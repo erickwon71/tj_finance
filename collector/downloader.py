@@ -35,20 +35,6 @@ from collector.models import Corporation, Filing, DownloadTask, CollectionRun
 _EXT_PRIORITY = [".pdf", ".html", ".htm", ".hwp", ".zip"]
 
 
-def _pick_best_file(members: list[str]) -> Optional[str]:
-    """
-    ZIP 멤버 목록에서 가장 적합한 파일을 선택.
-    우선순위: pdf > html/htm > hwp > zip
-    같은 유형이 여러 개면 파일 크기가 아닌 이름 정렬로 첫 번째 선택
-    (실제 크기 기반 선택은 ZipFile.getinfo 활용)
-    """
-    for ext in _EXT_PRIORITY:
-        matched = sorted([m for m in members if m.lower().endswith(ext)])
-        if matched:
-            return matched[0]
-    return None
-
-
 def _pick_best_file_by_size(zf: zipfile.ZipFile) -> Optional[zipfile.ZipInfo]:
     """
     PDF가 여러 개일 경우 가장 큰 파일(본문)을 선택.

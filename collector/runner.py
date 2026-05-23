@@ -6,6 +6,7 @@ from datetime import datetime, date, timedelta
 from loguru import logger
 from sqlalchemy import func, select, text
 
+from collector.config import MAX_DOWNLOAD_ATTEMPTS
 from collector.db import get_session
 from collector.models import Corporation, Filing, DownloadTask, CollectionRun
 from collector.rate_limiter import get_limiter
@@ -133,9 +134,10 @@ def cleanup_inactive_tasks() -> int:
     return count
 
 
-def reset_failed_downloads(max_attempts: int = 3) -> int:
+def reset_failed_downloads(max_attempts: int = MAX_DOWNLOAD_ATTEMPTS) -> int:
     """
     실패 건 중 시도 횟수가 max_attempts 미만인 것을 pending으로 리셋.
+    기본값은 config.MAX_DOWNLOAD_ATTEMPTS (현재 3회).
     반환: 리셋 건 수
     """
     from sqlalchemy import update

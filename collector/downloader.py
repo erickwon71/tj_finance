@@ -62,50 +62,34 @@ def _pick_best_file_by_size(zf: zipfile.ZipFile) -> Optional[zipfile.ZipInfo]:
     return None
 
 
-def _handle_non_zip_response(rcept_no: str, raw: bytes) -> None:
+def _parse_dart_xml_error(raw: bytes) -> tuple[str, str]:
     """
-    DART가 ZIP 대신 XML 에러를 반환했을 때 처리.
-
-    DART 에러 응답 예시:
-      <?xml version="1.0"?>
-      <result><status>020</status><message>문서가 존재하지 않습니다.</message></result>
-
-    - 문서 없음(013·014·020) → skipped (재시도 무의미)
-    - 그 외 DART 에러    → failed  (일시적 서버 문제일 수 있음)
-    - XML 파싱 불가      → failed  (예외 raise)
+    DART XML 에러 응답 파싱.
+    반환: (status_code, message)
+    ZIP이 아닌 비XML 응답은 ValueError raise.
     """
     import xml.etree.ElementTree as ET
 
-    # DART XML 에러 상태코드 중 '문서 없음'으로 확정되는 것
-    NO_DOC_STATUSES = {"013", "014", "020"}
+    if raw[:1] != b"<":
+        raise ValueError(f"ZIP이 아닌 응답 수신 (첫 4바이트: {raw[:4].hex()})")
 
-    # <?xml 또는 <result 로 시작하면 DART XML 에러 응답으로 간주
-    if raw[:1] == b"<":
-        try:
-            root = ET.fromstring(raw.decode("utf-8", errors="replace"))
-            status  = (root.findtext("status")  or "").strip()
-            message = (root.findtext("message") or "알 수 없는 오류").strip()
-            err_msg = f"DART 오류 [{status}]: {message}"
-        except ET.ParseError:
-            err_msg = f"비ZIP 응답 (XML 파싱 실패, 첫 50바이트: {raw[:50]})"
-            status  = ""
+    try:
+        root    = ET.fromstring(raw.decode("utf-8", errors="replace"))
+        status  = (root.findtext("status")  or "").strip()
+        message = (root.findtext("message") or "알 수 없는 오류").strip()
+        return status, message
+    except ET.ParseError:
+        raise ValueError(f"비ZIP XML 파싱 실패 (첫 50바이트: {raw[:50]})")
 
-        if status in NO_DOC_STATUSES:
-            # 문서가 DART 서버에 없음 → skipped (재시도해도 소용없음)
-            logger.warning(f"  ↷ 문서 없음 → skipped: {err_msg}")
-            with get_session() as session:
-                session.execute(
-                    update(DownloadTask)
-                    .where(DownloadTask.rcept_no == rcept_no)
-                    .values(status="skipped", last_error=err_msg)
-                )
-            return  # 정상 종료 (skipped)
 
-        # 그 외 DART 에러 (일시적 오류 가능) → 예외 raise → failed 처리
-        raise ValueError(err_msg)
-
-    # 전혀 예상치 못한 응답
-    raise ValueError(f"ZIP이 아닌 응답 수신 (첫 4바이트: {raw[:4].hex()})")
+def _mark_skipped(rcept_no: str, reason: str) -> None:
+    """download_tasks 행을 skipped로 업데이트"""
+    with get_session() as session:
+        session.execute(
+            update(DownloadTask)
+            .where(DownloadTask.rcept_no == rcept_no)
+            .values(status="skipped", last_error=reason)
+        )
 
 
 def _build_file_path(
@@ -128,6 +112,46 @@ def _build_file_path(
     )
     dest_dir.mkdir(parents=True, exist_ok=True)
     return dest_dir
+
+
+def _try_legacy_fallback(
+    scraper: "LegacyDartScraper",
+    task: DownloadTask,
+    filing: Filing,
+    corp: Corporation,
+    api_err_msg: str,
+) -> Optional[bool]:
+    """
+    OpenDART 014 오류 시 DART 웹 뷰어로 HTML 수집 시도.
+    반환: True=completed, None=skipped
+    """
+    from collector.legacy_downloader import LegacyDartScraper  # 순환 방지용 지연 import
+
+    logger.info(f"  ↷ API 014 → 웹 뷰어 폴백 시도...")
+    html_bytes = scraper.fetch(task.rcept_no)
+
+    if html_bytes:
+        # 저장 경로 결정 (.html)
+        dest_dir  = _build_file_path(corp, filing)
+        dest_path = dest_dir / f"{task.rcept_no}.html"
+        tmp_path  = TMP_DIR / f"{task.rcept_no}.html"
+
+        tmp_path.write_bytes(html_bytes)
+        shutil.move(str(tmp_path), dest_path)
+
+        file_size = dest_path.stat().st_size
+        logger.success(
+            f"  ✓ 저장 완료 [legacy HTML]: {dest_path.relative_to(RAW_REPORT_DIR)} "
+            f"({file_size / 1024:.0f} KB)"
+        )
+        _mark_completed(task.rcept_no, dest_path, "html", file_size)
+        return True
+
+    # 웹 뷰어도 실패 → skipped
+    reason = f"{api_err_msg} + 웹 뷰어 폴백 실패"
+    logger.warning(f"  ↷ 웹 뷰어도 실패 → skipped: {reason}")
+    _mark_skipped(task.rcept_no, reason)
+    return None
 
 
 def _reset_stale_downloading(session) -> int:
@@ -158,7 +182,10 @@ def run_downloads(
 
     반환: {total_queued, completed, failed, skipped}
     """
-    client = DartClient()
+    from collector.legacy_downloader import LegacyDartScraper
+
+    client  = DartClient()
+    scraper = LegacyDartScraper()
     run = CollectionRun(run_type="download", started_at=datetime.utcnow())
     stats = {"total_queued": 0, "completed": 0, "failed": 0, "skipped": 0}
 
@@ -207,9 +234,11 @@ def run_downloads(
                 f"{filing.report_type} ({task.rcept_no})"
             )
 
-            success = _download_one(client, task, filing, corp)
-            if success:
+            result = _download_one(client, task, filing, corp, scraper)
+            if result is True:
                 stats["completed"] += 1
+            elif result is None:
+                stats["skipped"] += 1
             else:
                 stats["failed"] += 1
 
@@ -219,18 +248,20 @@ def run_downloads(
             run.total     = stats["total_queued"]
             run.completed = stats["completed"]
             run.failed    = stats["failed"]
-            run.api_calls = stats["completed"] + stats["failed"]
+            run.skipped   = stats["skipped"]
+            run.api_calls = stats["completed"] + stats["failed"] + stats["skipped"]
             session.add(run)
 
         logger.success(
             f"다운로드 완료 — "
             f"성공 {stats['completed']:,} / 실패 {stats['failed']:,} / "
-            f"전체 {stats['total_queued']:,}건"
+            f"스킵 {stats['skipped']:,} / 전체 {stats['total_queued']:,}건"
         )
         return stats
 
     finally:
         client.close()
+        scraper.close()
 
 
 def _download_one(
@@ -238,10 +269,18 @@ def _download_one(
     task: DownloadTask,
     filing: Filing,
     corp: Corporation,
-) -> bool:
+    scraper: "LegacyDartScraper",
+) -> Optional[bool]:
     """
     단일 공시 문서 다운로드 처리.
-    반환: 성공 여부
+
+    흐름:
+      1. OpenDART document.xml API → ZIP 다운로드
+      2. 014(파일없음) 오류 시 → LegacyDartScraper 폴백 (dart.fss.or.kr 웹 뷰어)
+      3. 그 외 '문서없음' 오류(013·020) → skipped
+      4. 일시적 서버 오류 → failed (재시도 가능)
+
+    반환: True=completed, False=failed, None=skipped
     """
     # ── 상태 → downloading ───────────────────────────────────
     with get_session() as session:
@@ -259,10 +298,24 @@ def _download_one(
         # ── ZIP 다운로드 ─────────────────────────────────────
         zip_bytes = client.get_document_zip(task.rcept_no)
 
-        # DART는 오류 시 XML 에러 메시지를 반환하는 경우가 있음 (ZIP 매직 바이트 확인)
+        # DART는 오류 시 XML 에러 메시지를 반환 (ZIP 매직 바이트로 구분)
         if zip_bytes[:2] != b"PK":
-            _handle_non_zip_response(task.rcept_no, zip_bytes)
-            return False  # skipped 처리 후 종료 (예외는 _handle_non_zip_response 내부에서 raise)
+            status_code, message = _parse_dart_xml_error(zip_bytes)
+            err_msg = f"DART 오류 [{status_code}]: {message}"
+
+            if status_code == "014":
+                # ── 014: 파일없음 → 웹 뷰어(레거시) 폴백 ────────
+                return _try_legacy_fallback(scraper, task, filing, corp, err_msg)
+
+            elif status_code in {"013", "020"}:
+                # ── 013/020: 문서 자체가 없음 → skipped ──────────
+                logger.warning(f"  ↷ 문서 없음 → skipped: {err_msg}")
+                _mark_skipped(task.rcept_no, err_msg)
+                return None
+
+            else:
+                # ── 그 외 오류: 일시적 서버 문제 가능 → failed ───
+                raise ValueError(err_msg)
 
         # ── ZIP 파싱 → 최적 파일 선택 ────────────────────────
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
@@ -280,7 +333,7 @@ def _download_one(
                             last_error=f"미지원 파일 형식: {all_exts}",
                         )
                     )
-                return False
+                return None  # skipped
 
             ext = Path(best.filename).suffix.lower() or ".bin"
             fmt_note = " [iXBRL]" if ext == ".xml" else ""

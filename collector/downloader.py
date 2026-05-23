@@ -1,12 +1,17 @@
 """
-PDF 다운로더
+보고서 파일 다운로더
 Step 3: download_tasks 테이블의 pending/failed 건을 순서대로 처리
 
 처리 흐름:
   1. DART document.xml API → ZIP 다운로드
-  2. ZIP 압축 해제 → 파일 유형 분류 (pdf > html > hwp > zip)
+  2. ZIP 압축 해제 → 파일 유형 분류 (pdf > html > hwp > xml(iXBRL) > zip)
   3. raw_report/{market}/{corp_code}_{corp_name}/{report_type}/{fiscal_year}/ 에 저장
   4. download_tasks 상태 업데이트
+
+DART 제출 형식:
+  - ~2023: PDF 또는 HWP 위주
+  - 2024~: iXBRL(.xml) 위주 — 분기/반기보고서는 사실상 전면 전환됨
+    (XML 안에 HTML + XBRL 태그가 내장된 인라인 XBRL 형식)
 
 재시작 안전성:
   - completed 건은 완전히 건너뜀
@@ -32,19 +37,26 @@ from collector.models import Corporation, Filing, DownloadTask, CollectionRun
 
 
 # ── 파일 확장자 우선순위 ─────────────────────────────────────────────
-_EXT_PRIORITY = [".pdf", ".html", ".htm", ".hwp", ".zip"]
+# xml: DART iXBRL 형식 (2024년~ 분기/반기보고서 주력 제출 형식)
+#      HTML + XBRL 태그가 내장된 인라인 XBRL — 브라우저에서 바로 열림
+_EXT_PRIORITY = [".pdf", ".html", ".htm", ".hwp", ".xml", ".xbrl", ".zip"]
+
+# 여러 개일 때 가장 큰 파일(본문)을 선택할 확장자
+_PICK_LARGEST_EXTS = {".pdf", ".xml", ".xbrl"}
 
 
 def _pick_best_file_by_size(zf: zipfile.ZipFile) -> Optional[zipfile.ZipInfo]:
     """
-    PDF가 여러 개일 경우 가장 큰 파일(본문)을 선택.
-    HTML/HWP 등은 첫 번째 매칭.
+    ZIP 내에서 우선순위에 따라 최적 파일 선택.
+    - pdf / xml / xbrl : 여러 개면 가장 큰 파일 (본문 document)
+    - html / hwp / zip : 첫 번째 매칭
+    ZIP에 아무것도 없으면 None 반환 → 호출부에서 'skipped' 처리.
     """
     infos = zf.infolist()
     for ext in _EXT_PRIORITY:
         candidates = [i for i in infos if i.filename.lower().endswith(ext)]
         if candidates:
-            if ext == ".pdf":
+            if ext in _PICK_LARGEST_EXTS:
                 return max(candidates, key=lambda i: i.file_size)
             return candidates[0]
     return None
@@ -122,7 +134,8 @@ def run_downloads(
                     Filing.is_final == True,
                 )
                 .order_by(
-                    Filing.fiscal_year.desc(),  # 최신 연도부터
+                    Filing.corp_code.asc(),      # 기업별로 묶어서 처리
+                    Filing.fiscal_year.desc(),   # 기업 내에서는 최신 연도부터
                     DownloadTask.rcept_no.asc(),
                 )
             )
@@ -208,9 +221,22 @@ def _download_one(
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             best = _pick_best_file_by_size(zf)
             if best is None:
-                raise ValueError("ZIP 내에 유효한 파일 없음")
+                # 인식 가능한 형식 없음 — 재시도 무의미하므로 skipped 처리
+                all_exts = [Path(i.filename).suffix for i in zf.infolist()]
+                logger.warning(f"  ↷ 처리 불가 형식 → skipped: {all_exts}")
+                with get_session() as session:
+                    session.execute(
+                        update(DownloadTask)
+                        .where(DownloadTask.rcept_no == task.rcept_no)
+                        .values(
+                            status="skipped",
+                            last_error=f"미지원 파일 형식: {all_exts}",
+                        )
+                    )
+                return False
 
             ext = Path(best.filename).suffix.lower() or ".bin"
+            fmt_note = " [iXBRL]" if ext == ".xml" else ""
             dest_dir  = _build_file_path(corp, filing)
             dest_path = dest_dir / f"{task.rcept_no}{ext}"
 
@@ -230,7 +256,7 @@ def _download_one(
 
         file_size = dest_path.stat().st_size
         logger.success(
-            f"  ✓ 저장 완료: {dest_path.relative_to(RAW_REPORT_DIR)} "
+            f"  ✓ 저장 완료{fmt_note}: {dest_path.relative_to(RAW_REPORT_DIR)} "
             f"({file_size / 1024 / 1024:.1f} MB)"
         )
         _mark_completed(task.rcept_no, dest_path, ext.lstrip("."), file_size)

@@ -62,6 +62,52 @@ def _pick_best_file_by_size(zf: zipfile.ZipFile) -> Optional[zipfile.ZipInfo]:
     return None
 
 
+def _handle_non_zip_response(rcept_no: str, raw: bytes) -> None:
+    """
+    DART가 ZIP 대신 XML 에러를 반환했을 때 처리.
+
+    DART 에러 응답 예시:
+      <?xml version="1.0"?>
+      <result><status>020</status><message>문서가 존재하지 않습니다.</message></result>
+
+    - 문서 없음(013·014·020) → skipped (재시도 무의미)
+    - 그 외 DART 에러    → failed  (일시적 서버 문제일 수 있음)
+    - XML 파싱 불가      → failed  (예외 raise)
+    """
+    import xml.etree.ElementTree as ET
+
+    # DART XML 에러 상태코드 중 '문서 없음'으로 확정되는 것
+    NO_DOC_STATUSES = {"013", "014", "020"}
+
+    # <?xml 또는 <result 로 시작하면 DART XML 에러 응답으로 간주
+    if raw[:1] == b"<":
+        try:
+            root = ET.fromstring(raw.decode("utf-8", errors="replace"))
+            status  = (root.findtext("status")  or "").strip()
+            message = (root.findtext("message") or "알 수 없는 오류").strip()
+            err_msg = f"DART 오류 [{status}]: {message}"
+        except ET.ParseError:
+            err_msg = f"비ZIP 응답 (XML 파싱 실패, 첫 50바이트: {raw[:50]})"
+            status  = ""
+
+        if status in NO_DOC_STATUSES:
+            # 문서가 DART 서버에 없음 → skipped (재시도해도 소용없음)
+            logger.warning(f"  ↷ 문서 없음 → skipped: {err_msg}")
+            with get_session() as session:
+                session.execute(
+                    update(DownloadTask)
+                    .where(DownloadTask.rcept_no == rcept_no)
+                    .values(status="skipped", last_error=err_msg)
+                )
+            return  # 정상 종료 (skipped)
+
+        # 그 외 DART 에러 (일시적 오류 가능) → 예외 raise → failed 처리
+        raise ValueError(err_msg)
+
+    # 전혀 예상치 못한 응답
+    raise ValueError(f"ZIP이 아닌 응답 수신 (첫 4바이트: {raw[:4].hex()})")
+
+
 def _build_file_path(
     corp: Corporation,
     filing: Filing,
@@ -213,9 +259,10 @@ def _download_one(
         # ── ZIP 다운로드 ─────────────────────────────────────
         zip_bytes = client.get_document_zip(task.rcept_no)
 
-        # DART는 오류 시 XML을 반환하는 경우가 있음 (ZIP 매직 바이트 확인)
-        if not zip_bytes[:2] == b"PK":
-            raise ValueError(f"ZIP이 아닌 응답 수신 (첫 2바이트: {zip_bytes[:2].hex()})")
+        # DART는 오류 시 XML 에러 메시지를 반환하는 경우가 있음 (ZIP 매직 바이트 확인)
+        if zip_bytes[:2] != b"PK":
+            _handle_non_zip_response(task.rcept_no, zip_bytes)
+            return False  # skipped 처리 후 종료 (예외는 _handle_non_zip_response 내부에서 raise)
 
         # ── ZIP 파싱 → 최적 파일 선택 ────────────────────────
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:

@@ -1,11 +1,13 @@
 """
 SQLAlchemy ORM 모델 정의
-테이블: corporations / filings / download_tasks / collection_runs
+테이블:
+  Phase 1: corporations / filings / download_tasks / collection_runs
+  Phase 2: financial_facts / unknown_accounts / standard_financials / stock_prices
 """
 from datetime import datetime
 from sqlalchemy import (
-    BigInteger, Boolean, Column, Date, DateTime,
-    ForeignKey, Integer, String, Text, UniqueConstraint, Index
+    BigInteger, Boolean, Column, Date, DateTime, Float,
+    ForeignKey, Integer, SmallInteger, String, Text, UniqueConstraint, Index
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -93,13 +95,21 @@ class DownloadTask(Base):
     status           = Column(String(15), default="pending", nullable=False, index=True,
                                comment="pending/downloading/completed/failed/skipped")
     file_path        = Column(String(1000), nullable=True,  comment="저장된 파일 절대경로")
-    file_type        = Column(String(5),   nullable=True,   comment="pdf/html/hwp/zip")
+    file_type        = Column(String(5),   nullable=True,   comment="pdf/html/hwp/zip/xml")
     file_size        = Column(BigInteger,  nullable=True,   comment="바이트")
     attempts         = Column(Integer,     default=0,       comment="시도 횟수")
     last_error       = Column(Text,        nullable=True,   comment="마지막 오류 메시지")
     last_attempt_at  = Column(DateTime,    nullable=True)
     completed_at     = Column(DateTime,    nullable=True)
     created_at       = Column(DateTime,    default=datetime.utcnow)
+
+    # Phase 2: 파싱 상태 추적
+    parse_status     = Column(String(15), nullable=True, index=True,
+                               comment="pending/parsing/success/partial/failed/skip")
+    parse_error      = Column(Text,       nullable=True)
+    parsed_at        = Column(DateTime,   nullable=True)
+    parsed_facts     = Column(Integer,    nullable=True, comment="추출된 fact 행 수")
+    parser_track     = Column(String(3),  nullable=True, comment="A/B/PDF")
 
     filing           = relationship("Filing", back_populates="download_task")
 
@@ -128,3 +138,201 @@ class CollectionRun(Base):
 
     def __repr__(self):
         return f"<CollectionRun {self.run_type} {self.started_at:%Y-%m-%d %H:%M}>"
+
+
+# ══ Phase 2 테이블 ═══════════════════════════════════════════════════════════
+
+# ── 5. 재무 원시 데이터 ─────────────────────────────────────────────────────
+class FinancialFact(Base):
+    """
+    DART XML/PDF에서 파싱된 계정과목별 금액 (원시 데이터)
+
+    레이어 구조:
+      financial_facts (원시) → standard_financials (집계/표준화)
+
+    파티셔닝: PostgreSQL 선언적 파티셔닝 (fiscal_year 기준 RANGE)
+    PostgreSQL에서 파티션 생성 필요:
+      CREATE TABLE financial_facts_y1999_2009 PARTITION OF financial_facts FOR VALUES FROM (1999) TO (2010);
+      CREATE TABLE financial_facts_y2010_2019 PARTITION OF financial_facts FOR VALUES FROM (2010) TO (2020);
+      CREATE TABLE financial_facts_y2020_2029 PARTITION OF financial_facts FOR VALUES FROM (2020) TO (2030);
+      CREATE TABLE financial_facts_default    PARTITION OF financial_facts DEFAULT;
+    """
+    __tablename__ = "financial_facts"
+
+    id                    = Column(BigInteger,   primary_key=True, autoincrement=True)
+    corp_code             = Column(String(8),    nullable=False, index=True, comment="DART 기업코드")
+    rcept_no              = Column(String(14),   ForeignKey("filings.rcept_no"), nullable=False, index=True)
+    fs_type               = Column(String(6),    nullable=False,
+                                    comment="BS_C/IS_C/CF_C/BS_S/IS_S/CF_S/NOTE_C/NOTE_S")
+    statement_type        = Column(String(12),   nullable=False,
+                                    comment="consolidated / separate")
+    period_type           = Column(String(15),   nullable=False,
+                                    comment="annual / cumulative_ytd / point_in_time")
+    account_code          = Column(String(120),  nullable=False,
+                                    comment="표준 계정 코드 (bs.current_assets 등) 또는 unknown.xxx")
+    account_name_raw      = Column(String(300),  nullable=False, comment="원문 계정과목명 또는 XBRL ACODE")
+    period_end            = Column(Date,         nullable=True,  comment="결산 기준일 (비12월 결산 대응)")
+    fiscal_year           = Column(SmallInteger, nullable=False, index=True)
+    fiscal_period         = Column(String(5),    nullable=False, comment="FY/H1/Q1/Q3")
+    amount                = Column(BigInteger,   nullable=True,  comment="금액 (단위 적용 전)")
+    unit_multiplier       = Column(Integer,     default=1,       comment="1, 1000(천원), 1000000(백만원) 등")
+    # amount_won = amount * unit_multiplier (원 단위). Python 레이어에서 계산 (GENERATED AS 불사용)
+    col_index             = Column(SmallInteger, nullable=False,
+                                    comment="0=당기, 1=전기, 2=전전기")
+    row_order             = Column(SmallInteger, nullable=True)
+    is_subtotal           = Column(Boolean,      default=False,  comment="합계/소계 행 여부")
+    is_ifrs               = Column(Boolean,      default=True)
+    source_format         = Column(String(15),   nullable=False,
+                                    comment="xbrl_acode / xml_text / pdf_plumber / pdf_camelot / pdf_ocr")
+    extraction_confidence = Column(Float,        default=1.0)
+    parser_track          = Column(String(3),    nullable=True,  comment="A / B / PDF")
+    is_superseded         = Column(Boolean,      default=False,  comment="기재정정으로 대체된 데이터")
+    parsed_at             = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "corp_code", "rcept_no", "fs_type", "account_code", "col_index",
+            name="uq_financial_facts"
+        ),
+        Index("ix_ff_corp_year",  "corp_code", "fiscal_year", "statement_type"),
+        Index("ix_ff_account",    "account_code", "fiscal_year"),
+        Index("ix_ff_cross",      "fiscal_year", "fiscal_period", "account_code"),
+    )
+
+    @property
+    def amount_won(self):
+        """원 단위 정규화 금액"""
+        if self.amount is None:
+            return None
+        return self.amount * (self.unit_multiplier or 1)
+
+    def __repr__(self):
+        return f"<FinancialFact {self.corp_code} {self.fiscal_year} {self.account_code} {self.col_index}>"
+
+
+# ── 6. 미매핑 계정과목 추적 ─────────────────────────────────────────────────
+class UnknownAccount(Base):
+    """
+    3단계 매핑에서 실패한 계정과목 집계.
+    주기적으로 검토해 account_maps/*.py 에 alias 추가.
+    """
+    __tablename__ = "unknown_accounts"
+
+    account_name_normalized = Column(String(300), primary_key=True, comment="정규화된 계정과목명")
+    fs_type                 = Column(String(6),   nullable=True)
+    occurrence_count        = Column(Integer,     default=1)
+    corp_sample             = Column(String(8),   nullable=True, comment="처음 발견한 기업코드")
+    first_seen_at           = Column(DateTime,    default=datetime.utcnow)
+    last_seen_at            = Column(DateTime,    default=datetime.utcnow)
+    suggested_code          = Column(String(120), nullable=True, comment="검토 후 수동 입력할 표준 코드")
+
+    def __repr__(self):
+        return f"<UnknownAccount '{self.account_name_normalized}' ({self.occurrence_count}회)>"
+
+
+# ── 7. 표준화 재무제표 (와이드 테이블, 스크리닝 최적화) ─────────────────────
+class StandardFinancial(Base):
+    """
+    financial_facts를 집계한 와이드 테이블.
+    PER/PBR 스크리닝 등 Cross-sectional 쿼리에 최적화.
+
+    갱신: parse 완료 후 배치 계산. version으로 기재정정 이력 관리.
+    """
+    __tablename__ = "standard_financials"
+
+    corp_code           = Column(String(8),    primary_key=True)
+    fiscal_year         = Column(SmallInteger, primary_key=True)
+    fiscal_period       = Column(String(5),    primary_key=True)
+    statement_type      = Column(String(12),   primary_key=True)
+    version             = Column(SmallInteger, primary_key=True, default=1)
+    period_end          = Column(Date,         nullable=True)
+    is_ifrs             = Column(Boolean,      nullable=True)
+    rcept_no            = Column(String(14),   nullable=True)
+
+    # ── 재무상태표 (BS) ───────────────────────────────────────────────
+    total_assets         = Column(BigInteger, nullable=True)
+    current_assets       = Column(BigInteger, nullable=True)
+    cash                 = Column(BigInteger, nullable=True)
+    receivables          = Column(BigInteger, nullable=True)
+    inventory            = Column(BigInteger, nullable=True)
+    ppe                  = Column(BigInteger, nullable=True)
+    intangibles          = Column(BigInteger, nullable=True)
+    total_liabilities    = Column(BigInteger, nullable=True)
+    current_liabilities  = Column(BigInteger, nullable=True)
+    short_term_debt      = Column(BigInteger, nullable=True)
+    long_term_debt       = Column(BigInteger, nullable=True)
+    total_equity         = Column(BigInteger, nullable=True)
+    controlling_equity   = Column(BigInteger, nullable=True)
+    retained_earnings    = Column(BigInteger, nullable=True)
+    trade_payables       = Column(BigInteger, nullable=True)
+
+    # ── 손익계산서 (IS) ───────────────────────────────────────────────
+    revenue              = Column(BigInteger, nullable=True)
+    cogs                 = Column(BigInteger, nullable=True)
+    gross_profit         = Column(BigInteger, nullable=True)
+    sga                  = Column(BigInteger, nullable=True)
+    operating_income     = Column(BigInteger, nullable=True)
+    interest_expense     = Column(BigInteger, nullable=True)
+    ebt                  = Column(BigInteger, nullable=True)
+    tax_expense          = Column(BigInteger, nullable=True)
+    net_income           = Column(BigInteger, nullable=True)
+    controlling_ni       = Column(BigInteger, nullable=True)
+
+    # ── 현금흐름표 (CF) ───────────────────────────────────────────────
+    cfo                  = Column(BigInteger, nullable=True)
+    cfi                  = Column(BigInteger, nullable=True)
+    cff                  = Column(BigInteger, nullable=True)
+    capex                = Column(BigInteger, nullable=True)
+    dividends_paid       = Column(BigInteger, nullable=True)
+
+    # ── 주석에서 추출 ─────────────────────────────────────────────────
+    depreciation         = Column(BigInteger, nullable=True)
+    amortization         = Column(BigInteger, nullable=True)
+    da_total             = Column(BigInteger, nullable=True)
+
+    # ── 파생 계산 ─────────────────────────────────────────────────────
+    ebitda               = Column(BigInteger, nullable=True)  # op_income + da_total
+    fcf                  = Column(BigInteger, nullable=True)   # cfo - abs(capex)
+    net_debt             = Column(BigInteger, nullable=True)   # short+long debt - cash
+
+    # ── 메타 ──────────────────────────────────────────────────────────
+    data_quality         = Column(SmallInteger, default=0,
+                                   comment="0:미검증 1:정상 2:경고 3:오류")
+    superseded_at        = Column(DateTime,    nullable=True,
+                                   comment="기재정정으로 대체된 시각")
+    calculated_at        = Column(DateTime,    default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "corp_code", "fiscal_year", "fiscal_period", "statement_type", "version",
+            name="uq_standard_financials"
+        ),
+        Index(
+            "ix_sf_screening",
+            "fiscal_year", "fiscal_period", "statement_type",
+        ),
+        Index("ix_sf_corp_year", "corp_code", "fiscal_year"),
+    )
+
+    def __repr__(self):
+        return f"<StandardFinancial {self.corp_code} {self.fiscal_year}{self.fiscal_period} v{self.version}>"
+
+
+# ── 8. 주가 데이터 ──────────────────────────────────────────────────────────
+class StockPrice(Base):
+    """
+    pykrx에서 수집한 일별 주가 및 시총.
+    밸류에이션 멀티플(PER/PBR/EV-EBITDA) 계산에 사용.
+    """
+    __tablename__ = "stock_prices"
+
+    stock_code   = Column(String(6),  primary_key=True)
+    trade_date   = Column(Date,       primary_key=True)
+    close_price  = Column(Integer,    nullable=False)
+    market_cap   = Column(BigInteger, nullable=True, comment="시가총액 (원)")
+    shares_out   = Column(BigInteger, nullable=True, comment="상장주식수")
+
+    __table_args__ = (
+        UniqueConstraint("stock_code", "trade_date", name="uq_stock_prices"),
+        Index("ix_sp_stock_date", "stock_code", "trade_date"),
+    )

@@ -1,18 +1,23 @@
 """
-DART 웹 뷰어(dart.fss.or.kr) 기반 구형 공시 문서 수집기
+DART 웹(dart.fss.or.kr) 기반 구형 공시 문서 수집기
 
 OpenDART API(opendart.fss.or.kr) document.xml에서 014(파일없음) 오류가
-반환되는 구형 문서를 DART 공개 웹 뷰어를 통해 HTML로 수집합니다.
+반환되는 구형 문서를 DART 웹에서 직접 수집합니다.
 
 수집 흐름:
   1. dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}
-     → 공시 뷰어 메인 페이지 조회 (세션 쿠키 수집)
+     → 공시 뷰어 메인 페이지 조회 (세션 쿠키 + dcmNo 수집)
      → viewDoc("rcpNo","dcmNo","eleId","offset","length","dtd","") 파싱
-  2. dart.fss.or.kr/report/viewer.do
-        ?rcpNo=...&dcmNo=...&eleId=...&offset=...&length=...&dtd=...
-     → 공시 본문 HTML 전체 다운로드
+
+  2-A. PDF 우선 시도 (dart.fss.or.kr/pdf/download)
+       /pdf/download/main.do?rcp_no=...&dcm_no=...  → PDF 존재 확인
+       /pdf/download/pdf.do?rcp_no=...&dcm_no=...   → PDF 바이너리 다운로드
+
+  2-B. PDF 없을 때 HTML 뷰어 폴백
+       /report/viewer.do?rcpNo=...&dcmNo=...&eleId=...&offset=...&length=...&dtd=...
 
 핵심 설계:
+  - PDF가 존재하면 항상 PDF 우선 (HTML 표지 페이지 문제 해결)
   - viewDoc() JS 함수 인수를 위치 기반으로 파싱
     (DART 뷰어 세대별 dtd가 dart2.dtd / dart3.xsd로 다름 → 자동 감지)
   - eleId/offset/length: viewDoc 실제 값 사용 (0으로 고정하면 빈 응답 반환)
@@ -29,7 +34,7 @@ from loguru import logger
 
 DART_WEB_BASE  = "https://dart.fss.or.kr"
 WEB_INTERVAL   = 2.0    # 요청 간 최소 간격(초)
-MIN_HTML_BYTES = 500    # 유효 응답 최소 크기
+MIN_HTML_BYTES = 500    # 유효 HTML 응답 최소 크기
 
 _HEADERS = {
     "User-Agent": (
@@ -44,7 +49,7 @@ _HEADERS = {
 
 class LegacyDartScraper:
     """
-    DART 웹 뷰어 스크래퍼.
+    DART 웹 스크래퍼.
     run_downloads() 한 번에 단일 인스턴스를 생성·재사용.
     쿠키 유지를 위해 httpx.Client를 내부에서 재사용함.
     """
@@ -62,32 +67,42 @@ class LegacyDartScraper:
 
     # ── 공개 API ────────────────────────────────────────────────
 
-    def fetch(self, rcept_no: str) -> Optional[bytes]:
+    def fetch(self, rcept_no: str) -> tuple[Optional[bytes], str]:
         """
-        rcept_no 공시의 주 문서 HTML 다운로드.
-        반환: HTML bytes (성공) / None (실패)
+        rcept_no 공시 문서 다운로드.
+        순서: PDF 우선 → HTML 뷰어 폴백
+        반환: (bytes, fmt) — fmt는 "pdf" 또는 "html"
+               실패 시 (None, "")
         """
-        logger.debug(f"    [legacy] 웹 뷰어 시도: {rcept_no}")
+        logger.debug(f"    [legacy] 시도: {rcept_no}")
 
         params = self._get_view_params(rcept_no)
         if not params:
             logger.debug(f"    [legacy] 뷰어 파라미터 추출 실패")
-            return None
+            return None, ""
 
+        dcm_no = params["dcmNo"]
         logger.debug(
-            f"    [legacy] 파라미터: dcmNo={params['dcmNo']}  "
-            f"eleId={params['eleId']}  dtd={params['dtd']}"
+            f"    [legacy] dcmNo={dcm_no}  eleId={params['eleId']}  dtd={params['dtd']}"
         )
 
-        content = self._fetch_html(rcept_no, params)
-        if not content or len(content) < MIN_HTML_BYTES:
-            logger.debug(
-                f"    [legacy] 본문 응답 비정상 ({len(content) if content else 0}B)"
-            )
-            return None
+        # ── 1. PDF 시도 ──────────────────────────────────────
+        pdf_bytes = self._fetch_pdf(rcept_no, dcm_no)
+        if pdf_bytes:
+            logger.debug(f"    [legacy] PDF 성공: {len(pdf_bytes):,}B")
+            return pdf_bytes, "pdf"
 
-        logger.debug(f"    [legacy] 성공: {len(content):,}B")
-        return content
+        # ── 2. HTML 뷰어 폴백 ────────────────────────────────
+        html_bytes = self._fetch_html(rcept_no, params)
+        if html_bytes and len(html_bytes) >= MIN_HTML_BYTES:
+            logger.debug(f"    [legacy] HTML 성공: {len(html_bytes):,}B")
+            return html_bytes, "html"
+
+        logger.debug(
+            f"    [legacy] 모두 실패 "
+            f"(HTML크기={len(html_bytes) if html_bytes else 0}B)"
+        )
+        return None, ""
 
     # ── 내부 메서드 ─────────────────────────────────────────────
 
@@ -109,6 +124,58 @@ class LegacyDartScraper:
         except Exception as e:
             logger.debug(f"    [legacy] 요청 실패: {e}")
             return None
+
+    def _fetch_pdf(self, rcept_no: str, dcm_no: str) -> Optional[bytes]:
+        """
+        dart.fss.or.kr/pdf/download 엔드포인트로 PDF 다운로드 시도.
+
+        흐름:
+          1. /pdf/download/main.do  → PDF 존재 여부 확인 (HTML 목록 페이지)
+          2. /pdf/download/pdf.do   → PDF 바이너리 다운로드 (Referer 필수)
+
+        반환: PDF bytes (성공) / None (PDF 없거나 실패)
+        """
+        # 1. PDF 목록 페이지 확인
+        main_resp = self._get(
+            f"{DART_WEB_BASE}/pdf/download/main.do",
+            {"rcp_no": rcept_no, "dcm_no": dcm_no},
+        )
+        if not main_resp or "/pdf/download/pdf.do" not in main_resp.text:
+            logger.debug(f"    [legacy] PDF 없음 (dcm_no={dcm_no})")
+            return None
+
+        # 2. PDF 실제 다운로드 (Referer: main.do 필요)
+        self._throttle()
+        try:
+            resp = self._client.get(
+                f"{DART_WEB_BASE}/pdf/download/pdf.do",
+                params={"rcp_no": rcept_no, "dcm_no": dcm_no},
+                headers={
+                    **_HEADERS,
+                    "Referer": (
+                        f"{DART_WEB_BASE}/pdf/download/main.do"
+                        f"?rcp_no={rcept_no}&dcm_no={dcm_no}"
+                    ),
+                },
+                timeout=120,  # PDF 대용량 대비
+            )
+            resp.raise_for_status()
+            self._last_ts = time.monotonic()
+        except Exception as e:
+            logger.debug(f"    [legacy] PDF 다운로드 실패: {e}")
+            return None
+
+        content = resp.content
+        # PDF 매직 바이트 확인 (%PDF)
+        if content[:4] != b"%PDF":
+            logger.debug(
+                f"    [legacy] PDF 매직 바이트 불일치 "
+                f"(첫 8B={content[:8].hex()}, "
+                f"Content-Type={resp.headers.get('content-type', '?')})"
+            )
+            return None
+
+        return content
 
     def _get_view_params(self, rcept_no: str) -> Optional[dict]:
         """

@@ -1,0 +1,327 @@
+"""
+주가 / 시가총액 수집
+
+주가:   pykrx → Naver Finance (get_market_ohlcv) ← 항상 동작
+상장주식수: DART OpenAPI (stockTotqySttus) ← corp_code 필요
+시가총액: 종가 × 상장주식수 로 계산
+
+사용 예:
+    from analyzer.price_fetcher import get_market_data
+
+    data = get_market_data("005930", as_of_date=date(2024, 12, 31),
+                           corp_code="00126380", fiscal_year=2024)
+    # → {"market_cap": 324_756_170_720_000, "close_price": 54400,
+    #    "shares_out": 5_969_782_550, "trade_date": date(2025, 1, 3)}
+"""
+from __future__ import annotations
+
+import re
+from datetime import date, timedelta
+from typing import Optional
+from loguru import logger
+
+
+# ---------------------------------------------------------------------------
+# 공개 인터페이스
+# ---------------------------------------------------------------------------
+
+def get_market_data(
+    stock_code: str,
+    as_of_date: Optional[date] = None,
+    corp_code: Optional[str] = None,
+    fiscal_year: Optional[int] = None,
+    use_cache: bool = True,
+) -> Optional[dict]:
+    """
+    종목코드(6자리)와 기준일로 시가총액/주가 반환.
+
+    1순위: stock_prices 테이블 캐시 (market_cap != NULL 조건)
+    2순위: pykrx(Naver) 주가 + DART 상장주식수 → 계산
+
+    Args:
+        stock_code:  KRX 6자리 종목코드 (예: "005930")
+        as_of_date:  기준일. None이면 오늘
+        corp_code:   DART 8자리 기업코드. 상장주식수 조회에 사용.
+                     None이면 DB에서 자동 조회.
+        fiscal_year: 상장주식수 기준 사업연도. None이면 as_of_date 연도
+        use_cache:   DB 캐시 사용 여부
+
+    Returns:
+        dict: market_cap, close_price, shares_out, trade_date
+        조회 실패 시 None
+    """
+    if as_of_date is None:
+        as_of_date = date.today()
+
+    # 캐시: market_cap이 있는 레코드 우선 조회
+    if use_cache:
+        cached = _load_from_cache(stock_code, as_of_date)
+        if cached and cached.get("market_cap"):
+            return cached
+
+    # corp_code 없으면 DB에서 조회
+    if not corp_code:
+        corp_code = _lookup_corp_code(stock_code)
+
+    return _fetch_live(stock_code, as_of_date, corp_code, fiscal_year)
+
+
+# ---------------------------------------------------------------------------
+# 주가 조회 (pykrx → Naver Finance)
+# ---------------------------------------------------------------------------
+
+def _fetch_close_price(stock_code: str, target_date: date):
+    """종가와 실제 거래일 반환. 실패 시 (None, None)."""
+    try:
+        from pykrx import stock as krx  # type: ignore[import]
+
+        start = (target_date - timedelta(days=15)).strftime("%Y%m%d")
+        end   = (target_date + timedelta(days=5)).strftime("%Y%m%d")
+
+        df = krx.get_market_ohlcv(start, end, stock_code)
+        if df is None or df.empty:
+            return None, None
+
+        # target_date 이전 마지막 거래일 우선
+        before = df[df.index.date <= target_date]
+        if not before.empty:
+            row = before.iloc[-1]
+            trade_dt = before.index[-1].date()
+        else:
+            row = df.iloc[-1]
+            trade_dt = df.index[-1].date()
+
+        close = int(row.get("종가", row.get("Close", 0)))
+        return close, trade_dt
+
+    except Exception as e:
+        logger.debug(f"주가 조회 오류 [{stock_code}]: {e}")
+        return None, None
+
+
+# ---------------------------------------------------------------------------
+# 상장주식수 조회 (DART OpenAPI)
+# ---------------------------------------------------------------------------
+
+def get_shares_from_dart(corp_code: str, fiscal_year: int) -> Optional[int]:
+    """
+    DART stockTotqySttus API로 보통주 상장주식수 조회.
+
+    Returns:
+        보통주 istc_totqy (상장주식 총수) or None
+    """
+    try:
+        import requests
+        from collector.config import DART_API_KEY
+
+        if not DART_API_KEY:
+            return None
+
+        url = "https://opendart.fss.or.kr/api/stockTotqySttus.json"
+        params = {
+            "crtfc_key": DART_API_KEY,
+            "corp_code":  corp_code,
+            "bsns_year":  str(fiscal_year),
+            "reprt_code": "11011",  # 사업보고서
+        }
+        resp = requests.get(url, params=params, timeout=10)
+        data = resp.json()
+
+        if data.get("status") != "000" or not data.get("list"):
+            # 사업보고서 없으면 반기 시도
+            params["reprt_code"] = "11012"
+            resp = requests.get(url, params=params, timeout=10)
+            data = resp.json()
+
+        if data.get("status") != "000" or not data.get("list"):
+            return None
+
+        # 보통주 행 탐색
+        for item in data["list"]:
+            se = item.get("se", "")
+            if "보통주" in se or se == "합계":
+                raw = item.get("istc_totqy", "0")
+                shares = int(re.sub(r"[^0-9]", "", raw) or "0")
+                if shares > 0:
+                    return shares
+
+        return None
+
+    except Exception as e:
+        logger.debug(f"DART 상장주식수 조회 오류 [{corp_code}/{fiscal_year}]: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# 메인 조회 로직
+# ---------------------------------------------------------------------------
+
+def _fetch_live(
+    stock_code: str,
+    target_date: date,
+    corp_code: Optional[str],
+    fiscal_year: Optional[int],
+) -> Optional[dict]:
+    """pykrx 주가 + DART 상장주식수 → 시총 계산 후 캐시 저장."""
+
+    close, trade_dt = _fetch_close_price(stock_code, target_date)
+    if close is None:
+        logger.debug(f"주가 없음: {stock_code} @ {target_date}")
+        return None
+
+    # 상장주식수: DART API
+    shares_out = None
+    market_cap  = None
+
+    if corp_code:
+        fy = fiscal_year or target_date.year
+        shares_out = get_shares_from_dart(corp_code, fy)
+        # 연말 결산 기준 상장주식수가 없으면 전년도 시도
+        if not shares_out and fy > 2000:
+            shares_out = get_shares_from_dart(corp_code, fy - 1)
+
+    if shares_out:
+        market_cap = close * shares_out
+
+    result = {
+        "market_cap":  market_cap,
+        "close_price": close,
+        "shares_out":  shares_out,
+        "trade_date":  trade_dt,
+    }
+
+    _save_to_cache(stock_code, trade_dt, result)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# DB 캐시 헬퍼
+# ---------------------------------------------------------------------------
+
+def _load_from_cache(stock_code: str, target_date: date) -> Optional[dict]:
+    """stock_prices 테이블에서 조회 (±7일 이내, 가장 가까운 날)."""
+    try:
+        from sqlalchemy import text
+        from collector.db import get_session
+
+        with get_session() as session:
+            row = session.execute(text("""
+                SELECT close_price, market_cap, shares_out, trade_date
+                FROM stock_prices
+                WHERE stock_code = :code
+                  AND trade_date BETWEEN :start AND :end
+                ORDER BY ABS(CAST(trade_date AS DATE) - CAST(:target AS DATE)) ASC
+                LIMIT 1
+            """), {
+                "code":   stock_code,
+                "start":  target_date - timedelta(days=7),
+                "end":    target_date + timedelta(days=7),
+                "target": target_date.isoformat(),
+            }).fetchone()
+
+        if row:
+            return {
+                "market_cap":  row.market_cap,
+                "close_price": row.close_price,
+                "shares_out":  row.shares_out,
+                "trade_date":  row.trade_date,
+            }
+    except Exception as e:
+        logger.debug(f"캐시 조회 오류 [{stock_code}]: {e}")
+
+    return None
+
+
+def _save_to_cache(stock_code: str, trade_date: date, data: dict) -> None:
+    """주가 데이터를 stock_prices 테이블에 저장."""
+    try:
+        from sqlalchemy import text
+        from collector.db import get_session
+
+        with get_session() as session:
+            session.execute(text("""
+                INSERT INTO stock_prices (stock_code, trade_date, close_price, market_cap, shares_out)
+                VALUES (:code, :dt, :price, :cap, :shares)
+                ON CONFLICT (stock_code, trade_date) DO UPDATE
+                    SET close_price = EXCLUDED.close_price,
+                        market_cap  = COALESCE(EXCLUDED.market_cap, stock_prices.market_cap),
+                        shares_out  = COALESCE(EXCLUDED.shares_out, stock_prices.shares_out)
+            """), {
+                "code":   stock_code,
+                "dt":     trade_date,
+                "price":  data.get("close_price"),
+                "cap":    data.get("market_cap"),
+                "shares": data.get("shares_out"),
+            })
+    except Exception as e:
+        logger.debug(f"주가 캐시 저장 오류: {e}")
+
+
+def _lookup_corp_code(stock_code: str) -> Optional[str]:
+    """DB의 corporations 테이블에서 stock_code → corp_code 조회."""
+    try:
+        from sqlalchemy import text
+        from collector.db import get_session
+
+        with get_session() as session:
+            row = session.execute(text("""
+                SELECT corp_code FROM corporations
+                WHERE stock_code = :code LIMIT 1
+            """), {"code": stock_code}).fetchone()
+
+        return row.corp_code if row else None
+    except Exception as e:
+        logger.debug(f"corp_code 조회 오류 [{stock_code}]: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# 일괄 주가 수집 (sync-prices 명령어)
+# ---------------------------------------------------------------------------
+
+def sync_prices(
+    corp_codes: Optional[list] = None,
+    since_year: int = 2020,
+) -> int:
+    """
+    DB의 기업들에 대해 결산일 기준 주가/시총을 일괄 수집.
+
+    Returns:
+        저장된 행 수
+    """
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    sql = """
+        SELECT DISTINCT c.corp_code, c.stock_code, sf.period_end,
+               sf.fiscal_year
+        FROM standard_financials sf
+        JOIN corporations c ON c.corp_code = sf.corp_code
+        WHERE c.stock_code IS NOT NULL
+          AND sf.fiscal_year >= :since
+          AND sf.period_end IS NOT NULL
+          AND sf.fiscal_period = 'FY'
+        ORDER BY sf.period_end DESC
+    """
+    with get_session() as session:
+        targets = session.execute(text(sql), {"since": since_year}).fetchall()
+
+    logger.info(f"주가 수집 대상: {len(targets)}건")
+    saved = 0
+
+    for row in targets:
+        if corp_codes and row.corp_code not in corp_codes:
+            continue
+        result = get_market_data(
+            row.stock_code,
+            as_of_date=row.period_end,
+            corp_code=row.corp_code,
+            fiscal_year=row.fiscal_year,
+        )
+        if result and result.get("market_cap"):
+            saved += 1
+        if saved % 50 == 0 and saved > 0:
+            logger.info(f"  주가 수집 {saved}/{len(targets)}")
+
+    logger.success(f"주가 수집 완료: {saved}건 저장")
+    return saved

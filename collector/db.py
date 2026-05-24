@@ -54,6 +54,29 @@ def _run_migrations() -> None:
     migrations = [
         # 2025-05: last_filing_sync 컬럼 추가 (sync-filings resume 기능)
         "ALTER TABLE corporations ADD COLUMN IF NOT EXISTS last_filing_sync TIMESTAMP",
+
+        # Phase 2: download_tasks 파싱 상태 컬럼 추가
+        "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parse_status  VARCHAR(15)",
+        "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parse_error   TEXT",
+        "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parsed_at     TIMESTAMP",
+        "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parsed_facts  INTEGER",
+        "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parser_track  VARCHAR(3)",
+
+        # Phase 2: unit_multiplier SmallInteger → Integer (백만원 1,000,000 지원)
+        "ALTER TABLE financial_facts ALTER COLUMN unit_multiplier TYPE INTEGER",
+
+        # Phase 2: parse_status 인덱스
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE tablename='download_tasks' AND indexname='ix_dt_parse_status'
+            ) THEN
+                CREATE INDEX ix_dt_parse_status ON download_tasks (parse_status)
+                WHERE parse_status IS NOT NULL;
+            END IF;
+        END $$
+        """,
     ]
 
     with engine.begin() as conn:

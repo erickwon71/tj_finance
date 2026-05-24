@@ -4,7 +4,7 @@ Step 3: download_tasks 테이블의 pending/failed 건을 순서대로 처리
 
 처리 흐름:
   1. DART document.xml API → ZIP 다운로드
-  2. ZIP 압축 해제 → 파일 유형 분류 (pdf > html > hwp > xml(iXBRL) > zip)
+  2. ZIP 압축 해제 → 파일 유형 분류 (xml > pdf > html > hwp > zip)
   3. raw_report/{market}/{corp_code}_{corp_name}/{report_type}/{fiscal_year}/ 에 저장
   4. download_tasks 상태 업데이트
 
@@ -12,6 +12,10 @@ DART 제출 형식:
   - ~2023: PDF 또는 HWP 위주
   - 2024~: iXBRL(.xml) 위주 — 분기/반기보고서는 사실상 전면 전환됨
     (XML 안에 HTML + XBRL 태그가 내장된 인라인 XBRL 형식)
+
+파일 우선순위: xml > xbrl > pdf > html > hwp > zip
+  - DART XML(dart4.xsd)은 XBRL ACODE 속성이 내장된 정형 데이터 → 파싱 정확도 최고
+  - PDF는 XML이 없을 때만 사용 (구형 문서용 폴백)
 
 재시작 안전성:
   - completed 건은 완전히 건너뜀
@@ -37,9 +41,10 @@ from collector.models import Corporation, Filing, DownloadTask, CollectionRun
 
 
 # ── 파일 확장자 우선순위 ─────────────────────────────────────────────
-# xml: DART iXBRL 형식 (2024년~ 분기/반기보고서 주력 제출 형식)
-#      HTML + XBRL 태그가 내장된 인라인 XBRL — 브라우저에서 바로 열림
-_EXT_PRIORITY = [".pdf", ".html", ".htm", ".hwp", ".xml", ".xbrl", ".zip"]
+# xml/xbrl 최우선: DART XML(dart4.xsd)은 XBRL ACODE 속성이 내장된 정형 데이터.
+#   파서가 계정과목을 ACODE로 직접 추출 → PDF 파싱 복잡도 80% 제거.
+# pdf 폴백: XML이 없는 구형 문서(~2020년 이전)용.
+_EXT_PRIORITY = [".xml", ".xbrl", ".pdf", ".html", ".htm", ".hwp", ".zip"]
 
 # 여러 개일 때 가장 큰 파일(본문)을 선택할 확장자
 _PICK_LARGEST_EXTS = {".pdf", ".xml", ".xbrl"}
@@ -122,34 +127,34 @@ def _try_legacy_fallback(
     api_err_msg: str,
 ) -> Optional[bool]:
     """
-    OpenDART 014 오류 시 DART 웹 뷰어로 HTML 수집 시도.
+    OpenDART 014 오류 시 DART 웹에서 직접 수집 시도.
+    순서: PDF 우선 → HTML 뷰어 폴백
     반환: True=completed, None=skipped
     """
-    from collector.legacy_downloader import LegacyDartScraper  # 순환 방지용 지연 import
+    logger.info(f"  ↷ API 014 → 레거시 폴백 시도 (PDF 우선)...")
+    content, fmt = scraper.fetch(task.rcept_no)
 
-    logger.info(f"  ↷ API 014 → 웹 뷰어 폴백 시도...")
-    html_bytes = scraper.fetch(task.rcept_no)
-
-    if html_bytes:
-        # 저장 경로 결정 (.html)
+    if content:
+        ext       = f".{fmt}"
         dest_dir  = _build_file_path(corp, filing)
-        dest_path = dest_dir / f"{task.rcept_no}.html"
-        tmp_path  = TMP_DIR / f"{task.rcept_no}.html"
+        dest_path = dest_dir / f"{task.rcept_no}{ext}"
+        tmp_path  = TMP_DIR / f"{task.rcept_no}{ext}"
 
-        tmp_path.write_bytes(html_bytes)
+        tmp_path.write_bytes(content)
         shutil.move(str(tmp_path), dest_path)
 
         file_size = dest_path.stat().st_size
+        fmt_label = "legacy PDF" if fmt == "pdf" else "legacy HTML"
         logger.success(
-            f"  ✓ 저장 완료 [legacy HTML]: {dest_path.relative_to(RAW_REPORT_DIR)} "
+            f"  ✓ 저장 완료 [{fmt_label}]: {dest_path.relative_to(RAW_REPORT_DIR)} "
             f"({file_size / 1024:.0f} KB)"
         )
-        _mark_completed(task.rcept_no, dest_path, "html", file_size)
+        _mark_completed(task.rcept_no, dest_path, fmt, file_size)
         return True
 
-    # 웹 뷰어도 실패 → skipped
-    reason = f"{api_err_msg} + 웹 뷰어 폴백 실패"
-    logger.warning(f"  ↷ 웹 뷰어도 실패 → skipped: {reason}")
+    # PDF + HTML 모두 실패 → skipped
+    reason = f"{api_err_msg} + 레거시 폴백 실패"
+    logger.warning(f"  ↷ 레거시 폴백 실패 → skipped: {reason}")
     _mark_skipped(task.rcept_no, reason)
     return None
 

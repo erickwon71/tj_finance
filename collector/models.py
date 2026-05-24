@@ -296,6 +296,9 @@ class StandardFinancial(Base):
     fcf                  = Column(BigInteger, nullable=True)   # cfo - abs(capex)
     net_debt             = Column(BigInteger, nullable=True)   # short+long debt - cash
 
+    # ── 주식수 (stock_prices에서 period_end 기준 조회) ─────────────────
+    shares_out           = Column(BigInteger, nullable=True, comment="상장주식수")
+
     # ── 메타 ──────────────────────────────────────────────────────────
     data_quality         = Column(SmallInteger, default=0,
                                    comment="0:미검증 1:정상 2:경고 3:오류")

@@ -129,14 +129,23 @@ class AccountMapper:
 
         # ── Stage 1: 정확 일치 (전체 merged) ─────────────────────────
         if raw in self._exact:
-            return MappingResult(self._exact[raw], 1.0, "exact", raw)
+            code = self._exact[raw]
+            # fs_section 제공 시 반환 코드가 해당 섹션인지 확인
+            # 다른 섹션 코드면 Stage 2로 넘어가지 않고 unknown 처리
+            # (예: 'is.other_income'이 'bs' 섹션에서 반환되는 것 방지)
+            if not fs_section or code.startswith(f"{fs_section}."):
+                return MappingResult(code, 1.0, "exact", raw)
 
         # ── Stage 2: 정규화 후 일치 ───────────────────────────────────
         if normalized in self._normalized:
-            return MappingResult(self._normalized[normalized], 1.0, "normalized", normalized)
+            code = self._normalized[normalized]
+            if not fs_section or code.startswith(f"{fs_section}."):
+                return MappingResult(code, 1.0, "normalized", normalized)
 
         # ── Stage 3: 퍼지 매핑 ────────────────────────────────────────
-        fuzzy_result = self._fuzzy_match(raw, normalized)
+        # fs_section 제공 시 섹션-한정 퍼지 먼저 시도, 없으면 전체 퍼지 (단, 섹션 접두사가
+        # 불일치하는 코드는 최종 후보에서 제외 — 예: BS 컨텍스트에서 IS 코드 반환 방지)
+        fuzzy_result = self._fuzzy_match(raw, normalized, fs_section=fs_section)
         if fuzzy_result:
             return fuzzy_result
 
@@ -148,16 +157,25 @@ class AccountMapper:
         self,
         raw: str,
         normalized: str,
+        fs_section: Optional[str] = None,
     ) -> Optional[MappingResult]:
         """
         퍼지 매핑: 포함 관계 우선, 그 다음 Jaro-Winkler 유사도.
         jellyfish가 없으면 포함 관계만 시도.
+
+        fs_section이 제공되면 **동일 섹션의 코드만** 후보로 사용한다.
+        예: fs_section="bs" → bs.* 코드만 퍼지 매칭 (IS/CF 코드로 오매핑 방지).
+        섹션 내 후보 없으면 None 반환 (크로스-섹션 폴백 없음).
         """
         best_code: Optional[str] = None
         best_score: float = 0.0
         best_alias: Optional[str] = None
 
         for code, aliases in self._aliases_by_code.items():
+            # fs_section 제공 시 동일 섹션 코드만 허용
+            if fs_section and not code.startswith(f"{fs_section}."):
+                continue
+
             for alias in aliases:
                 alias_norm = normalize_account_name(alias)
                 if not alias_norm:

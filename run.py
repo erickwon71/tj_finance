@@ -358,8 +358,19 @@ def _parse_single(task_tuple) -> tuple:
 
         fact_count = _save_parsed_facts(result)
 
-        # unknown 계정 집계
+        # unknown 계정 집계:
+        # 1. result.unknown_accounts_seen: Track B에서 저장 건너뛴 unknown 계정 (새 방식)
+        # 2. result.facts에 남은 unknown.*: 이전 코드 호환성 (Track A Note 등)
         unknown_accs: dict[str, dict] = {}
+        # 신규: ParseResult.unknown_accounts_seen (Track B 미매핑 추적)
+        for norm, info in result.unknown_accounts_seen.items():
+            entry = unknown_accs.setdefault(norm, {
+                "fs_type":   info["fs_type"],
+                "corp_code": corp_code,
+                "count":     0,
+            })
+            entry["count"] += info["count"]
+        # 레거시: result.facts에 남은 unknown.* (Track A Fallback 등)
         for fact in result.facts:
             if fact.account_code.startswith("unknown."):
                 norm = normalize_account_name(fact.account_name_raw)[:300]
@@ -611,10 +622,17 @@ def _save_parsed_facts(result) -> int:
     from collector.db import get_session
     from collector.models import FinancialFact
 
-    if not result.facts:
-        return 0
-
     now = datetime.utcnow()
+
+    if not result.facts:
+        # facts가 없어도 이전 파싱 데이터를 삭제해야 idempotency 보장
+        # (재파싱 시 old facts가 잔류하면 quality 저하)
+        with get_session() as session:
+            session.execute(
+                text("DELETE FROM financial_facts WHERE rcept_no = :r"),
+                {"r": result.rcept_no},
+            )
+        return 0
 
     # ── 배치 내 중복 제거 ────────────────────────────────────────────
     # 키: (fs_type, account_code, col_index)

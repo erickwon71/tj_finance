@@ -4,3 +4,4 @@ raw_report/
 tmp/
 *~
 .env
+.DS_Store

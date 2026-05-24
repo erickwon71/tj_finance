@@ -14,6 +14,9 @@ IS_ACCOUNTS: dict[str, list[str]] = {
         "매출액", "수익(매출액)", "영업수익",
         "매출", "순매출액",
         "영업수익(매출액)",
+        # 금융업 (은행/증권/보험) 순영업수익
+        "순영업수익", "영업순수익",
+        "순수수료수익",   # 순수수료손익이 수익으로 표시되는 경우
         # "수익" 단독은 제외: NOTE 섹션의 수익 항목과 충돌 → 오탐 방지
     ],
     "is.cogs": [
@@ -164,9 +167,17 @@ IS_ACCOUNTS: dict[str, list[str]] = {
     "is.eps_basic": [
         "기본주당이익", "기본주당순이익",
         "주당순이익",
+        "주당손익",  # K-GAAP 일부 기업 표기
     ],
     "is.eps_diluted": [
         "희석주당이익", "희석주당순이익",
+    ],
+
+    # ── K-GAAP 특화 항목 ──────────────────────────────────────────────
+    "is.credit_loss_expense": [
+        "대손상각비",           # K-GAAP: 수취채권 대손상각
+        "기타의대손상각비",      # 기타자산 대손상각
+        "대손충당금전입액",      # 충당금 전입
     ],
 
     # ── 감가상각 (성격별 분류 기업에서 IS에 표시) ─────────────────────
@@ -176,7 +187,14 @@ IS_ACCOUNTS: dict[str, list[str]] = {
     "is.amortization": [
         "무형자산상각비", "무형자산감가상각비",
     ],
-    "is.roa_depreciation": [
+    "is.rou_depreciation": [
         "사용권자산상각비",
+        "사용권 자산상각비",
+        "리스자산감가상각비",
+        "사용권자산 감가상각비",
+    ],
+    # legacy typo alias (is.roa_depreciation → is.rou_depreciation 로 통합)
+    "is.roa_depreciation": [
+        # 구버전 코드 호환 (aggregator에서 양쪽 모두 depreciation에 합산됨)
     ],
 }

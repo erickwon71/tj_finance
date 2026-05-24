@@ -16,9 +16,15 @@ NOTE_ACCOUNTS: dict[str, list[str]] = {
         "무형자산상각비",
         "무형자산감가상각비",
     ],
-    "note.roa_depreciation": [
+    # 사용권자산 감가상각비 (Right-Of-Use asset depreciation, IFRS 16)
+    "note.rou_depreciation": [
         "사용권자산상각비",
+        "리스자산감가상각비",
+        "사용권 자산상각비",
+        "사용권자산 감가상각비",
     ],
+    # legacy typo alias (aggregator handles both)
+    "note.roa_depreciation": [],
     "note.da_total": [
         "감가상각비및무형자산상각비합계",
         "상각비합계",

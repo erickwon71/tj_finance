@@ -26,6 +26,7 @@ from parser.xml.section_detector import (
     find_summary_tables,
 )
 from parser.xml.table_extractor import extract_rows, RowData
+from parser.xml.note_extractor import extract_da_from_cf_notes, NoteDAFact
 
 
 # ── 데이터 구조 ───────────────────────────────────────────────────────
@@ -66,6 +67,9 @@ class ParseResult:
     facts: list[FactRow] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     parse_status: str = "pending"   # success / partial / failed
+    # unknown 계정 추적 (financial_facts에는 저장 안 되지만 unknown_accounts에는 기록)
+    # {normalized_name: {"fs_type": ..., "count": ...}}
+    unknown_accounts_seen: dict = field(default_factory=dict)
 
 
 # ── 파서 메인 ─────────────────────────────────────────────────────────
@@ -125,16 +129,36 @@ def parse_dart_xml(
         else:
             _parse_track_b(root, result, fiscal_year, fiscal_period)
 
+        # ── NOTE 추출: 현금흐름표 주석 D&A ───────────────────────────────
+        # 연간 보고서에만 적용 (분기/반기 주석은 전기 데이터 중복 위험)
+        if fiscal_period == "FY":
+            _extract_note_da(root, result, fiscal_year)
+
         # ── 결과 집계 ──────────────────────────────────────────────────
-        if result.facts:
-            # 핵심 재무제표 fact만으로 품질 판정 (NOTE 섹션 제외)
-            # NOTE 항목은 복잡한 주석 구조로 unknown 비율이 높아 판정을 왜곡함
-            core_facts = [
-                f for f in result.facts
-                if not f.fs_type.startswith("NOTE")
-            ]
-            core_total   = len(core_facts)
-            core_unknown = sum(1 for f in core_facts if f.account_code.startswith("unknown."))
+        # 핵심 재무제표 fact만으로 품질 판정 (NOTE 섹션 제외)
+        # NOTE 항목은 복잡한 주석 구조로 unknown 비율이 높아 판정을 왜곡함
+        core_mapped = sum(
+            1 for f in result.facts
+            if not f.fs_type.startswith("NOTE")
+               and not f.account_code.startswith("unknown.")
+        )
+        # unknown.* skip 방식: 미매핑 계정은 result.facts 대신 unknown_accounts_seen에 기록
+        # 품질 판정 시 unknown_accounts_seen의 비-NOTE 미매핑 계정도 포함
+        core_unknown_from_seen = sum(
+            info["count"]
+            for info in result.unknown_accounts_seen.values()
+            if not info.get("fs_type", "").startswith("NOTE")
+        )
+        # 레거시 방식(unknown.* 여전히 result.facts에 있는 경우)도 처리
+        core_unknown_from_facts = sum(
+            1 for f in result.facts
+            if not f.fs_type.startswith("NOTE")
+               and f.account_code.startswith("unknown.")
+        )
+        core_unknown = core_unknown_from_seen + core_unknown_from_facts
+        core_total   = core_mapped + core_unknown
+
+        if result.facts or core_unknown > 0:
             unknown_ratio = core_unknown / core_total if core_total else 1.0
 
             # 핵심 재무제표 항목이 아예 없으면 실패/부분
@@ -340,7 +364,17 @@ _ACODE_TO_STANDARD: dict[str, str] = {
     "ifrs-full_CashFlowsFromUsedInInvestingActivities": "cf.investing",
     "ifrs-full_CashFlowsFromUsedInFinancingActivities": "cf.financing",
     "ifrs-full_PurchaseOfPropertyPlantAndEquipment": "cf.capex",
-    "ifrs-full_DividendsPaid":                 "cf.dividends_paid",
+    # 배당금 지급: 두 가지 XBRL 분류 모두 매핑
+    # ifrs-full_DividendsPaid = 자본변동표 배당 (간혹 CF에서도 사용)
+    # ifrs-full_DividendsPaidClassifiedAsFinancingActivities = CF 재무활동 배당 (K-IFRS 주류)
+    "ifrs-full_DividendsPaid":                                    "cf.dividends_paid",
+    "ifrs-full_DividendsPaidClassifiedAsFinancingActivities":     "cf.dividends_paid",
+    "ifrs-full_DividendsPaidClassifiedAsOperatingActivities":     "cf.dividends_paid",
+    # 인수합병 관련
+    "ifrs-full_CashFlowsUsedInObtainingControlOfSubsidiariesOrOtherBusinessesClassifiedAsInvestingActivities": "cf.acquisition_of_subsidiaries",
+    # 무형자산 취득
+    "ifrs-full_PurchaseOfIntangibleAssetsClassifiedAsInvestingActivities": "cf.capex_intangible",
+    "ifrs-full_AcquisitionOfIntangibleAssets": "cf.capex_intangible",
 }
 
 # ACONTEXT 파싱: 기간 타입 추출
@@ -413,9 +447,8 @@ def _parse_track_a(root: etree._Element, result: ParseResult) -> None:
     """
     Track A: TE 태그의 ACODE/ACONTEXT 속성으로 직접 추출.
     정확도 최고, 퍼지매칭 불필요.
+    미등록 ACODE는 skip → Track B hybrid에서 텍스트 기반 보완.
     """
-    mapper = get_mapper()
-
     # 연결/별도 구분: ACONTEXT에 Consolidated/Separate 포함
     te_elements = root.findall(".//TE[@ACODE]")
 
@@ -439,15 +472,15 @@ def _parse_track_a(root: etree._Element, result: ParseResult) -> None:
             continue
 
         # 표준 코드 매핑
+        # Track A는 ACODE → _ACODE_TO_STANDARD 직접 매핑만 사용.
+        # ACODE가 _ACODE_TO_STANDARD에 없으면 즉시 skip (mapper 호출 불필요).
+        # 이유: mapper.map()은 텍스트 기반 퍼지매칭이라 XBRL 태그명에 맞지 않음.
+        #       Track B가 동일 파일에서 텍스트 기반 계정을 보완 추출함.
         if acode in _ACODE_TO_STANDARD:
             account_code = _ACODE_TO_STANDARD[acode]
             confidence = 1.0
         else:
-            # account_maps에서 2차 탐색 (ACODE의 로컬 이름 부분만)
-            local_name = acode.split("_", 1)[-1] if "_" in acode else acode
-            mapping = mapper.map(local_name)
-            account_code = mapping.account_code
-            confidence = mapping.confidence
+            continue  # 미등록 ACODE → skip (Track B에서 보완)
 
         # 연결/별도 구분
         if "Consolidated" in acontext or "_CON" in acontext.upper():
@@ -533,6 +566,52 @@ _FS_TYPE_MAP = {
 }
 
 
+def _extract_note_da(
+    root: etree._Element,
+    result: ParseResult,
+    fiscal_year: int,
+) -> None:
+    """
+    현금흐름표 주석에서 D&A(감가상각비·무형자산상각비) 추출 → result.facts에 추가.
+
+    추출 결과: note.depreciation, note.amortization, note.rou_depreciation, note.da_total
+    연간 보고서(FY)에만 실행.
+    """
+    try:
+        da_facts = extract_da_from_cf_notes(root)
+    except Exception as e:
+        logger.debug(f"note_extractor 오류 ({result.rcept_no}): {e}")
+        return
+
+    for nf in da_facts:
+        # col_index 0 = 당기(fiscal_year), 1 = 전기(fiscal_year-1)
+        fy = fiscal_year - nf.col_index
+        fs_type   = "NOTE_C" if nf.is_consolidated else "NOTE_S"
+        stmt_type = "consolidated" if nf.is_consolidated else "separate"
+
+        # da_total은 이미 절대금액(unit_multiplier=1)으로 계산됨
+        # 나머지는 unit_multiplier가 적용된 절대금액
+        # FactRow는 amount를 원 단위로 저장하므로 unit_multiplier=1 처리
+        result.facts.append(FactRow(
+            fs_type=fs_type,
+            statement_type=stmt_type,
+            period_type="annual",
+            account_code=nf.account_code,
+            account_name_raw=nf.account_name_raw,
+            period_end=None,        # NOTE는 period_end 없음
+            fiscal_year=fy,
+            fiscal_period="FY",
+            amount=nf.amount,       # 이미 원 단위 절대금액
+            col_index=nf.col_index,
+            row_order=None,
+            is_subtotal=(nf.account_code == "note.da_total"),
+            unit_multiplier=1,      # 이미 배수 적용됨
+            source_format="note_xml",
+            extraction_confidence=0.95,
+            parser_track=result.parser_track,
+        ))
+
+
 def _parse_track_b(
     root: etree._Element,
     result: ParseResult,
@@ -592,6 +671,21 @@ def _parse_track_b(
                 # fs_type "IS_C" → "is", "CF_S" → "cf", "NOTE_C" → "note" 등
                 _fs_section = fs_type.split("_")[0].lower() if fs_type else None
                 mapping: MappingResult = mapper.map(row.account_name, fs_section=_fs_section)
+
+                # Track A와 동일하게 미매핑 계정은 financial_facts에 저장하지 않음.
+                # unknown.* 계정은 unknown_accounts 테이블에만 기록되므로 데이터 손실 없음.
+                # (재파싱 없이 account_maps 추가 후 DB UPDATE로 소급 적용 가능)
+                if mapping.account_code.startswith("unknown."):
+                    # unknown_accounts 테이블 추적을 위해 별도 기록
+                    from parser.common.amount_normalizer import normalize_account_name as _norm
+                    norm = _norm(row.account_name)[:300]
+                    if norm not in result.unknown_accounts_seen:
+                        result.unknown_accounts_seen[norm] = {
+                            "fs_type": fs_type[:6],
+                            "count": 0,
+                        }
+                    result.unknown_accounts_seen[norm]["count"] += 1
+                    continue
 
                 for col_idx, amount in enumerate(row.amounts):
                     period_end = None
@@ -678,6 +772,18 @@ def _parse_summary_tables(
             # fs_section 없이 매핑하고, 이후 code prefix로 fs_type 결정
             mapping: MappingResult = mapper.map(row.account_name)
 
+            # 미매핑 계정은 저장하지 않음 (unknown_accounts 추적만)
+            if mapping.account_code.startswith("unknown."):
+                from parser.common.amount_normalizer import normalize_account_name as _norm
+                norm = _norm(row.account_name)[:300]
+                if norm not in result.unknown_accounts_seen:
+                    result.unknown_accounts_seen[norm] = {
+                        "fs_type": "BS_S",  # summary 테이블의 기본 섹션
+                        "count": 0,
+                    }
+                result.unknown_accounts_seen[norm]["count"] += 1
+                continue
+
             # 계정 타입에 따라 fs_type/period_type 결정
             code = mapping.account_code
             if code.startswith("bs."):
@@ -690,7 +796,7 @@ def _parse_summary_tables(
                 fs_type = "CF_C" if statement_type == "consolidated" else "CF_S"
                 period_type = "cumulative_ytd"
             else:
-                # unknown → BS로 기본 분류
+                # note.* 등 → 기본 분류 (저장은 됨)
                 fs_type = "BS_C" if statement_type == "consolidated" else "BS_S"
                 period_type = "point_in_time"
 

@@ -80,11 +80,14 @@ _CROSS_SECTION_MAP: dict[str, str] = {
     "note.da_total":       "da_total",
     "is.depreciation":     "depreciation",
     "is.amortization":     "amortization",
-    # note.roa_depreciation / is.roa_depreciation:
+    # note.rou_depreciation / is.rou_depreciation (Right-Of-Use asset depreciation):
     # 사용권자산상각비 — standard_financials 컬럼 없음, depreciation에 합산
-    "note.roa_depreciation": "depreciation",
-    "is.roa_depreciation":   "depreciation",
-    "cf.roa_depreciation":   "depreciation",
+    "note.rou_depreciation": "depreciation",
+    "note.roa_depreciation": "depreciation",   # legacy typo 호환
+    "is.rou_depreciation":   "depreciation",
+    "is.roa_depreciation":   "depreciation",   # legacy typo 호환
+    "cf.rou_depreciation":   "depreciation",
+    "cf.roa_depreciation":   "depreciation",   # legacy typo 호환
 }
 
 _ALL_MAP = {**_BS_MAP, **_IS_MAP, **_CF_MAP, **_CROSS_SECTION_MAP}
@@ -361,15 +364,20 @@ def _aggregate_one(
     }
 
     # 합산 방식으로 집계할 계정 코드 (sub-items → 합계)
-    # CF/IS 섹션에서만 유효 (NOTE 섹션 제외)
     _ADDITIVE_CODES = {
         "depreciation", "amortization",  # D&A
         "capex",                          # CAPEX 세부항목 합산 (K-GAAP 개별 자산)
     }
-    _ADDITIVE_VALID_FS_TYPES = {"CF_C", "CF_S", "IS_C", "IS_S"}
+    # CF/IS에서 D&A 합산 (개별 자산별 감가상각, ROU 포함)
+    # NOTE도 허용: note_extractor가 CF 주석에서 추출한 감가상각비
+    _ADDITIVE_DA_FS_TYPES = {"CF_C", "CF_S", "IS_C", "IS_S", "NOTE_C", "NOTE_S"}
+    # CAPEX 합산은 CF 섹션만 (NOTE 섹션의 자산취득 = 유형자산 주석, 현금흐름 아님)
+    _ADDITIVE_CAPEX_FS_TYPES = {"CF_C", "CF_S"}
 
     sf_values: dict[str, Optional[int]] = {}
     _accumulator: dict[str, int] = {}   # 합산 대상 계정 누계
+    # NOTE vs CF 소스 추적 (CF 소스가 있으면 NOTE로 덮지 않기 위해)
+    _da_source: str = ""  # "" / "cf" / "note"
 
     for account_code, amount, unit_mult, fs_type, col_idx in rows:
         col_name = _ALL_MAP.get(account_code)
@@ -396,12 +404,22 @@ def _aggregate_one(
             continue
 
         # 합산 방식 처리 (D&A + CAPEX 세부항목)
-        # CAPEX: K-GAAP 기업이 자산유형별로 개별 표시 → 합산
-        # D&A: PPE + ROU + 무형자산 합산
         if col_name in _ADDITIVE_CODES:
-            if fs_type in _ADDITIVE_VALID_FS_TYPES:
-                _accumulator[col_name] = _accumulator.get(col_name, 0) + abs(v)
-            # NOTE 섹션은 누계액 혼용 가능 → 제외
+            is_note = fs_type.startswith("NOTE")
+            if col_name in ("depreciation", "amortization"):
+                # D&A: CF/IS/NOTE 모두 합산 허용.
+                # 단, CF 소스가 이미 있으면 NOTE 소스로 덮지 않음
+                # (CF 간접법에서 직접 추출 > 주석 추출)
+                if not is_note and fs_type in _ADDITIVE_DA_FS_TYPES:
+                    _accumulator[col_name] = _accumulator.get(col_name, 0) + abs(v)
+                    _da_source = "cf"
+                elif is_note and _da_source != "cf":
+                    # CF에 D&A가 없을 때만 NOTE 소스 사용
+                    _accumulator[col_name] = _accumulator.get(col_name, 0) + abs(v)
+                    _da_source = "note"
+            elif col_name == "capex":
+                if fs_type in _ADDITIVE_CAPEX_FS_TYPES:
+                    _accumulator["capex"] = _accumulator.get("capex", 0) + abs(v)
         elif col_name not in sf_values:
             sf_values[col_name] = v
 
@@ -478,9 +496,8 @@ def _aggregate_one(
             dq = _validate_cross_year(session, corp_code, statement_type, sf_values)
 
         # 모든 _SF_COLS 컬럼을 항상 포함 (sf_values에 없으면 None → 기존 잘못된 값 덮어씌움)
-        # 이전에는 _DERIVED_COLS만 항상 포함하고 나머지는 sf_values에 있을 때만 포함했는데,
-        # NOTE_C에서 잘못 파싱된 값이 is.revenue로 매핑되어 5,000조 캡에 걸리면
-        # revenue가 sf_values에서 빠져 → 기존 잘못된 값이 DB에 남는 버그
+        # _DERIVED_COLS (ebitda, fcf, net_debt)는 _ALL_MAP에 없어 _SF_COLS에 미포함 →
+        # 명시적으로 추가해야 파생 지표가 DB에 저장됨
         record = {
             "corp_code":      corp_code,
             "fiscal_year":    fiscal_year,
@@ -492,8 +509,12 @@ def _aggregate_one(
             "rcept_no":       rcept_no,
             "data_quality":   dq,
             "calculated_at":  datetime.utcnow(),
-            # 모든 표준화 컬럼을 항상 포함 (없으면 None으로 이전 값 무효화)
+            # 표준화 컬럼 (_ALL_MAP에서 파생된 것들)
             **{col: sf_values.get(col) for col in _SF_COLS},
+            # 파생 지표 컬럼 (_ALL_MAP에 없지만 계산되어 sf_values에 담긴 것들)
+            "ebitda":    sf_values.get("ebitda"),
+            "fcf":       sf_values.get("fcf"),
+            "net_debt":  sf_values.get("net_debt"),
         }
 
         stmt = pg_insert(StandardFinancial.__table__).values([record])

@@ -803,6 +803,7 @@ def cmd_parse_reset(args):
     """파싱 실패(failed) 또는 Track B 전체를 NULL로 재등록 → parse 재시도 대상에 포함
 
     옵션:
+      --partial   : parse_status='partial' 파일만 재시도 (부분 파싱 재처리)
       --track-b   : Track B 파싱 완료 파일 전체 재시도 (새 파서 코드로 재분류)
       --all       : 파싱된 모든 파일 재시도 (success/partial/failed 포함)
     기본값 (옵션 없음): parse_status='failed' 인 파일만 재시도
@@ -812,9 +813,18 @@ def cmd_parse_reset(args):
 
     track_b = getattr(args, "track_b", False)
     reset_all = getattr(args, "all", False)
+    partial_only = getattr(args, "partial", False)
 
     with get_session() as session:
-        if reset_all:
+        if partial_only:
+            result = session.execute(text("""
+                UPDATE download_tasks
+                SET parse_status = NULL,
+                    parse_error  = NULL
+                WHERE parse_status = 'partial'
+            """))
+            label = "부분 파싱(partial) 재시도"
+        elif reset_all:
             result = session.execute(text("""
                 UPDATE download_tasks
                 SET parse_status = NULL,
@@ -1045,6 +1055,12 @@ def main():
         "--sep",
         action="store_true",
         help="analyze: 별도재무제표 출력 (기본: 연결)",
+    )
+    parser.add_argument(
+        "--partial",
+        action="store_true",
+        dest="partial",
+        help="parse-reset: 부분 파싱(partial) 파일만 재시도 대상으로 등록",
     )
     parser.add_argument(
         "--track-b",

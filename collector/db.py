@@ -77,6 +77,23 @@ def _run_migrations() -> None:
             END IF;
         END $$
         """,
+
+        # Phase 3: standard_financials 컬럼 추가
+        "ALTER TABLE standard_financials ADD COLUMN IF NOT EXISTS rd_expense   BIGINT",
+        "ALTER TABLE standard_financials ADD COLUMN IF NOT EXISTS shares_out   BIGINT",
+
+        # Phase 3: 스크리닝 인덱스
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE tablename='standard_financials' AND indexname='ix_sf_screening_full'
+            ) THEN
+                CREATE INDEX ix_sf_screening_full ON standard_financials
+                    (fiscal_year, fiscal_period, statement_type, data_quality);
+            END IF;
+        END $$
+        """,
     ]
 
     with engine.begin() as conn:

@@ -216,9 +216,21 @@ def _calc_piotroski(sf_list: list, ratios_curr) -> Optional[int]:
         if cr > cr_p:
             score += 1
 
-    # F7: 신주 미발행 (주식수 불변)
-    # shares_out 대신 paid_in_capital 변화로 추정
-    # TODO: 더 정확한 구현 필요
+    # F7: 신주 미발행 (주식수 불변 또는 감소)
+    so_curr = _get(curr, "shares_out")
+    so_prev = _get(prev, "shares_out") if prev else None
+    if so_curr is not None and so_prev is not None:
+        filled += 1
+        if so_curr <= so_prev:
+            score += 1
+    else:
+        # fallback: paid_in_capital 변화로 추정 (자본금 증가 없으면 +1)
+        pic_curr = _get(curr, "paid_in_capital")
+        pic_prev = _get(prev, "paid_in_capital") if prev else None
+        if pic_curr is not None and pic_prev is not None:
+            filled += 1
+            if pic_curr <= pic_prev * 1.01:  # 1% 허용 오차
+                score += 1
 
     # F8: 매출총이익률 개선
     gm = ratios_curr.gross_margin

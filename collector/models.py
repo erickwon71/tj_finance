@@ -271,6 +271,7 @@ class StandardFinancial(Base):
     cogs                 = Column(BigInteger, nullable=True)
     gross_profit         = Column(BigInteger, nullable=True)
     sga                  = Column(BigInteger, nullable=True)
+    rd_expense           = Column(BigInteger, nullable=True)   # 연구개발비
     operating_income     = Column(BigInteger, nullable=True)
     interest_expense     = Column(BigInteger, nullable=True)
     ebt                  = Column(BigInteger, nullable=True)

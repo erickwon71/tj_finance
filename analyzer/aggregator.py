@@ -48,6 +48,7 @@ _IS_MAP: dict[str, str] = {
     "is.cogs":              "cogs",
     "is.gross_profit":      "gross_profit",
     "is.sga":               "sga",
+    "is.rd_expense":        "rd_expense",
     "is.operating_income":  "operating_income",
     "is.interest_expense":  "interest_expense",
     "is.finance_cost":      "interest_expense",   # 대체 코드
@@ -512,6 +513,27 @@ def _aggregate_one(
         # 모든 _SF_COLS 컬럼을 항상 포함 (sf_values에 없으면 None → 기존 잘못된 값 덮어씌움)
         # _DERIVED_COLS (ebitda, fcf, net_debt)는 _ALL_MAP에 없어 _SF_COLS에 미포함 →
         # 명시적으로 추가해야 파생 지표가 DB에 저장됨
+        # shares_out: stock_prices에서 period_end 기준 30일 내 최근 값 조회
+        shares_out = None
+        if period_end:
+            from sqlalchemy import text as _text
+            from datetime import timedelta
+            row_so = session.execute(_text("""
+                SELECT shares_out FROM stock_prices
+                WHERE stock_code = (
+                    SELECT stock_code FROM corporations WHERE corp_code = :cc
+                )
+                  AND shares_out IS NOT NULL
+                  AND trade_date BETWEEN :d1 AND :d2
+                ORDER BY trade_date DESC LIMIT 1
+            """), {
+                "cc": corp_code,
+                "d1": period_end - timedelta(days=30),
+                "d2": period_end,
+            }).fetchone()
+            if row_so:
+                shares_out = row_so[0]
+
         record = {
             "corp_code":      corp_code,
             "fiscal_year":    fiscal_year,
@@ -526,9 +548,10 @@ def _aggregate_one(
             # 표준화 컬럼 (_ALL_MAP에서 파생된 것들)
             **{col: sf_values.get(col) for col in _SF_COLS},
             # 파생 지표 컬럼 (_ALL_MAP에 없지만 계산되어 sf_values에 담긴 것들)
-            "ebitda":    sf_values.get("ebitda"),
-            "fcf":       sf_values.get("fcf"),
-            "net_debt":  sf_values.get("net_debt"),
+            "ebitda":      sf_values.get("ebitda"),
+            "fcf":         sf_values.get("fcf"),
+            "net_debt":    sf_values.get("net_debt"),
+            "shares_out":  shares_out,
         }
 
         stmt = pg_insert(StandardFinancial.__table__).values([record])

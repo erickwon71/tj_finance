@@ -112,8 +112,14 @@ def print_analysis(
     # ── 현금흐름 테이블 ──────────────────────────────────────────────
     _print_cf_table(sf_list, years_labels, ratios)
 
+    # ── 성장성 & 효율성 테이블 ────────────────────────────────────────
+    _print_growth_table(sf_list, ratios)
+
     # ── 밸류에이션 테이블 ────────────────────────────────────────────
     _print_valuation_table(mults, curr, ratios)
+
+    # ── DuPont 분해 ──────────────────────────────────────────────────
+    _print_dupont_table(sf_list, ratios)
 
     # ── 버핏 관점 지표 ───────────────────────────────────────────────
     _print_buffett_table(buffett)
@@ -157,25 +163,22 @@ def _print_is_table(sf_list: list, years: list, ratios) -> None:
 
     # 마진율
     table.add_section()
-    for sf_item in sf_list:
-        pass  # 마진율은 비율 계산 필요
 
-    # 마진율 행 (당기만)
-    rev = sf_list[0].get("revenue") if isinstance(sf_list[0], dict) else getattr(sf_list[0], "revenue", None)
-    if rev and rev > 0:
-        def _margin_cells(key):
-            cells = []
-            for sf in sf_list:
-                v = sf.get(key) if isinstance(sf, dict) else getattr(sf, key, None)
-                rev_ = sf.get("revenue") if isinstance(sf, dict) else getattr(sf, "revenue", None)
-                if v is not None and rev_ and rev_ > 0:
-                    cells.append(f"{v/rev_*100:.1f}%")
-                else:
-                    cells.append("—")
-            return cells
+    def _margin_cells(key):
+        cells = []
+        for sf in sf_list:
+            v = sf.get(key) if isinstance(sf, dict) else getattr(sf, key, None)
+            rev_ = sf.get("revenue") if isinstance(sf, dict) else getattr(sf, "revenue", None)
+            if v is not None and rev_ and rev_ > 0:
+                cells.append(f"{v/rev_*100:.1f}%")
+            else:
+                cells.append("—")
+        return cells
 
-        table.add_row("영업이익률", *_margin_cells("operating_income"), "")
-        table.add_row("순이익률",   *_margin_cells("net_income"), "")
+    table.add_row("매출총이익률", *_margin_cells("gross_profit"), "")
+    table.add_row("영업이익률",   *_margin_cells("operating_income"), "")
+    table.add_row("EBITDA마진",   *_margin_cells("ebitda"), "")
+    table.add_row("순이익률",     *_margin_cells("net_income"), "")
 
     console.print(table)
 
@@ -253,6 +256,71 @@ def _print_cf_table(sf_list: list, years: list, ratios) -> None:
     console.print(table)
 
 
+def _print_growth_table(sf_list: list, ratios) -> None:
+    """성장성 & 수익성 효율 테이블."""
+    from analyzer.ratio_engine import _cagr, _safe_div
+
+    table = Table(title="성장성 & 효율성", box=box.SIMPLE_HEAVY, title_style="bold")
+    table.add_column("지표", style="cyan", width=22)
+    table.add_column("당기", justify="right", width=10)
+    table.add_column("3년 CAGR", justify="right", width=10)
+    table.add_column("5년 CAGR", justify="right", width=10)
+
+    def _get(sf, key):
+        return sf.get(key) if isinstance(sf, dict) else getattr(sf, key, None)
+
+    def _cagr_cells(key):
+        curr_val = _get(sf_list[0], key)
+        val_3 = _get(sf_list[3], key) if len(sf_list) > 3 else None
+        val_5 = _get(sf_list[5], key) if len(sf_list) > 5 else None
+        c3 = _cagr(val_3, curr_val, 3) if val_3 and curr_val and val_3 > 0 else None
+        c5 = _cagr(val_5, curr_val, 5) if val_5 and curr_val and val_5 > 0 else None
+        return c3, c5
+
+    def _add_growth(label, key):
+        curr_val = _get(sf_list[0], key)
+        prev_val = _get(sf_list[1], key) if len(sf_list) > 1 else None
+        yoy = None
+        if curr_val and prev_val and prev_val != 0:
+            yoy = (curr_val - prev_val) / abs(prev_val)
+        c3, c5 = _cagr_cells(key)
+        table.add_row(
+            label,
+            _fmt_pct(yoy) if yoy is not None else "—",
+            _fmt_pct(c3, sign=False) if c3 is not None else "—",
+            _fmt_pct(c5, sign=False) if c5 is not None else "—",
+        )
+
+    _add_growth("매출 성장률", "revenue")
+    _add_growth("영업이익 성장률", "operating_income")
+    _add_growth("순이익 성장률", "net_income")
+    _add_growth("총자산 성장률", "total_assets")
+
+    # 수익성 지표 (단일 연도)
+    table.add_section()
+
+    def _add_ratio(label, value):
+        table.add_row(label, _fmt_pct(value, sign=False) if value is not None else "—", "—", "—")
+
+    _add_ratio("ROE",  ratios.roe)
+    _add_ratio("ROA",  ratios.roa)
+    _add_ratio("ROIC", ratios.roic)
+
+    # R&D 비중
+    sf0 = sf_list[0]
+    rd = _get(sf0, "rd_expense")
+    rev = _get(sf0, "revenue")
+    rd_ratio = _safe_div(rd, rev) if rd and rev else None
+    _add_ratio("R&D/매출", rd_ratio)
+
+    # FCF 마진
+    fcf = _get(sf0, "fcf")
+    fcf_margin = _safe_div(fcf, rev) if fcf is not None and rev else None
+    _add_ratio("FCF 마진", fcf_margin)
+
+    console.print(table)
+
+
 def _print_valuation_table(mults, curr, ratios) -> None:
     """밸류에이션 테이블."""
     table = Table(title="밸류에이션", box=box.SIMPLE_HEAVY, title_style="bold")
@@ -274,6 +342,53 @@ def _print_valuation_table(mults, curr, ratios) -> None:
     _add("EV/EBITDA", mults.fmt("ev_ebitda"))
     _add("EV/EBIT",  mults.fmt("ev_ebit"),  "영업이익 대비")
     _add("EV/FCF",   mults.fmt("ev_fcf"))
+
+    console.print(table)
+
+
+def _print_dupont_table(sf_list: list, ratios) -> None:
+    """DuPont 3요소 분해 테이블 (ROE = 순이익률 × 자산회전율 × 재무레버리지)."""
+    from analyzer.ratio_engine import compute_ratios
+
+    table = Table(title="DuPont 분해 (ROE)", box=box.SIMPLE_HEAVY, title_style="bold")
+    table.add_column("지표", style="cyan", width=22)
+    for i, sf in enumerate(sf_list):
+        fy = sf.get("fiscal_year") if isinstance(sf, dict) else getattr(sf, "fiscal_year", "")
+        table.add_column(str(fy), justify="right", width=10)
+
+    def _get(sf, key):
+        return sf.get(key) if isinstance(sf, dict) else getattr(sf, key, None)
+
+    rows = {
+        "ROE": [],
+        "순이익률": [],
+        "자산회전율": [],
+        "재무레버리지": [],
+    }
+
+    for sf in sf_list:
+        r = compute_ratios(sf)
+        ni  = _get(sf, "net_income")
+        rev = _get(sf, "revenue")
+        ta  = _get(sf, "total_assets")
+        eq  = _get(sf, "total_equity")
+
+        from analyzer.ratio_engine import _safe_div
+        net_margin    = _safe_div(ni, rev)
+        asset_turnover = _safe_div(rev, ta)
+        leverage      = _safe_div(ta, eq)
+        roe           = r.roe
+
+        rows["ROE"].append(_fmt_pct(roe, sign=False) if roe is not None else "—")
+        rows["순이익률"].append(_fmt_pct(net_margin, sign=False) if net_margin is not None else "—")
+        rows["자산회전율"].append(f"{asset_turnover:.2f}x" if asset_turnover is not None else "—")
+        rows["재무레버리지"].append(f"{leverage:.2f}x" if leverage is not None else "—")
+
+    for label, cells in rows.items():
+        style = "bold" if label == "ROE" else ""
+        table.add_row(f"[{style}]{label}[/{style}]" if style else label, *cells)
+        if label == "ROE":
+            table.add_section()
 
     console.print(table)
 

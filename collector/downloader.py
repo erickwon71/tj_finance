@@ -36,6 +36,10 @@ from collector.config import (
     MAX_DOWNLOAD_ATTEMPTS, MIN_DOWNLOAD_INTERVAL,
 )
 from collector.dart_client import DartClient, DartApiError
+
+
+class DartApiQuotaError(Exception):
+    """DART API 일일 사용량 소진 (오류코드 020) — 즉시 종료 신호"""
 from collector.db import get_session
 from collector.models import Corporation, Filing, DownloadTask, CollectionRun
 
@@ -239,7 +243,14 @@ def run_downloads(
                 f"{filing.report_type} ({task.rcept_no})"
             )
 
-            result = _download_one(client, task, filing, corp, scraper)
+            try:
+                result = _download_one(client, task, filing, corp, scraper)
+            except DartApiQuotaError:
+                logger.warning(
+                    f"  → 중단 시점: 성공 {stats['completed']:,} / "
+                    f"실패 {stats['failed']:,} / 스킵 {stats['skipped']:,}"
+                )
+                break
             if result is True:
                 stats["completed"] += 1
             elif result is None:
@@ -282,7 +293,7 @@ def _download_one(
     흐름:
       1. OpenDART document.xml API → ZIP 다운로드
       2. 014(파일없음) 오류 시 → LegacyDartScraper 폴백 (dart.fss.or.kr 웹 뷰어)
-      3. 그 외 '문서없음' 오류(013·020) → skipped
+      3. 020(API 사용량 소진) → 즉시 종료 / 013(문서 없음) → skipped
       4. 일시적 서버 오류 → failed (재시도 가능)
 
     반환: True=completed, False=failed, None=skipped
@@ -312,8 +323,13 @@ def _download_one(
                 # ── 014: 파일없음 → 웹 뷰어(레거시) 폴백 ────────
                 return _try_legacy_fallback(scraper, task, filing, corp, err_msg)
 
-            elif status_code in {"013", "020"}:
-                # ── 013/020: 문서 자체가 없음 → skipped ──────────
+            elif status_code == "020":
+                # ── 020: API 일일 사용량 소진 → 즉시 종료 ────────
+                logger.error(f"  ✋ DART API 사용량 소진(020) — 다운로드 중단: {message}")
+                raise DartApiQuotaError(message)
+
+            elif status_code == "013":
+                # ── 013: 문서 자체가 없음 → skipped ──────────────
                 logger.warning(f"  ↷ 문서 없음 → skipped: {err_msg}")
                 _mark_skipped(task.rcept_no, err_msg)
                 return None

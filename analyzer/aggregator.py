@@ -304,6 +304,13 @@ def _aggregate_one(
     fs_types = [f"BS{suffix}", f"IS{suffix}", f"CF{suffix}",
                 f"NOTE{suffix}"]
 
+    # 연결 집계 시 CF_S를 폴백 소스로 포함
+    # 이유: XBRL 파서가 CF_C에서 잘못된 0값을 파싱하는 경우(예: ifrs-full_DividendsPaid=0)
+    #      CF_S 텍스트 값으로 보완.
+    #      BS_S/IS_S는 포함하지 않아 재무상태표/손익계산서 혼용 방지.
+    if statement_type == "consolidated":
+        fs_types.append("CF_S")
+
     # rcept_no로 필터링해 단일 공시의 데이터만 사용
     # fs_type을 올바른 연결/별도 유형으로 제한 (IS_C/BS_C 혼합 방지)
     # fiscal_year에 맞는 col_index 선택:
@@ -326,6 +333,9 @@ def _aggregate_one(
             -- NOTE 섹션은 보조 출처: IS/BS/CF가 항상 NOTE보다 먼저 (is_subtotal보다 우선)
             -- 이유: NOTE의 is_subtotal=True가 IS_C보다 먼저 정렬되는 버그 방지
             CASE WHEN fs_type LIKE 'NOTE%' THEN 1 ELSE 0 END ASC,
+            -- CF_S는 연결 집계에서 폴백 소스: CF_C보다 낮은 우선순위
+            -- CF_C가 XBRL 0값 → CF_S 텍스트 값이 "replace 0 with non-zero" 로직으로 보완
+            CASE WHEN fs_type = 'CF_S' THEN 1 ELSE 0 END ASC,
             is_subtotal DESC,
             extraction_confidence DESC
     """

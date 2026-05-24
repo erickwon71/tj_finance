@@ -414,6 +414,11 @@ def _aggregate_one(
         if v is None:
             continue
 
+        # CF_S 폴백(연결 집계) 시 additive 항목(CAPEX/D&A) 중복 합산 방지
+        # CF_S는 non-additive CF 항목(dividends_paid 등)의 0값 보완만 담당
+        if statement_type == "consolidated" and fs_type == "CF_S" and col_name in _ADDITIVE_CODES:
+            continue
+
         # 합산 방식 처리 (D&A + CAPEX 세부항목)
         if col_name in _ADDITIVE_CODES:
             is_note = fs_type.startswith("NOTE")

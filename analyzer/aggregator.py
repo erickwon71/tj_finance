@@ -423,6 +423,9 @@ def _aggregate_one(
                     _accumulator["capex"] = _accumulator.get("capex", 0) + abs(v)
         elif col_name not in sf_values:
             sf_values[col_name] = v
+        elif sf_values[col_name] == 0 and v != 0:
+            # 기존 값이 0(XBRL 태그 오인 등)이고 새 값이 유효하면 교체
+            sf_values[col_name] = v
 
     # 합산 결과 반영
     for col, total in _accumulator.items():

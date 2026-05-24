@@ -87,6 +87,9 @@ BS_ACCOUNTS: dict[str, list[str]] = {
         "당기손익-공정가치지분상품",
         "당기손익공정가치지분상품",
         "단기매매금융자산",  # K-GAAP
+        "당기손익인식금융자산",
+        "당기손익-공정가치금융자산",  # IFRS 9
+        "당기손익인식금융자산(공정가치)",
     ],
     "bs.ppe": [
         "유형자산", "유형자산(순액)", "유형자산 순액",
@@ -130,6 +133,8 @@ BS_ACCOUNTS: dict[str, list[str]] = {
     ],
     "bs.short_term_debt": [
         "단기차입금",
+        "차입부채",          # K-GAAP 유동부채 내 차입금 통합 표기
+        "단기금융부채",
     ],
     "bs.current_portion_lt_debt": [
         "유동성장기부채", "유동성장기차입금",
@@ -195,6 +200,8 @@ BS_ACCOUNTS: dict[str, list[str]] = {
     "bs.capital_surplus": [
         "자본잉여금", "주식발행초과금",
         "기타자본잉여금",
+        "기타불입자본",      # K-GAAP 자본잉여금 포함 표현
+        "추가납입자본",
     ],
     "bs.retained_earnings": [
         "이익잉여금", "미처분이익잉여금",

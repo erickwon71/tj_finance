@@ -58,14 +58,15 @@ _IS_MAP: dict[str, str] = {
 }
 
 _CF_MAP: dict[str, str] = {
-    "cf.operating":        "cfo",
-    "cf.investing":        "cfi",
-    "cf.financing":        "cff",
-    "cf.capex":            "capex",
-    "cf.dividends_paid":   "dividends_paid",
-    "cf.depreciation":     "depreciation",
-    "cf.amortization":     "amortization",
-    "cf.da_total":         "da_total",
+    "cf.operating":            "cfo",
+    "cf.investing":            "cfi",
+    "cf.financing":            "cff",
+    "cf.capex":                "capex",
+    "cf.capex_intangible":     "capex",    # 무형자산취득 → CAPEX에 합산
+    "cf.dividends_paid":       "dividends_paid",
+    "cf.depreciation":         "depreciation",
+    "cf.amortization":         "amortization",
+    "cf.da_total":             "da_total",
 }
 
 # account_mapper가 섹션 무관하게 merged index를 사용해서
@@ -114,6 +115,71 @@ def _amount_won(amount, unit_multiplier) -> Optional[int]:
     return v
 
 
+def _validate_cross_year(
+    session,
+    corp_code: str,
+    statement_type: str,
+    sf_values: dict,
+) -> int:
+    """
+    이미 저장된 연도 데이터와 교차 검증해 이상값 탐지.
+
+    임계값 설계:
+      - ratio > 200x  : 파싱 오류로 간주 (DQ=3)
+        → 예: 경농 2024 343조 vs 정상 3,400억 (1000x)
+        → 예: 농심 2018 226,941조 vs 정상 3조 (75,000x)
+      - ratio > 30x   : 경고 표시 (DQ=2)
+        → 예: M&A로 급성장 → 사람이 검토
+      - else          : 정상 (DQ=1)
+
+    절대 최솟값 조건: 중앙값이 너무 작으면 (< 10억) 비율 검증 생략
+    → 소규모 기업의 정상적 변동을 오탐 방지
+
+    Returns:
+        data_quality 레벨 (1=정상, 2=경고, 3=오류)
+    """
+    # 기준 컬럼: revenue 또는 total_assets
+    check_cols = [("revenue", 200, 30), ("total_assets", 200, 30)]
+    _MIN_MEDIAN = 1_000_000_000   # 중앙값 10억 미만은 검증 생략 (소기업)
+
+    dq = 1
+    for col, limit_err, limit_warn in check_cols:
+        new_val = sf_values.get(col)
+        if not new_val or new_val <= 0:
+            continue   # 0 또는 음수 매출/자산은 검증 대상 아님 (정상 범위로 간주)
+
+        # 같은 기업 같은 statement_type의 다른 연도 중앙값 조회
+        result = session.execute(text(f"""
+            SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY {col})
+            FROM standard_financials
+            WHERE corp_code      = :corp_code
+              AND statement_type = :stmt_type
+              AND fiscal_period  = 'FY'
+              AND {col}          > 0
+              AND version        = 1
+              AND data_quality   < 3
+        """), {"corp_code": corp_code, "stmt_type": statement_type}).scalar()
+
+        if result and result >= _MIN_MEDIAN:
+            ratio = new_val / result
+            if ratio > limit_err or ratio < (1.0 / limit_err):
+                logger.warning(
+                    f"[이상값-오류] {corp_code} {statement_type} {col}: "
+                    f"신규={new_val/1e8:.0f}억 vs 중앙값={result/1e8:.0f}억 "
+                    f"(비율={ratio:.1f}x) → DQ=3"
+                )
+                return 3  # 오류 (비율 200x 초과)
+            elif ratio > limit_warn or ratio < (1.0 / limit_warn):
+                logger.warning(
+                    f"[이상값-경고] {corp_code} {statement_type} {col}: "
+                    f"신규={new_val/1e8:.0f}억 vs 중앙값={result/1e8:.0f}억 "
+                    f"(비율={ratio:.1f}x) → DQ=2"
+                )
+                dq = max(dq, 2)  # 경고
+
+    return dq
+
+
 def aggregate_corp(
     corp_code: str,
     fiscal_year: Optional[int] = None,
@@ -144,7 +210,8 @@ def aggregate_corp(
             ff.statement_type,
             MAX(ff.period_end)      AS period_end,
             BOOL_OR(ff.is_ifrs)     AS is_ifrs,
-            -- col_index=0 우선, 없으면 다른 col_index의 rcept_no 사용
+            -- col_index=0 우선, 없으면 col_index>0, 최후 수단으로 NOTE 섹션 rcept 사용
+            -- NOTE 폴백: NOTE만 존재하는 경우에도 upsert를 진행해 기존 잘못된 값을 NULL로 초기화
             COALESCE(
                 (
                     SELECT ff2.rcept_no
@@ -171,6 +238,18 @@ def aggregate_corp(
                       AND ff3.fs_type        NOT LIKE 'NOTE%'
                       AND NOT ff3.is_superseded
                     GROUP BY ff3.rcept_no
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 1
+                ),
+                (
+                    SELECT ff4.rcept_no
+                    FROM financial_facts ff4
+                    WHERE ff4.corp_code      = ff.corp_code
+                      AND ff4.fiscal_year    = ff.fiscal_year
+                      AND ff4.fiscal_period  = ff.fiscal_period
+                      AND ff4.statement_type = ff.statement_type
+                      AND NOT ff4.is_superseded
+                    GROUP BY ff4.rcept_no
                     ORDER BY COUNT(*) DESC
                     LIMIT 1
                 )
@@ -238,7 +317,13 @@ def _aggregate_one(
           AND (account_code NOT LIKE 'unknown.%'
                OR account_code IN ('unknown.지배주주순이익', 'unknown.지배주주 순이익',
                                    'unknown.비지배주주순이익', 'unknown.비지배주주 순이익'))
-        ORDER BY col_index ASC, is_subtotal DESC, extraction_confidence DESC
+        ORDER BY
+            col_index ASC,
+            -- NOTE 섹션은 보조 출처: IS/BS/CF가 항상 NOTE보다 먼저 (is_subtotal보다 우선)
+            -- 이유: NOTE의 is_subtotal=True가 IS_C보다 먼저 정렬되는 버그 방지
+            CASE WHEN fs_type LIKE 'NOTE%' THEN 1 ELSE 0 END ASC,
+            is_subtotal DESC,
+            extraction_confidence DESC
     """
     with get_session() as session:
         rows = session.execute(text(sql), {
@@ -275,16 +360,16 @@ def _aggregate_one(
         "unknown.비지배주주 순이익":    None,
     }
 
-    # 감가상각비 합산용 별도 누계 (sub-item이 여러 개일 수 있음)
-    # CF/IS 섹션에서만 D&A 추출 (NOTE 섹션은 누계액이나 다른 문맥일 수 있어 제외)
-    _DA_ADDITIVE_CODES = {
-        "depreciation", "amortization",
+    # 합산 방식으로 집계할 계정 코드 (sub-items → 합계)
+    # CF/IS 섹션에서만 유효 (NOTE 섹션 제외)
+    _ADDITIVE_CODES = {
+        "depreciation", "amortization",  # D&A
+        "capex",                          # CAPEX 세부항목 합산 (K-GAAP 개별 자산)
     }
-    # NOTE 섹션의 감가상각은 누계액(accumulated)이 섞일 수 있어 D&A 집계에서 제외
-    _DA_VALID_FS_TYPES = {"CF_C", "CF_S", "IS_C", "IS_S"}
+    _ADDITIVE_VALID_FS_TYPES = {"CF_C", "CF_S", "IS_C", "IS_S"}
 
     sf_values: dict[str, Optional[int]] = {}
-    _da_accumulator: dict[str, int] = {}   # depreciation/amortization 누계
+    _accumulator: dict[str, int] = {}   # 합산 대상 계정 누계
 
     for account_code, amount, unit_mult, fs_type, col_idx in rows:
         col_name = _ALL_MAP.get(account_code)
@@ -310,21 +395,30 @@ def _aggregate_one(
         if v is None:
             continue
 
-        # D&A 합산: CF/IS 섹션에서만, abs 값 사용 (음수 표시 기업도 있음)
-        if col_name in _DA_ADDITIVE_CODES:
-            if fs_type in _DA_VALID_FS_TYPES:
-                _da_accumulator[col_name] = _da_accumulator.get(col_name, 0) + abs(v)
-            # NOTE 섹션 D&A는 무시 (누계액 혼용 방지)
+        # 합산 방식 처리 (D&A + CAPEX 세부항목)
+        # CAPEX: K-GAAP 기업이 자산유형별로 개별 표시 → 합산
+        # D&A: PPE + ROU + 무형자산 합산
+        if col_name in _ADDITIVE_CODES:
+            if fs_type in _ADDITIVE_VALID_FS_TYPES:
+                _accumulator[col_name] = _accumulator.get(col_name, 0) + abs(v)
+            # NOTE 섹션은 누계액 혼용 가능 → 제외
         elif col_name not in sf_values:
             sf_values[col_name] = v
 
-    # 합산된 감가상각 반영
-    for da_col, total in _da_accumulator.items():
+    # 합산 결과 반영
+    for col, total in _accumulator.items():
         if total > 0:
-            sf_values[da_col] = total
+            if col == "capex":
+                # CAPEX는 음수로 저장 (현금 유출이므로)
+                sf_values[col] = -total
+            else:
+                sf_values[col] = total
 
-    if not sf_values:
-        return 0
+    # sf_values가 비어있어도 upsert는 진행:
+    # 이미 standard_financials에 잘못된 값(NOTE_C 오탐 등)이 있을 경우
+    # NULL로 덮어씌워 정리해야 함
+    # (rows가 있었지만 모든 값이 5,000조 캡에 걸려 무효화된 경우)
+    # rows 자체가 없으면 _aggregate_one이 rows==[] 체크에서 이미 return 0
 
     # ── 파생 지표 계산 ────────────────────────────────────────────────
     # EBITDA = operating_income + da_total (감가상각비 있을 때만)
@@ -377,25 +471,31 @@ def _aggregate_one(
     # 항상 명시적으로 포함해야 하는 파생 컬럼들 (이전 잘못된 값을 NULL로 덮어씌움)
     _DERIVED_COLS = {"depreciation", "amortization", "da_total", "ebitda", "fcf", "net_debt"}
 
-    record = {
-        "corp_code":      corp_code,
-        "fiscal_year":    fiscal_year,
-        "fiscal_period":  fiscal_period,
-        "statement_type": statement_type,
-        "version":        1,
-        "period_end":     period_end,
-        "is_ifrs":        is_ifrs,
-        "rcept_no":       rcept_no,
-        "data_quality":   1,   # 정상 (자동 계산)
-        "calculated_at":  datetime.utcnow(),
-        # 파생 컬럼은 항상 명시 포함 (NULL이면 None으로 기존 값 덮어씌움)
-        **{col: sf_values.get(col) for col in _DERIVED_COLS},
-        # 나머지 계산된 값들
-        **{k: v for k, v in sf_values.items()
-           if k in _SF_COLS and k not in _DERIVED_COLS},
-    }
-
     with get_session() as session:
+        # 교차 연도 이상값 검증 (FY 레코드만)
+        dq = 1
+        if fiscal_period == "FY":
+            dq = _validate_cross_year(session, corp_code, statement_type, sf_values)
+
+        # 모든 _SF_COLS 컬럼을 항상 포함 (sf_values에 없으면 None → 기존 잘못된 값 덮어씌움)
+        # 이전에는 _DERIVED_COLS만 항상 포함하고 나머지는 sf_values에 있을 때만 포함했는데,
+        # NOTE_C에서 잘못 파싱된 값이 is.revenue로 매핑되어 5,000조 캡에 걸리면
+        # revenue가 sf_values에서 빠져 → 기존 잘못된 값이 DB에 남는 버그
+        record = {
+            "corp_code":      corp_code,
+            "fiscal_year":    fiscal_year,
+            "fiscal_period":  fiscal_period,
+            "statement_type": statement_type,
+            "version":        1,
+            "period_end":     period_end,
+            "is_ifrs":        is_ifrs,
+            "rcept_no":       rcept_no,
+            "data_quality":   dq,
+            "calculated_at":  datetime.utcnow(),
+            # 모든 표준화 컬럼을 항상 포함 (없으면 None으로 이전 값 무효화)
+            **{col: sf_values.get(col) for col in _SF_COLS},
+        }
+
         stmt = pg_insert(StandardFinancial.__table__).values([record])
         stmt = stmt.on_conflict_do_update(
             index_elements=["corp_code", "fiscal_year", "fiscal_period", "statement_type", "version"],

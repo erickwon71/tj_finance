@@ -24,6 +24,8 @@ DART 재무데이터 수집·파싱 시스템 — CLI 진입점
   python run.py parse --limit 500       # 최대 500건만
   python run.py parse-status            # 파싱 현황 (완료/실패/미처리)
   python run.py parse-reset             # 파싱 실패 건 재시도 등록
+  python run.py parse-reset --track-b  # Track B 전체 재파싱 (새 파서로 Track A 재분류)
+  python run.py parse-reset --all      # 파싱 완료 전체 재파싱
   python run.py unknown-accounts        # 미매핑 계정과목 목록 (account_maps 확장 우선순위)
   python run.py unknown-accounts --limit 100
 
@@ -647,9 +649,18 @@ def _save_parsed_facts(result) -> int:
             dedup[key] = rec
         else:
             prev = dedup[key]
-            # 합계 행 우선, 동점이면 confidence 높은 것, 그 다음 먼저 나온 것
+            # 우선순위:
+            # 1. 합계(is_subtotal=True) 행 우선
+            # 2. NULL 금액보다 실제 금액 우선 (이전 NULL → 새 값으로 교체)
+            # 3. confidence 높은 것 우선
+            # 4. 동점이면 먼저 나온 것(선착순)
+            new_has_amount = f.amount is not None
+            prev_has_amount = prev["amount"] is not None
             if (f.is_subtotal and not prev["is_subtotal"]) or \
                (f.is_subtotal == prev["is_subtotal"] and
+                    new_has_amount and not prev_has_amount) or \
+               (f.is_subtotal == prev["is_subtotal"] and
+                    new_has_amount == prev_has_amount and
                     f.extraction_confidence > prev["extraction_confidence"]):
                 dedup[key] = rec
 
@@ -771,20 +782,50 @@ def cmd_parse_status(args):
 
 
 def cmd_parse_reset(args):
-    """파싱 실패(failed) 건을 NULL로 재등록 → parse 재시도 대상에 포함"""
+    """파싱 실패(failed) 또는 Track B 전체를 NULL로 재등록 → parse 재시도 대상에 포함
+
+    옵션:
+      --track-b   : Track B 파싱 완료 파일 전체 재시도 (새 파서 코드로 재분류)
+      --all       : 파싱된 모든 파일 재시도 (success/partial/failed 포함)
+    기본값 (옵션 없음): parse_status='failed' 인 파일만 재시도
+    """
     from sqlalchemy import text
     from collector.db import get_session
 
+    track_b = getattr(args, "track_b", False)
+    reset_all = getattr(args, "all", False)
+
     with get_session() as session:
-        result = session.execute(text("""
-            UPDATE download_tasks
-            SET parse_status = NULL,
-                parse_error  = NULL
-            WHERE parse_status = 'failed'
-        """))
+        if reset_all:
+            result = session.execute(text("""
+                UPDATE download_tasks
+                SET parse_status = NULL,
+                    parse_error  = NULL,
+                    parser_track = NULL
+                WHERE parse_status IN ('success', 'partial', 'failed')
+            """))
+            label = "전체 재파싱"
+        elif track_b:
+            result = session.execute(text("""
+                UPDATE download_tasks
+                SET parse_status = NULL,
+                    parse_error  = NULL,
+                    parser_track = NULL
+                WHERE parse_status IN ('success', 'partial', 'failed')
+                  AND parser_track = 'B'
+            """))
+            label = "Track B 재파싱 (새 파서 코드로 재분류)"
+        else:
+            result = session.execute(text("""
+                UPDATE download_tasks
+                SET parse_status = NULL,
+                    parse_error  = NULL
+                WHERE parse_status = 'failed'
+            """))
+            label = "파싱 실패 재시도"
         count = result.rowcount
 
-    logger.success(f"파싱 재시도 등록: {count}건  (parse_status=failed → NULL)")
+    logger.success(f"{label} 등록: {count}건  → parse_status=NULL")
     if count:
         logger.info("  이제 'python run.py parse' 로 재파싱을 실행하세요.")
 
@@ -986,6 +1027,18 @@ def main():
         "--sep",
         action="store_true",
         help="analyze: 별도재무제표 출력 (기본: 연결)",
+    )
+    parser.add_argument(
+        "--track-b",
+        action="store_true",
+        dest="track_b",
+        help="parse-reset: Track B 파싱 파일 전체를 재시도 대상으로 등록 (새 파서 코드로 재분류)",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="all",
+        help="parse-reset: 성공/부분/실패 포함 전체 파일을 재시도 대상으로 등록",
     )
 
     args = parser.parse_args()

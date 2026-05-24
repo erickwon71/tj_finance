@@ -118,6 +118,10 @@ def parse_dart_xml(
 
         if track == "A":
             _parse_track_a(root, result)
+            # Track A는 _ACODE_TO_STANDARD에 있는 핵심 항목만 추출.
+            # Track B도 함께 실행해 텍스트 기반 한국어 계정 보완 (특히 감가상각 등).
+            # 중복 항목은 DB upsert 시 extraction_confidence 높은 쪽(Track A=1.0)이 우선.
+            _parse_track_b(root, result, fiscal_year, fiscal_period)
         else:
             _parse_track_b(root, result, fiscal_year, fiscal_period)
 
@@ -277,13 +281,17 @@ def _detect_track(root: etree._Element) -> str:
     TE 태그에 DART 독자 ACODE를 사용함. 재무제표 데이터는 TABLE/TD 구조로 제공.
     """
     # TE 태그에서 진짜 XBRL ACODE 존재 여부 확인
+    # 주의: XBRL 섹션이 문서 앞부분이 아닌 중간에 위치하는 경우가 있으므로
+    # 앞 100개만 샘플링하지 않고 전체 탐색 (10개 찾으면 조기 종료)
     te_elements = root.findall(".//TE[@ACODE]")
     xbrl_count = 0
-    for te in te_elements[:100]:  # 앞 100개 샘플링
+    for te in te_elements:  # 전체 스캔 (10개 찾으면 break)
         acode = te.get("ACODE", "")
         acontext = te.get("ACONTEXT", "")
         if (acode.startswith("ifrs-full_") or acode.startswith("dart_")) and acontext:
             xbrl_count += 1
+            if xbrl_count >= 10:
+                break  # 충분히 확인됨 → 조기 종료
 
     # XBRL ACODE가 10개 이상이면 Track A
     if xbrl_count >= 10:
@@ -336,11 +344,31 @@ _ACODE_TO_STANDARD: dict[str, str] = {
 }
 
 # ACONTEXT 파싱: 기간 타입 추출
-# CFY2026eFQA → cumulative_ytd (FY=당기 Q1 누적)
-# PFY2025eFQ  → point_in_time  (전기말)
-# CFY2025eFA  → annual
+#
+# DART XBRL ACONTEXT 포맷 (두 가지 변형):
+#   1. 구형(Plan 문서 기준): CFY2026eFQA → 당기 Q1 누적
+#   2. 신형(실측):           CFY2024dFY  → 당기 연간
+#                           PFY2023eFY  → 전기 연간 (BS 기준)
+#                           BPFY2022dFY → 전전기 연간 (2년 전)
+#
+# 접두사 의미:
+#   C   = 당기 (Current)  → col_index=0
+#   P   = 전기 (Prior)    → col_index=1
+#   BPF = 전전기 시작      → col_index=2  (BPFY2022dFY 형식)
+#
+# 기간 구분:
+#   [de]FY  = 연간 (annual)
+#   [de]FH  = 반기 (half-year)
+#   [de]FQ  = 분기 (quarter, 3개월)
+#   [de]FQA = Q1~Q3 누적 (cumulative_ytd)
+#   [de]FHA = H1 누적 (cumulative_ytd)
+#
+# BPFY 패턴은 별도 regex로 먼저 처리 (BP+P 충돌 방지)
+_ACONTEXT_BP_PATTERN = re.compile(
+    r'BPFY\d{4}[de]F(?P<period>[QHYA])(?P<accum>A?)'
+)
 _ACONTEXT_PERIOD_PATTERN = re.compile(
-    r'(?P<rel>[CP])FY\d{4}eF(?P<period>[QHYA])(?P<accum>A?)'
+    r'(?P<rel>[CP])FY\d{4}[de]F(?P<period>[QHYA])(?P<accum>A?)'
 )
 
 
@@ -350,29 +378,35 @@ def _parse_acontext(acontext: str) -> tuple[str, int]:
 
     Returns:
         period_type: 'annual' / 'cumulative_ytd' / 'point_in_time'
-        col_index: 0=당기, 1=전기
+        col_index: 0=당기, 1=전기, 2=전전기
     """
     if not acontext:
         return "annual", 0
 
+    def _period_from_match(m) -> str:
+        period = m.group("period")
+        accum  = m.group("accum")
+        if period in ("Q", "H") and accum == "A":
+            return "cumulative_ytd"
+        elif period in ("Y", "A"):
+            return "annual"
+        else:
+            return "point_in_time"
+
+    # 1순위: BPFY (전전기) 패턴 먼저 체크 — CP 패턴과 충돌 방지
+    bp_m = _ACONTEXT_BP_PATTERN.search(acontext)
+    if bp_m:
+        return _period_from_match(bp_m), 2
+
+    # 2순위: C/P FY 패턴
     m = _ACONTEXT_PERIOD_PATTERN.search(acontext)
     if not m:
         return "annual", 0
 
-    rel = m.group("rel")       # C=당기, P=전기
-    period = m.group("period") # Q=분기, H=반기, Y=연간, A=연간
-    accum = m.group("accum")   # A=누적
-
+    rel   = m.group("rel")     # C=당기, P=전기
     col_index = 0 if rel == "C" else 1
 
-    if period in ("Q", "H") and accum == "A":
-        period_type = "cumulative_ytd"
-    elif period in ("Y", "A"):
-        period_type = "annual"
-    else:
-        period_type = "point_in_time"
-
-    return period_type, col_index
+    return _period_from_match(m), col_index
 
 
 def _parse_track_a(root: etree._Element, result: ParseResult) -> None:
@@ -389,7 +423,17 @@ def _parse_track_a(root: etree._Element, result: ParseResult) -> None:
         acode = te.get("ACODE", "")
         acontext = te.get("ACONTEXT", "")
         aunit = te.get("AUNIT", "KRW")
+        # TE의 텍스트는 직접 te.text 또는 <P> 자식 태그 안에 있을 수 있음
+        # 예: <TE ACODE="..."><P>(4,196,698)</P></TE>
         raw_text = (te.text or "").strip()
+        if not raw_text:
+            # <P> 자식에서 텍스트 추출
+            p_child = te.find("P")
+            if p_child is not None:
+                raw_text = (p_child.text or "").strip()
+        # <P> 안에도 없으면 전체 텍스트 노드 결합 시도
+        if not raw_text:
+            raw_text = "".join(te.itertext()).strip()
 
         if not acode or not raw_text:
             continue
@@ -424,8 +468,23 @@ def _parse_track_a(root: etree._Element, result: ParseResult) -> None:
         # 기간 타입 및 col_index
         period_type, col_index = _parse_acontext(acontext)
 
+        # Track A: ACODE 기반이므로 _ACODE_TO_STANDARD에 없는 항목은 저장하지 않음
+        # (알 수 없는 XBRL 표준 태그를 unknown.*로 저장하면 financial_facts 비대화 & unknown_accounts 오염)
+        if account_code.startswith("unknown."):
+            continue
+
         # 금액 파싱
-        amount = parse_amount(raw_text, result.unit_multiplier)
+        # ADECIMAL 속성으로 단위 결정: ADECIMAL="-6" → 백만원(×10^6), "-3" → 천원(×10^3)
+        # unit_multiplier 기본값(1)보다 ADECIMAL이 더 정확하므로 우선 사용
+        adecimal_str = te.get("ADECIMAL", "")
+        try:
+            adecimal = int(adecimal_str)
+            # ADECIMAL은 소수점 자릿수(-n = n자리 반올림 → 단위 10^n)
+            unit_mult = 10 ** (-adecimal) if adecimal < 0 else 1
+        except (ValueError, TypeError):
+            unit_mult = result.unit_multiplier
+
+        amount = parse_amount(raw_text, unit_mult)
 
         result.facts.append(FactRow(
             fs_type=fs_prefix,

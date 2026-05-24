@@ -439,6 +439,20 @@ def _aggregate_one(
     # rows 자체가 없으면 _aggregate_one이 rows==[] 체크에서 이미 return 0
 
     # ── 파생 지표 계산 ────────────────────────────────────────────────
+    # net_income 보완: controlling_ni + noncontrolling_ni로 합산
+    # 일부 K-IFRS IS에서 "당기순이익" 합계 행 없이 지배/비지배 귀속만 표시하는 경우
+    if sf_values.get("net_income") is None:
+        cni  = sf_values.get("controlling_ni")
+        ncni = sf_values.get("noncontrolling_ni")
+        if cni is not None or ncni is not None:
+            sf_values["net_income"] = (cni or 0) + (ncni or 0)
+
+    # controlling_ni 보완: 별도재무제표는 비지배지분 없음 → net_income = controlling_ni
+    if sf_values.get("controlling_ni") is None:
+        ni = sf_values.get("net_income")
+        if ni is not None and statement_type == "separate":
+            sf_values["controlling_ni"] = ni
+
     # EBITDA = operating_income + da_total (감가상각비 있을 때만)
     op_income = sf_values.get("operating_income")
     da = sf_values.get("da_total")

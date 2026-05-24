@@ -184,12 +184,19 @@ class AccountMapper:
                 # 포함 관계: alias가 normalized 안에 있으면 높은 점수
                 if alias_norm in normalized or normalized in alias_norm:
                     # 더 긴 쪽 / 짧은 쪽 비율로 점수 조절
-                    overlap_ratio = min(len(alias_norm), len(normalized)) / max(len(alias_norm), len(normalized))
-                    score = 0.90 + overlap_ratio * 0.09  # 0.90 ~ 0.99
-                    if score > best_score:
-                        best_score = score
-                        best_code = code
-                        best_alias = alias
+                    len_ratio = min(len(alias_norm), len(normalized)) / max(len(alias_norm), len(normalized), 1)
+                    # 짧은 단어(3자 이하)가 긴 단어의 접미사/접두사인 경우 오탐 방지
+                    # 예: "합계"(2자) in "급여합계"(4자) → len_ratio=0.5 → skip
+                    # 단, 완전 일치(len_ratio=1.0)는 항상 허용
+                    if len_ratio < 0.65 and min(len(alias_norm), len(normalized)) <= 4:
+                        # 너무 짧은 단어가 부분 매칭되는 경우 → Jaro-Winkler로만 처리
+                        pass
+                    else:
+                        score = 0.90 + len_ratio * 0.09  # 0.90 ~ 0.99
+                        if score > best_score:
+                            best_score = score
+                            best_code = code
+                            best_alias = alias
                     continue
 
                 # Jaro-Winkler 유사도

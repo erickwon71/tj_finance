@@ -236,21 +236,29 @@ def _detect_xml_encoding(raw: bytes) -> str:
     """
     DART XML 파일의 실제 인코딩 추정.
 
-    UTF-8 한글(유니코드 U+AC00~U+D7A3)은 0xEA~0xED로 시작하는 3바이트 시퀀스.
-    EUC-KR 한글은 0xA1~0xFE 범위의 2바이트 시퀀스.
+    전략:
+    1. strict UTF-8 decode 성공 → "utf-8"  (가장 신뢰)
+    2. UTF-8 실패 시 EUC-KR 특징 바이트 분포로 판단
 
-    샘플 500바이트에서 분포를 계산해 비율로 판단.
+    주의: 이전의 0xB0~0xFE 카운팅 방식은 UTF-8 한글 연속 바이트
+    (0x80~0xBF)가 0xB0~0xBF 구간과 겹쳐 오탐지가 발생했음.
     """
-    sample = raw[:5000]  # 앞 5KB 샘플
+    # ── 1순위: strict UTF-8 검증 ──────────────────────────────────────
+    try:
+        raw.decode("utf-8")
+        return "utf-8"
+    except (UnicodeDecodeError, ValueError):
+        pass
 
-    # UTF-8 한글 시작 바이트 (EA~ED)
-    utf8_starts = sum(1 for b in sample if 0xEA <= b <= 0xED)
-    # EUC-KR 고바이트 범위 (A1~FE), UTF-8 한글과 겹치지 않는 구간
-    euckr_range = sum(1 for b in sample if 0xB0 <= b <= 0xFE)
-
-    # EUC-KR 특징: 0xB0~0xFE 바이트가 많고 0xEA~0xED 바이트가 적음
-    if euckr_range > utf8_starts * 2 and euckr_range > 50:
+    # ── 2순위: EUC-KR 특징 바이트 분포 ───────────────────────────────
+    # EUC-KR 한글: 첫 바이트 0xB0~0xC8, 두 번째 바이트 0xA1~0xFE
+    # UTF-8에서 0xC0~0xC1, 0xF5~0xFF는 사용하지 않음
+    # → 0xC0 이상 바이트가 있으면 EUC-KR 강력 지시
+    sample = raw[:5000]
+    high_bytes = sum(1 for b in sample if b >= 0xC0)
+    if high_bytes > 10:
         return "euc-kr"
+
     return "utf-8"
 
 

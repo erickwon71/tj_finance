@@ -51,17 +51,21 @@ def detect_sections(root: etree._Element) -> dict[str, Optional[etree._Element]]
     """
     XML 루트 요소에서 TITLE 태그를 탐색해 재무제표 섹션별 위치를 반환한다.
 
+    TITLE 기반 탐지 후 핵심 섹션(BS/IS/CF)이 누락된 경우 TABLE 기반 fallback 실행:
+    1. TABLE-GROUP 구조 (분기보고서 일부): TABLE-GROUP 내 첫 TABLE에서 섹션명 감지
+    2. TABLE-first-row 구조 (감사보고서 첨부): TABLE 첫 행 텍스트에서 섹션명 감지
+
     Args:
         root: lxml 파싱된 DART XML 루트 요소
 
     Returns:
-        섹션 코드 → TITLE 요소 또는 None
+        섹션 코드 → TITLE/TABLE 요소 또는 None
     """
     sections: dict[str, Optional[etree._Element]] = {
         code: None for code, _ in _SECTION_PATTERNS
     }
 
-    # 모든 TITLE 태그 추출
+    # ── TITLE 기반 탐지 (1순위) ───────────────────────────────────────
     titles = root.findall(".//TITLE")
 
     for title_elem in titles:
@@ -83,7 +87,84 @@ def detect_sections(root: etree._Element) -> dict[str, Optional[etree._Element]]
                 sections[code] = title_elem
                 break  # 하나의 TITLE은 하나의 섹션만 매핑
 
+    # ── TABLE 기반 fallback (핵심 섹션이 없을 때) ─────────────────────
+    core_missing = [
+        code for code, elem in sections.items()
+        if elem is None and not code.startswith("NOTE")
+    ]
+    if core_missing:
+        _detect_sections_from_tables(root, sections)
+
     return sections
+
+
+def _detect_sections_from_tables(
+    root: etree._Element,
+    sections: dict[str, Optional[etree._Element]],
+) -> None:
+    """
+    TABLE 구조에서 재무제표 섹션을 탐지해 sections dict를 in-place 수정한다.
+
+    패턴 1 — TABLE-GROUP 구조 (일부 분기/반기 보고서):
+        <TABLE-GROUP>
+          <TABLE><TR><TD><P>재무상태표</P>...</TABLE>  ← 제목 TABLE
+          <TABLE>... BS 데이터 ...</TABLE>             ← 데이터 TABLE
+        </TABLE-GROUP>
+        → sections[code] = 데이터 TABLE (두 번째 TABLE)
+
+    패턴 2 — TABLE-first-row 구조 (감사보고서 첨부):
+        <TABLE><TR><TD><P>연 결 재 무 상 태 표</P></TD></TR></TABLE>  ← 제목 TABLE
+        <TABLE>... BS 데이터 ...</TABLE>                              ← 데이터 TABLE
+        → sections[code] = 데이터 TABLE (다음 sibling TABLE)
+    """
+    # ── 패턴 1: TABLE-GROUP ────────────────────────────────────────────
+    # TABLE-GROUP[첫 TABLE = 제목, 두 번째 TABLE = 데이터] 구조
+    for tg in root.iter('TABLE-GROUP'):
+        direct_tables = [c for c in tg if c.tag == 'TABLE']
+        if len(direct_tables) < 2:
+            continue
+
+        title_table = direct_tables[0]   # sections에 저장할 제목 TABLE
+
+        rows = title_table.findall('.//TR')
+        if not rows:
+            continue
+        title_text = _get_text(rows[0])
+        if not title_text:
+            continue
+
+        for code, keywords in _SECTION_PATTERNS:
+            if sections[code] is not None:
+                continue
+            exclude_kws = _EXCLUDE_PATTERNS.get(code, [])
+            if _matches(title_text, keywords, exclude_kws):
+                sections[code] = title_table  # 제목 TABLE 저장 (단위·기간 탐색에 활용)
+                break
+
+    # ── 패턴 2: TABLE-first-row ────────────────────────────────────────
+    # 아직 누락된 섹션이 있을 때만 실행
+    if not any(sections[c] is None and not c.startswith("NOTE") for c in sections):
+        return
+
+    for table in root.iter('TABLE'):
+        rows = table.findall('.//TR')
+        if not rows:
+            continue
+        # 행 수 적은 TABLE만 제목 후보 (여러 행이면 데이터 TABLE일 가능성 높음)
+        if len(rows) > 8:
+            continue
+        title_text = _get_text(rows[0])
+        if not title_text:
+            continue
+
+        for code, keywords in _SECTION_PATTERNS:
+            if sections[code] is not None:
+                continue
+            exclude_kws = _EXCLUDE_PATTERNS.get(code, [])
+            if _matches(title_text, keywords, exclude_kws):
+                # 제목 TABLE을 sections에 저장 (find_section_tables가 다음 sibling 탐색)
+                sections[code] = table
+                break
 
 
 def find_section_tables(
@@ -91,16 +172,55 @@ def find_section_tables(
     max_tables: int = 5,
 ) -> list[etree._Element]:
     """
-    TITLE 요소 이후에 오는 TABLE 요소들을 반환한다.
-    다음 TITLE이 나오면 탐색 중단.
+    섹션 마커 요소 이후에 오는 TABLE 요소들을 반환한다.
+
+    - section_elem이 TITLE 요소인 경우: 다음 TITLE까지 sibling TABLE 수집 (기존 동작)
+    - section_elem이 TABLE 요소인 경우: 그 자체가 데이터 TABLE → [section_elem] 반환
+      (_detect_sections_from_tables fallback에서 데이터 TABLE을 직접 저장하므로)
 
     Args:
-        section_elem: 섹션의 TITLE 요소
+        section_elem: 섹션의 TITLE 또는 데이터 TABLE 요소
         max_tables: 최대 TABLE 수 (재무제표 본문은 보통 1~3개)
 
     Returns:
         TABLE 요소 리스트
     """
+    elem_tag = section_elem.tag.upper() if isinstance(section_elem.tag, str) else ""
+
+    if elem_tag == "TABLE":
+        # TABLE 요소 = 제목 TABLE → 같은 부모의 sibling TABLE들에서 데이터 탐색
+        # (다음 섹션 제목 TABLE 이전까지만 수집)
+        parent = section_elem.getparent()
+        if parent is None:
+            return []
+        siblings = list(parent)
+        try:
+            start_idx = siblings.index(section_elem)
+        except ValueError:
+            return []
+
+        tables = []
+        for s in siblings[start_idx + 1:]:
+            stag = s.tag.upper() if isinstance(s.tag, str) else ""
+            if stag == "TITLE":
+                break  # 다음 TITLE 섹션 시작
+            if stag != "TABLE":
+                continue
+            # 다음 섹션 제목 TABLE인지 확인 (행 수 ≤ 8이고 섹션 패턴 매칭)
+            s_rows = s.findall('.//TR')
+            if s_rows and len(s_rows) <= 8:
+                s_title = _get_text(s_rows[0])
+                if s_title and any(
+                    _matches(s_title, kws, _EXCLUDE_PATTERNS.get(c, []))
+                    for c, kws in _SECTION_PATTERNS
+                ):
+                    break  # 다음 섹션 제목 TABLE → 여기서 중단
+            tables.append(s)
+            if len(tables) >= max_tables:
+                break
+        return tables
+
+    # TITLE 기반: 다음 TITLE 전까지 sibling TABLE 수집
     parent = section_elem.getparent()
     if parent is None:
         return []
@@ -289,3 +409,21 @@ def _get_text(elem: etree._Element) -> str:
         return ' '.join(p for p in parts if p)
     except Exception:
         return ""
+
+
+def _matches(text: str, keywords: list[str], exclude_kws: list[str]) -> bool:
+    """
+    텍스트가 섹션 패턴에 매칭되는지 확인.
+
+    매칭 방법: 원문(text) 또는 공백 제거 버전(text_no_space)에서 키워드 탐색.
+    예: "연 결 재 무 상 태 표" → 공백 제거 후 "연결재무상태표" → 키워드 ["연결","재무상태표"] 매칭
+    """
+    text_no_space = text.replace(' ', '')
+    # 제외 키워드 체크
+    if any(kw in text or kw in text_no_space for kw in exclude_kws):
+        return False
+    # 포함 키워드 전체 매칭 (원문 또는 공백 제거 버전)
+    return all(
+        kw in text or kw in text_no_space
+        for kw in keywords
+    )

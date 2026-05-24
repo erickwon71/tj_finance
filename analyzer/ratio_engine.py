@@ -237,25 +237,52 @@ def load_standard_financials(
     """
     standard_financials에서 최근 N년치 데이터를 조회.
 
+    Args:
+        fiscal_period: "FY" | "H1" | "Q1" | "Q3" | "ALL"
+                       "ALL" = 모든 분기/반기/연간 포함 (분기 모드용)
+
     Returns:
         연도 내림차순 리스트 (최신 → 과거)
     """
     from collector.db import get_session
     from sqlalchemy import text
 
-    sql = """
-        SELECT *
-        FROM standard_financials
-        WHERE corp_code      = :corp
-          AND statement_type = :stype
-          AND fiscal_period  = :fp
-        ORDER BY fiscal_year DESC
-        LIMIT :n
-    """
+    if fiscal_period == "ALL":
+        # 분기/반기/연간 전체 — period_end 내림차순
+        sql = """
+            SELECT *
+            FROM standard_financials
+            WHERE corp_code      = :corp
+              AND statement_type = :stype
+            ORDER BY fiscal_year DESC, period_end DESC NULLS LAST
+            LIMIT :n
+        """
+        params = {"corp": corp_code, "stype": statement_type, "n": years}
+    elif fiscal_period == "HALF":
+        # H1 + FY만 (반기 모드)
+        sql = """
+            SELECT *
+            FROM standard_financials
+            WHERE corp_code      = :corp
+              AND statement_type = :stype
+              AND fiscal_period  IN ('H1', 'FY')
+            ORDER BY fiscal_year DESC, period_end DESC NULLS LAST
+            LIMIT :n
+        """
+        params = {"corp": corp_code, "stype": statement_type, "n": years}
+    else:
+        sql = """
+            SELECT *
+            FROM standard_financials
+            WHERE corp_code      = :corp
+              AND statement_type = :stype
+              AND fiscal_period  = :fp
+            ORDER BY fiscal_year DESC
+            LIMIT :n
+        """
+        params = {"corp": corp_code, "stype": statement_type, "fp": fiscal_period, "n": years}
+
     with get_session() as session:
-        rows = session.execute(text(sql), {
-            "corp": corp_code, "stype": statement_type,
-            "fp": fiscal_period, "n": years,
-        }).mappings().fetchall()
+        rows = session.execute(text(sql), params).mappings().fetchall()
 
     return [dict(r) for r in rows]

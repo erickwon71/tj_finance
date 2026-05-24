@@ -47,18 +47,32 @@ def _fmt_ratio(value: Optional[float], suffix: str = "x", decimal: int = 1) -> s
     return f"{value:.{decimal}f}{suffix}"
 
 
+def _period_label(sf: dict) -> str:
+    """분기/반기/연간 레이블. 예: '2024 FY', '2024 H1', '2024 Q1', '2023 Q3'."""
+    fy = sf.get("fiscal_year", "?")
+    fp = sf.get("fiscal_period", "FY")
+    fp_map = {"FY": "FY", "H1": "H1", "Q1": "Q1", "Q3": "Q3"}
+    return f"{fy} {fp_map.get(fp, fp)}"
+
+
 def print_analysis(
     corp_code: str,
     statement_type: str = "consolidated",
     fiscal_period: str = "FY",
     years: int = 5,
 ) -> None:
-    """종합 재무분석 출력 (Bloomberg-style)."""
+    """종합 재무분석 출력 (Bloomberg-style).
+
+    Args:
+        fiscal_period: "FY"=연간(기본) / "ALL"=분기혼합 / "HALF"=반기
+    """
     from analyzer.ratio_engine import load_standard_financials, compute_ratios
     from analyzer.valuation_engine import compute_multiples
     from analyzer.buffett_engine import compute_buffett
     from collector.db import get_session
     from sqlalchemy import text
+
+    is_multi_period = fiscal_period in ("ALL", "HALF")
 
     # 기업 정보
     with get_session() as session:
@@ -97,22 +111,42 @@ def print_analysis(
 
     # ── 헤더 ─────────────────────────────────────────────────────────
     stmt_label = "연결" if statement_type == "consolidated" else "별도"
-    title = f"[bold cyan]{corp_name}[/bold cyan] ({stock_code or '비상장'}) — {stmt_label} K-{'IFRS' if curr.get('is_ifrs', True) else 'GAAP'}"
+    period_mode_label = {
+        "ALL":  " │ [yellow]분기별 (YTD)[/yellow]",
+        "HALF": " │ [yellow]반기별[/yellow]",
+    }.get(fiscal_period, "")
+    title = (
+        f"[bold cyan]{corp_name}[/bold cyan] ({stock_code or '비상장'})"
+        f" — {stmt_label} K-{'IFRS' if curr.get('is_ifrs', True) else 'GAAP'}"
+        f"{period_mode_label}"
+    )
     console.print(Panel(title, box=box.DOUBLE))
 
-    # ── 연도 헤더 ────────────────────────────────────────────────────
-    years_labels = [str(sf["fiscal_year"]) for sf in sf_list]
+    # ── 기간 헤더 ────────────────────────────────────────────────────
+    # 분기/반기 모드: "2024 Q1", "2024 H1" 등 / 연간 모드: "2024"
+    if is_multi_period:
+        period_labels = [_period_label(sf) for sf in sf_list]
+        # YTD 안내
+        if fiscal_period == "ALL":
+            console.print("[dim]  ※ 분기/반기 수치는 연초 누적(YTD) 기준[/dim]")
+    else:
+        period_labels = [str(sf["fiscal_year"]) for sf in sf_list]
 
     # ── 손익계산서 테이블 ────────────────────────────────────────────
-    _print_is_table(sf_list, years_labels, ratios)
+    _print_is_table(sf_list, period_labels, ratios, show_yoy=not is_multi_period)
 
     # ── 재무상태표 테이블 ────────────────────────────────────────────
-    _print_bs_table(sf_list, years_labels, ratios)
+    _print_bs_table(sf_list, period_labels, ratios)
 
     # ── 현금흐름 테이블 ──────────────────────────────────────────────
-    _print_cf_table(sf_list, years_labels, ratios)
+    _print_cf_table(sf_list, period_labels, ratios)
 
-    # ── 성장성 & 효율성 테이블 ────────────────────────────────────────
+    # ── 분기/반기 모드: 여기서 종료 ─────────────────────────────────
+    if is_multi_period:
+        console.print("[dim]  ※ 성장성/밸류에이션/DuPont/버핏 지표는 연간(FY) 모드에서 확인하세요[/dim]")
+        return
+
+    # ── 성장성 & 효율성 테이블 (연간 모드만) ──────────────────────────
     _print_growth_table(sf_list, ratios)
 
     # ── 밸류에이션 테이블 ────────────────────────────────────────────
@@ -125,44 +159,35 @@ def print_analysis(
     _print_buffett_table(buffett)
 
 
-def _print_is_table(sf_list: list, years: list, ratios) -> None:
-    """손익계산서 테이블."""
-    table = Table(title="손익계산서 (억원)", box=box.SIMPLE_HEAVY, title_style="bold")
-    table.add_column("항목", style="cyan", width=22)
-    for y in years:
-        table.add_column(y, justify="right", width=12)
-    # YoY열 추가
-    table.add_column("YoY", justify="right", width=8)
+def _print_is_table(sf_list: list, years: list, ratios, show_yoy: bool = True) -> None:
+    """손익계산서 테이블.
 
-    def _row(label: str, key: str, is_pct: bool = False):
+    Args:
+        show_yoy: True=연간모드(YoY 열 표시) / False=분기모드(YoY 생략)
+    """
+    title_suffix = "" if show_yoy else " [YTD]"
+    table = Table(title=f"손익계산서 (억원){title_suffix}", box=box.SIMPLE_HEAVY, title_style="bold")
+    table.add_column("항목", style="cyan", width=22)
+
+    # 분기모드에서 컬럼 폭 조정 (기간 레이블이 더 길다)
+    col_width = 10 if show_yoy else 11
+    for y in years:
+        table.add_column(y, justify="right", width=col_width)
+
+    if show_yoy:
+        table.add_column("YoY", justify="right", width=8)
+
+    def _row(label: str, key: str):
         vals = [sf.get(key) if isinstance(sf, dict) else getattr(sf, key, None) for sf in sf_list]
         cells = [_fmt_amount(v) for v in vals]
-        # YoY
-        yoy = ""
-        if len(vals) >= 2 and vals[0] is not None and vals[1] is not None and vals[1] != 0:
-            yoy_val = (vals[0] - vals[1]) / abs(vals[1])
-            yoy = _fmt_pct(yoy_val)
-        table.add_row(label, *cells, yoy)
-
-    def _pct_row(label: str, key: str, curr_val, prev_val=None):
-        """비율 행."""
-        cells = []
-        for sf in sf_list:
-            v = sf.get(key) if isinstance(sf, dict) else getattr(sf, key, None)
-            cells.append(f"{v*100:.1f}%" if v is not None else "—")
-        table.add_row(label, *cells, "")
-
-    _row("매출액", "revenue")
-    _row("매출원가", "cogs")
-    _row("매출총이익", "gross_profit")
-    _row("판관비", "sga")
-    _row("영업이익", "operating_income")
-    _row("EBITDA", "ebitda")
-    _row("순이익", "net_income")
-    _row("지배주주 순이익", "controlling_ni")
-
-    # 마진율
-    table.add_section()
+        if show_yoy:
+            yoy = ""
+            if len(vals) >= 2 and vals[0] is not None and vals[1] is not None and vals[1] != 0:
+                yoy_val = (vals[0] - vals[1]) / abs(vals[1])
+                yoy = _fmt_pct(yoy_val)
+            table.add_row(label, *cells, yoy)
+        else:
+            table.add_row(label, *cells)
 
     def _margin_cells(key):
         cells = []
@@ -175,10 +200,29 @@ def _print_is_table(sf_list: list, years: list, ratios) -> None:
                 cells.append("—")
         return cells
 
-    table.add_row("매출총이익률", *_margin_cells("gross_profit"), "")
-    table.add_row("영업이익률",   *_margin_cells("operating_income"), "")
-    table.add_row("EBITDA마진",   *_margin_cells("ebitda"), "")
-    table.add_row("순이익률",     *_margin_cells("net_income"), "")
+    _row("매출액",          "revenue")
+    _row("매출원가",        "cogs")
+    _row("매출총이익",      "gross_profit")
+    _row("판관비",          "sga")
+    _row("영업이익",        "operating_income")
+    _row("EBITDA",          "ebitda")
+    _row("순이익",          "net_income")
+    _row("지배주주 순이익", "controlling_ni")
+
+    # 마진율
+    table.add_section()
+
+    def _margin_row(label, key):
+        cells = _margin_cells(key)
+        if show_yoy:
+            table.add_row(label, *cells, "")
+        else:
+            table.add_row(label, *cells)
+
+    _margin_row("매출총이익률", "gross_profit")
+    _margin_row("영업이익률",   "operating_income")
+    _margin_row("EBITDA마진",   "ebitda")
+    _margin_row("순이익률",     "net_income")
 
     console.print(table)
 

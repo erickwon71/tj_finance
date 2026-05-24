@@ -929,8 +929,10 @@ def cmd_analyze(args):
     기업 재무분석 출력 (Bloomberg Terminal 스타일).
 
     사용:
-      python run.py analyze --corp 00126380         # 연결 FY 5개년
-      python run.py analyze --corp 00126380 --sep   # 별도재무제표
+      python run.py analyze --corp 00126380              # 연결 FY 5개년
+      python run.py analyze --corp 00126380 --sep        # 별도재무제표
+      python run.py analyze --corp 00126380 --period Q   # 최근 8분기 (YTD)
+      python run.py analyze --corp 00126380 --period H   # 최근 4반기
     """
     from analyzer.display.table_view import print_analysis
 
@@ -939,10 +941,19 @@ def cmd_analyze(args):
         logger.error("--corp CORP_CODE 를 지정하세요.")
         return
 
-    sep = getattr(args, "sep", False)
-    stmt_type = "separate" if sep else "consolidated"
+    sep        = getattr(args, "sep", False)
+    period_arg = getattr(args, "period", "FY") or "FY"
+    stmt_type  = "separate" if sep else "consolidated"
 
-    print_analysis(corp_code=corp_code, statement_type=stmt_type)
+    # --period 매핑
+    period_mode_map = {
+        "FY": ("FY",   5),   # 연간 5개년
+        "Q":  ("ALL",  8),   # 최근 8분기(혼합)
+        "H":  ("HALF", 4),   # 최근 4반기
+    }
+    fp, n = period_mode_map.get(period_arg.upper(), ("FY", 5))
+
+    print_analysis(corp_code=corp_code, statement_type=stmt_type, fiscal_period=fp, years=n)
 
 
 def cmd_sync_prices(args):
@@ -1055,6 +1066,12 @@ def main():
         "--sep",
         action="store_true",
         help="analyze: 별도재무제표 출력 (기본: 연결)",
+    )
+    parser.add_argument(
+        "--period",
+        default="FY",
+        choices=["FY", "Q", "H"],
+        help="analyze: 기간 모드 — FY=연간 5개년(기본) / Q=최근 8분기 / H=최근 4반기",
     )
     parser.add_argument(
         "--partial",

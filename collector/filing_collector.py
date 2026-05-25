@@ -38,20 +38,47 @@ def _is_amendment(report_nm: str) -> bool:
 def _parse_fiscal_info(
     report_type: str,
     filed_at: date,
+    report_nm: str = "",
 ) -> tuple[int, str]:
     """
-    접수 날짜와 보고서 유형으로 회계연도·기간 추정.
-    (비12월 결산 기업은 오차 발생 가능 — Phase 2에서 보완)
+    보고서명의 "(YYYY.MM)" 패턴 또는 접수 날짜로 회계연도·기간 결정.
+
+    우선순위:
+      1. report_nm의 "(YYYY.MM)" — DART가 명시한 결산기말 연월
+         예) "사업보고서 (2023.03)" → fiscal_year=2023, FY
+             "분기보고서 (2023.09)" → fiscal_year=2023, Q3
+      2. filed_at 기반 추정 (폴백 — 12월 결산 기준, 비12월 오차 가능)
+
+    기간 판별 (report_nm 기준):
+      - annual  : YYYY → fiscal_year, "FY"
+      - half    : YYYY → fiscal_year, "H1"
+      - quarter : MM ≤ 6 → Q1 (상반기 마감), MM > 6 → Q3 (하반기 마감)
 
     반환: (fiscal_year: int, fiscal_period: str)
     """
-    y = filed_at.year
-    m = filed_at.month
+    # ── 1순위: report_nm에서 (YYYY.MM) 파싱 ─────────────────────────────
+    nm_match = re.search(r'\((\d{4})\.(\d{2})\)', report_nm)
+    if nm_match:
+        fy = int(nm_match.group(1))
+        fm = int(nm_match.group(2))
+
+        if report_type == "annual":
+            return fy, "FY"
+        elif report_type == "half":
+            return fy, "H1"
+        elif report_type == "quarter":
+            # 6월 이하 마감 → Q1 (1분기), 7월 이상 마감 → Q3 (3분기)
+            return fy, ("Q1" if fm <= 6 else "Q3")
+        # report_type 미분류 시 폴백
+        return fy, "FY"
+
+    # ── 2순위: 접수 날짜 기반 추정 (12월 결산 가정) ───────────────────────
+    y  = filed_at.year
+    mo = filed_at.month
 
     if report_type == "annual":
         # 사업보고서: 보통 1~4월 접수 → 전년도 회계연도
-        fiscal_year = y - 1 if m <= 6 else y
-        return fiscal_year, "FY"
+        return (y - 1 if mo <= 6 else y), "FY"
 
     elif report_type == "half":
         # 반기보고서: 보통 7~9월 접수 → 당해 H1
@@ -59,10 +86,7 @@ def _parse_fiscal_info(
 
     elif report_type == "quarter":
         # Q1: 4~6월 접수, Q3: 10~12월 접수
-        if m <= 6:
-            return y, "Q1"
-        else:
-            return y, "Q3"
+        return y, ("Q1" if mo <= 6 else "Q3")
 
     return y, "FY"  # fallback
 
@@ -260,7 +284,7 @@ def _sync_one_corp(
             if filed_at is None:
                 continue
 
-            fiscal_year, fiscal_period = _parse_fiscal_info(report_type, filed_at)
+            fiscal_year, fiscal_period = _parse_fiscal_info(report_type, filed_at, report_nm)
             amendment = _is_amendment(report_nm)
 
             rows.append({

@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Optional
 
 from loguru import logger
-from sqlalchemy import select, update
+from sqlalchemy import select, update, or_, and_
 
 from collector.config import (
     RAW_REPORT_DIR, TMP_DIR,
@@ -213,7 +213,13 @@ def run_downloads(
                 .where(
                     DownloadTask.status.in_(["pending", "failed"]),
                     DownloadTask.attempts < MAX_DOWNLOAD_ATTEMPTS,
-                    Filing.is_final == True,
+                    # 일반: 최신본(is_final=True) — 기재정정 포함
+                    # 예외: 원본 공시(is_amendment=False) — 기재정정이 재무데이터 없을 때
+                    #        enqueue-originals 명령으로 명시 등록된 건만 해당
+                    or_(
+                        Filing.is_final == True,
+                        and_(Filing.is_final == False, Filing.is_amendment == False),
+                    ),
                 )
                 .order_by(
                     Filing.corp_code.asc(),      # 기업별로 묶어서 처리

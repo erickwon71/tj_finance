@@ -532,7 +532,7 @@ def _run_parse_worker(worker_id: int, total_workers: int,
         WHERE dt.status = 'completed'
           AND dt.file_type = 'xml'
           AND (dt.parse_status IS NULL OR dt.parse_status = 'pending')
-          AND f.is_final = TRUE
+          AND (f.is_final = TRUE OR f.is_amendment = FALSE)
           AND dt.file_path IS NOT NULL
         {partition_clause}
         ORDER BY f.fiscal_year DESC, dt.rcept_no
@@ -1028,7 +1028,7 @@ def _run_pdf_parse_worker(worker_id: int, total_workers: int,
         WHERE dt.status = 'completed'
           AND dt.file_type = 'pdf'
           AND (dt.parse_status IS NULL OR dt.parse_status = 'pending')
-          AND f.is_final = TRUE
+          AND (f.is_final = TRUE OR f.is_amendment = FALSE)
           AND dt.file_path IS NOT NULL
         {partition_clause}
         ORDER BY f.fiscal_year DESC, dt.rcept_no
@@ -1154,6 +1154,283 @@ def cmd_parse_pdf_reset(args):
     logger.success(f"{label} 재등록: {count}건 → parse_status=NULL")
     if count:
         logger.info("  이제 'python run.py parse-pdf' 로 재파싱을 실행하세요.")
+
+
+def cmd_enqueue_originals(args):
+    """
+    기재정정 공시에 재무데이터가 없는 경우 원본 공시를 다운로드 큐에 추가.
+
+    배경:
+      DART에서 기재정정(文字정정)이 오면 is_final=True로 표시되어 다운로드된다.
+      그런데 기재정정이 표지·서명 등 텍스트만 수정한 경우 재무데이터가 전혀 없고
+      (parsed_facts=0), 실제 재무제표는 기재정정 이전 원본에만 있다.
+
+    동작:
+      1. parse_status='partial' AND parsed_facts=0 인 기재정정(is_amendment=True)을 탐색
+      2. 같은 그룹(corp+보고서유형+연도+기간) 중 is_amendment=False 원본을 찾음
+      3. 원본에 DownloadTask가 없으면 새로 등록 (status='pending')
+      4. 원본에 DownloadTask가 있지만 미파싱이면 parse_status를 NULL로 리셋
+      5. 이미 완료(download+parse) 된 원본은 건너뜀
+
+    이후: python run.py download → python run.py parse 로 원본 파일 처리
+    """
+    from sqlalchemy import text, select
+    from collector.db import get_session
+    from collector.models import DownloadTask
+
+    corp_code_filter = getattr(args, "corp", None)
+
+    with get_session() as session:
+        corp_clause = "AND f_amend.corp_code = :corp_code" if corp_code_filter else ""
+        params = {}
+        if corp_code_filter:
+            params["corp_code"] = corp_code_filter
+
+        sql = text(f"""
+            SELECT
+                f_orig.rcept_no       AS orig_rcept_no,
+                f_orig.corp_code      AS orig_corp,
+                f_orig.corp_name      AS orig_corp_name,
+                f_orig.report_nm      AS orig_report_nm,
+                f_amend.rcept_no      AS amend_rcept_no,
+                f_amend.report_nm     AS amend_report_nm,
+                dt_amend.parsed_facts AS amend_facts,
+                dt_orig.rcept_no      AS orig_task_rcept,
+                dt_orig.status        AS orig_task_status,
+                dt_orig.parse_status  AS orig_parse_status
+            FROM filings f_amend
+            JOIN download_tasks dt_amend ON f_amend.rcept_no = dt_amend.rcept_no
+            JOIN filings f_orig ON (
+                f_orig.corp_code     = f_amend.corp_code
+                AND f_orig.report_type   = f_amend.report_type
+                AND f_orig.fiscal_year   = f_amend.fiscal_year
+                AND f_orig.fiscal_period = f_amend.fiscal_period
+                AND f_orig.is_amendment  = FALSE
+            )
+            LEFT JOIN download_tasks dt_orig ON f_orig.rcept_no = dt_orig.rcept_no
+            WHERE f_amend.is_amendment = TRUE
+              AND f_amend.is_final     = TRUE
+              AND dt_amend.parse_status = 'partial'
+              AND (dt_amend.parsed_facts IS NULL OR dt_amend.parsed_facts = 0)
+              AND (
+                  dt_orig.rcept_no IS NULL                         -- 아직 다운로드 작업 없음
+                  OR dt_orig.status NOT IN ('completed')           -- 다운로드 미완료
+                  OR dt_orig.parse_status IS NULL                  -- 파싱 대기
+                  OR dt_orig.parse_status IN ('pending', 'failed') -- 파싱 재시도 필요
+              )
+              {corp_clause}
+            ORDER BY f_amend.corp_code, f_amend.fiscal_year DESC
+        """)
+        rows = session.execute(sql, params).fetchall()
+
+    if not rows:
+        print("✓ 기재정정 원본 보완이 필요한 케이스 없음")
+        return
+
+    print(f"\n기재정정 원본 다운로드 대상: {len(rows)}건\n")
+
+    create_tasks = []
+    reset_parse  = []
+
+    for row in rows:
+        tag = f"  {row.orig_corp_name}({row.orig_corp}) {row.orig_report_nm[:40]}"
+        if row.orig_task_rcept is None:
+            # DownloadTask 자체가 없음 → 새로 등록
+            print(f"{tag}")
+            print(f"    새 다운로드 등록: {row.orig_rcept_no}  ← {row.amend_rcept_no}")
+            create_tasks.append(row.orig_rcept_no)
+        elif row.orig_task_status != "completed":
+            # DownloadTask 있지만 다운로드 미완료 → pending으로 리셋
+            print(f"{tag}")
+            print(f"    다운로드 재시도: {row.orig_rcept_no} [{row.orig_task_status}]")
+            reset_parse.append(("download_retry", row.orig_rcept_no))
+        else:
+            # 다운로드는 됐지만 파싱 안 됨 → parse_status 리셋
+            print(f"{tag}")
+            print(f"    파싱 재시도: {row.orig_rcept_no} [parse_status={row.orig_parse_status}]")
+            reset_parse.append(("parse_retry", row.orig_rcept_no))
+
+    if not create_tasks and not reset_parse:
+        print("\n처리할 항목 없음")
+        return
+
+    with get_session() as session:
+        # 새 DownloadTask 생성
+        if create_tasks:
+            existing = set(session.scalars(
+                select(DownloadTask.rcept_no).where(
+                    DownloadTask.rcept_no.in_(create_tasks)
+                )
+            ).all())
+            new_tasks = [
+                DownloadTask(rcept_no=rn, status="pending")
+                for rn in create_tasks
+                if rn not in existing
+            ]
+            if new_tasks:
+                session.add_all(new_tasks)
+                logger.success(f"  → 원본 다운로드 작업 {len(new_tasks)}건 등록")
+
+        # 다운로드 재시도
+        download_retry = [rn for t, rn in reset_parse if t == "download_retry"]
+        if download_retry:
+            session.execute(
+                text("""
+                    UPDATE download_tasks
+                    SET status='pending', parse_status=NULL, last_error=NULL
+                    WHERE rcept_no = ANY(:rcepts)
+                """),
+                {"rcepts": download_retry}
+            )
+            logger.success(f"  → 다운로드 재시도 {len(download_retry)}건 리셋")
+
+        # 파싱 재시도
+        parse_retry = [rn for t, rn in reset_parse if t == "parse_retry"]
+        if parse_retry:
+            session.execute(
+                text("""
+                    UPDATE download_tasks
+                    SET parse_status=NULL, parse_error=NULL
+                    WHERE rcept_no = ANY(:rcepts)
+                """),
+                {"rcepts": parse_retry}
+            )
+            logger.success(f"  → 파싱 재시도 {len(parse_retry)}건 리셋")
+
+    total = len(create_tasks) + len(download_retry) + len(parse_retry)
+    print(f"\n총 {total}건 등록 완료.")
+    print("다음 단계:")
+    if create_tasks or download_retry:
+        print("  python run.py download      # 원본 공시 다운로드")
+    print("  python run.py parse         # XML 원본 파싱")
+    print("  python run.py parse-pdf     # PDF 원본 파싱")
+
+
+def cmd_fix_fiscal_years(args):
+    """
+    비12월 결산 기업의 잘못된 fiscal_year / fiscal_period를 일괄 수정.
+
+    대상:
+      - filings.report_nm에 "(YYYY.MM)" 패턴이 있고
+      - 저장된 fiscal_year / fiscal_period가 그 값과 다른 행
+
+    수정 범위:
+      1. filings.fiscal_year, fiscal_period
+      2. financial_facts.fiscal_year  (rcept_no 기준 일치)
+      3. _update_is_final_flags 재실행 (그룹 재계산)
+
+    ※ standard_financials는 수정하지 않음 → 'python run.py aggregate' 재실행 필요
+    """
+    import re as _re
+    from sqlalchemy import text
+    from collector.db import get_session
+    from collector.filing_collector import _update_is_final_flags
+
+    dry_run = getattr(args, "dry_run", False)
+
+    print("fiscal_year 수정 분석 중...")
+
+    with get_session() as s:
+        rows = s.execute(text("""
+            SELECT rcept_no, corp_code, report_nm, fiscal_year, fiscal_period, report_type
+            FROM filings
+            WHERE report_nm ~ E'\\\\([0-9]{4}\\\\.[0-9]{2}\\\\)'
+        """)).fetchall()
+
+    # 수정 필요 목록 계산
+    fixes: list[dict] = []
+    for r in rows:
+        nm_match = _re.search(r'\((\d{4})\.(\d{2})\)', r.report_nm)
+        if not nm_match:
+            continue
+        fy = int(nm_match.group(1))
+        fm = int(nm_match.group(2))
+
+        if r.report_type == 'annual':
+            new_fy, new_fp = fy, 'FY'
+        elif r.report_type == 'half':
+            new_fy, new_fp = fy, 'H1'
+        elif r.report_type == 'quarter':
+            new_fy, new_fp = fy, ('Q1' if fm <= 6 else 'Q3')
+        else:
+            continue
+
+        if new_fy != r.fiscal_year or new_fp != r.fiscal_period:
+            fixes.append({
+                "rcept_no":      r.rcept_no,
+                "corp_code":     r.corp_code,
+                "old_fy":        r.fiscal_year,
+                "old_fp":        r.fiscal_period,
+                "new_fy":        new_fy,
+                "new_fp":        new_fp,
+            })
+
+    if not fixes:
+        print("✓ 수정 필요 없음")
+        return
+
+    print(f"수정 대상: {len(fixes)}건")
+
+    # 유형별 집계
+    by_type = {}
+    for f in fixes:
+        key = f"annual" if f["old_fp"] == "FY" else ("half" if f["old_fp"] == "H1" else "quarter")
+        by_type[key] = by_type.get(key, 0) + 1
+    for k, v in sorted(by_type.items()):
+        print(f"  {k}: {v}건")
+
+    if dry_run:
+        print("\n[DRY-RUN] DB 변경 없음. --dry-run 제거 후 실행하세요.")
+        # 샘플 10개 출력
+        print("\n변경 예시 (10건):")
+        for f in fixes[:10]:
+            print(f"  {f['rcept_no']}  {f['old_fy']}{f['old_fp']} → {f['new_fy']}{f['new_fp']}")
+        return
+
+    # ── filings 업데이트 (배치) ─────────────────────────────────────────
+    rcept_nos = [f["rcept_no"] for f in fixes]
+
+    with get_session() as session:
+        for fix in fixes:
+            session.execute(
+                text("""
+                    UPDATE filings
+                    SET fiscal_year   = :new_fy,
+                        fiscal_period = :new_fp,
+                        updated_at    = NOW()
+                    WHERE rcept_no = :rcept_no
+                """),
+                {"new_fy": fix["new_fy"], "new_fp": fix["new_fp"],
+                 "rcept_no": fix["rcept_no"]}
+            )
+    logger.success(f"filings 업데이트: {len(fixes)}건")
+
+    # ── financial_facts 업데이트 ─────────────────────────────────────────
+    with get_session() as session:
+        for fix in fixes:
+            session.execute(
+                text("""
+                    UPDATE financial_facts
+                    SET fiscal_year = :new_fy
+                    WHERE rcept_no    = :rcept_no
+                      AND fiscal_year = :old_fy
+                """),
+                {"new_fy": fix["new_fy"], "rcept_no": fix["rcept_no"],
+                 "old_fy": fix["old_fy"]}
+            )
+    logger.success("financial_facts fiscal_year 업데이트 완료")
+
+    # ── is_final 재계산 (영향받는 기업) ────────────────────────────────
+    affected_corps = list({f["corp_code"] for f in fixes})
+    logger.info(f"is_final 재계산: {len(affected_corps)}개 기업...")
+    with get_session() as session:
+        for corp_code in affected_corps:
+            _update_is_final_flags(session, corp_code)
+    logger.success(f"is_final 재계산 완료: {len(affected_corps)}개 기업")
+
+    print(f"\n수정 완료: {len(fixes)}건")
+    print("표준화 재무제표(standard_financials)를 갱신하려면:")
+    print("  python run.py aggregate --since 1999")
 
 
 def cmd_unknown_accounts(args):
@@ -1590,6 +1867,10 @@ def main():
             "parse", "parse-status", "parse-reset", "unknown-accounts",
             # PDF 파싱 (Phase 5B)
             "parse-pdf", "parse-pdf-reset",
+            # 다운로더 보완 (Phase 6 전처리)
+            "enqueue-originals",
+            # fiscal_year 일괄 수정
+            "fix-fiscal-years",
             # 분석 (Phase 3)
             "aggregate", "analyze", "sync-prices",
             # 스크리닝 (Phase 4)
@@ -1775,6 +2056,9 @@ def main():
         # PDF 파싱 (Phase 5B)
         "parse-pdf":        cmd_parse_pdf,
         "parse-pdf-reset":  cmd_parse_pdf_reset,
+        # 다운로더 보완
+        "enqueue-originals":  cmd_enqueue_originals,
+        "fix-fiscal-years":   cmd_fix_fiscal_years,
         # 유지보수
         "deactivate":       cmd_deactivate,
         "cleanup":          cmd_cleanup,

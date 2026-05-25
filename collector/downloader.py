@@ -389,6 +389,9 @@ def _download_one(
 
         return True
 
+    except DartApiQuotaError:
+        # API 사용량 소진 — 상위 루프(download_all)로 전파해 즉시 종료
+        raise
     except Exception as e:
         err_msg = str(e)[:500]
         logger.warning(f"  ✗ 다운로드 실패: {err_msg}")

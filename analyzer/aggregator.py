@@ -531,7 +531,8 @@ def _aggregate_one(
         # 모든 _SF_COLS 컬럼을 항상 포함 (sf_values에 없으면 None → 기존 잘못된 값 덮어씌움)
         # _DERIVED_COLS (ebitda, fcf, net_debt)는 _ALL_MAP에 없어 _SF_COLS에 미포함 →
         # 명시적으로 추가해야 파생 지표가 DB에 저장됨
-        # shares_out: stock_prices에서 period_end 기준 30일 내 최근 값 조회
+        # shares_out: stock_prices에서 period_end 기준 가장 가까운 값 조회
+        # 상한을 +7일로 설정: 12/31 결산 기업의 경우 첫 거래일이 1/2~1/3일 수 있음
         shares_out = None
         if period_end:
             from sqlalchemy import text as _text
@@ -543,11 +544,12 @@ def _aggregate_one(
                 )
                   AND shares_out IS NOT NULL
                   AND trade_date BETWEEN :d1 AND :d2
-                ORDER BY trade_date DESC LIMIT 1
+                ORDER BY ABS(trade_date - :target) ASC LIMIT 1
             """), {
-                "cc": corp_code,
-                "d1": period_end - timedelta(days=30),
-                "d2": period_end,
+                "cc":     corp_code,
+                "d1":     period_end - timedelta(days=30),
+                "d2":     period_end + timedelta(days=7),
+                "target": period_end,
             }).fetchone()
             if row_so:
                 shares_out = row_so[0]

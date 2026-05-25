@@ -83,7 +83,8 @@ def compare(
         # 밸류에이션
         ni      = curr.get("net_income") or 0
         eq      = curr.get("total_equity") or 0
-        ebitda  = curr.get("ebitda") or 0
+        ebitda_raw = curr.get("ebitda")          # None → "—" 표시용
+        ebitda  = ebitda_raw or 0                # 계산용 (0으로 폴백)
         net_dt  = curr.get("net_debt") or 0
         rev     = curr.get("revenue") or 0
         cfo     = curr.get("cfo") or 0
@@ -123,7 +124,7 @@ def compare(
             "total_equity":  eq,
             "net_debt":      net_dt,
             "market_cap":    mktcap,
-            "ebitda":        ebitda,
+            "ebitda":        ebitda_raw,   # None이면 "—" 표시
             "fcf":           curr.get("fcf"),
             "cfo":           cfo,
             # 수익성

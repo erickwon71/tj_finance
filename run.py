@@ -971,7 +971,7 @@ def cmd_sync_prices(args):
     from analyzer.price_fetcher import sync_prices
 
     corp_code = getattr(args, "corp", None)
-    since     = getattr(args, "since", 2020)
+    since     = getattr(args, "since", 2015)  # aggregate 기본값과 통일
 
     corp_codes = [corp_code] if corp_code else None
     sync_prices(corp_codes=corp_codes, since_year=since)

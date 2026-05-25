@@ -281,7 +281,7 @@ def _lookup_corp_code(stock_code: str) -> Optional[str]:
 
 def sync_prices(
     corp_codes: Optional[list] = None,
-    since_year: int = 2020,
+    since_year: int = 2015,
 ) -> int:
     """
     DB의 기업들에 대해 결산일 기준 주가/시총을 일괄 수집.

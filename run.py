@@ -908,18 +908,26 @@ def cmd_aggregate(args):
     financial_facts → standard_financials 집계.
 
     사용:
-      python run.py aggregate                   # 전체 기업 2015년 이후
-      python run.py aggregate --corp 00126380   # 특정 기업
-      python run.py aggregate --since 2020      # 2020년 이후만
+      python run.py aggregate                          # 전체 기업 2015년 이후
+      python run.py aggregate --corp 00126380          # 특정 기업
+      python run.py aggregate --since 2020             # 2020년 이후만
+      python run.py aggregate --dry-run --corp 00126380  # DB 저장 없이 변경 미리보기
     """
     from analyzer.aggregator import aggregate_corp, aggregate_all
 
     corp_code = getattr(args, "corp", None)
     since     = getattr(args, "since", 2015) or 2015
+    dry_run   = getattr(args, "dry_run", False)
+
+    if dry_run:
+        logger.info("=== DRY-RUN 모드 — DB에 저장하지 않습니다 ===")
 
     if corp_code:
-        n = aggregate_corp(corp_code)
-        logger.success(f"집계 완료: {corp_code} — {n}건 표준화")
+        n = aggregate_corp(corp_code, dry_run=dry_run)
+        if dry_run:
+            logger.success(f"[DRY-RUN] {corp_code} — {n}건 계산 완료 (저장 안 함)")
+        else:
+            logger.success(f"집계 완료: {corp_code} — {n}건 표준화")
     else:
         aggregate_all(since_fiscal_year=since)
 
@@ -1356,6 +1364,12 @@ def main():
         default=2015,
         metavar="YEAR",
         help="aggregate: 집계 시작 연도 (기본값 2015)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="aggregate: DB 저장 없이 변경 내용만 출력 (Side Effect 방어용)",
     )
     parser.add_argument(
         "--sep",

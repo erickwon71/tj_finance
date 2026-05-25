@@ -263,6 +263,7 @@ def aggregate_corp(
     corp_code: str,
     fiscal_year: Optional[int] = None,
     statement_type: str = "both",    # "consolidated" / "separate" / "both"
+    dry_run: bool = False,           # True = 계산만 하고 DB 저장 안 함
 ) -> int:
     """
     주어진 기업의 financial_facts를 집계해 standard_financials에 저장.
@@ -270,8 +271,12 @@ def aggregate_corp(
     각 (fiscal_year, fiscal_period, statement_type) 조합에서
     가장 facts가 많은 공시(rcept_no) 1개만 선택 → 중복 공시 문제 방지.
 
+    Args:
+        dry_run: True이면 계산 결과를 출력만 하고 DB에 저장하지 않음.
+                 코드 수정 전/후 결과 비교용.
+
     Returns:
-        저장/갱신된 행 수
+        저장/갱신된 행 수 (dry_run=True이면 계산된 행 수, DB 변경 없음)
     """
     year_clause = "AND ff.fiscal_year = :fy" if fiscal_year else ""
     stmt_filter = {
@@ -352,12 +357,16 @@ def aggregate_corp(
         logger.debug(f"[집계] {corp_code} — 데이터 없음")
         return 0
 
+    if dry_run:
+        logger.info(f"[DRY-RUN] {corp_code} — 집계 대상 {len(combos)}건 (DB 저장 안 함)")
+
     saved = 0
     for row in combos:
         corp_code_, fy, fp, stmt_type, period_end, is_ifrs, rcept_no = row
         if not rcept_no:
             continue
-        n = _aggregate_one(corp_code_, fy, fp, stmt_type, period_end, is_ifrs, rcept_no)
+        n = _aggregate_one(corp_code_, fy, fp, stmt_type, period_end, is_ifrs, rcept_no,
+                           dry_run=dry_run)
         saved += n
 
     return saved
@@ -371,6 +380,7 @@ def _aggregate_one(
     period_end,
     is_ifrs: Optional[bool],
     rcept_no: Optional[str],
+    dry_run: bool = False,
 ) -> int:
     """단일 (corp_code, fiscal_year, fiscal_period, statement_type) 집계."""
 
@@ -652,6 +662,48 @@ def _aggregate_one(
             "net_debt":    sf_values.get("net_debt"),
             "shares_out":  shares_out,
         }
+
+        if dry_run:
+            # ── dry_run: 기존값과 diff 출력, DB 저장 안 함 ──
+            existing = session.execute(text("""
+                SELECT revenue, operating_income, net_income, total_assets,
+                       total_equity, cfo, fcf, ebitda, data_quality
+                FROM standard_financials
+                WHERE corp_code = :cc AND fiscal_year = :fy
+                  AND fiscal_period = :fp AND statement_type = :st AND version = 1
+            """), {"cc": corp_code, "fy": fiscal_year, "fp": fiscal_period,
+                   "st": statement_type}).fetchone()
+
+            _dry_cols = ["revenue", "operating_income", "net_income",
+                         "total_assets", "total_equity", "cfo", "fcf", "ebitda", "data_quality"]
+            has_diff = False
+            if existing:
+                for i, col in enumerate(_dry_cols):
+                    old_v = existing[i]
+                    new_v = record.get(col)
+                    if old_v != new_v:
+                        has_diff = True
+                        pct_str = ""
+                        if old_v and new_v and old_v != 0:
+                            pct = (new_v - old_v) / abs(old_v) * 100
+                            pct_str = f"  ({pct:+.1f}%)"
+                        old_str = f"{old_v/1e8:,.0f}억" if isinstance(old_v, (int, float)) and old_v else str(old_v)
+                        new_str = f"{new_v/1e8:,.0f}억" if isinstance(new_v, (int, float)) and new_v else str(new_v)
+                        logger.info(
+                            f"  [DRY-RUN] {corp_code} {fiscal_year} {fiscal_period} {statement_type} "
+                            f"{col}: {old_str} → {new_str}{pct_str}"
+                        )
+            else:
+                has_diff = True
+                logger.info(
+                    f"  [DRY-RUN] {corp_code} {fiscal_year} {fiscal_period} {statement_type}: "
+                    f"신규 레코드 (기존 없음)"
+                )
+            if not has_diff:
+                logger.debug(
+                    f"  [DRY-RUN] {corp_code} {fiscal_year} {fiscal_period} {statement_type}: 변동 없음"
+                )
+            return 1  # DB 저장 안 하고 반환
 
         stmt = pg_insert(StandardFinancial.__table__).values([record])
         stmt = stmt.on_conflict_do_update(

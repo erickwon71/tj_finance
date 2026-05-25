@@ -218,7 +218,7 @@ def screen(
             if prev:
                 sf_list.append(prev)
             bm = compute_buffett(sf_list, mktcap)
-            piotroski = bm.piotroski_score
+            piotroski = bm.piotroski_f_score
         except Exception:
             pass
 
@@ -295,7 +295,7 @@ def print_screen_results(
     from rich.table import Table
     from rich import box
 
-    console = Console()
+    console = Console(width=220)
 
     if not results:
         console.print("\n[yellow]조건에 맞는 기업이 없습니다.[/yellow]")
@@ -320,19 +320,19 @@ def print_screen_results(
         return f"{v:.1f}조" if v is not None else "—"
 
     # 컬럼 정의
-    tbl.add_column("기업명",    style="bold", width=14, no_wrap=True)
-    tbl.add_column("시장",      width=7)
-    tbl.add_column("FY",        width=5)
-    tbl.add_column("시총",      width=8,  justify="right")
-    tbl.add_column("ROE",       width=7,  justify="right")
-    tbl.add_column("ROIC",      width=7,  justify="right")
-    tbl.add_column("PER",       width=6,  justify="right")
-    tbl.add_column("PBR",       width=6,  justify="right")
-    tbl.add_column("EV/EBIT",   width=8,  justify="right")
-    tbl.add_column("영업이익률", width=8,  justify="right")
-    tbl.add_column("매출성장",   width=8,  justify="right")
-    tbl.add_column("부채비율",   width=8,  justify="right")
-    tbl.add_column("F-Score",   width=8,  justify="right")
+    tbl.add_column("기업명",     style="bold", min_width=14, no_wrap=True)
+    tbl.add_column("시장",       min_width=6,  no_wrap=True)
+    tbl.add_column("FY",         min_width=4,  no_wrap=True)
+    tbl.add_column("시총",       min_width=7,  justify="right", no_wrap=True)
+    tbl.add_column("ROE",        min_width=7,  justify="right", no_wrap=True)
+    tbl.add_column("ROIC",       min_width=7,  justify="right", no_wrap=True)
+    tbl.add_column("PER",        min_width=6,  justify="right", no_wrap=True)
+    tbl.add_column("PBR",        min_width=6,  justify="right", no_wrap=True)
+    tbl.add_column("EV/EBITDA",  min_width=9,  justify="right", no_wrap=True)
+    tbl.add_column("영업이익률",  min_width=8,  justify="right", no_wrap=True)
+    tbl.add_column("매출성장",    min_width=8,  justify="right", no_wrap=True)
+    tbl.add_column("부채비율",    min_width=7,  justify="right", no_wrap=True)
+    tbl.add_column("F-Score",    min_width=7,  justify="right", no_wrap=True)
 
     for r in results:
         mkt_color = "green" if r.get("market") == "KOSPI" else "cyan"

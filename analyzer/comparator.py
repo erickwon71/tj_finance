@@ -99,7 +99,7 @@ def compare(
         try:
             sf_list = [curr] + ([prev] if prev else [])
             bm = compute_buffett(sf_list, mktcap)
-            piotroski = bm.piotroski_score
+            piotroski = bm.piotroski_f_score
         except Exception:
             pass
 
@@ -173,7 +173,7 @@ def print_compare_results(results: list[dict]) -> None:
         Console().print("[yellow]비교할 기업 데이터가 없습니다.[/yellow]")
         return
 
-    console = Console()
+    console = Console(width=220)
     n = len(results)
 
     # ── 헬퍼 ────────────────────────────────────────────────────────

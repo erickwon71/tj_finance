@@ -977,6 +977,64 @@ def cmd_sync_prices(args):
     sync_prices(corp_codes=corp_codes, since_year=since)
 
 
+def cmd_dcf(args):
+    """
+    DCF 모델 — 내재가치 / 안전마진 계산.
+
+    사용:
+      python run.py dcf --corp 00126380
+      python run.py dcf --corp 00126380 --growth 8% --wacc 10% --terminal 3%
+      python run.py dcf --corp 00126380 --sep
+    """
+    from analyzer.dcf_engine import run_dcf, print_dcf
+
+    corp_code = getattr(args, "corp", None)
+    if not corp_code:
+        logger.error("--corp CORP_CODE 를 지정하세요.")
+        return
+
+    sep       = getattr(args, "sep", False)
+    stmt_type = "separate" if sep else "consolidated"
+
+    def _parse_pct(s):
+        if s is None: return None
+        s = s.strip().rstrip("%")
+        return float(s) / 100.0
+
+    user_growth = _parse_pct(getattr(args, "dcf_growth", None))
+    user_wacc   = _parse_pct(getattr(args, "dcf_wacc", None))
+    terminal    = float(getattr(args, "dcf_terminal", None) or "2.5") / 100.0
+
+    result = run_dcf(corp_code, user_growth=user_growth, user_wacc=user_wacc,
+                     terminal_growth=terminal, statement_type=stmt_type)
+    if result:
+        print_dcf(result)
+
+
+def cmd_dividend(args):
+    """
+    배당 히스토리 분석.
+
+    사용:
+      python run.py dividend --corp 00126380
+      python run.py dividend --corp 00126380 --years 10
+    """
+    from analyzer.dividend_engine import analyze_dividend, print_dividend
+
+    corp_code = getattr(args, "corp", None)
+    if not corp_code:
+        logger.error("--corp CORP_CODE 를 지정하세요.")
+        return
+
+    sep       = getattr(args, "sep", False)
+    stmt_type = "separate" if sep else "consolidated"
+    years     = getattr(args, "div_years", 10) or 10
+
+    summary = analyze_dividend(corp_code, years=years, statement_type=stmt_type)
+    if summary:
+        print_dividend(summary)
+
+
 def cmd_screen(args):
     """
     재무 조건으로 기업 스크리닝.
@@ -1083,6 +1141,8 @@ def main():
             "aggregate", "analyze", "sync-prices",
             # 스크리닝 (Phase 4)
             "screen", "compare",
+            # DCF / 배당 (Phase 5)
+            "dcf", "dividend",
             # 유지보수
             "deactivate", "cleanup", "reset-html",
         ],
@@ -1161,6 +1221,15 @@ def main():
         choices=["FY", "Q", "H"],
         help="analyze: 기간 모드 — FY=연간 5개년(기본) / Q=최근 8분기 / H=최근 4반기",
     )
+    # ── dcf / dividend 옵션 ─────────────────────────────────────────
+    parser.add_argument("--growth",   metavar="PCT", dest="dcf_growth",
+                        help="dcf: FCF 성장률 수동 입력 (예: 8% 또는 8)")
+    parser.add_argument("--wacc",     metavar="PCT", dest="dcf_wacc",
+                        help="dcf: WACC 수동 입력 (예: 10%)")
+    parser.add_argument("--terminal", metavar="PCT", dest="dcf_terminal", default="2.5",
+                        help="dcf: 영구성장률 (기본 2.5%%)")
+    parser.add_argument("--div-years", type=int, metavar="N", dest="div_years", default=10,
+                        help="dividend: 조회 연수 (기본 10)")
     # ── screen 옵션 ─────────────────────────────────────────────────
     parser.add_argument("--roe",            metavar="COND", help="ROE 조건 (예: \">15%\")")
     parser.add_argument("--roa",            metavar="COND", help="ROA 조건")
@@ -1237,6 +1306,9 @@ def main():
         # 스크리닝 (Phase 4)
         "screen":           cmd_screen,
         "compare":          cmd_compare,
+        # DCF / 배당 (Phase 5)
+        "dcf":              cmd_dcf,
+        "dividend":         cmd_dividend,
         # 유지보수
         "deactivate":       cmd_deactivate,
         "cleanup":          cmd_cleanup,

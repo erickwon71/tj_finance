@@ -109,9 +109,12 @@ def compare(
         dps      = abs(divs) / shares if divs and shares else None
         div_yield = _div(dps, data.get("close_price")) if dps else None
 
+        dq = curr.get("data_quality", 1)
+
         results.append({
             "corp_code":     cc,
             "corp_name":     data["corp_name"],
+            "data_quality":  dq,
             "stock_code":    data["stock_code"],
             "market":        data["market"],
             "fiscal_year":   curr["fiscal_year"],
@@ -207,6 +210,18 @@ def print_compare_results(results: list[dict]) -> None:
         if idx in best_set:
             return f"[bold green]{s}[/bold green]"
         return s
+
+    # ── data_quality 경고 ──────────────────────────────────────────
+    dq_msgs = []
+    for r in results:
+        dq = r.get("data_quality", 1)
+        if dq >= 2:
+            label = "오류(DQ=3)" if dq >= 3 else "경고(DQ=2)"
+            dq_msgs.append(f"  {r['corp_name']}: {label}")
+    if dq_msgs:
+        console.print(f"[yellow]Data Quality 주의:[/yellow]")
+        for m in dq_msgs:
+            console.print(f"[yellow]{m}[/yellow]")
 
     # ── 테이블 구성 ──────────────────────────────────────────────────
     names = [r["corp_name"][:14] for r in results]

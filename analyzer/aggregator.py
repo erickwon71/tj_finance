@@ -184,6 +184,81 @@ def _validate_cross_year(
     return dq
 
 
+def _validate_accounting_equations(
+    sf_values: dict,
+    corp_code: str,
+    fiscal_year: int,
+    statement_type: str,
+) -> int:
+    """
+    회계 항등식 검증.
+
+    Returns:
+        data_quality 레벨 (1=정상, 2=경고, 3=오류)
+    """
+    dq = 1
+
+    # 1) BS 항등식: total_assets = total_liabilities + total_equity
+    ta = sf_values.get("total_assets")
+    tl = sf_values.get("total_liabilities")
+    te = sf_values.get("total_equity")
+    if ta and tl is not None and te is not None and ta > 0:
+        expected = tl + te
+        diff_ratio = abs(ta - expected) / abs(ta)
+        if diff_ratio > 0.05:
+            logger.warning(
+                f"[BS불일치-오류] {corp_code} {fiscal_year} {statement_type}: "
+                f"자산={ta/1e8:.0f}억 vs 부채+자본={expected/1e8:.0f}억 "
+                f"(차이={diff_ratio*100:.1f}%) → DQ=3"
+            )
+            return 3
+        elif diff_ratio > 0.01:
+            logger.warning(
+                f"[BS불일치-경고] {corp_code} {fiscal_year} {statement_type}: "
+                f"자산={ta/1e8:.0f}억 vs 부채+자본={expected/1e8:.0f}억 "
+                f"(차이={diff_ratio*100:.1f}%) → DQ=2"
+            )
+            dq = max(dq, 2)
+
+    # 2) IS 정합성: revenue - cogs ≈ gross_profit
+    rev = sf_values.get("revenue")
+    cogs = sf_values.get("cogs")
+    gp = sf_values.get("gross_profit")
+    if rev and cogs is not None and gp is not None and abs(rev) > 0:
+        expected_gp = rev - abs(cogs) if cogs < 0 else rev - cogs
+        diff_ratio = abs(gp - expected_gp) / abs(rev)
+        if diff_ratio > 0.05:
+            logger.debug(
+                f"[IS불일치] {corp_code} {fiscal_year}: "
+                f"매출총이익={gp/1e8:.0f}억 vs 매출-원가={expected_gp/1e8:.0f}억 "
+                f"(차이={diff_ratio*100:.1f}%)"
+            )
+            dq = max(dq, 2)
+
+    # 3) CF 정합성: |cfo + cfi + cff| / max(|cfo|,|cfi|,|cff|) < 임계값
+    cfo_v = sf_values.get("cfo")
+    cfi_v = sf_values.get("cfi")
+    cff_v = sf_values.get("cff")
+    if cfo_v is not None and cfi_v is not None and cff_v is not None:
+        cf_sum = cfo_v + cfi_v + cff_v
+        cf_max = max(abs(cfo_v), abs(cfi_v), abs(cff_v))
+        if cf_max > 0:
+            cf_ratio = abs(cf_sum) / cf_max
+            # CF 합계 ≠ 0인 경우도 환율차이/기타 항목으로 흔함 → 경고만
+            if cf_ratio > 0.5:
+                logger.debug(
+                    f"[CF불일치] {corp_code} {fiscal_year}: "
+                    f"CFO+CFI+CFF={cf_sum/1e8:.0f}억 "
+                    f"(비율={cf_ratio*100:.0f}%)"
+                )
+
+    # 4) 교차검증: IS net_income vs CF 시작 순이익 (cf.net_income_cf)
+    # → cf.net_income_cf는 _ALL_MAP에 매핑 안 됨(standard_financials 컬럼 없음)
+    # → 향후 추가 시 검증 가능. 현재는 skip
+
+    return dq
+
+
 def aggregate_corp(
     corp_code: str,
     fiscal_year: Optional[int] = None,
@@ -527,6 +602,10 @@ def _aggregate_one(
         dq = 1
         if fiscal_period == "FY":
             dq = _validate_cross_year(session, corp_code, statement_type, sf_values)
+
+        # 회계 항등식 검증 (BS=L+E, IS 정합성, CF 정합성)
+        eq_dq = _validate_accounting_equations(sf_values, corp_code, fiscal_year, statement_type)
+        dq = max(dq, eq_dq)
 
         # 모든 _SF_COLS 컬럼을 항상 포함 (sf_values에 없으면 None → 기존 잘못된 값 덮어씌움)
         # _DERIVED_COLS (ebitda, fcf, net_debt)는 _ALL_MAP에 없어 _SF_COLS에 미포함 →

@@ -1094,6 +1094,151 @@ def cmd_screen(args):
     print_screen_results(results, filters=filters, sort_by=sort_by, market=market)
 
 
+def cmd_validate(args):
+    """
+    standard_financials vs financial_facts 원본 대조.
+
+    사용:
+      python run.py validate --corp 00126380
+    """
+    from collector.db import get_session
+    from sqlalchemy import text
+    from rich.console import Console
+    from rich.table import Table
+    from rich import box
+
+    corp_code = getattr(args, "corp", None)
+    if not corp_code:
+        logger.error("--corp CORP_CODE 를 지정하세요.")
+        return
+
+    sep       = getattr(args, "sep", False)
+    stmt_type = "separate" if sep else "consolidated"
+
+    with get_session() as session:
+        corp = session.execute(text(
+            "SELECT corp_name FROM corporations WHERE corp_code = :c"
+        ), {"c": corp_code}).fetchone()
+        corp_name = corp[0] if corp else corp_code
+
+        sf_rows = session.execute(text("""
+            SELECT fiscal_year, fiscal_period, data_quality, rcept_no,
+                   revenue, operating_income, net_income, total_assets,
+                   total_liabilities, total_equity, cfo, cfi, cff
+            FROM standard_financials
+            WHERE corp_code = :cc AND statement_type = :st
+              AND fiscal_period = 'FY' AND version = 1
+            ORDER BY fiscal_year DESC LIMIT 5
+        """), {"cc": corp_code, "st": stmt_type}).fetchall()
+
+    if not sf_rows:
+        logger.error(f"standard_financials 데이터 없음: {corp_code}")
+        return
+
+    console = Console(width=160)
+    console.print(f"\n[bold cyan]{corp_name}[/bold cyan] — 원본 대조 (standard_financials vs financial_facts)")
+
+    fields = [
+        ("revenue",           "매출액"),
+        ("operating_income",  "영업이익"),
+        ("net_income",        "당기순이익"),
+        ("total_assets",      "총자산"),
+        ("total_liabilities", "총부채"),
+        ("total_equity",      "총자본"),
+        ("cfo",               "영업CF"),
+        ("cfi",               "투자CF"),
+        ("cff",               "재무CF"),
+    ]
+
+    for sf_row in sf_rows:
+        fy     = sf_row[0]
+        fp     = sf_row[1]
+        dq     = sf_row[2]
+        rcept  = sf_row[3]
+        sf_vals = dict(zip(
+            ["revenue", "operating_income", "net_income",
+             "total_assets", "total_liabilities", "total_equity",
+             "cfo", "cfi", "cff"],
+            sf_row[4:]
+        ))
+
+        dq_label = {1: "[green]정상[/green]", 2: "[yellow]경고[/yellow]", 3: "[red]오류[/red]"}.get(dq, "—")
+        tbl = Table(
+            title=f"{fy} {fp}  DQ={dq_label}  rcept={rcept or '—'}",
+            box=box.SIMPLE, show_header=True, header_style="bold",
+        )
+        tbl.add_column("항목",   width=12)
+        tbl.add_column("집계값 (억)", justify="right", width=14)
+        tbl.add_column("원본값 (억)", justify="right", width=14)
+        tbl.add_column("차이(%)", justify="right", width=10)
+        tbl.add_column("상태", width=6)
+
+        # BS 항등식 체크
+        ta = sf_vals.get("total_assets")
+        tl = sf_vals.get("total_liabilities")
+        te = sf_vals.get("total_equity")
+        if ta and tl is not None and te is not None:
+            expected = tl + te
+            diff = abs(ta - expected) / abs(ta) * 100 if ta else 0
+            status = "[green]OK[/green]" if diff < 1 else "[red]FAIL[/red]"
+            tbl.add_row(
+                "BS 항등식",
+                f"{ta/1e8:,.0f}",
+                f"{expected/1e8:,.0f}",
+                f"{diff:.2f}%",
+                status,
+            )
+
+        # 각 항목의 원본 facts 합계와 비교
+        if rcept:
+            _BS_CODES = {"revenue": "is.revenue", "operating_income": "is.operating_income",
+                         "net_income": "is.net_income", "total_assets": "bs.total_assets",
+                         "total_liabilities": "bs.total_liabilities", "total_equity": "bs.total_equity",
+                         "cfo": "cf.operating", "cfi": "cf.investing", "cff": "cf.financing"}
+            suffix = "_C" if stmt_type == "consolidated" else "_S"
+
+            with get_session() as session:
+                for col, label in fields:
+                    sf_v = sf_vals.get(col)
+                    acode = _BS_CODES.get(col)
+                    if not acode:
+                        continue
+
+                    fact_row = session.execute(text("""
+                        SELECT amount FROM financial_facts
+                        WHERE rcept_no = :rn AND account_code = :ac
+                          AND fiscal_year = :fy AND fiscal_period = :fp
+                          AND fs_type = ANY(:fst)
+                          AND NOT is_superseded
+                        ORDER BY col_index ASC, is_subtotal DESC,
+                                 extraction_confidence DESC
+                        LIMIT 1
+                    """), {
+                        "rn": rcept, "ac": acode, "fy": fy, "fp": fp,
+                        "fst": [f"BS{suffix}", f"IS{suffix}", f"CF{suffix}"],
+                    }).fetchone()
+
+                    fact_v = int(fact_row[0]) if fact_row and fact_row[0] is not None else None
+
+                    sf_str   = f"{sf_v/1e8:,.0f}" if sf_v is not None else "—"
+                    fact_str = f"{fact_v/1e8:,.0f}" if fact_v is not None else "—"
+
+                    if sf_v is not None and fact_v is not None and fact_v != 0:
+                        diff_pct = abs(sf_v - fact_v) / abs(fact_v) * 100
+                        diff_str = f"{diff_pct:.2f}%"
+                        status = "[green]OK[/green]" if diff_pct < 1 else "[yellow]!![/yellow]"
+                    elif sf_v is None and fact_v is None:
+                        diff_str = "—"
+                        status = "[dim]N/A[/dim]"
+                    else:
+                        diff_str = "—"
+                        status = "[yellow]??[/yellow]"
+
+                    tbl.add_row(label, sf_str, fact_str, diff_str, status)
+
+        console.print(tbl)
+
+
 def cmd_compare(args):
     """
     여러 기업의 핵심 재무지표를 나란히 비교.
@@ -1143,6 +1288,8 @@ def main():
             "screen", "compare",
             # DCF / 배당 (Phase 5)
             "dcf", "dividend",
+            # 검증 (Phase 5A)
+            "validate",
             # 유지보수
             "deactivate", "cleanup", "reset-html",
         ],
@@ -1309,6 +1456,8 @@ def main():
         # DCF / 배당 (Phase 5)
         "dcf":              cmd_dcf,
         "dividend":         cmd_dividend,
+        # 검증 (Phase 5A)
+        "validate":         cmd_validate,
         # 유지보수
         "deactivate":       cmd_deactivate,
         "cleanup":          cmd_cleanup,

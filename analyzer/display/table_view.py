@@ -122,6 +122,24 @@ def print_analysis(
     )
     console.print(Panel(title, box=box.DOUBLE))
 
+    # ── data_quality 경고 ────────────────────────────────────────────
+    dq_warnings = []
+    for sf in sf_list:
+        dq = sf.get("data_quality", 1)
+        fy = sf.get("fiscal_year", "?")
+        fp = sf.get("fiscal_period", "FY")
+        if dq >= 3:
+            dq_warnings.append(f"[bold red]{fy} {fp}: 데이터 오류 (DQ=3) — 회계 항등식 불일치 또는 이상값[/bold red]")
+        elif dq >= 2:
+            dq_warnings.append(f"[yellow]{fy} {fp}: 데이터 경고 (DQ=2) — 검증 필요[/yellow]")
+    if dq_warnings:
+        console.print(Panel(
+            "\n".join(dq_warnings),
+            title="[bold yellow]Data Quality 경고[/bold yellow]",
+            border_style="yellow",
+            expand=False,
+        ))
+
     # ── 기간 헤더 ────────────────────────────────────────────────────
     # 분기/반기 모드: "2024 Q1", "2024 H1" 등 / 연간 모드: "2024"
     if is_multi_period:

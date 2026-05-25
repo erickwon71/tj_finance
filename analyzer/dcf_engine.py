@@ -243,6 +243,18 @@ def run_dcf(
         return None
 
     curr = sfs[0]
+    dq = curr.get("data_quality", 1)
+    if dq >= 3:
+        logger.warning(
+            f"[DQ경고] {corp_code} {curr.get('fiscal_year')}년 데이터에 오류(DQ=3) — "
+            f"DCF 결과 신뢰도가 낮을 수 있습니다"
+        )
+    elif dq >= 2:
+        logger.info(
+            f"[DQ주의] {corp_code} {curr.get('fiscal_year')}년 데이터 경고(DQ=2) — "
+            f"검증 권장"
+        )
+
     base_fcf = curr.get("fcf")
     if not base_fcf:
         logger.warning(f"FCF 데이터 없음 — CFO 기반으로 추정합니다.")

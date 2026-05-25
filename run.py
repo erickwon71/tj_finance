@@ -977,6 +977,92 @@ def cmd_sync_prices(args):
     sync_prices(corp_codes=corp_codes, since_year=since)
 
 
+def cmd_screen(args):
+    """
+    재무 조건으로 기업 스크리닝.
+
+    사용:
+      python run.py screen --roe ">15%" --per "<12"
+      python run.py screen --piotroski ">=7" --market KOSPI --sort roe
+      python run.py screen --revenue-growth ">10%" --debt-ratio "<1" --limit 20
+      python run.py screen --roic ">12%" --ev-ebitda "<10" --min-cap 1
+
+    조건 형식:
+      ">15%"   ← % 포함 시 비율값(0.15로 변환)
+      "<12"    ← % 없으면 그대로 사용
+      ">=7"    ← Piotroski 등 정수형
+
+    필터 옵션: --roe --roa --roic --op-margin --net-margin
+               --per --pbr --ev-ebitda --pcr --psr
+               --revenue-growth --op-growth
+               --debt-ratio --current-ratio
+               --piotroski --fcf-quality
+    """
+    from analyzer.screener import screen, print_screen_results
+
+    # 필터 수집
+    filter_keys = [
+        ("roe", "roe"), ("roa", "roa"), ("roic", "roic"),
+        ("op_margin", "op_margin"), ("net_margin", "net_margin"),
+        ("ebitda_margin", "ebitda_margin"),
+        ("per", "per"), ("pbr", "pbr"), ("ev_ebitda", "ev_ebitda"),
+        ("pcr", "pcr"), ("psr", "psr"),
+        ("revenue_growth", "revenue_growth"), ("op_growth", "op_growth"),
+        ("debt_ratio", "debt_ratio"), ("current_ratio", "current_ratio"),
+        ("piotroski", "piotroski"), ("fcf_quality", "fcf_quality"),
+    ]
+    filters = {}
+    for attr_name, filter_key in filter_keys:
+        val = getattr(args, attr_name, None)
+        if val:
+            filters[filter_key] = val
+
+    market  = getattr(args, "market",   None)
+    sort_by = getattr(args, "sort",     "roe")
+    limit   = getattr(args, "limit",    30) or 30
+    year    = getattr(args, "year",     None)
+    min_cap = getattr(args, "min_cap",  None)
+    asc     = getattr(args, "asc",      False)
+
+    results = screen(
+        filters=filters,
+        market=market,
+        sort_by=sort_by,
+        sort_asc=asc,
+        limit=limit,
+        fiscal_year=year,
+        min_market_cap=min_cap,
+    )
+    print_screen_results(results, filters=filters, sort_by=sort_by, market=market)
+
+
+def cmd_compare(args):
+    """
+    여러 기업의 핵심 재무지표를 나란히 비교.
+
+    사용:
+      python run.py compare --compare-corps 00126380,00164779,00164742
+      python run.py compare --compare-corps 00126380,00164779 --sep
+    """
+    from analyzer.comparator import compare, print_compare_results
+
+    corps_str = getattr(args, "compare_corps", None)
+    if not corps_str:
+        logger.error("--corps CORP1,CORP2,... 를 지정하세요.")
+        return
+
+    corp_codes = [c.strip() for c in corps_str.split(",") if c.strip()]
+    if len(corp_codes) < 2:
+        logger.error("비교할 기업을 2개 이상 지정하세요.")
+        return
+
+    sep       = getattr(args, "sep", False)
+    stmt_type = "separate" if sep else "consolidated"
+
+    results = compare(corp_codes, statement_type=stmt_type)
+    print_compare_results(results)
+
+
 # ── CLI 파서 ─────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(
@@ -995,6 +1081,8 @@ def main():
             "parse", "parse-status", "parse-reset", "unknown-accounts",
             # 분석 (Phase 3)
             "aggregate", "analyze", "sync-prices",
+            # 스크리닝 (Phase 4)
+            "screen", "compare",
             # 유지보수
             "deactivate", "cleanup", "reset-html",
         ],
@@ -1073,6 +1161,34 @@ def main():
         choices=["FY", "Q", "H"],
         help="analyze: 기간 모드 — FY=연간 5개년(기본) / Q=최근 8분기 / H=최근 4반기",
     )
+    # ── screen 옵션 ─────────────────────────────────────────────────
+    parser.add_argument("--roe",            metavar="COND", help="ROE 조건 (예: \">15%\")")
+    parser.add_argument("--roa",            metavar="COND", help="ROA 조건")
+    parser.add_argument("--roic",           metavar="COND", help="ROIC 조건")
+    parser.add_argument("--op-margin",      metavar="COND", dest="op_margin",    help="영업이익률 조건")
+    parser.add_argument("--net-margin",     metavar="COND", dest="net_margin",   help="순이익률 조건")
+    parser.add_argument("--ebitda-margin",  metavar="COND", dest="ebitda_margin",help="EBITDA 마진 조건")
+    parser.add_argument("--per",            metavar="COND", help="PER 조건 (예: \"<12\")")
+    parser.add_argument("--pbr",            metavar="COND", help="PBR 조건")
+    parser.add_argument("--ev-ebitda",      metavar="COND", dest="ev_ebitda",    help="EV/EBITDA 조건")
+    parser.add_argument("--pcr",            metavar="COND", help="PCR 조건")
+    parser.add_argument("--psr",            metavar="COND", help="PSR 조건")
+    parser.add_argument("--revenue-growth", metavar="COND", dest="revenue_growth",help="매출 성장률 조건")
+    parser.add_argument("--op-growth",      metavar="COND", dest="op_growth",    help="영업이익 성장률 조건")
+    parser.add_argument("--debt-ratio",     metavar="COND", dest="debt_ratio",   help="부채비율 조건")
+    parser.add_argument("--current-ratio",  metavar="COND", dest="current_ratio",help="유동비율 조건")
+    parser.add_argument("--piotroski",      metavar="COND", help="Piotroski F-Score 조건 (예: \">=7\")")
+    parser.add_argument("--fcf-quality",    metavar="COND", dest="fcf_quality",  help="FCF품질(CFO/순이익) 조건")
+    parser.add_argument("--market",         choices=["KOSPI", "KOSDAQ"],          help="시장 필터")
+    parser.add_argument("--sort",           metavar="FIELD", default="roe",       help="정렬 기준 (기본: roe)")
+    parser.add_argument("--asc",            action="store_true",                   help="오름차순 정렬 (기본: 내림차순)")
+    parser.add_argument("--year",           type=int, metavar="YEAR",             help="기준 연도 (기본: 최신)")
+    parser.add_argument("--min-cap",        type=float, dest="min_cap", metavar="조",
+                        help="최소 시가총액 (조원, 예: 1)")
+    # ── compare 옵션 ────────────────────────────────────────────────
+    parser.add_argument("--compare-corps",  metavar="CORP1,CORP2,...",
+                        dest="compare_corps",
+                        help="compare: 비교할 기업 DART 코드 콤마 구분")
     parser.add_argument(
         "--partial",
         action="store_true",
@@ -1118,6 +1234,9 @@ def main():
         "aggregate":        cmd_aggregate,
         "analyze":          cmd_analyze,
         "sync-prices":      cmd_sync_prices,
+        # 스크리닝 (Phase 4)
+        "screen":           cmd_screen,
+        "compare":          cmd_compare,
         # 유지보수
         "deactivate":       cmd_deactivate,
         "cleanup":          cmd_cleanup,

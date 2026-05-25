@@ -895,14 +895,47 @@ def _parse_single_pdf(task_tuple) -> tuple:
         )
 
     try:
+        primary_path = Path(file_path)
         result = parse_dart_pdf(
-            file_path=Path(file_path),
+            file_path=primary_path,
             rcept_no=rcept_no,
             corp_code=corp_code,
             fiscal_year=fiscal_year or 2000,
             fiscal_period=fiscal_period or "FY",
             report_type=report_type or "annual",
         )
+
+        # ── 별첨 PDF 탐색 및 병합 ──────────────────────────────────────
+        # 같은 폴더의 {rcept_no}_p2.pdf, {rcept_no}_p3.pdf … 를 추가 파싱
+        # ZIP에서 함께 저장됐거나, 향후 별도 저장된 별첨 파일 대응
+        parent_dir = primary_path.parent
+        stem       = primary_path.stem   # = rcept_no
+        extra_pdfs = sorted(parent_dir.glob(f"{stem}_p*.pdf"))
+
+        for extra_path in extra_pdfs:
+            try:
+                extra_result = parse_dart_pdf(
+                    file_path=extra_path,
+                    rcept_no=rcept_no,
+                    corp_code=corp_code,
+                    fiscal_year=fiscal_year or 2000,
+                    fiscal_period=fiscal_period or "FY",
+                    report_type=report_type or "annual",
+                )
+                if extra_result.facts:
+                    logger.debug(
+                        f"  별첨 PDF 병합: {extra_path.name} "
+                        f"({len(extra_result.facts)} facts)"
+                    )
+                    result.facts.extend(extra_result.facts)
+                    result.unknown_accounts_seen.update(
+                        extra_result.unknown_accounts_seen
+                    )
+                    # 연결 재무제표 발견 시 fin_type 갱신
+                    if extra_result.fin_type == 'A':
+                        result.fin_type = 'A'
+            except Exception as e:
+                logger.debug(f"  별첨 PDF 파싱 오류 [{extra_path.name}]: {e}")
 
         fact_count = _save_parsed_facts(result)
 

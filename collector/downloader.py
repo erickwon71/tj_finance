@@ -53,18 +53,58 @@ _EXT_PRIORITY = [".xml", ".xbrl", ".pdf", ".html", ".htm", ".hwp", ".zip"]
 # 여러 개일 때 가장 큰 파일(본문)을 선택할 확장자
 _PICK_LARGEST_EXTS = {".pdf", ".xml", ".xbrl"}
 
+# 재무제표가 담긴 PDF를 식별하는 파일명 키워드 (구형 DART ZIP 대응)
+# 우선순위 순서대로: 재무 관련 키워드 → 가장 큰 파일(폴백)
+_FINANCIAL_PDF_KEYWORDS = [
+    '재무제표', '재무상태표', '손익계산서', '현금흐름표',
+    'financial', '결산', '별첨재무', '첨부재무',
+]
+
+
+def _pick_best_pdf(candidates: list) -> "zipfile.ZipInfo":
+    """
+    ZIP 내 PDF 파일이 여러 개일 때 재무제표가 있을 가능성이 높은 파일 선택.
+
+    선택 기준 (우선순위):
+      1. 재무제표 키워드가 파일명에 포함된 파일 (첫 번째 매칭)
+      2. 없으면 가장 큰 파일 (메인 보고서 본문일 가능성 높음)
+    """
+    for kw in _FINANCIAL_PDF_KEYWORDS:
+        for info in candidates:
+            if kw in info.filename:
+                logger.debug(
+                    f"  PDF 키워드 선택 [{kw}]: {info.filename} "
+                    f"({info.file_size / 1024:.0f} KB)"
+                )
+                return info
+    # 폴백: 가장 큰 파일
+    return max(candidates, key=lambda i: i.file_size)
+
 
 def _pick_best_file_by_size(zf: zipfile.ZipFile) -> Optional[zipfile.ZipInfo]:
     """
     ZIP 내에서 우선순위에 따라 최적 파일 선택.
-    - pdf / xml / xbrl : 여러 개면 가장 큰 파일 (본문 document)
-    - html / hwp / zip : 첫 번째 매칭
+
+    - xml / xbrl: 여러 개면 가장 큰 파일
+    - pdf: 여러 개면 재무제표 키워드 우선, 없으면 가장 큰 파일
+    - html / hwp / zip: 첫 번째 매칭
     ZIP에 아무것도 없으면 None 반환 → 호출부에서 'skipped' 처리.
+
+    비고: 현재 ZIP 한 개당 파일 한 개만 저장 (DownloadTask 1:1 구조).
+          재무제표가 여러 별첨 PDF에 분산된 경우 주 파일만 저장되며,
+          나머지는 파싱 대상에서 제외됨 (구형 2000~2005년 보고서 일부 해당).
     """
     infos = zf.infolist()
     for ext in _EXT_PRIORITY:
         candidates = [i for i in infos if i.filename.lower().endswith(ext)]
         if candidates:
+            if ext == ".pdf":
+                if len(candidates) > 1:
+                    logger.debug(
+                        f"  ZIP 내 PDF {len(candidates)}개 발견 → "
+                        f"재무제표 키워드 우선 선택"
+                    )
+                return _pick_best_pdf(candidates)
             if ext in _PICK_LARGEST_EXTS:
                 return max(candidates, key=lambda i: i.file_size)
             return candidates[0]
@@ -344,7 +384,7 @@ def _download_one(
                 # ── 그 외 오류: 일시적 서버 문제 가능 → failed ───
                 raise ValueError(err_msg)
 
-        # ── ZIP 파싱 → 최적 파일 선택 ────────────────────────
+        # ── ZIP 파싱 → 파일 선택 및 저장 ─────────────────────
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             best = _pick_best_file_by_size(zf)
             if best is None:
@@ -373,13 +413,33 @@ def _download_one(
                 _mark_completed(task.rcept_no, dest_path, ext, best.file_size)
                 return True
 
-            # 압축 해제 → 저장
+            # 압축 해제 → 저장 (primary)
             tmp_path = TMP_DIR / f"{task.rcept_no}{ext}"
             with zf.open(best) as src, open(tmp_path, "wb") as dst:
                 shutil.copyfileobj(src, dst)
-
-            # 원자적 이동 (부분 파일 방지)
             shutil.move(str(tmp_path), dest_path)
+
+            # ── PDF: 나머지 PDF 파일도 모두 저장 (병렬 재무제표 탐색용) ──
+            # DART 구형 보고서는 재무제표가 별첨 PDF로 분리된 경우 있음
+            # 형식: {rcept_no}_p2.pdf, {rcept_no}_p3.pdf …
+            if ext == ".pdf":
+                other_pdfs = [
+                    i for i in zf.infolist()
+                    if i.filename.lower().endswith(".pdf") and i != best
+                ]
+                for n, extra_info in enumerate(other_pdfs, 2):
+                    extra_path = dest_dir / f"{task.rcept_no}_p{n}.pdf"
+                    if extra_path.exists():
+                        continue
+                    tmp_extra = TMP_DIR / f"{task.rcept_no}_p{n}.pdf"
+                    with zf.open(extra_info) as src, open(tmp_extra, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    shutil.move(str(tmp_extra), extra_path)
+                if other_pdfs:
+                    logger.debug(
+                        f"  + 별첨 PDF {len(other_pdfs)}개 추가 저장 "
+                        f"(_p2~_p{len(other_pdfs)+1})"
+                    )
 
         file_size = dest_path.stat().st_size
         logger.success(

@@ -83,9 +83,15 @@ def parse_amount_cell(cell: Optional[str], multiplier: int = 1) -> Optional[int]
 
     try:
         amount = int(digits) * multiplier
-        return -amount if is_negative else amount
     except (ValueError, OverflowError):
         return None
+
+    # PostgreSQL bigint 범위 초과 → 파싱 오류(셀 연결 등) 로 간주
+    # 한국 최대 기업도 개별 계정 50조원(5×10^13) 이하 → 10^15 이상은 비현실적
+    if abs(amount) > 10 ** 15:
+        return None
+
+    return -amount if is_negative else amount
 
 
 # ── 헤더 판별 ─────────────────────────────────────────────────────────

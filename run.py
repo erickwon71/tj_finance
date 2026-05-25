@@ -858,6 +858,304 @@ def cmd_parse_reset(args):
         logger.info("  이제 'python run.py parse' 로 재파싱을 실행하세요.")
 
 
+# ════════════════════════════════════════════════════════════════════════
+# Phase 5B: PDF 파싱
+# ════════════════════════════════════════════════════════════════════════
+
+def _parse_single_pdf(task_tuple) -> tuple:
+    """
+    단일 PDF 파일 파싱 워커.
+
+    Returns:
+        (parse_status, fact_count, parser_track, unknown_accs_dict)
+    """
+    from sqlalchemy import text
+    from pathlib import Path
+    from collector.db import get_session
+    from parser.pdf.dart_pdf_parser import parse_dart_pdf
+    from parser.common.amount_normalizer import normalize_account_name
+
+    rcept_no, file_path, corp_code, fiscal_year, fiscal_period, report_type = task_tuple
+
+    # 파일 존재 확인
+    if not file_path or not Path(file_path).exists():
+        with get_session() as s:
+            s.execute(
+                text("UPDATE download_tasks SET parse_status='skip',"
+                     " parse_error='파일 없음' WHERE rcept_no=:r"),
+                {"r": rcept_no},
+            )
+        return ("skip", 0, "PDF", {})
+
+    # parsing 상태 마킹
+    with get_session() as s:
+        s.execute(
+            text("UPDATE download_tasks SET parse_status='parsing' WHERE rcept_no=:r"),
+            {"r": rcept_no},
+        )
+
+    try:
+        result = parse_dart_pdf(
+            file_path=Path(file_path),
+            rcept_no=rcept_no,
+            corp_code=corp_code,
+            fiscal_year=fiscal_year or 2000,
+            fiscal_period=fiscal_period or "FY",
+            report_type=report_type or "annual",
+        )
+
+        fact_count = _save_parsed_facts(result)
+
+        # unknown 계정 집계
+        unknown_accs: dict[str, dict] = {}
+        for norm, info in result.unknown_accounts_seen.items():
+            entry = unknown_accs.setdefault(norm, {
+                "fs_type":   info["fs_type"],
+                "corp_code": corp_code,
+                "count":     0,
+            })
+            entry["count"] += info["count"]
+
+        # 최종 상태 갱신
+        with get_session() as s:
+            s.execute(text("""
+                UPDATE download_tasks
+                SET parse_status = :status,
+                    parsed_facts = :facts,
+                    parser_track = :track,
+                    parsed_at    = NOW(),
+                    parse_error  = NULL
+                WHERE rcept_no = :r
+            """), {
+                "status": result.parse_status,
+                "facts":  fact_count,
+                "track":  result.parser_track,
+                "r":      rcept_no,
+            })
+
+        return (result.parse_status, fact_count, result.parser_track, unknown_accs)
+
+    except Exception as exc:
+        err_msg = str(exc)[:1000]
+        try:
+            with get_session() as s:
+                s.execute(text("""
+                    UPDATE download_tasks
+                    SET parse_status='failed', parse_error=:err
+                    WHERE rcept_no=:r
+                """), {"err": err_msg, "r": rcept_no})
+        except Exception:
+            pass
+        return ("failed", 0, "PDF", {"__exception__": {"fs_type": "??", "corp_code": corp_code,
+                                                        "count": 0, "_err": err_msg}})
+
+
+def cmd_parse_pdf(args):
+    """
+    다운로드된 PDF 파일을 파싱해 financial_facts 저장 (Phase 5B).
+
+    대상: download_tasks.status='completed' AND file_type='pdf'
+          AND (parse_status IS NULL OR parse_status='pending')
+
+    옵션:
+      --workers N  : 병렬 서브프로세스 수 (기본값 2)
+      --corp CODE  : 특정 기업만 파싱
+      --limit N    : 최대 처리 건 수
+    """
+    import subprocess, sys
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    corp_code_filter = getattr(args, "corp", None)
+    limit            = getattr(args, "limit", None)
+    workers          = getattr(args, "workers", 2)
+    worker_id        = getattr(args, "worker_id", None)
+    total_workers    = getattr(args, "total_workers", 1)
+
+    # ── 워커 모드: 실제 파싱 실행 ────────────────────────────────────
+    if worker_id is not None:
+        _run_pdf_parse_worker(worker_id, total_workers, corp_code_filter, limit)
+        return
+
+    # ── 관리자 모드 ──────────────────────────────────────────────────
+    if workers <= 1:
+        _run_pdf_parse_worker(0, 1, corp_code_filter, limit)
+        return
+
+    logger.info(f"PDF 병렬 파싱 시작: workers={workers}")
+    base_cmd = [sys.executable, __file__,
+                "parse-pdf",
+                "--worker-id", "0",
+                "--total-workers", str(workers)]
+    if corp_code_filter:
+        base_cmd += ["--corp", corp_code_filter]
+    if limit:
+        per = max(1, limit // workers)
+        base_cmd += ["--limit", str(per)]
+
+    procs = []
+    for wid in range(workers):
+        cmd = base_cmd[:]
+        idx = cmd.index("0")
+        cmd[idx] = str(wid)
+        p = subprocess.Popen(cmd)
+        procs.append(p)
+        logger.info(f"  PDF 워커 {wid} PID={p.pid} 시작")
+
+    for p in procs:
+        p.wait()
+
+    logger.success(f"PDF 병렬 파싱 완료 (workers={workers})")
+    _print_pdf_parse_status()
+
+
+def _run_pdf_parse_worker(worker_id: int, total_workers: int,
+                          corp_code_filter, limit):
+    """PDF 파싱 루프 워커"""
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    partition_clause = (
+        f" AND ABS(HASHTEXT(dt.rcept_no)) % {total_workers} = {worker_id}\n"
+        if total_workers > 1 else ""
+    )
+    limit_clause = f"LIMIT {int(limit)}" if limit else ""
+    sql = f"""
+        SELECT dt.rcept_no, dt.file_path,
+               f.corp_code, f.fiscal_year, f.fiscal_period, f.report_type
+        FROM download_tasks dt
+        JOIN filings f ON f.rcept_no = dt.rcept_no
+        WHERE dt.status = 'completed'
+          AND dt.file_type = 'pdf'
+          AND (dt.parse_status IS NULL OR dt.parse_status = 'pending')
+          AND f.is_final = TRUE
+          AND dt.file_path IS NOT NULL
+        {partition_clause}
+        ORDER BY f.fiscal_year DESC, dt.rcept_no
+        {limit_clause}
+    """
+    params: dict = {}
+    if corp_code_filter:
+        sql = sql.replace("AND dt.file_path IS NOT NULL",
+                          "AND dt.file_path IS NOT NULL\n  AND f.corp_code = :corp_code")
+        params["corp_code"] = corp_code_filter
+
+    with get_session() as session:
+        tasks = [tuple(row) for row in session.execute(text(sql), params).fetchall()]
+
+    if not tasks:
+        logger.info(f"[W{worker_id}] PDF 파싱 대상 없음")
+        return
+
+    total = len(tasks)
+    pfx = f"[W{worker_id}]" if total_workers > 1 else ""
+    logger.info(f"{pfx} PDF 파싱 대상: {total:,}건")
+
+    success_cnt = partial_cnt = failed_cnt = skip_cnt = 0
+    total_facts  = 0
+    unknown_acc: dict[str, dict] = {}
+
+    for idx, task in enumerate(tasks, 1):
+        status, fact_count, _, unknowns = _parse_single_pdf(task)
+
+        if status == "success":
+            success_cnt += 1
+        elif status == "partial":
+            partial_cnt += 1
+        elif status == "skip":
+            skip_cnt += 1
+        else:
+            failed_cnt += 1
+        total_facts += fact_count or 0
+
+        for norm, info in unknowns.items():
+            if norm.startswith("__exception__"):
+                continue
+            entry = unknown_acc.setdefault(norm, {
+                "fs_type": info["fs_type"], "corp_code": info["corp_code"], "count": 0
+            })
+            entry["count"] += info["count"]
+
+        if idx % 50 == 0 or idx == total:
+            pct = idx / total * 100
+            logger.info(
+                f"{pfx} {idx:,}/{total:,} ({pct:.1f}%)  "
+                f"성공:{success_cnt}  부분:{partial_cnt}  스킵:{skip_cnt}  "
+                f"실패:{failed_cnt}  facts:{total_facts:,}"
+            )
+        elif status == "failed":
+            logger.error(f"{pfx} PDF 실패 [{task[0]}]")
+
+    if unknown_acc:
+        _upsert_unknown_accounts(unknown_acc)
+        logger.info(f"{pfx} 미매핑 계정 {len(unknown_acc)}종 기록")
+
+    logger.success(
+        f"{pfx} PDF 완료 — 성공:{success_cnt}  부분:{partial_cnt}  "
+        f"스킵:{skip_cnt}  실패:{failed_cnt}  facts:{total_facts:,}"
+    )
+
+
+def _print_pdf_parse_status():
+    """PDF parse-status 요약 출력 (내부 헬퍼)"""
+    from sqlalchemy import text
+    from collector.db import get_session
+    with get_session() as s:
+        row = s.execute(text("""
+            SELECT
+                COUNT(*) FILTER (WHERE parse_status='success')  AS success,
+                COUNT(*) FILTER (WHERE parse_status='partial')  AS partial,
+                COUNT(*) FILTER (WHERE parse_status='skip')     AS skip,
+                COUNT(*) FILTER (WHERE parse_status='failed')   AS failed,
+                COALESCE(SUM(parsed_facts),0)                   AS total_facts
+            FROM download_tasks
+            WHERE file_type='pdf'
+        """)).fetchone()
+    if row:
+        logger.info(
+            f"  PDF 파싱 누계 — 성공:{row.success}  부분:{row.partial}  "
+            f"스킵:{row.skip}  실패:{row.failed}  총facts:{row.total_facts:,}"
+        )
+
+
+def cmd_parse_pdf_reset(args):
+    """
+    PDF parse_status를 NULL로 재등록 → parse-pdf 재시도 대상에 포함.
+
+    옵션:
+      --all    : success/partial/failed/skip 포함 전체 재등록
+      기본값   : failed 만 재등록
+    """
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    reset_all = getattr(args, "all", False)
+
+    with get_session() as session:
+        if reset_all:
+            result = session.execute(text("""
+                UPDATE download_tasks
+                SET parse_status = NULL, parse_error = NULL
+                WHERE file_type = 'pdf'
+                  AND parse_status IN ('success', 'partial', 'failed', 'skip')
+            """))
+            label = "PDF 전체"
+        else:
+            result = session.execute(text("""
+                UPDATE download_tasks
+                SET parse_status = NULL, parse_error = NULL
+                WHERE file_type = 'pdf'
+                  AND parse_status = 'failed'
+            """))
+            label = "PDF 실패"
+
+        count = result.rowcount
+
+    logger.success(f"{label} 재등록: {count}건 → parse_status=NULL")
+    if count:
+        logger.info("  이제 'python run.py parse-pdf' 로 재파싱을 실행하세요.")
+
+
 def cmd_unknown_accounts(args):
     """
     미매핑 계정과목 목록 출력.
@@ -1290,6 +1588,8 @@ def main():
             "status", "failed", "reset-failed", "all",
             # 파싱 (Phase 2)
             "parse", "parse-status", "parse-reset", "unknown-accounts",
+            # PDF 파싱 (Phase 5B)
+            "parse-pdf", "parse-pdf-reset",
             # 분석 (Phase 3)
             "aggregate", "analyze", "sync-prices",
             # 스크리닝 (Phase 4)
@@ -1472,6 +1772,9 @@ def main():
         "dividend":         cmd_dividend,
         # 검증 (Phase 5A)
         "validate":         cmd_validate,
+        # PDF 파싱 (Phase 5B)
+        "parse-pdf":        cmd_parse_pdf,
+        "parse-pdf-reset":  cmd_parse_pdf_reset,
         # 유지보수
         "deactivate":       cmd_deactivate,
         "cleanup":          cmd_cleanup,

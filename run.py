@@ -864,7 +864,12 @@ def cmd_parse_reset(args):
 
 def _parse_single_pdf(task_tuple) -> tuple:
     """
-    단일 PDF 파일 파싱 워커.
+    Parse a single PDF file, applying amendment handling when applicable.
+
+    task_tuple: (rcept_no, file_path, corp_code, fiscal_year, fiscal_period,
+                 report_type, is_amendment, orig_rcept_no, orig_file_path)
+      - is_amendment: True if this filing is a 기재정정(amendment)
+      - orig_rcept_no / orig_file_path: original filing info (may be None)
 
     Returns:
         (parse_status, fact_count, parser_track, unknown_accs_dict)
@@ -873,9 +878,18 @@ def _parse_single_pdf(task_tuple) -> tuple:
     from pathlib import Path
     from collector.db import get_session
     from parser.pdf.dart_pdf_parser import parse_dart_pdf
+    from parser.pdf.pdf_amendment_handler import parse_pdf_with_amendment
     from parser.common.amount_normalizer import normalize_account_name
 
-    rcept_no, file_path, corp_code, fiscal_year, fiscal_period, report_type = task_tuple
+    # Unpack — tolerate both old 6-tuple and new 9-tuple (backward compat)
+    if len(task_tuple) == 9:
+        (rcept_no, file_path, corp_code, fiscal_year, fiscal_period,
+         report_type, is_amendment, orig_rcept_no, orig_file_path) = task_tuple
+    else:
+        rcept_no, file_path, corp_code, fiscal_year, fiscal_period, report_type = task_tuple
+        is_amendment   = False
+        orig_rcept_no  = None
+        orig_file_path = None
 
     # 파일 존재 확인
     if not file_path or not Path(file_path).exists():
@@ -896,18 +910,37 @@ def _parse_single_pdf(task_tuple) -> tuple:
 
     try:
         primary_path = Path(file_path)
-        result = parse_dart_pdf(
-            file_path=primary_path,
-            rcept_no=rcept_no,
-            corp_code=corp_code,
-            fiscal_year=fiscal_year or 2000,
-            fiscal_period=fiscal_period or "FY",
-            report_type=report_type or "annual",
-        )
+        fy    = fiscal_year   or 2000
+        fp    = fiscal_period or "FY"
+        rtype = report_type   or "annual"
 
-        # ── 별첨 PDF 탐색 및 병합 ──────────────────────────────────────
-        # 같은 폴더의 {rcept_no}_p2.pdf, {rcept_no}_p3.pdf … 를 추가 파싱
-        # ZIP에서 함께 저장됐거나, 향후 별도 저장된 별첨 파일 대응
+        # ── Amendment handling ────────────────────────────────────────
+        # When is_amendment=True and the original PDF is available,
+        # classify the amendment type and apply the correct merge strategy.
+        if is_amendment:
+            orig_path = Path(orig_file_path) if orig_file_path else None
+            result = parse_pdf_with_amendment(
+                orig_path     = orig_path,
+                amend_path    = primary_path,
+                rcept_no      = rcept_no,
+                corp_code     = corp_code,
+                fiscal_year   = fy,
+                fiscal_period = fp,
+                report_type   = rtype,
+                rcept_no_orig = orig_rcept_no,
+            )
+        else:
+            result = parse_dart_pdf(
+                file_path     = primary_path,
+                rcept_no      = rcept_no,
+                corp_code     = corp_code,
+                fiscal_year   = fy,
+                fiscal_period = fp,
+                report_type   = rtype,
+            )
+
+        # ── Supplemental PDFs: {rcept_no}_p2.pdf, _p3.pdf … ──────────
+        # Merge facts from split-ZIP attachments stored alongside main file.
         parent_dir = primary_path.parent
         stem       = primary_path.stem   # = rcept_no
         extra_pdfs = sorted(parent_dir.glob(f"{stem}_p*.pdf"))
@@ -1053,24 +1086,49 @@ def _run_pdf_parse_worker(worker_id: int, total_workers: int,
         if total_workers > 1 else ""
     )
     limit_clause = f"LIMIT {int(limit)}" if limit else ""
+    corp_clause  = "AND f.corp_code = :corp_code" if corp_code_filter else ""
+
+    # For amendment PDFs, LEFT JOIN to fetch the original filing's file_path
+    # so the amendment handler can use the original as the base data source.
     sql = f"""
-        SELECT dt.rcept_no, dt.file_path,
-               f.corp_code, f.fiscal_year, f.fiscal_period, f.report_type
+        SELECT
+            dt.rcept_no,
+            dt.file_path,
+            f.corp_code,
+            f.fiscal_year,
+            f.fiscal_period,
+            f.report_type,
+            f.is_amendment,
+            f_orig.rcept_no   AS orig_rcept_no,
+            dt_orig.file_path AS orig_file_path
         FROM download_tasks dt
         JOIN filings f ON f.rcept_no = dt.rcept_no
+        -- For amendments: find the matching original filing in same corp/period
+        LEFT JOIN filings f_orig ON (
+            f.is_amendment = TRUE
+            AND f_orig.corp_code    = f.corp_code
+            AND f_orig.report_type  = f.report_type
+            AND f_orig.fiscal_year  = f.fiscal_year
+            AND f_orig.fiscal_period = f.fiscal_period
+            AND f_orig.is_amendment = FALSE
+        )
+        LEFT JOIN download_tasks dt_orig ON (
+            dt_orig.rcept_no  = f_orig.rcept_no
+            AND dt_orig.file_type = 'pdf'
+            AND dt_orig.status    = 'completed'
+        )
         WHERE dt.status = 'completed'
           AND dt.file_type = 'pdf'
           AND (dt.parse_status IS NULL OR dt.parse_status = 'pending')
           AND (f.is_final = TRUE OR f.is_amendment = FALSE)
           AND dt.file_path IS NOT NULL
+          {corp_clause}
         {partition_clause}
-        ORDER BY f.fiscal_year DESC, dt.rcept_no
+        ORDER BY f.fiscal_year DESC, f.is_amendment, dt.rcept_no
         {limit_clause}
     """
     params: dict = {}
     if corp_code_filter:
-        sql = sql.replace("AND dt.file_path IS NOT NULL",
-                          "AND dt.file_path IS NOT NULL\n  AND f.corp_code = :corp_code")
         params["corp_code"] = corp_code_filter
 
     with get_session() as session:

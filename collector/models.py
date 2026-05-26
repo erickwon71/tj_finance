@@ -3,6 +3,7 @@ SQLAlchemy ORM 모델 정의
 테이블:
   Phase 1: corporations / filings / download_tasks / collection_runs
   Phase 2: financial_facts / unknown_accounts / standard_financials / stock_prices
+  Phase 6: executives / order_backlog
 """
 from datetime import datetime
 from sqlalchemy import (
@@ -109,7 +110,7 @@ class DownloadTask(Base):
     parse_error      = Column(Text,       nullable=True)
     parsed_at        = Column(DateTime,   nullable=True)
     parsed_facts     = Column(Integer,    nullable=True, comment="추출된 fact 행 수")
-    parser_track     = Column(String(3),  nullable=True, comment="A/B/PDF")
+    parser_track     = Column(String(15), nullable=True, comment="A/B/PDF/PDF_AMEND")
 
     filing           = relationship("Filing", back_populates="download_task")
 
@@ -185,7 +186,7 @@ class FinancialFact(Base):
     source_format         = Column(String(15),   nullable=False,
                                     comment="xbrl_acode / xml_text / pdf_plumber / pdf_camelot / pdf_ocr")
     extraction_confidence = Column(Float,        default=1.0)
-    parser_track          = Column(String(3),    nullable=True,  comment="A / B / PDF")
+    parser_track          = Column(String(15),   nullable=True,  comment="A / B / PDF / PDF_AMEND")
     is_superseded         = Column(Boolean,      default=False,  comment="기재정정으로 대체된 데이터")
     parsed_at             = Column(DateTime,     default=datetime.utcnow)
 
@@ -339,4 +340,64 @@ class StockPrice(Base):
     __table_args__ = (
         UniqueConstraint("stock_code", "trade_date", name="uq_stock_prices"),
         Index("ix_sp_stock_date", "stock_code", "trade_date"),
+    )
+
+
+# ── 9. 임원 현황 ────────────────────────────────────────────────────────────
+class Executive(Base):
+    """
+    DART exctvSttus API 기반 임원 현황.
+    hmvAuditIndvdlBySttus API로 5억원 이상 고액 보수도 병합.
+    """
+    __tablename__ = "executives"
+
+    id              = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code       = Column(String(8),    nullable=False,   index=True)
+    fiscal_year     = Column(SmallInteger, nullable=False)
+    name            = Column(String(50),   nullable=False)
+    gender          = Column(String(4),    nullable=True)   # 남/여
+    birth_ym        = Column(String(10),   nullable=True)   # "1968.06"
+    position        = Column(String(150),  nullable=True)   # 직위
+    is_registered   = Column(Boolean,      nullable=True)   # 등기임원 여부
+    is_fulltime     = Column(Boolean,      nullable=True)   # 상근 여부
+    responsibility  = Column(String(300),  nullable=True)   # 담당업무
+    main_career     = Column(String(500),  nullable=True)   # 주요경력
+    shareholder_rel = Column(String(100),  nullable=True)   # 최대주주관계
+    tenure_period   = Column(String(60),   nullable=True)   # "2016.11.01 ~ 2026.03.31"
+    tenure_end      = Column(String(20),   nullable=True)   # 임기만료일
+    compensation    = Column(BigInteger,   nullable=True,
+                             comment="보수총액(원), DART 5억이상 공시 기준")
+    fetched_at      = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("corp_code", "fiscal_year", "name", "position",
+                         name="uq_executives"),
+        Index("ix_exec_corp_year", "corp_code", "fiscal_year"),
+    )
+
+
+# ── 10. 수주잔고 ────────────────────────────────────────────────────────────
+class OrderBacklog(Base):
+    """
+    수주잔고 (건설/조선/방산/반도체 등 수주 기반 업종).
+    사업보고서 '수주상황' 섹션 파싱 결과 저장.
+    """
+    __tablename__ = "order_backlog"
+
+    id           = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code    = Column(String(8),    nullable=False,   index=True)
+    fiscal_year  = Column(SmallInteger, nullable=False)
+    category     = Column(String(150),  nullable=True)   # 수주 분류 (품목/계약처)
+    backlog_amt  = Column(BigInteger,   nullable=True)   # 수주잔고 (원)
+    new_orders   = Column(BigInteger,   nullable=True)   # 당기 신규수주
+    completed    = Column(BigInteger,   nullable=True)   # 당기 완성/납품
+    unit         = Column(String(20),   nullable=True,
+                          comment="원래 공시 단위 (억원/백만원 등)")
+    source       = Column(String(20),   nullable=True,
+                          comment="html_parse / dart_api")
+    rcept_no     = Column(String(14),   nullable=True)
+    fetched_at   = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_order_corp_year", "corp_code", "fiscal_year"),
     )

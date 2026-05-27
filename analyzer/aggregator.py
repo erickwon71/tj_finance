@@ -308,7 +308,7 @@ def aggregate_corp(
                       AND ff2.fs_type        NOT LIKE 'NOTE%'
                       AND NOT ff2.is_superseded
                     GROUP BY ff2.rcept_no
-                    ORDER BY COUNT(*) DESC
+                    ORDER BY COUNT(*) DESC, ff2.rcept_no DESC
                     LIMIT 1
                 ),
                 (
@@ -322,7 +322,7 @@ def aggregate_corp(
                       AND ff3.fs_type        NOT LIKE 'NOTE%'
                       AND NOT ff3.is_superseded
                     GROUP BY ff3.rcept_no
-                    ORDER BY COUNT(*) DESC
+                    ORDER BY COUNT(*) DESC, ff3.rcept_no DESC
                     LIMIT 1
                 ),
                 (
@@ -334,7 +334,7 @@ def aggregate_corp(
                       AND ff4.statement_type = ff.statement_type
                       AND NOT ff4.is_superseded
                     GROUP BY ff4.rcept_no
-                    ORDER BY COUNT(*) DESC
+                    ORDER BY COUNT(*) DESC, ff4.rcept_no DESC
                     LIMIT 1
                 )
             ) AS best_rcept_no

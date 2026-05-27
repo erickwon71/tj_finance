@@ -337,25 +337,38 @@ def _sync_one_corp(
                     .values(market=market, updated_at=datetime.utcnow())
                 )
 
-        # is_final=True인 공시에 대해 download_task 생성 (없는 것만)
-        final_rcept_nos = session.scalars(
-            select(Filing.rcept_no).where(
-                Filing.corp_code == corp.corp_code,
-                Filing.is_final  == True,
-            )
-        ).all()
+        # download_task 생성: is_final=True + 기재정정 그룹의 원본도 포함
+        from sqlalchemy import text as _text
+        target_rcept_nos = [
+            r[0] for r in session.execute(_text("""
+                SELECT DISTINCT f.rcept_no
+                FROM filings f
+                WHERE f.corp_code = :corp
+                  AND (
+                    f.is_final = TRUE
+                    OR EXISTS (
+                      SELECT 1 FROM filings f2
+                      WHERE f2.corp_code     = f.corp_code
+                        AND f2.report_type   = f.report_type
+                        AND f2.fiscal_year   = f.fiscal_year
+                        AND f2.fiscal_period = f.fiscal_period
+                        AND f2.is_amendment  = TRUE
+                    )
+                  )
+            """), {"corp": corp.corp_code}).fetchall()
+        ]
 
         existing_tasks = set(
             session.scalars(
                 select(DownloadTask.rcept_no).where(
-                    DownloadTask.rcept_no.in_(final_rcept_nos)
+                    DownloadTask.rcept_no.in_(target_rcept_nos)
                 )
             ).all()
-        )
+        ) if target_rcept_nos else set()
 
         new_tasks = [
             DownloadTask(rcept_no=rn, status="pending")
-            for rn in final_rcept_nos
+            for rn in target_rcept_nos
             if rn not in existing_tasks
         ]
         if new_tasks:

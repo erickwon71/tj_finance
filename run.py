@@ -114,7 +114,6 @@ def _get_active_corp_codes() -> list[str]:
             JOIN filings f ON f.corp_code = c.corp_code
             JOIN download_tasks dt ON dt.rcept_no = f.rcept_no
             WHERE c.is_active = TRUE
-              AND f.is_final = TRUE
               AND dt.status IN ('pending', 'failed')
             ORDER BY c.corp_code
         """)).fetchall()
@@ -327,7 +326,7 @@ def _parse_single(task_tuple) -> tuple:
     from parser.xml.dart_xml_parser import parse_dart_xml
     from parser.common.amount_normalizer import normalize_account_name
 
-    rcept_no, file_path, corp_code, fiscal_year, fiscal_period, report_type = task_tuple
+    rcept_no, file_path, corp_code, fiscal_year, fiscal_period, report_type = task_tuple[:6]
 
     # 파일 존재 확인
     if not file_path or not Path(file_path).exists():
@@ -526,16 +525,17 @@ def _run_parse_worker(worker_id: int, total_workers: int,
     limit_clause = f"LIMIT {int(limit)}" if limit else ""
     sql = f"""
         SELECT dt.rcept_no, dt.file_path,
-               f.corp_code, f.fiscal_year, f.fiscal_period, f.report_type
+               f.corp_code, f.fiscal_year, f.fiscal_period, f.report_type,
+               f.is_amendment
         FROM download_tasks dt
         JOIN filings f ON f.rcept_no = dt.rcept_no
         WHERE dt.status = 'completed'
           AND dt.file_type = 'xml'
           AND (dt.parse_status IS NULL OR dt.parse_status = 'pending')
-          AND (f.is_final = TRUE OR f.is_amendment = FALSE)
           AND dt.file_path IS NOT NULL
         {partition_clause}
-        ORDER BY f.fiscal_year DESC, dt.rcept_no
+        ORDER BY f.corp_code, f.fiscal_year DESC, f.fiscal_period,
+                 f.is_amendment ASC, dt.rcept_no ASC
         {limit_clause}
     """
     params: dict = {}
@@ -560,8 +560,11 @@ def _run_parse_worker(worker_id: int, total_workers: int,
     unknown_acc: dict[str, dict] = {}
 
     for idx, task in enumerate(tasks, 1):
-        rcept_no, file_path, corp_code, fiscal_year, fiscal_period, report_type = task
+        rcept_no, file_path, corp_code, fiscal_year, fiscal_period, report_type, is_amendment = task
         status, fact_count, _, unknowns = _parse_single(task)
+
+        if is_amendment and status in ("success", "partial") and fact_count > 0:
+            _manage_superseded(rcept_no, corp_code, fiscal_year, fiscal_period)
 
         # 카운터 업데이트
         if status == "success":
@@ -699,6 +702,66 @@ def _save_parsed_facts(result) -> int:
             session.execute(stmt)
 
     return len(records)
+
+
+def _manage_superseded(
+    amend_rcept_no: str,
+    corp_code: str,
+    fiscal_year: int,
+    fiscal_period: str,
+):
+    """
+    기재정정 파싱 완료 후, 같은 기간의 원본 facts를 supersede할지 결정.
+
+    기준: 기재정정의 BS+IS+CF facts (col_index=0, non-NOTE) >= 10건
+          AND 원본 facts의 50% 이상이면 → 원본 is_superseded=True
+    """
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    with get_session() as s:
+        orig_rcepts = s.execute(text("""
+            SELECT f_orig.rcept_no
+            FROM filings f_amend
+            JOIN filings f_orig ON (
+                f_orig.corp_code     = f_amend.corp_code
+                AND f_orig.report_type   = f_amend.report_type
+                AND f_orig.fiscal_year   = f_amend.fiscal_year
+                AND f_orig.fiscal_period = f_amend.fiscal_period
+                AND f_orig.is_amendment  = FALSE
+            )
+            WHERE f_amend.rcept_no = :amend
+        """), {"amend": amend_rcept_no}).fetchall()
+
+        if not orig_rcepts:
+            return
+
+        amend_cnt = s.execute(text("""
+            SELECT COUNT(*) FROM financial_facts
+            WHERE rcept_no = :rn AND fs_type NOT LIKE 'NOTE%%'
+              AND col_index = 0 AND NOT is_superseded
+        """), {"rn": amend_rcept_no}).scalar() or 0
+
+        if amend_cnt < 10:
+            return
+
+        for row in orig_rcepts:
+            orig_rn = row[0]
+            orig_cnt = s.execute(text("""
+                SELECT COUNT(*) FROM financial_facts
+                WHERE rcept_no = :rn AND fs_type NOT LIKE 'NOTE%%'
+                  AND col_index = 0 AND NOT is_superseded
+            """), {"rn": orig_rn}).scalar() or 0
+
+            if orig_cnt == 0:
+                continue
+
+            if amend_cnt >= orig_cnt * 0.5:
+                s.execute(text("""
+                    UPDATE financial_facts
+                    SET is_superseded = TRUE
+                    WHERE rcept_no = :rn AND corp_code = :corp
+                """), {"rn": orig_rn, "corp": corp_code})
 
 
 def _upsert_unknown_accounts(accumulator: dict) -> None:
@@ -1120,11 +1183,11 @@ def _run_pdf_parse_worker(worker_id: int, total_workers: int,
         WHERE dt.status = 'completed'
           AND dt.file_type = 'pdf'
           AND (dt.parse_status IS NULL OR dt.parse_status = 'pending')
-          AND (f.is_final = TRUE OR f.is_amendment = FALSE)
           AND dt.file_path IS NOT NULL
           {corp_clause}
         {partition_clause}
-        ORDER BY f.fiscal_year DESC, f.is_amendment, dt.rcept_no
+        ORDER BY f.corp_code, f.fiscal_year DESC, f.fiscal_period,
+                 f.is_amendment ASC, dt.rcept_no ASC
         {limit_clause}
     """
     params: dict = {}
@@ -1148,6 +1211,12 @@ def _run_pdf_parse_worker(worker_id: int, total_workers: int,
 
     for idx, task in enumerate(tasks, 1):
         status, fact_count, _, unknowns = _parse_single_pdf(task)
+
+        # task: (rcept_no, file_path, corp_code, fiscal_year, fiscal_period,
+        #        report_type, is_amendment, orig_rcept_no, orig_file_path)
+        _rn, _fp, _corp, _fy, _fper, _rt, _is_amend = task[0], task[1], task[2], task[3], task[4], task[5], task[6]
+        if _is_amend and status in ("success", "partial") and (fact_count or 0) > 0:
+            _manage_superseded(_rn, _corp, _fy, _fper)
 
         if status == "success":
             success_cnt += 1
@@ -1395,6 +1464,176 @@ def cmd_enqueue_originals(args):
         print("  python run.py download      # 원본 공시 다운로드")
     print("  python run.py parse         # XML 원본 파싱")
     print("  python run.py parse-pdf     # PDF 원본 파싱")
+
+
+def cmd_enqueue_missing_finals(args):
+    """
+    is_final=True 이지만 download_tasks에 한 번도 등록되지 않은 공시를 일괄 enqueue.
+
+    배경:
+      filing_collector는 sync 시점의 is_final=True 공시에만 download_task를 생성한다.
+      그런데 나중에 기재정정이 올라와 is_final이 바뀐 경우, 새 최종본에
+      download_task가 생성되지 않아 영구 누락 상태로 남는다.
+
+    대상:
+      filings.is_final = TRUE
+      AND rcept_no NOT IN (SELECT rcept_no FROM download_tasks)
+
+    --dry-run: 대상 건수와 샘플만 출력, DB 변경 없음
+    """
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    dry_run = getattr(args, "dry_run", False)
+
+    with get_session() as s:
+        rows = s.execute(text("""
+            SELECT f.rcept_no, f.corp_code, f.corp_name, f.report_nm,
+                   f.report_type, f.is_amendment, f.filed_at
+            FROM filings f
+            WHERE f.is_final = TRUE
+              AND NOT EXISTS (
+                  SELECT 1 FROM download_tasks dt WHERE dt.rcept_no = f.rcept_no
+              )
+            ORDER BY f.filed_at DESC
+        """)).fetchall()
+
+        if not rows:
+            print("✓ 누락된 최종본 없음")
+            return
+
+        print(f"누락 최종본: {len(rows):,}건")
+
+        # 유형별 집계
+        from collections import Counter
+        by_type = Counter(
+            f"{'기재정정' if r.is_amendment else '원본'} {r.report_type}"
+            for r in rows
+        )
+        for k, v in sorted(by_type.items(), key=lambda x: -x[1]):
+            print(f"  {k:20} {v:,}건")
+
+        if dry_run:
+            print("\n[DRY-RUN] DB 변경 없음. --dry-run 제거 후 실행하세요.")
+            print("\n샘플 10건:")
+            for r in rows[:10]:
+                amend = "[기재정정]" if r.is_amendment else ""
+                print(f"  {r.rcept_no}  {r.corp_name}  {amend}{r.report_nm[:40]}")
+            return
+
+        # download_tasks 일괄 등록 (executemany)
+        s.execute(
+            text("INSERT INTO download_tasks (rcept_no, status) VALUES (:rn, 'pending') ON CONFLICT (rcept_no) DO NOTHING"),
+            [{"rn": r.rcept_no} for r in rows],
+        )
+        s.commit()
+
+        print(f"\n✓ {len(rows):,}건 download_tasks 등록 완료 (status=pending)")
+        print("다음 단계:")
+        print("  python run.py download --workers 4")
+        print("  python run.py parse --workers 4")
+        print("  python run.py parse-pdf")
+        print("  python run.py aggregate --since 1999")
+
+
+def cmd_backfill_originals(args):
+    """
+    기재정정이 있는 그룹에서 원본 공시의 download_task가 없는 건을 일괄 등록.
+    """
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    dry_run = getattr(args, "dry_run", False)
+
+    with get_session() as s:
+        rows = s.execute(text("""
+            SELECT f_orig.rcept_no, f_orig.corp_code, f_orig.report_nm,
+                   f_orig.report_type, f_orig.fiscal_year
+            FROM filings f_orig
+            WHERE f_orig.is_amendment = FALSE
+              AND NOT EXISTS (
+                  SELECT 1 FROM download_tasks dt WHERE dt.rcept_no = f_orig.rcept_no
+              )
+              AND EXISTS (
+                  SELECT 1 FROM filings f_amend
+                  WHERE f_amend.corp_code     = f_orig.corp_code
+                    AND f_amend.report_type   = f_orig.report_type
+                    AND f_amend.fiscal_year   = f_orig.fiscal_year
+                    AND f_amend.fiscal_period = f_orig.fiscal_period
+                    AND f_amend.is_amendment  = TRUE
+              )
+            ORDER BY f_orig.corp_code, f_orig.fiscal_year DESC
+        """)).fetchall()
+
+        if not rows:
+            print("✓ 백필 대상 없음")
+            return
+
+        print(f"원본 백필 대상: {len(rows):,}건")
+        from collections import Counter
+        by_type = Counter(r.report_type for r in rows)
+        for k, v in sorted(by_type.items(), key=lambda x: -x[1]):
+            print(f"  {k:12} {v:,}건")
+
+        if dry_run:
+            print("\n[DRY-RUN] DB 변경 없음.")
+            for r in rows[:10]:
+                print(f"  {r.rcept_no}  {r.report_nm[:50]}")
+            return
+
+        s.execute(
+            text("INSERT INTO download_tasks (rcept_no, status) VALUES (:rn, 'pending') ON CONFLICT (rcept_no) DO NOTHING"),
+            [{"rn": r.rcept_no} for r in rows],
+        )
+        s.commit()
+        print(f"\n✓ {len(rows):,}건 등록 완료")
+        print("다음: python run.py download → parse → parse-pdf → aggregate")
+
+
+def cmd_recalc_superseded(args):
+    """
+    기존 파싱 완료된 기재정정에 대해 is_superseded를 일괄 재계산.
+    """
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    dry_run = getattr(args, "dry_run", False)
+    corp_filter = getattr(args, "corp", None)
+
+    corp_clause = "AND f.corp_code = :corp" if corp_filter else ""
+    params = {"corp": corp_filter} if corp_filter else {}
+
+    with get_session() as s:
+        amendments = s.execute(text(f"""
+            SELECT f.rcept_no, f.corp_code, f.fiscal_year, f.fiscal_period
+            FROM filings f
+            JOIN download_tasks dt ON dt.rcept_no = f.rcept_no
+            WHERE f.is_amendment = TRUE
+              AND dt.parse_status IN ('success', 'partial')
+              AND (dt.parsed_facts IS NOT NULL AND dt.parsed_facts > 0)
+              {corp_clause}
+            ORDER BY f.corp_code, f.fiscal_year DESC
+        """), params).fetchall()
+
+    if not amendments:
+        print("✓ 대상 없음")
+        return
+
+    print(f"재계산 대상 기재정정: {len(amendments):,}건")
+
+    if dry_run:
+        print("[DRY-RUN] DB 변경 없음.")
+        return
+
+    updated = 0
+    for a in amendments:
+        _manage_superseded(a.rcept_no, a.corp_code, a.fiscal_year, a.fiscal_period)
+        updated += 1
+        if updated % 500 == 0:
+            print(f"  {updated:,}/{len(amendments):,} 처리 중...")
+
+    print(f"✓ {updated:,}건 재계산 완료")
+    print("다음: python run.py aggregate --since 1999")
 
 
 def cmd_fix_fiscal_years(args):
@@ -1960,6 +2199,9 @@ def main():
             "parse-pdf", "parse-pdf-reset",
             # 다운로더 보완 (Phase 6 전처리)
             "enqueue-originals",
+            "enqueue-missing-finals",
+            "backfill-originals",
+            "recalc-superseded",
             # fiscal_year 일괄 수정
             "fix-fiscal-years",
             # 분석 (Phase 3)
@@ -2148,8 +2390,11 @@ def main():
         "parse-pdf":        cmd_parse_pdf,
         "parse-pdf-reset":  cmd_parse_pdf_reset,
         # 다운로더 보완
-        "enqueue-originals":  cmd_enqueue_originals,
-        "fix-fiscal-years":   cmd_fix_fiscal_years,
+        "enqueue-originals":       cmd_enqueue_originals,
+        "enqueue-missing-finals":  cmd_enqueue_missing_finals,
+        "backfill-originals":      cmd_backfill_originals,
+        "recalc-superseded":       cmd_recalc_superseded,
+        "fix-fiscal-years":        cmd_fix_fiscal_years,
         # 유지보수
         "deactivate":       cmd_deactivate,
         "cleanup":          cmd_cleanup,

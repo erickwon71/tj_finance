@@ -400,39 +400,67 @@ def _aggregate_one(
     if statement_type == "consolidated":
         fs_types.append("CF_S")
 
-    # rcept_no로 필터링해 단일 공시의 데이터만 사용
+    # ── 정정+원본 item 단위 병합 (C) — merge_rcepts 산출 ──────────────────
+    # 같은 (corp, report_type, fy, fp)의 기재정정+원본을 우선순위대로 함께 읽어,
+    # 정정이 부분정정이어도 원본으로 결손을 채운다(데이터 손실 방지).
+    # 우선순위: 정정(최신 rcept) → primary(best_rcept 최적 원본) → 나머지 원본.
+    # 정정이 없는 기간은 merge_rcepts=[primary]로 기존 동작과 완전히 동일.
+    with get_session() as session:
+        _grp = session.execute(text("""
+            SELECT f.rcept_no, f.is_amendment
+            FROM filings f
+            JOIN download_tasks dt ON dt.rcept_no = f.rcept_no
+            WHERE f.corp_code     = :corp_code
+              AND f.fiscal_year   = :fiscal_year
+              AND f.fiscal_period = :fiscal_period
+              AND f.report_type   = (SELECT report_type FROM filings WHERE rcept_no = :primary)
+              AND dt.parse_status IN ('success', 'partial')
+              AND COALESCE(dt.parsed_facts, 0) > 0
+            ORDER BY f.is_amendment DESC, f.rcept_no DESC
+        """), {"corp_code": corp_code, "fiscal_year": fiscal_year,
+               "fiscal_period": fiscal_period, "primary": rcept_no}).fetchall()
+    _amend = [r[0] for r in _grp if r[1]]
+    _orig  = [r[0] for r in _grp if not r[1]]
+    merge_rcepts: list[str] = list(_amend)          # 정정(최신) 우선
+    if rcept_no not in merge_rcepts:                # primary(최적 원본) 다음
+        merge_rcepts.append(rcept_no)
+    for _o in _orig:                                # 나머지 원본 결손 보충
+        if _o not in merge_rcepts:
+            merge_rcepts.append(_o)
+    if not merge_rcepts:
+        merge_rcepts = [rcept_no]
+
+    # merge_rcepts 우선순위로 필터링 (정정 우선, 원본 결손 보충)
     # fs_type을 올바른 연결/별도 유형으로 제한 (IS_C/BS_C 혼합 방지)
-    # fiscal_year에 맞는 col_index 선택:
-    #   - col_index=0이 있으면 우선 사용
-    #   - 없으면 해당 fiscal_year의 다른 col_index 사용
+    # is_superseded 필터 미적용: merge_rcepts(정정 그룹)로 범위가 한정되고
+    #   우선순위(array_position)와 additive-소유 가드로 정합성을 직접 보장하므로,
+    #   blunt supersede된 원본 facts도 결손 보충 용도로 읽는다.
     sql = """
-        SELECT account_code, amount, unit_multiplier, fs_type, col_index
+        SELECT account_code, amount, unit_multiplier, fs_type, col_index, rcept_no
         FROM financial_facts
         WHERE corp_code    = :corp_code
-          AND rcept_no     = :rcept_no
+          AND rcept_no     = ANY(:merge_rcepts)
           AND fiscal_year  = :fiscal_year
           AND fiscal_period = :fiscal_period
           AND fs_type       = ANY(:fs_types)
-          AND NOT is_superseded
           AND (account_code NOT LIKE 'unknown.%'
                OR account_code IN ('unknown.지배주주순이익', 'unknown.지배주주 순이익',
                                    'unknown.비지배주주순이익', 'unknown.비지배주주 순이익'))
         ORDER BY
             col_index ASC,
+            -- 같은 col_index 내에서 정정 우선 (merge_rcepts 우선순위)
+            array_position(:merge_rcepts, rcept_no) ASC,
             -- NOTE 섹션은 보조 출처: IS/BS/CF가 항상 NOTE보다 먼저 (is_subtotal보다 우선)
-            -- 이유: NOTE의 is_subtotal=True가 IS_C보다 먼저 정렬되는 버그 방지
             CASE WHEN fs_type LIKE 'NOTE%' THEN 1 ELSE 0 END ASC,
             -- CF_S는 연결 집계에서 폴백 소스: CF_C보다 낮은 우선순위
-            -- CF_C가 XBRL 0값 → CF_S 텍스트 값이 "replace 0 with non-zero" 로직으로 보완
             CASE WHEN fs_type = 'CF_S' THEN 1 ELSE 0 END ASC,
-            -- (XML>PDF 포맷 우선순위는 best_rcept_no 선택 단계에서 처리 — 단일 rcept 내에서는 동일 포맷)
             is_subtotal DESC,
             extraction_confidence DESC
     """
     with get_session() as session:
         rows = session.execute(text(sql), {
             "corp_code":    corp_code,
-            "rcept_no":     rcept_no,
+            "merge_rcepts": merge_rcepts,
             "fiscal_year":  fiscal_year,
             "fiscal_period": fiscal_period,
             "fs_types":     fs_types,
@@ -479,8 +507,11 @@ def _aggregate_one(
     _accumulator: dict[str, int] = {}   # 합산 대상 계정 누계
     # NOTE vs CF 소스 추적 (CF 소스가 있으면 NOTE로 덮지 않기 위해)
     _da_source: str = ""  # "" / "cf" / "note"
+    # additive 계정(D&A/CAPEX)을 소유한 rcept 추적 — 정정+원본 병합 시
+    # 서로 다른 공시의 세부항목이 중복 합산되는 것을 방지 (우선순위 높은 공시가 소유).
+    _additive_owner: dict[str, str] = {}
 
-    for account_code, amount, unit_mult, fs_type, col_idx in rows:
+    for account_code, amount, unit_mult, fs_type, col_idx, row_rcept in rows:
         col_name = _ALL_MAP.get(account_code)
 
         if fs_type in _IS_FS_TYPES:
@@ -511,6 +542,11 @@ def _aggregate_one(
 
         # 합산 방식 처리 (D&A + CAPEX 세부항목)
         if col_name in _ADDITIVE_CODES:
+            # 병합 가드: 이 additive 계정을 처음 기여한 rcept만 소유 →
+            # 다른 공시(원본/정정)의 세부항목 중복 합산 차단 (우선순위 높은 공시 우선)
+            _owner = _additive_owner.setdefault(col_name, row_rcept)
+            if _owner != row_rcept:
+                continue
             is_note = fs_type.startswith("NOTE")
             if col_name in ("depreciation", "amortization"):
                 # D&A: CF/IS/NOTE 모두 합산 허용.

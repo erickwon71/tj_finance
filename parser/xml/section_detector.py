@@ -252,7 +252,7 @@ def detect_unit_from_section(section_elem: etree._Element) -> int:
 
     TABLE에서 직접 찾거나, 섹션 내 P 태그에서 찾는다.
     """
-    from parser.common.amount_normalizer import detect_unit_multiplier
+    from parser.common.amount_normalizer import detect_unit_declaration
 
     parent = section_elem.getparent()
     if parent is None:
@@ -264,16 +264,16 @@ def detect_unit_from_section(section_elem: etree._Element) -> int:
     except ValueError:
         return 1
 
-    # 섹션 시작부터 다음 TITLE 전까지 텍스트 탐색
+    # 섹션 시작부터 다음 TITLE 전까지 탐색.
+    # 가장 먼저 나오는 '명시적 단위 선언'(원 포함)을 채택한다.
+    # (이전: multiplier>1만 채택 → '단위: 원' 표를 건너뛰고 뒤쪽 천원을 잘못 적용하는 버그)
     for elem in siblings[start_idx:start_idx + 20]:
         tag = elem.tag.upper() if isinstance(elem.tag, str) else ""
         if tag == "TITLE" and elem is not section_elem:
             break
-        text = _get_text(elem)
-        if "단위" in text:
-            multiplier = detect_unit_multiplier(text)
-            if multiplier > 1:
-                return multiplier
+        decl = detect_unit_declaration(_get_text(elem))
+        if decl is not None:
+            return decl
 
     return 1
 

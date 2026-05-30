@@ -840,8 +840,23 @@ def _parse_summary_tables(
 
 
 def _detect_unit_near_table(table_elem: etree._Element) -> int:
-    """TABLE 인접 요소에서 단위 배수 탐지 (P 태그 또는 TABLE 앞의 단위 행)"""
-    from parser.common.amount_normalizer import detect_unit_multiplier
+    """
+    TABLE 인접 요소에서 단위 배수 탐지.
+
+    우선순위:
+      1. 표 자체 첫 행의 단위 셀 (가장 권위 있음)
+      2. 표 바로 앞 요소부터 가까운 순서로 탐색한 '명시적 단위 선언'(원 포함)
+    '단위: 원' 선언도 채택한다 → 원 단위 표 앞에 다른 표의 천원 선언이 있어도
+    가장 가까운 선언(=그 표의 단위)을 쓰므로 ×1000 오적용을 막는다.
+    """
+    from parser.common.amount_normalizer import detect_unit_declaration
+
+    # 1. 표 자체 첫 행 (가장 권위 있는 단위 선언)
+    first_tr = table_elem.find(".//TR")
+    if first_tr is not None:
+        decl = detect_unit_declaration(''.join(first_tr.itertext()))
+        if decl is not None:
+            return decl
 
     parent = table_elem.getparent()
     if parent is None:
@@ -853,23 +868,12 @@ def _detect_unit_near_table(table_elem: etree._Element) -> int:
     except ValueError:
         return 1
 
-    # table 앞 5개 요소에서 단위 탐색
-    for s in siblings[max(0, idx - 5):idx]:
+    # 2. table 앞 5개 요소를 가까운 순서(역순)로 탐색 — 가장 가까운 단위 선언 채택
+    for s in reversed(siblings[max(0, idx - 5):idx]):
         tag = s.tag.upper() if isinstance(s.tag, str) else ""
         if tag in ("P", "TABLE"):
-            text = ''.join(s.itertext())
-            if "단위" in text:
-                m = detect_unit_multiplier(text)
-                if m > 1:
-                    return m
-
-    # table 첫 번째 행에서도 탐색 (단위 셀)
-    first_tr = table_elem.find(".//TR")
-    if first_tr is not None:
-        text = ''.join(first_tr.itertext())
-        if "단위" in text:
-            m = detect_unit_multiplier(text)
-            if m > 1:
-                return m
+            decl = detect_unit_declaration(''.join(s.itertext()))
+            if decl is not None:
+                return decl
 
     return 1

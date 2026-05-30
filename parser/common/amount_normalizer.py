@@ -23,6 +23,27 @@ UNIT_MULTIPLIERS: dict[str, int] = {
 # 공란으로 취급할 문자열
 _BLANK_PATTERNS = frozenset(["", "-", "─", "—", "―", "　", " ", "·", ".", "...", "N/A", "n/a"])
 
+# 명시적 단위 선언 패턴: "(단위 : 천원)", "단위:백만원", "단위 : 원, %" 등
+# "단위적립방식" 같은 비단위 표현과 구분하기 위해 단위 키워드(억원/백만원/만원/천원/원)를 강제.
+_UNIT_DECL_RE = re.compile(r'단위\s*[:：]?\s*\(?\s*(억원|백만원|만원|천원|원)')
+
+
+def detect_unit_declaration(text: str) -> Optional[int]:
+    """
+    '단위 : 천원' 같은 **명시적 단위 선언**이 있을 때만 배수를 반환, 없으면 None.
+
+    detect_unit_multiplier()와 달리 '원' 선언(배수 1)도 None이 아니라 1로 구분 반환한다.
+    → 호출부가 "가장 가까운 단위 선언"을 (원 포함) 채택할 수 있게 한다.
+    '단위적립방식', '단위의 회수가능액' 처럼 단위 키워드가 없는 경우 None.
+    """
+    if not text or "단위" not in text:
+        return None
+    normalized = text.replace('：', ':').replace('　', ' ')
+    m = _UNIT_DECL_RE.search(normalized)
+    if not m:
+        return None
+    return UNIT_MULTIPLIERS[m.group(1)]
+
 
 def detect_unit_multiplier(section_text: str) -> int:
     """

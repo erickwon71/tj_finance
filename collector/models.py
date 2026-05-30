@@ -30,6 +30,7 @@ class Corporation(Base):
     stock_code       = Column(String(6),   nullable=True,  index=True,  comment="KRX 종목코드")
     corp_name        = Column(String(200), nullable=False,               comment="기업명")
     market           = Column(String(10),  nullable=True,               comment="KOSPI/KOSDAQ/KONEX")
+    fiscal_month     = Column(SmallInteger, default=12,                  comment="결산월 1~12 (사업보고서 (YYYY.MM)에서 도출, 기본 12월)")
     is_active        = Column(Boolean,     default=True,                 comment="현재 상장 여부")
     dart_modify_date = Column(String(8),   nullable=True,               comment="DART 최종변경일(yyyymmdd)")
     last_filing_sync = Column(DateTime,    nullable=True,               comment="공시목록 마지막 수집 시각")
@@ -175,8 +176,8 @@ class FinancialFact(Base):
     period_end            = Column(Date,         nullable=True,  comment="결산 기준일 (비12월 결산 대응)")
     fiscal_year           = Column(SmallInteger, nullable=False, index=True)
     fiscal_period         = Column(String(5),    nullable=False, comment="FY/H1/Q1/Q3")
-    amount                = Column(BigInteger,   nullable=True,  comment="금액 (단위 적용 전)")
-    unit_multiplier       = Column(Integer,     default=1,       comment="1, 1000(천원), 1000000(백만원) 등")
+    amount                = Column(BigInteger,   nullable=True,  comment="금액 (원 단위, unit_multiplier 적용 후 — parse_amount()가 변환하여 저장)")
+    unit_multiplier       = Column(Integer,     default=1,       comment="원본 표기 단위 출처 메타: 1=원, 1000=천원, 1000000=백만원 (금액 계산에 재사용 불필요)")
     # amount_won = amount * unit_multiplier (원 단위). Python 레이어에서 계산 (GENERATED AS 불사용)
     col_index             = Column(SmallInteger, nullable=False,
                                     comment="0=당기, 1=전기, 2=전전기")
@@ -188,6 +189,7 @@ class FinancialFact(Base):
     extraction_confidence = Column(Float,        default=1.0)
     parser_track          = Column(String(15),   nullable=True,  comment="A / B / PDF / PDF_AMEND")
     is_superseded         = Column(Boolean,      default=False,  comment="기재정정으로 대체된 데이터")
+    source_ref            = Column(String(120),  nullable=True,  comment="원본 문서 내 위치: PDF='p42/t3/r5', XBRL='BS_C/ACODE=ifrs-full_Assets', XML='IS_S/row=12'")
     parsed_at             = Column(DateTime,     default=datetime.utcnow)
 
     __table_args__ = (
@@ -343,7 +345,51 @@ class StockPrice(Base):
     )
 
 
-# ── 9. 임원 현황 ────────────────────────────────────────────────────────────
+# ── 9. 검증 결과 ────────────────────────────────────────────────────────────
+
+class VerificationResult(Base):
+    """
+    계층형 재무 정합성 검증 결과.
+    Layer 1: BS/IS/CF 항등식
+    Layer 2: XBRL 소계 대조
+    Layer 3: 기간 연속성 (전기 기말 = 당기 기초)
+    Layer 4: 수동 대조 안내 (source_ref 기반)
+    """
+    __tablename__ = "verification_results"
+
+    id             = Column(BigInteger,   primary_key=True, autoincrement=True)
+    corp_code      = Column(String(8),    nullable=False, index=True)
+    fiscal_year    = Column(SmallInteger, nullable=False)
+    fiscal_period  = Column(String(5),    nullable=False)
+    statement_type = Column(String(12),   nullable=False)
+    rcept_no       = Column(String(14),   nullable=True)
+    check_name     = Column(String(40),   nullable=False)
+    layer          = Column(SmallInteger, nullable=True, comment="1=항등식 2=소계 3=연속성 4=수동")
+    passed         = Column(Boolean,      nullable=True)
+    lhs_label      = Column(String(60),   nullable=True)
+    rhs_label      = Column(String(60),   nullable=True)
+    lhs_value      = Column(BigInteger,   nullable=True, comment="원 단위")
+    rhs_value      = Column(BigInteger,   nullable=True, comment="원 단위")
+    diff_pct       = Column(Float,        nullable=True)
+    tolerance_pct  = Column(Float,        nullable=True, default=0.5)
+    source_ref     = Column(String(120),  nullable=True, comment="fail 항목의 원본 위치")
+    checked_at     = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "corp_code", "fiscal_year", "fiscal_period", "statement_type", "check_name",
+            name="uq_verification"
+        ),
+        Index("ix_verif_corp_year", "corp_code", "fiscal_year", "fiscal_period"),
+        Index("ix_verif_failed", "passed"),
+    )
+
+    def __repr__(self):
+        status = "PASS" if self.passed else "FAIL"
+        return f"<VerificationResult {self.corp_code} {self.fiscal_year} {self.check_name} [{status}]>"
+
+
+# ── 10. 임원 현황 ────────────────────────────────────────────────────────────
 class Executive(Base):
     """
     DART exctvSttus API 기반 임원 현황.

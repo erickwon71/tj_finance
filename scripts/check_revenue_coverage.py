@@ -292,7 +292,7 @@ def main():
     )
     parser.add_argument(
         "--market",
-        choices=["KOSPI", "KOSDAQ", "KONEX"],
+        choices=["KOSPI", "KOSDAQ"],
         default=None,
         help="시장 필터 (기본: 전체)",
     )

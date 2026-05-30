@@ -308,7 +308,9 @@ def aggregate_corp(
                       AND ff2.fs_type        NOT LIKE 'NOTE%'
                       AND NOT ff2.is_superseded
                     GROUP BY ff2.rcept_no
-                    ORDER BY COUNT(*) DESC, ff2.rcept_no DESC
+                    -- XML/XBRL 공시를 PDF 공시보다 우선 (정확도 높음 → "XML 우선 → PDF")
+                    ORDER BY MAX(CASE WHEN ff2.source_format LIKE 'pdf%' THEN 0 ELSE 1 END) DESC,
+                             COUNT(*) DESC, ff2.rcept_no DESC
                     LIMIT 1
                 ),
                 (
@@ -322,7 +324,8 @@ def aggregate_corp(
                       AND ff3.fs_type        NOT LIKE 'NOTE%'
                       AND NOT ff3.is_superseded
                     GROUP BY ff3.rcept_no
-                    ORDER BY COUNT(*) DESC, ff3.rcept_no DESC
+                    ORDER BY MAX(CASE WHEN ff3.source_format LIKE 'pdf%' THEN 0 ELSE 1 END) DESC,
+                             COUNT(*) DESC, ff3.rcept_no DESC
                     LIMIT 1
                 ),
                 (
@@ -334,7 +337,8 @@ def aggregate_corp(
                       AND ff4.statement_type = ff.statement_type
                       AND NOT ff4.is_superseded
                     GROUP BY ff4.rcept_no
-                    ORDER BY COUNT(*) DESC, ff4.rcept_no DESC
+                    ORDER BY MAX(CASE WHEN ff4.source_format LIKE 'pdf%' THEN 0 ELSE 1 END) DESC,
+                             COUNT(*) DESC, ff4.rcept_no DESC
                     LIMIT 1
                 )
             ) AS best_rcept_no
@@ -421,6 +425,7 @@ def _aggregate_one(
             -- CF_S는 연결 집계에서 폴백 소스: CF_C보다 낮은 우선순위
             -- CF_C가 XBRL 0값 → CF_S 텍스트 값이 "replace 0 with non-zero" 로직으로 보완
             CASE WHEN fs_type = 'CF_S' THEN 1 ELSE 0 END ASC,
+            -- (XML>PDF 포맷 우선순위는 best_rcept_no 선택 단계에서 처리 — 단일 rcept 내에서는 동일 포맷)
             is_subtotal DESC,
             extraction_confidence DESC
     """
@@ -526,6 +531,11 @@ def _aggregate_one(
         elif sf_values[col_name] == 0 and v != 0:
             # 기존 값이 0(XBRL 태그 오인 등)이고 새 값이 유효하면 교체
             sf_values[col_name] = v
+        elif col_name == "revenue" and abs(sf_values["revenue"]) < 100_000_000 and abs(v) > abs(sf_values["revenue"]):
+            # revenue 중복 시: 현재값이 1억 미만인 경우에만 더 큰 값으로 교체
+            # (IS sub-item 6원 → 합계 영업수익으로 교체하는 경우)
+            # 현재값이 이미 1억 이상이면 col_index=2의 과거 비교데이터로 덮지 않음
+            sf_values[col_name] = v
 
     # 합산 결과 반영
     for col, total in _accumulator.items():
@@ -543,6 +553,70 @@ def _aggregate_one(
     # rows 자체가 없으면 _aggregate_one이 rows==[] 체크에서 이미 return 0
 
     # ── 파생 지표 계산 ────────────────────────────────────────────────
+    # revenue 보완 ①: 선택된 rcept_no의 revenue가 비정상적으로 작을 때
+    # 같은 기간을 다른 보고서의 비교 컬럼(col_index≥1)에서 최대값으로 대체
+    # (금융사 IS에서 "1.수수료수익" 6원이 2022 FY 자체 보고서에만 남고
+    #  실제 "영업수익" 89,423억은 2023 보고서의 전기 컬럼에 있는 경우)
+    # unit_multiplier=1 조건: 천원 단위 오파싱(unit_multiplier=1000)으로 인한
+    # 1000x 오류값을 차단하면서, 정상 기재정정(unit_multiplier=1)은 허용
+    _REV_MIN = 100_000_000  # 1억원 미만이면 비정상으로 판단
+    _rev = sf_values.get("revenue")
+    if _rev is None or abs(_rev) < _REV_MIN:
+        with get_session() as _s:
+            _fs_col = "IS_C" if statement_type == "consolidated" else "IS_S"
+            _fb_row = _s.execute(text("""
+                SELECT COALESCE(
+                  MAX(ABS(ff.amount)) FILTER (WHERE ff.unit_multiplier = 1),
+                  MAX(ABS(ff.amount))
+                )
+                FROM financial_facts ff
+                WHERE ff.corp_code      = :cc
+                  AND ff.fiscal_year    = :fy
+                  AND ff.fiscal_period  = :fp
+                  AND ff.fs_type        = :fs
+                  AND ff.col_index      >= 1
+                  AND ff.account_code   = 'is.revenue'
+                  AND NOT ff.is_superseded
+            """), {"cc": corp_code, "fy": fiscal_year, "fp": fiscal_period,
+                   "fs": _fs_col}).fetchone()
+            if _fb_row and _fb_row[0] and _fb_row[0] >= _REV_MIN:
+                sf_values["revenue"] = _fb_row[0]
+
+    # revenue 보완 ②: is.revenue 매핑 실패 시 cogs + gross_profit으로 역산
+    # IS 첫 줄 계정명이 "수익" 단독인 기업(엑시콘 등)에서 매출 누락 방지
+    if sf_values.get("revenue") is None:
+        _cogs = sf_values.get("cogs")
+        _gp   = sf_values.get("gross_profit")
+        if _cogs is not None and _gp is not None:
+            sf_values["revenue"] = abs(_cogs) + _gp
+
+    # revenue 보완 ③: IS_C 매출 없을 때 IS_S로 폴백 (DQ=2 표시)
+    # XBRL에서 연결 IS가 EBT 이하만 공시하는 부분공시 기업 대응
+    # (HPSP 2024, 힘스 2025, 참좋은여행 2024/2025 등)
+    # col_index=0 우선이나 0원이면 col_index>=1 로 확장
+    # (한양증권 2022: IS_S col_index=0 = 1.수수료수익 0원, col_index=1 = 영업수익 11,171억)
+    _rev_from_is_s = False
+    if sf_values.get("revenue") is None and statement_type == "consolidated":
+        with get_session() as _s:
+            _s3_row = _s.execute(text("""
+                SELECT COALESCE(
+                  MAX(ABS(ff.amount)) FILTER (WHERE ff.unit_multiplier = 1
+                                              AND ABS(ff.amount) >= 100000000),
+                  MAX(ABS(ff.amount)) FILTER (WHERE ABS(ff.amount) >= 100000000)
+                )
+                FROM financial_facts ff
+                WHERE ff.corp_code      = :cc
+                  AND ff.fiscal_year    = :fy
+                  AND ff.fiscal_period  = :fp
+                  AND ff.fs_type        = 'IS_S'
+                  AND ff.account_code   = 'is.revenue'
+                  AND NOT ff.is_superseded
+            """), {"cc": corp_code, "fy": fiscal_year, "fp": fiscal_period}).fetchone()
+            _s3_val = _s3_row[0] if _s3_row else None
+            if _s3_val and _s3_val >= _REV_MIN:
+                sf_values["revenue"] = _s3_val
+                _rev_from_is_s = True
+
     # net_income 보완: controlling_ni + noncontrolling_ni로 합산
     # 일부 K-IFRS IS에서 "당기순이익" 합계 행 없이 지배/비지배 귀속만 표시하는 경우
     if sf_values.get("net_income") is None:
@@ -612,6 +686,10 @@ def _aggregate_one(
         dq = 1
         if fiscal_period == "FY":
             dq = _validate_cross_year(session, corp_code, statement_type, sf_values)
+
+        # 보완 ③ IS_S 폴백 사용 시 → DQ=2 (IS_C 매출 직접 공시 아님)
+        if _rev_from_is_s:
+            dq = max(dq, 2)
 
         # 회계 항등식 검증 (BS=L+E, IS 정합성, CF 정합성)
         eq_dq = _validate_accounting_equations(sf_values, corp_code, fiscal_year, statement_type)
@@ -725,9 +803,14 @@ def aggregate_all(
     """
     전체 기업을 집계해 standard_financials 갱신.
 
+    workers > 1 이면 ThreadPoolExecutor로 병렬 처리.
+    aggregate_corp는 호출당 독립적인 DB 세션을 사용하므로 스레드 안전.
+
     Returns:
         처리된 (corp_code, fiscal_year, fiscal_period, statement_type) 수
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     sql = """
         SELECT DISTINCT ff.corp_code
         FROM financial_facts ff
@@ -739,18 +822,35 @@ def aggregate_all(
     with get_session() as session:
         corps = [r[0] for r in session.execute(text(sql), {"since_fy": since_fiscal_year}).fetchall()]
 
-    logger.info(f"집계 대상: {len(corps)}개 기업 (FY≥{since_fiscal_year})")
+    total = len(corps)
+    logger.info(f"집계 대상: {total}개 기업 (FY≥{since_fiscal_year}, workers={workers})")
 
     total_rows = 0
-    for i, corp_code in enumerate(corps, 1):
-        try:
-            n = aggregate_corp(corp_code, statement_type=statement_type)
-            total_rows += n
-        except Exception as exc:
-            logger.error(f"[집계] {corp_code} 오류: {exc}")
 
-        if i % 50 == 0:
-            logger.info(f"  집계 {i}/{len(corps)} — 누계 {total_rows}건")
+    if workers <= 1:
+        for i, corp_code in enumerate(corps, 1):
+            try:
+                total_rows += aggregate_corp(corp_code, statement_type=statement_type)
+            except Exception as exc:
+                logger.error(f"[집계] {corp_code} 오류: {exc}")
+            if i % 100 == 0:
+                logger.info(f"  집계 {i}/{total} — 누계 {total_rows}건")
+    else:
+        done = 0
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(aggregate_corp, c, statement_type=statement_type): c
+                for c in corps
+            }
+            for fut in as_completed(futures):
+                corp_code = futures[fut]
+                done += 1
+                try:
+                    total_rows += fut.result()
+                except Exception as exc:
+                    logger.error(f"[집계] {corp_code} 오류: {exc}")
+                if done % 100 == 0:
+                    logger.info(f"  집계 {done}/{total} — 누계 {total_rows}건")
 
-    logger.success(f"집계 완료 — {len(corps)}개 기업, {total_rows}건 표준화")
+    logger.success(f"집계 완료 — {total}개 기업, {total_rows}건 표준화")
     return total_rows

@@ -303,7 +303,7 @@ def main():
     parser.add_argument("--output", "-o", default="download_coverage.txt")
     parser.add_argument("--since",  type=int, default=2000,
                         help="Earliest fiscal_year to include (default: 2000)")
-    parser.add_argument("--market", choices=["KOSPI", "KOSDAQ", "KONEX"], default=None)
+    parser.add_argument("--market", choices=["KOSPI", "KOSDAQ"], default=None)
     parser.add_argument("--corp",   default=None, metavar="CORP_CODE",
                         help="Single company spot-check")
     args = parser.parse_args()

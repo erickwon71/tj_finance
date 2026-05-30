@@ -35,42 +35,100 @@ def _is_amendment(report_nm: str) -> bool:
     return "[기재정정]" in report_nm or "기재정정" in report_nm
 
 
+def _detect_fiscal_month(relevant: list[tuple]) -> Optional[int]:
+    """
+    공시 목록에서 결산월(FYE month)을 추정.
+
+    사업보고서(annual)의 report_nm "(YYYY.MM)" 중 MM이 결산기말 월이다.
+    가장 최근(rcept_no 큰) annual 보고서를 기준으로 한다.
+    annual이 없으면 None(호출부에서 기본 12 또는 기존값 유지).
+
+    relevant: [(item_dict, report_type), ...]
+    """
+    annual_months: list[tuple[str, int]] = []  # (rcept_no, month)
+    for item, report_type in relevant:
+        if report_type != "annual":
+            continue
+        m = re.search(r'\((\d{4})\.(\d{2})\)', item.get("report_nm", ""))
+        if m:
+            annual_months.append((item.get("rcept_no", ""), int(m.group(2))))
+    if not annual_months:
+        return None
+    # 최신 접수번호 기준 결산월
+    annual_months.sort(key=lambda x: x[0], reverse=True)
+    month = annual_months[0][1]
+    return month if 1 <= month <= 12 else None
+
+
+def compute_fiscal_year_period(
+    report_type: str,
+    period_end_year: int,
+    period_end_month: int,
+    fiscal_month: int = 12,
+) -> tuple[int, str]:
+    """
+    보고서 기준일(period_end)과 회사 결산월(fiscal_month)로 회계연도·기간 산출.
+
+    결산월(FYE)이 12월이 아닌 기업도 같은 회계연도의 4개 기간이 동일
+    fiscal_year로 묶이도록 일반화한 산식:
+
+      months_into = (period_end_month - fiscal_month) mod 12   # 0이면 FY 결산
+      fiscal_year = year      if period_end_month <= fiscal_month
+                    year + 1  otherwise          (회계연도 = 결산이 끝나는 해)
+
+    기간은 report_type을 우선 신뢰하고, quarter만 months_into로 Q1/Q3 구분:
+      - annual  → FY
+      - half    → H1
+      - quarter → months_into==3 → Q1, ==9 → Q3 (그 외 폴백: month≤6→Q1)
+
+    예) 3월 결산사:
+        Q1(6월말)→ FY{Y+1} Q1, H1(9월말)→ H1, Q3(12월말)→ Q3, FY(익년3월말)→ FY
+        → 모두 동일 fiscal_year(=결산 해)로 그룹화.
+        12월 결산사는 기존 동작과 동일.
+    """
+    fm = fiscal_month if fiscal_month and 1 <= fiscal_month <= 12 else 12
+    months_into = (period_end_month - fm) % 12
+    fiscal_year = period_end_year if period_end_month <= fm else period_end_year + 1
+
+    if report_type == "annual":
+        return fiscal_year, "FY"
+    if report_type == "half":
+        return fiscal_year, "H1"
+    if report_type == "quarter":
+        if months_into == 3:
+            return fiscal_year, "Q1"
+        if months_into == 9:
+            return fiscal_year, "Q3"
+        # 폴백: 결산월 탐지가 어긋난 경우 분기 월 기준 추정
+        return fiscal_year, ("Q1" if period_end_month <= 6 else "Q3")
+    return fiscal_year, "FY"
+
+
 def _parse_fiscal_info(
     report_type: str,
     filed_at: date,
     report_nm: str = "",
+    fiscal_month: int = 12,
 ) -> tuple[int, str]:
     """
     보고서명의 "(YYYY.MM)" 패턴 또는 접수 날짜로 회계연도·기간 결정.
 
     우선순위:
       1. report_nm의 "(YYYY.MM)" — DART가 명시한 결산기말 연월
-         예) "사업보고서 (2023.03)" → fiscal_year=2023, FY
-             "분기보고서 (2023.09)" → fiscal_year=2023, Q3
-      2. filed_at 기반 추정 (폴백 — 12월 결산 기준, 비12월 오차 가능)
-
-    기간 판별 (report_nm 기준):
-      - annual  : YYYY → fiscal_year, "FY"
-      - half    : YYYY → fiscal_year, "H1"
-      - quarter : MM ≤ 6 → Q1 (상반기 마감), MM > 6 → Q3 (하반기 마감)
+         → compute_fiscal_year_period()로 결산월 반영 산출
+      2. filed_at 기반 추정 (폴백 — 12월 결산 가정, 비12월 오차 가능)
 
     반환: (fiscal_year: int, fiscal_period: str)
     """
     # ── 1순위: report_nm에서 (YYYY.MM) 파싱 ─────────────────────────────
     nm_match = re.search(r'\((\d{4})\.(\d{2})\)', report_nm)
     if nm_match:
-        fy = int(nm_match.group(1))
-        fm = int(nm_match.group(2))
-
-        if report_type == "annual":
-            return fy, "FY"
-        elif report_type == "half":
-            return fy, "H1"
-        elif report_type == "quarter":
-            # 6월 이하 마감 → Q1 (1분기), 7월 이상 마감 → Q3 (3분기)
-            return fy, ("Q1" if fm <= 6 else "Q3")
-        # report_type 미분류 시 폴백
-        return fy, "FY"
+        return compute_fiscal_year_period(
+            report_type,
+            int(nm_match.group(1)),
+            int(nm_match.group(2)),
+            fiscal_month,
+        )
 
     # ── 2순위: 접수 날짜 기반 추정 (12월 결산 가정) ───────────────────────
     y  = filed_at.year
@@ -271,6 +329,10 @@ def _sync_one_corp(
 
     logger.debug(f"  → 관련 공시 {len(relevant)}건 발견 (총 {len(all_items)}건 중)")
 
+    # 결산월(FYE) 추정 — annual 보고서 (YYYY.MM)에서. 없으면 기존값/기본 12.
+    detected_fm = _detect_fiscal_month(relevant)
+    fiscal_month = detected_fm or corp.fiscal_month or 12
+
     # DB upsert
     with get_session() as session:
         rows = []
@@ -284,7 +346,9 @@ def _sync_one_corp(
             if filed_at is None:
                 continue
 
-            fiscal_year, fiscal_period = _parse_fiscal_info(report_type, filed_at, report_nm)
+            fiscal_year, fiscal_period = _parse_fiscal_info(
+                report_type, filed_at, report_nm, fiscal_month
+            )
             amendment = _is_amendment(report_nm)
 
             rows.append({
@@ -328,7 +392,7 @@ def _sync_one_corp(
 
         # 시장 구분 갱신 (corp_cls → market)
         if rows:
-            cls_map = {"Y": "KOSPI", "K": "KOSDAQ", "N": "KONEX"}
+            cls_map = {"Y": "KOSPI", "K": "KOSDAQ"}  # N(KONEX) 제외
             market = cls_map.get(rows[0]["corp_cls"], None)
             if market:
                 session.execute(
@@ -375,11 +439,14 @@ def _sync_one_corp(
             session.add_all(new_tasks)
             logger.debug(f"  → 다운로드 작업 {len(new_tasks)}건 신규 등록")
 
-        # 수집 완료 시각 기록 (resume 핵심)
+        # 수집 완료 시각 + 결산월 기록 (resume 핵심)
+        sync_values = {"last_filing_sync": datetime.utcnow()}
+        if detected_fm:
+            sync_values["fiscal_month"] = detected_fm
         session.execute(
             update(Corporation)
             .where(Corporation.corp_code == corp.corp_code)
-            .values(last_filing_sync=datetime.utcnow())
+            .values(**sync_values)
         )
 
     return api_calls

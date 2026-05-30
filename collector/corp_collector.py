@@ -67,7 +67,7 @@ def _get_krx_universe() -> Optional[dict]:
         return None
 
     universe = {}
-    for market in ("KOSPI", "KOSDAQ", "KONEX"):
+    for market in ("KOSPI", "KOSDAQ"):
         try:
             df = fdr.StockListing(market)
             if df is None or df.empty:

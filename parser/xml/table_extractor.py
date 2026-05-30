@@ -48,6 +48,8 @@ _SUBTOTAL_KEYWORDS = frozenset([
     "매출총이익", "영업이익", "당기순이익",
     "유동자산합계", "비유동자산합계",
     "유동부채합계", "비유동부채합계",
+    # 금융업 IS 섹션 합계 (보험/증권 6-column 형식에서 section total)
+    "영업수익",
 ])
 
 # 재무 데이터로 저장하지 않아야 할 잡 행 (헤더/메타데이터/순수 레이블)
@@ -204,13 +206,19 @@ def extract_rows(
         if label_clean_check in _JUNK_ACCOUNT_NAMES:
             continue
 
-        # 금액 파싱
+        # 금액 파싱 (전체 amount_cells 파싱 후 재정렬)
+        all_parsed = [parse_amount(ac, multiplier) for ac in amount_cells]
+
+        # 6-column IS 형식 대응: 앞쪽 구조적 빈 셀(None) 제거
+        # 예: [None, None, 42647억, None, 43360억] → [42647억, None, 43360억]
+        # 조건: amount_cells ≥ 4개 (3-column IS는 영향 없음)
+        if len(all_parsed) >= 4:
+            while all_parsed and all_parsed[0] is None:
+                all_parsed.pop(0)
+
         amounts: list[Optional[int]] = []
         for i in range(num_cols):
-            if i < len(amount_cells):
-                amounts.append(parse_amount(amount_cells[i], multiplier))
-            else:
-                amounts.append(None)
+            amounts.append(all_parsed[i] if i < len(all_parsed) else None)
 
         indent = _detect_indent(label)
         label_clean = label.lstrip()  # 들여쓰기 공백 제거
@@ -238,12 +246,19 @@ def _get_cells(tr: etree._Element) -> list[str]:
     return cells
 
 
+_NOTE_REF_PATTERN = re.compile(r'^[1-9]\d{0,2}(,[1-9]\d{0,2})*$')
+
+
 def _split_label_amounts(cells: list[str]) -> tuple[str, list[str]]:
     """
     셀 리스트에서 계정과목명(첫 번째 비숫자 셀)과 금액 셀을 분리한다.
 
     DART XML 구조:
       [계정과목명, 당기금액, 전기금액, 전전기금액, (주석)]
+
+    6-column IS 구조 (금융업 보험/증권):
+      [계정과목명, 주석번호, 당기명세, 당기합계, 전기명세, 전기합계]
+      → 주석번호("34", "4,28" 등 소정수)는 금액 셀로 오인하지 않도록 건너뜀
     """
     label = ""
     amount_cells: list[str] = []
@@ -253,13 +268,15 @@ def _split_label_amounts(cells: list[str]) -> tuple[str, list[str]]:
             # 첫 셀은 항상 계정과목명
             label = cell
         else:
-            # 숫자 패턴이거나 공란이면 금액 셀
             cell_stripped = cell.replace(',', '').replace(' ', '')
+            # 첫 번째 숫자-유사 셀이 주석번호 패턴(소정수)이면 건너뜀
+            # 예: "34", "4", "4,28" → DART 주석 교차참조 번호
+            if not amount_cells and _NOTE_REF_PATTERN.match(cell_stripped):
+                continue
+            # 숫자 패턴이거나 공란이면 금액 셀
             if _NUMBER_PATTERN.match(cell_stripped) or cell_stripped in ('-', '—', ''):
                 amount_cells.append(cell)
-            else:
-                # 숫자가 아닌 추가 텍스트 (주석 번호 등) → 무시
-                pass
+            # 숫자가 아닌 추가 텍스트 → 무시
 
     return label, amount_cells
 

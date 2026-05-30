@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Optional
 
 from loguru import logger
-from sqlalchemy import select, update, or_
+from sqlalchemy import func, select, update, or_
 
 from collector.config import (
     RAW_REPORT_DIR, TMP_DIR,
@@ -347,7 +347,7 @@ def _download_one(
             .where(DownloadTask.rcept_no == task.rcept_no)
             .values(
                 status="downloading",
-                attempts=DownloadTask.attempts + 1,
+                attempts=func.coalesce(DownloadTask.attempts, 0) + 1,
                 last_attempt_at=datetime.utcnow(),
             )
         )
@@ -397,6 +397,36 @@ def _download_one(
                         )
                     )
                 return None  # skipped
+
+            # ── HWP/HTML 전용 ZIP: 파싱 불가 → 레거시 PDF 폴백 우선 ──
+            # ZIP에 xml/pdf가 없고 hwp/html만 있으면(구형 공시), 웹뷰어에서
+            # PDF를 먼저 시도한다. 실패 시 원본(hwp/html)을 그대로 보존.
+            best_ext = Path(best.filename).suffix.lower()
+            has_parseable = any(
+                Path(i.filename).suffix.lower() in (".xml", ".xbrl", ".pdf")
+                for i in zf.infolist()
+            )
+            if not has_parseable and best_ext in (".hwp", ".html", ".htm", ".zip"):
+                logger.info(f"  ↷ 파싱 불가 형식({best_ext}) → 레거시 PDF 폴백 시도")
+                try:
+                    content, fmt = scraper.fetch(task.rcept_no)
+                except Exception as e:
+                    content, fmt = None, None
+                    logger.debug(f"  레거시 fetch 오류: {e}")
+                if content and fmt == "pdf":
+                    dest_dir  = _build_file_path(corp, filing)
+                    dest_path = dest_dir / f"{task.rcept_no}.pdf"
+                    tmp_path  = TMP_DIR / f"{task.rcept_no}.pdf"
+                    tmp_path.write_bytes(content)
+                    shutil.move(str(tmp_path), dest_path)
+                    fsize = dest_path.stat().st_size
+                    logger.success(
+                        f"  ✓ 저장 완료 [legacy PDF]: "
+                        f"{dest_path.relative_to(RAW_REPORT_DIR)} ({fsize / 1024:.0f} KB)"
+                    )
+                    _mark_completed(task.rcept_no, dest_path, "pdf", fsize)
+                    return True
+                logger.info(f"  ↷ 레거시 PDF 폴백 실패 → 원본 형식({best_ext}) 보존")
 
             ext = Path(best.filename).suffix.lower() or ".bin"
             fmt_note = " [iXBRL]" if ext == ".xml" else ""

@@ -50,6 +50,7 @@ class FactRow:
     source_format: str      # 'xbrl_acode' / 'xml_text'
     extraction_confidence: float
     parser_track: str       # 'A' / 'B'
+    source_ref: Optional[str] = None   # 원본 위치: PDF='p42/t3/r5', XBRL='IS_C/ACODE', XML='BS_S/r12'
 
 
 @dataclass

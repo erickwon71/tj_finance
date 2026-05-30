@@ -561,10 +561,10 @@ def _run_parse_worker(worker_id: int, total_workers: int,
 
     for idx, task in enumerate(tasks, 1):
         rcept_no, file_path, corp_code, fiscal_year, fiscal_period, report_type, is_amendment = task
-        status, fact_count, _, unknowns = _parse_single(task)
+        status, fact_count, ptrack, unknowns = _parse_single(task)
 
         if is_amendment and status in ("success", "partial") and fact_count > 0:
-            _manage_superseded(rcept_no, corp_code, fiscal_year, fiscal_period)
+            _manage_superseded(rcept_no, corp_code, fiscal_year, fiscal_period, ptrack or "")
 
         # 카운터 업데이트
         if status == "success":
@@ -643,6 +643,15 @@ def _save_parsed_facts(result) -> int:
     dedup: dict[tuple, dict] = {}
     for f in result.facts:
         key = (f.fs_type, f.account_code[:120], f.col_index)
+        # source_ref: 파서가 채웠으면 사용, 아니면 포맷별로 유도
+        #   XBRL/XML  → fs_type/원문계정명(또는 ACODE)
+        #   기타       → fs_type/r{row_order}
+        _src_ref = getattr(f, "source_ref", None)
+        if not _src_ref:
+            if f.source_format in ("xbrl_acode", "xml_text", "note_xml"):
+                _src_ref = f"{f.fs_type}/{(f.account_name_raw or '')[:50]}"
+            else:
+                _src_ref = f"{f.fs_type}/r{f.row_order}"
         rec = {
             "corp_code":             result.corp_code,
             "rcept_no":              result.rcept_no,
@@ -664,6 +673,7 @@ def _save_parsed_facts(result) -> int:
             "extraction_confidence": f.extraction_confidence,
             "parser_track":          f.parser_track,
             "is_superseded":         False,
+            "source_ref":            _src_ref[:120],
             "parsed_at":             now,
         }
         if key not in dedup:
@@ -709,12 +719,21 @@ def _manage_superseded(
     corp_code: str,
     fiscal_year: int,
     fiscal_period: str,
+    parser_track: str = "",
 ):
     """
     기재정정 파싱 완료 후, 같은 기간의 원본 facts를 supersede할지 결정.
 
-    기준: 기재정정의 BS+IS+CF facts (col_index=0, non-NOTE) >= 10건
-          AND 원본 facts의 50% 이상이면 → 원본 is_superseded=True
+    유형별 전략:
+      XML 정정(parser_track='A'|'B')
+        → facts >= 10건 AND >= 원본 50% 시 원본 전체 supersede (기존 동작 유지)
+      PDF 정정 FULL_REPORT (parser_track='PDF_AMEND', amend_cnt >= 10)
+        → 원본 전체 supersede
+      PDF 정정 PARTIAL_COVER (parser_track='PDF_AMEND', amend_cnt < 10)
+        → 정정이 가진 account_code/fs_type/col_index 항목만 원본에서 is_superseded
+          (부분 정정: 정정 항목만 대체, 원본 나머지 보존)
+      PDF 정정 NON_FINANCIAL (amend_cnt == 0)
+        → 아무것도 건드리지 않음
     """
     from sqlalchemy import text
     from collector.db import get_session
@@ -742,8 +761,7 @@ def _manage_superseded(
               AND col_index = 0 AND NOT is_superseded
         """), {"rn": amend_rcept_no}).scalar() or 0
 
-        if amend_cnt < 10:
-            return
+        is_pdf_amend = (parser_track or "").upper() == "PDF_AMEND"
 
         for row in orig_rcepts:
             orig_rn = row[0]
@@ -756,12 +774,40 @@ def _manage_superseded(
             if orig_cnt == 0:
                 continue
 
-            if amend_cnt >= orig_cnt * 0.5:
-                s.execute(text("""
-                    UPDATE financial_facts
-                    SET is_superseded = TRUE
-                    WHERE rcept_no = :rn AND corp_code = :corp
-                """), {"rn": orig_rn, "corp": corp_code})
+            if is_pdf_amend:
+                if amend_cnt >= 10:
+                    # FULL_REPORT: 정정이 재무제표 전체 포함 → 원본 전체 대체
+                    s.execute(text("""
+                        UPDATE financial_facts
+                        SET is_superseded = TRUE
+                        WHERE rcept_no = :rn AND corp_code = :corp
+                    """), {"rn": orig_rn, "corp": corp_code})
+                elif amend_cnt > 0:
+                    # PARTIAL_COVER: 정정된 account_code/fs_type/col_index만 원본에서 supersede
+                    amend_keys = s.execute(text("""
+                        SELECT DISTINCT fs_type, account_code, col_index
+                        FROM financial_facts
+                        WHERE rcept_no = :rn AND fs_type NOT LIKE 'NOTE%%'
+                          AND NOT is_superseded
+                    """), {"rn": amend_rcept_no}).fetchall()
+                    for fs_t, ac, ci in amend_keys:
+                        s.execute(text("""
+                            UPDATE financial_facts
+                            SET is_superseded = TRUE
+                            WHERE rcept_no = :rn AND corp_code = :corp
+                              AND fs_type = :ft AND account_code = :ac
+                              AND col_index = :ci
+                        """), {"rn": orig_rn, "corp": corp_code,
+                               "ft": fs_t, "ac": ac, "ci": ci})
+                # amend_cnt == 0 → NON_FINANCIAL → no-op
+            else:
+                # XML 정정: 기존 휴리스틱 유지
+                if amend_cnt >= 10 and amend_cnt >= orig_cnt * 0.5:
+                    s.execute(text("""
+                        UPDATE financial_facts
+                        SET is_superseded = TRUE
+                        WHERE rcept_no = :rn AND corp_code = :corp
+                    """), {"rn": orig_rn, "corp": corp_code})
 
 
 def _upsert_unknown_accounts(accumulator: dict) -> None:
@@ -1210,13 +1256,13 @@ def _run_pdf_parse_worker(worker_id: int, total_workers: int,
     unknown_acc: dict[str, dict] = {}
 
     for idx, task in enumerate(tasks, 1):
-        status, fact_count, _, unknowns = _parse_single_pdf(task)
+        status, fact_count, ptrack, unknowns = _parse_single_pdf(task)
 
         # task: (rcept_no, file_path, corp_code, fiscal_year, fiscal_period,
         #        report_type, is_amendment, orig_rcept_no, orig_file_path)
         _rn, _fp, _corp, _fy, _fper, _rt, _is_amend = task[0], task[1], task[2], task[3], task[4], task[5], task[6]
         if _is_amend and status in ("success", "partial") and (fact_count or 0) > 0:
-            _manage_superseded(_rn, _corp, _fy, _fper)
+            _manage_superseded(_rn, _corp, _fy, _fper, ptrack or "")
 
         if status == "success":
             success_cnt += 1
@@ -1590,6 +1636,72 @@ def cmd_backfill_originals(args):
         print("다음: python run.py download → parse → parse-pdf → aggregate")
 
 
+def cmd_enqueue_all_notask(args):
+    """
+    활성 기업의 공시 중 download_tasks 행이 아예 없는 건을 모두 pending 등록.
+
+    기존 enqueue-missing-finals / backfill-originals 가 커버하지 못한
+    is_final=False 공시(기재정정 구버전, 원본 구버전)까지 포함하여
+    missing_downloads.txt 상의 NOTASK 건을 모두 재시도 대상으로 만든다.
+    """
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    dry_run = getattr(args, "dry_run", False)
+
+    with get_session() as s:
+        rows = s.execute(text("""
+            SELECT f.rcept_no, c.corp_name, f.report_type,
+                   f.fiscal_year, f.fiscal_period,
+                   f.is_amendment, f.is_final
+            FROM filings f
+            JOIN corporations c ON c.corp_code = f.corp_code
+            WHERE c.is_active = TRUE
+              AND f.report_type IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM download_tasks dt
+                  WHERE dt.rcept_no = f.rcept_no
+              )
+            ORDER BY c.corp_name, f.fiscal_year DESC, f.rcept_no
+        """)).fetchall()
+
+        if not rows:
+            print("✓ NOTASK 대상 없음 — 모든 공시에 download_tasks 행 존재")
+            return
+
+        from collections import Counter
+        by_type   = Counter(r.report_type for r in rows)
+        by_am     = Counter("기재정정" if r.is_amendment else "원본" for r in rows)
+        by_final  = Counter("is_final=T" if r.is_final else "is_final=F" for r in rows)
+
+        print(f"NOTASK 대상: {len(rows):,}건")
+        print("  보고서 유형:")
+        for k, v in sorted(by_type.items(), key=lambda x: -x[1]):
+            print(f"    {k:12s}: {v:,}건")
+        print("  원본/기재정정:")
+        for k, v in by_am.items():
+            print(f"    {k}: {v:,}건")
+        print("  is_final:")
+        for k, v in by_final.items():
+            print(f"    {k}: {v:,}건")
+
+        if dry_run:
+            print("\n[DRY-RUN] DB 변경 없음. 샘플 10건:")
+            for r in rows[:10]:
+                am = "AMEND" if r.is_amendment else "Orig"
+                print(f"  {r.rcept_no}  {r.corp_name:20s}  {r.report_type} {r.fiscal_year}{r.fiscal_period}  {am}")
+            return
+
+        s.execute(
+            text("INSERT INTO download_tasks (rcept_no, status) "
+                 "VALUES (:rn, 'pending') ON CONFLICT (rcept_no) DO NOTHING"),
+            [{"rn": r.rcept_no} for r in rows],
+        )
+        s.commit()
+        print(f"\n✓ {len(rows):,}건 등록 완료")
+        print("다음: python run.py download")
+
+
 def cmd_recalc_superseded(args):
     """
     기존 파싱 완료된 기재정정에 대해 is_superseded를 일괄 재계산.
@@ -1636,6 +1748,88 @@ def cmd_recalc_superseded(args):
     print("다음: python run.py aggregate --since 1999")
 
 
+def cmd_detect_fiscal_month(args):
+    """
+    사업보고서(annual) report_nm "(YYYY.MM)"에서 결산월(FYE month)을 추출해
+    corporations.fiscal_month 갱신.
+
+    - 기업별 최신(rcept_no 큰) annual 보고서의 MM을 결산월로 사용
+    - annual 보고서가 없는 기업은 변경하지 않음 (기본 12 유지)
+
+    이후 비12월 결산 기업 재라벨:
+      python run.py fix-fiscal-years [--corp CODE]
+      python run.py aggregate --since 1999
+    """
+    import re as _re
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    corp_filter = getattr(args, "corp", None)
+    dry_run     = getattr(args, "dry_run", False)
+
+    corp_clause = "AND f.corp_code = :corp" if corp_filter else ""
+    params = {"corp": corp_filter} if corp_filter else {}
+
+    print("결산월 탐지 중 (annual 보고서 기준)...")
+
+    with get_session() as s:
+        # 기업별 최신 annual 보고서의 (YYYY.MM) 추출
+        rows = s.execute(text(f"""
+            SELECT DISTINCT ON (f.corp_code)
+                   f.corp_code, f.report_nm, COALESCE(c.fiscal_month, 12) AS cur_fm
+            FROM filings f
+            JOIN corporations c ON c.corp_code = f.corp_code
+            WHERE f.report_type = 'annual'
+              AND f.report_nm ~ E'\\\\([0-9]{{4}}\\\\.[0-9]{{2}}\\\\)'
+              {corp_clause}
+            ORDER BY f.corp_code, f.rcept_no DESC
+        """), params).fetchall()
+
+    updates: list[tuple[str, int, int]] = []  # (corp_code, new_fm, cur_fm)
+    for r in rows:
+        m = _re.search(r'\((\d{4})\.(\d{2})\)', r.report_nm)
+        if not m:
+            continue
+        new_fm = int(m.group(2))
+        if not (1 <= new_fm <= 12):
+            continue
+        if new_fm != r.cur_fm:
+            updates.append((r.corp_code, new_fm, r.cur_fm))
+
+    print(f"  annual 보유 기업: {len(rows):,}개")
+    print(f"  fiscal_month 갱신 필요: {len(updates):,}개")
+
+    if updates:
+        # 결산월 분포 (갱신 후 기준 샘플)
+        from collections import Counter
+        dist = Counter(fm for _, fm, _ in updates)
+        print("  변경 결산월 분포:", dict(sorted(dist.items())))
+        print("  예시 (10건):")
+        for c, new_fm, cur_fm in updates[:10]:
+            print(f"    {c}  {cur_fm}월 → {new_fm}월")
+
+    if dry_run:
+        print("\n[DRY-RUN] DB 변경 없음.")
+        return
+
+    if not updates:
+        print("✓ 갱신 필요 없음")
+        return
+
+    with get_session() as s:
+        for corp_code, new_fm, _ in updates:
+            s.execute(
+                text("UPDATE corporations SET fiscal_month = :fm, updated_at = NOW() "
+                     "WHERE corp_code = :c"),
+                {"fm": new_fm, "c": corp_code},
+            )
+
+    logger.success(f"fiscal_month 갱신: {len(updates)}개 기업")
+    print("다음 단계 (비12월 결산 재라벨):")
+    print("  python run.py fix-fiscal-years" + (f" --corp {corp_filter}" if corp_filter else ""))
+    print("  python run.py aggregate --since 1999")
+
+
 def cmd_fix_fiscal_years(args):
     """
     비12월 결산 기업의 잘못된 fiscal_year / fiscal_period를 일괄 수정.
@@ -1654,18 +1848,25 @@ def cmd_fix_fiscal_years(args):
     import re as _re
     from sqlalchemy import text
     from collector.db import get_session
-    from collector.filing_collector import _update_is_final_flags
+    from collector.filing_collector import _update_is_final_flags, compute_fiscal_year_period
 
     dry_run = getattr(args, "dry_run", False)
+    corp_filter = getattr(args, "corp", None)
 
-    print("fiscal_year 수정 분석 중...")
+    print("fiscal_year 수정 분석 중... (결산월 반영)")
 
+    corp_clause = "AND f.corp_code = :corp" if corp_filter else ""
+    params = {"corp": corp_filter} if corp_filter else {}
     with get_session() as s:
-        rows = s.execute(text("""
-            SELECT rcept_no, corp_code, report_nm, fiscal_year, fiscal_period, report_type
-            FROM filings
-            WHERE report_nm ~ E'\\\\([0-9]{4}\\\\.[0-9]{2}\\\\)'
-        """)).fetchall()
+        rows = s.execute(text(f"""
+            SELECT f.rcept_no, f.corp_code, f.report_nm, f.fiscal_year,
+                   f.fiscal_period, f.report_type,
+                   COALESCE(c.fiscal_month, 12) AS fiscal_month
+            FROM filings f
+            JOIN corporations c ON c.corp_code = f.corp_code
+            WHERE f.report_nm ~ E'\\\\([0-9]{{4}}\\\\.[0-9]{{2}}\\\\)'
+            {corp_clause}
+        """), params).fetchall()
 
     # 수정 필요 목록 계산
     fixes: list[dict] = []
@@ -1673,17 +1874,14 @@ def cmd_fix_fiscal_years(args):
         nm_match = _re.search(r'\((\d{4})\.(\d{2})\)', r.report_nm)
         if not nm_match:
             continue
-        fy = int(nm_match.group(1))
-        fm = int(nm_match.group(2))
+        pe_year  = int(nm_match.group(1))
+        pe_month = int(nm_match.group(2))
 
-        if r.report_type == 'annual':
-            new_fy, new_fp = fy, 'FY'
-        elif r.report_type == 'half':
-            new_fy, new_fp = fy, 'H1'
-        elif r.report_type == 'quarter':
-            new_fy, new_fp = fy, ('Q1' if fm <= 6 else 'Q3')
-        else:
+        if r.report_type not in ('annual', 'half', 'quarter'):
             continue
+        new_fy, new_fp = compute_fiscal_year_period(
+            r.report_type, pe_year, pe_month, r.fiscal_month
+        )
 
         if new_fy != r.fiscal_year or new_fp != r.fiscal_period:
             fixes.append({
@@ -1735,20 +1933,31 @@ def cmd_fix_fiscal_years(args):
             )
     logger.success(f"filings 업데이트: {len(fixes)}건")
 
-    # ── financial_facts 업데이트 ─────────────────────────────────────────
+    # ── financial_facts 업데이트 (fiscal_year + fiscal_period) ───────────
+    # 비12월 결산 재라벨은 fiscal_period도 바뀌므로(Q1↔Q3 등) 반드시 함께 갱신.
+    # aggregator가 facts를 (fiscal_year, fiscal_period)로 조회하기 때문.
+    #
+    # 해당 rcept의 모든 col_index를 일괄 시프트:
+    #   - fiscal_year += (new_fy - old_fy)  → col_index=0/1/2 비교컬럼 관계 보존
+    #   - fiscal_period = new_fp            → 같은 공시의 모든 행 동일 기간 라벨
+    # (filing은 1회 보정 후 재처리 대상에서 제외되므로 idempotent)
+    period_changes = sum(1 for f in fixes if f["old_fp"] != f["new_fp"])
     with get_session() as session:
         for fix in fixes:
             session.execute(
                 text("""
                     UPDATE financial_facts
-                    SET fiscal_year = :new_fy
-                    WHERE rcept_no    = :rcept_no
-                      AND fiscal_year = :old_fy
+                    SET fiscal_year   = fiscal_year + :delta_fy,
+                        fiscal_period = :new_fp
+                    WHERE rcept_no = :rcept_no
                 """),
-                {"new_fy": fix["new_fy"], "rcept_no": fix["rcept_no"],
-                 "old_fy": fix["old_fy"]}
+                {"delta_fy": fix["new_fy"] - fix["old_fy"],
+                 "new_fp": fix["new_fp"],
+                 "rcept_no": fix["rcept_no"]}
             )
-    logger.success("financial_facts fiscal_year 업데이트 완료")
+    logger.success(
+        f"financial_facts 업데이트 완료 (fiscal_period 변경 {period_changes}건 포함)"
+    )
 
     # ── is_final 재계산 (영향받는 기업) ────────────────────────────────
     affected_corps = list({f["corp_code"] for f in fixes})
@@ -1816,6 +2025,7 @@ def cmd_aggregate(args):
       python run.py aggregate                          # 전체 기업 2015년 이후
       python run.py aggregate --corp 00126380          # 특정 기업
       python run.py aggregate --since 2020             # 2020년 이후만
+      python run.py aggregate --workers 4              # 4개 스레드 병렬 (권장 4~6)
       python run.py aggregate --dry-run --corp 00126380  # DB 저장 없이 변경 미리보기
     """
     from analyzer.aggregator import aggregate_corp, aggregate_all
@@ -1823,6 +2033,7 @@ def cmd_aggregate(args):
     corp_code = getattr(args, "corp", None)
     since     = getattr(args, "since", 2015) or 2015
     dry_run   = getattr(args, "dry_run", False)
+    workers   = getattr(args, "workers", 1) or 1
 
     if dry_run:
         logger.info("=== DRY-RUN 모드 — DB에 저장하지 않습니다 ===")
@@ -1834,7 +2045,7 @@ def cmd_aggregate(args):
         else:
             logger.success(f"집계 완료: {corp_code} — {n}건 표준화")
     else:
-        aggregate_all(since_fiscal_year=since)
+        aggregate_all(since_fiscal_year=since, workers=workers)
 
 
 def cmd_analyze(args):
@@ -2152,6 +2363,226 @@ def cmd_validate(args):
         console.print(tbl)
 
 
+def cmd_download_original_pdf(args):
+    """
+    사업보고서(annual) 원본 전체 PDF를 DART 웹뷰어에서 추가 다운로드.
+
+    - XML(iXBRL)이 이미 있는 최신 annual 보고서도 사람이 검증할 원본 PDF 확보.
+    - 저장: {기존폴더}/{rcept_no}_full.pdf
+    - DB:  download_tasks.orig_pdf_status / orig_pdf_path / orig_pdf_size 갱신
+
+    사용:
+      python run.py download-original-pdf
+      python run.py download-original-pdf --corp 00126380
+      python run.py download-original-pdf --limit 50
+    """
+    from pathlib import Path
+    from sqlalchemy import text
+    from collector.db import get_session
+    from collector.legacy_downloader import LegacyDartScraper
+
+    corp_filter = getattr(args, "corp", None)
+    limit       = getattr(args, "limit", None)
+
+    corp_clause = "AND f.corp_code = :corp" if corp_filter else ""
+    limit_clause = f"LIMIT {int(limit)}" if limit else ""
+    params: dict = {}
+    if corp_filter:
+        params["corp"] = corp_filter
+
+    # 대상: annual is_final, orig_pdf_status 미완료
+    with get_session() as s:
+        tasks = s.execute(text(f"""
+            SELECT f.rcept_no, dt.file_path, f.corp_code, c.corp_name,
+                   f.fiscal_year, f.fiscal_period
+            FROM filings f
+            JOIN download_tasks dt ON dt.rcept_no = f.rcept_no
+            JOIN corporations c ON c.corp_code = f.corp_code
+            WHERE f.report_type = 'annual'
+              AND f.is_final = TRUE
+              AND c.is_active = TRUE
+              AND dt.status = 'completed'
+              AND (dt.orig_pdf_status IS NULL OR dt.orig_pdf_status = 'pending')
+              {corp_clause}
+            ORDER BY f.corp_code, f.fiscal_year DESC
+            {limit_clause}
+        """), params).fetchall()
+
+    if not tasks:
+        logger.info("다운로드 대상 없음 (orig_pdf_status 미완료 annual 공시)")
+        return
+
+    logger.info(f"사업보고서 원본 PDF 다운로드 대상: {len(tasks):,}건")
+    scraper = LegacyDartScraper()
+    completed = failed = skipped = 0
+
+    try:
+        for idx, row in enumerate(tasks, 1):
+            rcept_no, file_path, corp_code, corp_name, fy, fp = row
+            logger.info(f"[{idx}/{len(tasks)}] {corp_name} {fy}{fp} ({rcept_no})")
+
+            # 기존 파일 경로의 폴더에 _full.pdf 저장
+            if file_path:
+                dest_dir = Path(file_path).parent
+            else:
+                from collector.config import RAW_REPORT_DIR
+                dest_dir = RAW_REPORT_DIR
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = dest_dir / f"{rcept_no}_full.pdf"
+
+            # 이미 존재하면 DB 갱신 후 스킵
+            if dest_path.exists() and dest_path.stat().st_size > 1024:
+                fsize = dest_path.stat().st_size
+                with get_session() as s:
+                    s.execute(text("""
+                        UPDATE download_tasks
+                        SET orig_pdf_status='completed', orig_pdf_path=:p, orig_pdf_size=:sz
+                        WHERE rcept_no=:r
+                    """), {"p": str(dest_path), "sz": fsize, "r": rcept_no})
+                skipped += 1
+                continue
+
+            try:
+                content, fmt = scraper.fetch(rcept_no)
+            except Exception as e:
+                logger.warning(f"  ✗ fetch 오류: {e}")
+                with get_session() as s:
+                    s.execute(text("UPDATE download_tasks SET orig_pdf_status='failed' WHERE rcept_no=:r"),
+                              {"r": rcept_no})
+                failed += 1
+                continue
+
+            if content and fmt == "pdf":
+                dest_path.write_bytes(content)
+                fsize = dest_path.stat().st_size
+                with get_session() as s:
+                    s.execute(text("""
+                        UPDATE download_tasks
+                        SET orig_pdf_status='completed', orig_pdf_path=:p, orig_pdf_size=:sz
+                        WHERE rcept_no=:r
+                    """), {"p": str(dest_path), "sz": fsize, "r": rcept_no})
+                logger.success(f"  ✓ {dest_path.name} ({fsize/1024:.0f} KB)")
+                completed += 1
+            else:
+                # PDF 없음(구형 공시 등) → skipped
+                with get_session() as s:
+                    s.execute(text("UPDATE download_tasks SET orig_pdf_status='skipped' WHERE rcept_no=:r"),
+                              {"r": rcept_no})
+                logger.info(f"  ↷ PDF 없음 → skipped ({fmt or 'no_pdf'})")
+                skipped += 1
+
+    finally:
+        scraper.close()
+
+    logger.success(
+        f"완료 — 성공:{completed}  실패:{failed}  스킵:{skipped}  "
+        f"전체:{len(tasks)}"
+    )
+
+
+def cmd_verify(args):
+    """
+    단일 기업 계층형 재무 정합성 검증 (Layer 1 항등식 + Layer 3 연속성).
+
+    사용:
+      python run.py verify --corp 00126380
+      python run.py verify --corp 00126380 --sep    # 별도재무제표
+      python run.py verify --corp 00126380 --since 2015
+    """
+    from analyzer.verifier import verify_corp
+    from rich.console import Console
+    from rich.table import Table
+    from rich import box
+
+    corp_code = getattr(args, "corp", None)
+    if not corp_code:
+        logger.error("--corp CORP_CODE 를 지정하세요.")
+        return
+
+    sep       = getattr(args, "sep", False)
+    stmt_type = "separate" if sep else "consolidated"
+    since     = getattr(args, "since", 2015) or 2015
+
+    with get_session() as s:
+        from sqlalchemy import text
+        row = s.execute(
+            text("SELECT corp_name FROM corporations WHERE corp_code = :c"),
+            {"c": corp_code}
+        ).fetchone()
+    corp_name = row[0] if row else corp_code
+
+    results = verify_corp(corp_code, since_year=since, stmt_type=stmt_type, save=True)
+
+    if not results:
+        logger.info(f"{corp_name}: standard_financials 데이터 없음")
+        return
+
+    console = Console(width=160)
+    console.print(f"\n[bold cyan]{corp_name}[/bold cyan] — 재무 정합성 검증 ({stmt_type})")
+
+    tbl = Table(box=box.SIMPLE, show_header=True, header_style="bold")
+    tbl.add_column("연도",      width=6)
+    tbl.add_column("기간",      width=4)
+    tbl.add_column("검사",      width=24)
+    tbl.add_column("Layer",     width=6)
+    tbl.add_column("LHS(억원)", justify="right", width=14)
+    tbl.add_column("RHS(억원)", justify="right", width=14)
+    tbl.add_column("diff%",     justify="right", width=8)
+    tbl.add_column("상태",      width=6)
+    tbl.add_column("source_ref", width=30)
+
+    UNIT = 100_000_000
+    for r in sorted(results, key=lambda x: (x["fiscal_year"], x["fiscal_period"], x["check_name"])):
+        lhs_s = f"{r['lhs_value']/UNIT:,.1f}" if r["lhs_value"] is not None else "—"
+        rhs_s = f"{r['rhs_value']/UNIT:,.1f}" if r["rhs_value"] is not None else "—"
+        diff_s = f"{r['diff_pct']:.2f}%" if r["diff_pct"] is not None else "—"
+        if r["passed"] is True:
+            status = "[green]OK[/green]"
+        elif r["passed"] is False:
+            status = "[red]FAIL[/red]"
+        else:
+            status = "[dim]N/A[/dim]"
+        tbl.add_row(
+            str(r["fiscal_year"]),
+            r["fiscal_period"],
+            r["check_name"],
+            str(r["layer"] or ""),
+            lhs_s, rhs_s, diff_s, status,
+            r.get("source_ref") or "—",
+        )
+
+    console.print(tbl)
+
+    fails = [r for r in results if r["passed"] is False]
+    if fails:
+        console.print(f"[red]FAIL {len(fails)}건[/red] — source_ref 위치에서 원본 문서 확인 필요")
+    else:
+        console.print("[green]모든 검사 통과[/green]")
+
+
+def cmd_verify_all(args):
+    """
+    전체 기업 배치 검증 (Layer 1+3).
+
+    사용:
+      python run.py verify-all
+      python run.py verify-all --since 2015 --sep
+    """
+    from analyzer.verifier import verify_all
+
+    sep   = getattr(args, "sep", False)
+    since = getattr(args, "since", 2015) or 2015
+    stmt_type = "separate" if sep else "consolidated"
+
+    logger.info(f"전체 기업 검증 시작 (since={since}, {stmt_type})...")
+    stats = verify_all(since_year=since, stmt_type=stmt_type)
+    logger.success(
+        f"검증 완료 — 전체:{stats['total']}  FAIL:{stats['fail']}  "
+        f"PASS:{stats['pass']}  데이터없음:{stats['skip']}"
+    )
+    logger.info("FAIL 기업 로그: logs/coverage/{{corp_code}}_*.verify_fail.log")
+
+
 def cmd_compare(args):
     """
     여러 기업의 핵심 재무지표를 나란히 비교.
@@ -2201,17 +2632,20 @@ def main():
             "enqueue-originals",
             "enqueue-missing-finals",
             "backfill-originals",
+            "enqueue-all-notask",
             "recalc-superseded",
-            # fiscal_year 일괄 수정
+            # fiscal_year 일괄 수정 + 원본 PDF
             "fix-fiscal-years",
+            "detect-fiscal-month",
+            "download-original-pdf",
             # 분석 (Phase 3)
             "aggregate", "analyze", "sync-prices",
             # 스크리닝 (Phase 4)
             "screen", "compare",
             # DCF / 배당 (Phase 5)
             "dcf", "dividend",
-            # 검증 (Phase 5A)
-            "validate",
+            # 검증 (Phase 5A + C3)
+            "validate", "verify", "verify-all",
             # 유지보수
             "deactivate", "cleanup", "reset-html",
         ],
@@ -2254,7 +2688,7 @@ def main():
         type=int,
         default=1,
         metavar="N",
-        help="parse: 병렬 서브프로세스 수 (기본값 1, 권장 4~6)",
+        help="parse/aggregate: 병렬 실행 수 (기본값 1, 권장 4~6)",
     )
     parser.add_argument(
         "--worker-id",
@@ -2384,8 +2818,10 @@ def main():
         # DCF / 배당 (Phase 5)
         "dcf":              cmd_dcf,
         "dividend":         cmd_dividend,
-        # 검증 (Phase 5A)
+        # 검증 (Phase 5A + C3)
         "validate":         cmd_validate,
+        "verify":           cmd_verify,
+        "verify-all":       cmd_verify_all,
         # PDF 파싱 (Phase 5B)
         "parse-pdf":        cmd_parse_pdf,
         "parse-pdf-reset":  cmd_parse_pdf_reset,
@@ -2393,8 +2829,11 @@ def main():
         "enqueue-originals":       cmd_enqueue_originals,
         "enqueue-missing-finals":  cmd_enqueue_missing_finals,
         "backfill-originals":      cmd_backfill_originals,
+        "enqueue-all-notask":      cmd_enqueue_all_notask,
         "recalc-superseded":       cmd_recalc_superseded,
         "fix-fiscal-years":        cmd_fix_fiscal_years,
+        "detect-fiscal-month":     cmd_detect_fiscal_month,
+        "download-original-pdf":   cmd_download_original_pdf,
         # 유지보수
         "deactivate":       cmd_deactivate,
         "cleanup":          cmd_cleanup,

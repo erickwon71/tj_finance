@@ -15,3 +15,4 @@
  - python 환경은 venv를 적용해서 다른 환경에 영향이 없도록 함.
  - DB는 postgresql local에서 사용
  - DB 크기가 커지는 것을 대비해서 query 시간을 일정하게 빠른 속도를 유지할 수 있도록 함.
+ - venv는 .venv_tj_finance로 적용

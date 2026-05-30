@@ -223,6 +223,7 @@ def parse_dart_pdf(
                                 source_format='pdf_text',
                                 extraction_confidence=mapping.confidence * 0.9,
                                 parser_track='PDF',
+                                source_ref=f"p{page_no}/t{t_idx}/r{row.row_order}",
                             ))
 
     except Exception as e:

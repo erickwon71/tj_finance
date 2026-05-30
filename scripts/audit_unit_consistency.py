@@ -10,8 +10,10 @@ financial_facts.amount 의 단위 정합성을 3가지 휴리스틱으로 검사
   (반대로 중복 곱셈이면 1000x 크게 들어간다.)
 
 검사 규칙:
-  ① 동일 (rcept_no, fs_type) 내 unit_multiplier 혼재
-     → 같은 재무제표 안에서 unit이 섞이면 일부 셀이 다른 단위일 가능성
+  ① 동일 (rcept_no, fs_type, source_format) 내 unit_multiplier 혼재
+     → source_format으로 분리: XBRL(unit=1, 이미 완전 원값)과 텍스트표(unit≥1000,
+       헤더 스케일)의 정상 공존은 제외. 같은 source_format 안에서만 혼재 = 진짜 오류
+       (예: xml_text 표 일부 천원·일부 단위미탐지 원 디폴트 → 1000x 과소)
   ② 연속 기간 값 점프 ≈ 1000x 또는 ≈ 1e6x
      → 동일 (corp, account_code, statement_type) 에서 인접 FY 비율이 급변
   ③ BS 자산 vs 부채+자본 스케일 불일치
@@ -42,9 +44,19 @@ UNIT = 100_000_000  # 억원
 
 # ── DB 조회 ──────────────────────────────────────────────────────────────────
 
-def fetch_mixed_unit(since_year: int, market, corp_code) -> list[dict]:
+def fetch_mixed_unit(since_year: int, market, corp_code,
+                     limit: int = 500) -> tuple[list[dict], int]:
     """
-    규칙 ①: 동일 (rcept_no, fs_type) 내 unit_multiplier 혼재 탐지
+    규칙 ①: 동일 (rcept_no, fs_type, **source_format**) 내 unit_multiplier 혼재 탐지.
+
+    중요: source_format으로 분리한다.
+      XBRL(xbrl_acode/note_xml)은 이미 완전한 원 값 → unit_multiplier=1 (정상),
+      텍스트표(xml_text)는 헤더 단위(천원=1000 등) 스케일 → unit_multiplier≥1000 (정상).
+      한 재무제표에 둘이 공존하는 것은 정상이며 amount는 양쪽 모두 원으로 정규화됨.
+    따라서 **같은 source_format 안에서** unit이 섞인 경우만 진짜 오류로 본다
+      (예: xml_text 표가 일부는 천원, 일부는 단위미탐지로 원 디폴트 → 1000x 과소).
+
+    반환: (상위 limit개 행, 전체 의심 그룹 수)
     """
     conn = psycopg2.connect(DB_DSN)
     cur = conn.cursor()
@@ -58,16 +70,8 @@ def fetch_mixed_unit(since_year: int, market, corp_code) -> list[dict]:
         clauses.append("ff.corp_code = %s")
         params.append(corp_code)
     where = " AND ".join(clauses)
-    cur.execute(f"""
-        SELECT
-            ff.rcept_no,
-            ff.corp_code,
-            c.corp_name,
-            ff.fs_type,
-            ff.fiscal_year,
-            ff.fiscal_period,
-            COUNT(DISTINCT ff.unit_multiplier) AS unit_kinds,
-            ARRAY_AGG(DISTINCT ff.unit_multiplier ORDER BY ff.unit_multiplier) AS units
+
+    base = f"""
         FROM financial_facts ff
         JOIN download_tasks dt ON dt.rcept_no = ff.rcept_no
         JOIN corporations c ON c.corp_code = ff.corp_code
@@ -75,15 +79,30 @@ def fetch_mixed_unit(since_year: int, market, corp_code) -> list[dict]:
           AND ff.unit_multiplier > 0
           AND NOT ff.is_superseded
         GROUP BY ff.rcept_no, ff.corp_code, c.corp_name, ff.fs_type,
-                 ff.fiscal_year, ff.fiscal_period
+                 ff.fiscal_year, ff.fiscal_period, ff.source_format
         HAVING COUNT(DISTINCT ff.unit_multiplier) > 1
+    """
+
+    # 상세 목록 (상위 limit개)
+    cur.execute(f"""
+        SELECT
+            ff.rcept_no, ff.corp_code, c.corp_name, ff.fs_type,
+            ff.fiscal_year, ff.fiscal_period, ff.source_format,
+            COUNT(DISTINCT ff.unit_multiplier) AS unit_kinds,
+            ARRAY_AGG(DISTINCT ff.unit_multiplier ORDER BY ff.unit_multiplier) AS units
+        {base}
         ORDER BY ff.corp_code, ff.fiscal_year DESC, ff.rcept_no
-        LIMIT 500
+        LIMIT {int(limit)}
     """, params)
     cols = [d[0] for d in cur.description]
     rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    # 전체 의심 그룹 수
+    cur.execute(f"SELECT COUNT(*) FROM ( SELECT 1 {base} ) t", params)
+    total = cur.fetchone()[0]
+
     conn.close()
-    return rows
+    return rows, total
 
 
 def fetch_jump_candidates(since_year: int, market, corp_code,
@@ -136,9 +155,16 @@ def fetch_jump_candidates(since_year: int, market, corp_code,
             if prev_val == 0 or cur_val == 0:
                 continue
             ratio = abs(cur_val) / abs(prev_val)
-            # 비율이 threshold 이상이거나 1/threshold 이하이면 의심
-            if ratio >= ratio_threshold or ratio <= 1 / ratio_threshold:
-                results.append({
+            big_jump = ratio >= ratio_threshold
+            big_drop = ratio <= 1 / ratio_threshold
+            if not (big_jump or big_drop):
+                continue
+            # pre-revenue 성장(영≈0 → 정상)은 단위오류 아님:
+            # 폭증(jump)인데 전년값이 10억 미만이면 신규영업/상장초기로 보고 제외.
+            # (단위 오파싱은 전년이 정상규모인데 당년이 1000x↑ 폭증하는 패턴)
+            if big_jump and abs(prev_val) < 1_000_000_000:
+                continue
+            results.append({
                     "corp_code": corp_c,
                     "corp_name": corp_name,
                     "fiscal_year": fy,
@@ -219,9 +245,9 @@ def main():
     args = ap.parse_args()
 
     today = date.today()
-    print(f"[1/4] 규칙① 단위 혼재 탐지...")
-    mixed = fetch_mixed_unit(args.since, args.market, args.corp)
-    print(f"      → {len(mixed)}건")
+    print(f"[1/4] 규칙① 단위 혼재 탐지 (동일 source_format 내)...")
+    mixed, mixed_total = fetch_mixed_unit(args.since, args.market, args.corp)
+    print(f"      → {mixed_total}건 (표시 {len(mixed)}건)")
 
     print(f"[2/4] 규칙② 연속 기간 점프 탐지 (threshold={args.ratio_threshold}x)...")
     jumps = fetch_jump_candidates(args.since, args.market, args.corp, args.ratio_threshold)
@@ -240,21 +266,22 @@ def main():
     lines.append(f"  Market    : {args.market or '전체'}   Since: {args.since}")
     lines.append("=" * 90)
     lines.append("")
-    lines.append(f"  규칙① 단위 혼재    : {len(mixed):,}건")
+    lines.append(f"  규칙① 단위 혼재    : {mixed_total:,}건  (동일 source_format 내 — XBRL+텍스트 정상 공존 제외)")
     lines.append(f"  규칙② 값 점프      : {len(jumps):,}건  (threshold {args.ratio_threshold}x)")
     lines.append(f"  규칙③ BS 스케일    : {len(bs_mis):,}건  (자산 vs 부채+자본 ≥1000x)")
     lines.append("")
 
     if mixed:
         lines.append("─" * 90)
-        lines.append("  규칙① — 동일 재무제표 내 unit_multiplier 혼재 (상위 100건)")
+        lines.append("  규칙① — 동일 source_format 내 unit_multiplier 혼재 (상위 100건)")
         lines.append("─" * 90)
-        lines.append(f"  {'rcept_no':<14}  {'corp':8}  {'fs':<6}  {'fy':>4}  {'fp':<3}  unit 종류  권장조치")
+        lines.append(f"  {'rcept_no':<14}  {'corp':8}  {'fs':<6}  {'fy':>4}  {'fp':<3}  {'source_fmt':<12}  unit종류  권장조치")
         for r in mixed[:100]:
             units_str = "/".join(str(u) for u in (r["units"] or []))
             lines.append(
                 f"  {r['rcept_no']:<14}  {r['corp_code']:8}  {r['fs_type']:<6}  "
-                f"{r['fiscal_year']:>4}  {r['fiscal_period']:<3}  {units_str:<10}  parse-reset"
+                f"{r['fiscal_year']:>4}  {r['fiscal_period']:<3}  "
+                f"{(r['source_format'] or ''):<12}  {units_str:<8}  parse-reset"
             )
         lines.append("")
 

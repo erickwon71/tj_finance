@@ -433,6 +433,88 @@ class StandardFinancial(Base):
         return f"<StandardFinancial {self.corp_code} {self.fiscal_year}{self.fiscal_period} v{self.version}>"
 
 
+# ── 7b. fin2 S-레이어 표준화 (std_financials_v2) ─────────────────────────────
+class StdFinancialV2(Base):
+    """
+    fin2 표준화(S) 산출물. statement_source 선택을 읽어 (corp,period,basis) 한 레코드 조립.
+
+    standard_financials 와 **동일 값 컬럼 계약**(P5 호환 view 가 이 위에 version=1 상수로 올라감)
+    + lineage(bs/is/cf_rcept)·applied_rules(규칙엔진 추적). 표준화 규칙은 fin2/standardize/rules.py
+    (현 aggregator 13 휴리스틱을 명명·순서·테스트가능 규칙으로 이식).
+    신규 테이블 → create_all 자동 생성.
+    """
+    __tablename__ = "std_financials_v2"
+
+    corp_code           = Column(String(8),    primary_key=True)
+    fiscal_year         = Column(SmallInteger, primary_key=True)
+    fiscal_period       = Column(String(5),    primary_key=True)
+    statement_type      = Column(String(12),   primary_key=True)
+    version             = Column(SmallInteger, primary_key=True, default=1)
+    period_end          = Column(Date,         nullable=True)
+    is_ifrs             = Column(Boolean,      nullable=True)
+
+    # ── BS ──
+    total_assets        = Column(BigInteger, nullable=True)
+    current_assets      = Column(BigInteger, nullable=True)
+    cash                = Column(BigInteger, nullable=True)
+    receivables         = Column(BigInteger, nullable=True)
+    inventory           = Column(BigInteger, nullable=True)
+    ppe                 = Column(BigInteger, nullable=True)
+    intangibles         = Column(BigInteger, nullable=True)
+    total_liabilities   = Column(BigInteger, nullable=True)
+    current_liabilities = Column(BigInteger, nullable=True)
+    short_term_debt     = Column(BigInteger, nullable=True)
+    long_term_debt      = Column(BigInteger, nullable=True)
+    total_equity        = Column(BigInteger, nullable=True)
+    controlling_equity  = Column(BigInteger, nullable=True)
+    retained_earnings   = Column(BigInteger, nullable=True)
+    trade_payables      = Column(BigInteger, nullable=True)
+    # ── IS ──
+    revenue             = Column(BigInteger, nullable=True)
+    cogs                = Column(BigInteger, nullable=True)
+    gross_profit        = Column(BigInteger, nullable=True)
+    sga                 = Column(BigInteger, nullable=True)
+    rd_expense          = Column(BigInteger, nullable=True)
+    operating_income    = Column(BigInteger, nullable=True)
+    interest_expense    = Column(BigInteger, nullable=True)
+    ebt                 = Column(BigInteger, nullable=True)
+    tax_expense         = Column(BigInteger, nullable=True)
+    net_income          = Column(BigInteger, nullable=True)
+    controlling_ni      = Column(BigInteger, nullable=True)
+    # ── CF ──
+    cfo                 = Column(BigInteger, nullable=True)
+    cfi                 = Column(BigInteger, nullable=True)
+    cff                 = Column(BigInteger, nullable=True)
+    capex               = Column(BigInteger, nullable=True)
+    dividends_paid      = Column(BigInteger, nullable=True)
+    # ── 주석/파생 ──
+    depreciation        = Column(BigInteger, nullable=True)
+    amortization        = Column(BigInteger, nullable=True)
+    da_total            = Column(BigInteger, nullable=True)
+    ebitda              = Column(BigInteger, nullable=True)
+    fcf                 = Column(BigInteger, nullable=True)
+    net_debt            = Column(BigInteger, nullable=True)
+    shares_out          = Column(BigInteger, nullable=True)
+
+    # ── 메타·연원 ──
+    data_quality        = Column(SmallInteger, default=0, comment="0:미검증 1:정상 2:경고 3:오류")
+    bs_rcept            = Column(String(14),  nullable=True, comment="BS source filing")
+    is_rcept            = Column(String(14),  nullable=True, comment="IS source filing")
+    cf_rcept            = Column(String(14),  nullable=True, comment="CF source filing")
+    applied_rules       = Column(JSONB,       nullable=True, comment="적용된 규칙 이름 목록")
+    calculated_at       = Column(DateTime,    default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("corp_code", "fiscal_year", "fiscal_period", "statement_type", "version",
+                         name="uq_std_v2"),
+        Index("ix_stdv2_screening", "fiscal_year", "fiscal_period", "statement_type"),
+        Index("ix_stdv2_corp_year", "corp_code", "fiscal_year"),
+    )
+
+    def __repr__(self):
+        return f"<StdFinancialV2 {self.corp_code} {self.fiscal_year}{self.fiscal_period} {self.statement_type}>"
+
+
 # ── 8. 주가 데이터 ──────────────────────────────────────────────────────────
 class StockPrice(Base):
     """

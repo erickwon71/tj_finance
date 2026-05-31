@@ -2735,6 +2735,29 @@ def cmd_reconcile2(args):
     logger.success(f"[reconcile2] corp={corp} 완료 — statement_source {n}행")
 
 
+def cmd_standardize2(args):
+    """
+    fin2 S-레이어: statement_source → std_financials_v2 조립(규칙엔진).
+
+    옵션:
+      --corp CODE   : 대상 기업 (필수)
+      --year YEAR   : 특정 회계연도만
+    """
+    from collector.db import get_session
+    from fin2.standardize.build import standardize_corp
+
+    corp = getattr(args, "corp", None)
+    if not corp:
+        logger.error("standardize2 는 --corp CODE 가 필요합니다.")
+        sys.exit(1)
+    year = getattr(args, "year", None)
+
+    with get_session() as session:
+        n = standardize_corp(session, corp, fiscal_year=year)
+        session.commit()
+    logger.success(f"[standardize2] corp={corp} 완료 — std_financials_v2 {n}레코드")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="DART PDF 수집 시스템",
@@ -2750,8 +2773,8 @@ def main():
             "status", "failed", "reset-failed", "all",
             # 파싱 (Phase 2)
             "parse", "parse-status", "parse-reset", "unknown-accounts",
-            # fin2 재구축 (E·R-레이어)
-            "extract2", "reconcile2",
+            # fin2 재구축 (E·R·S-레이어)
+            "extract2", "reconcile2", "standardize2",
             # PDF 파싱 (Phase 5B)
             "parse-pdf", "parse-pdf-reset",
             # 다운로더 보완 (Phase 6 전처리)
@@ -2934,9 +2957,10 @@ def main():
         "parse-status":     cmd_parse_status,
         "parse-reset":      cmd_parse_reset,
         "unknown-accounts": cmd_unknown_accounts,
-        # fin2 재구축 (E·R-레이어)
+        # fin2 재구축 (E·R·S-레이어)
         "extract2":         cmd_extract2,
         "reconcile2":       cmd_reconcile2,
+        "standardize2":     cmd_standardize2,
         # 분석 (Phase 3)
         "aggregate":        cmd_aggregate,
         "analyze":          cmd_analyze,

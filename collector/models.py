@@ -10,6 +10,7 @@ from sqlalchemy import (
     BigInteger, Boolean, Column, Date, DateTime, Float,
     ForeignKey, Integer, SmallInteger, String, Text, UniqueConstraint, Index
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -211,6 +212,71 @@ class FinancialFact(Base):
 
     def __repr__(self):
         return f"<FinancialFact {self.corp_code} {self.fiscal_year} {self.account_code} {self.col_index}>"
+
+
+# ── 5b. fin2 E-레이어 원시 사실 (fact_v2) ───────────────────────────────────
+class FactV2(Base):
+    """
+    fin2 재구축의 추출(E) 산출물. 단위·기간·연결/별도·차원을 **추론이 아닌 저장**.
+
+    financial_facts 와의 차이:
+      - ADECIMAL(단위 권위)·ACONTEXT(구조: basis/기간/instant·duration/extra_dims)를
+        그대로 보존. 텍스트 proximity 단위탐지·연결별도 추정 폐기.
+      - **is_superseded 컬럼 없음**: 기재정정 정합은 R-레이어(statement_source)가
+        period·basis·statement 단위로 source filing 을 선택해 처리(over-supersede 구조 제거).
+      - period_end 를 저장하지 않음: ACONTEXT 는 회계연도+instant/duration 만 주므로
+        실제 날짜는 R/S-레이어에서 기업 결산월(fiscal_month)로 산출(현 period_end 불신 해소).
+
+    신규 테이블이므로 Base.metadata.create_all() 로 자동 생성(별도 마이그레이션 불요).
+    대용량화 시 financial_facts 처럼 report_fiscal_year 기준 파티셔닝 추가 가능.
+    """
+    __tablename__ = "fact_v2"
+
+    id                 = Column(BigInteger,   primary_key=True, autoincrement=True)
+    corp_code          = Column(String(8),    nullable=False, index=True)
+    rcept_no           = Column(String(14),   ForeignKey("filings.rcept_no"), nullable=False, index=True)
+
+    # 보고서(파일) 메타 — 이 fact 가 실린 정기보고서
+    report_fiscal_year   = Column(SmallInteger, nullable=False, index=True, comment="보고서 회계연도")
+    report_fiscal_period = Column(String(5),    nullable=False, comment="보고서 기간 FY/H1/Q1/Q3")
+
+    # 계정
+    acode              = Column(String(120),  nullable=False, comment="원문 XBRL ACODE (ifrs-full_Assets 등)")
+    canonical_account  = Column(String(120),  nullable=True,  comment="concept_map 매핑 결과(미매핑 시 NULL)")
+
+    # ACONTEXT 구조 파싱 결과 (acontext.parse_acontext)
+    basis              = Column(String(12),   nullable=True,  comment="consolidated/separate/NULL(불명→파일 fin_type 폴백)")
+    context_fiscal_year= Column(SmallInteger, nullable=True,  index=True, comment="데이터의 절대 회계연도(C/P/BP 해석)")
+    col_index          = Column(SmallInteger, nullable=True,  comment="0=당기 1=전기 2=전전기")
+    period_kind        = Column(String(8),    nullable=True,  comment="instant(BS) / duration(IS·CF)")
+    period_type        = Column(String(4),    nullable=True,  comment="FY/FQ/FH")
+    is_cumulative      = Column(Boolean,      default=False,  comment="FQA/FHA 누적")
+    extra_dims         = Column(JSONB,        nullable=True,  comment="연결/별도 외 차원 [[axis,member],...] (SCE 등)")
+    is_dimensional     = Column(Boolean,      default=False,  index=True, comment="extra_dims 보유 → statement 합계 제외 대상")
+
+    # 단위·금액 (ADECIMAL 권위)
+    adecimal           = Column(SmallInteger, nullable=True,  comment="원본 ADECIMAL (단위 출처)")
+    amount_won         = Column(BigInteger,   nullable=True,  comment="원 단위 정규화 금액 = 표기값 × 10^(-adecimal)")
+
+    # 연원/추적
+    source_format      = Column(String(15),   nullable=False, default="xbrl_acode",
+                                comment="xbrl_acode / xml_text / pdf_* (P2)")
+    source_ref         = Column(String(180),  nullable=True,  comment="원본 위치 단서")
+    acontext_raw       = Column(String(255),  nullable=True,  comment="원문 ACONTEXT(감사/재파싱용)")
+    context_parsed     = Column(Boolean,      default=True,   comment="ACONTEXT 구조 파싱 성공 여부")
+    parsed_at          = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        # 한 보고서 내 (ACODE, ACONTEXT) 셀은 유일
+        UniqueConstraint("rcept_no", "acode", "acontext_raw", name="uq_fact_v2_cell"),
+        # R-레이어: (corp, 데이터연도, 연결/별도)로 source filing 의 facts 조회
+        Index("ix_fact_v2_lookup", "corp_code", "context_fiscal_year", "basis"),
+        Index("ix_fact_v2_canon",  "canonical_account", "context_fiscal_year"),
+    )
+
+    def __repr__(self):
+        return (f"<FactV2 {self.corp_code} r{self.rcept_no} {self.acode} "
+                f"{self.basis} {self.context_fiscal_year} {self.amount_won}>")
 
 
 # ── 6. 미매핑 계정과목 추적 ─────────────────────────────────────────────────

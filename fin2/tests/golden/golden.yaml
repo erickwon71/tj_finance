@@ -1,0 +1,102 @@
+# golden — 엣지 클래스별 손수 검증한 정답 고정 (fin2 정확성 게이트)
+#
+# parity 와의 차이:
+#   - parity  = 현 파이프라인 출력 무회귀 (좋은 값을 잃지 말 것)
+#   - golden  = "진짜 정답". 현 파이프라인이 틀려도 됨(current: fail 로 표기).
+#               fin2 는 모든 golden 케이스를 pass 시켜야 한다.
+#
+# 스키마 (cases[] 각 항목):
+#   id            : 케이스 식별자
+#   corp_code     : 8자리 corp_code
+#   name          : 기업명(가독성용)
+#   edge_class    : non_dec_fy | financial_x1000 | partial_amend | pre_revenue | kgaap_multiaxis_sce
+#   note          : 무엇을/왜 검증하는지
+#   verified      : 정답값을 원본/공시/회계항등식으로 확인했는가
+#   current       : 현 774 파이프라인이 이 케이스를 맞히는가 (pass | fail)
+#   asserts[]     : year, period(FY/Q1/H1/Q3), basis(separate|consolidated), column
+#                   op : approx(기본,tol 0.02) | nonnull | null | gt | lt | eq ; value/tol
+#
+# 값 단위: 원(KRW) 정수. (1,931억 = 193_100_000_000)
+#
+# ⚠ 2026-05-31 발견(fin2 E/R 레이어가 해결해야 할 데이터 품질 이슈):
+#   - period_end 라벨링 신뢰 불가: 현대바이오(00313649) FY2018→period_end 2020-06-17 등
+#     fiscal_year 와 period_end 가 불일치. 옵트론텍 FY 별도 period_end=2009-02-18(공시일 누수).
+#   - is_ifrs 가 같은 기업/연도 내 FY(false) vs 분기(true) 로 뒤집힘 (옵트론텍 2008).
+#   → 이 때문에 "비12월 결산" golden 을 깨끗이 고정할 표본을 현 DB 에서 못 찾음.
+#     non_dec_fy 케이스는 fin2 E 레이어(ACONTEXT 기간 파싱)로 period_end 정합 후 추가.
+
+cases:
+  # ── 금융사 ×1000 단위 오적용 방지 (86ff88f 단위탐지 수정의 회귀 가드) ──
+  - id: hanyang_2012_revenue_unit
+    corp_code: "00162416"
+    name: 한양증권
+    edge_class: financial_x1000
+    note: >
+      증권사 영업수익. 텍스트 proximity 단위탐지가 ×1000 오적용하면 193조로 폭증.
+      정답 약 1,931억. ADECIMAL 권위 단위로 풀어야 함.
+    verified: true
+    current: pass
+    asserts:
+      - {year: 2012, period: FY, basis: separate, column: revenue, value: 193144577956, op: approx, tol: 0.02}
+      - {year: 2012, period: FY, basis: separate, column: revenue, value: 193000000000000, op: lt}  # 193조(×1000) 미만
+
+  # ── 부분 기재정정 over-supersede 손실 — fin2 P3 statement_source 가 복구해야 함 ──
+  - id: rimed_2023_con_oversupersede
+    corp_code: "01275665"
+    name: 리메드
+    edge_class: partial_amend
+    note: >
+      2023 연결: 일부 항목만 재작성한 정정본이 원본을 통째 supersede → 연결 BS 가
+      NULL, revenue 가 283,638(파편)으로 손실. 별도(2023)는 정상(assets 543.9억,
+      revenue 179.7억). 정답 연결 assets≈550.6억/revenue≈185.4억 (정정+원본 병합,
+      자산=부채+자본 검증 통과). 774 는 fail(NULL/파편)이 정상.
+    verified: true
+    current: fail
+    asserts:
+      - {year: 2023, period: FY, basis: consolidated, column: total_assets, value: 55060000000, op: approx, tol: 0.03}
+      - {year: 2023, period: FY, basis: consolidated, column: revenue, value: 18540000000, op: approx, tol: 0.05}
+
+  # ── 부분 기재정정인데 774 가 이미 맞히는 케이스 (무회귀 가드) ──
+  - id: jiitech_separate_revenue
+    corp_code: "01367586"
+    name: 제이아이테크
+    edge_class: partial_amend
+    note: 2020/21/22 별도 매출 ≈ 198.9 / 205.0 / 682.9억. 774 정상, fin2 도 유지해야 함.
+    verified: true
+    current: pass
+    asserts:
+      - {year: 2020, period: FY, basis: separate, column: revenue, value: 19893358412, op: approx, tol: 0.02}
+      - {year: 2021, period: FY, basis: separate, column: revenue, value: 20497336065, op: approx, tol: 0.02}
+      - {year: 2022, period: FY, basis: separate, column: revenue, value: 68290728683, op: approx, tol: 0.02}
+
+  # ── pre-revenue 바이오 (매출 0 이라도 BS/CF 정상 존재) ──
+  - id: curocell_2023_pre_revenue
+    corp_code: "01492651"
+    name: 큐로셀
+    edge_class: pre_revenue
+    note: >
+      2023 연결 매출 0(임상단계). 매출 0 이어도 자산 1,049.7억·자본 591.0억 등
+      BS 는 정상 존재해야 하며 dq 가 매출 0 을 결손으로 오판하면 안 됨.
+    verified: true
+    current: pass
+    asserts:
+      - {year: 2023, period: FY, basis: consolidated, column: revenue, value: 100000000, op: lt}
+      - {year: 2023, period: FY, basis: consolidated, column: total_assets, value: 104969385964, op: approx, tol: 0.02}
+      - {year: 2023, period: FY, basis: consolidated, column: total_equity, value: 59099540497, op: approx, tol: 0.02}
+
+  # ── K-GAAP 구형(IFRS 이전) — DB 전체에서 거의 유일한 K-GAAP 표본 ──
+  - id: optrontec_2008_kgaap_equity
+    corp_code: "00327396"
+    name: 옵트론텍
+    edge_class: kgaap_multiaxis_sce
+    note: >
+      2008 별도(is_ifrs=false): 자산 943.97억·자본 346.29억(자본<자산, 정합). 다축 SCE 의
+      기타 축이 total_equity 에 잘못 합산되면 안 됨. period_end 는 신뢰 불가라 단언 제외.
+      (DB 전체에서 K-GAAP+자본 보유 행은 옵트론텍 2007/2008 뿐 — K-GAAP 커버리지 희소.)
+    verified: true
+    current: pass
+    asserts:
+      - {year: 2008, period: FY, basis: separate, column: total_equity, value: 34628733000, op: approx, tol: 0.02}
+      - {year: 2008, period: FY, basis: separate, column: total_assets, value: 94397095000, op: approx, tol: 0.02}
+
+  # ── non_dec_fy: 보류 (period_end 라벨링 신뢰 불가 — 위 ⚠ 참고). fin2 E 레이어 후 추가. ──

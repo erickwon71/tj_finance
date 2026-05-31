@@ -6,3 +6,6 @@ tmp/
 .env
 .DS_Store
 *.log
+
+# 대용량 스냅샷 산출물 (로컬 전용 — 파리티 baseline / 진단)
+*.json

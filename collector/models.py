@@ -241,7 +241,7 @@ class FactV2(Base):
     report_fiscal_period = Column(String(5),    nullable=False, comment="보고서 기간 FY/H1/Q1/Q3")
 
     # 계정
-    acode              = Column(String(120),  nullable=False, comment="원문 XBRL ACODE (ifrs-full_Assets 등)")
+    acode              = Column(String(255),  nullable=False, comment="원문 XBRL ACODE/계정명 (ifrs-full 표준 개념명은 최대 ~180자)")
     canonical_account  = Column(String(120),  nullable=True,  comment="concept_map 매핑 결과(미매핑 시 NULL)")
 
     # ACONTEXT 구조 파싱 결과 (acontext.parse_acontext)

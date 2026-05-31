@@ -126,6 +126,8 @@ def extract_facts(
         acode = te.get("ACODE", "")
         if not acode.startswith(_XBRL_PREFIXES):
             continue
+        if len(acode) > 255:
+            continue  # 초장문 기업확장 공시테이블 항목(>255) — 핵심 재무 아님, 스킵
         acontext = te.get("ACONTEXT", "")
         if not acontext:
             continue  # ACONTEXT 없는 XBRL 셀은 Track A 대상 아님
@@ -165,7 +167,7 @@ def extract_facts(
             adecimal=adecimal,
             amount_won=amount_won,
             source_format=source_format,
-            source_ref=f"{ctx.basis or '?'}/{acode}",
+            source_ref=f"{ctx.basis or '?'}/{acode}"[:180],
             acontext_raw=acontext_raw,
             context_parsed=ctx.parsed,
             canonical_account=map_acode(acode),

@@ -2623,10 +2623,7 @@ def cmd_extract2(args):
       --year YEAR   : 특정 회계연도만
       --dry-run     : DB 저장 없이 추출 요약만 출력(단위/연결별도 눈검증)
     """
-    from sqlalchemy import text
     from collector.db import get_session
-    from fin2.extract import xbrl, text as text_extract
-    from fin2.extract.xbrl import store_facts
 
     corp = getattr(args, "corp", None)
     if not corp:
@@ -2635,16 +2632,32 @@ def cmd_extract2(args):
     year = getattr(args, "year", None)
     dry_run = getattr(args, "dry_run", False)
 
+    with get_session() as session:
+        files, a, b, facts = _extract2_corp(session, corp, year=year, dry_run=dry_run, verbose=True)
+        if not dry_run:
+            session.commit()
+    logger.success(
+        f"[extract2] corp={corp} 파일 {files}개 — Track A {a} / Track B {b}, "
+        f"fact {facts:,}행" + (" (dry-run, 미저장)" if dry_run else " 저장")
+    )
+
+
+def _extract2_corp(session, corp, year=None, dry_run=False, verbose=True):
+    """
+    한 기업의 다운로드 XML 을 fact_v2 로 추출(Track A 우선, 0행이면 Track B 폴백).
+    커밋은 호출자 책임. 반환=(파일수, TrackA수, TrackB수, fact수).
+    """
+    from sqlalchemy import text
+    from fin2.extract import xbrl, text as text_extract
+    from fin2.extract.xbrl import store_facts
+
     sql = """
         SELECT dt.rcept_no, dt.file_path,
-               f.corp_code, f.fiscal_year, f.fiscal_period, f.report_type,
-               f.is_amendment, f.is_final
+               f.corp_code, f.fiscal_year, f.fiscal_period, f.report_type, f.is_amendment
         FROM download_tasks dt
         JOIN filings f ON f.rcept_no = dt.rcept_no
-        WHERE dt.status = 'completed'
-          AND dt.file_type = 'xml'
-          AND dt.file_path IS NOT NULL
-          AND f.corp_code = :corp
+        WHERE dt.status = 'completed' AND dt.file_type = 'xml'
+          AND dt.file_path IS NOT NULL AND f.corp_code = :corp
     """
     params = {"corp": corp}
     if year is not None:
@@ -2652,62 +2665,52 @@ def cmd_extract2(args):
         params["year"] = year
     sql += "ORDER BY f.fiscal_year DESC, f.fiscal_period, f.is_amendment ASC, dt.rcept_no ASC"
 
-    with get_session() as session:
-        rows = session.execute(text(sql), params).fetchall()
-        if not rows:
+    rows = session.execute(text(sql), params).fetchall()
+    if not rows:
+        if verbose:
             logger.warning(f"[extract2] 대상 XML 없음: corp={corp} year={year}")
-            return
+        return (0, 0, 0, 0)
 
-        total_files = n_track_a = n_track_b = total_facts = 0
-        for r in rows:
-            common = dict(
-                rcept_no=r.rcept_no, corp_code=r.corp_code,
-                report_fiscal_year=r.fiscal_year, report_fiscal_period=r.fiscal_period,
-            )
-            # Track A(XBRL) 우선, 0행이면 Track B(텍스트) 폴백
-            facts = xbrl.extract_facts(r.file_path, **common)
-            track = "A"
-            if not facts:
-                facts = text_extract.extract_facts(r.file_path, **common)
-                track = "B"
-
-            total_files += 1
-            tag = f"{r.fiscal_year}{r.fiscal_period}" + ("*" if r.is_amendment else "")
-            if not facts:
-                logger.info(f"  [{tag}] r{r.rcept_no} — 추출 0행(A·B 모두, PDF 폴백 대상)")
-                continue
-            if track == "A":
-                n_track_a += 1
-            else:
-                n_track_b += 1
-            total_facts += len(facts)
-
-            if dry_run:
-                logger.info(f"  [{tag}] r{r.rcept_no} — Track {track} {len(facts)}행")
-                # 단위/연결별도 눈검증용: 주요 항목(canonical 또는 XBRL acode) 표시
-                want_canon = {"bs.total_assets", "is.revenue", "bs.total_equity"}
-                want_acode = {"ifrs-full_Assets", "ifrs-full_Revenue", "ifrs-full_Equity"}
-                for f in facts:
-                    hit = (f.canonical_account in want_canon) or (f.acode in want_acode)
-                    if hit and f.col_index == 0 and not f.is_dimensional:
-                        label = f.canonical_account or f.acode
-                        logger.info(
-                            f"      {label:18s} basis={f.basis or '-':12s} "
-                            f"ADECIMAL={f.adecimal} col={f.col_index} "
-                            f"won={f.amount_won:,}"
-                        )
-            else:
-                n = store_facts(session, facts)
-                logger.success(f"  [{tag}] r{r.rcept_no} — Track {track} {n}행 upsert")
-
-        if not dry_run:
-            session.commit()
-
-        logger.success(
-            f"[extract2] corp={corp} 파일 {total_files}개 — Track A {n_track_a} / "
-            f"Track B {n_track_b}, fact {total_facts:,}행"
-            + (" (dry-run, 미저장)" if dry_run else " 저장")
+    _log = logger.success if verbose else logger.debug
+    total_files = n_track_a = n_track_b = total_facts = 0
+    for r in rows:
+        common = dict(
+            rcept_no=r.rcept_no, corp_code=r.corp_code,
+            report_fiscal_year=r.fiscal_year, report_fiscal_period=r.fiscal_period,
         )
+        facts = xbrl.extract_facts(r.file_path, **common)
+        track = "A"
+        if not facts:
+            facts = text_extract.extract_facts(r.file_path, **common)
+            track = "B"
+
+        total_files += 1
+        tag = f"{r.fiscal_year}{r.fiscal_period}" + ("*" if r.is_amendment else "")
+        if not facts:
+            if verbose:
+                logger.info(f"  [{tag}] r{r.rcept_no} — 추출 0행(A·B 모두, PDF 폴백 대상)")
+            continue
+        if track == "A":
+            n_track_a += 1
+        else:
+            n_track_b += 1
+        total_facts += len(facts)
+
+        if dry_run:
+            logger.info(f"  [{tag}] r{r.rcept_no} — Track {track} {len(facts)}행")
+            want_canon = {"bs.total_assets", "is.revenue", "bs.total_equity"}
+            want_acode = {"ifrs-full_Assets", "ifrs-full_Revenue", "ifrs-full_Equity"}
+            for f in facts:
+                hit = (f.canonical_account in want_canon) or (f.acode in want_acode)
+                if hit and f.col_index == 0 and not f.is_dimensional:
+                    label = f.canonical_account or f.acode
+                    logger.info(f"      {label:18s} basis={f.basis or '-':12s} "
+                                f"ADECIMAL={f.adecimal} col={f.col_index} won={f.amount_won:,}")
+        else:
+            n = store_facts(session, facts)
+            _log(f"  [{tag}] r{r.rcept_no} — Track {track} {n}행 upsert")
+
+    return (total_files, n_track_a, n_track_b, total_facts)
 
 
 def cmd_reconcile2(args):
@@ -2758,6 +2761,79 @@ def cmd_standardize2(args):
     logger.success(f"[standardize2] corp={corp} 완료 — std_financials_v2 {n}레코드")
 
 
+def cmd_fin2_all(args):
+    """
+    fin2 전수 오케스트레이션: 다운로드 완료된 전 기업에 E→R→S 파이프라인 실행.
+
+    대상: download_tasks(status=completed, file_type=xml) 보유 기업.
+    각 기업: extract2 → reconcile2 → standardize2. 기업 단위 커밋(중단 시 재개 가능).
+    기업별 예외는 로깅 후 계속(전체 중단 방지).
+
+    옵션:
+      --corps START:END : list 인덱스 슬라이스(부분 실행/병렬 분할)
+      --limit N         : 최대 기업 수
+      --stage S         : extract|reconcile|standardize|all(기본). 단계만 재실행용.
+    ⚠ 장시간 작업. 진행률 50기업마다 로깅.
+    """
+    from sqlalchemy import text
+    from collector.db import get_session
+    from fin2.reconcile import reconcile_corp
+    from fin2.standardize.build import standardize_corp
+
+    stage = getattr(args, "stage", None) or "all"
+    do_e = stage in ("all", "extract")
+    do_r = stage in ("all", "reconcile")
+    do_s = stage in ("all", "standardize")
+
+    with get_session() as session:
+        corps = [r[0] for r in session.execute(text("""
+            SELECT DISTINCT f.corp_code
+            FROM download_tasks dt JOIN filings f ON f.rcept_no = dt.rcept_no
+            WHERE dt.status='completed' AND dt.file_type='xml' AND dt.file_path IS NOT NULL
+            ORDER BY f.corp_code
+        """)).fetchall()]
+
+    # --corps START:END 슬라이스 (병렬 분할/부분 실행)
+    corps_arg = getattr(args, "corps", None)
+    if corps_arg:
+        if ":" in corps_arg:
+            a, _, b = corps_arg.partition(":")
+            corps = corps[(int(a) if a else None):(int(b) if b else None)]
+        else:
+            corps = corps[int(corps_arg):int(corps_arg) + 1]
+    limit = getattr(args, "limit", None)
+    if limit:
+        corps = corps[:limit]
+
+    total = len(corps)
+    logger.info(f"[fin2-all] stage={stage} 대상 기업 {total}개")
+    agg = {"e_files": 0, "e_facts": 0, "r": 0, "s": 0, "errors": 0}
+    for i, corp in enumerate(corps, 1):
+        try:
+            with get_session() as session:
+                if do_e:
+                    files, a, b, facts = _extract2_corp(session, corp, verbose=False)
+                    agg["e_files"] += files
+                    agg["e_facts"] += facts
+                if do_r:
+                    agg["r"] += reconcile_corp(session, corp)
+                if do_s:
+                    agg["s"] += standardize_corp(session, corp)
+                session.commit()
+        except Exception as e:
+            agg["errors"] += 1
+            logger.error(f"[fin2-all] corp={corp} 실패: {e}")
+        if i % 50 == 0 or i == total:
+            logger.info(f"[fin2-all] 진행 {i}/{total} — "
+                        f"facts {agg['e_facts']:,} / stmt_src {agg['r']:,} / "
+                        f"std_v2 {agg['s']:,} / 오류 {agg['errors']}")
+
+    logger.success(
+        f"[fin2-all] 완료 — 기업 {total}개, fact {agg['e_facts']:,}행, "
+        f"statement_source {agg['r']:,}, std_v2 {agg['s']:,}, 오류 {agg['errors']}"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="DART PDF 수집 시스템",
@@ -2773,8 +2849,8 @@ def main():
             "status", "failed", "reset-failed", "all",
             # 파싱 (Phase 2)
             "parse", "parse-status", "parse-reset", "unknown-accounts",
-            # fin2 재구축 (E·R·S-레이어)
-            "extract2", "reconcile2", "standardize2",
+            # fin2 재구축 (E·R·S-레이어 + 전수 오케스트레이션)
+            "extract2", "reconcile2", "standardize2", "fin2-all",
             # PDF 파싱 (Phase 5B)
             "parse-pdf", "parse-pdf-reset",
             # 다운로더 보완 (Phase 6 전처리)
@@ -2917,6 +2993,12 @@ def main():
                         dest="compare_corps",
                         help="compare: 비교할 기업 DART 코드 콤마 구분")
     parser.add_argument(
+        "--stage",
+        choices=["extract", "reconcile", "standardize", "all"],
+        default="all",
+        help="fin2-all: 실행 단계 (extract/reconcile/standardize/all, 기본 all)",
+    )
+    parser.add_argument(
         "--partial",
         action="store_true",
         dest="partial",
@@ -2957,10 +3039,11 @@ def main():
         "parse-status":     cmd_parse_status,
         "parse-reset":      cmd_parse_reset,
         "unknown-accounts": cmd_unknown_accounts,
-        # fin2 재구축 (E·R·S-레이어)
+        # fin2 재구축 (E·R·S-레이어 + 전수 오케스트레이션)
         "extract2":         cmd_extract2,
         "reconcile2":       cmd_reconcile2,
         "standardize2":     cmd_standardize2,
+        "fin2-all":         cmd_fin2_all,
         # 분석 (Phase 3)
         "aggregate":        cmd_aggregate,
         "analyze":          cmd_analyze,

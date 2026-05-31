@@ -97,7 +97,7 @@ def _row_to_fact(
         adecimal=_adecimal_from_unit(unit),
         amount_won=amount,
         source_format="xml_text",
-        source_ref=f"{fs_type}/{row.account_name[:80]}",
+        source_ref=f"{fs_type}/{row.account_name[:80]}"[:180],
         acontext_raw=_synth_acontext(basis, period_kind, col_idx, ctx_fy),
         context_parsed=False,
         canonical_account=canonical,

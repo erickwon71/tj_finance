@@ -46,17 +46,17 @@ NON_VALUE_COLS = {
 }
 
 
-def _value_columns() -> list[str]:
-    """standard_financials 의 숫자형 값 컬럼 목록을 동적으로 수집."""
+def _value_columns(table: str = "standard_financials") -> list[str]:
+    """테이블의 숫자형 값 컬럼 목록을 동적으로 수집."""
     sql = """
         SELECT column_name
         FROM information_schema.columns
-        WHERE table_name = 'standard_financials'
+        WHERE table_name = :table
           AND data_type IN ('bigint', 'integer', 'smallint', 'numeric')
         ORDER BY ordinal_position
     """
     with get_session() as session:
-        cols = [r[0] for r in session.execute(text(sql)).fetchall()]
+        cols = [r[0] for r in session.execute(text(sql), {"table": table}).fetchall()]
     # 키 컬럼(fiscal_year/version 등 숫자)과 메타 컬럼 제거
     return [c for c in cols if c not in KEY_COLS and c not in NON_VALUE_COLS]
 
@@ -65,13 +65,23 @@ def _key(row: dict) -> str:
     return "|".join(str(row[c]) for c in KEY_COLS)
 
 
-def capture(label: str, out_path: str, since_year: int = 1999) -> dict:
-    """standard_financials 전 컬럼 스냅샷을 JSON 으로 저장."""
-    value_cols = _value_columns()
+# parity 캡처 가능한 테이블(화이트리스트 — SQL 인젝션 방지)
+_CAPTURE_TABLES = {"standard_financials", "std_financials_v2"}
+
+
+def capture(label: str, out_path: str, since_year: int = 1999,
+            table: str = "standard_financials") -> dict:
+    """
+    와이드 테이블 전 컬럼 스냅샷을 JSON 으로 저장.
+    table='std_financials_v2' 로 신 파이프라인 출력을 캡처해 baseline774(현 출력)과 diff.
+    """
+    if table not in _CAPTURE_TABLES:
+        raise ValueError(f"capture 대상 테이블 화이트리스트 밖: {table}")
+    value_cols = _value_columns(table)
     select_cols = ", ".join(f"sf.{c}" for c in (*KEY_COLS, *value_cols))
     sql = f"""
         SELECT {select_cols}
-        FROM standard_financials sf
+        FROM {table} sf
         WHERE sf.fiscal_year >= :since_year
     """
     data: dict[str, dict] = {}
@@ -86,12 +96,13 @@ def capture(label: str, out_path: str, since_year: int = 1999) -> dict:
         "label": label,
         "created_at": date.today().isoformat(),
         "since_year": since_year,
+        "table": table,
         "value_columns": value_cols,
         "count": len(data),
         "data": data,
     }
     Path(out_path).write_text(json.dumps(snapshot, ensure_ascii=False))
-    print(f"captured {len(data):,} rows × {len(value_cols)} cols → {out_path}")
+    print(f"captured {len(data):,} rows × {len(value_cols)} cols from {table} → {out_path}")
     return snapshot
 
 
@@ -183,14 +194,14 @@ def _print_report(report: dict, limit: int = 30) -> None:
 
 
 def _cmd_capture(args):
-    capture(args.label, args.out, since_year=args.since)
+    capture(args.label, args.out, since_year=args.since, table=args.table)
 
 
 def _cmd_diff(args):
     baseline = _load(args.baseline)
     if args.live:
         current = capture("__live__", "/dev/null" if sys.platform != "win32" else "nul",
-                          since_year=baseline.get("since_year", 1999))
+                          since_year=baseline.get("since_year", 1999), table=args.table)
     else:
         current = _load(args.current)
     report = diff(baseline, current, tol=args.tol)
@@ -204,16 +215,21 @@ def main(argv=None):
     p = argparse.ArgumentParser(description="fin2 parity harness")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    pc = sub.add_parser("capture", help="현 standard_financials 스냅샷 저장")
+    pc = sub.add_parser("capture", help="와이드 테이블 스냅샷 저장")
     pc.add_argument("--label", required=True)
     pc.add_argument("--out", required=True)
     pc.add_argument("--since", type=int, default=1999)
+    pc.add_argument("--table", default="standard_financials",
+                    choices=sorted(_CAPTURE_TABLES), help="캡처 대상(기본 standard_financials)")
     pc.set_defaults(func=_cmd_capture)
 
     pd = sub.add_parser("diff", help="baseline vs (live|snapshot) 비교")
     pd.add_argument("baseline")
     pd.add_argument("current", nargs="?")
     pd.add_argument("--live", action="store_true", help="라이브 테이블과 비교")
+    pd.add_argument("--table", default="std_financials_v2",
+                    choices=sorted(_CAPTURE_TABLES),
+                    help="--live 캡처 대상(기본 std_financials_v2 — 신 출력 vs baseline)")
     pd.add_argument("--tol", type=float, default=0.0, help="상대 허용오차(예: 0.005=0.5%%)")
     pd.add_argument("--limit", type=int, default=30)
     pd.add_argument("--out", help="리포트 JSON 저장 경로")

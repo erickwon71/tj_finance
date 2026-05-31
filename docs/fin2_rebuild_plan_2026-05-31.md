@@ -20,11 +20,14 @@ report→DB(파싱/표준화) 계층을 새 스키마로 **병행 재구축(fin2
 
 **P4 (규칙엔진+std_v2)**: `StdFinancialV2` + `fin2/standardize/{rules,build}.py` + `standardize2`(92e61e1). 13휴리스틱 규칙 이식. **E→R→S golden 4/4(리메드 DQ=3→1)**. test_rules(9). 전체 37통과.
 
+**전수 오케스트레이션 + parity-v2**(12f17eb): `fin2-all [--corps S:E][--limit][--stage]` + `parity.py --table std_financials_v2`. acode 120→255 버그수정.
+
 **남은 작업(우선순위)**:
-1. **P4 마무리 = 전수 parity**: 전기업 일괄명령(--all) 추가 → 장시간 sweep(사용자 실행) → parity.py std_v2 캡처 확장 → baseline774 대비 diff(null_flip/changed=회귀).
-2. **Phase 5 호환 view**: standard_financials 를 std_v2 위 view(version=1)로 무중단 전환.
-3. `fin2/extract/pdf.py`: PDF-only 폴백. 낮은 우선순위.
-- ⚠ 적재는 신흥·큐로셀·리메드 3사뿐. CLI: extract2/reconcile2/standardize2 --corp(단일 E→R→S 3명령).
+1. **전수 sweep(사용자, 장시간)**: `run.py fin2-all` → `parity diff baseline --live --table std_financials_v2 --tol 0.005 --out`.
+2. **parity 발산 정밀화(P4 잔여)**: 6사 시범에서 CF파생 집중 발산(ebitda/da_total/cfi/depreciation/cff/fcf/capex/amortization). 원인=주석 D&A 귀속 갭(legacy note_extractor) + cfi/cff source. data_quality 변동=리메드 DQ3→1(의도). → note D&A 보강 규칙.
+3. **Phase 5 호환 view**: standard_financials → std_v2 view(version=1).
+4. `fin2/extract/pdf.py`: PDF-only 폴백. 낮은 우선순위.
+- 적재=6사. CLI: extract2/reconcile2/standardize2 --corp(단일), fin2-all(전수).
 
 ## ✅ Phase 0 완료 (2026-05-31)
 **완료 내역:**

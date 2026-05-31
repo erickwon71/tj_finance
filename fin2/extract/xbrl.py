@@ -22,6 +22,7 @@ from loguru import logger
 from parser.common.amount_normalizer import parse_amount
 from parser.xml.dart_xml_parser import _parse_xml_file
 from fin2.extract.acontext import parse_acontext
+from fin2.taxonomy.concept_map import map_acode
 
 # Track A 로 인정하는 ACODE 네임스페이스 접두어
 _XBRL_PREFIXES = ("ifrs-full_", "dart_")
@@ -49,7 +50,7 @@ class ExtractedFact:
     source_ref: str | None
     acontext_raw: str | None
     context_parsed: bool
-    canonical_account: str | None = None  # Track A=NULL(concept_map 책임), Track B=account_mapper 결과
+    canonical_account: str | None = None  # Track A=concept_map.map_acode, Track B=account_mapper. 미매핑 NULL
 
     def as_row(self) -> dict:
         """SQLAlchemy bulk upsert 용 dict (FactV2 컬럼명 기준)."""
@@ -167,6 +168,7 @@ def extract_facts(
             source_ref=f"{ctx.basis or '?'}/{acode}",
             acontext_raw=acontext_raw,
             context_parsed=ctx.parsed,
+            canonical_account=map_acode(acode),
         )
 
         key = (acode, acontext_raw)

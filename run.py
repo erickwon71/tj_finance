@@ -2773,6 +2773,8 @@ def cmd_fin2_all(args):
       --corps START:END : list 인덱스 슬라이스(부분 실행/병렬 분할)
       --limit N         : 최대 기업 수
       --stage S         : extract|reconcile|standardize|all(기본). 단계만 재실행용.
+      --skip-done       : 이미 std_financials_v2 에 있는 기업(E→R→S 완주) 건너뜀.
+                          중단 후 재개 시 재처리·파일 재다운로드 최소화.
     ⚠ 장시간 작업. 진행률 50기업마다 로깅.
     """
     from sqlalchemy import text
@@ -2805,8 +2807,19 @@ def cmd_fin2_all(args):
     if limit:
         corps = corps[:limit]
 
+    # --skip-done: 이미 std_v2 에 완주 적재된 기업 제외(중단 후 재개 가속)
+    skipped_done = 0
+    if getattr(args, "skip_done", False):
+        with get_session() as session:
+            done = {r[0] for r in session.execute(text(
+                "SELECT DISTINCT corp_code FROM std_financials_v2")).fetchall()}
+        before = len(corps)
+        corps = [c for c in corps if c not in done]
+        skipped_done = before - len(corps)
+
     total = len(corps)
-    logger.info(f"[fin2-all] stage={stage} 대상 기업 {total}개")
+    logger.info(f"[fin2-all] stage={stage} 대상 기업 {total}개"
+                + (f" (skip-done {skipped_done}개 제외)" if skipped_done else ""))
     agg = {"e_files": 0, "e_facts": 0, "r": 0, "s": 0, "errors": 0}
     for i, corp in enumerate(corps, 1):
         try:
@@ -2997,6 +3010,12 @@ def main():
         choices=["extract", "reconcile", "standardize", "all"],
         default="all",
         help="fin2-all: 실행 단계 (extract/reconcile/standardize/all, 기본 all)",
+    )
+    parser.add_argument(
+        "--skip-done",
+        action="store_true",
+        dest="skip_done",
+        help="fin2-all: 이미 std_financials_v2 에 적재된 기업 건너뜀(재개 가속)",
     )
     parser.add_argument(
         "--partial",

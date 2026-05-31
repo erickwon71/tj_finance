@@ -5,7 +5,21 @@
 ## 한 줄 요약
 report→DB(파싱/표준화) 계층을 새 스키마로 **병행 재구축(fin2/)**. 수집·다운로드는 완료·유지. golden 파리티 통과 후 **호환 view로 무중단 전환**. PostgreSQL 유지.
 
-## ✅ Phase 0 완료 (2026-05-31) — 다음은 Phase 1
+## ✅ Phase 1·2 완료 (2026-05-31) — 다음은 PDF 폴백 + concept_map, 그 후 Phase 3
+**P1 (XBRL Track A)**: acontext 파서(f550548)·fact_v2 스키마(512247f)·추출기+`extract2`(e7b16f9).
+- 신흥에스이씨 2024: 743행, 현 `standard_financials` won-스케일 완전 일치(연결/별도). ADECIMAL=0=원. SCE 180행 is_dimensional. test_xbrl(4)+test_acontext(9).
+
+**P2 (텍스트 Track B)**: `fin2/extract/text.py` + extract2 자동폴백(fc674de). leaf 모듈 재사용, 레거시 오케스트레이터 비의존.
+- canonical=account_mapper(미매핑 NULL), **무손실**(미매핑 행 보존), adecimal=단위역산, acontext_raw=합성 "text:" 토큰.
+- 큐로셀 2023: 별도 자산 1,049.7억·자본 591억·매출0 = golden 일치. 신흥 2024 = Track A 743(연간) + Track B 1042(분기), idempotent, canonical 89%. test_text(5).
+- ⚠ **알려진 한계**: 분기/반기 IS col0 가 3개월/누적 중 **3개월** 컬럼을 잡는 레거시 table_extractor 동작 상속 → `is_cumulative=True` 라벨과 불일치. P4 기간정규화/컬럼판별에서 해소(레거시도 동일 → 회귀 아님).
+
+**남은 작업(우선순위)**:
+1. `fin2/taxonomy/concept_map.py`: XBRL acode→canonical(현 _ACODE_TO_STANDARD 40개 대체+확장). **Track A canonical 채워야 R/S 레이어가 양 트랙 통합 가능**(현재 Track A canonical=NULL).
+2. `fin2/extract/pdf.py`: PDF-only(구형/PDF) 폴백. extract2 에 A→B→PDF 3단 폴백. 기존 PDF 모듈 재사용.
+3. → Phase 3 statement_source 정합.
+
+## ✅ Phase 0 완료 (2026-05-31)
 **완료 내역:**
 1. **774 복구**: `git revert d3577ae`(→cf90295) + recalc-superseded + aggregate. **DQ=3=774 확인**.
    한양증권 2012 FY 별도 영업수익 193,144,577,956(=1,931억) 유지. ⚠ 리메드 등 ~200 over-supersede 손실 재유입(의도된 baseline; fin2 P3가 복구).

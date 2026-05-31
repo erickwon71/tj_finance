@@ -16,11 +16,13 @@ report→DB(파싱/표준화) 계층을 새 스키마로 **병행 재구축(fin2
 
 **P3 prep (concept_map)**: `fin2/taxonomy/concept_map.py`(7fd84eb). ifrs-full_*/dart_*→canonical, xbrl 연동, 신흥 Track A core 80%. 미매핑은 의도적 보류(보존→backfill 가능). test_concept_map(5). **전체 fin2 23통과.**
 
+**P3 (statement_source)**: `collector/models.py` StatementSource + `fin2/reconcile.py` + `reconcile2`(0997a84). BS/IS/CF 독립 선택(anchor>완전성>filed_at). **리메드 2023 복구: 깨진 정정본 대신 원본 → assets 55,060,329,028·rev 18,536,134,645 = golden 일치.** test_reconcile(5). 전체 28통과.
+
 **남은 작업(우선순위)**:
-1. **Phase 3 `fin2/reconcile.py`**: (corp,period,basis)별 BS/IS/CF 각각 단일 source filing 선택 → over-supersede 구조 해결. **golden rimed 2023 복구 타깃.**
-2. `fin2/extract/pdf.py`: PDF-only 폴백(A→B→PDF 3단). Phase 3 보다 낮은 우선순위.
-3. → P4 규칙엔진 std_v2 → parity 전수 → P5 호환 view.
-- ⚠ fact_v2 전수 적재 미실시(현재 신흥·큐로셀만). Phase 3/4 검증 전 전 기업 extract2 일괄 필요.
+1. **Phase 4 `fin2/standardize/rules.py` + std_financials_v2**: statement_source 읽어 레코드 조립, aggregator 13 휴리스틱(:472–696)을 규칙엔진으로 이식, parity 전수 검증.
+2. `fin2/extract/pdf.py`: PDF-only 폴백. P4 보다 낮은 우선순위.
+3. → P5 호환 view 전환.
+- ⚠ fact_v2 전수 적재 미실시(신흥·큐로셀·리메드만). P4 parity 전수검증 전 전 기업 extract2+reconcile2 일괄 필요(전체 일괄 명령 미구현).
 
 ## ✅ Phase 0 완료 (2026-05-31)
 **완료 내역:**

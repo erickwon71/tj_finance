@@ -240,6 +240,60 @@ def cmd_cleanup(args):
     cleanup_inactive_tasks()
 
 
+def cmd_reset_missing(args):
+    """
+    download_tasks: status='completed' 인데 디스크에 파일이 없는 건을 pending 으로 리셋.
+
+    파일이 외부(OneDrive 등)에서 소실됐을 때 재다운로드 경로 복구용.
+    다운로더는 pending/failed 만 큐에 넣고 파일 존재를 확인하지 않으므로, 이 리셋 없이는
+    소실 파일이 재다운로드되지 않는다.
+
+    옵션:
+      --corp CODE : 특정 기업만
+      --dry-run   : 리셋 없이 소실 건수만 보고
+    """
+    from pathlib import Path
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    corp = getattr(args, "corp", None)
+    dry = getattr(args, "dry_run", False)
+
+    sql = "SELECT dt.rcept_no, dt.file_path FROM download_tasks dt"
+    params: dict = {}
+    if corp:
+        sql += " JOIN filings f ON f.rcept_no = dt.rcept_no WHERE dt.status='completed' AND f.corp_code=:c"
+        params["c"] = corp
+    else:
+        sql += " WHERE dt.status='completed'"
+
+    with get_session() as session:
+        rows = session.execute(text(sql), params).fetchall()
+
+    missing = [r.rcept_no for r in rows
+               if not r.file_path or not Path(r.file_path).exists()]
+    logger.info(f"completed {len(rows):,}건 중 파일 소실 {len(missing):,}건")
+
+    if dry:
+        logger.info("dry-run: DB 변경 안 함. (리셋하려면 --dry-run 제거)")
+        return
+    if not missing:
+        logger.success("소실 파일 없음 — 리셋 불필요.")
+        return
+
+    with get_session() as session:
+        for i in range(0, len(missing), 1000):
+            chunk = missing[i:i + 1000]
+            session.execute(text("""
+                UPDATE download_tasks
+                SET status='pending', attempts=0, completed_at=NULL,
+                    last_error='파일 소실 — 재다운로드 대상으로 리셋'
+                WHERE rcept_no = ANY(:rs)
+            """), {"rs": chunk})
+        session.commit()
+    logger.success(f"{len(missing):,}건 pending 리셋 완료 → 이제 download 가 재다운로드함")
+
+
 def cmd_reset_html(args):
     """
     기존 레거시 HTML(표지만 있는 파일)을 pending으로 되돌려 PDF 재시도 등록.
@@ -2859,7 +2913,7 @@ def main():
             # 수집
             "init", "sync-corps", "sync-filings",
             "download", "list-corps",
-            "status", "failed", "reset-failed", "all",
+            "status", "failed", "reset-failed", "reset-missing", "all",
             # 파싱 (Phase 2)
             "parse", "parse-status", "parse-reset", "unknown-accounts",
             # fin2 재구축 (E·R·S-레이어 + 전수 오케스트레이션)
@@ -3052,6 +3106,7 @@ def main():
         "status":           cmd_status,
         "failed":           cmd_failed,
         "reset-failed":     cmd_reset_failed,
+        "reset-missing":    cmd_reset_missing,
         "all":              cmd_all,
         # 파싱 (Phase 2)
         "parse":            cmd_parse,

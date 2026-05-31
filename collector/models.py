@@ -279,6 +279,48 @@ class FactV2(Base):
                 f"{self.basis} {self.context_fiscal_year} {self.amount_won}>")
 
 
+# ── 5c. fin2 R-레이어 statement source 선택 (statement_source) ───────────────
+class StatementSource(Base):
+    """
+    fin2 정합(R) 산출물: (기업·연도·기간·연결별도·재무제표) 단위로 **단일 source filing 선택**.
+
+    over-supersede 구조적 해결:
+      기존 파이프라인은 (period,basis) 전체를 '최신 final filing' 하나로 blunt-supersede →
+      부분 기재정정이 미정정 statement까지 덮어써 데이터 손실(리메드 2023: 정정본 revenue=283,638).
+      fin2 는 BS/IS/CF **각 statement 별로 독립 선택** → 부분정정은 가진 statement만 이김.
+
+    선택 규칙(reconcile.py):
+      후보 = fact_v2 에서 해당 (corp, report_fy, report_period, basis) + statement(canonical 접두어)을
+             1줄 이상 가진 filing. 점수 = 매핑 canonical 라인 수(완전성), anchor 라인 보유 가산.
+      최고점 채택, 동점이면 filed_at 최신(정정 우선).
+
+    S-레이어는 (period,basis) 한 레코드를 BS=선택본·IS=선택본·CF=선택본 으로 조립.
+    신규 테이블 → create_all 자동 생성.
+    """
+    __tablename__ = "statement_source"
+
+    corp_code      = Column(String(8),    primary_key=True)
+    fiscal_year    = Column(SmallInteger, primary_key=True)
+    fiscal_period  = Column(String(5),    primary_key=True)   # FY/H1/Q1/Q3
+    basis          = Column(String(12),   primary_key=True)   # consolidated/separate
+    statement      = Column(String(2),    primary_key=True)   # BS/IS/CF
+
+    source_rcept_no = Column(String(14),  nullable=False, comment="선택된 source filing")
+    line_count      = Column(SmallInteger, nullable=True, comment="선택본의 매핑 canonical 라인 수(완전성)")
+    has_anchor      = Column(Boolean,     default=False, comment="anchor 라인(BS=assets/IS=revenue/CF=operating) 보유")
+    candidate_count = Column(SmallInteger, nullable=True, comment="경쟁한 filing 수")
+    lineage         = Column(JSONB,       nullable=True, comment="후보별 [{rcept,line_count,filed_at,chosen}]")
+    reconciled_at   = Column(DateTime,    default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_stmt_src_lookup", "corp_code", "fiscal_year", "fiscal_period", "basis"),
+    )
+
+    def __repr__(self):
+        return (f"<StatementSource {self.corp_code} {self.fiscal_year}{self.fiscal_period} "
+                f"{self.basis}/{self.statement} ← r{self.source_rcept_no} ({self.line_count})>")
+
+
 # ── 6. 미매핑 계정과목 추적 ─────────────────────────────────────────────────
 class UnknownAccount(Base):
     """

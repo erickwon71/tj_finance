@@ -2611,6 +2611,93 @@ def cmd_compare(args):
 
 
 # ── CLI 파서 ─────────────────────────────────────────────────────────
+def cmd_extract2(args):
+    """
+    fin2 E-레이어: Track A XBRL 추출 → fact_v2 upsert.
+
+    대상: 해당 기업의 download_tasks.status='completed' AND file_type='xml' 최종본.
+    Track A 가 아닌 파일(구형/Track B)은 0행 → P2 폴백 예정(여기선 스킵).
+
+    옵션:
+      --corp CODE   : 대상 기업 (필수)
+      --year YEAR   : 특정 회계연도만
+      --dry-run     : DB 저장 없이 추출 요약만 출력(단위/연결별도 눈검증)
+    """
+    from sqlalchemy import text
+    from collector.db import get_session
+    from fin2.extract.xbrl import extract_facts, store_facts
+
+    corp = getattr(args, "corp", None)
+    if not corp:
+        logger.error("extract2 는 --corp CODE 가 필요합니다.")
+        sys.exit(1)
+    year = getattr(args, "year", None)
+    dry_run = getattr(args, "dry_run", False)
+
+    sql = """
+        SELECT dt.rcept_no, dt.file_path,
+               f.corp_code, f.fiscal_year, f.fiscal_period, f.report_type,
+               f.is_amendment, f.is_final
+        FROM download_tasks dt
+        JOIN filings f ON f.rcept_no = dt.rcept_no
+        WHERE dt.status = 'completed'
+          AND dt.file_type = 'xml'
+          AND dt.file_path IS NOT NULL
+          AND f.corp_code = :corp
+    """
+    params = {"corp": corp}
+    if year is not None:
+        sql += "  AND f.fiscal_year = :year\n"
+        params["year"] = year
+    sql += "ORDER BY f.fiscal_year DESC, f.fiscal_period, f.is_amendment ASC, dt.rcept_no ASC"
+
+    with get_session() as session:
+        rows = session.execute(text(sql), params).fetchall()
+        if not rows:
+            logger.warning(f"[extract2] 대상 XML 없음: corp={corp} year={year}")
+            return
+
+        total_files = total_track_a = total_facts = 0
+        for r in rows:
+            facts = extract_facts(
+                r.file_path,
+                rcept_no=r.rcept_no,
+                corp_code=r.corp_code,
+                report_fiscal_year=r.fiscal_year,
+                report_fiscal_period=r.fiscal_period,
+            )
+            total_files += 1
+            tag = f"{r.fiscal_year}{r.fiscal_period}" + ("*" if r.is_amendment else "")
+            if not facts:
+                logger.info(f"  [{tag}] r{r.rcept_no} — Track A 아님(0행, P2 폴백)")
+                continue
+            total_track_a += 1
+            total_facts += len(facts)
+
+            if dry_run:
+                # 단위/연결별도 눈검증용: 주요 acode 몇 개 표시
+                logger.info(f"  [{tag}] r{r.rcept_no} — {len(facts)}행")
+                show = {"ifrs-full_Assets", "ifrs-full_Revenue", "ifrs-full_Equity"}
+                for f in facts:
+                    if f.acode in show and f.col_index == 0 and not f.is_dimensional:
+                        logger.info(
+                            f"      {f.acode:28s} basis={f.basis or '-':12s} "
+                            f"ADECIMAL={f.adecimal} col={f.col_index} "
+                            f"won={f.amount_won:,}"
+                        )
+            else:
+                n = store_facts(session, facts)
+                logger.success(f"  [{tag}] r{r.rcept_no} — {n}행 upsert")
+
+        if not dry_run:
+            session.commit()
+
+        logger.success(
+            f"[extract2] corp={corp} 파일 {total_files}개 중 Track A {total_track_a}개, "
+            f"fact {total_facts:,}행" + (" (dry-run, 미저장)" if dry_run else " 저장")
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="DART PDF 수집 시스템",
@@ -2626,6 +2713,8 @@ def main():
             "status", "failed", "reset-failed", "all",
             # 파싱 (Phase 2)
             "parse", "parse-status", "parse-reset", "unknown-accounts",
+            # fin2 재구축 (E-레이어)
+            "extract2",
             # PDF 파싱 (Phase 5B)
             "parse-pdf", "parse-pdf-reset",
             # 다운로더 보완 (Phase 6 전처리)
@@ -2808,6 +2897,8 @@ def main():
         "parse-status":     cmd_parse_status,
         "parse-reset":      cmd_parse_reset,
         "unknown-accounts": cmd_unknown_accounts,
+        # fin2 재구축 (E-레이어)
+        "extract2":         cmd_extract2,
         # 분석 (Phase 3)
         "aggregate":        cmd_aggregate,
         "analyze":          cmd_analyze,

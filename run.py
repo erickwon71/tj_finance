@@ -2625,7 +2625,8 @@ def cmd_extract2(args):
     """
     from sqlalchemy import text
     from collector.db import get_session
-    from fin2.extract.xbrl import extract_facts, store_facts
+    from fin2.extract import xbrl, text as text_extract
+    from fin2.extract.xbrl import store_facts
 
     corp = getattr(args, "corp", None)
     if not corp:
@@ -2657,44 +2658,55 @@ def cmd_extract2(args):
             logger.warning(f"[extract2] 대상 XML 없음: corp={corp} year={year}")
             return
 
-        total_files = total_track_a = total_facts = 0
+        total_files = n_track_a = n_track_b = total_facts = 0
         for r in rows:
-            facts = extract_facts(
-                r.file_path,
-                rcept_no=r.rcept_no,
-                corp_code=r.corp_code,
-                report_fiscal_year=r.fiscal_year,
-                report_fiscal_period=r.fiscal_period,
+            common = dict(
+                rcept_no=r.rcept_no, corp_code=r.corp_code,
+                report_fiscal_year=r.fiscal_year, report_fiscal_period=r.fiscal_period,
             )
+            # Track A(XBRL) 우선, 0행이면 Track B(텍스트) 폴백
+            facts = xbrl.extract_facts(r.file_path, **common)
+            track = "A"
+            if not facts:
+                facts = text_extract.extract_facts(r.file_path, **common)
+                track = "B"
+
             total_files += 1
             tag = f"{r.fiscal_year}{r.fiscal_period}" + ("*" if r.is_amendment else "")
             if not facts:
-                logger.info(f"  [{tag}] r{r.rcept_no} — Track A 아님(0행, P2 폴백)")
+                logger.info(f"  [{tag}] r{r.rcept_no} — 추출 0행(A·B 모두, PDF 폴백 대상)")
                 continue
-            total_track_a += 1
+            if track == "A":
+                n_track_a += 1
+            else:
+                n_track_b += 1
             total_facts += len(facts)
 
             if dry_run:
-                # 단위/연결별도 눈검증용: 주요 acode 몇 개 표시
-                logger.info(f"  [{tag}] r{r.rcept_no} — {len(facts)}행")
-                show = {"ifrs-full_Assets", "ifrs-full_Revenue", "ifrs-full_Equity"}
+                logger.info(f"  [{tag}] r{r.rcept_no} — Track {track} {len(facts)}행")
+                # 단위/연결별도 눈검증용: 주요 항목(canonical 또는 XBRL acode) 표시
+                want_canon = {"bs.total_assets", "is.revenue", "bs.total_equity"}
+                want_acode = {"ifrs-full_Assets", "ifrs-full_Revenue", "ifrs-full_Equity"}
                 for f in facts:
-                    if f.acode in show and f.col_index == 0 and not f.is_dimensional:
+                    hit = (f.canonical_account in want_canon) or (f.acode in want_acode)
+                    if hit and f.col_index == 0 and not f.is_dimensional:
+                        label = f.canonical_account or f.acode
                         logger.info(
-                            f"      {f.acode:28s} basis={f.basis or '-':12s} "
+                            f"      {label:18s} basis={f.basis or '-':12s} "
                             f"ADECIMAL={f.adecimal} col={f.col_index} "
                             f"won={f.amount_won:,}"
                         )
             else:
                 n = store_facts(session, facts)
-                logger.success(f"  [{tag}] r{r.rcept_no} — {n}행 upsert")
+                logger.success(f"  [{tag}] r{r.rcept_no} — Track {track} {n}행 upsert")
 
         if not dry_run:
             session.commit()
 
         logger.success(
-            f"[extract2] corp={corp} 파일 {total_files}개 중 Track A {total_track_a}개, "
-            f"fact {total_facts:,}행" + (" (dry-run, 미저장)" if dry_run else " 저장")
+            f"[extract2] corp={corp} 파일 {total_files}개 — Track A {n_track_a} / "
+            f"Track B {n_track_b}, fact {total_facts:,}행"
+            + (" (dry-run, 미저장)" if dry_run else " 저장")
         )
 
 

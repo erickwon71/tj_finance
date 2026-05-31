@@ -49,6 +49,7 @@ class ExtractedFact:
     source_ref: str | None
     acontext_raw: str | None
     context_parsed: bool
+    canonical_account: str | None = None  # Track A=NULL(concept_map 책임), Track B=account_mapper 결과
 
     def as_row(self) -> dict:
         """SQLAlchemy bulk upsert 용 dict (FactV2 컬럼명 기준)."""
@@ -58,7 +59,7 @@ class ExtractedFact:
             "report_fiscal_year": self.report_fiscal_year,
             "report_fiscal_period": self.report_fiscal_period,
             "acode": self.acode,
-            "canonical_account": None,          # concept_map 책임(여기선 미매핑)
+            "canonical_account": self.canonical_account,
             "basis": self.basis,
             "context_fiscal_year": self.context_fiscal_year,
             "col_index": self.col_index,

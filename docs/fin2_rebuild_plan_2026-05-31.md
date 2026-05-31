@@ -14,10 +14,13 @@ report→DB(파싱/표준화) 계층을 새 스키마로 **병행 재구축(fin2
 - 큐로셀 2023: 별도 자산 1,049.7억·자본 591억·매출0 = golden 일치. 신흥 2024 = Track A 743(연간) + Track B 1042(분기), idempotent, canonical 89%. test_text(5).
 - ⚠ **알려진 한계**: 분기/반기 IS col0 가 3개월/누적 중 **3개월** 컬럼을 잡는 레거시 table_extractor 동작 상속 → `is_cumulative=True` 라벨과 불일치. P4 기간정규화/컬럼판별에서 해소(레거시도 동일 → 회귀 아님).
 
+**P3 prep (concept_map)**: `fin2/taxonomy/concept_map.py`(7fd84eb). ifrs-full_*/dart_*→canonical, xbrl 연동, 신흥 Track A core 80%. 미매핑은 의도적 보류(보존→backfill 가능). test_concept_map(5). **전체 fin2 23통과.**
+
 **남은 작업(우선순위)**:
-1. `fin2/taxonomy/concept_map.py`: XBRL acode→canonical(현 _ACODE_TO_STANDARD 40개 대체+확장). **Track A canonical 채워야 R/S 레이어가 양 트랙 통합 가능**(현재 Track A canonical=NULL).
-2. `fin2/extract/pdf.py`: PDF-only(구형/PDF) 폴백. extract2 에 A→B→PDF 3단 폴백. 기존 PDF 모듈 재사용.
-3. → Phase 3 statement_source 정합.
+1. **Phase 3 `fin2/reconcile.py`**: (corp,period,basis)별 BS/IS/CF 각각 단일 source filing 선택 → over-supersede 구조 해결. **golden rimed 2023 복구 타깃.**
+2. `fin2/extract/pdf.py`: PDF-only 폴백(A→B→PDF 3단). Phase 3 보다 낮은 우선순위.
+3. → P4 규칙엔진 std_v2 → parity 전수 → P5 호환 view.
+- ⚠ fact_v2 전수 적재 미실시(현재 신흥·큐로셀만). Phase 3/4 검증 전 전 기업 extract2 일괄 필요.
 
 ## ✅ Phase 0 완료 (2026-05-31)
 **완료 내역:**

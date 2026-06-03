@@ -3,7 +3,7 @@ DART API 호출 속도 제한기
 - 하루 40,000콜 한도 관리
 - 콜 간 최소 1.0초 간격 강제 (config.MIN_REQUEST_INTERVAL)
 - 자정 기준 일일 카운터 자동 리셋
-- 한도 초과 시 다음날 자정까지 대기
+- 한도 초과 시 DailyQuotaReached 예외를 던져 즉시 종료 (진행 상태는 DB에 저장됨)
 """
 import time
 from datetime import date, datetime, timedelta
@@ -13,6 +13,10 @@ from typing import Optional
 from loguru import logger
 
 from collector.config import DAILY_CALL_LIMIT, MIN_REQUEST_INTERVAL
+
+
+class DailyQuotaReached(Exception):
+    """DART API 일일 호출 한도 도달 — 즉시 종료 신호 (자정까지 대기하지 않음)"""
 
 
 class DartRateLimiter:
@@ -75,18 +79,21 @@ class DartRateLimiter:
         if self._calls_today < self.daily_limit:
             return
 
-        # 자정까지 남은 시간 계산
+        # 자정까지 남은 시간 (참고용 로그)
         now = datetime.now()
         midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
-        wait_sec = (midnight - now).total_seconds() + 5  # 5초 여유
+        wait_hours = ((midnight - now).total_seconds()) / 3600
 
+        # 12시간 가까이 잠들지 않고 즉시 종료한다. 진행 상태는 DB에 저장되어 있으므로
+        # 자정 이후(또는 다음 실행 시) 다시 실행하면 중단 지점부터 이어서 처리된다.
         logger.warning(
-            f"[RateLimiter] 일일 한도 {self.daily_limit:,}콜 도달. "
-            f"자정까지 {wait_sec / 3600:.1f}시간 대기..."
+            f"[RateLimiter] 일일 한도 {self.daily_limit:,}콜 도달 — 즉시 종료합니다. "
+            f"자정까지 약 {wait_hours:.1f}시간 남음. "
+            f"자정 이후 다시 실행하면 중단 지점부터 재개됩니다."
         )
-        time.sleep(wait_sec)
-        self._calls_today = 0
-        self._day = date.today()
+        raise DailyQuotaReached(
+            f"일일 호출 한도 {self.daily_limit:,}콜 도달"
+        )
 
     def _wait_for_min_interval(self) -> None:
         elapsed = time.monotonic() - self._last_call_ts

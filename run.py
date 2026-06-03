@@ -49,6 +49,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from collector.rate_limiter import DailyQuotaReached
+
 # ── 로거 설정 ─────────────────────────────────────────────────────────
 LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -3154,6 +3156,12 @@ def main():
         dispatch[args.command](args)
     except KeyboardInterrupt:
         logger.warning("사용자 중단 (Ctrl+C). 진행 상태는 DB에 저장되어 있습니다.")
+        sys.exit(0)
+    except DailyQuotaReached as e:
+        logger.warning(
+            f"DART 일일 호출 한도 도달 — 종료합니다 ({e}). "
+            f"진행 상태는 DB에 저장되어 있으니 자정 이후 다시 실행하면 이어서 처리됩니다."
+        )
         sys.exit(0)
     except Exception as e:
         logger.exception(f"오류 발생: {e}")

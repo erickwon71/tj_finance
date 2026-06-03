@@ -36,10 +36,14 @@ from collector.config import (
     MAX_DOWNLOAD_ATTEMPTS, MIN_DOWNLOAD_INTERVAL,
 )
 from collector.dart_client import DartClient, DartApiError
+from collector.rate_limiter import DailyQuotaReached
 
 
-class DartApiQuotaError(Exception):
-    """DART API 일일 사용량 소진 (오류코드 020) — 즉시 종료 신호"""
+class DartApiQuotaError(DailyQuotaReached):
+    """DART API 일일 사용량 소진 (서버 오류코드 020) — 즉시 종료 신호.
+
+    클라이언트 측 호출 한도(DailyQuotaReached)와 동일한 처리 경로로 다룬다.
+    """
 from collector.db import get_session
 from collector.models import Corporation, Filing, DownloadTask, CollectionRun
 
@@ -287,7 +291,7 @@ def run_downloads(
 
             try:
                 result = _download_one(client, task, filing, corp, scraper)
-            except DartApiQuotaError:
+            except DailyQuotaReached:
                 logger.warning(
                     f"  → 중단 시점: 성공 {stats['completed']:,} / "
                     f"실패 {stats['failed']:,} / 스킵 {stats['skipped']:,}"
@@ -481,8 +485,9 @@ def _download_one(
 
         return True
 
-    except DartApiQuotaError:
-        # API 사용량 소진 — 상위 루프(download_all)로 전파해 즉시 종료
+    except DailyQuotaReached:
+        # API 사용량 소진(서버 020) 또는 클라이언트 일일 한도 도달 —
+        # 상위 루프(run_downloads)로 전파해 즉시 종료 (task를 failed로 기록하지 않음)
         raise
     except Exception as e:
         err_msg = str(e)[:500]

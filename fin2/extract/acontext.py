@@ -4,18 +4,20 @@ ACONTEXT 구조 파서 (fin2 E-레이어의 핵심).
 DART XBRL 의 TE 태그 ACONTEXT 속성을 **추론이 아닌 구조 파싱**으로 분해한다.
 연결/별도·기간(연도/종류/instant·duration)·차원(축/멤버)을 권위있게 추출한다.
 
-실측 포맷 (신흥에스이씨 2024 등):
+실측 포맷 (신흥에스이씨 2024 연간 / 반기·3분기 보고서 등):
     CFY2024dFY_ifrs-full_ConsolidatedAndSeparateFinancialStatementsAxis_ifrs-full_ConsolidatedMember
     PFY2023eFY_ifrs-full_ConsolidatedAndSeparateFinancialStatementsAxis_ifrs-full_SeparateMember
+    CFY2025eHYA_..._ConsolidatedMember   (반기 보고서)
+    CFY2025dTQQ_..._SeparateMember        (3분기 보고서, 3개월값)
     CFY2024dFY_..._ConsolidatedMember_ifrs-full_ComponentsOfEquityAxis_ifrs-full_RetainedEarningsMember
 
 구성: {prefix}[_{ns}_{Axis}_{ns}_{Member}]*
-  prefix = (C|P|BP) FY{year} (d|e) F (Y|Q|H) (A?)
+  prefix = (C|P|BP) FY{year} (d|e) PTYPE (A|Q)?
     - C/P/BP : 당기/전기/전전기  → col_index 0/1/2
     - FY{year}: 절대 회계연도
     - d|e     : duration(기간, IS·CF) | instant(시점, BS)   ← e/d 가 BS vs IS/CF 권위
-    - Y|Q|H   : 연간/분기/반기
-    - A       : 누적(cumulative_ytd)
+    - PTYPE  : FY 연간 / FQ 1분기 / HY 반기 / TQ 3분기  (Q1·Q3 구분은 report_fiscal_period 가 가짐)
+    - A|Q    : A=누적(cumulative_ytd) | Q=3개월 분기값(비누적) | 없음=instant 등
   dimension = (axis, member) 쌍. ns ∈ {ifrs-full, dart}.
 
 ★ 현 파이프라인 버그(dart_xml_parser.py:495) 수정:
@@ -34,10 +36,15 @@ from dataclasses import dataclass, field
 # 연결/별도 판정을 담당하는 축
 _CONSOL_AXIS = "ConsolidatedAndSeparateFinancialStatementsAxis"
 
-# prefix: (C|P|BP) FY{4} (d|e) F (Y|Q|H) (A?)   — BP 를 P 보다 먼저 매칭
+# prefix: (C|P|BP) FY{4} (d|e) PTYPE (A|Q)?   — BP 를 P 보다 먼저 매칭
+#   PTYPE ∈ {FY 연간, FQ 1분기, HY 반기, TQ 3분기}  — 반기(HY)·3분기(TQ)는 F 로 시작하지
+#   않으므로, 구식 `F[YQH]` 정규식은 이들을 통째로 탈락시켜 basis/연도 NULL → reconcile 드롭을 유발했음.
 _PREFIX_RE = re.compile(
-    r"^(?P<rel>BP|C|P)FY(?P<year>\d{4})(?P<kind>[de])F(?P<ptype>[YQH])(?P<accum>A?)"
+    r"^(?P<rel>BP|C|P)FY(?P<year>\d{4})(?P<kind>[de])(?P<ptype>FY|FQ|HY|TQ)(?P<accum>[AQ]?)"
 )
+
+# XBRL 기간코드 → period_type 도메인(FY/FQ/FH). Q1·Q3 구분은 report_fiscal_period 가 보유.
+_PTYPE_MAP = {"FY": "FY", "FQ": "FQ", "TQ": "FQ", "HY": "FH"}
 
 # 차원 토큰: ns_Name 반복. ns = ifrs-full | dart. Name 은 다음 ns 직전까지.
 _DIM_TOKEN_RE = re.compile(r"(?:ifrs-full|dart)_(?P<name>.+?)(?=_(?:ifrs-full|dart)_|$)")
@@ -99,8 +106,8 @@ def parse_acontext(acontext: str | None) -> AContext:
     ctx.col_index = _REL_TO_COL[ctx.rel]
     ctx.fiscal_year = int(m.group("year"))
     ctx.period_kind = "instant" if m.group("kind") == "e" else "duration"
-    ctx.period_type = "F" + m.group("ptype")          # FY / FQ / FH
-    ctx.is_cumulative = bool(m.group("accum"))
+    ctx.period_type = _PTYPE_MAP[m.group("ptype")]    # FY / FQ / FH
+    ctx.is_cumulative = m.group("accum") == "A"        # A=누적 / Q=3개월(비누적) / 없음
 
     # prefix 이후가 차원 구간
     remainder = raw[m.end():]

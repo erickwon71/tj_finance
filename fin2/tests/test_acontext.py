@@ -85,6 +85,42 @@ def test_cumulative_quarter():
     assert c.period_kind == "instant"
 
 
+def test_half_year_member():
+    # ★ 회귀 버그: 반기(HY)는 F 로 시작하지 않아 구식 정규식이 통째로 탈락시켜
+    #   basis/연도 NULL → reconcile 드롭. 이제 파싱돼야 함.
+    c = parse_acontext(
+        "CFY2025eHYA_ifrs-full_ConsolidatedAndSeparateFinancialStatementsAxis_ifrs-full_ConsolidatedMember"
+    )
+    assert c.parsed
+    assert c.basis == "consolidated"
+    assert c.col_index == 0 and c.fiscal_year == 2025
+    assert c.period_kind == "instant"      # e = BS 시점
+    assert c.period_type == "FH"           # HY → 반기
+    assert c.is_cumulative is True          # A = 누적
+
+
+def test_third_quarter_discrete_vs_cumulative():
+    disc = parse_acontext(
+        "CFY2025dTQQ_ifrs-full_ConsolidatedAndSeparateFinancialStatementsAxis_ifrs-full_SeparateMember"
+    )
+    cum = parse_acontext(
+        "CFY2025dTQA_ifrs-full_ConsolidatedAndSeparateFinancialStatementsAxis_ifrs-full_SeparateMember"
+    )
+    assert disc.basis == "separate" and cum.basis == "separate"
+    assert disc.period_type == "FQ" and cum.period_type == "FQ"  # TQ(3분기) → FQ 도메인
+    assert disc.period_kind == "duration"
+    assert disc.is_cumulative is False     # Q = 3개월 분기값
+    assert cum.is_cumulative is True       # A = 누적(YTD)
+
+
+def test_half_year_no_suffix_instant():
+    c = parse_acontext(
+        "CFY2025eHY_ifrs-full_ConsolidatedAndSeparateFinancialStatementsAxis_ifrs-full_SeparateMember"
+    )
+    assert c.parsed and c.basis == "separate"
+    assert c.period_type == "FH" and c.is_cumulative is False
+
+
 def test_no_basis_axis_falls_back_none():
     c = parse_acontext("CFY2024dFY")  # 차원 없음
     assert c.parsed and c.basis is None and c.col_index == 0

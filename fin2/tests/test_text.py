@@ -73,6 +73,28 @@ def test_separate_only_no_consolidated():
     assert all(f.basis != "consolidated" for f in facts)
 
 
+# ── 반기/3분기 누적컬럼 정합 회귀 (Track B interim cumulative) ──
+# 제이아이테크 2024 반기: IS 가 [당기[3개월,누적], 전기[3개월,누적]] 2단 헤더.
+# 누적컬럼만 채택해 col0=2024 H1 누적=30,488,775,643 / col1=2023 H1 누적=23,273,515,096.
+# (버그 시: 3개월 17,044,235,442 을 col0 누적으로 오라벨하고 연도까지 밀림.)
+_H1_SAMPLE = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/01367586_제이아이테크/half/2024/20240814001863.xml"
+)
+
+
+def test_interim_cumulative_columns():
+    if not _H1_SAMPLE.exists():
+        return  # 파일 없으면 스킵
+    facts = extract_facts(_H1_SAMPLE, rcept_no="20240814001863", corp_code="01367586",
+                          report_fiscal_year=2024, report_fiscal_period="H1")
+    rev = {(f.col_index, f.context_fiscal_year): f.amount_won
+           for f in facts if f.canonical_account == "is.revenue" and f.basis == "separate"}
+    assert rev.get((0, 2024)) == 30_488_775_643, f"2024 H1 누적 불일치: {rev}"
+    assert rev.get((1, 2023)) == 23_273_515_096, f"2023 H1 누적 불일치: {rev}"
+    assert rev.get((0, 2024)) != 17_044_235_442  # 3개월이 col0 으로 새면 안 됨
+
+
 def _run():
     if not _SAMPLE.exists():
         print(f"  - SKIP: 실측 파일 없음 {_SAMPLE}")

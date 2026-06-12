@@ -23,6 +23,7 @@ run.py extract2 에서 Track A(xbrl)가 0행이면 자동 폴백으로 호출.
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 
 from loguru import logger
@@ -56,6 +57,39 @@ def _adecimal_from_unit(unit: int) -> int:
     if unit <= 1:
         return 0
     return -int(round(math.log10(unit)))
+
+
+_CUM_RE = re.compile(r"누적|누계")
+_THREE_M_RE = re.compile(r"3개월|3 개월|삼개월")
+
+
+def _interim_cumulative_cols(table) -> dict[int, int] | None:
+    """
+    반기/3분기 IS·CF 표의 2단 헤더(제N기 × [3개월|누적])에서 **누적 금액컬럼만** 골라
+    {amount_position: period_offset} 을 반환한다. 누적/3개월 구분이 없으면 None(현 동작 유지).
+
+    배경: Track B 가 위치순으로 col_index 를 매겨, [당기3개월, 당기누적, 전기3개월, 전기누적]
+    레이아웃에서 당기3개월(Q)을 당기누적으로 오라벨하고 연도까지 밀렸음. 헤더의 '누적' 토큰
+    위치로 누적컬럼만 추출하면 표준 반기/누적 지표가 정확해진다.
+
+    amount_position 은 데이터행 금액셀(라벨 제외)의 0-base 인덱스. period_offset 은
+    0=당기, 1=전기, ... (누적컬럼 등장 순서).
+    """
+    from parser.xml.table_extractor import _get_cells
+    for tr in table.findall(".//TR"):
+        cells = _get_cells(tr)
+        joined = "".join(cells)
+        if not _CUM_RE.search(joined) or not _THREE_M_RE.search(joined):
+            continue  # 2단(3개월/누적) 헤더가 아니면 대상 아님
+        # 라벨/빈 선두 셀 제거 → 금액컬럼 헤더와 정렬
+        sub = list(cells)
+        while sub and not (_CUM_RE.search(sub[0]) or _THREE_M_RE.search(sub[0])):
+            sub.pop(0)
+        cum = [i for i, c in enumerate(sub) if _CUM_RE.search(c)]
+        if not cum:
+            continue
+        return {pos: off for off, pos in enumerate(cum)}
+    return None
 
 
 def _detect_fin_type(root) -> str:
@@ -146,13 +180,23 @@ def extract_facts(
         # TR 많은 테이블 우선(첫 표는 보통 헤더)
         data_tables = sorted(tables, key=lambda t: len(t.findall(".//TR")), reverse=True)
         fs_section = section_code.split("_")[0].lower()
+        # 반기/3분기 flow(IS·CF) 표는 [3개월|누적] 2단 헤더에서 누적컬럼만 채택(연도 정합).
+        interim_flow = fs_section in ("is", "cf") and report_fiscal_period in ("H1", "Q3")
 
         for table in data_tables:
-            for row in extract_rows(table, multiplier=unit):
+            cum_map = _interim_cumulative_cols(table) if interim_flow else None
+            # 누적컬럼이 4번째 등 뒤쪽일 수 있으므로 금액셀을 넉넉히 확보
+            n_cols = max(cum_map) + 1 if cum_map else 3
+            for row in extract_rows(table, multiplier=unit, num_cols=n_cols):
                 if not row.account_name:
                     continue
                 mapping = mapper.map(row.account_name, fs_section=fs_section)
-                for col_idx, amount in enumerate(row.amounts):
+                if cum_map is not None:
+                    pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()
+                             if pos < len(row.amounts)]
+                else:
+                    pairs = list(enumerate(row.amounts))
+                for col_idx, amount in pairs:
                     if amount is None:
                         continue
                     _add(_row_to_fact(

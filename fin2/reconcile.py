@@ -39,18 +39,31 @@ def _statement_of(canonical: str) -> str | None:
     return None
 
 
+# 기재정정 우선 신호의 유효 기간(일). 원본 최초제출 이후 이 기간 내 정정만 '적시 정정'으로
+# 인정 → 원본을 대체. 수년 뒤 재제출(예: 2009 보고서의 2017 정정)은 추출 품질 저하·단위
+# 오검출 위험이 커서 신호 미발동(완전성으로 결정 → 원본 유지). jiitech 4일=인정 / 00111218
+# 7년=기각. 83%의 정정이 400일 내 제출(실측).
+_AMEND_WINDOW_DAYS = 400
+
+
 def select_source(candidates: list[tuple], anchor: str) -> tuple:
     """
     후보 [(rcept, lines:set, filed_at, is_amendment)] 중 source 선택(순수 함수, 테스트가능).
 
-    우선순위(사전식): anchor 보유 > 기재정정(is_amendment) > 완전성(라인수) > filed_at 최신 > rcept_no.
+    우선순위(사전식): anchor 보유 > 적시 기재정정 > 완전성(라인수) > filed_at 최신 > rcept_no.
+    '적시 기재정정' = is_amendment 이면서 최초제출(후보 최소 filed_at) 이후 _AMEND_WINDOW_DAYS 내.
     반환: best 후보 튜플(호출측이 [0]=rcept, [1]=lines 사용).
     """
+    fileds = [c[2] for c in candidates if c[2] is not None]
+    earliest = min(fileds) if fileds else None
+
     def score(c):
         rcept, lines, filed_at, is_amend = c
+        timely_amend = bool(is_amend) and earliest is not None and filed_at is not None \
+            and (filed_at - earliest).days <= _AMEND_WINDOW_DAYS
         return (
             anchor in lines,                  # 1. anchor 보유
-            bool(is_amend),                   # 2. 기재정정 우선(정정본이 원본 대체)
+            timely_amend,                     # 2. 적시 기재정정 우선(정정본이 원본 대체)
             len(lines),                        # 3. 완전성
             filed_at or datetime.min.date(),  # 4. 최신
             rcept,                             # 5. tiebreak

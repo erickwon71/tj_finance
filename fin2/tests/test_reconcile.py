@@ -39,13 +39,22 @@ def test_partial_attachment_amendment_loses_to_complete_original():
     assert best[0] == "20240320001869", "완전한 원본이 선택돼야 함(over-supersede 방지)"
 
 
-def test_content_amendment_beats_buggy_original_even_with_fewer_lines():
+def test_timely_content_amendment_beats_buggy_original_even_with_fewer_lines():
     # jiitech 2022 IS: 버그 원본(is_amendment=False, 24라인 — 천원 오검출로 부풀려짐) vs
-    # 기재정정본(is_amendment=True, 14라인, 올바른 단위). 기재정정이 이겨야 함.
+    # 적시 기재정정본(4일 뒤, 14라인, 올바른 단위). 적시 정정이 이겨야 함.
     buggy_original = _cand("20230323001579", 24, date(2023, 3, 23), is_amend=False)
     content_fix = _cand("20230324001306", 14, date(2023, 3, 27), prefix="is.y", is_amend=True)
     best = select_source([buggy_original, content_fix], _IS_ANCHOR)
-    assert best[0] == "20230324001306", "기재정정본이 원본을 대체해야 함"
+    assert best[0] == "20230324001306", "적시 기재정정본이 원본을 대체해야 함"
+
+
+def test_stale_amendment_does_not_override_complete_original():
+    # 00111218: 2009 원본(is_amendment=False, 19라인, 올바른 단위) vs 2017 기재정정
+    # (7년 뒤, 9라인, ×1000 버그). 적시성 밖 → 신호 미발동 → 완전한 원본 유지.
+    original = _cand("20100331002835", 19, date(2010, 3, 31), is_amend=False)
+    stale_fix = _cand("20170306000436", 9, date(2017, 3, 6), prefix="is.y", is_amend=True)
+    best = select_source([original, stale_fix], _IS_ANCHOR)
+    assert best[0] == "20100331002835", "수년 뒤 정정은 원본을 대체하지 못함"
 
 
 def test_anchor_beats_more_lines_without_anchor():

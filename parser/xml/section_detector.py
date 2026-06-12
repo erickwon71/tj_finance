@@ -28,11 +28,13 @@ from lxml import etree
 _SECTION_PATTERNS: list[tuple[str, list[str]]] = [
     # (섹션 코드, 매칭 키워드 리스트) — 모두 포함되어야 매칭
     ("BS_C", ["연결", "재무상태표"]),
+    ("BS_C", ["연결", "대차대조표"]),       # K-GAAP(pre-IFRS) 연결 BS
     ("IS_C", ["연결", "손익계산서"]),      # 포괄손익계산서 / 손익계산서 모두 포함
     ("CF_C", ["연결", "현금흐름표"]),
     ("NOTE_C", ["연결", "주석"]),
     # 별도 (연결 없이 단독)
     ("BS_S", ["재무상태표"]),
+    ("BS_S", ["대차대조표"]),               # K-GAAP(pre-IFRS) 별도 BS
     ("IS_S", ["손익계산서"]),
     ("CF_S", ["현금흐름표"]),
     ("NOTE_S", ["주석"]),
@@ -241,6 +243,16 @@ def find_section_tables(
         if tag == "TABLE":
             tables.append(elem)
             if len(tables) >= max_tables:
+                break
+        elif tag == "TABLE-GROUP" and not tables:
+            # K-GAAP(pre-IFRS) 중첩: 섹션헤더 TITLE 다음 데이터가 직접 TABLE 이 아니라
+            # TABLE-GROUP(내부에 실제 제목 TITLE + 데이터 TABLE) 안에 있음. 직접 TABLE 이
+            # 하나도 없을 때만 그 안의 TABLE 을 수집(IFRS 본문은 직접 TABLE 이라 무영향).
+            for t in elem.findall(".//TABLE"):
+                tables.append(t)
+                if len(tables) >= max_tables:
+                    break
+            if tables:
                 break
 
     return tables

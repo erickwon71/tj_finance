@@ -67,13 +67,16 @@ cases:
       2022 별도 매출 ≈ 682.9억. 원본 사업보고서는 IS_S 섹션이 천원 주석표로 오검출돼
       매출 ×1000(68.29조). 다음날 [기재정정]본(올바른 단위)이 있어 reconcile 가
       적시 기재정정 우선으로 이를 채택해야 함(commit 4b5a0a8+적시성가드).
-      ⚠ 2020/2021 은 자기연도 정기보고서가 없고(2022 상장) 2022 보고서의 비교컬럼에만
-      존재 → fin2 own-report 원칙상 행 미생성(의도). 비교컬럼 폴백은 별도 과제.
+      2020/2021 은 자기연도 정기보고서가 없고(2022 상장) 2022 보고서의 비교컬럼에만
+      존재 → **비교컬럼 폴백**(standardize_comparative_corp)이 좋은 정정본의 col1/col2 에서
+      합성(DQ2). 정답 198.9억/205.0억(×1000 아님).
     verified: true
     current: pass
     asserts:
       - {year: 2022, period: FY, basis: separate, column: revenue, value: 68290728683, op: approx, tol: 0.02}
-      - {year: 2022, period: FY, basis: separate, column: revenue, value: 68290728683000, op: lt}  # ×1000(68.29조) 미만
+      - {year: 2022, period: FY, basis: separate, column: revenue, value: 68290728683000, op: lt}  # ×1000 미만
+      - {year: 2021, period: FY, basis: separate, column: revenue, value: 20497336065, op: approx, tol: 0.02}
+      - {year: 2020, period: FY, basis: separate, column: revenue, value: 19893358412, op: approx, tol: 0.02}
 
   # ── pre-revenue 바이오 (매출 0 이라도 BS/CF 정상 존재) ──
   - id: curocell_2023_pre_revenue

@@ -94,23 +94,29 @@ def extract_note_da_facts(
 
     out: list[ExtractedFact] = []
     for basis, fs in facts_by_basis.items():
-        da_total = next((f.amount for f in fs if f.account_code == "note.da_total"), None)
+        # 같은 계정(note.depreciation 등)이 여러 라인(유형/투자부동산 등)으로 올 수 있다.
+        # 계정코드별로 **합산**해 1행씩 방출한다(uq_fact_v2_cell 충돌 방지 + 총액 정확).
+        by_code: dict[str, int] = {}
+        for f in fs:
+            if f.amount is not None:
+                by_code[f.account_code] = by_code.get(f.account_code, 0) + f.amount
+
+        da_total = by_code.get("note.da_total")
         if da_total is None:
-            da_total = sum(f.amount for f in fs if f.account_code in _DEP_LIKE and f.amount)
+            da_total = sum(v for c, v in by_code.items() if c in _DEP_LIKE)
         factor = _unit_factor(da_total, revenue_by_basis.get(basis))
         if factor is None:
             logger.debug(f"[notes] {rcept_no} {basis}: 단위 보정 불가(매출대비 비현실) → 버림")
             continue
 
-        for f in fs:
-            amount_won = int(round(f.amount * factor))
-            acontext = f"note:{basis}:col0"
+        acontext = f"note:{basis}:col0"
+        for code, amt in by_code.items():
             out.append(ExtractedFact(
                 corp_code=corp_code,
                 rcept_no=rcept_no,
                 report_fiscal_year=report_fiscal_year,
                 report_fiscal_period=report_fiscal_period,
-                acode=f.account_code,                 # 합성 acode = note 계정코드
+                acode=code,                            # 합성 acode = note 계정코드
                 basis=basis,
                 context_fiscal_year=report_fiscal_year,
                 col_index=0,
@@ -120,11 +126,11 @@ def extract_note_da_facts(
                 extra_dims=None,
                 is_dimensional=False,
                 adecimal=None,
-                amount_won=amount_won,
+                amount_won=int(round(amt * factor)),
                 source_format="note_cf",
                 source_ref=f"{basis}/note_cf"[:180],
                 acontext_raw=acontext,
                 context_parsed=True,
-                canonical_account=f.account_code,      # note.* 는 이미 canonical
+                canonical_account=code,                # note.* 는 이미 canonical
             ))
     return out

@@ -311,7 +311,10 @@ def verify_corp(
             _upsert_result(rec)
 
     # data_quality 갱신: any FAIL → DQ 상승 (3>2>기존)
-    if save and all_results:
+    # ⚠ P5 컷오버 후 standard_financials 는 view(쓰기 불가). fin2 build.py 가 이미
+    #    data_quality 를 산출하므로 레거시 DQ writeback 은 스킵한다.
+    from collector.db import relation_is_view
+    if save and all_results and not relation_is_view("standard_financials"):
         with get_session() as s:
             for fy, fp in periods:
                 period_recs = [r for r in all_results

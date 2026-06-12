@@ -78,19 +78,22 @@ def _run_migrations() -> None:
         END $$
         """,
 
-        # Phase 3: standard_financials 컬럼 추가
-        "ALTER TABLE standard_financials ADD COLUMN IF NOT EXISTS rd_expense   BIGINT",
-        "ALTER TABLE standard_financials ADD COLUMN IF NOT EXISTS shares_out   BIGINT",
-
-        # Phase 3: 스크리닝 인덱스
+        # Phase 3 + P5: standard_financials 컬럼/스크리닝 인덱스.
+        # ⚠ P5 컷오버 후 standard_financials 는 std_financials_v2 위 view → relkind='r'(base table)
+        #    일 때만 ALTER/CREATE INDEX 수행(view 면 스킵). 멱등.
         """
         DO $$ BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM pg_indexes
-                WHERE tablename='standard_financials' AND indexname='ix_sf_screening_full'
-            ) THEN
-                CREATE INDEX ix_sf_screening_full ON standard_financials
-                    (fiscal_year, fiscal_period, statement_type, data_quality);
+            IF EXISTS (SELECT 1 FROM pg_class
+                       WHERE relname='standard_financials' AND relkind='r') THEN
+                ALTER TABLE standard_financials ADD COLUMN IF NOT EXISTS rd_expense BIGINT;
+                ALTER TABLE standard_financials ADD COLUMN IF NOT EXISTS shares_out BIGINT;
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_indexes
+                    WHERE tablename='standard_financials' AND indexname='ix_sf_screening_full'
+                ) THEN
+                    CREATE INDEX ix_sf_screening_full ON standard_financials
+                        (fiscal_year, fiscal_period, statement_type, data_quality);
+                END IF;
             END IF;
         END $$
         """,
@@ -101,6 +104,15 @@ def _run_migrations() -> None:
             conn.execute(text(sql))
 
     logger.info(f"마이그레이션 {len(migrations)}건 적용 완료")
+
+
+def relation_is_view(name: str) -> bool:
+    """주어진 relation 이 view 인지 여부. P5 컷오버 후 standard_financials 가
+    std_financials_v2 위 view 로 바뀌었는지 판정해 레거시 쓰기 경로를 차단하는 데 쓴다."""
+    with engine.connect() as conn:
+        return bool(conn.execute(text(
+            "SELECT relkind='v' FROM pg_class WHERE relname=:n"
+        ), {"n": name}).scalar())
 
 
 @contextmanager

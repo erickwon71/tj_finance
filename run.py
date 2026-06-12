@@ -2085,6 +2085,14 @@ def cmd_aggregate(args):
       python run.py aggregate --dry-run --corp 00126380  # DB 저장 없이 변경 미리보기
     """
     from analyzer.aggregator import aggregate_corp, aggregate_all
+    from collector.db import relation_is_view
+
+    # ⚠ P5 컷오버: standard_financials 가 view(std_financials_v2 기반)면 레거시 집계는 쓰기 불가.
+    #    fin2 파이프라인(extract2/reconcile2/standardize2 또는 fin2-all)을 사용할 것.
+    if relation_is_view("standard_financials"):
+        logger.error("standard_financials 는 P5 컷오버로 view 가 되었습니다(레거시 집계 비활성). "
+                     "fin2 사용: python run.py fin2-all  (또는 standardize2 --corp).")
+        sys.exit(1)
 
     corp_code = getattr(args, "corp", None)
     since     = getattr(args, "since", 2015) or 2015

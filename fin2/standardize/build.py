@@ -169,9 +169,9 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
 
 
 _COMP_MARKER = "comparative_fallback"
-# 비교컬럼 폴백 허용 기간: FY·Q1 만(고신뢰). H1/Q3 는 누적-3개월 컬럼 의미 혼선으로
-# 비교컬럼 신뢰도 급락(레거시 대비 일치 61~64% vs FY/Q1 92~98%) → 제외(후속 과제).
-_COMP_PERIODS = ("FY", "Q1")
+# 비교컬럼 폴백 허용 기간. H1/Q3 는 Track B 누적컬럼 정합(text._interim_cumulative_cols,
+# 2026-06-13) 후 신뢰가능해져 재포함. FY·Q1 은 단일/연간 컬럼이라 원래부터 안전.
+_COMP_PERIODS = ("FY", "Q1", "H1", "Q3")
 
 
 def _collect_comparative(session, basis: str, sources: dict[str, tuple]) -> dict[str, int]:

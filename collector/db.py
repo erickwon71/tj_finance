@@ -38,6 +38,11 @@ def init_db() -> None:
         logger.error(f"DB 연결 실패: {e}")
         raise
 
+    # financial_facts: P5 컷오버로 드롭(레거시 parse→aggregate 경로 폐기, std_financials_v2
+    # 가 대체). create_all 이 빈 테이블로 재생성하지 않도록 메타데이터에서 제외(드롭 영속).
+    _ff = Base.metadata.tables.get("financial_facts")
+    if _ff is not None:
+        Base.metadata.remove(_ff)
     Base.metadata.create_all(engine)
     logger.info("테이블 스키마 확인/생성 완료")
 
@@ -62,8 +67,16 @@ def _run_migrations() -> None:
         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parsed_facts  INTEGER",
         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parser_track  VARCHAR(3)",
 
-        # Phase 2: unit_multiplier SmallInteger → Integer (백만원 1,000,000 지원)
-        "ALTER TABLE financial_facts ALTER COLUMN unit_multiplier TYPE INTEGER",
+        # Phase 2: unit_multiplier SmallInteger → Integer (백만원 1,000,000 지원).
+        # ⚠ financial_facts 는 P5 에서 드롭됨 → 존재할 때만 ALTER(레거시 DB 호환).
+        """
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_class
+                       WHERE relname='financial_facts' AND relkind='r') THEN
+                ALTER TABLE financial_facts ALTER COLUMN unit_multiplier TYPE INTEGER;
+            END IF;
+        END $$
+        """,
 
         # Phase 2: parse_status 인덱스
         """

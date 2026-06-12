@@ -105,11 +105,11 @@ cases:
       2008 별도(is_ifrs=false): 자산 943.97억·자본 346.29억(자본<자산, 정합). 다축 SCE 의
       기타 축이 total_equity 에 잘못 합산되면 안 됨. period_end 는 신뢰 불가라 단언 제외.
       (DB 전체에서 K-GAAP+자본 보유 행은 옵트론텍 2007/2008 뿐 — K-GAAP 커버리지 희소.)
-      ⚠ current: fail — fin2 는 pre-IFRS K-GAAP 미지원(2024+ 적재분에 행 없음). **구조적
-      known-gap**(레거시는 추출했으나 표본 희소·우선순위 낮음). fin2 가 행을 만들기 시작하면
-      이 가드가 값 정확성을 검증한다.
+      ✅ **비교컬럼 폴백으로 복구**: 2008 자기보고서는 K-GAAP 라 추출 0행이나, 나중
+      보고서(IFRS)의 비교컬럼에 2008 값이 있어 standardize_comparative_corp 가 합성(DQ2).
+      검증치 정확 일치(equity 34,628,733,000·assets 94,397,095,000).
     verified: true
-    current: fail
+    current: pass
     asserts:
       - {year: 2008, period: FY, basis: separate, column: total_equity, value: 34628733000, op: approx, tol: 0.02}
       - {year: 2008, period: FY, basis: separate, column: total_assets, value: 94397095000, op: approx, tol: 0.02}

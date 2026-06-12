@@ -169,6 +169,9 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
 
 
 _COMP_MARKER = "comparative_fallback"
+# 비교컬럼 폴백 허용 기간: FY·Q1 만(고신뢰). H1/Q3 는 누적-3개월 컬럼 의미 혼선으로
+# 비교컬럼 신뢰도 급락(레거시 대비 일치 61~64% vs FY/Q1 92~98%) → 제외(후속 과제).
+_COMP_PERIODS = ("FY", "Q1")
 
 
 def _collect_comparative(session, basis: str, sources: dict[str, tuple]) -> dict[str, int]:
@@ -223,6 +226,8 @@ def standardize_comparative_corp(session, corp_code: str) -> int:
     # (cfy, fp, basis) → {stmt: (rcept, col, cfy)} — col1(전기) 우선
     targets: dict[tuple, dict[str, tuple]] = {}
     for s in srcs:
+        if s.fp not in _COMP_PERIODS:
+            continue  # H1/Q3 비교컬럼은 누적컬럼 혼선으로 제외
         for col, cfy in ((1, s.fy - 1), (2, s.fy - 2)):
             key = (cfy, s.fp, s.basis)
             if key in own:

@@ -49,25 +49,31 @@ cases:
       2023 연결: 일부 항목만 재작성한 정정본이 원본을 통째 supersede → 연결 BS 가
       NULL, revenue 가 283,638(파편)으로 손실. 별도(2023)는 정상(assets 543.9억,
       revenue 179.7억). 정답 연결 assets≈550.6억/revenue≈185.4억 (정정+원본 병합,
-      자산=부채+자본 검증 통과). 774 는 fail(NULL/파편)이 정상.
+      자산=부채+자본 검증 통과).
+      ✅ fin2 P3 statement_source(BS/IS/CF 독립 선택)가 복구 → pass(검증: assets
+      55,060,329,028·revenue 18,536,134,645). (레거시 774 는 fail 이었음.)
     verified: true
-    current: fail
+    current: pass
     asserts:
       - {year: 2023, period: FY, basis: consolidated, column: total_assets, value: 55060000000, op: approx, tol: 0.03}
       - {year: 2023, period: FY, basis: consolidated, column: revenue, value: 18540000000, op: approx, tol: 0.05}
 
-  # ── 부분 기재정정인데 774 가 이미 맞히는 케이스 (무회귀 가드) ──
+  # ── 기재정정 단위(천원) 오검출 → 적시 정정본 우선으로 복구 (reconcile 회귀 가드) ──
   - id: jiitech_separate_revenue
     corp_code: "01367586"
     name: 제이아이테크
     edge_class: partial_amend
-    note: 2020/21/22 별도 매출 ≈ 198.9 / 205.0 / 682.9억. 774 정상, fin2 도 유지해야 함.
+    note: >
+      2022 별도 매출 ≈ 682.9억. 원본 사업보고서는 IS_S 섹션이 천원 주석표로 오검출돼
+      매출 ×1000(68.29조). 다음날 [기재정정]본(올바른 단위)이 있어 reconcile 가
+      적시 기재정정 우선으로 이를 채택해야 함(commit 4b5a0a8+적시성가드).
+      ⚠ 2020/2021 은 자기연도 정기보고서가 없고(2022 상장) 2022 보고서의 비교컬럼에만
+      존재 → fin2 own-report 원칙상 행 미생성(의도). 비교컬럼 폴백은 별도 과제.
     verified: true
     current: pass
     asserts:
-      - {year: 2020, period: FY, basis: separate, column: revenue, value: 19893358412, op: approx, tol: 0.02}
-      - {year: 2021, period: FY, basis: separate, column: revenue, value: 20497336065, op: approx, tol: 0.02}
       - {year: 2022, period: FY, basis: separate, column: revenue, value: 68290728683, op: approx, tol: 0.02}
+      - {year: 2022, period: FY, basis: separate, column: revenue, value: 68290728683000, op: lt}  # ×1000(68.29조) 미만
 
   # ── pre-revenue 바이오 (매출 0 이라도 BS/CF 정상 존재) ──
   - id: curocell_2023_pre_revenue
@@ -75,14 +81,17 @@ cases:
     name: 큐로셀
     edge_class: pre_revenue
     note: >
-      2023 연결 매출 0(임상단계). 매출 0 이어도 자산 1,049.7억·자본 591.0억 등
-      BS 는 정상 존재해야 하며 dq 가 매출 0 을 결손으로 오판하면 안 됨.
+      2023 매출 0(임상단계). 매출 0 이어도 자산 1,049.7억·자본 591.0억 등 BS 는 정상
+      존재해야 하며 dq 가 매출 0 을 결손으로 오판하면 안 됨.
+      ⚠ basis=separate 로 정정(2026-06-12): 큐로셀은 연결재무제표 미작성(종속기업 없음).
+      레거시는 별도값을 연결로도 복제해 phantom 연결행을 만들었으나(assets/equity 동일),
+      fin2 는 별도만 생성(정답). 검증: 별도 assets 104,969,385,964·equity 59,099,540,497.
     verified: true
     current: pass
     asserts:
-      - {year: 2023, period: FY, basis: consolidated, column: revenue, value: 100000000, op: lt}
-      - {year: 2023, period: FY, basis: consolidated, column: total_assets, value: 104969385964, op: approx, tol: 0.02}
-      - {year: 2023, period: FY, basis: consolidated, column: total_equity, value: 59099540497, op: approx, tol: 0.02}
+      - {year: 2023, period: FY, basis: separate, column: revenue, value: 100000000, op: lt}
+      - {year: 2023, period: FY, basis: separate, column: total_assets, value: 104969385964, op: approx, tol: 0.02}
+      - {year: 2023, period: FY, basis: separate, column: total_equity, value: 59099540497, op: approx, tol: 0.02}
 
   # ── K-GAAP 구형(IFRS 이전) — DB 전체에서 거의 유일한 K-GAAP 표본 ──
   - id: optrontec_2008_kgaap_equity
@@ -93,8 +102,11 @@ cases:
       2008 별도(is_ifrs=false): 자산 943.97억·자본 346.29억(자본<자산, 정합). 다축 SCE 의
       기타 축이 total_equity 에 잘못 합산되면 안 됨. period_end 는 신뢰 불가라 단언 제외.
       (DB 전체에서 K-GAAP+자본 보유 행은 옵트론텍 2007/2008 뿐 — K-GAAP 커버리지 희소.)
+      ⚠ current: fail — fin2 는 pre-IFRS K-GAAP 미지원(2024+ 적재분에 행 없음). **구조적
+      known-gap**(레거시는 추출했으나 표본 희소·우선순위 낮음). fin2 가 행을 만들기 시작하면
+      이 가드가 값 정확성을 검증한다.
     verified: true
-    current: pass
+    current: fail
     asserts:
       - {year: 2008, period: FY, basis: separate, column: total_equity, value: 34628733000, op: approx, tol: 0.02}
       - {year: 2008, period: FY, basis: separate, column: total_assets, value: 94397095000, op: approx, tol: 0.02}

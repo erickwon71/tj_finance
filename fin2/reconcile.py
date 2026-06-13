@@ -86,7 +86,7 @@ def reconcile_corp(session, corp_code: str, fiscal_year: int | None = None) -> i
     rows = session.execute(text(f"""
         SELECT f.report_fiscal_year AS fy, f.report_fiscal_period AS fp,
                f.basis, f.rcept_no, f.canonical_account,
-               fl.filed_at, fl.is_amendment
+               fl.filed_at, fl.is_amendment, COALESCE(fl.is_stub, false) AS is_stub
         FROM fact_v2 f
         JOIN filings fl ON fl.rcept_no = f.rcept_no
         WHERE f.corp_code = :corp
@@ -97,26 +97,27 @@ def reconcile_corp(session, corp_code: str, fiscal_year: int | None = None) -> i
           {fy_clause}
     """), params).fetchall()
 
-    # (fy, fp, basis, statement, rcept) → {canonical 라인 set, filed_at, is_amendment}
+    # (fy, fp, basis, statement, is_stub, rcept) → {canonical 라인 set, filed_at, is_amendment}
+    # is_stub: 결산월 변경 stub 회계기간(PRD 01a)은 같은 (fy,fp) 정상연도와 분리 — 별도 source 선택.
     Cand = lambda: {"lines": set(), "filed_at": None, "is_amendment": False}
     agg: dict[tuple, dict] = defaultdict(Cand)
     for r in rows:
         stmt = _statement_of(r.canonical_account)
         if stmt is None:
             continue
-        key = (r.fy, r.fp, r.basis, stmt, r.rcept_no)
+        key = (r.fy, r.fp, r.basis, stmt, bool(r.is_stub), r.rcept_no)
         agg[key]["lines"].add(r.canonical_account)
         agg[key]["filed_at"] = r.filed_at
         agg[key]["is_amendment"] = bool(r.is_amendment)
 
-    # (fy, fp, basis, statement) → 후보 rcept 목록
+    # (fy, fp, basis, statement, is_stub) → 후보 rcept 목록
     groups: dict[tuple, list[tuple]] = defaultdict(list)
-    for (fy, fp, basis, stmt, rcept), v in agg.items():
-        groups[(fy, fp, basis, stmt)].append(
+    for (fy, fp, basis, stmt, is_stub, rcept), v in agg.items():
+        groups[(fy, fp, basis, stmt, is_stub)].append(
             (rcept, v["lines"], v["filed_at"], v["is_amendment"]))
 
     written = 0
-    for (fy, fp, basis, stmt), cands in groups.items():
+    for (fy, fp, basis, stmt, is_stub), cands in groups.items():
         _, anchor = _STATEMENTS[stmt]
         best = select_source(cands, anchor)
         best_rcept, best_lines = best[0], best[1]
@@ -138,12 +139,12 @@ def reconcile_corp(session, corp_code: str, fiscal_year: int | None = None) -> i
 
         session.execute(text("""
             INSERT INTO statement_source
-                (corp_code, fiscal_year, fiscal_period, basis, statement,
+                (corp_code, fiscal_year, fiscal_period, basis, statement, is_stub,
                  source_rcept_no, line_count, has_anchor, candidate_count, lineage, reconciled_at)
             VALUES
-                (:corp, :fy, :fp, :basis, :stmt,
+                (:corp, :fy, :fp, :basis, :stmt, :stub,
                  :rcept, :lc, :anchor, :cc, CAST(:lineage AS JSONB), :ts)
-            ON CONFLICT (corp_code, fiscal_year, fiscal_period, basis, statement)
+            ON CONFLICT (corp_code, fiscal_year, fiscal_period, basis, statement, is_stub)
             DO UPDATE SET
                 source_rcept_no = EXCLUDED.source_rcept_no,
                 line_count      = EXCLUDED.line_count,
@@ -153,6 +154,7 @@ def reconcile_corp(session, corp_code: str, fiscal_year: int | None = None) -> i
                 reconciled_at   = EXCLUDED.reconciled_at
         """), {
             "corp": corp_code, "fy": fy, "fp": fp, "basis": basis, "stmt": stmt,
+            "stub": is_stub,
             "rcept": best_rcept, "lc": len(best_lines), "anchor": has_anchor,
             "cc": len(cands),
             "lineage": __import__("json").dumps(lineage, ensure_ascii=False),

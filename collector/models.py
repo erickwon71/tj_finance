@@ -33,6 +33,7 @@ class Corporation(Base):
     market           = Column(String(10),  nullable=True,               comment="KOSPI/KOSDAQ/KONEX")
     fiscal_month     = Column(SmallInteger, default=12,                  comment="결산월 1~12 (사업보고서 (YYYY.MM)에서 도출, 기본 12월)")
     is_active        = Column(Boolean,     default=True,                 comment="현재 상장 여부")
+    coverage_class   = Column(String(20),  default="periodic",           comment="periodic=표준 정기보고 대상 / non_periodic=펀드·집합투자기구 등 정기보고 미대상(완전성 모집단 제외, 추후 보강)")
     dart_modify_date = Column(String(8),   nullable=True,               comment="DART 최종변경일(yyyymmdd)")
     last_filing_sync = Column(DateTime,    nullable=True,               comment="공시목록 마지막 수집 시각")
     created_at       = Column(DateTime,    default=datetime.utcnow)
@@ -63,13 +64,19 @@ class Filing(Base):
     corp_name     = Column(String(200), nullable=True)
     report_nm     = Column(String(500), nullable=True,                comment="원본 보고서명")
     report_type   = Column(String(10),  nullable=False, index=True,   comment="annual/half/quarter")
-    fiscal_year   = Column(Integer,     nullable=True,  index=True,   comment="회계연도")
+    fiscal_year   = Column(Integer,     nullable=True,  index=True,   comment="회계연도(기간이 끝나는 달력연도)")
     fiscal_period = Column(String(5),   nullable=True,               comment="FY/H1/Q1/Q3")
     filed_at      = Column(Date,        nullable=True,  index=True,   comment="접수일자")
+    # ── 결산월 변경 대응(PRD 01a): 보고서 (YYYY.MM) 기반 기간 정체성 ──
+    period_end_date   = Column(Date,        nullable=True, index=True, comment="보고 기간 기말일 (report_nm (YYYY.MM)의 말일). 라벨/충돌해소의 정체성 키")
+    period_end_month  = Column(SmallInteger, nullable=True,           comment="기말 월 (1~12)")
+    fye_month_at_time = Column(SmallInteger, nullable=True,           comment="이 보고 시점에 유효한 결산월(FYE timeline 도출)")
+    is_stub           = Column(Boolean,     default=False, index=True, comment="결산월 변경 전환기의 12개월 미만 회계기간 소속")
     corp_cls      = Column(String(1),   nullable=True,               comment="Y:유가 K:코스닥 N:코넥스 E:기타")
-    is_amendment  = Column(Boolean,     default=False,               comment="기재정정 여부")
+    is_amendment  = Column(Boolean,     default=False,               comment="기재정정([기재정정]) 여부 — 본문 정정")
+    is_attachment_amendment = Column(Boolean, default=False, index=True, comment="첨부정정([첨부정정]) 여부 — 본문 동일·첨부만 정정")
     superseded_by = Column(String(14),  nullable=True,               comment="대체한 정정공시 rcept_no")
-    is_final      = Column(Boolean,     default=True,  index=True,   comment="최종본 여부(다운로드 대상)")
+    is_final      = Column(Boolean,     default=True,  index=True,   comment="최종본 여부(다운로드 대상). 그룹키=period_end_date(없으면 fy+fp)")
     created_at    = Column(DateTime,    default=datetime.utcnow)
     updated_at    = Column(DateTime,    default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -113,6 +120,13 @@ class DownloadTask(Base):
     parsed_at        = Column(DateTime,   nullable=True)
     parsed_facts     = Column(Integer,    nullable=True, comment="추출된 fact 행 수")
     parser_track     = Column(String(15), nullable=True, comment="A/B/PDF/PDF_AMEND")
+
+    # PRD 02 Gate A: 다운로드 유효성 검증
+    gate_a_status    = Column(String(12), nullable=True, index=True,
+                               comment="PASS/FAIL — 다운로드 무결성·재무제표존재 검증 결과")
+    gate_a_reason    = Column(String(20), nullable=True,
+                               comment="MISSING_FILE/ZERO_BYTE/BAD_MAGIC/NO_STATEMENTS 등 실패 사유")
+    gate_a_checked_at = Column(DateTime,  nullable=True)
 
     filing           = relationship("Filing", back_populates="download_task")
 
@@ -304,6 +318,8 @@ class StatementSource(Base):
     fiscal_period  = Column(String(5),    primary_key=True)   # FY/H1/Q1/Q3
     basis          = Column(String(12),   primary_key=True)   # consolidated/separate
     statement      = Column(String(2),    primary_key=True)   # BS/IS/CF
+    is_stub        = Column(Boolean,      primary_key=True, default=False,
+                            comment="결산월 변경 전환기 stub 회계기간(PRD 01a) — 정상연도와 동일 (fy,fp) 충돌 분리")
 
     source_rcept_no = Column(String(14),  nullable=False, comment="선택된 source filing")
     line_count      = Column(SmallInteger, nullable=True, comment="선택본의 매핑 canonical 라인 수(완전성)")
@@ -450,6 +466,8 @@ class StdFinancialV2(Base):
     fiscal_period       = Column(String(5),    primary_key=True)
     statement_type      = Column(String(12),   primary_key=True)
     version             = Column(SmallInteger, primary_key=True, default=1)
+    is_stub             = Column(Boolean,      primary_key=True, default=False,
+                                 comment="결산월 변경 전환기 stub 회계기간(PRD 01a). 기본 view 는 NOT is_stub 만 노출")
     period_end          = Column(Date,         nullable=True)
     is_ifrs             = Column(Boolean,      nullable=True)
 
@@ -505,7 +523,7 @@ class StdFinancialV2(Base):
     calculated_at       = Column(DateTime,    default=datetime.utcnow)
 
     __table_args__ = (
-        UniqueConstraint("corp_code", "fiscal_year", "fiscal_period", "statement_type", "version",
+        UniqueConstraint("corp_code", "fiscal_year", "fiscal_period", "statement_type", "version", "is_stub",
                          name="uq_std_v2"),
         Index("ix_stdv2_screening", "fiscal_year", "fiscal_period", "statement_type"),
         Index("ix_stdv2_corp_year", "corp_code", "fiscal_year"),

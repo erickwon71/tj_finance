@@ -59,8 +59,15 @@ def _collect(session, basis: str, sources: dict[str, str]) -> dict[str, int]:
     return canon
 
 
-def _period_end(session, corp_code: str, fiscal_year: int, fiscal_period: str) -> date | None:
-    """period_end 추정. 비12월 결산은 corporations.fiscal_month 로 FY 말일 보정."""
+def _period_end(session, corp_code: str, fiscal_year: int, fiscal_period: str,
+                rcept: str | None = None) -> date | None:
+    """period_end. 우선 source filing 의 period_end_date(보고 (YYYY.MM) 말일, PRD 01a)를 쓴다
+    — 결산월 변경·stub 에서도 정확. 없으면 비12월 결산은 corporations.fiscal_month 로 FY 말일 보정(폴백)."""
+    if rcept:
+        pe = session.execute(text(
+            "SELECT period_end_date FROM filings WHERE rcept_no=:r"), {"r": rcept}).scalar()
+        if pe:
+            return pe
     md = _FP_MONTH_DAY.get(fiscal_period, (12, 31))
     try:
         if fiscal_period == "FY":
@@ -120,7 +127,8 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
 
     # (fy, fp, basis) → {statement: rcept}
     rows = session.execute(text(f"""
-        SELECT fiscal_year, fiscal_period, basis, statement, source_rcept_no, has_anchor
+        SELECT fiscal_year, fiscal_period, basis, statement, source_rcept_no, has_anchor,
+               COALESCE(is_stub, false) AS is_stub
         FROM statement_source
         WHERE corp_code = :corp {fy_clause}
     """), params).fetchall()
@@ -128,18 +136,20 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
         logger.warning(f"[standardize2] statement_source 없음: corp={corp_code} fy={fiscal_year}")
         return 0
 
+    # (fy, fp, basis, is_stub) → {statement: rcept}. is_stub: 결산월 변경 stub 분리(PRD 01a).
     groups: dict[tuple, dict[str, str]] = {}
     for r in rows:
-        key = (r.fiscal_year, r.fiscal_period, r.basis)
+        key = (r.fiscal_year, r.fiscal_period, r.basis, bool(r.is_stub))
         groups.setdefault(key, {})[r.statement] = r.source_rcept_no
 
     written = 0
-    for (fy, fp, basis), sources in groups.items():
+    for (fy, fp, basis, is_stub), sources in groups.items():
         canon = _collect(session, basis, sources)
         ctx = StdContext(corp_code=corp_code, fiscal_year=fy, fiscal_period=fp, basis=basis, canon=canon)
         run_rules(ctx)
 
-        period_end = _period_end(session, corp_code, fy, fp)
+        period_end = _period_end(session, corp_code, fy, fp,
+                                 sources.get("BS") or sources.get("IS") or sources.get("CF"))
         shares_out = _shares_out(session, corp_code, period_end)
         # is_ifrs: filings 에 컬럼 없음 → 현재 None(추후 fact_v2 source_format/DocumentMeta 에서 도출).
         is_ifrs = None
@@ -149,7 +159,7 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
 
         record = {
             "corp_code": corp_code, "fiscal_year": fy, "fiscal_period": fp,
-            "statement_type": basis, "version": 1,
+            "statement_type": basis, "version": 1, "is_stub": is_stub,
             "period_end": period_end, "is_ifrs": is_ifrs,
             "data_quality": dq,
             "bs_rcept": sources.get("BS"), "is_rcept": sources.get("IS"), "cf_rcept": sources.get("CF"),
@@ -159,7 +169,7 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
         }
         stmt = insert(StdFinancialV2).values(record)
         update_cols = {k: stmt.excluded[k] for k in record if k not in
-                       ("corp_code", "fiscal_year", "fiscal_period", "statement_type", "version")}
+                       ("corp_code", "fiscal_year", "fiscal_period", "statement_type", "version", "is_stub")}
         stmt = stmt.on_conflict_do_update(constraint="uq_std_v2", set_=update_cols)
         session.execute(stmt)
         written += 1
@@ -193,6 +203,7 @@ def standardize_kgaap_gap_corp(session, corp_code: str) -> int:
     rows = session.execute(text("""
         SELECT fiscal_year, fiscal_period, basis, statement, source_rcept_no
         FROM statement_source WHERE corp_code = :corp
+          AND NOT COALESCE(is_stub, false)
     """), {"corp": corp_code}).fetchall()
     groups: dict[tuple, dict[str, str]] = {}
     for r in rows:
@@ -207,13 +218,14 @@ def standardize_kgaap_gap_corp(session, corp_code: str) -> int:
             continue
         ctx = StdContext(corp_code=corp_code, fiscal_year=fy, fiscal_period=fp, basis=basis, canon=canon)
         run_rules(ctx)
-        period_end = _period_end(session, corp_code, fy, fp)
+        period_end = _period_end(session, corp_code, fy, fp,
+                                 sources.get("BS") or sources.get("IS") or sources.get("CF"))
         shares_out = _shares_out(session, corp_code, period_end)
         dq = max(validate_equations(ctx.col),
                  _dq_cross_year(session, corp_code, basis, ctx.col) if fp == "FY" else 1, 2)
         record = {
             "corp_code": corp_code, "fiscal_year": fy, "fiscal_period": fp,
-            "statement_type": basis, "version": 1,
+            "statement_type": basis, "version": 1, "is_stub": False,
             "period_end": period_end, "is_ifrs": False, "data_quality": dq,
             "bs_rcept": sources.get("BS"), "is_rcept": sources.get("IS"), "cf_rcept": sources.get("CF"),
             "applied_rules": list(ctx.applied) + [_KGAAP_MARKER],
@@ -222,7 +234,7 @@ def standardize_kgaap_gap_corp(session, corp_code: str) -> int:
         }
         stmt = insert(StdFinancialV2).values(record)
         update_cols = {k: stmt.excluded[k] for k in record if k not in
-                       ("corp_code", "fiscal_year", "fiscal_period", "statement_type", "version")}
+                       ("corp_code", "fiscal_year", "fiscal_period", "statement_type", "version", "is_stub")}
         stmt = stmt.on_conflict_do_update(constraint="uq_std_v2", set_=update_cols)
         session.execute(stmt)
         written += 1
@@ -278,6 +290,7 @@ def standardize_comparative_corp(session, corp_code: str) -> int:
         SELECT fiscal_year AS fy, fiscal_period AS fp, basis,
                statement AS stmt, source_rcept_no AS rcept
         FROM statement_source WHERE corp_code = :c
+          AND NOT COALESCE(is_stub, false)
     """), {"c": corp_code}).fetchall()
 
     # (cfy, fp, basis) → {stmt: (rcept, col, cfy)} — col1(전기) 우선
@@ -310,7 +323,7 @@ def standardize_comparative_corp(session, corp_code: str) -> int:
 
         record = {
             "corp_code": corp_code, "fiscal_year": cfy, "fiscal_period": fp,
-            "statement_type": basis, "version": 1,
+            "statement_type": basis, "version": 1, "is_stub": False,
             "period_end": period_end, "is_ifrs": None, "data_quality": dq,
             "bs_rcept": sources.get("BS", (None,))[0],
             "is_rcept": sources.get("IS", (None,))[0],
@@ -321,7 +334,7 @@ def standardize_comparative_corp(session, corp_code: str) -> int:
         }
         stmt = insert(StdFinancialV2).values(record)
         update_cols = {k: stmt.excluded[k] for k in record if k not in
-                       ("corp_code", "fiscal_year", "fiscal_period", "statement_type", "version")}
+                       ("corp_code", "fiscal_year", "fiscal_period", "statement_type", "version", "is_stub")}
         stmt = stmt.on_conflict_do_update(constraint="uq_std_v2", set_=update_cols)
         session.execute(stmt)
         written += 1

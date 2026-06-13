@@ -65,7 +65,8 @@ FILING_GRACE_DAYS = {
 def fetch_corps(market, corp_code) -> list[dict]:
     conn = psycopg2.connect(DB_DSN)
     cur = conn.cursor()
-    clauses = ["is_active = TRUE"]
+    # 정기보고 미대상(펀드/집합투자기구 등 non_periodic)은 완전성 모집단에서 제외
+    clauses = ["is_active = TRUE", "COALESCE(coverage_class,'periodic') <> 'non_periodic'"]
     params = []
     if market:
         clauses.append("market = %s")
@@ -156,6 +157,28 @@ def fetch_corp_first_period(since_year: int, market, corp_code) -> dict:
                      WHEN 'Q3' THEN 2 WHEN 'FY' THEN 3 ELSE 9 END ASC
     """, params)
     result = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+    conn.close()
+    return result
+
+
+def fetch_stub_years(market, corp_code) -> dict:
+    """
+    반환: {corp_code: set(fiscal_year)} — 결산월 변경 전환 stub 회계연도(PRD 01a).
+    이 연도들은 회계기간이 단축/불규칙(예 9개월 stub)이라 Q1/H1/Q3/FY 4기간을
+    rigid 하게 기대하면 phantom NOFIL 이 생긴다 → 완전성 격자에서 면제한다.
+    """
+    conn = psycopg2.connect(DB_DSN)
+    cur = conn.cursor()
+    clauses = ["is_stub = TRUE", "fiscal_year IS NOT NULL"]
+    params = []
+    if corp_code:
+        clauses.append("corp_code = %s")
+        params.append(corp_code)
+    where = " AND ".join(clauses)
+    cur.execute(f"SELECT DISTINCT corp_code, fiscal_year FROM filings WHERE {where}", params)
+    result: dict = {}
+    for code, fy in cur.fetchall():
+        result.setdefault(code, set()).add(fy)
     conn.close()
     return result
 
@@ -253,6 +276,7 @@ def write_corp_log(
     filings_map: dict,
     log_dir: Path,
     today: date,
+    stub_set: set = frozenset(),
 ) -> bool:
     """
     갭(NODL/NOFIL)이 있으면 로그 작성 후 True 반환.
@@ -264,7 +288,7 @@ def write_corp_log(
     log_path = log_dir / f"{code}_{safe}.missing_download.log"
 
     gaps = [(fy, p) for (fy, p) in grid
-            if cell_status(fy, p, filings_map) != "OK"]
+            if fy not in stub_set and cell_status(fy, p, filings_map) != "OK"]
 
     if not gaps:
         if log_path.exists():
@@ -321,6 +345,7 @@ def main():
     print("[2/4] 공시/다운로드 현황 조회...")
     raw_filings = fetch_filings(args.since, args.market, args.corp)
     first_periods = fetch_corp_first_period(args.since, args.market, args.corp)
+    stub_years = fetch_stub_years(args.market, args.corp)  # PRD 01a: 전환 stub 연도 면제
 
     print("[3/4] 격자 분석 중...")
 
@@ -329,6 +354,7 @@ def main():
     ok_cells = 0
     nodl_cells = 0
     nofil_cells = 0
+    exempt_cells = 0  # 결산변경 stub 연도 면제(phantom 방지)
     gap_corps: list[dict] = []
     nofil_corps: list[str] = []
 
@@ -350,11 +376,15 @@ def main():
             if period in PERIODS:
                 filings_map[(fy, period)].append((is_final, dl_status))
 
-        corp_ok = corp_nodl = corp_nofil = 0
+        corp_stubs = stub_years.get(code, set())
+        corp_ok = corp_nodl = corp_nofil = corp_exempt = 0
         for fy, p in grid:
             st = cell_status(fy, p, filings_map)
             if st == "OK":
                 corp_ok += 1
+            elif fy in corp_stubs:
+                # 전환 stub 회계연도: 단축·불규칙 기간이라 결손을 갭으로 보지 않음(면제)
+                corp_exempt += 1
             elif st == "NODL":
                 corp_nodl += 1
             else:
@@ -364,6 +394,7 @@ def main():
         ok_cells += corp_ok
         nodl_cells += corp_nodl
         nofil_cells += corp_nofil
+        exempt_cells += corp_exempt
 
         has_gap = (corp_nodl + corp_nofil) > 0
         if has_gap:
@@ -372,7 +403,7 @@ def main():
                 nofil_corps.append(code)
 
         if not args.no_logs:
-            write_corp_log(corp, grid, filings_map, log_dir, today)
+            write_corp_log(corp, grid, filings_map, log_dir, today, corp_stubs)
 
     print("[4/4] 출력 생성...")
 
@@ -399,6 +430,7 @@ def main():
     out_lines.append(f"  OK                 : {ok_cells:,}  ({ok_cells/total_cells*100:.1f}%)" if total_cells else "  OK                 : 0")
     out_lines.append(f"  NODL (미다운로드)  : {nodl_cells:,}  ({nodl_cells/total_cells*100:.1f}%)" if total_cells else "  NODL               : 0")
     out_lines.append(f"  NOFIL (미등록)     : {nofil_cells:,}  ({nofil_cells/total_cells*100:.1f}%)" if total_cells else "  NOFIL              : 0")
+    out_lines.append(f"  EXEMPT (전환stub)  : {exempt_cells:,}  (결산변경 전환연도 면제, PRD 01a)")
     out_lines.append(f"  갭 있는 기업 수    : {len(gap_corps):,} / {len(corps):,}")
     out_lines.append("")
 
@@ -437,7 +469,7 @@ def main():
         f.write("\n".join(out_lines) + "\n")
 
     print(f"완료: {args.output}")
-    print(f"  기대 셀 {total_cells:,}개  OK={ok_cells:,}  NODL={nodl_cells:,}  NOFIL={nofil_cells:,}")
+    print(f"  기대 셀 {total_cells:,}개  OK={ok_cells:,}  NODL={nodl_cells:,}  NOFIL={nofil_cells:,}  EXEMPT={exempt_cells:,}")
     print(f"  갭 있는 기업: {len(gap_corps):,}개")
     if not args.no_logs:
         print(f"  기업별 로그: {log_dir}/")

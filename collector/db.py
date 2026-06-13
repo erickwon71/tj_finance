@@ -62,12 +62,80 @@ def _run_migrations() -> None:
         # 2025-05: last_filing_sync 컬럼 추가 (sync-filings resume 기능)
         "ALTER TABLE corporations ADD COLUMN IF NOT EXISTS last_filing_sync TIMESTAMP",
 
+        # 2026-06: coverage_class — 펀드/집합투자기구 등 정기보고 미대상 분리(완전성 모집단 제외, 추후 보강)
+        "ALTER TABLE corporations ADD COLUMN IF NOT EXISTS coverage_class VARCHAR(20) DEFAULT 'periodic'",
+
+        # 2026-06: PRD 01a 결산월 변경 대응 — filings 기간 정체성 컬럼(추가만, 기존 무영향)
+        "ALTER TABLE filings ADD COLUMN IF NOT EXISTS period_end_date   DATE",
+        "ALTER TABLE filings ADD COLUMN IF NOT EXISTS period_end_month  SMALLINT",
+        "ALTER TABLE filings ADD COLUMN IF NOT EXISTS fye_month_at_time SMALLINT",
+        "ALTER TABLE filings ADD COLUMN IF NOT EXISTS is_stub           BOOLEAN DEFAULT FALSE",
+        "CREATE INDEX IF NOT EXISTS ix_filings_period_end ON filings (corp_code, report_type, period_end_date)",
+        # 2026-06: PRD 02 — 첨부정정 플래그(기재정정과 구분)
+        "ALTER TABLE filings ADD COLUMN IF NOT EXISTS is_attachment_amendment BOOLEAN DEFAULT FALSE",
+
+        # 2026-06: PRD 01a — statement_source PK 에 is_stub 추가(정상연도 vs stub 공존). 1회만(컬럼 없을 때).
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='statement_source' AND column_name='is_stub') THEN
+                ALTER TABLE statement_source ADD COLUMN is_stub BOOLEAN NOT NULL DEFAULT FALSE;
+                ALTER TABLE statement_source DROP CONSTRAINT statement_source_pkey;
+                ALTER TABLE statement_source ADD PRIMARY KEY
+                    (corp_code, fiscal_year, fiscal_period, basis, statement, is_stub);
+            END IF;
+        END $$
+        """,
+
+        # 2026-06: PRD 01a — std_financials_v2 PK(uq_std_v2) 에 is_stub 추가. 1회만.
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='std_financials_v2' AND column_name='is_stub') THEN
+                ALTER TABLE std_financials_v2 ADD COLUMN is_stub BOOLEAN NOT NULL DEFAULT FALSE;
+                ALTER TABLE std_financials_v2 DROP CONSTRAINT uq_std_v2;
+                ALTER TABLE std_financials_v2 ADD CONSTRAINT uq_std_v2 PRIMARY KEY
+                    (corp_code, fiscal_year, fiscal_period, statement_type, version, is_stub);
+            END IF;
+        END $$
+        """,
+
+        # 2026-06: PRD 01a — standard_financials view 에서 stub 제외(정상연도만 노출, 기존 소비자 무영향).
+        # 멱등(CREATE OR REPLACE). view 일 때만 재정의(레거시 base table 환경 보호).
+        """
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_class WHERE relname='standard_financials' AND relkind='v') THEN
+                CREATE OR REPLACE VIEW standard_financials AS
+                SELECT corp_code, fiscal_year, fiscal_period, statement_type, version,
+                       period_end, is_ifrs,
+                       COALESCE(bs_rcept, is_rcept, cf_rcept) AS rcept_no,
+                       total_assets, current_assets, cash, receivables, inventory, ppe, intangibles,
+                       total_liabilities, current_liabilities, short_term_debt, long_term_debt,
+                       total_equity, controlling_equity, retained_earnings, trade_payables,
+                       revenue, cogs, gross_profit, sga, rd_expense, operating_income,
+                       interest_expense, ebt, tax_expense, net_income, controlling_ni,
+                       cfo, cfi, cff, capex, dividends_paid,
+                       depreciation, amortization, da_total, ebitda, fcf, net_debt, shares_out,
+                       data_quality,
+                       NULL::timestamp without time zone AS superseded_at,
+                       calculated_at
+                FROM std_financials_v2
+                WHERE version = 1 AND NOT COALESCE(is_stub, false);
+            END IF;
+        END $$
+        """,
+
         # Phase 2: download_tasks 파싱 상태 컬럼 추가
         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parse_status  VARCHAR(15)",
         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parse_error   TEXT",
         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parsed_at     TIMESTAMP",
         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parsed_facts  INTEGER",
         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parser_track  VARCHAR(3)",
+
+        # 2026-06: PRD 02 Gate A — 다운로드 유효성 검증 결과
+        "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS gate_a_status     VARCHAR(12)",
+        "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS gate_a_reason     VARCHAR(20)",
+        "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS gate_a_checked_at TIMESTAMP",
 
         # Phase 2: unit_multiplier SmallInteger → Integer (백만원 1,000,000 지원).
         # ⚠ financial_facts 는 P5 에서 드롭됨 → 존재할 때만 ALTER(레거시 DB 호환).

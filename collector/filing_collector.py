@@ -7,12 +7,14 @@ Step 2: 기업별 DART list API → 사업/반기/분기보고서 메타데이�
     가장 최신 rcept_no를 is_final=True, 나머지는 is_final=False
   - is_final=True인 건만 download_tasks에 등록
 """
+import calendar
 import re
+from collections import defaultdict
 from datetime import date, datetime
 from typing import Optional
 
 from loguru import logger
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from collector.config import COLLECT_START_DATE, REPORT_TYPE_MAP
@@ -33,6 +35,11 @@ def _detect_report_type(report_nm: str) -> Optional[str]:
 
 def _is_amendment(report_nm: str) -> bool:
     return "[기재정정]" in report_nm or "기재정정" in report_nm
+
+
+def _is_attachment_amendment(report_nm: str) -> bool:
+    """첨부정정([첨부정정]): 본문은 동일하고 첨부만 정정. 재무 본문 신호로는 미발동."""
+    return "[첨부정정]" in (report_nm or "")
 
 
 def _detect_fiscal_month(relevant: list[tuple]) -> Optional[int]:
@@ -190,6 +197,118 @@ def _update_is_final_flags(session, corp_code: str) -> int:
     """)
     result = session.execute(sql, {"corp_code": corp_code})
     return result.rowcount
+
+
+# ── 결산월 변경 대응 라벨링 (PRD 01a) ──────────────────────────────────
+
+def _period_end_from_nm(report_nm: str) -> Optional[tuple[int, int, date]]:
+    """report_nm '(YYYY.MM)' → (year, month, 그 달 말일 date). 없으면 None."""
+    m = re.search(r'\((\d{4})\.(\d{2})\)', report_nm or "")
+    if not m:
+        return None
+    y, mo = int(m.group(1)), int(m.group(2))
+    if not (1 <= mo <= 12):
+        return None
+    return (y, mo, date(y, mo, calendar.monthrange(y, mo)[1]))
+
+
+def _build_fye_timeline(annual_ends: list[tuple[date, int]]) -> list[tuple[date, int]]:
+    """annual 보고서들의 (기말일, 결산월)을 기말일 오름차순으로. 중복 제거."""
+    return sorted(set(annual_ends), key=lambda x: x[0])
+
+
+def _stub_end_dates(timeline: list[tuple[date, int]]) -> set[date]:
+    """전환 stub(직전 annual 과 간격 12개월 미만) 회계연도의 기말일 집합."""
+    stubs: set[date] = set()
+    for i in range(1, len(timeline)):
+        prev_d, cur_d = timeline[i - 1][0], timeline[i][0]
+        gap = (cur_d.year - prev_d.year) * 12 + (cur_d.month - prev_d.month)
+        if gap < 12:  # 단축 전환기(예 3월결산→12월결산 = 9개월)
+            stubs.add(cur_d)
+    return stubs
+
+
+def _governing_annual(pe_date: date, timeline: list[tuple[date, int]]) -> Optional[tuple[date, int]]:
+    """interim(pe_date)이 속한 회계연도를 닫는 annual = pe_date 이상 중 가장 이른 annual.
+    없으면(최신 annual 이후 진행중 연도) 가장 최근 annual 로 폴백."""
+    for d, mo in timeline:  # 오름차순
+        if d >= pe_date:
+            return (d, mo)
+    return timeline[-1] if timeline else None
+
+
+def relabel_corp_filings(session, corp_code: str) -> dict:
+    """
+    한 기업의 filings 를 '그 시점 결산월(FYE)' 기준으로 재라벨(PRD 01a).
+    - period_end_date/period_end_month/fye_month_at_time/is_stub 채움.
+    - fiscal_year/fiscal_period 를 time-aware FYE 로 재계산(기존 규약 유지: 회계연도=결산이 끝나는 해).
+    - is_final 그룹키를 period_end_date(없으면 fy+fp) 로 재계산 → 같은 달력연도 충돌(정상연도 vs stub) 공존.
+    멱등. (YYYY.MM) 없는 구형 보고서는 기존 라벨 유지·period_end NULL.
+    반환: {filings, relabeled, stubs, finals}
+    """
+    rows = session.execute(text("""
+        SELECT rcept_no, report_type, report_nm, fiscal_year, fiscal_period
+        FROM filings WHERE corp_code = :c
+    """), {"c": corp_code}).fetchall()
+
+    annual_ends: list[tuple[date, int]] = []
+    parsed: dict[str, dict] = {}
+    for r in rows:
+        pe = _period_end_from_nm(r.report_nm)
+        parsed[r.rcept_no] = {
+            "report_type": r.report_type, "pe": pe,
+            "fy": r.fiscal_year, "fp": r.fiscal_period,
+            "att": _is_attachment_amendment(r.report_nm),
+        }
+        if r.report_type == "annual" and pe:
+            annual_ends.append((pe[2], pe[1]))
+
+    timeline = _build_fye_timeline(annual_ends)
+    stubs = _stub_end_dates(timeline)
+
+    # 라벨 계산
+    upd: list[dict] = []
+    for rcept, info in parsed.items():
+        rt, pe = info["report_type"], info["pe"]
+        att = info["att"]
+        if pe is None:
+            # 구형(YYYY.MM 없음): 기존 라벨 유지
+            upd.append({"rcept": rcept, "fy": info["fy"], "fp": info["fp"],
+                        "ped": None, "pem": None, "fye": None, "stub": False, "att": att})
+            continue
+        py, pmo, pdate = pe
+        if rt == "annual":
+            fye, is_stub = pmo, (pdate in stubs)
+        else:
+            gov = _governing_annual(pdate, timeline)
+            fye = gov[1] if gov else 12
+            is_stub = (gov[0] in stubs) if gov else False
+        fy, fp = compute_fiscal_year_period(rt, py, pmo, fye)
+        upd.append({"rcept": rcept, "fy": fy, "fp": fp,
+                    "ped": pdate, "pem": pmo, "fye": fye, "stub": is_stub, "att": att})
+
+    # is_final 재그룹: (report_type, period_end_date | (fy,fp) 폴백)
+    groups: dict[tuple, list[str]] = defaultdict(list)
+    for u in upd:
+        rt = parsed[u["rcept"]]["report_type"]
+        key = (rt, u["ped"]) if u["ped"] else (rt, "NA", u["fy"], u["fp"])
+        groups[key].append(u["rcept"])
+    final_set = {max(rcepts) for rcepts in groups.values()}  # 접수번호 최대=최신
+
+    for u in upd:
+        session.execute(text("""
+            UPDATE filings SET
+                fiscal_year=:fy, fiscal_period=:fp,
+                period_end_date=:ped, period_end_month=:pem,
+                fye_month_at_time=:fye, is_stub=:stub,
+                is_attachment_amendment=:att,
+                is_final=:isf, updated_at=NOW()
+            WHERE rcept_no=:r
+        """), {"fy": u["fy"], "fp": u["fp"], "ped": u["ped"], "pem": u["pem"],
+               "fye": u["fye"], "stub": u["stub"], "att": u["att"],
+               "isf": u["rcept"] in final_set, "r": u["rcept"]})
+
+    return {"filings": len(upd), "stubs": len(stubs), "finals": len(final_set)}
 
 
 # ── 메인 수집 함수 ────────────────────────────────────────────────────
@@ -387,8 +506,9 @@ def _sync_one_corp(
         )
         session.execute(stmt)
 
-        # 기재정정 버전 플래그 재계산
-        _update_is_final_flags(session, corp.corp_code)
+        # 결산월 변경 대응 라벨링(PRD 01a): period_end/fye-at-time/is_stub/fiscal_period 재계산
+        # + is_final 그룹키=period_end_date. (구 _update_is_final_flags 를 포함·대체)
+        relabel_corp_filings(session, corp.corp_code)
 
         # 시장 구분 갱신 (corp_cls → market)
         if rows:

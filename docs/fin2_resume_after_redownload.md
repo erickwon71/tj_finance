@@ -1,7 +1,9 @@
 # 재다운로드 완료 후 재개 런북 (fin2)
 
-> 작성 2026-05-31. raw_report(OneDrive) 파일 전체 소실 → 재다운로드 진행 중.
+> 작성 2026-05-31. 갱신 2026-06-06(basis-NULL 수정 단계 추가). raw_report 파일 전체 소실 → 재다운로드 진행 중.
 > **전체 download 완료 후 이 문서대로 이어서 진행**한다. 마스터 계획: `docs/fin2_rebuild_plan_2026-05-31.md`, 상태 메모리: `project-status`.
+
+> ⚠ **2026-06-06 갱신 핵심**: 06-06 전수 패스에서 std_v2에 적재된 ~2,552사는 **옛 acontext 파서(HY/TQ basis-NULL 버그)** 로 만들어졌다. basis-NULL 수정(commit `2d51ea8`)은 이 적재분에 **자동 반영되지 않는다** — 아래 **1.5단계(basis-NULL 타깃 재추출)** 를 반드시 수행할 것. `fin2-all --skip-done` 은 이미 적재된 기업을 건너뛰므로 이 수정을 적용하지 못한다.
 
 ## 사고 요약 / 현재 상태
 - `raw_report` 가 OneDrive 심볼릭 링크였는데 내용이 **전부 삭제**됨(현재 빈 로컬 폴더).
@@ -38,6 +40,22 @@ python run.py fin2-all --corps 2000:2553 --skip-done 2>&1 | tee -a /tmp/fin2_4.l
 ```
 - **중단·재개 안전**: 기업 단위 커밋 + upsert(idempotent). 죽어도 같은 명령 재실행하면 이어짐.
 - ⚠ 파일이 다시 OneDrive 온디맨드면 `read()` 가 멈출 수 있음 → 반드시 로컬/외장 실파일로 둘 것.
+- ⚠ `--skip-done` 은 std_v2 에 **이미 있는 기업을 건너뛴다**. 06-06 적재분(~2,552사)은 옛 버그 파서산물이므로,
+  이 단계만으로는 basis-NULL 이 안 고쳐진다 → **반드시 1.5단계를 이어서 수행**.
+
+## 1.5) ★ basis-NULL 타깃 재추출 (acontext HY/TQ 버그 수정 적용)
+06-06 적재분에 박혀 있는 basis-NULL(HY/반기·TQ/3분기 컨텍스트 파싱 실패)을 고친다.
+망가진 보고서(약 5,464건)만 raw_report 에서 재추출하고, 영향 기업만 R→S 재실행한다.
+```bash
+# 디스크 가드(--min-free-gb)로 2GB 미만이면 중단(공간 확보 후 재실행하면 이어짐).
+# 디스크가 빠듯하면 --limit 로 시범 후 전량 실행.
+python scripts/fin2_reextract_basisnull.py --min-free-gb 2.0 2>&1 | tee -a /tmp/reextract_basisnull.log
+```
+- **중단·재개 안전**: upsert idempotent. 고쳐진 보고서는 basis 가 채워져 재식별 대상에서 빠짐 → 같은 명령으로 이어짐.
+- ⚠ 이 작업은 **raw_report 실파일이 필요**(E 단계가 `file_path` 를 읽음). 재다운로드 완료 전엔 못 돈다.
+  (대안: `acontext_raw` 가 fact_v2 에 보존돼 있어 파일 없이 DB-only 재파싱도 가능 — 필요 시 별도 스크립트.)
+- 기대 효과: parity 트리아지의 **OWNREPORT_BASIS_NULL 22,810건(removed의 32%) 급감.**
+- 디스크 ⚠: 전수 `fin2-all` 재실행 금지(7천만 fact UPDATE → fact_v2 부풀어 디스크 풀 위험). 본 스크립트는 망가진 행만 손댐.
 
 ## 2) 전수 적용 확인
 ```bash
@@ -76,6 +94,7 @@ python -m fin2.tests.parity diff fin2/tests/parity_baseline.json \
 | `reconcile2 --corp C [--year Y]` | 단일기업 R(source 선택) |
 | `standardize2 --corp C [--year Y]` | 단일기업 S(표준화) |
 | `fin2-all [--corps S:E] [--limit N] [--stage] [--skip-done]` | 전수 E→R→S |
+| `scripts/fin2_reextract_basisnull.py [--limit N] [--min-free-gb 2.0]` | basis-NULL(HY/TQ) 망가진 보고서만 재추출 + 영향기업 R→S |
 | `reset-missing [--corp C] [--dry-run]` | 소실 파일 completed→pending 복구 |
 | `scripts/fin2_coverage.py [--show N]` | 전수 적재 커버리지 점검 |
 | `python -m fin2.tests.parity diff <baseline> --live --table std_financials_v2` | 무회귀 검증 |

@@ -1,6 +1,7 @@
 .venv_tj_finance/
 logs/
 raw_report/
+raw_report
 tmp/
 *~
 .env

@@ -91,6 +91,28 @@ def test_note_headers_rejected():
     assert _is_statement_header("현금흐름표", ["현금흐름표"], [])
 
 
+def test_multi_note_ref_column_not_parsed_as_amount():
+    """금융업 다중 주석참조('2,4,32,34,35,36')가 금액으로 오인되어 컬럼이 밀리지 않아야 함.
+
+    배경: _split_label_amounts 가 쉼표 제거 후 주석 판정 → '2,4,32,…'→'243234…' 가
+    금액과 혼동되어 col0 을 차지, 실제 당기값이 col1 로 밀림(부국증권 H1 매출=전년값).
+    """
+    from parser.xml.table_extractor import _split_label_amounts
+    cells = ["Ⅰ. 현금 및 예치금", "2,4,32,34,35,36",
+             "496,412,633,753", "125,529,986,707", "148,432,981,080"]
+    label, amounts = _split_label_amounts(cells)
+    assert label.startswith("Ⅰ. 현금")
+    # 주석참조는 제외 → 금액 3개만, 당기=496,412,633,753 가 첫 금액
+    assert len(amounts) == 3, f"기대 금액 3개, 실제 {len(amounts)}: {amounts}"
+    assert amounts[0].replace(",", "") == "496412633753"
+    # 정상 3자리그룹 소액("2,433")은 주석 아님 → 금액으로 유지
+    _, amt2 = _split_label_amounts(["기타", "2,433", "1,000"])
+    assert amt2 and amt2[0].replace(",", "") == "2433"
+    # 단일 주석번호("34")는 여전히 제외
+    _, amt3 = _split_label_amounts(["자산", "34", "1,000,000"])
+    assert amt3 and amt3[0].replace(",", "") == "1000000"
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

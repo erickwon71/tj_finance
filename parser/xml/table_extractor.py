@@ -247,6 +247,9 @@ def _get_cells(tr: etree._Element) -> list[str]:
 
 
 _NOTE_REF_PATTERN = re.compile(r'^[1-9]\d{0,2}(,[1-9]\d{0,2})*$')
+# 정상 3자리 그룹 금액(예: "2,433", "496,412,633,753"). 주석 교차참조와 구별용.
+# 주석은 1~2자리 그룹의 비정규 나열("2,4,32,34,35,36")이라 이 패턴에 안 맞는다.
+_AMOUNT_GROUPED_PATTERN = re.compile(r'^\(?\d{1,3}(,\d{3})+\)?$')
 
 
 def _split_label_amounts(cells: list[str]) -> tuple[str, list[str]]:
@@ -268,10 +271,15 @@ def _split_label_amounts(cells: list[str]) -> tuple[str, list[str]]:
             # 첫 셀은 항상 계정과목명
             label = cell
         else:
-            cell_stripped = cell.replace(',', '').replace(' ', '')
-            # 첫 번째 숫자-유사 셀이 주석번호 패턴(소정수)이면 건너뜀
-            # 예: "34", "4", "4,28" → DART 주석 교차참조 번호
-            if not amount_cells and _NOTE_REF_PATTERN.match(cell_stripped):
+            cell_nospace = cell.replace(' ', '')             # 쉼표 보존(주석 판정용)
+            cell_stripped = cell_nospace.replace(',', '')      # 쉼표 제거(금액 판정용)
+            # 첫 번째 숫자-유사 셀이 주석번호 패턴(소정수 나열)이면 건너뜀.
+            # 예: "34", "4,28", "2,4,32,34,35,36"(금융업 다중 주석참조).
+            # ⚠ 반드시 쉼표 보존 문자열로 판정 — 쉼표 제거 시 "2,4,32,…"→"243234…" 로
+            #    금액과 혼동(컬럼 1칸 밀림 버그). 정상 3자리그룹 금액("2,433")은 주석 아님.
+            if (not amount_cells
+                    and _NOTE_REF_PATTERN.match(cell_nospace)
+                    and not _AMOUNT_GROUPED_PATTERN.match(cell_nospace)):
                 continue
             # 숫자 패턴이거나 공란이면 금액 셀
             if _NUMBER_PATTERN.match(cell_stripped) or cell_stripped in ('-', '—', ''):

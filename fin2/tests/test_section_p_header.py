@@ -113,6 +113,46 @@ def test_multi_note_ref_column_not_parsed_as_amount():
     assert amt3 and amt3[0].replace(",", "") == "1000000"
 
 
+def test_interim_is_cumulative_table_wins_over_annual_comparative():
+    """금융업 interim IS: [3개월|누적] 반기표가 [전기|전전기] 연간비교표보다 먼저 처리되어
+    당기누적값이 col0 을 선점해야 함(연간비교표의 전년 FY값 오염 차단).
+
+    부국증권 H1 매출이 2017 FY값(566B)으로 오염되던 버그의 합성 회귀.
+    """
+    from fin2.extract.text import extract_facts
+    xml = """<DOCUMENT><SECTION-2>
+      <TITLE>2. 연결재무제표</TITLE>
+      <P>연 결 포 괄 손 익 계 산 서</P>
+      <TABLE>
+        <TR><TD>과목</TD><TD>주석</TD><TD>제65(당)반기</TD><TD></TD><TD>제64(전)반기</TD><TD></TD></TR>
+        <TR><TD></TD><TD></TD><TD>3개월</TD><TD>누적</TD><TD>3개월</TD><TD>누적</TD></TR>
+        <TR><TD>Ⅰ. 영업수익</TD><TD>37</TD><TD>144,000,000,000</TD><TD>314,000,000,000</TD><TD>161,000,000,000</TD><TD>324,000,000,000</TD></TR>
+      </TABLE>
+      <TABLE>
+        <TR><TD>과목</TD><TD>주석</TD><TD>제64(전)기</TD><TD>제63(전전)기</TD></TR>
+        <TR><TD>Ⅰ. 영업수익</TD><TD>37</TD><TD>566,000,000,000</TD><TD>753,000,000,000</TD></TR>
+      </TABLE>
+      <P>연 결 현 금 흐 름 표</P>
+      <TABLE><TR><TD>영업활동현금흐름</TD><TD>5</TD></TR></TABLE>
+    </SECTION-2></DOCUMENT>"""
+    import tempfile, os
+    with tempfile.NamedTemporaryFile("w", suffix=".xml", delete=False, encoding="utf-8") as fh:
+        fh.write(xml)
+        path = fh.name
+    try:
+        facts = extract_facts(path, rcept_no="T", corp_code="T",
+                              report_fiscal_year=2018, report_fiscal_period="H1")
+    finally:
+        os.unlink(path)
+    rev0 = [f.amount_won for f in facts
+            if f.canonical_account == "is.revenue" and f.basis == "consolidated"
+            and f.col_index == 0]
+    assert rev0, "영업수익 col0 미추출"
+    # 당기누적 314B 가 선점, 연간비교표 566B 오염 아님
+    assert 314_000_000_000 in rev0, f"기대 314B(당기누적), 실제 {rev0}"
+    assert 566_000_000_000 not in rev0, f"연간비교 566B 오염: {rev0}"
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

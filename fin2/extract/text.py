@@ -177,14 +177,26 @@ def extract_facts(
         tables = find_section_tables(title_elem)
         if not tables:
             continue
-        # TR 많은 테이블 우선(첫 표는 보통 헤더)
-        data_tables = sorted(tables, key=lambda t: len(t.findall(".//TR")), reverse=True)
         fs_section = section_code.split("_")[0].lower()
         # 반기/3분기 flow(IS·CF) 표는 [3개월|누적] 2단 헤더에서 누적컬럼만 채택(연도 정합).
         interim_flow = fs_section in ("is", "cf") and report_fiscal_period in ("H1", "Q3")
 
+        # 표별 누적컬럼 맵 1회 산출.
+        cum_maps = {id(t): (_interim_cumulative_cols(t) if interim_flow else None)
+                    for t in tables}
+        # interim flow 는 [3개월|누적] 2단 표(=당기 데이터)를 **먼저** 처리한다.
+        # 금융업 보고서는 반기표 외에 [전기|전전기] 연간비교 표가 따로 있어, 위치순으로
+        # 처리하면 전년 FY값이 당기누적 컬럼을 오염시킨다(영업수익 H1=전년 FY). 2단 표를
+        # 먼저 넣으면 dedup 가 정확한 누적값을 선점 → 연간비교 표의 오염을 차단.
+        data_tables = sorted(
+            tables,
+            key=lambda t: ((cum_maps[id(t)] is not None) if interim_flow else False,
+                           len(t.findall(".//TR"))),
+            reverse=True,
+        )
+
         for table in data_tables:
-            cum_map = _interim_cumulative_cols(table) if interim_flow else None
+            cum_map = cum_maps[id(table)]
             # 누적컬럼이 4번째 등 뒤쪽일 수 있으므로 금액셀을 넉넉히 확보
             n_cols = max(cum_map) + 1 if cum_map else 3
             for row in extract_rows(table, multiplier=unit, num_cols=n_cols):

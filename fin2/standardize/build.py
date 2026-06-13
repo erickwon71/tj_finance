@@ -169,9 +169,66 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
 
 
 _COMP_MARKER = "comparative_fallback"
+_KGAAP_MARKER = "kgaap_gap"
 # 비교컬럼 폴백 허용 기간. H1/Q3 는 Track B 누적컬럼 정합(text._interim_cumulative_cols,
 # 2026-06-13) 후 신뢰가능해져 재포함. FY·Q1 은 단일/연간 컬럼이라 원래부터 안전.
 _COMP_PERIODS = ("FY", "Q1", "H1", "Q3")
+
+
+def standardize_kgaap_gap_corp(session, corp_code: str) -> int:
+    """
+    K-GAAP(pre-IFRS) 갭 채우기: K-GAAP 자기보고서 source 로 std_v2 행을 만들되,
+    **기존 std_v2 행이 없는 (corp,fy,period,basis) 키만** 채운다(기존 own/comparative
+    불가침). K-GAAP 원본값은 IFRS 재작성 비교컬럼값과 상충하므로, 비교컬럼이 닿지 못한
+    구년도(대개 pre-2009)만 보충한다. 파생행: is_ifrs=False + applied_rules='kgaap_gap'
+    + DQ≥2. idempotent. 반환=기록 레코드 수.
+    """
+    existing = {(r.fiscal_year, r.fiscal_period, r.statement_type)
+                for r in session.execute(text("""
+                    SELECT fiscal_year, fiscal_period, statement_type FROM std_financials_v2
+                    WHERE corp_code = :c AND version = 1
+                      AND NOT (applied_rules @> :m)
+                """), {"c": corp_code, "m": f'["{_KGAAP_MARKER}"]'})}
+
+    rows = session.execute(text("""
+        SELECT fiscal_year, fiscal_period, basis, statement, source_rcept_no
+        FROM statement_source WHERE corp_code = :corp
+    """), {"corp": corp_code}).fetchall()
+    groups: dict[tuple, dict[str, str]] = {}
+    for r in rows:
+        groups.setdefault((r.fiscal_year, r.fiscal_period, r.basis), {})[r.statement] = r.source_rcept_no
+
+    written = 0
+    for (fy, fp, basis), sources in groups.items():
+        if (fy, fp, basis) in existing:
+            continue  # 기존 행 불가침(own/comparative 우선)
+        canon = _collect(session, basis, sources)
+        if not (canon.get("is.revenue") or canon.get("bs.total_assets")):
+            continue
+        ctx = StdContext(corp_code=corp_code, fiscal_year=fy, fiscal_period=fp, basis=basis, canon=canon)
+        run_rules(ctx)
+        period_end = _period_end(session, corp_code, fy, fp)
+        shares_out = _shares_out(session, corp_code, period_end)
+        dq = max(validate_equations(ctx.col),
+                 _dq_cross_year(session, corp_code, basis, ctx.col) if fp == "FY" else 1, 2)
+        record = {
+            "corp_code": corp_code, "fiscal_year": fy, "fiscal_period": fp,
+            "statement_type": basis, "version": 1,
+            "period_end": period_end, "is_ifrs": False, "data_quality": dq,
+            "bs_rcept": sources.get("BS"), "is_rcept": sources.get("IS"), "cf_rcept": sources.get("CF"),
+            "applied_rules": list(ctx.applied) + [_KGAAP_MARKER],
+            "shares_out": shares_out, "calculated_at": datetime.utcnow(),
+            **{c: ctx.col.get(c) for c in VALUE_COLS},
+        }
+        stmt = insert(StdFinancialV2).values(record)
+        update_cols = {k: stmt.excluded[k] for k in record if k not in
+                       ("corp_code", "fiscal_year", "fiscal_period", "statement_type", "version")}
+        stmt = stmt.on_conflict_do_update(constraint="uq_std_v2", set_=update_cols)
+        session.execute(stmt)
+        written += 1
+
+    logger.info(f"[kgaap-gap] corp={corp_code} — K-GAAP 갭 std_v2 {written}레코드")
+    return written
 
 
 def _collect_comparative(session, basis: str, sources: dict[str, tuple]) -> dict[str, int]:

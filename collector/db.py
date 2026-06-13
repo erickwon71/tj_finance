@@ -40,9 +40,11 @@ def init_db() -> None:
 
     # financial_facts: P5 컷오버로 드롭(레거시 parse→aggregate 경로 폐기, std_financials_v2
     # 가 대체). create_all 이 빈 테이블로 재생성하지 않도록 메타데이터에서 제외(드롭 영속).
-    _ff = Base.metadata.tables.get("financial_facts")
-    if _ff is not None:
-        Base.metadata.remove(_ff)
+    # unknown_accounts: 레거시 parse 부산물(미매핑 계정). fin2 파이프라인 미사용 → 함께 드롭.
+    for _dropped in ("financial_facts", "unknown_accounts"):
+        _t = Base.metadata.tables.get(_dropped)
+        if _t is not None:
+            Base.metadata.remove(_t)
     Base.metadata.create_all(engine)
     logger.info("테이블 스키마 확인/생성 완료")
 

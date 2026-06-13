@@ -57,6 +57,11 @@ _MAX_HEADER_LEN = 30
 # 주석 항목 번호 접두("33.", "(1)", "1)") — 표제가 아니라 주석/세부항목 번호.
 _NOTE_NUM_PREFIX_RE = re.compile(r"^\(?\d+[.)]")
 
+# <P> 섹션 경계 추가 표제 — 추출 대상은 아니나(BS/IS/CF 만 추출) IS·CF 표 수집의 경계로
+# 인식해야 하는 재무제표. 특히 자본변동표(SCE)는 포괄손익계산서 바로 뒤 <P> 로 와서,
+# 경계로 인식 안 하면 IS_C 가 SCE 의 "연결당기순이익/반기순이익" 행을 흡수해 순이익이 오염됨.
+_BOUNDARY_EXTRA: list[list[str]] = [["자본변동표"]]
+
 
 def detect_sections(root: etree._Element) -> dict[str, Optional[etree._Element]]:
     """
@@ -297,9 +302,10 @@ def find_section_tables(
             # 다음 재무제표 표제 <P>(=새 섹션) 를 만나면 중단. 그 외 <P>(단위·각주문장
             # 등)는 건너뛰고 계속 수집. (<P> 마커 섹션의 형제 경계 인식)
             ptxt = _get_text(elem)
-            if ptxt and any(
-                _is_statement_header(ptxt, kws, _EXCLUDE_PATTERNS.get(c, []))
-                for c, kws in _SECTION_PATTERNS if not c.startswith("NOTE")
+            if ptxt and (
+                any(_is_statement_header(ptxt, kws, _EXCLUDE_PATTERNS.get(c, []))
+                    for c, kws in _SECTION_PATTERNS if not c.startswith("NOTE"))
+                or any(_is_statement_header(ptxt, kws, []) for kws in _BOUNDARY_EXTRA)
             ):
                 break
             continue

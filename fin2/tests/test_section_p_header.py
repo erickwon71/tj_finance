@@ -162,6 +162,43 @@ def test_interim_is_cumulative_table_wins_over_annual_comparative():
     assert 37_000_000_000 not in ni0, f"연간비교 37B(당기순이익) 오염: {ni0}"
 
 
+def test_sce_changes_in_equity_not_absorbed_into_is():
+    """자본변동표(SCE)가 포괄손익계산서 바로 뒤 <P> 로 올 때, IS 표 수집이 SCE 에서
+    멈춰야 함. 안 그러면 SCE 의 '연결당기순이익' 행이 is.net_income 을 오염(Q1 순이익
+    =SCE 전년값). FY 단일컬럼 보고서 모사.
+    """
+    from fin2.extract.text import extract_facts
+    xml = """<DOCUMENT><SECTION-2>
+      <TITLE>2. 연결재무제표</TITLE>
+      <P>연 결 포 괄 손 익 계 산 서</P>
+      <TABLE>
+        <TR><TD>과목</TD><TD>주석</TD><TD>제65(당)기</TD></TR>
+        <TR><TD>Ⅰ. 영업수익</TD><TD>37</TD><TD>100,000,000,000</TD></TR>
+        <TR><TD>Ⅷ. 당기순이익</TD><TD>37</TD><TD>11,000,000,000</TD></TR>
+      </TABLE>
+      <P>연 결 자 본 변 동 표</P>
+      <TABLE>
+        <TR><TD>과목</TD><TD>자본금</TD><TD>이익잉여금</TD><TD>총계</TD></TR>
+        <TR><TD>5. 연결당기순이익</TD><TD></TD><TD>27,000,000,000</TD><TD>27,000,000,000</TD></TR>
+      </TABLE>
+      <P>연 결 현 금 흐 름 표</P>
+      <TABLE><TR><TD>영업활동현금흐름</TD><TD>5</TD></TR></TABLE>
+    </SECTION-2></DOCUMENT>"""
+    import tempfile, os
+    with tempfile.NamedTemporaryFile("w", suffix=".xml", delete=False, encoding="utf-8") as fh:
+        fh.write(xml)
+        path = fh.name
+    try:
+        facts = extract_facts(path, rcept_no="T", corp_code="T",
+                              report_fiscal_year=2018, report_fiscal_period="FY")
+    finally:
+        os.unlink(path)
+    ni = [f.amount_won for f in facts
+          if f.canonical_account == "is.net_income" and f.basis == "consolidated"]
+    assert 11_000_000_000 in ni, f"IS 당기순이익 미추출: {ni}"
+    assert 27_000_000_000 not in ni, f"SCE 연결당기순이익 27B 오염: {ni}"
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

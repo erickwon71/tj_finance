@@ -93,6 +93,11 @@ def main() -> None:
     for i, corp in enumerate(pending, 1):
         try:
             with get_session() as session:
+                # ⚠ fact_v2 는 (acode) 키 upsert 라 파서 변경 시 옛 계정명 cell 이 orphan
+                # 으로 남는다(예: 옛 "당기순이익" vs 새 "반기순이익"). 재추출 전 corp 단위
+                # purge 로 제거 → 깨끗이 재적재. statement_source/std_v2 는 키안정 upsert 라
+                # 별도 purge 불필요(comparative/kgaap 파생행 보존).
+                session.execute(text("DELETE FROM fact_v2 WHERE corp_code=:c"), {"c": corp})
                 files, a, b, facts = _extract2_corp(session, corp, verbose=False)
                 agg["e_files"] += files
                 agg["e_facts"] += facts

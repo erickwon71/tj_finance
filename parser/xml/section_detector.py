@@ -48,6 +48,15 @@ _EXCLUDE_PATTERNS: dict[str, list[str]] = {
     "NOTE_S": ["연결"],
 }
 
+# <P> 헤더 섹션탐지(금융업/구형 레거시)용 길이 가드.
+# 실제 재무제표 제목은 짧고 단독("연결재무상태표"=7자, "연결포괄손익계산서"=9자)인 반면,
+# 주석/정관 문장("재무상태표에 표시되는 금융자산…", "제64기는 종전기준서인 K-IFRS…")은 길다.
+# 이 가드로 주석 오매칭을 차단한다.
+_MAX_HEADER_LEN = 30
+
+# 주석 항목 번호 접두("33.", "(1)", "1)") — 표제가 아니라 주석/세부항목 번호.
+_NOTE_NUM_PREFIX_RE = re.compile(r"^\(?\d+[.)]")
+
 
 def detect_sections(root: etree._Element) -> dict[str, Optional[etree._Element]]:
     """
@@ -89,6 +98,18 @@ def detect_sections(root: etree._Element) -> dict[str, Optional[etree._Element]]
                 sections[code] = title_elem
                 break  # 하나의 TITLE은 하나의 섹션만 매핑
 
+    # ── <P> 헤더 기반 탐지 (금융업/구형 레거시, 핵심 섹션 누락 시) ──────
+    # 보험·증권·지주 및 SPAC 등 레거시 ACODE 보고서는 재무제표 표제가 <TITLE> 이 아니라
+    # <P>연결재무상태표</P> 처럼 데이터 TABLE 과 같은 SECTION 의 직계 형제 <P> 로 존재한다.
+    # TITLE 스캔은 컨테이너("2. 연결재무제표")만 잡으므로 표제 <P> 를 별도 탐지한다.
+    # (TABLE 폴백보다 먼저 실행 → 주석표가 BS_S 등을 선점하는 오매칭을 방지.)
+    core_missing = [
+        code for code, elem in sections.items()
+        if elem is None and not code.startswith("NOTE")
+    ]
+    if core_missing:
+        _detect_sections_from_paragraphs(root, sections)
+
     # ── TABLE 기반 fallback (핵심 섹션이 없을 때) ─────────────────────
     core_missing = [
         code for code, elem in sections.items()
@@ -98,6 +119,38 @@ def detect_sections(root: etree._Element) -> dict[str, Optional[etree._Element]]
         _detect_sections_from_tables(root, sections)
 
     return sections
+
+
+def _detect_sections_from_paragraphs(
+    root: etree._Element,
+    sections: dict[str, Optional[etree._Element]],
+) -> None:
+    """<P> 표제 헤더로 재무제표 섹션을 탐지(in-place). 핵심(BS/IS/CF)만 대상.
+
+    레이아웃:
+        <SECTION-2>
+          <TITLE>2. 연결재무제표</TITLE>      ← 컨테이너(키워드 미보유)
+          <P>연결재무상태표</P>                ← 표제 헤더(짧은 단독 <P>)
+          <TABLE>...기간 헤더...</TABLE>
+          <TABLE>...BS 데이터...</TABLE>
+          <P>연결포괄손익계산서</P>            ← 다음 표제
+          ...
+    → sections[code] = 표제 <P> 요소. find_section_tables 가 다음 표제 <P> 전까지
+      형제 TABLE 을 수집한다.
+    """
+    for p in root.iter("P"):
+        ptext = _get_text(p)
+        if not ptext:
+            continue
+        for code, keywords in _SECTION_PATTERNS:
+            if code.startswith("NOTE"):
+                continue  # 주석은 <P> 헤더 탐지 대상 아님(BS/IS/CF 만)
+            if sections[code] is not None:
+                continue
+            exclude_kws = _EXCLUDE_PATTERNS.get(code, [])
+            if _is_statement_header(ptext, keywords, exclude_kws):
+                sections[code] = p
+                break  # 한 <P> 는 한 섹션만
 
 
 def _detect_sections_from_tables(
@@ -240,6 +293,16 @@ def find_section_tables(
         if tag == "TITLE":
             # 다음 섹션 시작 → 중단
             break
+        if tag == "P":
+            # 다음 재무제표 표제 <P>(=새 섹션) 를 만나면 중단. 그 외 <P>(단위·각주문장
+            # 등)는 건너뛰고 계속 수집. (<P> 마커 섹션의 형제 경계 인식)
+            ptxt = _get_text(elem)
+            if ptxt and any(
+                _is_statement_header(ptxt, kws, _EXCLUDE_PATTERNS.get(c, []))
+                for c, kws in _SECTION_PATTERNS if not c.startswith("NOTE")
+            ):
+                break
+            continue
         if tag == "TABLE":
             tables.append(elem)
             if len(tables) >= max_tables:
@@ -439,3 +502,30 @@ def _matches(text: str, keywords: list[str], exclude_kws: list[str]) -> bool:
         kw in text or kw in text_no_space
         for kw in keywords
     )
+
+
+def _is_statement_header(text: str, keywords: list[str], exclude_kws: list[str]) -> bool:
+    """<P>/제목 텍스트가 **재무제표 표제 그 자체**인지(주석 문장 아님) 판정.
+
+    가드:
+      1) 길이(공백 제거 ≤ _MAX_HEADER_LEN) — 표제는 짧은 단독 문구, 주석/정관은 긴 문장.
+      2) 주석/요약 마커 배제 — "요약"·"부문"(부문별/요약 재무정보 주석),
+         번호 접두("33.", "(1)", "1)" = 주석 항목 번호)로 시작하면 표제 아님.
+      3) **표제명으로 끝나야 함**(공백 제거 후 keywords[-1] 로 endswith) — 진짜 표제는
+         "…재무상태표"로 끝나지만, 주석 문장("재무상태표에 표시되는 금융자산…")은 표제명
+         뒤로 문장이 이어진다. 이 한 줄이 짧은 주석 문장까지 정확히 걸러낸다.
+      4) _matches(키워드 포함 + 제외어).
+    실제 표제("연결재무상태표","재무상태표","포괄손익계산서","현금흐름표")는 통과하고,
+    주석표("(1)부문별 요약 재무상태표","33.현금흐름표","재무상태표에 표시되는…")는 걸러진다.
+    """
+    no_space = text.replace(' ', '')
+    if len(no_space) > _MAX_HEADER_LEN:
+        return False
+    if any(marker in no_space for marker in ("요약", "부문")):
+        return False
+    if _NOTE_NUM_PREFIX_RE.match(no_space):
+        return False
+    # keywords[-1] = 표제명(예: "재무상태표"). 표제는 이 명칭으로 끝난다.
+    if keywords and not no_space.endswith(keywords[-1]):
+        return False
+    return _matches(text, keywords, exclude_kws)

@@ -127,10 +127,12 @@ def test_interim_is_cumulative_table_wins_over_annual_comparative():
         <TR><TD>과목</TD><TD>주석</TD><TD>제65(당)반기</TD><TD></TD><TD>제64(전)반기</TD><TD></TD></TR>
         <TR><TD></TD><TD></TD><TD>3개월</TD><TD>누적</TD><TD>3개월</TD><TD>누적</TD></TR>
         <TR><TD>Ⅰ. 영업수익</TD><TD>37</TD><TD>144,000,000,000</TD><TD>314,000,000,000</TD><TD>161,000,000,000</TD><TD>324,000,000,000</TD></TR>
+        <TR><TD>Ⅷ. 반기순이익</TD><TD>37</TD><TD>8,000,000,000</TD><TD>20,000,000,000</TD><TD>13,000,000,000</TD><TD>28,000,000,000</TD></TR>
       </TABLE>
       <TABLE>
         <TR><TD>과목</TD><TD>주석</TD><TD>제64(전)기</TD><TD>제63(전전)기</TD></TR>
         <TR><TD>Ⅰ. 영업수익</TD><TD>37</TD><TD>566,000,000,000</TD><TD>753,000,000,000</TD></TR>
+        <TR><TD>Ⅷ. 당기순이익</TD><TD>37</TD><TD>37,000,000,000</TD><TD>27,000,000,000</TD></TR>
       </TABLE>
       <P>연 결 현 금 흐 름 표</P>
       <TABLE><TR><TD>영업활동현금흐름</TD><TD>5</TD></TR></TABLE>
@@ -151,6 +153,13 @@ def test_interim_is_cumulative_table_wins_over_annual_comparative():
     # 당기누적 314B 가 선점, 연간비교표 566B 오염 아님
     assert 314_000_000_000 in rev0, f"기대 314B(당기누적), 실제 {rev0}"
     assert 566_000_000_000 not in rev0, f"연간비교 566B 오염: {rev0}"
+    # 순이익: 계정명이 달라(반기순이익 vs 당기순이익) dedup 로 못 막으므로 연간비교표
+    # 자체를 스킵해야 함. 당기누적 20B 만, 연간비교 37B 오염 없어야.
+    ni0 = [f.amount_won for f in facts
+           if f.canonical_account == "is.net_income" and f.basis == "consolidated"
+           and f.col_index == 0]
+    assert 20_000_000_000 in ni0, f"기대 20B(반기순이익 누적), 실제 {ni0}"
+    assert 37_000_000_000 not in ni0, f"연간비교 37B(당기순이익) 오염: {ni0}"
 
 
 def _run():

@@ -184,19 +184,18 @@ def extract_facts(
         # 표별 누적컬럼 맵 1회 산출.
         cum_maps = {id(t): (_interim_cumulative_cols(t) if interim_flow else None)
                     for t in tables}
-        # interim flow 는 [3개월|누적] 2단 표(=당기 데이터)를 **먼저** 처리한다.
-        # 금융업 보고서는 반기표 외에 [전기|전전기] 연간비교 표가 따로 있어, 위치순으로
-        # 처리하면 전년 FY값이 당기누적 컬럼을 오염시킨다(영업수익 H1=전년 FY). 2단 표를
-        # 먼저 넣으면 dedup 가 정확한 누적값을 선점 → 연간비교 표의 오염을 차단.
-        data_tables = sorted(
-            tables,
-            key=lambda t: ((cum_maps[id(t)] is not None) if interim_flow else False,
-                           len(t.findall(".//TR"))),
-            reverse=True,
-        )
+        # 금융업 interim IS·CF 는 [당기3개월|당기누적|전기3개월|전기누적] 2단 표(=당기 데이터)
+        # 와 별도 [전기|전전기] 연간비교 표가 공존한다. 연간비교 표를 위치순 처리하면 전년 FY값이
+        # 당기 컬럼으로 오염된다(영업수익 H1=전년FY 566B). 또 계정명이 달라(반기순이익 vs
+        # 당기순이익) dedup 로도 못 막는다. ⟹ **2단 표가 하나라도 있으면 2단 표만 처리**
+        # (연간비교 표 스킵; 그 FY값은 실제 연간보고서에서 취득되어 손실 없음).
+        has_2tier = interim_flow and any(v is not None for v in cum_maps.values())
+        data_tables = sorted(tables, key=lambda t: len(t.findall(".//TR")), reverse=True)
 
         for table in data_tables:
             cum_map = cum_maps[id(table)]
+            if has_2tier and cum_map is None:
+                continue  # 2단 표 존재 시 연간비교(비2단) 표는 스킵
             # 누적컬럼이 4번째 등 뒤쪽일 수 있으므로 금액셀을 넉넉히 확보
             n_cols = max(cum_map) + 1 if cum_map else 3
             for row in extract_rows(table, multiplier=unit, num_cols=n_cols):

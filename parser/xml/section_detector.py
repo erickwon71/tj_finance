@@ -57,6 +57,11 @@ _MAX_HEADER_LEN = 30
 # 주석 항목 번호 접두("33.", "(1)", "1)") — 표제가 아니라 주석/세부항목 번호.
 _NOTE_NUM_PREFIX_RE = re.compile(r"^\(?\d+[.)]")
 
+# 소·중형사 레이아웃: 표제가 번호접두+기간 인라인("1)재무상태표(대차대조표)제33기2022년…").
+# 선두 enumerator·연결/별도 수식어 제거용 + 기간마커(=진짜 재무제표는 기간 표기, 주석은 없음).
+_LEAD_QUALIFIER_RE = re.compile(r"^(연결|별도|개별)")
+_PERIOD_MARKER_RE = re.compile(r"제\d+\s*기|\d{4}\s*년|부터")
+
 # <P> 섹션 경계 추가 표제 — 추출 대상은 아니나(BS/IS/CF 만 추출) IS·CF 표 수집의 경계로
 # 인식해야 하는 재무제표. 특히 자본변동표(SCE)는 포괄손익계산서 바로 뒤 <P> 로 와서,
 # 경계로 인식 안 하면 IS_C 가 SCE 의 "연결당기순이익/반기순이익" 행을 흡수해 순이익이 오염됨.
@@ -525,13 +530,22 @@ def _is_statement_header(text: str, keywords: list[str], exclude_kws: list[str])
     주석표("(1)부문별 요약 재무상태표","33.현금흐름표","재무상태표에 표시되는…")는 걸러진다.
     """
     no_space = text.replace(' ', '')
-    if len(no_space) > _MAX_HEADER_LEN:
+    # 공통: 키워드 포함+제외어, 주석/요약 마커 배제.
+    if not _matches(text, keywords, exclude_kws):
         return False
     if any(marker in no_space for marker in ("요약", "부문")):
         return False
-    if _NOTE_NUM_PREFIX_RE.match(no_space):
-        return False
-    # keywords[-1] = 표제명(예: "재무상태표"). 표제는 이 명칭으로 끝난다.
-    if keywords and not no_space.endswith(keywords[-1]):
-        return False
-    return _matches(text, keywords, exclude_kws)
+    name = keywords[-1] if keywords else ""
+    # (A) 깨끗한 단독 표제: 짧고(≤_MAX), 번호접두 없고, 표제명으로 끝남.
+    if (len(no_space) <= _MAX_HEADER_LEN
+            and not _NOTE_NUM_PREFIX_RE.match(no_space)
+            and (not name or no_space.endswith(name))):
+        return True
+    # (B) 번호접두+기간 인라인 표제(소·중형사): "1)재무상태표(대차대조표)제33기2022년…".
+    #     선두 enumerator·연결/별도 수식어 제거 후 표제명으로 **시작** + 기간마커 보유 → 표제.
+    #     주석 제목("21.현금흐름표 당사는 간접법으로…")은 기간마커가 없어 걸러진다.
+    if name:
+        body = _LEAD_QUALIFIER_RE.sub("", _NOTE_NUM_PREFIX_RE.sub("", no_space))
+        if body.startswith(name) and _PERIOD_MARKER_RE.search(no_space):
+            return True
+    return False

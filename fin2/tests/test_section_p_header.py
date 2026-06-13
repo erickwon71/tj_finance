@@ -199,6 +199,28 @@ def test_sce_changes_in_equity_not_absorbed_into_is():
     assert 27_000_000_000 not in ni, f"SCE 연결당기순이익 27B 오염: {ni}"
 
 
+def test_numbered_inline_period_header_accepted():
+    """소·중형사 레이아웃: 번호접두+기간 인라인 표제("1)재무상태표(대차대조표)제33기…")를
+    표제로 인식. 단, 기간마커 없는 주석 제목("21.현금흐름표 당사는…")은 거부(=오매칭 방지).
+    """
+    from parser.xml.section_detector import _is_statement_header, _EXCLUDE_PATTERNS
+    excl_bs = _EXCLUDE_PATTERNS.get("BS_S", [])
+    # 진짜 표제(번호접두 + 기간 인라인) → 인식
+    assert _is_statement_header(
+        "1)재무상태표(대차대조표)제33기 2022년 12월 31일 현재 제32기 2021년", ["재무상태표"], excl_bs)
+    assert _is_statement_header(
+        "5)현금흐름표 제33기 2022년 1월 1일부터 2022년 12월 31일까지", ["현금흐름표"], [])
+    # 연결 수식어 + 번호 + 기간 → 연결 표제 인식
+    assert _is_statement_header(
+        "1)연결재무상태표 제33기 2022년 12월 31일 현재", ["연결", "재무상태표"], [])
+    # 주석 제목(번호접두지만 기간마커 없음) → 거부
+    assert not _is_statement_header(
+        "21.현금흐름표 당사는 간접법에 의하여 현금흐름표를 작성하고 있으며", ["현금흐름표"], [])
+    # 표제명이 문장 중간(주석 서술) → 거부
+    assert not _is_statement_header(
+        "당사는 현금흐름표를 제33기부터 간접법으로 작성", ["현금흐름표"], [])
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

@@ -22,6 +22,7 @@ from pathlib import Path
 
 from parser.xml.dart_xml_parser import _parse_xml_file
 from fin2.extract.acontext import parse_acontext
+from fin2.extract.statement_titles import title_text, classify_statement_title
 from fin2.taxonomy.concept_map import map_acode
 
 _XBRL_PREFIXES = ("ifrs-full_", "dart_")
@@ -216,44 +217,8 @@ def _adecimal_from_unit(unit: int) -> int:
     return -int(round(math.log10(unit)))
 
 
-# 본문 재무제표 표제 패턴(제목 표 텍스트에서). 요약/주석/분할·합병/자본변동표 배제.
-_STMT_TITLE = [
-    (re.compile(r"재무상태표|대차대조표"), "BS"),
-    (re.compile(r"포괄손익계산서|손익계산서"), "IS"),
-    (re.compile(r"현금흐름표"), "CF"),
-]
-# 본문 표제임을 확정하는 기간 마커(요약표·일반표 배제용).
-_PERIOD_MARK = re.compile(r"제\s*\d+\s*기|반기말|분기말|기말|현재|\d{4}\s*[.\-]\s*\d{1,2}\s*[.\-]\s*\d{1,2}")
-# 본문 face 표가 아닌 표제(주석·요약·분할·자본변동·세부명세) 배제.
-_TITLE_EXCLUDE = re.compile(r"분할|합병|주석|요약|자본변동|변동표|명세|부속")
-_CONSOL_TITLE = re.compile(r"연결\s*(재무상태표|대차대조표|포괄손익계산서|손익계산서|현금흐름표)")
-
-
-def _title_text(tbl) -> str:
-    """데이터 표의 표제 텍스트. DART 본문은 <TABLE-GROUP>[표제 TABLE, 데이터 TABLE] 구조라
-    표제가 직전 형제 TABLE 에 들어있다 → 직전 형제(태그 무관) 텍스트를 표제로 본다."""
-    prev = tbl.getprevious()
-    if prev is None:
-        return ""
-    return " ".join("".join(prev.itertext()).split())[:200]
-
-
-def _classify_statement_title(title: str) -> tuple[str, str] | None:
-    """표제 → (basis, statement) 또는 None(본문 재무제표 표 아님)."""
-    if not title or not _PERIOD_MARK.search(title):
-        return None
-    head = title[:45]
-    if _TITLE_EXCLUDE.search(head):
-        return None
-    stmt = None
-    for pat, s in _STMT_TITLE:
-        if pat.search(head):
-            stmt = s
-            break
-    if stmt is None:
-        return None
-    basis = "consolidated" if _CONSOL_TITLE.search(title) else "separate"
-    return (basis, stmt)
+# 표제기반 본문표 식별은 fin2.extract.statement_titles 로 이전(추출기와 공유, 단일 진실원).
+# title_text / classify_statement_title 를 import 해 사용한다.
 
 
 def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
@@ -281,8 +246,8 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
     seen: set[tuple] = set()
 
     for tbl in root.findall(".//TABLE"):
-        title = _title_text(tbl)
-        meta = _classify_statement_title(title)
+        title = title_text(tbl)
+        meta = classify_statement_title(title)
         if meta is None:
             continue
         basis, stmt = meta

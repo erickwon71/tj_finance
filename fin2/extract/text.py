@@ -29,7 +29,7 @@ from pathlib import Path
 from loguru import logger
 
 from parser.common.account_mapper import get_mapper, MappingResult
-from parser.common.amount_normalizer import normalize_account_name
+from parser.common.amount_normalizer import normalize_account_name, detect_unit_declaration
 from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.section_detector import (
     detect_sections, find_section_tables, find_summary_tables,
@@ -37,6 +37,9 @@ from parser.xml.section_detector import (
 )
 from parser.xml.table_extractor import extract_rows
 from fin2.extract.xbrl import ExtractedFact
+from fin2.extract.statement_titles import (
+    title_text, classify_statement_title, SECTION_CODE_OF,
+)
 
 # 섹션 코드 → (basis, period_kind)
 _SECTION_META = {
@@ -138,6 +141,88 @@ def _row_to_fact(
     )
 
 
+def _detect_body_statement_tables(root, fin_type: str) -> dict[str, list[tuple]]:
+    """
+    **표제기반 본문표 식별**(1차 경로): 데이터 TABLE 의 직전 형제 표제로 본문 재무제표 표를
+    직접 분류한다(요약·주석·분할·자본변동 배제). 복잡문서(분할·기재정정)에서 find_section_tables
+    전방수집이 2차 조정표/요약을 오연결하던 문제를 구조적으로 회피한다.
+
+    반환: {section_code: [(table_elem, unit), ...]}. 셀 읽기(컬럼의미)는 호출측 _emit_section 이
+    기존 extract_rows 로직으로 수행한다(표 식별만 여기서).
+    """
+    groups: dict[str, list[tuple]] = {}
+    for tbl in root.findall(".//TABLE"):
+        meta = classify_statement_title(title_text(tbl))
+        if meta is None:
+            continue
+        basis, stmt = meta
+        if basis == "consolidated" and fin_type == "B":
+            continue  # 연결 없는 기업의 연결 표 무시
+        section_code = SECTION_CODE_OF[(basis, stmt)]
+        unit = detect_unit_declaration(title_text(tbl)) or _detect_unit_near_table(tbl)
+        groups.setdefault(section_code, []).append((tbl, unit))
+    return groups
+
+
+def _emit_section(
+    section_code: str,
+    tables_with_unit: list[tuple],
+    *,
+    add,
+    mapper,
+    corp_code: str,
+    rcept_no: str,
+    report_fiscal_year: int,
+    report_fiscal_period: str,
+) -> None:
+    """한 섹션(BS_C 등)의 데이터 TABLE 들을 컬럼기반으로 읽어 fact 방출.
+
+    표제기반 경로와 레거시 폴백이 **같은 헬퍼**를 호출 → 셀 읽기 의미 동일(저위험·DRY).
+    tables_with_unit = [(table_elem, unit), ...]. interim(H1/Q3) IS·CF 2단 누적컬럼 처리 포함.
+    """
+    basis, period_kind = _SECTION_META[section_code]
+    fs_section = section_code.split("_")[0].lower()
+    tables = [t for t, _ in tables_with_unit]
+    unit_of = {id(t): u for t, u in tables_with_unit}
+    # 반기/3분기 flow(IS·CF) 표는 [3개월|누적] 2단 헤더에서 누적컬럼만 채택(연도 정합).
+    interim_flow = fs_section in ("is", "cf") and report_fiscal_period in ("H1", "Q3")
+    cum_maps = {id(t): (_interim_cumulative_cols(t) if interim_flow else None) for t in tables}
+    # 금융업 interim IS·CF 는 [당기3개월|당기누적|전기3개월|전기누적] 2단 표와 별도 [전기|전전기]
+    # 연간비교 표가 공존한다. 연간비교 표를 위치순 처리하면 전년 FY값이 당기 컬럼으로 오염된다.
+    # ⟹ 2단 표가 하나라도 있으면 2단 표만 처리(연간비교 표 스킵; 그 FY값은 연간보고서서 취득).
+    has_2tier = interim_flow and any(v is not None for v in cum_maps.values())
+    data_tables = sorted(tables, key=lambda t: len(t.findall(".//TR")), reverse=True)
+
+    for table in data_tables:
+        cum_map = cum_maps[id(table)]
+        if has_2tier and cum_map is None:
+            continue  # 2단 표 존재 시 연간비교(비2단) 표는 스킵
+        unit = unit_of[id(table)]
+        # 누적컬럼이 4번째 등 뒤쪽일 수 있으므로 금액셀을 넉넉히 확보
+        n_cols = max(cum_map) + 1 if cum_map else 3
+        for row in extract_rows(table, multiplier=unit, num_cols=n_cols):
+            if not row.account_name:
+                continue
+            mapping = mapper.map(row.account_name, fs_section=fs_section)
+            if cum_map is not None:
+                pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()
+                         if pos < len(row.amounts)]
+            else:
+                pairs = list(enumerate(row.amounts))
+            for col_idx, amount in pairs:
+                if amount is None:
+                    continue
+                add(_row_to_fact(
+                    row=row, col_idx=col_idx, amount=amount,
+                    basis=basis, period_kind=period_kind, mapping=mapping,
+                    corp_code=corp_code, rcept_no=rcept_no,
+                    report_fiscal_year=report_fiscal_year,
+                    report_fiscal_period=report_fiscal_period,
+                    fiscal_period=report_fiscal_period, unit=unit,
+                    fs_type=section_code,
+                ))
+
+
 def extract_facts(
     file_path: str | Path,
     *,
@@ -147,7 +232,8 @@ def extract_facts(
     report_fiscal_period: str,
 ) -> list[ExtractedFact]:
     """
-    Track B(텍스트) 추출. 표준 섹션(BS/IS/CF) 우선, 없으면 요약재무정보 폴백.
+    Track B(텍스트) 추출. **표제기반 본문표 식별이 1차**, 놓친 핵심 섹션만 레거시 detect_sections
+    폴백, 그래도 핵심 섹션 전무면 요약재무정보 폴백.
     같은 (acode, 합성 context) 셀 중복 시 1개로 합치되 금액 보유 행 우선.
     """
     root = _parse_xml_file(Path(file_path))
@@ -165,66 +251,37 @@ def extract_facts(
         if prev is None or prev.amount_won is None:
             dedup[key] = fact
 
-    sections = detect_sections(root)
-    for section_code, title_elem in sections.items():
-        if title_elem is None or section_code not in _SECTION_META:
-            continue
-        basis, period_kind = _SECTION_META[section_code]
-        if basis == "consolidated" and fin_type == "B":
-            continue  # 연결 없는 기업의 연결 섹션 무시
+    # ── 1차: 표제기반 본문표 식별(robust) ──────────────────────────────────
+    groups = _detect_body_statement_tables(root, fin_type)
 
-        unit = detect_unit_from_section(title_elem)
-        tables = find_section_tables(title_elem)
-        if not tables:
-            continue
-        fs_section = section_code.split("_")[0].lower()
-        # 반기/3분기 flow(IS·CF) 표는 [3개월|누적] 2단 헤더에서 누적컬럼만 채택(연도 정합).
-        interim_flow = fs_section in ("is", "cf") and report_fiscal_period in ("H1", "Q3")
+    # ── 폴백(갭필): 표제기반이 놓친 핵심 섹션만 레거시 detect_sections 로 채운다 ──
+    # (표제기반이 일부 섹션만 잡아도 나머지 손실 없음 + <P>헤더·TABLE-GROUP 레거시 성과 보호.)
+    missing = [
+        c for c in _SECTION_META
+        if c not in groups and not (c.endswith("_C") and fin_type == "B")
+    ]
+    if missing:
+        sections = detect_sections(root)
+        for code in missing:
+            title_elem = sections.get(code)
+            if title_elem is None:
+                continue
+            tbls = find_section_tables(title_elem)
+            if not tbls:
+                continue
+            unit = detect_unit_from_section(title_elem)
+            groups[code] = [(t, unit) for t in tbls]
 
-        # 표별 누적컬럼 맵 1회 산출.
-        cum_maps = {id(t): (_interim_cumulative_cols(t) if interim_flow else None)
-                    for t in tables}
-        # 금융업 interim IS·CF 는 [당기3개월|당기누적|전기3개월|전기누적] 2단 표(=당기 데이터)
-        # 와 별도 [전기|전전기] 연간비교 표가 공존한다. 연간비교 표를 위치순 처리하면 전년 FY값이
-        # 당기 컬럼으로 오염된다(영업수익 H1=전년FY 566B). 또 계정명이 달라(반기순이익 vs
-        # 당기순이익) dedup 로도 못 막는다. ⟹ **2단 표가 하나라도 있으면 2단 표만 처리**
-        # (연간비교 표 스킵; 그 FY값은 실제 연간보고서에서 취득되어 손실 없음).
-        has_2tier = interim_flow and any(v is not None for v in cum_maps.values())
-        data_tables = sorted(tables, key=lambda t: len(t.findall(".//TR")), reverse=True)
+    for code, tables_with_unit in groups.items():
+        _emit_section(
+            code, tables_with_unit, add=_add, mapper=mapper,
+            corp_code=corp_code, rcept_no=rcept_no,
+            report_fiscal_year=report_fiscal_year,
+            report_fiscal_period=report_fiscal_period,
+        )
 
-        for table in data_tables:
-            cum_map = cum_maps[id(table)]
-            if has_2tier and cum_map is None:
-                continue  # 2단 표 존재 시 연간비교(비2단) 표는 스킵
-            # 누적컬럼이 4번째 등 뒤쪽일 수 있으므로 금액셀을 넉넉히 확보
-            n_cols = max(cum_map) + 1 if cum_map else 3
-            for row in extract_rows(table, multiplier=unit, num_cols=n_cols):
-                if not row.account_name:
-                    continue
-                mapping = mapper.map(row.account_name, fs_section=fs_section)
-                if cum_map is not None:
-                    pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()
-                             if pos < len(row.amounts)]
-                else:
-                    pairs = list(enumerate(row.amounts))
-                for col_idx, amount in pairs:
-                    if amount is None:
-                        continue
-                    _add(_row_to_fact(
-                        row=row, col_idx=col_idx, amount=amount,
-                        basis=basis, period_kind=period_kind, mapping=mapping,
-                        corp_code=corp_code, rcept_no=rcept_no,
-                        report_fiscal_year=report_fiscal_year,
-                        report_fiscal_period=report_fiscal_period,
-                        fiscal_period=report_fiscal_period, unit=unit,
-                        fs_type=section_code,
-                    ))
-
-    # 표준 섹션이 하나도 없으면 요약재무정보 폴백(분기/반기)
-    core_found = any(
-        sections.get(c) is not None
-        for c in ("BS_C", "IS_C", "CF_C", "BS_S", "IS_S", "CF_S")
-    )
+    # 핵심 섹션이 하나도 없으면 요약재무정보 폴백(분기/반기)
+    core_found = any(groups.get(c) for c in _SECTION_META)
     if not core_found:
         _extract_summary(root, mapper, fin_type, dedup, _add,
                          corp_code, rcept_no, report_fiscal_year, report_fiscal_period)

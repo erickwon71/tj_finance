@@ -9,7 +9,9 @@ from sqlalchemy import text
 from collector.db import get_session
 from parser.xml.dart_xml_parser import _parse_xml_file
 from fin2.extract.acontext import parse_acontext
-from fin2.audit.face_audit import parse_displayed, _cell_text, STD_FIELD_CANONICAL, map_acode
+from fin2.audit.face_audit import (
+    parse_displayed, _cell_text, STD_FIELD_CANONICAL, map_acode, read_report_face_text,
+)
 
 corp, fy, fp, basis, field = sys.argv[1:6]
 fy = int(fy)
@@ -49,3 +51,11 @@ with get_session() as s:
         wonv = disp * (10 ** (-int(ade))) if (ade and int(ade) < 0) else disp
         print(f"    {ac:50s} basis={ctx.basis} cum={ctx.is_cumulative} ade={ade} "
               f"disp={disp} won={wonv}")
+
+    print(f"\n  -- Track B 텍스트 reader 가 본 canonical={canon} 라인 (basis={basis}) --")
+    tb = [ln for ln in read_report_face_text(fp_file) if ln.canonical == canon]
+    for ln in tb:
+        flag = "  <= basis일치" if ln.basis == basis else ""
+        print(f"    [{ln.basis:12s}] label='{ln.label}' disp={ln.displayed_value} "
+              f"ade={ln.adecimal} won={ln.amount_won}{flag}")
+    print(f"  (총 {len(tb)} 라인, std값={d[field]})")

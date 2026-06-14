@@ -446,6 +446,11 @@ def audit_fields(
         if val in won_vals:
             results.append(FieldAudit(field, canon, val, True, None,
                                       report_value_won=val))
+        elif -val in won_vals:
+            # 부호만 반대 — std 의 비용/차감 정규화(매출원가·세금 등 양수화) vs 보고서 괄호표시.
+            # 값(절대) 충실 → PASS(부호는 표준화 규약, 데이터 오류 아님).
+            results.append(FieldAudit(field, canon, val, True, None,
+                                      report_value_won=-val))
         else:
             nearest = min(cands, key=lambda ln: abs((ln.amount_won or 0) - val))
             results.append(FieldAudit(field, canon, val, False, "VALUE_DIFF",

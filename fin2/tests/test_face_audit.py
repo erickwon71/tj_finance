@@ -87,6 +87,17 @@ def test_pending_blocks_pass():
     assert ra.n_pass == 1 and ra.n_pending == 1
 
 
+def test_sign_flip_is_pass():
+    # std 는 비용을 양수화(매출원가 +), 보고서는 괄호 음수(-). 절대값 충실 → PASS.
+    db = {"cogs": 27747335376}
+    is_line = FaceLine(statement="IS", basis="separate", acode="매출원가", canonical="is.cogs",
+                       label="매출원가", displayed_value=-27747335376, adecimal=0)
+    ra = audit_std_row(db, basis="separate", bs_face=[], is_face=[is_line], cf_face=[],
+                       is_comparative=False)
+    assert ra.status == STATUS_PASS
+    assert ra.n_fail == 0
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

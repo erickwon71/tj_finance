@@ -216,76 +216,112 @@ def _adecimal_from_unit(unit: int) -> int:
     return -int(round(math.log10(unit)))
 
 
+# 본문 재무제표 표제 패턴(제목 표 텍스트에서). 요약/주석/분할·합병/자본변동표 배제.
+_STMT_TITLE = [
+    (re.compile(r"재무상태표|대차대조표"), "BS"),
+    (re.compile(r"포괄손익계산서|손익계산서"), "IS"),
+    (re.compile(r"현금흐름표"), "CF"),
+]
+# 본문 표제임을 확정하는 기간 마커(요약표·일반표 배제용).
+_PERIOD_MARK = re.compile(r"제\s*\d+\s*기|반기말|분기말|기말|현재|\d{4}\s*[.\-]\s*\d{1,2}\s*[.\-]\s*\d{1,2}")
+# 본문 face 표가 아닌 표제(주석·요약·분할·자본변동·세부명세) 배제.
+_TITLE_EXCLUDE = re.compile(r"분할|합병|주석|요약|자본변동|변동표|명세|부속")
+_CONSOL_TITLE = re.compile(r"연결\s*(재무상태표|대차대조표|포괄손익계산서|손익계산서|현금흐름표)")
+
+
+def _title_text(tbl) -> str:
+    """데이터 표의 표제 텍스트. DART 본문은 <TABLE-GROUP>[표제 TABLE, 데이터 TABLE] 구조라
+    표제가 직전 형제 TABLE 에 들어있다 → 직전 형제(태그 무관) 텍스트를 표제로 본다."""
+    prev = tbl.getprevious()
+    if prev is None:
+        return ""
+    return " ".join("".join(prev.itertext()).split())[:200]
+
+
+def _classify_statement_title(title: str) -> tuple[str, str] | None:
+    """표제 → (basis, statement) 또는 None(본문 재무제표 표 아님)."""
+    if not title or not _PERIOD_MARK.search(title):
+        return None
+    head = title[:45]
+    if _TITLE_EXCLUDE.search(head):
+        return None
+    stmt = None
+    for pat, s in _STMT_TITLE:
+        if pat.search(head):
+            stmt = s
+            break
+    if stmt is None:
+        return None
+    basis = "consolidated" if _CONSOL_TITLE.search(title) else "separate"
+    return (basis, stmt)
+
+
 def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
     """
-    Track B(텍스트) 보고서의 face 라인을 **독립** 재추출.
+    Track B(텍스트) 보고서의 **본문 재무제표 face 표** 라인을 독립 재추출.
 
-    독립성: 섹션(재무제표 표) 위치는 section_detector 로 찾되(구조적), 셀 값은
-    table_extractor 의 컬럼선택 로직(컬럼시프트·누적/3개월 판정 = 역대 버그 발원지)을
-    재사용하지 않고 **행 내 모든 숫자 셀을 리터럴**로 읽는다.
+    설계(NAVER 트리아지 교훈): section_detector.find_section_tables 는 복잡문서(분할·정정)에서
+    본문 표 대신 2차 조정표/요약을 오연결한다 → **표제(제목 표)로 본문 재무제표 표를 직접 식별**한다.
+    DART 본문 = `<TABLE-GROUP>[표제 TABLE("연결 재무상태표 제N기..."), 데이터 TABLE]` 구조.
+    표제에 statement명+기간마커가 있고 분할/주석/요약/자본변동이 아니면 그 데이터 표가 본문 face.
 
-    매칭 의미(Track A 와 차이): std 값이 그 계정 라벨 행의 **어느 숫자 셀과든 일치**하면 PASS
-    (값·계정·단위 충실성 검증). 컬럼 의미(당기 vs 전기 vs 누적/3개월)까지는 구분하지 않는다
-    — Track B 컬럼정합은 별도(추출기 _interim_cumulative_cols, 단조성 검증)에서 담보. 따라서
-    is_cumulative=True 로 두어 interim 필터를 통과시킨다(any-column 의미).
+    독립성: 표 위치는 표제로 찾되, 셀은 table_extractor 컬럼로직 비재사용하고 **행 내 모든
+    숫자 셀 리터럴** 읽기(any-column). is_cumulative=True 로 interim 필터 통과.
+    요약재무정보표·주석표는 제외(본문만).
     """
-    from parser.xml.section_detector import (
-        detect_sections, find_section_tables, detect_unit_from_section,
-    )
     from parser.xml.table_extractor import _get_cells
     from parser.common.account_mapper import get_mapper
+    from parser.common.amount_normalizer import detect_unit_declaration
 
     root = _parse_xml_file(Path(file_path))
     if root is None:
         return []
     mapper = get_mapper()
-    sections = detect_sections(root)
     lines: list[FaceLine] = []
     seen: set[tuple] = set()
-    for section_code, title_elem in sections.items():
-        meta = _TEXT_SECTION_META.get(section_code)
-        if meta is None or title_elem is None:
+
+    for tbl in root.findall(".//TABLE"):
+        title = _title_text(tbl)
+        meta = _classify_statement_title(title)
+        if meta is None:
             continue
         basis, stmt = meta
         fs_section = stmt.lower()
-        unit = detect_unit_from_section(title_elem)
+        unit = detect_unit_declaration(title) or 1
         adecimal = _adecimal_from_unit(unit)
-        for table in find_section_tables(title_elem):
-            for tr in table.findall(".//TR"):
-                cells = _get_cells(tr)
-                label = None
-                nums: list[int] = []
-                for cell in cells:
-                    if label is None and _HANGUL_RE.search(cell):
-                        label = cell.strip()
-                        continue
-                    if label is None:
-                        continue  # 라벨 전 선두 셀 무시
-                    v = parse_displayed(cell)
-                    if v is not None:
-                        nums.append(v)
-                if not label or not nums:
+        for tr in tbl.findall(".//TR"):
+            cells = _get_cells(tr)
+            label = None
+            nums: list[int] = []
+            for cell in cells:
+                if label is None and _HANGUL_RE.search(cell):
+                    label = cell.strip()
                     continue
-                mapping = mapper.map(label, fs_section=fs_section)
-                canon = mapping.account_code
-                if not canon or canon.startswith("unknown."):
+                if label is None:
                     continue
-                if _statement_of(canon) != stmt:
-                    continue  # 라벨이 다른 statement 계정으로 매핑되면(오매칭) 스킵
-                # account_mapper 오매핑 가드(감사 한정): "법인세비용차감전…" = 세전이익(EBT),
-                # 라벨에 '법인세비용' 이 있어 tax_expense 로 오매핑됨 → 세금 셀 아님, 제외.
-                if canon == "is.tax_expense" and "차감전" in label:
+                v = parse_displayed(cell)
+                if v is not None:
+                    nums.append(v)
+            if not label or not nums:
+                continue
+            mapping = mapper.map(label, fs_section=fs_section)
+            canon = mapping.account_code
+            if not canon or canon.startswith("unknown."):
+                continue
+            if _statement_of(canon) != stmt:
+                continue
+            if canon == "is.tax_expense" and "차감전" in label:
+                continue  # 세전이익 오매핑 가드
+            for v in nums:
+                key = (canon, basis, v)
+                if key in seen:
                     continue
-                for v in nums:
-                    key = (canon, basis, v)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    lines.append(FaceLine(
-                        statement=stmt, basis=basis, acode=label[:80], canonical=canon,
-                        label=label[:80], displayed_value=v, adecimal=adecimal,
-                        is_cumulative=True,
-                    ))
+                seen.add(key)
+                lines.append(FaceLine(
+                    statement=stmt, basis=basis, acode=label[:80], canonical=canon,
+                    label=label[:80], displayed_value=v, adecimal=adecimal,
+                    is_cumulative=True,
+                ))
     return lines
 
 

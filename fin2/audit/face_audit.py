@@ -1,0 +1,349 @@
+"""
+Gate B — 보고서 face 표 독립 재추출 + DB(std_v2) 100% 일치 감사.
+
+이 모듈의 핵심 원칙(PRD 04):
+  - **표준화 파이프라인과 독립**: reconcile(source 선택)·standardize(규칙) 를 거치지 않고
+    원본 보고서의 face 표를 직접 다시 읽는다 → 같은 버그를 양쪽이 공유하지 않음.
+  - **보고서 표시단위 정확 일치**: round(DB_amount_won × 10^ADECIMAL) == 보고서 표시값.
+    Track A(XBRL) 는 ADECIMAL 권위라 won-공간에서 동치 비교가 정확하다.
+  - 감사 대상은 std_v2 의 **최종 소비값**(시각화에 쓰는 표준 계정). 이 값이 그 statement 의
+    source 보고서 face 표에 **실제로 그 계정 부류로 등장**하는지 검증한다.
+
+iteration 1 = Track A(xbrl_acode) 백엔드. Track B(xml_text) 백엔드는 후속.
+
+숫자 파싱은 추출기(parse_amount)를 재사용하지 않고 본 모듈 자체의 리터럴 파서를 쓴다
+(독립성 — 추출기의 숫자/단위 버그를 감사가 공유하지 않도록).
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+from parser.xml.dart_xml_parser import _parse_xml_file
+from fin2.extract.acontext import parse_acontext
+from fin2.taxonomy.concept_map import map_acode
+
+_XBRL_PREFIXES = ("ifrs-full_", "dart_")
+
+# std_v2 표준 필드 → canonical 계정 (앵커/고신뢰 셋 우선).
+# basis(statement_type) 와 무관하게 계정 부류 일치만 본다.
+STD_FIELD_CANONICAL: dict[str, str] = {
+    # ── BS ──
+    "total_assets": "bs.total_assets",
+    "current_assets": "bs.current_assets",
+    "cash": "bs.cash",
+    "inventory": "bs.inventory",
+    "ppe": "bs.ppe",
+    "total_liabilities": "bs.total_liabilities",
+    "current_liabilities": "bs.current_liabilities",
+    "total_equity": "bs.total_equity",
+    "controlling_equity": "bs.controlling_equity",
+    "retained_earnings": "bs.retained_earnings",
+    "trade_payables": "bs.trade_payables",
+    # ── IS ──
+    "revenue": "is.revenue",
+    "cogs": "is.cogs",
+    "gross_profit": "is.gross_profit",
+    "operating_income": "is.operating_income",
+    "ebt": "is.ebt",
+    "tax_expense": "is.tax_expense",
+    "net_income": "is.net_income",
+    "controlling_ni": "is.controlling_ni",
+    # ── CF ──
+    "cfo": "cf.operating",
+    "cfi": "cf.investing",
+    "cff": "cf.financing",
+    "capex": "cf.capex",
+    "dividends_paid": "cf.dividends_paid",
+}
+
+# 앵커(가장 중요·라벨↔계정 모호성 없음) — 감사를 먼저 신뢰가능하게 채우는 부분집합.
+ANCHOR_FIELDS = (
+    "total_assets", "total_liabilities", "total_equity",
+    "revenue", "operating_income", "net_income",
+    "cfo", "cfi", "cff",
+)
+
+# DIRECT = 단일 보고서 face 라인에 1:1 대응(strict 100% 일치 대상).
+# 제외:
+#  - 합성 필드(capex=cf.capex+cf.capex_intangible 등) → 단일 라인 아님, 자기일관성으로 별도 검증.
+#  - controlling_*(지배지분) → 별도(separate) 재무제표엔 지배/비지배 구분 없어 face 라인 부재
+#    (std 는 net_income/total_equity 동일값으로 채움) → CONSOLIDATED 에서만 face 라인 존재.
+DIRECT_FIELDS = tuple(
+    f for f in STD_FIELD_CANONICAL if f not in ("capex",)
+)
+# 연결에서만 face 라인이 존재하는 지배지분 필드.
+_CONSOLIDATED_ONLY = ("controlling_equity", "controlling_ni")
+
+# canonical 접두어 → statement(BS/IS/CF)
+def _statement_of(canonical: str | None) -> str | None:
+    if not canonical:
+        return None
+    if canonical.startswith("bs."):
+        return "BS"
+    if canonical.startswith("is."):
+        return "IS"
+    if canonical.startswith("cf."):
+        return "CF"
+    return None
+
+
+@dataclass
+class FaceLine:
+    """보고서 face 표의 한 라인(독립 재추출 산출). col_index=0(당기)만 수집."""
+    statement: str | None      # BS/IS/CF (canonical 기준; 미매핑은 period_kind 추정)
+    basis: str | None          # consolidated/separate/None
+    acode: str
+    canonical: str | None
+    label: str
+    displayed_value: int       # 보고서 표시값(단위 미환산, 리터럴)
+    adecimal: int | None       # 표시단위(원 환산용)
+
+    @property
+    def amount_won(self) -> int | None:
+        """표시값 → 원. amount_won = 표시값 × 10^(-adecimal)."""
+        if self.adecimal is None:
+            return self.displayed_value
+        if self.adecimal < 0:
+            return self.displayed_value * (10 ** (-self.adecimal))
+        return self.displayed_value  # adecimal>=0: 표시값이 이미 원(반올림 자리)
+
+
+_NUM_RE = re.compile(r"[0-9][0-9,  ]*\.?[0-9]*")
+_NEG_MARK = ("△", "▲", "▵", "−", "-", "(")
+
+
+def parse_displayed(text: str) -> int | None:
+    """
+    보고서 셀 텍스트 → 표시 정수값(리터럴, 단위 미환산). 추출기와 독립한 자체 파서.
+    음수: 괄호 (1,234) / △ / − / 선행 '-'. 소수는 반올림. 비수치/공란 None.
+    """
+    if not text:
+        return None
+    t = text.strip().replace(" ", " ")
+    if not t:
+        return None
+    neg = t.startswith("(") and t.rstrip().endswith(")")
+    if not neg and t[:1] in ("△", "▲", "▵", "−", "-"):
+        neg = True
+    m = _NUM_RE.search(t)
+    if not m:
+        return None
+    digits = m.group(0).replace(",", "").replace(" ", "")
+    if not digits or digits == ".":
+        return None
+    try:
+        val = float(digits)
+    except ValueError:
+        return None
+    iv = int(round(val))
+    return -iv if neg else iv
+
+
+def _cell_text(te) -> str:
+    raw = (te.text or "").strip()
+    if not raw:
+        p = te.find("P")
+        if p is not None:
+            raw = (p.text or "").strip()
+    if not raw:
+        raw = "".join(te.itertext()).strip()
+    return raw
+
+
+def read_report_face_xbrl(file_path: str | Path) -> list[FaceLine]:
+    """
+    Track A(XBRL) 보고서의 face 라인을 독립 재추출. col_index=0(당기)·비차원만.
+
+    Track A 가 아니면(=ifrs/dart ACODE+ACONTEXT 셀 없음) 빈 리스트.
+    같은 (acode, basis) 셀 중복 등장은 1개로 합치되 금액 보유 우선.
+    """
+    root = _parse_xml_file(Path(file_path))
+    if root is None:
+        return []
+
+    dedup: dict[tuple[str, str | None], FaceLine] = {}
+    for te in root.findall(".//TE[@ACODE]"):
+        acode = te.get("ACODE", "")
+        if not acode.startswith(_XBRL_PREFIXES) or len(acode) > 255:
+            continue
+        acontext = te.get("ACONTEXT", "")
+        if not acontext:
+            continue
+        ctx = parse_acontext(acontext)
+        if not ctx.parsed or ctx.col_index != 0 or ctx.is_dimensional:
+            continue
+        text = _cell_text(te)
+        displayed = parse_displayed(text)
+        if displayed is None:
+            continue
+        try:
+            adecimal = int(te.get("ADECIMAL", ""))
+        except (ValueError, TypeError):
+            adecimal = None
+        canonical = map_acode(acode)
+        stmt = _statement_of(canonical)
+        if stmt is None and ctx.period_kind == "instant":
+            stmt = "BS"
+        line = FaceLine(
+            statement=stmt, basis=ctx.basis, acode=acode, canonical=canonical,
+            label=text[:80], displayed_value=displayed, adecimal=adecimal,
+        )
+        key = (acode, ctx.basis)
+        if key not in dedup:
+            dedup[key] = line
+    return list(dedup.values())
+
+
+# ── 감사 비교 ───────────────────────────────────────────────────────────────
+
+@dataclass
+class FieldAudit:
+    field: str
+    canonical: str
+    db_amount_won: int
+    match: bool
+    reason: str | None          # None=match. VALUE_DIFF/LABEL_UNMATCHED/...
+    report_value_won: int | None  # 가장 가까운 보고서 라인의 won 값(진단)
+
+
+# 감사 상태(field·row 레벨). PASS/FAIL 만 promote 게이트에 반영,
+# PENDING_* 는 iteration 1 범위 밖(차단도 통과도 아님 — 후속 백엔드가 처리).
+STATUS_PASS = "pass"
+STATUS_FAIL = "fail"          # Track A own-report col0 에 계정 라인 존재하나 값 불일치(진짜 오류)
+STATUS_PENDING = "pending"    # 아직 감사 불가(범위 밖)
+
+# field reason → 분류
+_FAIL_REASONS = {"VALUE_DIFF"}
+_PENDING_REASONS = {"COMPARATIVE_ROW", "SOURCE_NOT_TRACK_A", "LABEL_UNMATCHED"}
+
+
+@dataclass
+class RowAudit:
+    """std_v2 한 행(corp,fy,fp,basis)의 감사 롤업."""
+    status: str                 # pass/fail/pending
+    n_pass: int
+    n_fail: int
+    n_pending: int
+    fields: list[FieldAudit]
+    fail_fields: list[str]
+
+
+def _statement_face(field: str, bs_face, is_face, cf_face) -> list:
+    canon = STD_FIELD_CANONICAL.get(field, "")
+    if canon.startswith("bs."):
+        return bs_face
+    if canon.startswith("is."):
+        return is_face
+    if canon.startswith("cf."):
+        return cf_face
+    return []
+
+
+def audit_std_row(
+    db_row: dict,
+    *,
+    basis: str,
+    bs_face: list[FaceLine],
+    is_face: list[FaceLine],
+    cf_face: list[FaceLine],
+    is_comparative: bool,
+    fields: tuple[str, ...] | None = None,
+) -> RowAudit:
+    """
+    std_v2 한 행을 statement 별 source face 와 대조하여 행 상태로 롤업.
+
+    범위 게이팅(iteration 1):
+      - 비교컬럼 폴백 행(is_comparative): 값이 후속 보고서 col1/2 에 있어 col0 감사 불가 → PENDING.
+      - statement source 가 Track A 가 아니면(face 비어있음): 텍스트 백엔드 필요 → PENDING.
+      - 그 외: col0 대조 → PASS / FAIL(VALUE_DIFF) / PENDING(LABEL_UNMATCHED).
+
+    row status: 하나라도 FAIL → fail. FAIL 없고 PASS≥1 이며 PENDING 만 잔여 → pending if 모든 게
+    pending, 아니면 in-scope 전부 pass 면 pass.
+    """
+    fields = fields or DIRECT_FIELDS
+    out: list[FieldAudit] = []
+    for field in fields:
+        canon = STD_FIELD_CANONICAL.get(field)
+        if canon is None:
+            continue
+        if field in _CONSOLIDATED_ONLY and basis != "consolidated":
+            continue
+        val = db_row.get(field)
+        if val is None:
+            continue
+        if is_comparative:
+            out.append(FieldAudit(field, canon, val, False, "COMPARATIVE_ROW", None))
+            continue
+        face = _statement_face(field, bs_face, is_face, cf_face)
+        if not face:
+            out.append(FieldAudit(field, canon, val, False, "SOURCE_NOT_TRACK_A", None))
+            continue
+        fa = audit_fields(db_row, face, basis=basis, fields=(field,))
+        out.extend(fa)
+
+    n_pass = sum(1 for f in out if f.match)
+    n_fail = sum(1 for f in out if f.reason in _FAIL_REASONS)
+    n_pending = sum(1 for f in out if f.reason in _PENDING_REASONS)
+    fail_fields = [f.field for f in out if f.reason in _FAIL_REASONS]
+    # 엄격 게이트(PRD §6/§8): pass = in-scope 전 계정 검증되어 모두 일치(fail·pending 0).
+    # pending 이 하나라도 있으면 100% 인증 불가 → 행 전체 pending(차단도 아니나 promote 도 안 함).
+    if n_fail:
+        status = STATUS_FAIL
+    elif n_pending == 0 and n_pass:
+        status = STATUS_PASS
+    else:
+        status = STATUS_PENDING
+    return RowAudit(status, n_pass, n_fail, n_pending, out, fail_fields)
+
+
+def audit_fields(
+    db_row: dict,
+    face_lines: list[FaceLine],
+    *,
+    basis: str,
+    fields: tuple[str, ...] | None = None,
+) -> list[FieldAudit]:
+    """
+    std_v2 한 행(db_row, statement_type=basis)의 표준 필드 값들을 face_lines 와 대조.
+
+    PASS = 그 계정 부류(canonical)의 보고서 라인 중 won 값이 정확히 일치하는 것이 존재.
+    won 동치 = displayed × 10^(-adecimal). Track A 는 ADECIMAL 권위라 표시단위 일치와 동치.
+
+    basis 일치는 face_line.basis 가 명시된 경우만 강제(미태깅 None 라인은 양쪽 허용).
+    """
+    fields = fields or DIRECT_FIELDS
+    # canonical → 그 부류 보고서 라인의 won 값 집합
+    by_canon: dict[str, list[FaceLine]] = {}
+    for ln in face_lines:
+        if ln.canonical is None:
+            continue
+        if ln.basis is not None and ln.basis != basis:
+            continue
+        by_canon.setdefault(ln.canonical, []).append(ln)
+
+    results: list[FieldAudit] = []
+    for field in fields:
+        canon = STD_FIELD_CANONICAL.get(field)
+        if canon is None:
+            continue
+        # 지배지분 필드는 연결에서만 face 라인 존재 — 별도는 감사 제외.
+        if field in _CONSOLIDATED_ONLY and basis != "consolidated":
+            continue
+        val = db_row.get(field)
+        if val is None:
+            continue  # DB 에 값 없음 — 감사 대상 아님(누락은 별도 커버리지 이슈)
+        cands = by_canon.get(canon, [])
+        if not cands:
+            results.append(FieldAudit(field, canon, val, False, "LABEL_UNMATCHED", None))
+            continue
+        won_vals = {ln.amount_won for ln in cands}
+        if val in won_vals:
+            results.append(FieldAudit(field, canon, val, True, None,
+                                      report_value_won=val))
+        else:
+            nearest = min(cands, key=lambda ln: abs((ln.amount_won or 0) - val))
+            results.append(FieldAudit(field, canon, val, False, "VALUE_DIFF",
+                                      report_value_won=nearest.amount_won))
+    return results

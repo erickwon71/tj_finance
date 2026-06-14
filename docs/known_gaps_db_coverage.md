@@ -52,3 +52,18 @@ WHERE dt.gate_a_status='REVIEW' AND dt.gate_a_reason='EXTRACT_EMPTY'
 진단도구: `scripts/diag_xml_structure.py` · `diag_trackb_sections.py` ·
 `diag_trackb_extract.py` · `diag_extract_empty.py`.
 재추출(수정 후): `scripts/fin2_reextract_financial.py`(purge 포함).
+
+## K-GAAP↔IFRS 시계열 단절 (TODO, 2026-06-14)
+
+**결정(사용자 ①, as-filed)**: pre-2011 K-GAAP 연도의 std_v2 Layer 1 = **그 해 보고서가 실제
+적은 K-GAAP 원본값**(Gate B 'DB=보고서 100%' 원칙 일치). 나중 IFRS 보고서의 비교컬럼
+재작성값은 2008 원본엔 없어 Gate B 검증 불가 → Layer 1 에서 제외.
+
+- 규모: fy≤2010 own-report(map_direct) **32,596행 / 1,397사**. kgaap_gap 보충 19행.
+- 예: 옵트론텍 2008 별도 자산 = 71.5B(K-GAAP as-filed) ≠ 94.4B(IFRS 재작성 비교컬럼).
+- golden `optrontec_2008_kgaap_equity` 를 as-filed(71.5B/29.1B)로 갱신.
+
+**⚠ TODO — 시계열 단절 처리**: K-GAAP(≤2010)과 IFRS(2011+) 구간이 회계기준 차이로 점프할 수
+있다(연결범위·재평가). 처리안 후보: ① Layer 2(비교/달력 정규화)에서 IFRS 재작성 비교컬럼값을
+별도 시계열로 노출 ② 기준 전환 플래그(`accounting_basis` K-GAAP/IFRS)로 구간 표시 ③ 시각화에서
+전환연도 마커. **Layer 2 설계 시 함께 다룸**(PRD 03 §5.3 calendar 레이어와 연계).

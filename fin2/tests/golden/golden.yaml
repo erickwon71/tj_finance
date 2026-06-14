@@ -102,16 +102,19 @@ cases:
     name: 옵트론텍
     edge_class: kgaap_multiaxis_sce
     note: >
-      2008 별도(is_ifrs=false): 자산 943.97억·자본 346.29억(자본<자산, 정합). 다축 SCE 의
+      2008 별도(K-GAAP, is_ifrs=false): 자산 715.30억·자본 290.66억(자본<자산, 정합). 다축 SCE 의
       기타 축이 total_equity 에 잘못 합산되면 안 됨. period_end 는 신뢰 불가라 단언 제외.
-      (DB 전체에서 K-GAAP+자본 보유 행은 옵트론텍 2007/2008 뿐 — K-GAAP 커버리지 희소.)
-      ✅ **비교컬럼 폴백으로 복구**: 2008 자기보고서는 K-GAAP 라 추출 0행이나, 나중
-      보고서(IFRS)의 비교컬럼에 2008 값이 있어 standardize_comparative_corp 가 합성(DQ2).
-      검증치 정확 일치(equity 34,628,733,000·assets 94,397,095,000).
+      ★ **as-filed 채택(2026-06-14, 사용자 결정 ①)**: K-GAAP 섹션탐지 수정으로 2008 자기보고서가
+      추출되면서, std_v2 Layer 1 = **그 해 보고서가 실제 적은 K-GAAP 원본값**(자산 71,530,061,989·
+      자본 29,066,351,063)을 담는다. Gate B 'DB=보고서 100%' 원칙과 일치(2008 보고서로 검증 가능).
+      이전 기대값(자산 94,397,095,000·자본 34,628,733,000)은 **나중 IFRS 보고서의 비교컬럼 재작성값**
+      으로, 2008 원본엔 없어 Gate B 검증 불가 → Layer 1 진실원에서 제외. IFRS 재작성값은 향후
+      비교/달력 정규화 레이어(Layer 2)로 별도 표현 예정(K-GAAP↔IFRS 시계열 단절 처리 TODO).
     verified: true
     current: pass
     asserts:
-      - {year: 2008, period: FY, basis: separate, column: total_equity, value: 34628733000, op: approx, tol: 0.02}
-      - {year: 2008, period: FY, basis: separate, column: total_assets, value: 94397095000, op: approx, tol: 0.02}
+      - {year: 2008, period: FY, basis: separate, column: total_equity, value: 29066351063, op: approx, tol: 0.02}
+      - {year: 2008, period: FY, basis: separate, column: total_assets, value: 71530061989, op: approx, tol: 0.02}
+      - {year: 2008, period: FY, basis: separate, column: total_equity, value: 71530061989, op: lt}  # 자본<자산(SCE 과합산 가드)
 
   # ── non_dec_fy: 보류 (period_end 라벨링 신뢰 불가 — 위 ⚠ 참고). fin2 E 레이어 후 추가. ──

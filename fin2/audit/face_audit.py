@@ -272,6 +272,10 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
                     continue
                 if _statement_of(canon) != stmt:
                     continue  # 라벨이 다른 statement 계정으로 매핑되면(오매칭) 스킵
+                # account_mapper 오매핑 가드(감사 한정): "법인세비용차감전…" = 세전이익(EBT),
+                # 라벨에 '법인세비용' 이 있어 tax_expense 로 오매핑됨 → 세금 셀 아님, 제외.
+                if canon == "is.tax_expense" and "차감전" in label:
+                    continue
                 for v in nums:
                     key = (canon, basis, v)
                     if key in seen:

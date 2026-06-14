@@ -99,6 +99,7 @@ class FaceLine:
     label: str
     displayed_value: int       # 보고서 표시값(단위 미환산, 리터럴)
     adecimal: int | None       # 표시단위(원 환산용)
+    is_cumulative: bool = False  # 반기/3분기 누적(YTD) 셀 — std_v2 IS/CF 가 저장하는 값
 
     @property
     def amount_won(self) -> int | None:
@@ -189,8 +190,10 @@ def read_report_face_xbrl(file_path: str | Path) -> list[FaceLine]:
         line = FaceLine(
             statement=stmt, basis=ctx.basis, acode=acode, canonical=canonical,
             label=text[:80], displayed_value=displayed, adecimal=adecimal,
+            is_cumulative=ctx.is_cumulative,
         )
-        key = (acode, ctx.basis)
+        # 반기/3분기는 같은 (acode,basis)에 누적·3개월 셀이 공존 → is_cumulative 도 키에 포함.
+        key = (acode, ctx.basis, ctx.is_cumulative)
         if key not in dedup:
             dedup[key] = line
     return list(dedup.values())
@@ -263,6 +266,7 @@ def audit_std_row(
     pending, 아니면 in-scope 전부 pass 면 pass.
     """
     fields = fields or DIRECT_FIELDS
+    interim = db_row.get("fiscal_period") in ("H1", "Q3")
     out: list[FieldAudit] = []
     for field in fields:
         canon = STD_FIELD_CANONICAL.get(field)
@@ -280,7 +284,7 @@ def audit_std_row(
         if not face:
             out.append(FieldAudit(field, canon, val, False, "SOURCE_NOT_TRACK_A", None))
             continue
-        fa = audit_fields(db_row, face, basis=basis, fields=(field,))
+        fa = audit_fields(db_row, face, basis=basis, fields=(field,), interim=interim)
         out.extend(fa)
 
     n_pass = sum(1 for f in out if f.match)
@@ -304,6 +308,7 @@ def audit_fields(
     *,
     basis: str,
     fields: tuple[str, ...] | None = None,
+    interim: bool = False,
 ) -> list[FieldAudit]:
     """
     std_v2 한 행(db_row, statement_type=basis)의 표준 필드 값들을 face_lines 와 대조.
@@ -312,6 +317,7 @@ def audit_fields(
     won 동치 = displayed × 10^(-adecimal). Track A 는 ADECIMAL 권위라 표시단위 일치와 동치.
 
     basis 일치는 face_line.basis 가 명시된 경우만 강제(미태깅 None 라인은 양쪽 허용).
+    interim=True(H1/Q3): IS/CF 는 std_v2 가 누적(YTD)을 저장하므로 누적 셀(is_cumulative)만 후보.
     """
     fields = fields or DIRECT_FIELDS
     # canonical → 그 부류 보고서 라인의 won 값 집합
@@ -320,6 +326,10 @@ def audit_fields(
         if ln.canonical is None:
             continue
         if ln.basis is not None and ln.basis != basis:
+            continue
+        # 반기/3분기 flow(IS/CF): std 는 누적값 → 누적 셀만 대조(3개월 셀 오매칭 방지).
+        if interim and (ln.canonical.startswith("is.") or ln.canonical.startswith("cf.")) \
+                and not ln.is_cumulative:
             continue
         by_canon.setdefault(ln.canonical, []).append(ln)
 

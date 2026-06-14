@@ -655,3 +655,38 @@ class OrderBacklog(Base):
     __table_args__ = (
         Index("ix_order_corp_year", "corp_code", "fiscal_year"),
     )
+
+
+# ── 10. Gate B 감사대장 (face_audit) ──────────────────────────────────────────
+class FaceAudit(Base):
+    """
+    PRD 04 Gate B 감사 산출물: std_v2 한 행(corp,fy,fp,basis)을 원본 보고서 face 표와
+    표시단위 정확일치로 대조한 결과. status 가 promote 게이트(gate_b_status)를 구동한다.
+
+    grain = std_financials_v2 와 동일(corp,fiscal_year,fiscal_period,statement_type,is_stub).
+    - status: pass = in-scope 전 계정 검증·일치 / fail = Track A own-report col0 값불일치 1+ /
+      pending = 아직 감사불가(비교컬럼행·Track B source·미매핑).
+    - fail_detail/pending_detail: 트리아지용 필드별 [{field,canonical,db,report,reason}].
+    신규 테이블 → create_all 자동 생성.
+    """
+    __tablename__ = "face_audit"
+
+    corp_code      = Column(String(8),    primary_key=True)
+    fiscal_year    = Column(SmallInteger, primary_key=True)
+    fiscal_period  = Column(String(5),    primary_key=True)
+    statement_type = Column(String(12),   primary_key=True)   # consolidated/separate (=basis)
+    is_stub        = Column(Boolean,      primary_key=True, default=False)
+
+    status         = Column(String(8),    nullable=False, comment="pass/fail/pending")
+    n_pass         = Column(SmallInteger, default=0)
+    n_fail         = Column(SmallInteger, default=0)
+    n_pending      = Column(SmallInteger, default=0)
+    fail_fields    = Column(JSONB,        nullable=True, comment="FAIL 필드명 목록")
+    fail_detail    = Column(JSONB,        nullable=True, comment="[{field,canonical,db_won,report_won,reason}]")
+    pending_detail = Column(JSONB,        nullable=True, comment="범위밖 사유 집계 {reason:count}")
+    reader_version = Column(String(20),   nullable=True, comment="감사 reader 버전(재현)")
+    checked_at     = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_face_audit_status", "status", "fiscal_year"),
+    )

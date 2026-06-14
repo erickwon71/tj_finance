@@ -27,35 +27,59 @@ _FP_MONTH_DAY = {"FY": (12, 31), "H1": (6, 30), "Q1": (3, 31), "Q3": (9, 30), "Q
 _DA_SUPP = set(_DEP_CANON) | set(_AMORT_CANON) | set(_DA_TOTAL_CANON)
 
 
-def _collect(session, basis: str, sources: dict[str, str]) -> dict[str, int]:
-    """선택 source 들에서 canonical→value(원, 중복 max-abs) 수집."""
-    canon: dict[str, int] = {}
+def _collect(session, basis: str, sources: dict[str, str],
+             fiscal_period: str | None = None) -> dict[str, int]:
+    """
+    선택 source 들에서 canonical→value(원) 수집.
 
-    def _merge(c, v):
+    중복 셀 해소:
+      - 기본: max-abs(중복 컬럼은 절대값 큰 쪽).
+      - **반기/3분기(H1/Q3) flow(IS/CF)**: Track A 보고서는 같은 acode 에 누적(YTD)·3개월 셀이
+        둘 다 col_index=0 으로 존재한다. std_v2 는 누적값을 저장해야 하므로 max-abs 가 아니라
+        **누적 셀(is_cumulative)을 권위**로 채택한다(누적 셀이 없을 때만 3개월로 폴백).
+        (max-abs 는 Q1 세액공제 등으로 3개월 절대값이 누적을 넘으면 오선택 — tax_expense 등.)
+        BS(instant)·FY·Q1 은 영향 없음.
+    """
+    interim = fiscal_period in ("H1", "Q3")
+    canon: dict[str, int] = {}
+    cum_locked: set[str] = set()  # interim flow 에서 누적 셀로 확정된 canonical
+
+    def _merge(c, v, is_cum):
         if v is None:
             return
-        if c not in canon or abs(v) > abs(canon[c]):
-            canon[c] = v
+        if interim and (c.startswith("is.") or c.startswith("cf.")):
+            if is_cum:
+                if c not in cum_locked or abs(v) > abs(canon[c]):
+                    canon[c] = v
+                    cum_locked.add(c)
+            elif c not in cum_locked:  # 3개월 폴백(누적 미확정인 경우만)
+                if c not in canon or abs(v) > abs(canon[c]):
+                    canon[c] = v
+        else:
+            if c not in canon or abs(v) > abs(canon[c]):
+                canon[c] = v
 
     for stmt, rcept in sources.items():
         rows = session.execute(text("""
-            SELECT canonical_account, amount_won FROM fact_v2
+            SELECT canonical_account, amount_won, COALESCE(is_cumulative, false) AS is_cum
+            FROM fact_v2
             WHERE rcept_no = :r AND basis = :b AND col_index = 0
               AND NOT is_dimensional AND canonical_account LIKE :p
         """), {"r": rcept, "b": basis, "p": _PREFIX[stmt] + "%"}).fetchall()
-        for c, v in rows:
-            _merge(c, v)
+        for c, v, is_cum in rows:
+            _merge(c, v, is_cum)
 
     # D&A 보조: note./is./cf. 감가상각 — 선택 source 들의 union 에서
     union = list({r for r in sources.values()})
     if union:
         rows = session.execute(text("""
-            SELECT canonical_account, amount_won FROM fact_v2
+            SELECT canonical_account, amount_won, COALESCE(is_cumulative, false) AS is_cum
+            FROM fact_v2
             WHERE rcept_no = ANY(:rs) AND basis = :b AND col_index = 0
               AND NOT is_dimensional AND canonical_account = ANY(:cs)
         """), {"rs": union, "b": basis, "cs": list(_DA_SUPP)}).fetchall()
-        for c, v in rows:
-            _merge(c, v)
+        for c, v, is_cum in rows:
+            _merge(c, v, is_cum)
     return canon
 
 
@@ -144,7 +168,7 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
 
     written = 0
     for (fy, fp, basis, is_stub), sources in groups.items():
-        canon = _collect(session, basis, sources)
+        canon = _collect(session, basis, sources, fiscal_period=fp)
         ctx = StdContext(corp_code=corp_code, fiscal_year=fy, fiscal_period=fp, basis=basis, canon=canon)
         run_rules(ctx)
 
@@ -213,7 +237,7 @@ def standardize_kgaap_gap_corp(session, corp_code: str) -> int:
     for (fy, fp, basis), sources in groups.items():
         if (fy, fp, basis) in existing:
             continue  # 기존 행 불가침(own/comparative 우선)
-        canon = _collect(session, basis, sources)
+        canon = _collect(session, basis, sources, fiscal_period=fp)
         if not (canon.get("is.revenue") or canon.get("bs.total_assets")):
             continue
         ctx = StdContext(corp_code=corp_code, fiscal_year=fy, fiscal_period=fp, basis=basis, canon=canon)

@@ -199,6 +199,100 @@ def read_report_face_xbrl(file_path: str | Path) -> list[FaceLine]:
     return list(dedup.values())
 
 
+_HANGUL_RE = re.compile(r"[가-힣]")
+
+# 텍스트 섹션코드 → (basis, statement)
+_TEXT_SECTION_META = {
+    "BS_C": ("consolidated", "BS"), "IS_C": ("consolidated", "IS"), "CF_C": ("consolidated", "CF"),
+    "BS_S": ("separate", "BS"), "IS_S": ("separate", "IS"), "CF_S": ("separate", "CF"),
+}
+
+
+def _adecimal_from_unit(unit: int) -> int:
+    """단위 배수 → ADECIMAL. 1→0, 1000→-3, 1000000→-6."""
+    import math
+    if unit <= 1:
+        return 0
+    return -int(round(math.log10(unit)))
+
+
+def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
+    """
+    Track B(텍스트) 보고서의 face 라인을 **독립** 재추출.
+
+    독립성: 섹션(재무제표 표) 위치는 section_detector 로 찾되(구조적), 셀 값은
+    table_extractor 의 컬럼선택 로직(컬럼시프트·누적/3개월 판정 = 역대 버그 발원지)을
+    재사용하지 않고 **행 내 모든 숫자 셀을 리터럴**로 읽는다.
+
+    매칭 의미(Track A 와 차이): std 값이 그 계정 라벨 행의 **어느 숫자 셀과든 일치**하면 PASS
+    (값·계정·단위 충실성 검증). 컬럼 의미(당기 vs 전기 vs 누적/3개월)까지는 구분하지 않는다
+    — Track B 컬럼정합은 별도(추출기 _interim_cumulative_cols, 단조성 검증)에서 담보. 따라서
+    is_cumulative=True 로 두어 interim 필터를 통과시킨다(any-column 의미).
+    """
+    from parser.xml.section_detector import (
+        detect_sections, find_section_tables, detect_unit_from_section,
+    )
+    from parser.xml.table_extractor import _get_cells
+    from parser.common.account_mapper import get_mapper
+
+    root = _parse_xml_file(Path(file_path))
+    if root is None:
+        return []
+    mapper = get_mapper()
+    sections = detect_sections(root)
+    lines: list[FaceLine] = []
+    seen: set[tuple] = set()
+    for section_code, title_elem in sections.items():
+        meta = _TEXT_SECTION_META.get(section_code)
+        if meta is None or title_elem is None:
+            continue
+        basis, stmt = meta
+        fs_section = stmt.lower()
+        unit = detect_unit_from_section(title_elem)
+        adecimal = _adecimal_from_unit(unit)
+        for table in find_section_tables(title_elem):
+            for tr in table.findall(".//TR"):
+                cells = _get_cells(tr)
+                label = None
+                nums: list[int] = []
+                for cell in cells:
+                    if label is None and _HANGUL_RE.search(cell):
+                        label = cell.strip()
+                        continue
+                    if label is None:
+                        continue  # 라벨 전 선두 셀 무시
+                    v = parse_displayed(cell)
+                    if v is not None:
+                        nums.append(v)
+                if not label or not nums:
+                    continue
+                mapping = mapper.map(label, fs_section=fs_section)
+                canon = mapping.account_code
+                if not canon or canon.startswith("unknown."):
+                    continue
+                if _statement_of(canon) != stmt:
+                    continue  # 라벨이 다른 statement 계정으로 매핑되면(오매칭) 스킵
+                for v in nums:
+                    key = (canon, basis, v)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    lines.append(FaceLine(
+                        statement=stmt, basis=basis, acode=label[:80], canonical=canon,
+                        label=label[:80], displayed_value=v, adecimal=adecimal,
+                        is_cumulative=True,
+                    ))
+    return lines
+
+
+def read_report_face(file_path: str | Path) -> list[FaceLine]:
+    """Track A 우선, 0행이면 Track B(텍스트) 폴백. 감사 러너의 단일 진입점."""
+    lines = read_report_face_xbrl(file_path)
+    if lines:
+        return lines
+    return read_report_face_text(file_path)
+
+
 # ── 감사 비교 ───────────────────────────────────────────────────────────────
 
 @dataclass

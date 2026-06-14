@@ -25,9 +25,9 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 from collector.db import get_session, engine
 from collector.models import FaceAudit, Base
-from fin2.audit.face_audit import read_report_face_xbrl, audit_std_row
+from fin2.audit.face_audit import read_report_face, audit_std_row
 
-READER_VERSION = "xbrl-col0-v1"
+READER_VERSION = "trackAB-v2"
 
 
 def ensure_table():
@@ -95,7 +95,7 @@ def audit_corp(session, corp, args, agg):
             return []
         if rc not in face_cache:
             fp = fpmap.get(rc)
-            face_cache[rc] = read_report_face_xbrl(fp) if fp else []
+            face_cache[rc] = read_report_face(fp) if fp else []
         return face_cache[rc]
 
     batch = []

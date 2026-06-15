@@ -34,6 +34,16 @@ from account_maps.note_accounts import NOTE_ACCOUNTS
 from parser.common.amount_normalizer import normalize_account_name
 
 
+# 퍼지 오매핑 차단 라벨: 표준 단일계정이 아닌 **합산성** 라벨(현금 + 예적금 = bs.cash +
+# 단기금융상품 혼합)이 Jaro-Winkler 로 bs.cash('현금및예금')에 오매핑되는 것을 방지.
+# 해당 기업들은 모두 별도로 '현금및현금성자산'(→bs.cash)을 보고하므로 이 라벨은 무매핑으로
+# 두어(raw 보존) bs.cash 과대계상(예적금 포함)을 막는다. exact/normalized 명시매핑은 우선.
+_FUZZY_BLOCK = {normalize_account_name(x) for x in (
+    "현금및예적금", "현금과예적금", "현금및예적금등",
+    "현금및현금성자산및예적금등",
+)}
+
+
 @dataclass
 class MappingResult:
     account_code: str          # 표준 코드 또는 "unknown.{name}"
@@ -141,6 +151,10 @@ class AccountMapper:
             code = self._normalized[normalized]
             if not fs_section or code.startswith(f"{fs_section}."):
                 return MappingResult(code, 1.0, "normalized", normalized)
+
+        # ── 퍼지 차단: 합산성 라벨(현금+예적금 등)은 퍼지로 bs.cash 오매핑 방지 → 무매핑 ──
+        if normalized in _FUZZY_BLOCK:
+            return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
 
         # ── Stage 3: 퍼지 매핑 ────────────────────────────────────────
         # fs_section 제공 시 섹션-한정 퍼지 먼저 시도, 없으면 전체 퍼지 (단, 섹션 접두사가

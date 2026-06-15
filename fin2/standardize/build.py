@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 from loguru import logger
-from sqlalchemy import text
+from sqlalchemy import text, bindparam
 from sqlalchemy.dialects.postgresql import insert
 
 from collector.models import StdFinancialV2
@@ -175,8 +175,9 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
         period_end = _period_end(session, corp_code, fy, fp,
                                  sources.get("BS") or sources.get("IS") or sources.get("CF"))
         shares_out = _shares_out(session, corp_code, period_end)
-        # is_ifrs: filings 에 컬럼 없음 → 현재 None(추후 fact_v2 source_format/DocumentMeta 에서 도출).
-        is_ifrs = None
+        # is_ifrs 도출: Track A(xbrl_acode) source 는 ifrs-full_/dart_ 택소노미만 방출 → IFRS.
+        # 그 외(Track B 텍스트)는 회계연도로 판정(K-IFRS 상장사 의무화 = FY2011~).
+        is_ifrs = _derive_is_ifrs(session, sources, fy)
 
         dq = max(validate_equations(ctx.col),
                  _dq_cross_year(session, corp_code, basis, ctx.col) if fp == "FY" else 1)
@@ -200,6 +201,27 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
 
     logger.info(f"[standardize2] corp={corp_code} fy={fiscal_year or 'all'} — std_v2 {written}레코드")
     return written
+
+
+def _derive_is_ifrs(session, sources: dict[str, str], fy: int) -> bool:
+    """
+    std_v2 행의 회계기준(IFRS vs K-GAAP) 도출.
+
+    - Track A(xbrl_acode) source 가 하나라도 있으면 IFRS: 추출기(xbrl.py)는 ifrs-full_/dart_
+      표준개념(ACODE)만 방출하고, 구 K-GAAP ACODE 보고서는 Track A 0행이라 Track B 로 가므로
+      xbrl_acode fact 존재 ⟺ IFRS 택소노미.
+    - 그 외(전부 Track B 텍스트)는 회계연도로 판정: K-IFRS 상장사 의무적용은 FY2011~ 이므로
+      fy≥2011 → IFRS, fy≤2010 → K-GAAP. (2009~10 조기채택사는 XBRL 제출 시 위 Track A 로 포착.)
+    """
+    rcepts = [r for r in {v for v in sources.values()} if r]
+    if rcepts:
+        row = session.execute(text("""
+            SELECT 1 FROM fact_v2
+            WHERE rcept_no IN :rs AND source_format = 'xbrl_acode' LIMIT 1
+        """).bindparams(bindparam("rs", expanding=True)), {"rs": rcepts}).first()
+        if row is not None:
+            return True
+    return fy >= 2011
 
 
 _COMP_MARKER = "comparative_fallback"

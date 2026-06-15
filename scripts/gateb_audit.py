@@ -110,7 +110,11 @@ def audit_corp(session, corp, args, agg):
             return []
         if rc not in face_cache:
             fp = fpmap.get(rc)
-            lines, track = read_report_face_tracked(fp) if fp else ([], None)
+            try:
+                lines, track = read_report_face_tracked(fp) if fp else ([], None)
+            except (FileNotFoundError, OSError):
+                # 소실/손상 파일(Gate A MISSING_FILE 등) → face 없음 → 해당 행 pending(크래시 아님)
+                lines, track = [], None
             face_cache[rc] = lines
             track_of[rc] = track
         return face_cache[rc]
@@ -179,19 +183,27 @@ def main():
     args = ap.parse_args()
 
     ensure_table()
-    agg = {"status": Counter(), "gate": Counter(), "fld_pass": 0, "fld_fail": 0, "fail_rows": []}
+    agg = {"status": Counter(), "gate": Counter(), "fld_pass": 0, "fld_fail": 0,
+           "fail_rows": [], "errors": 0}
     with get_session() as session:
         corps = select_corps(session, args)
         print(f"대상 corp {len(corps)}사, fy>={args.fy_min}")
         for i, c in enumerate(corps, 1):
-            audit_corp(session, c, args, agg)
+            try:
+                audit_corp(session, c, args, agg)
+            except Exception as e:
+                # 기업 단위 예외 격리(전수 장시간 실행이 한 기업 오류로 중단되지 않게)
+                session.rollback()
+                agg["errors"] += 1
+                print(f"  [err] corp={c}: {type(e).__name__}: {e}")
             if i % 50 == 0:
-                print(f"  ..{i}/{len(corps)}  status={dict(agg['status'])}")
+                print(f"  ..{i}/{len(corps)}  status={dict(agg['status'])} err={agg['errors']}")
 
     s = agg["status"]
     g = agg["gate"]
     tot = sum(s.values())
-    print(f"\n── 감사 {tot}행 ── pass {s['pass']} / fail {s['fail']} / pending {s['pending']}")
+    print(f"\n── 감사 {tot}행 ── pass {s['pass']} / fail {s['fail']} / pending {s['pending']}"
+          f" (기업오류 {agg['errors']})")
     print(f"   gate_status: pass {g['pass']} / fail_a(차단) {g['fail_a']} / "
           f"fail_b(REVIEW) {g['fail_b']} / pending {g['pending']}")
     if tot:

@@ -678,6 +678,7 @@ class FaceAudit(Base):
     is_stub        = Column(Boolean,      primary_key=True, default=False)
 
     status         = Column(String(8),    nullable=False, comment="pass/fail/pending")
+    gate_status    = Column(String(8),    nullable=True,  comment="promote 게이트: pass/fail_a/fail_b/pending")
     n_pass         = Column(SmallInteger, default=0)
     n_fail         = Column(SmallInteger, default=0)
     n_pending      = Column(SmallInteger, default=0)

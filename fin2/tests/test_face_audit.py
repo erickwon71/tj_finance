@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fin2.audit.face_audit import (  # noqa: E402
     parse_displayed, FaceLine, audit_std_row, STATUS_PASS, STATUS_FAIL, STATUS_PENDING,
+    RowAudit, gate_status_for_row, GATE_PASS, GATE_FAIL_A, GATE_FAIL_B, GATE_PENDING,
 )
 
 
@@ -96,6 +97,40 @@ def test_sign_flip_is_pass():
                        is_comparative=False)
     assert ra.status == STATUS_PASS
     assert ra.n_fail == 0
+
+
+def _ra(status, fail_fields=()):
+    return RowAudit(status=status, n_pass=0, n_fail=len(fail_fields), n_pending=0,
+                    fields=[], fail_fields=list(fail_fields))
+
+
+def test_gate_pass_pending_passthrough():
+    assert gate_status_for_row(_ra(STATUS_PASS), {}) == GATE_PASS
+    assert gate_status_for_row(_ra(STATUS_PENDING), {}) == GATE_PENDING
+
+
+def test_gate_track_a_fail_is_fail_a():
+    # Track A 출처 실패 = 확정버그 → fail_a(차단)
+    ra = _ra(STATUS_FAIL, ["total_assets"])
+    assert gate_status_for_row(ra, {"total_assets": "A"}) == GATE_FAIL_A
+
+
+def test_gate_track_b_fail_is_fail_b():
+    # 전 실패필드가 Track B = 휴리스틱 → fail_b(REVIEW, 메인뷰 노출)
+    ra = _ra(STATUS_FAIL, ["cash"])
+    assert gate_status_for_row(ra, {"cash": "B"}) == GATE_FAIL_B
+
+
+def test_gate_mixed_fail_blocks_on_any_track_a():
+    ra = _ra(STATUS_FAIL, ["cash", "total_assets"])
+    assert gate_status_for_row(ra, {"cash": "B", "total_assets": "A"}) == GATE_FAIL_A
+
+
+def test_gate_unknown_track_is_conservative_fail_a():
+    # track 미상(None/누락)은 보수적으로 차단(fail_a)
+    ra = _ra(STATUS_FAIL, ["revenue"])
+    assert gate_status_for_row(ra, {"revenue": None}) == GATE_FAIL_A
+    assert gate_status_for_row(ra, {}) == GATE_FAIL_A
 
 
 def _run():

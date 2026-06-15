@@ -298,6 +298,21 @@ def read_report_face(file_path: str | Path) -> list[FaceLine]:
     return read_report_face_text(file_path)
 
 
+def read_report_face_tracked(file_path: str | Path) -> tuple[list[FaceLine], str | None]:
+    """read_report_face 와 동일하되 **어느 track 으로 읽었는지** 함께 반환.
+
+    track = "A"(Track A xbrl_acode 가 행을 냄) / "B"(Track B 텍스트 폴백) / None(둘 다 0행).
+    promote 게이트가 fail 의 신뢰도(Track A=확정버그 / Track B=휴리스틱)를 구분하는 데 쓴다.
+    """
+    lines = read_report_face_xbrl(file_path)
+    if lines:
+        return lines, "A"
+    lines = read_report_face_text(file_path)
+    if lines:
+        return lines, "B"
+    return [], None
+
+
 # ── 감사 비교 ───────────────────────────────────────────────────────────────
 
 @dataclass
@@ -330,6 +345,32 @@ class RowAudit:
     n_pending: int
     fields: list[FieldAudit]
     fail_fields: list[str]
+
+
+# ── promote gate_status (task #5) ────────────────────────────────────────────
+# 뷰 게이팅용 상태. fail 은 source track 으로 신뢰도 분리:
+#   fail_a = Track A(XBRL ADECIMAL 권위) 값불일치 = **확정 버그** → 메인뷰 차단.
+#   fail_b = Track B(텍스트 reader 휴리스틱) 값불일치 = false-fail 가능 → 메인뷰 노출·REVIEW.
+GATE_PASS = "pass"
+GATE_FAIL_A = "fail_a"
+GATE_FAIL_B = "fail_b"
+GATE_PENDING = "pending"
+
+
+def gate_status_for_row(ra: RowAudit, fail_field_tracks: dict[str, str]) -> str:
+    """RowAudit + 실패필드별 track('A'/'B') → promote gate_status.
+
+    pass→pass / pending→pending / fail→ 실패필드 track 중 하나라도 'A' 면 fail_a(확정버그),
+    아니면 fail_b(Track B 휴리스틱). track 미상(None/누락)은 보수적으로 'A' 취급(차단).
+    """
+    if ra.status == STATUS_PASS:
+        return GATE_PASS
+    if ra.status == STATUS_PENDING:
+        return GATE_PENDING
+    # fail: 실패필드 중 하나라도 Track A(또는 track 미상) → 확정버그로 차단
+    if any(fail_field_tracks.get(f) != "B" for f in ra.fail_fields):
+        return GATE_FAIL_A
+    return GATE_FAIL_B
 
 
 def _statement_face(field: str, bs_face, is_face, cf_face) -> list:

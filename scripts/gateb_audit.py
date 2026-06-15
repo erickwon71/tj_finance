@@ -12,6 +12,8 @@ usage:
   python scripts/gateb_audit.py --corp 00162416             # 단일
   옵션: --fy-min 2015 --recheck --no-commit
 """
+from __future__ import annotations
+
 import argparse
 import random
 import sys
@@ -25,9 +27,21 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 from collector.db import get_session, engine
 from collector.models import FaceAudit, Base
-from fin2.audit.face_audit import read_report_face, audit_std_row
+from fin2.audit.face_audit import (
+    read_report_face_tracked, audit_std_row, gate_status_for_row, STD_FIELD_CANONICAL,
+)
 
 READER_VERSION = "trackAB-v2"
+
+# 표준필드 → statement 의 source rcept 컬럼(track 조회용)
+_FIELD_RCEPT_COL = {"bs.": "bs_rcept", "is.": "is_rcept", "cf.": "cf_rcept"}
+
+
+def _field_track(field: str, db_row: dict, track_of: dict) -> str | None:
+    """실패필드 → canonical 접두 → statement source rcept → 그 rcept 를 읽은 track('A'/'B')."""
+    canon = STD_FIELD_CANONICAL.get(field, "")
+    col = _FIELD_RCEPT_COL.get(canon[:3])
+    return track_of.get(db_row.get(col)) if col else None
 
 
 def ensure_table():
@@ -89,13 +103,16 @@ def audit_corp(session, corp, args, agg):
                 rcepts.add(getattr(r, k))
     fpmap = file_path_map(session, rcepts)
     face_cache: dict[str, list] = {}
+    track_of: dict[str, str | None] = {}   # rcept → 'A'/'B'/None (gate_status 분류용)
 
     def face_of(rc):
         if not rc:
             return []
         if rc not in face_cache:
             fp = fpmap.get(rc)
-            face_cache[rc] = read_report_face(fp) if fp else []
+            lines, track = read_report_face_tracked(fp) if fp else ([], None)
+            face_cache[rc] = lines
+            track_of[rc] = track
         return face_cache[rc]
 
     batch = []
@@ -114,15 +131,19 @@ def audit_corp(session, corp, args, agg):
             cf_face=face_of(d.get("cf_rcept")),
             is_comparative=is_comp,
         )
+        # promote gate_status: 실패필드 track('A'/'B')으로 fail_a(확정버그)/fail_b(휴리스틱) 분리
+        fail_tracks = {f: _field_track(f, d, track_of) for f in ra.fail_fields}
+        gate = gate_status_for_row(ra, fail_tracks)
         agg["status"][ra.status] += 1
+        agg["gate"][gate] += 1
         agg["fld_pass"] += ra.n_pass; agg["fld_fail"] += ra.n_fail
         if ra.status == "fail":
-            agg["fail_rows"].append((corp, key, ra.fail_fields))
+            agg["fail_rows"].append((corp, key, gate, ra.fail_fields))
         pend = Counter(f.reason for f in ra.fields if f.reason and f.reason != "VALUE_DIFF")
         batch.append({
             "corp_code": corp, "fiscal_year": d["fiscal_year"],
             "fiscal_period": d["fiscal_period"], "statement_type": basis,
-            "is_stub": False, "status": ra.status,
+            "is_stub": False, "status": ra.status, "gate_status": gate,
             "n_pass": ra.n_pass, "n_fail": ra.n_fail, "n_pending": ra.n_pending,
             "fail_fields": ra.fail_fields or None,
             "fail_detail": [
@@ -158,7 +179,7 @@ def main():
     args = ap.parse_args()
 
     ensure_table()
-    agg = {"status": Counter(), "fld_pass": 0, "fld_fail": 0, "fail_rows": []}
+    agg = {"status": Counter(), "gate": Counter(), "fld_pass": 0, "fld_fail": 0, "fail_rows": []}
     with get_session() as session:
         corps = select_corps(session, args)
         print(f"대상 corp {len(corps)}사, fy>={args.fy_min}")
@@ -168,8 +189,11 @@ def main():
                 print(f"  ..{i}/{len(corps)}  status={dict(agg['status'])}")
 
     s = agg["status"]
+    g = agg["gate"]
     tot = sum(s.values())
     print(f"\n── 감사 {tot}행 ── pass {s['pass']} / fail {s['fail']} / pending {s['pending']}")
+    print(f"   gate_status: pass {g['pass']} / fail_a(차단) {g['fail_a']} / "
+          f"fail_b(REVIEW) {g['fail_b']} / pending {g['pending']}")
     if tot:
         promotable = s['pass'] + s['fail']
         print(f"   in-scope(=pass+fail) {promotable}행 중 일치율 = "
@@ -177,8 +201,8 @@ def main():
         print(f"   필드: PASS {agg['fld_pass']} / FAIL {agg['fld_fail']}")
     if agg["fail_rows"]:
         print(f"\n── FAIL 행 {len(agg['fail_rows'])} (상위 20) ──")
-        for corp, key, ff in agg["fail_rows"][:20]:
-            print(f"   {corp} {key} → {ff}")
+        for corp, key, gate, ff in agg["fail_rows"][:20]:
+            print(f"   [{gate}] {corp} {key} → {ff}")
 
 
 if __name__ == "__main__":

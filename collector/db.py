@@ -100,27 +100,52 @@ def _run_migrations() -> None:
         END $$
         """,
 
-        # 2026-06: PRD 01a — standard_financials view 에서 stub 제외(정상연도만 노출, 기존 소비자 무영향).
-        # 멱등(CREATE OR REPLACE). view 일 때만 재정의(레거시 base table 환경 보호).
+        # 2026-06: PRD 04 Gate B task #5 — face_audit.gate_status(promote 게이트). 뷰가 참조하므로
+        # 뷰 재정의 **앞에** 추가. (create_all 이 fresh DB 엔 이미 생성 → IF NOT EXISTS 멱등.)
+        "ALTER TABLE face_audit ADD COLUMN IF NOT EXISTS gate_status VARCHAR(8)",
+
+        # 2026-06: PRD 01a + 04 — standard_financials view: stub 제외(정상연도만) + Gate B promote 게이트.
+        # face_audit LEFT JOIN 으로 gate_b_status 파생(std_v2 컬럼 미저장 → 재표준화가 감사결과 리셋 안 함).
+        # 메인뷰는 **fail_a(Track A 확정버그)만 차단**, 나머지(pass·fail_b·pending·미감사)는 노출.
+        # 멱등(CREATE OR REPLACE, 끝 컬럼 gate_b_status 추가). view 일 때만 재정의(레거시 base table 보호).
         """
         DO $$ BEGIN
             IF EXISTS (SELECT 1 FROM pg_class WHERE relname='standard_financials' AND relkind='v') THEN
                 CREATE OR REPLACE VIEW standard_financials AS
-                SELECT corp_code, fiscal_year, fiscal_period, statement_type, version,
-                       period_end, is_ifrs,
-                       COALESCE(bs_rcept, is_rcept, cf_rcept) AS rcept_no,
-                       total_assets, current_assets, cash, receivables, inventory, ppe, intangibles,
-                       total_liabilities, current_liabilities, short_term_debt, long_term_debt,
-                       total_equity, controlling_equity, retained_earnings, trade_payables,
-                       revenue, cogs, gross_profit, sga, rd_expense, operating_income,
-                       interest_expense, ebt, tax_expense, net_income, controlling_ni,
-                       cfo, cfi, cff, capex, dividends_paid,
-                       depreciation, amortization, da_total, ebitda, fcf, net_debt, shares_out,
-                       data_quality,
+                SELECT s.corp_code, s.fiscal_year, s.fiscal_period, s.statement_type, s.version,
+                       s.period_end, s.is_ifrs,
+                       COALESCE(s.bs_rcept, s.is_rcept, s.cf_rcept) AS rcept_no,
+                       s.total_assets, s.current_assets, s.cash, s.receivables, s.inventory, s.ppe, s.intangibles,
+                       s.total_liabilities, s.current_liabilities, s.short_term_debt, s.long_term_debt,
+                       s.total_equity, s.controlling_equity, s.retained_earnings, s.trade_payables,
+                       s.revenue, s.cogs, s.gross_profit, s.sga, s.rd_expense, s.operating_income,
+                       s.interest_expense, s.ebt, s.tax_expense, s.net_income, s.controlling_ni,
+                       s.cfo, s.cfi, s.cff, s.capex, s.dividends_paid,
+                       s.depreciation, s.amortization, s.da_total, s.ebitda, s.fcf, s.net_debt, s.shares_out,
+                       s.data_quality,
                        NULL::timestamp without time zone AS superseded_at,
-                       calculated_at
-                FROM std_financials_v2
-                WHERE version = 1 AND NOT COALESCE(is_stub, false);
+                       s.calculated_at,
+                       COALESCE(fa.gate_status, 'unaudited') AS gate_b_status
+                FROM std_financials_v2 s
+                LEFT JOIN face_audit fa
+                  ON  fa.corp_code = s.corp_code
+                  AND fa.fiscal_year = s.fiscal_year
+                  AND fa.fiscal_period = s.fiscal_period
+                  AND fa.statement_type = s.statement_type
+                  AND NOT COALESCE(fa.is_stub, false)
+                WHERE s.version = 1 AND NOT COALESCE(s.is_stub, false)
+                  AND COALESCE(fa.gate_status, 'unaudited') <> 'fail_a';
+            END IF;
+        END $$
+        """,
+
+        # 2026-06: PRD 04 Gate B — strict 검증뷰: gate_b_status='pass' 만(=보고서 100% 충실 보증).
+        # 메인뷰 재사용. 메인뷰가 view 일 때만 생성.
+        """
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_class WHERE relname='standard_financials' AND relkind='v') THEN
+                CREATE OR REPLACE VIEW standard_financials_verified AS
+                SELECT * FROM standard_financials WHERE gate_b_status = 'pass';
             END IF;
         END $$
         """,

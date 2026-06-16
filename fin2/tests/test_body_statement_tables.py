@@ -43,6 +43,19 @@ def test_classify_excludes_summary_note_split_sce():
     assert classify_statement_title("요약 연결재무상태표 제68기") is None
     assert classify_statement_title("연결 자본변동표 제5기 기말") is None
     assert classify_statement_title("주석 재무상태표 제3기") is None
+
+
+def test_classify_rejects_note_sentence_mentions():
+    # ★ statement 명을 문장 속에 언급한 주석표(천원 단위) 배제 → face ×1000 오염 방지(E1류).
+    assert classify_statement_title(
+        "당 기말 및 전기말 리스와 관련하여 연결재무상태표에 인식된 금액은 다음과 같습니다.") is None
+    assert classify_statement_title(
+        "22.1 당기말 및 전기말 현재 퇴직급여채무와 관련하여 재무상태표에 인식된 금액") is None
+    assert classify_statement_title(
+        "34. 금융상품의 공정가치당기말 및 전기말 현재 재무상태표에서 공정가치로") is None
+    # 진짜 본문은 statement 명으로 시작 → 채택(enumerator·연결 접두 허용)
+    assert classify_statement_title("연결 재무상태표 제 39 기 2022.12.31 현재 (단위 : 원)") == ("consolidated", "BS")
+    assert classify_statement_title("1. 연결재무상태표 제39기 기말") == ("consolidated", "BS")
     assert classify_statement_title("분할 재무상태표 제3기") is None
 
 

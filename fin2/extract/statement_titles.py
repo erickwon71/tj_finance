@@ -26,6 +26,18 @@ _PERIOD_MARK = re.compile(r"제\s*\d+\s*기|반기말|분기말|기말|현재|\d
 # 본문 face 표가 아닌 표제(주석·요약·분할·자본변동·세부명세) 배제.
 _TITLE_EXCLUDE = re.compile(r"분할|합병|주석|요약|자본변동|변동표|명세|부속")
 _CONSOL_TITLE = re.compile(r"연결\s*(재무상태표|대차대조표|포괄손익계산서|손익계산서|현금흐름표)")
+# ★ 본문 face 표제는 statement 명으로 **시작**한다(선택적 enumerator + 연결/별도/개별 접두 허용).
+# 주석표 표제는 statement 명을 문장 속에 포함("…리스와 관련하여 연결재무상태표에 인식된 금액…",
+# "22.1 …퇴직급여채무와 관련하여 재무상태표…")해 천원 단위 노트값이 face 를 오염(×1000)시켰다.
+# 시작-앵커로 본문만 채택 → 노트 오염·×1000 제거.
+_FACE_TITLE_START = re.compile(
+    r"^[\sⅠⅡⅢⅣⅤ\d.\)\(]{0,8}(?:연결|별도|개별)?\s*"
+    r"(재무상태표|대차대조표|포괄손익계산서|손익계산서|현금흐름표)"
+)
+_STMT_NAME = {
+    "재무상태표": "BS", "대차대조표": "BS",
+    "포괄손익계산서": "IS", "손익계산서": "IS", "현금흐름표": "CF",
+}
 
 # (basis, statement) → fact_v2 섹션 코드.
 SECTION_CODE_OF: dict[tuple[str, str], str] = {
@@ -53,12 +65,10 @@ def classify_statement_title(title: str) -> tuple[str, str] | None:
     head = title[:45]
     if _TITLE_EXCLUDE.search(head):
         return None
-    stmt = None
-    for pat, s in _STMT_TITLE:
-        if pat.search(head):
-            stmt = s
-            break
-    if stmt is None:
+    # ★ statement 명이 표제 **시작**에 와야 본문 face(주석 문장 속 언급 배제).
+    m = _FACE_TITLE_START.match(title)
+    if m is None:
         return None
+    stmt = _STMT_NAME[m.group(1)]
     basis = "consolidated" if _CONSOL_TITLE.search(title) else "separate"
     return (basis, stmt)

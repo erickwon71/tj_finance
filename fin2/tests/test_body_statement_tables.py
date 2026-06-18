@@ -57,6 +57,14 @@ def test_classify_rejects_note_sentence_mentions():
     assert classify_statement_title("연결 재무상태표 제 39 기 2022.12.31 현재 (단위 : 원)") == ("consolidated", "BS")
     assert classify_statement_title("1. 연결재무상태표 제39기 기말") == ("consolidated", "BS")
     assert classify_statement_title("분할 재무상태표 제3기") is None
+    # ★ statement 명이 enumerator 뒤 문장 시작에 와도 한글 조사가 붙으면(="현금흐름표의 현금은…")
+    # 표제 토큰이 아니라 문장 → 배제(삼천리자전거 CF 보충표 ×1000 오염 방지).
+    assert classify_statement_title(
+        "(1) 현금흐름표의 현금은 보고기간종료일 현재의 현금및현금성자산입니다.") is None
+    assert classify_statement_title(
+        "(2) 당기와 전기의 영업활동 현금흐름 중 조정과 순운전자본의 변동내역은 다음과 같습니다.") is None
+    # 진짜 CF 본문은 statement 명이 단독 토큰 → 채택.
+    assert classify_statement_title("현금흐름표 제 42 기 2020.01.01 부터 (단위 : 원)") == ("separate", "CF")
 
 
 def test_classify_requires_period_marker():

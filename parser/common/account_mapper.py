@@ -156,6 +156,16 @@ class AccountMapper:
         if normalized in _FUZZY_BLOCK:
             return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
 
+        # ── 세전이익(EBT) 가드: '차감전'(법인세비용/법인세 차감 전) = 세전이익이지 법인세비용(tax)이
+        # 아니다. 라벨에 '법인세비용' 부분문자열이 있어 퍼지가 is.tax_expense 로 오매핑하던 변형
+        # ('법인세비용차감전이익(손실)' 등 exact 미등록 케이스)을 차단해 is.ebt 로 귀속한다.
+        # IS(또는 섹션 미지정)에서만 발동; CF 의 indirect-method 시작라인은 자체 처리(미발동).
+        # 중단영업 차감전(=중단영업 세전손익)은 총 EBT 가 아니므로 무매핑(raw 보존, tax/ebt 비오염).
+        if "차감전" in normalized and fs_section in (None, "is"):
+            if "중단" in normalized:
+                return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
+            return MappingResult("is.ebt", 0.95, "guard", raw)
+
         # ── Stage 3: 퍼지 매핑 ────────────────────────────────────────
         # fs_section 제공 시 섹션-한정 퍼지 먼저 시도, 없으면 전체 퍼지 (단, 섹션 접두사가
         # 불일치하는 코드는 최종 후보에서 제외 — 예: BS 컨텍스트에서 IS 코드 반환 방지)

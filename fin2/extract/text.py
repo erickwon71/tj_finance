@@ -212,7 +212,14 @@ def _emit_section(
             mapping = mapper.map(row.account_name, fs_section=fs_section)
             if cum_map is not None:
                 pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()
-                         if pos < len(row.amounts)]
+                         if pos < len(row.amounts) and row.amounts[pos] is not None]
+                if not pairs:
+                    # ★ 축약(누적-only) 요약행: 상세행은 [3개월,누적,3개월,누적] 4셀이나 총계/귀속
+                    # 요약행(당기순이익·지배/비지배 귀속)은 누적값 2개만 가져 누적컬럼(1,3) 위치가 비고
+                    # 값이 0·2 등에 실린다 → 누적컬럼이 전부 비면 존재 값을 순서대로 col0,col1.. 로 채택.
+                    # (상세행은 누적셀 존재 → 폴백 미발동. interim net_income/controlling 소실 해결.)
+                    present = [a for a in row.amounts if a is not None]
+                    pairs = list(enumerate(present))
             else:
                 pairs = list(enumerate(row.amounts))
             for col_idx, amount in pairs:

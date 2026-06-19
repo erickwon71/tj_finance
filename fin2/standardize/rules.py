@@ -110,11 +110,17 @@ def rule_additive_da(ctx: StdContext) -> None:
 
 
 def rule_net_income_fill(ctx: StdContext) -> None:
-    """net_income NULL 이면 controlling_ni(+noncontrolling) 합산. (비지배는 canonical 없으면 0)"""
+    """net_income NULL 이면 controlling_ni + noncontrolling_ni 합산(총 당기순이익).
+
+    연결 IS 의 총 '당기순이익' 라인이 추출 안 되는 경우(컬럼 오정렬·CF 라인 충돌 등)에도 귀속
+    라인(지배/비지배)은 고유 라벨이라 신뢰가능 → 둘을 더해 총NI 복원. 비지배 없으면(별도 등) 0.
+    (지배=net_income 단독 대체하던 옛 동작은 소수주주 손익 클 때 총NI 과 크게 어긋났다 — 예
+    포스코퓨처엠 지배 28.7B vs 총 4.4B.)"""
     if ctx.col.get("net_income") is None:
         cni = ctx.col.get("controlling_ni")
         if cni is not None:
-            ctx.col["net_income"] = cni
+            nci = ctx.canon.get("is.noncontrolling_ni")
+            ctx.col["net_income"] = cni + (nci or 0)
             ctx._mark("net_income_fill")
 
 

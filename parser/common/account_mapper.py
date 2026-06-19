@@ -166,6 +166,20 @@ class AccountMapper:
                 return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
             return MappingResult("is.ebt", 0.95, "guard", raw)
 
+        # ── 포괄손익 귀속(배분) 가드: '포괄손익, 지배기업소유주귀속지분'·'총포괄손익,비지배지분' 은
+        # 총포괄손익의 지배/비지배 배분이지 **당기순이익 귀속**(controlling/noncontrolling NI)이 아니다.
+        # 라벨에 '지배'가 있어 퍼지가 controlling_ni 로 오매핑 → net_income 합산(controlling+noncontrolling)
+        # 을 오염시켰다(OCI≠0 일 때 총NI 과 불일치). 무매핑(raw 보존)으로 차단. 'IS' 한정.
+        if "포괄손익" in normalized and "지배" in normalized and fs_section in (None, "is"):
+            return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
+
+        # ── 지분법 지분 가드: '지분법적용대상…당기순손익에대한지분'(피투자기업 순손익 지분) 은
+        # 지분법손익(equity_method_income)이지 당기순이익(net_income)이 아니다. '당기순손익' 부분문자열로
+        # is.net_income 오매핑 → fill 우회(net_income 오염)되던 것 차단(is.equity_method_income 로 귀속).
+        if "지분법" in normalized and ("당기순손익" in normalized or "당기순이익" in normalized) \
+                and fs_section in (None, "is"):
+            return MappingResult("is.equity_method_income", 0.9, "guard", raw)
+
         # ── Stage 3: 퍼지 매핑 ────────────────────────────────────────
         # fs_section 제공 시 섹션-한정 퍼지 먼저 시도, 없으면 전체 퍼지 (단, 섹션 접두사가
         # 불일치하는 코드는 최종 후보에서 제외 — 예: BS 컨텍스트에서 IS 코드 반환 방지)

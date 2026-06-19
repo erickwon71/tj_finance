@@ -103,9 +103,15 @@ def _detect_fin_type(root) -> str:
     return "A"
 
 
-def _synth_acontext(basis: str, period_kind: str, col_idx: int, ctx_fy: int | None) -> str:
-    """텍스트 셀의 합성 컨텍스트 토큰(고유성 키). 원 ACONTEXT 부재를 명시."""
-    return f"text:{basis[:3]}:{'e' if period_kind == 'instant' else 'd'}:c{col_idx}:{ctx_fy}"
+def _synth_acontext(basis: str, period_kind: str, col_idx: int, ctx_fy: int | None,
+                    stmt: str = "") -> str:
+    """텍스트 셀의 합성 컨텍스트 토큰(고유성 키). 원 ACONTEXT 부재를 명시.
+
+    ★ stmt(BS/IS/CF) 포함: 같은 계정명(acode)이 손익계산서와 현금흐름표 양쪽에 등장하는 경우
+    (예 '당기순이익(손실)' = IS 총당기순이익 + CF 간접법 시작라인)가 둘 다 period_kind='duration'
+    이라 stmt 없이는 acontext_raw 가 충돌 → uq_fact_v2_cell 에서 한쪽(주로 IS net_income)이 소실.
+    stmt 를 키에 포함해 IS/CF 셀을 분리한다(BS 는 'instant'라 기존에도 분리됐으나 일관성 위해 포함)."""
+    return f"text:{stmt}:{basis[:3]}:{'e' if period_kind == 'instant' else 'd'}:c{col_idx}:{ctx_fy}"
 
 
 def _row_to_fact(
@@ -135,7 +141,7 @@ def _row_to_fact(
         amount_won=amount,
         source_format="xml_text",
         source_ref=f"{fs_type}/{row.account_name[:80]}"[:180],
-        acontext_raw=_synth_acontext(basis, period_kind, col_idx, ctx_fy),
+        acontext_raw=_synth_acontext(basis, period_kind, col_idx, ctx_fy, fs_type.split("_")[0]),
         context_parsed=False,
         canonical_account=canonical,
     )

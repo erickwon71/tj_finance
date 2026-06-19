@@ -63,6 +63,9 @@ def file_path_map(session, rcepts):
 def select_corps(session, args):
     if args.corp:
         return [args.corp]
+    if args.corp_file:
+        corps = [ln.strip() for ln in Path(args.corp_file).read_text().splitlines() if ln.strip()]
+        return sorted(set(corps))
     q = "SELECT DISTINCT corp_code FROM std_financials_v2 WHERE version=1"
     params = {}
     if args.corps:
@@ -174,6 +177,7 @@ def audit_corp(session, corp, args, agg):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--corp")
+    ap.add_argument("--corp-file", dest="corp_file", help="corp_code 목록 파일(라인당 1개)")
     ap.add_argument("--corps", help="corp_code 범위 LO:HI")
     ap.add_argument("--sample", type=int)
     ap.add_argument("--seed", type=int, default=42)

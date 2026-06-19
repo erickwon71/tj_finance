@@ -49,6 +49,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fy-min", type=int, default=2015)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--corps", default=None, help="START:END 위치 슬라이스(병렬 분할)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--resume-file", default=None)
     args = ap.parse_args()
@@ -64,6 +65,9 @@ def main() -> None:
             WHERE canonical_account='is.tax_expense' AND acode LIKE '%차감전%'
         """), {"y": args.fy_min}).fetchall()})
 
+    if args.corps and ":" in args.corps:
+        a, _, b = args.corps.partition(":")
+        corps = corps[(int(a) if a else None):(int(b) if b else None)]
     done = load_done(args.resume_file)
     pending = [c for c in corps if c not in done]
     if args.limit:

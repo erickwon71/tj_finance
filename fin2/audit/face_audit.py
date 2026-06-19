@@ -278,7 +278,12 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
             if canon == "is.tax_expense" and "차감전" in label:
                 continue  # 세전이익 오매핑 가드
             for v in nums:
-                key = (canon, basis, v)
+                # ★ dedup 키는 표시값(v)이 아니라 won 환산값으로. 같은 statement 가 단위만 다른
+                # 표(예 '단위:백만원' 표 + '단위:원' 표)로 중복 등장하면 표시값은 같아도 won 이 다르다
+                # → 표시값 dedup 시 먼저 읽힌 잘못된 단위 표가 올바른 단위 표를 가려 ×10^6 false-fail
+                # (아이티센씨티에스 CF). won 키로 두 단위 버전 모두 보존 → 감사가 올바른 쪽과 매칭.
+                won = v * (10 ** (-adecimal)) if adecimal < 0 else v
+                key = (canon, basis, won)
                 if key in seen:
                     continue
                 seen.add(key)

@@ -2742,14 +2742,22 @@ def _extract2_corp(session, corp, year=None, dry_run=False, verbose=True):
             rcept_no=r.rcept_no, corp_code=r.corp_code,
             report_fiscal_year=r.fiscal_year, report_fiscal_period=r.fiscal_period,
         )
-        facts = xbrl.extract_facts(r.file_path, **common)
-        track = "A"
-        if not facts:
-            facts = text_extract.extract_facts(r.file_path, **common)
-            track = "B"
+        tag = f"{r.fiscal_year}{r.fiscal_period}" + ("*" if r.is_amendment else "")
+        try:
+            facts = xbrl.extract_facts(r.file_path, **common)
+            track = "A"
+            if not facts:
+                facts = text_extract.extract_facts(r.file_path, **common)
+                track = "B"
+        except (FileNotFoundError, OSError) as e:
+            # 소실/손상 파일(예 동방아그로 2003H1 MISSING_FILE)은 스킵 → 기업 전체 롤백 방지
+            # (나머지 정상 연도는 재추출 진행). 해당 연도 fact 는 purge 후 미적재(=공백).
+            if verbose:
+                logger.warning(f"  [{tag}] r{r.rcept_no} — 파일 소실/손상 스킵: {e}")
+            total_files += 1
+            continue
 
         total_files += 1
-        tag = f"{r.fiscal_year}{r.fiscal_period}" + ("*" if r.is_amendment else "")
         if not facts:
             if verbose:
                 logger.info(f"  [{tag}] r{r.rcept_no} — 추출 0행(A·B 모두, PDF 폴백 대상)")

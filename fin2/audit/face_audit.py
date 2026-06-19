@@ -499,6 +499,24 @@ def audit_fields(
                                       report_value_won=-val))
         else:
             nearest = min(cands, key=lambda ln: abs((ln.amount_won or 0) - val))
-            results.append(FieldAudit(field, canon, val, False, "VALUE_DIFF",
-                                      report_value_won=nearest.amount_won))
+            # ★ 표시단위 ±1 허용: 보고서 표시단위(10^-adecimal) 1단위 이내 차이는 발행사 자체
+            # 반올림(예 CJ제일제당 XBRL: ProfitLoss vs 지배+비지배 1천원 불일치)·파생필드 라운딩
+            # 으로, 표시단위 이하 검증불가(PRD)에 해당 → PASS. 실수준 오류(>1단위)만 VALUE_DIFF.
+            nw = nearest.amount_won or 0
+            tol = 10 ** (-nearest.adecimal) if (nearest.adecimal or 0) < 0 else 1
+            matched_won = None
+            if abs(nw - val) <= tol or abs(nw + val) <= tol:
+                matched_won = nw
+            elif canon == "is.net_income":
+                # ★ 총 당기순이익 라인이 보고서 본문에 깔끔히 안 나오는 경우(컬럼 깨짐·3개월만 표기)
+                # std 는 지배+비지배 귀속 합으로 복원한다 → 보고서의 귀속 라인 합과 대조해 충실성 검증.
+                ctrl = [l.amount_won for l in by_canon.get("is.controlling_ni", []) if l.amount_won is not None]
+                ncl = [l.amount_won for l in by_canon.get("is.noncontrolling_ni", []) if l.amount_won is not None]
+                if any(abs(c + n - val) <= max(tol, 1) for c in ctrl for n in ncl):
+                    matched_won = val
+            if matched_won is not None:
+                results.append(FieldAudit(field, canon, val, True, None, report_value_won=matched_won))
+            else:
+                results.append(FieldAudit(field, canon, val, False, "VALUE_DIFF",
+                                          report_value_won=nw))
     return results

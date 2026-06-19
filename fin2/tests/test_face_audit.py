@@ -44,12 +44,35 @@ def test_row_pass_when_all_inscope_match():
 
 
 def test_row_fail_on_value_diff():
-    db = {"total_assets": 999}  # 보고서는 1000
+    db = {"total_assets": 900}  # 보고서 1000 (표시단위 1단위 초과 = 실오류)
     bs = [_bs_line("bs.total_assets", 1000)]
     ra = audit_std_row(db, basis="consolidated", bs_face=bs, is_face=[], cf_face=[],
                        is_comparative=False)
     assert ra.status == STATUS_FAIL
     assert ra.fail_fields == ["total_assets"]
+
+
+def test_display_unit_tolerance():
+    # 천원(ade=-3) 1단위(1,000원) 이내 = 발행사 반올림 → PASS.
+    ra = audit_std_row({"total_assets": 1_234_000}, basis="consolidated",
+                       bs_face=[_bs_line("bs.total_assets", 1235, ade=-3)],
+                       is_face=[], cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_PASS, ra.fields
+    # 2단위(2,000원) 차이 = 실오류 → FAIL.
+    ra2 = audit_std_row({"total_assets": 1_233_000}, basis="consolidated",
+                        bs_face=[_bs_line("bs.total_assets", 1235, ade=-3)],
+                        is_face=[], cf_face=[], is_comparative=False)
+    assert ra2.status == STATUS_FAIL
+
+
+def test_net_income_matches_attribution_sum():
+    # 본문 당기순이익 라인이 불일치(3개월만)해도 지배+비지배 귀속 합과 일치 → PASS.
+    is_face = [_bs_line("is.net_income", -502_592_034),
+               _bs_line("is.controlling_ni", -1_903_963_591),
+               _bs_line("is.noncontrolling_ni", -3_177_661)]
+    ra = audit_std_row({"net_income": -1_907_141_252}, basis="consolidated",
+                       bs_face=[], is_face=is_face, cf_face=[], is_comparative=False)
+    assert ra.n_fail == 0, ra.fields
 
 
 def test_comparative_row_is_pending_not_fail():

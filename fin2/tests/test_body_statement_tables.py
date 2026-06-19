@@ -65,6 +65,16 @@ def test_classify_rejects_note_sentence_mentions():
         "(2) 당기와 전기의 영업활동 현금흐름 중 조정과 순운전자본의 변동내역은 다음과 같습니다.") is None
     # 진짜 CF 본문은 statement 명이 단독 토큰 → 채택.
     assert classify_statement_title("현금흐름표 제 42 기 2020.01.01 부터 (단위 : 원)") == ("separate", "CF")
+    # ★ 노트 섹션 제목 "NN. 현금흐름표(1) 현금흐름표의 현금은…현재…": 명칭 뒤가 "(1)"이라 기간마커가
+    # 멀리 있으면 거부(동일기연 CF 보충표 ×1000 오염 방지). 본문은 명칭 직후 기간마커.
+    assert classify_statement_title(
+        "24. 현금흐름표(1) 현금흐름표의 현금은 보고기간종료일 현재의 현금및현금성자산입니다.") is None
+    assert classify_statement_title(
+        "재무상태표 상 자산 당기말 전기말 당기손익-공정가치측정금융자산 27,158,859") is None
+    # ★ 명칭 직후 기간마커 변형: 제N(당)기말·당기말·날짜·(단위 모두 채택.
+    assert classify_statement_title("재무상태표 제 32(당) 기말 2025년 12월 31일 현재 (단위 : 원)") == ("separate", "BS")
+    assert classify_statement_title("재무상태표 당기말 전기말 (단위:천원)") == ("separate", "BS")
+    assert classify_statement_title("재무상태표 2022.12.31 현재") == ("separate", "BS")
 
 
 def test_classify_requires_period_marker():

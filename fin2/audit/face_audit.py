@@ -383,9 +383,11 @@ def read_report_face_tracked(file_path: str | Path,
     """
     lines = read_report_face_xbrl(file_path, all_cols=all_cols)
     if lines:
-        # 비교행(all_cols)은 전기/전전기 컬럼 대조라 보충 비대상. 일반 col0 감사만 텍스트 보충.
-        if not all_cols:
-            lines = _supplement_with_text(lines, file_path)
+        # 텍스트 보충: Track A 가 못 잡은 계정(IS face 텍스트표 등)을 Track B 라인으로 보충.
+        # all_cols(비교행)도 보충 — Track B 는 행 내 전 셀(전기/전전기 포함)을 any-column 으로
+        # 읽으므로 비교컬럼 대조에 그대로 부합. 비교행 분기는 불일치를 fail 로 승격하지 않음
+        # (COMPARATIVE_ROW pending) → 후보 추가는 매칭만 늘려 단조 개선.
+        lines = _supplement_with_text(lines, file_path)
         return lines, "A"
     lines = read_report_face_text(file_path)
     if lines:
@@ -504,7 +506,10 @@ def audit_std_row(
             # 컬럼-연도 정밀대조가 약해 보수적으로 미검증 유지(fail=0 불변, 커버리지만 확장).
             face = _statement_face(field, bs_face, is_face, cf_face)
             if face:
-                for f in audit_fields(db_row, face, basis=basis, fields=(field,), interim=interim):
+                # 비교행은 any-column 대조(검증 약 tier, 불일치=pending) → interim 누적셀 필터를 풀어
+                # 모든 컬럼·셀(3개월/누적 포함)을 후보로 본다. 비교 분기는 fail 을 내지 않으므로
+                # 필터 완화는 매칭만 늘리는 단조 개선(fail=0 보존).
+                for f in audit_fields(db_row, face, basis=basis, fields=(field,), interim=False):
                     out.append(f if f.match else
                                FieldAudit(field, canon, val, False, "COMPARATIVE_ROW", f.report_value_won))
             else:

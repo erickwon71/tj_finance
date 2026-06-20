@@ -24,6 +24,9 @@ from fin2.standardize.rules import (
 
 _PREFIX = {"BS": "bs.", "IS": "is.", "CF": "cf."}
 _FP_MONTH_DAY = {"FY": (12, 31), "H1": (6, 30), "Q1": (3, 31), "Q3": (9, 30), "Q2": (6, 30), "Q4": (12, 31)}
+# 실제 재무제표 행이면 최소 하나는 있어야 하는 BS/IS 핵심 헤드라인(전무=빈/phantom 행).
+_HEADLINE_COLS = ("total_assets", "total_equity", "current_assets",
+                  "revenue", "net_income", "operating_income", "gross_profit")
 _DA_SUPP = set(_DEP_CANON) | set(_AMORT_CANON) | set(_DA_TOTAL_CANON)
 
 
@@ -181,6 +184,15 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
 
         dq = max(validate_equations(ctx.col),
                  _dq_cross_year(session, corp_code, basis, ctx.col) if fp == "FY" else 1)
+
+        # ★ 헤드라인(BS/IS 핵심) 전무 행은 생성 안 함: 단일basis 기업의 반대basis phantom(stray CF
+        # 만 존재)·추출 실패 stale 행 = 데이터 없는 빈 행. std_v2 에 두면 감사 pending 만 늘고 무용
+        # (시각화도 불가). 기존에 있으면 삭제(재추출 후 orphan 정리). 비교/K-GAAP 폴백은 별도패스라 무영향.
+        if all(ctx.col.get(c) is None for c in _HEADLINE_COLS):
+            session.execute(text("""DELETE FROM std_financials_v2 WHERE corp_code=:c AND fiscal_year=:y
+                AND fiscal_period=:p AND statement_type=:b AND version=1 AND is_stub=:s"""),
+                {"c": corp_code, "y": fy, "p": fp, "b": basis, "s": is_stub})
+            continue
 
         record = {
             "corp_code": corp_code, "fiscal_year": fy, "fiscal_period": fp,

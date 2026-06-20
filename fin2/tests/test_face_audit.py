@@ -167,6 +167,19 @@ def test_gate_unknown_track_is_conservative_fail_a():
     assert gate_status_for_row(ra, {}) == GATE_FAIL_A
 
 
+def test_revenue_derived_verified_by_cogs_plus_gross_profit():
+    # 매출액 단일 라인 부재 + std 가 cogs+gross_profit 로 파생 → 항등식 합 일치 시 PASS.
+    is_face = [_bs_line("is.cogs", 800), _bs_line("is.gross_profit", 200)]
+    ra = audit_std_row({"revenue": 1000}, basis="consolidated",
+                       bs_face=[], is_face=is_face, cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_PASS, ra.fields
+    # 괄호 음수 cogs(=양수화 안 된 face)도 abs 로 일치.
+    is_face2 = [_bs_line("is.cogs", -800), _bs_line("is.gross_profit", 200)]
+    ra2 = audit_std_row({"revenue": 1000}, basis="consolidated",
+                        bs_face=[], is_face=is_face2, cf_face=[], is_comparative=False)
+    assert ra2.status == STATUS_PASS, ra2.fields
+
+
 def test_net_income_label_unmatched_falls_back_to_attribution():
     # IS face 에 총 당기순이익 라인 부재(LABEL_UNMATCHED 상황)여도 지배+비지배 귀속 합과
     # 일치하면 PASS(보고서에 값 실재 검증). fail 아님·pending 아님.

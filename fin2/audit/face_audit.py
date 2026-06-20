@@ -575,6 +575,15 @@ def audit_fields(
         if val is None:
             continue  # DB 에 값 없음 — 감사 대상 아님(누락은 별도 커버리지 이슈)
         cands = by_canon.get(canon, [])
+        if not cands and canon == "is.revenue":
+            # ★ 매출액 단일 라인이 face 에 없고 std 가 매출원가+매출총이익 으로 파생된 경우
+            # (revenue_from_cogs_gp 규칙). 회계 항등식 매출원가+매출총이익==매출액 → 보고서의
+            # cogs·gross_profit 라인 합이 std 매출과 일치하면 보고서 충실 검증(PASS). 미일치=LABEL 유지.
+            cogs = [ln.amount_won for ln in by_canon.get("is.cogs", []) if ln.amount_won is not None]
+            gp = [ln.amount_won for ln in by_canon.get("is.gross_profit", []) if ln.amount_won is not None]
+            if any(abs(c) + g == val for c in cogs for g in gp):
+                results.append(FieldAudit(field, canon, val, True, None, report_value_won=val))
+                continue
         if not cands and canon == "is.net_income":
             # ★ 총 당기순이익 라인이 IS face 에 깔끔히 안 잡히는 경우(보고서가 귀속분만 표기·
             # 3개월/누적 컬럼 깨짐) std=당기순이익 의 충실성을 보조 라인으로 검증:

@@ -237,6 +237,7 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
     from parser.xml.table_extractor import _get_cells
     from parser.common.account_mapper import get_mapper
     from parser.common.amount_normalizer import detect_unit_declaration
+    from fin2.extract.text import _detect_unit_near_table
 
     root = _parse_xml_file(Path(file_path))
     if root is None:
@@ -252,7 +253,9 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
             continue
         basis, stmt = meta
         fs_section = stmt.lower()
-        unit = detect_unit_declaration(title) or 1
+        # 단위: 표제 선언 → (없으면) 표 자체/인접 <P> 선언(추출기와 동일 폴백). 표제만 보면
+        # 천원 선언이 표 첫행/주변에 있는 K-GAAP 구표를 원으로 오인해 ×1000 false-fail(아이톡시·대주산업).
+        unit = detect_unit_declaration(title) or _detect_unit_near_table(tbl)
         adecimal = _adecimal_from_unit(unit)
         for tr in tbl.findall(".//TR"):
             cells = _get_cells(tr)

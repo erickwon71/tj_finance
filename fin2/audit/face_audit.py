@@ -517,6 +517,7 @@ def audit_fields(
                 # std 는 지배+비지배 귀속 합으로 복원한다 → 보고서의 귀속 라인 합과 대조해 충실성 검증.
                 ctrl = [l.amount_won for l in by_canon.get("is.controlling_ni", []) if l.amount_won is not None]
                 ncl = [l.amount_won for l in by_canon.get("is.noncontrolling_ni", []) if l.amount_won is not None]
+                ncl = ncl or [0]  # 비지배지분 라인 부재(소수주주 없음) → 총NI=지배지분.
                 if any(abs(c + n - val) <= max(tol, 1) for c in ctrl for n in ncl):
                     matched_won = val
             if matched_won is not None:

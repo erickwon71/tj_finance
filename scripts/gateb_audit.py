@@ -84,9 +84,9 @@ def audit_corp(session, corp, args, agg):
     rows = session.execute(text("""
         SELECT * FROM std_financials_v2
         WHERE corp_code=:c AND version=1 AND NOT COALESCE(is_stub,false)
-          AND fiscal_year >= :fymin
+          AND fiscal_year >= :fymin AND fiscal_year <= :fymax
         ORDER BY fiscal_year DESC
-    """), {"c": corp, "fymin": args.fy_min}).fetchall()
+    """), {"c": corp, "fymin": args.fy_min, "fymax": args.fy_max}).fetchall()
     if not rows:
         return
 
@@ -182,6 +182,7 @@ def main():
     ap.add_argument("--sample", type=int)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--fy-min", type=int, default=2010)
+    ap.add_argument("--fy-max", type=int, default=2100)
     ap.add_argument("--recheck", action="store_true")
     ap.add_argument("--no-commit", action="store_true")
     args = ap.parse_args()

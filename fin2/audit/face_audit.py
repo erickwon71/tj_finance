@@ -101,6 +101,7 @@ class FaceLine:
     displayed_value: int       # 보고서 표시값(단위 미환산, 리터럴)
     adecimal: int | None       # 표시단위(원 환산용)
     is_cumulative: bool = False  # 반기/3분기 누적(YTD) 셀 — std_v2 IS/CF 가 저장하는 값
+    from_gapfill: bool = False   # 표제기반 실패→detect_sections 갭필로 찾은 표(휴리스틱, 저신뢰)
 
     @property
     def amount_won(self) -> int | None:
@@ -254,7 +255,7 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
     lines: list[FaceLine] = []
     seen: set[tuple] = set()
 
-    def _read_table(tbl, basis, stmt, unit):
+    def _read_table(tbl, basis, stmt, unit, from_gapfill=False):
         fs_section = stmt.lower()
         adecimal = _adecimal_from_unit(unit or 1)
         for tr in tbl.findall(".//TR"):
@@ -291,7 +292,7 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
                 lines.append(FaceLine(
                     statement=stmt, basis=basis, acode=label[:80], canonical=canon,
                     label=label[:80], displayed_value=v, adecimal=adecimal,
-                    is_cumulative=True,
+                    is_cumulative=True, from_gapfill=from_gapfill,
                 ))
 
     # ── 1차: 표제기반 본문표(robust, 복잡문서 오연결 회피) ──
@@ -331,7 +332,7 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
                 continue
             basis, stmt = _META_OF[code]
             for t in tbls:
-                _read_table(t, basis, stmt, unit)
+                _read_table(t, basis, stmt, unit, from_gapfill=True)
     return lines
 
 
@@ -380,7 +381,8 @@ STATUS_PENDING = "pending"    # 아직 감사 불가(범위 밖)
 
 # field reason → 분류
 _FAIL_REASONS = {"VALUE_DIFF"}
-_PENDING_REASONS = {"COMPARATIVE_ROW", "SOURCE_NOT_TRACK_A", "LABEL_UNMATCHED"}
+_PENDING_REASONS = {"COMPARATIVE_ROW", "SOURCE_NOT_TRACK_A", "LABEL_UNMATCHED",
+                    "GAPFILL_UNVERIFIED"}
 
 
 @dataclass
@@ -573,6 +575,11 @@ def audit_fields(
                     matched_won = val
             if matched_won is not None:
                 results.append(FieldAudit(field, canon, val, True, None, report_value_won=matched_won))
+            elif all(ln.from_gapfill for ln in cands):
+                # ★ 갭필(표제기반 실패→detect_sections, 휴리스틱 저신뢰)로만 찾은 표와의 불일치는
+                # reader 표선택 불확실(NAVER류)일 수 있어 **fail 아닌 pending**(GAPFILL_UNVERIFIED).
+                # 커버리지 확장은 단조(매칭=pass, 불일치=미검증 유지) → fail=0 보존. 잠재 std 버그는 별도.
+                results.append(FieldAudit(field, canon, val, False, "GAPFILL_UNVERIFIED", nw))
             else:
                 results.append(FieldAudit(field, canon, val, False, "VALUE_DIFF",
                                           report_value_won=nw))

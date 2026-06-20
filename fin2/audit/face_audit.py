@@ -339,11 +339,37 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
     return lines
 
 
+def _supplement_with_text(a_lines: list[FaceLine], file_path: str | Path) -> list[FaceLine]:
+    """Track A 라인에 Track B(텍스트) face 라인을 **보충** 병합한다.
+
+    배경: 일부 보고서(지주·하이브리드)는 BS/CF 는 XBRL ACODE 로 태깅하나 **IS(손익) face 는
+    텍스트표만** 제공 → Track A 만 읽으면 매출/순이익이 통째로 빠져 LABEL_UNMATCHED(pending).
+    Track A 가 못 잡은 계정의 텍스트 라인을 합치면 그 값이 보고서에 실재함을 검증할 수 있다.
+
+    안전성(단조성): 추가하는 Track B 라인은 모두 from_gapfill=True 로 표시 → 그 계정에 Track A
+    후보가 없던 경우(LABEL_UNMATCHED)의 불일치는 GAPFILL_UNVERIFIED(pending)로 남고 **fail 로
+    승격되지 않는다**. 후보 추가는 매칭 기회만 늘릴 뿐 기존 매칭을 없애지 못한다 → fail=0 보존.
+    """
+    try:
+        b_lines = read_report_face_text(file_path)
+    except (FileNotFoundError, OSError):
+        return a_lines
+    if not b_lines:
+        return a_lines
+    a_keys = {(ln.canonical, ln.basis, ln.amount_won) for ln in a_lines}
+    for bl in b_lines:
+        if (bl.canonical, bl.basis, bl.amount_won) in a_keys:
+            continue
+        bl.from_gapfill = True
+        a_lines.append(bl)
+    return a_lines
+
+
 def read_report_face(file_path: str | Path) -> list[FaceLine]:
-    """Track A 우선, 0행이면 Track B(텍스트) 폴백. 감사 러너의 단일 진입점."""
+    """Track A 우선(+텍스트 보충), 0행이면 Track B(텍스트) 폴백. 감사 러너의 단일 진입점."""
     lines = read_report_face_xbrl(file_path)
     if lines:
-        return lines
+        return _supplement_with_text(lines, file_path)
     return read_report_face_text(file_path)
 
 
@@ -357,6 +383,9 @@ def read_report_face_tracked(file_path: str | Path,
     """
     lines = read_report_face_xbrl(file_path, all_cols=all_cols)
     if lines:
+        # 비교행(all_cols)은 전기/전전기 컬럼 대조라 보충 비대상. 일반 col0 감사만 텍스트 보충.
+        if not all_cols:
+            lines = _supplement_with_text(lines, file_path)
         return lines, "A"
     lines = read_report_face_text(file_path)
     if lines:
@@ -546,6 +575,24 @@ def audit_fields(
         if val is None:
             continue  # DB 에 값 없음 — 감사 대상 아님(누락은 별도 커버리지 이슈)
         cands = by_canon.get(canon, [])
+        if not cands and canon == "is.net_income":
+            # ★ 총 당기순이익 라인이 IS face 에 깔끔히 안 잡히는 경우(보고서가 귀속분만 표기·
+            # 3개월/누적 컬럼 깨짐) std=당기순이익 의 충실성을 보조 라인으로 검증:
+            #   ① CF 간접법 시작 '당기순이익'(cf.net_income_cf, YTD=std 와 동일 누적기준)
+            #   ② 지배+비지배 귀속 합(소수주주 없으면 지배=총NI)
+            # 매칭=PASS(보고서에 값 실재 확인), 미매칭=아래 일반흐름(LABEL_UNMATCHED 유지) → fail 아님.
+            alt = [ln.amount_won for ln in by_canon.get("cf.net_income_cf", [])
+                   if ln.amount_won is not None]
+            if val in alt or -val in alt:
+                results.append(FieldAudit(field, canon, val, True, None, report_value_won=val))
+                continue
+            ctrl = [ln.amount_won for ln in by_canon.get("is.controlling_ni", [])
+                    if ln.amount_won is not None]
+            ncl = [ln.amount_won for ln in by_canon.get("is.noncontrolling_ni", [])
+                   if ln.amount_won is not None] or [0]
+            if any(c + n == val for c in ctrl for n in ncl):
+                results.append(FieldAudit(field, canon, val, True, None, report_value_won=val))
+                continue
         if not cands:
             results.append(FieldAudit(field, canon, val, False, "LABEL_UNMATCHED", None))
             continue

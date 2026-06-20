@@ -167,6 +167,34 @@ def test_gate_unknown_track_is_conservative_fail_a():
     assert gate_status_for_row(ra, {}) == GATE_FAIL_A
 
 
+def test_net_income_label_unmatched_falls_back_to_attribution():
+    # IS face 에 총 당기순이익 라인 부재(LABEL_UNMATCHED 상황)여도 지배+비지배 귀속 합과
+    # 일치하면 PASS(보고서에 값 실재 검증). fail 아님·pending 아님.
+    is_face = [_bs_line("is.controlling_ni", 900), _bs_line("is.noncontrolling_ni", 100)]
+    ra = audit_std_row({"net_income": 1000}, basis="consolidated",
+                       bs_face=[], is_face=is_face, cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_PASS, ra.fields
+    assert ra.n_fail == 0
+
+
+def test_net_income_label_unmatched_falls_back_to_cf_line():
+    # IS face 에 net_income 라인 부재여도 CF 간접법 시작 '당기순이익'(cf.net_income_cf)과
+    # 일치하면 PASS(동일 file 의 CF face 가 병합돼 있는 경우).
+    face = [_bs_line("cf.net_income_cf", 1000)]
+    ra = audit_std_row({"net_income": 1000}, basis="consolidated",
+                       bs_face=[], is_face=face, cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_PASS, ra.fields
+
+
+def test_net_income_label_unmatched_no_alt_stays_pending_not_fail():
+    # 보조 라인도 불일치면 LABEL_UNMATCHED(pending) 유지 — 절대 fail 아님(fail=0 보존).
+    face = [_bs_line("is.controlling_ni", 900), _bs_line("is.noncontrolling_ni", 50)]  # 합 950≠1000
+    ra = audit_std_row({"net_income": 1000}, basis="consolidated",
+                       bs_face=[], is_face=face, cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_PENDING
+    assert ra.n_fail == 0
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

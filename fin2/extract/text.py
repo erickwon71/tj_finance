@@ -263,6 +263,12 @@ def extract_facts(
         prev = dedup.get(key)
         if prev is None or prev.amount_won is None:
             dedup[key] = fact
+        elif fact.amount_won is not None and abs(fact.amount_won) > abs(prev.amount_won):
+            # ★ 동일 키 충돌 시 더 큰 |금액| 채택: 노트표는 이미 statement_titles 로 face 에서
+            # 배제됐으므로, 같은 (acode,acontext) 충돌은 같은 statement 의 단위/통화 표현 차이
+            # (예 엘브이엠씨: 'USD기준' 자산총계 586,325,742=원취급 586M vs 백만원 KRW 표 678.8B).
+            # 단위완전(=큰값)이 정답 → 큰 쪽 채택.
+            dedup[key] = fact
 
     # ── 1차: 표제기반 본문표 식별(robust) ──────────────────────────────────
     groups = _detect_body_statement_tables(root, fin_type)
@@ -343,7 +349,12 @@ def _extract_summary(root, mapper, fin_type, dedup, add,
 
 
 def _detect_unit_near_table(table_elem) -> int:
-    """요약표 인접 단위 선언 탐지(표 첫 행 → 앞 5개 형제, 가장 가까운 선언)."""
+    """인접 단위 선언 탐지(표 첫 행 → 앞 형제 <P> 선언).
+
+    ⚠ 형제 TABLE 의 단위 선언은 **누설 금지**: 단위는 그 표 소유이지 인접 표 것이 아니다.
+    (엘브이엠씨 2019: USD기준 BS 표가 4형제 앞 '연결현금흐름표 단위:백만원' 을 주워 ×10^6 →
+    자산총계 586조. 표제(직전 형제)의 단위는 호출측 detect_unit_declaration(title_text) 이 이미
+    확인하므로, 폴백 스캔은 <P> 텍스트 선언만 본다.)"""
     from parser.common.amount_normalizer import detect_unit_declaration
     first_tr = table_elem.find(".//TR")
     if first_tr is not None:
@@ -360,7 +371,7 @@ def _detect_unit_near_table(table_elem) -> int:
         return 1
     for s in reversed(siblings[max(0, idx - 5):idx]):
         tag = s.tag.upper() if isinstance(s.tag, str) else ""
-        if tag in ("P", "TABLE"):
+        if tag == "P":  # <P> 텍스트 단위 선언만(형제 TABLE 단위 누설 차단)
             decl = detect_unit_declaration("".join(s.itertext()))
             if decl is not None:
                 return decl

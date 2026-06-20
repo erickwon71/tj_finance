@@ -75,12 +75,23 @@ def test_net_income_matches_attribution_sum():
     assert ra.n_fail == 0, ra.fields
 
 
-def test_comparative_row_is_pending_not_fail():
-    db = {"total_assets": 999}
-    bs = [_bs_line("bs.total_assets", 1000)]  # col0 는 다른 연도지만 비교행이라 감사 보류
+def test_comparative_row_unmatched_is_pending_not_fail():
+    # 비교행 값이 보고서 face(전 컬럼)에 없으면 → PENDING(절대 fail 아님: fail=0 보존).
+    db = {"total_assets": 777}
+    bs = [_bs_line("bs.total_assets", 1000), _bs_line("bs.total_assets", 1200)]
     ra = audit_std_row(db, basis="consolidated", bs_face=bs, is_face=[], cf_face=[],
                        is_comparative=True)
     assert ra.status == STATUS_PENDING
+    assert ra.n_fail == 0
+
+
+def test_comparative_row_matched_is_pass():
+    # 비교행 값이 보고서 전 컬럼(all_cols face) 중 하나와 일치하면 → PASS(검증, 커버리지 확장).
+    db = {"total_assets": 1200}
+    bs = [_bs_line("bs.total_assets", 1000), _bs_line("bs.total_assets", 1200)]  # 전기 컬럼 1200
+    ra = audit_std_row(db, basis="consolidated", bs_face=bs, is_face=[], cf_face=[],
+                       is_comparative=True)
+    assert ra.status == STATUS_PASS, ra.fields
     assert ra.n_fail == 0
 
 

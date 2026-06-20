@@ -137,7 +137,10 @@ def parse_displayed(text: str) -> int | None:
         return None
     try:
         val = float(digits)
-    except ValueError:
+    except (ValueError, OverflowError):
+        return None
+    import math
+    if not math.isfinite(val):   # 비정상 셀(자릿수 과다 → inf) 방어
         return None
     iv = int(round(val))
     return -iv if neg else iv
@@ -154,18 +157,19 @@ def _cell_text(te) -> str:
     return raw
 
 
-def read_report_face_xbrl(file_path: str | Path) -> list[FaceLine]:
+def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False) -> list[FaceLine]:
     """
-    Track A(XBRL) 보고서의 face 라인을 독립 재추출. col_index=0(당기)·비차원만.
+    Track A(XBRL) 보고서의 face 라인을 독립 재추출. 기본 col_index=0(당기)·비차원만.
 
+    all_cols=True: col_index 0/1/2(당기·전기·전전기) 모두 포함 — 비교컬럼 폴백 행 검증용
+    (그 행 값은 후속 보고서의 전기/전전기 컬럼에 있으므로 col0 만으론 대조 불가).
     Track A 가 아니면(=ifrs/dart ACODE+ACONTEXT 셀 없음) 빈 리스트.
-    같은 (acode, basis) 셀 중복 등장은 1개로 합치되 금액 보유 우선.
     """
     root = _parse_xml_file(Path(file_path))
     if root is None:
         return []
 
-    dedup: dict[tuple[str, str | None], FaceLine] = {}
+    dedup: dict[tuple, FaceLine] = {}
     for te in root.findall(".//TE[@ACODE]"):
         acode = te.get("ACODE", "")
         if not acode.startswith(_XBRL_PREFIXES) or len(acode) > 255:
@@ -174,7 +178,9 @@ def read_report_face_xbrl(file_path: str | Path) -> list[FaceLine]:
         if not acontext:
             continue
         ctx = parse_acontext(acontext)
-        if not ctx.parsed or ctx.col_index != 0 or ctx.is_dimensional:
+        if not ctx.parsed or ctx.is_dimensional:
+            continue
+        if not all_cols and ctx.col_index != 0:
             continue
         text = _cell_text(te)
         displayed = parse_displayed(text)
@@ -194,7 +200,8 @@ def read_report_face_xbrl(file_path: str | Path) -> list[FaceLine]:
             is_cumulative=ctx.is_cumulative,
         )
         # 반기/3분기는 같은 (acode,basis)에 누적·3개월 셀이 공존 → is_cumulative 도 키에 포함.
-        key = (acode, ctx.basis, ctx.is_cumulative)
+        # all_cols 시 col_index 도 키에 포함(전기/전전기 셀 보존).
+        key = (acode, ctx.basis, ctx.is_cumulative, ctx.col_index if all_cols else 0)
         if key not in dedup:
             dedup[key] = line
     return list(dedup.values())
@@ -336,13 +343,15 @@ def read_report_face(file_path: str | Path) -> list[FaceLine]:
     return read_report_face_text(file_path)
 
 
-def read_report_face_tracked(file_path: str | Path) -> tuple[list[FaceLine], str | None]:
+def read_report_face_tracked(file_path: str | Path,
+                             all_cols: bool = False) -> tuple[list[FaceLine], str | None]:
     """read_report_face 와 동일하되 **어느 track 으로 읽었는지** 함께 반환.
 
     track = "A"(Track A xbrl_acode 가 행을 냄) / "B"(Track B 텍스트 폴백) / None(둘 다 0행).
     promote 게이트가 fail 의 신뢰도(Track A=확정버그 / Track B=휴리스틱)를 구분하는 데 쓴다.
+    all_cols=True: 비교컬럼 폴백 행 검증용으로 Track A 전 컬럼 포함(Track B 는 본래 전 셀 읽음).
     """
-    lines = read_report_face_xbrl(file_path)
+    lines = read_report_face_xbrl(file_path, all_cols=all_cols)
     if lines:
         return lines, "A"
     lines = read_report_face_text(file_path)
@@ -456,7 +465,16 @@ def audit_std_row(
         if val is None:
             continue
         if is_comparative:
-            out.append(FieldAudit(field, canon, val, False, "COMPARATIVE_ROW", None))
+            # 비교컬럼 폴백 행: 값이 후속 보고서 전기/전전기 컬럼에 있다 → all_cols face 와 any-column
+            # 대조. 일치=PASS(검증). 불일치/미발견=COMPARATIVE_ROW(pending, **fail 아님**) — 비교컬럼은
+            # 컬럼-연도 정밀대조가 약해 보수적으로 미검증 유지(fail=0 불변, 커버리지만 확장).
+            face = _statement_face(field, bs_face, is_face, cf_face)
+            if face:
+                for f in audit_fields(db_row, face, basis=basis, fields=(field,), interim=interim):
+                    out.append(f if f.match else
+                               FieldAudit(field, canon, val, False, "COMPARATIVE_ROW", f.report_value_won))
+            else:
+                out.append(FieldAudit(field, canon, val, False, "COMPARATIVE_ROW", None))
             continue
         face = _statement_face(field, bs_face, is_face, cf_face)
         if not face:

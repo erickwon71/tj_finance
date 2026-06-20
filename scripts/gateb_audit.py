@@ -106,21 +106,24 @@ def audit_corp(session, corp, args, agg):
                 rcepts.add(getattr(r, k))
     fpmap = file_path_map(session, rcepts)
     face_cache: dict[str, list] = {}
+    face_cache_all: dict[str, list] = {}   # all_cols(비교행 검증용)
     track_of: dict[str, str | None] = {}   # rcept → 'A'/'B'/None (gate_status 분류용)
 
-    def face_of(rc):
+    def face_of(rc, all_cols=False):
         if not rc:
             return []
-        if rc not in face_cache:
+        cache = face_cache_all if all_cols else face_cache
+        if rc not in cache:
             fp = fpmap.get(rc)
             try:
-                lines, track = read_report_face_tracked(fp) if fp else ([], None)
+                lines, track = read_report_face_tracked(fp, all_cols=all_cols) if fp else ([], None)
             except (FileNotFoundError, OSError):
                 # 소실/손상 파일(Gate A MISSING_FILE 등) → face 없음 → 해당 행 pending(크래시 아님)
                 lines, track = [], None
-            face_cache[rc] = lines
-            track_of[rc] = track
-        return face_cache[rc]
+            cache[rc] = lines
+            if not all_cols:
+                track_of[rc] = track
+        return cache[rc]
 
     batch = []
     for r in rows:
@@ -131,11 +134,12 @@ def audit_corp(session, corp, args, agg):
         basis = d["statement_type"]
         rules = d.get("applied_rules") or []
         is_comp = "comparative_fallback" in rules
+        # 비교행은 값이 후속보고서 전기/전전기 컬럼 → all_cols face 로 검증.
         ra = audit_std_row(
             d, basis=basis,
-            bs_face=face_of(d.get("bs_rcept")),
-            is_face=face_of(d.get("is_rcept")),
-            cf_face=face_of(d.get("cf_rcept")),
+            bs_face=face_of(d.get("bs_rcept"), all_cols=is_comp),
+            is_face=face_of(d.get("is_rcept"), all_cols=is_comp),
+            cf_face=face_of(d.get("cf_rcept"), all_cols=is_comp),
             is_comparative=is_comp,
         )
         # promote gate_status: 실패필드 track('A'/'B')으로 fail_a(확정버그)/fail_b(휴리스틱) 분리

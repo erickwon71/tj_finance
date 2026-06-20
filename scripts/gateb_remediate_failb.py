@@ -50,20 +50,24 @@ def main() -> None:
     ap.add_argument("--fy-min", type=int, default=2015)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--corps", default=None, help="START:END 위치 슬라이스(병렬 분할)")
+    ap.add_argument("--corp-file", dest="corp_file", default=None,
+                    help="corp_code 목록 파일(주면 fail_b∪EBT 쿼리 대신 이 목록 사용)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--resume-file", default=None)
     args = ap.parse_args()
 
-    # 모집단 = 측정된 fail_b 기업 ∪ EBT 오매핑 기업(차감전→tax_expense 박힌 fact_v2 보유).
-    # 후자는 아직 fail_b 로 안 떠도(감사 미커버·pending) tax_expense 값이 오염돼 있어 함께 교정.
-    with get_session() as s:
-        corps = sorted({r[0] for r in s.execute(text("""
-            SELECT DISTINCT corp_code FROM face_audit
-            WHERE gate_status='fail_b' AND fiscal_year >= :y
-            UNION
-            SELECT DISTINCT corp_code FROM fact_v2
-            WHERE canonical_account='is.tax_expense' AND acode LIKE '%차감전%'
-        """), {"y": args.fy_min}).fetchall()})
+    # 모집단: --corp-file 주면 그 목록, 아니면 측정된 fail_b ∪ EBT 오매핑 기업.
+    if args.corp_file:
+        corps = sorted({ln.strip() for ln in Path(args.corp_file).read_text().splitlines() if ln.strip()})
+    else:
+        with get_session() as s:
+            corps = sorted({r[0] for r in s.execute(text("""
+                SELECT DISTINCT corp_code FROM face_audit
+                WHERE gate_status='fail_b' AND fiscal_year >= :y
+                UNION
+                SELECT DISTINCT corp_code FROM fact_v2
+                WHERE canonical_account='is.tax_expense' AND acode LIKE '%차감전%'
+            """), {"y": args.fy_min}).fetchall()})
 
     if args.corps and ":" in args.corps:
         a, _, b = args.corps.partition(":")

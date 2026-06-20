@@ -238,6 +238,7 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
     from parser.common.account_mapper import get_mapper
     from parser.common.amount_normalizer import detect_unit_declaration
     from fin2.extract.text import _detect_unit_near_table
+    from fin2.extract.statement_titles import SECTION_CODE_OF
 
     root = _parse_xml_file(Path(file_path))
     if root is None:
@@ -246,17 +247,9 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
     lines: list[FaceLine] = []
     seen: set[tuple] = set()
 
-    for tbl in root.findall(".//TABLE"):
-        title = title_text(tbl)
-        meta = classify_statement_title(title)
-        if meta is None:
-            continue
-        basis, stmt = meta
+    def _read_table(tbl, basis, stmt, unit):
         fs_section = stmt.lower()
-        # 단위: 표제 선언 → (없으면) 표 자체/인접 <P> 선언(추출기와 동일 폴백). 표제만 보면
-        # 천원 선언이 표 첫행/주변에 있는 K-GAAP 구표를 원으로 오인해 ×1000 false-fail(아이톡시·대주산업).
-        unit = detect_unit_declaration(title) or _detect_unit_near_table(tbl)
-        adecimal = _adecimal_from_unit(unit)
+        adecimal = _adecimal_from_unit(unit or 1)
         for tr in tbl.findall(".//TR"):
             cells = _get_cells(tr)
             label = None
@@ -281,10 +274,8 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
             if canon == "is.tax_expense" and "차감전" in label:
                 continue  # 세전이익 오매핑 가드
             for v in nums:
-                # ★ dedup 키는 표시값(v)이 아니라 won 환산값으로. 같은 statement 가 단위만 다른
-                # 표(예 '단위:백만원' 표 + '단위:원' 표)로 중복 등장하면 표시값은 같아도 won 이 다르다
-                # → 표시값 dedup 시 먼저 읽힌 잘못된 단위 표가 올바른 단위 표를 가려 ×10^6 false-fail
-                # (아이티센씨티에스 CF). won 키로 두 단위 버전 모두 보존 → 감사가 올바른 쪽과 매칭.
+                # ★ dedup 키는 표시값(v)이 아니라 won 환산값으로(단위만 다른 중복표가 표시값 같아도
+                # won 다름 → 잘못된 단위표가 올바른 표 가리는 ×10^6 false-fail 방지, 아이티센씨티에스).
                 won = v * (10 ** (-adecimal)) if adecimal < 0 else v
                 key = (canon, basis, won)
                 if key in seen:
@@ -295,6 +286,45 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
                     label=label[:80], displayed_value=v, adecimal=adecimal,
                     is_cumulative=True,
                 ))
+
+    # ── 1차: 표제기반 본문표(robust, 복잡문서 오연결 회피) ──
+    covered: set[str] = set()
+    for tbl in root.findall(".//TABLE"):
+        meta = classify_statement_title(title_text(tbl))
+        if meta is None:
+            continue
+        basis, stmt = meta
+        # 단위: 표제 선언 → 표 자체/인접 <P>(K-GAAP 천원 ×1000 false-fail 방지).
+        unit = detect_unit_declaration(title_text(tbl)) or _detect_unit_near_table(tbl)
+        _read_table(tbl, basis, stmt, unit)
+        covered.add(SECTION_CODE_OF[(basis, stmt)])
+
+    # ── 폴백(갭필): 표제기반이 못 잡은 섹션(구 K-GAAP 면표는 제목이 stub 표에 분리돼 classify 실패)
+    # 은 추출기와 동일하게 detect_sections/find_section_tables 로 찾는다(K-GAAP 등 커버리지 확장).
+    # 셀 읽기는 동일 _read_table(any-column, 독립 숫자파서) → 수치/단위 검증 독립성 유지.
+    _META_OF = {"BS_C": ("consolidated", "BS"), "BS_S": ("separate", "BS"),
+                "IS_C": ("consolidated", "IS"), "IS_S": ("separate", "IS"),
+                "CF_C": ("consolidated", "CF"), "CF_S": ("separate", "CF")}
+    missing = [c for c in _META_OF if c not in covered]
+    if missing:
+        from parser.xml.section_detector import (
+            detect_sections, find_section_tables, detect_unit_from_section)
+        try:
+            sections = detect_sections(root)
+        except Exception:
+            sections = {}
+        for code in missing:
+            title_elem = sections.get(code)
+            if title_elem is None:
+                continue
+            try:
+                tbls = find_section_tables(title_elem)
+                unit = detect_unit_from_section(title_elem)
+            except Exception:
+                continue
+            basis, stmt = _META_OF[code]
+            for t in tbls:
+                _read_table(t, basis, stmt, unit)
     return lines
 
 

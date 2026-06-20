@@ -161,6 +161,12 @@ def _detect_body_statement_tables(root, fin_type: str) -> dict[str, list[tuple]]
         meta = classify_statement_title(title_text(tbl))
         if meta is None:
             continue
+        # ★ 표제가 재무제표명이라도 그 표가 **데이터행 없는 footer/stub**(예 '첨부된 주석은…' 1행,
+        # 제목/단위만)일 수 있다. 이런 표를 face 로 잡으면 그 섹션이 '커버됨'으로 표시돼 갭필
+        # (find_section_tables)이 진짜 데이터표를 못 채운다(극동유화류 임베디드-ACODE 분기보고서
+        # → std 빈행 8K). 데이터행(라벨+숫자) ≥3 인 표만 face 로 인정.
+        if not _table_has_data_rows(tbl):
+            continue
         basis, stmt = meta
         if basis == "consolidated" and fin_type == "B":
             continue  # 연결 없는 기업의 연결 표 무시
@@ -168,6 +174,25 @@ def _detect_body_statement_tables(root, fin_type: str) -> dict[str, list[tuple]]
         unit = detect_unit_declaration(title_text(tbl)) or _detect_unit_near_table(tbl)
         groups.setdefault(section_code, []).append((tbl, unit))
     return groups
+
+
+_HANGUL_RE = re.compile(r"[가-힣]")
+
+
+def _table_has_data_rows(tbl, minimum: int = 2) -> int:
+    """표에 '라벨+숫자' 데이터행이 minimum 개 이상인지(footer/stub 표 배제. 실제 재무제표 면표는
+    계정행 다수라 항상 충족; footer('첨부된 주석은…')·제목/단위 stub 은 0~1행이라 배제)."""
+    from parser.xml.table_extractor import _get_cells
+    n = 0
+    for tr in tbl.findall(".//TR"):
+        cells = _get_cells(tr)
+        has_label = any(_HANGUL_RE.search(c) for c in cells)
+        has_num = any(re.search(r"\d{2,}", c) for c in cells)
+        if has_label and has_num:
+            n += 1
+            if n >= minimum:
+                return True
+    return False
 
 
 def _emit_section(

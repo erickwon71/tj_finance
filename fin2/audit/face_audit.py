@@ -245,7 +245,7 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
     from parser.xml.table_extractor import _get_cells
     from parser.common.account_mapper import get_mapper
     from parser.common.amount_normalizer import detect_unit_declaration
-    from fin2.extract.text import _detect_unit_near_table
+    from fin2.extract.text import _detect_unit_near_table, _table_has_data_rows
     from fin2.extract.statement_titles import SECTION_CODE_OF
 
     root = _parse_xml_file(Path(file_path))
@@ -300,6 +300,9 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
     for tbl in root.findall(".//TABLE"):
         meta = classify_statement_title(title_text(tbl))
         if meta is None:
+            continue
+        # 데이터행 없는 footer/stub 표(제목만)는 face 아님 → 커버로 치지 않음(갭필이 진짜표 채우게).
+        if not _table_has_data_rows(tbl):
             continue
         basis, stmt = meta
         # 단위: 표제 선언 → 표 자체/인접 <P>(K-GAAP 천원 ×1000 false-fail 방지).

@@ -349,7 +349,15 @@ def _supplement_with_text(a_lines: list[FaceLine], file_path: str | Path) -> lis
     안전성(단조성): 추가하는 Track B 라인은 모두 from_gapfill=True 로 표시 → 그 계정에 Track A
     후보가 없던 경우(LABEL_UNMATCHED)의 불일치는 GAPFILL_UNVERIFIED(pending)로 남고 **fail 로
     승격되지 않는다**. 후보 추가는 매칭 기회만 늘릴 뿐 기존 매칭을 없애지 못한다 → fail=0 보존.
+
+    성능: Track A 가 BS/IS/CF **3개 statement 를 모두** 커버하면(각 ≥1 canonical 라인) 보충해도
+    얻을 게 없으므로 텍스트 재파싱을 건너뛴다(완전한 Track A=대다수 → 이중 파싱 회피). 하나라도
+    누락된 하이브리드(지주·금융 등 IS 텍스트표) 보고서에서만 Track B 를 읽는다.
     """
+    covered = {_statement_of(ln.canonical) for ln in a_lines if ln.canonical}
+    covered.discard(None)
+    if {"BS", "IS", "CF"} <= covered:
+        return a_lines
     try:
         b_lines = read_report_face_text(file_path)
     except (FileNotFoundError, OSError):

@@ -221,12 +221,15 @@ def facts_from_text(
             if canon == "is.tax_expense" and "차감전" in label:
                 continue  # 세전이익 오매핑 가드(Track B 와 동일)
             amount_won = amount * anc.unit
-            key = (canon, anc.basis, amount_won)
+            is_cumulative = period_kind == "duration" and report_fiscal_period != "FY"
+            acode = (normalize_account_name(label) or label)[:120]
+            # dedup 키 = DB uq_fact_v2_cell(rcept, acode, acontext_raw) 와 동일 grain.
+            # acontext_raw 가 (stmt,basis,fy) 를 인코딩하므로 (acode, stmt, basis) 로 충분.
+            # 같은 라벨이 본문·하위표에 재등장 시 **첫 등장(본문 col0 당기)** 만 채택.
+            key = (acode, anc.statement, anc.basis)
             if key in seen:
                 continue
             seen.add(key)
-            is_cumulative = period_kind == "duration" and report_fiscal_period != "FY"
-            acode = (normalize_account_name(label) or label)[:120]
             facts.append(ExtractedFact(
                 corp_code=corp_code,
                 rcept_no=rcept_no,

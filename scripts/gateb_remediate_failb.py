@@ -86,7 +86,9 @@ def main() -> None:
     for i, corp in enumerate(pending, 1):
         try:
             with get_session() as s:
-                s.execute(text("DELETE FROM fact_v2 WHERE corp_code=:c"), {"c": corp})
+                # ⚠ PDF 백필 fact(source_format='pdf')는 보존 — XML 재추출로 재생성 불가(갭).
+                s.execute(text("DELETE FROM fact_v2 WHERE corp_code=:c "
+                               "AND COALESCE(source_format,'') <> 'pdf'"), {"c": corp})
                 files, a, b, facts = _extract2_corp(s, corp, verbose=False)
                 agg["facts"] += facts
                 agg["track_b"] += b

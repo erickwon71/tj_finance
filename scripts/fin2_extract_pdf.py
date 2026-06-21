@@ -44,7 +44,15 @@ WHERE p.file_type='pdf' AND p.status='completed' AND p.file_path IS NOT NULL
 
 
 def identity_ok(facts) -> bool | None:
-    """연결 우선, BS 회계 항등식(자산≈부채+자본, 0.5% 이내) 검증. 데이터 부족 None."""
+    """연결 우선 BS 항등식(자산≈부채+자본) + 부호 sanity. True=clean / False=오추출 의심 / None=데이터부족.
+
+    부호 sanity(구 K-GAAP 다단컬럼 오추출=음수 자산/매출 등 차단): 자산총계>0·부채총계≥0·
+    매출 음수 없음. 항등식만으론 부호가 통째로 뒤집힌 추출을 못 잡으므로 positivity 동시 요구.
+    """
+    # 음수 매출(any basis) = 오추출 → 즉시 reject.
+    for f in facts:
+        if f.canonical_account == "is.revenue" and f.amount_won is not None and f.amount_won < 0:
+            return False
     for basis in ("consolidated", "separate"):
         d = {}
         for f in facts:
@@ -52,6 +60,8 @@ def identity_ok(facts) -> bool | None:
                     "bs.total_assets", "bs.total_liabilities", "bs.total_equity"):
                 d[f.canonical_account] = f.amount_won
         if len(d) == 3 and d["bs.total_assets"]:
+            if d["bs.total_assets"] <= 0 or d["bs.total_liabilities"] < 0:
+                return False  # 부호 뒤집힘/오추출
             diff = abs(d["bs.total_assets"] - d["bs.total_liabilities"] - d["bs.total_equity"])
             return diff <= abs(d["bs.total_assets"]) * 0.005
     return None

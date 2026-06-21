@@ -385,10 +385,14 @@ def read_report_face_tracked(file_path: str | Path,
                              all_cols: bool = False) -> tuple[list[FaceLine], str | None]:
     """read_report_face 와 동일하되 **어느 track 으로 읽었는지** 함께 반환.
 
-    track = "A"(Track A xbrl_acode 가 행을 냄) / "B"(Track B 텍스트 폴백) / None(둘 다 0행).
-    promote 게이트가 fail 의 신뢰도(Track A=확정버그 / Track B=휴리스틱)를 구분하는 데 쓴다.
+    track = "A"(XBRL) / "B"(텍스트) / "C"(PDF) / None(0행).
+    promote 게이트가 fail 의 신뢰도(Track A=확정버그 / B·C=휴리스틱)를 구분하는 데 쓴다.
     all_cols=True: 비교컬럼 폴백 행 검증용으로 Track A 전 컬럼 포함(Track B 는 본래 전 셀 읽음).
     """
+    # PDF-only 보고서(.pdf source) → Track C 독립 reader. PDF 라인은 from_gapfill → 불일치 pending.
+    if str(file_path).lower().endswith(".pdf"):
+        lines = read_report_face_pdf(file_path)
+        return (lines, "C") if lines else ([], None)
     lines = read_report_face_xbrl(file_path, all_cols=all_cols)
     if lines:
         # 텍스트 보충: Track A 가 못 잡은 계정(IS face 텍스트표 등)을 Track B 라인으로 보충.
@@ -401,6 +405,62 @@ def read_report_face_tracked(file_path: str | Path,
     if lines:
         return lines, "B"
     return [], None
+
+
+def read_report_face_pdf(file_path: str | Path) -> list[FaceLine]:
+    """Track C(PDF) 보고서의 본문 재무제표 face 라인을 **독립** 재추출(감사용).
+
+    독립성: 추출기(`fin2.extract.pdf.extract_pdf_facts`)는 행에서 col0(당기 1개 셀)만 취하지만,
+    감사 reader 는 같은 본문표에서 **행 내 모든 숫자 셀(any-column)**을 후보로 읽는다 → std 값이
+    그 계정 라인의 어느 컬럼과든 일치하는지 검증(추출기의 컬럼 선택 오류를 잡는다). 숫자 파싱은
+    감사 자체 `parse_displayed` 사용. 라인은 from_gapfill=True → 불일치는 GAPFILL_UNVERIFIED
+    (pending)로 남고 **fail 로 승격 안 됨**(fail=0 보존). 통계표 식별(앵커·단위)은 추출기와 공유.
+    """
+    from fin2.extract.pdf import (
+        _read_pdf_text, _find_anchors, _iter_data_lines,
+        _region_has_anchor_labels, _adecimal_from_unit,
+    )
+    from parser.common.account_mapper import get_mapper
+
+    text = _read_pdf_text(file_path)
+    if not text:
+        return []
+    anchors = _find_anchors(text)
+    if not anchors:
+        return []
+    mapper = get_mapper()
+    lines: list[FaceLine] = []
+    seen: set[tuple] = set()
+    for i, anc in enumerate(anchors):
+        if anc.statement == "SCE":
+            continue
+        end = anchors[i + 1].start if i + 1 < len(anchors) else len(text)
+        region = text[anc.start:end]
+        if not _region_has_anchor_labels(region, anc.statement):
+            continue
+        adecimal = _adecimal_from_unit(anc.unit)
+        fs_section = anc.statement.lower()
+        for label, nums in _iter_data_lines(region):
+            mapping = mapper.map(label, fs_section=fs_section)
+            canon = mapping.account_code
+            if not canon or canon.startswith("unknown."):
+                continue
+            if _statement_of(canon) != anc.statement:
+                continue
+            if canon == "is.tax_expense" and "차감전" in label:
+                continue
+            for v in nums:                       # ★ any-column(추출기 col0 선택과 독립)
+                won = v * (10 ** (-adecimal)) if adecimal < 0 else v
+                key = (canon, anc.basis, won)
+                if key in seen:
+                    continue
+                seen.add(key)
+                lines.append(FaceLine(
+                    statement=anc.statement, basis=anc.basis, acode=label[:80],
+                    canonical=canon, label=label[:80], displayed_value=v,
+                    adecimal=adecimal, is_cumulative=True, from_gapfill=True,
+                ))
+    return lines
 
 
 # ── 감사 비교 ───────────────────────────────────────────────────────────────
@@ -458,8 +518,10 @@ def gate_status_for_row(ra: RowAudit, fail_field_tracks: dict[str, str]) -> str:
         return GATE_PASS
     if ra.status == STATUS_PENDING:
         return GATE_PENDING
-    # fail: 실패필드 중 하나라도 Track A(또는 track 미상) → 확정버그로 차단
-    if any(fail_field_tracks.get(f) != "B" for f in ra.fail_fields):
+    # fail: 실패필드 중 하나라도 Track A(또는 track 미상) → 확정버그로 차단.
+    # Track B(텍스트)·C(PDF)는 휴리스틱 → fail_b(REVIEW). (PDF 라인은 from_gapfill 이라 실제론
+    # fail 미발생·pending 이지만 방어적으로 분류.)
+    if any(fail_field_tracks.get(f) not in ("B", "C") for f in ra.fail_fields):
         return GATE_FAIL_A
     return GATE_FAIL_B
 

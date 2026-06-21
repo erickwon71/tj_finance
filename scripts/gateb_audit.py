@@ -49,15 +49,20 @@ def ensure_table():
 
 
 def file_path_map(session, rcepts):
-    """rcept_no 집합 → file_path (xml, completed)."""
+    """rcept_no 집합 → file_path. xml 우선, 없으면 pdf(Track C, PDF-only 보고서 검증)."""
     if not rcepts:
         return {}
     rows = session.execute(text("""
-        SELECT rcept_no, file_path FROM download_tasks
-        WHERE rcept_no = ANY(:rs) AND file_type='xml' AND status='completed'
+        SELECT rcept_no, file_path, file_type FROM download_tasks
+        WHERE rcept_no = ANY(:rs) AND file_type IN ('xml','pdf') AND status='completed'
           AND file_path IS NOT NULL
     """), {"rs": list(rcepts)}).fetchall()
-    return {r.rcept_no: r.file_path for r in rows}
+    fmap: dict[str, str] = {}
+    for r in rows:
+        # xml 이 이미 있으면 유지(우선). 없을 때만 pdf 채택.
+        if r.file_type == "xml" or r.rcept_no not in fmap:
+            fmap[r.rcept_no] = r.file_path
+    return fmap
 
 
 def select_corps(session, args):

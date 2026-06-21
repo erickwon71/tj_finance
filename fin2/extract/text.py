@@ -231,10 +231,23 @@ def _emit_section(
         unit = unit_of[id(table)]
         # 누적컬럼이 4번째 등 뒤쪽일 수 있으므로 금액셀을 넉넉히 확보
         n_cols = max(cum_map) + 1 if cum_map else 3
+        # ★ 귀속 섹션 컨텍스트(보험/금융 손익계산서): '당기순이익의 귀속' 다음의 지배/비지배는
+        # 당기순이익 귀속(controlling/noncontrolling_ni 정답), '총포괄이익(손익)의 귀속' 다음은
+        # 총포괄손익 귀속 → 같은 라벨('지배기업의소유주')이 max-abs 로 controlling_ni 를 총포괄값
+        # (예 한화손해보험 267B vs 정답 손익귀속 61.26B)으로 오염. 총포괄 귀속 헤더 이후는 제외.
+        comp_attr = False
         for row in extract_rows(table, multiplier=unit, num_cols=n_cols):
             if not row.account_name:
                 continue
+            nm = row.account_name
+            if "귀속" in nm:
+                if "총포괄" in nm:
+                    comp_attr = True
+                elif "순이익" in nm or "순손익" in nm:
+                    comp_attr = False
             mapping = mapper.map(row.account_name, fs_section=fs_section)
+            if comp_attr and mapping.account_code in ("is.controlling_ni", "is.noncontrolling_ni"):
+                continue  # 총포괄손익 귀속 라인 — 당기순이익 귀속(controlling/noncontrolling) 오염 방지
             if cum_map is not None:
                 pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()
                          if pos < len(row.amounts) and row.amounts[pos] is not None]

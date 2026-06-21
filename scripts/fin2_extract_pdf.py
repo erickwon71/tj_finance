@@ -49,9 +49,13 @@ def identity_ok(facts) -> bool | None:
     부호 sanity(구 K-GAAP 다단컬럼 오추출=음수 자산/매출 등 차단): 자산총계>0·부채총계≥0·
     매출 음수 없음. 항등식만으론 부호가 통째로 뒤집힌 추출을 못 잡으므로 positivity 동시 요구.
     """
-    # 음수 매출(any basis) = 오추출 → 즉시 reject.
+    # 부호 불가능 계정(any basis): 자산총계·부채총계≤0 또는 매출<0 = 오추출 → 즉시 reject.
     for f in facts:
-        if f.canonical_account == "is.revenue" and f.amount_won is not None and f.amount_won < 0:
+        if f.amount_won is None:
+            continue
+        if f.canonical_account in ("bs.total_assets", "bs.total_liabilities") and f.amount_won <= 0:
+            return False
+        if f.canonical_account == "is.revenue" and f.amount_won < 0:
             return False
     for basis in ("consolidated", "separate"):
         d = {}

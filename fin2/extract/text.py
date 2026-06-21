@@ -246,7 +246,16 @@ def _emit_section(
                     present = [a for a in row.amounts if a is not None]
                     pairs = list(enumerate(present))
             else:
-                pairs = list(enumerate(row.amounts))
+                # ★ 선두 None(주석/빈 컬럼) 제거 후 열거: 보고서 금액 컬럼은 항상 당기(col0)부터
+                # 시작하므로, 표 파서가 끼워넣은 phantom 선두 빈칸은 col_index 를 한 칸씩 밀어
+                # 당기 값을 전기 연도로 오귀속한다(보험 손익계산서 'VIII.당기순이익' [None,48.25B,…]
+                # → col1=전년 오귀속 → net_income 소실 → net_income_fill 이 총포괄 지배귀속 채택).
+                # 내부 None 은 보존(컬럼 의미 유지), 선두 None 만 절삭해 첫 실값=당기(col0).
+                amts = row.amounts
+                lead = 0
+                while lead < len(amts) and amts[lead] is None:
+                    lead += 1
+                pairs = list(enumerate(amts[lead:]))
             for col_idx, amount in pairs:
                 if amount is None:
                     continue

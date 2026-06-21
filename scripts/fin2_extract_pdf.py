@@ -34,7 +34,12 @@ WHERE p.file_type='pdf' AND p.status='completed' AND p.file_path IS NOT NULL
   AND f.fiscal_year IS NOT NULL AND f.fiscal_period IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM download_tasks x WHERE x.rcept_no=p.rcept_no
                   AND x.file_type='xml' AND x.status='completed')
-  AND NOT EXISTS (SELECT 1 FROM fact_v2 v WHERE v.rcept_no=p.rcept_no)
+  AND NOT EXISTS (SELECT 1 FROM fact_v2 v WHERE v.rcept_no=p.rcept_no
+                  AND v.source_format <> 'pdf')
+  -- ★ 진짜 갭만: 해당 (corp,fy,fp) 에 기존 std_v2 가 없을 때만 적재 → XML 파생 std 와 경쟁/회귀 방지.
+  AND NOT EXISTS (SELECT 1 FROM std_financials_v2 v2 WHERE v2.corp_code=f.corp_code
+                  AND v2.fiscal_year=f.fiscal_year AND v2.fiscal_period=f.fiscal_period
+                  AND v2.version=1 AND NOT COALESCE(v2.is_stub,false))
 """
 
 
@@ -58,6 +63,7 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=40)
     ap.add_argument("--store", action="store_true")
     ap.add_argument("--resume-file")
+    ap.add_argument("--shard", help="병렬 샤딩 I/N (rcept 정렬 후 i::N)")
     args = ap.parse_args()
 
     done = set()
@@ -66,14 +72,18 @@ def main() -> None:
 
     with get_session() as s:
         q = _SEL + (" AND f.corp_code=:c" if args.corp else "")
-        q += " ORDER BY p.rcept_no DESC"
+        q += " ORDER BY p.rcept_no"
         rows = s.execute(text(q), {"c": args.corp} if args.corp else {}).fetchall()
+    if args.shard:
+        i, n = (int(x) for x in args.shard.split("/"))
+        rows = rows[i::n]
     rows = [r for r in rows if r.rcept_no not in done]
     if not args.store and args.limit:
         rows = rows[:args.limit]
     logger.info(f"[pdf] 대상 {len(rows)} rcept (store={args.store})")
 
-    agg = {"facts": 0, "ok": 0, "bad": 0, "none": 0, "empty": 0, "err": 0, "n": 0}
+    agg = {"facts": 0, "ok": 0, "bad": 0, "none": 0, "empty": 0, "err": 0, "n": 0,
+           "stored": 0, "skip_bad": 0}
     for r in rows:
         agg["n"] += 1
         try:
@@ -91,12 +101,21 @@ def main() -> None:
         ident = identity_ok(facts)
         agg["ok" if ident else ("none" if ident is None else "bad")] += 1
         if args.store:
+            # ★ 품질 게이트: BS 회계 항등식이 깨진 rcept(구 K-GAAP 다단컬럼 오추출)은 적재 스킵
+            # → 'DB=보고서' 원칙상 잘못된 값으로 메인뷰 오염 방지. OK/n/a(BS triple 불완전)만 적재.
+            if ident is False:
+                agg["skip_bad"] += 1
+                if args.resume_file:
+                    with open(args.resume_file, "a") as fh:
+                        fh.write(r.rcept_no + "\n")
+                continue
             try:
                 with get_session() as s:
                     s.execute(text("DELETE FROM fact_v2 WHERE rcept_no=:r AND source_format='pdf'"),
                               {"r": r.rcept_no})
                     store_facts(s, facts)
                     s.commit()
+                agg["stored"] += 1
                 if args.resume_file:
                     with open(args.resume_file, "a") as fh:
                         fh.write(r.rcept_no + "\n")
@@ -113,7 +132,8 @@ def main() -> None:
 
     logger.success(f"[pdf] 완료 — rcept {agg['n']}, facts {agg['facts']:,}, "
                    f"항등식 OK {agg['ok']} / FAIL {agg['bad']} / n/a {agg['none']} / "
-                   f"빈추출 {agg['empty']} / 오류 {agg['err']}")
+                   f"빈추출 {agg['empty']} / 오류 {agg['err']} | "
+                   f"적재 {agg['stored']} / 품질스킵 {agg['skip_bad']}")
     if not args.store:
         logger.info("적재하려면 --store (per-rcept purge 후 store_facts). 이후 reconcile/standardize 필요.")
 

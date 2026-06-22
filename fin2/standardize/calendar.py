@@ -118,7 +118,13 @@ def calendarize_corp(session, corp_code: str) -> int:
         for cyear in sorted({cy for (cy, _q) in cq_map}):
             quarters = {q: cq_map.get((cyear, q)) for q in _CQ_ORDER}
             if all(quarters[q] is not None for q in _CQ_ORDER):
-                batch.append(_cy_record(corp_code, basis, cyear, quarters, derivation))
+                # derivation 은 데이터 기반: 4분기가 모두 같은 회계연도서 왔으면 native(=12월결산
+                # 단일 회계연도가 달력연도와 정확 일치), 2개 회계연도 합성이면 recomposed. (corp.
+                # fiscal_month 휴리스틱보다 정확 — 결산월 변경사의 과거연도 오플래그 방지.)
+                cy_deriv = ("native"
+                            if len({quarters[q]["fiscal_year"] for q in _CQ_ORDER}) == 1
+                            else "recomposed")
+                batch.append(_cy_record(corp_code, basis, cyear, quarters, cy_deriv))
 
         stmt = insert(StdFinancialCalendar).values(batch)
         update_cols = {c.name: stmt.excluded[c.name]

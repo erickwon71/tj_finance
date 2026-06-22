@@ -65,6 +65,10 @@ def _run_migrations() -> None:
         # 2026-06: coverage_class — 펀드/집합투자기구 등 정기보고 미대상 분리(완전성 모집단 제외, 추후 보강)
         "ALTER TABLE corporations ADD COLUMN IF NOT EXISTS coverage_class VARCHAR(20) DEFAULT 'periodic'",
 
+        # 2026-06: PRD 03 §5.2 — 계정 표준화 버킷(general/financial). 금융=이자/보험/순영업수익 구조
+        # (은행·보험·증권·금융지주). 시각화 peer 그룹·버킷별 지표 적용용. tag 는 scripts/tag_account_bucket.py.
+        "ALTER TABLE corporations ADD COLUMN IF NOT EXISTS account_bucket VARCHAR(12)",
+
         # 2026-06: PRD 01a 결산월 변경 대응 — filings 기간 정체성 컬럼(추가만, 기존 무영향)
         "ALTER TABLE filings ADD COLUMN IF NOT EXISTS period_end_date   DATE",
         "ALTER TABLE filings ADD COLUMN IF NOT EXISTS period_end_month  SMALLINT",

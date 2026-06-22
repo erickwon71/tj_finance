@@ -252,4 +252,32 @@ def facts_from_text(
                 context_parsed=False,
                 canonical_account=canon,
             ))
+    _fix_paren_formatted_bs(facts)
     return facts
+
+
+def _fix_paren_formatted_bs(facts: list[ExtractedFact]) -> None:
+    """구 DART PDF 의 **괄호 전체포맷 BS** 보정(in-place).
+
+    일부 2000년대 K-GAAP PDF 는 재무상태표 금액 컬럼 전체를 괄호로 감싼다((6,744,327)=양수
+    표기 스타일, 음수 아님) → parse_number 가 전부 음수로 읽어 자산총계<0. (BS, basis) 단위로
+    자산/부채/자본 총계가 **모두 음수**이고 회계 항등식 |자산|≈|부채|+|자본|(0.5% 이내)이 성립하면
+    그 basis 의 BS 전 계정 부호를 반전(괄호=포맷 확정). 일반 음수(자본조정 등 소수)는 함께 뒤집히나
+    헤드라인 정합 우선. 항등식 미성립(진짜 음수/오추출)은 미발동 → 품질게이트가 reject.
+    """
+    by_basis: dict[str, dict[str, int]] = {}
+    for f in facts:
+        if (f.canonical_account or "") in (
+                "bs.total_assets", "bs.total_liabilities", "bs.total_equity"):
+            by_basis.setdefault(f.basis, {})[f.canonical_account] = f.amount_won
+    flip = set()
+    for basis, d in by_basis.items():
+        if len(d) < 3:
+            continue
+        A, L, E = d["bs.total_assets"], d["bs.total_liabilities"], d["bs.total_equity"]
+        if A < 0 and L < 0 and E < 0 and abs(abs(A) - abs(L) - abs(E)) <= abs(A) * 0.005:
+            flip.add(basis)
+    for f in facts:
+        if (f.canonical_account or "").startswith("bs.") and f.basis in flip \
+                and f.amount_won is not None:
+            f.amount_won = -f.amount_won

@@ -2854,6 +2854,7 @@ def cmd_fin2_all(args):
     from fin2.reconcile import reconcile_corp
     from fin2.standardize.build import standardize_corp
     from fin2.standardize.quarterly import derive_quarters_corp
+    from fin2.standardize.calendar import calendarize_corp
 
     stage = getattr(args, "stage", None) or "all"
     do_e = stage in ("all", "extract")
@@ -2861,6 +2862,8 @@ def cmd_fin2_all(args):
     do_s = stage in ("all", "standardize")
     # 분기환산(PRD 03 §5.1): standardize 직후. as-filed 누적행에서 이산분기 파생.
     do_q = stage in ("all", "standardize", "quarterly")
+    # Layer 2 달력정규화(PRD 03 §5.3): 이산분기를 달력분기/연도로. quarterly 직후.
+    do_c = stage in ("all", "standardize", "quarterly", "calendar")
 
     with get_session() as session:
         corps = [r[0] for r in session.execute(text("""
@@ -2895,7 +2898,7 @@ def cmd_fin2_all(args):
     total = len(corps)
     logger.info(f"[fin2-all] stage={stage} 대상 기업 {total}개"
                 + (f" (skip-done {skipped_done}개 제외)" if skipped_done else ""))
-    agg = {"e_files": 0, "e_facts": 0, "r": 0, "s": 0, "q": 0, "errors": 0}
+    agg = {"e_files": 0, "e_facts": 0, "r": 0, "s": 0, "q": 0, "c": 0, "errors": 0}
     for i, corp in enumerate(corps, 1):
         try:
             with get_session() as session:
@@ -2909,6 +2912,8 @@ def cmd_fin2_all(args):
                     agg["s"] += standardize_corp(session, corp)
                 if do_q:
                     agg["q"] += derive_quarters_corp(session, corp)
+                if do_c:
+                    agg["c"] += calendarize_corp(session, corp)
                 session.commit()
         except Exception as e:
             agg["errors"] += 1
@@ -2920,7 +2925,8 @@ def cmd_fin2_all(args):
 
     logger.success(
         f"[fin2-all] 완료 — 기업 {total}개, fact {agg['e_facts']:,}행, "
-        f"statement_source {agg['r']:,}, std_v2 {agg['s']:,}, 이산분기 {agg['q']:,}, 오류 {agg['errors']}"
+        f"statement_source {agg['r']:,}, std_v2 {agg['s']:,}, 이산분기 {agg['q']:,}, "
+        f"달력행 {agg['c']:,}, 오류 {agg['errors']}"
     )
 
 
@@ -3084,9 +3090,9 @@ def main():
                         help="compare: 비교할 기업 DART 코드 콤마 구분")
     parser.add_argument(
         "--stage",
-        choices=["extract", "reconcile", "standardize", "quarterly", "all"],
+        choices=["extract", "reconcile", "standardize", "quarterly", "calendar", "all"],
         default="all",
-        help="fin2-all: 실행 단계 (extract/reconcile/standardize/quarterly/all, 기본 all)",
+        help="fin2-all: 실행 단계 (extract/reconcile/standardize/quarterly/calendar/all, 기본 all)",
     )
     parser.add_argument(
         "--skip-done",

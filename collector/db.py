@@ -165,6 +165,17 @@ def _run_migrations() -> None:
         END $$
         """,
 
+        # 2026-06: PRD 03 §5.3 Layer 2 — calendar_financials 뷰(달력 정규화, 파생·Gate B 비대상).
+        # std_financials_calendar 테이블은 create_all 로 생성됨. 뷰는 소비자 노출용(파생 플래그 포함).
+        """
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_class WHERE relname='std_financials_calendar' AND relkind='r') THEN
+                CREATE OR REPLACE VIEW calendar_financials AS
+                SELECT * FROM std_financials_calendar WHERE version = 1;
+            END IF;
+        END $$
+        """,
+
         # Phase 2: download_tasks 파싱 상태 컬럼 추가
         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parse_status  VARCHAR(15)",
         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parse_error   TEXT",

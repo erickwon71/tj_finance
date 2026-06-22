@@ -535,6 +535,85 @@ class StdFinancialV2(Base):
         return f"<StdFinancialV2 {self.corp_code} {self.fiscal_year}{self.fiscal_period} {self.statement_type}>"
 
 
+# ── 7c. Layer 2 달력 정규화 (PRD 03 §5.3) ────────────────────────────────────
+class StdFinancialCalendar(Base):
+    """
+    PRD 03 §5.3 Layer 2 — 전 기업 12월 달력기준 정규화(파생, 비교·시각화용).
+
+    Layer 1(std_financials_v2, as-filed)의 **이산분기(is_discrete)** 를 period_end 로 달력분기에
+    재배열·합산. **Gate B 비적용**(어느 단일 보고서에도 없는 계산값) — 항상 파생 플래그.
+    flow(IS/CF)=ΣCQ, stock(BS)=분기말/12-31 스냅샷(합산 금지). 결측분기→CY 미생성(추정 금지).
+    """
+    __tablename__ = "std_financials_calendar"
+
+    corp_code        = Column(String(8),    primary_key=True)
+    calendar_year    = Column(SmallInteger, primary_key=True)
+    calendar_period  = Column(String(4),    primary_key=True, comment="CQ1/CQ2/CQ3/CQ4/CY")
+    statement_type   = Column(String(12),   primary_key=True, comment="consolidated/separate(=basis)")
+    version          = Column(SmallInteger, primary_key=True, default=1)
+    period_end       = Column(Date,         nullable=True, comment="CQ=분기말, CY=12-31")
+    is_ifrs          = Column(Boolean,      nullable=True)
+
+    # 파생 추적 플래그
+    derivation       = Column(String(10),   nullable=True, comment="native(12월결산)|recomposed(비12월 합성)|partial")
+    is_complete      = Column(Boolean,      default=False, comment="CY 가 4분기 완비")
+    source_lineage   = Column(JSONB,        nullable=True, comment="구성 회계 (fy,fp) 목록")
+    data_quality     = Column(SmallInteger, default=0)
+
+    # ── 값 컬럼(std_v2 와 동일 계약) ──
+    total_assets        = Column(BigInteger, nullable=True)
+    current_assets      = Column(BigInteger, nullable=True)
+    cash                = Column(BigInteger, nullable=True)
+    receivables         = Column(BigInteger, nullable=True)
+    inventory           = Column(BigInteger, nullable=True)
+    ppe                 = Column(BigInteger, nullable=True)
+    intangibles         = Column(BigInteger, nullable=True)
+    total_liabilities   = Column(BigInteger, nullable=True)
+    current_liabilities = Column(BigInteger, nullable=True)
+    short_term_debt     = Column(BigInteger, nullable=True)
+    long_term_debt      = Column(BigInteger, nullable=True)
+    total_equity        = Column(BigInteger, nullable=True)
+    controlling_equity  = Column(BigInteger, nullable=True)
+    retained_earnings   = Column(BigInteger, nullable=True)
+    trade_payables      = Column(BigInteger, nullable=True)
+    revenue             = Column(BigInteger, nullable=True)
+    cogs                = Column(BigInteger, nullable=True)
+    gross_profit        = Column(BigInteger, nullable=True)
+    sga                 = Column(BigInteger, nullable=True)
+    rd_expense          = Column(BigInteger, nullable=True)
+    operating_income    = Column(BigInteger, nullable=True)
+    interest_expense    = Column(BigInteger, nullable=True)
+    ebt                 = Column(BigInteger, nullable=True)
+    tax_expense         = Column(BigInteger, nullable=True)
+    net_income          = Column(BigInteger, nullable=True)
+    controlling_ni      = Column(BigInteger, nullable=True)
+    cfo                 = Column(BigInteger, nullable=True)
+    cfi                 = Column(BigInteger, nullable=True)
+    cff                 = Column(BigInteger, nullable=True)
+    capex               = Column(BigInteger, nullable=True)
+    dividends_paid      = Column(BigInteger, nullable=True)
+    depreciation        = Column(BigInteger, nullable=True)
+    amortization        = Column(BigInteger, nullable=True)
+    da_total            = Column(BigInteger, nullable=True)
+    ebitda              = Column(BigInteger, nullable=True)
+    fcf                 = Column(BigInteger, nullable=True)
+    net_debt            = Column(BigInteger, nullable=True)
+    shares_out          = Column(BigInteger, nullable=True)
+
+    calculated_at       = Column(DateTime,    default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("corp_code", "calendar_year", "calendar_period",
+                         "statement_type", "version", name="uq_std_calendar"),
+        Index("ix_cal_screening", "calendar_year", "calendar_period", "statement_type"),
+        Index("ix_cal_corp", "corp_code", "calendar_year"),
+    )
+
+    def __repr__(self):
+        return (f"<StdFinancialCalendar {self.corp_code} {self.calendar_year}"
+                f"{self.calendar_period} {self.statement_type}>")
+
+
 # ── 8. 주가 데이터 ──────────────────────────────────────────────────────────
 class StockPrice(Base):
     """

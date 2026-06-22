@@ -89,6 +89,7 @@ def audit_corp(session, corp, args, agg):
     rows = session.execute(text("""
         SELECT * FROM std_financials_v2
         WHERE corp_code=:c AND version=1 AND NOT COALESCE(is_stub,false)
+          AND NOT COALESCE(is_discrete,false)
           AND fiscal_year >= :fymin AND fiscal_year <= :fymax
         ORDER BY fiscal_year DESC
     """), {"c": corp, "fymin": args.fy_min, "fymax": args.fy_max}).fetchall()

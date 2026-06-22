@@ -100,6 +100,20 @@ def _run_migrations() -> None:
         END $$
         """,
 
+        # 2026-06: PRD 03 §5.1 — std_financials_v2 PK(uq_std_v2) 에 is_discrete 추가(분기환산 이산행
+        # Q1~Q4 가 누적 as-filed 와 공존). 1회만(컬럼 없을 때).
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='std_financials_v2' AND column_name='is_discrete') THEN
+                ALTER TABLE std_financials_v2 ADD COLUMN is_discrete BOOLEAN NOT NULL DEFAULT FALSE;
+                ALTER TABLE std_financials_v2 DROP CONSTRAINT uq_std_v2;
+                ALTER TABLE std_financials_v2 ADD CONSTRAINT uq_std_v2 PRIMARY KEY
+                    (corp_code, fiscal_year, fiscal_period, statement_type, version, is_stub, is_discrete);
+            END IF;
+        END $$
+        """,
+
         # 2026-06: PRD 04 Gate B task #5 — face_audit.gate_status(promote 게이트). 뷰가 참조하므로
         # 뷰 재정의 **앞에** 추가. (create_all 이 fresh DB 엔 이미 생성 → IF NOT EXISTS 멱등.)
         "ALTER TABLE face_audit ADD COLUMN IF NOT EXISTS gate_status VARCHAR(8)",
@@ -134,6 +148,7 @@ def _run_migrations() -> None:
                   AND fa.statement_type = s.statement_type
                   AND NOT COALESCE(fa.is_stub, false)
                 WHERE s.version = 1 AND NOT COALESCE(s.is_stub, false)
+                  AND NOT COALESCE(s.is_discrete, false)
                   AND COALESCE(fa.gate_status, 'unaudited') <> 'fail_a';
             END IF;
         END $$

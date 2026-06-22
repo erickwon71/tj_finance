@@ -468,6 +468,8 @@ class StdFinancialV2(Base):
     version             = Column(SmallInteger, primary_key=True, default=1)
     is_stub             = Column(Boolean,      primary_key=True, default=False,
                                  comment="결산월 변경 전환기 stub 회계기간(PRD 01a). 기본 view 는 NOT is_stub 만 노출")
+    is_discrete         = Column(Boolean,      primary_key=True, default=False,
+                                 comment="분기 환산 이산행(PRD 03 §5.1, Q1~Q4 3개월). 누적 as-filed 와 공존. 기본 view·Gate B 는 NOT is_discrete 만")
     period_end          = Column(Date,         nullable=True)
     is_ifrs             = Column(Boolean,      nullable=True)
 
@@ -523,8 +525,8 @@ class StdFinancialV2(Base):
     calculated_at       = Column(DateTime,    default=datetime.utcnow)
 
     __table_args__ = (
-        UniqueConstraint("corp_code", "fiscal_year", "fiscal_period", "statement_type", "version", "is_stub",
-                         name="uq_std_v2"),
+        UniqueConstraint("corp_code", "fiscal_year", "fiscal_period", "statement_type", "version",
+                         "is_stub", "is_discrete", name="uq_std_v2"),
         Index("ix_stdv2_screening", "fiscal_year", "fiscal_period", "statement_type"),
         Index("ix_stdv2_corp_year", "corp_code", "fiscal_year"),
     )

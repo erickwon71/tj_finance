@@ -190,7 +190,8 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
         # (시각화도 불가). 기존에 있으면 삭제(재추출 후 orphan 정리). 비교/K-GAAP 폴백은 별도패스라 무영향.
         if all(ctx.col.get(c) is None for c in _HEADLINE_COLS):
             session.execute(text("""DELETE FROM std_financials_v2 WHERE corp_code=:c AND fiscal_year=:y
-                AND fiscal_period=:p AND statement_type=:b AND version=1 AND is_stub=:s"""),
+                AND fiscal_period=:p AND statement_type=:b AND version=1 AND is_stub=:s
+                AND NOT COALESCE(is_discrete,false)"""),
                 {"c": corp_code, "y": fy, "p": fp, "b": basis, "s": is_stub})
             continue
 

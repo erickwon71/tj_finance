@@ -64,6 +64,7 @@ def integrity_reason(file_path: str, file_type: str) -> str | None:
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--corp", help="단일 corp_code 만 검사(기업 단위 순차 검증용)")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--statements", action="store_true", help="재무제표 존재 확인(XML 파싱, 느림)")
     ap.add_argument("--recheck", action="store_true", help="이미 검사한 것도 재검")
@@ -71,22 +72,35 @@ def main():
     args = ap.parse_args()
 
     session = SessionLocal()
-    where = "status='completed'" + ("" if args.recheck else " AND gate_a_status IS NULL")
+    where = "dt.status='completed'" + ("" if args.recheck else " AND dt.gate_a_status IS NULL")
+    params: dict = {}
+    # --corp: filings 로 조인해 해당 기업 rcept 만 스코프(기업 단위 Gate A)
+    join = ""
+    if args.corp:
+        join = "JOIN filings f ON f.rcept_no = dt.rcept_no"
+        where += " AND f.corp_code = :corp"
+        params["corp"] = args.corp
     limit = f" LIMIT {args.limit}" if args.limit else ""
     rows = session.execute(text(
-        f"SELECT rcept_no, file_path, file_type FROM download_tasks "
-        f"WHERE {where} ORDER BY rcept_no{limit}"
-    )).fetchall()
-    print(f"검사 대상: {len(rows):,}")
+        f"SELECT dt.rcept_no AS rcept_no, dt.file_path AS file_path, "
+        f"dt.file_type AS file_type FROM download_tasks dt {join} "
+        f"WHERE {where} ORDER BY dt.rcept_no{limit}"
+    ), params).fetchall()
+    print(f"검사 대상: {len(rows):,}" + (f" (corp={args.corp})" if args.corp else ""))
 
     # --statements: fin2 추출 facts 보유 rcept 집합(신뢰가능 신호). ⚠ download_tasks.parsed_facts 는
     # 레거시 파서 산물로 fact_v2 와 불일치(0인데 fact_v2 有 다수) → 사용 금지. fact_v2 가 권위.
     fact_rcepts: set = set()
     if args.statements:
-        print("fact_v2 보유 rcept 로딩(DISTINCT, 수십초~수분)...")
-        fact_rcepts = {r[0] for r in session.execute(
-            text("SELECT DISTINCT rcept_no FROM fact_v2")).fetchall()}
-        print(f"  → {len(fact_rcepts):,} rcept")
+        if args.corp:
+            fact_rcepts = {r[0] for r in session.execute(
+                text("SELECT DISTINCT rcept_no FROM fact_v2 WHERE corp_code=:c"),
+                {"c": args.corp}).fetchall()}
+        else:
+            print("fact_v2 보유 rcept 로딩(DISTINCT, 수십초~수분)...")
+            fact_rcepts = {r[0] for r in session.execute(
+                text("SELECT DISTINCT rcept_no FROM fact_v2")).fetchall()}
+            print(f"  → {len(fact_rcepts):,} rcept")
 
     from collections import Counter
     stat = Counter()

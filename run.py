@@ -2833,6 +2833,36 @@ def cmd_standardize2(args):
     logger.success(f"[standardize2] corp={corp} 완료 — std_financials_v2 {n}레코드")
 
 
+def process_corp(session, corp, stages=("extract", "reconcile", "standardize",
+                                        "quarterly", "calendar")):
+    """
+    한 기업에 fin2 E→R→S(+분기·달력) 파이프라인 1패스 실행. 커밋은 호출자 책임.
+
+    cmd_fin2_all 의 기업 루프 본문을 추출한 공유 헬퍼.
+    scripts/verify_corp_sequential.py(기업 단위 순차 검증)도 동일 경로를 재사용한다.
+    반환: {"e_files","e_facts","r","s","q","c"} 카운트 dict.
+    """
+    from fin2.reconcile import reconcile_corp
+    from fin2.standardize.build import standardize_corp
+    from fin2.standardize.quarterly import derive_quarters_corp
+    from fin2.standardize.calendar import calendarize_corp
+
+    out = {"e_files": 0, "e_facts": 0, "r": 0, "s": 0, "q": 0, "c": 0}
+    if "extract" in stages:
+        files, _a, _b, facts = _extract2_corp(session, corp, verbose=False)
+        out["e_files"] += files
+        out["e_facts"] += facts
+    if "reconcile" in stages:
+        out["r"] += reconcile_corp(session, corp)
+    if "standardize" in stages:
+        out["s"] += standardize_corp(session, corp)
+    if "quarterly" in stages:
+        out["q"] += derive_quarters_corp(session, corp)
+    if "calendar" in stages:
+        out["c"] += calendarize_corp(session, corp)
+    return out
+
+
 def cmd_fin2_all(args):
     """
     fin2 전수 오케스트레이션: 다운로드 완료된 전 기업에 E→R→S 파이프라인 실행.
@@ -2851,10 +2881,6 @@ def cmd_fin2_all(args):
     """
     from sqlalchemy import text
     from collector.db import get_session
-    from fin2.reconcile import reconcile_corp
-    from fin2.standardize.build import standardize_corp
-    from fin2.standardize.quarterly import derive_quarters_corp
-    from fin2.standardize.calendar import calendarize_corp
 
     stage = getattr(args, "stage", None) or "all"
     do_e = stage in ("all", "extract")
@@ -2899,21 +2925,15 @@ def cmd_fin2_all(args):
     logger.info(f"[fin2-all] stage={stage} 대상 기업 {total}개"
                 + (f" (skip-done {skipped_done}개 제외)" if skipped_done else ""))
     agg = {"e_files": 0, "e_facts": 0, "r": 0, "s": 0, "q": 0, "c": 0, "errors": 0}
+    stages = tuple(s for s, on in (
+        ("extract", do_e), ("reconcile", do_r), ("standardize", do_s),
+        ("quarterly", do_q), ("calendar", do_c)) if on)
     for i, corp in enumerate(corps, 1):
         try:
             with get_session() as session:
-                if do_e:
-                    files, a, b, facts = _extract2_corp(session, corp, verbose=False)
-                    agg["e_files"] += files
-                    agg["e_facts"] += facts
-                if do_r:
-                    agg["r"] += reconcile_corp(session, corp)
-                if do_s:
-                    agg["s"] += standardize_corp(session, corp)
-                if do_q:
-                    agg["q"] += derive_quarters_corp(session, corp)
-                if do_c:
-                    agg["c"] += calendarize_corp(session, corp)
+                c = process_corp(session, corp, stages)
+                for k in ("e_files", "e_facts", "r", "s", "q", "c"):
+                    agg[k] += c[k]
                 session.commit()
         except Exception as e:
             agg["errors"] += 1

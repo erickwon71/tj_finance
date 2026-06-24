@@ -772,3 +772,45 @@ class FaceAudit(Base):
     __table_args__ = (
         Index("ix_face_audit_status", "status", "fiscal_year"),
     )
+
+
+class CorpVerifyStatus(Base):
+    """
+    기업별 순차 검증 오케스트레이터(scripts/verify_corp_sequential.py) 산출물.
+
+    grain = corp_code (기업 1행). 한 기업의 전기간(상장 이후 분기/반기/사업보고서)에 대해
+    다운로드→Gate A→fin2(E·R·S)→Gate B 를 1패스로 돌린 결과 요약이자 재개 마커.
+
+    - stage: 마지막 완주 단계(downloaded/loaded/audited). 재실행 시 audited 면 skip(--recheck 로 강제).
+    - gb_fail_a 가 0 이면 기업 PASS(보고서=DB 표시단위 정확일치), 그 외 FAIL(사유는 fail_periods).
+      실패해도 루프는 중단하지 않고 기록 후 다음 기업 진행(PRD 00 불변원칙 추적용).
+    신규 테이블 → create_all 자동 생성.
+    """
+    __tablename__ = "corp_verify_status"
+
+    corp_code      = Column(String(8), primary_key=True)
+    corp_name      = Column(String(120), nullable=True)
+    stage          = Column(String(12), nullable=True, comment="downloaded/loaded/audited")
+
+    # 다운로드/Gate A
+    n_filings      = Column(Integer, default=0, comment="공시(필링) 수")
+    n_downloaded   = Column(Integer, default=0, comment="completed download_tasks 수")
+    gate_a_pass    = Column(Integer, default=0)
+    gate_a_fail    = Column(Integer, default=0)
+
+    # 적재
+    n_std_rows     = Column(Integer, default=0, comment="std_financials_v2 적재 행수(연결+별도, 전기간)")
+
+    # Gate B(보고서↔DB) 집계 — 전 fy·fp·basis
+    gb_pass        = Column(Integer, default=0)
+    gb_fail        = Column(Integer, default=0)
+    gb_pending     = Column(Integer, default=0)
+    gb_fail_a      = Column(Integer, default=0, comment="Track A 자기보고서 값불일치(차단)")
+    fail_periods   = Column(JSONB,   nullable=True, comment="[[fy,fp,basis,gate], ...] 트리아지 진입점")
+
+    error          = Column(String(300), nullable=True, comment="기업 단위 예외 메시지(있으면)")
+    verified_at    = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_corp_verify_stage", "stage"),
+    )

@@ -624,9 +624,21 @@ class StockPrice(Base):
 
     stock_code   = Column(String(6),  primary_key=True)
     trade_date   = Column(Date,       primary_key=True)
-    close_price  = Column(Integer,    nullable=False)
-    market_cap   = Column(BigInteger, nullable=True, comment="시가총액 (원)")
-    shares_out   = Column(BigInteger, nullable=True, comment="상장주식수")
+    # OHLCV (KRW; volume = shares traded)
+    open_price   = Column(Integer,    nullable=True,  comment="시가")
+    high_price   = Column(Integer,    nullable=True,  comment="고가")
+    low_price    = Column(Integer,    nullable=True,  comment="저가")
+    close_price  = Column(Integer,    nullable=False, comment="종가")
+    volume       = Column(BigInteger, nullable=True,  comment="거래량(주)")
+    market_cap   = Column(BigInteger, nullable=True,  comment="시가총액 (원)")
+    shares_out   = Column(BigInteger, nullable=True,  comment="상장주식수")
+    # Valuation fundamentals (KRX 제공: PER/PBR/DIV = ratios, EPS/BPS/DPS = KRW/share)
+    per          = Column(Float,      nullable=True,  comment="주가수익비율")
+    pbr          = Column(Float,      nullable=True,  comment="주가순자산비율")
+    eps          = Column(BigInteger, nullable=True,  comment="주당순이익 (원)")
+    bps          = Column(BigInteger, nullable=True,  comment="주당순자산 (원)")
+    div_yield    = Column(Float,      nullable=True,  comment="배당수익률 (%)")
+    dps          = Column(BigInteger, nullable=True,  comment="주당배당금 (원)")
 
     __table_args__ = (
         UniqueConstraint("stock_code", "trade_date", name="uq_stock_prices"),

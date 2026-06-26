@@ -325,3 +325,91 @@ def sync_prices(
 
     logger.success(f"주가 수집 완료: {saved}건 저장")
     return saved
+
+
+# ---------------------------------------------------------------------------
+# Daily full-history bulk sync (OHLCV + market cap/shares + fundamentals)
+# ---------------------------------------------------------------------------
+
+def _to_int(v):
+    """pandas/numpy scalar → int or None (NaN-safe)."""
+    import math
+    try:
+        if v is None:
+            return None
+        f = float(v)
+        return None if math.isnan(f) else int(f)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pos_int(v):
+    """Positive int or None. KRX 는 거래정지일에 시/고/저를 0 으로 채움(종가=정지 기준가).
+    가격 0 은 무의미 → None 으로 둔다(거래량 0 은 사실이라 보존)."""
+    n = _to_int(v)
+    return n if (n is not None and n > 0) else None
+
+
+def _pykrx_df(fn, *args):
+    """Call a pykrx *_by_date function with one retry; return non-empty DataFrame or None."""
+    for attempt in range(2):
+        try:
+            df = fn(*args)
+            if df is not None and not df.empty:
+                return df
+            return None
+        except Exception as e:  # transient throttle / network
+            logger.debug(f"pykrx {getattr(fn, '__name__', fn)} 재시도{attempt} [{args}]: {e}")
+    return None
+
+
+def sync_corp_daily(stock_code: str, start: str, end: str) -> int:
+    """
+    한 종목의 [start, end] 일별 OHLCV(시/고/저/종/거래량)를 pykrx 로 수집해 stock_prices 에
+    멱등 upsert. 반환 = 적재(또는 갱신)된 행 수. start/end = "YYYYMMDD".
+
+    ⚠ 시총·펀더멘탈(PER/PBR/EPS/BPS/DIV/DPS)은 **수집하지 않는다**: KRX 의 market_cap/
+    fundamental 엔드포인트가 (pykrx 최신판에서도) 빈 응답으로 구조적 breakage 상태. 해당 지표는
+    후속 '재무↔주가 결합' 단계에서 검증 재무 DB(종가×주식수, controlling_ni/equity 등)로 파생한다.
+    그 컬럼들(market_cap/shares_out/per/pbr/eps/bps/div_yield/dps)은 여기서 건드리지 않아
+    기존 값(FY 스냅샷·후속 파생)을 보존한다.
+    """
+    from pykrx import stock as krx
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    ohlcv = _pykrx_df(krx.get_market_ohlcv_by_date, start, end, stock_code)
+    if ohlcv is None:
+        return 0  # 해당 구간 거래이력 없음(상장 전/폐지 등)
+
+    rows = []
+    for idx, o in ohlcv.iterrows():
+        close = _to_int(o.get("종가"))
+        if not close or close <= 0:
+            continue  # close_price 는 NOT NULL — 종가 없는 행은 스킵
+        trade_dt = idx.date() if hasattr(idx, "date") else idx
+        rows.append({
+            "code": stock_code, "dt": trade_dt,
+            "open": _pos_int(o.get("시가")), "high": _pos_int(o.get("고가")),
+            "low": _pos_int(o.get("저가")), "close": close,
+            "volume": _to_int(o.get("거래량")),
+        })
+
+    if not rows:
+        return 0
+
+    with get_session() as session:
+        session.execute(text("""
+            INSERT INTO stock_prices
+                (stock_code, trade_date, open_price, high_price, low_price, close_price, volume)
+            VALUES
+                (:code, :dt, :open, :high, :low, :close, :volume)
+            ON CONFLICT (stock_code, trade_date) DO UPDATE SET
+                open_price = EXCLUDED.open_price,
+                high_price = EXCLUDED.high_price,
+                low_price  = EXCLUDED.low_price,
+                close_price = EXCLUDED.close_price,
+                volume     = EXCLUDED.volume
+        """), rows)
+
+    return len(rows)

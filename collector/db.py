@@ -186,6 +186,19 @@ def _run_migrations() -> None:
         END $$
         """,
 
+        # 2026-06: 주가 데이터 확충 — stock_prices 에 일별 OHLCV + 펀더멘탈 컬럼(additive, nullable).
+        # create_all 이 fresh DB 엔 이미 생성 → ADD COLUMN IF NOT EXISTS 멱등.
+        "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS open_price INTEGER",
+        "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS high_price INTEGER",
+        "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS low_price  INTEGER",
+        "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS volume     BIGINT",
+        "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS per        DOUBLE PRECISION",
+        "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS pbr        DOUBLE PRECISION",
+        "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS eps        BIGINT",
+        "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS bps        BIGINT",
+        "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS div_yield  DOUBLE PRECISION",
+        "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS dps        BIGINT",
+
         # Phase 2: download_tasks 파싱 상태 컬럼 추가
         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parse_status  VARCHAR(15)",
         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parse_error   TEXT",

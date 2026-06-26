@@ -199,6 +199,49 @@ def _run_migrations() -> None:
         "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS div_yield  DOUBLE PRECISION",
         "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS dps        BIGINT",
 
+        # 2026-06: 재무↔주가 결합 — valuation_daily 뷰(밸류에이션 멀티플). 일별 stock_prices 를 as-of
+        # FY 재무(period_end ≤ trade_date 최신, consolidated 우선)에 LATERAL 조인. 공식=valuation_engine.
+        # 단일종목 조회는 인덱스(ix_sp_stock_date + 아래 ix_std_v2_corp_period)로 빠름.
+        "CREATE INDEX IF NOT EXISTS ix_std_v2_corp_period ON std_financials_v2 (corp_code, period_end)",
+        """
+        CREATE OR REPLACE VIEW valuation_daily AS
+        SELECT
+            c.corp_code, c.corp_name, sp.stock_code, sp.trade_date,
+            sp.close_price, sp.market_cap, sp.shares_out,
+            fin.fiscal_year, fin.basis,
+            CASE WHEN fin.ni > 0      THEN sp.market_cap::double precision / fin.ni END      AS per,
+            CASE WHEN fin.eq > 0      THEN sp.market_cap::double precision / fin.eq END      AS pbr,
+            CASE WHEN fin.revenue > 0 THEN sp.market_cap::double precision / fin.revenue END AS psr,
+            CASE WHEN fin.cfo > 0     THEN sp.market_cap::double precision / fin.cfo END     AS pcr,
+            (sp.market_cap + COALESCE(fin.net_debt, 0))                                      AS ev,
+            CASE WHEN fin.ebitda > 0
+                 THEN (sp.market_cap + COALESCE(fin.net_debt,0))::double precision / fin.ebitda END           AS ev_ebitda,
+            CASE WHEN fin.operating_income > 0
+                 THEN (sp.market_cap + COALESCE(fin.net_debt,0))::double precision / fin.operating_income END AS ev_ebit,
+            CASE WHEN sp.shares_out > 0 THEN fin.ni::double precision / sp.shares_out END AS eps,
+            CASE WHEN sp.shares_out > 0 THEN fin.eq::double precision / sp.shares_out END AS bps,
+            CASE WHEN sp.shares_out > 0 AND fin.dividends_paid IS NOT NULL
+                 THEN abs(fin.dividends_paid)::double precision / sp.shares_out END AS dps,
+            CASE WHEN sp.shares_out > 0 AND fin.dividends_paid IS NOT NULL AND sp.close_price > 0
+                 THEN (abs(fin.dividends_paid)::double precision / sp.shares_out) / sp.close_price END AS dividend_yield
+        FROM stock_prices sp
+        JOIN corporations c ON c.stock_code = sp.stock_code AND c.is_active
+        LEFT JOIN LATERAL (
+            SELECT f.fiscal_year, f.statement_type AS basis,
+                   COALESCE(f.controlling_ni, f.net_income)       AS ni,
+                   COALESCE(f.controlling_equity, f.total_equity) AS eq,
+                   f.revenue, f.cfo, f.ebitda, f.operating_income, f.net_debt, f.dividends_paid
+            FROM std_financials_v2 f
+            WHERE f.corp_code = c.corp_code AND f.fiscal_period = 'FY' AND f.version = 1
+              AND NOT COALESCE(f.is_discrete, false) AND NOT COALESCE(f.is_stub, false)
+              AND f.period_end <= sp.trade_date
+            ORDER BY f.period_end DESC,
+                     CASE f.statement_type WHEN 'consolidated' THEN 0 ELSE 1 END
+            LIMIT 1
+        ) fin ON true
+        WHERE sp.market_cap IS NOT NULL
+        """,
+
         # Phase 2: download_tasks 파싱 상태 컬럼 추가
         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parse_status  VARCHAR(15)",
         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS parse_error   TEXT",

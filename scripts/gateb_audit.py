@@ -26,12 +26,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 from collector.db import get_session, engine
-from collector.models import FaceAudit, Base
+from collector.models import FaceAudit, FaceLineAudit, Base
 from fin2.audit.face_audit import (
     read_report_face_tracked, audit_std_row, gate_status_for_row, STD_FIELD_CANONICAL,
 )
+from fin2.audit.line_audit import reconcile_report_lines
 
 READER_VERSION = "trackAB-v2"
+_DETAIL_CAP = 200   # JSONB 상세 라인 상한(대량 보고서 방어)
 
 # 표준필드 → statement 의 source rcept 컬럼(track 조회용)
 _FIELD_RCEPT_COL = {"bs.": "bs_rcept", "is.": "is_rcept", "cf.": "cf_rcept"}
@@ -45,7 +47,8 @@ def _field_track(field: str, db_row: dict, track_of: dict) -> str | None:
 
 
 def ensure_table():
-    Base.metadata.create_all(engine, tables=[FaceAudit.__table__], checkfirst=True)
+    Base.metadata.create_all(
+        engine, tables=[FaceAudit.__table__, FaceLineAudit.__table__], checkfirst=True)
 
 
 def file_path_map(session, rcepts):
@@ -183,6 +186,82 @@ def audit_corp(session, corp, args, agg):
         session.execute(stmt)
         session.commit()
 
+    # ── Phase B: 본문 전 계정 라인 전수 대조(Track A) → face_line_audit ───────────────
+    if getattr(args, "line_audit", True):
+        audit_lines(session, corp, rcepts, face_of, track_of, args, agg)
+
+
+def audit_lines(session, corp, rcepts, face_of, track_of, args, agg):
+    """corp 의 전 source rcept 에 대해 보고서 Track A 전 face 라인을 fact_v2 와 1:1 대조.
+
+    face 는 std-row 패스에서 이미 읽힌 face_cache 재사용(추가 XML 파싱 없음). Track A 보고서만
+    pass/fail_a, 그 외(텍스트·PDF·0라인)는 pending(본 단계 비대상).
+    """
+    if not rcepts:
+        return
+    line_agg = agg.setdefault("line", Counter())
+    gate_agg = agg.setdefault("line_gate", Counter())
+
+    # 재개: 이미 감사된 rcept skip(--recheck 면 전부 재검)
+    if not args.recheck:
+        done = {r[0] for r in session.execute(text(
+            "SELECT rcept_no FROM face_line_audit WHERE corp_code=:c"), {"c": corp})}
+    else:
+        done = set()
+    todo = [rc for rc in rcepts if rc not in done]
+    if not todo:
+        return
+
+    # fact_v2 col0 비차원 행을 rcept 별로 1회 로드
+    fact_by_rcept: dict[str, list[dict]] = {}
+    for r in session.execute(text("""
+        SELECT rcept_no, acode, basis, is_cumulative, adecimal, amount_won
+        FROM fact_v2
+        WHERE rcept_no = ANY(:rs) AND col_index = 0 AND NOT COALESCE(is_dimensional, false)
+    """), {"rs": todo}):
+        fact_by_rcept.setdefault(r.rcept_no, []).append({
+            "acode": r.acode, "basis": r.basis, "is_cumulative": r.is_cumulative,
+            "adecimal": r.adecimal, "amount_won": r.amount_won})
+
+    batch = []
+    for rc in todo:
+        face = face_of(rc)                  # 캐시 재사용(col0 라인; Track A 접두만 reconcile 내부 필터)
+        track = track_of.get(rc)
+        rla = reconcile_report_lines(rc, face, fact_by_rcept.get(rc, []))
+        # Track A 보고서만 확정 게이트. 그 외는 pending(acode 부재 → n_lines 0 일반).
+        is_a = track == "A" and rla.n_lines > 0
+        gate = rla.line_gate_status if is_a else "pending"
+        # pending(비-Track-A) 보고서는 신뢰할 face 가 없어 EXTRA 가 무의미(전 fact_v2 행이 잉여로 오집계)
+        # → Track A 일 때만 extra 기록. (Track A 는 face==fact_v2 col0 정확일치라 extra 정상 0.)
+        n_extra = rla.n_extra if is_a else 0
+        line_agg["lines"] += rla.n_lines
+        line_agg["match"] += rla.n_match
+        line_agg["value_diff"] += rla.n_value_diff if is_a else 0
+        line_agg["missing"] += rla.n_missing
+        gate_agg[gate] += 1
+        batch.append({
+            "rcept_no": rc, "corp_code": corp, "track": track,
+            "n_lines": rla.n_lines, "n_match": rla.n_match,
+            "n_value_diff": rla.n_value_diff, "n_missing": rla.n_missing,
+            "n_extra": n_extra, "line_gate_status": gate,
+            "value_diff_detail": [
+                {"acode": l.acode, "basis": l.basis, "statement": l.statement,
+                 "label": l.label, "report_won": l.report_won, "db_won": l.db_won}
+                for l in rla.value_diffs[:_DETAIL_CAP]] or None,
+            "missing_detail": [
+                {"acode": l.acode, "basis": l.basis, "statement": l.statement, "label": l.label}
+                for l in rla.missing[:_DETAIL_CAP]] or None,
+            "reader_version": READER_VERSION, "checked_at": datetime.utcnow(),
+        })
+
+    if batch and not args.no_commit:
+        stmt = insert(FaceLineAudit).values(batch)
+        upd = {c.name: stmt.excluded[c.name] for c in FaceLineAudit.__table__.columns
+               if c.name != "rcept_no"}
+        stmt = stmt.on_conflict_do_update(index_elements=["rcept_no"], set_=upd)
+        session.execute(stmt)
+        session.commit()
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -195,6 +274,9 @@ def main():
     ap.add_argument("--fy-max", type=int, default=2100)
     ap.add_argument("--recheck", action="store_true")
     ap.add_argument("--no-commit", action="store_true")
+    ap.add_argument("--no-line-audit", dest="line_audit", action="store_false",
+                    help="Phase B 라인 전수대조(face_line_audit) 비활성")
+    ap.set_defaults(line_audit=True)
     args = ap.parse_args()
 
     ensure_table()
@@ -230,6 +312,13 @@ def main():
         print(f"\n── FAIL 행 {len(agg['fail_rows'])} (상위 20) ──")
         for corp, key, gate, ff in agg["fail_rows"][:20]:
             print(f"   [{gate}] {corp} {key} → {ff}")
+
+    if args.line_audit and agg.get("line"):
+        ln = agg["line"]; lg = agg.get("line_gate", Counter())
+        print(f"\n── Phase B 라인 전수대조(Track A) ── 라인 {ln['lines']}: "
+              f"match {ln['match']} / value_diff(차단후보) {ln['value_diff']} / "
+              f"missing(완전성지표) {ln['missing']}")
+        print(f"   보고서 gate: pass {lg['pass']} / fail_a {lg['fail_a']} / pending {lg['pending']}")
 
 
 if __name__ == "__main__":

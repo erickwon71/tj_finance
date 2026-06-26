@@ -1,0 +1,134 @@
+"""
+Gate B Phase B — 보고서 본문 **전 계정 라인** 전수 대조 (PRD 04 §1·§2 원안).
+
+Phase A(`face_audit.audit_std_row`)는 std_v2 의 25개 표준 필드만 보고서 face 와 대조한다.
+Phase B 는 그 바깥의 소계·기타 계정을 포함한 **보고서 Track A(XBRL) 전 face 라인**을 추출된
+전 셀(`fact_v2`)과 acode 정확매칭으로 1:1 대조한다.
+
+정책(사용자 확정):
+  - **Track A 전수·정확대조만**: XBRL 비차원 col0 `TE[@ACODE]` 라인. acode 가 권위(ADECIMAL)라
+    won-공간 동치 비교가 정확. Track B/C(텍스트·PDF)는 acode 부재 → 본 단계 비대상.
+  - **측정 우선**: `VALUE_DIFF`(fact_v2 행 존재, won 불일치 = 실제 손상)만 차단 후보(fail_a).
+    `MISSING_IN_DB`(보고서엔 있으나 fact_v2 부재)는 완전성 지표로 기록만(차단 안 함).
+
+이 모듈은 순수 함수(DB/IO 없음) — 입력은 이미 읽은 face 라인 + fact 행. 독립성·테스트 용이.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from fin2.audit.face_audit import _XBRL_PREFIXES, _statement_of, FaceLine
+
+# 라인 불일치 사유
+REASON_VALUE_DIFF = "VALUE_DIFF"      # fact_v2 행 존재, won 불일치 — 차단 후보(추출 손상)
+REASON_MISSING = "MISSING_IN_DB"      # 보고서 face 라인이 fact_v2 에 없음 — 완전성 지표
+REASON_EXTRA = "EXTRA_IN_DB"          # fact_v2 col0 행이 보고서 face 에 없음 — 감사 reader 갭 지표
+
+
+@dataclass
+class LineAudit:
+    """한 보고서 라인(또는 잉여 fact 행)의 대조 결과."""
+    acode: str
+    basis: str | None
+    statement: str | None
+    label: str
+    report_won: int | None
+    db_won: int | None
+    match: bool
+    reason: str | None          # None=match / VALUE_DIFF / MISSING_IN_DB / EXTRA_IN_DB
+
+
+@dataclass
+class ReportLineAudit:
+    """rcept 단위 라인감사 롤업."""
+    rcept_no: str
+    n_lines: int = 0
+    n_match: int = 0
+    n_value_diff: int = 0
+    n_missing: int = 0
+    n_extra: int = 0
+    value_diffs: list[LineAudit] = field(default_factory=list)   # 차단 후보 상세
+    missing: list[LineAudit] = field(default_factory=list)       # 완전성 지표 상세
+
+    @property
+    def line_gate_status(self) -> str:
+        """value_diff>0 → fail_a(확정 손상), 그 외 → pass. (Track A 한정 호출 전제.)"""
+        return "fail_a" if self.n_value_diff else "pass"
+
+
+def won_match(a: int, b: int, adecimal: int | None, *, allow_sign: bool = False) -> bool:
+    """
+    won 동치 판정 — 표시단위 ±1 허용(발행사 자체 반올림·파생필드 라운딩). Phase A `audit_fields`
+    와 동일 규약. 라인 대조는 **리터럴 셀↔추출값**이라 부호도 같아야 정상 → 기본 부호 엄격
+    (allow_sign=True 면 부호반대도 허용; 라인감사 기본 미사용).
+    """
+    tol = 10 ** (-adecimal) if (adecimal or 0) < 0 else 1
+    if abs(a - b) <= tol:
+        return True
+    return allow_sign and abs(a + b) <= tol
+
+
+def _track_a_face(face_lines: list[FaceLine]) -> list[FaceLine]:
+    """face 라인 중 **본문(face) Track A 라인**만:
+      - acode 가 XBRL 접두(ifrs-full_/dart_) — 텍스트 보충 라인(acode=라벨) 자연 제외.
+      - basis 명시(consolidated/separate) — DART K-IFRS XBRL 은 본문 BS/IS/CF 셀에 항상
+        연결/별도 시나리오를 태깅한다. basis=None 은 **주석 컨텍스트**(세그먼트·특수관계자·
+        담보 등 다중 셀이 동일 표준태그 재사용) → 본문 아님(PRD 04 = 본문 face, 주석은 2단계).
+        coarse 키 (acode,basis,is_cumulative) 가 주석 다중셀에서 충돌해 false VALUE_DIFF 유발 →
+        본문(basis 태깅) 으로 한정해 정밀도 확보."""
+    return [ln for ln in face_lines
+            if ln.acode.startswith(_XBRL_PREFIXES) and ln.amount_won is not None
+            and ln.basis is not None]
+
+
+def reconcile_report_lines(
+    rcept_no: str,
+    face_lines: list[FaceLine],
+    fact_rows: list[dict],
+) -> ReportLineAudit:
+    """
+    한 보고서의 Track A 전 face 라인을 fact_v2 col0 비차원 행과 1:1 대조.
+
+    face_lines : `read_report_face_xbrl(fp)` 결과(col0·비차원). 내부에서 Track A 접두만 필터.
+    fact_rows  : `fact_v2` WHERE rcept_no=? AND col_index=0 AND NOT is_dimensional 의 행.
+                 각 행은 {acode, basis, is_cumulative, adecimal, amount_won} 키를 가진 dict.
+
+    매칭 키 = (acode, basis, is_cumulative). 보고서/추출 양쪽 동일 XBRL 셀에서 도출되므로 정확.
+    """
+    out = ReportLineAudit(rcept_no=rcept_no)
+
+    # fact 인덱스: (acode, basis, is_cumulative) → 행. col0 비차원은 키당 1행(uq 보장).
+    # basis=None(주석 컨텍스트) 행은 본문 대조 대상 아님 → 제외(face 측 _track_a_face 와 대칭,
+    # extra 오집계 방지).
+    fact_idx: dict[tuple, dict] = {}
+    for r in fact_rows:
+        if r.get("amount_won") is None or r.get("basis") is None:
+            continue
+        key = (r["acode"], r.get("basis"), bool(r.get("is_cumulative")))
+        fact_idx.setdefault(key, r)
+
+    face_keys: set[tuple] = set()   # face 에 등장한 전 키(match·value_diff 무관) → extra 판정용
+    for ln in _track_a_face(face_lines):
+        out.n_lines += 1
+        key = (ln.acode, ln.basis, bool(ln.is_cumulative))
+        face_keys.add(key)
+        fr = fact_idx.get(key)
+        stmt = ln.statement or _statement_of(ln.canonical)
+        if fr is None:
+            out.n_missing += 1
+            out.missing.append(LineAudit(
+                ln.acode, ln.basis, stmt, ln.label,
+                ln.amount_won, None, False, REASON_MISSING))
+            continue
+        db_won = fr["amount_won"]
+        if won_match(ln.amount_won, db_won, ln.adecimal):
+            out.n_match += 1
+        else:
+            out.n_value_diff += 1
+            out.value_diffs.append(LineAudit(
+                ln.acode, ln.basis, stmt, ln.label,
+                ln.amount_won, db_won, False, REASON_VALUE_DIFF))
+
+    # 역방향: fact col0 행 중 보고서 face 에 아예 없던 키 → EXTRA(감사 reader 커버 갭, 지표).
+    out.n_extra = sum(1 for key in fact_idx if key not in face_keys)
+    return out

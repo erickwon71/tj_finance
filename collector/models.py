@@ -774,6 +774,43 @@ class FaceAudit(Base):
     )
 
 
+class FaceLineAudit(Base):
+    """
+    PRD 04 Phase B 산출물: 한 보고서(rcept_no)의 **본문 Track A 전 face 라인**을 추출된 전 셀
+    (fact_v2 col0·비차원)과 acode 정확매칭으로 1:1 대조한 결과(롤업).
+
+    grain = rcept_no(보고서 1행, fact_v2 키와 일치).
+    - line_gate_status: pass(n_value_diff=0) / fail_a(n_value_diff>0, 추출 손상 차단 후보) /
+      pending(Track≠A·0라인 → 본 단계 비대상).
+    - value_diff_detail: 차단 후보 라인 상세(추출버그 vs 감사reader 트리아지).
+    - missing_detail: 보고서엔 있으나 fact_v2 부재(완전성 지표, 측정 우선이라 비차단).
+    측정 우선 정책상 promote 뷰(standard_financials)는 본 표를 아직 참조하지 않는다(규모 측정 후 결정).
+    신규 테이블 → create_all 자동 생성.
+    """
+    __tablename__ = "face_line_audit"
+
+    rcept_no        = Column(String(14), primary_key=True)
+    corp_code       = Column(String(8),  nullable=False, index=True)
+    track           = Column(String(2),  nullable=True, comment="A(이번 범위)/B/C")
+
+    n_lines         = Column(Integer, default=0, comment="대조한 Track A face 라인 수")
+    n_match         = Column(Integer, default=0)
+    n_value_diff    = Column(Integer, default=0, comment="fact_v2 존재·won 불일치(차단 후보)")
+    n_missing       = Column(Integer, default=0, comment="보고서엔 있고 fact_v2 부재(완전성 지표)")
+    n_extra         = Column(Integer, default=0, comment="fact_v2 col0 행이 face 부재(감사 reader 갭)")
+    line_gate_status = Column(String(8), nullable=True, comment="pass/fail_a/pending")
+
+    value_diff_detail = Column(JSONB, nullable=True,
+                               comment="[{acode,basis,statement,label,report_won,db_won}]")
+    missing_detail    = Column(JSONB, nullable=True, comment="동(완전성 지표)")
+    reader_version    = Column(String(20), nullable=True)
+    checked_at        = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_face_line_audit_gate", "line_gate_status"),
+    )
+
+
 class CorpVerifyStatus(Base):
     """
     기업별 순차 검증 오케스트레이터(scripts/verify_corp_sequential.py) 산출물.
@@ -807,6 +844,11 @@ class CorpVerifyStatus(Base):
     gb_pending     = Column(Integer, default=0)
     gb_fail_a      = Column(Integer, default=0, comment="Track A 자기보고서 값불일치(차단)")
     fail_periods   = Column(JSONB,   nullable=True, comment="[[fy,fp,basis,gate], ...] 트리아지 진입점")
+
+    # Phase B(라인 전수 대조) 집계 — face_line_audit 롤업(전 source rcept)
+    line_total      = Column(Integer, default=0, comment="대조한 Track A 라인 총수")
+    line_value_diff = Column(Integer, default=0, comment="라인 값불일치(차단 후보)")
+    line_missing    = Column(Integer, default=0, comment="보고서 라인 fact_v2 부재(완전성 지표)")
 
     error          = Column(String(300), nullable=True, comment="기업 단위 예외 메시지(있으면)")
     verified_at    = Column(DateTime, default=datetime.utcnow)

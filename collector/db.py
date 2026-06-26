@@ -122,6 +122,12 @@ def _run_migrations() -> None:
         # 뷰 재정의 **앞에** 추가. (create_all 이 fresh DB 엔 이미 생성 → IF NOT EXISTS 멱등.)
         "ALTER TABLE face_audit ADD COLUMN IF NOT EXISTS gate_status VARCHAR(8)",
 
+        # 2026-06: PRD 04 Phase B — corp_verify_status 에 라인 전수대조 롤업 컬럼(기존 테이블 보강).
+        # face_line_audit 테이블 자체는 create_all 이 생성. 측정 우선 — promote 뷰는 미참조.
+        "ALTER TABLE corp_verify_status ADD COLUMN IF NOT EXISTS line_total INTEGER DEFAULT 0",
+        "ALTER TABLE corp_verify_status ADD COLUMN IF NOT EXISTS line_value_diff INTEGER DEFAULT 0",
+        "ALTER TABLE corp_verify_status ADD COLUMN IF NOT EXISTS line_missing INTEGER DEFAULT 0",
+
         # 2026-06: PRD 01a + 04 — standard_financials view: stub 제외(정상연도만) + Gate B promote 게이트.
         # face_audit LEFT JOIN 으로 gate_b_status 파생(std_v2 컬럼 미저장 → 재표준화가 감사결과 리셋 안 함).
         # 메인뷰는 **fail_a(Track A 확정버그)만 차단**, 나머지(pass·fail_b·pending·미감사)는 노출.

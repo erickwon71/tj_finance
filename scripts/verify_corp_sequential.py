@@ -38,14 +38,20 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 
 from collector.db import get_session, engine
-from collector.models import Base, CorpVerifyStatus, FaceAudit
+from collector.models import Base, CorpVerifyStatus, FaceAudit, FaceLineAudit
 from scripts.validate_downloads import integrity_reason
 from scripts import gateb_audit
 
 
 def ensure_tables():
     Base.metadata.create_all(
-        engine, tables=[CorpVerifyStatus.__table__, FaceAudit.__table__], checkfirst=True)
+        engine, tables=[CorpVerifyStatus.__table__, FaceAudit.__table__,
+                        FaceLineAudit.__table__], checkfirst=True)
+    # 기존 corp_verify_status 테이블에 Phase B 롤업 컬럼 보강(create_all 은 컬럼 추가 안 함). 멱등.
+    with engine.begin() as conn:
+        for col in ("line_total", "line_value_diff", "line_missing"):
+            conn.execute(text(
+                f"ALTER TABLE corp_verify_status ADD COLUMN IF NOT EXISTS {col} INTEGER DEFAULT 0"))
 
 
 def select_corps(session, args):
@@ -118,6 +124,13 @@ def rollup_corp(session, corp, corp_name, stage, error=None):
         WHERE corp_code=:c AND status='fail' ORDER BY fiscal_year DESC, fiscal_period LIMIT 200
     """), {"c": corp}).fetchall()]
 
+    # Phase B 라인 전수대조 롤업(face_line_audit, 전 source rcept)
+    la = session.execute(text("""
+        SELECT COALESCE(sum(n_lines),0) tot, COALESCE(sum(n_value_diff),0) vd,
+               COALESCE(sum(n_missing),0) miss
+        FROM face_line_audit WHERE corp_code=:c
+    """), {"c": corp}).one()
+
     vals = {
         "corp_code": corp, "corp_name": corp_name, "stage": stage,
         "n_filings": nf, "n_downloaded": nd,
@@ -126,6 +139,7 @@ def rollup_corp(session, corp, corp_name, stage, error=None):
         "gb_pass": gb.get("pass", 0), "gb_fail": gb.get("fail", 0),
         "gb_pending": gb.get("pending", 0), "gb_fail_a": gb_fail_a,
         "fail_periods": fail_periods or None, "error": error,
+        "line_total": la.tot, "line_value_diff": la.vd, "line_missing": la.miss,
         "verified_at": datetime.utcnow(),
     }
     stmt = insert(CorpVerifyStatus).values(vals)
@@ -154,7 +168,8 @@ def verify_corp(corp, corp_name, args):
     # 5) Gate B (audit_corp 가 내부 커밋)
     gb_args = SimpleNamespace(
         corp=corp, corp_file=None, corps=None, sample=None, seed=42,
-        fy_min=args.fy_min, fy_max=2100, recheck=args.recheck, no_commit=False)
+        fy_min=args.fy_min, fy_max=2100, recheck=args.recheck, no_commit=False,
+        line_audit=True)
     gb_agg = {"status": Counter(), "gate": Counter(),
               "fld_pass": 0, "fld_fail": 0, "fail_rows": [], "errors": 0}
     with get_session() as s:
@@ -213,6 +228,14 @@ def main():
                 pass
 
     print(f"\n── 완료: PASS {tot['pass']} / FAIL {tot['fail']} / ERR {tot['err']} ──")
+    with get_session() as s:
+        lb = s.execute(text("""
+            SELECT COALESCE(sum(line_total),0) tot, COALESCE(sum(line_value_diff),0) vd,
+                   COALESCE(sum(line_missing),0) miss FROM corp_verify_status
+            WHERE corp_code = ANY(:cs)
+        """), {"cs": todo}).one()
+    print(f"   Phase B 라인: {lb.tot} 대조 / value_diff(차단후보) {lb.vd} / "
+          f"missing(완전성지표) {lb.miss}")
 
 
 if __name__ == "__main__":

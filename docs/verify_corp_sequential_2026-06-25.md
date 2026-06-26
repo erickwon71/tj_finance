@@ -79,11 +79,60 @@ FROM corp_verify_status;
 -- 실패 트리아지: corp_verify_status.fail_periods / face_audit.fail_detail
 ```
 
+## 진행 경과 (2026-06-25 후속)
+
+### ✅ 엣지 4사 해소
+- 펀드/리츠 3사(맥쿼리인프라·맵스리얼티·KB발해인프라) → 이미 `coverage_class='non_periodic'`
+  (`scripts/tag_coverage_class.py` 큐레이션). 추가 작업 없음.
+- 코스모로보틱스(01802928, 실 KOSDAQ 보통주) → `--skip-download` 없이 재실행, 2026Q1 1건 다운로드
+  →추출→Gate B **PASS**(std 4 / GateB pass 2 fail 0).
+
+### ✅ Phase B 구현 완료 — 본문 전 계정 라인 전수 대조(Track A, 측정 우선)
+정책(사용자 확정): **Track A 전수·정확대조만**, **측정 우선**(VALUE_DIFF만 차단 후보, MISSING_IN_DB
+는 완전성 지표·비차단). promote 뷰는 미변경(규모 측정 후 결정).
+
+신규/변경:
+- **신규** `fin2/audit/line_audit.py` — `won_match`(표시단위 ±1 허용) + `reconcile_report_lines`
+  (보고서 Track A face 전 라인 ↔ `fact_v2` col0 비차원, `(acode,basis,is_cumulative)` 정확매칭).
+  사유 VALUE_DIFF/MISSING_IN_DB/EXTRA_IN_DB. 순수함수.
+- **신규** `collector/models.py::FaceLineAudit` — 테이블 `face_line_audit`(rcept 그레인, 롤업+JSONB
+  상세). `corp_verify_status` 에 `line_total/line_value_diff/line_missing` 추가. db.py 멱등 ALTER.
+- **변경** `scripts/gateb_audit.py::audit_corp` — 같은 `face_cache` 재사용 라인감사(`audit_lines`),
+  `--no-line-audit` 토글. 비-Track-A(pending) 보고서는 n_extra/value_diff 미집계(face 부재).
+- **변경** `scripts/verify_corp_sequential.py` — ensure_tables/rollup/요약 확장, gb_args.line_audit.
+- **신규** `fin2/tests/test_line_audit.py` — 7 테스트 PASS(face_audit 20 무회귀).
+
+**전수 결과(2026-06-26, 8-way 샤딩)**: 122,683 보고서 / **3,334,396 본문 Track A 라인** 대조 →
+**value_diff 0 / extra 0 / fail_a 0**(보고서↔DB 표시단위 100% 일치, PRD 04 §1 목표 충족).
+missing 2,474 = 서술형 XBRL 개념(InformationAboutMajorCustomers 등 재무 face 아님)으로 감사 reader
+과수집 잡음·비차단. gate: pass 14,836 보고서(Track A) / pending 107,847(텍스트·PDF·구 K-GAAP).
+※ basis 필터 수정 후 **라인감사 전용 전수 재실행**(`gateb_audit --corp-file 8샤드 --recheck`, 재추출
+없음)으로 전 보고서 카운트 일관화 완료 + `corp_verify_status.line_*` 롤업 갱신.
+
+⚠ 1차 전수에서 value_diff 94건이 잡혔으나 **트리아지=전부 false positive**(DB 손상 아님):
+전부 `basis=NULL`(미태깅) 셀 — 세그먼트·특수관계자·담보 등 **주석 표가 동일 표준 XBRL 태그
+(Revenue·ProfitLoss·Borrowings…) 재사용**, coarse 매칭키 `(acode,basis,is_cumulative)` 가 주석
+다중셀에서 충돌(비율 759×·5×·0.09× 제각각=단위오류 아님). Phase A 가 같은 기업 0 fail_a 로 소비값
+정확성 이미 입증. **수정**: `line_audit._track_a_face` 가 본문(연결/별도 태깅) 셀만 대조하고
+basis=None(주석=PRD 2단계 범위밖)은 제외 → 재감사 value_diff **94→0**. (테스트
+`test_basis_none_notes_cells_excluded` 추가, 8 PASS.)
+
+운영(전수, 사용자 실행 — [[feedback-long-running-commands]]):
+```bash
+# 라인감사 포함 전수(재추출 포함, 8-way 샤딩). face_line_audit 자동 적재.
+for a in 0 1 2 3 4 5 6 7; do
+  python scripts/verify_corp_sequential.py --shard $a/8 --skip-download --recheck > /tmp/vs_$a.log 2>&1 &
+done
+# 라인감사만(재추출 없이) 빠르게: python scripts/gateb_audit.py --corps LO:HI --recheck
+```
+조회: `SELECT sum(n_value_diff) vd, sum(n_missing) miss FROM face_line_audit;`
+차단후보 트리아지: `WHERE n_value_diff>0 ORDER BY n_value_diff DESC` → value_diff_detail.
+
 ## 다음 단계
-1. **엣지 4사 해소** — `--skip-download` 없이 재실행(펀드/리츠는 유니버스 정책 확인).
-2. **Phase B — 본문 전 계정 라인 전수 비교**(PRD 04 원안): `fin2/audit/face_audit.py`
-   `read_report_face_*` 를 std 40필드 매핑이 아니라 보고서 BS/IS/CF **전 라인**을
-   DB와 대조하도록 확장. Phase A 전수 통과 후 착수.
+1. **Phase B 전수 실행**(사용자) — 8-way 샤딩. value_diff(차단후보) 규모 측정 → 0 이 아니면
+   추출버그(PRD03 회부) vs 감사 reader 갭 트리아지. 0 이면 promote 뷰에 line_gate 연결 검토.
+2. **(선택) MISSING 잡음 축소** — 감사 reader 가 서술형/text-type XBRL 개념을 face 라인에서 제외
+   (수치 개념만). 측정 정밀도 개선용, 비차단이라 우선순위 낮음.
 3. (원래 목표) 주가 연동 재무 시각화(Layer 2 calendarization → stock_prices 연동).
 
 관련: [[project-status]] [[prd-role-separation]] [[feedback-long-running-commands]]

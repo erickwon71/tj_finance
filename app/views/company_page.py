@@ -13,6 +13,7 @@ import streamlit as st
 from app import cache, state
 from app.components.export import download_button
 from app.format import fmt_amount, fmt_corp_identity, fmt_ratio
+from app.views import metric_panel
 from app.views.chart_panel import render_price_chart, render_price_financial_combined
 
 EOK = 100_000_000
@@ -151,8 +152,8 @@ def render() -> None:
             st.caption("※ DB 값은 공시 보고서와 100% 일치(Gate B 검증). 이 경고는 소스 보고서 자체의 "
                        "비정상 가능성(정정 전 오기재·이상 수치)을 알리는 표시용 신호입니다.")
 
-    tab_fin, tab_val, tab_px, tab_combo = st.tabs(
-        ["📑 재무제표", "💰 밸류에이션", "📈 주가", "📊 주가·재무 결합"])
+    tab_fin, tab_metric, tab_val, tab_px, tab_combo = st.tabs(
+        ["📑 재무제표", "📊 지표", "💰 밸류에이션", "📈 주가", "📊 주가·재무 결합"])
 
     labels = _period_labels(series, grain)
 
@@ -171,6 +172,10 @@ def render() -> None:
         download_button(
             combined, filename=f"{meta['corp_name']}_{corp_code}_{suffix}_won.csv",
             label="⬇ 재무제표 CSV (원 단위)", key="fin_csv")
+
+    # ── 지표 (레지스트리 멀티셀렉트 + 그래프/표) ──
+    with tab_metric:
+        metric_panel.render(series, grain, meta["corp_name"], corp_code)
 
     # ── 밸류에이션 (항상 최신 FY 기준) ──
     with tab_val:

@@ -46,20 +46,23 @@
 
 ### Plan B — 이상치 가드 UI ☑ 완료 (2026-06-27)
 - ☑ `app/compute/checks.py:financial_anomalies(series, grain)` — ① 영업이익률 >100%(불가)·>60%(의심)
-  ② 매출/영업이익/순이익이 인접기간 중앙값 대비 4.0배↑ 급증. 데이터 미수정, 표시용 경고만 생성.
+  ② 급증: **전년 동기(YoY) 4배↑ 그리고 직전 분기(QoQ) 1.8배↑ 동시**(분기)/전년 4배↑(연간). 메시지에
+  전년 동기·직전 분기 값과 배수 병기. 데이터 미수정, 표시용 경고만.
 - ☑ company_page 상단 '⚠ 이상치 점검' expander(DB=보고서 일치 안내 포함)
-- **검증**: ☑ 삼성 2026 CQ1 OP 8.5배·NI 5.7배 포착 · ☑ 삼성SDS 0건(오탐 없음) · ☑ 연간 0건 · ☑ AppTest annual 무경고/quarter 2건 · ☑ 실서버 0 에러
+- **검증**: ☑ 삼성 2026 CQ1 OP(전년 8.6배·직전 2.9배)·NI 포착 2건 · ☑ SK 2026 CQ1 3건 · ☑ 삼성SDS·현대차 0건
+  · ☑ 경기민감 회복 오탐 배제(삼성 2024 CQ2 YoY 6배지만 QoQ 1.5배→미플래그, SK 적자기저 회복 미플래그)
+  · ☑ 연간 0건 · ☑ AppTest quarter 2건 · ☑ 실서버 0 에러
 - **검증**: ☑ AppTest annual·quarter 무예외(4 df·4 탭) · ☑ 분기 컬럼 '2026 CQ1'… 정상 · ☑ 분기 CSV raw 정수 · ☑ 결합차트 metric·log 토글 동작 · ☑ 실서버 health=ok·deprecation 0
 - ⚠ **데이터 주의(UI 무관)**: 일부 최신 분기(예: 삼성 2026 CQ1=133.9조)가 비정상 과대 — Layer 2 이산환산의 최신보고서 처리 이슈로 추정. UI 가 아닌 `calendar_financials` 데이터 레이어 후속 점검 대상.
 
-## Phase 2 — 레지스트리 + 차트패널
-- ☐ `app/registry/units.py`(UnitType·Category·Grain)
-- ☐ `app/registry/metrics.py`(MetricSpec + METRIC_REGISTRY)
-- ☐ `app/compute/resolver.py:build_metric_frame`(기간당 엔진 1회 계산)
-- ☐ `app/data/series.py:load_quarter_series`(calendar discrete)
-- ☐ 지표 멀티셀렉트(카테고리 그룹) + 그래프/표 토글 + 분기/연간 + 연결/별도
-- ☐ 단위별 이중축(억원/%/x)
-- **검증**: ☐ ROE/op_margin/매출 시계열 == 엔진 출력 · ☐ 분기 CQ1–4 합 ≈ FY
+## Phase 2 — 레지스트리 + 차트패널 ☑ 완료 (2026-06-27)
+- ☑ `app/registry/units.py`(UnitType·Category·Grain + display_value/format_value)
+- ☑ `app/registry/metrics.py`(MetricSpec + METRIC_REGISTRY 49종: 재무24·수익성9·성장성4·안정성12) + metrics_by_category
+- ☑ `app/compute/resolver.py:build_metric_frame`(기간당 compute_ratios 1회·tidy DataFrame)
+- ☑ `app/data/series.py:load_quarter_series`(calendar discrete) — Phase 1.5 기구현
+- ☑ `app/views/metric_panel.py` 카테고리 멀티셀렉트 + 표/그래프 토글 + CSV(원시값) → company_page '📊 지표' 탭
+- ☑ `chart_panel.render_metric_chart` 단위별 이중축(금액 억원=좌축 / 비율·배수·일수=우축)
+- **검증**: ☑ revenue/op_margin(13.1%==오라클)/ROE 리졸버==엔진 정확일치 · ☑ ΣCQ2024==FY2024 revenue(ratio 1.0000) · ☑ AppTest 5탭·50옵션·표/그래프/멀티셀렉트(금액+%+x 혼합) 무예외(연간/분기) · ☑ 실서버 health=ok 0에러
 
 ## Phase 3 — 스크리너 단일패스
 - ☐ `analyzer/screener._load_screening_data` → `app/data/screen_window.py` 확장(rn 캡 제거)

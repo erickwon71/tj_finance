@@ -96,6 +96,52 @@ _EOK = 100_000_000
 _FIN_COLORS = ["#d62728", "#2ca02c", "#ff7f0e"]
 _FIN_BAR_FILL = "rgba(214,39,40,0.55)"
 
+_METRIC_COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd",
+                  "#8c564b", "#17becf", "#e377c2"]
+
+
+def render_metric_chart(frame, key: str | None = None) -> None:
+    """
+    지표 시계열 차트 — 금액(억원)은 좌축, 비율/배수/일수는 우축에 배치(이중축).
+    frame: app.compute.resolver.build_metric_frame 산출(tidy).
+    """
+    from app.registry.units import AMOUNT_UNITS, UnitType, display_value
+
+    if frame is None or frame.empty:
+        st.info("표시할 지표를 선택하세요.")
+        return
+
+    has_amount = any(u in AMOUNT_UNITS for u in frame["unit"].unique())
+    has_other = any(u not in AMOUNT_UNITS for u in frame["unit"].unique())
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    for i, (mid, g) in enumerate(frame.groupby("metric_id", sort=False)):
+        g = g.sort_values("period_end")
+        unit = g["unit"].iloc[0]
+        name = g["name"].iloc[0]
+        ys = [display_value(v, unit) for v in g["value"]]
+        on_right = unit not in AMOUNT_UNITS
+        suffix = {UnitType.AMOUNT_EOK: "억", UnitType.PCT: "%",
+                  UnitType.MULTIPLE_X: "x", UnitType.DAYS: "일"}.get(unit, "")
+        fig.add_trace(go.Scatter(
+            x=g["period_end"], y=ys, name=f"{name}({unit.value})",
+            mode="lines+markers",
+            line=dict(color=_METRIC_COLORS[i % len(_METRIC_COLORS)], width=1.8),
+            marker=dict(size=6),
+            hovertemplate=f"{name}<br>%{{x|%Y-%m-%d}}<br>%{{y:,.2f}}{suffix}<extra></extra>",
+        ), secondary_y=on_right)
+
+    if has_amount:
+        fig.update_yaxes(title_text="금액(억원)", secondary_y=False)
+    if has_other:
+        fig.update_yaxes(title_text="비율(%)/배수(x)/일수", secondary_y=True, showgrid=False)
+    fig.update_layout(
+        height=480, margin=dict(l=10, r=10, t=30, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, use_container_width=True, key=key)
+
 
 def render_price_financial_combined(
     price_rows: list[dict],

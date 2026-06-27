@@ -56,6 +56,15 @@ def price_bounds(stock_code: str) -> tuple[Optional[date], Optional[date]]:
     return _series.price_date_bounds(stock_code)
 
 
+# ── 스크리너 모집단 (최신 FY 전수) ───────────────────────
+@st.cache_data(ttl=600, show_spinner="스크리닝 데이터 로드 중…")
+def screen_population(fiscal_year: Optional[int] = None) -> list[dict]:
+    """필터 없는 전체 모집단(가장 무거운 조회). 필터·정렬은 페이지에서 메모리로 적용."""
+    from app.data.screen_window import load_population
+
+    return load_population(fiscal_year)
+
+
 # ── 밸류에이션 멀티플 (최신 FY) ──────────────────────────
 @st.cache_data(ttl=600, show_spinner=False)
 def company_multiples(corp_code: str, statement_type: str) -> Optional[dict]:

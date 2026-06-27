@@ -64,11 +64,15 @@
 - ☑ `chart_panel.render_metric_chart` 단위별 이중축(금액 억원=좌축 / 비율·배수·일수=우축)
 - **검증**: ☑ revenue/op_margin(13.1%==오라클)/ROE 리졸버==엔진 정확일치 · ☑ ΣCQ2024==FY2024 revenue(ratio 1.0000) · ☑ AppTest 5탭·50옵션·표/그래프/멀티셀렉트(금액+%+x 혼합) 무예외(연간/분기) · ☑ 실서버 health=ok 0에러
 
-## Phase 3 — 스크리너 단일패스
-- ☐ `analyzer/screener._load_screening_data` → `app/data/screen_window.py` 확장(rn 캡 제거)
-- ☐ `app/views/screener_page.py` 필터 빌더(카탈로그 + `_parse_condition`/`_check`)
-- ☐ 결과표(기업명/corp_code/종목코드)
-- **검증**: ☐ 결과·정렬 == `run.py screen --roe ">15%" --per "<12"`
+## Phase 3 — 스크리너 단일패스 ☑ 완료 (2026-06-27)
+- ☑ `app/data/screen_window.py:load_population(fiscal_year)` — `screen()` 를 필터無·한도無로
+  호출해 전수 모집단 1회 로드(행 스키마 == `screen()`). rn 캡 확장(윈도우)은 Phase 4.
+- ☑ `app/cache.py:screen_population` 캐시 래퍼(ttl 600, spinner)
+- ☑ `app/views/screener_page.py` 필터 빌더(FIELDS 22종 + `_parse_condition`/`_check` 재사용) +
+  시장/정렬/방향/한도 컨트롤 + 메모리 필터(`_apply` = screen() 메모리단계와 동일) + 결과 CSV(raw 원)
+- ☑ 결과표(기업명/종목코드/corp_code/시장/FY/시총 + ROE·ROIC·PER·PBR·EV/EBITDA·영업이익률·매출성장·부채비율·F)
+- **검증**: ☑ 4 케이스 결과·정렬 == CLI `screen()` 정확일치(`scripts/verify_screener_phase3.py` ALL PASS,
+  `--roe ">15%" --per "<12"` 30건 포함) · ☑ AppTest 부팅+결과렌더 무예외(dataframe=1) · ☑ 실서버 health=ok(1s) 에러 0
 
 ## Phase 4 — 윈도우집계 + 퀀트 + 분할뷰
 - ☐ `load_screening_window(n_years ≤ 10, fiscal_year)`

@@ -63,23 +63,22 @@ class DCFResult:
 
 def _calc_beta(stock_code: str, days: int = 252) -> float:
     """
-    pykrx로 주가/KOSPI 일별 수익률 계산 → 베타 반환.
-    실패 시 _DEFAULT_BETA(1.0) 반환.
+    종목/KOSPI(KS11) 일별 수익률로 베타 계산 → 반환. 실패 시 _DEFAULT_BETA(1.0).
+
+    데이터 소스는 FinanceDataReader. (pykrx 의 지수 조회는 최신판에서 지수명 룩업이
+    깨져 KeyError 가 나므로, 이미 프로젝트 의존성인 FDR 로 종목·지수를 함께 받는다.)
     """
     try:
         import numpy as np
-        from pykrx import stock as krx
+        import FinanceDataReader as fdr
         from datetime import date, timedelta
 
         end   = date.today()
         start = end - timedelta(days=days + 30)  # 여유 포함
-        s = start.strftime("%Y%m%d")
-        e = end.strftime("%Y%m%d")
 
-        # 종목 일별 종가
-        df_stock = krx.get_market_ohlcv(s, e, stock_code)["종가"]
-        # KOSPI 일별 종가 (인덱스코드 1001)
-        df_kospi = krx.get_index_ohlcv_by_date(s, e, "1001")["종가"]
+        # 종목 일별 종가 + KOSPI 지수 종가
+        df_stock = fdr.DataReader(stock_code, start, end)["Close"]
+        df_kospi = fdr.DataReader("KS11", start, end)["Close"]
 
         # 공통 날짜로 정렬
         common = df_stock.index.intersection(df_kospi.index)

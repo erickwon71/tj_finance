@@ -1,0 +1,86 @@
+"""
+DB 로더의 st.cache_data 래퍼.
+
+Streamlit 전체 재실행 모델에서 매 상호작용마다 DB 를 다시 치지 않도록, 모든 조회는
+이 모듈을 경유해 캐시한다. 데이터 레이어(app/data/*)는 UI 비의존으로 유지하고, 캐싱
+정책(키·ttl)은 여기 한곳에서 관리한다.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict
+from datetime import date
+from typing import Optional
+
+import streamlit as st
+
+from app.data import corp as _corp
+from app.data import series as _series
+
+
+# ── 기업 ─────────────────────────────────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def search_corps(query: str, limit: int = 30) -> list[dict]:
+    return _corp.search_corps(query, limit)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def resolve_corp(corp_code: str) -> Optional[dict]:
+    return _corp.resolve_corp(corp_code)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def table_counts() -> dict:
+    return _corp.table_counts()
+
+
+# ── 재무 / 주가 시계열 ───────────────────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def annual_series(corp_code: str, statement_type: str, years: int = 10) -> tuple[list[dict], str]:
+    """연간 재무 시계열 + 실제 사용 basis (연결→별도 폴백)."""
+    return _series.load_annual_series_with_fallback(corp_code, statement_type, years)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def quarter_series(corp_code: str, statement_type: str, quarters: int = 16) -> tuple[list[dict], str]:
+    """분기 이산 재무 시계열 + 실제 사용 basis (연결→별도 폴백)."""
+    return _series.load_quarter_series_with_fallback(corp_code, statement_type, quarters)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def price_series(stock_code: str, start: Optional[date], end: Optional[date]) -> list[dict]:
+    return _series.load_price_series(stock_code, start, end)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def price_bounds(stock_code: str) -> tuple[Optional[date], Optional[date]]:
+    return _series.price_date_bounds(stock_code)
+
+
+# ── 밸류에이션 멀티플 (최신 FY) ──────────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def company_multiples(corp_code: str, statement_type: str) -> Optional[dict]:
+    """
+    최신 FY 기준 밸류에이션 멀티플. analyzer.valuation_engine.compute_multiples 재사용
+    (run.py analyze 와 동일). EPS/BPS 는 재무·주식수로 파생.
+    """
+    from analyzer.valuation_engine import compute_multiples
+
+    rows, used = _series.load_annual_series_with_fallback(corp_code, statement_type, 2)
+    if not rows:
+        return None
+    curr = rows[0]
+    meta = _corp.resolve_corp(corp_code)
+    stock_code = meta.get("stock_code") if meta else None
+    period_end = curr.get("period_end")
+
+    mv = compute_multiples(curr, corp_code, stock_code, period_end)
+    d = asdict(mv)
+
+    ni = curr.get("controlling_ni") or curr.get("net_income")
+    eq = curr.get("controlling_equity") or curr.get("total_equity")
+    shares = mv.shares_out
+    d["eps"] = (ni / shares) if (ni and shares) else None
+    d["bps"] = (eq / shares) if (eq and shares) else None
+    d["fiscal_year"] = curr.get("fiscal_year")
+    d["used_stmt"] = used
+    return d

@@ -10,3 +10,8 @@ pykrx==1.0.51
 finance-datareader>=0.9.50
 pdfplumber>=0.11.0
 PyYAML==6.0.3
+
+# 시각화/스크리너 앱 (app/) — Streamlit + Plotly
+streamlit==1.50.0
+plotly==6.7.0
+pandas>=2.0

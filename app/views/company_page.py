@@ -152,13 +152,17 @@ def render() -> None:
             st.caption("※ DB 값은 공시 보고서와 100% 일치(Gate B 검증). 이 경고는 소스 보고서 자체의 "
                        "비정상 가능성(정정 전 오기재·이상 수치)을 알리는 표시용 신호입니다.")
 
-    tab_fin, tab_metric, tab_val, tab_px, tab_combo = st.tabs(
-        ["📑 재무제표", "📊 지표", "💰 밸류에이션", "📈 주가", "📊 주가·재무 결합"])
-
     labels = _period_labels(series, grain)
+    stock_code = meta.get("stock_code")
+    lo, hi = cache.price_bounds(stock_code) if stock_code else (None, None)
+
+    # 탭 = session_state 유지 라디오(사이드바 변경 등 재실행에도 보던 화면 유지)
+    TABS = ["📑 재무제표", "📊 지표", "💰 밸류에이션", "📈 주가", "📊 주가·재무 결합"]
+    active = st.radio("화면", TABS, horizontal=True, key="company_tab",
+                      label_visibility="collapsed")
 
     # ── 재무제표 ──
-    with tab_fin:
+    if active == TABS[0]:
         if grain == "quarter":
             st.caption("분기 = 달력분기 이산값 · IS/CF = 3개월 발생액, BS = 분기말 잔액 스냅샷")
         raw_sections = {}
@@ -174,7 +178,7 @@ def render() -> None:
             label="⬇ 재무제표 CSV (원 단위)", key="fin_csv")
 
     # ── 지표 (레지스트리 멀티셀렉트 + 그래프/표) ──
-    with tab_metric:
+    elif active == TABS[1]:
         # 지표 탭은 전체 기간 사용(표=전체 표시, 그래프=슬라이더로 기간 조절)
         if grain == "quarter":
             mseries, _ = cache.quarter_series(corp_code, requested_stmt, quarters=400)
@@ -183,7 +187,7 @@ def render() -> None:
         metric_panel.render(mseries, grain, meta["corp_name"], corp_code)
 
     # ── 밸류에이션 (항상 최신 FY 기준) ──
-    with tab_val:
+    elif active == TABS[2]:
         st.caption("연간(FY) 기준 — 분기 멀티플(TTM)은 후속 단계")
         mv = cache.company_multiples(corp_code, requested_stmt)
         if not mv or not mv.get("market_cap"):
@@ -194,9 +198,7 @@ def render() -> None:
             st.dataframe(_valuation_df(mv), width="stretch")
 
     # ── 주가 ──
-    stock_code = meta.get("stock_code")
-    lo, hi = cache.price_bounds(stock_code) if stock_code else (None, None)
-    with tab_px:
+    elif active == TABS[3]:
         if not stock_code:
             st.info("비상장 또는 종목코드 없음.")
         elif not hi:
@@ -215,7 +217,7 @@ def render() -> None:
                                log_scale=log_scale, candlestick=candle, key="px_chart")
 
     # ── 주가·재무 결합 ──
-    with tab_combo:
+    elif active == TABS[4]:
         if not stock_code or not hi:
             st.info("주가 데이터가 없어 결합 차트를 표시할 수 없습니다.")
         else:

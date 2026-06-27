@@ -88,14 +88,20 @@
   퀀트 3패스 단조축소(2259→200→100→30) · ☑ AppTest 부팅·실행·선택→우측패널 무예외(좌측 결과 유지=비파괴) ·
   ☑ 실서버 health=ok(1s) 에러 0
 
-## Phase 5 — 대가 지표 + 폴리시
-- ☐ Graham custom 지표(Graham Number·NCAV·PER×PBR·EPS 안정성)
-- ☐ Greenblatt 마법공식(Earnings Yield·Return on Capital·합산랭크)
-- ☐ Lynch(PEG) · Fisher(R&D/매출·이익률추세) custom 지표
-- ☐ Compare 페이지(comparator.compare)
-- ☐ Valuation 페이지(dcf_engine.run_dcf + dividend_engine.analyze_dividend)
-- ☐ 캐싱/성능 튜닝(주간 다운샘플·st.cache_data ttl)
-- **검증**: ☐ DCF/배당 페이지 == `run.py` 출력 · ☐ 마법공식 랭크 산식 검증
+## Phase 5 — 대가 지표 + 폴리시 ☑ 완료 (2026-06-27)
+- ☑ `app/compute/master_metrics.py:compute_master` — Graham(Graham Number·NCAV/주가·PER×PBR·EPS흑자연수) ·
+  Greenblatt(EY=EBIT/EV·ROC=EBIT/(순운전자본+순고정자산)) · Lynch(PEG) · Fisher(R&D/매출·매출총이익률변화).
+  Buffett/Piotroski 는 `buffett_engine.compute_buffett` 재사용.
+- ☑ `screen_eval`: 대가 점값 필드(MASTER_FIELDS) base frame 통합 + `add_magic_rank`(EY랭크+ROC랭크→재랭크) +
+  effective_unit/make_threshold 확장. 스크리너 필터/정렬에 EY·ROC·마법공식랭크·PEG·Graham상승여력·NCAV·R&D 추가.
+- ☑ `app/views/company_page.py` '🏆 대가지표' 탭(Buffett/Graham/Greenblatt·Lynch·Fisher 3열)
+- ☑ `app/views/compare_page.py`(comparator.compare 재사용, 항목×기업 표) + nav 등록
+- ☑ `app/views/valuation_page.py`(dcf_engine.run_dcf + dividend_engine.analyze_dividend, focus_corp) + nav 등록
+- ☑ `cache.py`: compare_companies·dcf_cached·dividend_cached 캐시 래퍼
+- **검증**: ☑ `scripts/verify_screener_phase5.py` — 삼성 Graham Number·EY·ROC 수기 대조 일치 ·
+  마법공식 종합랭크 산식 일치(유효 2062사, 1위 검출) · ☑ AppTest 대가탭·밸류에이션(metric8·DCF표·배당표)·비교 무예외 ·
+  ☑ 실서버 health=ok(1s) 4페이지 에러 0
+  - ※ DCF 베타계산은 `pkg_resources` 부재로 β=1.0 폴백(엔진 기존 동작, `run.py dcf` 동일)
 
 ---
 

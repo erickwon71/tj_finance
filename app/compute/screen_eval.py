@@ -37,6 +37,21 @@ MULTIPLE_FIELDS: list[tuple[str, str]] = [
 ]
 MULTIPLE_IDS = [k for k, _ in MULTIPLE_FIELDS]
 
+# 대가(Master) 점값 필드 — 최신 FY 기준(윈도우 집계 비대상)
+MASTER_FIELDS: list[tuple[str, str]] = [
+    ("earnings_yield", "이익수익률(EY)"),
+    ("return_on_capital", "투하자본수익률(ROC)"),
+    ("magic_rank", "마법공식 랭크"),
+    ("peg", "PEG"),
+    ("graham_upside", "Graham 상승여력"),
+    ("ncav_to_price", "NCAV/주가"),
+    ("rd_to_revenue", "R&D/매출"),
+]
+MASTER_IDS = [k for k, _ in MASTER_FIELDS]
+_MASTER_PCT = {"earnings_yield", "return_on_capital", "graham_upside", "rd_to_revenue"}
+_MASTER_X = {"peg", "ncav_to_price"}
+MAGIC_RANK_ID = "magic_rank"
+
 # 규모 필드(조원)
 MARKET_CAP_ID = "market_cap_jo"
 
@@ -139,8 +154,44 @@ def build_base_frame(window: dict[str, dict], method: str, n_years: int) -> pd.D
         for mid, vals in series.items():
             rec[mid] = aggregate(vals, method, n_years)
         rec.update(_latest_multiples(rows, c.get("market_cap")))
+        rec.update(_latest_master(rows, c.get("market_cap"), c.get("close_price")))
         recs.append(rec)
-    return pd.DataFrame(recs)
+    df = pd.DataFrame(recs)
+    return add_magic_rank(df)
+
+
+def _latest_master(rows: list[dict], market_cap, price) -> dict:
+    """최신 FY 기준 대가 점값(Graham/Greenblatt/Lynch/Fisher)."""
+    from app.compute.master_metrics import compute_master
+
+    m = compute_master(rows, market_cap, price)
+    return {
+        "earnings_yield": m.earnings_yield,
+        "return_on_capital": m.return_on_capital,
+        "peg": m.peg,
+        "graham_upside": m.graham_upside,
+        "ncav_to_price": m.ncav_to_price,
+        "rd_to_revenue": m.rd_to_revenue,
+    }
+
+
+def add_magic_rank(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Greenblatt 마법공식 종합 랭크 = rank(EY 내림) + rank(ROC 내림).
+    값이 작을수록(=둘 다 상위) 우수. 두 지표 모두 있는 기업만 부여, 나머지 NaN.
+    """
+    if df.empty or "earnings_yield" not in df.columns or "return_on_capital" not in df.columns:
+        df[MAGIC_RANK_ID] = pd.NA
+        return df
+    ey_rank = df["earnings_yield"].rank(ascending=False, method="min")
+    roc_rank = df["return_on_capital"].rank(ascending=False, method="min")
+    combined = ey_rank + roc_rank
+    # 두 지표 모두 존재할 때만 유효
+    valid = df["earnings_yield"].notna() & df["return_on_capital"].notna()
+    df[MAGIC_RANK_ID] = combined.where(valid)
+    # 종합 랭크를 1..N 정수 순위로 재산출(작을수록 우수)
+    df[MAGIC_RANK_ID] = df[MAGIC_RANK_ID].rank(ascending=True, method="min")
+    return df
 
 
 # ── 퀀트 다단계 ────────────────────────────────────────────────
@@ -176,9 +227,15 @@ def run_quant_passes(base: pd.DataFrame, passes: list[dict]) -> tuple[pd.DataFra
 
 # ── 필드 단위/임계 헬퍼 ────────────────────────────────────────
 def effective_unit(metric_id: str, method: str) -> UnitType:
-    """집계 결과의 표시 단위. CAGR/YoY 는 성장률(%)."""
+    """집계 결과의 표시 단위. CAGR/YoY 는 성장률(%). 멀티플·대가는 점값(고정 단위)."""
     if metric_id in MULTIPLE_IDS:
         return UnitType.MULTIPLE_X
+    if metric_id in _MASTER_PCT:
+        return UnitType.PCT
+    if metric_id in _MASTER_X:
+        return UnitType.MULTIPLE_X
+    if metric_id == MAGIC_RANK_ID:
+        return UnitType.MULTIPLE_X  # 정수 랭크(별도 포맷)
     if metric_id == MARKET_CAP_ID:
         return UnitType.MULTIPLE_X  # 조원(별도 포맷)
     if method in (CAGR, YOY):

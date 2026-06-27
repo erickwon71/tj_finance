@@ -12,7 +12,7 @@ import streamlit as st
 
 from app import cache, state
 from app.components.export import download_button
-from app.format import fmt_amount, fmt_corp_identity, fmt_ratio
+from app.format import fmt_amount, fmt_corp_identity, fmt_pct, fmt_ratio
 from app.views import metric_panel
 from app.views.chart_panel import render_price_chart, render_price_financial_combined
 
@@ -108,6 +108,61 @@ def _fin_points(series: list[dict], key: str) -> list[tuple]:
     return pts
 
 
+def _master_tab(corp_code: str, stmt: str, meta: dict) -> None:
+    """대가(Master) 지표 — Buffett/Piotroski(엔진) + Graham/Greenblatt/Lynch/Fisher."""
+    from analyzer.buffett_engine import compute_buffett
+    from app.compute.master_metrics import compute_master
+
+    rows, used = cache.annual_series(corp_code, stmt, years=10)
+    if not rows:
+        st.info("연간 재무 데이터가 없어 대가지표를 계산할 수 없습니다.")
+        return
+    mv = cache.company_multiples(corp_code, stmt)
+    market_cap = mv.get("market_cap") if mv else None
+    shares = mv.get("shares_out") if mv else None
+    price = (market_cap / shares) if (market_cap and shares) else None
+
+    bm = compute_buffett(rows, market_cap)
+    mm = compute_master(rows, market_cap, price)
+    st.caption(f"최신 FY 기준 · {'연결' if used=='consolidated' else '별도'}"
+               + ("" if market_cap else " · ⚠ 시총 없음(가격기반 지표 제한)"))
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("**Buffett / Piotroski**")
+        st.dataframe(pd.DataFrame([
+            ("Piotroski F", bm.score_badge()),
+            ("Owner's Earnings", bm.oe_in_eok()),
+            ("FCF품질(CFO/NI)", fmt_ratio(bm.fcf_quality)),
+            ("ROIC", fmt_pct(bm.roic)),
+            ("ROIC 5Y평균", fmt_pct(bm.roic_5y_avg)),
+            ("배당성향", fmt_pct(bm.payout_ratio)),
+        ], columns=["지표", "값"]).set_index("지표"), width="stretch")
+    with c2:
+        st.markdown("**Graham**")
+        st.dataframe(pd.DataFrame([
+            ("EPS", f"{mm.eps:,.0f}원" if mm.eps else "—"),
+            ("BPS", f"{mm.bps:,.0f}원" if mm.bps else "—"),
+            ("Graham Number", f"{mm.graham_number:,.0f}원" if mm.graham_number else "—"),
+            ("Graham 상승여력", fmt_pct(mm.graham_upside)),
+            ("NCAV/주가", fmt_ratio(mm.ncav_to_price)),
+            ("PER×PBR(≤22.5)", fmt_ratio(mm.per_pbr, decimals=1)),
+            ("EPS 흑자연수", f"{mm.eps_positive_years}년" if mm.eps_positive_years is not None else "—"),
+        ], columns=["지표", "값"]).set_index("지표"), width="stretch")
+    with c3:
+        st.markdown("**Greenblatt / Lynch / Fisher**")
+        st.dataframe(pd.DataFrame([
+            ("이익수익률(EY)", fmt_pct(mm.earnings_yield)),
+            ("투하자본수익률(ROC)", fmt_pct(mm.return_on_capital)),
+            ("PEG(Lynch)", fmt_ratio(mm.peg, decimals=2)),
+            ("R&D/매출(Fisher)", fmt_pct(mm.rd_to_revenue)),
+            ("매출총이익률 변화", fmt_pct(mm.gross_margin_delta)),
+        ], columns=["지표", "값"]).set_index("지표"), width="stretch")
+
+    st.caption("※ Graham Number=√(22.5·EPS·BPS) · EY=EBIT/EV · ROC=EBIT/(순운전자본+순고정자산) · "
+               "PEG=PER/순이익성장%. 마법공식 종합랭크는 스크리너에서 모집단 횡단면으로 산출.")
+
+
 def render() -> None:
     st.header("기업 시각화")
 
@@ -157,7 +212,8 @@ def render() -> None:
     lo, hi = cache.price_bounds(stock_code) if stock_code else (None, None)
 
     # 탭 = session_state 유지 라디오(사이드바 변경 등 재실행에도 보던 화면 유지)
-    TABS = ["📑 재무제표", "📊 지표", "💰 밸류에이션", "📈 주가", "📊 주가·재무 결합"]
+    TABS = ["📑 재무제표", "📊 지표", "💰 밸류에이션", "🏆 대가지표",
+            "📈 주가", "📊 주가·재무 결합"]
     active = st.radio("화면", TABS, horizontal=True, key="company_tab",
                       label_visibility="collapsed")
 
@@ -197,8 +253,12 @@ def render() -> None:
                         f"{'연결' if mv.get('used_stmt')=='consolidated' else '별도'}")
             st.dataframe(_valuation_df(mv), width="stretch")
 
-    # ── 주가 ──
+    # ── 대가지표 (Buffett·Piotroski·Graham·Greenblatt·Lynch·Fisher) ──
     elif active == TABS[3]:
+        _master_tab(corp_code, requested_stmt, meta)
+
+    # ── 주가 ──
+    elif active == TABS[4]:
         if not stock_code:
             st.info("비상장 또는 종목코드 없음.")
         elif not hi:
@@ -217,7 +277,7 @@ def render() -> None:
                                log_scale=log_scale, candlestick=candle, key="px_chart")
 
     # ── 주가·재무 결합 ──
-    elif active == TABS[4]:
+    elif active == TABS[5]:
         if not stock_code or not hi:
             st.info("주가 데이터가 없어 결합 차트를 표시할 수 없습니다.")
         else:

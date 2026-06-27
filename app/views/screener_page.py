@@ -23,10 +23,13 @@ from app.registry.units import UnitType
 from app.views import company_page
 
 # ── 필드 카탈로그(필터/정렬 가능) ──────────────────────────────
-ALL_FIELD_IDS: list[str] = se.WINDOW_METRIC_IDS + se.MULTIPLE_IDS + [se.MARKET_CAP_ID]
+ALL_FIELD_IDS: list[str] = (
+    se.WINDOW_METRIC_IDS + se.MULTIPLE_IDS + se.MASTER_IDS + [se.MARKET_CAP_ID]
+)
 
 _LABELS: dict[str, str] = {m.id: m.name_ko for m in METRIC_REGISTRY}
 _LABELS.update(dict(se.MULTIPLE_FIELDS))
+_LABELS.update(dict(se.MASTER_FIELDS))
 _LABELS[se.MARKET_CAP_ID] = "시가총액(조)"
 
 _OPS = [">", ">=", "<", "<=", "="]
@@ -48,6 +51,8 @@ def _fmt(mid: str, method: str, value) -> str:
         return "—"
     if mid == se.MARKET_CAP_ID:
         return f"{value:.2f}조"
+    if mid == se.MAGIC_RANK_ID:
+        return f"{int(value)}위"
     unit = se.effective_unit(mid, method)
     if unit == UnitType.PCT:
         return f"{value * 100:.1f}%"

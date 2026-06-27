@@ -21,7 +21,9 @@ import streamlit as st  # noqa: E402
 from app import state  # noqa: E402
 from app.cache import search_corps, table_counts  # noqa: E402
 from app.format import fmt_corp_identity  # noqa: E402
-from app.views import company_page, screener_page  # noqa: E402
+from app.views import (  # noqa: E402
+    company_page, compare_page, screener_page, valuation_page,
+)
 
 
 def _sidebar() -> None:
@@ -89,6 +91,10 @@ def main() -> None:
                 url_path="company", default=True),
         st.Page(screener_page.render, title="스크리너", icon="🔎",
                 url_path="screener"),
+        st.Page(valuation_page.render, title="밸류에이션", icon="💎",
+                url_path="valuation"),
+        st.Page(compare_page.render, title="기업 비교", icon="⚖️",
+                url_path="compare"),
     ]
     st.navigation(pages).run()
 

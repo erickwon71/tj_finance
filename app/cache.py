@@ -79,6 +79,34 @@ def screen_base_frame(n_years: int, method: str, statement_type: str,
     return build_base_frame(window, method, n_years)
 
 
+# ── 비교 / DCF / 배당 (대가·밸류에이션 페이지) ───────────
+@st.cache_data(ttl=600, show_spinner="기업 비교 중…")
+def compare_companies(corp_codes: tuple, statement_type: str) -> list[dict]:
+    """analyzer.comparator.compare 재사용(run.py compare 동일). 캐시 키=정렬불요 튜플."""
+    from analyzer.comparator import compare
+
+    return compare(list(corp_codes), statement_type)
+
+
+@st.cache_data(ttl=600, show_spinner="DCF 계산 중…")
+def dcf_cached(corp_code: str, user_growth, user_wacc, terminal_growth: float,
+               dcf_years: int, statement_type: str):
+    """analyzer.dcf_engine.run_dcf 재사용(베타/주가 조회 포함이라 캐시)."""
+    from analyzer.dcf_engine import run_dcf
+
+    return run_dcf(corp_code, user_growth=user_growth, user_wacc=user_wacc,
+                   terminal_growth=terminal_growth, dcf_years=dcf_years,
+                   statement_type=statement_type)
+
+
+@st.cache_data(ttl=600, show_spinner="배당 분석 중…")
+def dividend_cached(corp_code: str, years: int, statement_type: str):
+    """analyzer.dividend_engine.analyze_dividend 재사용."""
+    from analyzer.dividend_engine import analyze_dividend
+
+    return analyze_dividend(corp_code, years=years, statement_type=statement_type)
+
+
 # ── 밸류에이션 멀티플 (최신 FY) ──────────────────────────
 @st.cache_data(ttl=600, show_spinner=False)
 def company_multiples(corp_code: str, statement_type: str) -> Optional[dict]:

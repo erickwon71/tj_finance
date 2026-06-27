@@ -82,20 +82,38 @@ def render(series: list[dict], grain: str, corp_name: str = "", corp_code: str =
     cat_order = [c.value for c in by_cat.keys()]
     present_cats = [cv for cv in cat_order if (frame["category"] == cv).any()]
 
+    # 전체 기간(최신→과거) 라벨·기준일
+    periods = (frame[["period_label", "period_end"]]
+               .drop_duplicates().sort_values("period_end"))
+    total = len(periods)
+
     st.divider()
     if view == "표":
+        # 표 = 알고 있는 전체 기간 표시
         for cv in present_cats:
             sub = frame[frame["category"] == cv]
             st.markdown(f"#### {cv}")
             st.dataframe(_display_table(sub), width="stretch")
-        st.caption(f"{grain_note} · 금액=억원·비율=%·배수=x·일수=일")
+        st.caption(f"{grain_note} · 전체 {total}개 기간 · 금액=억원·비율=%·배수=x·일수=일")
         suffix = "quarter" if grain == "quarter" else "annual"
         download_button(
             _raw_table(frame), filename=f"{corp_name}_{corp_code}_metrics_{suffix}.csv",
             label="⬇ 지표 CSV (전체, 원시값: 금액=원·비율=소수)", key="metric_csv")
     else:
+        # 그래프 = 기간축 확대/축소(최근 N개) 슬라이더
+        unit_word = "분기" if grain == "quarter" else "연"
+        if total > 4:
+            n = st.slider(
+                f"그래프 표시 기간 (최근 {unit_word} 수)", min_value=4, max_value=total,
+                value=min(total, 20), key="metric_graph_n",
+                help="오른쪽으로 갈수록 더 긴 기간(축소), 왼쪽일수록 최근만(확대)")
+        else:
+            n = total
+        recent = set(periods.tail(n)["period_label"])
+        fgraph = frame[frame["period_label"].isin(recent)]
         for cv in present_cats:
-            sub = frame[frame["category"] == cv]
+            sub = fgraph[fgraph["category"] == cv]
             st.markdown(f"#### {cv}")
             render_metric_chart(sub, key=f"metric_chart_{cv}")
-        st.caption(f"{grain_note} · 카테고리별 분리 · 금액(억원)=좌축 · 비율/배수/일수")
+        st.caption(f"{grain_note} · 최근 {n}/{total}개 기간 · 카테고리별 · "
+                   f"금액(억원)=좌축 · 비율/배수/일수 (차트 드래그로 추가 확대 가능)")

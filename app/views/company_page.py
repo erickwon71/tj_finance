@@ -175,7 +175,12 @@ def render() -> None:
 
     # ── 지표 (레지스트리 멀티셀렉트 + 그래프/표) ──
     with tab_metric:
-        metric_panel.render(series, grain, meta["corp_name"], corp_code)
+        # 지표 탭은 전체 기간 사용(표=전체 표시, 그래프=슬라이더로 기간 조절)
+        if grain == "quarter":
+            mseries, _ = cache.quarter_series(corp_code, requested_stmt, quarters=400)
+        else:
+            mseries, _ = cache.annual_series(corp_code, requested_stmt, years=200)
+        metric_panel.render(mseries, grain, meta["corp_name"], corp_code)
 
     # ── 밸류에이션 (항상 최신 FY 기준) ──
     with tab_val:

@@ -74,12 +74,19 @@
 - **검증**: ☑ 4 케이스 결과·정렬 == CLI `screen()` 정확일치(`scripts/verify_screener_phase3.py` ALL PASS,
   `--roe ">15%" --per "<12"` 30건 포함) · ☑ AppTest 부팅+결과렌더 무예외(dataframe=1) · ☑ 실서버 health=ok(1s) 에러 0
 
-## Phase 4 — 윈도우집계 + 퀀트 + 분할뷰
-- ☐ `load_screening_window(n_years ≤ 10, fiscal_year)`
-- ☐ `app/compute/screen_eval.py` 집계(average/CAGR/YoY) + `run_quant_passes(≤3)`
-- ☐ 분할 레이아웃(`st.columns([5,7])`) + `on_select` → `focus_corp`
-- ☐ 우측에 company_page 패널 재사용
-- **검증**: ☐ CAGR/avg 1기업 수기 대조 · ☐ 퀀트 3패스 순차 축소 · ☐ 행클릭시 좌측 비파괴
+## Phase 4 — 윈도우집계 + 퀀트 + 분할뷰 ☑ 완료 (2026-06-27)
+- ☑ `app/data/screen_window.py:load_screening_window(n_years≤10, fiscal_year, statement_type)`
+  — `_load_screening_data` rn 캡을 `rn≤n_years+1`(오래된 기간 ratio prev용 +1)로 확장, corp별 series 그룹화
+- ☑ `app/compute/screen_eval.py` — `aggregate(average/CAGR/YoY)`(=`_cagr`/`_growth_rate`) +
+  `build_base_frame`(corp당 1행, compute_ratios 기간당 1회) + 최신 멀티플(per/pbr/ev_ebitda/psr/pcr) +
+  `run_quant_passes(≤3)`(filter→sort→limit, `_check` 재사용) + 단위/임계 헬퍼(`effective_unit`·`make_threshold`)
+  - ※ CAGR 부호반전(end≤0) 시 복소수 차단 → None
+- ☑ `app/cache.py:screen_base_frame`((n,method,stmt,fy)별 1회 캐시)
+- ☑ `app/views/screener_page.py` 분할 레이아웃(`st.columns([5,7])`) — 좌: 윈도우(기간/방법/시장) +
+  퀀트 ≤3패스(폼 밖, 멀티셀렉트→조건 위젯 즉시) + 결과표 `on_select`→`focus_corp` + CSV(raw) · 우: `company_page.render()` 재사용
+- **검증**: ☑ `scripts/verify_screener_phase4.py` — avg/CAGR/YoY 삼성 revenue·roe 수기 대조 일치 ·
+  퀀트 3패스 단조축소(2259→200→100→30) · ☑ AppTest 부팅·실행·선택→우측패널 무예외(좌측 결과 유지=비파괴) ·
+  ☑ 실서버 health=ok(1s) 에러 0
 
 ## Phase 5 — 대가 지표 + 폴리시
 - ☐ Graham custom 지표(Graham Number·NCAV·PER×PBR·EPS 안정성)

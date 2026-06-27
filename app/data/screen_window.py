@@ -17,6 +17,24 @@ from typing import Optional
 # 사실상 무한 한도 — 전수 모집단을 받기 위함(전체 활성 보통주 ~2.5천)
 _NO_LIMIT = 1_000_000
 
+# 윈도우 로드 시 받아올 행에 포함할 컬럼(= compute_ratios 입력 + 식별/시총)
+_WINDOW_COLS = """
+    sf.corp_code, sf.fiscal_year, sf.fiscal_period,
+    sf.statement_type, sf.period_end, sf.data_quality,
+    sf.total_assets, sf.current_assets, sf.cash,
+    sf.receivables, sf.inventory, sf.ppe,
+    sf.total_liabilities, sf.current_liabilities,
+    sf.short_term_debt, sf.long_term_debt,
+    sf.total_equity, sf.controlling_equity, sf.retained_earnings,
+    sf.trade_payables,
+    sf.revenue, sf.cogs, sf.gross_profit, sf.sga, sf.rd_expense,
+    sf.operating_income, sf.interest_expense, sf.ebt,
+    sf.tax_expense, sf.net_income, sf.controlling_ni,
+    sf.cfo, sf.cfi, sf.cff, sf.capex, sf.dividends_paid,
+    sf.depreciation, sf.amortization, sf.da_total,
+    sf.ebitda, sf.fcf, sf.net_debt, sf.shares_out
+"""
+
 
 def load_population(fiscal_year: Optional[int] = None) -> list[dict]:
     """
@@ -40,3 +58,80 @@ def load_population(fiscal_year: Optional[int] = None) -> list[dict]:
         limit=_NO_LIMIT,
         fiscal_year=fiscal_year,
     )
+
+
+def load_screening_window(
+    n_years: int,
+    fiscal_year: Optional[int] = None,
+    statement_type: str = "consolidated",
+) -> dict[str, dict]:
+    """
+    전체 활성 보통주의 최근 `n_years` FY 시계열 + 최신 시총을 한 번에 로드.
+
+    `_load_screening_data` 의 `rn<=2` 캡을 `rn<=n_years+1` 로 확장한 윈도우판이다.
+    (+1 은 윈도우 내 가장 오래된 기간의 ratio/성장률 전기(prev) 확보용.)
+
+    반환: {corp_code: {
+        "corp_code","corp_name","stock_code","market","market_cap","close_price",
+        "rows": [행 dict, ...]   # 최신→과거, 최대 n_years+1 개
+    }}
+
+    statement_type 은 단일 basis(기본 consolidated). corp별 연결→별도 폴백은 후속.
+    """
+    from collector.db import get_session
+    from sqlalchemy import text
+
+    n_rows = max(1, n_years) + 1  # 오래된 기간 ratio prev 용 +1
+    year_filter = f"AND sf.fiscal_year = {int(fiscal_year)}" if fiscal_year else ""
+
+    sql = f"""
+        WITH ranked AS (
+            SELECT
+                {_WINDOW_COLS},
+                c.corp_name, c.stock_code, c.market,
+                sp.close_price, sp.market_cap,
+                ROW_NUMBER() OVER (
+                    PARTITION BY sf.corp_code
+                    ORDER BY sf.fiscal_year DESC
+                ) AS rn
+            FROM standard_financials sf
+            JOIN corporations c ON c.corp_code = sf.corp_code
+            LEFT JOIN LATERAL (
+                SELECT close_price, market_cap
+                FROM stock_prices
+                WHERE stock_code = c.stock_code
+                  AND market_cap IS NOT NULL
+                ORDER BY trade_date DESC
+                LIMIT 1
+            ) sp ON TRUE
+            WHERE sf.fiscal_period    = 'FY'
+              AND sf.statement_type   = :stmt
+              AND sf.data_quality     < 3
+              AND c.stock_code        IS NOT NULL
+              {year_filter}
+        )
+        SELECT * FROM ranked WHERE rn <= :n_rows
+        ORDER BY corp_code, rn
+    """
+
+    with get_session() as session:
+        rows = session.execute(
+            text(sql), {"stmt": statement_type, "n_rows": n_rows}
+        ).mappings().fetchall()
+
+    window: dict[str, dict] = {}
+    for row in rows:
+        cc = row["corp_code"]
+        if cc not in window:
+            window[cc] = {
+                "corp_code":   cc,
+                "corp_name":   row["corp_name"],
+                "stock_code":  row["stock_code"],
+                "market":      row["market"],
+                "market_cap":  row["market_cap"],
+                "close_price": row["close_price"],
+                "rows":        [],
+            }
+        window[cc]["rows"].append(dict(row))  # rn 오름차순 = 최신→과거
+
+    return window

@@ -11,18 +11,12 @@ import streamlit as st
 
 from app.compute.resolver import build_metric_frame
 from app.components.export import download_button
-from app.registry.metrics import REGISTRY_BY_ID, metrics_by_category
+from app.registry.metrics import metrics_by_category
 from app.registry.units import format_value
 from app.views.chart_panel import render_metric_chart
 
-# 멀티셀렉트 라벨("카테고리 · 이름") ↔ id
-_LABELS: dict[str, str] = {}
-for _cat, _specs in metrics_by_category().items():
-    for _s in _specs:
-        _LABELS[f"{_cat.value} · {_s.name_ko}"] = _s.id
-_ID_TO_LABEL = {v: k for k, v in _LABELS.items()}
-
-_DEFAULT = ["revenue", "operating_income", "op_margin"]
+# 카테고리별 기본 선택 지표
+_DEFAULT = {"revenue", "operating_income", "op_margin"}
 
 
 def _ordered_periods(frame: pd.DataFrame) -> list[str]:
@@ -61,11 +55,19 @@ def render(series: list[dict], grain: str, corp_name: str = "", corp_code: str =
         st.info("재무 데이터가 없습니다.")
         return
 
-    sel_labels = st.multiselect(
-        "지표 선택 (카테고리 · 지표)", list(_LABELS.keys()),
-        default=[_ID_TO_LABEL[m] for m in _DEFAULT if m in _ID_TO_LABEL],
-        key="metric_select")
-    metric_ids = [_LABELS[l] for l in sel_labels]
+    # 카테고리별 선택 메뉴 분리 (재무데이터 · 수익성 · 성장성 · 안정성)
+    st.markdown("**지표 선택** — 카테고리별로 고르세요")
+    by_cat = metrics_by_category()
+    cols = st.columns(2)
+    metric_ids: list[str] = []
+    for i, (cat, specs) in enumerate(by_cat.items()):
+        name_to_id = {s.name_ko: s.id for s in specs}
+        default = [s.name_ko for s in specs if s.id in _DEFAULT]
+        with cols[i % 2]:
+            picked = st.multiselect(
+                cat.value, list(name_to_id.keys()), default=default,
+                key=f"metric_sel_{cat.name}")
+        metric_ids += [name_to_id[n] for n in picked]
 
     if not metric_ids:
         st.info("표시할 지표를 1개 이상 선택하세요.")

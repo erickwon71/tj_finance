@@ -120,7 +120,8 @@ def render_metric_chart(frame, key: str | None = None) -> None:
         unit = g["unit"].iloc[0]
         name = g["name"].iloc[0]
         ys = [display_value(v, unit) for v in g["value"]]
-        on_right = unit not in AMOUNT_UNITS
+        # 금액이 함께 있을 때만 비금액을 우축으로. 비금액만이면 좌축 사용.
+        on_right = (unit not in AMOUNT_UNITS) and has_amount
         suffix = {UnitType.AMOUNT_EOK: "억", UnitType.PCT: "%",
                   UnitType.MULTIPLE_X: "x", UnitType.DAYS: "일"}.get(unit, "")
         fig.add_trace(go.Scatter(
@@ -131,10 +132,13 @@ def render_metric_chart(frame, key: str | None = None) -> None:
             hovertemplate=f"{name}<br>%{{x|%Y-%m-%d}}<br>%{{y:,.2f}}{suffix}<extra></extra>",
         ), secondary_y=on_right)
 
+    other_title = "비율(%)/배수(x)/일수"
     if has_amount:
         fig.update_yaxes(title_text="금액(억원)", secondary_y=False)
-    if has_other:
-        fig.update_yaxes(title_text="비율(%)/배수(x)/일수", secondary_y=True, showgrid=False)
+        if has_other:
+            fig.update_yaxes(title_text=other_title, secondary_y=True, showgrid=False)
+    else:
+        fig.update_yaxes(title_text=other_title, secondary_y=False)
     fig.update_layout(
         height=480, margin=dict(l=10, r=10, t=30, b=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0),

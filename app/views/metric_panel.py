@@ -78,14 +78,24 @@ def render(series: list[dict], grain: str, corp_name: str = "", corp_code: str =
     frame = build_metric_frame(series, metric_ids, grain)
     grain_note = "분기 이산(3개월)" if grain == "quarter" else "연간 FY"
 
+    # 표시도 카테고리별로 분리 (선택된 카테고리만, 레지스트리 순서)
+    cat_order = [c.value for c in by_cat.keys()]
+    present_cats = [cv for cv in cat_order if (frame["category"] == cv).any()]
+
+    st.divider()
     if view == "표":
-        st.dataframe(_display_table(frame), width="stretch")
+        for cv in present_cats:
+            sub = frame[frame["category"] == cv]
+            st.markdown(f"#### {cv}")
+            st.dataframe(_display_table(sub), width="stretch")
         st.caption(f"{grain_note} · 금액=억원·비율=%·배수=x·일수=일")
-        raw = _raw_table(frame)
         suffix = "quarter" if grain == "quarter" else "annual"
         download_button(
-            raw, filename=f"{corp_name}_{corp_code}_metrics_{suffix}.csv",
-            label="⬇ 지표 CSV (원시값: 금액=원·비율=소수)", key="metric_csv")
+            _raw_table(frame), filename=f"{corp_name}_{corp_code}_metrics_{suffix}.csv",
+            label="⬇ 지표 CSV (전체, 원시값: 금액=원·비율=소수)", key="metric_csv")
     else:
-        render_metric_chart(frame, key="metric_chart")
-        st.caption(f"{grain_note} · 금액(억원)=좌축 · 비율/배수/일수=우축")
+        for cv in present_cats:
+            sub = frame[frame["category"] == cv]
+            st.markdown(f"#### {cv}")
+            render_metric_chart(sub, key=f"metric_chart_{cv}")
+        st.caption(f"{grain_note} · 카테고리별 분리 · 금액(억원)=좌축 · 비율/배수/일수")

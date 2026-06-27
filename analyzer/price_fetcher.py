@@ -395,9 +395,15 @@ def sync_corp_daily(stock_code: str, start: str, end: str) -> int:
             "volume": _to_int(o.get("거래량")),
         })
 
+    return _upsert_ohlcv(rows)
+
+
+def _upsert_ohlcv(rows: list[dict]) -> int:
+    """OHLCV 행(code/dt/open/high/low/close/volume) stock_prices 멱등 upsert. 반환=행수."""
+    from sqlalchemy import text
+    from collector.db import get_session
     if not rows:
         return 0
-
     with get_session() as session:
         session.execute(text("""
             INSERT INTO stock_prices
@@ -411,5 +417,56 @@ def sync_corp_daily(stock_code: str, start: str, end: str) -> int:
                 close_price = EXCLUDED.close_price,
                 volume     = EXCLUDED.volume
         """), rows)
-
     return len(rows)
+
+
+# ---------------------------------------------------------------------------
+# Naver Finance siseJson — 심화 이력(상장~현재) 일별 수정주가 OHLCV
+#   KRX(pykrx)/koapy 가 pre-2014 를 못 줘서(2014 floor / MDCSTAT LOGOUT) 대체 소스.
+#   반환값은 **수정주가**(액면분할 등 보정, 현재 기준) — 기존 pykrx 수집과 동일 basis.
+#   상장주식수·시총은 미제공 → std_v2 주식수 timeline 으로 파생(fin2_market_cap_daily).
+# ---------------------------------------------------------------------------
+
+def fetch_naver_daily(stock_code: str, start: str, end: str) -> list[dict]:
+    """Naver siseJson 일별 OHLCV. start/end='YYYYMMDD'. 행 dict 목록(code 제외)."""
+    import ast
+    import requests
+    url = "https://api.finance.naver.com/siseJson.naver"
+    params = {"symbol": stock_code, "requestType": "1",
+              "startTime": start, "endTime": end, "timeframe": "day"}
+    try:
+        r = requests.get(url, params=params, timeout=20,
+                         headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/"})
+    except Exception as e:
+        logger.debug(f"naver 요청 오류 [{stock_code}]: {e}")
+        return []
+    if r.status_code != 200 or not r.text.strip():
+        return []
+    try:
+        raw = ast.literal_eval(r.text.strip())  # 헤더 작은따옴표·데이터 큰따옴표 모두 허용
+    except Exception as e:
+        logger.debug(f"naver 파싱 오류 [{stock_code}]: {e}")
+        return []
+    out = []
+    for row in raw[1:]:  # [0]=헤더
+        if not row or len(row) < 6:
+            continue
+        d, o, h, l, c, v = row[0], row[1], row[2], row[3], row[4], row[5]
+        try:
+            trade_dt = date(int(d[:4]), int(d[4:6]), int(d[6:8]))
+            close = int(c)
+        except (ValueError, TypeError, IndexError):
+            continue
+        if close <= 0:
+            continue
+        out.append({"dt": trade_dt, "open": _pos_int(o), "high": _pos_int(h),
+                    "low": _pos_int(l), "close": close, "volume": _to_int(v)})
+    return out
+
+
+def sync_corp_daily_naver(stock_code: str, start: str, end: str) -> int:
+    """한 종목 [start,end] 일별 OHLCV(Naver 수정주가) → stock_prices 멱등 upsert. 반환=행수."""
+    rows = fetch_naver_daily(stock_code, start, end)
+    for r in rows:
+        r["code"] = stock_code
+    return _upsert_ohlcv(rows)

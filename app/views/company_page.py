@@ -226,7 +226,7 @@ def render() -> None:
             metric_labels = c1.multiselect(
                 "재무 항목 (최대 3개)", [l for l, _ in _FIN_METRICS],
                 default=["매출액"], max_selections=3, key="combo_metrics")
-            log2 = c2.toggle("로그 스케일(주가)", value=False, key="combo_log")
+            log2 = c2.toggle("로그 스케일(주가)", value=True, key="combo_log")
 
             # 결합용 더 긴 시계열 (사이드바 grain 기준)
             if grain == "quarter":

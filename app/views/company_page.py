@@ -208,7 +208,7 @@ def render() -> None:
             c1, c2, c3 = st.columns([2, 1, 1])
             rng = c1.radio("기간", ["1Y", "3Y", "5Y", "10Y", "전체"],
                            index=2, horizontal=True, key="px_range")
-            log_scale = c2.toggle("로그 스케일", value=False, key="px_log")
+            log_scale = c2.toggle("로그 스케일", value=True, key="px_log")
             candle = c3.toggle("캔들", value=False, key="px_candle")
             span = {"1Y": 365, "3Y": 365*3, "5Y": 365*5, "10Y": 365*10}.get(rng)
             start = max(hi - timedelta(days=span), lo) if span else lo

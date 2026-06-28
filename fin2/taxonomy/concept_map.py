@@ -73,6 +73,9 @@ _IS: dict[str, str] = {
     "ifrs-full_CostOfSales": "is.cogs",
     "ifrs-full_GrossProfit": "is.gross_profit",
     "dart_TotalSellingGeneralAdministrativeExpenses": "is.sga",
+    # R&D: face IS 에 표준개념으로 태깅한 기업(~327사)만 포착. 대다수는 비용의 성격별
+    # 분류 주석에만 있어 별도 note 파서 필요(후속). rd_expense 는 정보컬럼(IS 항등식 무관).
+    "ifrs-full_ResearchAndDevelopmentExpense": "is.rd_expense",
     "dart_OperatingIncomeLoss": "is.operating_income",
     "ifrs-full_ProfitLossFromOperatingActivities": "is.operating_income",
     "ifrs-full_FinanceIncome": "is.finance_income",

@@ -32,7 +32,6 @@ _LABELS.update(dict(se.MULTIPLE_FIELDS))
 _LABELS.update(dict(se.MASTER_FIELDS))
 _LABELS[se.MARKET_CAP_ID] = "시가총액(조)"
 
-_OPS = [">", ">=", "<", "<=", "="]
 _RESULT_META = "screen_meta"   # session_state: {"df", "method", "cols", "counts"}
 
 
@@ -43,6 +42,18 @@ def _label(mid: str) -> str:
 def _windowable(mid: str) -> bool:
     """윈도우 집계 대상 여부(멀티플·시총은 최신 점값)."""
     return mid in se.WINDOW_METRIC_IDS
+
+
+def _unit_suffix(mid: str, method: str) -> str:
+    """필터 입력 단위 표기. 금액=(억원)·비율=(%)·배수=(배)·일수=(일)·시총=(조원)·랭크=(위).
+    CAGR/YoY/QoQ 집계 시엔 금액도 성장률(%)이 되므로 effective_unit 로 판정."""
+    if mid == se.MARKET_CAP_ID:
+        return " (조원)"
+    if mid == se.MAGIC_RANK_ID:
+        return " (위)"
+    unit = se.effective_unit(mid, method)
+    return {UnitType.PCT: " (%)", UnitType.AMOUNT_EOK: " (억원)",
+            UnitType.DAYS: " (일)", UnitType.MULTIPLE_X: " (배)"}.get(unit, "")
 
 
 # ── 셀 포맷 ────────────────────────────────────────────────────
@@ -72,22 +83,23 @@ def _pass_controls(i: int, method: str) -> dict:
         f"필터 지표 (패스 {i + 1})", ALL_FIELD_IDS, format_func=_label,
         default=(["roe"] if i == 0 else []), key=f"p{i}_metrics")
 
-    filters: dict[str, tuple[str, float]] = {}
+    # 지표별 구간 필터: 최소(이상)·최대(이하). 한쪽만 입력하면 단측 조건, 둘 다면 구간.
+    filters: dict[str, list] = {}
     for mid in metrics:
-        c1, c2 = st.columns([1, 2])
-        unit = se.effective_unit(mid, method)
-        default_op = "<" if (unit == UnitType.MULTIPLE_X and mid in se.MULTIPLE_IDS) else ">"
-        with c1:
-            op = st.selectbox(_label(mid), _OPS, index=_OPS.index(default_op),
-                              key=f"p{i}_op_{mid}")
-        with c2:
-            suffix = {UnitType.PCT: " (%)", UnitType.AMOUNT_EOK: " (억원)",
-                      UnitType.DAYS: " (일)"}.get(unit, "")
-            if mid == se.MARKET_CAP_ID:
-                suffix = " (조)"
-            val = st.number_input(f"값{suffix}", value=10.0, step=1.0,
-                                  key=f"p{i}_val_{mid}")
-        filters[mid] = se.make_threshold(mid, method, op, val)
+        sfx = _unit_suffix(mid, method)
+        c0, c1, c2 = st.columns([2, 1, 1])
+        c0.markdown(f"**{_label(mid)}**{sfx}")
+        vmin = c1.number_input("최소(이상)", value=None, step=1.0,
+                               key=f"p{i}_min_{mid}", placeholder="하한 없음")
+        vmax = c2.number_input("최대(이하)", value=None, step=1.0,
+                               key=f"p{i}_max_{mid}", placeholder="상한 없음")
+        conds = []
+        if vmin is not None:
+            conds.append(se.make_threshold(mid, method, ">=", float(vmin)))
+        if vmax is not None:
+            conds.append(se.make_threshold(mid, method, "<=", float(vmax)))
+        if conds:
+            filters[mid] = conds
 
     c1, c2, c3 = st.columns([2, 1, 1])
     with c1:

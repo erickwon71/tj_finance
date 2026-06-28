@@ -234,15 +234,21 @@ def add_magic_rank(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ── 퀀트 다단계 ────────────────────────────────────────────────
-def apply_pass(df: pd.DataFrame, filters: dict[str, tuple[str, float]],
+def apply_pass(df: pd.DataFrame, filters: dict,
                sort_by: Optional[str], asc: bool, limit: Optional[int]) -> pd.DataFrame:
-    """한 패스: filter(_check) → sort → head. 순수 DataFrame→DataFrame."""
+    """한 패스: filter(_check) → sort → head. 순수 DataFrame→DataFrame.
+
+    filters 값은 단일 조건 (op, thr) 또는 조건 리스트 [(op, thr), ...](구간=하한+상한).
+    모든 조건을 AND 로 적용."""
     out = df
-    for key, (op, thr) in filters.items():
+    for key, cond in filters.items():
         if key not in out.columns:
             continue
-        mask = out[key].map(lambda v: _check(None if pd.isna(v) else v, op, thr))
-        out = out[mask]
+        conds = cond if isinstance(cond, list) else [cond]
+        for op, thr in conds:
+            mask = out[key].map(
+                lambda v, op=op, thr=thr: _check(None if pd.isna(v) else v, op, thr))
+            out = out[mask]
     if sort_by and sort_by in out.columns:
         out = out.sort_values(sort_by, ascending=asc, na_position="last")
     if limit:

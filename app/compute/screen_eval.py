@@ -3,7 +3,7 @@
 
 윈도우 로드(`app.data.screen_window.load_screening_window`)의 corp별 시계열을
 지표별로 집계(average / CAGR / YoY)해 **기업당 1행** base DataFrame 을 만들고,
-≤3개 퀀트 패스(filter→sort→limit)를 순차 적용한다.
+≤4개 퀀트 패스(filter→sort→limit)를 순차 적용한다.
 
 집계·필터·성장률은 기존 엔진 재사용:
 - `analyzer.ratio_engine.compute_ratios` (기간당 1회)·`_cagr`·`_growth_rate`
@@ -213,7 +213,7 @@ def apply_pass(df: pd.DataFrame, filters: dict[str, tuple[str, float]],
 
 def run_quant_passes(base: pd.DataFrame, passes: list[dict]) -> tuple[pd.DataFrame, list[int]]:
     """
-    passes: [{filters:{key:(op,thr)}, sort_by, asc, limit}, ...]  (≤3)
+    passes: [{filters:{key:(op,thr)}, sort_by, asc, limit}, ...]  (≤4)
     각 패스를 직전 결과에 순차 적용. 반환: (최종 df, [패스별 잔존 건수]).
     """
     df = base

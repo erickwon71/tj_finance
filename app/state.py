@@ -16,7 +16,7 @@ FOCUS_CORP = "focus_corp"          # 현재 시각화 대상 corp_code
 STMT_TYPE = "stmt_type"            # "consolidated" | "separate"
 GRAIN = "grain"                    # "annual" | "quarter"
 SCREEN_RESULTS = "screen_results"  # 스크리너 결과 DataFrame (비파괴 분할용)
-QUANT_PASSES = "quant_passes"      # 퀀트 다단계 패스 리스트 (<=3)
+QUANT_PASSES = "quant_passes"      # 퀀트 다단계 패스 리스트 (<=4)
 
 # ── 표시 라벨 ↔ 내부값 매핑 ──────────────────────────────
 STMT_LABELS = {"연결": "consolidated", "별도": "separate"}

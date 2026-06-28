@@ -2,7 +2,7 @@
 Screener 페이지 — Phase 4(윈도우 집계 + 퀀트 다단계 + 비파괴 분할 시각화).
 
 좌(필터·결과) · 우(선택기업 시각화)로 분할(`st.columns([5,7])`). 좌측에서 윈도우
-집계(average/CAGR/YoY, 최대 10년)와 ≤3개 퀀트 패스(filter→sort→limit)를 구성·실행하고,
+집계(average/CAGR/YoY, 최대 10년)와 ≤4개 퀀트 패스(filter→sort→limit)를 구성·실행하고,
 결과 행을 클릭하면 우측에 PRD 05 `company_page` 패널을 재사용해 시각화한다(좌측 결과는 유지).
 
 수치·집계·필터는 기존 엔진 재사용 → `run.py screen` / `analyze` 와 정합:
@@ -131,7 +131,7 @@ def _left() -> None:
     st.caption(f"연간(FY)·{state.STMT_LABELS_INV.get(state.get_stmt_type())} 기준 · "
                f"윈도우 집계 = **{note}** · 멀티플/시총은 최신 점값")
 
-    n_passes = int(st.selectbox("퀀트 패스 수", [1, 2, 3], key="scr_npass"))
+    n_passes = int(st.selectbox("퀀트 패스 수", [1, 2, 3, 4], key="scr_npass"))
     passes = []
     for i in range(n_passes):
         with st.expander(f"패스 {i + 1}", expanded=(i == 0)):

@@ -39,6 +39,15 @@ def _sidebar() -> None:
             results = search_corps(query, limit=30)
             if not results:
                 st.caption("검색 결과 없음")
+            elif len(results) == 1:
+                # 결과가 1개면 선택 단계 없이 바로 표시.
+                # 검색어가 바뀐 경우에만 자동선택(스크리너 행클릭 등 다른 선택을 덮지 않도록).
+                r = results[0]
+                st.caption(f"✅ {fmt_corp_identity(r['corp_name'], r['corp_code'], r.get('stock_code'), r.get('market'))}")
+                if st.session_state.get("_auto_pick_q") != query:
+                    st.session_state["_auto_pick_q"] = query
+                    state.set_focus_corp(r["corp_code"])
+                    st.rerun()
             else:
                 labels = {
                     fmt_corp_identity(r["corp_name"], r["corp_code"],

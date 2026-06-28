@@ -77,7 +77,7 @@ class BuffettMetrics:
         """Owner's Earnings 억원 단위."""
         if self.owners_earnings is None:
             return "—"
-        return f"{self.owners_earnings/1e8:.0f}억원"
+        return f"{self.owners_earnings/1e8:,.0f}억원"
 
 
 def compute_buffett(

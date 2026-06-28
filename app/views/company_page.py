@@ -7,6 +7,8 @@ Company (시각화) 페이지 — Phase 1 + 분기 + 주가·재무 결합.
 """
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 import streamlit as st
 
@@ -108,6 +110,30 @@ def _fin_points(series: list[dict], key: str) -> list[tuple]:
     return pts
 
 
+def _report_viewer(corp_code: str) -> None:
+    """선택 기업의 연도별 정기보고서 원문 — DART 웹뷰어 링크 + 로컬 원문 다운로드."""
+    reports = cache.corp_reports(corp_code)
+    if not reports:
+        return
+    with st.expander("📄 공시 원문 보기 (사업·반기·분기 보고서)", expanded=False):
+        # 인덱스 기반 선택 → 같은 해 1분기/3분기 등 동일 라벨 충돌에도 안전
+        idx = st.selectbox("보고서 선택", range(len(reports)),
+                           format_func=lambda i: reports[i]["label"],
+                           key=f"report_pick_{corp_code}")
+        r = reports[idx]
+        c1, c2 = st.columns([1, 1])
+        c1.link_button("DART에서 원문 보기 ↗", r["dart_url"], width="stretch")
+        fp = r.get("file_path")
+        if fp and os.path.exists(fp):
+            c2.download_button(
+                "원문 파일 내려받기", data=cache.report_file_bytes(fp),
+                file_name=os.path.basename(fp), mime="application/xml",
+                width="stretch", key=f"report_dl_{corp_code}")
+        else:
+            c2.caption("로컬 원문 파일 없음 (DART 링크 이용)")
+        st.caption(f"{r['report_nm']} · 접수번호 {r['rcept_no']}")
+
+
 def _master_tab(corp_code: str, stmt: str, meta: dict) -> None:
     """대가(Master) 지표 — Buffett/Piotroski(엔진) + Graham/Greenblatt/Lynch/Fisher."""
     from analyzer.buffett_engine import compute_buffett
@@ -187,6 +213,8 @@ def render() -> None:
 
     st.subheader(fmt_corp_identity(
         meta["corp_name"], meta["corp_code"], meta.get("stock_code"), meta.get("market")))
+
+    _report_viewer(corp_code)
 
     if not series:
         st.warning(f"{'분기' if grain=='quarter' else '연간'} 표준화 재무제표 데이터가 없습니다.")

@@ -33,6 +33,20 @@ def table_counts() -> dict:
     return _corp.table_counts()
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def corp_reports(corp_code: str) -> list[dict]:
+    """기업 정기보고서(사업/반기/분기) 목록 + DART 원문 URL + 로컬 파일경로."""
+    from app.data import reports as _reports
+    return _reports.list_reports(corp_code)
+
+
+@st.cache_data(ttl=600, show_spinner=False, max_entries=8)
+def report_file_bytes(path: str) -> bytes:
+    """로컬 공시 원문 파일 바이트(다운로드용). 경로별 1회 읽기 캐시(대용량 재읽기 방지)."""
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
 # ── 재무 / 주가 시계열 ───────────────────────────────────
 @st.cache_data(ttl=600, show_spinner=False)
 def annual_series(corp_code: str, statement_type: str, years: int = 10) -> tuple[list[dict], str]:

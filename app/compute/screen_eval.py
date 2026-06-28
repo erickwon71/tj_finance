@@ -57,21 +57,24 @@ MARKET_CAP_ID = "market_cap_jo"
 
 
 # ── 단일 시계열 집계 ────────────────────────────────────────────
-def aggregate(values: list, method: str, n_years: int) -> Optional[float]:
+def aggregate(values: list, method: str, n_periods: int, grain: str = "annual") -> Optional[float]:
     """
-    values: 최신→과거 순. None 허용.
-      average = 비결측 평균
-      CAGR    = _cagr(가장 오래된 비결측, 최신 비결측, 기간수)
-      YoY     = _growth_rate(최신, 직전)
+    values: 최신→과거 순. None 허용. grain="quarter" 면 분기 의미로 보정:
+      average = 비결측 평균(공통)
+      YoY     = 최신 대비 1년 전(연간=직전, 분기=4분기 전)
+      CAGR    = 연복리(분기는 경과기간을 연수로 환산: span/4)
     """
     if not values:
         return None
+    step = 4 if grain == "quarter" else 1
+    per_year = 4 if grain == "quarter" else 1
+
     if method == AVERAGE:
         vals = [v for v in values if v is not None]
         return sum(vals) / len(vals) if vals else None
     if method == YOY:
         curr = values[0] if values else None
-        prev = values[1] if len(values) > 1 else None
+        prev = values[step] if len(values) > step else None
         return _growth_rate(curr, prev)
     if method == CAGR:
         # 최신=end(values[0]), 가장 오래된 비결측=start
@@ -80,11 +83,12 @@ def aggregate(values: list, method: str, n_years: int) -> Optional[float]:
         for i in range(1, len(values)):
             if values[i] is not None:
                 start, span = values[i], i
+        years = span / per_year
         # 부호가 바뀌거나(end<=0) start<=0 이면 CAGR 정의 불가 → None
         # (_cagr 의 분수승이 음수 밑에서 복소수가 되는 것을 차단)
-        if span <= 0 or start is None or start <= 0 or end is None or end <= 0:
+        if years <= 0 or start is None or start <= 0 or end is None or end <= 0:
             return None
-        return _cagr(start, end, span)
+        return _cagr(start, end, years)
     return None
 
 
@@ -109,9 +113,31 @@ def _corp_metric_values(rows: list[dict], metric_ids: list[str],
     return out
 
 
-def _latest_multiples(rows: list[dict], market_cap: Optional[float]) -> dict[str, Optional[float]]:
-    """최신 FY 기준 점값 멀티플(시총/재무). 윈도우 집계 비대상."""
-    curr = rows[0] if rows else {}
+# 분기 TTM 합산 대상 flow 컬럼(손익·현금흐름). BS/주식수는 최신 분기 스냅샷 사용.
+_FLOW_KEYS = (
+    "revenue", "cogs", "gross_profit", "sga", "rd_expense", "operating_income",
+    "ebt", "tax_expense", "net_income", "controlling_ni", "ebitda",
+    "cfo", "cfi", "cff", "capex", "fcf", "da_total", "interest_expense", "dividends_paid",
+)
+
+
+def _ttm_row(rows: list[dict], start: int = 0) -> Optional[dict]:
+    """rows(최신→과거)의 [start:start+4] 4개 분기로 TTM 행 합성.
+    flow 는 합산, BS/주식수 등은 윈도우 내 최신 분기(rows[start]) 스냅샷. 4분기 미만이면 None."""
+    window = rows[start:start + 4]
+    if len(window) < 4:
+        return None
+    out = dict(window[0])  # BS 스냅샷 + 식별
+    for k in _FLOW_KEYS:
+        vals = [w.get(k) for w in window]
+        out[k] = sum(v for v in vals if v is not None) if any(v is not None for v in vals) else None
+    return out
+
+
+def _latest_multiples(rows: list[dict], market_cap: Optional[float],
+                      grain: str = "annual") -> dict[str, Optional[float]]:
+    """점값 멀티플(시총/재무). 분기는 TTM(직전 4분기 합산 손익/현금흐름) 기준 → 분기 단발 왜곡 방지."""
+    curr = (_ttm_row(rows, 0) if grain == "quarter" else (rows[0] if rows else {})) or {}
     mc = market_cap
 
     def _div(a, b):
@@ -133,38 +159,45 @@ def _latest_multiples(rows: list[dict], market_cap: Optional[float]) -> dict[str
     }
 
 
-def build_base_frame(window: dict[str, dict], method: str, n_years: int) -> pd.DataFrame:
+def build_base_frame(window: dict[str, dict], method: str, n_periods: int,
+                     grain: str = "annual") -> pd.DataFrame:
     """
     윈도우 → 기업당 1행 base DataFrame.
     컬럼: 식별(corp_code/corp_name/stock_code/market) + market_cap_jo + n_periods +
-          레지스트리 전 지표(집계값) + 멀티플(최신 점값). 원시값 보존.
+          레지스트리 전 지표(집계값) + 멀티플·대가(점값, 분기는 TTM). 원시값 보존.
     """
     recs = []
     for cc, c in window.items():
         rows = c["rows"]
-        series = _corp_metric_values(rows, WINDOW_METRIC_IDS, n_years)
+        series = _corp_metric_values(rows, WINDOW_METRIC_IDS, n_periods)
         rec: dict[str, object] = {
             "corp_code":   cc,
             "corp_name":   c["corp_name"],
             "stock_code":  c["stock_code"],
             "market":      c["market"],
             MARKET_CAP_ID: (c["market_cap"] / 1e12) if c.get("market_cap") else None,
-            "n_periods":   min(n_years, len(rows)),
+            "n_periods":   min(n_periods, len(rows)),
         }
         for mid, vals in series.items():
-            rec[mid] = aggregate(vals, method, n_years)
-        rec.update(_latest_multiples(rows, c.get("market_cap")))
-        rec.update(_latest_master(rows, c.get("market_cap"), c.get("close_price")))
+            rec[mid] = aggregate(vals, method, n_periods, grain)
+        rec.update(_latest_multiples(rows, c.get("market_cap"), grain))
+        rec.update(_latest_master(rows, c.get("market_cap"), c.get("close_price"), grain))
         recs.append(rec)
     df = pd.DataFrame(recs)
     return add_magic_rank(df)
 
 
-def _latest_master(rows: list[dict], market_cap, price) -> dict:
-    """최신 FY 기준 대가 점값(Graham/Greenblatt/Lynch/Fisher)."""
+def _latest_master(rows: list[dict], market_cap, price, grain: str = "annual") -> dict:
+    """대가 점값(Graham/Greenblatt/Lynch/Fisher). 분기는 TTM(현재 4분기) + 전년 TTM(직전 4분기)
+    로 합성해 PEG(YoY 성장)·EY 등을 분기 단발 왜곡 없이 계산."""
     from app.compute.master_metrics import compute_master
 
-    m = compute_master(rows, market_cap, price)
+    if grain == "quarter":
+        ttm_curr, ttm_prev = _ttm_row(rows, 0), _ttm_row(rows, 4)
+        sf_list = [r for r in (ttm_curr, ttm_prev) if r is not None] or rows
+    else:
+        sf_list = rows
+    m = compute_master(sf_list, market_cap, price)
     return {
         "earnings_yield": m.earnings_yield,
         "return_on_capital": m.return_on_capital,

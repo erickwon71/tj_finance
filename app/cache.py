@@ -66,17 +66,17 @@ def screen_population(fiscal_year: Optional[int] = None) -> list[dict]:
 
 
 @st.cache_data(ttl=600, show_spinner="윈도우 집계 중…")
-def screen_base_frame(n_years: int, method: str, statement_type: str,
-                      fiscal_year: Optional[int] = None):
+def screen_base_frame(n_periods: int, method: str, statement_type: str,
+                      grain: str = "annual", fiscal_year: Optional[int] = None):
     """
-    윈도우 로드 + 집계(average/CAGR/YoY) → 기업당 1행 base DataFrame.
-    퀀트 패스(필터·정렬·한도)는 이 frame 에 메모리로 적용. (n,method,stmt,fy)별 1회 캐시.
+    윈도우 로드(연간 FY / 분기 달력분기) + 집계(average/CAGR/YoY) → 기업당 1행 base DataFrame.
+    퀀트 패스(필터·정렬·한도)는 이 frame 에 메모리로 적용. (n,method,stmt,grain,fy)별 1회 캐시.
     """
     from app.compute.screen_eval import build_base_frame
     from app.data.screen_window import load_screening_window
 
-    window = load_screening_window(n_years, fiscal_year, statement_type)
-    return build_base_frame(window, method, n_years)
+    window = load_screening_window(n_periods, fiscal_year, statement_type, grain)
+    return build_base_frame(window, method, n_periods, grain)
 
 
 # ── 비교 / DCF / 배당 (대가·밸류에이션 페이지) ───────────

@@ -118,18 +118,28 @@ def _left() -> None:
     st.header("🔎 스크리너")
     method_label = {"average": "평균", "CAGR": "CAGR", "YoY": "YoY"}
 
-    c1, c2 = st.columns([1, 1])
+    c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
-        n_years = int(st.slider("집계 기간(년)", 1, 10, 3, key="scr_n"))
+        grain_label = st.selectbox("기간 단위", ["연간", "분기"], key="scr_grain")
+    grain = "quarter" if grain_label == "분기" else "annual"
     with c2:
+        if grain == "quarter":
+            n_periods = int(st.slider("집계 기간(분기)", 4, 20, 8, key="scr_nq"))
+        else:
+            n_periods = int(st.slider("집계 기간(년)", 1, 10, 3, key="scr_n"))
+    with c3:
         method = st.selectbox("집계 방법", se.AGG_METHODS,
                               format_func=lambda m: method_label[m], key="scr_method")
     market = st.selectbox("시장", ["전체", "KOSPI", "KOSDAQ"], key="scr_market")
 
-    note = {"average": f"최근 {n_years}년 평균", "CAGR": f"최근 {n_years}년 CAGR",
-            "YoY": "최신 연도 전년比"}[method]
-    st.caption(f"연간(FY)·{state.STMT_LABELS_INV.get(state.get_stmt_type())} 기준 · "
-               f"윈도우 집계 = **{note}** · 멀티플/시총은 최신 점값")
+    unit = "분기" if grain == "quarter" else "년"
+    yoy_note = "최신 분기 전년동기比" if grain == "quarter" else "최신 연도 전년比"
+    note = {"average": f"최근 {n_periods}{unit} 평균",
+            "CAGR": f"최근 {n_periods}{unit} CAGR(연환산)", "YoY": yoy_note}[method]
+    grain_txt = "분기(달력분기 이산)" if grain == "quarter" else "연간(FY)"
+    pt_txt = "멀티플/대가는 TTM(직전 4분기)" if grain == "quarter" else "멀티플/시총은 최신 점값"
+    st.caption(f"{grain_txt}·{state.STMT_LABELS_INV.get(state.get_stmt_type())} 기준 · "
+               f"윈도우 집계 = **{note}** · {pt_txt}")
 
     n_passes = int(st.selectbox("퀀트 패스 수", [1, 2, 3, 4], key="scr_npass"))
     passes = []
@@ -138,7 +148,7 @@ def _left() -> None:
             passes.append(_pass_controls(i, method))
 
     if st.button("스크리닝 실행", type="primary", width="stretch"):
-        base = cache.screen_base_frame(n_years, method, state.get_stmt_type())
+        base = cache.screen_base_frame(n_periods, method, state.get_stmt_type(), grain)
         if market != "전체":
             base = base[base["market"].str.upper() == market.upper()]
         final, counts = se.run_quant_passes(base, passes)

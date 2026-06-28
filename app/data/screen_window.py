@@ -61,27 +61,31 @@ def load_population(fiscal_year: Optional[int] = None) -> list[dict]:
 
 
 def load_screening_window(
-    n_years: int,
+    n_periods: int,
     fiscal_year: Optional[int] = None,
     statement_type: str = "consolidated",
+    grain: str = "annual",
 ) -> dict[str, dict]:
     """
-    전체 활성 보통주의 최근 `n_years` FY 시계열 + 최신 시총을 한 번에 로드.
+    전체 활성 보통주의 최근 `n_periods` 기간 시계열 + 최신 시총을 한 번에 로드.
 
-    `_load_screening_data` 의 `rn<=2` 캡을 `rn<=n_years+1` 로 확장한 윈도우판이다.
-    (+1 은 윈도우 내 가장 오래된 기간의 ratio/성장률 전기(prev) 확보용.)
+    grain="annual": standard_financials FY (연간).
+    grain="quarter": calendar_financials 달력분기 CQ1~CQ4 이산(분기).
 
     반환: {corp_code: {
         "corp_code","corp_name","stock_code","market","market_cap","close_price",
-        "rows": [행 dict, ...]   # 최신→과거, 최대 n_years+1 개
+        "rows": [행 dict, ...]   # 최신→과거
     }}
 
     statement_type 은 단일 basis(기본 consolidated). corp별 연결→별도 폴백은 후속.
     """
+    if grain == "quarter":
+        return _load_quarter_window(n_periods, statement_type)
+
     from collector.db import get_session
     from sqlalchemy import text
 
-    n_rows = max(1, n_years) + 1  # 오래된 기간 ratio prev 용 +1
+    n_rows = max(1, n_periods) + 1  # 오래된 기간 ratio prev 용 +1
     year_filter = f"AND sf.fiscal_year = {int(fiscal_year)}" if fiscal_year else ""
 
     sql = f"""
@@ -134,4 +138,66 @@ def load_screening_window(
             }
         window[cc]["rows"].append(dict(row))  # rn 오름차순 = 최신→과거
 
+    return window
+
+
+def _load_quarter_window(n_periods: int, statement_type: str) -> dict[str, dict]:
+    """
+    분기(달력분기 CQ1~CQ4 이산) 윈도우 — calendar_financials.
+
+    n_rows = max(n_periods+1, 8): TTM 멀티플/대가(현재 TTM=4분기 + 전년 TTM=직전 4분기)와
+    YoY(4분기 전) 계산에 충분하도록 최소 8분기 확보.
+    """
+    from collector.db import get_session
+    from sqlalchemy import text
+
+    n_rows = max(int(n_periods) + 1, 8)
+    sql = """
+        WITH ranked AS (
+            SELECT
+                cf.*,
+                c.corp_name, c.stock_code, c.market,
+                sp.close_price, sp.market_cap,
+                ROW_NUMBER() OVER (
+                    PARTITION BY cf.corp_code
+                    ORDER BY cf.calendar_year DESC,
+                        CASE cf.calendar_period
+                            WHEN 'CQ4' THEN 4 WHEN 'CQ3' THEN 3
+                            WHEN 'CQ2' THEN 2 ELSE 1 END DESC
+                ) AS rn
+            FROM calendar_financials cf
+            JOIN corporations c ON c.corp_code = cf.corp_code
+            LEFT JOIN LATERAL (
+                SELECT close_price, market_cap
+                FROM stock_prices
+                WHERE stock_code = c.stock_code AND market_cap IS NOT NULL
+                ORDER BY trade_date DESC LIMIT 1
+            ) sp ON TRUE
+            WHERE cf.statement_type = :stmt
+              AND cf.calendar_period IN ('CQ1', 'CQ2', 'CQ3', 'CQ4')
+              AND COALESCE(cf.data_quality, 1) < 3
+              AND c.stock_code IS NOT NULL
+        )
+        SELECT * FROM ranked WHERE rn <= :n_rows
+        ORDER BY corp_code, rn
+    """
+    with get_session() as session:
+        rows = session.execute(
+            text(sql), {"stmt": statement_type, "n_rows": n_rows}
+        ).mappings().fetchall()
+
+    window: dict[str, dict] = {}
+    for row in rows:
+        cc = row["corp_code"]
+        if cc not in window:
+            window[cc] = {
+                "corp_code":   cc,
+                "corp_name":   row["corp_name"],
+                "stock_code":  row["stock_code"],
+                "market":      row["market"],
+                "market_cap":  row["market_cap"],
+                "close_price": row["close_price"],
+                "rows":        [],
+            }
+        window[cc]["rows"].append(dict(row))
     return window

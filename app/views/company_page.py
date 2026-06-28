@@ -249,9 +249,28 @@ def render() -> None:
     if active == TABS[0]:
         if grain == "quarter":
             st.caption("분기 = 달력분기 이산값 · IS/CF = 3개월 발생액, BS = 분기말 잔액 스냅샷")
+        # 전체 기간 로드 후 슬라이더로 표시 구간 선택(표가 기간=컬럼이라 과거 분기/연도도 열람)
+        if grain == "quarter":
+            full, _ = cache.quarter_series(corp_code, requested_stmt, quarters=400)
+        else:
+            full, _ = cache.annual_series(corp_code, requested_stmt, years=200)
+        full_labels = _period_labels(full, grain)          # 최신→과거
+        chrono = list(reversed(full_labels))               # 과거→최신
+        sel_labels = full_labels
+        if len(chrono) >= 2:
+            default_n = min(12 if grain == "quarter" else 10, len(chrono))
+            start, end = st.select_slider(
+                "표시 기간 (구간 선택)", options=chrono,
+                value=(chrono[-default_n], chrono[-1]), key=f"fin_range_{grain}")
+            i0, i1 = chrono.index(start), chrono.index(end)
+            win = set(chrono[i0:i1 + 1])
+            sel_labels = [lb for lb in full_labels if lb in win]
+        fseries = [r for r, lb in zip(full, full_labels) if lb in set(sel_labels)]
+        st.caption(f"표시 {len(sel_labels)}개 기간 (전체 {len(chrono)}개 중) · 표는 가로 스크롤")
+
         raw_sections = {}
         for label, items in _SECTIONS:
-            raw_df = _section_raw_df(series, items, labels)
+            raw_df = _section_raw_df(fseries, items, sel_labels)
             raw_sections[label] = raw_df
             _show_statement(label, raw_df)
         combined = pd.concat(raw_sections.values(), keys=raw_sections.keys(),
@@ -259,7 +278,7 @@ def render() -> None:
         suffix = "quarter" if grain == "quarter" else "annual"
         download_button(
             combined, filename=f"{meta['corp_name']}_{corp_code}_{suffix}_won.csv",
-            label="⬇ 재무제표 CSV (원 단위)", key="fin_csv")
+            label="⬇ 재무제표 CSV (원 단위, 선택 구간)", key="fin_csv")
 
     # ── 지표 (레지스트리 멀티셀렉트 + 그래프/표) ──
     elif active == TABS[1]:

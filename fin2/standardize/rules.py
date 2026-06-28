@@ -142,6 +142,38 @@ def rule_revenue_from_cogs_gp(ctx: StdContext) -> None:
             ctx._mark("revenue_from_cogs_gp")
 
 
+# 차입성부채 세부 → 단기/장기 합산 컴포넌트(개념별 1캐논 → 이중계상 없음)
+_ST_DEBT_PARTS = ("bs.short_term_debt", "bs.current_lt_debt", "bs.current_bonds")
+_LT_DEBT_PARTS = ("bs.long_term_debt", "bs.bonds")
+
+
+def rule_additive_debt(ctx: StdContext) -> None:
+    """단기/장기차입금 = 차입금 + 유동성장기부채·유동성사채 / 사채 등 세부 합산.
+
+    세부항목이 하나라도 있으면 합산값으로 덮어 과소계상을 보정한다(차입금만 있던 기업은
+    동일값 = 변화 없음, 세부만 있던 기업은 NULL→값). 각 leaf 개념은 단일 canonical 로만
+    매핑돼 max-abs 후 합산 → 이중계상 없음. map_direct 뒤에 실행.
+
+    가드: 일부 보고서가 차입금을 롤업으로도 태깅해 합산이 총부채를 넘으면(이중계상 의심)
+    합산을 적용하지 않고 기존(map_direct) 값을 유지한다(검증 표본 1,044중 2건만 해당)."""
+    st = [abs(ctx.canon[c]) for c in _ST_DEBT_PARTS if ctx.canon.get(c) is not None]
+    lt = [abs(ctx.canon[c]) for c in _LT_DEBT_PARTS if ctx.canon.get(c) is not None]
+    new_st = sum(st) if st else None
+    new_lt = sum(lt) if lt else None
+
+    tl = ctx.col.get("total_liabilities")
+    cand_total = (new_st or 0) + (new_lt or 0)
+    if tl and tl > 0 and cand_total > tl * 1.05:
+        return  # 이중계상 의심 → 합산 미적용(기존 단일개념 값 유지)
+
+    if new_st is not None:
+        ctx.col["short_term_debt"] = new_st
+        ctx._mark("additive_debt")
+    if new_lt is not None:
+        ctx.col["long_term_debt"] = new_lt
+        ctx._mark("additive_debt")
+
+
 def rule_rd_fallback(ctx: StdContext) -> None:
     """rd_expense 가 face IS(is.rd_expense)로 안 채워졌을 때만 사업보고서 주석값으로 보완.
     (중복 방지: is.rd_expense 우선·불가침. note 값은 항상 양수 저장.)"""
@@ -181,6 +213,7 @@ RULES = [
     ("map_direct", rule_map_direct),
     ("additive_capex", rule_additive_capex),
     ("additive_da", rule_additive_da),
+    ("additive_debt", rule_additive_debt),
     ("net_income_fill", rule_net_income_fill),
     ("controlling_ni_fill", rule_controlling_ni_fill),
     ("revenue_from_cogs_gp", rule_revenue_from_cogs_gp),

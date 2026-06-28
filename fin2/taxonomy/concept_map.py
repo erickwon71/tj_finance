@@ -46,8 +46,16 @@ _BS: dict[str, str] = {
     "ifrs-full_ShorttermBorrowings": "bs.short_term_debt",
     "ifrs-full_CurrentBorrowings": "bs.short_term_debt",
     "dart_ShortTermBorrowings": "bs.short_term_debt",
+    # 단기 차입성부채 세부(유동성장기부채·유동성사채) → rule_additive_debt 가 단기차입금에 합산.
+    # ※ 깨끗한 leaf 개념만(롤업 CurrentBorrowingsAndCurrentPortion… 등은 이중계상 위험으로 제외).
+    "ifrs-full_CurrentPortionOfLongtermBorrowings": "bs.current_lt_debt",
+    "dart_CurrentPortionOfBonds": "bs.current_bonds",
+    "dart_CurrentPortionOfConvertibleBonds": "bs.current_bonds",
     "ifrs-full_NoncurrentBorrowings": "bs.long_term_debt",
     "dart_LongTermBorrowingsGross": "bs.long_term_debt",
+    "ifrs-full_LongtermBorrowings": "bs.long_term_debt",
+    # 사채(비유동) → rule_additive_debt 가 장기차입금에 합산. 비유동 명시 개념만(총 BondsIssued 제외).
+    "ifrs-full_NoncurrentPortionOfNoncurrentBondsIssued": "bs.bonds",
     "ifrs-full_CurrentLeaseLiabilities": "bs.lease_liability",
     "ifrs-full_NoncurrentLeaseLiabilities": "bs.lease_liability",
     "ifrs-full_TradeAndOtherCurrentPayables": "bs.trade_payables",

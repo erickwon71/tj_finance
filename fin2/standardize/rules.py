@@ -174,6 +174,26 @@ def rule_additive_debt(ctx: StdContext) -> None:
         ctx._mark("additive_debt")
 
 
+def rule_revenue_fallback(ctx: StdContext) -> None:
+    """금융(보험) 매출 보완: 제조업 표준 revenue(ifrs-full_Revenue)가 없을 때만,
+    **보험 주력**(보험수익 ≥ 이자수익) 기업에 한해 영업수익(보험)/보험수익을 매출로 채운다.
+    은행·혼합지주(이자수익 우위)는 단일 총매출 개념이 없어 **미적용**(잘못된 과소값 방지).
+    map_direct 뒤 실행."""
+    if ctx.col.get("revenue") is not None:
+        return
+    ins = ctx.canon.get("is.insurance_revenue")
+    op_ins = ctx.canon.get("is.operating_revenue_ins")
+    cand = op_ins if op_ins is not None else ins   # 영업수익(보험) 우선, 없으면 보험수익
+    if cand is None:
+        return
+    interest = ctx.canon.get("is.interest_revenue")
+    ins_size = ins if ins is not None else op_ins
+    if interest is not None and ins_size is not None and abs(ins_size) < abs(interest):
+        return  # 이자수익 우위 = 은행/혼합지주 → 미적용
+    ctx.col["revenue"] = abs(cand)
+    ctx._mark("revenue_fallback")
+
+
 def rule_rd_fallback(ctx: StdContext) -> None:
     """rd_expense 가 face IS(is.rd_expense)로 안 채워졌을 때만 사업보고서 주석값으로 보완.
     (중복 방지: is.rd_expense 우선·불가침. note 값은 항상 양수 저장.)"""
@@ -217,6 +237,7 @@ RULES = [
     ("net_income_fill", rule_net_income_fill),
     ("controlling_ni_fill", rule_controlling_ni_fill),
     ("revenue_from_cogs_gp", rule_revenue_from_cogs_gp),
+    ("revenue_fallback", rule_revenue_fallback),
     ("rd_fallback", rule_rd_fallback),
     ("derive_ebitda", rule_derive_ebitda),
     ("derive_fcf", rule_derive_fcf),

@@ -80,6 +80,12 @@ _IS: dict[str, str] = {
     "ifrs-full_Revenue": "is.revenue",
     "ifrs-full_CostOfSales": "is.cogs",
     "ifrs-full_GrossProfit": "is.gross_profit",
+    # 금융(보험) 매출 보조 — 제조업 표준 ifrs-full_Revenue 가 없을 때 rule_revenue_fallback 이
+    # '보험 주력' 기업에 한해 매출로 사용(은행/혼합지주 이자우위는 미적용=오값 방지).
+    "ifrs-full_InsuranceRevenue": "is.insurance_revenue",
+    "dart_OperatingIncomeInsurance": "is.operating_revenue_ins",
+    "ifrs-full_RevenueFromInterest": "is.interest_revenue",
+    "ifrs-full_InterestRevenueCalculatedUsingEffectiveInterestMethod": "is.interest_revenue",
     "dart_TotalSellingGeneralAdministrativeExpenses": "is.sga",
     # R&D: face IS 에 표준개념으로 태깅한 기업(~327사)만 포착. 대다수는 비용의 성격별
     # 분류 주석에만 있어 별도 note 파서 필요(후속). rd_expense 는 정보컬럼(IS 항등식 무관).

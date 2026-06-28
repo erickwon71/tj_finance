@@ -116,7 +116,7 @@ def _displayed_cols(passes: list[dict]) -> list[str]:
 # ── 좌측: 컨트롤 + 결과 ─────────────────────────────────────────
 def _left() -> None:
     st.header("🔎 스크리너")
-    method_label = {"average": "평균", "CAGR": "CAGR", "YoY": "YoY"}
+    method_label = {"average": "평균", "CAGR": "CAGR", "YoY": "YoY", "QoQ": "전분기比"}
 
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
@@ -128,14 +128,20 @@ def _left() -> None:
         else:
             n_periods = int(st.slider("집계 기간(년)", 1, 10, 3, key="scr_n"))
     with c3:
-        method = st.selectbox("집계 방법", se.AGG_METHODS,
-                              format_func=lambda m: method_label[m], key="scr_method")
+        # grain 별 옵션/키 분리 → 분기전용 QoQ 가 연간 옵션에 없어 생기는 충돌 방지
+        if grain == "quarter":
+            method = st.selectbox("집계 방법", se.AGG_METHODS_QUARTER,
+                                  format_func=lambda m: method_label[m], key="scr_method_q")
+        else:
+            method = st.selectbox("집계 방법", se.AGG_METHODS,
+                                  format_func=lambda m: method_label[m], key="scr_method_a")
     market = st.selectbox("시장", ["전체", "KOSPI", "KOSDAQ"], key="scr_market")
 
     unit = "분기" if grain == "quarter" else "년"
     yoy_note = "최신 분기 전년동기比" if grain == "quarter" else "최신 연도 전년比"
     note = {"average": f"최근 {n_periods}{unit} 평균",
-            "CAGR": f"최근 {n_periods}{unit} CAGR(연환산)", "YoY": yoy_note}[method]
+            "CAGR": f"최근 {n_periods}{unit} CAGR(연환산)", "YoY": yoy_note,
+            "QoQ": "최신 분기 직전분기比"}[method]
     grain_txt = "분기(달력분기 이산)" if grain == "quarter" else "연간(FY)"
     pt_txt = "멀티플/대가는 TTM(직전 4분기)" if grain == "quarter" else "멀티플/시총은 최신 점값"
     st.caption(f"{grain_txt}·{state.STMT_LABELS_INV.get(state.get_stmt_type())} 기준 · "

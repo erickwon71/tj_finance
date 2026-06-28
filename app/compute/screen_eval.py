@@ -24,8 +24,9 @@ from app.registry.metrics import METRIC_REGISTRY, REGISTRY_BY_ID
 from app.registry.units import UnitType
 
 # 집계 방법
-AVERAGE, CAGR, YOY = "average", "CAGR", "YoY"
-AGG_METHODS = [AVERAGE, CAGR, YOY]
+AVERAGE, CAGR, YOY, QOQ = "average", "CAGR", "YoY", "QoQ"
+AGG_METHODS = [AVERAGE, CAGR, YOY]              # 연간
+AGG_METHODS_QUARTER = [AVERAGE, CAGR, YOY, QOQ]  # 분기(QoQ=직전분기比 추가)
 
 # 윈도우 집계 대상 = 레지스트리 전 지표
 WINDOW_METRIC_IDS: list[str] = [m.id for m in METRIC_REGISTRY]
@@ -75,6 +76,11 @@ def aggregate(values: list, method: str, n_periods: int, grain: str = "annual") 
     if method == YOY:
         curr = values[0] if values else None
         prev = values[step] if len(values) > step else None
+        return _growth_rate(curr, prev)
+    if method == QOQ:
+        # 직전 기간 대비(분기=직전 분기). 연간에선 노출 안 함.
+        curr = values[0] if values else None
+        prev = values[1] if len(values) > 1 else None
         return _growth_rate(curr, prev)
     if method == CAGR:
         # 최신=end(values[0]), 가장 오래된 비결측=start
@@ -271,7 +277,7 @@ def effective_unit(metric_id: str, method: str) -> UnitType:
         return UnitType.MULTIPLE_X  # 정수 랭크(별도 포맷)
     if metric_id == MARKET_CAP_ID:
         return UnitType.MULTIPLE_X  # 조원(별도 포맷)
-    if method in (CAGR, YOY):
+    if method in (CAGR, YOY, QOQ):
         return UnitType.PCT
     spec = REGISTRY_BY_ID.get(metric_id)
     return spec.unit if spec else UnitType.MULTIPLE_X

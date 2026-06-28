@@ -54,14 +54,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--year-min", type=int, default=2024)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--shard", help="병렬 샤딩 I/N (corp 단위 분할 — 샤드별 corp 가 겹치지 않아 동시 실행 안전)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
     with get_session() as session:
         targets = session.execute(text(_TARGET_SQL), {"ymin": args.year_min}).fetchall()
+    if args.shard:
+        i, n = (int(x) for x in args.shard.split("/"))
+        shard_corps = set(sorted({t.corp_code for t in targets})[i::n])
+        targets = [t for t in targets if t.corp_code in shard_corps]
     if args.limit:
         targets = targets[: args.limit]
-    logger.info(f"[cf-da] consolidated D&A-NULL 대상 {len(targets):,}건 (fy>={args.year_min})")
+    logger.info(f"[cf-da] consolidated D&A-NULL 대상 {len(targets):,}건 (fy>={args.year_min}"
+                + (f", shard {args.shard}" if args.shard else "") + ")")
 
     affected: dict[str, None] = {}
     stored = src_note = src_face = skip_nofile = skip_norev = skip_none = 0

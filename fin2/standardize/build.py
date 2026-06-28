@@ -27,7 +27,9 @@ _FP_MONTH_DAY = {"FY": (12, 31), "H1": (6, 30), "Q1": (3, 31), "Q3": (9, 30), "Q
 # 실제 재무제표 행이면 최소 하나는 있어야 하는 BS/IS 핵심 헤드라인(전무=빈/phantom 행).
 _HEADLINE_COLS = ("total_assets", "total_equity", "current_assets",
                   "revenue", "net_income", "operating_income", "gross_profit")
-_DA_SUPP = set(_DEP_CANON) | set(_AMORT_CANON) | set(_DA_TOTAL_CANON)
+# D&A 보조 + R&D 주석(note.rd_expense): build 단계에서 union source 들로부터 수집 →
+# rules 의 rule_additive_da / rule_rd_fallback 가 조립.
+_DA_SUPP = set(_DEP_CANON) | set(_AMORT_CANON) | set(_DA_TOTAL_CANON) | {"note.rd_expense"}
 
 
 def _collect(session, basis: str, sources: dict[str, str],

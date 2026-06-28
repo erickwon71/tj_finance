@@ -142,6 +142,16 @@ def rule_revenue_from_cogs_gp(ctx: StdContext) -> None:
             ctx._mark("revenue_from_cogs_gp")
 
 
+def rule_rd_fallback(ctx: StdContext) -> None:
+    """rd_expense 가 face IS(is.rd_expense)로 안 채워졌을 때만 사업보고서 주석값으로 보완.
+    (중복 방지: is.rd_expense 우선·불가침. note 값은 항상 양수 저장.)"""
+    if ctx.col.get("rd_expense") is None:
+        v = ctx.canon.get("note.rd_expense")
+        if v:
+            ctx.col["rd_expense"] = abs(v)
+            ctx._mark("rd_fallback")
+
+
 def rule_derive_ebitda(ctx: StdContext) -> None:
     """EBITDA = operating_income + da_total (da>0 일 때만)."""
     op, da = ctx.col.get("operating_income"), ctx.col.get("da_total")
@@ -174,6 +184,7 @@ RULES = [
     ("net_income_fill", rule_net_income_fill),
     ("controlling_ni_fill", rule_controlling_ni_fill),
     ("revenue_from_cogs_gp", rule_revenue_from_cogs_gp),
+    ("rd_fallback", rule_rd_fallback),
     ("derive_ebitda", rule_derive_ebitda),
     ("derive_fcf", rule_derive_fcf),
     ("derive_net_debt", rule_derive_net_debt),

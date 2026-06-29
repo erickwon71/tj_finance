@@ -22,7 +22,7 @@ from app import state  # noqa: E402
 from app.cache import search_corps, table_counts  # noqa: E402
 from app.format import fmt_corp_identity  # noqa: E402
 from app.views import (  # noqa: E402
-    company_page, compare_page, screener_page, valuation_page,
+    collect_page, company_page, compare_page, screener_page, valuation_page,
 )
 
 
@@ -104,6 +104,8 @@ def main() -> None:
                 url_path="valuation"),
         st.Page(compare_page.render, title="기업 비교", icon="⚖️",
                 url_path="compare"),
+        st.Page(collect_page.render, title="보고서 수집", icon="🗂",
+                url_path="collect"),
     ]
     st.navigation(pages).run()
 

@@ -65,6 +65,8 @@ def main():
         targets = session.execute(text(_TARGET_SQL.format(basis=basis)),
                                   {"ymin": args.year_min}).fetchall()
     if args.shard:
+        if "/" not in args.shard:
+            raise SystemExit("--shard 형식은 I/N 입니다 (예: --shard 0/4, 1/4, 2/4, 3/4 를 4개 터미널에)")
         i, n = (int(x) for x in args.shard.split("/"))
         shard_corps = set(sorted({t.corp_code for t in targets})[i::n])
         targets = [t for t in targets if t.corp_code in shard_corps]

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  매일 18:00 신규 공시 수집·DB화 자동 실행 (launchd LaunchAgent).
+  잠자기 상태면 pmset 예약 wake(17:58)로 깨운 뒤 launchd 가 18:00 에 실행한다.
+  설치: deploy/launchd/README 또는 대화 안내 참조.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tjfinance.collect</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/taejin/Project/tj_finance/.venv_tj_finance/bin/python</string>
+        <string>/Users/taejin/Project/tj_finance/scripts/collect_new.py</string>
+        <string>--days</string>
+        <string>3</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/taejin/Project/tj_finance</string>
+
+    <!-- 매일 18:00 실행. 잠자기였다면 깨어난 직후 실행됨(누락 방지). -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>18</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/collect.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/collect.err.log</string>
+</dict>
+</plist>

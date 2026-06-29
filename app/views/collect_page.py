@@ -42,8 +42,10 @@ def _run_flow(days: int) -> None:
             return
 
         # ② 공시목록 동기화(+다운로드 큐 생성)
-        st.write(f"**②** 공시목록 동기화 ({len(corps)}개 기업)…")
-        r1 = sync_filings(corp_codes=corps)
+        # force=True: 이미 동기화된 기업이라도 *새 공시* 재확인(일일 증분). discover 로 이미
+        # 최근 공시 있는 기업으로 좁혀놨으므로 그 기업들만 강제 재동기화 = 저렴.
+        st.write(f"**②** 공시목록 동기화 ({len(corps)}개 기업, 신규 재확인)…")
+        r1 = sync_filings(corp_codes=corps, force=True)
         st.write(f"  · 동기화: {r1.get('processed', 0)}/{r1.get('total_corps', 0)}개 기업 "
                  f"(API {r1.get('api_calls', 0)}콜)")
 

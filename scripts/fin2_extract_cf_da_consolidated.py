@@ -32,9 +32,9 @@ _TARGET_SQL = """
     FROM std_financials_v2 s
     JOIN statement_source ss
       ON ss.corp_code=s.corp_code AND ss.fiscal_year=s.fiscal_year
-     AND ss.fiscal_period=s.fiscal_period AND ss.basis='consolidated' AND ss.statement='CF'
+     AND ss.fiscal_period=s.fiscal_period AND ss.basis='{basis}' AND ss.statement='CF'
     JOIN download_tasks dt ON dt.rcept_no = ss.source_rcept_no
-    WHERE s.statement_type='consolidated' AND s.version=1 AND s.depreciation IS NULL
+    WHERE s.statement_type='{basis}' AND s.version=1 AND s.depreciation IS NULL
       AND s.fiscal_year >= :ymin AND dt.file_path IS NOT NULL
     ORDER BY s.corp_code, s.fiscal_year, s.fiscal_period
 """
@@ -53,20 +53,24 @@ def _revenue_by_basis(session, rcept: str) -> dict[str, int]:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--year-min", type=int, default=2024)
+    ap.add_argument("--basis", choices=["consolidated", "separate"], default="consolidated",
+                    help="대상 basis (기본 consolidated; 별도는 separate)")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--shard", help="병렬 샤딩 I/N (corp 단위 분할 — 샤드별 corp 가 겹치지 않아 동시 실행 안전)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    basis = args.basis
 
     with get_session() as session:
-        targets = session.execute(text(_TARGET_SQL), {"ymin": args.year_min}).fetchall()
+        targets = session.execute(text(_TARGET_SQL.format(basis=basis)),
+                                  {"ymin": args.year_min}).fetchall()
     if args.shard:
         i, n = (int(x) for x in args.shard.split("/"))
         shard_corps = set(sorted({t.corp_code for t in targets})[i::n])
         targets = [t for t in targets if t.corp_code in shard_corps]
     if args.limit:
         targets = targets[: args.limit]
-    logger.info(f"[cf-da] consolidated D&A-NULL 대상 {len(targets):,}건 (fy>={args.year_min}"
+    logger.info(f"[cf-da] {basis} D&A-NULL 대상 {len(targets):,}건 (fy>={args.year_min}"
                 + (f", shard {args.shard}" if args.shard else "") + ")")
 
     affected: dict[str, None] = {}
@@ -79,14 +83,14 @@ def main():
                 skip_nofile += 1
                 continue
             rev = _revenue_by_basis(session, t.cf_rcept)
-            if not rev.get("consolidated"):
+            if not rev.get(basis):
                 skip_norev += 1
                 continue
 
             facts, source = recover_cf_da(
                 t.file_path, rcept_no=t.cf_rcept, corp_code=t.corp_code,
                 report_fiscal_year=t.fiscal_year, report_fiscal_period=t.fiscal_period,
-                basis="consolidated", revenue_by_basis=rev,
+                basis=basis, revenue_by_basis=rev,
             )
             if not facts:
                 skip_none += 1
@@ -100,7 +104,7 @@ def main():
             da_total = next((f.amount_won for f in facts
                              if f.canonical_account == "note.da_total"), None)
             if len(samples) < 14:
-                ratio = abs(da_total) / rev["consolidated"] if da_total else 0
+                ratio = abs(da_total) / rev[basis] if da_total else 0
                 samples.append((t.corp_code, t.fiscal_year, t.fiscal_period,
                                 source, da_total, f"{ratio*100:.1f}%"))
             if not args.dry_run:

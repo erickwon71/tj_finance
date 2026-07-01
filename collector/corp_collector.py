@@ -220,8 +220,17 @@ def sync_corporations() -> dict:
 
         # ── Step 5: DB Upsert ─────────────────────────────────
         final_codes = {c["corp_code"] for c in candidates}
+        meta_by_code = {
+            c["corp_code"]: {"corp_name": c["corp_name"], "market": c["market"]}
+            for c in candidates
+        }
 
         with get_session() as session:
+            # upsert 이전의 활성 집합 스냅샷 → 이번 실행으로 '신규 활성화'된 기업 판별용.
+            pre_active = set(session.scalars(
+                select(Corporation.corp_code).where(Corporation.is_active == True)
+            ).all())
+
             # 현재 수집 대상 upsert
             batch_size = 500
             for i in range(0, len(candidates), batch_size):
@@ -247,13 +256,30 @@ def sync_corporations() -> dict:
             ).all()
             to_deactivate = [c for c in existing_active if c not in final_codes]
 
+            # 제외 대상 이름 조회(업데이트 전) — UI/로그 노출용.
+            deactivated_corps = []
             if to_deactivate:
+                deactivated_corps = [
+                    {"corp_code": r[0], "corp_name": r[1], "market": r[2]}
+                    for r in session.execute(
+                        select(Corporation.corp_code, Corporation.corp_name,
+                               Corporation.market)
+                        .where(Corporation.corp_code.in_(to_deactivate))
+                    ).all()
+                ]
                 session.execute(
                     update(Corporation)
                     .where(Corporation.corp_code.in_(to_deactivate))
                     .values(is_active=False, updated_at=datetime.utcnow())
                 )
                 logger.info(f"  상장폐지·제외 처리: {len(to_deactivate):,}개 → is_active=False")
+
+            # 이번 실행으로 새로 활성화된 기업(신규 상장 + 재등록) — 이름/시장 첨부.
+            new_active_codes = final_codes - pre_active
+            new_corps = sorted(
+                ({"corp_code": cc, **meta_by_code.get(cc, {})} for cc in new_active_codes),
+                key=lambda d: (d.get("corp_name") or ""),
+            )
 
             krx_total = len(krx_universe) if krx_universe else len(dart_map)
             run.ended_at  = datetime.utcnow()
@@ -271,6 +297,9 @@ def sync_corporations() -> dict:
             "excluded_name":    excluded_name,
             "final_count":      len(candidates),
             "deactivated":      len(to_deactivate),
+            "new_count":        len(new_corps),
+            "new_corps":        new_corps,          # [{corp_code, corp_name, market}]
+            "deactivated_corps": deactivated_corps,  # [{corp_code, corp_name, market}]
         }
         logger.success(
             f"기업 목록 동기화 완료 — 최종 {len(candidates):,}개 기업"

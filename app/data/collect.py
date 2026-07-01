@@ -34,6 +34,18 @@ def collection_status() -> dict:
     return dict(row)
 
 
+def refresh_universe() -> dict:
+    """
+    상장 유니버스(활성 보통주) 갱신 — KRX 상장 목록 기준으로 **신규 상장** 기업을 대상에
+    추가(is_active=True)하고, 목록에서 빠진 기업(**상장폐지·제외**)을 비활성화(is_active=False).
+
+    반환: sync_corporations() 결과(new_count/new_corps/deactivated/deactivated_corps 포함).
+    ⚠ KRX(FinanceDataReader) + DART corpCode.xml 네트워크 조회가 있어 수십 초 걸릴 수 있음.
+    """
+    from collector.corp_collector import sync_corporations
+    return sync_corporations()
+
+
 def discover_recent_corps(days: int = 7) -> dict:
     """
     최근 `days` 일 DART 정기공시(pblntf_ty=A) 날짜범위 조회 → 우리 활성 보통주 중

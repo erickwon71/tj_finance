@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from app.data import collect
@@ -22,6 +23,46 @@ def _dashboard() -> None:
     lf = s.get("latest_filed")
     pend = s.get("pending") or 0
     st.caption(f"최신 공시 접수일: **{lf}** · 다운로드 대기(pending/failed): **{pend:,}**")
+
+
+def _universe_section() -> None:
+    """상장 유니버스 갱신 — 신규 상장 반영 + 상장폐지·제외 비활성화, 두 목록 표시."""
+    st.subheader("① 상장 유니버스 갱신 (신규 상장 · 상장폐지 반영)")
+    st.caption("KRX 상장 목록 기준으로 **신규 상장** 기업을 대상에 추가하고, 목록에서 빠진 "
+               "기업(**상장폐지·제외**)을 비활성화합니다. 신규 공시 수집 전에 실행하면 신규 상장사도 포함됩니다.")
+
+    if not st.button("🔁 유니버스 갱신 실행", key="btn_refresh_universe"):
+        return
+
+    with st.status("KRX 상장 목록 동기화 중… (수십 초 소요)", expanded=True) as status:
+        try:
+            r = collect.refresh_universe()
+        except Exception as exc:  # noqa: BLE001
+            status.update(label=f"갱신 실패: {exc}", state="error")
+            st.error(str(exc))
+            return
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("현재 대상(활성)", f"{r.get('final_count', 0):,}")
+        c2.metric("신규 반영", f"{r.get('new_count', 0):,}")
+        c3.metric("제외(비활성)", f"{r.get('deactivated', 0):,}")
+
+        new = r.get("new_corps") or []
+        deact = r.get("deactivated_corps") or []
+        with st.expander(f"🆕 신규 기업 {len(new)}개", expanded=bool(new)):
+            if new:
+                st.dataframe(pd.DataFrame(new), hide_index=True, width="stretch")
+            else:
+                st.caption("신규 상장/재등록 기업 없음")
+        with st.expander(f"🚫 제외 기업 {len(deact)}개", expanded=bool(deact)):
+            if deact:
+                st.dataframe(pd.DataFrame(deact), hide_index=True, width="stretch")
+            else:
+                st.caption("상장폐지/제외 기업 없음")
+
+        status.update(
+            label=f"완료 — 신규 {r.get('new_count', 0)} · 제외 {r.get('deactivated', 0)}",
+            state="complete")
 
 
 def _run_flow(days: int) -> None:
@@ -87,6 +128,10 @@ def render() -> None:
     _dashboard()
     st.divider()
 
+    _universe_section()
+    st.divider()
+
+    st.subheader("② 신규 공시 수집")
     c1, c2 = st.columns([1, 2])
     days = int(c1.number_input("탐지 기간(일)", min_value=1, max_value=90, value=7, step=1,
                                help="실행일로부터 최근 N일 내 등록된 정기공시를 확인"))

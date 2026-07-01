@@ -15,6 +15,11 @@
         <string>/Users/taejin/Project/tj_finance/scripts/collect_new.py</string>
         <string>--days</string>
         <string>3</string>
+        <!-- 기업당 파싱·표준화 타임아웃(초). 대형 보고서(≈120초 경계) 완주 위해 600. -->
+        <string>--timeout</string>
+        <string>600</string>
+        <!-- 수집 전 상장 유니버스 갱신(신규 상장 반영·상장폐지 비활성화). 실패해도 수집은 계속. -->
+        <string>--refresh-universe</string>
     </array>
 
     <key>WorkingDirectory</key>

@@ -92,15 +92,25 @@ def main() -> None:
     ap.add_argument("--timeout", type=int, default=120, help="기업당 파싱·표준화 타임아웃(초)")
     ap.add_argument("--standardize-only", action="store_true",
                     help="①②③ 건너뛰고 ④(파싱·표준화)만 — 다운로드는 됐는데 표준화 남은 전체 기업 대상. 중단 후 재개용")
+    ap.add_argument("--refresh-universe", action="store_true",
+                    help="⓪ 수집 전 상장 유니버스 갱신(KRX 기준 신규 상장 반영·상장폐지 비활성화)")
+    ap.add_argument("--corps", type=str, default=None,
+                    help="쉼표구분 corp_code — 이 기업들만 ④ 처리(--standardize-only 와 함께). "
+                         "예: 타임아웃 스킵분 재시도")
     args = ap.parse_args()
 
     from app.data import collect
 
-    # ── 재개 모드: ④만 (이미 다운로드된 표준화 미완 전 기업) ──
+    # ── 재개 모드: ④만 (이미 다운로드된 표준화 미완 전 기업, 또는 --corps 지정분) ──
     if args.standardize_only:
-        affected = collect.needs_standardize_corps()
-        logger.info(f"[collect] (재개) ④ 파싱·표준화 대상 {len(affected)}개 기업 "
-                    f"(타임아웃 {args.timeout}초/기업)")
+        if args.corps:
+            affected = [c.strip() for c in args.corps.split(",") if c.strip()]
+            logger.info(f"[collect] (재개) ④ 파싱·표준화 — 지정 {len(affected)}개 기업 "
+                        f"(타임아웃 {args.timeout}초/기업)")
+        else:
+            affected = collect.needs_standardize_corps()
+            logger.info(f"[collect] (재개) ④ 파싱·표준화 대상 {len(affected)}개 기업 "
+                        f"(타임아웃 {args.timeout}초/기업)")
         agg = _standardize_with_timeout(affected, args.timeout) if affected else {}
         logger.success(f"[collect] 재개 완료 — std_v2 {agg.get('s', 0):,} · 이산분기 {agg.get('q', 0):,} · "
                        f"달력 {agg.get('c', 0):,} · 타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
@@ -108,6 +118,22 @@ def main() -> None:
 
     from collector.downloader import run_downloads
     from collector.filing_collector import sync_filings
+
+    # ⓪ 상장 유니버스 갱신(옵션) — 신규 상장 반영 + 상장폐지·제외 비활성화.
+    #    네트워크(KRX/DART) 조회라 실패해도 수집은 계속(비치명적).
+    if args.refresh_universe:
+        try:
+            u = collect.refresh_universe()
+            new_names = ", ".join(c.get("corp_name", "") for c in (u.get("new_corps") or [])[:20])
+            deact_names = ", ".join(c.get("corp_name", "") for c in (u.get("deactivated_corps") or [])[:20])
+            logger.info(f"[collect] ⓪ 유니버스 갱신 — 대상 {u.get('final_count', 0):,}개 · "
+                        f"신규 {u.get('new_count', 0)} · 제외 {u.get('deactivated', 0)}")
+            if new_names:
+                logger.info(f"[collect]    신규: {new_names}")
+            if deact_names:
+                logger.info(f"[collect]    제외: {deact_names}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[collect] ⓪ 유니버스 갱신 실패(수집은 계속): {exc}")
 
     # ① 탐지
     disc = collect.discover_recent_corps(args.days)

@@ -181,6 +181,7 @@ def build_base_frame(window: dict[str, dict], method: str, n_periods: int,
             "corp_name":   c["corp_name"],
             "stock_code":  c["stock_code"],
             "market":      c["market"],
+            "used_stmt":   c.get("used_stmt"),   # 실제 사용 basis(연결/별도 폴백 결과)
             MARKET_CAP_ID: (c["market_cap"] / 1e12) if c.get("market_cap") else None,
             "n_periods":   min(n_periods, len(rows)),
         }
@@ -234,12 +235,27 @@ def add_magic_rank(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ── 퀀트 다단계 ────────────────────────────────────────────────
+def _cond_ok(v, op, thr, include_missing: bool) -> bool:
+    """단일 조건 판정 + 결측 정책.
+
+    결측(NULL/NaN) 처리 정책은 **명시적**:
+      include_missing=False (기본, '제외') — 결측 기업은 해당 필터에서 탈락. CLI `screen`
+        (`_check(None,...)=False`)·회사 분석과 동일 = 데이터 없는 기업을 조건 통과로 오인 방지.
+      include_missing=True  ('통과')       — 결측을 그 필터에 한해 통과 처리(다른 필터는 그대로).
+        지표 커버리지가 낮은 항목(EBITDA·R&D 등)으로 모집단이 과도히 잘리는 것을 피할 때.
+    """
+    if pd.isna(v):
+        return include_missing
+    return _check(v, op, thr)
+
+
 def apply_pass(df: pd.DataFrame, filters: dict,
-               sort_by: Optional[str], asc: bool, limit: Optional[int]) -> pd.DataFrame:
+               sort_by: Optional[str], asc: bool, limit: Optional[int],
+               include_missing: bool = False) -> pd.DataFrame:
     """한 패스: filter(_check) → sort → head. 순수 DataFrame→DataFrame.
 
     filters 값은 단일 조건 (op, thr) 또는 조건 리스트 [(op, thr), ...](구간=하한+상한).
-    모든 조건을 AND 로 적용."""
+    모든 조건을 AND 로 적용. 결측 처리는 include_missing 참조(_cond_ok)."""
     out = df
     for key, cond in filters.items():
         if key not in out.columns:
@@ -247,7 +263,7 @@ def apply_pass(df: pd.DataFrame, filters: dict,
         conds = cond if isinstance(cond, list) else [cond]
         for op, thr in conds:
             mask = out[key].map(
-                lambda v, op=op, thr=thr: _check(None if pd.isna(v) else v, op, thr))
+                lambda v, op=op, thr=thr: _cond_ok(v, op, thr, include_missing))
             out = out[mask]
     if sort_by and sort_by in out.columns:
         out = out.sort_values(sort_by, ascending=asc, na_position="last")
@@ -256,16 +272,18 @@ def apply_pass(df: pd.DataFrame, filters: dict,
     return out
 
 
-def run_quant_passes(base: pd.DataFrame, passes: list[dict]) -> tuple[pd.DataFrame, list[int]]:
+def run_quant_passes(base: pd.DataFrame, passes: list[dict],
+                     include_missing: bool = False) -> tuple[pd.DataFrame, list[int]]:
     """
     passes: [{filters:{key:(op,thr)}, sort_by, asc, limit}, ...]  (≤4)
     각 패스를 직전 결과에 순차 적용. 반환: (최종 df, [패스별 잔존 건수]).
+    include_missing: 결측(NULL) 기업을 필터에서 제외(False, 기본)할지 통과(True)시킬지.
     """
     df = base
     counts = []
     for p in passes:
         df = apply_pass(df, p.get("filters", {}), p.get("sort_by"),
-                        p.get("asc", False), p.get("limit"))
+                        p.get("asc", False), p.get("limit"), include_missing)
         counts.append(len(df))
     return df, counts
 

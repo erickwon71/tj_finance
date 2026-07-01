@@ -147,7 +147,15 @@ def _left() -> None:
         else:
             method = st.selectbox("집계 방법", se.AGG_METHODS,
                                   format_func=lambda m: method_label[m], key="scr_method_a")
-    market = st.selectbox("시장", ["전체", "KOSPI", "KOSDAQ"], key="scr_market")
+    mc1, mc2 = st.columns([1, 1])
+    with mc1:
+        market = st.selectbox("시장", ["전체", "KOSPI", "KOSDAQ"], key="scr_market")
+    with mc2:
+        miss_label = st.selectbox(
+            "결측값(NULL) 처리", ["제외", "통과"], key="scr_missing",
+            help="필터 지표가 없는(NULL) 기업을 제외(기본)할지, 그 필터에 한해 통과시킬지. "
+                 "'통과'는 EBITDA·R&D 등 커버리지 낮은 지표로 모집단이 과도히 잘릴 때 유용.")
+    include_missing = miss_label == "통과"
 
     unit = "분기" if grain == "quarter" else "년"
     yoy_note = "최신 분기 전년동기比" if grain == "quarter" else "최신 연도 전년比"
@@ -169,7 +177,7 @@ def _left() -> None:
         base = cache.screen_base_frame(n_periods, method, state.get_stmt_type(), grain)
         if market != "전체":
             base = base[base["market"].str.upper() == market.upper()]
-        final, counts = se.run_quant_passes(base, passes)
+        final, counts = se.run_quant_passes(base, passes, include_missing=include_missing)
         st.session_state[_RESULT_META] = {
             "df": final.reset_index(drop=True),
             "method": method,
@@ -213,6 +221,7 @@ def _build_display(df: pd.DataFrame, method: str, cols: list[str]) -> pd.DataFra
             "종목코드": r.get("stock_code") or "—",
             "corp_code": r["corp_code"],
             "시장": r.get("market") or "—",
+            "기준": {"consolidated": "연결", "separate": "별도"}.get(r.get("used_stmt"), "—"),
             "기간": int(r["n_periods"]) if pd.notna(r.get("n_periods")) else 0,
         }
         for mid in cols:

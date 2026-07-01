@@ -22,7 +22,8 @@ from app import state  # noqa: E402
 from app.cache import search_corps, table_counts  # noqa: E402
 from app.format import fmt_corp_identity  # noqa: E402
 from app.views import (  # noqa: E402
-    collect_page, company_page, compare_page, screener_page, valuation_page,
+    collect_page, company_page, compare_page, quarter_change_page,
+    screener_page, valuation_page,
 )
 
 
@@ -100,6 +101,8 @@ def main() -> None:
                 url_path="company", default=True),
         st.Page(screener_page.render, title="스크리너", icon="🔎",
                 url_path="screener"),
+        st.Page(quarter_change_page.render, title="분기 변화", icon="📊",
+                url_path="quarter-change"),
         st.Page(valuation_page.render, title="밸류에이션", icon="💎",
                 url_path="valuation"),
         st.Page(compare_page.render, title="기업 비교", icon="⚖️",

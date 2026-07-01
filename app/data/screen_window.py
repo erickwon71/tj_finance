@@ -74,10 +74,13 @@ def load_screening_window(
 
     반환: {corp_code: {
         "corp_code","corp_name","stock_code","market","market_cap","close_price",
+        "used_stmt",              # 실제 사용 basis (요청 basis 없어 폴백했으면 반대값)
         "rows": [행 dict, ...]   # 최신→과거
     }}
 
-    statement_type 은 단일 basis(기본 consolidated). corp별 연결→별도 폴백은 후속.
+    statement_type 은 요청 basis(기본 consolidated). **corp별 연결→별도 폴백** — 요청 basis
+    FY 행이 없는 기업은 반대 basis 로 대체(회사페이지 series 폴백과 동일 철학, 단 basis 는
+    corp 단위로 고정해 한 기업의 시계열이 basis 혼합되지 않게 함).
     """
     if grain == "quarter":
         return _load_quarter_window(n_periods, statement_type)
@@ -86,10 +89,22 @@ def load_screening_window(
     from sqlalchemy import text
 
     n_rows = max(1, n_periods) + 1  # 오래된 기간 ratio prev 용 +1
+    other = "separate" if statement_type == "consolidated" else "consolidated"
     year_filter = f"AND sf.fiscal_year = {int(fiscal_year)}" if fiscal_year else ""
 
+    # avail: corp 별로 요청 basis FY 행 존재 여부. has_req=False 인 기업만 반대 basis 채택.
     sql = f"""
-        WITH ranked AS (
+        WITH avail AS (
+            SELECT sf.corp_code,
+                   BOOL_OR(sf.statement_type = :stmt) AS has_req
+            FROM standard_financials sf
+            WHERE sf.fiscal_period    = 'FY'
+              AND sf.statement_type   IN (:stmt, :other)
+              AND sf.data_quality     < 3
+              {year_filter}
+            GROUP BY sf.corp_code
+        ),
+        ranked AS (
             SELECT
                 {_WINDOW_COLS},
                 c.corp_name, c.stock_code, c.market,
@@ -99,6 +114,7 @@ def load_screening_window(
                     ORDER BY sf.fiscal_year DESC
                 ) AS rn
             FROM standard_financials sf
+            JOIN avail a ON a.corp_code = sf.corp_code
             JOIN corporations c ON c.corp_code = sf.corp_code
             LEFT JOIN LATERAL (
                 SELECT close_price, market_cap
@@ -109,7 +125,7 @@ def load_screening_window(
                 LIMIT 1
             ) sp ON TRUE
             WHERE sf.fiscal_period    = 'FY'
-              AND sf.statement_type   = :stmt
+              AND sf.statement_type   = CASE WHEN a.has_req THEN :stmt ELSE :other END
               AND sf.data_quality     < 3
               AND c.stock_code        IS NOT NULL
               {year_filter}
@@ -120,7 +136,7 @@ def load_screening_window(
 
     with get_session() as session:
         rows = session.execute(
-            text(sql), {"stmt": statement_type, "n_rows": n_rows}
+            text(sql), {"stmt": statement_type, "other": other, "n_rows": n_rows}
         ).mappings().fetchall()
 
     window: dict[str, dict] = {}
@@ -134,6 +150,7 @@ def load_screening_window(
                 "market":      row["market"],
                 "market_cap":  row["market_cap"],
                 "close_price": row["close_price"],
+                "used_stmt":   row["statement_type"],
                 "rows":        [],
             }
         window[cc]["rows"].append(dict(row))  # rn 오름차순 = 최신→과거
@@ -152,8 +169,19 @@ def _load_quarter_window(n_periods: int, statement_type: str) -> dict[str, dict]
     from sqlalchemy import text
 
     n_rows = max(int(n_periods) + 1, 8)
+    other = "separate" if statement_type == "consolidated" else "consolidated"
+    # avail: corp 별 요청 basis 달력분기 행 존재 여부 → 없으면 반대 basis 폴백(annual 과 동일).
     sql = """
-        WITH ranked AS (
+        WITH avail AS (
+            SELECT cf.corp_code,
+                   BOOL_OR(cf.statement_type = :stmt) AS has_req
+            FROM calendar_financials cf
+            WHERE cf.calendar_period IN ('CQ1', 'CQ2', 'CQ3', 'CQ4')
+              AND cf.statement_type IN (:stmt, :other)
+              AND COALESCE(cf.data_quality, 1) < 3
+            GROUP BY cf.corp_code
+        ),
+        ranked AS (
             SELECT
                 cf.*,
                 c.corp_name, c.stock_code, c.market,
@@ -166,6 +194,7 @@ def _load_quarter_window(n_periods: int, statement_type: str) -> dict[str, dict]
                             WHEN 'CQ2' THEN 2 ELSE 1 END DESC
                 ) AS rn
             FROM calendar_financials cf
+            JOIN avail a ON a.corp_code = cf.corp_code
             JOIN corporations c ON c.corp_code = cf.corp_code
             LEFT JOIN LATERAL (
                 SELECT close_price, market_cap
@@ -173,7 +202,7 @@ def _load_quarter_window(n_periods: int, statement_type: str) -> dict[str, dict]
                 WHERE stock_code = c.stock_code AND market_cap IS NOT NULL
                 ORDER BY trade_date DESC LIMIT 1
             ) sp ON TRUE
-            WHERE cf.statement_type = :stmt
+            WHERE cf.statement_type = CASE WHEN a.has_req THEN :stmt ELSE :other END
               AND cf.calendar_period IN ('CQ1', 'CQ2', 'CQ3', 'CQ4')
               AND COALESCE(cf.data_quality, 1) < 3
               AND c.stock_code IS NOT NULL
@@ -183,7 +212,7 @@ def _load_quarter_window(n_periods: int, statement_type: str) -> dict[str, dict]
     """
     with get_session() as session:
         rows = session.execute(
-            text(sql), {"stmt": statement_type, "n_rows": n_rows}
+            text(sql), {"stmt": statement_type, "other": other, "n_rows": n_rows}
         ).mappings().fetchall()
 
     window: dict[str, dict] = {}
@@ -197,6 +226,7 @@ def _load_quarter_window(n_periods: int, statement_type: str) -> dict[str, dict]
                 "market":      row["market"],
                 "market_cap":  row["market_cap"],
                 "close_price": row["close_price"],
+                "used_stmt":   row["statement_type"],
                 "rows":        [],
             }
         window[cc]["rows"].append(dict(row))

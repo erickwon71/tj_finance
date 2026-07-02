@@ -642,7 +642,8 @@ class StockPrice(Base):
 
     __table_args__ = (
         UniqueConstraint("stock_code", "trade_date", name="uq_stock_prices"),
-        Index("ix_sp_stock_date", "stock_code", "trade_date"),
+        # ix_sp_stock_date 는 uq_stock_prices(동일 컬럼 unique index)와 중복이라 제거.
+        # 기존 DB 의 잔존분은 db._run_migrations 의 DROP INDEX IF EXISTS 로 정리(멱등).
     )
 
 

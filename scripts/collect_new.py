@@ -51,6 +51,7 @@ def _standardize_with_timeout(affected: list[str], timeout: int) -> dict:
     worker.start()
 
     agg = {"e_facts": 0, "s": 0, "q": 0, "c": 0, "errors": 0, "timeout": 0}
+    ok_corps: list[str] = []
     skipped: list[str] = []
     total = len(affected)
     for i, corp in enumerate(affected, 1):
@@ -60,6 +61,7 @@ def _standardize_with_timeout(affected: list[str], timeout: int) -> dict:
             if status == "ok":
                 for k in ("e_facts", "s", "q", "c"):
                     agg[k] += payload[k]
+                ok_corps.append(c)
             else:
                 agg["errors"] += 1
                 logger.warning(f"[collect]   {c} 실패: {payload}")
@@ -83,7 +85,80 @@ def _standardize_with_timeout(affected: list[str], timeout: int) -> dict:
         worker.terminate()
     if skipped:
         logger.warning(f"[collect]   ⏱ 타임아웃 스킵 {len(skipped)}개: {', '.join(skipped)}")
+    agg["ok_corps"] = ok_corps
     return agg
+
+
+def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
+    """I2 · 수집시 DQ 게이트 — 수집된 기업에 Gate B(보고서==DB) 재감사 + 항등식(DQ) 집계.
+
+    기존 검증 자산 재사용: `gateb_audit.audit_corp`(Phase A 면표 + Phase B 라인, 내부 커밋) +
+    `verify_corp_sequential.rollup_corp`(→ corp_verify_status upsert). 표준화가 std_v2 에 이미 반영한
+    항등식 위반은 data_quality>=3 로 집계. fail_a(확정 불일치)·line value_diff·DQ3 를 반환한다.
+    """
+    from collections import Counter
+    from types import SimpleNamespace
+
+    from sqlalchemy import text
+
+    from collector.db import get_session
+    import gateb_audit                         # scripts/ 는 실행 시 sys.path[0]
+    import verify_corp_sequential as vcs
+
+    vcs.ensure_tables()
+    names: dict[str, str] = {}
+    with get_session() as s:
+        for cc, nm in s.execute(text(
+                "SELECT corp_code, corp_name FROM corporations WHERE corp_code = ANY(:cs)"),
+                {"cs": corps}).fetchall():
+            names[cc] = nm
+
+    summ = {"corps": 0, "gb_fail_a": 0, "line_value_diff": 0, "dq3": 0, "fail_corps": []}
+    for corp in corps:
+        gb_args = SimpleNamespace(
+            corp=corp, corp_file=None, corps=None, sample=None, seed=42,
+            fy_min=fy_min, fy_max=2100, recheck=True, no_commit=False, line_audit=True)
+        gb_agg = {"status": Counter(), "gate": Counter(),
+                  "fld_pass": 0, "fld_fail": 0, "fail_rows": [], "errors": 0}
+        try:
+            with get_session() as s:
+                gateb_audit.audit_corp(s, corp, gb_args, gb_agg)
+            with get_session() as s:
+                vals = vcs.rollup_corp(s, corp, names.get(corp, "?"), stage="audited")
+                dq3 = s.execute(text(
+                    "SELECT count(*) FROM std_financials_v2 WHERE corp_code=:c AND version=1 "
+                    "AND COALESCE(data_quality,1) >= 3"), {"c": corp}).scalar() or 0
+                s.commit()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[verify]   {corp} 검사 실패: {type(exc).__name__}: {exc}")
+            continue
+        vd = vals.get("line_value_diff", 0) or 0
+        summ["corps"] += 1
+        summ["gb_fail_a"] += vals["gb_fail_a"]
+        summ["line_value_diff"] += vd
+        summ["dq3"] += dq3
+        if vals["gb_fail_a"] or vd or dq3:
+            summ["fail_corps"].append((corp, vals["gb_fail_a"], vd, dq3))
+    return summ
+
+
+def _verify_and_log(agg: dict, args) -> None:
+    """수집 후 DQ 게이트 실행·로깅. fail_a/value_diff(확정 불일치) 발견 시 loud error."""
+    ok = agg.get("ok_corps") or []
+    if getattr(args, "no_verify", False) or not ok:
+        return
+    logger.info(f"[verify] DQ 게이트 — {len(ok)}개 기업 Gate B(보고서==DB)+항등식 재검(fy≥{args.verify_fy_min})")
+    summ = run_dq_gate(ok, args.verify_fy_min)
+    msg = (f"[verify] 완료 — 검사 {summ['corps']} · fail_a {summ['gb_fail_a']} · "
+           f"line_value_diff {summ['line_value_diff']} · DQ3(항등식위반) {summ['dq3']}")
+    if summ["gb_fail_a"] or summ["line_value_diff"]:
+        logger.error(msg + "  ⚠ 보고서≠DB 확정 불일치 발견!")
+        for corp, fa, vd, dq in summ["fail_corps"]:
+            logger.error(f"[verify]   {corp}: fail_a={fa} value_diff={vd} dq3={dq}")
+    elif summ["dq3"]:
+        logger.warning(msg + "  (DQ3=항등식 경고, 비차단 — corp_verify_status 기록됨)")
+    else:
+        logger.success(msg)
 
 
 def main() -> None:
@@ -97,6 +172,10 @@ def main() -> None:
     ap.add_argument("--corps", type=str, default=None,
                     help="쉼표구분 corp_code — 이 기업들만 ④ 처리(--standardize-only 와 함께). "
                          "예: 타임아웃 스킵분 재시도")
+    ap.add_argument("--no-verify", action="store_true",
+                    help="⑤ 수집 후 DQ 게이트(Gate B 재감사+항등식) 생략")
+    ap.add_argument("--verify-fy-min", type=int, default=2015,
+                    help="DQ 게이트 Gate B 재감사 최소 회계연도(기본 2015)")
     args = ap.parse_args()
 
     from app.data import collect
@@ -114,6 +193,7 @@ def main() -> None:
         agg = _standardize_with_timeout(affected, args.timeout) if affected else {}
         logger.success(f"[collect] 재개 완료 — std_v2 {agg.get('s', 0):,} · 이산분기 {agg.get('q', 0):,} · "
                        f"달력 {agg.get('c', 0):,} · 타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
+        _verify_and_log(agg, args)
         return
 
     from collector.downloader import run_downloads
@@ -161,6 +241,9 @@ def main() -> None:
     logger.success(f"[collect] 완료 — 신규 {len(corps)}개 기업 · fact {agg.get('e_facts', 0):,} · "
                    f"std_v2 {agg.get('s', 0):,} · 이산분기 {agg.get('q', 0):,} · 달력 {agg.get('c', 0):,} · "
                    f"타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
+
+    # ⑤ 수집 후 DQ 게이트 — 새로 표준화된 기업만 Gate B(보고서==DB)+항등식 재검, corp_verify_status 적재.
+    _verify_and_log(agg, args)
 
 
 if __name__ == "__main__":

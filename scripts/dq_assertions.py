@@ -84,6 +84,19 @@ CHECKS: list[dict] = [
                   "AND total_assets IS NOT NULL AND total_assets <= 0 LIMIT 10",
     },
     {
+        "name": "operating_income_eq_net_income",
+        "sev": "WARN",
+        "desc": "영업이익 == 순이익 (원단위 정확일치 = Track B 순이익 라인 오매핑 신호)",
+        "count": "SELECT count(*) FROM std_financials_v2 WHERE version=1 "
+                 "AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false) "
+                 "AND fiscal_period IN ('FY','Q1') "
+                 "AND operating_income IS NOT NULL AND operating_income = net_income",
+        "sample": "SELECT corp_code, fiscal_year, fiscal_period, statement_type, operating_income "
+                  "FROM std_financials_v2 WHERE version=1 AND NOT COALESCE(is_stub,false) "
+                  "AND NOT COALESCE(is_discrete,false) AND fiscal_period IN ('FY','Q1') "
+                  "AND operating_income IS NOT NULL AND operating_income = net_income LIMIT 10",
+    },
+    {
         "name": "bs_identity_gt5pct",
         "sev": "WARN",
         "desc": "자산 ≠ 부채+자본 (5% 초과, =DQ3 항등식 위반)",

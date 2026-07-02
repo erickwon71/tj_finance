@@ -85,6 +85,23 @@ def _collect(session, basis: str, sources: dict[str, str],
         """), {"rs": union, "b": basis, "cs": list(_DA_SUPP)}).fetchall()
         for c, v, is_cum in rows:
             _merge(c, v, is_cum)
+
+    # 영업이익 오선택 교정: operating_income 이 net_income 과 원 단위 정확 일치하면 Track B 가
+    # 순이익 라인을 is.operating_income canonical 로 오매핑 + max-abs 로 그 값을 오선택한 신호다
+    # (정상적으로 영업이익==순이익 이 원단위까지 같을 확률은 사실상 0). 순이익과 다른 비영(非0)
+    # 영업이익 후보가 있으면 그중 max-abs 를 채택한다. FY/Q1(비interim) 에만 적용(interim 은
+    # 누적/3개월 구분이 있어 별도) — 후보가 없으면 그대로 두고 DQ/어서션이 잡도록 남긴다.
+    op, ni = canon.get("is.operating_income"), canon.get("is.net_income")
+    if not interim and op is not None and ni is not None and op == ni:
+        alt = session.execute(text("""
+            SELECT amount_won FROM fact_v2
+            WHERE rcept_no = ANY(:rs) AND basis = :b AND col_index = 0
+              AND NOT is_dimensional AND canonical_account = 'is.operating_income'
+              AND amount_won IS NOT NULL AND amount_won <> :ni AND amount_won <> 0
+        """), {"rs": list({r for r in sources.values()}), "b": basis, "ni": ni}).fetchall()
+        cands = [r[0] for r in alt]
+        if cands:
+            canon["is.operating_income"] = max(cands, key=abs)
     return canon
 
 

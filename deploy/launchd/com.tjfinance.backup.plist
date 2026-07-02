@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  매일 19:00 DB 논리 백업 (launchd LaunchAgent).
+  18:00 수집(com.tjfinance.collect)의 pmset wake(17:58) 창을 타고 머신이 깨어있을 때 실행된다.
+  pg_dump 로 소비계층을 외장 볼륨(/Volumes/dart_data/db_backups)에 저장(재생성 가능한 fact_v2
+  데이터 제외). 설치: deploy/launchd/README 참조.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tjfinance.backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/taejin/Project/tj_finance/.venv_tj_finance/bin/python</string>
+        <string>/Users/taejin/Project/tj_finance/scripts/backup_db.py</string>
+        <string>--keep</string>
+        <string>7</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/taejin/Project/tj_finance</string>
+
+    <!-- 매일 19:00 (18:00 수집이 깨운 창을 재사용). -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>19</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/backup.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/backup.err.log</string>
+</dict>
+</plist>

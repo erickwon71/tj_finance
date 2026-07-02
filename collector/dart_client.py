@@ -4,6 +4,8 @@ DART Open API HTTP 클라이언트
 - tenacity 기반 재시도 (5xx / 네트워크 오류)
 - 공통 응답 파싱 헬퍼
 """
+from __future__ import annotations
+
 import time
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -96,6 +98,26 @@ class DartClient:
         /api/document.xml → ZIP 바이너리 반환.
         """
         return self._raw_get("/document.xml", params={"rcept_no": rcept_no})
+
+    def get_single_account(
+        self,
+        corp_code: str,
+        bsns_year: str | int,
+        reprt_code: str = "11011",   # 11011 사업보고서 / 11012 반기 / 11013 1분기 / 11014 3분기
+    ) -> list[dict[str, Any]]:
+        """
+        단일회사 주요계정(fnlttSinglAcnt) — 독립 소스 교차검증용.
+        DART가 공시 원문에서 구조화해 제공하는 주요계정(매출액·영업이익·당기순이익·자산/부채/자본총계
+        등)을 반환한다. 각 행은 fs_div(CFS=연결/OFS=별도)·account_nm·thstrm_amount(당기금액, 원) 포함.
+        조회결과 없음(status 013) → 빈 리스트. 2015 사업연도부터 제공.
+        """
+        params = {
+            "corp_code": corp_code,
+            "bsns_year": str(bsns_year),
+            "reprt_code": reprt_code,
+        }
+        data = self._api_get_json("/fnlttSinglAcnt.json", params)
+        return data.get("list", [])
 
     # ── 내부 헬퍼 ───────────────────────────────────────────────
 

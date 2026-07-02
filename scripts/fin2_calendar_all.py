@@ -26,12 +26,19 @@ def main() -> None:
     ap.add_argument("--shard", help="병렬 샤딩 I/N")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--resume-file")
+    ap.add_argument("--corps", help="대상 corp_code 목록(쉼표구분) 또는 목록파일 경로. 지정 시 전수 대신 이들만.")
     args = ap.parse_args()
 
-    with get_session() as s:
-        corps = [r[0] for r in s.execute(text(
-            "SELECT DISTINCT corp_code FROM std_financials_v2 "
-            "WHERE is_discrete=true ORDER BY corp_code"))]
+    if args.corps:
+        raw = args.corps
+        if Path(raw).exists():
+            raw = Path(raw).read_text()
+        corps = [c.strip() for c in raw.replace("\n", ",").split(",") if c.strip()]
+    else:
+        with get_session() as s:
+            corps = [r[0] for r in s.execute(text(
+                "SELECT DISTINCT corp_code FROM std_financials_v2 "
+                "WHERE is_discrete=true ORDER BY corp_code"))]
     if args.shard:
         i, n = (int(x) for x in args.shard.split("/"))
         corps = corps[i::n]

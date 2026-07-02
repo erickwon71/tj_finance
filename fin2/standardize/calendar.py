@@ -27,13 +27,21 @@ from fin2.standardize.quarterly import _FLOW_COLS, _STOCK_COLS
 # period_end 월 → 달력분기 토큰. 달력분기말만(3/6/9/12) 정렬.
 _MONTH_CQ = {3: "CQ1", 6: "CQ2", 9: "CQ3", 12: "CQ4"}
 _CQ_ORDER = ("CQ1", "CQ2", "CQ3", "CQ4")
-_PK = ("corp_code", "calendar_year", "calendar_period", "statement_type", "version")
 _CARRY = ("is_ifrs",)
 
 
 def _corp_fiscal_month(session, corp_code: str) -> int | None:
     return session.execute(text(
         "SELECT fiscal_month FROM corporations WHERE corp_code = :c"), {"c": corp_code}).scalar()
+
+
+def _is_calendarizable_end(period_end: date, today: date | None = None) -> bool:
+    """달력분기는 해당 분기말(period_end)이 지나야만 구성 가능하다.
+
+    period_end 가 미래(=아직 끝나지 않은 분기)면 실제 데이터가 존재할 수 없으므로
+    달력화 대상에서 제외한다. (오프셋 결산·시드성 데이터가 미래 분기말을 갖는 경우 방어.)
+    """
+    return period_end <= (today or date.today())
 
 
 def _load_discrete(session, corp_code: str, basis: str):
@@ -97,12 +105,20 @@ def calendarize_corp(session, corp_code: str) -> int:
     fiscal_month = _corp_fiscal_month(session, corp_code)
     written = 0
     for basis in ("consolidated", "separate"):
+        # 이 corp+basis 의 달력행 전체를 현재 이산분기로부터 다시 만든다. **upsert 가 아니라
+        # delete-then-insert** — 기재정정·재추출로 이산분기의 period_end 가 바뀌면 예전 달력분기
+        # (예: 미래로 오매핑된 CQ)가 남아 유령행이 되므로, 지운 뒤 새로 채워 제거가 전파되게 한다.
+        session.execute(text(
+            "DELETE FROM std_financials_calendar "
+            "WHERE corp_code = :c AND statement_type = :b AND version = 1"),
+            {"c": corp_code, "b": basis})
+
         discrete = _load_discrete(session, corp_code, basis)
-        if not discrete:
-            continue
-        # (calendar_year, CQ) → 이산분기 행. 달력분기말 정렬분만.
+        # (calendar_year, CQ) → 이산분기 행. 달력분기말 정렬분 + 이미 끝난 분기만.
         cq_map: dict[tuple, dict] = {}
         for r in discrete:
+            if not _is_calendarizable_end(r["period_end"]):
+                continue  # 미래 분기말(아직 안 끝난 분기) = 실제 데이터 불가 → 스킵
             cq = _MONTH_CQ.get(r["period_end"].month)
             if cq is None:
                 continue  # 비정렬 = not_calendarizable → 스킵
@@ -126,11 +142,7 @@ def calendarize_corp(session, corp_code: str) -> int:
                             else "recomposed")
                 batch.append(_cy_record(corp_code, basis, cyear, quarters, cy_deriv))
 
-        stmt = insert(StdFinancialCalendar).values(batch)
-        update_cols = {c.name: stmt.excluded[c.name]
-                       for c in StdFinancialCalendar.__table__.columns if c.name not in _PK}
-        stmt = stmt.on_conflict_do_update(constraint="uq_std_calendar", set_=update_cols)
-        session.execute(stmt)
+        session.execute(insert(StdFinancialCalendar).values(batch))
         written += len(batch)
     if written:
         logger.info(f"[calendar] corp={corp_code} — 달력행 {written}레코드")

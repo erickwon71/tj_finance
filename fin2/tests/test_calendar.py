@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fin2.standardize.calendar import (  # noqa: E402
-    _MONTH_CQ, _cq_record, _cy_record, _CQ_ORDER,
+    _MONTH_CQ, _cq_record, _cy_record, _CQ_ORDER, _is_calendarizable_end,
 )
 
 
@@ -71,6 +71,15 @@ def test_recomposed_derivation_for_nondec():
     src = _disc(2024, "Q4", 3, 2024, revenue=50)   # 3월결산사 fiscal Q4 → 달력 CQ1
     rec = _cq_record("00000000", "consolidated", 2024, "CQ1", src, "recomposed")
     assert rec["derivation"] == "recomposed"
+
+
+def test_future_period_end_not_calendarizable():
+    # 오늘 = 2026-07-02 가정. 이미 끝난 분기말은 달력화 가능, 미래 분기말은 불가.
+    today = date(2026, 7, 2)
+    assert _is_calendarizable_end(date(2026, 3, 31), today) is True   # 지난 분기
+    assert _is_calendarizable_end(date(2026, 6, 30), today) is True   # 이틀 전 마감
+    assert _is_calendarizable_end(date(2026, 9, 30), today) is False  # 미래(아직 안 끝남)
+    assert _is_calendarizable_end(date(2026, 12, 31), today) is False
 
 
 def _run():

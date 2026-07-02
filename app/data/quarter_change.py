@@ -61,7 +61,7 @@ def load_quarter_change(
 
     반환: (rows, total_targets)
       rows: 해당 분기 데이터가 있는 기업만. 각 행 =
-        {corp_code, corp_name, stock_code, market, used_stmt,
+        {corp_code, corp_name, stock_code, market, fiscal_month, used_stmt,
          revenue, op,                              # 당분기 값(원)
          rev_qoq_amt, rev_qoq_pct, rev_yoy_amt, rev_yoy_pct,
          op_qoq_amt,  op_qoq_pct,  op_yoy_amt,  op_yoy_pct}
@@ -93,7 +93,7 @@ def load_quarter_change(
         )
         SELECT t.corp_code, t.calendar_year, t.calendar_period, t.statement_type,
                t.revenue, t.operating_income,
-               c.corp_name, c.stock_code, c.market
+               c.corp_name, c.stock_code, c.market, c.fiscal_month
         FROM tgt t
         JOIN avail a ON a.corp_code = t.corp_code
         JOIN corporations c ON c.corp_code = t.corp_code
@@ -116,6 +116,7 @@ def load_quarter_change(
             d = by_corp[cc] = {
                 "corp_code": cc, "corp_name": r["corp_name"],
                 "stock_code": r["stock_code"], "market": r["market"],
+                "fiscal_month": r["fiscal_month"],
                 "used_stmt": r["statement_type"],
             }
         key = (r["calendar_year"], r["calendar_period"])
@@ -140,6 +141,7 @@ def load_quarter_change(
         rows.append({
             "corp_code": d["corp_code"], "corp_name": d["corp_name"],
             "stock_code": d["stock_code"], "market": d["market"],
+            "fiscal_month": d.get("fiscal_month"),
             "used_stmt": d["used_stmt"],
             "revenue": cur_rev, "op": cur_op,
             "rev_qoq_amt": _diff(cur_rev, qoq_rev), "rev_qoq_pct": _growth_rate(cur_rev, qoq_rev),

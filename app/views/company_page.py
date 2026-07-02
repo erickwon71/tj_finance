@@ -14,7 +14,7 @@ import streamlit as st
 
 from app import cache, state
 from app.components.export import download_button
-from app.format import fmt_amount, fmt_corp_identity, fmt_pct, fmt_ratio
+from app.format import corp_notes, fmt_amount, fmt_corp_identity, fmt_notes, fmt_pct, fmt_ratio
 from app.views import metric_panel
 from app.views.chart_panel import render_price_chart, render_price_financial_combined
 
@@ -211,8 +211,13 @@ def render() -> None:
     else:
         series, used_stmt = cache.annual_series(corp_code, requested_stmt, years=10)
 
+    notes = corp_notes(fiscal_month=meta.get("fiscal_month"),
+                       used_stmt=used_stmt, requested_stmt=requested_stmt)
     st.subheader(fmt_corp_identity(
-        meta["corp_name"], meta["corp_code"], meta.get("stock_code"), meta.get("market")))
+        meta["corp_name"], meta["corp_code"], meta.get("stock_code"),
+        meta.get("market")) + fmt_notes(notes))
+    if notes:
+        st.caption("기업명 옆 **(주n)** 표시의 뜻은 좌측 메뉴 **ℹ️ 도움말** 페이지를 참고하세요.")
 
     _report_viewer(corp_code)
 

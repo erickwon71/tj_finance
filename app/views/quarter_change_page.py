@@ -14,7 +14,7 @@ import streamlit as st
 from analyzer.ratio_engine import _growth_rate
 from app import cache, state
 from app.components.export import to_csv_bytes
-from app.format import fmt_corp_identity
+from app.format import corp_notes, fmt_corp_identity, fmt_notes
 from app.views import company_page
 
 _MODAL_QUARTERS = 16  # 모달 분기 추이에 표시할 최근 달력분기 수
@@ -53,11 +53,14 @@ def _pct(v):
     return (v * 100.0) if v is not None else None
 
 
-def _to_display(rows: list[dict]) -> pd.DataFrame:
+def _to_display(rows: list[dict], requested_stmt: str) -> pd.DataFrame:
     recs = []
     for r in rows:
+        # 기업명 옆 특별조치 각주: 주1=비-12월 결산(달력 재구성), 주2=연결→별도 대체.
+        notes = corp_notes(fiscal_month=r.get("fiscal_month"),
+                           used_stmt=r.get("used_stmt"), requested_stmt=requested_stmt)
         recs.append({
-            "기업명": r["corp_name"],
+            "기업명": r["corp_name"] + fmt_notes(notes),
             "종목코드": r.get("stock_code") or "—",
             "시장": r.get("market") or "—",
             "기준": {"consolidated": "연결", "separate": "별도"}.get(r.get("used_stmt"), "—"),
@@ -149,12 +152,14 @@ def _viz_dialog(corp_code: str) -> None:
     매출·영업이익 분기 추이를 표/그래프로 선택. 전체 상세(주가·지표·밸류·대가)는 옵션."""
     state.set_focus_corp(corp_code)
     meta = cache.resolve_corp(corp_code)
-    if meta:
-        st.subheader(fmt_corp_identity(
-            meta["corp_name"], meta["corp_code"], meta.get("stock_code"), meta.get("market")))
-
     stmt = state.get_stmt_type()
     series, used = cache.quarter_series(corp_code, stmt, quarters=_MODAL_QUARTERS)
+    if meta:
+        notes = corp_notes(fiscal_month=meta.get("fiscal_month"),
+                           used_stmt=used, requested_stmt=stmt)
+        st.subheader(fmt_corp_identity(
+            meta["corp_name"], meta["corp_code"], meta.get("stock_code"),
+            meta.get("market")) + fmt_notes(notes))
     if not series:
         st.info("분기(달력분기) 데이터가 없습니다.")
         return
@@ -189,7 +194,7 @@ def _render_quarter(cal_year: int, quarter: str, stmt: str) -> None:
     stmt_ko = state.STMT_LABELS_INV.get(stmt, "연결")
     st.markdown(f"표시 **{len(rows):,}** / 전체 **{total:,}** 기업 · {cal_year} {quarter} · {stmt_ko} 기준")
 
-    df = _to_display(rows)
+    df = _to_display(rows, stmt)
     if df.empty:
         st.info("해당 분기 데이터가 없습니다.")
         # 빈 표(헤더만) 표시
@@ -226,7 +231,8 @@ def _render_quarter(cal_year: int, quarter: str, stmt: str) -> None:
 def render() -> None:
     st.header("📊 분기 변화 — 매출·영업이익")
     st.caption("전 대상기업의 매출·영업이익을 **직전분기(QoQ)·전년동기(YoY)** 대비 증감액·증감률로 표시. "
-               "증감률 등 숫자 컬럼은 헤더를 클릭해 정렬, **행을 클릭하면 팝업으로 해당 기업 시각화**가 뜹니다.")
+               "증감률 등 숫자 컬럼은 헤더를 클릭해 정렬, **행을 클릭하면 팝업으로 해당 기업 시각화**가 뜹니다. "
+               "기업명 옆 **(주1)(주2)** 표시의 뜻은 좌측 메뉴 **ℹ️ 도움말** 페이지를 참고하세요.")
 
     stmt = state.get_stmt_type()
     years = cache.quarter_change_years(stmt)

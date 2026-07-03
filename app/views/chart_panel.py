@@ -256,3 +256,26 @@ def render_valuation_band(series: list[dict], stats: dict, label: str,
                       yaxis_title=f"{label} ({unit})", hovermode="x unified",
                       showlegend=False)
     st.plotly_chart(fig, use_container_width=True, key=key)
+
+
+def render_pershare_panel(rows: list[dict], key: str | None = None) -> None:
+    """주당지표(EPS/BPS/FCF-per-share, 원/주) + 발행주식수(백만주) 추이. rows=연도 오름차순."""
+    df = pd.DataFrame(rows).sort_values("year")
+    x = df["year"].astype(str)
+
+    fig1 = go.Figure()
+    for col, name, color in [("eps", "EPS", "#3182bd"), ("bps", "BPS", "#e6550d"),
+                             ("fcf_ps", "FCF/주", "#31a354")]:
+        if col in df:
+            fig1.add_trace(go.Scatter(x=x, y=df[col], mode="lines+markers", name=name,
+                                      line=dict(color=color)))
+    fig1.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10), yaxis_title="원/주",
+                       legend=dict(orientation="h", y=1.14), hovermode="x unified")
+    st.plotly_chart(fig1, use_container_width=True, key=f"{key}_ps")
+
+    fig2 = go.Figure()
+    fig2.add_trace(go.Scatter(x=x, y=df["shares_out"] / 1e6, mode="lines+markers",
+                              name="발행주식수", line=dict(color="#756bb1"), fill="tozeroy"))
+    fig2.update_layout(height=240, margin=dict(l=10, r=10, t=30, b=10), yaxis_title="백만주",
+                       hovermode="x unified", showlegend=False)
+    st.plotly_chart(fig2, use_container_width=True, key=f"{key}_sh")

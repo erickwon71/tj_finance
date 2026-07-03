@@ -17,7 +17,8 @@ from app.components.export import download_button
 from app.format import corp_notes, fmt_amount, fmt_corp_identity, fmt_notes, fmt_pct, fmt_ratio
 from app.views import metric_panel
 from app.views.chart_panel import (
-    render_price_chart, render_price_financial_combined, render_valuation_band)
+    render_price_chart, render_price_financial_combined, render_valuation_band,
+    render_pershare_panel)
 
 EOK = 100_000_000
 
@@ -129,6 +130,35 @@ def _valuation_bands(corp_code: str) -> None:
     st.caption(f"중앙값 {stats['median']*mult:,.1f}{unit} · 범위 "
                f"{stats['min']*mult:,.1f}~{stats['max']*mult:,.1f}{unit} · {stats['n']:,}거래일")
     render_valuation_band(series, stats, label, is_pct, key=f"vband_{metric}")
+
+
+def _per_share_trends(corp_code: str, stmt: str) -> None:
+    """주당지표(EPS/BPS/FCF-per-share) + 발행주식수 추이(자사주/희석). 연간(FY) 기준."""
+    rows_raw, _ = cache.annual_series(corp_code, stmt, 15)
+    recs = []
+    for r in rows_raw:
+        sh = r.get("shares_out")
+        if not sh:
+            continue
+        ni = r.get("controlling_ni") if r.get("controlling_ni") is not None else r.get("net_income")
+        eq = r.get("controlling_equity") if r.get("controlling_equity") is not None else r.get("total_equity")
+        fcf = r.get("fcf")
+        recs.append({
+            "year": r["fiscal_year"], "shares_out": sh,
+            "eps": (ni / sh) if ni is not None else None,
+            "bps": (eq / sh) if eq is not None else None,
+            "fcf_ps": (fcf / sh) if fcf is not None else None,
+        })
+    if len(recs) < 2:
+        return
+    recs.sort(key=lambda x: x["year"])
+    st.divider()
+    st.markdown("#### 📐 주당지표 · 발행주식수 추이 (FY, 현재 주식수 기준)")
+    first, last = recs[0], recs[-1]
+    chg = (last["shares_out"] / first["shares_out"] - 1) * 100 if first["shares_out"] else 0.0
+    trend = ("자사주 매입 등 감소" if chg < -1 else "증자·희석 등 증가" if chg > 1 else "거의 불변")
+    st.caption(f"발행주식수 {first['year']}→{last['year']}: **{chg:+.1f}%** ({trend})")
+    render_pershare_panel(recs, key="pershare")
 
 
 def _dq_banner(series: list[dict], grain: str) -> None:
@@ -346,6 +376,7 @@ def render() -> None:
             st.dataframe(_valuation_df(mv), width="stretch")
 
         _valuation_bands(corp_code)
+        _per_share_trends(corp_code, requested_stmt)
 
     # ── 대가지표 (Buffett·Piotroski·Graham·Greenblatt·Lynch·Fisher) ──
     elif active == TABS[3]:

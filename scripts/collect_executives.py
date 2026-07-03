@@ -79,6 +79,11 @@ def _pick(session, args) -> list[str]:
     corps = [r[0] for r in session.execute(text(
         "SELECT corp_code FROM corporations WHERE is_active AND stock_code IS NOT NULL "
         "ORDER BY corp_code")).fetchall()]
+    if args.skip_existing:
+        done = {r[0] for r in session.execute(text(
+            "SELECT DISTINCT corp_code FROM executives WHERE fiscal_year = :y"),
+            {"y": args.year}).fetchall()}
+        corps = [c for c in corps if c not in done]
     if args.sample:
         random.Random(args.seed).shuffle(corps)
         corps = corps[: args.sample]
@@ -90,6 +95,8 @@ def main() -> None:
     ap.add_argument("--corps")
     ap.add_argument("--sample", type=int)
     ap.add_argument("--year", type=int, default=2024, help="사업연도(기본 2024)")
+    ap.add_argument("--skip-existing", action="store_true",
+                    help="해당 연도 이미 수집된 기업 건너뜀(중단 후 재개용)")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 

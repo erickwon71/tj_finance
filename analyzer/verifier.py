@@ -119,21 +119,28 @@ def _fetch_sf(corp_code: str, fy: int, fp: str, stmt_type: str) -> dict:
 
 
 def _fetch_source_ref(rcept_no: str, account_code: str, stmt_type: str) -> Optional[str]:
-    """해당 fact의 source_ref 조회 (fail 항목 원본 위치 안내용)."""
+    """해당 fact의 source_ref 조회 (fail 항목 원본 위치 안내용).
+
+    ⚠ financial_facts 는 P5(fin2 컷오버)에서 드롭됨. 이 안내는 실패 항목에만 쓰이는 부가정보라
+    테이블이 없으면 None 을 반환(비치명적) — 검증 자체는 std_v2(standard_financials view)로 수행된다.
+    """
     suffix = "_C" if stmt_type == "consolidated" else "_S"
-    with get_session() as s:
-        row = s.execute(text("""
-            SELECT source_ref FROM financial_facts
-            WHERE rcept_no = :rn AND account_code = :ac
-              AND fs_type = ANY(ARRAY[:bs, :is_, :cf])
-              AND col_index = 0 AND NOT is_superseded
-              AND source_ref IS NOT NULL
-            LIMIT 1
-        """), {
-            "rn": rcept_no, "ac": account_code,
-            "bs": f"BS{suffix}", "is_": f"IS{suffix}", "cf": f"CF{suffix}",
-        }).fetchone()
-    return row[0] if row else None
+    try:
+        with get_session() as s:
+            row = s.execute(text("""
+                SELECT source_ref FROM financial_facts
+                WHERE rcept_no = :rn AND account_code = :ac
+                  AND fs_type = ANY(ARRAY[:bs, :is_, :cf])
+                  AND col_index = 0 AND NOT is_superseded
+                  AND source_ref IS NOT NULL
+                LIMIT 1
+            """), {
+                "rn": rcept_no, "ac": account_code,
+                "bs": f"BS{suffix}", "is_": f"IS{suffix}", "cf": f"CF{suffix}",
+            }).fetchone()
+        return row[0] if row else None
+    except Exception:  # noqa: BLE001 — financial_facts 부재 등(드롭됨) → 안내 생략
+        return None
 
 
 # ── Layer 1 항등식 검사 ───────────────────────────────────────────────────────

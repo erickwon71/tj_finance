@@ -74,14 +74,15 @@ CHECKS: list[dict] = [
     {
         "name": "nonpositive_total_assets",
         "sev": "ERROR",
-        "desc": "자산총계 <= 0 (자산은 양수여야 함; as-reported 행 기준)",
+        "desc": "자산총계 <= 0 인데 미격리(DQ<3) — 소비계층에 노출되는 불가값",
         "count": "SELECT count(*) FROM std_financials_v2 WHERE version=1 "
                  "AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false) "
-                 "AND total_assets IS NOT NULL AND total_assets <= 0",
+                 "AND total_assets IS NOT NULL AND total_assets <= 0 AND COALESCE(data_quality,1) < 3",
         "sample": "SELECT corp_code, fiscal_year, fiscal_period, statement_type, total_assets "
                   "FROM std_financials_v2 WHERE version=1 AND NOT COALESCE(is_stub,false) "
                   "AND NOT COALESCE(is_discrete,false) "
-                  "AND total_assets IS NOT NULL AND total_assets <= 0 LIMIT 10",
+                  "AND total_assets IS NOT NULL AND total_assets <= 0 "
+                  "AND COALESCE(data_quality,1) < 3 LIMIT 10",
     },
     {
         "name": "operating_income_eq_net_income",

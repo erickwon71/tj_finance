@@ -256,9 +256,13 @@ def run_rules(ctx: StdContext) -> StdContext:
 
 # ── 회계 항등식 DQ(순수 함수, aggregator 이식) ─────────────────────────────
 def validate_equations(col: dict) -> int:
-    """BS=L+E, IS revenue-cogs≈gp, CF 합 정합. 1=정상 2=경고 3=오류."""
+    """BS=L+E, IS revenue-cogs≈gp, CF 합 정합. 자산총계<=0(불가)→3. 1=정상 2=경고 3=오류."""
     dq = 1
     ta, tl, te = col.get("total_assets"), col.get("total_liabilities"), col.get("total_equity")
+    # 자산총계는 자산계정의 합이라 정상 기업이면 항상 양수. <=0 은 추출/부호/컬럼정렬 오류
+    # (예: 텍스트 BS 의 연결/비교 컬럼 오추출) → 오류(DQ3)로 소비계층(data_quality<3)에서 배제.
+    if ta is not None and ta <= 0:
+        return 3
     if ta and tl is not None and te is not None and ta > 0:
         diff = abs(ta - (tl + te)) / abs(ta)
         if diff > 0.05:

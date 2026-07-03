@@ -155,6 +155,15 @@ def dividend_cached(corp_code: str, years: int, statement_type: str):
     return analyze_dividend(corp_code, years=years, statement_type=statement_type)
 
 
+# ── 섹터 피어 벤치마킹 ────────────────────────────────────
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=1024)
+def peer_benchmark(corp_code: str, fiscal_year: Optional[int] = None) -> Optional[dict]:
+    """대상 기업의 업종 피어 벤치마크. 캐시된 스크리너 모집단 재사용."""
+    from app.data import peers as _peers
+    pop = screen_population(fiscal_year)
+    return _peers.load_peer_benchmark(corp_code, pop)
+
+
 # ── 데이터 신뢰 (Gate B) ─────────────────────────────────
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=1024)
 def trust_summary(corp_code: str) -> dict:

@@ -33,6 +33,7 @@ class Corporation(Base):
     market           = Column(String(10),  nullable=True,               comment="KOSPI/KOSDAQ/KONEX")
     fiscal_month     = Column(SmallInteger, default=12,                  comment="결산월 1~12 (사업보고서 (YYYY.MM)에서 도출, 기본 12월)")
     is_active        = Column(Boolean,     default=True,                 comment="현재 상장 여부")
+    induty_code      = Column(String(6),   nullable=True,  index=True,   comment="DART 업종코드(KSIC). 섹터/피어 그룹핑용")
     coverage_class   = Column(String(20),  default="periodic",           comment="periodic=표준 정기보고 대상 / non_periodic=펀드·집합투자기구 등 정기보고 미대상(완전성 모집단 제외, 추후 보강)")
     dart_modify_date = Column(String(8),   nullable=True,               comment="DART 최종변경일(yyyymmdd)")
     last_filing_sync = Column(DateTime,    nullable=True,               comment="공시목록 마지막 수집 시각")

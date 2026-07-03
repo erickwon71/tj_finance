@@ -161,6 +161,56 @@ def _per_share_trends(corp_code: str, stmt: str) -> None:
     render_pershare_panel(recs, key="pershare")
 
 
+def _fmt_peer_val(v, kind: str) -> str:
+    if v is None:
+        return "—"
+    if kind == "pct":
+        return f"{v*100:.1f}%"
+    if kind == "mult":
+        return f"{v:.1f}x"
+    return f"{v:.0f}"
+
+
+def _peer_panel(corp_code: str) -> None:
+    """섹터(KSIC 중분류) 피어 대비 지표 백분위 + 피어 목록."""
+    pb = cache.peer_benchmark(corp_code)
+    if not pb or not pb.get("has_sector"):
+        st.info("업종코드가 없습니다. (수집: `python scripts/collect_industry.py --skip-existing`)")
+        return
+    if pb.get("insufficient"):
+        st.info(f"**{pb['sector_name']}** 섹터 피어가 부족합니다 ({pb['n_peers']}개사).")
+        return
+
+    st.markdown(f"#### 🏢 {pb['sector_name']} — 피어 {pb['n_peers']}개사 대비 (최신 FY)")
+    recs = []
+    for m in pb["metrics"]:
+        if m["value"] is None or m["percentile"] is None:
+            recs.append({"지표": m["label"], "기업값": _fmt_peer_val(m["value"], m["kind"]),
+                         "섹터중앙값": "—", "백분위": "—", "평가": "—"})
+            continue
+        good = m["percentile"] if m["higher_better"] else (100 - m["percentile"])
+        verdict = "🟢 우수" if good >= 70 else "🔴 열위" if good <= 30 else "🟡 평균"
+        recs.append({
+            "지표": m["label"], "기업값": _fmt_peer_val(m["value"], m["kind"]),
+            "섹터중앙값": _fmt_peer_val(m["median"], m["kind"]),
+            "백분위": f"{m['percentile']:.0f}%", "평가": verdict,
+        })
+    st.dataframe(pd.DataFrame(recs), hide_index=True, width="stretch")
+    st.caption("백분위 = 섹터 내 위치(0=최저, 100=최고). 평가: 방향 반영(저 PER/부채=우수). "
+               "섹터=KSIC 중분류(업종코드 앞 2자리).")
+
+    st.markdown("**시총 상위 피어**")
+    prows = [{
+        "기업명": ("★ " if r["corp_code"] == corp_code else "") + r["corp_name"],
+        "시총(조)": round(r.get("market_cap_jo") or 0, 2),
+        "ROE": _fmt_peer_val(r.get("roe"), "pct"),
+        "영업이익률": _fmt_peer_val(r.get("op_margin"), "pct"),
+        "PER": _fmt_peer_val(r.get("per"), "mult"),
+        "PBR": _fmt_peer_val(r.get("pbr"), "mult"),
+    } for r in pb["peers"]]
+    st.dataframe(pd.DataFrame(prows), hide_index=True, width="stretch")
+
+
 def _trust_badge(corp_code: str) -> None:
     """데이터 신뢰 배지 — Gate B(보고서==DB) 감사 결과를 한 줄로."""
     t = cache.trust_summary(corp_code)
@@ -359,7 +409,7 @@ def render() -> None:
 
     # 탭 = session_state 유지 라디오(사이드바 변경 등 재실행에도 보던 화면 유지)
     TABS = ["📑 재무제표", "📊 지표", "💰 밸류에이션", "🏆 대가지표",
-            "📈 주가", "📊 주가·재무 결합", "👔 임원"]
+            "📈 주가", "📊 주가·재무 결합", "🏢 섹터·피어", "👔 임원"]
     active = st.radio("화면", TABS, horizontal=True, key="company_tab",
                       label_visibility="collapsed")
 
@@ -481,6 +531,10 @@ def render() -> None:
                 st.caption(f"좌축=주가(원{', log' if log2 else ''}) · 우축=재무(억원, {style}) · "
                            f"{grain_note} · 재무항목 {len(fin_series)}개 · 기간 전환은 좌측 사이드바")
 
-    # ── 임원 (지배구조) ──
+    # ── 섹터·피어 벤치마킹 ──
     elif active == TABS[6]:
+        _peer_panel(corp_code)
+
+    # ── 임원 (지배구조) ──
+    elif active == TABS[7]:
         _executives_panel(corp_code)

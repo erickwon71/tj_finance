@@ -128,6 +128,12 @@ class DartClient:
         data = self._api_get_json("/exctvSttus.json", params)
         return data.get("list", [])
 
+    def get_company(self, corp_code: str) -> dict[str, Any]:
+        """기업개황(company.json) — induty_code(업종/KSIC)·acc_mt(결산월)·corp_cls 등.
+        섹터/피어 그룹핑용. 조회결과 없음(013) → 빈 dict."""
+        data = self._api_get_json("/company.json", {"corp_code": corp_code})
+        return {} if data.get("status") == "013" else data
+
     # ── 내부 헬퍼 ───────────────────────────────────────────────
 
     def _api_get_json(self, path: str, params: dict) -> dict:

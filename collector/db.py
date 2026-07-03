@@ -297,6 +297,9 @@ def _run_migrations() -> None:
             END IF;
         END $$
         """,
+        # 섹터/피어 벤치마킹 — DART 업종코드(KSIC). company.json 로 채움(collect_industry.py).
+        "ALTER TABLE corporations ADD COLUMN IF NOT EXISTS induty_code VARCHAR(6)",
+        "CREATE INDEX IF NOT EXISTS ix_corporations_induty ON corporations (induty_code)",
         # P1 D2 — 중복/미사용 인덱스 정리(디스크 회수, 멱등). 재생성 안 함:
         #  ix_sp_stock_date = uq_stock_prices 와 동일 컬럼 중복(683MB)
         #  ix_fact_v2_is_dimensional = boolean 저선택 인덱스, 스캔 0(2.1GB)

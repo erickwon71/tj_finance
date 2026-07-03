@@ -92,12 +92,15 @@ def _collect(session, basis: str, sources: dict[str, str],
     # 영업이익 후보가 있으면 그중 max-abs 를 채택한다. FY/Q1(비interim) 에만 적용(interim 은
     # 누적/3개월 구분이 있어 별도) — 후보가 없으면 그대로 두고 DQ/어서션이 잡도록 남긴다.
     op, ni = canon.get("is.operating_income"), canon.get("is.net_income")
-    if not interim and op is not None and ni is not None and op == ni:
-        alt = session.execute(text("""
+    if op is not None and ni is not None and op == ni:
+        # interim(H1/Q3)은 누적셀만 후보로(3개월셀 오선택 방지). FY/Q1 은 전체 col0 후보.
+        cum_filter = "AND COALESCE(is_cumulative, false)" if interim else ""
+        alt = session.execute(text(f"""
             SELECT amount_won FROM fact_v2
             WHERE rcept_no = ANY(:rs) AND basis = :b AND col_index = 0
               AND NOT is_dimensional AND canonical_account = 'is.operating_income'
               AND amount_won IS NOT NULL AND amount_won <> :ni AND amount_won <> 0
+              {cum_filter}
         """), {"rs": list({r for r in sources.values()}), "b": basis, "ni": ni}).fetchall()
         cands = [r[0] for r in alt]
         if cands:

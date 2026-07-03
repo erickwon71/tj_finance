@@ -25,7 +25,6 @@ from run import process_corp
 _AFFECTED_SQL = """
     SELECT DISTINCT corp_code FROM std_financials_v2
     WHERE version=1 AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false)
-      AND fiscal_period IN ('FY','Q1')
       AND operating_income IS NOT NULL AND operating_income = net_income
     ORDER BY corp_code
 """
@@ -35,7 +34,7 @@ def _op_eq_ni_rows(session) -> int:
     return session.execute(text(
         "SELECT count(*) FROM std_financials_v2 WHERE version=1 "
         "AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false) "
-        "AND fiscal_period IN ('FY','Q1') AND operating_income IS NOT NULL "
+        "AND operating_income IS NOT NULL "
         "AND operating_income = net_income")).scalar() or 0
 
 

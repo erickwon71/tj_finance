@@ -161,6 +161,21 @@ def _per_share_trends(corp_code: str, stmt: str) -> None:
     render_pershare_panel(recs, key="pershare")
 
 
+def _trust_badge(corp_code: str) -> None:
+    """데이터 신뢰 배지 — Gate B(보고서==DB) 감사 결과를 한 줄로."""
+    t = cache.trust_summary(corp_code)
+    if not t or t["total"] == 0:
+        return
+    if t["fail_a"] > 0:
+        st.error(f"⚠ 보고서 ≠ DB 확정 불일치 {t['fail_a']}건 (Gate B fail_a) — 값 확인 필요")
+    elif t["fail"] > 0:
+        st.warning(f"🔎 보고서↔DB 검토 대상 {t['fail']}건 (Gate B fail_b, 휴리스틱 항목)")
+    else:
+        tail = f" · 미검증 {t['pending']}" if t["pending"] else ""
+        st.success(f"✅ 보고서↔DB 검증 통과 — Gate B pass **{t['pass']:,}** 기간 · 불일치 0{tail}",
+                   icon="✅")
+
+
 def _executives_panel(corp_code: str) -> None:
     """임원 현황(지배구조) 로스터 — 최신 사업보고서 기준."""
     yr, rows = cache.executives_roster(corp_code)
@@ -317,6 +332,7 @@ def render() -> None:
         st.caption("기업명 옆 **(주n)** 표시의 뜻은 좌측 메뉴 **ℹ️ 도움말** 페이지를 참고하세요.")
 
     _report_viewer(corp_code)
+    _trust_badge(corp_code)
 
     if not series:
         st.warning(f"{'분기' if grain=='quarter' else '연간'} 표준화 재무제표 데이터가 없습니다.")

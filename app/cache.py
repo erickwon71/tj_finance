@@ -155,6 +155,14 @@ def dividend_cached(corp_code: str, years: int, statement_type: str):
     return analyze_dividend(corp_code, years=years, statement_type=statement_type)
 
 
+# ── 데이터 신뢰 (Gate B) ─────────────────────────────────
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=1024)
+def trust_summary(corp_code: str) -> dict:
+    """Gate B 감사 요약(신뢰 배지). app.data.trust 위임."""
+    from app.data import trust as _trust
+    return _trust.load_trust(corp_code)
+
+
 # ── 지배구조 (임원 현황) ─────────────────────────────────
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
 def executives_roster(corp_code: str):

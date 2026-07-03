@@ -1,0 +1,8 @@
+# TJ Finance Streamlit 설정. 다크모드는 우상단 ☰ > Settings 에서 사용자가 전환 가능.
+[theme]
+base = "light"
+primaryColor = "#08519c"          # 딥 블루 (밴드·차트 강조색과 통일)
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false

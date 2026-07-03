@@ -220,3 +220,39 @@ def render_price_financial_combined(
     st.plotly_chart(fig, use_container_width=True, key=key)
     if downsampled:
         st.caption("주가 주간 다운샘플(장기간)")
+
+
+def render_valuation_band(series: list[dict], stats: dict, label: str,
+                          is_pct: bool = False, key: str | None = None) -> None:
+    """멀티플 일별 시계열 + 분위 밴드(p10/p25/중앙/p75/p90) + 현재값 마커.
+
+    series=[{trade_date, value}, ...](오름차순), stats=valuation_bands.band_stats 결과.
+    """
+    df = pd.DataFrame(series)
+    df["trade_date"] = pd.to_datetime(df["trade_date"])
+    df = df.sort_values("trade_date")
+    mult = 100.0 if is_pct else 1.0
+    y = df["value"] * mult
+    unit = "%" if is_pct else "x"
+
+    fig = go.Figure()
+    for name, val, dash, color in [
+        ("p10", stats["p10"], "dot", "#c6dbef"),
+        ("p25", stats["p25"], "dash", "#9ecae1"),
+        ("중앙값", stats["median"], "solid", "#3182bd"),
+        ("p75", stats["p75"], "dash", "#9ecae1"),
+        ("p90", stats["p90"], "dot", "#c6dbef"),
+    ]:
+        fig.add_hline(y=val * mult, line=dict(color=color, dash=dash, width=1),
+                      annotation_text=f"{name} {val*mult:.1f}{unit}",
+                      annotation_position="right",
+                      annotation_font=dict(size=10, color=color))
+    fig.add_trace(go.Scatter(x=df["trade_date"], y=y, mode="lines", name=label,
+                             line=dict(color="#08519c", width=1.4)))
+    fig.add_trace(go.Scatter(x=[df["trade_date"].iloc[-1]], y=[y.iloc[-1]],
+                             mode="markers", name="현재",
+                             marker=dict(color="crimson", size=11, symbol="diamond")))
+    fig.update_layout(height=380, margin=dict(l=10, r=90, t=30, b=10),
+                      yaxis_title=f"{label} ({unit})", hovermode="x unified",
+                      showlegend=False)
+    st.plotly_chart(fig, use_container_width=True, key=key)

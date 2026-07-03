@@ -155,6 +155,14 @@ def dividend_cached(corp_code: str, years: int, statement_type: str):
     return analyze_dividend(corp_code, years=years, statement_type=statement_type)
 
 
+# ── 밸류에이션 밴드 (일별 멀티플 시계열) ─────────────────
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def valuation_series(corp_code: str, metric: str, since_year: Optional[int] = None) -> list[dict]:
+    """valuation_daily 일별 멀티플 시계열(밴드용). app.data.valuation_bands 위임."""
+    from app.data import valuation_bands as _vb
+    return _vb.load_valuation_series(corp_code, metric, since_year)
+
+
 # ── 밸류에이션 멀티플 (최신 FY) ──────────────────────────
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
 def company_multiples(corp_code: str, statement_type: str) -> Optional[dict]:

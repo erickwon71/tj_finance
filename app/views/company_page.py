@@ -16,7 +16,8 @@ from app import cache, state
 from app.components.export import download_button
 from app.format import corp_notes, fmt_amount, fmt_corp_identity, fmt_notes, fmt_pct, fmt_ratio
 from app.views import metric_panel
-from app.views.chart_panel import render_price_chart, render_price_financial_combined
+from app.views.chart_panel import (
+    render_price_chart, render_price_financial_combined, render_valuation_band)
 
 EOK = 100_000_000
 
@@ -89,6 +90,45 @@ def _valuation_df(mv: dict) -> pd.DataFrame:
         ("BPS", f"{mv['bps']:,.0f}원" if mv.get("bps") else "—"),
     ]
     return pd.DataFrame(rows, columns=["지표", "값"]).set_index("지표")
+
+
+def _band_verdict(percentile: float, metric: str) -> str:
+    """자기 역사 대비 저/고평가 판정. 멀티플은 낮을수록 싸고, 배당수익률은 높을수록 싸다."""
+    cheapness = percentile if metric == "dividend_yield" else (100 - percentile)
+    if cheapness >= 75:
+        return "🟢 역사적 저평가권 (싸다)"
+    if cheapness <= 25:
+        return "🔴 역사적 고평가권 (비싸다)"
+    return "🟡 역사적 중립권"
+
+
+def _valuation_bands(corp_code: str) -> None:
+    """일별 멀티플의 과거 분포 + 현재 위치(밴드). '자기 역사 대비 싸다/비싸다'."""
+    from app.data.valuation_bands import BAND_METRICS, band_stats
+
+    st.divider()
+    st.markdown("#### 📉 밸류에이션 밴드 — 자기 역사 대비 (2015~)")
+    keys = list(BAND_METRICS)
+    labels = [BAND_METRICS[k][0] for k in keys]
+    sel = st.selectbox("지표", labels, key="vband_metric", label_visibility="collapsed")
+    metric = keys[labels.index(sel)]
+    label, is_pct = BAND_METRICS[metric]
+
+    series = cache.valuation_series(corp_code, metric, 2015)
+    if not series or len(series) < 30:
+        st.info("밴드를 그릴 만큼의 일별 멀티플 데이터가 없습니다.")
+        return
+    stats = band_stats([r["value"] for r in series])
+    mult = 100.0 if is_pct else 1.0
+    unit = "%" if is_pct else "x"
+    c1, c2, c3 = st.columns(3)
+    c1.metric(f"현재 {label}", f"{stats['current']*mult:,.1f}{unit}")
+    c2.metric("역사적 백분위", f"{stats['percentile']:.0f}%",
+              help="현재값이 과거 분포에서 차지하는 위치(0=최저, 100=최고)")
+    c3.metric("판정", _band_verdict(stats["percentile"], metric))
+    st.caption(f"중앙값 {stats['median']*mult:,.1f}{unit} · 범위 "
+               f"{stats['min']*mult:,.1f}~{stats['max']*mult:,.1f}{unit} · {stats['n']:,}거래일")
+    render_valuation_band(series, stats, label, is_pct, key=f"vband_{metric}")
 
 
 def _dq_banner(series: list[dict], grain: str) -> None:
@@ -304,6 +344,8 @@ def render() -> None:
             st.markdown(f"**{mv.get('fiscal_year')} FY 기준** · "
                         f"{'연결' if mv.get('used_stmt')=='consolidated' else '별도'}")
             st.dataframe(_valuation_df(mv), width="stretch")
+
+        _valuation_bands(corp_code)
 
     # ── 대가지표 (Buffett·Piotroski·Graham·Greenblatt·Lynch·Fisher) ──
     elif active == TABS[3]:

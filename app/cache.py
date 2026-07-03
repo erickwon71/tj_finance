@@ -155,6 +155,14 @@ def dividend_cached(corp_code: str, years: int, statement_type: str):
     return analyze_dividend(corp_code, years=years, statement_type=statement_type)
 
 
+# ── 지배구조 (임원 현황) ─────────────────────────────────
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def executives_roster(corp_code: str):
+    """최신 사업연도 임원 로스터. app.data.governance 위임."""
+    from app.data import governance as _gov
+    return _gov.load_executives(corp_code)
+
+
 # ── 밸류에이션 밴드 (일별 멀티플 시계열) ─────────────────
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
 def valuation_series(corp_code: str, metric: str, since_year: Optional[int] = None) -> list[dict]:

@@ -161,6 +161,33 @@ def _per_share_trends(corp_code: str, stmt: str) -> None:
     render_pershare_panel(recs, key="pershare")
 
 
+def _executives_panel(corp_code: str) -> None:
+    """임원 현황(지배구조) 로스터 — 최신 사업보고서 기준."""
+    yr, rows = cache.executives_roster(corp_code)
+    if not rows:
+        st.info("임원 데이터가 없습니다. (수집: `python scripts/collect_executives.py --corps "
+                f"{corp_code} --year 2024`)")
+        return
+    st.markdown(f"#### 👔 임원 현황 — {yr} 사업보고서 · {len(rows)}명")
+    reg = sum(1 for r in rows if r["is_registered"])
+    fem = sum(1 for r in rows if r.get("gender") == "여")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("임원 수", f"{len(rows)}명")
+    c2.metric("등기임원", f"{reg}명")
+    c3.metric("여성", f"{fem}명 ({fem/len(rows)*100:.0f}%)" if rows else "—")
+    df = pd.DataFrame([{
+        "성명": r["name"], "직위": r.get("position") or "—",
+        "등기": "등기" if r["is_registered"] else "미등기" if r["is_registered"] is False else "—",
+        "상근": "상근" if r["is_fulltime"] else "비상근" if r["is_fulltime"] is False else "—",
+        "담당업무": r.get("responsibility") or "—",
+        "최대주주관계": r.get("shareholder_rel") or "—",
+        "재직기간": r.get("tenure_period") or "—",
+        "주요경력": r.get("main_career") or "—",
+    } for r in rows])
+    st.dataframe(df, hide_index=True, width="stretch")
+    st.caption("출처: DART 임원현황(exctvSttus). 보수(개별 5억+)는 별도 공시라 미포함.")
+
+
 def _dq_banner(series: list[dict], grain: str) -> None:
     warn = []
     for sf, lbl in zip(series, _period_labels(series, grain)):
@@ -316,7 +343,7 @@ def render() -> None:
 
     # 탭 = session_state 유지 라디오(사이드바 변경 등 재실행에도 보던 화면 유지)
     TABS = ["📑 재무제표", "📊 지표", "💰 밸류에이션", "🏆 대가지표",
-            "📈 주가", "📊 주가·재무 결합"]
+            "📈 주가", "📊 주가·재무 결합", "👔 임원"]
     active = st.radio("화면", TABS, horizontal=True, key="company_tab",
                       label_visibility="collapsed")
 
@@ -437,3 +464,7 @@ def render() -> None:
                 style = "막대" if len(fin_series) == 1 else "라인"
                 st.caption(f"좌축=주가(원{', log' if log2 else ''}) · 우축=재무(억원, {style}) · "
                            f"{grain_note} · 재무항목 {len(fin_series)}개 · 기간 전환은 좌측 사이드바")
+
+    # ── 임원 (지배구조) ──
+    elif active == TABS[6]:
+        _executives_panel(corp_code)

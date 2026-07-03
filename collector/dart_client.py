@@ -119,6 +119,15 @@ class DartClient:
         data = self._api_get_json("/fnlttSinglAcnt.json", params)
         return data.get("list", [])
 
+    def get_executive_status(
+        self, corp_code: str, bsns_year: str | int, reprt_code: str = "11011",
+    ) -> list[dict[str, Any]]:
+        """임원 현황(exctvSttus) — 성명·직위·등기/상근·담당업무·주요경력·최대주주관계·재직기간 등.
+        지배구조 패널용. 조회결과 없음(013) → 빈 리스트. 사업보고서(11011) 기준."""
+        params = {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code}
+        data = self._api_get_json("/exctvSttus.json", params)
+        return data.get("list", [])
+
     # ── 내부 헬퍼 ───────────────────────────────────────────────
 
     def _api_get_json(self, path: str, params: dict) -> dict:

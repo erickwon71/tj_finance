@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  매일 20:30 데이터 품질 야간 점검 (launchd LaunchAgent).
+  scripts/dq_nightly.py = I3 SQL 어서션(참조무결성) + I1 DART 교차검증(순환 표본).
+  18:00 수집·19:00 백업 뒤라, 그날 반영분까지 점검. 설치: deploy/launchd/README 참조.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tjfinance.dqcheck</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/taejin/Project/tj_finance/.venv_tj_finance/bin/python</string>
+        <string>/Users/taejin/Project/tj_finance/scripts/dq_nightly.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/taejin/Project/tj_finance</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>20</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/dqcheck.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/dqcheck.err.log</string>
+</dict>
+</plist>

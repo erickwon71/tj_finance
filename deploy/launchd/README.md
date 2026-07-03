@@ -88,10 +88,23 @@ pg_restore -d tj_finance --clean --if-exists /Volumes/dart_data/db_backups/<파�
 
 ---
 
-# 무결성 SQL 어서션 (I3, 선택 스케줄)
+# 야간 데이터 품질 점검 (launchd, 매일 20:30) — I3 + I1
 
-`scripts/dq_assertions.py` 는 참조무결성/정합성 어서션(미래 period_end·달력 orphan·자산총계<=0 등)을
-점검하고 ERROR 위반 시 종료코드 1 을 낸다. 수동 또는 별도 launchd 로 야간 실행할 수 있다.
+`scripts/dq_nightly.py` = **I3 SQL 어서션**(참조무결성: 미래 period_end·달력 orphan·자산총계<=0·op==ni 등)
++ **I1 DART 교차검증**(날짜 시드 순환 표본 25사). 18:00 수집·19:00 백업 뒤 실행. 어서션 ERROR 위반 시
+종료코드 1(로그로 확인). 교차검증 불일치는 정정노이즈·합성 포함이라 게이트 제외(참고).
+
+## 설치
 ```bash
-python scripts/dq_assertions.py --sample     # 위반 표본까지
+cp deploy/launchd/com.tjfinance.dqcheck.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.tjfinance.dqcheck.plist
+launchctl start com.tjfinance.dqcheck        # 즉시 1회 테스트
+tail -f logs/dqcheck.out.log
+```
+
+## 수동 실행
+```bash
+python scripts/dq_assertions.py --sample      # 어서션만(위반 표본까지)
+python scripts/dq_nightly.py --xsrc-sample 0  # 어서션만(교차검증 생략)
+python scripts/verify_cross_source.py --sample 50 --years 2018-2024   # 교차검증 깊게
 ```

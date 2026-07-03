@@ -128,6 +128,12 @@ def _period_end(session, corp_code: str, fiscal_year: int, fiscal_period: str,
         return None
 
 
+def _future_guard(dq: int, period_end) -> int:
+    """미래 period_end(아직 끝나지 않은 기간)= 실제 데이터 불가 → DQ3 격리(소비계층 배제).
+    합성/시드나 기간 오라벨로 period_end 가 오늘 이후인 행 방어."""
+    return 3 if (period_end is not None and period_end > date.today()) else dq
+
+
 def _shares_out(session, corp_code: str, period_end: date | None) -> int | None:
     if not period_end:
         return None
@@ -203,6 +209,7 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
 
         dq = max(validate_equations(ctx.col),
                  _dq_cross_year(session, corp_code, basis, ctx.col) if fp == "FY" else 1)
+        dq = _future_guard(dq, period_end)
 
         # ★ 헤드라인(BS/IS 핵심) 전무 행은 생성 안 함: 단일basis 기업의 반대basis phantom(stray CF
         # 만 존재)·추출 실패 stale 행 = 데이터 없는 빈 행. std_v2 에 두면 감사 pending 만 늘고 무용
@@ -301,6 +308,7 @@ def standardize_kgaap_gap_corp(session, corp_code: str) -> int:
         shares_out = _shares_out(session, corp_code, period_end)
         dq = max(validate_equations(ctx.col),
                  _dq_cross_year(session, corp_code, basis, ctx.col) if fp == "FY" else 1, 2)
+        dq = _future_guard(dq, period_end)
         record = {
             "corp_code": corp_code, "fiscal_year": fy, "fiscal_period": fp,
             "statement_type": basis, "version": 1, "is_stub": False,
@@ -398,6 +406,7 @@ def standardize_comparative_corp(session, corp_code: str) -> int:
         dq = max(validate_equations(ctx.col),
                  _dq_cross_year(session, corp_code, basis, ctx.col) if fp == "FY" else 1,
                  2)  # 비교컬럼 파생은 2차 출처 → 최소 DQ2(검토 등급)
+        dq = _future_guard(dq, period_end)
 
         record = {
             "corp_code": corp_code, "fiscal_year": cfy, "fiscal_period": fp,

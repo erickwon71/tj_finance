@@ -27,12 +27,12 @@ CHECKS: list[dict] = [
     {
         "name": "future_period_std",
         "sev": "ERROR",
-        "desc": "std_financials_v2 에 미래 period_end(아직 끝나지 않은 기간)",
+        "desc": "미래 period_end 인데 미격리(DQ<3) — 아직 끝나지 않은 기간이 소비계층에 노출",
         "count": "SELECT count(*) FROM std_financials_v2 "
-                 "WHERE version=1 AND period_end > CURRENT_DATE",
+                 "WHERE version=1 AND period_end > CURRENT_DATE AND COALESCE(data_quality,1) < 3",
         "sample": "SELECT corp_code, fiscal_year, fiscal_period, statement_type, period_end "
                   "FROM std_financials_v2 WHERE version=1 AND period_end > CURRENT_DATE "
-                  "ORDER BY period_end DESC LIMIT 10",
+                  "AND COALESCE(data_quality,1) < 3 ORDER BY period_end DESC LIMIT 10",
     },
     {
         "name": "calendar_orphan_cq",

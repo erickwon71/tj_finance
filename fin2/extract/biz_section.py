@@ -321,6 +321,9 @@ def _parse_value(s: str) -> tuple[Optional[float], bool, Optional[str]]:
     if not m:
         return None, is_ratio, None
     raw = m.group(0)
+    if not any(ch.isdigit() for ch in raw):
+        # "," 단독처럼 [\d,]+ 가 콤마만 매치한 빈 셀(실측: 00129280 2005 구형 표) — 숫자 아님.
+        return None, is_ratio, None
     neg = raw.lstrip().startswith("(") and t.rstrip().endswith(")")
     num = float(raw.replace("(", "").replace(",", "").strip())
     if neg:

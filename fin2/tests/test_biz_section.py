@@ -28,6 +28,9 @@ _LXINTL = _BASE / "raw_report/KOSPI/00120076_LX인터내셔널/annual/2024/20250
 # B4b-2 회귀: 아세아텍 = 전치형 레이아웃(지표명이 '구분' 열 값) + 기간별 수량/금액 하위열 +
 # 날짜헤더 "2024.06.30(제46기)"(first_data 오탐 유발) + '가동율'(율 표기 변이).
 _ASEATECH = _BASE / "raw_report/KOSDAQ/00138747_아세아텍/annual/2024/20240913000575.xml"
+# B4b-3 회귀: 삼화전자공업(2005, 구형 K-GAAP) — 빈 셀이 콤마 하나(',')뿐인 표 → _parse_value 가
+# _NUM_LEAD_RE 매치를 숫자로 오인해 float('') ValueError 크래시(전수 다개년 백필 중 실측 발견).
+_SAMHWA = _BASE / "raw_report/KOSPI/00129280_삼화전자공업/annual/2005/20060515002622.xml"
 
 
 def _rows(fp, corp, fy):
@@ -127,6 +130,14 @@ def test_aseatech_transposed_layout():
     util = [r for r in g if r["metric"] == "utilization"]
     assert util and util[0]["is_ratio"] and util[0]["unit"] == "%", util
     assert 0 < util[0]["value"] <= 200, util
+
+
+def test_samhwa_comma_only_cell_no_crash():
+    """콤마 하나(',')뿐인 빈 셀이 _parse_value 를 크래시시키지 않아야 함(ValueError 회귀)."""
+    if not _SAMHWA.exists():
+        return
+    rows = _rows(_SAMHWA, "00129280", 2005)  # 예외 없이 완주하면 통과
+    assert isinstance(rows, list)
 
 
 def _run():

@@ -92,10 +92,15 @@ Claude cannot switch its own session model mid-session — only the user can via
 ### Phase B — Data expansion (Weeks 2–5) ★ top priority per user
 Common pattern per dataset: collection script (backfill 2015+ first, then extend) → incremental hook in `scripts/collect_new.py` → DQ assertion in `scripts/dq_assertions.py` → panel in `app/views/company_page.py`.
 
-- **B1 수주잔고** (easiest — plumbing exists): `scripts/collect_backlog.py` using `collector/dart_extra.py` fetchers into `order_backlog`; backlog-vs-revenue trend panel. Note: DART API coverage for backlog is limited; where the API returns nothing, source from the 사업보고서 "수주상황" body table in Phase B4's extractor.
+- **B1 수주잔고 — merged into B4 (corrected 2026-07-04)**: originally scoped as "easiest — plumbing
+  exists," but investigation found no DART structured API for order backlog at all (unlike
+  executives' `exctvSttus`) and no fetcher function in `collector/dart_extra.py` despite the
+  `OrderBacklog` model being imported there. The model's own docstring always specified body-table
+  parsing as the source. B1 is not independently doable — pick it up as part of B4's body-table
+  extractor (수주상황 is one of the same heterogeneous tables B4 already targets).
 - **B2 Dilution/capital events** (highest investment value): new table `capital_events` (corp, event_type, rcept_no, date, amounts, conversion price, share delta). Sources: `piicDecsn`(유상증자), `cvbdIsDecsn`(CB), `bdwtIsDecsn`(BW), `exbdIsDecsn`(EB), `tsstkAqDecsn`/처분(자사주), `irdsSttus`(증자감자 현황), 미상환 CB/BW balance APIs. Viz: event markers overlaid on the B-2 share-count chart + "potential dilution %" metric.
-- **B3 대주주/지분**: new table `major_shareholders`; `hyslrSttus` + `hyslrChgSttus` + `mrhlSttus`; ownership-structure panel (largest shareholder %, float %).
-- **B4 가동률/생산/수주 body-table extractor** (hardest): new `fin2/extract/biz_section.py` parsing 생산능력/생산실적/가동률/수주상황 tables from stored raw reports. Heterogeneous per industry — start with manufacturing corps + user's watchlist, iterate; store in long-format table `biz_metrics` (corp, period, metric, segment, value, unit) rather than wide columns.
+- **B3 대주주/지분**: new table `major_shareholders`; `hyslrSttus` + `hyslrChgSttus` + `mrhlSttus`; ownership-structure panel (largest shareholder %, float %). Confirmed real DART structured APIs (unlike B1) — genuinely quick relative to B4.
+- **B4 가동률/생산/수주 body-table extractor** (hardest — now includes B1's 수주상황): new `fin2/extract/biz_section.py` parsing 생산능력/생산실적/가동률/수주상황 tables from stored raw reports. Heterogeneous per industry — start with manufacturing corps + user's watchlist, iterate; store in long-format table `biz_metrics` (corp, period, metric, segment, value, unit) rather than wide columns.
 - **B5 D&A note augmentation**: add note-D&A binding rule in `fin2/standardize/rules.py`/`build.py` (closes the ebitda/da_total/fcf/capex parity divergence flagged since the fin2 rebuild).
 
 ### Phase C — Verification expansion (Weeks 5–7, overlaps B; C5/C6/C10 pulled into Weeks 1–2 — cheap, high value)
@@ -143,7 +148,14 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
 - [x] A4c schema_migrations governance
 
 ### Phase B — Data
-- [ ] B1 order_backlog collection + backfill + panel
+- [ ] B1 order_backlog collection + backfill + panel — **RESCOPED (2026-07-04)**: this item assumed
+      a DART structured API fetcher existed/could be quickly wired via `collector/dart_extra.py`.
+      Checked: `OrderBacklog` is imported there but no fetch function exists at all, and the model's
+      own docstring (`collector/models.py:731`) says it was always meant to be filled by **report
+      body-table parsing** ("사업보고서 '수주상황' 섹션 파싱"), not a DART API — unlike executives
+      (`exctvSttus`), DART has no structured API for order backlog. B1 is therefore not separable
+      from B4 (heterogeneous per-industry body-table extractor) — merge into B4's scope when that's
+      picked up; do not attempt a standalone "quick" B1 collector.
 - [ ] B2a capital_events table + collectors (CB/BW/EB/유증/자사주/증자감자)
 - [ ] B2b Backfill 2015+ + incremental in collect_new.py
 - [ ] B2c Dilution overlay on share-count chart + potential-dilution metric

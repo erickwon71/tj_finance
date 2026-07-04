@@ -54,10 +54,26 @@ class BizTable:
     grid: list[list[str]]        # rowspan/colspan 확장된 2D 텍스트 그리드(헤더 포함)
 
 
-def _load_root(file_path: Path) -> etree._Element:
+def _load_root(file_path: Path) -> Optional[etree._Element]:
+    """XML 루트 로드. 구형 DART 보고서(~2010년대)는 UTF-8 로 선언됐지만 실제 EUC-KR 인 경우가
+    많아 인코딩 자동감지 폴백(_detect_xml_encoding 재사용) + 대용량 사업보고서용 huge_tree."""
+    from parser.xml.dart_xml_parser import _detect_xml_encoding
+
+    with open(file_path, "rb") as f:
+        raw = f.read()
     parser = etree.XMLParser(recover=True, huge_tree=True)
-    tree = etree.parse(str(file_path), parser)
-    return tree.getroot()
+    if _detect_xml_encoding(raw) != "utf-8":
+        # EUC-KR → UTF-8 재인코딩 후 선언 교체(text.py/shares.py 폴백과 동일 전략)
+        raw = re.sub(rb'encoding\s*=\s*"[^"]*"', b'encoding="utf-8"',
+                     raw.decode("euc-kr", "replace").encode("utf-8"), count=1)
+    try:
+        return etree.fromstring(raw, parser)
+    except Exception:
+        try:
+            return etree.fromstring(
+                raw, etree.XMLParser(recover=True, huge_tree=True, encoding="utf-8"))
+        except Exception:
+            return None
 
 
 def _tag(el) -> str:
@@ -205,6 +221,8 @@ def parse_biz_tables(file_path: Path, corp_code: str, fiscal_year: int) -> list[
     grid 는 원본 그대로(정규화 없음) — 캐노니컬 스키마 매핑은 B4b 이후.
     """
     root = _load_root(file_path)
+    if root is None:
+        return []
     tables = find_biz_subsections(root)
     return [
         {
@@ -463,6 +481,8 @@ def parse_biz_metrics(file_path: Path, corp_code: str, fiscal_year: int) -> tupl
     파이프라인이 소비. 원본 grid(무손실) + 구조화 지표행을 함께 반환.
     """
     root = _load_root(file_path)
+    if root is None:
+        return [], []
     tables = find_biz_subsections(root)
     section_rows: list[dict] = []
     metric_rows: list[dict] = []

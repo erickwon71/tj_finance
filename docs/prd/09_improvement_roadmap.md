@@ -188,7 +188,20 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       correct 20.2% for Samsung); fixed to prefer the "계" rows when present. Verified live via
       Playwright against Samsung Electronics (20.2% major + 68.2% retail, matches public knowledge).
       100-corp sample backfilled (not full 2,557 — same background-run pattern as executives).
-- [ ] B4a biz_metrics table + biz_section extractor v1 (생산능력/실적/가동률/수주상황)
+- [~] B4a biz_metrics table + biz_section extractor v1 (생산능력/실적/가동률/수주상황) —
+      **prototype done (2026-07-04), DB schema/wiring not started**: `fin2/extract/biz_section.py`
+      finds the 생산능력/생산실적/가동률 subsection headings (heading format varies wildly by
+      company — Samsung uses individual `(생산능력)`/`(생산실적)`/`(가동률)` SPAN markers, S-Oil
+      combines "생산실적 및 가동률" into one numbered-paragraph heading covering both) and returns
+      the following table(s) as a loss-less 2D grid with proper ROWSPAN/COLSPAN expansion (reused
+      nowhere else in the codebase — `parser/xml/table_extractor.py`'s `extract_rows` assumes a
+      3-column financial-statement shape and doesn't fit this). Validated against 3 real, unrelated
+      industries: Samsung Electronics (perfect), S-Oil (perfect, correctly merged output+utilization
+      table), HD Hyundai Heavy Industries (core utilization/output data correct — 97.1%/28.9%/148.4%
+      per segment — but 1 of 5 "capacity" matches pulled in an unrelated raw-materials table because
+      its heading "다. 주요 원재료 및 생산능력" combines two topics under numbered sub-items (1)/(2)
+      — a genuine heterogeneity case for B4b to iterate on, not a bug). No canonical column/metric
+      mapping, no `biz_metrics` DB table, no pipeline wiring yet — next session's starting point.
 - [ ] B4b Coverage report by industry; iterate parser
 - [ ] B5 D&A note augmentation rule + parity re-check (ebitda/fcf divergence → 0)
 

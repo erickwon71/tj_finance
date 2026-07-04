@@ -220,8 +220,25 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       limits so a facilities/소재지 table's long address label can't crash a corp's insert.
       ⚠ Full 2,557-corp backfill not yet run (long background job — hand to user:
       `python scripts/collect_biz_metrics.py --latest --skip-existing`).
-- [ ] B4b Coverage report by industry; iterate parser (remaining heterogeneity: per-column units in
-      S-Oil 표준생산능력 detail table, facilities/소재지 tables wrongly captured, 수주상황 tables)
+- [x] B4b Coverage report by industry; iterate parser — **DONE (2026-07-04)**: coverage tool
+      `scripts/biz_metrics_coverage.py` (KSIC 2-digit division map, per-industry 생산표 보유율 +
+      avg rows + ★flag for manufacturing divisions <50% covered; `--manufacturing`/`--missing`).
+      Parser iteration (empirically driven by a 300-corp read-only file sweep) fixed the dominant
+      leaks: (1) **production-column filter** — a value column must resolve to a period (제N기/YYYY)
+      OR contain a production keyword (생산/가동/능력/설비); a table with no such column is not a
+      production table → dropped, killing PP&E 장부금액 tables (01435489) and 공장 소재지/면적 tables
+      (00120076). (2) **clean-number value-column test** — a value column must be majority "clean
+      numbers" (leading digit + short unit, no ÷×=), dropping 계산근거 formula columns whose embedded
+      `%` was contaminating utilization (강남제비스코 실제가동시간 2,350 → bogus 2350% util). (3)
+      tightened non-period `period_label` fallback (reject 단위/기준/소재지/narrative, ≤20 chars).
+      Sweep before→after: facility leaks→0, utilization out-of-[0,200]→0 (remaining >100% like
+      00162911's 278% are the report's own values — 실제가동 6,683h/가능 2,400h, not bugs, like the
+      Samsung-2026 source case), null-year% 43–63%→26.5%. Regression tests +2 (강남제비스코 formula
+      column, LX인터내셔널 facility drop) → `test_biz_section.py` 7 total. ⚠ Existing biz_metrics rows
+      (from B4a sample runs + any in-flight backfill) are stale vs the new parser — re-run the full
+      backfill to regenerate clean rows: `python scripts/collect_biz_metrics.py --latest` (idempotent
+      per rcept). Remaining for future: 수주상황(order backlog) section type; per-column units in
+      S-Oil 표준생산능력 detail table; units embedded in segment labels (반도체기판 "패키지솔루션(천㎡)").
 - [ ] B5 D&A note augmentation rule + parity re-check (ebitda/fcf divergence → 0)
 
 ### Phase C — Verification

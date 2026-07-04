@@ -235,6 +235,10 @@ _METRIC_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("capacity",    ("생산능력", "표준생산능력", "생산 능력")),
 ]
 _UNIT_HEADER_KW = ("단위",)
+# 값열이 '생산 데이터 열'인지 판정하는 도메인 키워드 — 기간(제N기/연도)도 없고 이 키워드도
+# 없는 값열은 생산표가 아니라 유형자산 장부금액·공장 소재지/면적 등(PP&E/facility) 표라
+# 판단해 버린다. 실측(2026-07-04): 01435489 감가상각표·00120076 면적/가액표 오포착 방지.
+_PRODUCTION_COL_KW = ("생산", "가동", "능력", "설비")
 _PERIOD_GI_RE = re.compile(r"제\s*(\d+)\s*기")
 _PERIOD_YEAR_RE = re.compile(r"(19|20)\d{2}")
 _NUM_LEAD_RE = re.compile(r"^\(?\s*-?[\d,]+(?:\.\d+)?")
@@ -258,6 +262,18 @@ def _looks_numeric(s: str) -> bool:
     if not t:
         return False
     return bool(_NUM_LEAD_RE.match(t)) and any(c.isdigit() for c in t)
+
+
+def _is_clean_number(s: str) -> bool:
+    """'깨끗한 수치 셀'(값열 판정용) — 선두 숫자 + 짧은 후행단위만. 계산식·서술형(÷×=,
+    '2,350시간 ÷2,760시간×100=85.1%' 같은 계산근거 컬럼)은 값열이 아니라 배제한다."""
+    t = s.strip()
+    if not t or not _looks_numeric(t):
+        return False
+    if any(ch in t for ch in ("÷", "×", "=", "/")):
+        return False
+    tail = t[_NUM_LEAD_RE.match(t).end():].strip().lstrip("%").strip()
+    return len(tail) <= 6
 
 
 def _parse_value(s: str) -> tuple[Optional[float], bool, Optional[str]]:
@@ -306,11 +322,13 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
         return []
     header_rows, data_rows = grid[:first_data], grid[first_data:]
 
-    # 2) 열 분류 — 데이터행이 하나도 수치가 아니면 차원열, 아니면 값열.
+    # 2) 열 분류 — 데이터셀의 과반이 '깨끗한 수치'면 값열, 아니면 차원열(계산근거·서술 컬럼 배제).
     dim_cols, val_cols = [], []
     for c in range(ncols):
-        col = [data_rows[r][c] for r in range(len(data_rows))]
-        (val_cols if any(_looks_numeric(v) for v in col) else dim_cols).append(c)
+        col = [data_rows[r][c].strip() for r in range(len(data_rows))]
+        nonempty = [v for v in col if v]
+        clean = sum(1 for v in nonempty if _is_clean_number(v))
+        (val_cols if nonempty and clean >= len(nonempty) / 2 else dim_cols).append(c)
     if not val_cols:
         return []
 
@@ -323,7 +341,24 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
             break
     label_cols = [c for c in dim_cols if c != unit_col]
 
-    # 3) 값열별 기간/세부지표 해석. 현재 '제N기' 최대값 = fiscal_year 로 상대매핑.
+    # 3) 값열 유효성 필터 — 기간(제N기/연도)이 있거나 생산 도메인 키워드(생산/가동/능력/설비)를
+    #    가진 열만 '생산 데이터 열'로 채택. 둘 다 없는 열(장부금액·소재지·면적 등)은 버려
+    #    유형자산·설비현황 표 오포착을 차단. 채택 열이 하나도 없으면 생산표가 아님(빈 반환).
+    def _has_period(c: int) -> bool:
+        return any(_PERIOD_GI_RE.search(header_rows[r][c]) or _PERIOD_YEAR_RE.search(header_rows[r][c])
+                   for r in range(len(header_rows)))
+
+    def _is_production_col(c: int) -> bool:
+        if _has_period(c):
+            return True
+        head = " ".join(header_rows[r][c] for r in range(len(header_rows)))
+        return any(k in head for k in _PRODUCTION_COL_KW)
+
+    val_cols = [c for c in val_cols if _is_production_col(c)]
+    if not val_cols:
+        return []
+
+    # 현재 '제N기' 최대값 = fiscal_year 로 상대매핑.
     max_gi = None
     for r in header_rows:
         for c in val_cols:
@@ -350,10 +385,14 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
                 if label is None:
                     label = f"{ym.group(0)}년"
         if label is None:
-            # 기간 미검출(보조표) → 차원헤더가 아닌 컬럼헤더 텍스트를 라벨로 보존.
-            parts = [header_rows[r][c].strip() for r in range(len(header_rows))
-                     if header_rows[r][c].strip()]
-            label = " ".join(dict.fromkeys(parts)) or None
+            # 기간 미검출(보조표) → 컬럼헤더 텍스트를 라벨로 보존하되 서술형(단위·산출기준·주소)은
+            # 배제. 짧고 의미있는 세부지표명(설비능력수량/가동가능일수/표준생산능력)만 남긴다.
+            parts = []
+            for r in range(len(header_rows)):
+                p = header_rows[r][c].strip().replace("\n", " ")
+                if p and len(p) <= 20 and not any(k in p for k in ("단위", "기준", "소재지", "：", ":")):
+                    parts.append(p)
+            label = " ".join(dict.fromkeys(parts))[:60] or None
         return label, year
 
     def col_metric(c: int, is_ratio: bool) -> str:

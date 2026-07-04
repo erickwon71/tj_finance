@@ -21,6 +21,10 @@ from fin2.extract.biz_section import parse_biz_metrics  # noqa: E402
 _BASE = Path(__file__).resolve().parents[2]
 _SAMSUNG = _BASE / "raw_report/KOSPI/00126380_삼성전자/annual/2024/20250311001085.xml"
 _SOIL = _BASE / "raw_report/KOSPI/00138279_S-Oil/annual/2024/20250319000503.xml"
+# B4b 회귀: 강남제비스코 = 계산근거 컬럼('2,350시간÷2,760시간×100=85.1%')이 가동률 2350%로
+# 오염되던 케이스. LX인터내셔널 = 유형자산/공장 소재지·면적 표만 있어 생산행 0이어야 함.
+_KANGNAM = _BASE / "raw_report/KOSPI/00100939_강남제비스코/annual/2024/20250318001036.xml"
+_LXINTL = _BASE / "raw_report/KOSPI/00120076_LX인터내셔널/annual/2024/20250320000626.xml"
 
 
 def _rows(fp, corp, fy):
@@ -80,6 +84,27 @@ def test_soil_nonperiod_supplementary_lossless():
     std_cap = _find(rows, segment="정유부문", period_label="표준생산능력")
     assert len(std_cap) == 1 and std_cap[0]["period_year"] is None, std_cap
     assert std_cap[0]["value"] == 669_000
+
+
+def test_kangnam_formula_column_excluded():
+    """계산근거(÷×= 서술) 컬럼은 값열이 아니라 배제 → 가동률 오염(실제가동시간 2350%) 없음."""
+    if not _KANGNAM.exists():
+        return
+    rows = _rows(_KANGNAM, "00100939", 2024)
+    util = [r for r in rows if r["metric"] == "utilization"]
+    assert util, "가동률 행이 있어야 함"
+    assert all(0 <= r["value"] <= 200 for r in util), \
+        [r for r in util if not 0 <= r["value"] <= 200]
+    # 실제가동시간(2350)은 utilization 아닌 output 으로 분류.
+    assert not any(r["metric"] == "utilization" and r["value"] == 2350 for r in rows)
+
+
+def test_lxintl_facility_table_dropped():
+    """유형자산/공장 소재지·면적 표만 존재 → 생산 지표행 0(오포착 차단)."""
+    if not _LXINTL.exists():
+        return
+    rows = _rows(_LXINTL, "00120076", 2024)
+    assert len(rows) == 0, f"소재지/면적 표에서 생산행이 새면 안 됨: {rows[:2]}"
 
 
 def _run():

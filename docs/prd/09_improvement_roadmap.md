@@ -183,7 +183,13 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
 - [ ] C8 Pytest regression suite for derived metrics + app compute functions
 - [ ] C9 Amendment-supersede flag + trust-badge surfacing
 - [x] C10 Failure notifications (osascript/mail) on dq_nightly/backup errors
-- [ ] C11 Recurring completeness matrix (every corp × every expected period) in dq_nightly
+- [x] C11 Recurring completeness matrix (every corp × every expected period) in dq_nightly — implemented
+      as a forward-looking staleness check (no `listing_date` column exists, so full since-listing
+      re-enumeration wasn't attempted — the 2026-06-25 full run already proved that once). Calibrated
+      against two real false-positive classes: fiscal-year-change stub periods (아시아종묘, fixed by
+      not excluding `is_stub`) and brand-new listings (5 corps, fixed via `dart_modify_date` proxy for
+      listing recency, since no listing_date exists). After calibration, found 1 genuine flag: 피씨엘
+      (01051092) — no filing since Q3 2025, worth a manual look.
 
 ### Phase D — Visualization
 - [ ] D1 Free-form chart builder page (+preset save/load)

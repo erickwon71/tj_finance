@@ -26,23 +26,33 @@ from typing import Optional
 from loguru import logger
 
 from collector.config import DART_API_KEY
+from collector.dart_client import DartApiError
 
 _BASE = "https://opendart.fss.or.kr/api"
 
 
 def _get(url: str, params: dict) -> Optional[dict]:
+    """status='013'(조회결과 없음)은 정상 케이스로 None 반환. 그 외 비-000(예: '020' 사용한도
+    초과)은 DartApiError 로 명시 raise — 예전엔 전부 None 으로 뭉개 "이 기간 이벤트 없음"과
+    "쿼터 소진으로 확인 자체를 못 함"을 구분 못 했다(실측 2026-07-05: 자본이벤트 연간백필
+    12개 창 중 8~12번째가 각 <1초·신규0건으로 끝나 완료로 보였으나, 실은 전부 쿼터초과라
+    2022~2026 은 스캔이 안 된 것 — status='020' 직접 재현으로 확인). 네트워크/파싱 예외는
+    여전히 None(일시적 오류는 호출부가 사실상 재시도 없이 계속 진행해도 무방)."""
+    import requests
     try:
-        import requests
         params = dict(params)
         params["crtfc_key"] = DART_API_KEY
         resp = requests.get(url, params=params, timeout=15)
         data = resp.json()
-        if data.get("status") == "000":
-            return data
-        return None
     except Exception as e:  # noqa: BLE001
-        logger.debug(f"DART API 요청 실패: {e}")
+        logger.debug(f"DART API 요청 실패(네트워크/파싱): {e}")
         return None
+    status = data.get("status", "")
+    if status == "000":
+        return data
+    if status == "013":
+        return None
+    raise DartApiError(status, data.get("message", ""))
 
 
 # report_nm 매칭 규칙: (포함키워드, 제외키워드|None, event_type, endpoint). 순서대로 첫 매치 채택

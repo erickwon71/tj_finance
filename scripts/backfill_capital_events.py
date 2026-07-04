@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from loguru import logger
 
 from collector.dart_capital import sync_capital_events
+from collector.dart_client import DartApiError
 
 
 def _year_windows(start_year: int, end_date: date) -> list[tuple[str, str]]:
@@ -58,6 +59,16 @@ def main() -> None:
             n = sync_capital_events(bgn, end)
             total += n
             logger.info(f"  -> 신규 {n}건 (누적 {total})")
+        except DartApiError as exc:
+            # 쿼터 소진(status='020' 등)은 이후 모든 창이 동일하게 실패할 것이 확실하므로
+            # 계속 돌 필요 없이 즉시 중단 + 재개 방법 안내(반대로 조용히 넘어가면 "완료"로
+            # 보이지만 실은 스캔이 하나도 안 된 창이 남는다 — 실측 2026-07-05 사고 재발 방지).
+            logger.error(f"  -> DART API 오류 [{exc.status}] {exc.message} — 쿼터 소진으로 추정, "
+                        f"중단합니다.")
+            logger.error(f"[capital-backfill] 중단 — {i-1}/{len(windows)}개 창 완료, 신규 {total}건. "
+                        f"쿼터 리셋 후(보통 익일) 재실행: "
+                        f"python scripts/backfill_capital_events.py --start-year {bgn[:4]}")
+            return
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"  -> 실패(비치명적, 다음 창 계속): {type(exc).__name__}: {exc}")
         if i < len(windows):

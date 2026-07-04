@@ -148,14 +148,30 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
 - [x] A4c schema_migrations governance
 
 ### Phase B — Data
-- [ ] B1 order_backlog collection + backfill + panel — **RESCOPED (2026-07-04)**: this item assumed
-      a DART structured API fetcher existed/could be quickly wired via `collector/dart_extra.py`.
-      Checked: `OrderBacklog` is imported there but no fetch function exists at all, and the model's
-      own docstring (`collector/models.py:731`) says it was always meant to be filled by **report
-      body-table parsing** ("사업보고서 '수주상황' 섹션 파싱"), not a DART API — unlike executives
-      (`exctvSttus`), DART has no structured API for order backlog. B1 is therefore not separable
-      from B4 (heterogeneous per-industry body-table extractor) — merge into B4's scope when that's
-      picked up; do not attempt a standalone "quick" B1 collector.
+- [x] B1 order_backlog extractor + collector + pipeline + panel — **DONE (2026-07-05)**, v1 scope.
+      Confirmed the 2026-07-04 rescoping (no DART API, body-table parsing only) and built it as an
+      extension of B4's biz_section.py infrastructure (same document structure, same pollution risks,
+      same reusable primitives: grid extraction, nested-TABLE exclusion, numeric parsing, financial-
+      statement guard). Empirically found 3 structural formats across 6 real filers (삼성중공업/
+      한화시스템/현대건설/GS건설/대우건설/한화오션): **aggregate** (few rows by segment, explicit
+      수주총액/기납품액/수주잔고 columns), **detail-with-explicit-backlog** (dozens–hundreds of
+      per-project rows with an explicit 계약잔액 column — summed to one company-level row), and
+      **progress-only** (수주총액 + 진행률% with no explicit backlog column — deriving backlog would
+      need value×(1-progress%), which is unreliable given rounding/change-order edge cases — v1
+      explicitly skips this format rather than guess). New files: `fin2/extract/order_backlog.py`,
+      `collector/order_backlog.py`, `scripts/collect_order_backlog.py`, wired into `collect_new.py`
+      as non-fatal step ⑤-2, panel added to company_page's existing "🏭 생산·가동률" tab (reuses the
+      pre-existing `OrderBacklog` schema unchanged). Fixed 3 bugs found via an 80-corp sample sweep
+      (construction/shipbuilding/defense/machinery): date columns (수주일자/납기/수주년도) leaking
+      into the category label, unit never captured (억원 vs 백만원 differs per filer — reused
+      biz_section's `_narrative_unit`), and a heading that recurs as a running header deep in the
+      financial-statement section pulling in unrelated tables (부채총계/현금성자산) — fixed with a
+      `max_tables_per_marker` cap (mirroring biz_section's existing defense) plus a reused financial-
+      statement keyword guard. Tests: `fin2/tests/test_order_backlog.py` 7/7 (real 6 filers),
+      biz_section's 18 tests unaffected. 80-corp sweep: 24 corps with data, 72 rows, 0 anomalies.
+      ⚠ Full backfill not yet run — user to run `collect_order_backlog.py --sample N --latest`,
+      expand after spot-checking. Progress-only format (대우건설/한화오션-style) is a known B4b-style
+      follow-up if reliable derivation logic is ever justified.
 - [x] B2a capital_events table + collectors (CB/BW/EB/유증/자사주/증자감자) — 9 DART endpoints verified
       live (2026-07-04) before building: piicDecsn/fricDecsn/pifricDecsn/crDecsn/cvbdIsDecsn/
       bdwtIsDecsn/exbdIsDecsn/tsstkAqDecsn/tsstkDpDecsn. Key discovery: these decision-detail APIs

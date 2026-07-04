@@ -347,6 +347,63 @@ def _ownership_panel(corp_code: str) -> None:
                "소액주주현황(mrhlSttus). 소액주주 지분율은 유통주식(float)의 근사치입니다.")
 
 
+def _production_panel(corp_code: str) -> None:
+    """생산능력/생산실적/가동률(B4) — 사업보고서 본문표에서 파싱한 부문·품목별 시계열."""
+    import plotly.graph_objects as go
+    from app.data import biz as _biz
+
+    data = cache.biz_production(corp_code)
+    if not data.get("available"):
+        st.info("생산 데이터가 없습니다. 제조·자원 업종이 아니거나 아직 수집되지 않았습니다. "
+                f"(수집: `python scripts/collect_biz_metrics.py --corps {corp_code} --latest`)")
+        return
+    rows, years, ry = data["rows"], data["years"], data["report_year"]
+    st.markdown(f"#### 🏭 생산능력·생산실적·가동률 — {ry} 사업보고서 기준")
+
+    # ── 가동률 추이(공통 단위 %라 한 차트에) ──
+    util = _biz.utilization_series(rows)
+    if util:
+        latest = [(lbl, pts[-1][1]) for lbl, pts in util if pts]
+        if latest:
+            cols = st.columns(min(len(latest), 4))
+            for (lbl, v), col in zip(latest[:4], cols):
+                col.metric(f"가동률 · {lbl[:16]}", f"{v:.1f}%")
+        fig = go.Figure()
+        for lbl, pts in util:
+            fig.add_trace(go.Scatter(
+                x=[y for y, _ in pts], y=[v for _, v in pts], mode="lines+markers", name=lbl))
+        fig.update_layout(
+            title="가동률 추이 (%)", height=340, margin=dict(t=40, b=10, l=10, r=10),
+            yaxis_title="가동률(%)", xaxis=dict(dtick=1),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.35))
+        st.plotly_chart(fig, use_container_width=True, key="biz_util")
+    else:
+        st.caption("가동률 시계열 데이터가 없습니다.")
+
+    # ── 생산능력/생산실적 표(부문·품목별, 단위 상이라 표로) ──
+    for metric in ("capacity", "output"):
+        recs = _biz.production_table(rows, metric, years)
+        if not recs:
+            continue
+        df = pd.DataFrame(recs)
+        year_cols = [str(y) for y in years if str(y) in df.columns]
+        df = df[["부문·품목", "단위"] + year_cols]
+        st.markdown(f"**{_biz.METRIC_LABELS[metric]}** (부문·품목별)")
+        st.dataframe(df, hide_index=True, width="stretch",
+                     column_config={c: st.column_config.NumberColumn(c, format="localized")
+                                    for c in year_cols})
+
+    # ── 비시계열 보조표(표준생산능력·가동가능일수 등) ──
+    supp = _biz.supplementary_rows(rows)
+    if supp:
+        with st.expander(f"생산설비 보조지표 ({len(supp)}건)", expanded=False):
+            st.dataframe(pd.DataFrame(supp), hide_index=True, width="stretch")
+
+    st.caption("출처: DART 정기(사업)보고서 'II. 사업의 내용' 본문 생산능력/생산실적/가동률 표. "
+               "부문·품목마다 단위가 다를 수 있어 가동률(%)만 함께 그리고, 생산능력/실적은 표로 "
+               "표시합니다. 가동률이 100%를 넘는 값은 초과가동(교대·잔업)으로 보고서 원값 그대로입니다.")
+
+
 def _dq_banner(series: list[dict], grain: str) -> None:
     warn = []
     for sf, lbl in zip(series, _period_labels(series, grain)):
@@ -506,7 +563,7 @@ def render() -> None:
 
     # 탭 = session_state 유지 라디오(사이드바 변경 등 재실행에도 보던 화면 유지)
     TABS = ["📑 재무제표", "📊 지표", "💰 밸류에이션", "🏆 대가지표",
-            "📈 주가", "📊 주가·재무 결합", "🏢 섹터·피어", "👔 임원·지분"]
+            "📈 주가", "📊 주가·재무 결합", "🏭 생산·가동률", "🏢 섹터·피어", "👔 임원·지분"]
     active = st.radio("화면", TABS, horizontal=True, key="company_tab",
                       label_visibility="collapsed")
 
@@ -628,12 +685,16 @@ def render() -> None:
                 st.caption(f"좌축=주가(원{', log' if log2 else ''}) · 우축=재무(억원, {style}) · "
                            f"{grain_note} · 재무항목 {len(fin_series)}개 · 기간 전환은 좌측 사이드바")
 
-    # ── 섹터·피어 벤치마킹 ──
+    # ── 생산·가동률 (B4) ──
     elif active == TABS[6]:
+        _production_panel(corp_code)
+
+    # ── 섹터·피어 벤치마킹 ──
+    elif active == TABS[7]:
         _peer_panel(corp_code)
 
     # ── 임원·지분 (지배구조) ──
-    elif active == TABS[7]:
+    elif active == TABS[8]:
         _executives_panel(corp_code)
         st.divider()
         _ownership_panel(corp_code)

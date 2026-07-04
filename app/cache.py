@@ -188,6 +188,14 @@ def capital_events(corp_code: str) -> list[dict]:
     return _capital.load_capital_events(corp_code)
 
 
+# ── 사업지표 (생산능력·생산실적·가동률, B4) ──────────────────
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def biz_production(corp_code: str) -> dict:
+    """사업보고서 본문 생산능력/생산실적/가동률 시계열. app.data.biz 위임."""
+    from app.data import biz as _biz
+    return _biz.load_biz_production(corp_code)
+
+
 # ── 지배구조 (임원 현황) ─────────────────────────────────
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
 def executives_roster(corp_code: str):

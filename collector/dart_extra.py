@@ -1,5 +1,5 @@
 """
-DART API 추가 데이터 수집 — 임원현황, 고액보수, 수주잔고
+DART API 추가 데이터 수집 — 임원현황, 고액보수, 수주잔고, 시장조치(규제) 이력
 
 사용 예:
     from collector.dart_extra import sync_executives
@@ -8,7 +8,7 @@ DART API 추가 데이터 수집 — 임원현황, 고액보수, 수주잔고
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 from loguru import logger
 
@@ -197,3 +197,134 @@ def sync_executives_all(
 
     logger.success(f"임원 수집 완료: {total}명")
     return total
+
+
+# ── 시장조치/규제 지정 이력(관리종목·상장폐지·매매정지 등) ─────────────────────
+# report_nm 키워드 → (event_type, is_lift). is_lift=True 는 지정 해제/정상화. 순서대로 첫 매치 채택.
+# 상장폐지는 보수적으로 해제 자동판정 안 함(법적 중대사안 — 항상 is_lift=False 로 계속 노출).
+_REGULATORY_RULES: list[tuple[str, str, str, bool]] = [
+    ("관리종목",         "해제", "admin_issue",          True),
+    ("관리종목",         "",     "admin_issue",          False),
+    ("상장폐지",         "",     "delisting",            False),
+    ("매매거래정지",     "해제", "trading_halt",         True),
+    ("매매거래정지",     "",     "trading_halt",         False),
+    ("불성실공시법인",   "",     "disclosure_violation", False),
+    ("회생절차",         "종결", "rehabilitation",       True),
+    ("회생절차",         "폐지", "rehabilitation",       True),
+    ("회생절차",         "",     "rehabilitation",       False),
+    ("투자주의환기종목", "해제", "investment_caution",   True),
+    ("투자주의환기종목", "",     "investment_caution",   False),
+]
+
+
+def classify_regulatory_event(report_nm: str) -> Optional[tuple[str, bool]]:
+    """report_nm → (event_type, is_lift), 관심 이벤트가 아니면 None."""
+    for keyword, sub_keyword, event_type, is_lift in _REGULATORY_RULES:
+        if keyword in report_nm and (not sub_keyword or sub_keyword in report_nm):
+            return event_type, is_lift
+    return None
+
+
+def _date_chunks(bgn_de: str, end_de: str, max_days: int = 90) -> list[tuple[str, str]]:
+    """corp_code 없는 list.json 조회는 최대 90일 창만 허용 — 긴 구간을 청크로 분할."""
+    from datetime import timedelta as _td
+    start = date(int(bgn_de[:4]), int(bgn_de[4:6]), int(bgn_de[6:8]))
+    end = date(int(end_de[:4]), int(end_de[4:6]), int(end_de[6:8]))
+    chunks = []
+    cur = start
+    while cur <= end:
+        chunk_end = min(cur + _td(days=max_days - 1), end)
+        chunks.append((cur.strftime("%Y%m%d"), chunk_end.strftime("%Y%m%d")))
+        cur = chunk_end + _td(days=1)
+    return chunks
+
+
+def _fetch_regulatory_events_chunk(bgn_de: str, end_de: str) -> list[dict]:
+    """단일 청크(<=90일) 조회. 페이지네이션 처리."""
+    out: list[dict] = []
+    page_no = 1
+    page_count = 100
+    while True:
+        data = _get(f"{_BASE}/list.json", {
+            "bgn_de": bgn_de, "end_de": end_de,
+            "pblntf_ty": "I", "page_no": page_no, "page_count": page_count,
+        })
+        if not data:
+            break
+        for item in data.get("list", []):
+            report_nm = (item.get("report_nm") or "").strip()
+            classified = classify_regulatory_event(report_nm)
+            if not classified:
+                continue
+            event_type, is_lift = classified
+            out.append({
+                "corp_code": item.get("corp_code"),
+                "rcept_no": item.get("rcept_no"),
+                "filed_at": item.get("rcept_dt"),
+                "report_nm": report_nm,
+                "event_type": event_type,
+                "is_lift": is_lift,
+            })
+        total_page = data.get("total_page", 1)
+        if page_no >= total_page:
+            break
+        page_no += 1
+    return out
+
+
+def fetch_regulatory_events(bgn_de: str, end_de: str) -> list[dict]:
+    """
+    DART 거래소공시(pblntf_ty=I) 시장전체 조회(corp_code 생략) → 관심 이벤트만 필터링.
+    bgn_de/end_de = "YYYYMMDD". corp_code 미지정 조회는 DART 제약상 최대 90일 창만
+    허용되므로 내부적으로 청크 분할(백필 등 긴 구간도 안전).
+    """
+    out: list[dict] = []
+    for chunk_bgn, chunk_end in _date_chunks(bgn_de, end_de):
+        out.extend(_fetch_regulatory_events_chunk(chunk_bgn, chunk_end))
+    return out
+
+
+def sync_regulatory_events(bgn_de: str, end_de: str) -> int:
+    """
+    시장조치 이벤트를 조회해 regulatory_events 에 멱등 upsert(rcept_no 기준).
+    추적 대상(종목코드 있는 상장기업)이 아닌 corp_code 는 skip.
+
+    Returns:
+        신규 저장된 행 수
+    """
+    from sqlalchemy import text
+
+    events = fetch_regulatory_events(bgn_de, end_de)
+    if not events:
+        return 0
+
+    with get_session() as session:
+        tracked = {r[0] for r in session.execute(text(
+            "SELECT corp_code FROM corporations WHERE stock_code IS NOT NULL"
+        )).fetchall()}
+
+        rows = []
+        for e in events:
+            if e["corp_code"] not in tracked or not e["filed_at"]:
+                continue
+            rows.append({
+                "corp_code": e["corp_code"],
+                "rcept_no": e["rcept_no"],
+                "filed_at": date(int(e["filed_at"][:4]), int(e["filed_at"][4:6]), int(e["filed_at"][6:8])),
+                "report_nm": e["report_nm"][:300],
+                "event_type": e["event_type"],
+                "is_lift": e["is_lift"],
+            })
+        if not rows:
+            return 0
+
+        result = session.execute(text("""
+            INSERT INTO regulatory_events (corp_code, rcept_no, filed_at, report_nm, event_type, is_lift)
+            VALUES (:corp_code, :rcept_no, :filed_at, :report_nm, :event_type, :is_lift)
+            ON CONFLICT (rcept_no) DO NOTHING
+        """), rows)
+        saved = result.rowcount or 0
+
+    if saved:
+        logger.success(f"[regulatory] 시장조치 이벤트 신규 {saved}건 저장 ({bgn_de}~{end_de})")
+    return saved

@@ -226,6 +226,33 @@ def _trust_badge(corp_code: str) -> None:
                    icon="✅")
 
 
+def _regulatory_panel(reg_status: dict) -> None:
+    """⚠ 시장조치 이력 — 관리종목/상장폐지/매매정지 등. 활성 조치가 있으면 경고, 없으면 표시 안 함
+    (이력 자체가 없는 기업이 대다수라 배지처럼 항상 노출하지 않고, 과거 이력만 있어도 접어서 제공)."""
+    from app.data.regulatory import EVENT_LABELS
+
+    events = reg_status["events"]
+    if not events:
+        return
+
+    active = reg_status["active"]
+    if active:
+        labels = ", ".join(EVENT_LABELS.get(t, t) for t in active)
+        st.error(f"⚠ 시장조치 이력 — 현재 활성: **{labels}**")
+    else:
+        st.caption("⚠ 시장조치 이력 있음(현재는 모두 해제됨) — 아래 펼쳐서 확인")
+
+    with st.expander(f"시장조치 이력 상세 ({len(events)}건)", expanded=bool(active)):
+        df = pd.DataFrame([{
+            "일자": e["filed_at"],
+            "구분": EVENT_LABELS.get(e["event_type"], e["event_type"]),
+            "해제여부": "해제" if e["is_lift"] else "지정/발생",
+            "공시명": e["report_nm"],
+        } for e in events])
+        st.dataframe(df, hide_index=True, width="stretch")
+        st.caption("출처: DART 거래소공시(pblntf_ty=I). 자세한 내용은 DART 원문 공시를 확인하세요.")
+
+
 def _executives_panel(corp_code: str) -> None:
     """임원 현황(지배구조) 로스터 — 최신 사업보고서 기준."""
     yr, rows = cache.executives_roster(corp_code)
@@ -373,8 +400,10 @@ def render() -> None:
     else:
         series, used_stmt = cache.annual_series(corp_code, requested_stmt, years=10)
 
+    reg_status = cache.regulatory_status(corp_code)
     notes = corp_notes(fiscal_month=meta.get("fiscal_month"),
-                       used_stmt=used_stmt, requested_stmt=requested_stmt)
+                       used_stmt=used_stmt, requested_stmt=requested_stmt,
+                       has_regulatory_flag=bool(reg_status["active"]))
     st.subheader(fmt_corp_identity(
         meta["corp_name"], meta["corp_code"], meta.get("stock_code"),
         meta.get("market")) + fmt_notes(notes))
@@ -383,6 +412,7 @@ def render() -> None:
 
     _report_viewer(corp_code)
     _trust_badge(corp_code)
+    _regulatory_panel(reg_status)
 
     if not series:
         st.warning(f"{'분기' if grain=='quarter' else '연간'} 표준화 재무제표 데이터가 없습니다.")

@@ -752,6 +752,31 @@ class OrderBacklog(Base):
     )
 
 
+# ── 11. 시장조치/규제 지정 이력 (관리종목·상장폐지·매매정지 등) ──────────────────
+class RegulatoryEvent(Base):
+    """
+    거래소(KRX) 시장조치 공시(DART pblntf_ty='I') 중 관리종목·상장폐지·매매거래정지·
+    불성실공시법인·회생절차 등 투자위험 관련 이벤트만 선별 저장.
+    시각화 각주(주3)·기업 상세 패널의 데이터 소스. collector/dart_extra.py::sync_regulatory_events 가 채움.
+    """
+    __tablename__ = "regulatory_events"
+
+    id          = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code   = Column(String(8),    nullable=False,   index=True)
+    rcept_no    = Column(String(14),   nullable=False,   unique=True)
+    filed_at    = Column(Date,         nullable=False)
+    report_nm   = Column(String(300),  nullable=True)
+    event_type  = Column(String(30),   nullable=False,
+                         comment="admin_issue/delisting/trading_halt/disclosure_violation/rehabilitation")
+    is_lift     = Column(Boolean,      default=False,
+                         comment="True=지정 해제/정상화 이벤트, False=지정/발생 이벤트")
+    fetched_at  = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_regevt_corp_type", "corp_code", "event_type", "filed_at"),
+    )
+
+
 # ── 10. Gate B 감사대장 (face_audit) ──────────────────────────────────────────
 class FaceAudit(Base):
     """

@@ -172,6 +172,14 @@ def trust_summary(corp_code: str) -> dict:
     return _trust.load_trust(corp_code)
 
 
+# ── 시장조치/규제 지정 이력 ─────────────────────────────
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=1024)
+def regulatory_status(corp_code: str) -> dict:
+    """관리종목/상장폐지/매매정지 등 활성 flag + 이력. app.data.regulatory 위임."""
+    from app.data import regulatory as _regulatory
+    return _regulatory.load_regulatory_status(corp_code)
+
+
 # ── 지배구조 (임원 현황) ─────────────────────────────────
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
 def executives_roster(corp_code: str):

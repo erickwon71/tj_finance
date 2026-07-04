@@ -17,6 +17,7 @@ import argparse
 import multiprocessing as mp
 import queue as pyqueue
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -142,6 +143,20 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
     return summ
 
 
+def _sync_regulatory(lookback_days: int = 5) -> None:
+    """시장조치(관리종목/상장폐지/매매정지 등) 감지 — 정기보고와 무관하게 매일 상시 실행.
+    비치명적 실패(네트워크 등)는 본 수집을 막지 않는다. lookback_days 여유로 결측 방지."""
+    try:
+        from collector.dart_extra import sync_regulatory_events
+        end_de = date.today().strftime("%Y%m%d")
+        bgn_de = (date.today() - timedelta(days=lookback_days)).strftime("%Y%m%d")
+        n = sync_regulatory_events(bgn_de, end_de)
+        if n:
+            logger.info(f"[collect] ⓪-1 시장조치 이벤트 신규 {n}건(관리종목/상장폐지/매매정지 등)")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ⓪-1 시장조치 이벤트 동기화 실패(비치명적): {exc}")
+
+
 def _refresh_valuation_daily() -> None:
     """A4a — 수집 후 valuation_daily matview 갱신(CONCURRENTLY, 읽기 비차단). 비치명적 실패."""
     try:
@@ -186,6 +201,9 @@ def main() -> None:
     ap.add_argument("--verify-fy-min", type=int, default=2015,
                     help="DQ 게이트 Gate B 재감사 최소 회계연도(기본 2015)")
     args = ap.parse_args()
+
+    # ⓪-1 시장조치 감지 — 모드와 무관하게 매일 상시(정기보고 유무와 독립적인 이벤트).
+    _sync_regulatory()
 
     from app.data import collect
 

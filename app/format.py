@@ -77,22 +77,30 @@ CORP_NOTES: dict[str, str] = {
     "주2": ("**별도 기준 대체** — 연결(consolidated) 재무제표를 요청했으나 해당 기업·기간에 "
             "연결이 없어 **별도(개별) 재무제표**로 대체 표시한 값입니다. (종속기업이 없어 연결을 "
             "작성하지 않는 경우 등)"),
+    "주3": ("**시장조치/규제 지정 이력** — 거래소(KRX)가 관리종목 지정·상장폐지 관련·매매거래정지·"
+            "불성실공시법인 지정·회생절차 개시 등 투자위험 관련 조치를 취한 이력이 있는 기업입니다. "
+            "현재도 해제되지 않은 조치가 있습니다. 상세 사유·시점은 기업 화면의 **⚠ 시장조치 이력** "
+            "패널을 참고하세요."),
 }
 
 
 def corp_notes(fiscal_month: Optional[int] = None,
                used_stmt: Optional[str] = None,
-               requested_stmt: Optional[str] = None) -> list[str]:
+               requested_stmt: Optional[str] = None,
+               has_regulatory_flag: bool = False) -> list[str]:
     """기업에 적용된 특별 조치 각주 키 목록(예: ['주1','주2']).
 
     - 주1: 비-12월 결산(fiscal_month != 12) → 달력분기 재구성.
     - 주2: 연결 요청인데 별도로 대체된 경우(used_stmt != requested_stmt).
+    - 주3: 활성(미해제) 시장조치/규제 지정 이력이 있는 경우.
     """
     notes: list[str] = []
     if fiscal_month is not None and fiscal_month != 12:
         notes.append("주1")
     if used_stmt and requested_stmt and used_stmt != requested_stmt:
         notes.append("주2")
+    if has_regulatory_flag:
+        notes.append("주3")
     return notes
 
 

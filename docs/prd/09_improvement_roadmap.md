@@ -185,9 +185,19 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       bw_issue 29·mixed_increase 12). shares_delta field-extraction coverage is high (88–100%)
       except treasury_dispose (36% — some disposal sub-methods likely use a different field name
       than `eaq_ostk`; raw data preserved in `detail` JSONB regardless, fixable later without
-      re-fetching). Incremental daily sync wired into `collect_new.py` (⓪-2, non-fatal). Deeper
-      historical backfill can be run later the same way (just call `sync_capital_events` with an
-      earlier `bgn_de`).
+      re-fetching). Incremental daily sync wired into `collect_new.py` (⓪-2, non-fatal).
+      **2015+ full backfill (2026-07-05): `scripts/backfill_capital_events.py`** — per-DART-quirk,
+      the detail API's lookback is anchored to `end_de` (365 days back), so a single call spanning
+      years would silently miss old events; script runs one call per calendar year instead. Ran
+      2015~2021 successfully (+8,493 rows, ~3-4min/year), but 2022~2026 silently returned "0 new"
+      in <1s each — turned out to be DART's daily quota exhausted mid-run (confirmed via direct
+      `status='020'` reproduction), which the old `dart_capital._get()` swallowed as indistinguishable
+      from "genuinely no events" (user caught this from the suspiciously fast log, not a proactive
+      catch). **Fixed**: `_get()` now raises the project's existing `DartApiError` for any non-'000'/
+      non-'013' status instead of silently returning `None`; the backfill script catches it
+      specifically and stops immediately with a clear resume command, rather than "completing"
+      having silently skipped years. ⚠ **2022–2026 still need re-running once the DART quota
+      resets** (`python scripts/backfill_capital_events.py --start-year 2022`).
 - [x] B2c Dilution overlay on share-count chart + potential-dilution metric — `app/data/capital.py`
       + `chart_panel.render_pershare_panel` markers (▲dilutive/▼reduction/◆potential CB-BW-EB) on
       the B-2 share-count chart, "잠재 희석 %" caption (upper-bound estimate, doesn't track

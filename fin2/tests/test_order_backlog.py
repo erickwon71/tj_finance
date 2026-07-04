@@ -25,6 +25,10 @@ _HYUNDAI_ENG = _BASE / "raw_report/KOSPI/00164478_현대건설/annual/2025/20260
 _GS_ENG = _BASE / "raw_report/KOSPI/00120030_GS건설/annual/2025/20260701000624.xml"
 _HANWHA_OCEAN = _BASE / "raw_report/KOSPI/00111704_한화오션/annual/2025/20260317000644.xml"
 _DAEWOO_ENG = _BASE / "raw_report/KOSPI/00124540_대우건설/annual/2025/20260318001029.xml"
+# 100사 표본 스윕(2026-07-05)으로 발견한 3종 추가 회귀.
+_LS_HOLDING = _BASE / "raw_report/KOSPI/00105952_LS/annual/2025/20260318001427.xml"          # 합계행 이중집계
+_WISEAI = _BASE / "raw_report/KOSDAQ/00374738_위세아이텍/annual/2025/20260320000390.xml"      # 계약금액/수익인식액/진행률%
+_KC_COTTRELL = _BASE / "raw_report/KOSPI/00797364_KC코트렐/annual/2025/20260407003641.xml"     # 환종별 롤포워드
 
 
 def _rows(fp, corp, fy):
@@ -102,6 +106,39 @@ def test_daewoo_eng_summary_table_used_detail_skipped():
     rows = _rows(_DAEWOO_ENG, "00124540", 2025)
     assert rows, "수주상황(요약) 집계표는 있어야 함"
     assert len(rows) <= 5, "진행률형 상세표(수십~수백행)까지 채택되면 안 됨"
+
+
+def test_ls_holding_existing_total_row_not_double_counted():
+    """LS(지주) — 부문별 11행 + 이미 계산된 "합계" 1행(총12행, 상세형 임계 초과). 전부 다시
+    합산하면 합계행까지 더해져 2배로 부풀려짐(149,834→299,668) — 기존 합계행을 그대로 채택해야 함."""
+    if not _LS_HOLDING.exists():
+        return
+    rows = _rows(_LS_HOLDING, "00105952", 2025)
+    assert len(rows) == 1
+    assert rows[0]["backlog_amt"] == 149834, rows[0]
+
+
+def test_wiseai_contract_amount_and_revenue_recognized_synonyms():
+    """위세아이텍 — "계약금액"(수주총액 아님)·"수익인식액"(기납품 아님)·"계약종료일"(날짜)·
+    "진행률"(%) 표기 변이. 계약명에 날짜/퍼센트/숫자 오염 없이 총액·완료액 모두 채워져야 함."""
+    if not _WISEAI.exists():
+        return
+    rows = _rows(_WISEAI, "00374738", 2025)
+    assert rows
+    r0 = rows[0]
+    assert r0["category"] == "국회사무처 차세대 e의안시스템 구축"
+    assert r0["new_orders"] == 2358101 and r0["completed"] == 1179051 and r0["backlog_amt"] == 1179050
+
+
+def test_kc_cottrell_rollforward_currency_table():
+    """환종별 롤포워드표(기초계약잔액/당기신규·변동/당기공사수익/기말계약잔액) — "당기 XX"
+    미분류열이 category 에 안 새고(순수 통화코드만), backlog 는 기말(마지막 매치) 값 채택."""
+    if not _KC_COTTRELL.exists():
+        return
+    rows = _rows(_KC_COTTRELL, "00797364", 2025)
+    assert {r["category"] for r in rows} == {"KRW", "USD", "EUR", "INR", "TWD"}
+    krw = next(r for r in rows if r["category"] == "KRW")
+    assert krw["backlog_amt"] == 16603919
 
 
 def _run():

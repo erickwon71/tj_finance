@@ -36,15 +36,25 @@ _NUMBERED_HEADING_RE = re.compile(r"^[가-힣]\s*\.\s*\S")
 
 # 열 판별 키워드(회사마다 표기 변이 — 괄호부기 "(A+B)"/"(매출액,A)" 등은 in 매칭이라 무관).
 # "도급"(GS건설 "기본 도급금액"처럼 "도급액" 사이에 "금"이 끼는 변이까지 포괄하는 안전한 substring).
-_TOTAL_KW = ("수주총액", "도급")
-# "기납품"(액 없이, 실측 에너토크 — 수량/금액 하위열이라 "기납품액" 정확매치 실패했었음).
-_COMPLETED_KW = ("기납품", "완성공사액")
+# "계약금액"(위세아이텍 — "수주총액" 대신 이 표현 사용).
+_TOTAL_KW = ("수주총액", "도급", "계약금액")
+# "기납품"(액 없이, 실측 에너토크)·"수익인식액"(위세아이텍 — 진행기준 수익인식 = 누적 완료분).
+_COMPLETED_KW = ("기납품", "완성공사액", "수익인식액")
 _BACKLOG_KW = ("수주잔고", "계약잔액")
 # 진행률형(계약잔액 없이 진행률%만) 판별 — 발견 시 낮은 신뢰도로 스킵.
 _PROGRESS_ONLY_KW = ("진행률", "미청구공사", "공사미수금")
 # 날짜/기한 열 — category 라벨에서 제외(실측: 삼성중공업 "수주일자"/"납기", 에너토크 "수주
-# 년도" 열이 라벨에 섞여 "조선해양 ~ 2025.12.31 -"/"…이월분 839 2,029" 처럼 오염되던 것 방지).
-_DATE_COL_KW = ("일자", "기한", "계약일", "착공", "완공", "납기", "년도")
+# 년도", 위세아이텍 "계약종료일"[="계약"+"종료일", "계약일" substring 미포함이라 "종료일"
+# 별도 추가] 열이 라벨에 섞여 오염되던 것 방지).
+_DATE_COL_KW = ("일자", "기한", "계약일", "착공", "완공", "납기", "년도", "종료일")
+# 진행률(%) 열 — category 라벨에서 제외(위세아이텍 "50%"가 계약명에 섞이던 것 방지).
+_PROGRESS_COL_KW = ("진행률",)
+# "당기 XX" 미분류 열(환종별 롤포워드표 — 기초계약잔액/당기신규·변동/당기공사수익/기말계약잔액
+# 형태, 실측 KC코트렐 "주요 환종별 수주상황") — "당기신규/변동"·"당기공사수익"은 total/completed
+# 키워드에 안 걸려 dim_col 로 새어 category 오염("KRW 49,100,522 61,642,403"). "당기"류는
+# 기간흐름 열이지 차원(부문/품목) 아니므로 미분류 시 일괄 제외(backlog 는 "계약잔액"이 기초/
+# 기말 양쪽에 매치돼도 마지막 값=기말=현재잔고를 취하므로 이미 올바르게 처리됨).
+_PERIOD_FLOW_COL_KW = ("당기",)
 
 
 @dataclass
@@ -140,22 +150,23 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
 
     col_kind: dict[int, str] = {}
     unit_col = None
-    date_cols: set[int] = set()
+    skip_cols: set[int] = set()  # 날짜/진행률/기간흐름 등 category 라벨에서 제외할 비수치 메타열
     for c in range(ncols):
         head = " ".join(header_rows[r][c] for r in range(len(header_rows)))
         if "단위" in head:
             unit_col = c
             continue
-        if any(k in head for k in _DATE_COL_KW):
-            date_cols.add(c)
-            continue
-        k = _col_kind(head)
+        k = _col_kind(head)  # total/completed/backlog 매칭을 먼저 시도(우선순위 상위)
         if k:
             col_kind[c] = k
+            continue
+        if (any(kw in head for kw in _DATE_COL_KW) or any(kw in head for kw in _PROGRESS_COL_KW)
+                or any(kw in head for kw in _PERIOD_FLOW_COL_KW)):
+            skip_cols.add(c)
     if "backlog" not in col_kind.values():
         return []  # 수주잔고/계약잔액 컬럼 자체가 없으면 신뢰 파생 불가 → 스킵
 
-    dim_cols = [c for c in range(ncols) if c not in col_kind and c != unit_col and c not in date_cols]
+    dim_cols = [c for c in range(ncols) if c not in col_kind and c != unit_col and c not in skip_cols]
     unit = None
     if unit_col is not None:
         for r in range(len(data_rows)):
@@ -168,7 +179,9 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
 
     rows: list[OrderBacklogRow] = []
     for drow in data_rows:
-        labels = [drow[c].strip() for c in dim_cols if drow[c].strip()]
+        # "-" 단독 placeholder(대손충당 등 값없는 열)는 의미 있는 라벨이 아니므로 제외.
+        labels = [drow[c].strip() for c in dim_cols
+                 if drow[c].strip() and drow[c].strip() not in ("-", "－", "—")]
         category = " ".join(dict.fromkeys(labels))[:150] or None
         vals: dict[str, int] = {}
         for c, kind in col_kind.items():
@@ -183,10 +196,23 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
     return rows
 
 
+def _is_total_label(category: Optional[str]) -> bool:
+    return bool(category) and category.replace(" ", "") in ("합계", "총계", "소계")
+
+
 def _aggregate_if_detail(rows: list[OrderBacklogRow]) -> list[OrderBacklogRow]:
-    """행이 많으면(프로젝트 상세형) 회사 전체 합산 1행으로 축약. 적으면(집계형) 그대로."""
+    """행이 많으면(프로젝트 상세형) 회사 전체 합산 1행으로 축약. 적으면(집계형) 그대로.
+    이미 "합계" 행이 표에 포함돼 있으면(실측: LS — 부문별 11행+합계 1행=12행) 그 행을 그대로
+    채택 — 전부 다시 합산하면 합계행까지 더해져 정확히 2배로 부풀려진다(실측: 149,834→299,668)."""
     if len(rows) <= 10:
         return rows
+    existing_total = next((r for r in rows if _is_total_label(r.category)), None)
+    if existing_total is not None:
+        return [OrderBacklogRow(
+            category=None, backlog_amt=existing_total.backlog_amt,
+            new_orders=existing_total.new_orders, completed=existing_total.completed,
+            unit=existing_total.unit,
+        )]
     total_backlog = sum(r.backlog_amt or 0 for r in rows)
     total_new = sum(r.new_orders or 0 for r in rows if r.new_orders is not None)
     total_completed = sum(r.completed or 0 for r in rows if r.completed is not None)

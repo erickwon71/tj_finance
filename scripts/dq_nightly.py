@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PY = str(ROOT / ".venv_tj_finance" / "bin" / "python")
+sys.path.insert(0, str(ROOT))
 
 
 def _run(args: list[str]) -> int:
@@ -42,6 +43,9 @@ def main() -> None:
 
     # 게이트 = 어서션 ERROR 만(교차검증 불일치는 정정노이즈/합성 포함이라 비게이트).
     print(f"\n[dq-nightly] 어서션 종료코드 {rc_assert}", flush=True)
+    if rc_assert != 0:
+        from scripts.notify import notify_failure
+        notify_failure("DQ 야간 점검 실패", f"어서션 위반 발견(exit {rc_assert}) — logs/dqcheck.out.log 확인")
     sys.exit(rc_assert)
 
 

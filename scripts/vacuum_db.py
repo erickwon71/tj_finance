@@ -21,6 +21,9 @@ import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from loguru import logger
 
@@ -47,7 +50,10 @@ def main() -> None:
     elapsed = time.monotonic() - t0
 
     if r.returncode != 0:
-        logger.error(f"[vacuum] 실패(rc={r.returncode}, {elapsed:,.0f}초): {r.stderr.strip()[:1000]}")
+        err = f"실패(rc={r.returncode}, {elapsed:,.0f}초): {r.stderr.strip()[:500]}"
+        logger.error(f"[vacuum] {err}")
+        from scripts.notify import notify_failure
+        notify_failure("주간 VACUUM 실패", err)
         sys.exit(1)
 
     logger.success(f"[vacuum] 완료 — {elapsed:,.0f}초")

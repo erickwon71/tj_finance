@@ -36,6 +36,11 @@ def _pg_dump_bin() -> str:
     return shutil.which("pg_dump") or "/opt/homebrew/bin/pg_dump"
 
 
+def _notify(title: str, message: str) -> None:
+    from scripts.notify import notify_failure
+    notify_failure(title, message)
+
+
 def _rotate(out_dir: Path, db: str, keep: int) -> list[str]:
     dumps = sorted(out_dir.glob(f"{db}_*.dump"))
     removed = []
@@ -60,7 +65,9 @@ def main() -> None:
     # 외장 볼륨 미마운트 시 내장 디스크로 백업하면 사고 대비 의미가 없으므로 상위 마운트 확인.
     mount = out_dir if out_dir.exists() else out_dir.parent
     if not mount.exists():
-        logger.error(f"[backup] 백업 대상 볼륨이 없습니다: {out_dir} — 외장 볼륨 마운트 확인 필요.")
+        msg = f"백업 대상 볼륨이 없습니다: {out_dir} — 외장 볼륨 마운트 확인 필요."
+        logger.error(f"[backup] {msg}")
+        _notify("백업 실패 — 볼륨 미마운트", msg)
         sys.exit(2)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -76,7 +83,9 @@ def main() -> None:
     logger.info(f"[backup] pg_dump 시작 → {path.name} ({'전체' if args.full else 'fact_v2 데이터 제외'})")
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
-        logger.error(f"[backup] pg_dump 실패(rc={r.returncode}): {r.stderr.strip()[:500]}")
+        err = f"pg_dump 실패(rc={r.returncode}): {r.stderr.strip()[:500]}"
+        logger.error(f"[backup] {err}")
+        _notify("백업 실패 — pg_dump 오류", err)
         # 실패한 부분 파일 정리
         if path.exists() and path.stat().st_size == 0:
             path.unlink()
@@ -85,6 +94,7 @@ def main() -> None:
     size = path.stat().st_size if path.exists() else 0
     if size == 0:
         logger.error("[backup] 결과 파일 크기 0 — 실패로 간주.")
+        _notify("백업 실패 — 빈 파일", f"{path.name} 크기 0")
         sys.exit(1)
     removed = _rotate(out_dir, args.db, args.keep)
 

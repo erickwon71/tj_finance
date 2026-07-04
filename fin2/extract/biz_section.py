@@ -84,13 +84,34 @@ def _text(el) -> str:
     return "".join(el.itertext()).strip()
 
 
+def _direct_trs(table_elem: etree._Element) -> list[etree._Element]:
+    """table_elem 소속 TR 만(중첩 TABLE 안의 TR 제외). DART 문서는 때때로 페이지 레이아웃용
+    바깥 TABLE 이 실제 표(들)를 통째로 감싼다 — `.//TR` 은 그 중첩 표들의 TR 까지 전부 형제
+    행처럼 끌어와 거대 오염 grid 를 만든다(실측 2026-07-05: LG 2011 사업보고서, 중첩 TABLE
+    859개, 최대 TABLE 3073 TR 중 3069개=99.9%가 중첩분 — 법인세비용 등 재무제표 라인이
+    생산표로 오염). 중첩된 실제 표는 root.iter() 가 별도 TABLE element 로 이미 캡처하므로
+    이 필터링으로 데이터 손실은 없다(바깥 래퍼는 대개 거의 빈 grid 가 되어 자연 배제됨)."""
+    out = []
+    for tr in table_elem.iter("TR"):
+        anc = tr.getparent()
+        nested = False
+        while anc is not None and anc is not table_elem:
+            if _tag(anc) == "TABLE":
+                nested = True
+                break
+            anc = anc.getparent()
+        if not nested:
+            out.append(tr)
+    return out
+
+
 def expand_table_grid(table_elem: etree._Element) -> list[list[str]]:
     """
     TABLE 요소를 ROWSPAN/COLSPAN 반영한 완전한 2D 텍스트 그리드로 변환(표준 HTML 확장
     알고리즘). 병합 셀은 값이 각 점유 칸에 복제된다(관용적 표현 — 합계 이중집계 방지는
     소비자 책임, 원본 형태를 그대로 보존하는 게 이 레이어의 목적).
     """
-    trs = table_elem.findall(".//TR")
+    trs = _direct_trs(table_elem)
     grid: list[list[Optional[str]]] = []
     # row_idx -> col_idx -> value, 미리 계산한 rowspan 점유를 기록해두는 용도
     pending: dict[int, dict[int, str]] = {}

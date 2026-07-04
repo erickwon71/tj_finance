@@ -258,8 +258,12 @@ def render_valuation_band(series: list[dict], stats: dict, label: str,
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 
-def render_pershare_panel(rows: list[dict], key: str | None = None) -> None:
-    """주당지표(EPS/BPS/FCF-per-share, 원/주) + 발행주식수(백만주) 추이. rows=연도 오름차순."""
+def render_pershare_panel(rows: list[dict], key: str | None = None,
+                          dilution_by_year: dict[int, dict] | None = None) -> None:
+    """주당지표(EPS/BPS/FCF-per-share, 원/주) + 발행주식수(백만주) 추이. rows=연도 오름차순.
+
+    dilution_by_year: {year: {issued_delta, potential_delta, n, types}} (B2c, app.data.capital
+    위임) — 있으면 발행주식수 라인 위에 자본이벤트 마커를 얹는다(연도 버킷, 근사 오버레이)."""
     df = pd.DataFrame(rows).sort_values("year")
     x = df["year"].astype(str)
 
@@ -276,6 +280,29 @@ def render_pershare_panel(rows: list[dict], key: str | None = None) -> None:
     fig2 = go.Figure()
     fig2.add_trace(go.Scatter(x=x, y=df["shares_out"] / 1e6, mode="lines+markers",
                               name="발행주식수", line=dict(color="#756bb1"), fill="tozeroy"))
+
+    if dilution_by_year:
+        mk_years, mk_y, mk_text, mk_color, mk_symbol = [], [], [], [], []
+        for i, yr in enumerate(df["year"]):
+            info = dilution_by_year.get(int(yr))
+            if not info or not info["n"]:
+                continue
+            mk_years.append(str(yr))
+            mk_y.append(df["shares_out"].iloc[i] / 1e6)
+            labels = ", ".join(sorted(info["types"]))
+            mk_text.append(f"{yr} 자본이벤트 {info['n']}건 ({labels})<br>"
+                           f"확정변동 {info['issued_delta']:+,}주 · 잠재희석(CB/BW/EB) "
+                           f"{info['potential_delta']:+,}주")
+            net = info["issued_delta"]
+            mk_color.append("#e6550d" if net > 0 else "#31a354" if net < 0 else "#feb24c")
+            mk_symbol.append("triangle-up" if net > 0 else "triangle-down" if net < 0 else "diamond")
+        if mk_years:
+            fig2.add_trace(go.Scatter(
+                x=mk_years, y=mk_y, mode="markers", name="자본이벤트",
+                marker=dict(size=14, color=mk_color, symbol=mk_symbol,
+                           line=dict(width=1, color="white")),
+                text=mk_text, hoverinfo="text"))
+
     fig2.update_layout(height=240, margin=dict(l=10, r=10, t=30, b=10), yaxis_title="백만주",
-                       hovermode="x unified", showlegend=False)
+                       hovermode="x unified", showlegend=bool(dilution_by_year))
     st.plotly_chart(fig2, use_container_width=True, key=f"{key}_sh")

@@ -158,7 +158,29 @@ def _per_share_trends(corp_code: str, stmt: str) -> None:
     chg = (last["shares_out"] / first["shares_out"] - 1) * 100 if first["shares_out"] else 0.0
     trend = ("자사주 매입 등 감소" if chg < -1 else "증자·희석 등 증가" if chg > 1 else "거의 불변")
     st.caption(f"발행주식수 {first['year']}→{last['year']}: **{chg:+.1f}%** ({trend})")
-    render_pershare_panel(recs, key="pershare")
+
+    # B2c — 자본이벤트 오버레이 + 잠재 희석 % (증자/감자/CB/BW/EB/자기주식)
+    from app.data.capital import EVENT_LABELS, potential_dilution_pct, yearly_dilution_overlay
+    events = cache.capital_events(corp_code)
+    dilution_by_year = yearly_dilution_overlay(events)
+    dil_pct = potential_dilution_pct(events, last["shares_out"])
+    if dil_pct is not None:
+        st.caption(f"⚗️ 잠재 희석(최근 3년 CB/BW/EB, 상한선 추정) — 현재 발행주식수 대비 "
+                   f"**{dil_pct:+.1f}%** (전환/상환 상태 미반영, 실제보다 클 수 있음)")
+
+    render_pershare_panel(recs, key="pershare", dilution_by_year=dilution_by_year)
+
+    if events:
+        with st.expander(f"자본이벤트 이력 ({len(events)}건)", expanded=False):
+            df_ev = pd.DataFrame([{
+                "접수일": e["filed_at"], "이사회결의일": e["board_date"],
+                "구분": EVENT_LABELS.get(e["event_type"], e["event_type"]),
+                "주식수 변동": f"{e['shares_delta']:+,}" if e["shares_delta"] is not None else "—",
+                "접수번호": e["rcept_no"],
+            } for e in events])
+            st.dataframe(df_ev, hide_index=True, width="stretch")
+            st.caption("출처: DART 주요사항보고서. CB/BW/EB는 전환·행사 전 잠재 주식수(상한선 추정). "
+                       "자기주식 취득/처분은 총발행주식수 불변(유통주식만 영향).")
 
 
 def _fmt_peer_val(v, kind: str) -> str:

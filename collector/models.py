@@ -777,6 +777,39 @@ class RegulatoryEvent(Base):
     )
 
 
+# ── 12. 자본이벤트 (증자·감자·CB/BW/EB 발행·자기주식) ────────────────────────────
+class CapitalEvent(Base):
+    """
+    주식수에 영향(즉시 또는 잠재적)을 주는 주요사항보고서 이벤트.
+    DART 주요사항보고(pblntf_ty='B') 중 유/무상증자·감자·전환사채·신주인수권부사채·
+    교환사채 발행·자기주식 취득/처분 결정만 선별해 타입별 구조화 API(piicDecsn 등)로
+    상세 조회한 결과. shares_delta 는 필드 가용 시의 best-effort 추정치(전량 신뢰 금지 —
+    원본은 detail JSONB). CB/BW/EB 는 전환 전 "잠재" 주식수(양수)로 저장.
+    시각화 B-2 발행주식수 추이 차트의 dilution 오버레이 데이터 소스.
+    collector/dart_capital.py::sync_capital_events 가 채움.
+    """
+    __tablename__ = "capital_events"
+
+    id            = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code     = Column(String(8),    nullable=False,   index=True)
+    rcept_no      = Column(String(14),   nullable=False,   unique=True)
+    filed_at      = Column(Date,         nullable=False)
+    board_date    = Column(Date,         nullable=True,   comment="이사회결의일(bddd)")
+    report_nm     = Column(String(300),  nullable=True)
+    event_type    = Column(String(20),   nullable=False,
+                           comment="paid_increase/free_increase/mixed_increase/reduction/"
+                                   "cb_issue/bw_issue/eb_issue/treasury_acquire/treasury_dispose")
+    shares_delta  = Column(BigInteger,   nullable=True,
+                           comment="증권종류 무관 보통주 기준 best-effort 추정(+증가/잠재발행, -감소). "
+                                   "필드 미공시 시 NULL")
+    detail        = Column(JSONB,        nullable=True,   comment="해당 rcept_no 의 원본 API 응답 전체")
+    fetched_at    = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_capevt_corp_type", "corp_code", "event_type", "filed_at"),
+    )
+
+
 # ── 10. Gate B 감사대장 (face_audit) ──────────────────────────────────────────
 class FaceAudit(Base):
     """

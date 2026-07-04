@@ -156,9 +156,22 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       (`exctvSttus`), DART has no structured API for order backlog. B1 is therefore not separable
       from B4 (heterogeneous per-industry body-table extractor) — merge into B4's scope when that's
       picked up; do not attempt a standalone "quick" B1 collector.
-- [ ] B2a capital_events table + collectors (CB/BW/EB/유증/자사주/증자감자)
-- [ ] B2b Backfill 2015+ + incremental in collect_new.py
-- [ ] B2c Dilution overlay on share-count chart + potential-dilution metric
+- [x] B2a capital_events table + collectors (CB/BW/EB/유증/자사주/증자감자) — 9 DART endpoints verified
+      live (2026-07-04) before building: piicDecsn/fricDecsn/pifricDecsn/crDecsn/cvbdIsDecsn/
+      bdwtIsDecsn/exbdIsDecsn/tsstkAqDecsn/tsstkDpDecsn. Key discovery: these decision-detail APIs
+      filter by **board resolution date (bddd), not receipt date**, and always return only the
+      **current/latest amended state** per decision (no historical versions) — required widening
+      the detail-fetch lookback to 365 days and deriving `filed_at` from `rcept_no` prefix (no
+      `rcept_dt` field in the detail response). `collector/dart_capital.py`.
+- [~] B2b Backfill + incremental in collect_new.py — **10-month backfill done (2025-09~2026-07,
+      not full 2015+)**; incremental daily sync wired into `collect_new.py` (⓪-2, non-fatal).
+      Deeper historical backfill can be run later the same way (just call `sync_capital_events`
+      with an earlier `bgn_de`).
+- [x] B2c Dilution overlay on share-count chart + potential-dilution metric — `app/data/capital.py`
+      + `chart_panel.render_pershare_panel` markers (▲dilutive/▼reduction/◆potential CB-BW-EB) on
+      the B-2 share-count chart, "잠재 희석 %" caption (upper-bound estimate, doesn't track
+      conversion/redemption status — noted as a known limitation), event history expander.
+      Verified live via Playwright on 제이에스링크(00642541, real CB history).
 - [ ] B3 major_shareholders table + collectors + ownership panel
 - [ ] B4a biz_metrics table + biz_section extractor v1 (생산능력/실적/가동률/수주상황)
 - [ ] B4b Coverage report by industry; iterate parser

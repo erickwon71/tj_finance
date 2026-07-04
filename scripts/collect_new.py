@@ -157,6 +157,20 @@ def _sync_regulatory(lookback_days: int = 5) -> None:
         logger.warning(f"[collect] ⓪-1 시장조치 이벤트 동기화 실패(비치명적): {exc}")
 
 
+def _sync_capital(lookback_days: int = 5) -> None:
+    """B2 — 자본이벤트(증자/감자/CB·BW·EB/자기주식) 감지. 정기보고와 무관하게 매일 상시.
+    비치명적 실패(네트워크 등)는 본 수집을 막지 않는다."""
+    try:
+        from collector.dart_capital import sync_capital_events
+        end_de = date.today().strftime("%Y%m%d")
+        bgn_de = (date.today() - timedelta(days=lookback_days)).strftime("%Y%m%d")
+        n = sync_capital_events(bgn_de, end_de)
+        if n:
+            logger.info(f"[collect] ⓪-2 자본이벤트 신규 {n}건(증자/감자/CB·BW·EB/자기주식)")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ⓪-2 자본이벤트 동기화 실패(비치명적): {exc}")
+
+
 def _refresh_valuation_daily() -> None:
     """A4a — 수집 후 valuation_daily matview 갱신(CONCURRENTLY, 읽기 비차단). 비치명적 실패."""
     try:
@@ -204,6 +218,8 @@ def main() -> None:
 
     # ⓪-1 시장조치 감지 — 모드와 무관하게 매일 상시(정기보고 유무와 독립적인 이벤트).
     _sync_regulatory()
+    # ⓪-2 자본이벤트 감지 — 마찬가지로 매일 상시.
+    _sync_capital()
 
     from app.data import collect
 

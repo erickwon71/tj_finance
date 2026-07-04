@@ -180,6 +180,14 @@ def regulatory_status(corp_code: str) -> dict:
     return _regulatory.load_regulatory_status(corp_code)
 
 
+# ── 자본이벤트 (증자·감자·CB/BW/EB·자기주식) ─────────────────
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=1024)
+def capital_events(corp_code: str) -> list[dict]:
+    """자본이벤트 이력. app.data.capital 위임."""
+    from app.data import capital as _capital
+    return _capital.load_capital_events(corp_code)
+
+
 # ── 지배구조 (임원 현황) ─────────────────────────────────
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
 def executives_roster(corp_code: str):

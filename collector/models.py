@@ -995,3 +995,62 @@ class RetailOwnership(Base):
     __table_args__ = (
         UniqueConstraint("corp_code", "fiscal_year", name="uq_retail_ownership"),
     )
+
+
+# ── 12. 사업의 내용 · 생산능력/생산실적/가동률 (B4) ────────────────────────────
+class BizSectionTable(Base):
+    """
+    사업보고서 "II. 사업의 내용" 본문 생산능력/생산실적/가동률 소제목의 원본 표(무손실).
+    XBRL 비대상 순수 HTML형 표라 fin2/extract/biz_section.py 가 ROWSPAN/COLSPAN 확장한
+    2D 그리드를 그대로 보존한다(캐노니컬 매핑 실패/부분 대비 audit 원천). 구조화된 long-format
+    행은 biz_metrics 에 별도 적재. corp+rcept 단위 delete-then-insert(멱등).
+    """
+    __tablename__ = "biz_section_tables"
+
+    id           = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code    = Column(String(8),    nullable=False,   index=True)
+    fiscal_year  = Column(SmallInteger, nullable=False)
+    rcept_no     = Column(String(14),   nullable=False)
+    table_ord    = Column(SmallInteger, nullable=False,   comment="보고서 내 추출 표 순번(0-based)")
+    metric       = Column(String(40),   nullable=True,    comment="소제목 파생 지표: capacity/output/utilization(+결합)")
+    narrative    = Column(Text,         nullable=True,    comment="소제목 다음 설명 문단(단위·산출기준)")
+    grid         = Column(JSONB,        nullable=False,   comment="원본 2D 텍스트 그리드(헤더 포함)")
+    n_metric_rows = Column(SmallInteger, nullable=True,   comment="이 표에서 매핑된 biz_metrics 행 수")
+    fetched_at   = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("rcept_no", "table_ord", name="uq_biz_section_tables"),
+        Index("ix_biz_sec_corp_year", "corp_code", "fiscal_year"),
+    )
+
+
+class BizMetric(Base):
+    """
+    생산능력/생산실적/가동률의 구조화된 long-format 값(corp·기간·지표·부문·품목 단위 1행).
+    biz_section_tables 의 원본 그리드를 fin2/extract/biz_section.map_biz_table 이 해석한 결과.
+    period_year 는 '제N기(YYYY년)' 헤더에서 해석한 달력연도(해석 불가 시 NULL — 비-시계열
+    보조표는 period_label 에 헤더 라벨 보존). value 는 원공시 단위(unit) 기준 그대로.
+    corp+rcept 단위 delete-then-insert(멱등).
+    """
+    __tablename__ = "biz_metrics"
+
+    id           = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code    = Column(String(8),    nullable=False,   index=True)
+    fiscal_year  = Column(SmallInteger, nullable=False,   comment="보고서 회계연도")
+    rcept_no     = Column(String(14),   nullable=False)
+    table_ord    = Column(SmallInteger, nullable=False,   comment="출처 biz_section_tables.table_ord")
+    metric       = Column(String(20),   nullable=False,   comment="capacity/output/utilization")
+    segment      = Column(String(120),  nullable=True,    comment="부문(예: DX부문/정유부문)")
+    item         = Column(String(150),  nullable=True,    comment="품목(예: 메모리/TV·모니터). 부문뿐이면 NULL")
+    period_label = Column(String(60),   nullable=True,    comment="원본 기간 라벨(제56기 등) 또는 보조컬럼 헤더")
+    period_year  = Column(SmallInteger, nullable=True,   comment="해석한 달력연도(비시계열 보조표는 NULL)")
+    value        = Column(Float,        nullable=False)
+    unit         = Column(String(30),   nullable=True,    comment="원공시 단위(천대/천배럴/% 등)")
+    is_ratio     = Column(Boolean,      default=False,    comment="가동률 등 백분율 값 여부")
+    source       = Column(String(20),   default="html_parse")
+    fetched_at   = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_biz_metric_corp_year", "corp_code", "fiscal_year", "metric"),
+        Index("ix_biz_metric_lookup", "corp_code", "metric", "period_year"),
+    )

@@ -200,9 +200,28 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       table), HD Hyundai Heavy Industries (core utilization/output data correct — 97.1%/28.9%/148.4%
       per segment — but 1 of 5 "capacity" matches pulled in an unrelated raw-materials table because
       its heading "다. 주요 원재료 및 생산능력" combines two topics under numbered sub-items (1)/(2)
-      — a genuine heterogeneity case for B4b to iterate on, not a bug). No canonical column/metric
-      mapping, no `biz_metrics` DB table, no pipeline wiring yet — next session's starting point.
-- [ ] B4b Coverage report by industry; iterate parser
+      — a genuine heterogeneity case for B4b to iterate on, not a bug).
+      **DONE (2026-07-04, part 2)**: two tables added — `biz_section_tables` (loss-less raw grid +
+      narrative, one row per source table) and `biz_metrics` (structured long-format: corp, fiscal_year,
+      rcept_no, table_ord, metric[capacity/output/utilization], segment, item, period_label, period_year,
+      value, unit, is_ratio). Canonical mapping `fin2/extract/biz_section.map_biz_table` classifies
+      columns (dimension vs value, unit column detection), resolves periods (제N기→calendar year via
+      max-기 relative mapping, or `(YYYY년)` direct; non-period supplementary tables keep the column
+      header as `period_label` with `period_year`=NULL — loss-less), and resolves per-column metric via
+      explicit keywords + header hints (능력→capacity / 실적·생산량→output) + a **ratio-consistency
+      guard** (a % value is always utilization; a 가동률-labeled column with a non-% value is
+      reclassified — fixes the 삼화전기 "설비능력수량" 426,624 being mislabeled as 426,624%
+      utilization). Collector `collector/biz_metrics.py::sync_biz_metrics` (finds annual reports via
+      download_tasks.file_path JOIN filings, corp+rcept delete-then-insert, idempotent) +
+      `scripts/collect_biz_metrics.py` (sample/resume/corps, mirrors collect_shareholders.py) +
+      wired into `collect_new.py` as non-fatal step ⑤-1 (latest annual of newly-standardized corps).
+      Tests `fin2/tests/test_biz_section.py` (5, real Samsung+S-Oil). Validated: 150-corp sample =
+      3,154 rows, 0 errors, utilization max 102.7% (0 outliers >200%); string fields clipped to column
+      limits so a facilities/소재지 table's long address label can't crash a corp's insert.
+      ⚠ Full 2,557-corp backfill not yet run (long background job — hand to user:
+      `python scripts/collect_biz_metrics.py --latest --skip-existing`).
+- [ ] B4b Coverage report by industry; iterate parser (remaining heterogeneity: per-column units in
+      S-Oil 표준생산능력 detail table, facilities/소재지 tables wrongly captured, 수주상황 tables)
 - [ ] B5 D&A note augmentation rule + parity re-check (ebitda/fcf divergence → 0)
 
 ### Phase C — Verification

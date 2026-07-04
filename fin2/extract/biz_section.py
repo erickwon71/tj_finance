@@ -216,3 +216,230 @@ def parse_biz_tables(file_path: Path, corp_code: str, fiscal_year: int) -> list[
         }
         for t in tables
     ]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B4a · 캐노니컬 매핑 — 무손실 grid 를 long-format 지표행으로 해석
+# ─────────────────────────────────────────────────────────────────────────────
+# 실측 3사(삼성전자·S-Oil·HD현대중공업)로 확인한 표 형태:
+#   - 좌측 차원열(부문/품목/구분/단위) + 우측 값열(기간 또는 지표 세부)
+#   - 헤더가 1~2행: 상단=기간(제N기/YYYY년), 하단=세부지표(생산능력/생산실적/가동률)
+#   - 값열이 기간별(삼성 capacity/output)일 수도, 지표세부별(삼성 utilization: 능력/실적/가동률
+#     한 표에 병렬)일 수도, 둘의 교차(S-Oil output+utilization)일 수도 있음.
+#   - 기간 미검출 보조표(S-Oil 표준생산능력/가동가능일수)는 period_year=NULL + 컬럼헤더를
+#     period_label 로 보존해 무손실.
+
+_METRIC_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    ("utilization", ("가동률",)),
+    ("output",      ("생산실적", "실제 생산", "실제생산", "생산량")),
+    ("capacity",    ("생산능력", "표준생산능력", "생산 능력")),
+]
+_UNIT_HEADER_KW = ("단위",)
+_PERIOD_GI_RE = re.compile(r"제\s*(\d+)\s*기")
+_PERIOD_YEAR_RE = re.compile(r"(19|20)\d{2}")
+_NUM_LEAD_RE = re.compile(r"^\(?\s*-?[\d,]+(?:\.\d+)?")
+
+
+@dataclass
+class BizMetricRow:
+    metric: str
+    segment: Optional[str]
+    item: Optional[str]
+    period_label: Optional[str]
+    period_year: Optional[int]
+    value: float
+    unit: Optional[str]
+    is_ratio: bool
+
+
+def _looks_numeric(s: str) -> bool:
+    """셀이 수치값(콤마·소수·%·괄호음수·후행단위 허용)인지."""
+    t = s.strip()
+    if not t:
+        return False
+    return bool(_NUM_LEAD_RE.match(t)) and any(c.isdigit() for c in t)
+
+
+def _parse_value(s: str) -> tuple[Optional[float], bool, Optional[str]]:
+    """셀 → (숫자값, 비율여부, 인라인단위). 파싱 실패 시 (None, ..)."""
+    t = s.strip()
+    if not t or t in ("-", "－", "—", "N/A", "해당없음"):
+        return None, False, None
+    is_ratio = "%" in t
+    m = _NUM_LEAD_RE.match(t)
+    if not m:
+        return None, is_ratio, None
+    raw = m.group(0)
+    neg = raw.lstrip().startswith("(") and t.rstrip().endswith(")")
+    num = float(raw.replace("(", "").replace(",", "").strip())
+    if neg:
+        num = -num
+    # 후행 인라인 단위(예: "362.2일", "8,692시간") — 남은 텍스트에 숫자 없고 %가 아니면 단위로.
+    tail = t[m.end():].strip().lstrip("%").strip()
+    inline_unit = tail if (tail and not any(c.isdigit() for c in tail) and len(tail) <= 8) else None
+    return num, is_ratio, inline_unit
+
+
+def _narrative_unit(narrative: str) -> Optional[str]:
+    """'(단위 : 천배럴)' 처럼 단일 단위만 있으면 추출(혼합이면 None — 행별 단위열/인라인 우선)."""
+    m = re.search(r"단위\s*[:：]\s*([^)\]]+)", narrative or "")
+    if not m:
+        return None
+    u = m.group(1).strip()
+    # 혼합 단위(콤마/및 로 나열)면 신뢰 불가 → None.
+    if "," in u or "및" in u or len(u) > 10:
+        return None
+    return u or None
+
+
+def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
+    """무손실 grid → 구조화된 지표행. 해석 불가 컬럼은 period_label 로 헤더를 보존(무손실)."""
+    grid = [list(r) for r in bt.grid if r]
+    if len(grid) < 2:
+        return []
+    ncols = max(len(r) for r in grid)
+    grid = [r + [""] * (ncols - len(r)) for r in grid]
+
+    # 1) 헤더행/데이터행 분리 — 값열이 수치로 시작하는 첫 행부터 데이터.
+    first_data = next((i for i, r in enumerate(grid) if any(_looks_numeric(c) for c in r)), None)
+    if first_data is None or first_data == 0:
+        return []
+    header_rows, data_rows = grid[:first_data], grid[first_data:]
+
+    # 2) 열 분류 — 데이터행이 하나도 수치가 아니면 차원열, 아니면 값열.
+    dim_cols, val_cols = [], []
+    for c in range(ncols):
+        col = [data_rows[r][c] for r in range(len(data_rows))]
+        (val_cols if any(_looks_numeric(v) for v in col) else dim_cols).append(c)
+    if not val_cols:
+        return []
+
+    # 단위열(헤더에 '단위') 식별 → 라벨열과 분리.
+    unit_col = None
+    for c in dim_cols:
+        head = " ".join(header_rows[r][c] for r in range(len(header_rows)))
+        if any(k in head for k in _UNIT_HEADER_KW):
+            unit_col = c
+            break
+    label_cols = [c for c in dim_cols if c != unit_col]
+
+    # 3) 값열별 기간/세부지표 해석. 현재 '제N기' 최대값 = fiscal_year 로 상대매핑.
+    max_gi = None
+    for r in header_rows:
+        for c in val_cols:
+            gm = _PERIOD_GI_RE.search(r[c])
+            if gm:
+                max_gi = max(max_gi or 0, int(gm.group(1)))
+
+    table_metrics = bt.metric.split("+")
+
+    def col_period(c: int) -> tuple[Optional[str], Optional[int]]:
+        label = year = None
+        for r in header_rows:
+            cell = r[c]
+            gm = _PERIOD_GI_RE.search(cell)
+            ym = _PERIOD_YEAR_RE.search(cell)
+            if gm and label is None:
+                label = f"제{gm.group(1)}기"
+                if ym:
+                    year = int(ym.group(0))
+                elif max_gi is not None:
+                    year = fiscal_year - (max_gi - int(gm.group(1)))
+            elif ym and year is None:
+                year = int(ym.group(0))
+                if label is None:
+                    label = f"{ym.group(0)}년"
+        if label is None:
+            # 기간 미검출(보조표) → 차원헤더가 아닌 컬럼헤더 텍스트를 라벨로 보존.
+            parts = [header_rows[r][c].strip() for r in range(len(header_rows))
+                     if header_rows[r][c].strip()]
+            label = " ".join(dict.fromkeys(parts)) or None
+        return label, year
+
+    def col_metric(c: int, is_ratio: bool) -> str:
+        head = " ".join(header_rows[r][c] for r in range(len(header_rows)))
+        # 1) 명시 키워드(생산능력/생산실적/가동률 등).
+        matched = None
+        for mk, kws in _METRIC_KEYWORDS:
+            if any(k in head for k in kws):
+                matched = mk
+                break
+        # 가동률 라벨인데 값이 비율이 아니면 신뢰하지 않음(설비능력수량 등 오검 방지) → 재분류.
+        if matched == "utilization" and not is_ratio:
+            matched = None
+        # 2) 헤더 힌트 보강(능력→capacity / 실적·생산량·생산→output).
+        if matched is None:
+            if "능력" in head:
+                matched = "capacity"
+            elif any(k in head for k in ("실적", "생산량", "생산")):
+                matched = "output"
+        # 3) 비율 값은 항상 가동률(캐파/실적 컬럼 아래 %가 오면 그게 가동률).
+        if is_ratio:
+            return "utilization"
+        if matched is not None:
+            return matched
+        # 4) 폴백: 표 metric(결합표는 비-가동률 우선).
+        non_util = [m for m in table_metrics if m != "utilization"]
+        return non_util[0] if non_util else "output"
+
+    nar_unit = _narrative_unit(bt.narrative)
+    rows: list[BizMetricRow] = []
+    for drow in data_rows:
+        labels: list[str] = []
+        for c in label_cols:
+            v = drow[c].strip()
+            if v and (not labels or labels[-1] != v):
+                labels.append(v)
+        segment = labels[0] if labels else None
+        item = labels[1] if len(labels) > 1 else None
+        row_unit = drow[unit_col].strip() if unit_col is not None else None
+        for c in val_cols:
+            val, is_ratio, inline_unit = _parse_value(drow[c])
+            if val is None:
+                continue
+            plabel, pyear = col_period(c)
+            metric = col_metric(c, is_ratio)
+            # 비율 값의 단위는 항상 %(부문 단위열이 천배럴이어도 가동률 셀은 %).
+            unit = "%" if is_ratio else (row_unit or inline_unit or nar_unit)
+            rows.append(BizMetricRow(
+                metric=metric, segment=segment, item=item,
+                period_label=plabel, period_year=pyear,
+                value=val, unit=unit, is_ratio=is_ratio,
+            ))
+    return rows
+
+
+def _clip(v: Optional[str], n: int) -> Optional[str]:
+    """DB 컬럼 길이 초과 방어(이질적 표에서 라벨이 주소·설명문이 되는 경우 대비 무손실은
+    biz_section_tables.grid 가 보장 — 구조화 행은 안전히 잘라 적재 실패를 막는다)."""
+    if v is None:
+        return None
+    v = v.strip()
+    return v[:n] if v else None
+
+
+def parse_biz_metrics(file_path: Path, corp_code: str, fiscal_year: int) -> tuple[list[dict], list[dict]]:
+    """
+    파일 하나 → (biz_section_tables 행, biz_metrics 행) 튜플. 수집기(collect_biz_metrics.py)와
+    파이프라인이 소비. 원본 grid(무손실) + 구조화 지표행을 함께 반환.
+    """
+    root = _load_root(file_path)
+    tables = find_biz_subsections(root)
+    section_rows: list[dict] = []
+    metric_rows: list[dict] = []
+    for ord_, bt in enumerate(tables):
+        mrows = map_biz_table(bt, fiscal_year)
+        section_rows.append({
+            "corp_code": corp_code, "fiscal_year": fiscal_year, "table_ord": ord_,
+            "metric": _clip(bt.metric, 40), "narrative": bt.narrative, "grid": bt.grid,
+            "n_metric_rows": len(mrows),
+        })
+        for m in mrows:
+            metric_rows.append({
+                "corp_code": corp_code, "fiscal_year": fiscal_year, "table_ord": ord_,
+                "metric": _clip(m.metric, 20), "segment": _clip(m.segment, 120),
+                "item": _clip(m.item, 150), "period_label": _clip(m.period_label, 60),
+                "period_year": m.period_year,
+                "value": m.value, "unit": _clip(m.unit, 30), "is_ratio": m.is_ratio,
+            })
+    return section_rows, metric_rows

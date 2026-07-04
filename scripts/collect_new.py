@@ -171,6 +171,22 @@ def _sync_capital(lookback_days: int = 5) -> None:
         logger.warning(f"[collect] ⓪-2 자본이벤트 동기화 실패(비치명적): {exc}")
 
 
+def _sync_biz_metrics(corps: list[str]) -> None:
+    """B4 — 새로 수집된 기업의 사업보고서 본문 생산능력/생산실적/가동률 → biz_metrics.
+    사업의 내용 절은 annual 에만 있어 이번에 표준화된 기업의 최신 사업보고서만 대상.
+    비치명적 실패는 본 수집을 막지 않는다(rcept 단위 멱등)."""
+    if not corps:
+        return
+    try:
+        from collector.biz_metrics import sync_biz_metrics
+        agg = sync_biz_metrics(corps, latest_only=True)
+        if agg.get("metric_rows"):
+            logger.info(f"[collect] ⑤-1 사업지표(생산능력/실적/가동률) 기업 {agg['corps']} · "
+                        f"표 {agg['tables']} · 지표행 {agg['metric_rows']:,}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ⑤-1 사업지표 수집 실패(비치명적): {exc}")
+
+
 def _refresh_valuation_daily() -> None:
     """A4a — 수집 후 valuation_daily matview 갱신(CONCURRENTLY, 읽기 비차단). 비치명적 실패."""
     try:
@@ -237,6 +253,7 @@ def main() -> None:
         logger.success(f"[collect] 재개 완료 — std_v2 {agg.get('s', 0):,} · 이산분기 {agg.get('q', 0):,} · "
                        f"달력 {agg.get('c', 0):,} · 타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
         _verify_and_log(agg, args)
+        _sync_biz_metrics(affected)
         _refresh_valuation_daily()
         return
 
@@ -288,6 +305,9 @@ def main() -> None:
 
     # ⑤ 수집 후 DQ 게이트 — 새로 표준화된 기업만 Gate B(보고서==DB)+항등식 재검, corp_verify_status 적재.
     _verify_and_log(agg, args)
+
+    # ⑤-1 사업지표(생산능력/생산실적/가동률) — 신규 기업의 사업보고서 본문표 → biz_metrics(B4).
+    _sync_biz_metrics(affected)
 
     # ⑥ valuation_daily matview 갱신(A4a) — 오늘 반영분(신규 재무·주가)까지 밸류에이션 뷰에 즉시 노출.
     _refresh_valuation_daily()

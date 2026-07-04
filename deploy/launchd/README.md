@@ -108,3 +108,47 @@ python scripts/dq_assertions.py --sample      # 어서션만(위반 표본까지
 python scripts/dq_nightly.py --xsrc-sample 0  # 어서션만(교차검증 생략)
 python scripts/verify_cross_source.py --sample 50 --years 2018-2024   # 교차검증 깊게
 ```
+
+---
+
+# 주간 VACUUM(ANALYZE) (launchd, 매주 일요일 22:00) — D5 / A4b
+
+`scripts/vacuum_db.py` 가 DB 전체(기본) 또는 지정 테이블에 `vacuumdb --analyze` 를 실행한다.
+전문가 리뷰 §5: `fact_v2`(87M행)가 dead tuple ~15%인데 수동 VACUUM 이력이 전무했던 문제의 정례 대응.
+`collector/db.py` 마이그레이션(`2026_07_fact_v2_autovacuum_tuning`)이 `fact_v2` 의 autovacuum 임계값도
+낮춰 자동 청소 빈도를 높였다 — 이 주간 잡은 그 보완(+ 대량 수집 뒤 플래너 통계 갱신).
+18:00 수집·19:00 백업·20:30 DQ점검 뒤(리소스 경합 회피) 일요일 22:00 로 배치.
+
+## 설치
+```bash
+cp deploy/launchd/com.tjfinance.vacuum.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.tjfinance.vacuum.plist
+launchctl start com.tjfinance.vacuum        # 즉시 1회 테스트
+tail -f logs/vacuum.out.log
+```
+
+## 수동 실행
+```bash
+python scripts/vacuum_db.py                  # 전체 DB
+python scripts/vacuum_db.py --table fact_v2  # 특정 테이블만
+```
+
+---
+
+# valuation_daily matview 갱신 — A4a (D3)
+
+재무↔주가 결합 밸류에이션 뷰(`app/data/valuation_bands.py` 가 소비)는 11.2M 주가행마다 LATERAL로
+최신 FY 재무를 조인하는 일반 뷰였던 것을 **materialized view** 로 전환했다(전문가 리뷰 §4).
+`collector/db.py` 마이그레이션이 `WITH NO DATA` 로 뷰만 만들어두므로, **최초 1회 수동 적재가 필요**하다.
+
+## 최초 적재 (1회, 사용자 실행 — 수 분 소요 가능)
+```bash
+python scripts/refresh_valuation_daily.py
+```
+
+## 이후 자동 갱신
+`scripts/collect_new.py` 가 매 실행 끝(⑥)에 `REFRESH MATERIALIZED VIEW CONCURRENTLY` 로 갱신하므로
+18:00 수집 잡에 자동으로 포함된다(비치명적 — 실패해도 수집 자체는 성공 처리). 수동으로 다시 갱신하려면:
+```bash
+python scripts/refresh_valuation_daily.py --concurrent
+```

@@ -142,6 +142,15 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
     return summ
 
 
+def _refresh_valuation_daily() -> None:
+    """A4a — 수집 후 valuation_daily matview 갱신(CONCURRENTLY, 읽기 비차단). 비치명적 실패."""
+    try:
+        from scripts.refresh_valuation_daily import refresh
+        refresh(concurrent=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] valuation_daily 갱신 실패(비치명적): {exc}")
+
+
 def _verify_and_log(agg: dict, args) -> None:
     """수집 후 DQ 게이트 실행·로깅. fail_a/value_diff(확정 불일치) 발견 시 loud error."""
     ok = agg.get("ok_corps") or []
@@ -194,6 +203,7 @@ def main() -> None:
         logger.success(f"[collect] 재개 완료 — std_v2 {agg.get('s', 0):,} · 이산분기 {agg.get('q', 0):,} · "
                        f"달력 {agg.get('c', 0):,} · 타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
         _verify_and_log(agg, args)
+        _refresh_valuation_daily()
         return
 
     from collector.downloader import run_downloads
@@ -244,6 +254,9 @@ def main() -> None:
 
     # ⑤ 수집 후 DQ 게이트 — 새로 표준화된 기업만 Gate B(보고서==DB)+항등식 재검, corp_verify_status 적재.
     _verify_and_log(agg, args)
+
+    # ⑥ valuation_daily matview 갱신(A4a) — 오늘 반영분(신규 재무·주가)까지 밸류에이션 뷰에 즉시 노출.
+    _refresh_valuation_daily()
 
 
 if __name__ == "__main__":

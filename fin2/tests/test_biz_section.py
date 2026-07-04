@@ -25,6 +25,9 @@ _SOIL = _BASE / "raw_report/KOSPI/00138279_S-Oil/annual/2024/20250319000503.xml"
 # 오염되던 케이스. LX인터내셔널 = 유형자산/공장 소재지·면적 표만 있어 생산행 0이어야 함.
 _KANGNAM = _BASE / "raw_report/KOSPI/00100939_강남제비스코/annual/2024/20250318001036.xml"
 _LXINTL = _BASE / "raw_report/KOSPI/00120076_LX인터내셔널/annual/2024/20250320000626.xml"
+# B4b-2 회귀: 아세아텍 = 전치형 레이아웃(지표명이 '구분' 열 값) + 기간별 수량/금액 하위열 +
+# 날짜헤더 "2024.06.30(제46기)"(first_data 오탐 유발) + '가동율'(율 표기 변이).
+_ASEATECH = _BASE / "raw_report/KOSDAQ/00138747_아세아텍/annual/2024/20240913000575.xml"
 
 
 def _rows(fp, corp, fy):
@@ -105,6 +108,25 @@ def test_lxintl_facility_table_dropped():
         return
     rows = _rows(_LXINTL, "00120076", 2024)
     assert len(rows) == 0, f"소재지/면적 표에서 생산행이 새면 안 됨: {rows[:2]}"
+
+
+def test_aseatech_transposed_layout():
+    """전치형(지표명이 구분열) + 수량/금액 하위열 + 날짜헤더 + '가동율' 변이 종합."""
+    if not _ASEATECH.exists():
+        return
+    rows = _rows(_ASEATECH, "00138747", 2024)
+    assert rows, "전치형 표에서 행을 뽑아야 함(날짜헤더 first_data 오탐 회귀 방지)"
+    metrics = {r["metric"] for r in rows}
+    assert metrics >= {"capacity", "output", "utilization"}, metrics
+    # 관리기 2024: 구분열이 지표로 승격 + 수량/금액 단위 구분.
+    g = [r for r in rows if r["segment"] == "관리기" and r["period_year"] == 2024]
+    out_qty = [r for r in g if r["metric"] == "output" and r["unit"] == "수량"]
+    assert out_qty and out_qty[0]["value"] == 16458, out_qty
+    assert any(r["metric"] == "output" and r["unit"] == "금액" for r in g), g
+    # 가동율(율 표기) → utilization + 비율(%없이도).
+    util = [r for r in g if r["metric"] == "utilization"]
+    assert util and util[0]["is_ratio"] and util[0]["unit"] == "%", util
+    assert 0 < util[0]["value"] <= 200, util
 
 
 def _run():

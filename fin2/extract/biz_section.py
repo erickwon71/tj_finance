@@ -138,19 +138,32 @@ def expand_table_grid(table_elem: etree._Element) -> list[list[str]]:
 
 
 _HEADING_MAX_LEN = 40   # 소제목 후보 최대 길이(내러티브 본문과 구별 — 실측: 삼성 15자, S-Oil 12자)
+_HEAD_WINDOW = 50       # 본문 융합형 소제목에서 앞머리 관찰 폭
+# 넘버링 접두((2)·2)·나.·2.·①·ⅰ 등) 뒤 생산 키워드로 '시작'하는 문단 = 본문에 소제목이 붙은 경우.
+# 실측(2026-07-04): 흥국 "(2) 생산능력, 생산실적, 가동률연결기업의…", 에이텍 "2) 생산실적 및 가동률당기말…"
+# 처럼 소제목과 본문이 한 <P>에 융합돼 길이 40자 필터에 걸리던 케이스를 회수한다.
+_HEADING_PREFIX_RE = re.compile(
+    r"^\s*(?:[\(（]?\s*\d+\s*[\)）.]|\d+\s*[.)]|[가-힣]\s*[.)]|[①-⑳㉠-㉿]|[ⅰ-ⅹ]+\s*[.)]?)?\s*"
+    r"(?:생산\s*능력|생산\s*실적|가동\s*[률율])")
 
 
 def _heading_metrics(text: str) -> list[str]:
-    """짧은 소제목 텍스트에서 매칭되는 지표 키(들)를 반환. 헤딩 아니면 빈 리스트.
+    """소제목 텍스트에서 매칭되는 지표 키(들)를 반환. 헤딩 아니면 빈 리스트.
     실측(2026-07-04) 발견: 회사마다 표기가 전혀 다름 —
       삼성전자: SPAN "(생산능력)"/"(생산실적)"/"(가동률)" 개별 소제목.
       S-Oil:    P "다. 생산능력" / "라. 생산실적 및 가동률"(두 지표 한 절에 결합).
-    → 길이 제한 + 키워드 포함으로 느슨하게 판정(내러티브 문단은 훨씬 길어 자연히 배제)."""
-    t = text.strip()
-    if not t or len(t) > _HEADING_MAX_LEN:
+      흥국/에이텍: 소제목이 본문과 한 <P>에 융합("(2) 생산능력, 생산실적, 가동률…") → 앞머리 판정.
+    (a) 짧은 순수 소제목: 길이≤40 + 키워드 포함. (b) 융합형: 넘버링+생산키워드로 시작하면 앞머리
+    _HEAD_WINDOW 안의 키워드를 지표로 채택(뒤 표는 B4b 생산열/깨끗수치 필터가 보호)."""
+    t = text.strip().replace("가동율", "가동률")   # 율/률 표기 변이 정규화(실측: 아세아텍 '가동율')
+    if not t:
         return []
-    hits = [key for key, kw in _MARKERS.items() if kw in t]
-    return hits
+    if len(t) <= _HEADING_MAX_LEN:
+        return [key for key, kw in _MARKERS.items() if kw in t]
+    if _HEADING_PREFIX_RE.match(t):
+        head = t[:_HEAD_WINDOW]
+        return [key for key, kw in _MARKERS.items() if kw in head]
+    return []
 
 
 def find_biz_subsections(root: etree._Element, max_tables_per_marker: int = 3) -> list[BizTable]:
@@ -248,7 +261,7 @@ def parse_biz_tables(file_path: Path, corp_code: str, fiscal_year: int) -> list[
 #     period_label 로 보존해 무손실.
 
 _METRIC_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
-    ("utilization", ("가동률",)),
+    ("utilization", ("가동률", "가동율")),
     ("output",      ("생산실적", "실제 생산", "실제생산", "생산량")),
     ("capacity",    ("생산능력", "표준생산능력", "생산 능력")),
 ]
@@ -257,6 +270,10 @@ _UNIT_HEADER_KW = ("단위",)
 # 없는 값열은 생산표가 아니라 유형자산 장부금액·공장 소재지/면적 등(PP&E/facility) 표라
 # 판단해 버린다. 실측(2026-07-04): 01435489 감가상각표·00120076 면적/가액표 오포착 방지.
 _PRODUCTION_COL_KW = ("생산", "가동", "능력", "설비")
+# 매출(판매)표 판별 키워드 — 융합형 소제목 탐지가 생산문단 뒤의 매출실적표(제N기 기간열·
+# 백만원)를 잘못 잡는 것을 차단. 부문/품목 라벨의 과반이 이 단어를 담으면 매출표로 보고 버린다.
+# ('수출액/내수액'은 '수출ATM/내수ATM' 같은 정상 생산품목과 구별하려 '액'까지 요구).
+_SALES_KW = ("매출", "판매", "수출액", "내수액")
 _PERIOD_GI_RE = re.compile(r"제\s*(\d+)\s*기")
 _PERIOD_YEAR_RE = re.compile(r"(19|20)\d{2}")
 _NUM_LEAD_RE = re.compile(r"^\(?\s*-?[\d,]+(?:\.\d+)?")
@@ -334,8 +351,10 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
     ncols = max(len(r) for r in grid)
     grid = [r + [""] * (ncols - len(r)) for r in grid]
 
-    # 1) 헤더행/데이터행 분리 — 값열이 수치로 시작하는 첫 행부터 데이터.
-    first_data = next((i for i, r in enumerate(grid) if any(_looks_numeric(c) for c in r)), None)
+    # 1) 헤더행/데이터행 분리 — '깨끗한 수치' 셀이 처음 나오는 행부터 데이터.
+    #    _looks_numeric(선두숫자만) 은 헤더의 날짜셀 "2025.06.30(제47기)" 도 수치로 오인해
+    #    header_rows 를 비워버림 → _is_clean_number(짧은 후행단위만 허용) 로 판정.
+    first_data = next((i for i, r in enumerate(grid) if any(_is_clean_number(c) for c in r)), None)
     if first_data is None or first_data == 0:
         return []
     header_rows, data_rows = grid[:first_data], grid[first_data:]
@@ -358,6 +377,20 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
             unit_col = c
             break
     label_cols = [c for c in dim_cols if c != unit_col]
+
+    # 전치형 레이아웃 — 지표명(생산능력/생산실적/가동률)이 열 헤더가 아니라 '구분' 차원열의
+    # 값으로 들어간 경우(아세아텍류). 값의 과반이 지표명인 차원열을 지표열로 승격하고, 각 행의
+    # 지표를 그 값에서 얻는다(그 열은 부문/품목에서 제외).
+    metric_col = None
+    for c in label_cols:
+        vals = [data_rows[r][c].strip() for r in range(len(data_rows))]
+        nonempty = [v for v in vals if v]
+        hits = sum(1 for v in nonempty if _heading_metrics(v))
+        if nonempty and hits >= len(nonempty) * 0.6:
+            metric_col = c
+            break
+    if metric_col is not None:
+        label_cols = [c for c in label_cols if c != metric_col]
 
     # 3) 값열 유효성 필터 — 기간(제N기/연도)이 있거나 생산 도메인 키워드(생산/가동/능력/설비)를
     #    가진 열만 '생산 데이터 열'로 채택. 둘 다 없는 열(장부금액·소재지·면적 등)은 버려
@@ -439,6 +472,24 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
         non_util = [m for m in table_metrics if m != "utilization"]
         return non_util[0] if non_util else "output"
 
+    def col_sublabel(c: int) -> Optional[str]:
+        """값열 헤더의 세부축(수량/금액/대 등) — 기간·지표키워드 토큰은 제외. 전치형에서 한 기간에
+        수량·금액 두 열이 오는 경우 단위로 구분(그냥 두면 같은 키로 충돌)."""
+        for r in range(len(header_rows)):
+            t = header_rows[r][c].strip()
+            if (t and len(t) <= 6 and not _PERIOD_GI_RE.search(t) and not _PERIOD_YEAR_RE.search(t)
+                    and not any(k in t for k in _PRODUCTION_COL_KW)):
+                return t
+        return None
+
+    # 매출표 가드 — 부문·품목 라벨의 과반이 매출/판매 키워드면 매출실적표로 보고 버린다
+    # (융합 소제목 탐지가 생산문단 뒤 매출표를 잘못 잡는 경우 차단).
+    sales_rows = sum(
+        1 for r in range(len(data_rows))
+        if any(k in " ".join(data_rows[r][c] for c in label_cols) for k in _SALES_KW))
+    if data_rows and sales_rows >= len(data_rows) / 2:
+        return []
+
     nar_unit = _narrative_unit(bt.narrative)
     rows: list[BizMetricRow] = []
     for drow in data_rows:
@@ -450,14 +501,24 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
         segment = labels[0] if labels else None
         item = labels[1] if len(labels) > 1 else None
         row_unit = drow[unit_col].strip() if unit_col is not None else None
+        # 전치형: 이 행의 지표는 구분열 값에서(생산능력/생산실적/가동률).
+        row_metric = None
+        if metric_col is not None:
+            mh = _heading_metrics(drow[metric_col].strip())
+            row_metric = mh[0] if mh else None
         for c in val_cols:
             val, is_ratio, inline_unit = _parse_value(drow[c])
             if val is None:
                 continue
             plabel, pyear = col_period(c)
-            metric = col_metric(c, is_ratio)
+            if metric_col is not None:
+                metric = row_metric or col_metric(c, is_ratio)
+                if metric == "utilization":   # 전치형 가동률 행은 %없이도 비율(예: 71.56)
+                    is_ratio = True
+            else:
+                metric = col_metric(c, is_ratio)
             # 비율 값의 단위는 항상 %(부문 단위열이 천배럴이어도 가동률 셀은 %).
-            unit = "%" if is_ratio else (row_unit or inline_unit or nar_unit)
+            unit = "%" if is_ratio else (row_unit or inline_unit or col_sublabel(c) or nar_unit)
             rows.append(BizMetricRow(
                 metric=metric, segment=segment, item=item,
                 period_label=plabel, period_year=pyear,

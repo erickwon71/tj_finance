@@ -1,0 +1,216 @@
+"""B1(→B4 병합) · 수주상황 추출기 — 사업보고서 본문 '수주상황'/'수주계약 현황' 섹션.
+
+DART 는 수주잔고 구조화 API 가 없다(`collector/models.py::OrderBacklog` 독스트링 참조) —
+사업보고서 본문표를 파싱한다. biz_section.py 의 그리드 추출·중첩TABLE 배제·숫자파싱을
+그대로 재사용(동일 문서 구조·동일 오염 위험이라 이미 검증된 인프라).
+
+실측(2026-07-05, 6개사 — 삼성중공업/한화시스템/현대건설/GS건설/대우건설/한화오션)으로
+확인한 3개 구조 유형:
+  1. **집계형**(삼성중공업/한화시스템): 사업부문·품목별 소수 행(5행 안팎), 열=수주총액·
+     기납품액·수주잔고. 행 그대로 저장(category=품목/사업부문).
+  2. **프로젝트 상세형**(현대건설/GS건설, "계약잔액" 명시): 공사·계약별 수십~수백 행, 열=
+     기본도급액/완성공사액/계약잔액. 계약잔액이 곧 수주잔고라 프로젝트 전부 합산해 회사
+     전체 1행으로 축약(category=None, "전체 프로젝트 합산"으로 표기 — 프로젝트 개수는
+     narrative 아닌 raw 로 저장하지 않음, 무손실은 원 raw_report 로 필요시 재조회).
+  3. **진행률형**(대우건설/한화오션, "진행률적용 수주계약 현황" — 계약잔액 컬럼 없이
+     수주총액+진행률%만): backlog = 수주총액×(1-진행률/100) 파생이 필요한데 진행률
+     반올림·초과(개산계약 변경 등) 리스크가 있어 **1차 범위 밖**(TODO, 낮은 신뢰도).
+     이 표는 명시적 배제(계약잔액/수주잔고 컬럼 부재로 자연 스킵).
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+from fin2.extract.biz_section import (
+    _FINANCIAL_STMT_KW, _is_clean_number, _load_root, _narrative_unit, _parse_value, _tag, _text,
+    expand_table_grid,
+)
+
+# 소제목 판정 — biz_section 과 동일하게 짧은 SPAN/P 요소만(내러티브 문단과 구별).
+_HEADING_MAX_LEN = 30
+_ORDER_HEADING_KW = ("수주상황", "수주 상황", "수주현황", "수주 현황", "수주계약")
+_NUMBERED_HEADING_RE = re.compile(r"^[가-힣]\s*\.\s*\S")
+
+# 열 판별 키워드(회사마다 표기 변이 — 괄호부기 "(A+B)"/"(매출액,A)" 등은 in 매칭이라 무관).
+# "도급"(GS건설 "기본 도급금액"처럼 "도급액" 사이에 "금"이 끼는 변이까지 포괄하는 안전한 substring).
+_TOTAL_KW = ("수주총액", "도급")
+# "기납품"(액 없이, 실측 에너토크 — 수량/금액 하위열이라 "기납품액" 정확매치 실패했었음).
+_COMPLETED_KW = ("기납품", "완성공사액")
+_BACKLOG_KW = ("수주잔고", "계약잔액")
+# 진행률형(계약잔액 없이 진행률%만) 판별 — 발견 시 낮은 신뢰도로 스킵.
+_PROGRESS_ONLY_KW = ("진행률", "미청구공사", "공사미수금")
+# 날짜/기한 열 — category 라벨에서 제외(실측: 삼성중공업 "수주일자"/"납기", 에너토크 "수주
+# 년도" 열이 라벨에 섞여 "조선해양 ~ 2025.12.31 -"/"…이월분 839 2,029" 처럼 오염되던 것 방지).
+_DATE_COL_KW = ("일자", "기한", "계약일", "착공", "완공", "납기", "년도")
+
+
+@dataclass
+class OrderBacklogRow:
+    category: Optional[str]
+    backlog_amt: Optional[int]
+    new_orders: Optional[int]
+    completed: Optional[int]
+    unit: Optional[str]
+
+
+_MAX_TABLES_PER_MARKER = 4  # biz_section 과 동일 방어 — 헤딩 텍스트가 러닝헤더로 반복 출현해
+# (실측: 에너토크 "4. 수주상황" 이 문서 뒤쪽 재무제표 구간에서도 재등장) 다음 경계를 못 찾고
+# 창이 무관한 표(부채총계/현금성자산/외화자산 등)까지 쓸어담는 것을 표 개수 상한으로 차단.
+
+
+def find_order_subsections(root) -> list[tuple[str, Optional[str], list[list[str]]]]:
+    """'수주상황' 계열 소제목 다음에 오는 표들을 (heading, unit, grid) 리스트로 반환.
+    다음 순번 소제목(가./나. 등)을 만나면 창을 자른다(biz_section 과 동일 전략). 단위는
+    보통 데이터표 앞의 "(단위 : 억원)" 같은 1행짜리 안내표에 있고 회사마다 억원/백만원이
+    달라(실측: 삼성중공업=억원, 한화시스템=백만원) 반드시 캡처해야 수치 스케일을 안다."""
+    elements = list(root.iter())
+    marker_positions = []
+    for i, el in enumerate(elements):
+        if _tag(el) not in ("SPAN", "P"):
+            continue
+        t = _text(el)
+        if t and len(t) <= _HEADING_MAX_LEN and any(k in t for k in _ORDER_HEADING_KW):
+            marker_positions.append((i, t))
+
+    results: list[tuple[str, Optional[str], list[list[str]]]] = []
+    for idx, (pos, heading) in enumerate(marker_positions):
+        next_pos = marker_positions[idx + 1][0] if idx + 1 < len(marker_positions) else len(elements)
+        for j in range(pos + 1, next_pos):
+            t = _text(elements[j])
+            if (_tag(elements[j]) in ("SPAN", "P") and len(t) <= _HEADING_MAX_LEN
+                    and _NUMBERED_HEADING_RE.match(t) and not any(k in t for k in _ORDER_HEADING_KW)):
+                next_pos = j
+                break
+        seen = set()
+        window_unit = None
+        n_tables = 0
+        for j in range(pos + 1, next_pos):
+            if n_tables >= _MAX_TABLES_PER_MARKER:
+                break
+            el = elements[j]
+            if _tag(el) == "TABLE" and id(el) not in seen:
+                seen.add(id(el))
+                grid = expand_table_grid(el)
+                if len(grid) <= 1:
+                    u = _narrative_unit(" ".join(c for row in grid for c in row))
+                    if u:
+                        window_unit = u
+                    continue
+                results.append((heading, window_unit, grid))
+                n_tables += 1
+    return results
+
+
+def _col_kind(header_text: str) -> Optional[str]:
+    if any(k in header_text for k in _BACKLOG_KW):
+        return "backlog"
+    if any(k in header_text for k in _COMPLETED_KW):
+        return "completed"
+    if any(k in header_text for k in _TOTAL_KW):
+        return "total"
+    return None
+
+
+def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -> list[OrderBacklogRow]:
+    """표 그리드 → OrderBacklogRow 리스트. 계약잔액/수주잔고 컬럼이 없으면(진행률형) 빈 리스트.
+    default_unit: 표 앞 "(단위 : 억원)" 식 안내문에서 캡처한 단위(행별 단위열 없을 때 폴백)."""
+    grid = [list(r) for r in grid if r]
+    if len(grid) < 2:
+        return []
+    ncols = max(len(r) for r in grid)
+    grid = [r + [""] * (ncols - len(r)) for r in grid]
+
+    first_data = next((i for i, r in enumerate(grid) if any(_is_clean_number(c) for c in r)), None)
+    if first_data is None or first_data == 0:
+        return []
+    header_rows, data_rows = grid[:first_data], grid[first_data:]
+
+    header_text_all = " ".join(header_rows[r][c] for r in range(len(header_rows)) for c in range(ncols))
+    if any(k in header_text_all for k in _PROGRESS_ONLY_KW) and not any(k in header_text_all for k in _BACKLOG_KW):
+        return []  # 진행률형 — 1차 범위 밖
+
+    # 재무제표/외화자산 표 가드(biz_section 의 _FINANCIAL_STMT_KW 재사용) — 헤딩이 러닝헤더로
+    # 반복 출현해 창이 무관한 표까지 쓸어담는 경우의 2차 방어(실측: 에너토크 부채총계/현금성자산).
+    all_row_text = " ".join(data_rows[r][c] for r in range(len(data_rows)) for c in range(ncols))
+    if any(k in all_row_text for k in _FINANCIAL_STMT_KW):
+        return []
+
+    col_kind: dict[int, str] = {}
+    unit_col = None
+    date_cols: set[int] = set()
+    for c in range(ncols):
+        head = " ".join(header_rows[r][c] for r in range(len(header_rows)))
+        if "단위" in head:
+            unit_col = c
+            continue
+        if any(k in head for k in _DATE_COL_KW):
+            date_cols.add(c)
+            continue
+        k = _col_kind(head)
+        if k:
+            col_kind[c] = k
+    if "backlog" not in col_kind.values():
+        return []  # 수주잔고/계약잔액 컬럼 자체가 없으면 신뢰 파생 불가 → 스킵
+
+    dim_cols = [c for c in range(ncols) if c not in col_kind and c != unit_col and c not in date_cols]
+    unit = None
+    if unit_col is not None:
+        for r in range(len(data_rows)):
+            v = data_rows[r][unit_col].strip()
+            if v:
+                unit = v
+                break
+    if unit is None:
+        unit = default_unit
+
+    rows: list[OrderBacklogRow] = []
+    for drow in data_rows:
+        labels = [drow[c].strip() for c in dim_cols if drow[c].strip()]
+        category = " ".join(dict.fromkeys(labels))[:150] or None
+        vals: dict[str, int] = {}
+        for c, kind in col_kind.items():
+            v, _, _ = _parse_value(drow[c])
+            if v is not None:
+                vals[kind] = int(v)
+        if "backlog" in vals:
+            rows.append(OrderBacklogRow(
+                category=category, backlog_amt=vals.get("backlog"),
+                new_orders=vals.get("total"), completed=vals.get("completed"), unit=unit,
+            ))
+    return rows
+
+
+def _aggregate_if_detail(rows: list[OrderBacklogRow]) -> list[OrderBacklogRow]:
+    """행이 많으면(프로젝트 상세형) 회사 전체 합산 1행으로 축약. 적으면(집계형) 그대로."""
+    if len(rows) <= 10:
+        return rows
+    total_backlog = sum(r.backlog_amt or 0 for r in rows)
+    total_new = sum(r.new_orders or 0 for r in rows if r.new_orders is not None)
+    total_completed = sum(r.completed or 0 for r in rows if r.completed is not None)
+    unit = next((r.unit for r in rows if r.unit), None)
+    return [OrderBacklogRow(
+        category=None, backlog_amt=total_backlog,
+        new_orders=total_new or None, completed=total_completed or None, unit=unit,
+    )]
+
+
+def parse_order_backlog(file_path: Path, corp_code: str, fiscal_year: int) -> list[dict]:
+    """파일 하나 → order_backlog 행 딕셔너리 리스트(멱등 upsert 는 수집기가 담당)."""
+    root = _load_root(file_path)
+    if root is None:
+        return []
+    out: list[dict] = []
+    for _heading, unit, grid in find_order_subsections(root):
+        rows = map_order_table(grid, default_unit=unit)
+        rows = _aggregate_if_detail(rows)
+        for r in rows:
+            out.append({
+                "corp_code": corp_code, "fiscal_year": fiscal_year,
+                "category": r.category, "backlog_amt": r.backlog_amt,
+                "new_orders": r.new_orders, "completed": r.completed,
+                "unit": r.unit, "source": "html_parse",
+            })
+    return out

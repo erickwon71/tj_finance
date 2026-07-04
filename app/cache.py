@@ -196,6 +196,14 @@ def biz_production(corp_code: str) -> dict:
     return _biz.load_biz_production(corp_code)
 
 
+# ── 수주상황 (수주잔고, B1→B4) ────────────────────────────
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def order_backlog(corp_code: str) -> dict:
+    """최신 사업보고서 기준 수주상황(수주잔고). app.data.order_backlog 위임."""
+    from app.data import order_backlog as _ob
+    return _ob.load_order_backlog(corp_code)
+
+
 # ── 지배구조 (임원 현황) ─────────────────────────────────
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
 def executives_roster(corp_code: str):

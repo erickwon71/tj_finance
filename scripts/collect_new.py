@@ -187,6 +187,22 @@ def _sync_biz_metrics(corps: list[str]) -> None:
         logger.warning(f"[collect] ⑤-1 사업지표 수집 실패(비치명적): {exc}")
 
 
+def _sync_order_backlog(corps: list[str]) -> None:
+    """B1(→B4) — 새로 수집된 기업의 사업보고서 본문 수주상황 → order_backlog.
+    사업의 내용 절은 annual 에만 있어 이번에 표준화된 기업의 최신 사업보고서만 대상.
+    비치명적 실패는 본 수집을 막지 않는다(rcept 단위 멱등). v1 은 계약잔액/수주잔고
+    컬럼이 명시된 표만 채택 — 진행률%만 있는 표는 낮은신뢰도라 자연 스킵."""
+    if not corps:
+        return
+    try:
+        from collector.order_backlog import sync_order_backlog
+        agg = sync_order_backlog(corps, latest_only=True)
+        if agg.get("rows"):
+            logger.info(f"[collect] ⑤-2 수주상황 기업 {agg['corps']} · 행 {agg['rows']:,}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ⑤-2 수주상황 수집 실패(비치명적): {exc}")
+
+
 def _refresh_valuation_daily() -> None:
     """A4a — 수집 후 valuation_daily matview 갱신(CONCURRENTLY, 읽기 비차단). 비치명적 실패."""
     try:
@@ -254,6 +270,7 @@ def main() -> None:
                        f"달력 {agg.get('c', 0):,} · 타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
         _verify_and_log(agg, args)
         _sync_biz_metrics(affected)
+        _sync_order_backlog(affected)
         _refresh_valuation_daily()
         return
 
@@ -308,6 +325,9 @@ def main() -> None:
 
     # ⑤-1 사업지표(생산능력/생산실적/가동률) — 신규 기업의 사업보고서 본문표 → biz_metrics(B4).
     _sync_biz_metrics(affected)
+
+    # ⑤-2 수주상황 — 신규 기업의 사업보고서 본문표 → order_backlog(B1→B4).
+    _sync_order_backlog(affected)
 
     # ⑥ valuation_daily matview 갱신(A4a) — 오늘 반영분(신규 재무·주가)까지 밸류에이션 뷰에 즉시 노출.
     _refresh_valuation_daily()

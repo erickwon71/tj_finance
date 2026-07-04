@@ -403,6 +403,30 @@ def _production_panel(corp_code: str) -> None:
                "부문·품목마다 단위가 다를 수 있어 가동률(%)만 함께 그리고, 생산능력/실적은 표로 "
                "표시합니다. 가동률이 100%를 넘는 값은 초과가동(교대·잔업)으로 보고서 원값 그대로입니다.")
 
+    st.divider()
+    _order_backlog_panel(corp_code)
+
+
+def _order_backlog_panel(corp_code: str) -> None:
+    """수주상황(수주잔고) — 건설/조선/방산 등 수주 기반 업종. 사업보고서 본문표 파싱(B1→B4)."""
+    data = cache.order_backlog(corp_code)
+    if not data.get("available"):
+        st.caption("🏗 수주상황 데이터가 없습니다. (수주 기반 업종이 아니거나, 계약잔액 없이 "
+                   "진행률%만 공시하는 표 형식이라 v1 범위 밖이거나, 아직 미수집)")
+        return
+    rows = data["rows"]
+    st.markdown(f"#### 🏗 수주상황 — {data['fiscal_year']} 사업보고서 기준")
+
+    df = pd.DataFrame([{
+        "구분": r["category"] or "전체", "수주총액": r["new_orders"],
+        "기납품액": r["completed"], "수주잔고": r["backlog_amt"],
+    } for r in rows])
+    st.dataframe(df, hide_index=True, width="stretch",
+                 column_config={c: st.column_config.NumberColumn(c, format="localized")
+                                for c in ("수주총액", "기납품액", "수주잔고")})
+    st.caption("출처: DART 사업보고서 '수주상황'/'수주계약 현황' 본문표. 단위는 원문 그대로(보통 "
+               "백만원). 프로젝트별 상세 공시는 회사 전체 합계로 축약했습니다.")
+
 
 def _dq_banner(series: list[dict], grain: str) -> None:
     warn = []

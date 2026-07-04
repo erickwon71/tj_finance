@@ -164,9 +164,14 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       the detail-fetch lookback to 365 days and deriving `filed_at` from `rcept_no` prefix (no
       `rcept_dt` field in the detail response). `collector/dart_capital.py`.
 - [~] B2b Backfill + incremental in collect_new.py — **10-month backfill done (2025-09~2026-07,
-      not full 2015+)**; incremental daily sync wired into `collect_new.py` (⓪-2, non-fatal).
-      Deeper historical backfill can be run later the same way (just call `sync_capital_events`
-      with an earlier `bgn_de`).
+      not full 2015+): 2,843 rows across 1,071 corps** (paid_increase 702·cb_issue 587·
+      treasury_dispose 899·treasury_acquire 301·eb_issue 137·reduction 134·free_increase 42·
+      bw_issue 29·mixed_increase 12). shares_delta field-extraction coverage is high (88–100%)
+      except treasury_dispose (36% — some disposal sub-methods likely use a different field name
+      than `eaq_ostk`; raw data preserved in `detail` JSONB regardless, fixable later without
+      re-fetching). Incremental daily sync wired into `collect_new.py` (⓪-2, non-fatal). Deeper
+      historical backfill can be run later the same way (just call `sync_capital_events` with an
+      earlier `bgn_de`).
 - [x] B2c Dilution overlay on share-count chart + potential-dilution metric — `app/data/capital.py`
       + `chart_panel.render_pershare_panel` markers (▲dilutive/▼reduction/◆potential CB-BW-EB) on
       the B-2 share-count chart, "잠재 희석 %" caption (upper-bound estimate, doesn't track

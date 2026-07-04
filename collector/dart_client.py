@@ -128,6 +128,29 @@ class DartClient:
         data = self._api_get_json("/exctvSttus.json", params)
         return data.get("list", [])
 
+    def get_major_shareholders(
+        self, corp_code: str, bsns_year: str | int, reprt_code: str = "11011",
+    ) -> list[dict[str, Any]]:
+        """최대주주 현황(hyslrSttus) — 주주명·관계·주식종류·기초/기말 소유주식수·지분율.
+        B3 지배구조 패널용. 조회결과 없음(013) → 빈 리스트. 사업보고서(11011) 기준."""
+        params = {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code}
+        return self._api_get_json("/hyslrSttus.json", params).get("list", [])
+
+    def get_shareholder_changes(
+        self, corp_code: str, bsns_year: str | int, reprt_code: str = "11011",
+    ) -> list[dict[str, Any]]:
+        """최대주주 변동현황(hyslrChgSttus) — 변동일·변경후 최대주주·지분율·변동원인.
+        변동이 없던 연도는 '-' 로 채워진 placeholder 1행만 옴(호출측에서 필터)."""
+        params = {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code}
+        return self._api_get_json("/hyslrChgSttus.json", params).get("list", [])
+
+    def get_minority_shareholders(
+        self, corp_code: str, bsns_year: str | int, reprt_code: str = "11011",
+    ) -> list[dict[str, Any]]:
+        """소액주주 현황(mrhlSttus) — corp+연도당 1행 집계(소액주주 수/지분율). float(유통물량) 근사치."""
+        params = {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code}
+        return self._api_get_json("/mrhlSttus.json", params).get("list", [])
+
     def get_company(self, corp_code: str) -> dict[str, Any]:
         """기업개황(company.json) — induty_code(업종/KSIC)·acc_mt(결산월)·corp_cls 등.
         섹터/피어 그룹핑용. 조회결과 없음(013) → 빈 dict."""

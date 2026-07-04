@@ -196,6 +196,13 @@ def executives_roster(corp_code: str):
     return _gov.load_executives(corp_code)
 
 
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def ownership_status(corp_code: str):
+    """최신 사업연도 대주주/지분 현황(B3). app.data.governance 위임."""
+    from app.data import governance as _gov
+    return _gov.load_ownership(corp_code)
+
+
 # ── 밸류에이션 밴드 (일별 멀티플 시계열) ─────────────────
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
 def valuation_series(corp_code: str, metric: str, since_year: Optional[int] = None) -> list[dict]:

@@ -928,3 +928,70 @@ class CorpVerifyStatus(Base):
     __table_args__ = (
         Index("ix_corp_verify_stage", "stage"),
     )
+
+
+# ── 13. 대주주/지분 현황 (B3) ─────────────────────────────────────────────────
+class MajorShareholder(Base):
+    """
+    DART hyslrSttus(최대주주 현황) — 사업보고서 기준 corp+fiscal_year+주주 단위 지분.
+    본인(최대주주) + 특수관계인 전 행. 지배구조 패널의 최대주주 지분율 소스.
+    """
+    __tablename__ = "major_shareholders"
+
+    id            = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code     = Column(String(8),    nullable=False,   index=True)
+    fiscal_year   = Column(SmallInteger, nullable=False)
+    name          = Column(String(100),  nullable=False)
+    relation      = Column(String(50),   nullable=True,   comment="최대주주 본인/특수관계인 등")
+    stock_kind    = Column(String(20),   nullable=True,   comment="보통주/우선주")
+    shares_begin  = Column(BigInteger,   nullable=True,   comment="기초소유주식수")
+    pct_begin     = Column(Float,        nullable=True,   comment="기초지분율(%)")
+    shares_end    = Column(BigInteger,   nullable=True,   comment="기말소유주식수")
+    pct_end       = Column(Float,        nullable=True,   comment="기말지분율(%)")
+    remark        = Column(String(200),  nullable=True)
+    fetched_at    = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("corp_code", "fiscal_year", "name", "relation", "stock_kind",
+                         name="uq_major_shareholders"),
+        Index("ix_mshr_corp_year", "corp_code", "fiscal_year"),
+    )
+
+
+class ShareholderChange(Base):
+    """DART hyslrChgSttus(최대주주 변동현황) — 실제 변동이 있었던 연도만 행 존재(대부분 '-')."""
+    __tablename__ = "shareholder_changes"
+
+    id            = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code     = Column(String(8),    nullable=False,   index=True)
+    fiscal_year   = Column(SmallInteger, nullable=False)
+    change_on     = Column(String(20),   nullable=True,   comment="변동일")
+    holder_name   = Column(String(100),  nullable=True,   comment="최대주주명(변경 후)")
+    shares        = Column(BigInteger,   nullable=True)
+    pct           = Column(Float,        nullable=True)
+    cause         = Column(String(200),  nullable=True,   comment="변동원인")
+    fetched_at    = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_shrchg_corp_year", "corp_code", "fiscal_year"),
+    )
+
+
+class RetailOwnership(Base):
+    """DART mrhlSttus(소액주주 현황) — corp+fiscal_year 당 1행 집계. float(유통물량) 근사치."""
+    __tablename__ = "retail_ownership"
+
+    id                = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code         = Column(String(8),    nullable=False,   index=True)
+    fiscal_year       = Column(SmallInteger, nullable=False)
+    holder_count      = Column(BigInteger,   nullable=True,   comment="소액주주 수")
+    holder_total_count = Column(BigInteger,  nullable=True,   comment="전체 주주 수")
+    holder_rate_pct   = Column(Float,        nullable=True,   comment="소액주주 비중(인원 기준, %)")
+    held_shares       = Column(BigInteger,   nullable=True,   comment="소액주주 보유주식수")
+    total_shares      = Column(BigInteger,   nullable=True,   comment="발행주식총수")
+    held_rate_pct     = Column(Float,        nullable=True,   comment="소액주주 지분율(주식수 기준, %) — float 근사치")
+    fetched_at        = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("corp_code", "fiscal_year", name="uq_retail_ownership"),
+    )

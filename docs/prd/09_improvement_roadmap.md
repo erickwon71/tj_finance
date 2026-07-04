@@ -177,7 +177,17 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       the B-2 share-count chart, "잠재 희석 %" caption (upper-bound estimate, doesn't track
       conversion/redemption status — noted as a known limitation), event history expander.
       Verified live via Playwright on 제이에스링크(00642541, real CB history).
-- [ ] B3 major_shareholders table + collectors + ownership panel
+- [x] B3 major_shareholders table + collectors + ownership panel — 3 DART endpoints verified live
+      before building (roadmap's naming was correct this time, unlike B1): `hyslrSttus`(최대주주
+      현황), `hyslrChgSttus`(최대주주 변동현황), `mrhlSttus`(소액주주 현황/float 근사치). New tables
+      `major_shareholders`/`shareholder_changes`/`retail_ownership`, `scripts/collect_shareholders.py`
+      (mirrors `collect_executives.py` pattern). Ownership panel added to the existing "임원" tab
+      (renamed "임원·지분"): 최대주주+특수관계인 %, 소액주주 %, holder table, change history.
+      **Bug caught before commit**: DART's `hyslrSttus` includes "계"(subtotal) rows per stock kind
+      — naively summing all rows double-counted the major-shareholder % (40.4% instead of the
+      correct 20.2% for Samsung); fixed to prefer the "계" rows when present. Verified live via
+      Playwright against Samsung Electronics (20.2% major + 68.2% retail, matches public knowledge).
+      100-corp sample backfilled (not full 2,557 — same background-run pattern as executives).
 - [ ] B4a biz_metrics table + biz_section extractor v1 (생산능력/실적/가동률/수주상황)
 - [ ] B4b Coverage report by industry; iterate parser
 - [ ] B5 D&A note augmentation rule + parity re-check (ebitda/fcf divergence → 0)

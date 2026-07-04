@@ -302,6 +302,51 @@ def _executives_panel(corp_code: str) -> None:
     st.caption("출처: DART 임원현황(exctvSttus). 보수(개별 5억+)는 별도 공시라 미포함.")
 
 
+def _ownership_panel(corp_code: str) -> None:
+    """대주주/지분 현황(B3) — 최대주주+특수관계인 지분, 소액주주(float 근사치), 변동이력."""
+    yr, holders, retail, changes = cache.ownership_status(corp_code)
+    if not holders:
+        st.info("지분 데이터가 없습니다. (수집: `python scripts/collect_shareholders.py --corps "
+                f"{corp_code} --year 2024`)")
+        return
+    st.markdown(f"#### 🏛 대주주/지분 현황 — {yr} 사업보고서")
+
+    # DART 원본에 "계"(주식종류별 소계) 행이 포함돼 있음 — 있으면 그걸로 합계(중복합산 방지),
+    # 없으면 개별 보유자 행을 직접 합산(폴백).
+    total_rows = [h for h in holders if h["name"].strip() == "계" and h.get("pct_end") is not None]
+    if total_rows:
+        major_pct = sum(h["pct_end"] for h in total_rows)
+    else:
+        major_pct = sum(h["pct_end"] for h in holders if h.get("pct_end") is not None)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("최대주주+특수관계인 지분율", f"{major_pct:.1f}%")
+    if retail and retail.get("held_rate_pct") is not None:
+        c2.metric("소액주주 지분율 (float 근사)", f"{retail['held_rate_pct']:.1f}%")
+        c3.metric("소액주주 수", f"{retail.get('holder_count', 0):,}명 "
+                  f"({retail.get('holder_rate_pct', 0):.1f}%)")
+    else:
+        c2.metric("소액주주 지분율", "—")
+
+    df = pd.DataFrame([{
+        "성명": h["name"], "관계": h.get("relation") or "—",
+        "주식종류": h.get("stock_kind") or "—",
+        "기말지분율(%)": h.get("pct_end"), "기말소유주식수": h.get("shares_end"),
+        "비고": h.get("remark") or "—",
+    } for h in holders])
+    st.dataframe(df, hide_index=True, width="stretch")
+
+    if changes:
+        with st.expander(f"최대주주 변동이력 ({len(changes)}건)", expanded=False):
+            df_chg = pd.DataFrame([{
+                "변동일": c["change_on"], "변경 후 최대주주": c.get("holder_name") or "—",
+                "지분율(%)": c.get("pct"), "변동원인": c.get("cause") or "—",
+            } for c in changes])
+            st.dataframe(df_chg, hide_index=True, width="stretch")
+
+    st.caption("출처: DART 최대주주현황(hyslrSttus)·최대주주변동현황(hyslrChgSttus)·"
+               "소액주주현황(mrhlSttus). 소액주주 지분율은 유통주식(float)의 근사치입니다.")
+
+
 def _dq_banner(series: list[dict], grain: str) -> None:
     warn = []
     for sf, lbl in zip(series, _period_labels(series, grain)):
@@ -461,7 +506,7 @@ def render() -> None:
 
     # 탭 = session_state 유지 라디오(사이드바 변경 등 재실행에도 보던 화면 유지)
     TABS = ["📑 재무제표", "📊 지표", "💰 밸류에이션", "🏆 대가지표",
-            "📈 주가", "📊 주가·재무 결합", "🏢 섹터·피어", "👔 임원"]
+            "📈 주가", "📊 주가·재무 결합", "🏢 섹터·피어", "👔 임원·지분"]
     active = st.radio("화면", TABS, horizontal=True, key="company_tab",
                       label_visibility="collapsed")
 
@@ -587,6 +632,8 @@ def render() -> None:
     elif active == TABS[6]:
         _peer_panel(corp_code)
 
-    # ── 임원 (지배구조) ──
+    # ── 임원·지분 (지배구조) ──
     elif active == TABS[7]:
         _executives_panel(corp_code)
+        st.divider()
+        _ownership_panel(corp_code)

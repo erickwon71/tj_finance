@@ -187,6 +187,22 @@ def _heading_metrics(text: str) -> list[str]:
     return []
 
 
+_METRIC_LABEL_MAX_LEN = 10   # 전치형 지표열 값 순수라벨 상한(생산능력/생산실적/가동률=4~5자)
+
+
+def _pure_metric_label(text: str) -> list[str]:
+    """차원열 값이 '그 자체로' 순수 지표명인지(전치형 레이아웃 지표열 승격 전용, 아세아텍류
+    '구분' 열 값 = "생산능력"/"생산실적"/"가동율"). _heading_metrics 는 소제목 탐지용이라
+    40자까지 허용 → 짧은 각주/비고 문장(예: "※ 조립LINE 기준 가동율(각 공장별 SHIFT운영
+    반영)", 34자)까지 지표라벨로 오인해 해당 열 전체를 전치형으로 잘못 승격시킨다(실측:
+    현대위아 2006, 비고열의 각주 1건이 60% 문턱을 채워 가동가능시간/실제가동시간 수치까지
+    가동률(%)로 오염). 진짜 라벨은 훨씬 짧으므로 상한을 대폭 낮춘다."""
+    t = text.strip().replace("가동율", "가동률")
+    if not t or len(t) > _METRIC_LABEL_MAX_LEN:
+        return []
+    return [key for key, kw in _MARKERS.items() if kw in t]
+
+
 def find_biz_subsections(root: etree._Element, max_tables_per_marker: int = 3) -> list[BizTable]:
     """
     생산능력/생산실적/가동률 소제목(P 또는 SPAN, 회사마다 형태가 다름 — _heading_metrics 참조)을
@@ -295,8 +311,30 @@ _PRODUCTION_COL_KW = ("생산", "가동", "능력", "설비")
 # 백만원)를 잘못 잡는 것을 차단. 부문/품목 라벨의 과반이 이 단어를 담으면 매출표로 보고 버린다.
 # ('수출액/내수액'은 '수출ATM/내수ATM' 같은 정상 생산품목과 구별하려 '액'까지 요구).
 _SALES_KW = ("매출", "판매", "수출액", "내수액")
+# 원재료 매입처 현황표 판별 키워드 — 생산문단(예: "3) 생산설비 현황") 뒤에 이어지는 주요
+# 매입원재료표(사업부문/매입유형/품목/주요매입처/공급의안정성 등, 값열="수량 (비중%)")를
+# 생산데이터로 오포착하는 것을 차단(실측 2026-07-05: GS 2023, 화력발전 원재료 유연탄
+# 529,580(비중67.3%)를 가동률 67.3%대신 부풀린 숫자로 오염). 헤더에 이 단어들이 있으면
+# 매입표로 보고 버린다(HD현대중공업 "주요 원재료 및 생산능력" 유사 케이스와 동일 계열).
+_PURCHASE_HEADER_KW = ("매입처", "매입유형", "공급의안정성", "매입처와의")
+# 손익계산서/재무상태표 라인항목 키워드 — 생산문단 뒤에 부문별 재무요약표(매출액/순이익/
+# 총자산/부채)가 이어지는 경우를 차단(실측 2026-07-05: SG세계물산 2017, 부문별 "순이익(손실)"
+# %증감이 utilization 으로 오염 -16.6%~-106.1%). 이 단어들은 생산표에 나올 일이 없어
+# 데이터행(라벨)에 단 1건만 있어도 표 전체를 재무표로 판단해 버린다(과반 문턱 불필요).
+_FINANCIAL_STMT_KW = (
+    "총자산", "부채", "순이익", "당기순", "매출총이익", "영업이익", "자기자본",
+    # 유형자산 취득원가/감가상각누계액 롤포워드표 — "제N기" 기간헤더를 갖고 있어 생산열 필터를
+    # 통과해버림(실측: 현대힘스 2025, 기초/취득/처분/감가상각/기말/취득원가 표가 "2028년(제18기)"
+    # 표기와 함께 capacity 로 오염 — 참고로 이 "2028년" 자체도 원본 공시 오기: 제17기=2024 인데
+    # 제18기가 2025 아닌 2028 로 잘못 표기된 소스 데이터 이슈, 파서 버그 아님).
+    "취득원가", "감가상각누계액",
+    # 특수관계자 약정 공시("약정 금액"/"약정에 대한 설명") — 생산과 무관(실측: 롯데에너지머티리얼즈).
+    "약정 금액", "약정에 대한",
+)
 _PERIOD_GI_RE = re.compile(r"제\s*(\d+)\s*기")
-_PERIOD_YEAR_RE = re.compile(r"(19|20)\d{2}")
+# 자릿수 경계 가드(?<!\d)/(?!\d) 필수 — 없으면 큰 숫자·소수 내부에 우연히 낀 4자리를 연도로
+# 오인한다(실측: SUN&L 2023 '0.0119072CBM'의 "1907" 부분매치 → period_year=1907 오염).
+_PERIOD_YEAR_RE = re.compile(r"(?<!\d)(19|20)\d{2}(?!\d)")
 _NUM_LEAD_RE = re.compile(r"^\(?\s*-?[\d,]+(?:\.\d+)?")
 
 
@@ -337,20 +375,32 @@ def _parse_value(s: str) -> tuple[Optional[float], bool, Optional[str]]:
     t = s.strip()
     if not t or t in ("-", "－", "—", "N/A", "해당없음"):
         return None, False, None
-    is_ratio = "%" in t
     m = _NUM_LEAD_RE.match(t)
     if not m:
-        return None, is_ratio, None
+        return None, False, None
     raw = m.group(0)
     if not any(ch.isdigit() for ch in raw):
         # "," 단독처럼 [\d,]+ 가 콤마만 매치한 빈 셀(실측: 00129280 2005 구형 표) — 숫자 아님.
-        return None, is_ratio, None
+        return None, False, None
     neg = raw.lstrip().startswith("(") and t.rstrip().endswith(")")
+    # 비율여부 = 매칭된 숫자 바로 뒤에 % 가 오는지(문자열 아무데나 % 가 있으면 오판 —
+    # 실측 GS 2023 "194,013 (24.7%)": 추출값은 194,013 인데 뒤 괄호비중 % 때문에 비율로
+    # 오분류될 뻔함. 매칭 직후로 한정해야 안전).
+    tail_full = t[m.end():].strip()
+    is_ratio = tail_full.startswith("%")
+    # 콤마-소수점 오기 보정(퍼센트 셀 한정) — 마침표 없이 콤마 뒤 1~2자리만 있으면 그 콤마를
+    # 소수점으로 재해석(실측: 네오티스 "84,38%"→8438%, 위더스제약 "43,94%"→4394% 버그).
+    if is_ratio and "." not in raw:
+        ci = raw.rfind(",")
+        if ci != -1:
+            frac = raw[ci + 1:]
+            if 1 <= len(frac) <= 2 and frac.isdigit():
+                raw = raw[:ci] + "." + frac
     num = float(raw.replace("(", "").replace(",", "").strip())
     if neg:
         num = -num
     # 후행 인라인 단위(예: "362.2일", "8,692시간") — 남은 텍스트에 숫자 없고 %가 아니면 단위로.
-    tail = t[m.end():].strip().lstrip("%").strip()
+    tail = tail_full.lstrip("%").strip()
     inline_unit = tail if (tail and not any(c.isdigit() for c in tail) and len(tail) <= 8) else None
     return num, is_ratio, inline_unit
 
@@ -409,7 +459,7 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
     for c in label_cols:
         vals = [data_rows[r][c].strip() for r in range(len(data_rows))]
         nonempty = [v for v in vals if v]
-        hits = sum(1 for v in nonempty if _heading_metrics(v))
+        hits = sum(1 for v in nonempty if _pure_metric_label(v))
         if nonempty and hits >= len(nonempty) * 0.6:
             metric_col = c
             break
@@ -470,7 +520,7 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
             label = " ".join(dict.fromkeys(parts))[:60] or None
         return label, year
 
-    def col_metric(c: int, is_ratio: bool) -> str:
+    def col_metric(c: int, is_ratio: bool, val: float) -> str:
         head = " ".join(header_rows[r][c] for r in range(len(header_rows)))
         # 1) 명시 키워드(생산능력/생산실적/가동률 등).
         matched = None
@@ -478,8 +528,10 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
             if any(k in head for k in kws):
                 matched = mk
                 break
-        # 가동률 라벨인데 값이 비율이 아니면 신뢰하지 않음(설비능력수량 등 오검 방지) → 재분류.
-        if matched == "utilization" and not is_ratio:
+        # 가동률 라벨인데 값이 비율로 보기엔 너무 크면(>500) 신뢰하지 않음(설비능력수량 등
+        # 오검 방지 — 실측 삼화전기 426,624) → 재분류. 단, %기호 없이 순수숫자로만 쓰인 진짜
+        # 비율(실측 현대위아 2006 '90.14')은 값 자체가 합리적 범위라 그대로 유지한다.
+        if matched == "utilization" and not is_ratio and abs(val) > 500:
             matched = None
         # 2) 헤더 힌트 보강(능력→capacity / 실적·생산량·생산→output).
         if matched is None:
@@ -514,6 +566,18 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
     if data_rows and sales_rows >= len(data_rows) / 2:
         return []
 
+    # 원재료 매입처 현황표 가드 — 헤더에 매입처/공급 관련 열이 있으면 생산표가 아니라 매입표.
+    header_text = " ".join(header_rows[r][c] for r in range(len(header_rows)) for c in range(ncols))
+    if any(k in header_text for k in _PURCHASE_HEADER_KW):
+        return []
+
+    # 재무제표 라인항목 가드 — 데이터행 라벨에 순이익/총자산/부채 등이 하나라도 있으면
+    # 부문별 재무요약표(생산표 아님)로 보고 버린다(단일 발생만으로 충분히 명확한 신호).
+    for r in range(len(data_rows)):
+        row_label_text = " ".join(data_rows[r][c] for c in label_cols)
+        if any(k in row_label_text for k in _FINANCIAL_STMT_KW):
+            return []
+
     nar_unit = _narrative_unit(bt.narrative)
     rows: list[BizMetricRow] = []
     for drow in data_rows:
@@ -528,7 +592,7 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
         # 전치형: 이 행의 지표는 구분열 값에서(생산능력/생산실적/가동률).
         row_metric = None
         if metric_col is not None:
-            mh = _heading_metrics(drow[metric_col].strip())
+            mh = _pure_metric_label(drow[metric_col].strip())
             row_metric = mh[0] if mh else None
         for c in val_cols:
             val, is_ratio, inline_unit = _parse_value(drow[c])
@@ -536,11 +600,17 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
                 continue
             plabel, pyear = col_period(c)
             if metric_col is not None:
-                metric = row_metric or col_metric(c, is_ratio)
-                if metric == "utilization":   # 전치형 가동률 행은 %없이도 비율(예: 71.56)
-                    is_ratio = True
+                metric = row_metric or col_metric(c, is_ratio, val)
+                # 전치형 지표행(row_metric)이 utilization 이어도 이 열 값이 비율로 보기엔
+                # 너무 크면(>500, %기호도 없음) 신뢰 않고 헤더 힌트로 재평가 — row_metric 은
+                # col_metric 의 크기가드를 우회하므로 별도 재확인 필요(실측: 현대바이오 2015
+                # '가동가능시간' 4,800·'실제가동시간' 4,300이 가동률 4800%/4300%로 오염).
+                if metric == "utilization" and not is_ratio and abs(val) > 500:
+                    metric = col_metric(c, False, val)
             else:
-                metric = col_metric(c, is_ratio)
+                metric = col_metric(c, is_ratio, val)
+            if metric == "utilization":   # %기호 없이 순수숫자인 가동률도 비율로(예: 71.56/90.14)
+                is_ratio = True
             # 비율 값의 단위는 항상 %(부문 단위열이 천배럴이어도 가동률 셀은 %).
             unit = "%" if is_ratio else (row_unit or inline_unit or col_sublabel(c) or nar_unit)
             rows.append(BizMetricRow(

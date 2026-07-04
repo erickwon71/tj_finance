@@ -31,6 +31,16 @@ _ASEATECH = _BASE / "raw_report/KOSDAQ/00138747_아세아텍/annual/2024/2024091
 # B4b-3 회귀: 삼화전자공업(2005, 구형 K-GAAP) — 빈 셀이 콤마 하나(',')뿐인 표 → _parse_value 가
 # _NUM_LEAD_RE 매치를 숫자로 오인해 float('') ValueError 크래시(전수 다개년 백필 중 실측 발견).
 _SAMHWA = _BASE / "raw_report/KOSPI/00129280_삼화전자공업/annual/2005/20060515002622.xml"
+# B4b-4 회귀(다개년 전수 백필 중 실측, 2026-07-05): 중첩 TABLE·경계매치·오검출 4종 복합.
+_LG = _BASE / "raw_report/KOSPI/00120021_LG/annual/2011/20120330003253.xml"          # 중첩TABLE 오염
+_DAECHANG = _BASE / "raw_report/KOSPI/00112679_대창단조/annual/2009/20100331000054.xml"  # 2096년 버그
+_SUNL = _BASE / "raw_report/KOSPI/00132211_SUN&L/annual/2023/20240321001713.xml"     # 1907년 버그
+_HYUNDAIWIA = _BASE / "raw_report/KOSPI/00106623_현대위아/annual/2006/20070330001121.xml"  # 가동률 오분류
+_GS = _BASE / "raw_report/KOSPI/00500254_GS/annual/2023/20240320001516.xml"           # 매입처표 오염
+_HYUNDAIBIO = _BASE / "raw_report/KOSDAQ/00313649_현대바이오/annual/2015/20160329000763.xml"  # 전치형 시간값 오염
+_SGWORLD = _BASE / "raw_report/KOSPI/00133511_SG세계물산/annual/2017/20180402002320.xml"  # 순이익률표 오염
+_HYUNDAIHIMS = _BASE / "raw_report/KOSDAQ/00667373_현대힘스/annual/2025/20260318000236.xml"  # PP&E롤포워드 오염
+_LOTTE_EM = _BASE / "raw_report/KOSPI/00113997_롯데에너지머티리얼즈/annual/2024/20250314001597.xml"  # 약정공시 오염
 
 
 def _rows(fp, corp, fy):
@@ -138,6 +148,96 @@ def test_samhwa_comma_only_cell_no_crash():
         return
     rows = _rows(_SAMHWA, "00129280", 2005)  # 예외 없이 완주하면 통과
     assert isinstance(rows, list)
+
+
+def test_lg_nested_table_no_pollution():
+    """페이지 레이아웃 바깥 TABLE 이 중첩 TABLE 을 통째로 감싸는 문서(중첩 859개, 최대 TABLE
+    3073 TR 중 3069개=중첩분)에서 재무제표 라인('법인세비용' 등)이 생산데이터로 새면 안 됨."""
+    if not _LG.exists():
+        return
+    rows = _rows(_LG, "00120021", 2011)
+    assert not any(r["segment"] and any(k in r["segment"] for k in ("법인세비용", "환율변동효과", "영업외손익"))
+                   for r in rows)
+    assert all(r["value"] < 10_000_000 for r in rows if r["metric"] == "utilization")
+
+
+def test_daechang_no_bogus_future_year():
+    """소제목 번호("6","7"...)가 부문명으로, 무관한 큰 수의 부분매치가 period_year=2096 으로
+    새던 회귀. 모든 period_year 는 합리적 범위(1990~2027)여야 함."""
+    if not _DAECHANG.exists():
+        return
+    rows = _rows(_DAECHANG, "00112679", 2009)
+    assert not any(r["segment"] and r["segment"].strip().isdigit() for r in rows)
+    assert all(1990 <= r["period_year"] <= 2027 for r in rows if r["period_year"] is not None)
+
+
+def test_sunl_year_not_matched_inside_decimal():
+    """'0.0119072CBM' 같은 소수/큰수 내부에 우연히 낀 4자리("1907")를 연도로 오인하면 안 됨
+    (_PERIOD_YEAR_RE 자릿수 경계 가드 회귀)."""
+    if not _SUNL.exists():
+        return
+    rows = _rows(_SUNL, "00132211", 2023)
+    assert all(1990 <= r["period_year"] <= 2027 for r in rows if r["period_year"] is not None)
+
+
+def test_hyundaiwia_ratio_without_percent_sign():
+    """%기호 없이 순수숫자로만 쓰인 진짜 가동률("90.14")은 utilization+%단위로 살아있어야 하고
+    (과잉 재분류 방지), 정작 큰 시간값("연간가동가능시간" 1,189,180)은 가동률로 새면 안 됨."""
+    if not _HYUNDAIWIA.exists():
+        return
+    rows = _rows(_HYUNDAIWIA, "00106623", 2006)
+    util = [r for r in rows if r["metric"] == "utilization"]
+    assert util, "진짜 가동률(90.14 등)이 output 등으로 오분류되면 안 됨"
+    assert all(r["unit"] == "%" and 0 <= r["value"] <= 200 for r in util), util
+
+
+def test_gs_purchase_table_dropped():
+    """원재료 매입처 현황표("N (X%)" 수량+비중 괄호표기)가 생산데이터로 새면 안 됨
+    (괄호 비중 길이가 우연히 clean-number 판정을 흔들어 헤더경계까지 왜곡시키던 케이스)."""
+    if not _GS.exists():
+        return
+    rows = _rows(_GS, "00500254", 2023)
+    assert not any(r["metric"] == "utilization" and r["value"] > 200 for r in rows)
+
+
+def test_hyundaibio_transposed_hours_not_forced_ratio():
+    """전치형(구분열='가동률' 단일값)에서 row_metric 강제가 매그니튜드 가드를 우회해
+    '가동가능시간'(4,800)·'실제가동시간'(4,300) 이 4800%/4300% 로 새면 안 됨. 진짜 비율
+    (가동율 89.6%)은 그대로 utilization 유지."""
+    if not _HYUNDAIBIO.exists():
+        return
+    rows = _rows(_HYUNDAIBIO, "00313649", 2015)
+    assert not any(r["metric"] == "utilization" and r["value"] > 500 for r in rows)
+    real_util = [r for r in rows if r["segment"] == "김천공장" and r["metric"] == "utilization"]
+    assert real_util and real_util[0]["value"] == 89.6
+
+
+def test_sgworld_financial_summary_table_dropped():
+    """부문별 재무요약표(매출액/순이익(손실)/총자산/부채)가 utilization 으로 새면 안 되지만,
+    같은 파일의 진짜 생산표(의류수출/SSV 등 capacity)는 살아있어야 함."""
+    if not _SGWORLD.exists():
+        return
+    rows = _rows(_SGWORLD, "00133511", 2017)
+    assert not any(r["item"] and "순이익" in str(r["item"]) for r in rows)
+    assert any(r["metric"] == "capacity" and r["segment"] == "의류수출" for r in rows)
+
+
+def test_hyundaihims_ppe_rollforward_dropped():
+    """유형자산 취득원가/감가상각 롤포워드표(기초/취득/처분/기말)가 '제N기' 기간헤더를 갖고
+    있어 생산열 필터를 통과해버리는 것 차단. period_year 이상치(2028) 잔존 금지."""
+    if not _HYUNDAIHIMS.exists():
+        return
+    rows = _rows(_HYUNDAIHIMS, "00667373", 2025)
+    assert not any(r["period_year"] and (r["period_year"] > 2027 or r["period_year"] < 1990) for r in rows)
+    assert not any(r["segment"] in ("기초", "취득원가") for r in rows)
+
+
+def test_lotte_em_commitment_disclosure_dropped():
+    """특수관계자 투자약정 공시("약정 금액")가 생산데이터로 새면 안 됨."""
+    if not _LOTTE_EM.exists():
+        return
+    rows = _rows(_LOTTE_EM, "00113997", 2024)
+    assert not any(r["segment"] == "약정 금액" for r in rows)
 
 
 def _run():

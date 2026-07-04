@@ -158,11 +158,19 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
 - [ ] C3 DQ assertions for backlog/capital_events/biz_metrics
 - [ ] C4 Quarterly restore drill scheduled in runbook
 - [ ] C5 Full-universe cross-source sweep (2,557 corps × recent FY) + triage; rotation re-weighted to latest periods
-- [ ] C6 Computed-vs-KRX EPS/BPS/PER nightly consistency assertion
+- [ ] C6 Computed-vs-KRX EPS/BPS/PER nightly consistency assertion — **BLOCKED (2026-07-04)**: this
+      item assumed `stock_prices.per/pbr/eps/bps/div_yield/dps` already held independent KRX-sourced
+      values to compare against. Checked live DB: all five columns are 100% NULL (0/11.2M rows) —
+      never populated. `analyzer/price_fetcher.py:371` documents why: pykrx's fundamental endpoint
+      returns empty responses (structural breakage), so the design deliberately derives market_cap
+      from close_price × DART shares_out instead, and never attempted per/eps/bps at all. There is
+      currently no independent second source to cross-check against — C6 needs a new KRX data
+      source design (direct KRX open API, alternate library, or scraped fallback) before it's
+      implementable. Revisit as its own scoped item, not a quick win.
 - [ ] C7 Golden set 5 → 30–50 corps, wired into dq_nightly
 - [ ] C8 Pytest regression suite for derived metrics + app compute functions
 - [ ] C9 Amendment-supersede flag + trust-badge surfacing
-- [ ] C10 Failure notifications (osascript/mail) on dq_nightly/backup errors
+- [x] C10 Failure notifications (osascript/mail) on dq_nightly/backup errors
 - [ ] C11 Recurring completeness matrix (every corp × every expected period) in dq_nightly
 
 ### Phase D — Visualization

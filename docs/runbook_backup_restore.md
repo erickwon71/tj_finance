@@ -17,7 +17,14 @@ ls -la /Volumes/dart_data/db_backups/ | tail -5
 
 ## Restore drill
 
-Proves a dump is actually restorable, not just present. Run periodically (see cadence below) and after any change to `backup_db.py`.
+Proves a dump is actually restorable, not just present.
+
+- Job: `com.tjfinance.restoredrill` (LaunchAgent) — **automatic, quarterly** (Jan/Apr/Jul/Oct 1st, 19:30,
+  right after that day's 19:00 backup and before 20:30 dqcheck — minimizes false-positive row-count
+  mismatches from writes landing between backup time and drill time). Runs `--drop-after` (cleans up
+  the scratch DB automatically). Failure → C10 macOS notification (`scripts/notify.py`).
+- Logs: `logs/restoredrill.out.log`, `logs/restoredrill.err.log`
+- Can also run manually anytime (e.g. after any change to `backup_db.py`):
 
 ```bash
 python scripts/restore_drill.py               # restores newest dump into tj_finance_restore_test, keeps it for inspection
@@ -49,4 +56,4 @@ python run.py fin2-all
 ## Cadence
 
 - Backup: automatic, nightly (see schedule above)
-- Restore drill: quarterly (tracked as checklist item C4 in `docs/prd/09_improvement_roadmap.md`), plus once now to validate the mechanism itself
+- Restore drill: automatic, quarterly (`com.tjfinance.restoredrill`, C4 — done 2026-07-04), plus the manual run above whenever needed

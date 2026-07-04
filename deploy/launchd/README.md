@@ -88,6 +88,22 @@ pg_restore -d tj_finance --clean --if-exists /Volumes/dart_data/db_backups/<파�
 
 ---
 
+# 분기별 백업 복원 드릴 (launchd, 1/4/7/10월 1일 19:30) — C4
+
+`scripts/restore_drill.py --drop-after` 가 그날 19:00 백업 덤프를 scratch DB(`tj_finance_restore_test`)에
+복원하고 실 DB와 행수를 대조한다. 19:00 백업 직후·20:30 dqcheck 이전에 배치해, 그 사이 쓰기로 인한
+시점차 오탐(가짜 MISMATCH)을 최소화했다. 상세: `docs/runbook_backup_restore.md`.
+
+## 설치
+```bash
+cp deploy/launchd/com.tjfinance.restoredrill.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.tjfinance.restoredrill.plist
+launchctl start com.tjfinance.restoredrill        # 즉시 1회 테스트
+tail -f logs/restoredrill.out.log
+```
+
+---
+
 # 야간 데이터 품질 점검 (launchd, 매일 20:30) — I3 + I1
 
 `scripts/dq_nightly.py` = **I3 SQL 어서션**(참조무결성: 미래 period_end·달력 orphan·자산총계<=0·op==ni 등)

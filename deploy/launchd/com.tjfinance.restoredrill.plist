@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  분기별(1/4/7/10월 1일) 19:30 백업 복원 드릴 (launchd LaunchAgent) — C4.
+  scripts/restore_drill.py 가 그날 19:00 백업 덤프를 scratch DB(tj_finance_restore_test)에
+  복원하고 행수를 실 DB와 대조한다. 20:30 dqcheck 보다 앞서 실행해, 그 사이 쓰기(verification_results
+  등)로 인한 시점차 오탐(가짜 MISMATCH)을 최소화한다. 실패 시 C10 알림(osascript). 설치: README 참조.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tjfinance.restoredrill</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/taejin/Project/tj_finance/.venv_tj_finance/bin/python</string>
+        <string>/Users/taejin/Project/tj_finance/scripts/restore_drill.py</string>
+        <string>--drop-after</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/taejin/Project/tj_finance</string>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Month</key><integer>1</integer>
+            <key>Day</key><integer>1</integer>
+            <key>Hour</key><integer>19</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Month</key><integer>4</integer>
+            <key>Day</key><integer>1</integer>
+            <key>Hour</key><integer>19</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Month</key><integer>7</integer>
+            <key>Day</key><integer>1</integer>
+            <key>Hour</key><integer>19</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Month</key><integer>10</integer>
+            <key>Day</key><integer>1</integer>
+            <key>Hour</key><integer>19</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/restoredrill.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/restoredrill.err.log</string>
+</dict>
+</plist>

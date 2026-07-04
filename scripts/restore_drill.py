@@ -18,6 +18,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from loguru import logger
 
 LIVE_DB = "tj_finance"
@@ -82,7 +84,10 @@ def main() -> None:
     _run([_bin("dropdb"), "--if-exists", SCRATCH_DB])
     r = _run([_bin("createdb"), SCRATCH_DB])
     if r.returncode != 0:
-        logger.error(f"[drill] createdb failed: {r.stderr.strip()[:500]}")
+        err = f"createdb failed: {r.stderr.strip()[:500]}"
+        logger.error(f"[drill] {err}")
+        from scripts.notify import notify_failure
+        notify_failure("복원 드릴 실패 — createdb", err)
         sys.exit(1)
 
     logger.info(f"[drill] pg_restore → {SCRATCH_DB} (this can take a few minutes)")
@@ -117,6 +122,8 @@ def main() -> None:
         logger.success("[drill] PASS — dump restores cleanly and row counts match live.")
     else:
         logger.error("[drill] FAIL — see mismatches above.")
+        from scripts.notify import notify_failure
+        notify_failure("복원 드릴 실패 — 행 수 불일치", f"덤프: {dump_path.name} — logs/restoredrill.out.log 확인")
         sys.exit(1)
 
 

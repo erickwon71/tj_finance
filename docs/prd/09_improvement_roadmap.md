@@ -168,7 +168,7 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
 - [ ] C1 Track B line audit: harness extension → full 107,847 batch run → diff triage → gate pass
 - [ ] C2 con<sep 22 rows triaged
 - [ ] C3 DQ assertions for backlog/capital_events/biz_metrics
-- [ ] C4 Quarterly restore drill scheduled in runbook
+- [x] C4 Quarterly restore drill scheduled in runbook
 - [ ] C5 Full-universe cross-source sweep (2,557 corps × recent FY) + triage; rotation re-weighted to latest periods
 - [ ] C6 Computed-vs-KRX EPS/BPS/PER nightly consistency assertion — **BLOCKED (2026-07-04)**: this
       item assumed `stock_prices.per/pbr/eps/bps/div_yield/dps` already held independent KRX-sourced

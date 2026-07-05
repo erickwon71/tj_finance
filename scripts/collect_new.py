@@ -171,6 +171,21 @@ def _sync_capital(lookback_days: int = 5) -> None:
         logger.warning(f"[collect] ⓪-2 자본이벤트 동기화 실패(비치명적): {exc}")
 
 
+def _sync_cf_da(corps: list[str]) -> None:
+    """④-2 D&A note 복원(B5) — 신규 표준화 기업의 연결 CF D&A 갭(2024+ Track A 전환으로 누락)을
+    note 하이브리드로 채워 EBITDA/da_total 재퇴행 방지. S→Q→C 재전파. 비치명(수집 계속)."""
+    if not corps:
+        return
+    try:
+        from collector.cf_da_sync import sync_cf_da
+        res = sync_cf_da(corps=corps, year_min=2024)
+        if res["corps"]:
+            logger.info(f"[collect] ④-2 D&A 복원 — 기업 {res['corps']} · note fact {res['facts']:,} · "
+                        f"std_v2 {res['std_recalc']:,} 재전파(실패 {res['fail']})")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ④-2 D&A 복원 실패(비치명적): {exc}")
+
+
 def _sync_biz_metrics(corps: list[str]) -> None:
     """B4 — 새로 수집된 기업의 사업보고서 본문 생산능력/생산실적/가동률 → biz_metrics.
     사업의 내용 절은 annual 에만 있어 이번에 표준화된 기업의 최신 사업보고서만 대상.
@@ -268,6 +283,7 @@ def main() -> None:
         agg = _standardize_with_timeout(affected, args.timeout) if affected else {}
         logger.success(f"[collect] 재개 완료 — std_v2 {agg.get('s', 0):,} · 이산분기 {agg.get('q', 0):,} · "
                        f"달력 {agg.get('c', 0):,} · 타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
+        _sync_cf_da(affected)
         _verify_and_log(agg, args)
         _sync_biz_metrics(affected)
         _sync_order_backlog(affected)
@@ -319,6 +335,9 @@ def main() -> None:
     logger.success(f"[collect] 완료 — 신규 {len(corps)}개 기업 · fact {agg.get('e_facts', 0):,} · "
                    f"std_v2 {agg.get('s', 0):,} · 이산분기 {agg.get('q', 0):,} · 달력 {agg.get('c', 0):,} · "
                    f"타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
+
+    # ④-2 D&A note 복원(B5) — 신규 기업의 연결 CF D&A 갭을 채워 EBITDA 재퇴행 방지.
+    _sync_cf_da(affected)
 
     # ⑤ 수집 후 DQ 게이트 — 새로 표준화된 기업만 Gate B(보고서==DB)+항등식 재검, corp_verify_status 적재.
     _verify_and_log(agg, args)

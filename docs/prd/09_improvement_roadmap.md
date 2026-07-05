@@ -297,7 +297,23 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       So the historical (pre-2025) rows previously in the table were mostly already equivalent to
       what the fixed parser produces — the "stale" concern was real but narrow in practice, and this
       full rerun now guarantees every row reflects the current parser, closing the concern definitively.
-- [ ] B5 D&A note augmentation rule + parity re-check (ebitda/fcf divergence → 0)
+- [x] B5 D&A note augmentation — **rescoped + DONE (2026-07-05)**. Investigation changed the
+      premise: the original "parity re-check (ebitda/fcf → 0)" is obsolete/unachievable — the legacy
+      parity table was dropped in Phase 5, **fcf is already fine** (90–97% coverage, not a gap), and
+      the residual **ebitda/da_total gap is data-limited/irreducible** (consolidated ceiling ~42%,
+      separate ~34% — per the 2026-07-04 dry-run, D&A is simply absent from many CF statements). The
+      note-D&A *assembly* rules (`rule_additive_da`/`rule_ebitda` + `build.py` `_DA_SUPP` collection)
+      already existed and work; the D&A *extraction* (`cf_da.recover_cf_da`) only ran as **one-time
+      backfill scripts** and was **not wired into the standard pipeline**, so new/incremental reports
+      regressed (2026 new = ~11% EBITDA vs 2025's 42%). **Real fix = permanence**: new
+      `collector/cf_da_sync.py::sync_cf_da(corps, year_min)` runs the proven recover_cf_da
+      (note-first/face-fallback, unit guard) corp-restricted → fact_v2 upsert → **S→Q→C re-propagation**
+      (annual std_v2 + discrete-quarter + calendar view, fixing the calendar-staleness the memory
+      flagged). Wired into `scripts/collect_new.py` as non-fatal step ④-2 (both normal + resume
+      paths) so newly-standardized corps auto-recover D&A. Verified: plumbing smoke (5 corps → 51
+      targets found, clean end-to-end); non-destructive proof (`recover_cf_da` on 00264945 2024 FY →
+      3 real facts: dep 21.8B/amort 7.1B/da_total 28.9B). The one-time full backfill stays as the
+      historical tool; the absolute coverage ceiling is unchanged (data absent, not a pipeline bug).
 
 ### Phase C — Verification
 - [~] C1 Track B line audit: harness extension → full 107,847 batch run → diff triage → gate pass —

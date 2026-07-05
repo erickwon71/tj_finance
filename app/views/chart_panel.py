@@ -128,7 +128,8 @@ def render_metric_chart(frame, key: str | None = None) -> None:
         # 금액이 함께 있을 때만 비금액을 우축으로. 비금액만이면 좌축 사용.
         on_right = (unit not in AMOUNT_UNITS) and has_amount
         suffix = {UnitType.AMOUNT_EOK: "억", UnitType.PCT: "%",
-                  UnitType.MULTIPLE_X: "x", UnitType.DAYS: "일"}.get(unit, "")
+                  UnitType.MULTIPLE_X: "x", UnitType.DAYS: "일",
+                  UnitType.WON_PER_SHARE: "원"}.get(unit, "")
         fig.add_trace(go.Scatter(
             x=g["period_label"], y=ys, name=f"{name}({unit.value})",
             mode="lines+markers",
@@ -255,6 +256,75 @@ def render_valuation_band(series: list[dict], stats: dict, label: str,
     fig.update_layout(height=380, margin=dict(l=10, r=90, t=30, b=10),
                       yaxis_title=f"{label} ({unit})", hovermode="x unified",
                       showlegend=False)
+    st.plotly_chart(fig, use_container_width=True, key=key)
+
+
+def render_backlog_trend(points: list[dict], unit: str | None = None,
+                         key: str | None = None) -> None:
+    """연도별 총 수주잔고 추이(막대). points=[{year, backlog}], 연도 오름차순."""
+    df = pd.DataFrame(points)
+    if df.empty:
+        return
+    x = df["year"].astype(str)
+    ulab = f"({unit})" if unit else "(원문 단위)"
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=x, y=df["backlog"], marker_color="#2c7fb8", name="수주잔고",
+        hovertemplate="%{x}<br>수주잔고 %{y:,.0f}<extra></extra>"))
+    fig.update_layout(
+        height=300, margin=dict(l=10, r=10, t=30, b=10),
+        yaxis_title=f"수주잔고 {ulab}", xaxis=dict(type="category"),
+        hovermode="x unified", showlegend=False)
+    st.plotly_chart(fig, use_container_width=True, key=key)
+
+
+# 자본이벤트 타임라인 시각 스타일: 카테고리 → (범례라벨, 색, 심볼)
+_DIL_STYLE = {
+    "confirmed_up":   ("유상·무상증자", "#d62728", "triangle-up"),
+    "confirmed_down": ("감자",         "#2ca02c", "triangle-down"),
+    "potential":      ("잠재(CB/BW/EB)", "#ff7f0e", "diamond"),
+    "treasury":       ("자기주식",      "#7f7f7f", "circle"),
+    "other":          ("기타",         "#9467bd", "square"),
+}
+
+
+def render_dilution_timeline(items: list[dict], key: str | None = None) -> None:
+    """자본이벤트 타임라인 — 날짜별 이벤트 규모(만주) 마커 + 확정 발행 누적 라인.
+
+    items = app.data.capital.dilution_timeline 산출(날짜 오름차순, category/shares_delta/cum_confirmed).
+    """
+    if not items:
+        st.info("자본이벤트 데이터가 없습니다.")
+        return
+    df = pd.DataFrame(items)
+    df["date"] = pd.to_datetime(df["date"])
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    for cat, (label, color, symbol) in _DIL_STYLE.items():
+        g = df[(df["category"] == cat) & df["shares_delta"].notna()]
+        if g.empty:
+            continue
+        fig.add_trace(go.Scatter(
+            x=g["date"], y=g["shares_delta"] / 1e4, mode="markers", name=label,
+            marker=dict(color=color, symbol=symbol, size=11,
+                        line=dict(width=1, color="white")),
+            customdata=g["label"],
+            hovertemplate="%{customdata}<br>%{x|%Y-%m-%d}<br>%{y:,.1f}만주<extra></extra>",
+        ), secondary_y=False)
+
+    # 확정 발행주식 누적(증자/감자만) — 순증 궤적
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=df["cum_confirmed"] / 1e4, mode="lines", name="확정 발행 누적",
+        line=dict(color="#1f77b4", width=1.5, dash="dot"),
+        hovertemplate="누적 %{y:,.1f}만주<extra></extra>",
+    ), secondary_y=True)
+
+    fig.update_yaxes(title_text="이벤트 규모(만주)", secondary_y=False)
+    fig.update_yaxes(title_text="확정 발행 누적(만주)", secondary_y=True, showgrid=False)
+    fig.update_layout(
+        height=380, margin=dict(l=10, r=10, t=30, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0),
+        hovermode="closest")
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 

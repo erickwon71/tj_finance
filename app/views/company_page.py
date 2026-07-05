@@ -183,6 +183,26 @@ def _per_share_trends(corp_code: str, stmt: str) -> None:
                        "자기주식 취득/처분은 총발행주식수 불변(유통주식만 영향).")
 
 
+def _dilution_timeline(corp_code: str) -> None:
+    """자본이벤트 타임라인(D3) — 증자/감자/CB·BW·EB/자기주식을 시간축에 배치 + 확정발행 누적."""
+    from app.data.capital import dilution_timeline
+    from app.views.chart_panel import render_dilution_timeline
+
+    events = cache.capital_events(corp_code)
+    items = dilution_timeline(events)
+    if not items:
+        return
+    st.divider()
+    st.markdown("#### 🕒 자본이벤트 타임라인 (증자·감자·CB/BW/EB·자기주식)")
+    n_missing = sum(1 for it in items if it["shares_delta"] is None)
+    render_dilution_timeline(items, key="dil_timeline")
+    cap = ("▲증자 ▼감자 ◆잠재(CB/BW/EB) ●자기주식(총주식수 불변) · 점선=확정 발행주식 누적. "
+           "잠재·자기주식은 누적에서 제외.")
+    if n_missing:
+        cap += f" · 주식수 미기재 {n_missing}건은 마커 생략(원본 필드 부재)."
+    st.caption(cap)
+
+
 def _fmt_peer_val(v, kind: str) -> str:
     if v is None:
         return "—"
@@ -417,6 +437,18 @@ def _order_backlog_panel(corp_code: str) -> None:
     rows = data["rows"]
     st.markdown(f"#### 🏗 수주상황 — {data['fiscal_year']} 사업보고서 기준")
 
+    # 다년 수주잔고 추이(2개 연도 이상 보유 시)
+    trend = cache.order_backlog_trend(corp_code)
+    if trend.get("available"):
+        from app.views.chart_panel import render_backlog_trend
+        pts = trend["points"]
+        first, last = pts[0], pts[-1]
+        if first["backlog"]:
+            chg = (last["backlog"] / first["backlog"] - 1) * 100
+            st.caption(f"수주잔고 {first['year']}→{last['year']}: **{chg:+.0f}%** "
+                       f"({len(pts)}개 연도)")
+        render_backlog_trend(pts, trend.get("unit"), key="backlog_trend")
+
     df = pd.DataFrame([{
         "구분": r["category"] or "전체", "수주총액": r["new_orders"],
         "기납품액": r["completed"], "수주잔고": r["backlog_amt"],
@@ -445,6 +477,36 @@ def _fin_points(series: list[dict], key: str) -> list[tuple]:
            if r.get("period_end") and r.get(key) is not None]
     pts.sort(key=lambda t: t[0])
     return pts
+
+
+def _watch_toggle(container, corp_code: str) -> None:
+    """⭐ 관심종목 추가/해제 토글(사이드바 관심종목 목록과 연동)."""
+    from app.data import watchlist as wl
+
+    watched = wl.is_watched(corp_code)
+    label = "⭐ 관심해제" if watched else "☆ 관심추가"
+    if container.button(label, key=f"wl_toggle_{corp_code}", width="stretch",
+                        help="좌측 사이드바 ⭐ 관심종목에서 빠르게 다시 열 수 있습니다."):
+        wl.toggle(corp_code)
+        st.rerun()
+
+
+def _source_drilldown(corp_code: str, used_stmt: str) -> None:
+    """🔗 원천 공시 드릴다운 — 표시 재무의 BS/IS/CF 가 어느 filing 에서 왔는지 DART 링크(D2b)."""
+    sources = cache.statement_sources(corp_code, used_stmt, "FY")
+    if not sources:
+        return
+    with st.expander("🔗 이 값의 원천 공시 (연도별 BS/IS/CF source filing)", expanded=False):
+        st.caption("표준화된 재무 값은 재무제표(BS/IS/CF)별로 단일 공시에서 조립됩니다. "
+                   "부분 기재정정이 있으면 표별로 원천 공시가 다를 수 있어 아래에 나눠 표시합니다.")
+        for fy in sorted(sources.keys(), reverse=True)[:12]:
+            items = sources[fy]
+            st.markdown(f"**{fy}**")
+            cols = st.columns(len(items))
+            for col, it in zip(cols, items):
+                stmts = "·".join(it["statements"])
+                col.link_button(f"{stmts} · {it['rcept_no']} ↗", it["dart_url"],
+                                width="stretch")
 
 
 def _report_viewer(corp_code: str) -> None:
@@ -552,9 +614,11 @@ def render() -> None:
     notes = corp_notes(fiscal_month=meta.get("fiscal_month"),
                        used_stmt=used_stmt, requested_stmt=requested_stmt,
                        has_regulatory_flag=bool(reg_status["active"]))
-    st.subheader(fmt_corp_identity(
+    hcol, scol = st.columns([5, 1])
+    hcol.subheader(fmt_corp_identity(
         meta["corp_name"], meta["corp_code"], meta.get("stock_code"),
         meta.get("market")) + fmt_notes(notes))
+    _watch_toggle(scol, corp_code)
     if notes:
         st.caption("기업명 옆 **(주n)** 표시의 뜻은 좌측 메뉴 **ℹ️ 도움말** 페이지를 참고하세요.")
 
@@ -625,6 +689,7 @@ def render() -> None:
         download_button(
             combined, filename=f"{meta['corp_name']}_{corp_code}_{suffix}_won.csv",
             label="⬇ 재무제표 CSV (원 단위, 선택 구간)", key="fin_csv")
+        _source_drilldown(corp_code, used_stmt)
 
     # ── 지표 (레지스트리 멀티셀렉트 + 그래프/표) ──
     elif active == TABS[1]:
@@ -648,6 +713,7 @@ def render() -> None:
 
         _valuation_bands(corp_code)
         _per_share_trends(corp_code, requested_stmt)
+        _dilution_timeline(corp_code)
 
     # ── 대가지표 (Buffett·Piotroski·Graham·Greenblatt·Lynch·Fisher) ──
     elif active == TABS[3]:

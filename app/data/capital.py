@@ -33,6 +33,14 @@ _ISSUED_SHARE_TYPES = {"paid_increase", "free_increase", "mixed_increase", "redu
 # 전환/행사 시 잠재적으로 신주가 될 수 있는 사채류(미전환 가정 상한선 추정).
 _POTENTIAL_DILUTION_TYPES = {"cb_issue", "bw_issue", "eb_issue"}
 
+# 타임라인 시각 분류: 확정증가/확정감소/잠재/자기주식(총주식수 불변).
+_EVENT_CATEGORY: dict[str, str] = {
+    "paid_increase": "confirmed_up", "free_increase": "confirmed_up",
+    "mixed_increase": "confirmed_up", "reduction": "confirmed_down",
+    "cb_issue": "potential", "bw_issue": "potential", "eb_issue": "potential",
+    "treasury_acquire": "treasury", "treasury_dispose": "treasury",
+}
+
 
 def load_capital_events(corp_code: str) -> list[dict]:
     """corp 의 전체 자본이벤트 이력(최신순)."""
@@ -64,6 +72,31 @@ def yearly_dilution_overlay(events: list[dict]) -> dict[int, dict]:
         elif e["event_type"] in _POTENTIAL_DILUTION_TYPES:
             yr["potential_delta"] += sd
     return by_year
+
+
+def dilution_timeline(events: list[dict]) -> list[dict]:
+    """자본이벤트를 날짜 오름차순 타임라인으로. 확정 발행주식 누적증감(cum_confirmed) 포함.
+
+    각 항목: {date, event_type, label, category, shares_delta, cum_confirmed}.
+    date = board_date 우선, 없으면 filed_at. 누적은 확정증감(증자/감자)만 반영(잠재·자기주식 제외)."""
+    items = []
+    for e in events:
+        d = e.get("board_date") or e.get("filed_at")
+        if not d:
+            continue
+        items.append({
+            "date": d, "event_type": e["event_type"],
+            "label": EVENT_LABELS.get(e["event_type"], e["event_type"]),
+            "category": _EVENT_CATEGORY.get(e["event_type"], "other"),
+            "shares_delta": e.get("shares_delta"),
+        })
+    items.sort(key=lambda x: x["date"])
+    cum = 0
+    for it in items:
+        if it["category"] in ("confirmed_up", "confirmed_down") and it["shares_delta"] is not None:
+            cum += it["shares_delta"]
+        it["cum_confirmed"] = cum
+    return items
 
 
 def potential_dilution_pct(events: list[dict], current_shares_out: int, years: int = 3) -> float | None:

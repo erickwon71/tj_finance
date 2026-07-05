@@ -19,12 +19,34 @@ if str(ROOT) not in sys.path:
 import streamlit as st  # noqa: E402
 
 from app import state  # noqa: E402
-from app.cache import search_corps, table_counts  # noqa: E402
+from app.cache import resolve_corp, search_corps, table_counts  # noqa: E402
 from app.format import fmt_corp_identity  # noqa: E402
 from app.views import (  # noqa: E402
-    collect_page, company_page, compare_page, help_page, quarter_change_page,
-    screener_page, valuation_page,
+    chart_builder_page, collect_page, company_page, compare_page, help_page,
+    quarter_change_page, screener_page, valuation_page,
 )
+
+
+def _watchlist_sidebar() -> None:
+    """⭐ 관심종목 — 저장된 corp 를 클릭해 바로 포커스 이동, ❌ 로 해제."""
+    from app.data import watchlist as wl
+
+    corps = wl.get_watchlist()
+    with st.expander(f"⭐ 관심종목 ({len(corps)})", expanded=bool(corps)):
+        if not corps:
+            st.caption("기업 시각화 페이지에서 ⭐ 버튼으로 추가하세요.")
+            return
+        for cc in corps:
+            meta = resolve_corp(cc)
+            name = meta["corp_name"] if meta else cc
+            code = (meta.get("stock_code") if meta else None) or cc
+            c1, c2 = st.columns([5, 1])
+            if c1.button(f"{name} · {code}", key=f"wl_go_{cc}", width="stretch"):
+                state.set_focus_corp(cc)
+                st.rerun()
+            if c2.button("❌", key=f"wl_rm_{cc}", help="관심종목 해제"):
+                wl.remove(cc)
+                st.rerun()
 
 
 def _sidebar() -> None:
@@ -62,6 +84,8 @@ def _sidebar() -> None:
                     st.rerun()
 
         st.divider()
+
+        _watchlist_sidebar()
 
         # ── 표시 옵션 (전역) ──
         st.subheader("표시 옵션")
@@ -107,6 +131,8 @@ def main() -> None:
                 url_path="valuation"),
         st.Page(compare_page.render, title="기업 비교", icon="⚖️",
                 url_path="compare"),
+        st.Page(chart_builder_page.render, title="자유조합 차트", icon="🧪",
+                url_path="chart-builder"),
         st.Page(collect_page.render, title="보고서 수집", icon="🗂",
                 url_path="collect"),
         st.Page(help_page.render, title="도움말", icon="ℹ️",

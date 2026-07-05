@@ -204,6 +204,13 @@ def order_backlog(corp_code: str) -> dict:
     return _ob.load_order_backlog(corp_code)
 
 
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def order_backlog_trend(corp_code: str) -> dict:
+    """연도별 총 수주잔고 추이. app.data.order_backlog 위임."""
+    from app.data import order_backlog as _ob
+    return _ob.load_order_backlog_trend(corp_code)
+
+
 # ── 지배구조 (임원 현황) ─────────────────────────────────
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
 def executives_roster(corp_code: str):
@@ -217,6 +224,14 @@ def ownership_status(corp_code: str):
     """최신 사업연도 대주주/지분 현황(B3). app.data.governance 위임."""
     from app.data import governance as _gov
     return _gov.load_ownership(corp_code)
+
+
+# ── 원천 filing 드릴다운 (statement_source → DART URL) ───
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def statement_sources(corp_code: str, basis: str, fiscal_period: str = "FY") -> dict:
+    """연도별 재무제표 원천 공시(rcept_no)+DART URL. app.data.sources 위임."""
+    from app.data import sources as _sources
+    return _sources.load_statement_sources(corp_code, basis, fiscal_period)
 
 
 # ── 밸류에이션 밴드 (일별 멀티플 시계열) ─────────────────

@@ -149,7 +149,12 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       (NAS RAID1 + 라이브 Mac DB = 독립 2 장애도메인이므로 3번째 사본 불필요; 기존 3개 덤프는 NAS와
       SHA-256 일치 확인 후 삭제, 1.2G 회수). `restore_drill.py`/README/runbook 경로도 NAS로 갱신.
       NAS 미마운트 시 백업 실패+알림(마운트 가드). 실검증: pg_dump 493MB 직접 NAS 저장 exit 0.
-      ⚠ 아직 남음: launchd plist 재복사+리로드(자동 19:00 반영), **주간 raw_report 미러 rsync 잡**.
+      launchd plist 재복사+리로드 완료, 실트리거로 자동 19:00 경로 NAS 반영 확인(exit 0, 복원드릴 PASS).
+      ⚠ 아직 남음: **주간 raw_report 미러 rsync 잡**(raw_report NAS 전체 복사 완료 후 세팅 예정 —
+      사용자 계획: 복사 완료되면 sdcard 은퇴, NAS를 raw_report main으로 전환. 코드/DB 는 이미
+      `<project>/raw_report` 심링크(`collector/config.py`)만 거치고 `download_tasks.file_path` 도
+      이 안정 경로로 저장되어 있어 **전환은 심링크 재지정 한 줄로 완료**(코드/DB 변경 불필요) —
+      전환 전 완결성 검증(find|wc, du -sh 양쪽 대조) 필수. 상세 계획은 memory nas-migration-plan).
 - [x] A4a D3 valuation_daily matview + refresh in collect_new.py
 - [x] A4b D5 weekly VACUUM/ANALYZE job
 - [x] A4c schema_migrations governance
@@ -176,9 +181,14 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       `max_tables_per_marker` cap (mirroring biz_section's existing defense) plus a reused financial-
       statement keyword guard. Tests: `fin2/tests/test_order_backlog.py` 7/7 (real 6 filers),
       biz_section's 18 tests unaffected. 80-corp sweep: 24 corps with data, 72 rows, 0 anomalies.
-      ⚠ Full backfill not yet run — user to run `collect_order_backlog.py --sample N --latest`,
-      expand after spot-checking. Progress-only format (대우건설/한화오션-style) is a known B4b-style
-      follow-up if reliable derivation logic is ever justified.
+      **Full backfill DONE (2026-07-05)**: `collect_order_backlog.py --skip-existing --latest` over
+      all 2,555 active corps — 기업 1,988(신규 대상만) · 행 0 · 빈 1,988 (건너뛴 567사가 기존
+      2,070행/보유 — sum 2,555 checks out). Verified the 0-row result wasn't a regression by
+      re-running known-good filers (삼성중공업·현대건설) directly — still extract 9 rows correctly;
+      the 1,988 "empty" corps are genuinely non-backlog industries (`--skip-existing` filters live on
+      `SELECT DISTINCT corp_code FROM order_backlog`, confirmed in `scripts/collect_order_backlog.py`).
+      Order backlog coverage effectively complete for v1 scope. Progress-only format (대우건설/
+      한화오션-style) remains a known B4b-style follow-up if reliable derivation logic is justified.
 - [x] B2a capital_events table + collectors (CB/BW/EB/유증/자사주/증자감자) — 9 DART endpoints verified
       live (2026-07-04) before building: piicDecsn/fricDecsn/pifricDecsn/crDecsn/cvbdIsDecsn/
       bdwtIsDecsn/exbdIsDecsn/tsstkAqDecsn/tsstkDpDecsn. Key discovery: these decision-detail APIs
@@ -221,7 +231,7 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       correct 20.2% for Samsung); fixed to prefer the "계" rows when present. Verified live via
       Playwright against Samsung Electronics (20.2% major + 68.2% retail, matches public knowledge).
       100-corp sample backfilled (not full 2,557 — same background-run pattern as executives).
-- [~] B4a biz_metrics table + biz_section extractor v1 (생산능력/실적/가동률/수주상황) —
+- [x] B4a biz_metrics table + biz_section extractor v1 (생산능력/실적/가동률/수주상황) —
       **prototype done (2026-07-04), DB schema/wiring not started**: `fin2/extract/biz_section.py`
       finds the 생산능력/생산실적/가동률 subsection headings (heading format varies wildly by
       company — Samsung uses individual `(생산능력)`/`(생산실적)`/`(가동률)` SPAN markers, S-Oil
@@ -251,8 +261,7 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       Tests `fin2/tests/test_biz_section.py` (5, real Samsung+S-Oil). Validated: 150-corp sample =
       3,154 rows, 0 errors, utilization max 102.7% (0 outliers >200%); string fields clipped to column
       limits so a facilities/소재지 table's long address label can't crash a corp's insert.
-      ⚠ Full 2,557-corp backfill not yet run (long background job — hand to user:
-      `python scripts/collect_biz_metrics.py --latest --skip-existing`).
+      **Full backfill DONE (2026-07-05)** — see B4b closing note below (all years, not just latest).
 - [x] B4b Coverage report by industry; iterate parser — **DONE (2026-07-04)**: coverage tool
       `scripts/biz_metrics_coverage.py` (KSIC 2-digit division map, per-industry 생산표 보유율 +
       avg rows + ★flag for manufacturing divisions <50% covered; `--manufacturing`/`--missing`).
@@ -272,6 +281,22 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       backfill to regenerate clean rows: `python scripts/collect_biz_metrics.py --latest` (idempotent
       per rcept). Remaining for future: 수주상황(order backlog) section type; per-column units in
       S-Oil 표준생산능력 detail table; units embedded in segment labels (반도체기판 "패키지솔루션(천㎡)").
+
+      **Full-history regeneration DONE (2026-07-05)**: ran `python scripts/collect_biz_metrics.py`
+      (no flags = all 2,555 active corps × all fiscal years, not just `--latest`) before the planned
+      raw_report→NAS migration (local disk is faster for a 41,749-report full sweep than SMB).
+      Result: 기업 2,555 · 보고서 41,749 · 표 109,547 · 지표행 1,091,876 · 빈 831 · 오류 0 (~2h,
+      `fetched_at` 03:23–05:26 confirms every year 1999–2026 was genuinely re-extracted, not skipped).
+      **Investigated before trusting the "stale" premise**: total row count came out nearly identical
+      to the pre-rerun total (1,091,876 both times) — checked whether this meant the rerun was a
+      silent no-op. It wasn't: `fetched_at` timestamps confirm real re-extraction, and the coincidence
+      is explained by the B4b guards being narrow (they only trip on genuinely pathological tables,
+      which are a small minority) rather than the historical data being bulk-corrupted. Confirmed the
+      two known bug cases from the B4b note are actually fixed in the regenerated data: 강남제비스코
+      util>500% row — gone; LX인터내셔널 소재지/번지/주소-labeled rows — 0 (was leaking before B4b).
+      So the historical (pre-2025) rows previously in the table were mostly already equivalent to
+      what the fixed parser produces — the "stale" concern was real but narrow in practice, and this
+      full rerun now guarantees every row reflects the current parser, closing the concern definitively.
 - [ ] B5 D&A note augmentation rule + parity re-check (ebitda/fcf divergence → 0)
 
 ### Phase C — Verification
@@ -302,11 +327,64 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       (01051092) — no filing since Q3 2025, worth a manual look.
 
 ### Phase D — Visualization
-- [ ] D1 Free-form chart builder page (+preset save/load)
-- [ ] D2a Watchlist + saved screens
-- [ ] D2b Drill-down to source filing (rcept_no link)
-- [ ] D2c V3 EV/EBITDA time series confirmed/added
-- [ ] D3 Panels: backlog / dilution / ownership / utilization
+- [x] D1 Free-form chart builder page (+preset save/load) — **DONE (2026-07-05)**, v1 scope.
+      New page "🧪 자유조합 차트" (`app/views/chart_builder_page.py`, wired into `app/main.py`
+      nav). Built on the existing registry + resolver + chart_panel infra (per the 2026-07-04
+      decision to keep the field source as the ~50-metric curated registry rather than exposing
+      every raw std_v2 column — units/names/signs are all defined there). Adds the four D1
+      capabilities: (1) **파생 필드(조합)** via new `app/compute/derived.py` — 비율(A÷B, 무차원
+      x), 차분(A−B, 금액필드끼리만), 주당(A÷발행주식수, 원/주); computed on the same tidy frame
+      the base metrics use, so chart/table/CSV reuse the same path. (2) **주가 오버레이** — the
+      금액(억원) series currently in the frame (base + diff-derived) can be laid over the price
+      line via the existing `render_price_financial_combined` (≤3, log toggle). (3) **프리셋
+      저장/로드** via new `app/data/presets.py` (local JSON at `~/.tj_finance/chart_presets.json`,
+      atomic tmp→replace write, corrupt/missing-file tolerant). (4) **연간/분기** follows the
+      global sidebar grain. One small unit added: `UnitType.WON_PER_SHARE("원/주")` in
+      `app/registry/units.py` (+ chart_panel hover suffix). Verified: derived math against real
+      삼성전자 data (매출−매출원가 2024=114.3조 = gross profit ✓, 순이익 주당 EPS, FCF/영업이익
+      ratios incl. negative-FCF year); headless `AppTest` render of the page with a real corp +
+      seeded derived specs + overlay = 0 exceptions, all widgets built, price-overlay path
+      executed; preset save/list/get/delete + corrupt-file roundtrip. Follow-ups for a future
+      iteration: exposing raw (non-registry) columns; letting per-share/ratio derived fields
+      participate in the price overlay (currently amount-only); optional PCT rendering for a
+      ratio-of-two-amounts (today ratios render as x).
+- [x] D2a Watchlist + saved screens — **DONE (2026-07-05)**. Introduced a shared local-JSON
+      store `app/data/_localstore.py` (atomic tmp→replace, corrupt/missing-tolerant) and refactored
+      D1's `presets.py` onto it. **Watchlist** (`app/data/watchlist.py`, `~/.tj_finance/watchlist.json`):
+      ⭐ toggle button on the company-page header (`_watch_toggle`) + a "⭐ 관심종목" sidebar expander
+      (`_watchlist_sidebar` in `app/main.py`) listing starred corps as one-click focus-jump buttons
+      with ❌ remove. **Saved screens** (`app/data/saved_screens.py`, `~/.tj_finance/saved_screens.json`):
+      a "💾 저장된 스크린" bar on the screener that snapshots the screener's session widget config
+      (keys matching `^(scr_|p\d+_)`, excluding the bar's own meta widgets) and restores it via
+      session-state + rerun — so the whole filter/sort/aggregation/pass setup saves & reloads by name.
+- [x] D2b Drill-down to source filing (rcept_no link) — **DONE (2026-07-05)**. New
+      `app/data/sources.py::load_statement_sources` reads `statement_source.source_rcept_no` per
+      (year, BS/IS/CF) for the displayed basis and groups distinct filings (so a partial 기재정정
+      that sources BS from a different filing than IS/CF shows as separate links). Surfaced as a
+      "🔗 이 값의 원천 공시" expander in the 재무제표 tab (`company_page._source_drilldown`), each
+      filing a DART-viewer `link_button` (reuses `reports.DART_VIEWER`). Cached via
+      `cache.statement_sources`. Verified against real 삼성전자 data (2024 BS·IS·CF ← rcept
+      20250311001085, the actual 사업보고서).
+- [x] D2c V3 EV/EBITDA time series confirmed/added — **CONFIRMED present (2026-07-05)**. Already
+      implemented: `ev_ebitda` is in `valuation_bands.BAND_METRICS` and renders as a time-series +
+      historical-percentile band in the 밸류에이션 tab. Verified real coverage (삼성전자 2,594
+      non-null trading days in `valuation_daily`). No new work needed; noted the known
+      ~25%-coverage caveat (EBITDA data gap) means the band is empty for low-coverage corps.
+- [x] D3 Panels: backlog / dilution / ownership / utilization — **DONE (2026-07-05)**. Ownership
+      (B3, "임원·지분" tab) and utilization-by-segment (B4, "생산·가동률" tab) panels already
+      existed from Phase B and were confirmed present/working. Filled the two genuine gaps where
+      Phase B only had a snapshot: (1) **backlog trend** — `order_backlog` already holds multi-year
+      data (567 corps, 2020–2026, up to 6 yrs/corp), but the panel only showed the latest year's
+      table; added `load_order_backlog_trend` (yearly total = Σ backlog_amt) + `render_backlog_trend`
+      (bar) + a growth caption, shown above the existing latest-year breakdown when ≥2 years exist.
+      (2) **dilution timeline** — B2c only overlaid yearly buckets on the share-count chart; added a
+      standalone chronological panel (`capital.dilution_timeline` + `render_dilution_timeline`) in
+      the 밸류에이션 tab: date-axis markers by category (▲증자 ▼감자 ◆잠재CB/BW/EB ●자기주식) plus a
+      dotted cumulative-confirmed-issuance line (potential/treasury excluded from the cumulative).
+      Handles board_date→filed_at fallback and shares_delta-missing events (markers skipped, noted).
+      Verified against real data: 00155531 6-yr backlog trend; dilution timeline across corps
+      exercising all four categories (00536329 has 증자/감자/잠재/자기주식; 삼성 = 20 treasury-only,
+      cum=0). Both tabs headless-`AppTest` = 0 exceptions.
 - [ ] D4 (opt) Tearsheet export
 
 ## Verification (per phase)

@@ -12,15 +12,24 @@ Screener 페이지 — Phase 4(윈도우 집계 + 퀀트 다단계 + 비파괴 �
 """
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import streamlit as st
 
 from app import cache, state
 from app.compute import screen_eval as se
 from app.components.export import to_csv_bytes
+from app.data import saved_screens as ss
 from app.registry.metrics import METRIC_REGISTRY
 from app.registry.units import UnitType
 from app.views import company_page
+
+# 저장/복원할 스크리너 위젯 세션 키(구성 스냅샷). scr_* = 상단 컨트롤, p{i}_* = 패스별.
+_SCREEN_KEY_RE = re.compile(r"^(scr_|p\d+_)")
+_JSONABLE = (str, int, float, bool, list, type(None))
+# 저장 스냅샷에서 제외할 메타 위젯(저장바 자체 컨트롤 — 구성이 아님).
+_SCREEN_KEY_EXCLUDE = {"scr_saved_pick", "scr_saved_name"}
 
 # ── 필드 카탈로그(필터/정렬 가능) ──────────────────────────────
 ALL_FIELD_IDS: list[str] = (
@@ -125,9 +134,49 @@ def _displayed_cols(passes: list[dict]) -> list[str]:
     return cols
 
 
+# ── 저장된 스크린(구성 스냅샷) ─────────────────────────────────
+def _capture_screen_config() -> dict:
+    """현재 스크리너 위젯 구성(scr_*, p{i}_*)을 JSON 직렬화 가능 dict 로."""
+    return {k: v for k, v in st.session_state.items()
+            if _SCREEN_KEY_RE.match(k) and k not in _SCREEN_KEY_EXCLUDE
+            and isinstance(v, _JSONABLE)}
+
+
+def _apply_screen_config(cfg: dict) -> None:
+    """저장된 구성을 세션에 되돌린다(호출 후 st.rerun 필요)."""
+    for k, v in cfg.items():
+        if _SCREEN_KEY_RE.match(k) and k not in _SCREEN_KEY_EXCLUDE:
+            st.session_state[k] = v
+
+
+def _saved_screen_bar() -> None:
+    names = ss.list_screens()
+    with st.expander("💾 저장된 스크린 (구성 저장·불러오기)", expanded=False):
+        c1, c2, c3 = st.columns([3, 1, 1])
+        picked = c1.selectbox("저장된 스크린", ["(선택)"] + names,
+                              key="scr_saved_pick", label_visibility="collapsed")
+        if c2.button("불러오기", width="stretch", disabled=(picked == "(선택)")):
+            cfg = ss.get_screen(picked) or {}
+            _apply_screen_config(cfg)
+            st.rerun()
+        if c3.button("삭제", width="stretch", disabled=(picked == "(선택)")):
+            ss.delete_screen(picked)
+            st.rerun()
+
+        c4, c5 = st.columns([3, 1])
+        new_name = c4.text_input("새 스크린 이름", key="scr_saved_name",
+                                 placeholder="예: 고ROE·저PER 가치주",
+                                 label_visibility="collapsed")
+        if c5.button("저장", width="stretch", disabled=(not new_name.strip())):
+            ss.save_screen(new_name.strip(), _capture_screen_config())
+            st.success(f"스크린 '{new_name.strip()}' 저장됨")
+            st.rerun()
+
+
 # ── 좌측: 컨트롤 + 결과 ─────────────────────────────────────────
 def _left() -> None:
     st.header("🔎 스크리너")
+    _saved_screen_bar()
     method_label = {"average": "평균", "CAGR": "CAGR", "YoY": "YoY", "QoQ": "전분기比"}
 
     c1, c2, c3 = st.columns([1, 1, 1])

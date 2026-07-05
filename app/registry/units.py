@@ -13,6 +13,7 @@ class UnitType(Enum):
     PCT = "%"              # 원시=소수(0.15) → 표시 ×100 (%)
     MULTIPLE_X = "x"       # 배수/회전율
     DAYS = "일"            # 운전자본 일수
+    WON_PER_SHARE = "원/주"  # 주당지표(금액÷주식수) — 원시=원/주 그대로 표시
 
 
 class Category(Enum):
@@ -41,7 +42,7 @@ def display_value(value, unit: UnitType):
         return value / EOK
     if unit == UnitType.PCT:
         return value * 100
-    return value  # MULTIPLE_X, DAYS = 그대로
+    return value  # MULTIPLE_X, DAYS, WON_PER_SHARE = 그대로
 
 
 def format_value(value, unit: UnitType) -> str:
@@ -57,4 +58,6 @@ def format_value(value, unit: UnitType) -> str:
         return f"{dv:.2f}x"
     if unit == UnitType.DAYS:
         return f"{dv:.0f}일"
+    if unit == UnitType.WON_PER_SHARE:
+        return f"{dv:,.0f}원"
     return f"{dv:,.2f}"

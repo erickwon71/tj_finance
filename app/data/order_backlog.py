@@ -31,3 +31,24 @@ def load_order_backlog(corp_code: str) -> dict:
         "fiscal_year": latest_fy,
         "rows": [dict(r._mapping) for r in rows],
     }
+
+
+def load_order_backlog_trend(corp_code: str) -> dict:
+    """연도별 총 수주잔고(카테고리 합) 추이. 반환: {available, unit, points:[{year, backlog}]}.
+
+    대개 (corp, year) 당 전사 총계 1행이라 sum 이 곧 총잔고. 세그먼트 분할 공시(합계행 없이
+    부문 행만)도 합이 전사 총계다. 추이가 성립하려면 2개 연도 이상 필요."""
+    with get_session() as s:
+        rows = s.execute(text("""
+            SELECT fiscal_year, sum(backlog_amt) AS total, max(unit) AS unit
+            FROM order_backlog
+            WHERE corp_code = :c AND backlog_amt IS NOT NULL
+            GROUP BY fiscal_year ORDER BY fiscal_year
+        """), {"c": corp_code}).fetchall()
+    pts = [{"year": r[0], "backlog": int(r[1]), "unit": r[2]}
+           for r in rows if r[1] is not None]
+    if len(pts) < 2:
+        return {"available": False}
+    units = {p["unit"] for p in pts if p["unit"]}
+    unit = units.pop() if len(units) == 1 else None
+    return {"available": True, "unit": unit, "points": pts}

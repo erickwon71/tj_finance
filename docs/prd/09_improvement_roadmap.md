@@ -138,11 +138,18 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
 
 ### Phase A — Ops
 - [x] A0 Save this roadmap as `docs/prd/09_improvement_roadmap.md`
-- [ ] A1a Confirm 19:00 backup ran (logs + new dump in /Volumes/dart_data/db_backups, rotation working)
+- [ ] A1a Confirm 19:00 backup ran (logs + new dump in /Volumes/tj_finance_data/db_backups on NAS, rotation working)
 - [x] A1b Restore drill into scratch DB + `docs/runbook_backup_restore.md`
 - [x] A2 Bootout + remove `com.dart.financial.worker` plist
-- [ ] A3a NAS purchased, RAID1 volume + shares (`raw_report_mirror`, `db_backups2`)
-- [ ] A3b rsync launchd jobs (weekly raw_report, daily dump copy) + mount guards
+- [~] A3a NAS purchased (Synology DS723+), RAID1 volume + SMB share `tj_finance_data`
+      mounted at `/Volumes/tj_finance_data`. raw_report NAS 복사 진행 중; postgres 컨테이너 실행 상태.
+      ⚠ HW 개선(RAM 16GB+ / NVMe SSD 볼륨) 후 DB 이전 예정 — 상세는 memory nas-migration-plan.
+- [x] A3b DB dump → NAS 직접 저장 (2026-07-05): 별도 mirror 잡 대신 `backup_db.py` 의 `--out-dir`
+      기본값을 NAS(`/Volumes/tj_finance_data/db_backups`)로 변경 + plist 반영. **dart_data 사본 제거**
+      (NAS RAID1 + 라이브 Mac DB = 독립 2 장애도메인이므로 3번째 사본 불필요; 기존 3개 덤프는 NAS와
+      SHA-256 일치 확인 후 삭제, 1.2G 회수). `restore_drill.py`/README/runbook 경로도 NAS로 갱신.
+      NAS 미마운트 시 백업 실패+알림(마운트 가드). 실검증: pg_dump 493MB 직접 NAS 저장 exit 0.
+      ⚠ 아직 남음: launchd plist 재복사+리로드(자동 19:00 반영), **주간 raw_report 미러 rsync 잡**.
 - [x] A4a D3 valuation_daily matview + refresh in collect_new.py
 - [x] A4b D5 weekly VACUUM/ANALYZE job
 - [x] A4c schema_migrations governance

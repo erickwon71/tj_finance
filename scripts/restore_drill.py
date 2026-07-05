@@ -24,7 +24,7 @@ from loguru import logger
 
 LIVE_DB = "tj_finance"
 SCRATCH_DB = "tj_finance_restore_test"
-BACKUP_DIR = Path("/Volumes/dart_data/db_backups")
+BACKUP_DIR = Path("/Volumes/tj_finance_data/db_backups")  # NAS(RAID1) — backup_db.py 출력 위치와 일치
 
 # tables expected to carry real data in the (default, non --full) backup.
 DATA_TABLES = [

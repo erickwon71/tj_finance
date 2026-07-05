@@ -1,7 +1,8 @@
 """D1 · DB 백업 — 야간 pg_dump(논리 백업).
 
 89GB DB 단일 사본에 백업이 전무해 디스크 사고 시 전손 위험이 있었다. 이 스크립트는 매일
-`pg_dump`(custom format, 압축)로 논리 백업을 **PGDATA 와 다른 디스크(외장 볼륨)** 에 저장한다.
+`pg_dump`(custom format, 압축)로 논리 백업을 **PGDATA(Mac 내장) 와 다른 물리 디스크 — NAS
+(RAID1)** 에 저장한다. 라이브 DB(Mac)와 덤프(NAS)가 서로 독립 장애 도메인이 되어 SPOF 해소.
 기본적으로 **재생성 가능한 fact_v2 데이터(≈86GB)는 제외**(스키마는 보존) → 백업이 ~수백 MB 로 작아
 빠르다. fact_v2 는 필요 시 raw_report 재추출로 복원한다.
 
@@ -28,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from loguru import logger
 
 DEFAULT_DB = "tj_finance"
-DEFAULT_OUT = "/Volumes/dart_data/db_backups"   # PGDATA(내장 디스크)와 다른 외장 볼륨
+DEFAULT_OUT = "/Volumes/tj_finance_data/db_backups"  # NAS(RAID1) — PGDATA(Mac 내장)와 다른 물리 디스크
 EXCLUDE_DATA = ("fact_v2",)                      # 재생성 가능 → 데이터 제외(스키마는 보존)
 
 

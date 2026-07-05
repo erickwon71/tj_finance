@@ -2,8 +2,8 @@
 <!--
   매일 19:00 DB 논리 백업 (launchd LaunchAgent).
   18:00 수집(com.tjfinance.collect)의 pmset wake(17:58) 창을 타고 머신이 깨어있을 때 실행된다.
-  pg_dump 로 소비계층을 외장 볼륨(/Volumes/dart_data/db_backups)에 저장(재생성 가능한 fact_v2
-  데이터 제외). 설치: deploy/launchd/README 참조.
+  pg_dump 로 소비계층을 NAS(RAID1, /Volumes/tj_finance_data/db_backups)에 저장(재생성 가능한
+  fact_v2 데이터 제외). 라이브 DB(Mac)와 덤프(NAS)가 독립 장애 도메인. 설치: deploy/launchd/README 참조.
 -->
 <plist version="1.0">
 <dict>
@@ -16,6 +16,9 @@
         <string>/Users/taejin/Project/tj_finance/scripts/backup_db.py</string>
         <string>--keep</string>
         <string>7</string>
+        <!-- 덤프를 NAS(RAID1)로 직접 저장. NAS 미마운트 시 백업 실패+알림(마운트 가드). -->
+        <string>--out-dir</string>
+        <string>/Volumes/tj_finance_data/db_backups</string>
     </array>
 
     <key>WorkingDirectory</key>

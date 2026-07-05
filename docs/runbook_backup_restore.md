@@ -5,14 +5,14 @@
 - Job: `com.tjfinance.backup` (LaunchAgent, `~/Library/LaunchAgents/com.tjfinance.backup.plist`)
 - Schedule: daily 19:00 (rides the 17:58 `pmset` wake window used by the 18:00 collect job)
 - Script: `scripts/backup_db.py --keep 7`
-- Output: `/Volumes/dart_data/db_backups/tj_finance_core_<timestamp>.dump` (custom format, `fact_v2` data excluded — schema only, ~86GB of reproducible fact data skipped to keep dumps small/fast)
+- Output: `/Volumes/tj_finance_data/db_backups/tj_finance_core_<timestamp>.dump` on the **NAS (RAID1)** — a physical disk independent of the Mac's PGDATA, so the live DB (Mac) and the dump (NAS) are separate failure domains (SPOF resolved). NAS not mounted → backup fails with a notification (mount guard). Custom format, `fact_v2` data excluded — schema only, ~86GB of reproducible fact data skipped to keep dumps small/fast.
 - Rotation: keeps the newest 7 dumps, deletes older ones
 - Logs: `logs/backup.out.log`, `logs/backup.err.log`
 
 **Daily health check** (should show today's date and a nonzero-size dump):
 ```bash
 tail -20 logs/backup.out.log
-ls -la /Volumes/dart_data/db_backups/ | tail -5
+ls -la /Volumes/tj_finance_data/db_backups/ | tail -5
 ```
 
 ## Restore drill
@@ -29,7 +29,7 @@ Proves a dump is actually restorable, not just present.
 ```bash
 python scripts/restore_drill.py               # restores newest dump into tj_finance_restore_test, keeps it for inspection
 python scripts/restore_drill.py --drop-after  # same, but drops the scratch DB when done
-python scripts/restore_drill.py --dump /Volumes/dart_data/db_backups/tj_finance_core_20260704_1900.dump  # specific dump
+python scripts/restore_drill.py --dump /Volumes/tj_finance_data/db_backups/tj_finance_core_20260704_1900.dump  # specific dump
 ```
 
 What it does:

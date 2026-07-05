@@ -391,7 +391,18 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       Number/EY/ROC/PEG/Fisher). **Latent finding surfaced**: `ratio_engine._growth_rate` docstring
       says "음수 전기 → None" but the code only guards `prev == 0` (negative prev returns
       (c-p)/|p|); the test pins actual behavior and flags the doc/code mismatch for a separate fix.
-- [ ] C9 Amendment-supersede flag + trust-badge surfacing
+- [x] C9 Amendment-supersede flag + trust-badge surfacing — **DONE (2026-07-05)**. Addresses W6
+      (DB stores as-filed; a 기재정정 can supersede numbers with no user-visible signal). New
+      `app/data/amendments.py::load_amendment_summary` joins `filings.is_amendment` (periods with a
+      기재정정 filing) against `statement_source.source_rcept_no` (what the pipeline actually adopted)
+      → per (corp, period): `n_amended` / `n_reflects` (DB source IS the amendment) / `n_original`
+      (DB kept the original — stale/attachment amendment, reconcile's +400d timeliness guard). Surfaced
+      in the company-page trust badge (`_amendment_badge` + `cache.amendment_summary`): a caption when
+      all reflected, a **warning when n_original>0** ("원문 확인 권장"), plus an expander listing each
+      amended period + 정정본/원본유지. Verified via Playwright/AppTest: jiitech = 5 amended, all
+      reflected (caption); 삼성전자 = 2 (2011 reflected, 2002 original-kept, correct per timeliness).
+      (W6's "feed into I1 priority queue" deferred — needs DART API + `verify_cross_source` changes;
+      the user-facing transparency, the core of C9, is done.)
 - [x] C10 Failure notifications (osascript/mail) on dq_nightly/backup errors
 - [x] C11 Recurring completeness matrix (every corp × every expected period) in dq_nightly — implemented
       as a forward-looking staleness check (no `listing_date` column exists, so full since-listing

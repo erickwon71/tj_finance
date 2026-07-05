@@ -172,6 +172,14 @@ def trust_summary(corp_code: str) -> dict:
     return _trust.load_trust(corp_code)
 
 
+# ── 기재정정(amendment) 인식 (C9) ────────────────────────
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=1024)
+def amendment_summary(corp_code: str) -> dict:
+    """기재정정 이력 요약(신뢰 배지). app.data.amendments 위임."""
+    from app.data import amendments as _amd
+    return _amd.load_amendment_summary(corp_code)
+
+
 # ── 시장조치/규제 지정 이력 ─────────────────────────────
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=1024)
 def regulatory_status(corp_code: str) -> dict:

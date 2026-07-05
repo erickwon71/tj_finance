@@ -266,6 +266,30 @@ def _trust_badge(corp_code: str) -> None:
         tail = f" · 미검증 {t['pending']}" if t["pending"] else ""
         st.success(f"✅ 보고서↔DB 검증 통과 — Gate B pass **{t['pass']:,}** 기간 · 불일치 0{tail}",
                    icon="✅")
+    _amendment_badge(corp_code)
+
+
+def _amendment_badge(corp_code: str) -> None:
+    """🔄 기재정정 이력 — 정정본 존재 기간 + DB 반영 여부(C9). as-filed 저장의 stale 리스크 투명화."""
+    a = cache.amendment_summary(corp_code)
+    if not a or a["n_amended"] == 0:
+        return
+    orig = a["n_original"]
+    msg = (f"🔄 기재정정 이력 **{a['n_amended']}개 기간** — DB 정정본 반영 {a['n_reflects']}"
+           + (f" · 원본유지 {orig}" if orig else ""))
+    if orig:
+        st.warning(msg + " (원본유지 = 지연·첨부정정 등으로 정정 내용 미반영 가능 → 원문 확인 권장)")
+    else:
+        st.caption(msg + " (모두 정정본 반영)")
+    with st.expander(f"기재정정 기간 상세 ({a['n_amended']})", expanded=False):
+        df = pd.DataFrame([{
+            "연도": p["fiscal_year"], "기간": p["fiscal_period"],
+            "DB 반영": "정정본" if p["uses_amend"] else "원본유지",
+        } for p in a["periods"]])
+        st.dataframe(df, hide_index=True, width="stretch")
+        st.caption("출처: DART [기재정정] 공시. reconcile 은 적시 기재정정(최초제출 +400일 내)을 "
+                   "우선 채택하므로 대개 정정본이 반영됩니다. '원본유지'는 지연/첨부정정 등으로 "
+                   "원본이 채택된 기간입니다.")
 
 
 def _regulatory_panel(reg_status: dict) -> None:

@@ -315,7 +315,22 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       source design (direct KRX open API, alternate library, or scraped fallback) before it's
       implementable. Revisit as its own scoped item, not a quick win.
 - [ ] C7 Golden set 5 → 30–50 corps, wired into dq_nightly
-- [ ] C8 Pytest regression suite for derived metrics + app compute functions
+- [x] C8 Pytest regression suite for derived metrics + app compute functions — **DONE (2026-07-05)**.
+      New `tests/` package with **54 golden-value regression tests** over the previously-untested
+      derived/analytics layer (fixes W4/W8). Pure, DB-independent (synthetic hand-computed inputs);
+      valuation multiples test monkeypatches `price_fetcher.get_market_data`. Follows the fin2/tests
+      convention (self-contained `_util.run_tests`, no pytest dependency) + `tests/run_all.py`
+      aggregator — run with `python tests/run_all.py` (also pytest-collectable if installed).
+      Coverage: `test_ratio_engine` (compute_ratios: margins, avg-balance ROE/ROA, ROIC/NOPAT,
+      working-capital days, growth, guards), `test_valuation_engine` (PER/PBR/PSR/PCR/EV·EBITDA/
+      EBIT/FCF + controlling_ni preference), `test_units` (억원/%/x/원-주 conversions + signs),
+      `test_derived_resolver` (D1 ratio/diff/pershare + build_metric_frame column-vs-ratios +
+      validate rules), `test_checks` (anomaly guard: margin>100%/>60%, annual/quarter spike
+      triggers), `test_screen_eval` (aggregate avg/YoY/CAGR/QoQ, effective_unit, make_threshold,
+      apply_pass filter/sort/limit + missing policy, magic_rank), `test_master_metrics` (Graham
+      Number/EY/ROC/PEG/Fisher). **Latent finding surfaced**: `ratio_engine._growth_rate` docstring
+      says "음수 전기 → None" but the code only guards `prev == 0` (negative prev returns
+      (c-p)/|p|); the test pins actual behavior and flags the doc/code mismatch for a separate fix.
 - [ ] C9 Amendment-supersede flag + trust-badge surfacing
 - [x] C10 Failure notifications (osascript/mail) on dq_nightly/backup errors
 - [x] C11 Recurring completeness matrix (every corp × every expected period) in dq_nightly — implemented

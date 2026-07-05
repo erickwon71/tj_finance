@@ -242,6 +242,20 @@ def valuation_series(corp_code: str, metric: str, since_year: Optional[int] = No
     return _vb.load_valuation_series(corp_code, metric, since_year)
 
 
+# ── 기업 요약 tearsheet (PDF) ────────────────────────────
+@st.cache_data(ttl=TTL_HEAVY, show_spinner="요약 PDF 생성 중…", max_entries=64)
+def tearsheet_pdf(corp_code: str, statement_type: str) -> Optional[bytes]:
+    """기업 요약 tearsheet PDF bytes(D4). matplotlib 렌더라 캐시. app.components.tearsheet 위임."""
+    from app.components.tearsheet import build_tearsheet_pdf
+
+    meta = _corp.resolve_corp(corp_code)
+    series, used = _series.load_annual_series_with_fallback(corp_code, statement_type, 8)
+    if not meta or not series:
+        return None
+    mv = company_multiples(corp_code, statement_type)
+    return build_tearsheet_pdf(meta, series, mv, used)
+
+
 # ── 밸류에이션 멀티플 (최신 FY) ──────────────────────────
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
 def company_multiples(corp_code: str, statement_type: str) -> Optional[dict]:

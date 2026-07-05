@@ -479,6 +479,23 @@ def _fin_points(series: list[dict], key: str) -> list[tuple]:
     return pts
 
 
+def _tearsheet_download(corp_code: str, meta: dict, stmt: str) -> None:
+    """📄 요약 tearsheet(PDF) — 생성 비용(matplotlib) 지연: 버튼 클릭 시에만 생성 후 다운로드 노출."""
+    st.divider()
+    if st.button("📄 요약 tearsheet PDF 생성", key=f"ts_gen_{corp_code}",
+                 help="밸류에이션·재무·수익성 요약 + 추이 차트를 한 페이지 PDF 로."):
+        st.session_state["ts_ready"] = corp_code
+    if st.session_state.get("ts_ready") == corp_code:
+        pdf = cache.tearsheet_pdf(corp_code, stmt)
+        if pdf:
+            st.download_button(
+                "⬇ tearsheet PDF 내려받기", data=pdf,
+                file_name=f"{meta['corp_name']}_{corp_code}_tearsheet.pdf",
+                mime="application/pdf", key=f"ts_dl_{corp_code}", width="content")
+        else:
+            st.info("요약을 생성할 재무 데이터가 부족합니다.")
+
+
 def _watch_toggle(container, corp_code: str) -> None:
     """⭐ 관심종목 추가/해제 토글(사이드바 관심종목 목록과 연동)."""
     from app.data import watchlist as wl
@@ -690,6 +707,7 @@ def render() -> None:
             combined, filename=f"{meta['corp_name']}_{corp_code}_{suffix}_won.csv",
             label="⬇ 재무제표 CSV (원 단위, 선택 구간)", key="fin_csv")
         _source_drilldown(corp_code, used_stmt)
+        _tearsheet_download(corp_code, meta, requested_stmt)
 
     # ── 지표 (레지스트리 멀티셀렉트 + 그래프/표) ──
     elif active == TABS[1]:

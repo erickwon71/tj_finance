@@ -385,7 +385,19 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       Verified against real data: 00155531 6-yr backlog trend; dilution timeline across corps
       exercising all four categories (00536329 has 증자/감자/잠재/자기주식; 삼성 = 20 treasury-only,
       cum=0). Both tabs headless-`AppTest` = 0 exceptions.
-- [ ] D4 (opt) Tearsheet export
+- [x] D4 (opt) Tearsheet export — **DONE (2026-07-05)**. One-page A4 PDF company summary via
+      matplotlib (already installed — no new dependency, no external service; the existing CSV
+      export covers raw data, so this is the complementary *visual* one-pager). `app/components/
+      tearsheet.py::build_tearsheet_pdf` renders header + valuation snapshot (시총/PER/PBR/PSR/
+      EV·EBITDA/EPS/BPS/배당수익률) + 재무 요약 table (매출/영업이익/순이익/자산/자본, 8yr) +
+      수익성·안정성 table (ROE/영업이익률/순이익률/부채비율) + two trend charts (매출·영업이익,
+      ROE·영업이익률), returned as PDF bytes. Korean rendering via Mac font autodetect
+      (AppleGothic → Apple SD Gothic Neo → Nanum Gothic). Wired as a **deferred** generate→download
+      in the 재무제표 tab (`company_page._tearsheet_download` + `cache.tearsheet_pdf`, matplotlib
+      cost paid only on button click, then cached). Verified: real 삼성전자 PDF (86KB, valid %PDF)
+      rendered to PNG and visually inspected — Korean correct (no tofu), tables/charts/values right
+      (2025 매출 333.6조); table row-labels moved into a first column to fix left-edge clipping;
+      headless AppTest with generation forced = 0 exceptions.
 
 ## Verification (per phase)
 - Phase A: restore-drill row counts match spot checks; `launchctl list` shows new jobs exit 0; NAS mirror file counts match `find | wc -l`.

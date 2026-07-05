@@ -11,9 +11,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fin2.audit.face_audit import FaceLine  # noqa: E402
 from fin2.audit.line_audit import (  # noqa: E402
-    won_match, reconcile_report_lines,
+    won_match, reconcile_report_lines, reconcile_report_lines_text,
     REASON_VALUE_DIFF, REASON_MISSING,
 )
+
+
+def _tface(canon, won, basis="consolidated", ade=0):
+    """Track B(텍스트) face 라인 — acode=라벨(비XBRL), canonical 매핑됨."""
+    return FaceLine(statement=None, basis=basis, acode=canon, canonical=canon,
+                    label=canon, displayed_value=won, adecimal=ade, is_cumulative=True)
+
+
+def _tfact(canon, won, basis="consolidated", ade=0):
+    return {"canonical_account": canon, "basis": basis, "adecimal": ade, "amount_won": won}
 
 
 def _face(acode, won, basis="consolidated", ade=0, cum=False):
@@ -107,6 +117,49 @@ def test_basis_none_notes_cells_excluded():
     r = reconcile_report_lines("R1", face, facts)
     assert r.n_lines == 1 and r.n_match == 1          # 본문(연결)만 대조
     assert r.n_value_diff == 0 and r.n_extra == 0     # 주석 셀 충돌 무시
+
+
+def test_trackb_current_value_in_report_set():
+    # 보고서는 당기+전기 컬럼(리터럴 다수), fact_v2 당기값이 그 집합에 있으면 match.
+    face = [_tface("bs.total_assets", 1000), _tface("bs.total_assets", 800)]  # 당기/전기
+    facts = [_tfact("bs.total_assets", 1000)]   # DB 당기값
+    r = reconcile_report_lines_text("R1", face, facts)
+    assert r.n_lines == 1 and r.n_match == 1 and r.n_value_diff == 0
+
+
+def test_trackb_value_diff():
+    # DB 당기값이 보고서 어느 컬럼에도 없음 → 손상 후보(차단).
+    face = [_tface("is.revenue", 500), _tface("is.revenue", 400)]
+    facts = [_tfact("is.revenue", 777)]
+    r = reconcile_report_lines_text("R1", face, facts)
+    assert r.n_value_diff == 1 and r.n_match == 0
+    assert r.value_diffs[0].reason == REASON_VALUE_DIFF and r.value_diffs[0].db_won == 777
+
+
+def test_trackb_missing_when_reader_absent():
+    # fact_v2 에 있는 canonical 을 리더가 보고서에서 못 찾음 → MISSING(커버 갭, 비차단).
+    face = [_tface("bs.total_assets", 1000)]
+    facts = [_tfact("bs.total_assets", 1000), _tfact("cf.operating", 300)]
+    r = reconcile_report_lines_text("R1", face, facts)
+    assert r.n_match == 1 and r.n_missing == 1
+    assert r.missing[0].reason == REASON_MISSING
+
+
+def test_trackb_unmapped_fact_skipped():
+    # canonical=None(미매핑) fact 는 대조 불가 → 집계 제외.
+    face = [_tface("bs.total_assets", 1000)]
+    facts = [_tfact("bs.total_assets", 1000), _tfact(None, 555)]
+    r = reconcile_report_lines_text("R1", face, facts)
+    assert r.n_lines == 1 and r.n_match == 1
+
+
+def test_trackb_basis_distinguished():
+    face = [_tface("bs.total_assets", 1000, basis="consolidated"),
+            _tface("bs.total_assets", 800, basis="separate")]
+    facts = [_tfact("bs.total_assets", 1000, basis="consolidated"),
+             _tfact("bs.total_assets", 800, basis="separate")]
+    r = reconcile_report_lines_text("R1", face, facts)
+    assert r.n_lines == 2 and r.n_match == 2 and r.n_value_diff == 0
 
 
 def _run():

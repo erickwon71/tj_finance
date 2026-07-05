@@ -300,7 +300,25 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
 - [ ] B5 D&A note augmentation rule + parity re-check (ebitda/fcf divergence → 0)
 
 ### Phase C — Verification
-- [ ] C1 Track B line audit: harness extension → full 107,847 batch run → diff triage → gate pass
+- [~] C1 Track B line audit: harness extension → full 107,847 batch run → diff triage → gate pass —
+      **HARNESS BUILT + SAMPLE-VALIDATED (2026-07-05); full batch = user-run (long)**. Track A line
+      audit (`reconcile_report_lines`) keys on the XBRL acode (exact), so text-track reports
+      (`source_format='xml_text'` — the **largest** fact source at 69.3M rows) were left `pending`.
+      Added `reconcile_report_lines_text` in `fin2/audit/line_audit.py` using the proven Phase A
+      **direction + key**: since the independent reader (`read_report_face_text`) reads *all* columns
+      (당기+비교연도) and labels are unstable keys, we verify **each fact_v2 current value (col0,
+      authoritative) is present in the report's (canonical,basis) value-set** — not each report line
+      against the DB (that first cut gave 62.6% false VALUE_DIFF from comparative-year columns; the
+      flipped direction is the fix). VALUE_DIFF = a DB current value backed by *no* report column
+      (extraction picked wrong table/unit — blocking candidate); MISSING = reader didn't locate the
+      canonical (coverage indicator, non-blocking); EXTRA is structurally N/A for text. New
+      measurement tool `scripts/line_audit_trackb.py` (sample/corp/full, measurement-first per Track A
+      convention — no persist yet). **Sample result: 240 reports (40+200), ~46K lines, VALUE_DIFF 0,
+      MISSING ~0** — report↔DB fidelity holds for Track B. Tests: `test_line_audit.py` +5 (13 total).
+      **Remaining (user-run)**: full-population sweep `python scripts/line_audit_trackb.py --sample 0
+      --show 60`, triage any VALUE_DIFF per the 94-FP playbook; once clean at scale, add persistence
+      to `face_line_audit` (track='B') + wire into `gateb_audit.audit_lines` (replace the Track-B
+      `pending` branch).
 - [ ] C2 con<sep 22 rows triaged
 - [ ] C3 DQ assertions for backlog/capital_events/biz_metrics
 - [x] C4 Quarterly restore drill scheduled in runbook

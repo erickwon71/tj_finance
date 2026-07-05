@@ -132,3 +132,64 @@ def reconcile_report_lines(
     # 역방향: fact col0 행 중 보고서 face 에 아예 없던 키 → EXTRA(감사 reader 커버 갭, 지표).
     out.n_extra = sum(1 for key in fact_idx if key not in face_keys)
     return out
+
+
+def _track_b_face(face_lines: list[FaceLine]) -> list[FaceLine]:
+    """Track B(텍스트) 본문 face 라인만: **매핑된 canonical** + 비XBRL acode(라벨) +
+    won/basis 존재. read_report_face_text 는 매핑 라인만 방출하므로 canonical 이 항상 존재."""
+    return [ln for ln in face_lines
+            if ln.canonical and not ln.acode.startswith(_XBRL_PREFIXES)
+            and ln.amount_won is not None and ln.basis is not None]
+
+
+def reconcile_report_lines_text(
+    rcept_no: str,
+    face_lines: list[FaceLine],
+    fact_rows: list[dict],
+) -> ReportLineAudit:
+    """
+    Track B(텍스트) 보고서 face 라인을 fact_v2(xml_text) 와 **(canonical, basis) 값-집합** 대조.
+
+    Track A 와 달리 XBRL acode 가 없어(fact_v2 는 라벨을 acode 로 저장) 라벨은 발행사별
+    표기·소계 중복으로 불안정한 키다. 또한 독립 리더(read_report_face_text)는 본문 표의
+    **모든 컬럼(당기+비교연도)** 리터럴을 읽으므로, 보고서 측이 당기값만이 아니다.
+    그래서 Phase A(audit_std_row) 의 검증된 방향 — **fact_v2(당기 col0=권위값)가 보고서
+    canonical 값-집합에 존재하는가** — 로 판정한다(당기+비교 포함 집합이라 정상 당기값은 포함):
+      - MISSING : fact_v2 의 (canonical,basis) 를 리더가 보고서에서 못 찾음(리더 커버 갭 지표).
+      - VALUE_DIFF: (canonical,basis) 는 보고서에 있으나 fact_v2 당기값이 **어느 컬럼에도**
+        없음 → 다른 표/단위 오선택 등 추출 손상 후보(차단 후보).
+      - match   : fact_v2 당기값이 보고서 값-집합에 존재.
+    EXTRA 는 비대상(리더는 매핑라인만, fact_v2 는 미매핑 보존 → 역방향 무의미).
+
+    fact_rows: fact_v2 WHERE rcept_no=? AND col_index=0 AND NOT is_dimensional 의 행.
+               각 dict 는 {canonical_account, basis, adecimal, amount_won} 키 필요.
+    """
+    out = ReportLineAudit(rcept_no=rcept_no)
+
+    # 보고서 값-집합: (canonical, basis) → [won, ...] (전 컬럼 리터럴 = 당기+비교연도 포함)
+    rep_idx: dict[tuple, list[int]] = {}
+    for ln in _track_b_face(face_lines):
+        rep_idx.setdefault((ln.canonical, ln.basis), []).append(ln.amount_won)
+
+    for r in fact_rows:
+        canon = r.get("canonical_account")
+        if not canon or r.get("amount_won") is None or r.get("basis") is None:
+            continue
+        out.n_lines += 1
+        db_won = r["amount_won"]
+        reps = rep_idx.get((canon, r["basis"]))
+        stmt = _statement_of(canon)
+        if not reps:
+            out.n_missing += 1
+            out.missing.append(LineAudit(
+                canon, r["basis"], stmt, canon,
+                None, db_won, False, REASON_MISSING))
+            continue
+        if any(won_match(db_won, rw, r.get("adecimal")) for rw in reps):
+            out.n_match += 1
+        else:
+            out.n_value_diff += 1
+            out.value_diffs.append(LineAudit(
+                canon, r["basis"], stmt, canon,
+                reps[0], db_won, False, REASON_VALUE_DIFF))
+    return out

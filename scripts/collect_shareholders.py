@@ -26,6 +26,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from collector.dart_client import DartClient, DartApiError
 from collector.db import get_session
 from collector.models import MajorShareholder, RetailOwnership, ShareholderChange
+from collector.rate_limiter import DailyQuotaReached
+
+# 연속 '020'(사용한도초과) 이 이 값 이상 이어지면 일일 쿼터 소진으로 보고 즉시 중단한다.
+# 예전엔 020 을 013(정상 무결과)과 동일하게 조용히 continue 해서, 쿼터 소진 후에도 남은
+# 수천개 기업을 전부 "그냥 없음"으로 훑고 지나가거나(빠르지만 전부 허탕) 네트워크 재시도
+# 캐스케이드(_request_with_retry 429 처리, 기업당 최대 ~6분)에 걸려 사실상 멈춘 것처럼
+# 보이는 사고로 이어졌다(2026-07-05 실측 — 사용자가 Ctrl-C 로 강제종료).
+_QUOTA_STREAK_LIMIT = 5
 
 
 def _t(v, n: int):
@@ -129,21 +137,42 @@ def main() -> None:
     logger.info(f"[shr] 대상 {len(corps)}사 · {args.year} 사업보고서")
 
     agg = {"corps": 0, "shr_rows": 0, "chg_rows": 0, "retail_rows": 0, "empty": 0, "err": 0}
+    quota_streak = 0
     for i, corp in enumerate(corps, 1):
         try:
             shr_raw = client.get_major_shareholders(corp, args.year, "11011")
             chg_raw = client.get_shareholder_changes(corp, args.year, "11011")
             retail_raw = client.get_minority_shareholders(corp, args.year, "11011")
+        except DailyQuotaReached as e:
+            # rate_limiter 자체 판단(로컬 카운터가 일일한도 도달) — 설계 의도대로 즉시 종료.
+            logger.error(f"[shr] {e} — 중단합니다 ({i-1}/{len(corps)}개 처리, corp={corp}).")
+            client.close()
+            return
         except DartApiError as e:
+            if e.status == "020":
+                quota_streak += 1
+                if quota_streak >= _QUOTA_STREAK_LIMIT:
+                    logger.error(
+                        f"[shr] 연속 {quota_streak}회 '020'(사용한도초과) — DART 서버측 일일 쿼터가 "
+                        f"소진된 것으로 보여 중단합니다 ({i-1}/{len(corps)}개 처리). 쿼터 리셋 "
+                        f"(보통 익일) 후 동일 명령을 --skip-existing 과 함께 재실행하면 이어서 "
+                        f"처리됩니다: python scripts/collect_shareholders.py --year {args.year} "
+                        f"--skip-existing")
+                    client.close()
+                    return
+                continue
+            quota_streak = 0
             if e.status not in ("013", "020"):
                 agg["err"] += 1
                 logger.warning(f"[shr] {corp}: DART [{e.status}] {e.message}")
             continue
         except Exception as e:  # noqa: BLE001
+            quota_streak = 0
             agg["err"] += 1
             logger.warning(f"[shr] {corp}: {type(e).__name__}: {e}")
             continue
 
+        quota_streak = 0
         if not shr_raw and not chg_raw and not retail_raw:
             agg["empty"] += 1
             continue

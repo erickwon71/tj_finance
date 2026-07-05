@@ -342,7 +342,16 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       ~107,349 already-`pending` Track B reports to graded (a normal non-recheck run skips
       already-audited rcepts); triage any VALUE_DIFF per the 94-FP playbook (expected ~0 given the
       sample). `scripts/line_audit_trackb.py` remains as the standalone measurement/triage tool.
-- [ ] C2 con<sep 22 rows triaged
+- [x] C2 con<sep 22 rows triaged — **DONE (2026-07-05)**, `docs/dq_con_lt_sep_triage_2026-07-05.md`.
+      The "22" = `con>0 ∧ sep>0 ∧ sep≤1000조 ∧ con<sep×0.5 ∧ FY ∧ fy≥2015` = **21 rows** (full
+      con<sep is 14,525, dominated by old sign/unit/zero artifacts). Per-case via fact_v2 candidate
+      values: **~10 LEGIT** (한국토지신탁 trust-accounting, 별도 includes 신탁계정 11–13조 > 연결
+      1.7–2조, consistent 10yr, no unit bug) → con<sep is correct, not blockable; **~8 BUG** (dominant
+      = 별도 ×1000 unit-misdetection where the correct value also sits in fact_v2 but standardization's
+      max-abs picked the inflated adec=-3 row — 상상인증권/카카오게임즈/KB금융; + 인카 con tiny-value
+      pick) = the known "별도 버그클래스" (root fix design-heavy); **~3 ambiguous** (2015 financials/
+      IPO, no unit bug, lean legit). Feeds C3: a `con_lt_sep` DQ assertion flags new occurrences with a
+      trust/securities allowlist (root ×1000 fix deferred).
 - [ ] C3 DQ assertions for backlog/capital_events/biz_metrics
 - [x] C4 Quarterly restore drill scheduled in runbook
 - [ ] C5 Full-universe cross-source sweep (2,557 corps × recent FY) + triage; rotation re-weighted to latest periods

@@ -30,7 +30,7 @@ from collector.models import FaceAudit, FaceLineAudit, Base
 from fin2.audit.face_audit import (
     read_report_face_tracked, audit_std_row, gate_status_for_row, STD_FIELD_CANONICAL,
 )
-from fin2.audit.line_audit import reconcile_report_lines
+from fin2.audit.line_audit import reconcile_report_lines, reconcile_report_lines_text
 
 READER_VERSION = "trackAB-v2"
 _DETAIL_CAP = 200   # JSONB 상세 라인 상한(대량 보고서 방어)
@@ -186,16 +186,17 @@ def audit_corp(session, corp, args, agg):
         session.execute(stmt)
         session.commit()
 
-    # ── Phase B: 본문 전 계정 라인 전수 대조(Track A) → face_line_audit ───────────────
+    # ── Phase B: 본문 전 계정 라인 전수 대조(Track A+B) → face_line_audit ───────────────
     if getattr(args, "line_audit", True):
         audit_lines(session, corp, rcepts, face_of, track_of, args, agg)
 
 
 def audit_lines(session, corp, rcepts, face_of, track_of, args, agg):
-    """corp 의 전 source rcept 에 대해 보고서 Track A 전 face 라인을 fact_v2 와 1:1 대조.
+    """corp 의 전 source rcept 에 대해 보고서 face 라인을 fact_v2 와 대조 → face_line_audit.
 
-    face 는 std-row 패스에서 이미 읽힌 face_cache 재사용(추가 XML 파싱 없음). Track A 보고서만
-    pass/fail_a, 그 외(텍스트·PDF·0라인)는 pending(본 단계 비대상).
+    face 는 std-row 패스에서 이미 읽힌 face_cache 재사용(추가 XML 파싱 없음).
+    Track A(XBRL acode 정확대조)·Track B(텍스트, C1: canonical 값-집합) 모두 pass/fail_a
+    등급. PDF(C)·0라인은 pending(본 단계 비대상).
     """
     if not rcepts:
         return
@@ -212,31 +213,39 @@ def audit_lines(session, corp, rcepts, face_of, track_of, args, agg):
     if not todo:
         return
 
-    # fact_v2 col0 비차원 행을 rcept 별로 1회 로드
+    # fact_v2 col0 비차원 행을 rcept 별로 1회 로드 (canonical_account = Track B 값-집합 대조용)
     fact_by_rcept: dict[str, list[dict]] = {}
     for r in session.execute(text("""
-        SELECT rcept_no, acode, basis, is_cumulative, adecimal, amount_won
+        SELECT rcept_no, acode, canonical_account, basis, is_cumulative, adecimal, amount_won
         FROM fact_v2
         WHERE rcept_no = ANY(:rs) AND col_index = 0 AND NOT COALESCE(is_dimensional, false)
     """), {"rs": todo}):
         fact_by_rcept.setdefault(r.rcept_no, []).append({
-            "acode": r.acode, "basis": r.basis, "is_cumulative": r.is_cumulative,
+            "acode": r.acode, "canonical_account": r.canonical_account,
+            "basis": r.basis, "is_cumulative": r.is_cumulative,
             "adecimal": r.adecimal, "amount_won": r.amount_won})
 
     batch = []
     for rc in todo:
-        face = face_of(rc)                  # 캐시 재사용(col0 라인; Track A 접두만 reconcile 내부 필터)
+        face = face_of(rc)                  # 캐시 재사용(col0 라인)
         track = track_of.get(rc)
-        rla = reconcile_report_lines(rc, face, fact_by_rcept.get(rc, []))
-        # Track A 보고서만 확정 게이트. 그 외는 pending(acode 부재 → n_lines 0 일반).
-        is_a = track == "A" and rla.n_lines > 0
-        gate = rla.line_gate_status if is_a else "pending"
-        # pending(비-Track-A) 보고서는 신뢰할 face 가 없어 EXTRA 가 무의미(전 fact_v2 행이 잉여로 오집계)
-        # → Track A 일 때만 extra 기록. (Track A 는 face==fact_v2 col0 정확일치라 extra 정상 0.)
-        n_extra = rla.n_extra if is_a else 0
+        facts = fact_by_rcept.get(rc, [])
+        if track == "B":
+            # Track B(텍스트, C1): canonical 값-집합 대조. value_diff→fail_a(측정), missing=커버 갭.
+            rla = reconcile_report_lines_text(rc, face, facts)
+            gate = rla.line_gate_status if rla.n_lines > 0 else "pending"
+            n_extra = 0                     # 텍스트는 역방향 잉여 무의미(reader=매핑라인만)
+        else:
+            # Track A: XBRL acode 정확대조. 그 외(C/None)는 n_lines 0 → pending.
+            rla = reconcile_report_lines(rc, face, facts)
+            is_a = track == "A" and rla.n_lines > 0
+            gate = rla.line_gate_status if is_a else "pending"
+            # pending 보고서는 신뢰할 face 가 없어 EXTRA 무의미 → Track A 일 때만 기록.
+            n_extra = rla.n_extra if is_a else 0
+        graded = gate != "pending"          # A/B 등급 부여된 보고서만 value_diff 집계
         line_agg["lines"] += rla.n_lines
         line_agg["match"] += rla.n_match
-        line_agg["value_diff"] += rla.n_value_diff if is_a else 0
+        line_agg["value_diff"] += rla.n_value_diff if graded else 0
         line_agg["missing"] += rla.n_missing
         gate_agg[gate] += 1
         batch.append({
@@ -315,7 +324,7 @@ def main():
 
     if args.line_audit and agg.get("line"):
         ln = agg["line"]; lg = agg.get("line_gate", Counter())
-        print(f"\n── Phase B 라인 전수대조(Track A) ── 라인 {ln['lines']}: "
+        print(f"\n── Phase B 라인 전수대조(Track A+B) ── 라인 {ln['lines']}: "
               f"match {ln['match']} / value_diff(차단후보) {ln['value_diff']} / "
               f"missing(완전성지표) {ln['missing']}")
         print(f"   보고서 gate: pass {lg['pass']} / fail_a {lg['fail_a']} / pending {lg['pending']}")

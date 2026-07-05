@@ -315,10 +315,17 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       measurement tool `scripts/line_audit_trackb.py` (sample/corp/full, measurement-first per Track A
       convention — no persist yet). **Sample result: 240 reports (40+200), ~46K lines, VALUE_DIFF 0,
       MISSING ~0** — report↔DB fidelity holds for Track B. Tests: `test_line_audit.py` +5 (13 total).
-      **Remaining (user-run)**: full-population sweep `python scripts/line_audit_trackb.py --sample 0
-      --show 60`, triage any VALUE_DIFF per the 94-FP playbook; once clean at scale, add persistence
-      to `face_line_audit` (track='B') + wire into `gateb_audit.audit_lines` (replace the Track-B
-      `pending` branch).
+      **Larger validation (user-run 2026-07-05)**: 2,000-report confidence batch = 290,006 lines,
+      **VALUE_DIFF 0**, MISSING 68 (0.02%, reader-coverage). **INTEGRATED into production Gate B
+      (2026-07-05)**: `gateb_audit.audit_lines` now dispatches on track — Track B reports run
+      `reconcile_report_lines_text` and get a real pass/fail_a gate persisted to `face_line_audit`
+      with `track='B'` (was `pending`); fact load augmented with `canonical_account`. Integration
+      smoke (8 corps, `--recheck`): 67,752 lines, value_diff 0, **report gate pending 0** (all 477
+      source reports graded, incl. Track B) — DB now holds 430 `track='B'` `pass` rows.
+      **Remaining (user-run)**: a full `python scripts/gateb_audit.py --recheck` sweep to upgrade the
+      ~107,349 already-`pending` Track B reports to graded (a normal non-recheck run skips
+      already-audited rcepts); triage any VALUE_DIFF per the 94-FP playbook (expected ~0 given the
+      sample). `scripts/line_audit_trackb.py` remains as the standalone measurement/triage tool.
 - [ ] C2 con<sep 22 rows triaged
 - [ ] C3 DQ assertions for backlog/capital_events/biz_metrics
 - [x] C4 Quarterly restore drill scheduled in runbook

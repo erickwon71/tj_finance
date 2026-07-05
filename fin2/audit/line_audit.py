@@ -52,7 +52,7 @@ class ReportLineAudit:
 
     @property
     def line_gate_status(self) -> str:
-        """value_diff>0 → fail_a(확정 손상), 그 외 → pass. (Track A 한정 호출 전제.)"""
+        """value_diff>0 → fail_a(손상 후보), 그 외 → pass. Track A/B 공통(호출자가 등급대상 판정)."""
         return "fail_a" if self.n_value_diff else "pass"
 
 

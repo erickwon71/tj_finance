@@ -29,6 +29,13 @@ _DAEWOO_ENG = _BASE / "raw_report/KOSPI/00124540_대우건설/annual/2025/202603
 _LS_HOLDING = _BASE / "raw_report/KOSPI/00105952_LS/annual/2025/20260318001427.xml"          # 합계행 이중집계
 _WISEAI = _BASE / "raw_report/KOSDAQ/00374738_위세아이텍/annual/2025/20260320000390.xml"      # 계약금액/수익인식액/진행률%
 _KC_COTTRELL = _BASE / "raw_report/KOSPI/00797364_KC코트렐/annual/2025/20260407003641.xml"     # 환종별 롤포워드
+# 전수백필(2,555사) 실행 중 실측 발견(2026-07-05): 회사명 컬럼 헤더에 "단위" 글자가 우연히
+# 포함("회사명(단위)")돼 그 컬럼 전체가 단위열로 오인 → 회사명 셀값(22자)이 unit(varchar(20))
+# 에 들어가려다 DB insert 크래시 + 진짜 카테고리(회사명) 통째 소실.
+_PUNGSAN = _BASE / "raw_report/KOSPI/00155531_풍산홀딩스/annual/2025/20260312001433.xml"
+# 전수백필 이상치 트리아지(2026-07-05)로 발견한 2종 추가 회귀.
+_JEIO = _BASE / "raw_report/KOSDAQ/00411808_제이오/annual/2025/20260323000393.xml"              # 완성공사액 당기(누적)
+_NKMAX_GEN = _BASE / "raw_report/KOSDAQ/00977650_엔케이젠바이오텍코리아/annual/2025/20260324000530.xml"  # rowspan 밀림
 
 
 def _rows(fp, corp, fy):
@@ -139,6 +146,42 @@ def test_kc_cottrell_rollforward_currency_table():
     assert {r["category"] for r in rows} == {"KRW", "USD", "EUR", "INR", "TWD"}
     krw = next(r for r in rows if r["category"] == "KRW")
     assert krw["backlog_amt"] == 16603919
+
+
+def test_pungsan_company_name_column_not_misdetected_as_unit():
+    """"회사명(단위)" 헤더가 "단위" substring 매칭으로 단위열 오인되면 안 됨 — unit 은 20자
+    이하(DB varchar(20) 크래시 회귀)여야 하고, 회사명 라벨은 살아있되 "(단위:...)" 주석은
+    제거된 상태여야 함."""
+    if not _PUNGSAN.exists():
+        return
+    rows = _rows(_PUNGSAN, "00155531", 2025)
+    assert rows
+    assert all((r["unit"] or "") and len(r["unit"]) <= 20 or r["unit"] is None for r in rows)
+    assert not any(r["category"] and "단위" in r["category"] for r in rows)
+    assert not any(r["category"] is None and r["backlog_amt"] == 0 for r in rows)
+
+
+def test_jeio_completed_prefers_cumulative_in_parens():
+    """완성공사액 셀이 "29,961,564(72,900,381)"(당기(누적)) 형태 — 계약잔액 계산엔 괄호 안
+    누적값이 쓰이므로(기본도급액-누적완성공사액=계약잔액 정확 성립) 그 값을 채택해야 함."""
+    if not _JEIO.exists():
+        return
+    rows = _rows(_JEIO, "00411808", 2025)
+    domestic = next(r for r in rows if r["category"] and "국내" in r["category"])
+    assert domestic["completed"] == 72900381, domestic
+    assert domestic["new_orders"] - domestic["completed"] == domestic["backlog_amt"]
+
+
+def test_nkmax_gencorea_malformed_row_dropped():
+    """원본 문서의 rowspan 이상(품목 셀이 3칸에 걸쳐 중복)으로 데이터가 밀려 납기일자가
+    수주총액으로 오파싱(→2032)되는 행 — backlog>total 불변식 위반으로 폐기돼야 함(다른
+    정상 행·소스 자체 합계행은 살아있어야 함)."""
+    if not _NKMAX_GEN.exists():
+        return
+    rows = _rows(_NKMAX_GEN, "00977650", 2025)
+    assert not any(r["new_orders"] is not None and r["new_orders"] < 10000 for r in rows), \
+        "납기연도(2032 등)가 수주총액으로 오파싱된 행이 남아있으면 안 됨"
+    assert any(r["category"] and r["category"].strip().startswith("합") for r in rows)
 
 
 def _run():

@@ -55,6 +55,12 @@ _PROGRESS_COL_KW = ("진행률",)
 # 기간흐름 열이지 차원(부문/품목) 아니므로 미분류 시 일괄 제외(backlog 는 "계약잔액"이 기초/
 # 기말 양쪽에 매치돼도 마지막 값=기말=현재잔고를 취하므로 이미 올바르게 처리됨).
 _PERIOD_FLOW_COL_KW = ("당기",)
+# 라벨 셀 안에 박힌 단위주 제거(실측 풍산홀딩스 "㈜풍산 (단위: M/T, 백만원)").
+_UNIT_NOTE_RE = re.compile(r"[\(（]\s*단위\s*[:：][^)\]）]*[\)）]")
+# "완성공사액" 등 completed 열이 "29,961,564(72,900,381)" 처럼 당기(누적) 두 숫자를 한 셀에
+# 담는 관행(실측 제이오) — 앞 숫자는 당기분, 괄호 안은 누적(=계약잔액 계산에 실제 쓰이는 값:
+# 기본도급액-누적완성공사액=계약잔액 정확히 성립, 당기분으로는 안 맞음). 괄호 안 숫자를 우선 채택.
+_TRAILING_PAREN_NUM_RE = re.compile(r"\(([\d,]+)\)\s*$")
 
 
 @dataclass
@@ -153,7 +159,10 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
     skip_cols: set[int] = set()  # 날짜/진행률/기간흐름 등 category 라벨에서 제외할 비수치 메타열
     for c in range(ncols):
         head = " ".join(header_rows[r][c] for r in range(len(header_rows)))
-        if "단위" in head:
+        # "단위" 완전일치만 단위열로 인정 — substring 매칭이면 "회사명(단위)"(실측 풍산홀딩스,
+        # 회사명 셀값 "풍산특수금속㈜ (단위: M/T, 백만원)"=22자가 unit 으로 오인돼 varchar(20)
+        # 초과 크래시 + 진짜 카테고리(회사명)가 통째로 사라지는 이중 사고로 이어졌다.
+        if head.strip() == "단위":
             unit_col = c
             continue
         k = _col_kind(head)  # total/completed/backlog 매칭을 먼저 시도(우선순위 상위)
@@ -180,14 +189,34 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
     rows: list[OrderBacklogRow] = []
     for drow in data_rows:
         # "-" 단독 placeholder(대손충당 등 값없는 열)는 의미 있는 라벨이 아니므로 제외.
-        labels = [drow[c].strip() for c in dim_cols
+        # 회사명 셀에 "(단위: M/T, 백만원)" 처럼 단위주가 박혀있는 경우(실측 풍산홀딩스) 라벨에서
+        # 정리(숫자/backlog 계산엔 영향 없음 — 이미 단위열 완전일치 판정으로 별도 처리됨).
+        labels = [_UNIT_NOTE_RE.sub("", drow[c]).strip() for c in dim_cols
                  if drow[c].strip() and drow[c].strip() not in ("-", "－", "—")]
+        labels = [lb for lb in labels if lb]
         category = " ".join(dict.fromkeys(labels))[:150] or None
         vals: dict[str, int] = {}
         for c, kind in col_kind.items():
-            v, _, _ = _parse_value(drow[c])
+            cell = drow[c]
+            if kind == "completed":
+                m = _TRAILING_PAREN_NUM_RE.search(cell.strip())
+                if m:
+                    vals[kind] = int(m.group(1).replace(",", ""))
+                    continue
+            v, _, _ = _parse_value(cell)
             if v is not None:
                 vals[kind] = int(v)
+        # 불변식 가드: 수주잔고(backlog)는 수주총액(total)을 초과할 수 없다(backlog=total-completed
+        # 이므로 completed≥0 이면 항상 backlog≤total). 위반 시 이 행은 신뢰 불가로 폐기 —
+        # 실측(엔케이젠바이오텍코리아): 품목 셀이 원본 문서에서 비정상 rowspan 으로 3칸에 걸쳐
+        # 중복돼 데이터가 2칸 밀리면서 납기일자("2032.12.31")가 수주총액으로 오파싱(→2032)되고
+        # 실제 수주총액(973,902,752,000)이 completed 자리로, backlog(20억)만 제자리 아닌 값으로
+        # 밀려 backlog(20억) > total(2032) 라는 명백히 불가능한 조합이 됨. 이런 행은 조용히 버린다
+        # (같은 표의 다른 정상 행·소스 자체 계산인 합계행은 영향 없음 — 실측으로 합계행 수치는
+        # 정확함을 확인).
+        total_v, backlog_v = vals.get("total"), vals.get("backlog")
+        if total_v is not None and backlog_v is not None and backlog_v > total_v:
+            continue
         if "backlog" in vals:
             rows.append(OrderBacklogRow(
                 category=category, backlog_amt=vals.get("backlog"),
@@ -237,6 +266,8 @@ def parse_order_backlog(file_path: Path, corp_code: str, fiscal_year: int) -> li
                 "corp_code": corp_code, "fiscal_year": fiscal_year,
                 "category": r.category, "backlog_amt": r.backlog_amt,
                 "new_orders": r.new_orders, "completed": r.completed,
-                "unit": r.unit, "source": "html_parse",
+                # DB 컬럼길이 방어 클리핑(unit=varchar(20)) — 실측 풍산홀딩스 크래시 재발 방지용
+                # 최후 안전망(주 방지책은 위 단위열 완전일치 판정).
+                "unit": (r.unit or "")[:20] or None, "source": "html_parse",
             })
     return out

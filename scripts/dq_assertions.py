@@ -111,17 +111,20 @@ CHECKS: list[dict] = [
                  "AND COALESCE(data_quality,1) >= 3",
     },
     {
-        "name": "consolidated_lt_separate_assets",
+        # C2(2026-07-05): con<sep 전수는 14,525(대부분 구형 아티팩트) → 노이즈. 유의미 이상만:
+        # 최근FY·양수·sep≤1000조·연결<별도×0.5. baseline ~21 = 신탁회계 정당(한국토지신탁 등) +
+        # 별도 ×1000 단위오탐 버그. WARN(정당 예외 존재). 상세 docs/dq_con_lt_sep_triage_2026-07-05.
+        "name": "consolidated_lt_separate_assets_material",
         "sev": "WARN",
-        "desc": "연결 자산총계 < 별도 자산총계 (지주 통상 연결≥별도, 예외 존재)",
+        "desc": "연결 자산총계 < 별도×0.5 (최근FY 유의미 이상 — 별도 ×1000 오탐 or 신탁 정당, C2)",
         "count": """
             SELECT count(*) FROM standard_financials con
             JOIN standard_financials sep ON sep.corp_code=con.corp_code
               AND sep.fiscal_year=con.fiscal_year AND sep.fiscal_period=con.fiscal_period
               AND sep.statement_type='separate'
             WHERE con.statement_type='consolidated' AND con.fiscal_period='FY'
-              AND con.total_assets IS NOT NULL AND sep.total_assets IS NOT NULL
-              AND con.total_assets < sep.total_assets * 0.999""",
+              AND con.fiscal_year >= 2015 AND con.total_assets > 0 AND sep.total_assets > 0
+              AND sep.total_assets <= 1e15 AND con.total_assets < sep.total_assets * 0.5""",
         "sample": """
             SELECT con.corp_code, con.fiscal_year, con.total_assets AS con_assets,
                    sep.total_assets AS sep_assets
@@ -130,9 +133,37 @@ CHECKS: list[dict] = [
               AND sep.fiscal_year=con.fiscal_year AND sep.fiscal_period=con.fiscal_period
               AND sep.statement_type='separate'
             WHERE con.statement_type='consolidated' AND con.fiscal_period='FY'
-              AND con.total_assets IS NOT NULL AND sep.total_assets IS NOT NULL
-              AND con.total_assets < sep.total_assets * 0.999
-            ORDER BY (sep.total_assets - con.total_assets) DESC LIMIT 10""",
+              AND con.fiscal_year >= 2015 AND con.total_assets > 0 AND sep.total_assets > 0
+              AND sep.total_assets <= 1e15 AND con.total_assets < sep.total_assets * 0.5
+            ORDER BY con.total_assets::float / sep.total_assets LIMIT 10""",
+    },
+    # ── C3(2026-07-05): 신규 데이터셋 무결성(수주/자본이벤트/사업지표) ─────────────
+    {
+        "name": "order_backlog_negative",
+        "sev": "WARN",
+        "desc": "수주잔고 < 0 (불가값 — 본문표 파싱 오류 신호, B1/B4)",
+        "count": "SELECT count(*) FROM order_backlog WHERE backlog_amt < 0",
+        "sample": "SELECT corp_code, fiscal_year, category, backlog_amt FROM order_backlog "
+                  "WHERE backlog_amt < 0 ORDER BY backlog_amt LIMIT 10",
+    },
+    {
+        "name": "capital_events_unknown_type",
+        "sev": "WARN",
+        "desc": "자본이벤트 event_type 미지값 (수집기 매핑 누락 신호, B2)",
+        "count": "SELECT count(*) FROM capital_events WHERE event_type NOT IN "
+                 "('paid_increase','free_increase','mixed_increase','reduction','cb_issue',"
+                 "'bw_issue','eb_issue','treasury_acquire','treasury_dispose')",
+        "sample": "SELECT corp_code, rcept_no, event_type FROM capital_events WHERE event_type NOT IN "
+                  "('paid_increase','free_increase','mixed_increase','reduction','cb_issue',"
+                  "'bw_issue','eb_issue','treasury_acquire','treasury_dispose') LIMIT 10",
+    },
+    {
+        "name": "biz_metrics_util_impossible",
+        "sev": "WARN",
+        "desc": "가동률 > 500% (초과가동 교대·잔업 넘는 파싱 오류 — 계산근거/설비수량 오분류, B4)",
+        "count": "SELECT count(*) FROM biz_metrics WHERE metric='utilization' AND value > 500",
+        "sample": "SELECT corp_code, fiscal_year, segment, item, value FROM biz_metrics "
+                  "WHERE metric='utilization' AND value > 500 ORDER BY value DESC LIMIT 10",
     },
 ]
 

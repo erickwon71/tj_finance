@@ -352,7 +352,17 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       pick) = the known "별도 버그클래스" (root fix design-heavy); **~3 ambiguous** (2015 financials/
       IPO, no unit bug, lean legit). Feeds C3: a `con_lt_sep` DQ assertion flags new occurrences with a
       trust/securities allowlist (root ×1000 fix deferred).
-- [ ] C3 DQ assertions for backlog/capital_events/biz_metrics
+- [x] C3 DQ assertions for backlog/capital_events/biz_metrics — **DONE (2026-07-05)**. Added to
+      `scripts/dq_assertions.py` (nightly, WARN-level indicators — ERROR gate stays green): (1)
+      `order_backlog_negative` (backlog_amt<0, baseline 10 — body-table parse errors); (2)
+      `capital_events_unknown_type` (event_type outside the 9 known values, baseline 0 — clean guard
+      catching future collector drift); (3) `biz_metrics_util_impossible` (utilization>500%, baseline
+      16 — 계산근거/설비수량 misclassification beyond legit overtime). Also **sharpened the C2 signal**:
+      replaced the noisy `consolidated_lt_separate_assets` (con<sep×0.999 = 14,525 rows) with
+      `consolidated_lt_separate_assets_material` (con<sep×0.5, positive, sep≤1000조, FY, fy≥2015 =
+      baseline 21) so it's an actionable indicator, not noise. (The complex "shares_out change ↔
+      matching capital_event" correlation is deferred — high noise, low incremental value vs these
+      direct integrity guards.)
 - [x] C4 Quarterly restore drill scheduled in runbook
 - [ ] C5 Full-universe cross-source sweep (2,557 corps × recent FY) + triage; rotation re-weighted to latest periods
 - [ ] C6 Computed-vs-KRX EPS/BPS/PER nightly consistency assertion — **BLOCKED (2026-07-04)**: this

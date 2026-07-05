@@ -258,7 +258,8 @@ def _left() -> None:
     if sel:
         state.set_focus_corp(df.iloc[sel[0]]["corp_code"])
 
-    st.download_button("결과 CSV 내려받기", data=to_csv_bytes(df, index=False),
+    csv_df = df.drop(columns=["_transitions"], errors="ignore")  # 내부 표시용 컬럼 제외
+    st.download_button("결과 CSV 내려받기", data=to_csv_bytes(csv_df, index=False),
                        file_name="screen_results.csv", mime="text/csv")
 
 
@@ -273,8 +274,10 @@ def _build_display(df: pd.DataFrame, method: str, cols: list[str]) -> pd.DataFra
             "기준": {"consolidated": "연결", "separate": "별도"}.get(r.get("used_stmt"), "—"),
             "기간": int(r["n_periods"]) if pd.notna(r.get("n_periods")) else 0,
         }
+        trans = r.get("_transitions") or {}
         for mid in cols:
-            rec[_label(mid)] = _fmt(mid, method, r.get(mid))
+            # 흑자↔적자 전환은 %가 오도 소지가 있어 라벨로 대체(값·정렬·필터는 원 수치 유지).
+            rec[_label(mid)] = trans[mid] if mid in trans else _fmt(mid, method, r.get(mid))
         recs.append(rec)
     return pd.DataFrame(recs)
 

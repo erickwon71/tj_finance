@@ -31,7 +31,12 @@ def _avg(*values):
 
 
 def _growth_rate(curr, prev) -> Optional[float]:
-    """전기 대비 성장률. 전기가 0이거나 음수이면 None."""
+    """전기 대비 성장률 = (당기 - 전기) / |전기|. 전기가 0/None 이면 None.
+
+    분모가 **절대값**이라 전기가 음수(적자)여도 부호가 방향과 일치한다:
+    개선(적자 축소·흑자전환)=양수 · 악화(적자 확대·적자전환)=음수. 단, 흑자↔적자
+    전환 시 %는 문자 그대로의 성장률이 아니므로(예: 손실→이익), 스크리너 표시는
+    screen_eval.growth_transition 으로 '흑자전환/적자전환' 라벨로 대체한다."""
     if curr is None or prev is None or prev == 0:
         return None
     return (curr - prev) / abs(prev)

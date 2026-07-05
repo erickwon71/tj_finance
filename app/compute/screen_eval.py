@@ -27,6 +27,18 @@ from app.registry.units import UnitType
 AVERAGE, CAGR, YOY, QOQ = "average", "CAGR", "YoY", "QoQ"
 AGG_METHODS = [AVERAGE, CAGR, YOY]              # 연간
 AGG_METHODS_QUARTER = [AVERAGE, CAGR, YOY, QOQ]  # 분기(QoQ=직전분기比 추가)
+_GROWTH_METHODS = {CAGR, YOY, QOQ}             # 성장(전기 대비) 방법
+
+# 흑자↔적자 전환 라벨 — 성장률(YoY/QoQ/CAGR)에서 부호가 0을 가로지르면 %가 문자 그대로의
+# 성장률이 아니므로(예: 손실 561억→이익 58억을 +110% 로 표기), 표시를 라벨로 대체한다.
+# 대상 = 손익계산서 이익성 라인만(현금흐름·차입금 등엔 흑자/적자 어휘가 맞지 않음).
+# 매출/매출총이익은 통상 음수가 안 돼 라벨이 뜨지 않지만, 동일 기조 유지를 위해 포함.
+TURNAROUND = "흑자전환"
+DOWNTURN = "적자전환"
+_TRANSITION_METRICS = {
+    "revenue", "gross_profit", "operating_income", "ebt", "ebitda",
+    "net_income", "controlling_ni",
+}
 
 # 윈도우 집계 대상 = 레지스트리 전 지표
 WINDOW_METRIC_IDS: list[str] = [m.id for m in METRIC_REGISTRY]
@@ -96,6 +108,38 @@ def aggregate(values: list, method: str, n_periods: int, grain: str = "annual") 
             return None
         return _cagr(start, end, years)
     return None
+
+
+def growth_transition(curr, prev) -> Optional[str]:
+    """성장률 부호전환 라벨 — 전기 대비 0을 가로지르면 흑자/적자 전환.
+
+    prev<0≤curr → 흑자전환 · curr<0≤prev → 적자전환 · 그 외/결측 → None.
+    부호 규약은 _growth_rate 와 일치(값은 유지, 표시만 라벨로 대체)."""
+    if curr is None or prev is None:
+        return None
+    if prev < 0 <= curr:
+        return TURNAROUND
+    if curr < 0 <= prev:
+        return DOWNTURN
+    return None
+
+
+def _series_transition(values: list, method: str, grain: str) -> Optional[str]:
+    """집계와 같은 비교기간(당기 vs 전기)으로 흑자/적자 전환 판정. 성장 방법에서만."""
+    if method not in _GROWTH_METHODS or not values:
+        return None
+    step = 4 if grain == "quarter" else 1
+    curr = values[0]
+    if method == YOY:
+        prev = values[step] if len(values) > step else None
+    elif method == QOQ:
+        prev = values[1] if len(values) > 1 else None
+    else:  # CAGR — 가장 오래된 비결측을 start 로(aggregate 와 동일)
+        prev = None
+        for i in range(1, len(values)):
+            if values[i] is not None:
+                prev = values[i]
+    return growth_transition(curr, prev)
 
 
 # ── corp별 다지표 집계 ─────────────────────────────────────────
@@ -185,8 +229,14 @@ def build_base_frame(window: dict[str, dict], method: str, n_periods: int,
             MARKET_CAP_ID: (c["market_cap"] / 1e12) if c.get("market_cap") else None,
             "n_periods":   min(n_periods, len(rows)),
         }
+        trans: dict[str, str] = {}
         for mid, vals in series.items():
             rec[mid] = aggregate(vals, method, n_periods, grain)
+            if mid in _TRANSITION_METRICS:
+                t = _series_transition(vals, method, grain)
+                if t:
+                    trans[mid] = t
+        rec["_transitions"] = trans
         rec.update(_latest_multiples(rows, c.get("market_cap"), grain))
         rec.update(_latest_master(rows, c.get("market_cap"), c.get("close_price"), grain))
         recs.append(rec)

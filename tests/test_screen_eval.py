@@ -102,6 +102,41 @@ def test_magic_rank():
     assert list(out[se.MAGIC_RANK_ID]) == [1.0, 2.0, 3.0]
 
 
+def test_growth_transition_labels():
+    assert se.growth_transition(58, -561) == se.TURNAROUND     # 손실→이익
+    assert se.growth_transition(-561, 58) == se.DOWNTURN       # 이익→손실
+    assert se.growth_transition(-60, -68) is None              # 적자 축소(둘 다 음수)
+    assert se.growth_transition(200, 100) is None              # 정상 성장(둘 다 양수)
+    assert se.growth_transition(0, -10) == se.TURNAROUND       # 0 은 흑자쪽(≥0)
+    assert se.growth_transition(50, None) is None
+
+
+def test_series_transition_respects_method():
+    # YoY 연간: 당기=vals[0], 전기=vals[1]
+    assert se._series_transition([50, -100], "YoY", "annual") == se.TURNAROUND
+    # QoQ: 당기=vals[0], 전기=vals[1]
+    assert se._series_transition([-30, 40], "QoQ", "quarter") == se.DOWNTURN
+    # average 는 성장 방법 아님 → 라벨 없음
+    assert se._series_transition([50, -100], "average", "annual") is None
+    # YoY 분기: 4분기 전과 비교
+    assert se._series_transition([50, 9, 8, 7, -100], "YoY", "quarter") == se.TURNAROUND
+
+
+def test_base_frame_emits_transition_label():
+    # 순이익 전년 -100 → 당년 50 (흑자전환), YoY
+    window = {"A": {
+        "corp_name": "테스트", "stock_code": "000001", "market": "KOSPI",
+        "used_stmt": "consolidated", "market_cap": 1e12,
+        "rows": [{"net_income": 50, "revenue": 1000},
+                 {"net_income": -100, "revenue": 800}],
+    }}
+    df = se.build_base_frame(window, "YoY", 2, "annual")
+    trans = df.iloc[0]["_transitions"]
+    assert trans.get("net_income") == se.TURNAROUND
+    # 매출은 둘 다 양수 → 라벨 없음(동일 기조, 전환 없음)
+    assert "revenue" not in trans
+
+
 def test_magic_rank_missing_is_na():
     df = pd.DataFrame([
         {"corp_code": "A", "earnings_yield": 0.12, "return_on_capital": 0.40},

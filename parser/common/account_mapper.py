@@ -180,6 +180,20 @@ class AccountMapper:
                 and fs_section in (None, "is"):
             return MappingResult("is.equity_method_income", 0.9, "guard", raw)
 
+        # ── 영업이익 오매핑 가드(C5 크로스소스로 발견, 2026-07-06): '계속영업이익(손실)'·
+        # '중단영업이익(손실)'(세후 계속/중단영업 손익 소계, 순이익에 인접한 개념)과 '영업외손익'
+        # 계열(영업외수익-비용 순액)은 영업이익(is.operating_income)이 아니다. alias '영업이익
+        # (손실)'/'영업손익' 과의 부분포함(len_ratio 0.8)·근접 Jaro-Winkler 유사도로 Stage 3 가
+        # 잘못 흡수(신뢰도 0.9~0.97) → build.py max-abs 선택에서 이 큰 값이 진짜 영업이익을
+        # 가려 부호까지 뒤집힘(금호타이어 2022 등, 크로스소스 검증 65건 중 다수). '주당'(EPS)
+        # 파생 라인도 같은 substring 이라 동반 차단(원단위 canonical 에 EPS 오염 방지).
+        # '차감전'(세전) 계속영업 변형은 위 EBT 가드가 이미 처리했으므로 여기 도달 안 함.
+        if fs_section in (None, "is"):
+            if "계속영업" in normalized or "중단영업" in normalized:
+                return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
+            if "영업외" in normalized and ("이익" in normalized or "손익" in normalized):
+                return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
+
         # ── Stage 3: 퍼지 매핑 ────────────────────────────────────────
         # fs_section 제공 시 섹션-한정 퍼지 먼저 시도, 없으면 전체 퍼지 (단, 섹션 접두사가
         # 불일치하는 코드는 최종 후보에서 제외 — 예: BS 컨텍스트에서 IS 코드 반환 방지)

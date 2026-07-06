@@ -215,6 +215,10 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       specifically and stops immediately with a clear resume command, rather than "completing"
       having silently skipped years. ⚠ **2022–2026 still need re-running once the DART quota
       resets** (`python scripts/backfill_capital_events.py --start-year 2022`).
+- [x] **B2b 2022–2026 backfill — DONE (2026-07-06)**. Ran via `scripts/dart_backfill_chain.sh`
+      right after quota reset (00:01): +4,411 rows (2022 +1,313 · 2023 +1,310 · 2024 +1,286 ·
+      2025 +502 · 2026 +0, no errors). `capital_events` now **15,747 rows / 2,083 corps, full
+      2015–2026 coverage** (yearly range 996–1,954 rows). 2015+ backfill fully closed.
 - [x] B2c Dilution overlay on share-count chart + potential-dilution metric — `app/data/capital.py`
       + `chart_panel.render_pershare_panel` markers (▲dilutive/▼reduction/◆potential CB-BW-EB) on
       the B-2 share-count chart, "잠재 희석 %" caption (upper-bound estimate, doesn't track
@@ -226,6 +230,12 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       `major_shareholders`/`shareholder_changes`/`retail_ownership`, `scripts/collect_shareholders.py`
       (mirrors `collect_executives.py` pattern). Ownership panel added to the existing "임원" tab
       (renamed "임원·지분"): 최대주주+특수관계인 %, 소액주주 %, holder table, change history.
+      **Remaining-year backfill DONE (2026-07-06)** via `dart_backfill_chain.sh`: 2015–2021 had
+      zero/partial prior coverage (2021 only 981 corps) — full re-run with `--skip-existing`
+      across 2015–2025 (~8h, no errors). Final coverage per fiscal year (distinct corps): 2025
+      2,544 · 2024 2,481 · 2023 2,379 · 2022 2,286 · 2021 2,211 · 2020 2,129 · 2019 2,038 ·
+      2018 1,953 · 2017 1,869 · 2016 1,783 · 2015 1,717 (older years naturally lower — fewer
+      corps listed that far back). Coverage now considered complete; no further backfill needed.
       **Bug caught before commit**: DART's `hyslrSttus` includes "계"(subtotal) rows per stock kind
       — naively summing all rows double-counted the major-shareholder % (40.4% instead of the
       correct 20.2% for Samsung); fixed to prefer the "계" rows when present. Verified live via
@@ -364,7 +374,28 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       matching capital_event" correlation is deferred — high noise, low incremental value vs these
       direct integrity guards.)
 - [x] C4 Quarterly restore drill scheduled in runbook
-- [ ] C5 Full-universe cross-source sweep (2,557 corps × recent FY) + triage; rotation re-weighted to latest periods
+- [~] C5 Full-universe cross-source sweep (2,557 corps × recent FY) + triage; rotation re-weighted
+      to latest periods — **PARTIAL RUN (2026-07-06) found a real bug, full sweep retrying tonight**.
+      First attempt chained after B2b+대주주 in `dart_backfill_chain.sh`, but 대주주 alone consumed
+      ~8.5h of that day's DART quota, so C5 (started at 08:59) only got real API responses for
+      the first ~180/2,555 corps before going quota-starved (comparison-cell count plateaued at
+      8,581 from corp ~180 through 2,555; DB_ONLY=166 confirms most corps got no DART data).
+      **Even from that partial 7% slice, found 65 mismatches** — 29 on `operating_income`, several
+      with flipped signs (금호타이어 2022 연결: DART +23.1B vs DB −107.2B; 솔루스첨단소재 2023:
+      DART −73.2B vs DB +125.9B). Root-caused to an `account_mapper.py` Stage-3 fuzzy-matching bug
+      (see commit 364c334 / [[key-bugs-fixed]] #8): '계속영업이익(손실)'/'중단영업이익(손실)'
+      (continuing/discontinued-ops subtotals, conceptually near net income, not operating income)
+      and '영업외손익' (non-operating net) family labels were over-matched to `is.operating_income`
+      via substring containment / Jaro-Winkler similarity against aliases '영업이익(손실)'/'영업손익'
+      — a bug invisible to Gate B (same-report re-parse, correlated error) and only surfaced by this
+      independent DART-API cross-check (the whole point of W1). **Fixed + retroactively remediated**:
+      guard added to block the mis-mapping at extraction time; `scripts/fix_operating_income_mismap.py`
+      corrected 107 acode variants / 49,215 existing fact_v2 rows / 1,236 affected corps (95.8%
+      recovered a correct value, 4.2% correctly went NULL — genuinely missing, not corrupted); all
+      4 known bad cases now match DART exactly (incl. signs); fin2 tests 17/17, C8 regression 57/57,
+      DQ ERROR gate still 0. **Tonight's plan**: `dart_backfill_chain.sh` edited to run C5 alone
+      (B2b/대주주 steps commented out, both already complete) — full 2,555-corp × 2021–2025 sweep
+      should complete with the whole day's quota available, giving a true full-population triage.
 - [ ] C6 Computed-vs-KRX EPS/BPS/PER nightly consistency assertion — **BLOCKED (2026-07-04)**: this
       item assumed `stock_prices.per/pbr/eps/bps/div_yield/dps` already held independent KRX-sourced
       values to compare against. Checked live DB: all five columns are 100% NULL (0/11.2M rows) —

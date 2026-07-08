@@ -1,0 +1,1267 @@
+﻿company,corp_code,stock_code,market,combo,tab,check_id,result,detail,elapsed_sec,timestamp
+기신정기,00106614,092440,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:30:25
+기신정기,00106614,092440,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:30:25
+기신정기,00106614,092440,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:30:25
+기신정기,00106614,092440,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:30:25
+기신정기,00106614,092440,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:30:25
+기신정기,00106614,092440,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:30:25
+기신정기,00106614,092440,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:30:31
+기신정기,00106614,092440,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:30:31
+기신정기,00106614,092440,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:30:31
+기신정기,00106614,092440,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=23 slider_extended=True,,2026-07-07T06:30:31
+기신정기,00106614,092440,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:30:31
+기신정기,00106614,092440,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:30:31
+기신정기,00106614,092440,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:30:37
+기신정기,00106614,092440,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:30:37
+기신정기,00106614,092440,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:30:37
+기신정기,00106614,092440,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=65 slider_extended=True,,2026-07-07T06:30:37
+기신정기,00106614,092440,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:30:37
+기신정기,00106614,092440,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:30:37
+기신정기,00106614,092440,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:30:44
+기신정기,00106614,092440,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:30:44
+기신정기,00106614,092440,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:30:44
+기신정기,00106614,092440,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=73 slider_extended=True,,2026-07-07T06:30:44
+기신정기,00106614,092440,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:30:44
+기신정기,00106614,092440,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:30:44
+대신정보통신,00110875,020180,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:30:58
+대신정보통신,00110875,020180,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:30:58
+대신정보통신,00110875,020180,KOSDAQ,연간x연결,상단,DS-4,PASS,substitution caption present,,2026-07-07T06:30:58
+대신정보통신,00110875,020180,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:30:58
+대신정보통신,00110875,020180,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=26 slider_extended=True,,2026-07-07T06:30:58
+대신정보통신,00110875,020180,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:30:58
+대신정보통신,00110875,020180,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:30:58
+대신정보통신,00110875,020180,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:31:03
+대신정보통신,00110875,020180,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:31:03
+대신정보통신,00110875,020180,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:31:03
+대신정보통신,00110875,020180,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=26 slider_extended=True,,2026-07-07T06:31:03
+대신정보통신,00110875,020180,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:31:03
+대신정보통신,00110875,020180,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:31:03
+대신정보통신,00110875,020180,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:31:09
+대신정보통신,00110875,020180,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:31:09
+대신정보통신,00110875,020180,KOSDAQ,분기x연결,상단,DS-4,PASS,substitution caption present,,2026-07-07T06:31:09
+대신정보통신,00110875,020180,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:31:09
+대신정보통신,00110875,020180,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=76 slider_extended=True,,2026-07-07T06:31:09
+대신정보통신,00110875,020180,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:31:09
+대신정보통신,00110875,020180,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:31:09
+대신정보통신,00110875,020180,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:31:17
+대신정보통신,00110875,020180,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:31:17
+대신정보통신,00110875,020180,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:31:17
+대신정보통신,00110875,020180,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=76 slider_extended=True,,2026-07-07T06:31:17
+대신정보통신,00110875,020180,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:31:17
+대신정보통신,00110875,020180,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:31:17
+삼성전자,00126380,005930,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:31:31
+삼성전자,00126380,005930,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:31:31
+삼성전자,00126380,005930,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:31:31
+삼성전자,00126380,005930,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=22 slider_extended=True,,2026-07-07T06:31:31
+삼성전자,00126380,005930,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:31:31
+삼성전자,00126380,005930,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:31:31
+삼성전자,00126380,005930,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:31:36
+삼성전자,00126380,005930,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:31:36
+삼성전자,00126380,005930,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:31:36
+삼성전자,00126380,005930,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=23 slider_extended=True,,2026-07-07T06:31:36
+삼성전자,00126380,005930,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:31:36
+삼성전자,00126380,005930,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:31:36
+삼성전자,00126380,005930,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:31:42
+삼성전자,00126380,005930,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:31:42
+삼성전자,00126380,005930,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:31:42
+삼성전자,00126380,005930,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=74 slider_extended=True,,2026-07-07T06:31:42
+삼성전자,00126380,005930,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:31:42
+삼성전자,00126380,005930,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:31:42
+삼성전자,00126380,005930,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:31:50
+삼성전자,00126380,005930,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:31:50
+삼성전자,00126380,005930,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:31:50
+삼성전자,00126380,005930,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=76 slider_extended=True,,2026-07-07T06:31:50
+삼성전자,00126380,005930,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:31:50
+삼성전자,00126380,005930,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:31:50
+SK하이닉스,00164779,000660,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:32:03
+SK하이닉스,00164779,000660,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:32:03
+SK하이닉스,00164779,000660,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:32:03
+SK하이닉스,00164779,000660,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=22 slider_extended=True,,2026-07-07T06:32:03
+SK하이닉스,00164779,000660,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:32:03
+SK하이닉스,00164779,000660,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:32:03
+SK하이닉스,00164779,000660,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:32:08
+SK하이닉스,00164779,000660,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:32:08
+SK하이닉스,00164779,000660,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:32:08
+SK하이닉스,00164779,000660,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=25 slider_extended=True,,2026-07-07T06:32:08
+SK하이닉스,00164779,000660,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:32:08
+SK하이닉스,00164779,000660,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:32:08
+SK하이닉스,00164779,000660,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:32:15
+SK하이닉스,00164779,000660,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:32:15
+SK하이닉스,00164779,000660,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:32:15
+SK하이닉스,00164779,000660,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=71 slider_extended=True,,2026-07-07T06:32:15
+SK하이닉스,00164779,000660,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:32:15
+SK하이닉스,00164779,000660,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:32:15
+SK하이닉스,00164779,000660,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:32:22
+SK하이닉스,00164779,000660,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:32:22
+SK하이닉스,00164779,000660,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:32:22
+SK하이닉스,00164779,000660,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=83 slider_extended=True,,2026-07-07T06:32:22
+SK하이닉스,00164779,000660,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:32:22
+SK하이닉스,00164779,000660,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:32:22
+강남제비스코,00100939,000860,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:32:36
+강남제비스코,00100939,000860,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:32:36
+강남제비스코,00100939,000860,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:32:36
+강남제비스코,00100939,000860,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:32:36
+강남제비스코,00100939,000860,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:32:36
+강남제비스코,00100939,000860,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:32:36
+강남제비스코,00100939,000860,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:32:41
+강남제비스코,00100939,000860,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:32:41
+강남제비스코,00100939,000860,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:32:41
+강남제비스코,00100939,000860,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=28 slider_extended=True,,2026-07-07T06:32:41
+강남제비스코,00100939,000860,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:32:41
+강남제비스코,00100939,000860,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:32:41
+강남제비스코,00100939,000860,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:32:47
+강남제비스코,00100939,000860,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:32:47
+강남제비스코,00100939,000860,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:32:47
+강남제비스코,00100939,000860,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=65 slider_extended=True,,2026-07-07T06:32:47
+강남제비스코,00100939,000860,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:32:47
+강남제비스코,00100939,000860,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:32:47
+강남제비스코,00100939,000860,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:32:55
+강남제비스코,00100939,000860,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:32:55
+강남제비스코,00100939,000860,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:32:55
+강남제비스코,00100939,000860,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=82 slider_extended=True,,2026-07-07T06:32:55
+강남제비스코,00100939,000860,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:32:55
+강남제비스코,00100939,000860,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:32:55
+에이프로젠바이오로직스,00101044,003060,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:33:08
+에이프로젠바이오로직스,00101044,003060,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:33:08
+에이프로젠바이오로직스,00101044,003060,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:33:08
+에이프로젠바이오로직스,00101044,003060,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:33:08
+에이프로젠바이오로직스,00101044,003060,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:33:08
+에이프로젠바이오로직스,00101044,003060,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:33:08
+에이프로젠바이오로직스,00101044,003060,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:33:14
+에이프로젠바이오로직스,00101044,003060,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:33:14
+에이프로젠바이오로직스,00101044,003060,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:33:14
+에이프로젠바이오로직스,00101044,003060,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=25 slider_extended=True,,2026-07-07T06:33:14
+에이프로젠바이오로직스,00101044,003060,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:33:14
+에이프로젠바이오로직스,00101044,003060,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:33:14
+에이프로젠바이오로직스,00101044,003060,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:33:20
+에이프로젠바이오로직스,00101044,003060,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:33:20
+에이프로젠바이오로직스,00101044,003060,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:33:20
+에이프로젠바이오로직스,00101044,003060,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=60 slider_extended=True,,2026-07-07T06:33:20
+에이프로젠바이오로직스,00101044,003060,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:33:20
+에이프로젠바이오로직스,00101044,003060,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:33:20
+에이프로젠바이오로직스,00101044,003060,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:33:27
+에이프로젠바이오로직스,00101044,003060,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:33:27
+에이프로젠바이오로직스,00101044,003060,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:33:27
+에이프로젠바이오로직스,00101044,003060,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=82 slider_extended=True,,2026-07-07T06:33:27
+에이프로젠바이오로직스,00101044,003060,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:33:27
+에이프로젠바이오로직스,00101044,003060,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:33:27
+강원에너지,00100601,114190,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:33:41
+강원에너지,00100601,114190,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:33:41
+강원에너지,00100601,114190,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:33:41
+강원에너지,00100601,114190,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=15 slider_extended=True,,2026-07-07T06:33:41
+강원에너지,00100601,114190,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:33:41
+강원에너지,00100601,114190,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:33:41
+강원에너지,00100601,114190,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:33:46
+강원에너지,00100601,114190,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:33:46
+강원에너지,00100601,114190,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:33:46
+강원에너지,00100601,114190,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=21 slider_extended=True,,2026-07-07T06:33:46
+강원에너지,00100601,114190,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:33:46
+강원에너지,00100601,114190,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:33:46
+강원에너지,00100601,114190,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:33:53
+강원에너지,00100601,114190,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:33:53
+강원에너지,00100601,114190,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:33:53
+강원에너지,00100601,114190,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=51 slider_extended=True,,2026-07-07T06:33:53
+강원에너지,00100601,114190,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:33:53
+강원에너지,00100601,114190,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:33:53
+강원에너지,00100601,114190,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:34:00
+강원에너지,00100601,114190,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:34:00
+강원에너지,00100601,114190,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:34:00
+강원에너지,00100601,114190,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=62 slider_extended=True,,2026-07-07T06:34:00
+강원에너지,00100601,114190,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:34:00
+강원에너지,00100601,114190,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:34:00
+경동제약,00101549,011040,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:34:14
+경동제약,00101549,011040,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:34:14
+경동제약,00101549,011040,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:34:14
+경동제약,00101549,011040,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:34:14
+경동제약,00101549,011040,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:34:14
+경동제약,00101549,011040,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:34:14
+경동제약,00101549,011040,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:34:19
+경동제약,00101549,011040,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:34:19
+경동제약,00101549,011040,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:34:19
+경동제약,00101549,011040,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=31 slider_extended=True,,2026-07-07T06:34:19
+경동제약,00101549,011040,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:34:19
+경동제약,00101549,011040,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:34:19
+경동제약,00101549,011040,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:34:25
+경동제약,00101549,011040,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:34:25
+경동제약,00101549,011040,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:34:25
+경동제약,00101549,011040,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=60 slider_extended=True,,2026-07-07T06:34:25
+경동제약,00101549,011040,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:34:25
+경동제약,00101549,011040,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:34:25
+경동제약,00101549,011040,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:34:33
+경동제약,00101549,011040,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:34:33
+경동제약,00101549,011040,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:34:33
+경동제약,00101549,011040,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=92 slider_extended=True,,2026-07-07T06:34:33
+경동제약,00101549,011040,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:34:33
+경동제약,00101549,011040,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:34:33
+LS에코에너지,01093007,229640,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:34:46
+LS에코에너지,01093007,229640,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:34:46
+LS에코에너지,01093007,229640,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:34:46
+LS에코에너지,01093007,229640,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=13 slider_extended=True,,2026-07-07T06:34:46
+LS에코에너지,01093007,229640,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:34:46
+LS에코에너지,01093007,229640,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:34:46
+LS에코에너지,01093007,229640,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:34:51
+LS에코에너지,01093007,229640,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:34:51
+LS에코에너지,01093007,229640,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:34:51
+LS에코에너지,01093007,229640,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=13 slider_extended=True,,2026-07-07T06:34:51
+LS에코에너지,01093007,229640,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:34:51
+LS에코에너지,01093007,229640,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:34:51
+LS에코에너지,01093007,229640,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:34:58
+LS에코에너지,01093007,229640,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:34:58
+LS에코에너지,01093007,229640,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:34:58
+LS에코에너지,01093007,229640,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=43 slider_extended=True,,2026-07-07T06:34:58
+LS에코에너지,01093007,229640,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:34:58
+LS에코에너지,01093007,229640,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:34:58
+LS에코에너지,01093007,229640,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:35:05
+LS에코에너지,01093007,229640,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:35:05
+LS에코에너지,01093007,229640,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:35:05
+LS에코에너지,01093007,229640,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=45 slider_extended=True,,2026-07-07T06:35:05
+LS에코에너지,01093007,229640,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:35:05
+LS에코에너지,01093007,229640,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:35:05
+소프트캠프,01182408,258790,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:35:19
+소프트캠프,01182408,258790,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:35:19
+소프트캠프,01182408,258790,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:35:19
+소프트캠프,01182408,258790,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=11 slider_extended=True,,2026-07-07T06:35:19
+소프트캠프,01182408,258790,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:35:19
+소프트캠프,01182408,258790,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:35:19
+소프트캠프,01182408,258790,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:35:24
+소프트캠프,01182408,258790,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:35:24
+소프트캠프,01182408,258790,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:35:24
+소프트캠프,01182408,258790,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=14 slider_extended=True,,2026-07-07T06:35:24
+소프트캠프,01182408,258790,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:35:24
+소프트캠프,01182408,258790,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:35:24
+소프트캠프,01182408,258790,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:35:30
+소프트캠프,01182408,258790,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:35:30
+소프트캠프,01182408,258790,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:35:30
+소프트캠프,01182408,258790,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=32 slider_extended=True,,2026-07-07T06:35:30
+소프트캠프,01182408,258790,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:35:30
+소프트캠프,01182408,258790,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:35:30
+소프트캠프,01182408,258790,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:35:37
+소프트캠프,01182408,258790,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:35:37
+소프트캠프,01182408,258790,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:35:37
+소프트캠프,01182408,258790,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=40 slider_extended=True,,2026-07-07T06:35:37
+소프트캠프,01182408,258790,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:35:37
+소프트캠프,01182408,258790,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:35:37
+NPX,01037542,222160,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:35:51
+NPX,01037542,222160,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:35:51
+NPX,01037542,222160,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:35:51
+NPX,01037542,222160,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=14 slider_extended=True,,2026-07-07T06:35:51
+NPX,01037542,222160,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:35:51
+NPX,01037542,222160,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:35:51
+NPX,01037542,222160,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:35:56
+NPX,01037542,222160,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:35:56
+NPX,01037542,222160,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:35:56
+NPX,01037542,222160,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=14 slider_extended=True,,2026-07-07T06:35:56
+NPX,01037542,222160,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:35:56
+NPX,01037542,222160,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:35:56
+NPX,01037542,222160,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:36:03
+NPX,01037542,222160,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:36:03
+NPX,01037542,222160,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:36:03
+NPX,01037542,222160,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=16 slider_extended=True,,2026-07-07T06:36:03
+NPX,01037542,222160,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:36:03
+NPX,01037542,222160,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:36:03
+NPX,01037542,222160,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:36:10
+NPX,01037542,222160,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:36:10
+NPX,01037542,222160,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:36:10
+NPX,01037542,222160,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=18 slider_extended=True,,2026-07-07T06:36:10
+NPX,01037542,222160,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:36:10
+NPX,01037542,222160,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:36:10
+제이케이시냅스,00363510,060230,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:36:24
+제이케이시냅스,00363510,060230,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:36:24
+제이케이시냅스,00363510,060230,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:36:24
+제이케이시냅스,00363510,060230,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:36:24
+제이케이시냅스,00363510,060230,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:36:24
+제이케이시냅스,00363510,060230,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:36:24
+제이케이시냅스,00363510,060230,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:36:29
+제이케이시냅스,00363510,060230,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:36:29
+제이케이시냅스,00363510,060230,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:36:29
+제이케이시냅스,00363510,060230,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=25 slider_extended=True,,2026-07-07T06:36:29
+제이케이시냅스,00363510,060230,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:36:29
+제이케이시냅스,00363510,060230,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:36:29
+제이케이시냅스,00363510,060230,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:36:35
+제이케이시냅스,00363510,060230,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:36:35
+제이케이시냅스,00363510,060230,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:36:35
+제이케이시냅스,00363510,060230,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=61 slider_extended=True,,2026-07-07T06:36:35
+제이케이시냅스,00363510,060230,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:36:35
+제이케이시냅스,00363510,060230,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:36:35
+제이케이시냅스,00363510,060230,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:36:42
+제이케이시냅스,00363510,060230,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:36:42
+제이케이시냅스,00363510,060230,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:36:42
+제이케이시냅스,00363510,060230,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=81 slider_extended=True,,2026-07-07T06:36:42
+제이케이시냅스,00363510,060230,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:36:42
+제이케이시냅스,00363510,060230,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:36:42
+경보제약,00101664,214390,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:36:56
+경보제약,00101664,214390,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:36:56
+경보제약,00101664,214390,KOSPI,연간x연결,상단,DS-4,PASS,substitution caption present,,2026-07-07T06:36:56
+경보제약,00101664,214390,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:36:56
+경보제약,00101664,214390,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=15 slider_extended=True,,2026-07-07T06:36:56
+경보제약,00101664,214390,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:36:56
+경보제약,00101664,214390,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:36:56
+경보제약,00101664,214390,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:37:01
+경보제약,00101664,214390,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:37:01
+경보제약,00101664,214390,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:37:01
+경보제약,00101664,214390,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=15 slider_extended=True,,2026-07-07T06:37:01
+경보제약,00101664,214390,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:37:01
+경보제약,00101664,214390,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:37:01
+경보제약,00101664,214390,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:37:07
+경보제약,00101664,214390,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:37:07
+경보제약,00101664,214390,KOSPI,분기x연결,상단,DS-4,PASS,substitution caption present,,2026-07-07T06:37:07
+경보제약,00101664,214390,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:37:07
+경보제약,00101664,214390,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=52 slider_extended=True,,2026-07-07T06:37:07
+경보제약,00101664,214390,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:37:07
+경보제약,00101664,214390,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:37:07
+경보제약,00101664,214390,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:37:15
+경보제약,00101664,214390,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:37:15
+경보제약,00101664,214390,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:37:15
+경보제약,00101664,214390,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=52 slider_extended=True,,2026-07-07T06:37:15
+경보제약,00101664,214390,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:37:15
+경보제약,00101664,214390,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:37:15
+고려제약,00103015,014570,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:37:28
+고려제약,00103015,014570,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:37:28
+고려제약,00103015,014570,KOSDAQ,연간x연결,상단,DS-4,PASS,substitution caption present,,2026-07-07T06:37:28
+고려제약,00103015,014570,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:37:28
+고려제약,00103015,014570,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=23 slider_extended=True,,2026-07-07T06:37:28
+고려제약,00103015,014570,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:37:28
+고려제약,00103015,014570,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:37:28
+고려제약,00103015,014570,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:37:33
+고려제약,00103015,014570,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:37:33
+고려제약,00103015,014570,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:37:33
+고려제약,00103015,014570,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=23 slider_extended=True,,2026-07-07T06:37:33
+고려제약,00103015,014570,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:37:33
+고려제약,00103015,014570,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:37:33
+고려제약,00103015,014570,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:37:40
+고려제약,00103015,014570,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:37:40
+고려제약,00103015,014570,KOSDAQ,분기x연결,상단,DS-4,PASS,substitution caption present,,2026-07-07T06:37:40
+고려제약,00103015,014570,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:37:40
+고려제약,00103015,014570,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=75 slider_extended=True,,2026-07-07T06:37:40
+고려제약,00103015,014570,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:37:40
+고려제약,00103015,014570,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:37:40
+고려제약,00103015,014570,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:37:47
+고려제약,00103015,014570,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:37:47
+고려제약,00103015,014570,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:37:47
+고려제약,00103015,014570,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=75 slider_extended=True,,2026-07-07T06:37:47
+고려제약,00103015,014570,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:37:47
+고려제약,00103015,014570,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:37:47
+우진비앤지,00103547,018620,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:38:01
+우진비앤지,00103547,018620,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:38:01
+우진비앤지,00103547,018620,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:38:01
+우진비앤지,00103547,018620,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=12 slider_extended=True,,2026-07-07T06:38:01
+우진비앤지,00103547,018620,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:38:01
+우진비앤지,00103547,018620,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:38:01
+우진비앤지,00103547,018620,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:38:06
+우진비앤지,00103547,018620,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:38:06
+우진비앤지,00103547,018620,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:38:06
+우진비앤지,00103547,018620,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=22 slider_extended=True,,2026-07-07T06:38:06
+우진비앤지,00103547,018620,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:38:06
+우진비앤지,00103547,018620,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:38:06
+우진비앤지,00103547,018620,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:38:12
+우진비앤지,00103547,018620,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:38:12
+우진비앤지,00103547,018620,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:38:12
+우진비앤지,00103547,018620,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=36 slider_extended=True,,2026-07-07T06:38:12
+우진비앤지,00103547,018620,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:38:12
+우진비앤지,00103547,018620,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:38:12
+우진비앤지,00103547,018620,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:38:19
+우진비앤지,00103547,018620,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:38:19
+우진비앤지,00103547,018620,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:38:19
+우진비앤지,00103547,018620,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=73 slider_extended=True,,2026-07-07T06:38:19
+우진비앤지,00103547,018620,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:38:19
+우진비앤지,00103547,018620,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:38:19
+광동제약,00103592,009290,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:38:33
+광동제약,00103592,009290,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:38:33
+광동제약,00103592,009290,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:38:33
+광동제약,00103592,009290,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:38:33
+광동제약,00103592,009290,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:38:33
+광동제약,00103592,009290,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:38:33
+광동제약,00103592,009290,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:38:38
+광동제약,00103592,009290,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:38:38
+광동제약,00103592,009290,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:38:38
+광동제약,00103592,009290,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=23 slider_extended=True,,2026-07-07T06:38:38
+광동제약,00103592,009290,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:38:38
+광동제약,00103592,009290,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:38:38
+광동제약,00103592,009290,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:38:44
+광동제약,00103592,009290,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:38:44
+광동제약,00103592,009290,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:38:44
+광동제약,00103592,009290,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=60 slider_extended=True,,2026-07-07T06:38:44
+광동제약,00103592,009290,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:38:44
+광동제약,00103592,009290,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:38:44
+광동제약,00103592,009290,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:38:52
+광동제약,00103592,009290,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:38:52
+광동제약,00103592,009290,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:38:52
+광동제약,00103592,009290,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=76 slider_extended=True,,2026-07-07T06:38:52
+광동제약,00103592,009290,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:38:52
+광동제약,00103592,009290,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:38:52
+광명전기,00103662,017040,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:39:05
+광명전기,00103662,017040,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:39:05
+광명전기,00103662,017040,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:39:05
+광명전기,00103662,017040,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=18 slider_extended=True,,2026-07-07T06:39:05
+광명전기,00103662,017040,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:39:05
+광명전기,00103662,017040,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:39:05
+광명전기,00103662,017040,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:39:11
+광명전기,00103662,017040,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:39:11
+광명전기,00103662,017040,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:39:11
+광명전기,00103662,017040,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=25 slider_extended=True,,2026-07-07T06:39:11
+광명전기,00103662,017040,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:39:11
+광명전기,00103662,017040,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:39:11
+광명전기,00103662,017040,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:39:17
+광명전기,00103662,017040,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:39:17
+광명전기,00103662,017040,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:39:17
+광명전기,00103662,017040,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=53 slider_extended=True,,2026-07-07T06:39:17
+광명전기,00103662,017040,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:39:17
+광명전기,00103662,017040,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:39:17
+광명전기,00103662,017040,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:39:24
+광명전기,00103662,017040,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:39:24
+광명전기,00103662,017040,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:39:24
+광명전기,00103662,017040,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=84 slider_extended=True,,2026-07-07T06:39:24
+광명전기,00103662,017040,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:39:24
+광명전기,00103662,017040,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:39:24
+광진실업,00104120,026910,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:39:38
+광진실업,00104120,026910,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:39:38
+광진실업,00104120,026910,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:39:38
+광진실업,00104120,026910,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=8 slider_extended=True,,2026-07-07T06:39:38
+광진실업,00104120,026910,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:39:38
+광진실업,00104120,026910,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:39:38
+광진실업,00104120,026910,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:39:43
+광진실업,00104120,026910,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:39:43
+광진실업,00104120,026910,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:39:43
+광진실업,00104120,026910,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=23 slider_extended=True,,2026-07-07T06:39:43
+광진실업,00104120,026910,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:39:43
+광진실업,00104120,026910,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:39:43
+광진실업,00104120,026910,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:39:49
+광진실업,00104120,026910,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:39:49
+광진실업,00104120,026910,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:39:49
+광진실업,00104120,026910,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=23 slider_extended=True,,2026-07-07T06:39:49
+광진실업,00104120,026910,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:39:49
+광진실업,00104120,026910,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:39:49
+광진실업,00104120,026910,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:39:57
+광진실업,00104120,026910,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:39:57
+광진실업,00104120,026910,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:39:57
+광진실업,00104120,026910,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=78 slider_extended=True,,2026-07-07T06:39:57
+광진실업,00104120,026910,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:39:57
+광진실업,00104120,026910,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:39:57
+KG케미칼,00101220,001390,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:40:10
+KG케미칼,00101220,001390,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:40:10
+KG케미칼,00101220,001390,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:40:10
+KG케미칼,00101220,001390,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=20 slider_extended=True,,2026-07-07T06:40:10
+KG케미칼,00101220,001390,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:40:10
+KG케미칼,00101220,001390,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:40:10
+KG케미칼,00101220,001390,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:40:15
+KG케미칼,00101220,001390,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:40:15
+KG케미칼,00101220,001390,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:40:15
+KG케미칼,00101220,001390,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=24 slider_extended=True,,2026-07-07T06:40:15
+KG케미칼,00101220,001390,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:40:15
+KG케미칼,00101220,001390,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:40:15
+KG케미칼,00101220,001390,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:40:22
+KG케미칼,00101220,001390,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:40:22
+KG케미칼,00101220,001390,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:40:22
+KG케미칼,00101220,001390,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=61 slider_extended=True,,2026-07-07T06:40:22
+KG케미칼,00101220,001390,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:40:22
+KG케미칼,00101220,001390,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:40:22
+KG케미칼,00101220,001390,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:40:29
+KG케미칼,00101220,001390,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:40:29
+KG케미칼,00101220,001390,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:40:29
+KG케미칼,00101220,001390,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=82 slider_extended=True,,2026-07-07T06:40:29
+KG케미칼,00101220,001390,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:40:29
+KG케미칼,00101220,001390,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:40:29
+경농,00101433,002100,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:40:43
+경농,00101433,002100,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:40:43
+경농,00101433,002100,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:40:43
+경농,00101433,002100,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:40:43
+경농,00101433,002100,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:40:43
+경농,00101433,002100,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:40:43
+경농,00101433,002100,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:40:48
+경농,00101433,002100,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:40:48
+경농,00101433,002100,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:40:48
+경농,00101433,002100,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=25 slider_extended=True,,2026-07-07T06:40:48
+경농,00101433,002100,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:40:48
+경농,00101433,002100,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:40:48
+경농,00101433,002100,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:40:54
+경농,00101433,002100,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:40:54
+경농,00101433,002100,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:40:54
+경농,00101433,002100,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=60 slider_extended=True,,2026-07-07T06:40:54
+경농,00101433,002100,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:40:54
+경농,00101433,002100,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:40:54
+경농,00101433,002100,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:41:01
+경농,00101433,002100,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:41:01
+경농,00101433,002100,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:41:01
+경농,00101433,002100,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=85 slider_extended=True,,2026-07-07T06:41:01
+경농,00101433,002100,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:41:01
+경농,00101433,002100,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:41:01
+경동나비엔,00101488,009450,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:41:15
+경동나비엔,00101488,009450,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:41:15
+경동나비엔,00101488,009450,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:41:15
+경동나비엔,00101488,009450,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:41:15
+경동나비엔,00101488,009450,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:41:15
+경동나비엔,00101488,009450,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:41:15
+경동나비엔,00101488,009450,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:41:20
+경동나비엔,00101488,009450,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:41:20
+경동나비엔,00101488,009450,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:41:20
+경동나비엔,00101488,009450,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=21 slider_extended=True,,2026-07-07T06:41:20
+경동나비엔,00101488,009450,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:41:20
+경동나비엔,00101488,009450,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:41:20
+경동나비엔,00101488,009450,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:41:26
+경동나비엔,00101488,009450,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:41:26
+경동나비엔,00101488,009450,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:41:26
+경동나비엔,00101488,009450,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=70 slider_extended=True,,2026-07-07T06:41:26
+경동나비엔,00101488,009450,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:41:26
+경동나비엔,00101488,009450,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:41:26
+경동나비엔,00101488,009450,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:41:34
+경동나비엔,00101488,009450,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:41:34
+경동나비엔,00101488,009450,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:41:34
+경동나비엔,00101488,009450,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=77 slider_extended=True,,2026-07-07T06:41:34
+경동나비엔,00101488,009450,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:41:34
+경동나비엔,00101488,009450,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:41:34
+경방,00101628,000050,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:41:47
+경방,00101628,000050,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:41:47
+경방,00101628,000050,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:41:47
+경방,00101628,000050,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=20 slider_extended=True,,2026-07-07T06:41:47
+경방,00101628,000050,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:41:47
+경방,00101628,000050,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:41:47
+경방,00101628,000050,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:41:53
+경방,00101628,000050,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:41:53
+경방,00101628,000050,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:41:53
+경방,00101628,000050,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=29 slider_extended=True,,2026-07-07T06:41:53
+경방,00101628,000050,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:41:53
+경방,00101628,000050,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:41:53
+경방,00101628,000050,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:41:59
+경방,00101628,000050,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:41:59
+경방,00101628,000050,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:41:59
+경방,00101628,000050,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=66 slider_extended=True,,2026-07-07T06:41:59
+경방,00101628,000050,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:41:59
+경방,00101628,000050,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:41:59
+경방,00101628,000050,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:42:06
+경방,00101628,000050,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:42:06
+경방,00101628,000050,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:42:06
+경방,00101628,000050,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=89 slider_extended=True,,2026-07-07T06:42:06
+경방,00101628,000050,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:42:06
+경방,00101628,000050,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:42:06
+인디에프,00106881,014990,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:42:20
+인디에프,00106881,014990,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:42:20
+인디에프,00106881,014990,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:42:20
+인디에프,00106881,014990,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=21 slider_extended=True,,2026-07-07T06:42:20
+인디에프,00106881,014990,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:42:20
+인디에프,00106881,014990,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:42:20
+인디에프,00106881,014990,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:42:25
+인디에프,00106881,014990,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:42:25
+인디에프,00106881,014990,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:42:25
+인디에프,00106881,014990,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=29 slider_extended=True,,2026-07-07T06:42:25
+인디에프,00106881,014990,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:42:25
+인디에프,00106881,014990,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:42:25
+인디에프,00106881,014990,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:42:31
+인디에프,00106881,014990,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:42:31
+인디에프,00106881,014990,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:42:31
+인디에프,00106881,014990,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=78 slider_extended=True,,2026-07-07T06:42:31
+인디에프,00106881,014990,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:42:31
+인디에프,00106881,014990,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:42:31
+인디에프,00106881,014990,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:42:39
+인디에프,00106881,014990,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:42:39
+인디에프,00106881,014990,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:42:39
+인디에프,00106881,014990,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=87 slider_extended=True,,2026-07-07T06:42:39
+인디에프,00106881,014990,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:42:39
+인디에프,00106881,014990,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:42:39
+남광토건,00107066,001260,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:42:52
+남광토건,00107066,001260,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:42:52
+남광토건,00107066,001260,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:42:52
+남광토건,00107066,001260,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:42:52
+남광토건,00107066,001260,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:42:52
+남광토건,00107066,001260,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:42:52
+남광토건,00107066,001260,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:42:58
+남광토건,00107066,001260,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:42:58
+남광토건,00107066,001260,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:42:58
+남광토건,00107066,001260,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=27 slider_extended=True,,2026-07-07T06:42:58
+남광토건,00107066,001260,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:42:58
+남광토건,00107066,001260,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:42:58
+남광토건,00107066,001260,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:43:04
+남광토건,00107066,001260,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:43:04
+남광토건,00107066,001260,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:43:04
+남광토건,00107066,001260,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=60 slider_extended=True,,2026-07-07T06:43:04
+남광토건,00107066,001260,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:43:04
+남광토건,00107066,001260,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:43:04
+남광토건,00107066,001260,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:43:11
+남광토건,00107066,001260,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:43:11
+남광토건,00107066,001260,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:43:11
+남광토건,00107066,001260,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=85 slider_extended=True,,2026-07-07T06:43:11
+남광토건,00107066,001260,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:43:11
+남광토건,00107066,001260,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:43:11
+플레이그램,00103130,009810,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:43:25
+플레이그램,00103130,009810,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:43:25
+플레이그램,00103130,009810,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:43:25
+플레이그램,00103130,009810,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=21 slider_extended=True,,2026-07-07T06:43:25
+플레이그램,00103130,009810,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:43:25
+플레이그램,00103130,009810,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:43:25
+플레이그램,00103130,009810,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:43:30
+플레이그램,00103130,009810,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:43:30
+플레이그램,00103130,009810,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:43:30
+플레이그램,00103130,009810,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=27 slider_extended=True,,2026-07-07T06:43:30
+플레이그램,00103130,009810,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:43:30
+플레이그램,00103130,009810,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:43:30
+플레이그램,00103130,009810,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:43:36
+플레이그램,00103130,009810,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:43:36
+플레이그램,00103130,009810,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:43:36
+플레이그램,00103130,009810,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=63 slider_extended=True,,2026-07-07T06:43:36
+플레이그램,00103130,009810,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:43:36
+플레이그램,00103130,009810,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:43:36
+플레이그램,00103130,009810,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:43:44
+플레이그램,00103130,009810,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:43:44
+플레이그램,00103130,009810,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:43:44
+플레이그램,00103130,009810,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=85 slider_extended=True,,2026-07-07T06:43:44
+플레이그램,00103130,009810,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:43:44
+플레이그램,00103130,009810,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:43:44
+인지컨트롤스,00103510,023800,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:43:58
+인지컨트롤스,00103510,023800,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:43:58
+인지컨트롤스,00103510,023800,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:43:58
+인지컨트롤스,00103510,023800,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:43:58
+인지컨트롤스,00103510,023800,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:43:58
+인지컨트롤스,00103510,023800,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:43:58
+인지컨트롤스,00103510,023800,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:44:03
+인지컨트롤스,00103510,023800,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:44:03
+인지컨트롤스,00103510,023800,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:44:03
+인지컨트롤스,00103510,023800,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=25 slider_extended=True,,2026-07-07T06:44:03
+인지컨트롤스,00103510,023800,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:44:03
+인지컨트롤스,00103510,023800,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:44:03
+인지컨트롤스,00103510,023800,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:44:09
+인지컨트롤스,00103510,023800,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:44:09
+인지컨트롤스,00103510,023800,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:44:09
+인지컨트롤스,00103510,023800,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=63 slider_extended=True,,2026-07-07T06:44:09
+인지컨트롤스,00103510,023800,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:44:09
+인지컨트롤스,00103510,023800,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:44:09
+인지컨트롤스,00103510,023800,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:44:16
+인지컨트롤스,00103510,023800,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:44:16
+인지컨트롤스,00103510,023800,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:44:16
+인지컨트롤스,00103510,023800,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=82 slider_extended=True,,2026-07-07T06:44:16
+인지컨트롤스,00103510,023800,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:44:16
+인지컨트롤스,00103510,023800,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:44:16
+계룡건설산업,00102432,013580,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:44:30
+계룡건설산업,00102432,013580,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:44:30
+계룡건설산업,00102432,013580,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:44:30
+계룡건설산업,00102432,013580,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:44:30
+계룡건설산업,00102432,013580,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:44:30
+계룡건설산업,00102432,013580,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:44:30
+계룡건설산업,00102432,013580,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:44:35
+계룡건설산업,00102432,013580,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:44:35
+계룡건설산업,00102432,013580,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:44:35
+계룡건설산업,00102432,013580,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=30 slider_extended=True,,2026-07-07T06:44:35
+계룡건설산업,00102432,013580,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:44:35
+계룡건설산업,00102432,013580,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:44:35
+계룡건설산업,00102432,013580,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:44:41
+계룡건설산업,00102432,013580,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:44:41
+계룡건설산업,00102432,013580,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:44:41
+계룡건설산업,00102432,013580,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=68 slider_extended=True,,2026-07-07T06:44:41
+계룡건설산업,00102432,013580,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:44:41
+계룡건설산업,00102432,013580,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:44:41
+계룡건설산업,00102432,013580,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:44:49
+계룡건설산업,00102432,013580,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:44:49
+계룡건설산업,00102432,013580,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:44:49
+계룡건설산업,00102432,013580,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=89 slider_extended=True,,2026-07-07T06:44:49
+계룡건설산업,00102432,013580,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:44:49
+계룡건설산업,00102432,013580,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:44:49
+고려아연,00102858,010130,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:45:02
+고려아연,00102858,010130,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:45:02
+고려아연,00102858,010130,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:45:02
+고려아연,00102858,010130,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:45:02
+고려아연,00102858,010130,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:45:02
+고려아연,00102858,010130,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:45:02
+고려아연,00102858,010130,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:45:08
+고려아연,00102858,010130,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:45:08
+고려아연,00102858,010130,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:45:08
+고려아연,00102858,010130,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=30 slider_extended=True,,2026-07-07T06:45:08
+고려아연,00102858,010130,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:45:08
+고려아연,00102858,010130,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:45:08
+고려아연,00102858,010130,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:45:14
+고려아연,00102858,010130,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:45:14
+고려아연,00102858,010130,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:45:14
+고려아연,00102858,010130,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=63 slider_extended=True,,2026-07-07T06:45:14
+고려아연,00102858,010130,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:45:14
+고려아연,00102858,010130,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:45:14
+고려아연,00102858,010130,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:45:21
+고려아연,00102858,010130,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:45:21
+고려아연,00102858,010130,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:45:21
+고려아연,00102858,010130,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=89 slider_extended=True,,2026-07-07T06:45:21
+고려아연,00102858,010130,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:45:21
+고려아연,00102858,010130,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:45:21
+맥쿼리인프라,00435297,088980,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:45:34
+맥쿼리인프라,00435297,088980,KOSPI,연간x연결,재무제표,DS-1/NA,NA,"std_financials_v2/calendar_financials 데이터 0건 (데이터결함, 앱버그 아님) — 앱이 경고문구를 정상 표시하고 탭 자체를 렌더하지 않음",,2026-07-07T06:45:34
+맥쿼리인프라,00435297,088980,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:45:34
+맥쿼리인프라,00435297,088980,KOSPI,연간x별도,재무제표,DS-1/NA,NA,"std_financials_v2/calendar_financials 데이터 0건 (데이터결함, 앱버그 아님) — 앱이 경고문구를 정상 표시하고 탭 자체를 렌더하지 않음",,2026-07-07T06:45:34
+맥쿼리인프라,00435297,088980,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:45:36
+맥쿼리인프라,00435297,088980,KOSPI,분기x연결,재무제표,DS-1/NA,NA,"std_financials_v2/calendar_financials 데이터 0건 (데이터결함, 앱버그 아님) — 앱이 경고문구를 정상 표시하고 탭 자체를 렌더하지 않음",,2026-07-07T06:45:36
+맥쿼리인프라,00435297,088980,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:45:40
+맥쿼리인프라,00435297,088980,KOSPI,분기x별도,재무제표,DS-1/NA,NA,"std_financials_v2/calendar_financials 데이터 0건 (데이터결함, 앱버그 아님) — 앱이 경고문구를 정상 표시하고 탭 자체를 렌더하지 않음",,2026-07-07T06:45:40
+져스텍,00577593,153890,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:45:48
+져스텍,00577593,153890,KOSDAQ,연간x연결,재무제표,DS-1/NA,NA,"std_financials_v2/calendar_financials 데이터 0건 (데이터결함, 앱버그 아님) — 앱이 경고문구를 정상 표시하고 탭 자체를 렌더하지 않음",,2026-07-07T06:45:48
+져스텍,00577593,153890,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:45:49
+져스텍,00577593,153890,KOSDAQ,연간x별도,재무제표,DS-1/NA,NA,"std_financials_v2/calendar_financials 데이터 0건 (데이터결함, 앱버그 아님) — 앱이 경고문구를 정상 표시하고 탭 자체를 렌더하지 않음",,2026-07-07T06:45:49
+져스텍,00577593,153890,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:45:50
+져스텍,00577593,153890,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:45:50
+져스텍,00577593,153890,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:45:50
+져스텍,00577593,153890,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=3 slider_extended=False,,2026-07-07T06:45:50
+져스텍,00577593,153890,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:45:50
+져스텍,00577593,153890,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:45:50
+져스텍,00577593,153890,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:45:57
+져스텍,00577593,153890,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:45:57
+져스텍,00577593,153890,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:45:57
+져스텍,00577593,153890,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=3 slider_extended=False,,2026-07-07T06:45:57
+져스텍,00577593,153890,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:45:57
+져스텍,00577593,153890,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:45:57
+SK,00181712,034730,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:46:09
+SK,00181712,034730,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:46:09
+SK,00181712,034730,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:46:09
+SK,00181712,034730,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=23 slider_extended=True,,2026-07-07T06:46:09
+SK,00181712,034730,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:46:09
+SK,00181712,034730,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:46:09
+SK,00181712,034730,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:46:14
+SK,00181712,034730,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:46:14
+SK,00181712,034730,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:46:14
+SK,00181712,034730,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=21 slider_extended=True,,2026-07-07T06:46:14
+SK,00181712,034730,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:46:14
+SK,00181712,034730,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:46:14
+SK,00181712,034730,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:46:21
+SK,00181712,034730,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:46:21
+SK,00181712,034730,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:46:21
+SK,00181712,034730,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=73 slider_extended=True,,2026-07-07T06:46:21
+SK,00181712,034730,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:46:21
+SK,00181712,034730,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:46:21
+SK,00181712,034730,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:46:28
+SK,00181712,034730,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:46:28
+SK,00181712,034730,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:46:28
+SK,00181712,034730,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=76 slider_extended=True,,2026-07-07T06:46:28
+SK,00181712,034730,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:46:28
+SK,00181712,034730,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:46:28
+경창산업,00102353,024910,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:46:42
+경창산업,00102353,024910,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:46:42
+경창산업,00102353,024910,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:46:42
+경창산업,00102353,024910,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:46:42
+경창산업,00102353,024910,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:46:42
+경창산업,00102353,024910,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:46:42
+경창산업,00102353,024910,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:46:47
+경창산업,00102353,024910,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:46:47
+경창산업,00102353,024910,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:46:47
+경창산업,00102353,024910,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=30 slider_extended=True,,2026-07-07T06:46:47
+경창산업,00102353,024910,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:46:47
+경창산업,00102353,024910,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:46:47
+경창산업,00102353,024910,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:46:53
+경창산업,00102353,024910,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:46:53
+경창산업,00102353,024910,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:46:53
+경창산업,00102353,024910,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=59 slider_extended=True,,2026-07-07T06:46:53
+경창산업,00102353,024910,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:46:53
+경창산업,00102353,024910,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:46:53
+경창산업,00102353,024910,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:47:01
+경창산업,00102353,024910,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:47:01
+경창산업,00102353,024910,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:47:01
+경창산업,00102353,024910,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=91 slider_extended=True,,2026-07-07T06:47:01
+경창산업,00102353,024910,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:47:01
+경창산업,00102353,024910,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:47:01
+코스모로보틱스,01802928,439960,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:47:13
+코스모로보틱스,01802928,439960,KOSDAQ,연간x연결,재무제표,DS-1/NA,NA,"std_financials_v2/calendar_financials 데이터 0건 (데이터결함, 앱버그 아님) — 앱이 경고문구를 정상 표시하고 탭 자체를 렌더하지 않음",,2026-07-07T06:47:13
+코스모로보틱스,01802928,439960,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:47:13
+코스모로보틱스,01802928,439960,KOSDAQ,연간x별도,재무제표,DS-1/NA,NA,"std_financials_v2/calendar_financials 데이터 0건 (데이터결함, 앱버그 아님) — 앱이 경고문구를 정상 표시하고 탭 자체를 렌더하지 않음",,2026-07-07T06:47:13
+코스모로보틱스,01802928,439960,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:47:15
+코스모로보틱스,01802928,439960,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:47:15
+코스모로보틱스,01802928,439960,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:47:15
+코스모로보틱스,01802928,439960,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=3 slider_extended=False,,2026-07-07T06:47:15
+코스모로보틱스,01802928,439960,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:47:15
+코스모로보틱스,01802928,439960,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:47:15
+코스모로보틱스,01802928,439960,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:47:22
+코스모로보틱스,01802928,439960,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:47:22
+코스모로보틱스,01802928,439960,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:47:22
+코스모로보틱스,01802928,439960,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=3 slider_extended=False,,2026-07-07T06:47:22
+코스모로보틱스,01802928,439960,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:47:22
+코스모로보틱스,01802928,439960,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:47:22
+마키나락스,01709065,477850,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:47:33
+마키나락스,01709065,477850,KOSDAQ,연간x연결,재무제표,DS-1/NA,NA,"std_financials_v2/calendar_financials 데이터 0건 (데이터결함, 앱버그 아님) — 앱이 경고문구를 정상 표시하고 탭 자체를 렌더하지 않음",,2026-07-07T06:47:33
+마키나락스,01709065,477850,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:47:33
+마키나락스,01709065,477850,KOSDAQ,연간x별도,재무제표,DS-1/NA,NA,"std_financials_v2/calendar_financials 데이터 0건 (데이터결함, 앱버그 아님) — 앱이 경고문구를 정상 표시하고 탭 자체를 렌더하지 않음",,2026-07-07T06:47:33
+마키나락스,01709065,477850,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:47:35
+마키나락스,01709065,477850,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:47:35
+마키나락스,01709065,477850,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:47:35
+마키나락스,01709065,477850,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=4 slider_extended=True,,2026-07-07T06:47:35
+마키나락스,01709065,477850,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:47:35
+마키나락스,01709065,477850,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:47:35
+마키나락스,01709065,477850,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:47:44
+마키나락스,01709065,477850,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:47:44
+마키나락스,01709065,477850,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:47:44
+마키나락스,01709065,477850,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=4 slider_extended=True,,2026-07-07T06:47:44
+마키나락스,01709065,477850,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:47:44
+마키나락스,01709065,477850,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:47:44
+영원무역,00776820,111770,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:47:57
+영원무역,00776820,111770,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:47:57
+영원무역,00776820,111770,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:47:57
+영원무역,00776820,111770,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:47:57
+영원무역,00776820,111770,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:47:57
+영원무역,00776820,111770,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:47:57
+영원무역,00776820,111770,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:48:02
+영원무역,00776820,111770,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:48:02
+영원무역,00776820,111770,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:48:02
+영원무역,00776820,111770,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:48:02
+영원무역,00776820,111770,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:48:02
+영원무역,00776820,111770,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:48:02
+영원무역,00776820,111770,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:48:09
+영원무역,00776820,111770,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:48:09
+영원무역,00776820,111770,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:48:09
+영원무역,00776820,111770,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=65 slider_extended=True,,2026-07-07T06:48:09
+영원무역,00776820,111770,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:48:09
+영원무역,00776820,111770,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:48:09
+영원무역,00776820,111770,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:48:16
+영원무역,00776820,111770,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:48:16
+영원무역,00776820,111770,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:48:16
+영원무역,00776820,111770,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=66 slider_extended=True,,2026-07-07T06:48:16
+영원무역,00776820,111770,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:48:16
+영원무역,00776820,111770,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:48:16
+원풍물산,00144021,008290,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:48:30
+원풍물산,00144021,008290,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:48:30
+원풍물산,00144021,008290,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:48:30
+원풍물산,00144021,008290,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=8 slider_extended=True,,2026-07-07T06:48:30
+원풍물산,00144021,008290,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:48:30
+원풍물산,00144021,008290,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:48:30
+원풍물산,00144021,008290,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:48:35
+원풍물산,00144021,008290,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:48:35
+원풍물산,00144021,008290,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:48:35
+원풍물산,00144021,008290,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=30 slider_extended=True,,2026-07-07T06:48:35
+원풍물산,00144021,008290,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:48:35
+원풍물산,00144021,008290,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:48:35
+원풍물산,00144021,008290,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:48:41
+원풍물산,00144021,008290,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:48:41
+원풍물산,00144021,008290,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:48:41
+원풍물산,00144021,008290,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=23 slider_extended=True,,2026-07-07T06:48:41
+원풍물산,00144021,008290,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:48:41
+원풍물산,00144021,008290,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:48:41
+원풍물산,00144021,008290,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:48:49
+원풍물산,00144021,008290,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:48:49
+원풍물산,00144021,008290,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:48:49
+원풍물산,00144021,008290,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=89 slider_extended=True,,2026-07-07T06:48:49
+원풍물산,00144021,008290,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:48:49
+원풍물산,00144021,008290,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:48:49
+서연이화,01036446,200880,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:49:02
+서연이화,01036446,200880,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:49:02
+서연이화,01036446,200880,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:49:02
+서연이화,01036446,200880,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=14 slider_extended=True,,2026-07-07T06:49:02
+서연이화,01036446,200880,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:49:02
+서연이화,01036446,200880,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:49:02
+서연이화,01036446,200880,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:49:07
+서연이화,01036446,200880,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:49:07
+서연이화,01036446,200880,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:49:07
+서연이화,01036446,200880,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=14 slider_extended=True,,2026-07-07T06:49:07
+서연이화,01036446,200880,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:49:07
+서연이화,01036446,200880,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:49:07
+서연이화,01036446,200880,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:49:14
+서연이화,01036446,200880,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:49:14
+서연이화,01036446,200880,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:49:14
+서연이화,01036446,200880,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=51 slider_extended=True,,2026-07-07T06:49:14
+서연이화,01036446,200880,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:49:14
+서연이화,01036446,200880,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:49:14
+서연이화,01036446,200880,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:49:21
+서연이화,01036446,200880,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:49:21
+서연이화,01036446,200880,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:49:21
+서연이화,01036446,200880,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=51 slider_extended=True,,2026-07-07T06:49:21
+서연이화,01036446,200880,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:49:21
+서연이화,01036446,200880,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:49:21
+예스티,00530556,122640,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:49:34
+예스티,00530556,122640,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:49:34
+예스티,00530556,122640,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:49:34
+예스티,00530556,122640,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=15 slider_extended=True,,2026-07-07T06:49:34
+예스티,00530556,122640,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:49:34
+예스티,00530556,122640,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:49:34
+예스티,00530556,122640,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:49:40
+예스티,00530556,122640,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:49:40
+예스티,00530556,122640,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:49:40
+예스티,00530556,122640,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=17 slider_extended=True,,2026-07-07T06:49:40
+예스티,00530556,122640,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:49:40
+예스티,00530556,122640,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:49:40
+예스티,00530556,122640,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:49:46
+예스티,00530556,122640,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:49:46
+예스티,00530556,122640,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:49:46
+예스티,00530556,122640,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=44 slider_extended=True,,2026-07-07T06:49:46
+예스티,00530556,122640,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:49:46
+예스티,00530556,122640,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:49:46
+예스티,00530556,122640,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:49:53
+예스티,00530556,122640,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:49:53
+예스티,00530556,122640,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:49:53
+예스티,00530556,122640,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=51 slider_extended=True,,2026-07-07T06:49:53
+예스티,00530556,122640,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:49:53
+예스티,00530556,122640,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:49:53
+태원물산,00154055,001420,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:50:07
+태원물산,00154055,001420,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:50:07
+태원물산,00154055,001420,KOSPI,연간x연결,상단,DS-4,PASS,substitution caption present,,2026-07-07T06:50:07
+태원물산,00154055,001420,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:50:07
+태원물산,00154055,001420,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=30 slider_extended=True,,2026-07-07T06:50:07
+태원물산,00154055,001420,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:50:07
+태원물산,00154055,001420,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:50:07
+태원물산,00154055,001420,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:50:12
+태원물산,00154055,001420,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:50:12
+태원물산,00154055,001420,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:50:12
+태원물산,00154055,001420,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=30 slider_extended=True,,2026-07-07T06:50:12
+태원물산,00154055,001420,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:50:12
+태원물산,00154055,001420,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:50:12
+태원물산,00154055,001420,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:50:19
+태원물산,00154055,001420,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:50:19
+태원물산,00154055,001420,KOSPI,분기x연결,상단,DS-4,PASS,substitution caption present,,2026-07-07T06:50:19
+태원물산,00154055,001420,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:50:19
+태원물산,00154055,001420,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=83 slider_extended=True,,2026-07-07T06:50:19
+태원물산,00154055,001420,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:50:19
+태원물산,00154055,001420,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:50:19
+태원물산,00154055,001420,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:50:26
+태원물산,00154055,001420,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:50:26
+태원물산,00154055,001420,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:50:26
+태원물산,00154055,001420,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=83 slider_extended=True,,2026-07-07T06:50:26
+태원물산,00154055,001420,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:50:26
+태원물산,00154055,001420,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:50:26
+앱토크롬,00653194,109960,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:50:39
+앱토크롬,00653194,109960,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:50:39
+앱토크롬,00653194,109960,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:50:39
+앱토크롬,00653194,109960,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=17 slider_extended=True,,2026-07-07T06:50:39
+앱토크롬,00653194,109960,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:50:39
+앱토크롬,00653194,109960,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:50:39
+앱토크롬,00653194,109960,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:50:45
+앱토크롬,00653194,109960,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:50:45
+앱토크롬,00653194,109960,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:50:45
+앱토크롬,00653194,109960,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=21 slider_extended=True,,2026-07-07T06:50:45
+앱토크롬,00653194,109960,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:50:45
+앱토크롬,00653194,109960,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:50:45
+앱토크롬,00653194,109960,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:50:51
+앱토크롬,00653194,109960,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:50:51
+앱토크롬,00653194,109960,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:50:51
+앱토크롬,00653194,109960,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=58 slider_extended=True,,2026-07-07T06:50:51
+앱토크롬,00653194,109960,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:50:51
+앱토크롬,00653194,109960,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:50:51
+앱토크롬,00653194,109960,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:50:58
+앱토크롬,00653194,109960,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:50:58
+앱토크롬,00653194,109960,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:50:58
+앱토크롬,00653194,109960,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=69 slider_extended=True,,2026-07-07T06:50:58
+앱토크롬,00653194,109960,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:50:58
+앱토크롬,00653194,109960,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:50:58
+롯데에너지머티리얼즈,00113997,020150,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:51:12
+롯데에너지머티리얼즈,00113997,020150,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:51:12
+롯데에너지머티리얼즈,00113997,020150,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:51:12
+롯데에너지머티리얼즈,00113997,020150,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:51:12
+롯데에너지머티리얼즈,00113997,020150,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:51:12
+롯데에너지머티리얼즈,00113997,020150,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:51:12
+롯데에너지머티리얼즈,00113997,020150,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:51:17
+롯데에너지머티리얼즈,00113997,020150,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:51:17
+롯데에너지머티리얼즈,00113997,020150,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:51:17
+롯데에너지머티리얼즈,00113997,020150,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=23 slider_extended=True,,2026-07-07T06:51:17
+롯데에너지머티리얼즈,00113997,020150,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:51:17
+롯데에너지머티리얼즈,00113997,020150,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:51:17
+롯데에너지머티리얼즈,00113997,020150,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:51:23
+롯데에너지머티리얼즈,00113997,020150,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:51:23
+롯데에너지머티리얼즈,00113997,020150,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:51:23
+롯데에너지머티리얼즈,00113997,020150,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=60 slider_extended=True,,2026-07-07T06:51:23
+롯데에너지머티리얼즈,00113997,020150,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:51:23
+롯데에너지머티리얼즈,00113997,020150,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:51:23
+롯데에너지머티리얼즈,00113997,020150,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:51:31
+롯데에너지머티리얼즈,00113997,020150,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:51:31
+롯데에너지머티리얼즈,00113997,020150,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:51:31
+롯데에너지머티리얼즈,00113997,020150,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=66 slider_extended=True,,2026-07-07T06:51:31
+롯데에너지머티리얼즈,00113997,020150,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:51:31
+롯데에너지머티리얼즈,00113997,020150,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:51:31
+모티브링크,00367400,463480,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:51:44
+모티브링크,00367400,463480,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:51:44
+모티브링크,00367400,463480,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:51:44
+모티브링크,00367400,463480,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=6 slider_extended=True,,2026-07-07T06:51:44
+모티브링크,00367400,463480,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:51:44
+모티브링크,00367400,463480,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:51:44
+모티브링크,00367400,463480,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:51:49
+모티브링크,00367400,463480,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:51:49
+모티브링크,00367400,463480,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:51:49
+모티브링크,00367400,463480,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=6 slider_extended=True,,2026-07-07T06:51:49
+모티브링크,00367400,463480,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:51:49
+모티브링크,00367400,463480,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:51:49
+모티브링크,00367400,463480,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:51:55
+모티브링크,00367400,463480,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:51:55
+모티브링크,00367400,463480,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:51:55
+모티브링크,00367400,463480,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=11 slider_extended=True,,2026-07-07T06:51:55
+모티브링크,00367400,463480,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:51:55
+모티브링크,00367400,463480,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:51:55
+모티브링크,00367400,463480,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:52:03
+모티브링크,00367400,463480,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:52:03
+모티브링크,00367400,463480,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:52:03
+모티브링크,00367400,463480,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=11 slider_extended=True,,2026-07-07T06:52:03
+모티브링크,00367400,463480,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:52:03
+모티브링크,00367400,463480,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:52:03
+대한제분,00113243,001130,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:52:16
+대한제분,00113243,001130,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:52:16
+대한제분,00113243,001130,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:52:16
+대한제분,00113243,001130,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=20 slider_extended=True,,2026-07-07T06:52:16
+대한제분,00113243,001130,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:52:16
+대한제분,00113243,001130,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:52:16
+대한제분,00113243,001130,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:52:21
+대한제분,00113243,001130,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:52:21
+대한제분,00113243,001130,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:52:21
+대한제분,00113243,001130,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=27 slider_extended=True,,2026-07-07T06:52:21
+대한제분,00113243,001130,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:52:21
+대한제분,00113243,001130,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:52:21
+대한제분,00113243,001130,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:52:28
+대한제분,00113243,001130,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:52:28
+대한제분,00113243,001130,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:52:28
+대한제분,00113243,001130,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=63 slider_extended=True,,2026-07-07T06:52:28
+대한제분,00113243,001130,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:52:28
+대한제분,00113243,001130,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:52:28
+대한제분,00113243,001130,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:52:35
+대한제분,00113243,001130,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:52:35
+대한제분,00113243,001130,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:52:35
+대한제분,00113243,001130,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=83 slider_extended=True,,2026-07-07T06:52:35
+대한제분,00113243,001130,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:52:35
+대한제분,00113243,001130,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:52:35
+크레오에스지,00346407,040350,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:52:49
+크레오에스지,00346407,040350,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:52:49
+크레오에스지,00346407,040350,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:52:49
+크레오에스지,00346407,040350,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=21 slider_extended=True,,2026-07-07T06:52:49
+크레오에스지,00346407,040350,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:52:49
+크레오에스지,00346407,040350,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:52:49
+크레오에스지,00346407,040350,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:52:54
+크레오에스지,00346407,040350,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:52:54
+크레오에스지,00346407,040350,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:52:54
+크레오에스지,00346407,040350,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=28 slider_extended=True,,2026-07-07T06:52:54
+크레오에스지,00346407,040350,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:52:54
+크레오에스지,00346407,040350,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:52:54
+크레오에스지,00346407,040350,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:53:00
+크레오에스지,00346407,040350,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:53:00
+크레오에스지,00346407,040350,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:53:00
+크레오에스지,00346407,040350,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=69 slider_extended=True,,2026-07-07T06:53:00
+크레오에스지,00346407,040350,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:53:00
+크레오에스지,00346407,040350,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:53:00
+크레오에스지,00346407,040350,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:53:08
+크레오에스지,00346407,040350,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:53:08
+크레오에스지,00346407,040350,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:53:08
+크레오에스지,00346407,040350,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=80 slider_extended=True,,2026-07-07T06:53:08
+크레오에스지,00346407,040350,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:53:08
+크레오에스지,00346407,040350,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:53:08
+웅진,00143651,016880,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:53:21
+웅진,00143651,016880,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:53:21
+웅진,00143651,016880,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:53:21
+웅진,00143651,016880,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=21 slider_extended=True,,2026-07-07T06:53:21
+웅진,00143651,016880,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:53:21
+웅진,00143651,016880,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:53:21
+웅진,00143651,016880,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:53:26
+웅진,00143651,016880,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:53:26
+웅진,00143651,016880,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:53:26
+웅진,00143651,016880,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=25 slider_extended=True,,2026-07-07T06:53:26
+웅진,00143651,016880,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:53:26
+웅진,00143651,016880,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:53:26
+웅진,00143651,016880,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:53:32
+웅진,00143651,016880,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:53:32
+웅진,00143651,016880,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:53:32
+웅진,00143651,016880,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=69 slider_extended=True,,2026-07-07T06:53:32
+웅진,00143651,016880,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:53:32
+웅진,00143651,016880,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:53:32
+웅진,00143651,016880,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:53:40
+웅진,00143651,016880,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:53:40
+웅진,00143651,016880,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:53:40
+웅진,00143651,016880,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=79 slider_extended=True,,2026-07-07T06:53:40
+웅진,00143651,016880,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:53:40
+웅진,00143651,016880,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:53:40
+원일특강,00143907,012620,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:53:53
+원일특강,00143907,012620,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:53:53
+원일특강,00143907,012620,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:53:53
+원일특강,00143907,012620,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:53:53
+원일특강,00143907,012620,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:53:53
+원일특강,00143907,012620,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:53:53
+원일특강,00143907,012620,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:53:59
+원일특강,00143907,012620,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:53:59
+원일특강,00143907,012620,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:53:59
+원일특강,00143907,012620,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=28 slider_extended=True,,2026-07-07T06:53:59
+원일특강,00143907,012620,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:53:59
+원일특강,00143907,012620,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:53:59
+원일특강,00143907,012620,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:54:05
+원일특강,00143907,012620,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:54:05
+원일특강,00143907,012620,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:54:05
+원일특강,00143907,012620,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=60 slider_extended=True,,2026-07-07T06:54:05
+원일특강,00143907,012620,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:54:05
+원일특강,00143907,012620,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:54:05
+원일특강,00143907,012620,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:54:12
+원일특강,00143907,012620,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:54:12
+원일특강,00143907,012620,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:54:12
+원일특강,00143907,012620,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=89 slider_extended=True,,2026-07-07T06:54:12
+원일특강,00143907,012620,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:54:12
+원일특강,00143907,012620,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:54:12
+티비씨,00204642,033830,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:54:26
+티비씨,00204642,033830,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:54:26
+티비씨,00204642,033830,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:54:26
+티비씨,00204642,033830,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:54:26
+티비씨,00204642,033830,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:54:26
+티비씨,00204642,033830,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:54:26
+티비씨,00204642,033830,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:54:31
+티비씨,00204642,033830,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:54:31
+티비씨,00204642,033830,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:54:31
+티비씨,00204642,033830,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=20 slider_extended=True,,2026-07-07T06:54:31
+티비씨,00204642,033830,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:54:31
+티비씨,00204642,033830,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:54:31
+티비씨,00204642,033830,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:54:37
+티비씨,00204642,033830,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:54:37
+티비씨,00204642,033830,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:54:37
+티비씨,00204642,033830,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=60 slider_extended=True,,2026-07-07T06:54:37
+티비씨,00204642,033830,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:54:37
+티비씨,00204642,033830,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:54:37
+티비씨,00204642,033830,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:54:45
+티비씨,00204642,033830,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:54:45
+티비씨,00204642,033830,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:54:45
+티비씨,00204642,033830,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=63 slider_extended=True,,2026-07-07T06:54:45
+티비씨,00204642,033830,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:54:45
+티비씨,00204642,033830,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:54:45
+덕성,00114093,004830,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:54:58
+덕성,00114093,004830,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:54:58
+덕성,00114093,004830,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:54:58
+덕성,00114093,004830,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:54:58
+덕성,00114093,004830,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:54:58
+덕성,00114093,004830,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:54:58
+덕성,00114093,004830,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:55:03
+덕성,00114093,004830,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:55:03
+덕성,00114093,004830,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:55:03
+덕성,00114093,004830,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=26 slider_extended=True,,2026-07-07T06:55:03
+덕성,00114093,004830,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:55:03
+덕성,00114093,004830,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:55:03
+덕성,00114093,004830,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:55:10
+덕성,00114093,004830,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:55:10
+덕성,00114093,004830,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:55:10
+덕성,00114093,004830,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=60 slider_extended=True,,2026-07-07T06:55:10
+덕성,00114093,004830,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:55:10
+덕성,00114093,004830,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:55:10
+덕성,00114093,004830,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:55:17
+덕성,00114093,004830,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:55:17
+덕성,00114093,004830,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:55:17
+덕성,00114093,004830,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=86 slider_extended=True,,2026-07-07T06:55:17
+덕성,00114093,004830,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:55:17
+덕성,00114093,004830,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:55:17
+케이씨,00209780,029460,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:55:31
+케이씨,00209780,029460,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:55:31
+케이씨,00209780,029460,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:55:31
+케이씨,00209780,029460,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:55:31
+케이씨,00209780,029460,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:55:31
+케이씨,00209780,029460,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:55:31
+케이씨,00209780,029460,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:55:36
+케이씨,00209780,029460,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:55:36
+케이씨,00209780,029460,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:55:36
+케이씨,00209780,029460,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=29 slider_extended=True,,2026-07-07T06:55:36
+케이씨,00209780,029460,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:55:36
+케이씨,00209780,029460,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:55:36
+케이씨,00209780,029460,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:55:42
+케이씨,00209780,029460,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:55:42
+케이씨,00209780,029460,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:55:42
+케이씨,00209780,029460,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=68 slider_extended=True,,2026-07-07T06:55:42
+케이씨,00209780,029460,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:55:42
+케이씨,00209780,029460,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:55:42
+케이씨,00209780,029460,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:55:50
+케이씨,00209780,029460,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:55:50
+케이씨,00209780,029460,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:55:50
+케이씨,00209780,029460,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=92 slider_extended=True,,2026-07-07T06:55:50
+케이씨,00209780,029460,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:55:50
+케이씨,00209780,029460,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:55:50
+인피니트헬스케어,00435969,071200,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:56:03
+인피니트헬스케어,00435969,071200,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:56:03
+인피니트헬스케어,00435969,071200,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:56:03
+인피니트헬스케어,00435969,071200,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=19 slider_extended=True,,2026-07-07T06:56:03
+인피니트헬스케어,00435969,071200,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:56:03
+인피니트헬스케어,00435969,071200,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:56:03
+인피니트헬스케어,00435969,071200,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:56:09
+인피니트헬스케어,00435969,071200,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:56:09
+인피니트헬스케어,00435969,071200,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:56:09
+인피니트헬스케어,00435969,071200,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=20 slider_extended=True,,2026-07-07T06:56:09
+인피니트헬스케어,00435969,071200,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:56:09
+인피니트헬스케어,00435969,071200,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:56:09
+인피니트헬스케어,00435969,071200,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:56:15
+인피니트헬스케어,00435969,071200,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:56:15
+인피니트헬스케어,00435969,071200,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:56:15
+인피니트헬스케어,00435969,071200,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=60 slider_extended=True,,2026-07-07T06:56:15
+인피니트헬스케어,00435969,071200,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:56:15
+인피니트헬스케어,00435969,071200,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:56:15
+인피니트헬스케어,00435969,071200,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:56:22
+인피니트헬스케어,00435969,071200,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:56:22
+인피니트헬스케어,00435969,071200,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:56:22
+인피니트헬스케어,00435969,071200,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=71 slider_extended=True,,2026-07-07T06:56:22
+인피니트헬스케어,00435969,071200,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:56:22
+인피니트헬스케어,00435969,071200,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:56:22
+컨텍,01685251,451760,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:56:36
+컨텍,01685251,451760,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:56:36
+컨텍,01685251,451760,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:56:36
+컨텍,01685251,451760,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=7 slider_extended=True,,2026-07-07T06:56:36
+컨텍,01685251,451760,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:56:36
+컨텍,01685251,451760,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:56:36
+컨텍,01685251,451760,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:56:41
+컨텍,01685251,451760,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:56:41
+컨텍,01685251,451760,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:56:41
+컨텍,01685251,451760,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=7 slider_extended=True,,2026-07-07T06:56:41
+컨텍,01685251,451760,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:56:41
+컨텍,01685251,451760,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:56:41
+컨텍,01685251,451760,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:56:47
+컨텍,01685251,451760,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:56:47
+컨텍,01685251,451760,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:56:47
+컨텍,01685251,451760,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=16 slider_extended=True,,2026-07-07T06:56:47
+컨텍,01685251,451760,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:56:47
+컨텍,01685251,451760,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:56:47
+컨텍,01685251,451760,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:56:54
+컨텍,01685251,451760,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:56:54
+컨텍,01685251,451760,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:56:54
+컨텍,01685251,451760,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=16 slider_extended=True,,2026-07-07T06:56:54
+컨텍,01685251,451760,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:56:54
+컨텍,01685251,451760,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:56:54
+성우테크론,00350482,045300,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:57:08
+성우테크론,00350482,045300,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:57:08
+성우테크론,00350482,045300,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:57:08
+성우테크론,00350482,045300,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=20 slider_extended=True,,2026-07-07T06:57:08
+성우테크론,00350482,045300,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:57:08
+성우테크론,00350482,045300,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:57:08
+성우테크론,00350482,045300,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:57:13
+성우테크론,00350482,045300,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:57:13
+성우테크론,00350482,045300,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:57:13
+성우테크론,00350482,045300,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=21 slider_extended=True,,2026-07-07T06:57:13
+성우테크론,00350482,045300,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:57:13
+성우테크론,00350482,045300,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:57:13
+성우테크론,00350482,045300,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:57:19
+성우테크론,00350482,045300,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:57:19
+성우테크론,00350482,045300,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:57:19
+성우테크론,00350482,045300,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=75 slider_extended=True,,2026-07-07T06:57:19
+성우테크론,00350482,045300,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:57:19
+성우테크론,00350482,045300,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:57:19
+성우테크론,00350482,045300,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:57:27
+성우테크론,00350482,045300,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:57:27
+성우테크론,00350482,045300,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:57:27
+성우테크론,00350482,045300,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=76 slider_extended=True,,2026-07-07T06:57:27
+성우테크론,00350482,045300,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:57:27
+성우테크론,00350482,045300,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:57:27
+세방,00133812,004360,KOSPI,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:57:40
+세방,00133812,004360,KOSPI,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:57:40
+세방,00133812,004360,KOSPI,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:57:40
+세방,00133812,004360,KOSPI,연간x연결,재무제표,CV-3,PASS,rows=29 cols=28 slider_extended=True,,2026-07-07T06:57:40
+세방,00133812,004360,KOSPI,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:57:40
+세방,00133812,004360,KOSPI,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:57:40
+세방,00133812,004360,KOSPI,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:57:46
+세방,00133812,004360,KOSPI,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:57:46
+세방,00133812,004360,KOSPI,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:57:46
+세방,00133812,004360,KOSPI,연간x별도,재무제표,CV-3,PASS,rows=29 cols=26 slider_extended=True,,2026-07-07T06:57:46
+세방,00133812,004360,KOSPI,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:57:46
+세방,00133812,004360,KOSPI,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:57:46
+세방,00133812,004360,KOSPI,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:57:52
+세방,00133812,004360,KOSPI,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:57:52
+세방,00133812,004360,KOSPI,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:57:52
+세방,00133812,004360,KOSPI,분기x연결,재무제표,CV-3,PASS,rows=29 cols=79 slider_extended=True,,2026-07-07T06:57:52
+세방,00133812,004360,KOSPI,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:57:52
+세방,00133812,004360,KOSPI,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:57:52
+세방,00133812,004360,KOSPI,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:57:59
+세방,00133812,004360,KOSPI,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:57:59
+세방,00133812,004360,KOSPI,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎']",,2026-07-07T06:57:59
+세방,00133812,004360,KOSPI,분기x별도,재무제표,CV-3,PASS,rows=29 cols=87 slider_extended=True,,2026-07-07T06:57:59
+세방,00133812,004360,KOSPI,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:57:59
+세방,00133812,004360,KOSPI,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:57:59
+에어레인,01663116,163280,KOSDAQ,연간x연결,재무제표,DS-1,PASS,,,2026-07-07T06:58:13
+에어레인,01663116,163280,KOSDAQ,연간x연결,상단,DS-8,PASS,,,2026-07-07T06:58:13
+에어레인,01663116,163280,KOSDAQ,연간x연결,상단,DS-4,PASS,substitution caption present,,2026-07-07T06:58:13
+에어레인,01663116,163280,KOSDAQ,연간x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:58:13
+에어레인,01663116,163280,KOSDAQ,연간x연결,재무제표,CV-3,PASS,rows=29 cols=6 slider_extended=True,,2026-07-07T06:58:13
+에어레인,01663116,163280,KOSDAQ,연간x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:58:13
+에어레인,01663116,163280,KOSDAQ,연간x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:58:13
+에어레인,01663116,163280,KOSDAQ,연간x별도,재무제표,DS-1,PASS,,,2026-07-07T06:58:18
+에어레인,01663116,163280,KOSDAQ,연간x별도,상단,DS-8,PASS,,,2026-07-07T06:58:18
+에어레인,01663116,163280,KOSDAQ,연간x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:58:18
+에어레인,01663116,163280,KOSDAQ,연간x별도,재무제표,CV-3,PASS,rows=29 cols=6 slider_extended=True,,2026-07-07T06:58:18
+에어레인,01663116,163280,KOSDAQ,연간x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:58:18
+에어레인,01663116,163280,KOSDAQ,연간x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:58:18
+에어레인,01663116,163280,KOSDAQ,분기x연결,재무제표,DS-1,PASS,,,2026-07-07T06:58:25
+에어레인,01663116,163280,KOSDAQ,분기x연결,상단,DS-8,PASS,,,2026-07-07T06:58:25
+에어레인,01663116,163280,KOSDAQ,분기x연결,상단,DS-4,PASS,substitution caption present,,2026-07-07T06:58:25
+에어레인,01663116,163280,KOSDAQ,분기x연결,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:58:25
+에어레인,01663116,163280,KOSDAQ,분기x연결,재무제표,CV-3,PASS,rows=29 cols=11 slider_extended=True,,2026-07-07T06:58:25
+에어레인,01663116,163280,KOSDAQ,분기x연결,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:58:25
+에어레인,01663116,163280,KOSDAQ,분기x연결,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:58:25
+에어레인,01663116,163280,KOSDAQ,분기x별도,재무제표,DS-1,PASS,,,2026-07-07T06:58:32
+에어레인,01663116,163280,KOSDAQ,분기x별도,상단,DS-8,PASS,,,2026-07-07T06:58:32
+에어레인,01663116,163280,KOSDAQ,분기x별도,상단,DS-7,PASS,"badges seen: ['✅', '🔎', '⚠']",,2026-07-07T06:58:32
+에어레인,01663116,163280,KOSDAQ,분기x별도,재무제표,CV-3,PASS,rows=29 cols=11 slider_extended=True,,2026-07-07T06:58:32
+에어레인,01663116,163280,KOSDAQ,분기x별도,재무제표,DS-2/DS-3,DONE,"cross-check completed for ['매출액', '영업이익']",,2026-07-07T06:58:32
+에어레인,01663116,163280,KOSDAQ,분기x별도,지표,CV-6,PASS,default metric selection visible,,2026-07-07T06:58:32

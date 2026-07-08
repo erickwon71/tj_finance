@@ -70,10 +70,12 @@ def _show_statement(label: str, raw_df: pd.DataFrame) -> None:
     # 결측이 섞이면 object dtype 이 될 수 있어 표시용은 숫자로 강제 환산.
     # (CSV 는 raw_df 원본 정수를 그대로 사용하므로 정밀도 유지)
     disp = raw_df.apply(pd.to_numeric, errors="coerce") / EOK
-    st.dataframe(
-        disp.style.format(thousands=",", precision=0, na_rep="—"),
-        width="stretch",
-    )
+    # st.dataframe 은 Styler 의 na_rep 을 반영하지 않아 결측이 "None" 으로 새어나온다.
+    # 표시 직전에 셀을 직접 문자열화(천단위·정수)하고 결측은 "—" 로 치환한다.
+    # (col.map 형태로 pandas 버전 무관하게 동작)
+    text = disp.apply(lambda col: col.map(
+        lambda v: "—" if pd.isna(v) else f"{v:,.0f}"))
+    st.dataframe(text, width="stretch")
 
 
 def _valuation_df(mv: dict) -> pd.DataFrame:

@@ -1,0 +1,35 @@
+﻿corp_code,corp_name,stock_code,market,fiscal_month,axis,method
+00106614,기신정기,092440,KOSPI,3,fiscal_month_non_dec,corporations.fiscal_month <> 12
+00110875,대신정보통신,020180,KOSDAQ,3,fiscal_month_non_dec,corporations.fiscal_month <> 12
+00126380,삼성전자,005930,KOSPI,12,fiscal_month_dec_and_flagship+synthetic_2026Q1_seed,explicit 005930/000660
+00164779,SK하이닉스,000660,KOSPI,12,fiscal_month_dec_and_flagship+synthetic_2026Q1_seed,explicit 005930/000660
+00100939,강남제비스코,000860,KOSPI,12,market_kospi,corporations.market='KOSPI'
+00101044,에이프로젠바이오로직스,003060,KOSPI,12,market_kospi,corporations.market='KOSPI'
+00100601,강원에너지,114190,KOSDAQ,12,market_kosdaq,corporations.market='KOSDAQ'
+00101549,경동제약,011040,KOSDAQ,12,market_kosdaq,corporations.market='KOSDAQ'
+01093007,LS에코에너지,229640,KOSPI,12,market_cap_large,"valuation_daily latest snapshot, top market_cap"
+01182408,소프트캠프,258790,KOSDAQ,12,market_cap_large,"valuation_daily latest snapshot, top market_cap"
+01037542,NPX,222160,KOSDAQ,12,market_cap_small,"valuation_daily latest snapshot, bottom market_cap>0"
+00363510,제이케이시냅스,060230,KOSDAQ,12,market_cap_small,"valuation_daily latest snapshot, bottom market_cap>0"
+00101664,경보제약,214390,KOSPI,12,separate_only,"no consolidated rows in std_financials_v2, separate rows exist"
+00103015,고려제약,014570,KOSDAQ,12,separate_only,"no consolidated rows in std_financials_v2, separate rows exist"
+00103547,우진비앤지,018620,KOSDAQ,12,market_action_active,regulatory_events: latest event for a type is not lifted
+00103592,광동제약,009290,KOSPI,12,market_action_active,regulatory_events: latest event for a type is not lifted
+00103662,광명전기,017040,KOSPI,12,market_action_history,"regulatory_events exists (any, incl. lifted-only)"
+00104120,광진실업,026910,KOSDAQ,12,market_action_history,"regulatory_events exists (any, incl. lifted-only)"
+00101220,KG케미칼,001390,KOSPI,12,amendment_history,filings.is_amendment=true exists for corp
+00101433,경농,002100,KOSPI,12,amendment_history,filings.is_amendment=true exists for corp
+00101488,경동나비엔,009450,KOSPI,12,dividend_yes,std_financials_v2.dividends_paid non-null/non-zero exists
+00101628,경방,000050,KOSPI,12,dividend_yes,std_financials_v2.dividends_paid non-null/non-zero exists
+00106881,인디에프,014990,KOSPI,12,dividend_no,std_financials_v2.dividends_paid always null/zero
+00107066,남광토건,001260,KOSPI,12,dividend_no,std_financials_v2.dividends_paid always null/zero
+00103130,플레이그램,009810,KOSPI,12,capital_event_cb_bw_eb,"capital_events.event_type in (CB,BW,EB)"
+00103510,인지컨트롤스,023800,KOSPI,12,capital_event_cb_bw_eb,"capital_events.event_type in (CB,BW,EB)"
+00102432,계룡건설산업,013580,KOSPI,12,order_backlog_present,order_backlog rows exist
+00102858,고려아연,010130,KOSPI,12,order_backlog_present,order_backlog rows exist
+00435297,맥쿼리인프라,088980,KOSPI,12,no_market_cap,no valuation_daily rows for corp despite having stock_code
+00577593,져스텍,153890,KOSDAQ,12,no_market_cap,no valuation_daily rows for corp despite having stock_code
+00181712,SK,034730,KOSPI,12,flagship_samsung_sk,"explicit stock_code IN (005930 Samsung Elec, 000660 SK hynix, 034730 SK Inc)"
+00102353,경창산업,024910,KOSDAQ,12,coverage_span_longest,expected_coverage.csv distinct_fy_count max
+01802928,코스모로보틱스,439960,KOSDAQ,12,coverage_span_shortest,expected_coverage.csv distinct_fy_count min
+01709065,마키나락스,477850,KOSDAQ,12,newly_listed,expected_coverage.csv (latest_fy - earliest_fy) min

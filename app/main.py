@@ -121,6 +121,11 @@ def main() -> None:
     _sidebar()
 
     pages = [
+        # DEF-1(딥링크 첫 진입 시 'Page not found' 모달)은 이 default 페이지에 url_path 를
+        # 붙이든 떼든 /company 직접진입에서 동일하게 재현되는 Streamlit 프레임워크 동작임을
+        # 실측 확인함(정상 진입 경로 '/'는 모달 없음). url_path 를 떼면 /company 딥링크만
+        # 잃고 모달은 그대로라, 딥링크를 유지하는 원상태를 둔다. 근본해소는 Streamlit
+        # 버전 업그레이드 백로그로 이관.
         st.Page(company_page.render, title="기업 시각화", icon="📈",
                 url_path="company", default=True),
         st.Page(screener_page.render, title="스크리너", icon="🔎",

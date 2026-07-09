@@ -165,6 +165,51 @@ CHECKS: list[dict] = [
         "sample": "SELECT corp_code, fiscal_year, segment, item, value FROM biz_metrics "
                   "WHERE metric='utilization' AND value > 500 ORDER BY value DESC LIMIT 10",
     },
+    {
+        # DEF-4 재발 감지: Q1 분기보고서 IS/CF 표에서 당분기(col0)와 전기(col1) 3개월 값이
+        # 완전 동일하면 전기컬럼 추출 오류 신호(fin2/extract/text.py interim_flow 미적용 등).
+        "name": "fact_v2_q1_duration_col0_eq_col1",
+        "sev": "WARN",
+        "desc": "Q1 IS/CF fact_v2 에서 당분기(col0)==전기(col1) 동일값 — 전기컬럼 추출오류 신호(DEF-4)",
+        "count": "SELECT count(*) FROM fact_v2 a JOIN fact_v2 b "
+                 "ON a.rcept_no=b.rcept_no AND a.basis=b.basis "
+                 "AND a.canonical_account=b.canonical_account "
+                 "AND a.col_index=0 AND b.col_index=1 "
+                 "WHERE a.report_fiscal_period='Q1' AND NOT a.is_dimensional "
+                 "AND a.canonical_account IN ('is.revenue','is.operating_income') "
+                 "AND a.amount_won=b.amount_won AND a.amount_won<>0",
+        "sample": "SELECT a.corp_code, a.rcept_no, a.basis, a.canonical_account, a.amount_won "
+                  "FROM fact_v2 a JOIN fact_v2 b "
+                  "ON a.rcept_no=b.rcept_no AND a.basis=b.basis "
+                  "AND a.canonical_account=b.canonical_account "
+                  "AND a.col_index=0 AND b.col_index=1 "
+                  "WHERE a.report_fiscal_period='Q1' AND NOT a.is_dimensional "
+                  "AND a.canonical_account IN ('is.revenue','is.operating_income') "
+                  "AND a.amount_won=b.amount_won AND a.amount_won<>0 LIMIT 10",
+    },
+    {
+        # DEF-4 재발 감지(소비계층): 같은 기업·기준에서 인접연도 CQ1 매출·영업이익이 완전
+        # 동일값이면 상류 전기컬럼 중복 추출의 결과일 수 있음. 잔여 소수(휴면·구 K-GAAP 우연)는
+        # 정상 예외라 WARN. 진단 스크립트=scripts/diag_calendar_cq1_dup.py.
+        "name": "calendar_adjacent_year_cq1_identical",
+        "sev": "WARN",
+        "desc": "인접연도 CQ1 매출+영업이익 완전동일 (상류 전기컬럼 중복 추출 신호, DEF-4)",
+        "count": "SELECT count(*) FROM std_financials_calendar a JOIN std_financials_calendar b "
+                 "ON a.corp_code=b.corp_code AND a.statement_type=b.statement_type "
+                 "AND b.calendar_year=a.calendar_year+1 "
+                 "WHERE a.calendar_period='CQ1' AND b.calendar_period='CQ1' "
+                 "AND a.revenue IS NOT NULL AND a.revenue<>0 "
+                 "AND a.revenue=b.revenue "
+                 "AND a.operating_income IS NOT DISTINCT FROM b.operating_income",
+        "sample": "SELECT a.corp_code, a.statement_type, a.calendar_year, b.calendar_year, a.revenue "
+                  "FROM std_financials_calendar a JOIN std_financials_calendar b "
+                  "ON a.corp_code=b.corp_code AND a.statement_type=b.statement_type "
+                  "AND b.calendar_year=a.calendar_year+1 "
+                  "WHERE a.calendar_period='CQ1' AND b.calendar_period='CQ1' "
+                  "AND a.revenue IS NOT NULL AND a.revenue<>0 "
+                  "AND a.revenue=b.revenue "
+                  "AND a.operating_income IS NOT DISTINCT FROM b.operating_income LIMIT 10",
+    },
 ]
 
 

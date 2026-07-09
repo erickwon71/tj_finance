@@ -209,14 +209,16 @@ def _emit_section(
     """한 섹션(BS_C 등)의 데이터 TABLE 들을 컬럼기반으로 읽어 fact 방출.
 
     표제기반 경로와 레거시 폴백이 **같은 헬퍼**를 호출 → 셀 읽기 의미 동일(저위험·DRY).
-    tables_with_unit = [(table_elem, unit), ...]. interim(H1/Q3) IS·CF 2단 누적컬럼 처리 포함.
+    tables_with_unit = [(table_elem, unit), ...]. interim(H1/Q1/Q3) IS·CF 2단 누적컬럼 처리 포함.
     """
     basis, period_kind = _SECTION_META[section_code]
     fs_section = section_code.split("_")[0].lower()
     tables = [t for t, _ in tables_with_unit]
     unit_of = {id(t): u for t, u in tables_with_unit}
-    # 반기/3분기 flow(IS·CF) 표는 [3개월|누적] 2단 헤더에서 누적컬럼만 채택(연도 정합).
-    interim_flow = fs_section in ("is", "cf") and report_fiscal_period in ("H1", "Q3")
+    # 반기/1·3분기 flow(IS·CF) 표는 [3개월|누적] 2단 헤더에서 누적컬럼만 채택(연도 정합).
+    # Q1 은 3개월=누적이라 [당기3개월,당기누적,전기3개월,전기누적] 4열에서 위치기반 num_cols=3
+    # 절삭 시 당기값이 전기 슬롯에 중복되고 전기값이 전전기로 오라벨되는 버그가 있었음(DEF-4).
+    interim_flow = fs_section in ("is", "cf") and report_fiscal_period in ("H1", "Q1", "Q3")
     cum_maps = {id(t): (_interim_cumulative_cols(t) if interim_flow else None) for t in tables}
     # 금융업 interim IS·CF 는 [당기3개월|당기누적|전기3개월|전기누적] 2단 표와 별도 [전기|전전기]
     # 연간비교 표가 공존한다. 연간비교 표를 위치순 처리하면 전년 FY값이 당기 컬럼으로 오염된다.

@@ -396,15 +396,23 @@ Common pattern per dataset: collection script (backfill 2015+ first, then extend
       DQ ERROR gate still 0. **Tonight's plan**: `dart_backfill_chain.sh` edited to run C5 alone
       (B2b/대주주 steps commented out, both already complete) — full 2,555-corp × 2021–2025 sweep
       should complete with the whole day's quota available, giving a true full-population triage.
-- [ ] C6 Computed-vs-KRX EPS/BPS/PER nightly consistency assertion — **BLOCKED (2026-07-04)**: this
-      item assumed `stock_prices.per/pbr/eps/bps/div_yield/dps` already held independent KRX-sourced
-      values to compare against. Checked live DB: all five columns are 100% NULL (0/11.2M rows) —
-      never populated. `analyzer/price_fetcher.py:371` documents why: pykrx's fundamental endpoint
-      returns empty responses (structural breakage), so the design deliberately derives market_cap
-      from close_price × DART shares_out instead, and never attempted per/eps/bps at all. There is
-      currently no independent second source to cross-check against — C6 needs a new KRX data
-      source design (direct KRX open API, alternate library, or scraped fallback) before it's
-      implementable. Revisit as its own scoped item, not a quick win.
+- [x] ~~C6 Computed-vs-KRX EPS/BPS/PER nightly consistency assertion~~ — **DROPPED (2026-07-11)**.
+      Originally BLOCKED (2026-07-04): assumed `stock_prices.per/pbr/eps/bps/div_yield/dps` already
+      held independent KRX-sourced values to compare against. Checked live DB: all five columns are
+      100% NULL (0/11.2M rows) — never populated, because pykrx's fundamental endpoint returns empty
+      responses (structural breakage; `analyzer/price_fetcher.py:371`). Investigated the official
+      replacement (KRX Data Marketplace Open API, `openapi.krx.co.kr`, separate from both pykrx
+      scraping and the `data.go.kr` FSC-hosted redistribution) as a possible independent second
+      source: registered an API key and checked the full service catalog. **Confirmed: no PER/PBR/
+      EPS/BPS/dividend-yield service exists in the KRX Open API catalog at all** — those ratios were
+      only ever on the `data.krx.co.kr` statistics portal (the same page pykrx scraped, now broken).
+      The only stock-related field the Open API newly provides is `상장주식수`(listed shares) via
+      "유가증권/코스닥 일별매매정보" — but shares_out is already derived from DART (`fin2_backfill_shares*`)
+      at 92%+ coverage, so onboarding a whole new API integration to fetch one already-covered field
+      has no payoff. Market cap isn't provided either (still self-computed as close×shares_out).
+      **Decision: keep the current self-computed market_cap/PER/PBR/EPS/BPS approach permanently —
+      there is no independent KRX source to cross-check against, so C6 as scoped is not just blocked
+      but unimplementable. Dropped, not deferred.**
 - [ ] C7 Golden set 5 → 30–50 corps, wired into dq_nightly
 - [x] C8 Pytest regression suite for derived metrics + app compute functions — **DONE (2026-07-05)**.
       New `tests/` package with **54 golden-value regression tests** over the previously-untested

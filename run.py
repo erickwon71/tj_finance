@@ -3073,15 +3073,15 @@ def main():
     )
     # ── dcf / dividend 옵션 ─────────────────────────────────────────
     parser.add_argument("--growth",   metavar="PCT", dest="dcf_growth",
-                        help="dcf: FCF 성장률 수동 입력 (예: 8% 또는 8)")
+                        help="dcf: FCF 성장률 수동 입력 (예: 8%% 또는 8)")
     parser.add_argument("--wacc",     metavar="PCT", dest="dcf_wacc",
-                        help="dcf: WACC 수동 입력 (예: 10%)")
+                        help="dcf: WACC 수동 입력 (예: 10%%)")
     parser.add_argument("--terminal", metavar="PCT", dest="dcf_terminal", default="2.5",
                         help="dcf: 영구성장률 (기본 2.5%%)")
     parser.add_argument("--div-years", type=int, metavar="N", dest="div_years", default=10,
                         help="dividend: 조회 연수 (기본 10)")
     # ── screen 옵션 ─────────────────────────────────────────────────
-    parser.add_argument("--roe",            metavar="COND", help="ROE 조건 (예: \">15%\")")
+    parser.add_argument("--roe",            metavar="COND", help="ROE 조건 (예: \">15%%\")")
     parser.add_argument("--roa",            metavar="COND", help="ROA 조건")
     parser.add_argument("--roic",           metavar="COND", help="ROIC 조건")
     parser.add_argument("--op-margin",      metavar="COND", dest="op_margin",    help="영업이익률 조건")

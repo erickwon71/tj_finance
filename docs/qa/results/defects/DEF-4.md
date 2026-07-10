@@ -119,6 +119,32 @@ Q1 분기보고서 IS/CF 표 `[당기3개월,당기누적,전기3개월,전기�
 - **두 종 모두 `dq_assertions.py` 의 신규 WARN 어서션(fact_v2_q1_duration_col0_eq_col1=326,
   calendar_adjacent_year_cq1_identical=41)이 상시 추적** → 향후 타깃 수정 시 진척 계측 가능.
 
+## 잔여 예외처리 완료 (2026-07-10, 구조무관 안전제거)
+
+사용자 결정: 메인 파이프라인은 그대로 두고, 예외는 **격리된 1회성 스크립트**로 DB 보정
+(`scripts/fin2_kgaap_gap.py`와 동일 철학). 방식=**안전 제거**(원값 복구 아님 — 위조 중복을
+걷어내 공백으로, "없는데이터>틀린데이터").
+
+**구조무관 규칙**: 한 보고서(rcept)·한 basis 안에서 `is.revenue col0(당기)==col1(전기)`(≠0)인
+Q1 보고서 = 추출 버그(분기 당기==전년동기 정확일치는 사실상 항상 버그). 해당 보고서의
+flow 계정(`is.%/cf.%`) `col_index>=1` 삭제(당기 col0만 보존). 구 K-GAAP·현대 변종·미지 변종
+모두 동일 규칙으로 커버.
+
+**실행**(`scripts/def4_exception_remove_dup.py`, C5 종료 후):
+- 대상 172 (rcept,basis) · 영향 81 corp · fact_v2 삭제 15,271행(당기 보존, col≥1 flow만).
+  삭제 전 `docs/qa/results/def4_exception_deleted_facts.csv`로 전체 덤프(가역).
+- 재파생=기존 `def4_reprocess_pass2.py --corps-file`(81사, comparative 삭제 12,612/재합성 1,466/오류 0).
+- 사전 백업 `~/tj_finance_db_backups/tj_finance_core_20260710_0938.dump`.
+
+**검증 결과**:
+- 인접연도 CQ1 완전동일 페어 **60→34**, 그중 **same-rcept 위조잔재 26→0**(완전 제거).
+  잔여 34 = rev=0 휴면 19 + 독립rcept 우연 15(둘 다 진짜 동일, 버그 아님).
+- DQ: `fact_v2_q1_duration_col0_eq_col1` 326→**23**, `calendar_adjacent_year_cq1_identical` 41→**15**. ERROR 위반 0.
+- 대표: 광동제약(00103592) separate 2006 CQ1 = 공백(위조 제거), 2007 = 실제값 유지.
+- **잔여 fact 23건은 의도적 미제거** — op_income 만 col0==col1(revenue 상이)인 케이스라,
+  revenue 정상 comparative 를 과잉삭제할 위험이 있어 revenue-센티넬 보수적 유지. calendar
+  중복은 유발 안 함(same-rcept=0). WARN 어서션이 계속 추적.
+
 ## 비고
-- 근본원인 확정(2026-07-08), 수정·재처리·재검증 완료(2026-07-09), 잔여 원인 규명(2026-07-10).
-- 메인 결함(3,626조합/2012→2013, 98.5% 해소)은 종결. 잔여 ≈26쌍은 위 2종 별도 트랙(저우선).
+- 근본원인 확정(2026-07-08), 수정·재처리·재검증(2026-07-09), 잔여 규명+예외처리 완료(2026-07-10).
+- **DEF-4 전체 종결**: 메인(3,626조합/2012→2013, 98.5%↓) + 잔여 위조중복(same-rcept 26→0). 앱 노출 위조 CQ1 = 0.

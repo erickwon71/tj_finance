@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text
 from collector.db import get_session
-from scripts.std_coverage_gap import classify_financial
+from std_coverage_gap import classify_financial  # sibling in scripts/archive/coverage/ (run with PYTHONPATH=. from repo root)
 
 
 def main():

@@ -1,138 +1,90 @@
-# TJ Finance — DART PDF 수집 시스템 (Phase 1)
+# TJ Finance
 
-KOSPI/KOSDAQ 상장 기업의 분기·반기·사업보고서 최종본 PDF를  
-DART 전자공시에서 자동 수집해 로컬에 저장합니다.
+KOSPI/KOSDAQ 상장 보통주의 재무·경영·시장 데이터를 DART 전자공시에서 수집·표준화해
+PostgreSQL에 적재하고, 주가와 연동해 시각화하는 로컬 분석 시스템. (v1.0)
 
 ---
 
-## 빠른 시작
+## 기능별 구조
 
-### 1. 환경 설정
+| 기능 | 위치 | 설명 |
+|------|------|------|
+| **보고서 수집** | `collector/` | DART Open API 클라이언트(`dart_client`), 다운로더(`downloader`), 웹/PDF 폴백(`legacy_downloader`), 공시·기업 목록 수집(`filing_collector`, `corp_collector`), 도메인 수집기(임원·수주·증자·주주 등). 원본은 `raw_report/`(외장 볼륨 심볼릭 링크). |
+| **파싱·추출** | `fin2/` (현행) | 현행 엔진: 추출(extract) → 정합(reconcile) → 표준화(standardize). 산출 테이블 `fact_v2` → `statement_source` → `std_financials_v2`. |
+| | `parser/` (레거시) | 구 엔진(financial_facts/standard_financials). 유지만 하며 v1.0 메인 파이프라인 아님. |
+| **데이터베이스** | `collector/db.py`, `collector/models.py`, `collector/config.py` | 로컬 PostgreSQL. `db.py`가 엔진/세션/인라인 마이그레이션, `models.py`가 ORM/DDL, 설정은 `.env`. (Alembic 미사용) |
+| **분석 엔진** | `analyzer/` | 재무비율·밸류에이션·DCF·배당·버핏·스크리너·비교 엔진. |
+| **시각화 앱** | `app/` | Streamlit + Plotly. 실행: `streamlit run app/main.py`. |
+| **운영·스케줄링** | `scripts/`, `deploy/launchd/` | 일일 수집·DQ·백업·VACUUM 등. 1회성/과거 처리 스크립트는 `scripts/archive/`로 분리. |
+| **문서** | `docs/` | PRD(`docs/prd/`), QA(`docs/qa/`), 사용자 매뉴얼·런북. 과거 기록은 `docs/archive/`. |
+
+---
+
+## 빠른 시작 (최초 1회)
 
 ```bash
 cd ~/Project/tj_finance
-
-# 가상환경 활성화
 source .venv_tj_finance/bin/activate
-
-# 패키지 설치 (최초 1회)
 pip install -r requirements.txt
-```
 
-### 2. PostgreSQL DB 생성 (최초 1회)
-
-```bash
-createdb tj_finance          # 또는 psql로 직접 생성
-```
-
-### 3. .env 확인
-
-`.env` 파일의 `DATABASE_URL`을 본인 PostgreSQL 환경에 맞게 수정하세요.
-
-```
-DATABASE_URL=postgresql://localhost/tj_finance
-```
-
-### 4. DB 초기화 (최초 1회)
-
-```bash
-python run.py init
+createdb tj_finance            # 로컬 PostgreSQL
+# .env 의 DATABASE_URL / OPENDART_API_KEY 확인
+python run.py init             # DB 테이블 생성
 ```
 
 ---
 
-## 수집 실행 순서
+## 일일 파이프라인
+
+메인 수집→파싱→적재는 `scripts/collect_new.py`가 담당하며 launchd로 매일 자동 실행됩니다
+(`deploy/launchd/com.tjfinance.collect`, 18:00).
 
 ```bash
-# Step 1: 기업 목록 동기화 (DART corpCode — API 1콜)
-python run.py sync-corps
-
-# Step 2: 공시 목록 동기화 (전체 기업 — 기업당 ~1-3콜)
-python run.py sync-filings
-
-# Step 3: PDF 다운로드
-python run.py download
-
-# 또는 한 번에 (위 3단계 순서 실행)
-python run.py all
+# 수동 실행 예시 — 최근 3일 신규 공시 수집→fin2(E→R→S)→보조수집→밸류에이션 갱신
+python scripts/collect_new.py --days 3 --timeout 600 --refresh-universe
 ```
+
+흐름: 신규 공시 감지 → 다운로드 → 기업별 fin2 추출·정합·표준화 → 분기/캘린더 파생
+→ 보조 수집기(임원·증자·수주·현금흐름 D&A 등) → 밸류에이션 일일 갱신.
 
 ---
 
 ## 주요 명령어
 
-| 명령어 | 설명 |
-|--------|------|
-| `python run.py init` | DB 테이블 생성 (최초 1회) |
-| `python run.py sync-corps` | DART에서 기업 목록 갱신 |
-| `python run.py sync-filings` | 전체 기업 공시 목록 수집 |
-| `python run.py sync-filings --corp 00126380` | 특정 기업만 |
-| `python run.py download` | 전체 PDF 다운로드 |
-| `python run.py download --limit 100` | 최대 100건만 |
-| `python run.py download --corp 00126380` | 특정 기업만 |
-| `python run.py status` | 수집 현황 요약 |
-| `python run.py failed` | 실패 목록 확인 |
-| `python run.py reset-failed` | 실패 건 재시도 등록 |
+```bash
+# 수집 (현행)
+python run.py sync-corps            # 기업 목록 갱신
+python run.py sync-filings          # 공시 목록 수집
+python run.py download              # 원본 다운로드
+python run.py status                # 수집 현황
 
----
+# 재무 표준화 (현행 fin2 엔진)
+python run.py fin2-all              # 기업별 extract2 → reconcile2 → standardize2 (+quarterly/calendar)
+python run.py fin2-all --corp 00126380
 
-## 디렉토리 구조
-
-```
-tj_finance/
-├── .env                    # API 키, DB URL
-├── requirements.txt
-├── run.py                  # CLI 진입점
-├── collector/
-│   ├── config.py           # 전역 설정
-│   ├── models.py           # DB 모델
-│   ├── db.py               # PostgreSQL 연결
-│   ├── rate_limiter.py     # API 호출 속도 제한
-│   ├── dart_client.py      # DART API 클라이언트
-│   ├── corp_collector.py   # 기업 목록 수집
-│   ├── filing_collector.py # 공시 목록 수집
-│   ├── downloader.py       # PDF 다운로드
-│   └── runner.py           # 현황 조회
-├── raw_report/             # PDF 저장 루트
-│   ├── KOSPI/
-│   │   └── {corp_code}_{corp_name}/
-│   │       ├── annual/{year}/{rcept_no}.pdf
-│   │       ├── half/{year}/{rcept_no}.pdf
-│   │       └── quarter/{year}/{rcept_no}.pdf
-│   └── KOSDAQ/
-├── logs/                   # 날짜별 로그 파일
-└── tmp/                    # ZIP 임시 압축 해제
+# 시각화
+streamlit run app/main.py
 ```
 
----
-
-## API 호출 한도 관리
-
-- 하루 **40,000콜** 한도
-- 콜 간 **2.5초** 간격 자동 강제 → 하루 최대 ~34,500콜 (버퍼 14%)
-- 한도 도달 시 자정까지 자동 대기 후 재개
-- `python run.py status`로 당일 사용량 확인 가능
+> 레거시 명령(`run.py parse | parse-pdf | aggregate`, `parser/`)은 구 엔진 경로로,
+> 유지만 하며 신규 작업에는 사용하지 않습니다.
 
 ---
 
-## DB 테이블
+## 운영
 
-| 테이블 | 설명 |
-|--------|------|
-| `corporations` | 기업 마스터 (DART corp_code 기준) |
-| `filings` | 공시 메타데이터 + 기재정정 버전 관리 |
-| `download_tasks` | 다운로드 상태 추적 (resume 지원) |
-| `collection_runs` | 실행 이력 로그 |
+- **스케줄**: `deploy/launchd/` — 수집(`collect`)·DQ 점검(`dqcheck`)·백업(`backup`)·VACUUM(`vacuum`)·복원 드릴(`restoredrill`).
+- **백업/복원**: `docs/runbook_backup_restore.md`. 백업은 `scripts/backup_db.py`(야간 pg_dump, NAS).
+- **스크립트 맵**: 메인 vs 아카이브 구분은 `scripts/README.md` 참고.
+- **대용량 산출물**(QA 스크린샷·parity baseline·coverage 덤프)은 리포 밖 `~/tj_finance_archive/`에 보관.
 
 ---
 
-## 자동화 (선택)
-
-매일 자동 실행이 필요하면 crontab 설정:
+## 편의 명령 (Makefile)
 
 ```bash
-crontab -e
-# 매일 오전 2시 실행 (sync-filings는 주 1회, download는 매일)
-0 2 * * * cd /Users/taejin/Project/tj_finance && .venv_tj_finance/bin/python run.py download >> logs/cron.log 2>&1
-0 3 * * 0 cd /Users/taejin/Project/tj_finance && .venv_tj_finance/bin/python run.py sync-filings >> logs/cron.log 2>&1
+make app        # 시각화 앱 실행
+make collect    # 최근 3일 신규 수집 파이프라인
+make backup     # DB 백업
+make dq         # 야간 DQ 점검
 ```

@@ -149,8 +149,9 @@ def _on_dialog_dismiss() -> None:
 @st.dialog("기업 분기 시각화", width="large", on_dismiss=_on_dialog_dismiss)
 def _viz_dialog(corp_code: str) -> None:
     """행 선택 시 **분기 기준** 시각화를 모달로 표시(표 레이아웃 안 밀림).
-    매출·영업이익 분기 추이를 표/그래프로 선택. 전체 상세(주가·지표·밸류·대가)는 옵션."""
-    state.set_focus_corp(corp_code)
+    매출·영업이익 분기 추이를 표/그래프로 선택. 전체 상세(주가·지표·밸류·대가)는 옵션.
+    corp_code 는 파라미터로만 흘러가고 전역 focus_corp 는 건드리지 않는다 — 메인 메뉴
+    "기업 시각화"·스크리너와 선택 상태를 완전히 분리하기 위함."""
     meta = cache.resolve_corp(corp_code)
     stmt = state.get_stmt_type()
     series, used = cache.quarter_series(corp_code, stmt, quarters=_MODAL_QUARTERS)
@@ -183,7 +184,7 @@ def _viz_dialog(corp_code: str) -> None:
         saved_grain = state.get_grain()
         st.session_state[state.GRAIN] = "quarter"
         try:
-            company_page.render()
+            company_page.render(corp_code)
         finally:
             st.session_state[state.GRAIN] = saved_grain
 
@@ -211,7 +212,6 @@ def _render_quarter(cal_year: int, quarter: str, stmt: str) -> None:
     guard = f"qc_dlg_last_{cal_year}_{quarter}"
     if sel:
         cc = df.iloc[sel[0]]["corp_code"]
-        state.set_focus_corp(cc)
         # 선택 corp 이 바뀔 때만 모달 오픈(닫은 직후 selection 잔존 시 즉시 재오픈 방지).
         # 닫을 때 on_dismiss 가 이 표의 선택을 초기화 → sel 이 비면 아래서 guard 도 해제되어
         # 같은 기업을 다시 클릭해도 재오픈된다.

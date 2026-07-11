@@ -631,10 +631,13 @@ def _master_tab(corp_code: str, stmt: str, meta: dict) -> None:
                "PEG=PER/순이익성장%. 마법공식 종합랭크는 스크리너에서 모집단 횡단면으로 산출.")
 
 
-def render() -> None:
+def render(corp_code: str | None = None) -> None:
+    """corp_code 를 명시하면 그 기업을 그리고, 생략하면 전역 focus_corp 를 따른다
+    (스크리너 등 독립된 화면에서 자체 선택 기업을 넘겨 전역 상태와 분리하기 위함)."""
     st.header("기업 시각화")
 
-    corp_code = state.get_focus_corp()
+    if corp_code is None:
+        corp_code = state.get_focus_corp()
     if not corp_code:
         st.info("좌측 사이드바에서 기업을 검색·선택하세요.")
         return

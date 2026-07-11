@@ -256,7 +256,7 @@ def _left() -> None:
                          key="screen_table")
     sel = event.selection.rows if event and event.selection else []
     if sel:
-        state.set_focus_corp(df.iloc[sel[0]]["corp_code"])
+        state.set_screener_focus_corp(df.iloc[sel[0]]["corp_code"])
 
     csv_df = df.drop(columns=["_transitions"], errors="ignore")  # 내부 표시용 컬럼 제외
     st.download_button("결과 CSV 내려받기", data=to_csv_bytes(csv_df, index=False),
@@ -284,10 +284,13 @@ def _build_display(df: pd.DataFrame, method: str, cols: list[str]) -> pd.DataFra
 
 # ── 우측: 선택기업 시각화(비파괴) ───────────────────────────────
 def _right() -> None:
-    if not state.get_focus_corp():
+    # 스크리너 전용 focus corp(state.SCREENER_FOCUS_CORP) 사용 — 메인 메뉴 "기업 시각화"
+    # 의 전역 focus_corp 와는 독립적이라, 서로의 선택을 덮어쓰지 않는다.
+    corp_code = state.get_screener_focus_corp()
+    if not corp_code:
         st.info("← 결과 행을 선택하면 여기에 시각화가 표시됩니다.")
         return
-    company_page.render()
+    company_page.render(corp_code)
 
 
 def render() -> None:

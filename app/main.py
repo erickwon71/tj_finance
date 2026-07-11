@@ -66,11 +66,20 @@ def _sidebar() -> None:
                 # 결과가 1개면 선택 단계 없이 바로 표시.
                 # 검색어가 바뀐 경우에만 자동선택(스크리너 행클릭 등 다른 선택을 덮지 않도록).
                 r = results[0]
-                st.caption(f"✅ {fmt_corp_identity(r['corp_name'], r['corp_code'], r.get('stock_code'), r.get('market'))}")
+                label = fmt_corp_identity(r["corp_name"], r["corp_code"], r.get("stock_code"), r.get("market"))
+                already_focused = state.get_focus_corp() == r["corp_code"]
+                st.caption(f"{'✅' if already_focused else '🔎'} {label}")
                 if st.session_state.get("_auto_pick_q") != query:
                     st.session_state["_auto_pick_q"] = query
                     state.set_focus_corp(r["corp_code"])
                     st.rerun()
+                elif not already_focused:
+                    # 자동선택 가드가 막았어도(스크리너 등에서 포커스가 옮겨간 뒤 같은 검색어로
+                    # 되돌아온 경우) 이 버튼으로 항상 다시 전환할 수 있게 한다.
+                    st.caption("← 스크리너 등에서 다른 기업이 선택됨")
+                    if st.button("이 기업 다시 보기", key="corp_single_repick", width="stretch"):
+                        state.set_focus_corp(r["corp_code"])
+                        st.rerun()
             else:
                 labels = {
                     fmt_corp_identity(r["corp_name"], r["corp_code"],

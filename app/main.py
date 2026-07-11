@@ -124,9 +124,36 @@ def _sidebar() -> None:
                 st.error(f"DB 연결 실패: {exc}")
 
 
+def _quit_button_topbar() -> None:
+    """상단 'Deploy' 자리 바로 아래에 종료 버튼을 고정 배치. 로컬 데스크톱 전용 앱이라
+    배포 버튼은 쓸모가 없어 숨기고, 그 아래에 종료 버튼을 둬 사이드바 스크롤 없이 항상
+    보이게 한다. Streamlit 자체 툴바 행(0~60px, Deploy·⋮메뉴·"Running…" 표시줄)과 같은
+    줄에 두면 재실행 중 "Running…" 표시가 넓어질 때 버튼과 겹치므로, 그 아래 줄(top 4rem)
+    에 배치해 겹칠 일이 구조적으로 없게 한다."""
+    st.markdown("""
+        <style>
+        [data-testid="stAppDeployButton"] { display: none; }
+        div[data-testid="stElementContainer"]:has(#tj-quit-anchor)
+            + div[data-testid="stElementContainer"] {
+            position: fixed; top: 4rem; right: 1.2rem; z-index: 999999;
+        }
+        </style>
+        <div id="tj-quit-anchor"></div>
+        """, unsafe_allow_html=True)
+    if st.button("🛑 앱 종료", key="quit_app_topbar",
+                 help="Streamlit 서버와 이 앱을 실행한 터미널 창을 함께 닫습니다."):
+        st.info("앱을 종료합니다. 잠시 후 이 창과 터미널이 자동으로 닫힙니다…")
+        import time
+
+        from app.shutdown import shutdown_app
+        time.sleep(0.8)  # 위 안내 메시지가 브라우저로 전달될 시간을 확보
+        shutdown_app()
+
+
 def main() -> None:
     st.set_page_config(page_title="TJ Finance", page_icon="📊", layout="wide")
     state.init_defaults()
+    _quit_button_topbar()
     _sidebar()
 
     pages = [

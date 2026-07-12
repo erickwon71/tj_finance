@@ -7,6 +7,7 @@ __pycache__/
 raw_report/
 raw_report
 tmp/
+scratchpad/
 logs/
 *.log
 

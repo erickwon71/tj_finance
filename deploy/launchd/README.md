@@ -1,3 +1,54 @@
+# 전문서비스 갭 채우기 Phase 2·3·4 전수 백필 (launchd, 매일 00:01, 완료 시 자기 등록해제)
+
+`scripts/nightly_gap_fill_backfill.py` 가 Phase 2(주주환원 API 6종, PRD 13)·Phase 3(부문·수출입
+매출, PRD 14)·Phase 4(비용성격 D&A, PRD 15) 전수 백필을 매일 밤 이어서 진행한다. **일회성 백필
+잡** — 셋 다 완료되면 스스로 `launchctl unload` + 이 plist 를 삭제해 더 이상 등록/실행되지 않는다.
+
+- Phase 2: DART 서버 쿼터(하루 4만콜, 계정 공유) 제한이라 하루에 다 못 끝나면 자연스럽게
+  다음날 이어감(API 별 `--skip-existing`). 시작연도 2015(각 API 의 실제 데이터 보유 최초년도,
+  2010~2012 는 DART 자체에 없음 — 실측 확인됨) ~ 실행 시점의 최신연도.
+- Phase 3·4: 로컬 파일 파싱(DART 쿼터 무관), 대상 소진까지 한 번에 진행(수시간 걸릴 수 있음).
+  Phase 3 의 "매출표 없는 기업" 완료판정은 `~/.tj_finance/gap_fill_phase3_state.json` 로컬
+  상태파일로 자체 추적(DB 만으로는 시도이력 구분 불가).
+
+## 설치 (완료 — 2026-07-13 등록됨)
+
+```bash
+cp deploy/launchd/com.tjfinance.gapfill.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.tjfinance.gapfill.plist
+launchctl start com.tjfinance.gapfill        # 즉시 1회 실행(테스트/최초구동)
+```
+
+## 진행 확인
+
+```bash
+launchctl list | grep tjfinance.gapfill      # 등록 여부(제거되면 결과 없음=완료 의미)
+tail -f logs/gap_fill.out.log logs/gap_fill.err.log   # 진행 로그(loguru 는 기본 stderr)
+```
+
+각 Phase 잔여량은 로그의 `[gapfill] ==== 요약 ====` 줄에서 확인(모두 0 이면 다음 줄에서 자동
+등록해제 로그가 남고 이후 `launchctl list` 에 더 이상 나타나지 않는다).
+
+## 수동 실행 / 재등록
+
+```bash
+python scripts/nightly_gap_fill_backfill.py    # 즉시 1회 수동 실행(포그라운드, 장시간 주의)
+```
+
+이미 완료·자기해제된 뒤 다시 필요해지면(예: 신규 상장기업 백필) 설치 단계를 반복하면 된다.
+
+## 참고
+- **NAS(`raw_report`) 마운트 필요**: Phase 3·4 는 로컬 보고서 XML 을 읽으므로 `raw_report`
+  심링크가 가리키는 볼륨이 마운트돼 있어야 한다(2026-07-13 등록 당시 NAS(tj_finance_data)가
+  마운트 안 돼 있어 `dart_data` 폴백으로 임시 전환 — `nas-migration-plan` 메모리 참고).
+  NAS 정상화 후 원복하려면 `ln -sfn /Volumes/tj_finance_data/raw_report raw_report`.
+- Phase 2 서버 쿼터 소진(status='020' 연속 5회)은 각 API 호출이 수초 내 자연 종료되므로,
+  6개 API 를 매일 순차 시도해도 낭비가 적다(quota 소진 후엔 각 API 확인에 몇 초씩만 소모).
+- 등록해제 후 재발 방지: 이 잡은 **일회성**이라 완료되면 다시 등록되지 않는다. 이후 신규
+  상장기업 분은 `scripts/collect_new.py`(매일 18:00 정기수집)의 ⑤-1/⑤-3 단계가 자동 커버.
+
+---
+
 # 신규 공시 자동 수집 (launchd, 매일 18:00 + 잠자기 깨우기)
 
 `scripts/collect_new.py`(⓪유니버스 갱신→탐지→동기화→다운로드→파싱·표준화)를 매일 18:00

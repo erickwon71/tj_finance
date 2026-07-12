@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  전문서비스 갭 채우기 Phase 2·3·4 전수 백필 — 매일 00:01 자동 실행(launchd LaunchAgent).
+  일회성 백필 잡이다 — scripts/nightly_gap_fill_backfill.py 가 Phase 2(주주환원 API)·
+  Phase 3(부문/수출입 매출)·Phase 4(비용성격 D&A) 를 매일 밤 이어서 진행하고, 셋 다
+  완료되면 **스스로 launchctl unload + 이 plist 를 삭제**한다(더 이상 등록/실행 없음).
+  설치: deploy/launchd/README.md 참조.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tjfinance.gapfill</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/taejin/Project/tj_finance/.venv_tj_finance/bin/python</string>
+        <string>/Users/taejin/Project/tj_finance/scripts/nightly_gap_fill_backfill.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/taejin/Project/tj_finance</string>
+
+    <!-- 매일 00:01 실행. Mac 이 잠자기였다면 다음 wake 시(또는 다음날 저녁 17:58 기존
+         수집 wake) 놓친 실행을 launchd 가 만회하는 경우가 많다(100% 보장은 아님). -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>0</integer>
+        <key>Minute</key>
+        <integer>1</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/gap_fill.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/gap_fill.err.log</string>
+</dict>
+</plist>

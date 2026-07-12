@@ -172,31 +172,42 @@ def _sync_capital(lookback_days: int = 5) -> None:
 
 
 def _sync_cf_da(corps: list[str]) -> None:
-    """④-2 D&A note 복원(B5) — 신규 표준화 기업의 연결 CF D&A 갭(2024+ Track A 전환으로 누락)을
-    note 하이브리드로 채워 EBITDA/da_total 재퇴행 방지. S→Q→C 재전파. 비치명(수집 계속)."""
+    """④-2 D&A note 복원(B5+Phase4) — 신규 표준화 기업의 연결 CF D&A 갭(2024+ Track A 전환으로
+    누락)을 ① CF 주석/본문(cf_da) → ② 비용의 성격별 분류 주석(expense_nature) 하이브리드로 채워
+    EBITDA/da_total 재퇴행 방지. S→Q→C 재전파. 비치명(수집 계속). expense_nature 는 cf_da 다음에
+    돌아 **여전히 depreciation NULL** 인 잔여만 타겟(이중 계상 방지)."""
     if not corps:
         return
     try:
         from collector.cf_da_sync import sync_cf_da
         res = sync_cf_da(corps=corps, year_min=2024)
         if res["corps"]:
-            logger.info(f"[collect] ④-2 D&A 복원 — 기업 {res['corps']} · note fact {res['facts']:,} · "
+            logger.info(f"[collect] ④-2 D&A 복원(CF) — 기업 {res['corps']} · note fact {res['facts']:,} · "
                         f"std_v2 {res['std_recalc']:,} 재전파(실패 {res['fail']})")
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"[collect] ④-2 D&A 복원 실패(비치명적): {exc}")
+        logger.warning(f"[collect] ④-2 D&A 복원(CF) 실패(비치명적): {exc}")
+    try:
+        from collector.expense_nature_sync import sync_expense_nature
+        res2 = sync_expense_nature(corps=corps, year_min=2024)
+        if res2["corps"]:
+            logger.info(f"[collect] ④-2 D&A 복원(비용성격 주석) — 기업 {res2['corps']} · "
+                        f"note fact {res2['facts']:,} · std_v2 {res2['std_recalc']:,} 재전파(실패 {res2['fail']})")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ④-2 D&A 복원(비용성격) 실패(비치명적): {exc}")
 
 
 def _sync_biz_metrics(corps: list[str]) -> None:
-    """B4 — 새로 수집된 기업의 사업보고서 본문 생산능력/생산실적/가동률 → biz_metrics.
-    사업의 내용 절은 annual 에만 있어 이번에 표준화된 기업의 최신 사업보고서만 대상.
-    비치명적 실패는 본 수집을 막지 않는다(rcept 단위 멱등)."""
+    """B4+Phase3 — 새로 수집된 기업의 사업보고서 본문 생산능력/생산실적/가동률 **및 부문·수출/내수
+    매출실적**(metric='sales', channel) → biz_metrics. 매출 파서가 parse_biz_metrics 에 통합돼
+    같은 sync 진입점에서 함께 방출된다(PRD 14). 사업의 내용 절은 annual 에만 있어 이번에 표준화된
+    기업의 최신 사업보고서만 대상. 비치명적 실패는 본 수집을 막지 않는다(rcept 단위 멱등)."""
     if not corps:
         return
     try:
         from collector.biz_metrics import sync_biz_metrics
         agg = sync_biz_metrics(corps, latest_only=True)
         if agg.get("metric_rows"):
-            logger.info(f"[collect] ⑤-1 사업지표(생산능력/실적/가동률) 기업 {agg['corps']} · "
+            logger.info(f"[collect] ⑤-1 사업지표(생산·가동률+부문/수출입 매출) 기업 {agg['corps']} · "
                         f"표 {agg['tables']} · 지표행 {agg['metric_rows']:,}")
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[collect] ⑤-1 사업지표 수집 실패(비치명적): {exc}")
@@ -216,6 +227,45 @@ def _sync_order_backlog(corps: list[str]) -> None:
             logger.info(f"[collect] ⑤-2 수주상황 기업 {agg['corps']} · 행 {agg['rows']:,}")
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[collect] ⑤-2 수주상황 수집 실패(비치명적): {exc}")
+
+
+def _sync_periodic_apis(corps: list[str]) -> None:
+    """⑤-3(Phase 2, PRD 13) — 신규 표준화 기업의 최신 사업연도만 배당/자기주식/직원현황/
+    타법인출자/임원보수(요약+개인별) 6개 API 동기화. 전수 백필(scripts/collect_periodic_apis.py)과
+    별개, 매일 소규모 증분. corp+fy+api 그레인 멱등이라 재실행 안전. 비치명적 — 개별 실패는
+    건너뛰고 계속(일일 쿼터 소진 시에만 이번 배치를 조기 종료, 본 수집엔 영향 없음)."""
+    if not corps:
+        return
+    from datetime import date
+
+    from collector.dart_client import DartClient, DartApiError
+    from collector.dart_periodic import API_NAMES, sync_periodic
+    from collector.rate_limiter import DailyQuotaReached
+
+    fy = date.today().year - 1
+    client = DartClient()
+    rows = 0
+    quota_stopped = False
+    try:
+        for corp in corps:
+            for api in API_NAMES:
+                try:
+                    rows += sync_periodic(client, api, corp, fy)
+                except DailyQuotaReached as exc:
+                    logger.warning(f"[collect] ⑤-3 일일 쿼터 소진으로 중단(비치명적): {exc}")
+                    quota_stopped = True
+                    break
+                except DartApiError:
+                    continue  # '020' 등 — 일일 증분 규모라 스킵하고 계속(전수 백필은 별도 오케스트레이터)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(f"[collect] ⑤-3 {corp} {api} 실패(비치명적): {exc}")
+                    continue
+            if quota_stopped:
+                break
+    finally:
+        client.close()
+    if rows:
+        logger.info(f"[collect] ⑤-3 배당/자기주식/직원/출자/임원보수(FY{fy}) 기업 {len(corps)} · 행 {rows:,}")
 
 
 def _refresh_valuation_daily() -> None:
@@ -287,6 +337,7 @@ def main() -> None:
         _verify_and_log(agg, args)
         _sync_biz_metrics(affected)
         _sync_order_backlog(affected)
+        _sync_periodic_apis(affected)
         _refresh_valuation_daily()
         return
 
@@ -347,6 +398,9 @@ def main() -> None:
 
     # ⑤-2 수주상황 — 신규 기업의 사업보고서 본문표 → order_backlog(B1→B4).
     _sync_order_backlog(affected)
+
+    # ⑤-3 배당/자기주식/직원현황/타법인출자/임원보수 — 신규 기업의 최신 사업연도만(Phase 2, PRD 13).
+    _sync_periodic_apis(affected)
 
     # ⑥ valuation_daily matview 갱신(A4a) — 오늘 반영분(신규 재무·주가)까지 밸류에이션 뷰에 즉시 노출.
     _refresh_valuation_daily()

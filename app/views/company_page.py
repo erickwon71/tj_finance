@@ -393,6 +393,148 @@ def _ownership_panel(corp_code: str) -> None:
                "소액주주현황(mrhlSttus). 소액주주 지분율은 유통주식(float)의 근사치입니다.")
 
 
+def _pctfmt(v, decimals: int = 1) -> str:
+    """이미 % 스케일(예: 67.8)인 값 문자열화 — fmt_pct 는 소수(0.678)를 가정해 여기선 미사용."""
+    return f"{v:.{decimals}f}%" if v is not None else "—"
+
+
+def _shareholder_return_panel(corp_code: str, requested_stmt: str) -> None:
+    """💸 주주환원 — DPS/배당성향/총주주환원율 추이 + 자사주 취득·처분 상세(Phase 2, PRD 13)."""
+    import plotly.graph_objects as go
+
+    rows = cache.shareholder_return(corp_code, requested_stmt)
+    rows = [r for r in rows if r.get("dps_common") is not None or r.get("payout_ratio") is not None
+            or r.get("total_shareholder_return_won") is not None]
+    if not rows:
+        st.info("배당·자기주식 데이터가 없습니다. (수집: `python scripts/collect_periodic_apis.py "
+                f"--api alotMatter,tesstkAcqsDspsSttus --years 2015-2025 --corps {corp_code}`)")
+        return
+
+    rows = sorted(rows, key=lambda r: r["fiscal_year"])
+    latest = rows[-1]
+    st.markdown(f"#### 💸 주주환원 — {latest['fiscal_year']} FY 기준")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("주당 현금배당금(보통주)", f"{latest['dps_common']:,}원" if latest.get("dps_common") is not None else "—")
+    c2.metric("현금배당수익률", _pctfmt(latest.get("dividend_yield_common")))
+    c3.metric("배당성향", _pctfmt(latest.get("payout_ratio")))
+    c4.metric("총주주환원율", _pctfmt(latest.get("total_shareholder_return_ratio")))
+
+    years = [str(r["fiscal_year"]) for r in rows]
+    fig = go.Figure()
+    fig.add_bar(x=years, y=[r.get("dps_common") for r in rows], name="주당 현금배당금(원)")
+    fig.add_trace(go.Scatter(x=years, y=[r.get("payout_ratio") for r in rows], name="배당성향(%)",
+                             yaxis="y2", mode="lines+markers"))
+    fig.add_trace(go.Scatter(x=years, y=[r.get("total_shareholder_return_ratio") for r in rows],
+                             name="총주주환원율(%)", yaxis="y2", mode="lines+markers"))
+    fig.update_layout(
+        yaxis=dict(title="DPS(원)"), yaxis2=dict(title="%", overlaying="y", side="right"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02), height=380,
+        margin=dict(l=10, r=10, t=30, b=10),
+    )
+    st.plotly_chart(fig, width="stretch", key="shr_return_chart")
+
+    df = pd.DataFrame([{
+        "연도": r["fiscal_year"],
+        "DPS(보통주)": r.get("dps_common"), "DPS(우선주)": r.get("dps_pref"),
+        "현금배당수익률(%)": r.get("dividend_yield_common"),
+        "배당총액(억원)": (r["total_dividend_amount_won"] / EOK) if r.get("total_dividend_amount_won") is not None else None,
+        "배당성향(%)": r.get("payout_ratio"),
+        "자사주순취득(억원)": (r["buyback_amount_won"] / EOK) if r.get("buyback_amount_won") is not None else None,
+        "총주주환원율(%)": r.get("total_shareholder_return_ratio"),
+    } for r in reversed(rows)])
+    st.dataframe(df, hide_index=True, width="stretch")
+
+    detail = cache.treasury_activity_detail(corp_code, latest["fiscal_year"])
+    totals = [d for d in detail if d.get("acqs_method3") == "총계"]
+    if totals:
+        with st.expander(f"자기주식 취득·처분 상세 ({latest['fiscal_year']} FY, 주식종류별 총계)", expanded=False):
+            df_t = pd.DataFrame([{
+                "주식종류": t.get("stock_kind") or "—", "기초수량": t.get("qty_begin"),
+                "취득": t.get("qty_acquired"), "처분": t.get("qty_disposed"),
+                "소각": t.get("qty_incinerated"), "기말수량": t.get("qty_end"),
+                "비고": t.get("remark") or "—",
+            } for t in totals])
+            st.dataframe(df_t, hide_index=True, width="stretch")
+
+    st.caption("출처: DART 배당에관한사항(alotMatter)·자기주식취득및처분현황(tesstkAcqsDspsSttus). "
+               "배당성향=공시값 우선(없으면 배당총액/지배주주순이익 재계산). 총주주환원율="
+               "(배당총액+자사주 순취득금액)/지배주주순이익.")
+
+
+def _employee_panel(corp_code: str) -> None:
+    """직원 현황(부문×성별) — Phase 2, PRD 13 ④."""
+    yr, rows = cache.employee_stats(corp_code)
+    if not rows:
+        st.info("직원 현황 데이터가 없습니다. (수집: `python scripts/collect_periodic_apis.py "
+                f"--api empSttus --years 2023 --corps {corp_code}`)")
+        return
+    st.markdown(f"#### 👥 직원 현황 — {yr} 사업보고서")
+    total_row = next((r for r in rows if r.get("division") == "성별합계"
+                       and r.get("annual_salary_total") is not None), None)
+    if total_row:
+        total_headcount = sum(r["total_count"] or 0 for r in rows if r.get("division") == "성별합계")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("전체 인원", f"{total_headcount:,}명")
+        c2.metric("평균 근속연수(가중평균 아님, 성별 단순평균)",
+                  f"{sum(r['avg_tenure_years'] or 0 for r in rows if r.get('division')=='성별합계')/2:.1f}년")
+        avg_sal = [r["avg_salary"] for r in rows if r.get("division") == "성별합계" and r.get("avg_salary")]
+        if avg_sal:
+            c3.metric("1인평균급여(남/여 평균)", f"{sum(avg_sal)/len(avg_sal)/1e8:.2f}억원")
+    df = pd.DataFrame([{
+        "부문": r.get("division") or "—", "성별": r.get("sex") or "—",
+        "정규직": r.get("regular_count"), "계약직": r.get("contract_count"),
+        "합계": r.get("total_count"), "평균근속(년)": r.get("avg_tenure_years"),
+        "연간급여총액(억원)": (r["annual_salary_total"] / EOK) if r.get("annual_salary_total") else None,
+        "1인평균급여(원)": r.get("avg_salary"),
+    } for r in rows])
+    st.dataframe(df, hide_index=True, width="stretch")
+    st.caption("출처: DART 직원현황(empSttus). 급여총액/1인평균은 부문 전체(성별합계) 행에만 공시됨.")
+
+
+def _other_investment_panel(corp_code: str) -> None:
+    """타법인 출자현황 — Phase 2, PRD 13 ④."""
+    yr, rows = cache.other_investments(corp_code)
+    if not rows:
+        st.info("타법인 출자현황 데이터가 없습니다. (수집: `python scripts/collect_periodic_apis.py "
+                f"--api otrCprInvstmntSttus --years 2023 --corps {corp_code}`)")
+        return
+    st.markdown(f"#### 🏢 타법인 출자현황 — {yr} 사업보고서 · {len(rows)}건")
+    df = pd.DataFrame([{
+        "법인명": r.get("investee_name") or "—", "출자목적": r.get("purpose") or "—",
+        "최초취득일": r.get("first_acquired_date") or "—",
+        "기말지분율(%)": r.get("end_pct"),
+        "기말장부가액(억원)": (r["end_book_value"] / EOK) if r.get("end_book_value") is not None else None,
+        "피출자법인 총자산(억원)": (r["investee_total_assets"] / EOK) if r.get("investee_total_assets") is not None else None,
+        "피출자법인 순이익(억원)": (r["investee_net_income"] / EOK) if r.get("investee_net_income") is not None else None,
+    } for r in rows])
+    st.dataframe(df, hide_index=True, width="stretch")
+    st.caption("출처: DART 타법인출자현황(otrCprInvstmntSttus).")
+
+
+def _exec_pay_panel(corp_code: str) -> None:
+    """임원보수(요약+개인별 5억이상 상위5인) — Phase 2, PRD 13 ④."""
+    yr, summary, individuals = cache.exec_pay(corp_code)
+    if not summary and not individuals:
+        st.info("임원보수 데이터가 없습니다. (수집: `python scripts/collect_periodic_apis.py "
+                f"--api hmvAuditAllSttus,indvdlByPay --years 2023 --corps {corp_code}`)")
+        return
+    st.markdown(f"#### 💼 임원보수 — {yr} 사업보고서")
+    if summary:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("이사·감사 인원", f"{summary.get('total_exec_count', '—')}명")
+        c2.metric("보수총액", fmt_amount(summary.get("total_pay_amount")))
+        c3.metric("1인평균보수", fmt_amount(summary.get("avg_pay_per_person")))
+    if individuals:
+        with st.expander(f"개인별 보수 5억원 이상 (상위 {len(individuals)}인)", expanded=False):
+            df = pd.DataFrame([{
+                "성명": i.get("person_name") or "—", "직위": i.get("position") or "—",
+                "보수총액(억원)": (i["total_pay_amount"] / EOK) if i.get("total_pay_amount") is not None else None,
+            } for i in individuals])
+            st.dataframe(df, hide_index=True, width="stretch")
+    st.caption("출처: DART 이사·감사 전체보수현황(hmvAuditAllSttus)·개인별보수지급금액"
+               "(indvdlByPay, 미등기 고문/상담역 포함 가능).")
+
+
 def _production_panel(corp_code: str) -> None:
     """생산능력/생산실적/가동률(B4) — 사업보고서 본문표에서 파싱한 부문·품목별 시계열."""
     import plotly.graph_objects as go
@@ -450,7 +592,73 @@ def _production_panel(corp_code: str) -> None:
                "표시합니다. 가동률이 100%를 넘는 값은 초과가동(교대·잔업)으로 보고서 원값 그대로입니다.")
 
     st.divider()
+    _sales_panel(corp_code)
+
+    st.divider()
     _order_backlog_panel(corp_code)
+
+
+def _sales_panel(corp_code: str) -> None:
+    """부문·수출/내수 매출 구성(Phase 3) — 부문별 매출 스택 막대 + 수출비중(%) 라인.
+    한 기업의 여러 매출표(부문별/제품별/지역별) 중 최신 보고서에서 부문 구성용·수출비중용 표를
+    각각 단일 선택(app.data.biz.load_sales_composition)해 중복합산을 피한다."""
+    import plotly.graph_objects as go
+
+    data = cache.sales_composition(corp_code)
+    if not data.get("available"):
+        st.caption("🧾 부문·수출/내수 매출 데이터가 없습니다. (사업보고서 본문에 매출실적 표가 없거나 "
+                   f"아직 미수집 — 수집: `python scripts/collect_sales_metrics.py --corps {corp_code} --latest`)")
+        return
+
+    unit = data.get("unit") or "원문 단위"
+    st.markdown(f"#### 🧾 부문·수출/내수 매출 — {data['report_year']} 사업보고서 기준")
+
+    seg_rows, years = data["segment_rows"], data["years"]
+    if seg_rows:
+        # 부문별 매출 스택 막대(연도별) — 상위 8개 부문·품목만(가독성).
+        top = seg_rows[:8]
+        fig = go.Figure()
+        for s in top:
+            fig.add_bar(name=s["label"][:28],
+                        x=[str(y) for y in years],
+                        y=[s["by_year"].get(y) for y in years])
+        fig.update_layout(
+            barmode="stack", height=380, margin=dict(t=30, b=10, l=10, r=10),
+            yaxis_title=f"매출액({unit})", xaxis=dict(dtick=1),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.4))
+        st.plotly_chart(fig, use_container_width=True, key="sales_stack")
+
+        df = pd.DataFrame([{"부문·품목": s["label"],
+                            **{str(y): s["by_year"].get(y) for y in years}} for s in seg_rows])
+        st.dataframe(df, hide_index=True, width="stretch",
+                     column_config={str(y): st.column_config.NumberColumn(str(y), format="localized")
+                                    for y in years})
+        st.caption(f"부문별 매출 구성 (단위: {unit}) · 스택 막대는 상위 8개 부문·품목")
+
+    exp_rows = data["export_rows"]
+    if exp_rows:
+        latest = exp_rows[-1]
+        if latest.get("ratio_pct") is not None:
+            st.metric(f"수출비중 ({latest['year']})", f"{latest['ratio_pct']:.1f}%")
+        fig2 = go.Figure()
+        fig2.add_bar(name="내수", x=[str(e["year"]) for e in exp_rows],
+                     y=[e["domestic"] for e in exp_rows])
+        fig2.add_bar(name="수출", x=[str(e["year"]) for e in exp_rows],
+                     y=[e["export"] for e in exp_rows])
+        fig2.add_trace(go.Scatter(
+            name="수출비중(%)", x=[str(e["year"]) for e in exp_rows],
+            y=[e["ratio_pct"] for e in exp_rows], yaxis="y2", mode="lines+markers"))
+        fig2.update_layout(
+            barmode="stack", height=340, margin=dict(t=30, b=10, l=10, r=10),
+            yaxis=dict(title=f"매출액({unit})"),
+            yaxis2=dict(title="수출비중(%)", overlaying="y", side="right", range=[0, 100]),
+            xaxis=dict(dtick=1),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.3))
+        st.plotly_chart(fig2, use_container_width=True, key="sales_export")
+
+    st.caption("출처: DART 사업보고서 'II. 사업의 내용' 매출실적/판매실적 본문표. 한 회사가 부문별·"
+               "제품별·지역별 표를 함께 공시하는 경우 부문 구성은 부문 수가 가장 많은 표, 수출비중은 "
+               "수출·내수 구분 표를 각각 선택합니다(표마다 매출을 다른 축으로 재분해하므로 합산 주의).")
 
 
 def _order_backlog_panel(corp_code: str) -> None:
@@ -697,7 +905,8 @@ def render(corp_code: str | None = None) -> None:
 
     # 탭 = session_state 유지 라디오(사이드바 변경 등 재실행에도 보던 화면 유지)
     TABS = ["📑 재무제표", "📊 지표", "💰 밸류에이션", "🏆 대가지표",
-            "📈 주가", "📊 주가·재무 결합", "🏭 생산·가동률", "🏢 섹터·피어", "👔 임원·지분"]
+            "📈 주가", "📊 주가·재무 결합", "🏭 생산·매출", "🏢 섹터·피어", "👔 임원·지분",
+            "💸 주주환원"]
     active = st.radio("화면", TABS, horizontal=True, key="company_tab",
                       label_visibility="collapsed")
 
@@ -835,3 +1044,13 @@ def render(corp_code: str | None = None) -> None:
         _executives_panel(corp_code)
         st.divider()
         _ownership_panel(corp_code)
+        st.divider()
+        _exec_pay_panel(corp_code)
+        st.divider()
+        _employee_panel(corp_code)
+        st.divider()
+        _other_investment_panel(corp_code)
+
+    # ── 주주환원 (배당·자기주식, Phase 2) ──
+    elif active == TABS[9]:
+        _shareholder_return_panel(corp_code, requested_stmt)

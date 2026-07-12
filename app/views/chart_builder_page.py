@@ -20,8 +20,9 @@ from app import cache, state
 from app.components.export import download_button
 from app.compute import derived as _d
 from app.compute.resolver import build_metric_frame
-from app.compute.sources import fetch_ext_frame
+from app.compute.sources import fetch_dividend_frame, fetch_ext_frame
 from app.data import presets as _presets
+from app.registry.dividend import DIVIDEND_BY_ID, DIVIDEND_CATALOG
 from app.registry.extended import EXTENDED_BY_ID, EXTENDED_CATALOG
 from app.registry.metrics import METRIC_REGISTRY, REGISTRY_BY_ID
 from app.registry.units import AMOUNT_UNITS, Category, UnitType, format_value
@@ -32,8 +33,9 @@ from app.views.chart_panel import render_metric_chart, render_price_financial_co
 _ALL_IDS = [m.id for m in METRIC_REGISTRY]
 _AMOUNT_IDS = [m.id for m in METRIC_REGISTRY if m.unit in AMOUNT_UNITS]
 
-# "📈 기본 지표 선택" 은 레지스트리 + 확장 재무항목(EXTENDED_CATALOG) 통합 풀.
-_ALL_BASE_IDS = _ALL_IDS + [s.id for s in EXTENDED_CATALOG]
+# "📈 기본 지표 선택" 은 레지스트리 + 확장 재무항목(EXTENDED_CATALOG) + 배당(DIVIDEND_CATALOG,
+# Phase 2) 통합 풀.
+_ALL_BASE_IDS = _ALL_IDS + [s.id for s in EXTENDED_CATALOG] + [s.id for s in DIVIDEND_CATALOG]
 _EOK = 100_000_000
 
 
@@ -51,10 +53,10 @@ def _base_category(mid: str) -> str:
 
 
 def _fmt_base_id(mid: str) -> str:
-    """기본 지표 풀 id → '이름 · 카테고리' 라벨(레지스트리+확장 공통)."""
+    """기본 지표 풀 id → '이름 · 카테고리' 라벨(레지스트리+확장+배당 공통)."""
     if mid in REGISTRY_BY_ID:
         return _fmt_id(mid)
-    s = EXTENDED_BY_ID[mid]
+    s = EXTENDED_BY_ID.get(mid) or DIVIDEND_BY_ID[mid]
     return f"{s.name_ko} · {Category.EXTENDED.value}"
 
 
@@ -266,22 +268,29 @@ def render() -> None:
     # ② 파생 필드 빌더
     _derived_builder()
 
-    # 프레임 조립(베이스 + 확장 + 파생)
+    # 프레임 조립(베이스 + 확장 + 배당 + 파생)
     registry_ids = [i for i in base_ids if i in REGISTRY_BY_ID]
     extended_ids = [i for i in base_ids if i in EXTENDED_BY_ID]
+    dividend_ids = [i for i in base_ids if i in DIVIDEND_BY_ID]
 
     frames = []
     if registry_ids:
         frames.append(build_metric_frame(series, registry_ids, grain))
-    if extended_ids:
+    if extended_ids or dividend_ids:
         if grain != "annual":
-            st.caption("※ 확장 재무항목은 연간(FY)만 지원합니다 — "
+            st.caption("※ 확장 재무항목/배당 지표는 연간(FY)만 지원합니다 — "
                        "좌측 사이드바에서 연간으로 전환하면 표시됩니다.")
         else:
-            ext_rows = cache.extended_series(corp_code, used_stmt)
-            ext_frame = fetch_ext_frame(ext_rows, extended_ids, grain)
-            if not ext_frame.empty:
-                frames.append(ext_frame)
+            if extended_ids:
+                ext_rows = cache.extended_series(corp_code, used_stmt)
+                ext_frame = fetch_ext_frame(ext_rows, extended_ids, grain)
+                if not ext_frame.empty:
+                    frames.append(ext_frame)
+            if dividend_ids:
+                div_rows = cache.dividend_series_for_chart(corp_code, used_stmt)
+                div_frame = fetch_dividend_frame(div_rows, dividend_ids, grain)
+                if not div_frame.empty:
+                    frames.append(div_frame)
     dframe = _d.build_derived_frame(series, st.session_state.get("cb_derived", []), grain)
     if not dframe.empty:
         frames.append(dframe)

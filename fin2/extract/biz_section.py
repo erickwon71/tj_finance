@@ -634,6 +634,12 @@ def parse_biz_metrics(file_path: Path, corp_code: str, fiscal_year: int) -> tupl
     """
     파일 하나 → (biz_section_tables 행, biz_metrics 행) 튜플. 수집기(collect_biz_metrics.py)와
     파이프라인이 소비. 원본 grid(무손실) + 구조화 지표행을 함께 반환.
+
+    생산지표(capacity/output/utilization)에 이어 Phase 3 매출지표(metric='sales', channel 세팅)를
+    같은 진입점에서 함께 방출한다(PRD 14 §4.3 "동일 sync 진입점") — table_ord 를 이어붙여
+    biz_section_tables 유니크(rcept,table_ord) 충돌을 피하고, rcept 단위 delete-then-insert 멱등을
+    그대로 재사용(별도 delete 스코프 불필요). 생산 파서의 _SALES_KW 가드는 무변경(매출표를 계속
+    배제) — 매출은 이 아래 sales_section 경로로만 캡처되므로 이중 캡처가 없다.
     """
     root = _load_root(file_path)
     if root is None:
@@ -651,9 +657,19 @@ def parse_biz_metrics(file_path: Path, corp_code: str, fiscal_year: int) -> tupl
         for m in mrows:
             metric_rows.append({
                 "corp_code": corp_code, "fiscal_year": fiscal_year, "table_ord": ord_,
-                "metric": _clip(m.metric, 20), "segment": _clip(m.segment, 120),
+                "metric": _clip(m.metric, 20), "channel": None,
+                "segment": _clip(m.segment, 120),
                 "item": _clip(m.item, 150), "period_label": _clip(m.period_label, 60),
                 "period_year": m.period_year,
                 "value": m.value, "unit": _clip(m.unit, 30), "is_ratio": m.is_ratio,
             })
+
+    # Phase 3 매출표 — 생산표 다음 table_ord 부터 이어붙임(유니크(rcept,table_ord) 무충돌).
+    # 이중 캡처 방지는 grid 중복제거가 아니라 창 절단(생산/매출 파서 모두 무관한 순번 소제목
+    # 경계에서 창을 자름)이 보장한다 — 한 물리 표는 한 종류 헤딩 창에만 속하므로 겹치지 않는다.
+    from fin2.extract.sales_section import extract_sales_from_root
+    sales_sec, sales_met = extract_sales_from_root(root, corp_code, fiscal_year, start_ord=len(tables))
+    section_rows.extend(sales_sec)
+    metric_rows.extend(sales_met)
+
     return section_rows, metric_rows

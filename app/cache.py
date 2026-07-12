@@ -212,6 +212,14 @@ def biz_production(corp_code: str) -> dict:
     return _biz.load_biz_production(corp_code)
 
 
+# ── 부문·수출/내수 매출 (Phase 3, metric='sales') ─────────
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def sales_composition(corp_code: str) -> dict:
+    """최신 사업보고서 부문별 매출 구성 + 수출비중. app.data.biz 위임."""
+    from app.data import biz as _biz
+    return _biz.load_sales_composition(corp_code)
+
+
 # ── 수주상황 (수주잔고, B1→B4) ────────────────────────────
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
 def order_backlog(corp_code: str) -> dict:
@@ -240,6 +248,50 @@ def ownership_status(corp_code: str):
     """최신 사업연도 대주주/지분 현황(B3). app.data.governance 위임."""
     from app.data import governance as _gov
     return _gov.load_ownership(corp_code)
+
+
+# ── 주주환원 (배당·자기주식) — Phase 2, PRD 13 ───────────
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def shareholder_return(corp_code: str, statement_type: str = "consolidated"):
+    """연도별 배당성향(재계산 폴백 포함)·총주주환원율. app.data.shareholder_return 위임."""
+    from app.data import shareholder_return as _sr
+    return _sr.compute_shareholder_return(corp_code, statement_type)
+
+
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def treasury_activity_detail(corp_code: str, fiscal_year: int):
+    """해당 연도 자기주식 취득방법별 상세. app.data.shareholder_return 위임."""
+    from app.data import shareholder_return as _sr
+    return _sr.load_treasury_activity_detail(corp_code, fiscal_year)
+
+
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def dividend_series_for_chart(corp_code: str, basis: str = "consolidated"):
+    """차트빌더용 배당 시계열(period_end 조인 포함). app.data.shareholder_return 위임."""
+    from app.data import shareholder_return as _sr
+    return _sr.load_dividend_series_for_chart(corp_code, basis)
+
+
+# ── 회사 일반현황 (직원·타법인출자·임원보수) — Phase 2, PRD 13 ─
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def employee_stats(corp_code: str):
+    """최신 사업연도 직원현황. app.data.company_profile 위임."""
+    from app.data import company_profile as _cp
+    return _cp.load_employee_stats(corp_code)
+
+
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def other_investments(corp_code: str):
+    """최신 사업연도 타법인 출자현황. app.data.company_profile 위임."""
+    from app.data import company_profile as _cp
+    return _cp.load_other_investments(corp_code)
+
+
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def exec_pay(corp_code: str):
+    """최신 사업연도 임원보수(요약+개인별). app.data.company_profile 위임."""
+    from app.data import company_profile as _cp
+    return _cp.load_exec_pay(corp_code)
 
 
 # ── 원천 filing 드릴다운 (statement_source → DART URL) ───

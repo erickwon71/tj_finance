@@ -151,6 +151,55 @@ class DartClient:
         params = {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code}
         return self._api_get_json("/mrhlSttus.json", params).get("list", [])
 
+    def get_dividend_matters(
+        self, corp_code: str, bsns_year: str | int, reprt_code: str = "11011",
+    ) -> list[dict[str, Any]]:
+        """배당에 관한 사항(alotMatter) — se(항목명)+stock_knd 조합의 long-format 응답
+        (주당액면가액/당기순이익/현금배당금총액/현금배당성향/현금배당수익률/주당 현금배당금 등
+        약 15행, 실호출 확인 2026-07-12). 조회결과 없음(013) → 빈 리스트."""
+        params = {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code}
+        return self._api_get_json("/alotMatter.json", params).get("list", [])
+
+    def get_treasury_stock_status(
+        self, corp_code: str, bsns_year: str | int, reprt_code: str = "11011",
+    ) -> list[dict[str, Any]]:
+        """자기주식 취득 및 처분현황(tesstkAcqsDspsSttus) — 취득방법(대/중/소분류)×주식종류
+        조합별 1행(총계/소계 subtotal 포함). 조회결과 없음(013) → 빈 리스트."""
+        params = {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code}
+        return self._api_get_json("/tesstkAcqsDspsSttus.json", params).get("list", [])
+
+    def get_employee_status(
+        self, corp_code: str, bsns_year: str | int, reprt_code: str = "11011",
+    ) -> list[dict[str, Any]]:
+        """직원 현황(empSttus) — 부문×성별 조합별 1행(부문/성별 합계행 포함).
+        조회결과 없음(013) → 빈 리스트."""
+        params = {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code}
+        return self._api_get_json("/empSttus.json", params).get("list", [])
+
+    def get_other_corp_investment(
+        self, corp_code: str, bsns_year: str | int, reprt_code: str = "11011",
+    ) -> list[dict[str, Any]]:
+        """타법인 출자현황(otrCprInvstmntSttus) — 피출자법인별 1행. 조회결과 없음(013) → 빈 리스트."""
+        params = {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code}
+        return self._api_get_json("/otrCprInvstmntSttus.json", params).get("list", [])
+
+    def get_exec_pay_summary(
+        self, corp_code: str, bsns_year: str | int, reprt_code: str = "11011",
+    ) -> list[dict[str, Any]]:
+        """이사·감사 전체의 보수현황(hmvAuditAllSttus) — corp+연도당 1행 집계.
+        조회결과 없음(013) → 빈 리스트."""
+        params = {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code}
+        return self._api_get_json("/hmvAuditAllSttus.json", params).get("list", [])
+
+    def get_exec_pay_individual(
+        self, corp_code: str, bsns_year: str | int, reprt_code: str = "11011",
+    ) -> list[dict[str, Any]]:
+        """개인별 보수지급금액(indvdlByPay, 5억원 이상 상위5인) — 등기임원 여부 무관(고문/상담역
+        등 미등기 포함 가능). get_executive_status 의 hmvAuditIndvdlBySttus(등기임원 한정)와
+        별개 소스이므로 executives.compensation 과 병존한다. 조회결과 없음(013) → 빈 리스트."""
+        params = {"corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code}
+        return self._api_get_json("/indvdlByPay.json", params).get("list", [])
+
     def get_company(self, corp_code: str) -> dict[str, Any]:
         """기업개황(company.json) — induty_code(업종/KSIC)·acc_mt(결산월)·corp_cls 등.
         섹터/피어 그룹핑용. 조회결과 없음(013) → 빈 dict."""

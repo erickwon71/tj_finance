@@ -4,6 +4,8 @@ SQLAlchemy ORM 모델 정의
   Phase 1: corporations / filings / download_tasks / collection_runs
   Phase 2: financial_facts / unknown_accounts / standard_financials / stock_prices
   Phase 6: executives / order_backlog
+  갭채우기 Phase 2: dividend_facts / treasury_activity / employee_stats / other_investments /
+    exec_pay_summary / exec_pay_individual / periodic_api_progress
 """
 from datetime import datetime
 from sqlalchemy import (
@@ -1039,7 +1041,8 @@ class BizMetric(Base):
     fiscal_year  = Column(SmallInteger, nullable=False,   comment="보고서 회계연도")
     rcept_no     = Column(String(14),   nullable=False)
     table_ord    = Column(SmallInteger, nullable=False,   comment="출처 biz_section_tables.table_ord")
-    metric       = Column(String(20),   nullable=False,   comment="capacity/output/utilization")
+    metric       = Column(String(20),   nullable=False,   comment="capacity/output/utilization/sales")
+    channel      = Column(String(12),   nullable=True,    comment="매출 채널(수출/내수/합계/기타) — metric='sales' 전용, 생산지표는 NULL")
     segment      = Column(String(120),  nullable=True,    comment="부문(예: DX부문/정유부문)")
     item         = Column(String(150),  nullable=True,    comment="품목(예: 메모리/TV·모니터). 부문뿐이면 NULL")
     period_label = Column(String(60),   nullable=True,    comment="원본 기간 라벨(제56기 등) 또는 보조컬럼 헤더")
@@ -1054,3 +1057,167 @@ class BizMetric(Base):
         Index("ix_biz_metric_corp_year", "corp_code", "fiscal_year", "metric"),
         Index("ix_biz_metric_lookup", "corp_code", "metric", "period_year"),
     )
+
+
+# ── 13. Phase 2 · 주주환원 + 회사 일반현황 (정기보고서 API 6종) ──────────────────
+# DART 사업보고서(11011) 기준 corp+fiscal_year 단위. 각 API 응답의 raw 원본을 JSONB 로
+# 보존(필드명 변이·PRD 추정과 실제 API 응답 차이 대비 — 착수 전 실호출로 확인한 실제
+# 필드 스펙은 docs/prd/13_phase2_periodic_apis.md 참조). collector/dart_periodic.py 가 채움.
+
+class DividendFacts(Base):
+    """DART alotMatter(배당에 관한 사항) — corp+fiscal_year 당 1행으로 피벗.
+    원본은 se(항목명)+stock_knd(보통주/우선주) 조합의 long-format 15행이라 앱에서 바로 쓰기
+    어려워 대표 지표만 컬럼화하고 전체 15행은 raw 에 보존."""
+    __tablename__ = "dividend_facts"
+
+    id                    = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code             = Column(String(8),    nullable=False,   index=True)
+    fiscal_year           = Column(SmallInteger, nullable=False)
+    dps_common            = Column(BigInteger,   nullable=True,   comment="주당 현금배당금(원), 보통주")
+    dps_pref              = Column(BigInteger,   nullable=True,   comment="주당 현금배당금(원), 우선주")
+    stock_dividend_ratio  = Column(Float,        nullable=True,   comment="주당 주식배당(주), 보통주")
+    total_dividend_amount = Column(BigInteger,   nullable=True,   comment="현금배당금총액(백만원)")
+    payout_ratio          = Column(Float,        nullable=True,   comment="(연결)현금배당성향(%), 공시값")
+    dividend_yield_common = Column(Float,        nullable=True,   comment="현금배당수익률(%), 보통주")
+    rcept_no              = Column(String(14),   nullable=True)
+    raw                   = Column(JSONB,        nullable=True,   comment="alotMatter 응답 전체(15행 se/stock_knd 조합)")
+    fetched_at            = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("corp_code", "fiscal_year", name="uq_dividend_facts"),
+    )
+
+
+class TreasuryActivity(Base):
+    """DART tesstkAcqsDspsSttus(자기주식 취득 및 처분현황) — 취득방법(대/중/소분류)×주식종류
+    조합별 1행(총계/소계 subtotal 행 포함, raw 원본 그대로). corp+fiscal_year 단위 delete-then-insert."""
+    __tablename__ = "treasury_activity"
+
+    id               = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code        = Column(String(8),    nullable=False,   index=True)
+    fiscal_year      = Column(SmallInteger, nullable=False)
+    stock_kind       = Column(String(20),   nullable=True,   comment="보통주/우선주")
+    acqs_method1     = Column(String(60),   nullable=True,   comment="취득방법 대분류")
+    acqs_method2     = Column(String(60),   nullable=True,   comment="취득방법 중분류")
+    acqs_method3     = Column(String(60),   nullable=True,   comment="취득방법 소분류(총계/소계 포함)")
+    qty_begin        = Column(BigInteger,   nullable=True,   comment="기초 수량")
+    qty_acquired     = Column(BigInteger,   nullable=True,   comment="변동 수량(취득)")
+    qty_disposed     = Column(BigInteger,   nullable=True,   comment="변동 수량(처분)")
+    qty_incinerated  = Column(BigInteger,   nullable=True,   comment="변동 수량(소각)")
+    qty_end          = Column(BigInteger,   nullable=True,   comment="기말 수량")
+    remark           = Column(String(200),  nullable=True)
+    rcept_no         = Column(String(14),   nullable=True)
+    raw              = Column(JSONB,        nullable=True)
+    fetched_at       = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_treasury_corp_year", "corp_code", "fiscal_year"),
+    )
+
+
+class EmployeeStats(Base):
+    """DART empSttus(직원 현황) — 부문(fo_bbm)×성별(sexdstn) 조합별 1행(부문/성별 합계행 포함)."""
+    __tablename__ = "employee_stats"
+
+    id                   = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code            = Column(String(8),    nullable=False,   index=True)
+    fiscal_year          = Column(SmallInteger, nullable=False)
+    division             = Column(String(60),   nullable=True,   comment="부문(fo_bbm), '성별합계'=부문 전체")
+    sex                  = Column(String(4),    nullable=True,   comment="남/여")
+    regular_count        = Column(BigInteger,   nullable=True,   comment="정규직 수(rgllbr_co)")
+    contract_count       = Column(BigInteger,   nullable=True,   comment="계약직 수(cnttk_co)")
+    total_count          = Column(BigInteger,   nullable=True,   comment="합계(sm)")
+    avg_tenure_years     = Column(Float,        nullable=True,   comment="평균 근속연수(avrg_cnwk_sdytrn)")
+    annual_salary_total  = Column(BigInteger,   nullable=True,   comment="연간급여총액(원, fyer_salary_totamt) — 성별합계 행에만 존재")
+    avg_salary           = Column(BigInteger,   nullable=True,   comment="1인평균급여액(원, jan_salary_am) — 성별합계 행에만 존재")
+    remark               = Column(String(200),  nullable=True)
+    rcept_no             = Column(String(14),   nullable=True)
+    raw                  = Column(JSONB,        nullable=True)
+    fetched_at           = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_employee_corp_year", "corp_code", "fiscal_year"),
+    )
+
+
+class OtherInvestment(Base):
+    """DART otrCprInvstmntSttus(타법인 출자현황) — corp+fiscal_year 당 피출자법인별 1행."""
+    __tablename__ = "other_investments"
+
+    id                    = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code             = Column(String(8),    nullable=False,   index=True)
+    fiscal_year           = Column(SmallInteger, nullable=False)
+    investee_name         = Column(String(150),  nullable=True,   comment="법인명(inv_prm)")
+    first_acquired_date   = Column(String(20),   nullable=True,   comment="최초취득일자(frst_acqs_de)")
+    purpose               = Column(String(60),   nullable=True,   comment="출자목적(invstmnt_purps)")
+    first_acquired_amount = Column(BigInteger,   nullable=True,   comment="최초취득금액(원)")
+    begin_qty             = Column(BigInteger,   nullable=True,   comment="기초잔액 수량")
+    begin_pct             = Column(Float,        nullable=True,   comment="기초잔액 지분율(%)")
+    begin_book_value      = Column(BigInteger,   nullable=True,   comment="기초잔액 장부가액(원)")
+    end_qty               = Column(BigInteger,   nullable=True,   comment="기말잔액 수량")
+    end_pct               = Column(Float,        nullable=True,   comment="기말잔액 지분율(%)")
+    end_book_value        = Column(BigInteger,   nullable=True,   comment="기말잔액 장부가액(원)")
+    investee_total_assets = Column(BigInteger,   nullable=True,   comment="피출자법인 최근사업연도 총자산(원)")
+    investee_net_income   = Column(BigInteger,   nullable=True,   comment="피출자법인 최근사업연도 당기순이익(원)")
+    rcept_no              = Column(String(14),   nullable=True)
+    raw                   = Column(JSONB,        nullable=True)
+    fetched_at            = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_otherinv_corp_year", "corp_code", "fiscal_year"),
+    )
+
+
+class ExecPaySummary(Base):
+    """DART hmvAuditAllSttus(이사·감사 전체의 보수현황) — corp+fiscal_year 당 1행 집계."""
+    __tablename__ = "exec_pay_summary"
+
+    id                  = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code           = Column(String(8),    nullable=False,   index=True)
+    fiscal_year         = Column(SmallInteger, nullable=False)
+    total_exec_count    = Column(Integer,      nullable=True,   comment="인원수(nmpr)")
+    total_pay_amount    = Column(BigInteger,   nullable=True,   comment="보수총액(원, mendng_totamt)")
+    avg_pay_per_person  = Column(BigInteger,   nullable=True,   comment="1인평균보수액(원, jan_avrg_mendng_am)")
+    remark              = Column(String(200),  nullable=True)
+    rcept_no            = Column(String(14),   nullable=True)
+    raw                 = Column(JSONB,        nullable=True)
+    fetched_at          = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("corp_code", "fiscal_year", name="uq_exec_pay_summary"),
+    )
+
+
+class ExecPayIndividual(Base):
+    """DART indvdlByPay(개인별 보수지급금액, 5억원 이상 상위5인) — 등기임원 여부 무관(고문/상담역
+    등 미등기 포함 가능, executives.compensation(hmvAuditIndvdlBySttus=등기임원 한정)와 별개 소스."""
+    __tablename__ = "exec_pay_individual"
+
+    id                = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code         = Column(String(8),    nullable=False,   index=True)
+    fiscal_year       = Column(SmallInteger, nullable=False)
+    person_name       = Column(String(50),   nullable=True,   comment="성명(nm)")
+    position          = Column(String(100),  nullable=True,   comment="직위(ofcps)")
+    total_pay_amount  = Column(BigInteger,   nullable=True,   comment="보수총액(원, mendng_totamt)")
+    pay_detail        = Column(JSONB,        nullable=True,   comment="해당 행 원본(mendng_totamt_ct_incls_mendng 등)")
+    rcept_no          = Column(String(14),   nullable=True)
+    fetched_at        = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_execpayind_corp_year", "corp_code", "fiscal_year"),
+    )
+
+
+class PeriodicApiProgress(Base):
+    """Phase 2 6개 API 백필 체크포인트 — (corp_code, fiscal_year, api_name) 단위 진행상태.
+    no_data(status='013') 응답도 반드시 기록해야 재실행 시 이미 확인한 no-data 케이스를
+    다시 조회해 DART 일일 쿼터를 낭비하지 않는다(B3/B2 백필 쿼터소진 교훈과 동일 패턴)."""
+    __tablename__ = "periodic_api_progress"
+
+    corp_code    = Column(String(8),    primary_key=True)
+    fiscal_year  = Column(SmallInteger, primary_key=True)
+    api_name     = Column(String(30),   primary_key=True,
+                          comment="alotMatter/tesstkAcqsDspsSttus/empSttus/otrCprInvstmntSttus/"
+                                  "hmvAuditAllSttus/indvdlByPay")
+    status       = Column(String(10),   nullable=False,   comment="ok/no_data/error")
+    checked_at   = Column(DateTime,     default=datetime.utcnow)

@@ -11,10 +11,19 @@ from __future__ import annotations
 
 import pandas as pd
 
+from app.registry.dividend import DIVIDEND_BY_ID
 from app.registry.extended import EXTENDED_BY_ID
-from app.registry.units import Category
+from app.registry.units import Category, UnitType
 
 _TIDY_COLS = ["period_label", "period_end", "metric_id", "name", "category", "unit", "value"]
+
+# DIVIDEND_BY_ID id → dividend_facts 컬럼명(app.data.shareholder_return.load_dividend_series_for_chart)
+_DIVIDEND_COL = {
+    "div.dps_common": "dps_common",
+    "div.payout_ratio": "payout_ratio",
+    "div.dividend_yield_common": "dividend_yield_common",
+    "div.total_dividend_amount": "total_dividend_amount",
+}
 
 
 def fetch_ext_frame(rows: list[dict], metric_ids: list[str], grain: str) -> pd.DataFrame:
@@ -45,4 +54,40 @@ def fetch_ext_frame(rows: list[dict], metric_ids: list[str], grain: str) -> pd.D
             "unit": spec.unit,
             "value": r["amount_won"],
         })
+    return pd.DataFrame(out, columns=_TIDY_COLS) if out else empty
+
+
+def fetch_dividend_frame(rows: list[dict], metric_ids: list[str], grain: str) -> pd.DataFrame:
+    """rows: app.data.shareholder_return.load_dividend_series_for_chart() 결과.
+    metric_ids: DIVIDEND_CATALOG id 중 선택된 것. grain: "annual" 만 지원(연 1회 공시)."""
+    empty = pd.DataFrame(columns=_TIDY_COLS)
+    if grain != "annual" or not rows or not metric_ids:
+        return empty
+
+    specs = {mid: DIVIDEND_BY_ID[mid] for mid in metric_ids if mid in DIVIDEND_BY_ID}
+    if not specs:
+        return empty
+
+    out = []
+    for r in rows:
+        for mid, spec in specs.items():
+            col = _DIVIDEND_COL[mid]
+            v = r.get(col)
+            if v is None:
+                continue
+            # dividend_facts 의 payout_ratio/dividend_yield_common 은 이미 %스케일(67.8) —
+            # 다른 PCT 지표(소수 0.678)와 축약 관례를 맞추려 100 으로 나눈다.
+            if spec.unit == UnitType.PCT:
+                v = v / 100
+            elif spec.unit == UnitType.AMOUNT_EOK:
+                v = v * 1_000_000  # 공시 단위=백만원 → 원(다른 AMOUNT_EOK 지표와 raw 스케일 통일)
+            out.append({
+                "period_label": str(r["fiscal_year"]),
+                "period_end": r["period_end"],
+                "metric_id": spec.id,
+                "name": spec.name_ko,
+                "category": Category.EXTENDED.value,
+                "unit": spec.unit,
+                "value": v,
+            })
     return pd.DataFrame(out, columns=_TIDY_COLS) if out else empty

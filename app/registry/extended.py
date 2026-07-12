@@ -133,6 +133,11 @@ EXTENDED_CATALOG: list[ExtSpec] = [
     _spec("is.other_income", "기타수익"),
     _spec("is.sga_detail", "판관비 상세"),
     _spec("is.total_comprehensive_income", "총포괄손익"),
+
+    # ── 주석(NOTE) · 비용의 성격별 분류 (Phase 4, PRD 15) ──
+    # note.* 는 statement 접두가 없어 _spec 의 prefix 유도가 ""(공백)이 되므로 statement 를 명시.
+    ExtSpec("note.employee_benefits", "종업원급여(비용성격)", UnitType.AMOUNT_EOK, "NOTE"),
+    ExtSpec("note.raw_materials_used", "원재료 사용액(비용성격)", UnitType.AMOUNT_EOK, "NOTE"),
 ]
 
 EXTENDED_BY_ID: dict[str, ExtSpec] = {s.id: s for s in EXTENDED_CATALOG}

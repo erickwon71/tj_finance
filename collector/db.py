@@ -392,6 +392,42 @@ def _run_migrations() -> None:
         GROUP BY f.corp_code, ss.fiscal_year, ss.fiscal_period, ss.basis,
                  f.canonical_account, ss.source_rcept_no
         """),
+
+        ("2026_07_biz_metrics_channel",
+         # PRD 14(전문 서비스 갭 채우기 Phase 3) — 부문·수출/내수 매출 파서. biz_metrics 에 가산
+         # 컬럼 channel(수출/내수/합계/기타). 신규 테이블 대신 metric='sales' 신규 값 + channel 로
+         # 확장(기존 생산 로더/sync 재사용). 생산 지표(capacity/output/utilization)는 channel NULL.
+         "ALTER TABLE biz_metrics ADD COLUMN IF NOT EXISTS channel VARCHAR(12)"),
+
+        ("2026_07_extended_financials_view_note",
+         # PRD 15(Phase 4) — extended_financials 뷰가 note.*(비용성격 주석: employee_benefits/
+         # raw_materials_used 등)도 노출하도록 WHERE 절 보강. note.* 는 statement 접두(bs/is/cf)가
+         # 없어 기존 CASE(left 3자)에서 배제됐다 — expense_nature_sync 가 IS 승자 rcept 에 적재하므로
+         # ss.statement='IS' 와 매칭하는 분기를 OR 로 추가한다(나머지 로직·컬럼 동일).
+         """
+        CREATE OR REPLACE VIEW extended_financials AS
+        SELECT f.corp_code, ss.fiscal_year, ss.fiscal_period, ss.basis,
+               f.canonical_account, SUM(f.amount_won) AS amount_won,
+               COUNT(*) AS n_facts, ss.source_rcept_no
+        FROM statement_source ss
+        JOIN fact_v2 f ON f.rcept_no = ss.source_rcept_no
+          AND f.corp_code = ss.corp_code
+          AND f.report_fiscal_year = ss.fiscal_year
+          AND f.report_fiscal_period = ss.fiscal_period
+          AND f.basis = ss.basis
+        WHERE NOT ss.is_stub
+          AND f.col_index = 0
+          AND NOT f.is_dimensional
+          AND f.canonical_account IS NOT NULL AND f.amount_won IS NOT NULL
+          AND (
+                CASE left(f.canonical_account, 3)
+                  WHEN 'bs.' THEN 'BS' WHEN 'is.' THEN 'IS' WHEN 'cf.' THEN 'CF'
+                END = ss.statement
+                OR (f.canonical_account LIKE 'note.%' AND ss.statement = 'IS')
+              )
+        GROUP BY f.corp_code, ss.fiscal_year, ss.fiscal_period, ss.basis,
+                 f.canonical_account, ss.source_rcept_no
+        """),
     ]
 
     with engine.begin() as conn:

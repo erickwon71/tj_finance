@@ -362,6 +362,36 @@ def _run_migrations() -> None:
          # autovacuum 임계값을 하향(기본 스케일 팩터 20%→2%)해 죽은 튜플이 쌓이기 전에 더 자주 청소.
          # 주기 VACUUM(ANALYZE)은 scripts/vacuum_db.py(주간 launchd, D5)가 보완.
          "ALTER TABLE fact_v2 SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_analyze_scale_factor = 0.02)"),
+
+        ("2026_07_extended_financials_view",
+         # PRD 10~12(전문 서비스 갭 채우기 Phase 1) — concept_map 이 매핑하지만 std_financials_v2
+         # wide 컬럼으로 승격되지 않은 ~51종 캐노니컬(bs.goodwill·is.finance_income·
+         # cf.borrowings_proceeds 등)을 앱에 저비용 노출하는 long 뷰. statement_source 가 이미
+         # (corp,fy,fp,basis,statement) 별 승자 rcept 를 선택했으므로 그 rcept 의 fact_v2 만
+         # 골라 dedup 은 공짜. SUM 은 의도적(leaf-additive 캐노니컬 — 예: bs.lease_liability=
+         # 유동+비유동 두 acode 합). col_index=0(당기)·NOT is_dimensional(SCE/차원 제외)만.
+         # v1 은 연간(FY)만 앱 노출(H1/Q3 는 누적 as-filed 라 이산화 재구현 회피, 앱단에서 필터).
+         """
+        CREATE OR REPLACE VIEW extended_financials AS
+        SELECT f.corp_code, ss.fiscal_year, ss.fiscal_period, ss.basis,
+               f.canonical_account, SUM(f.amount_won) AS amount_won,
+               COUNT(*) AS n_facts, ss.source_rcept_no
+        FROM statement_source ss
+        JOIN fact_v2 f ON f.rcept_no = ss.source_rcept_no
+          AND f.corp_code = ss.corp_code
+          AND f.report_fiscal_year = ss.fiscal_year
+          AND f.report_fiscal_period = ss.fiscal_period
+          AND f.basis = ss.basis
+        WHERE NOT ss.is_stub
+          AND f.col_index = 0
+          AND NOT f.is_dimensional
+          AND f.canonical_account IS NOT NULL AND f.amount_won IS NOT NULL
+          AND CASE left(f.canonical_account, 3)
+                WHEN 'bs.' THEN 'BS' WHEN 'is.' THEN 'IS' WHEN 'cf.' THEN 'CF'
+              END = ss.statement
+        GROUP BY f.corp_code, ss.fiscal_year, ss.fiscal_period, ss.basis,
+                 f.canonical_account, ss.source_rcept_no
+        """),
     ]
 
     with engine.begin() as conn:

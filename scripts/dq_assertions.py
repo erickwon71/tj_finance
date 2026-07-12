@@ -147,6 +147,18 @@ CHECKS: list[dict] = [
                   "WHERE backlog_amt < 0 ORDER BY backlog_amt LIMIT 10",
     },
     {
+        # PRD 12(Phase 1) — extended_financials 뷰는 (corp,fy,fp,basis,canonical) 당 SUM(amount_won)
+        # 이 leaf-additive(리스부채=유동+비유동 등) 가정 위에 있다. n_facts 가 비정상적으로 크면
+        # (일반적으로 2~3개 leaf 인데 5개 초과) 같은 rcept 안에 동일 canonical 로 잘못 매핑된
+        # 무관 라인이 다수 섞여 합산 오염됐을 신호(controlling_ni 총포괄 오염과 같은 클래스의 버그).
+        "name": "extended_financials_n_facts_outlier",
+        "sev": "WARN",
+        "desc": "extended_financials n_facts > 5 (동일 캐노니컬에 라인 다수 합산 — 오매핑 의심)",
+        "count": "SELECT count(*) FROM extended_financials WHERE n_facts > 5",
+        "sample": "SELECT corp_code, fiscal_year, basis, canonical_account, n_facts, amount_won "
+                  "FROM extended_financials WHERE n_facts > 5 ORDER BY n_facts DESC LIMIT 10",
+    },
+    {
         "name": "capital_events_unknown_type",
         "sev": "WARN",
         "desc": "자본이벤트 event_type 미지값 (수집기 매핑 누락 신호, B2)",

@@ -20,13 +20,20 @@ from app import cache, state
 from app.components.export import download_button
 from app.compute import derived as _d
 from app.compute.resolver import build_metric_frame
+from app.compute.sources import fetch_ext_frame
 from app.data import presets as _presets
+from app.registry.extended import EXTENDED_BY_ID, EXTENDED_CATALOG
 from app.registry.metrics import METRIC_REGISTRY, REGISTRY_BY_ID
-from app.registry.units import AMOUNT_UNITS, UnitType, format_value
+from app.registry.units import AMOUNT_UNITS, Category, UnitType, format_value
 from app.views.chart_panel import render_metric_chart, render_price_financial_combined
 
+# 파생 필드(비율·차분·주당) A/B 는 레지스트리 46종만 대상(app.compute.derived 가 REGISTRY_BY_ID
+# 전용) — 확장 재무항목의 파생연산은 후속(Phase 5).
 _ALL_IDS = [m.id for m in METRIC_REGISTRY]
 _AMOUNT_IDS = [m.id for m in METRIC_REGISTRY if m.unit in AMOUNT_UNITS]
+
+# "📈 기본 지표 선택" 은 레지스트리 + 확장 재무항목(EXTENDED_CATALOG) 통합 풀.
+_ALL_BASE_IDS = _ALL_IDS + [s.id for s in EXTENDED_CATALOG]
 _EOK = 100_000_000
 
 
@@ -34,6 +41,21 @@ def _fmt_id(mid: str) -> str:
     """레지스트리 id → '이름 · 카테고리' 라벨."""
     s = REGISTRY_BY_ID[mid]
     return f"{s.name_ko} · {s.category.value}"
+
+
+def _base_category(mid: str) -> str:
+    """기본 지표 풀(레지스트리+확장) id → 카테고리 값."""
+    if mid in REGISTRY_BY_ID:
+        return REGISTRY_BY_ID[mid].category.value
+    return Category.EXTENDED.value
+
+
+def _fmt_base_id(mid: str) -> str:
+    """기본 지표 풀 id → '이름 · 카테고리' 라벨(레지스트리+확장 공통)."""
+    if mid in REGISTRY_BY_ID:
+        return _fmt_id(mid)
+    s = EXTENDED_BY_ID[mid]
+    return f"{s.name_ko} · {Category.EXTENDED.value}"
 
 
 # ── 프리셋 바 ────────────────────────────────────────────
@@ -227,18 +249,39 @@ def render() -> None:
 
     _preset_bar()
 
-    # ① 기본 지표 선택 (전체 레지스트리 평면 다중선택)
+    # ① 기본 지표 선택 (카테고리 필터 + 레지스트리+확장 통합 다중선택)
     st.session_state.setdefault("cb_base", ["revenue", "operating_income", "op_margin"])
-    base_ids = st.multiselect("📈 기본 지표 선택", _ALL_IDS, format_func=_fmt_id,
+    cat_options = ["전체"] + [c.value for c in Category]
+    cat_filter = st.selectbox("카테고리 필터", cat_options, key="cb_cat_filter")
+    if cat_filter == "전체":
+        options = _ALL_BASE_IDS
+    else:
+        options = [i for i in _ALL_BASE_IDS if _base_category(i) == cat_filter]
+    # 위젯 안전: 필터로 가려져도 이미 선택된 항목은 옵션에 항상 포함(카테고리 전환 시 선택 유지).
+    current = st.session_state.get("cb_base", [])
+    options = list(dict.fromkeys(options + [i for i in current if i in _ALL_BASE_IDS]))
+    base_ids = st.multiselect("📈 기본 지표 선택", options, format_func=_fmt_base_id,
                               key="cb_base")
 
     # ② 파생 필드 빌더
     _derived_builder()
 
-    # 프레임 조립(베이스 + 파생)
+    # 프레임 조립(베이스 + 확장 + 파생)
+    registry_ids = [i for i in base_ids if i in REGISTRY_BY_ID]
+    extended_ids = [i for i in base_ids if i in EXTENDED_BY_ID]
+
     frames = []
-    if base_ids:
-        frames.append(build_metric_frame(series, base_ids, grain))
+    if registry_ids:
+        frames.append(build_metric_frame(series, registry_ids, grain))
+    if extended_ids:
+        if grain != "annual":
+            st.caption("※ 확장 재무항목은 연간(FY)만 지원합니다 — "
+                       "좌측 사이드바에서 연간으로 전환하면 표시됩니다.")
+        else:
+            ext_rows = cache.extended_series(corp_code, used_stmt)
+            ext_frame = fetch_ext_frame(ext_rows, extended_ids, grain)
+            if not ext_frame.empty:
+                frames.append(ext_frame)
     dframe = _d.build_derived_frame(series, st.session_state.get("cb_derived", []), grain)
     if not dframe.empty:
         frames.append(dframe)

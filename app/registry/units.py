@@ -21,6 +21,7 @@ class Category(Enum):
     PROFIT = "수익성"
     GROWTH = "성장성"
     STABILITY = "안정성"
+    EXTENDED = "확장 재무항목"
 
 
 class Grain(Enum):

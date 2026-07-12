@@ -79,6 +79,14 @@ def quarter_series(corp_code: str, statement_type: str, quarters: int = 16) -> t
     return _series.load_quarter_series_with_fallback(corp_code, statement_type, quarters)
 
 
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def extended_series(corp_code: str, statement_type: str) -> list[dict]:
+    """확장 재무항목(연간 FY, EXTENDED_CATALOG) 전체 — 카탈로그 필터는 호출부(fetch_ext_frame)에서.
+    Phase 1(PRD 12) — 폴백 없음(연결→별도 폴백은 기존 annual_series 로 이미 basis 결정된 뒤 호출)."""
+    from app.data import extended as _extended
+    return _extended.load_extended_all(corp_code, statement_type)
+
+
 @st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=256)
 def price_series(stock_code: str, start: Optional[date], end: Optional[date]) -> list[dict]:
     return _series.load_price_series(stock_code, start, end)

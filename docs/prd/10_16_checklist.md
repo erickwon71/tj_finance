@@ -43,18 +43,24 @@
 - **사용자 실행**: ☑ 전수 스캔 완료(4-way 샤드 병렬+병합) · ☐ (선택, 미실행) 189K 전수
   제목-레벨 정규식 스캔
 
-## Phase 1 — extended_financials 뷰 + 차트빌더 노출 ☐ (PRD 12, 권장 모델: Sonnet)
-- ☐ `collector/db.py` 마이그레이션 `2026_07_extended_financials_view`(멱등 CREATE OR REPLACE VIEW)
-- ☐ `app/registry/extended.py`: EXTENDED_CATALOG ~30종(한글라벨+UnitType, eps=원/주 별도단위)
-- ☐ `app/data/extended.py:load_extended_series`
-- ☐ `app/compute/sources.py:fetch_ext_frame`(build_metric_frame 동일 tidy 스키마)
-- ☐ `app/cache.py:extended_series` 캐시
-- ☐ `app/views/chart_builder_page.py`: 플랫 multiselect → 카테고리 그룹 피커 + extended 카테고리
-- ☐ `scripts/dq_assertions.py`: n_facts 이상 감지 어서션(WARN)
-- **검증**: ☐ 삼성전자 FY2023 goodwill/자기주식/이자지급 DART 원문 대조 · ☐ lease_liability SUM
-  의미 확인(유동+비유동) · ☐ 차트빌더 extended 선택→렌더→CSV 수동확인 · ☐ statement-prefix CASE
-  매칭 단위테스트(fin2/tests) · ☐ 기존 46종 지표 무회귀
+## Phase 1 — extended_financials 뷰 + 차트빌더 노출 ☑ 완료 (2026-07-12, 커밋 540cf28) (PRD 12, 모델: Sonnet)
+- ☑ `collector/db.py` 마이그레이션 `2026_07_extended_financials_view`(멱등 CREATE OR REPLACE VIEW)
+- ☑ `app/registry/extended.py`: EXTENDED_CATALOG **94종**(DB 실측 기준, 당초 추정 51종보다 확대 —
+  concept_map 뿐 아니라 account_mapper Track B 어휘까지 포함됨. 한글라벨+UnitType, eps=원/주)
+- ☑ `app/data/extended.py:load_extended_all` (+ std_v2 조인으로 period_end 확보)
+- ☑ `app/compute/sources.py:fetch_ext_frame`(build_metric_frame 동일 tidy 스키마, 분기 그레인 가드)
+- ☑ `app/cache.py:extended_series` 캐시
+- ☑ `app/views/chart_builder_page.py`: 카테고리 필터 셀렉트(위젯안전) + 레지스트리·확장 통합
+  지표선택. 파생연산(A/B)은 레지스트리 전용 유지(확장 파생은 Phase 5)
+- ☑ `scripts/dq_assertions.py`: `extended_financials_n_facts_outlier` WARN 어서션
+- **검증**: ☑ 삼성전자 실데이터 대조(interest_paid 전연도 정상, cash/total_assets 등 항등식
+  일치) · ☑ EPS 원단위 정확 표시(4,950원, 억원 오스케일 없음) · ☑ 분기 그레인 가드 빈프레임 확인
+  · ☑ AppTest 3단계(기본→확장추가→카테고리전환) 예외 0 · ☑ 회귀 57 tests pass ·
+  ☑ dq_assertions 신규 어서션 SQL 무오류(ERROR 0, n_facts 위반 149,708건은 WARN 트리아지 대상으로 기록)
 - **사용자 실행**: 없음(뷰 즉시 반영)
+- **부수 발견·수정(Phase 1 범위 밖, 검증 중 발견)**: `controlling_ni` 총포괄손익 오염 버그 —
+  별도 커밋 22d21f9. 상세는 memory `bug-controlling-ni-total-comprehensive.md`. 소급 재표준화
+  1,733사 사용자 실행 중(진행상황: 위반 17,424→16,743, 계속 감소 중).
 
 ## Phase 2 — 주주환원 + 회사 일반현황 API 수집 ☐ (PRD 13, 권장 모델: Sonnet)
 - ☐ `collector/models.py`: dividend_facts·treasury_activity·employee_stats·other_investments·

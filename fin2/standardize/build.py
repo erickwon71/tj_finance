@@ -105,6 +105,32 @@ def _collect(session, basis: str, sources: dict[str, str],
         cands = [r[0] for r in alt]
         if cands:
             canon["is.operating_income"] = max(cands, key=abs)
+
+    # 지배주주 귀속 순이익 총포괄 오염 교정: Track B(텍스트) 보고서는 손익계산서의
+    # '지배기업 소유주 귀속 당기순이익'과 포괄손익계산서의 '지배기업 소유주 귀속 총포괄손익'을
+    # 회사마다 '지배기업소유주지분' 같은 동일 축약 라벨로 표기해 둘 다 is.controlling_ni 로
+    # 매핑된다(account_maps/is_accounts.py alias). max-abs 는 OCI 를 포함한 총포괄분(더 큼)을
+    # 오선택 → controlling_ni > net_income 항등식 위반(삼성전자 2023: 17.85조 채택, 정답 14.47조).
+    # 회계 항등식 controlling_ni + noncontrolling_ni = net_income 을 이용해, 후보가 여럿일 때
+    # (net_income - noncontrolling_ni)=기대 지배분에 가장 가까운 값을 채택한다. 후보가 하나뿐인
+    # 기업(정당하게 이 라벨로만 순이익 귀속분을 보고)은 그대로 유지되어 안전.
+    cni, ni2 = canon.get("is.controlling_ni"), canon.get("is.net_income")
+    if cni is not None and ni2 is not None:
+        nci = canon.get("is.noncontrolling_ni") or 0
+        expected = ni2 - nci
+        # 현재 선택값이 기대 지배분에서 유의미하게 벗어나면(총포괄 오염 의심) 후보 재선택.
+        if abs(cni - expected) > abs(expected) * 0.02 + 1_000_000:
+            cum_filter = "AND COALESCE(is_cumulative, false)" if interim else ""
+            alt = session.execute(text(f"""
+                SELECT DISTINCT amount_won FROM fact_v2
+                WHERE rcept_no = ANY(:rs) AND basis = :b AND col_index = 0
+                  AND NOT is_dimensional AND canonical_account = 'is.controlling_ni'
+                  AND amount_won IS NOT NULL
+                  {cum_filter}
+            """), {"rs": list({r for r in sources.values()}), "b": basis}).fetchall()
+            cands = [r[0] for r in alt]
+            if cands:
+                canon["is.controlling_ni"] = min(cands, key=lambda x: abs(x - expected))
     return canon
 
 

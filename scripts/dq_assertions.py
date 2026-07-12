@@ -166,6 +166,25 @@ CHECKS: list[dict] = [
                   "WHERE metric='utilization' AND value > 500 ORDER BY value DESC LIMIT 10",
     },
     {
+        # controlling_ni 총포괄 오염 재발 감지: 지배주주 귀속 '순이익'과 '총포괄손익'이 텍스트에서
+        # 동일 축약 라벨로 나와 둘 다 is.controlling_ni 로 매핑 → max-abs 가 총포괄분(OCI 포함,
+        # 더 큼)을 오선택하던 버그(build._collect 가 항등식으로 교정). |controlling|>|net|*1.02 는
+        # 비지배 음수인 정당 케이스도 일부 포함하므로 WARN(트리아지용). 소급수정=fin2_fix_controlling_ni.py.
+        "name": "std_v2_controlling_ni_exceeds_net",
+        "sev": "WARN",
+        "desc": "지배순이익 > |당기순이익|*1.02 (총포괄 오염 신호 — 비지배 음수 정당케이스 일부 포함)",
+        "count": "SELECT count(*) FROM std_financials_v2 WHERE version=1 "
+                 "AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false) "
+                 "AND net_income IS NOT NULL AND controlling_ni IS NOT NULL AND net_income<>0 "
+                 "AND ABS(controlling_ni) > ABS(net_income)*1.02",
+        "sample": "SELECT corp_code, fiscal_year, statement_type, net_income, controlling_ni "
+                  "FROM std_financials_v2 WHERE version=1 "
+                  "AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false) "
+                  "AND net_income IS NOT NULL AND controlling_ni IS NOT NULL AND net_income<>0 "
+                  "AND ABS(controlling_ni) > ABS(net_income)*1.02 "
+                  "ORDER BY ABS(controlling_ni)-ABS(net_income) DESC LIMIT 10",
+    },
+    {
         # DEF-4 재발 감지: Q1 분기보고서 IS/CF 표에서 당분기(col0)와 전기(col1) 3개월 값이
         # 완전 동일하면 전기컬럼 추출 오류 신호(fin2/extract/text.py interim_flow 미적용 등).
         "name": "fact_v2_q1_duration_col0_eq_col1",

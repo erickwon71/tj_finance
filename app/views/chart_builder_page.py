@@ -8,6 +8,12 @@
   ③ 프리셋 저장/로드  — 선택 구성을 로컬 JSON 으로 저장·복원
   ④ 연간/분기         — 좌측 사이드바 grain 을 그대로 따름
 
+그리고 Phase 5(D5) 고급 기능:
+  ⑤ 파생연산 확장     — YoY(전년동기比 %), TTM(분기, 직전4분기 합산)
+  ⑥ 밸류에이션 시계열 — PER/PBR/PSR/EV-EBITDA/배당수익률(valuation_daily, 독립 시간축)
+  ⑦ 다기업 비교       — 2~4개 기업 동시 시계열(색상=기업, 선스타일=지표)
+  ⑧ 금액 스케일 토글  — 원/억원/조원 표시 전환(저장값 불변, 표시 레이어만)
+
 베이스·파생 모두 tidy 프레임(resolver/derived)으로 통일돼 차트(render_metric_chart)·
 표·CSV(download_button)는 기존 컴포넌트를 재사용한다.
 """
@@ -25,8 +31,10 @@ from app.data import presets as _presets
 from app.registry.dividend import DIVIDEND_BY_ID, DIVIDEND_CATALOG
 from app.registry.extended import EXTENDED_BY_ID, EXTENDED_CATALOG
 from app.registry.metrics import METRIC_REGISTRY, REGISTRY_BY_ID
-from app.registry.units import AMOUNT_UNITS, Category, UnitType, format_value
-from app.views.chart_panel import render_metric_chart, render_price_financial_combined
+from app.registry.units import AMOUNT_SCALES, AMOUNT_UNITS, Category, UnitType, format_value
+from app.format import fmt_corp_identity
+from app.views.chart_panel import (
+    render_metric_chart, render_metric_chart_compare, render_price_financial_combined)
 
 # 파생 필드(비율·차분·주당) A/B 는 레지스트리 46종만 대상(app.compute.derived 가 REGISTRY_BY_ID
 # 전용) — 확장 재무항목의 파생연산은 후속(Phase 5).
@@ -103,15 +111,15 @@ def _derived_builder() -> None:
     st.session_state.setdefault("cb_derived", [])
     specs: list[dict] = st.session_state["cb_derived"]
 
-    with st.expander(f"🧬 파생 필드 조합 ({len(specs)}개) — 비율·차분·주당", expanded=bool(specs)):
+    with st.expander(f"🧬 파생 필드 조합 ({len(specs)}개) — 비율·차분·주당·YoY·TTM", expanded=bool(specs)):
         c1, c2, c3, c4 = st.columns([2, 3, 3, 1.4])
         op = c1.selectbox("연산", list(_d.OP_LABELS), key="cb_op",
                           format_func=lambda o: _d.OP_LABELS[o])
         a = c2.selectbox("A 필드", _ALL_IDS, key="cb_a", format_func=_fmt_id)
-        b_disabled = (op == "pershare")
+        b_disabled = (op in _d.SINGLE_FIELD_OPS)
         b = c3.selectbox("B 필드", _ALL_IDS, key="cb_b", format_func=_fmt_id,
                          disabled=b_disabled,
-                         help="주당(A÷주식수)은 B를 사용하지 않습니다.")
+                         help="주당·YoY·TTM 은 A 필드 1개만 사용합니다(B 불요).")
         c4.markdown("<div style='height:1.9em'></div>", unsafe_allow_html=True)
         if c4.button("➕ 추가", width="stretch"):
             spec = {"op": op, "a": a, "b": (None if b_disabled else b)}
@@ -136,18 +144,156 @@ def _derived_builder() -> None:
         st.caption("비율=무차원(x) · 차분=금액(억원, 금액필드끼리) · 주당=원/주(금액필드).")
 
 
+# ── 밸류에이션 시계열 (D5, Phase 5) ────────────────────────
+def _valuation_series_section(corp_code: str) -> None:
+    """valuation_daily 일별 멀티플 다중 선택 + 시계열 차트 — 재무 지표 프레임과 시간축이
+    달라(일별 vs 연간/분기 기간) 독립 섹션으로 렌더(주가 오버레이와 동일 원칙)."""
+    from app.data.valuation_bands import BAND_METRICS
+
+    with st.expander("💰 밸류에이션 시계열 (PER/PBR/PSR/EV-EBITDA/배당수익률)", expanded=False):
+        keys = list(BAND_METRICS)
+        labels = {k: BAND_METRICS[k][0] for k in keys}
+        st.session_state.setdefault("cb_val_metrics", ["per", "pbr"])
+        sel = st.multiselect("지표 (다중선택)", keys, format_func=lambda k: labels[k],
+                             key="cb_val_metrics")
+        if not sel:
+            st.caption("지표를 1개 이상 선택하세요.")
+            return
+
+        c1, c2 = st.columns([2, 1])
+        since = c1.selectbox("시작 연도", [2015, 2018, 2020, 2022, 2023, 2024], index=0,
+                             key="cb_val_since")
+        pct_keys = {k for k in sel if BAND_METRICS[k][1]}
+        x_keys = [k for k in sel if k not in pct_keys]
+
+        import plotly.graph_objects as go
+        fig = go.Figure()
+        any_data = False
+        for k in sel:
+            rows = cache.valuation_series(corp_code, k, since)
+            if not rows:
+                continue
+            any_data = True
+            label, is_pct = BAND_METRICS[k]
+            xs = [r["trade_date"] for r in rows]
+            ys = [r["value"] * 100 if is_pct else r["value"] for r in rows]
+            fig.add_trace(go.Scatter(
+                x=xs, y=ys, name=label, mode="lines",
+                yaxis="y2" if is_pct and x_keys else "y"))
+        if not any_data:
+            st.info("선택한 지표의 일별 밸류에이션 데이터가 없습니다.")
+            return
+
+        layout: dict = dict(height=360, margin=dict(t=20, b=10, l=10, r=10),
+                            legend=dict(orientation="h", yanchor="bottom", y=-0.3))
+        if pct_keys and x_keys:
+            layout["yaxis"] = dict(title="배수(x)")
+            layout["yaxis2"] = dict(title="%", overlaying="y", side="right")
+        elif pct_keys:
+            layout["yaxis"] = dict(title="%")
+        else:
+            layout["yaxis"] = dict(title="배수(x)")
+        fig.update_layout(**layout)
+        st.plotly_chart(fig, width="stretch", key="cb_val_chart")
+        st.caption(f"{since}년~ · 일별 밸류에이션(valuation_daily) · 재무 지표 프레임과 별개 시간축")
+
+
+# ── 다기업 비교 (D5, Phase 5) ────────────────────────────
+_CMP_KEY = "cb_compare_corps"  # session_state: list[corp_code], 2~4개
+
+
+def _compare_corp_picker() -> list[str]:
+    chosen: list[str] = st.session_state.setdefault(_CMP_KEY, [])
+    c1, c2 = st.columns([3, 1])
+    q = c1.text_input("기업 검색", key="cb_cmp_query", placeholder="삼성전자 / 005930",
+                      label_visibility="collapsed")
+    if q:
+        results = cache.search_corps(q, limit=15)
+        if results:
+            labels = {fmt_corp_identity(r["corp_name"], r["corp_code"],
+                                        r.get("stock_code"), r.get("market")): r["corp_code"]
+                      for r in results}
+            pick = c2.selectbox("검색결과", list(labels.keys()), key="cb_cmp_pick",
+                                label_visibility="collapsed")
+            if st.button("➕ 비교에 추가 (최대 4개)", key="cb_cmp_add",
+                        disabled=len(chosen) >= 4):
+                cc = labels[pick]
+                if cc not in chosen:
+                    chosen.append(cc)
+                st.rerun()
+        else:
+            st.caption("검색 결과 없음")
+
+    if chosen:
+        cols = st.columns(len(chosen))
+        for cc, col in zip(list(chosen), cols):
+            meta = cache.resolve_corp(cc)
+            name = meta["corp_name"] if meta else cc
+            col.caption(name)
+            if col.button("❌", key=f"cb_cmp_rm_{cc}"):
+                chosen.remove(cc)
+                st.rerun()
+    return chosen
+
+
+def _compare_section(requested_stmt: str, grain: str) -> None:
+    """다기업 비교(시계열) — compare_page.py(스냅샷 표)와 별개: 여기는 지표를 시간축으로
+    비교하는 차트. 2~4개 기업 × 레지스트리 지표(들)를 골라 색상=기업/선스타일=지표로 렌더."""
+    with st.expander("⚖️ 다기업 비교 (시계열) — 스냅샷 비교는 좌측 메뉴 '기업 비교' 참고",
+                     expanded=False):
+        chosen = _compare_corp_picker()
+        if len(chosen) < 2:
+            st.caption("기업을 2개 이상 추가하면 비교 차트가 표시됩니다(최대 4개).")
+            return
+
+        st.session_state.setdefault("cb_cmp_metrics", ["revenue", "operating_income"])
+        metric_ids = st.multiselect("비교 지표 (레지스트리, 다중선택)", _ALL_IDS,
+                                    format_func=_fmt_id, key="cb_cmp_metrics")
+        if not metric_ids:
+            st.caption("지표를 1개 이상 선택하세요.")
+            return
+
+        frames = []
+        for cc in chosen:
+            meta = cache.resolve_corp(cc)
+            if not meta:
+                continue
+            if grain == "quarter":
+                cseries, _used = cache.quarter_series(cc, requested_stmt, quarters=400)
+            else:
+                cseries, _used = cache.annual_series(cc, requested_stmt, years=200)
+            if not cseries:
+                continue
+            f = build_metric_frame(cseries, metric_ids, grain)
+            if f.empty:
+                continue
+            f = f.copy()
+            f["corp_code"] = cc
+            f["corp_name"] = meta["corp_name"]
+            frames.append(f)
+
+        if not frames:
+            st.info("선택한 기업들의 데이터가 없습니다.")
+            return
+        cmp_frame = pd.concat(frames, ignore_index=True)
+        render_metric_chart_compare(cmp_frame, key="cb_cmp_chart")
+        st.caption(f"{'분기' if grain=='quarter' else '연간'} · {len(chosen)}개 기업 × "
+                   f"{len(metric_ids)}개 지표 · 색상=기업, 선스타일=지표(2개 이상 선택 시)")
+
+
 # ── 표 / CSV ─────────────────────────────────────────────
 def _ordered_periods(frame: pd.DataFrame) -> list[str]:
     return (frame[["period_label", "period_end"]]
             .drop_duplicates().sort_values("period_end")["period_label"].tolist())
 
 
-def _display_table(frame: pd.DataFrame) -> pd.DataFrame:
+def _display_table(frame: pd.DataFrame, amount_scale) -> pd.DataFrame:
     periods = _ordered_periods(frame)
     cells: dict[str, dict[str, str]] = {}
     for _, r in frame.iterrows():
-        row = f"{r['name']} ({r['unit'].value})"
-        cells.setdefault(row, {})[r["period_label"]] = format_value(r["value"], r["unit"])
+        unit_label = amount_scale.label if r["unit"] == UnitType.AMOUNT_EOK else r["unit"].value
+        row = f"{r['name']} ({unit_label})"
+        cells.setdefault(row, {})[r["period_label"]] = format_value(r["value"], r["unit"], amount_scale)
     return pd.DataFrame(cells).T.reindex(columns=periods)
 
 
@@ -232,7 +378,6 @@ def render() -> None:
         st.warning(f"기업을 찾을 수 없습니다: {corp_code}")
         return
 
-    from app.format import fmt_corp_identity
     st.subheader(fmt_corp_identity(meta["corp_name"], meta["corp_code"],
                                    meta.get("stock_code"), meta.get("market")))
 
@@ -268,6 +413,12 @@ def render() -> None:
     # ② 파생 필드 빌더
     _derived_builder()
 
+    # ③ 밸류에이션 시계열(일별, 재무 프레임과 독립 시간축)
+    _valuation_series_section(corp_code)
+
+    # ④ 다기업 비교(시계열) — 단일회사 메인 차트와 독립 섹션
+    _compare_section(requested_stmt, grain)
+
     # 프레임 조립(베이스 + 확장 + 배당 + 파생)
     registry_ids = [i for i in base_ids if i in REGISTRY_BY_ID]
     extended_ids = [i for i in base_ids if i in EXTENDED_BY_ID]
@@ -291,7 +442,11 @@ def render() -> None:
                 div_frame = fetch_dividend_frame(div_rows, dividend_ids, grain)
                 if not div_frame.empty:
                     frames.append(div_frame)
-    dframe = _d.build_derived_frame(series, st.session_state.get("cb_derived", []), grain)
+    derived_specs = st.session_state.get("cb_derived", [])
+    if grain != "quarter" and any(s.get("op") == "ttm" for s in derived_specs):
+        st.caption("※ TTM 파생 지표는 분기 그레인에서만 계산됩니다 — "
+                   "좌측 사이드바에서 분기로 전환하면 표시됩니다.")
+    dframe = _d.build_derived_frame(series, derived_specs, grain)
     if not dframe.empty:
         frames.append(dframe)
     frames = [f for f in frames if not f.empty]
@@ -301,7 +456,13 @@ def render() -> None:
     frame = pd.concat(frames, ignore_index=True)
 
     st.divider()
-    view = st.radio("표시", ["그래프", "표"], horizontal=True, key="cb_view")
+    vc1, vc2 = st.columns([3, 1])
+    view = vc1.radio("표시", ["그래프", "표"], horizontal=True, key="cb_view")
+    scale_keys = list(AMOUNT_SCALES)
+    scale_key = vc2.selectbox("금액 단위", scale_keys,
+                              format_func=lambda k: AMOUNT_SCALES[k].label,
+                              index=scale_keys.index("eok"), key="cb_amount_scale")
+    amount_scale = AMOUNT_SCALES[scale_key]
     grain_note = "분기 이산(3개월)" if grain == "quarter" else "연간 FY"
 
     periods = (frame[["period_label", "period_end"]]
@@ -309,8 +470,8 @@ def render() -> None:
     total = len(periods)
 
     if view == "표":
-        st.dataframe(_display_table(frame), width="stretch")
-        st.caption(f"{grain_note} · 전체 {total}개 기간 · 금액=억원·비율=%/x·일수=일·주당=원/주")
+        st.dataframe(_display_table(frame, amount_scale), width="stretch")
+        st.caption(f"{grain_note} · 전체 {total}개 기간 · 금액={amount_scale.label}·비율=%/x·일수=일·주당=원/주")
         suffix = "quarter" if grain == "quarter" else "annual"
         download_button(_raw_table(frame),
                         filename=f"{meta['corp_name']}_{corp_code}_custom_{suffix}.csv",
@@ -323,8 +484,9 @@ def render() -> None:
         else:
             n = total
         recent = set(periods.tail(n)["period_label"])
-        render_metric_chart(frame[frame["period_label"].isin(recent)], key="cb_chart")
-        st.caption(f"{grain_note} · 최근 {n}/{total}개 기간 · 금액(억원)=좌축 · "
+        render_metric_chart(frame[frame["period_label"].isin(recent)], key="cb_chart",
+                            amount_scale=amount_scale)
+        st.caption(f"{grain_note} · 최근 {n}/{total}개 기간 · 금액({amount_scale.label})=좌축 · "
                    f"비율/배수/일수/주당=우축 (차트 드래그로 추가 확대)")
 
     # ③ 주가 오버레이

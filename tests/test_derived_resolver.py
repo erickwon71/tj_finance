@@ -91,5 +91,82 @@ def test_derived_names_and_units():
     assert d.derived_id({"op": "pershare", "a": "fcf"}) == "d_ps_fcf"
 
 
+# ── Phase 5(D5): YoY/TTM ────────────────────────────────
+_ANNUAL_3Y = [
+    {"fiscal_year": 2024, "period_end": date(2024, 12, 31), "revenue": 1000, "total_assets": 5000},
+    {"fiscal_year": 2023, "period_end": date(2023, 12, 31), "revenue": 800, "total_assets": 4500},
+    {"fiscal_year": 2022, "period_end": date(2022, 12, 31), "revenue": 700, "total_assets": 4000},
+]
+
+# 분기 시리즈(최신→과거, calendar_year/calendar_period 사용). 매출 130/120/110/100(2024 CQ4..CQ1),
+# 100/95/90/85(2023 CQ4..CQ1) — 오라클: YoY(2024 CQ4)=(130-100)/100=0.30, TTM(2024 CQ4)=460.
+_QUARTER_8Q = [
+    {"calendar_year": 2024, "calendar_period": p, "period_end": date(2024, 12, 31), "revenue": v}
+    for p, v in zip(["CQ4", "CQ3", "CQ2", "CQ1"], [130, 120, 110, 100])
+] + [
+    {"calendar_year": 2023, "calendar_period": p, "period_end": date(2023, 12, 31), "revenue": v}
+    for p, v in zip(["CQ4", "CQ3", "CQ2", "CQ1"], [100, 95, 90, 85])
+]
+
+
+def test_yoy_annual():
+    f = d.build_derived_frame(_ANNUAL_3Y, [{"op": "yoy", "a": "revenue"}], "annual")
+    assert approx(_cell(f, "2024", "d_yoy_revenue")["value"], (1000 - 800) / 800)
+    assert approx(_cell(f, "2023", "d_yoy_revenue")["value"], (800 - 700) / 700)
+    assert pd.isna(_cell(f, "2022", "d_yoy_revenue")["value"])  # 전기 없음
+    assert d.derived_unit({"op": "yoy", "a": "revenue"}) == UnitType.PCT
+
+
+def test_yoy_quarter_same_quarter_prior_year():
+    """분기 YoY 는 직전분기가 아니라 4분기 전(같은 분기 전년)과 비교."""
+    f = d.build_derived_frame(_QUARTER_8Q, [{"op": "yoy", "a": "revenue"}], "quarter")
+    assert approx(_cell(f, "2024 CQ4", "d_yoy_revenue")["value"], (130 - 100) / 100)
+    assert approx(_cell(f, "2024 CQ1", "d_yoy_revenue")["value"], (100 - 85) / 85)
+    # 2023 CQ4 는 4분기 전(2022 CQ4) 데이터가 없어 결측.
+    assert pd.isna(_cell(f, "2023 CQ4", "d_yoy_revenue")["value"])
+
+
+def test_ttm_quarter_rolling_sum():
+    f = d.build_derived_frame(_QUARTER_8Q, [{"op": "ttm", "a": "revenue"}], "quarter")
+    assert _cell(f, "2024 CQ4", "d_ttm_revenue")["value"] == 130 + 120 + 110 + 100
+    assert _cell(f, "2023 CQ4", "d_ttm_revenue")["value"] == 100 + 95 + 90 + 85
+    assert d.derived_unit({"op": "ttm", "a": "revenue"}) == UnitType.AMOUNT_EOK
+
+
+def test_ttm_annual_grain_is_none():
+    """TTM 은 분기 그레인 전용 — 연간 그레인이면 전부 결측(None)."""
+    f = d.build_derived_frame(_ANNUAL_3Y, [{"op": "ttm", "a": "revenue"}], "annual")
+    assert pd.isna(_cell(f, "2024", "d_ttm_revenue")["value"])
+
+
+def test_ttm_insufficient_quarters_is_none():
+    """4분기 미만 윈도우(가장 과거 분기)는 결측."""
+    f = d.build_derived_frame(_QUARTER_8Q, [{"op": "ttm", "a": "revenue"}], "quarter")
+    assert pd.isna(_cell(f, "2023 CQ1", "d_ttm_revenue")["value"])
+
+
+def test_ttm_validate_rejects_stock_metric():
+    """TTM 은 유량(flow) 지표만 — 잔액(stock) 항목(자산총계)은 거부."""
+    assert d.validate({"op": "ttm", "a": "total_assets"}) is not None
+    assert d.validate({"op": "ttm", "a": "revenue"}) is None
+
+
+def test_yoy_ttm_names_and_ids():
+    assert d.derived_id({"op": "yoy", "a": "revenue"}) == "d_yoy_revenue"
+    assert d.derived_id({"op": "ttm", "a": "revenue"}) == "d_ttm_revenue"
+    assert d.derived_name({"op": "yoy", "a": "revenue"}) == "매출액 YoY"
+    assert d.derived_name({"op": "ttm", "a": "revenue"}) == "매출액 TTM"
+
+
+def test_old_preset_schema_still_valid():
+    """구버전 프리셋(op 3종만 포함)은 신규 op 추가와 무관하게 그대로 유효해야 함."""
+    old_preset_derived = [
+        {"op": "ratio", "a": "fcf", "b": "operating_income"},
+        {"op": "diff", "a": "revenue", "b": "cogs"},
+        {"op": "pershare", "a": "net_income"},
+    ]
+    assert all(d.validate(s) is None for s in old_preset_derived)
+
+
 if __name__ == "__main__":
     sys.exit(1 if run_tests(globals()) else 0)

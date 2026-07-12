@@ -149,16 +149,26 @@
   `python -c "from collector.expense_nature_sync import sync_expense_nature; sync_expense_nature(year_min=2024)"`
   (또는 collect_new 파이프라인이 신규분 자동 처리)
 
-## Phase 5 — 차트빌더 고급 기능 ☐ (PRD 16, 권장 모델: Sonnet)
-- ☐ `app/compute/derived.py`: yoy(%) 연산, ttm(분기 롤링4합) 연산 + validate 가드
-- ☐ `app/views/chart_builder_page.py`: 밸류에이션 시계열 섹션(cache.valuation_series 재사용,
-  독립 시간축 렌더)
-- ☐ 다기업 비교 모드: 2~4사 multiselect + tidy frame corp_code 컬럼 + chart_panel color=corp 변형
-  (단일회사 경로 무회귀 유지)
-- ☐ `app/registry/units.py`: 원/억원/조원 스케일 토글(표시 레이어만)
-- ☐ `app/data/presets.py`: 신규 op 포함 스키마 검증(구 프리셋 하위호환)
-- **검증**: ☐ yoy/ttm 단위테스트(삼성전자 등 오라클 수기대조) · ☐ AppTest 무예외(다기업 비교+
-  extended+yoy 조합) · ☐ 구버전 프리셋 로드 무에러
+## Phase 5 — 차트빌더 고급 기능 ☑ 완료 (2026-07-12) (PRD 16, 모델: Sonnet)
+- ☑ `app/compute/derived.py`: yoy(전년동기比 %, 연간=직전기·분기=4기전) + ttm(분기 전용, 직전4분기
+  합산, `_is_ttm_eligible` 로 stock 성격 금액지표(자산총계 등) 제외) + validate 가드. periods 리스트
+  인덱스 오프셋으로 계산(달력 재계산 불필요, resolver 의 series 순서 규약 재사용)
+- ☑ `app/views/chart_builder_page.py`: `_valuation_series_section`(cache.valuation_series 재사용,
+  PER/PBR/PSR/EV-EBITDA/배당수익률 다중선택 + 독립 시간축 라인차트, %지표는 보조축)
+- ☑ 다기업 비교 모드(`_compare_section`): 검색+추가/제거 피커(최대 4사) + 레지스트리 지표
+  multiselect + tidy frame corp_code/corp_name 컬럼 + `chart_panel.render_metric_chart_compare`
+  (색상=기업, 선스타일=지표, 단일회사 `render_metric_chart` 는 별개 함수라 무회귀)
+- ☑ `app/registry/units.py`: `AmountScale`(원/억원/조원, 표시 레이어 전용) + `display_value`/
+  `format_value` 에 옵션 파라미터 추가(하위호환: 생략 시 기존과 동일 억원)
+- ☑ 프리셋 하위호환: validate() 가 신규 op 포함해도 기존 {op,a,b} 스키마 무변경이라 자동 호환
+  (신규 코드 불요, 단위테스트로 확인)
+- **검증**: ☑ yoy/ttm 단위테스트 16종(합성 시계열 오라클 수기대조 — annual/quarter YoY 방향성,
+  TTM 롤링합, stock 지표 거부, 그레인 가드) · ☑ AppTest 무예외(yoy 추가+표/그래프 전환·조원 스케일
+  전환·다기업 비교 2사 렌더·분기 그레인 TTM·프리셋 저장) · ☑ 실측 교차검증: TTM(2025 CQ4)=
+  3,336,059억=연간 2025 매출액과 정확히 일치 · ☑ 구버전 프리셋(3종 op) 로드 무에러 ·
+  ☑ 핵심회귀 65 tests 전체 그린(기존 57+신규 8추가분 포함 derived 16종)
+- **미포함(범위 밖)**: extended/dividend 카탈로그는 다기업 비교 대상 아님(레지스트리 지표만,
+  PRD 완료기준 충족에는 불필요 — 후속 확장 검토 항목)
 
 ---
 

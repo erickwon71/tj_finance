@@ -100,17 +100,19 @@ _METRIC_COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#ff7f0e", "#9467bd",
                   "#8c564b", "#17becf", "#e377c2"]
 
 
-def render_metric_chart(frame, key: str | None = None) -> None:
+def render_metric_chart(frame, key: str | None = None, amount_scale=None) -> None:
     """
-    지표 시계열 차트 — 금액(억원)은 좌축, 비율/배수/일수는 우축에 배치(이중축).
-    frame: app.compute.resolver.build_metric_frame 산출(tidy).
+    지표 시계열 차트 — 금액(기본 억원, Phase 5 부터 원/억원/조원 토글 가능)은 좌축,
+    비율/배수/일수는 우축에 배치(이중축). frame: resolver.build_metric_frame 산출(tidy).
+    amount_scale: app.registry.units.AmountScale, 생략 시 기존과 동일(억원).
     """
-    from app.registry.units import AMOUNT_UNITS, UnitType, display_value
+    from app.registry.units import AMOUNT_UNITS, DEFAULT_AMOUNT_SCALE, UnitType, display_value
 
     if frame is None or frame.empty:
         st.info("표시할 지표를 선택하세요.")
         return
 
+    scale = amount_scale or DEFAULT_AMOUNT_SCALE
     has_amount = any(u in AMOUNT_UNITS for u in frame["unit"].unique())
     has_other = any(u not in AMOUNT_UNITS for u in frame["unit"].unique())
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -124,14 +126,15 @@ def render_metric_chart(frame, key: str | None = None) -> None:
         g = g.sort_values("period_end")
         unit = g["unit"].iloc[0]
         name = g["name"].iloc[0]
-        ys = [display_value(v, unit) for v in g["value"]]
+        ys = [display_value(v, unit, scale) for v in g["value"]]
         # 금액이 함께 있을 때만 비금액을 우축으로. 비금액만이면 좌축 사용.
         on_right = (unit not in AMOUNT_UNITS) and has_amount
-        suffix = {UnitType.AMOUNT_EOK: "억", UnitType.PCT: "%",
+        unit_label = scale.label if unit == UnitType.AMOUNT_EOK else unit.value
+        suffix = {UnitType.AMOUNT_EOK: scale.label, UnitType.PCT: "%",
                   UnitType.MULTIPLE_X: "x", UnitType.DAYS: "일",
                   UnitType.WON_PER_SHARE: "원"}.get(unit, "")
         fig.add_trace(go.Scatter(
-            x=g["period_label"], y=ys, name=f"{name}({unit.value})",
+            x=g["period_label"], y=ys, name=f"{name}({unit_label})",
             mode="lines+markers",
             line=dict(color=_METRIC_COLORS[i % len(_METRIC_COLORS)], width=1.8),
             marker=dict(size=6),
@@ -142,7 +145,70 @@ def render_metric_chart(frame, key: str | None = None) -> None:
 
     other_title = "비율(%)/배수(x)/일수"
     if has_amount:
-        fig.update_yaxes(title_text="금액(억원)", secondary_y=False)
+        fig.update_yaxes(title_text=f"금액({scale.label})", secondary_y=False)
+        if has_other:
+            fig.update_yaxes(title_text=other_title, secondary_y=True, showgrid=False)
+    else:
+        fig.update_yaxes(title_text=other_title, secondary_y=False)
+    fig.update_layout(
+        height=480, margin=dict(l=10, r=10, t=30, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, use_container_width=True, key=key)
+
+
+_DASH_PATTERNS = ["solid", "dash", "dot", "dashdot", "longdash", "longdashdot"]
+
+
+def render_metric_chart_compare(frame, key: str | None = None, amount_scale=None) -> None:
+    """
+    다기업 비교 시계열 차트(Phase 5, D5) — frame 에 corp_name 컬럼이 추가된 형태(단일회사
+    tidy 스키마 + corp_code/corp_name). 색상=기업, 선 스타일=지표(2개 이상 선택 시)로 구분.
+    단일회사 render_metric_chart 와 별개 함수라 기존 경로는 무회귀.
+    amount_scale: app.registry.units.AmountScale, 생략 시 기존과 동일(억원).
+    """
+    from app.registry.units import AMOUNT_UNITS, DEFAULT_AMOUNT_SCALE, UnitType, display_value
+
+    if frame is None or frame.empty:
+        st.info("비교할 기업·지표를 선택하세요.")
+        return
+
+    scale = amount_scale or DEFAULT_AMOUNT_SCALE
+    has_amount = any(u in AMOUNT_UNITS for u in frame["unit"].unique())
+    has_other = any(u not in AMOUNT_UNITS for u in frame["unit"].unique())
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    order = (frame.sort_values("period_end")["period_label"]
+             .drop_duplicates().tolist())
+    corps = list(dict.fromkeys(frame["corp_name"]))
+    metrics = list(dict.fromkeys(frame["metric_id"]))
+    color_of = {c: _METRIC_COLORS[i % len(_METRIC_COLORS)] for i, c in enumerate(corps)}
+    dash_of = {m: _DASH_PATTERNS[i % len(_DASH_PATTERNS)] for i, m in enumerate(metrics)}
+
+    for (corp_name, mid), g in frame.groupby(["corp_name", "metric_id"], sort=False):
+        g = g.sort_values("period_end")
+        unit = g["unit"].iloc[0]
+        name = g["name"].iloc[0]
+        ys = [display_value(v, unit, scale) for v in g["value"]]
+        on_right = (unit not in AMOUNT_UNITS) and has_amount
+        suffix = {UnitType.AMOUNT_EOK: scale.label, UnitType.PCT: "%",
+                  UnitType.MULTIPLE_X: "x", UnitType.DAYS: "일",
+                  UnitType.WON_PER_SHARE: "원"}.get(unit, "")
+        legend_name = f"{corp_name} · {name}" if len(metrics) > 1 else corp_name
+        fig.add_trace(go.Scatter(
+            x=g["period_label"], y=ys, name=legend_name,
+            mode="lines+markers",
+            line=dict(color=color_of[corp_name], dash=dash_of[mid], width=1.8),
+            marker=dict(size=6),
+            hovertemplate=f"{legend_name}<br>%{{x}}<br>%{{y:,.2f}}{suffix}<extra></extra>",
+        ), secondary_y=on_right)
+
+    fig.update_xaxes(type="category", categoryorder="array", categoryarray=order)
+
+    other_title = "비율(%)/배수(x)/일수"
+    if has_amount:
+        fig.update_yaxes(title_text=f"금액({scale.label})", secondary_y=False)
         if has_other:
             fig.update_yaxes(title_text=other_title, secondary_y=True, showgrid=False)
     else:

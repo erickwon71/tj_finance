@@ -138,17 +138,23 @@ _PHASE4_TARGET_SQL = """
 """
 
 
+# 한 밤에 처리할 최대 기업 수(야간 잡 실행시간 유계). 기업당 추출+재표준화 ≈ 4초라
+# 500사 ≈ 30~40분. 남은 기업은 다음 밤에 이어감(기업단위 commit 이라 자동 재개).
+_PHASE4_MAX_CORPS_PER_NIGHT = 500
+
+
 def run_phase4() -> int:
-    """depreciation IS NULL AND da_total IS NULL 잔여 재표준화. 반환=처리 후 잔여 대상 수."""
+    """depreciation IS NULL AND da_total IS NULL 잔여를 기업단위 원자 처리(밤당 상한).
+    반환=처리 후 잔여 대상 수."""
     from collector.expense_nature_sync import sync_expense_nature
 
     with get_session() as s:
         before = s.execute(text(_PHASE4_TARGET_SQL)).scalar()
-    logger.info(f"[gapfill] Phase4 대상(실행 전) {before}사")
+    logger.info(f"[gapfill] Phase4 대상(실행 전) {before}사 · 이번 밤 최대 {_PHASE4_MAX_CORPS_PER_NIGHT}사")
     if before == 0:
         return 0
 
-    res = sync_expense_nature(year_min=2024)
+    res = sync_expense_nature(year_min=2024, max_corps=_PHASE4_MAX_CORPS_PER_NIGHT)
     logger.info(f"[gapfill] Phase4 실행 결과: {res}")
 
     with get_session() as s:

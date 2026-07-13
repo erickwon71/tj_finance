@@ -32,6 +32,10 @@ _TARGET_SQL = """
     JOIN download_tasks dt ON dt.rcept_no = ss.source_rcept_no
     WHERE s.statement_type=:basis AND s.version=1 AND s.depreciation IS NULL
       AND s.da_total IS NULL
+      -- 비용성격 주석은 연간(FY) 총액 → FY 만 타겟. interim(H1/Q1/Q3) da_total 은 표준화의
+      -- 분기 이산화(derive_quarters_corp)가 담당한다. FY 만 걸어야 완료판정(FY-only)과 정합하고,
+      -- FY 는 끝났는데 interim 만 NULL 인 corp 가 타겟에 영구 잔류해 매 밤 재처리되는 것을 막는다.
+      AND s.fiscal_period = 'FY'
       AND s.fiscal_year >= :ymin AND dt.file_path IS NOT NULL
       {corp_clause}
     ORDER BY s.corp_code, s.fiscal_year, s.fiscal_period
@@ -46,8 +50,17 @@ def _revenue(session, rcept: str, basis: str) -> int | None:
     """), {"r": rcept, "b": basis}).scalar()
 
 
-def sync_expense_nature(corps=None, year_min: int = 2024, basis: str = "consolidated") -> dict:
+def sync_expense_nature(corps=None, year_min: int = 2024, basis: str = "consolidated",
+                        max_corps: int | None = None) -> dict:
     """corp 한정 비용성격 주석 D&A 복원 + 재표준화. corps=None 이면 전체(백필용).
+
+    **기업당 원자적 처리**: 각 corp 의 (추출→store_facts→commit) 다음 (표준화→분기→달력→commit)
+    을 그 corp 단위로 끝낸다 — 중단돼도 이미 처리된 corp 는 da_total 이 채워져(NOT NULL) 다음
+    실행의 타겟에서 자동 제외되므로, DB 자체가 체크포인트가 되어 **처음부터 다시 하지 않는다**.
+    (예전엔 전체 추출을 단일 거대 트랜잭션 1회 commit 해, 중단 시 그날 작업 전부 롤백됐다.)
+
+    max_corps: 한 실행에서 처리할 최대 기업 수(야간 잡의 실행시간을 유계로 — 나머지는 다음 밤).
+               None 이면 대상 전부.
 
     반환: {targets, corps, facts, std_recalc, fail}."""
     corp_clause = "AND s.corp_code = ANY(:corps)" if corps else ""
@@ -59,34 +72,43 @@ def sync_expense_nature(corps=None, year_min: int = 2024, basis: str = "consolid
     with get_session() as session:
         targets = session.execute(text(sql), params).fetchall()
 
-    affected: dict[str, None] = {}
-    stored = 0
-    with get_session() as session:
-        for t in targets:
-            if not t.file_path or not Path(t.file_path).exists():
-                continue
-            rev = _revenue(session, t.is_rcept, basis)
-            facts = extract_expense_nature_facts(
-                t.file_path, rcept_no=t.is_rcept, corp_code=t.corp_code,
-                report_fiscal_year=t.fiscal_year, report_fiscal_period=t.fiscal_period,
-                basis=basis, revenue_ref=rev,
-            )
-            if not facts:
-                continue
-            affected[t.corp_code] = None
-            stored += store_facts(session, facts)
-        session.commit()
+    # (corp → [해당 corp 의 (fy,fp,rcept,path) 타겟들]) 로 그룹핑해 기업단위로 처리.
+    by_corp: dict[str, list] = {}
+    for t in targets:
+        by_corp.setdefault(t.corp_code, []).append(t)
+    corp_list = list(by_corp)
+    if max_corps is not None:
+        corp_list = corp_list[:max_corps]
 
-    # R 불변(note 는 source 선택 무관) → S→Q→C 재전파(누적 std_v2 + 이산분기 + 달력뷰까지 반영).
-    n_std = n_fail = 0
-    for corp in affected:
+    stored = n_std = n_fail = affected = 0
+    for corp in corp_list:
         try:
+            # 1) 이 corp 의 모든 타겟(fy,fp) 추출 → store_facts → commit(기업 단위 원자).
+            corp_facts = 0
+            with get_session() as session:
+                for t in by_corp[corp]:
+                    if not t.file_path or not Path(t.file_path).exists():
+                        continue
+                    rev = _revenue(session, t.is_rcept, basis)
+                    facts = extract_expense_nature_facts(
+                        t.file_path, rcept_no=t.is_rcept, corp_code=t.corp_code,
+                        report_fiscal_year=t.fiscal_year, report_fiscal_period=t.fiscal_period,
+                        basis=basis, revenue_ref=rev,
+                    )
+                    if facts:
+                        corp_facts += store_facts(session, facts)
+                session.commit()
+            if corp_facts == 0:
+                continue
+            affected += 1
+            stored += corp_facts
+            # 2) R 불변 → S→Q→C 재전파(누적 std_v2 + 이산분기 + 달력뷰까지 반영), 기업 단위 commit.
             with get_session() as session:
                 n_std += standardize_corp(session, corp)
                 derive_quarters_corp(session, corp)
                 calendarize_corp(session, corp)
                 session.commit()
-        except Exception:  # noqa: BLE001 — 개별 corp 실패 격리(비치명)
+        except Exception:  # noqa: BLE001 — 개별 corp 실패 격리(비치명), 다음 corp 계속
             n_fail += 1
-    return {"targets": len(targets), "corps": len(affected), "facts": stored,
+    return {"targets": len(targets), "corps": affected, "facts": stored,
             "std_recalc": n_std, "fail": n_fail}

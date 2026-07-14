@@ -250,6 +250,13 @@ def _emit_section(
             mapping = mapper.map(row.account_name, fs_section=fs_section)
             if comp_attr and mapping.account_code in ("is.controlling_ni", "is.noncontrolling_ni"):
                 continue  # 총포괄손익 귀속 라인 — 당기순이익 귀속(controlling/noncontrolling) 오염 방지
+            # ★ '총포괄...귀속' 헤더가 없는 보고서 대응: 'X.총포괄손익' 총계 라인을 통과하면 이후의
+            # 지배/비지배 귀속은 (당기순이익 귀속이 아니라) 총포괄손익 귀속이다. 번호형 소항목
+            # ('1.지배기업소유주지분')만 나열해 '귀속' 키워드가 없는 케이스(현대해상 등, 손익귀속
+            # 5,746억 vs 총포괄귀속 -6,479억 오염)를 잡는다. 총포괄손익 총계 자체는 이 라인에서
+            # is.total_comprehensive_income 로 매핑돼 스킵 대상이 아니므로 emit 후 플래그만 켠다.
+            if mapping.account_code == "is.total_comprehensive_income":
+                comp_attr = True
             if cum_map is not None:
                 pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()
                          if pos < len(row.amounts) and row.amounts[pos] is not None]

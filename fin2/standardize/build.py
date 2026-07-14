@@ -379,6 +379,29 @@ def _collect_comparative(session, basis: str, sources: dict[str, tuple]) -> dict
                "p": _PREFIX[stmt] + "%", "da": list(_DA_SUPP)}).fetchall()
         for c, v in rows:
             _merge(c, v)
+
+    # 총포괄 오염 교정(비교컬럼 경로) — _collect(line 109~) 와 동일 로직의 이식.
+    # 지배주주 귀속 '순이익'과 '총포괄손익'이 동일 축약 라벨로 둘 다 is.controlling_ni 로 매핑돼
+    # 위 _merge 의 max-abs 가 총포괄분(OCI 포함, 더 큼)을 오선택하는 것을, 항등식
+    # controlling+noncontrolling=net 으로 (net - nci)에 가장 가까운 후보로 재선택한다. 후보가
+    # 하나뿐이면 무변경이라 정당 케이스(비지배 음수 등) 안전. 비교컬럼은 col_index=col·
+    # context_fiscal_year=cfy 셀로 한정해 후보를 모은다(원 수집 쿼리와 동일 셀 의미).
+    cni, ni2 = canon.get("is.controlling_ni"), canon.get("is.net_income")
+    if cni is not None and ni2 is not None:
+        nci = canon.get("is.noncontrolling_ni") or 0
+        expected = ni2 - nci
+        if abs(cni - expected) > abs(expected) * 0.02 + 1_000_000:
+            cands: list[int] = []
+            for stmt, (rcept, col, cfy) in sources.items():
+                rows = session.execute(text("""
+                    SELECT DISTINCT amount_won FROM fact_v2
+                    WHERE rcept_no = :r AND basis = :b AND col_index = :ci
+                      AND context_fiscal_year = :cfy AND NOT is_dimensional
+                      AND canonical_account = 'is.controlling_ni' AND amount_won IS NOT NULL
+                """), {"r": rcept, "b": basis, "ci": col, "cfy": cfy}).fetchall()
+                cands += [r[0] for r in rows]
+            if cands:
+                canon["is.controlling_ni"] = min(cands, key=lambda x: abs(x - expected))
     return canon
 
 

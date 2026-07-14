@@ -180,21 +180,42 @@ CHECKS: list[dict] = [
     {
         # controlling_ni 총포괄 오염 재발 감지: 지배주주 귀속 '순이익'과 '총포괄손익'이 텍스트에서
         # 동일 축약 라벨로 나와 둘 다 is.controlling_ni 로 매핑 → max-abs 가 총포괄분(OCI 포함,
-        # 더 큼)을 오선택하던 버그(build._collect 가 항등식으로 교정). |controlling|>|net|*1.02 는
-        # 비지배 음수인 정당 케이스도 일부 포함하므로 WARN(트리아지용). 소급수정=fin2_fix_controlling_ni.py.
+        # 더 큼)을 오선택하던 버그(build._collect 가 항등식으로 교정). 소급수정=fin2_fix_controlling_ni.py.
+        #
+        # ★ 판별식 정제(2026-07-15, docs/qa/triage_controlling_ni_residual_2026-07-14.md):
+        # 단순 프록시 |controlling|>|net|*1.02 는 '정당한 비지배 음수'(controlling 손실>net 이 정상,
+        # 양의 NCI 가 상쇄) 9,164 행을 오탐한다. 실제 신호는 회계 항등식 잔차이므로,
+        # noncontrolling_ni(fact_v2 col0) 로 controlling+nci=net 이 성립하는(=정상) 행은 제외하고,
+        # 항등식이 재구성되지 않는 행만 센다(진짜 총포괄 오염 ~6,950). std_v2 엔 nci 컬럼이 없어
+        # source rcept(bs/is/cf)·동일 basis 의 fact_v2 에서 is.noncontrolling_ni 후보를 조회한다.
         "name": "std_v2_controlling_ni_exceeds_net",
         "sev": "WARN",
-        "desc": "지배순이익 > |당기순이익|*1.02 (총포괄 오염 신호 — 비지배 음수 정당케이스 일부 포함)",
-        "count": "SELECT count(*) FROM std_financials_v2 WHERE version=1 "
-                 "AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false) "
-                 "AND net_income IS NOT NULL AND controlling_ni IS NOT NULL AND net_income<>0 "
-                 "AND ABS(controlling_ni) > ABS(net_income)*1.02",
-        "sample": "SELECT corp_code, fiscal_year, statement_type, net_income, controlling_ni "
-                  "FROM std_financials_v2 WHERE version=1 "
-                  "AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false) "
-                  "AND net_income IS NOT NULL AND controlling_ni IS NOT NULL AND net_income<>0 "
-                  "AND ABS(controlling_ni) > ABS(net_income)*1.02 "
-                  "ORDER BY ABS(controlling_ni)-ABS(net_income) DESC LIMIT 10",
+        "desc": "controlling_ni 총포괄 오염 (항등식 controlling+nci=net 재구성 실패 — 정당 비지배음수는 제외)",
+        "count": "SELECT count(*) FROM std_financials_v2 s WHERE s.version=1 "
+                 "AND NOT COALESCE(s.is_stub,false) AND NOT COALESCE(s.is_discrete,false) "
+                 "AND s.net_income IS NOT NULL AND s.controlling_ni IS NOT NULL AND s.net_income<>0 "
+                 "AND ABS(s.controlling_ni) > ABS(s.net_income)*1.02 "
+                 "AND ABS(s.net_income - s.controlling_ni) > ABS(s.net_income)*0.02 + 1000000 "
+                 "AND NOT EXISTS (SELECT 1 FROM fact_v2 f "
+                 "  WHERE f.rcept_no IN (s.bs_rcept, s.is_rcept, s.cf_rcept) "
+                 "  AND f.basis = s.statement_type AND f.col_index=0 AND NOT f.is_dimensional "
+                 "  AND f.canonical_account='is.noncontrolling_ni' AND f.amount_won IS NOT NULL "
+                 "  AND ABS(f.amount_won - (s.net_income - s.controlling_ni)) "
+                 "      <= ABS(s.net_income)*0.02 + 1000000)",
+        "sample": "SELECT s.corp_code, s.fiscal_year, s.fiscal_period, s.statement_type, "
+                  "s.net_income, s.controlling_ni "
+                  "FROM std_financials_v2 s WHERE s.version=1 "
+                  "AND NOT COALESCE(s.is_stub,false) AND NOT COALESCE(s.is_discrete,false) "
+                  "AND s.net_income IS NOT NULL AND s.controlling_ni IS NOT NULL AND s.net_income<>0 "
+                  "AND ABS(s.controlling_ni) > ABS(s.net_income)*1.02 "
+                  "AND ABS(s.net_income - s.controlling_ni) > ABS(s.net_income)*0.02 + 1000000 "
+                  "AND NOT EXISTS (SELECT 1 FROM fact_v2 f "
+                  "  WHERE f.rcept_no IN (s.bs_rcept, s.is_rcept, s.cf_rcept) "
+                  "  AND f.basis = s.statement_type AND f.col_index=0 AND NOT f.is_dimensional "
+                  "  AND f.canonical_account='is.noncontrolling_ni' AND f.amount_won IS NOT NULL "
+                  "  AND ABS(f.amount_won - (s.net_income - s.controlling_ni)) "
+                  "      <= ABS(s.net_income)*0.02 + 1000000) "
+                  "ORDER BY ABS(s.controlling_ni)-ABS(s.net_income) DESC LIMIT 10",
     },
     {
         # DEF-4 재발 감지: Q1 분기보고서 IS/CF 표에서 당분기(col0)와 전기(col1) 3개월 값이

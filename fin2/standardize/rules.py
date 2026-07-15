@@ -125,10 +125,13 @@ def rule_net_income_fill(ctx: StdContext) -> None:
 
 
 def rule_controlling_ni_fill(ctx: StdContext) -> None:
-    """별도재무제표는 비지배지분 없음 → controlling_ni NULL 이면 net_income 으로."""
-    if ctx.col.get("controlling_ni") is None and ctx.basis == "separate":
+    """별도재무제표는 비지배지분이 없어 지배순이익 ≡ 당기순이익(회계 정의). 따라서 별도는
+    controlling_ni 가 NULL 이든, '지배기업 주주지분'(자본 라인) 오매핑·XBRL 오류·단위/스케일
+    오류로 net_income 과 어긋나든 **항상 net_income 으로 강제**한다. (연결은 실제 비지배분이
+    있으므로 불변.) 예: 기업은행 별도 지배순이익 138,722억(=자본) → 분기순이익 2,749억."""
+    if ctx.basis == "separate":
         ni = ctx.col.get("net_income")
-        if ni is not None:
+        if ni is not None and ctx.col.get("controlling_ni") != ni:
             ctx.col["controlling_ni"] = ni
             ctx._mark("controlling_ni_fill")
 

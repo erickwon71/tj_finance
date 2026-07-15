@@ -54,6 +54,12 @@ def test_net_income_and_controlling_fill():
     # separate: controlling_ni 없고 net_income 있으면 → controlling_ni 채움
     c2 = _ctx({"is.net_income": 700}, basis="separate")
     assert c2.col["controlling_ni"] == 700
+    # separate: controlling_ni 가 net 과 어긋나면(자본라인 오매핑 등) → net 으로 강제
+    c3 = _ctx({"is.net_income": 700, "is.controlling_ni": 138722}, basis="separate")
+    assert c3.col["controlling_ni"] == 700
+    # consolidated: 실제 비지배분 있으므로 불변
+    c4 = _ctx({"is.net_income": 700, "is.controlling_ni": 650, "is.noncontrolling_ni": 50})
+    assert c4.col["controlling_ni"] == 650
 
 
 def test_revenue_from_cogs_gp():

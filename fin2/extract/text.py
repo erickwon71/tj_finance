@@ -243,7 +243,12 @@ def _emit_section(
                 continue
             nm = row.account_name
             if "귀속" in nm:
-                if "총포괄" in nm:
+                # '총포괄손익의 귀속' 뿐 아니라 '포괄손익의 귀속'(총 없이)도 총포괄 귀속 헤더다.
+                # 분기 결합표는 [총포괄손익 총계 → 당기순이익의 귀속(지배/비지배) → 포괄손익의 귀속
+                # (지배/비지배)] 순이라, 당기순이익 귀속 헤더가 total_comprehensive 통과 플래그를
+                # 되돌린 뒤 '포괄손익의 귀속' 헤더로 다시 총포괄 귀속임을 표시해야 지배분 소유주지분
+                # 총포괄값(삼성물산 2023Q3 지배 50,712억 vs 정답 손익귀속분)이 오염되지 않는다.
+                if "총포괄" in nm or "포괄손익" in nm:
                     comp_attr = True
                 elif "순이익" in nm or "순손익" in nm:
                     comp_attr = False

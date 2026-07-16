@@ -189,6 +189,12 @@ class AccountMapper:
         # 파생 라인도 같은 substring 이라 동반 차단(원단위 canonical 에 EPS 오염 방지).
         # '차감전'(세전) 계속영업 변형은 위 EBT 가드가 이미 처리했으므로 여기 도달 안 함.
         if fs_section in (None, "is"):
+            # ── 주당(EPS) 가드: '기본주당기순손익'·'희석주당기순손익' 등 주당(원/주) 파생 라인은
+            # 퍼지가 '당기순손익' 과 0.94 유사도로 is.net_income 오매핑 → 원단위 net_income 이
+            # ~0(주당 수십 원)으로 오염(이월드 2013H1 net 0억, controlling_ni 비율 폭증). '주당'
+            # 포함 라인은 원단위 손익 canonical 에서 배제(원래 line 188 주석이 의도했으나 미구현분).
+            if "주당" in normalized:
+                return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
             if "계속영업" in normalized or "중단영업" in normalized:
                 return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
             if "영업외" in normalized and ("이익" in normalized or "손익" in normalized):

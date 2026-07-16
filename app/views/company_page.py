@@ -838,6 +838,18 @@ def _master_tab(corp_code: str, stmt: str, meta: dict) -> None:
             ("매출총이익률 변화", fmt_pct(mm.gross_margin_delta)),
         ], columns=["지표", "값"]).set_index("지표"), width="stretch")
 
+    # ── 듀폰 분해 (ROE 3분해) ──
+    if mm.roe is not None:
+        st.divider()
+        st.markdown("**🔬 듀폰 분해 — ROE = 순이익률 × 자산회전율 × 재무레버리지** (총자본 기준)")
+        d1, d2, d3, d4 = st.columns(4)
+        d1.metric("ROE", fmt_pct(mm.roe))
+        d2.metric("순이익률", fmt_pct(mm.dupont_net_margin))
+        d3.metric("자산회전율", fmt_ratio(mm.dupont_asset_turnover, decimals=2))
+        d4.metric("재무레버리지", fmt_ratio(mm.dupont_leverage, decimals=2))
+        st.caption("ROE = (순이익/매출) × (매출/총자산) × (총자산/자기자본). 세 인자의 곱이 ROE(총자본 기준) — "
+                   "수익성·자산효율·레버리지 중 무엇이 ROE 를 견인하는지 분해합니다.")
+
     st.caption("※ Graham Number=√(22.5·EPS·BPS) · EY=EBIT/EV · ROC=EBIT/(순운전자본+순고정자산) · "
                "PEG=PER/순이익성장%. 마법공식 종합랭크는 스크리너에서 모집단 횡단면으로 산출.")
 
@@ -990,6 +1002,11 @@ def render(corp_code: str | None = None) -> None:
                 st.caption(f"주가 기준일: **{pdate}** (해당 FY 말 근처 종가) · 시총·PER·PBR 은 이 종가 기준"
                            if pdate else "주가 기준일: — (주가 데이터 없음)")
             st.dataframe(_valuation_df(mv), width="stretch")
+            # EBITDA 관련 지표가 '—' 인 이유 안내 — 데이터 결함 오인 방지(외부평가 P2)
+            if mv.get("ev_ebitda") is None:
+                st.caption("ℹ️ EV/EBITDA·EBITDA 가 '—'인 것은 오류가 아니라 **감가상각비(D&A) 미공시·복원불가** "
+                           "때문입니다(EBITDA=영업이익+D&A). 비용의 성격별 분류·현금흐름표에서 D&A 를 복원 "
+                           "중이며(야간 자동화), 회사가 어느 서식에도 D&A 를 공시하지 않으면 산출이 불가합니다.")
 
         _valuation_bands(corp_code)
         _per_share_trends(corp_code, requested_stmt)

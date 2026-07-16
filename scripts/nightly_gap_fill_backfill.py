@@ -130,10 +130,14 @@ def run_phase3() -> int:
 
 
 # ── Phase 4 — 비용성격 D&A ───────────────────────────────────────────────
+# year_min: 2024(DART Track A D&A 절벽 대응) → **2015 로 확대**(외부평가 P2, EBITDA 커버리지 확대).
+# 비용성격별 분류 주석은 2024 이전 보고서에도 있어, da_total NULL 인 과거연도(2015~2023)의 EBITDA
+# 커버리지(연결 FY ~22-35%)를 끌어올린다. 멱등·단위가드(da/매출 범위) → 오염 없음. 밤당 상한으로 페이싱.
+_PHASE4_YEAR_MIN = 2015
 _PHASE4_TARGET_SQL = """
     SELECT count(DISTINCT corp_code) FROM std_financials_v2
     WHERE statement_type='consolidated' AND version=1 AND fiscal_period='FY'
-      AND fiscal_year>=2024 AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false)
+      AND fiscal_year>=2015 AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false)
       AND depreciation IS NULL AND da_total IS NULL
 """
 
@@ -154,7 +158,7 @@ def run_phase4() -> int:
     if before == 0:
         return 0
 
-    res = sync_expense_nature(year_min=2024, max_corps=_PHASE4_MAX_CORPS_PER_NIGHT)
+    res = sync_expense_nature(year_min=_PHASE4_YEAR_MIN, max_corps=_PHASE4_MAX_CORPS_PER_NIGHT)
     logger.info(f"[gapfill] Phase4 실행 결과: {res}")
 
     with get_session() as s:

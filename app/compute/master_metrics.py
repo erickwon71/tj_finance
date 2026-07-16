@@ -35,6 +35,11 @@ class MasterMetrics:
     # ── Fisher ──
     rd_to_revenue:     Optional[float] = None  # R&D/매출
     gross_margin_delta: Optional[float] = None  # 매출총이익률 전년 대비 변화(pp, 소수)
+    # ── DuPont (ROE 3분해, 총자본 기준) — ROE = 순이익률 × 자산회전율 × 재무레버리지 ──
+    roe:                Optional[float] = None  # 순이익/자기자본
+    dupont_net_margin:  Optional[float] = None  # 순이익/매출
+    dupont_asset_turnover: Optional[float] = None  # 매출/총자산(회전율, x)
+    dupont_leverage:    Optional[float] = None  # 총자산/자기자본(재무레버리지, x)
 
 
 def _g(row: dict, key: str):
@@ -130,5 +135,22 @@ def compute_master(
             gp_p = _g(prev, "gross_profit")
             if gp_p is not None and rev_p and rev_p > 0:
                 m.gross_margin_delta = gm_curr - (gp_p / rev_p)
+
+    # ── DuPont: ROE = 순이익률 × 자산회전율 × 재무레버리지 (총자본 기준) ──
+    # 항등식이 정확히 성립하도록 세 인자 모두 총(total) 기준으로 일관 사용.
+    # (지배주주 순이익/자본이 아닌 총순이익·총자본 — EPS/BPS 의 지배주주 기준과는 별개)
+    ta = _g(curr, "total_assets")
+    te = _g(curr, "total_equity")
+    ni_total = _g(curr, "net_income")
+    if ni_total is None:
+        ni_total = ni  # net_income 결측 시 controlling 폴백(항등식 근사)
+    if ni_total is not None and te and te > 0:
+        m.roe = ni_total / te
+    if ni_total is not None and rev and rev > 0:
+        m.dupont_net_margin = ni_total / rev
+    if rev and ta and ta > 0:
+        m.dupont_asset_turnover = rev / ta
+    if ta and te and te > 0:
+        m.dupont_leverage = ta / te
 
     return m

@@ -65,6 +65,7 @@ def load_screening_window(
     fiscal_year: Optional[int] = None,
     statement_type: str = "consolidated",
     grain: str = "annual",
+    year_max: Optional[int] = None,
 ) -> dict[str, dict]:
     """
     전체 활성 보통주의 최근 `n_periods` 기간 시계열 + 최신 시총을 한 번에 로드.
@@ -90,7 +91,14 @@ def load_screening_window(
 
     n_rows = max(1, n_periods) + 1  # 오래된 기간 ratio prev 용 +1
     other = "separate" if statement_type == "consolidated" else "consolidated"
-    year_filter = f"AND sf.fiscal_year = {int(fiscal_year)}" if fiscal_year else ""
+    # year_max(백테스트): fiscal_year <= Y 로 그 시점까지의 최근 n_periods 윈도우.
+    # fiscal_year(정확일치)는 기존 단년 모집단용. 둘 다 없으면 최신.
+    if year_max is not None:
+        year_filter = f"AND sf.fiscal_year <= {int(year_max)}"
+    elif fiscal_year:
+        year_filter = f"AND sf.fiscal_year = {int(fiscal_year)}"
+    else:
+        year_filter = ""
 
     # avail: corp 별로 요청 basis FY 행 존재 여부. has_req=False 인 기업만 반대 basis 채택.
     sql = f"""

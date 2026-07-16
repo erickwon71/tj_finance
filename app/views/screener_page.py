@@ -234,6 +234,8 @@ def _left() -> None:
             "counts": counts,
         }
 
+    _backtest_panel(passes, method, n_periods, market, include_missing, grain)
+
     meta = st.session_state.get(_RESULT_META)
     if not meta:
         st.info("필터를 구성하고 **스크리닝 실행**을 누르세요. 결과 행을 클릭하면 우측에 시각화됩니다.")
@@ -280,6 +282,73 @@ def _build_display(df: pd.DataFrame, method: str, cols: list[str]) -> pd.DataFra
             rec[_label(mid)] = trans[mid] if mid in trans else _fmt(mid, method, r.get(mid))
         recs.append(rec)
     return pd.DataFrame(recs)
+
+
+def _bt_pct(v) -> str:
+    return "—" if v is None else f"{v*100:+.1f}%"
+
+
+def _backtest_panel(passes, method, n_periods, market, include_missing, grain) -> None:
+    """스크리너 백테스트 — 현재 조건을 과거 코호트에 적용한 forward 수익률(P2)."""
+    with st.expander("📈 백테스트 — 이 조건이 과거에 유효했나?", expanded=False):
+        if grain != "annual":
+            st.info("백테스트는 **연간(FY) 기준**만 지원합니다. 상단 '기간 단위'를 연간으로 바꿔주세요.")
+            return
+        st.caption("현재 구성한 퀀트 패스·집계·시장 조건을 **과거 각 연도(FY)에 그대로 적용**해, "
+                   "익년 5월 매수 후 1·3·5년 수익률을 시뮬레이션합니다(동일가중).")
+        bc1, bc2 = st.columns(2)
+        start_y = int(bc1.number_input("코호트 시작연도(FY)", 2013, 2022, 2016, key="bt_start"))
+        end_y = int(bc2.number_input("코호트 종료연도(FY)", 2013, 2023, 2021, key="bt_end"))
+        if not st.button("백테스트 실행", key="bt_run"):
+            return
+        if end_y < start_y:
+            st.warning("종료연도가 시작연도보다 빠릅니다.")
+            return
+
+        from app.compute.backtest import run_backtest
+        with st.spinner("과거 코호트 시뮬레이션 중… (수 초~수십 초)"):
+            res = run_backtest(
+                passes, method, n_periods,
+                (None if market == "전체" else market),
+                include_missing, start_y, end_y,
+                statement_type=state.get_stmt_type(),
+            )
+        cohorts = res["cohorts"]
+        if not cohorts:
+            st.warning("해당 기간에 시뮬레이션 가능한 코호트가 없습니다(가격·재무 데이터 부족).")
+            return
+
+        hs = res["horizons"]
+        smry = res["summary"]
+        # 요약 표
+        srows = [{
+            "구분": "📌 포트폴리오(선정)",
+            **{f"{h}년": _bt_pct(smry["port"].get(h)) for h in hs},
+        }, {
+            "구분": "벤치마크(유니버스 동일가중)",
+            **{f"{h}년": _bt_pct(smry["bench"].get(h)) for h in hs},
+        }, {
+            "구분": "초과수익(포트−벤치)",
+            **{f"{h}년": _bt_pct((smry["port"].get(h) - smry["bench"].get(h))
+                               if (smry["port"].get(h) is not None and smry["bench"].get(h) is not None)
+                               else None) for h in hs},
+        }]
+        st.markdown("**코호트 평균 (연 환산 아님, 누적 수익률)**")
+        st.dataframe(pd.DataFrame(srows), hide_index=True, width="stretch")
+
+        # 코호트별 상세
+        crows = []
+        for c in cohorts:
+            row = {"코호트(FY)": c["year"], "매수일": c["rebalance_date"],
+                   "선정": c["n_selected"], "유니버스": c["n_universe"]}
+            for h in hs:
+                row[f"P{h}년"] = _bt_pct(c["port"].get(h))
+                row[f"B{h}년"] = _bt_pct(c["bench"].get(h))
+            crows.append(row)
+        st.dataframe(pd.DataFrame(crows), hide_index=True, width="stretch")
+        st.caption("⚠ 한계: 재무는 **정정본 포함**(정정 lookahead 소지) · **가격 수익률**(배당 제외) · "
+                   "리밸런스+N년 시점 가격 없는 종목(상장폐지 등)은 해당 구간 제외(경미한 생존편향). "
+                   "P=포트폴리오, B=벤치마크. 소수 코호트·소수 종목일수록 노이즈가 큽니다.")
 
 
 # ── 우측: 선택기업 시각화(비파괴) ───────────────────────────────

@@ -36,15 +36,24 @@
 → **원인 불문**(자본 오매핑·XBRL 오류·스케일), 별도는 controlling≡net 이 참이므로 표준화에서
 강제하면 일괄 교정된다.
 
-### Class B — 연결 단위/스케일 오류 ◻
+### Class B — 연결 단위/스케일 오류 = ★소스 데이터 오류(파서 아님) ◻
 - **우진플라임 2012FY 연결**: `is.controlling_ni`=69,067억 vs net 69억 (정확히 1000×).
-  라벨은 정상(`지배기업의 소유주에게 귀속되는 당기순이익`), **값만 1000× 오파싱**. 같은 표의
-  net(69억)은 정상 → controlling_ni 셀의 단위/자릿수 파싱 오류(라인 국소적).
-- 후보 1개(69,067)라 재선택 불가. 원문 셀 단위선언 재검 필요.
+  **원문 대조 결과 소스 파일 자체의 오타**: 손익계산서에 `6,906,699,699,581`(자릿수그룹 '699'
+  중복) 기재. 동일 값이 자본변동표엔 정상 `6,906,699,581`(69억). 파서는 소스를 충실히 추출 =
+  garbage-in. 후보 1개라 재선택 불가.
+- 규모: 연결 ratio>2 & |net|≥10억(=net 신뢰, 순수 B) 89행 · ratio>5 극단 105행. 대부분 소스오타.
+- **수정 안 함(백로그)**: 소스 오류라 파서 교정 불가. 안전한 자동교정(항등식으로 controlling=
+  net−nci 강제)은 net 오추출 케이스(Class C)와 구분 못하면 위험 → 보류. 향후 옵션: |controlling|
+  >|net|×K(극단) AND net 이 CF 당기순이익과 교차확인될 때만 net−nci 로 override.
 
-### Class C — net_income≈0 아티팩트 ◻
-- 이월드·서울식품 등 net≈0 → 비율만 수백만×. controlling 은 정상일 수 있고 **net 오추출**이
-  본질일 가능성. controlling_ni 버그로 보기 어려움 → net_income DQ 로 별도 추적.
+### Class C — net_income≈0 = ★EPS 오매핑(파서 버그) ✅수정
+- **이월드 2013H1**: `is.net_income`=0.00억 ← 출처가 `기본주당기순손익(손실)`·`희석주당기순손익
+  (손실)` = **주당(EPS, 원/주) 라인**. 실 당기순이익 라인이 없거나 작을 때 dedup max-abs 가
+  주당값(수십 원)을 채택 → net_income ~0 오염, controlling_ni 비율 폭증.
+- **근본**: `account_mapper.map` is-섹션 퍼지가 '기본주당기순손익'을 '당기순손익'과 0.94 유사도로
+  `is.net_income` 매핑. (line 188 주석은 '주당' 차단을 의도했으나 **코드 미구현**이었음.)
+- 규모: fact_v2 에서 주당 출처 `is.net_income` **8,301 facts / 644사**(+is.controlling_ni 348·
+  is.ordinary_income 332·is.noncontrolling_ni 67 등). ★net_income(헤드라인) 광범위 오염.
 
 ---
 
@@ -62,12 +71,21 @@
 
 ---
 
+## 3b. 해결 — Class C (2026-07-16)
+
+**수정** (`parser/common/account_mapper.py::map`, 커밋 3b023d1): is-섹션 가드에 `'주당' in
+normalized → unknown` 추가(원단위 손익 canonical 에서 EPS 라인 배제). '당기순이익(손실)'(주당
+없음)은 정상 매핑 유지.
+
+**검증(롤백 재추출)**: 이월드 net 0억 오염행 제거, 무림페이퍼·서울식품(실 net 존재)·삼성전자
+무변(무회귀). fin2 테스트 통과.
+
+**백필**: `scripts/fin2_fix_controlling_ni_reextract.py --corps-file`(EPS 오염 686사 재추출→
+재표준화). 완료 시 Gate B 대신 잔여 EPS-net facts=0 확인 + 어서션.
+
 ## 4. 백로그 (미해결)
 
-- **Class B (연결 단위/스케일)**: `우진플라임`류. 텍스트 추출기의 라인 단위 선언 처리
-  재검(`amount_normalizer.detect_unit_declaration` + 표 내 국소 단위) 필요. 소수지만 절대오차 큼.
-  가드 대안: `|controlling_ni| > |net_income|×N AND 후보 1개 AND 연결` → controlling_ni 를
-  버리고 net−nci 로 대체(과한 자동교정 위험 있어 신중).
-- **Class C (net≈0)**: net_income 오추출이 본질. controlling 과 분리해 net_income 완전성/정확성
-  DQ 로 트래킹. (별도 이슈)
-- 이후 잔여 controlling_ni WARN 은 (정당 비지배음수 + 소스 미보고 + Class B·C)로 구성.
+- **Class B (연결 소스 오타/스케일)**: `우진플라임`류 = 소스 파일 자체 오타(자릿수 중복). 파서
+  교정 불가. 안전한 자동교정 가드는 Class C(net 오추출)와 혼동 위험이라 보류. CF 당기순이익
+  교차확인 기반 override 가 향후 옵션. 규모 작음(순수 B ~89행).
+- 이후 잔여 controlling_ni WARN 은 (정당 비지배음수 + 소스 미보고 + Class B 소스오타)로 구성.

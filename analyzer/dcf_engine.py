@@ -57,6 +57,7 @@ class DCFResult:
     fcf_cagr_3y:       Optional[float]   # 3년 FCF CAGR
     fcf_cagr_5y:       Optional[float]   # 5년 FCF CAGR
     growth_source:     str               # "3Y CAGR" / "5Y CAGR" / "수동입력"
+    price_date:        Optional[date] = None  # current_price 의 실제 거래일(기준일 — UI 캡션용)
 
 
 # ── 베타 계산 ─────────────────────────────────────────────────────────────────
@@ -276,6 +277,7 @@ def run_dcf(
     # ── 주가 / 주식수 ────────────────────────────────────────────────
     from datetime import date
     current_price = None
+    price_date    = None
     shares_out    = curr.get("shares_out")
 
     if stock_code:
@@ -283,6 +285,7 @@ def run_dcf(
                                 corp_code=corp_code)
         if mdata:
             current_price = mdata.get("close_price")
+            price_date    = mdata.get("trade_date")
             if not shares_out:
                 shares_out = mdata.get("shares_out")
 
@@ -366,6 +369,7 @@ def run_dcf(
         fcf_cagr_3y      = fcf_cagr_3y,
         fcf_cagr_5y      = fcf_cagr_5y,
         growth_source    = growth_source,
+        price_date       = price_date,
     )
 
 

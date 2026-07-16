@@ -41,6 +41,21 @@ CHECKS: list[dict] = [
                   "AND COALESCE(data_quality,1) < 3 ORDER BY period_end DESC LIMIT 10",
     },
     {
+        # 밸류에이션 최신성(A4a): valuation_daily matview 는 nightly_valuation_refresh(19:30) 로 갱신된다.
+        # 최신 거래일이 6일 이상 지났으면 refresh/주가동기화 파이프라인 정체 신호(외부평가 2026-07-15 = 3주 정체).
+        # ★ 단일 종목이 앞서가면 max(trade_date) 가 착시를 준다(테스트 1종목이 07-14, 전수는 06-26 정체).
+        #   → **전수 커버(≥100 종목)된 최신 거래일**로 판정해 착시를 차단. 임계 6일 = 주말·연휴 여유.
+        #   ERROR → dq_nightly 가 알림(notify_failure).
+        "name": "valuation_daily_stale",
+        "sev": "ERROR",
+        "desc": "valuation_daily 전수커버 최신 거래일이 6일 이상 지연 (refresh/주가동기화 정체 신호)",
+        "count": "SELECT CASE WHEN COALESCE((SELECT max(trade_date) FROM "
+                 "(SELECT trade_date FROM valuation_daily GROUP BY trade_date HAVING count(*) >= 100) t), "
+                 "DATE '1900-01-01') < CURRENT_DATE - INTERVAL '6 days' THEN 1 ELSE 0 END",
+        "sample": "SELECT max(trade_date) AS broad_latest, CURRENT_DATE - max(trade_date) AS days_behind "
+                  "FROM (SELECT trade_date FROM valuation_daily GROUP BY trade_date HAVING count(*) >= 100) t",
+    },
+    {
         "name": "calendar_orphan_cq",
         "sev": "ERROR",
         "desc": "달력분기(CQ) 유령행 — 대응 이산분기 없음",
@@ -76,6 +91,30 @@ CHECKS: list[dict] = [
                 WHERE cq.corp_code=cy.corp_code AND cq.statement_type=cy.statement_type
                   AND cq.version=1 AND cq.calendar_year=cy.calendar_year
                   AND cq.calendar_period IN ('CQ1','CQ2','CQ3','CQ4')) < 4 LIMIT 10""",
+    },
+    {
+        # P0-3(외부평가 2026-07-15): shares_out 10^6 과다저장 → 시총·PER/PBR 천문학적 왜곡.
+        # 물리적 불가(> 10^11 = 삼성전자 발행주식수 ~60억주의 10배 초과). 단위변환 버그 재발 감지.
+        "name": "shares_out_impossible",
+        "sev": "ERROR",
+        "desc": "발행주식수 > 10^11 (물리적 불가 — shares_out 단위변환 버그 신호)",
+        "count": "SELECT count(*) FROM std_financials_v2 WHERE version=1 "
+                 "AND shares_out IS NOT NULL AND shares_out > 100000000000",
+        "sample": "SELECT corp_code, fiscal_year, fiscal_period, statement_type, shares_out "
+                  "FROM std_financials_v2 WHERE version=1 AND shares_out > 100000000000 "
+                  "ORDER BY shares_out DESC LIMIT 10",
+    },
+    {
+        # P0-3: 위 shares_out 버그가 stock_prices.market_cap 으로 전파된 결과. 국내증시 총액 ~3,000조.
+        # 단일종목 시총 > 5,000조(5e18원)는 불가값 → 시총 정렬·스크리너·피어 오염.
+        "name": "market_cap_impossible",
+        "sev": "ERROR",
+        "desc": "시가총액 > 5,000조원 (물리적 불가 — shares_out/단위 버그가 market_cap 으로 전파)",
+        "count": "SELECT count(DISTINCT stock_code) FROM stock_prices "
+                 "WHERE market_cap IS NOT NULL AND market_cap > 5e18",
+        "sample": "SELECT stock_code, max(market_cap) AS max_mc, max(shares_out) AS max_shares "
+                  "FROM stock_prices WHERE market_cap > 5e18 GROUP BY stock_code "
+                  "ORDER BY max_mc DESC LIMIT 10",
     },
     {
         "name": "nonpositive_total_assets",

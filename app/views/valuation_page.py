@@ -36,7 +36,8 @@ def _dcf_section(corp_code: str, stmt: str) -> None:
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("주당 적정가", _won(res.intrinsic_per_share))
-    c2.metric("현재가", _won(res.current_price))
+    c2.metric("현재가", _won(res.current_price),
+              help=f"기준일: {res.price_date}" if res.price_date else "기준일: 데이터 없음")
     sm = res.safety_margin
     c3.metric("안전마진", fmt_pct(sm) if sm is not None else "—",
               delta=("저평가" if sm and sm > 0 else "고평가") if sm is not None else None)
@@ -46,6 +47,9 @@ def _dcf_section(corp_code: str, stmt: str) -> None:
         f"성장률 {fmt_pct(res.fcf_growth)} ({res.growth_source}) · WACC {fmt_pct(res.wacc)} · "
         f"영구성장 {fmt_pct(res.terminal_growth)} · β {res.beta:.2f} · "
         f"기준FCF {fmt_amount(res.base_fcf)}")
+    st.caption(f"💡 현재가 기준일: **{res.price_date}** (최신 거래일 종가) — 기업 시각화의 💰 밸류에이션 탭은 "
+               f"FY말 종가 기준이라 값이 다를 수 있습니다."
+               if res.price_date else "💡 현재가 기준일: — (주가 데이터 없음)")
 
     proj = pd.DataFrame(
         [(y, f"{fcf/1e8:,.0f}억", f"{pv/1e8:,.0f}억") for y, fcf, pv in res.projected_fcfs],

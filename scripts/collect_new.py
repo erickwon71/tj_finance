@@ -360,8 +360,13 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"[collect] ⓪ 유니버스 갱신 실패(수집은 계속): {exc}")
 
-    # ① 탐지
-    disc = collect.discover_recent_corps(args.days)
+    # ① 탐지 — DART 쿼터초과([020]) 등 API 실패 시 하드 크래시 대신 정상 종료(비치명).
+    #    밸류에이션 refresh 는 별도 잡(nightly_valuation_refresh)이 담당하므로 여기서 죽어도 무방.
+    try:
+        disc = collect.discover_recent_corps(args.days)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"[collect] ① 탐지 실패(수집 중단): {type(exc).__name__}: {exc}")
+        return
     corps = disc["corps"]
     logger.info(f"[collect] ① 최근 {args.days}일({disc['window']}) 정기공시 "
                 f"{disc['total_filings']}건 → 활성 보통주 {len(corps)}개 기업")

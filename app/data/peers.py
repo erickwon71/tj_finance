@@ -10,8 +10,12 @@ from typing import Optional
 
 from sqlalchemy import text
 
-from analyzer.ksic import sector_key, sector_name
+from analyzer.ksic import is_financial_sector, sector_key, sector_name
 from collector.db import get_session
+
+# 금융업(은행/보험/지주)에서 제조업 기준으로 오도되는 지표 — 백분위·평가 딱지에서 제외(외부평가 2026-07-15).
+# 이자수익 중심 손익구조·고레버리지가 정상이라 영업이익률·부채비율을 일반 임계로 평가하면 오해를 부른다.
+_FINANCIAL_EXCLUDED_METRICS = frozenset({"op_margin", "debt_ratio"})
 
 # (key, 라벨, 높을수록좋음, 종류) — pct=비율(프랙션), mult=멀티플, score=점수
 PEER_METRICS: list[tuple[str, str, bool, str]] = [
@@ -48,11 +52,12 @@ def load_peer_benchmark(corp_code: str, population: list[dict]) -> Optional[dict
     if not skey:
         return {"has_sector": False}
 
+    is_financial = is_financial_sector(induty)
     peers = [r for r in population if sector_key(induty_map.get(r["corp_code"])) == skey]
     target = next((r for r in peers if r["corp_code"] == corp_code), None)
     result = {
         "has_sector": True, "sector_name": sector_name(induty), "induty": induty,
-        "n_peers": len(peers),
+        "n_peers": len(peers), "is_financial": is_financial,
     }
     if not target or len(peers) < 3:
         result["insufficient"] = True
@@ -60,6 +65,9 @@ def load_peer_benchmark(corp_code: str, population: list[dict]) -> Optional[dict
 
     metrics = []
     for key, label, hb, kind in PEER_METRICS:
+        # 금융업: 제조업 기준 오도 지표(영업이익률·부채비율)는 백분위·평가에서 제외.
+        if is_financial and key in _FINANCIAL_EXCLUDED_METRICS:
+            continue
         vals = [r[key] for r in peers if r.get(key) is not None]
         tv = target.get(key)
         if tv is None or len(vals) < 3:

@@ -59,20 +59,25 @@ WHERE c.stock_code = sp.stock_code
 """
 
 
+def run(stock: str | None = None) -> int:
+    """수정주가×현재주식수 시총(market_cap)·shares_out 재계산. 반환=갱신 행수. 멱등·순수 SQL."""
+    stock_filter = "AND sp.stock_code = :sc" if stock else ""
+    params = {"sc": stock} if stock else {}
+    sql = _SQL.format(stock_filter=stock_filter)
+
+    logger.info(f"[market-cap] 수정주가×현재주식수 시총 계산 "
+                f"{'(stock=' + stock + ')' if stock else '(전수)'}")
+    with get_session() as s:
+        res = s.execute(text(sql), params)
+        logger.success(f"[market-cap] 완료 — {res.rowcount:,} 행 갱신")
+        return res.rowcount
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--stock", help="단일 종목코드(파일럿)")
     args = ap.parse_args()
-
-    stock_filter = "AND sp.stock_code = :sc" if args.stock else ""
-    params = {"sc": args.stock} if args.stock else {}
-    sql = _SQL.format(stock_filter=stock_filter)
-
-    logger.info(f"[market-cap] 수정주가×현재주식수 시총 계산 "
-                f"{'(stock=' + args.stock + ')' if args.stock else '(전수)'}")
-    with get_session() as s:
-        res = s.execute(text(sql), params)
-        logger.success(f"[market-cap] 완료 — {res.rowcount:,} 행 갱신")
+    run(args.stock)
 
 
 if __name__ == "__main__":

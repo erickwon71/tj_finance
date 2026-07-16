@@ -194,7 +194,7 @@ def _valuation_series_section(corp_code: str) -> None:
         else:
             layout["yaxis"] = dict(title="배수(x)")
         fig.update_layout(**layout)
-        st.plotly_chart(fig, width="stretch", key="cb_val_chart")
+        st.plotly_chart(fig, use_container_width=True, key="cb_val_chart")
         st.caption(f"{since}년~ · 일별 밸류에이션(valuation_daily) · 재무 지표 프레임과 별개 시간축")
 
 

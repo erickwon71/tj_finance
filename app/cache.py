@@ -352,3 +352,35 @@ def company_multiples(corp_code: str, statement_type: str) -> Optional[dict]:
     d["fiscal_year"] = curr.get("fiscal_year")
     d["used_stmt"] = used
     return d
+
+
+@st.cache_data(ttl=TTL_HEAVY, show_spinner=False, max_entries=512)
+def company_multiples_ttm(corp_code: str, statement_type: str) -> Optional[dict]:
+    """분기 TTM(직전 4분기 합산 손익·현금흐름) + **현재가** 기준 밸류에이션 멀티플 (P1-9).
+
+    연간(FY) 멀티플은 실적 변곡점에서 왜곡이 크므로, 스크리너와 동일한 트레일링 4분기 합산
+    로직(`app.compute.screen_eval._ttm_row`)을 회사 밸류에이션 뷰에도 배선한다. BS·주식수는 최신
+    분기 스냅샷. 직전 4분기 데이터가 없으면 None."""
+    from analyzer.valuation_engine import compute_multiples
+    from app.compute.screen_eval import _ttm_row
+
+    rows, used = _series.load_quarter_series_with_fallback(corp_code, statement_type, 8)
+    if not rows or len(rows) < 4:
+        return None
+    ttm = _ttm_row(rows, 0)  # rows 는 최신→과거
+    if not ttm:
+        return None
+    meta = _corp.resolve_corp(corp_code)
+    stock_code = meta.get("stock_code") if meta else None
+
+    mv = compute_multiples(ttm, corp_code, stock_code, date.today())  # 현재가 기준
+    d = asdict(mv)
+
+    ni = ttm.get("controlling_ni") or ttm.get("net_income")
+    eq = ttm.get("controlling_equity") or ttm.get("total_equity")
+    shares = mv.shares_out
+    d["eps"] = (ni / shares) if (ni and shares) else None
+    d["bps"] = (eq / shares) if (eq and shares) else None
+    d["ttm_end"] = f"{rows[0].get('calendar_year')} {rows[0].get('calendar_period')}"
+    d["used_stmt"] = used
+    return d

@@ -14,7 +14,8 @@ import streamlit as st
 
 from app import cache, state
 from app.components.export import download_button
-from app.format import corp_notes, fmt_amount, fmt_corp_identity, fmt_notes, fmt_pct, fmt_ratio
+from app.format import (corp_notes, fmt_amount, fmt_corp_identity, fmt_notes, fmt_pct,
+                        fmt_ratio, render_dataframe)
 from app.views import metric_panel
 from app.views.chart_panel import (
     render_price_chart, render_price_financial_combined, render_valuation_band,
@@ -226,6 +227,9 @@ def _peer_panel(corp_code: str) -> None:
         return
 
     st.markdown(f"#### 🏢 {pb['sector_name']} — 피어 {pb['n_peers']}개사 대비 (최신 FY)")
+    if pb.get("is_financial"):
+        st.caption("ℹ️ 금융업(은행/보험/지주)은 이자수익 구조·고레버리지가 정상이라, 영업이익률·부채비율은 "
+                   "일반 기준 평가에서 제외했습니다.")
     recs = []
     for m in pb["metrics"]:
         if m["value"] is None or m["percentile"] is None:
@@ -253,6 +257,8 @@ def _peer_panel(corp_code: str) -> None:
         "PBR": _fmt_peer_val(r.get("pbr"), "mult"),
     } for r in pb["peers"]]
     st.dataframe(pd.DataFrame(prows), hide_index=True, width="stretch")
+    st.caption("⚠ PER·PBR·시총 = 각 사 **최신 거래일 종가** 기준입니다. 💰 밸류에이션 탭은 **FY말 종가** "
+               "기준이라 같은 기업이라도 값이 다를 수 있습니다(주가 급변 구간일수록 괴리 큼).")
 
 
 def _trust_badge(corp_code: str) -> None:
@@ -431,7 +437,7 @@ def _shareholder_return_panel(corp_code: str, requested_stmt: str) -> None:
         legend=dict(orientation="h", yanchor="bottom", y=1.02), height=380,
         margin=dict(l=10, r=10, t=30, b=10),
     )
-    st.plotly_chart(fig, width="stretch", key="shr_return_chart")
+    st.plotly_chart(fig, use_container_width=True, key="shr_return_chart")
 
     df = pd.DataFrame([{
         "연도": r["fiscal_year"],
@@ -442,7 +448,10 @@ def _shareholder_return_panel(corp_code: str, requested_stmt: str) -> None:
         "자사주순취득(억원)": (r["buyback_amount_won"] / EOK) if r.get("buyback_amount_won") is not None else None,
         "총주주환원율(%)": r.get("total_shareholder_return_ratio"),
     } for r in reversed(rows)])
-    st.dataframe(df, hide_index=True, width="stretch")
+    render_dataframe(
+        df,
+        num_cols=["DPS(보통주)", "DPS(우선주)", "배당총액(억원)", "자사주순취득(억원)"],
+        pct_cols=["현금배당수익률(%)", "배당성향(%)", "총주주환원율(%)"])
 
     detail = cache.treasury_activity_detail(corp_code, latest["fiscal_year"])
     totals = [d for d in detail if d.get("acqs_method3") == "총계"]
@@ -454,7 +463,7 @@ def _shareholder_return_panel(corp_code: str, requested_stmt: str) -> None:
                 "소각": t.get("qty_incinerated"), "기말수량": t.get("qty_end"),
                 "비고": t.get("remark") or "—",
             } for t in totals])
-            st.dataframe(df_t, hide_index=True, width="stretch")
+            render_dataframe(df_t, num_cols=("기초수량", "취득", "처분", "소각", "기말수량"))
 
     st.caption("출처: DART 배당에관한사항(alotMatter)·자기주식취득및처분현황(tesstkAcqsDspsSttus). "
                "배당성향=공시값 우선(없으면 배당총액/지배주주순이익 재계산). 총주주환원율="
@@ -577,9 +586,7 @@ def _production_panel(corp_code: str) -> None:
         year_cols = [str(y) for y in years if str(y) in df.columns]
         df = df[["부문·품목", "단위"] + year_cols]
         st.markdown(f"**{_biz.METRIC_LABELS[metric]}** (부문·품목별)")
-        st.dataframe(df, hide_index=True, width="stretch",
-                     column_config={c: st.column_config.NumberColumn(c, format="localized")
-                                    for c in year_cols})
+        render_dataframe(df, num_cols=year_cols)
 
     # ── 비시계열 보조표(표준생산능력·가동가능일수 등) ──
     supp = _biz.supplementary_rows(rows)
@@ -630,9 +637,7 @@ def _sales_panel(corp_code: str) -> None:
 
         df = pd.DataFrame([{"부문·품목": s["label"],
                             **{str(y): s["by_year"].get(y) for y in years}} for s in seg_rows])
-        st.dataframe(df, hide_index=True, width="stretch",
-                     column_config={str(y): st.column_config.NumberColumn(str(y), format="localized")
-                                    for y in years})
+        render_dataframe(df, num_cols=[str(y) for y in years])
         st.caption(f"부문별 매출 구성 (단위: {unit}) · 스택 막대는 상위 8개 부문·품목")
 
     exp_rows = data["export_rows"]
@@ -687,9 +692,7 @@ def _order_backlog_panel(corp_code: str) -> None:
         "구분": r["category"] or "전체", "수주총액": r["new_orders"],
         "기납품액": r["completed"], "수주잔고": r["backlog_amt"],
     } for r in rows])
-    st.dataframe(df, hide_index=True, width="stretch",
-                 column_config={c: st.column_config.NumberColumn(c, format="localized")
-                                for c in ("수주총액", "기납품액", "수주잔고")})
+    render_dataframe(df, num_cols=("수주총액", "기납품액", "수주잔고"))
     st.caption("출처: DART 사업보고서 '수주상황'/'수주계약 현황' 본문표. 단위는 원문 그대로(보통 "
                "백만원). 프로젝트별 상세 공시는 회사 전체 합계로 축약했습니다.")
 
@@ -889,9 +892,15 @@ def render(corp_code: str | None = None) -> None:
 
     _dq_banner(series, grain)
 
-    # 이상치 가드 — DB 는 보고서와 일치(Gate B)하나 소스 자체가 비정상일 수 있어 표시단계에서 플래그
+    # 이상치 가드 — DB 는 보고서와 일치(Gate B)하나 소스 자체가 비정상일 수 있어 표시단계에서 플래그.
+    # 금융업(은행/보험/지주)은 영업이익률 sanity 를 적용하지 않는다(이자수익 구조 — 안내 표시).
+    from analyzer.ksic import is_financial_sector
     from app.compute.checks import financial_anomalies
-    anomalies = financial_anomalies(series, grain)
+    induty = meta.get("induty_code")
+    if is_financial_sector(induty):
+        st.caption("ℹ️ 금융업(은행/보험/지주)은 업 특성상 일반 제조업 기준(영업이익률·부채비율)을 "
+                   "이상치·섹터 평가에 적용하지 않습니다.")
+    anomalies = financial_anomalies(series, grain, induty_code=induty)
     if anomalies:
         with st.expander(f"⚠ 이상치 점검 ({len(anomalies)}건) — 보고서 원값 확인 권장", expanded=True):
             for m in anomalies:
@@ -956,15 +965,30 @@ def render(corp_code: str | None = None) -> None:
             mseries, _ = cache.annual_series(corp_code, requested_stmt, years=200)
         metric_panel.render(mseries, grain, meta["corp_name"], corp_code)
 
-    # ── 밸류에이션 (항상 최신 FY 기준) ──
+    # ── 밸류에이션 (연간 FY / 분기 TTM 선택) ──
     elif active == TABS[2]:
-        st.caption("연간(FY) 기준 — 분기 멀티플(TTM)은 후속 단계")
-        mv = cache.company_multiples(corp_code, requested_stmt)
+        basis = st.radio("멀티플 기준", ["연간(FY)", "분기(TTM)"], horizontal=True,
+                         key="val_basis", label_visibility="collapsed")
+        is_ttm = basis == "분기(TTM)"
+        mv = (cache.company_multiples_ttm(corp_code, requested_stmt) if is_ttm
+              else cache.company_multiples(corp_code, requested_stmt))
         if not mv or not mv.get("market_cap"):
-            st.info("주가/시총 데이터가 없어 밸류에이션을 계산할 수 없습니다.")
+            if is_ttm:
+                st.info("직전 4개 분기 데이터가 부족해 TTM 멀티플을 계산할 수 없습니다. (연간 기준을 이용하세요)")
+            else:
+                st.info("주가/시총 데이터가 없어 밸류에이션을 계산할 수 없습니다.")
         else:
-            st.markdown(f"**{mv.get('fiscal_year')} FY 기준** · "
-                        f"{'연결' if mv.get('used_stmt')=='consolidated' else '별도'}")
+            stmt_ko = '연결' if mv.get('used_stmt') == 'consolidated' else '별도'
+            pdate = mv.get("price_date")
+            if is_ttm:
+                st.markdown(f"**TTM {mv.get('ttm_end', '')} 기준** · {stmt_ko} · 직전 4분기 합산")
+                st.caption(f"주가 기준일: **{pdate}** (현재가) · 손익·현금흐름은 직전 4분기 합산, "
+                           f"재무상태·주식수는 최신 분기 스냅샷"
+                           if pdate else "주가 기준일: — (주가 데이터 없음)")
+            else:
+                st.markdown(f"**{mv.get('fiscal_year')} FY 기준** · {stmt_ko}")
+                st.caption(f"주가 기준일: **{pdate}** (해당 FY 말 근처 종가) · 시총·PER·PBR 은 이 종가 기준"
+                           if pdate else "주가 기준일: — (주가 데이터 없음)")
             st.dataframe(_valuation_df(mv), width="stretch")
 
         _valuation_bands(corp_code)

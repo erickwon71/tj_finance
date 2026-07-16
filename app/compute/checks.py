@@ -56,26 +56,34 @@ def _eok(v) -> str:
     return f"{v/EOK:,.0f}억"
 
 
-def financial_anomalies(series: list[dict], grain: str = "annual") -> list[str]:
+def financial_anomalies(series: list[dict], grain: str = "annual",
+                        induty_code: str | None = None) -> list[str]:
     """
     재무 시계열 이상치 경고 메시지.
 
-    1) 영업이익률 > 100%(불가) / > 60%(의심)
+    1) 영업이익률 > 100%(불가) / > 60%(의심)  — **금융업(KSIC 64~66) 제외**
     2) 매출·영업이익·순이익이 **전년 동기 대비 4배 이상** 급증(직전 분기 비교 병기)
-    """
-    msgs: list[str] = []
 
-    # 1) 영업이익률 sanity
-    for sf in series:
-        rev, op = sf.get("revenue"), sf.get("operating_income")
-        if rev and op is not None and rev > 0:
-            m = op / rev
-            if m > _MARGIN_IMPOSSIBLE:
-                msgs.append(f"🔴 {_label(sf, grain)}: 영업이익이 매출을 초과 "
-                            f"(영업이익률 {m*100:.0f}%) — 보고서 원값 확인 필요")
-            elif m > _MARGIN_SUSPECT:
-                msgs.append(f"🟠 {_label(sf, grain)}: 영업이익률 {m*100:.0f}% "
-                            f"(비정상적으로 높음 — 확인 권장)")
+    금융업(은행/보험/지주)은 이자수익 중심 손익구조라 '매출' 대비 영업이익 비교가 의미 없어
+    영업이익률 sanity 를 적용하지 않는다(오탐 방지, 외부평가 2026-07-15).
+    """
+    from analyzer.ksic import is_financial_sector
+
+    msgs: list[str] = []
+    is_financial = is_financial_sector(induty_code)
+
+    # 1) 영업이익률 sanity — 금융업 제외
+    if not is_financial:
+        for sf in series:
+            rev, op = sf.get("revenue"), sf.get("operating_income")
+            if rev and op is not None and rev > 0:
+                m = op / rev
+                if m > _MARGIN_IMPOSSIBLE:
+                    msgs.append(f"🔴 {_label(sf, grain)}: 영업이익이 매출을 초과 "
+                                f"(영업이익률 {m*100:.0f}%) — 보고서 원값 확인 필요")
+                elif m > _MARGIN_SUSPECT:
+                    msgs.append(f"🟠 {_label(sf, grain)}: 영업이익률 {m*100:.0f}% "
+                                f"(비정상적으로 높음 — 확인 권장)")
 
     # 2) 전년 동기 / 직전 기간 대비 급증
     for key, name in _SPIKE_METRICS:

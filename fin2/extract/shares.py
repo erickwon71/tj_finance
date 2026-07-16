@@ -25,6 +25,10 @@ _CELL = re.compile(r'<T[DEH][^>]*>(.*?)</T[DEH]>', re.S | re.I)
 _TAG = re.compile(r'<[^>]+>')
 _WS = re.compile(r'\s+')
 
+# 물리적 상한: KOSPI/KOSDAQ 최다주식(삼성전자 ~60억주)도 10^10 미만. 10^11 초과는 불가값
+# (단위 오인·셀 병합 등 파싱 오류 신호) → 채택 거부. shares_out 10^6 과다저장 재발 방지(P0-3).
+_MAX_PLAUSIBLE_SHARES = 100_000_000_000  # 10^11
+
 
 def _decode(path: str | Path) -> str:
     raw = Path(path).read_bytes()
@@ -62,13 +66,16 @@ def extract_issued_common_shares(path: str | Path) -> int | None:
 
 
 def _pick(rows: list[list[str]], key: str) -> int | None:
-    """라벨에 key 포함(단 '발행할'=수권주식 제외)하는 행의 첫 숫자 컬럼(=보통주)."""
+    """라벨에 key 포함(단 '발행할'=수권주식 제외)하는 행의 첫 숫자 컬럼(=보통주).
+
+    물리적 불가값(> 10^11 = 삼성전자 발행주식수의 10배 초과)은 단위 오인·셀 병합 등 파싱 오류로
+    보고 채택하지 않는다(shares_out 10^6 과다저장 재발 방지, P0-3)."""
     for cells in rows:
         joined = " ".join(cells)
         if key in joined and "발행할" not in joined:
             for c in cells:
                 if _NUM.match(c) and c != '-':
                     n = int(c.replace(',', ''))
-                    if n > 0:
+                    if 0 < n <= _MAX_PLAUSIBLE_SHARES:
                         return n
     return None

@@ -24,6 +24,7 @@ class ValuationMultiples:
     market_cap:   Optional[int]   = None  # 시가총액 (원)
     close_price:  Optional[int]   = None  # 주가 (원)
     shares_out:   Optional[int]   = None  # 상장주식수
+    price_date:   Optional[date]  = None  # 위 주가/시총의 실제 거래일(기준일 — UI 캡션용)
 
     per:          Optional[float] = None  # Price/Earnings
     pbr:          Optional[float] = None  # Price/Book Value
@@ -101,6 +102,7 @@ def compute_multiples(
         market_cap  = price_data.get("market_cap"),
         close_price = price_data.get("close_price"),
         shares_out  = price_data.get("shares_out"),
+        price_date  = price_data.get("trade_date"),
     )
 
     mc = mv.market_cap

@@ -41,3 +41,13 @@ def sector_name(induty_code: str | None) -> str | None:
     if not key:
         return None
     return KSIC_2DIGIT.get(key, f"업종 {key}")
+
+
+# 금융업(은행/보험/지주·금융서비스) KSIC 중분류. 이자수익 중심 손익구조·고레버리지가 정상이라
+# 제조업 기준 지표(영업이익률 sanity·부채비율 백분위)를 그대로 적용하면 오도된다(외부평가 2026-07-15).
+_FINANCIAL_SECTOR_KEYS = frozenset({"64", "65", "66"})
+
+
+def is_financial_sector(induty_code: str | None) -> bool:
+    """금융업(KSIC 64 금융·65 보험·66 금융보험서비스)이면 True."""
+    return sector_key(induty_code) in _FINANCIAL_SECTOR_KEYS

@@ -214,9 +214,37 @@ python scripts/vacuum_db.py --table fact_v2  # 특정 테이블만
 python scripts/refresh_valuation_daily.py
 ```
 
-## 이후 자동 갱신
-`scripts/collect_new.py` 가 매 실행 끝(⑥)에 `REFRESH MATERIALIZED VIEW CONCURRENTLY` 로 갱신하므로
-18:00 수집 잡에 자동으로 포함된다(비치명적 — 실패해도 수집 자체는 성공 처리). 수동으로 다시 갱신하려면:
-```bash
-python scripts/refresh_valuation_daily.py --concurrent
+## 이후 자동 갱신 — 전용 잡 `com.tjfinance.valuation` (매일 19:30)
+
+★ **2026-07-16 변경(외부평가 P0-1)**: refresh 를 collect 잡에서 **분리**했다. 예전엔 refresh 가
+`collect_new.py` 마지막 단계(⑥)에만 매달려 있어서, collect 이 단계 ①에서 DART 쿼터초과([020])로
+크래시하면(gapfill 잡이 쿼터 선소진) matview 가 며칠~몇주씩 정체됐다. 이제 DART 와 무관한
+독립 잡이 갱신을 보장한다:
+
 ```
+scripts/nightly_valuation_refresh.py
+  ① 주가 증분 top-up (pykrx, 최근 15일)  → stock_prices
+  ② 시가총액·shares_out 재계산 (순수 SQL) → market_cap
+  ③ REFRESH MATERIALIZED VIEW CONCURRENTLY valuation_daily
+```
+각 단계는 격리되어 하나가 실패해도 나머지는 이미 신선한 데이터 위에서 계속 진행한다.
+
+### 설치
+```bash
+cp deploy/launchd/com.tjfinance.valuation.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.tjfinance.valuation.plist
+launchctl start com.tjfinance.valuation      # 즉시 1회 실행(테스트)
+```
+
+### 수동 실행
+```bash
+python scripts/nightly_valuation_refresh.py                # 전수(주가 15일 + 시총 + refresh)
+python scripts/nightly_valuation_refresh.py --skip-prices  # 시총+refresh 만(초고속)
+```
+
+### 최신성 모니터링
+`scripts/dq_assertions.py` 의 `valuation_daily_stale` 어서션(ERROR)이 최신 거래일 6일 이상 지연을
+잡고, `com.tjfinance.dqcheck` 야간 잡이 위반 시 `notify.py` 로 알림한다.
+
+> 참고: `collect_new.py`(18:00)도 여전히 끝에서 refresh 를 시도하지만(비치명적 redundant), 신뢰
+> 경로는 이 전용 잡이다. collect 이 DART 로 죽어도 밸류에이션은 정상 갱신된다.

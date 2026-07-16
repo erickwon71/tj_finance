@@ -14,7 +14,7 @@ import streamlit as st
 from analyzer.ratio_engine import _growth_rate
 from app import cache, state
 from app.components.export import to_csv_bytes
-from app.format import corp_notes, fmt_corp_identity, fmt_notes
+from app.format import corp_notes, fmt_corp_identity, fmt_notes, render_dataframe
 from app.views import company_page
 
 _MODAL_QUARTERS = 16  # 모달 분기 추이에 표시할 최근 달력분기 수
@@ -175,8 +175,9 @@ def _viz_dialog(corp_code: str) -> None:
         st.plotly_chart(_modal_chart(series), use_container_width=True,
                         key=f"qc_modal_chart_{corp_code}")
     else:
-        st.dataframe(_modal_table(series), hide_index=True, width="stretch",
-                     column_config=_modal_colcfg())
+        mdf = _modal_table(series)
+        render_dataframe(mdf, num_cols=["매출(억)", "영업이익(억)"],
+                         pct_cols=[c for c in mdf.columns if c.endswith("%")])
 
     # 전체 상세(주가·지표·밸류·대가) — 옵션(기본 접힘, 켤 때만 렌더 → 모달 가벼움). 분기 grain 강제.
     if st.toggle("전체 상세 분석 보기 (주가·지표·밸류·대가)", value=False,
@@ -199,14 +200,15 @@ def _render_quarter(cal_year: int, quarter: str, stmt: str) -> None:
     if df.empty:
         st.info("해당 분기 데이터가 없습니다.")
         # 빈 표(헤더만) 표시
-        st.dataframe(df, hide_index=True, width="stretch", column_config=_column_config())
+        render_dataframe(df, num_cols=_AMT_COLS, pct_cols=_PCT_COLS,
+                         column_config={"corp_code": None})
         return
 
     # 기본 정렬: 매출 YoY 증감률 내림차순(결측 뒤). 헤더 클릭으로 재정렬 가능.
     df = df.sort_values(_SORT_DEFAULT, ascending=False, na_position="last").reset_index(drop=True)
 
-    event = st.dataframe(
-        df, hide_index=True, width="stretch", column_config=_column_config(),
+    event = render_dataframe(
+        df, num_cols=_AMT_COLS, pct_cols=_PCT_COLS, column_config={"corp_code": None},
         on_select="rerun", selection_mode="single-row", key=f"qc_{cal_year}_{quarter}")
     sel = event.selection.rows if event and event.selection else []
     guard = f"qc_dlg_last_{cal_year}_{quarter}"

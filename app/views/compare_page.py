@@ -111,4 +111,6 @@ def render() -> None:
     df.columns = headers
     st.caption(f"{'연결' if stmt=='consolidated' else '별도'} 기준 · "
                f"`run.py compare` 와 동일 수치")
+    st.caption("⚠ 시가총액·PER·PBR·배당수익률 = 각 사 **최신 거래일 종가** 기준입니다. 기업 시각화의 "
+               "💰 밸류에이션 탭(FY말 종가 기준)과는 값이 다를 수 있습니다.")
     st.dataframe(df, width="stretch")

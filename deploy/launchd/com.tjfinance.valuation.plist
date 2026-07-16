@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  밸류에이션 파이프라인 야간 갱신 — 매일 19:30 실행(launchd LaunchAgent).
+  scripts/nightly_valuation_refresh.py 가 ① 주가 증분 top-up(pykrx, 최근 15일) → ② 시가총액
+  재계산 → ③ valuation_daily matview refresh 를 순서대로(단계 격리) 수행한다.
+
+  ★ 왜 collect 잡과 분리했나: matview refresh 가 원래 collect_new.py 단계 ⑥ 에만 매달려 있어,
+  collect 이 DART 쿼터초과([020])로 크래시하면 밸류에이션 뷰가 며칠씩 정체됐다(외부평가 2026-07-15).
+  이 잡은 DART 를 쓰지 않으므로(pykrx/Naver 기반) collect 성공 여부·gapfill 쿼터 경합과 무관.
+
+  최신성 모니터링: dq_assertions 의 valuation_daily_stale 어서션이 지연을 잡아 dq_nightly 가 알림.
+  설치: deploy/launchd/README.md 참조.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tjfinance.valuation</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/taejin/Project/tj_finance/.venv_tj_finance/bin/python</string>
+        <string>/Users/taejin/Project/tj_finance/scripts/nightly_valuation_refresh.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/taejin/Project/tj_finance</string>
+
+    <!-- 매일 19:30 실행(collect 18:00 이후, gapfill 00:01 이전). 잠자기였다면 wake 후 만회. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>19</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/valuation.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/valuation.err.log</string>
+</dict>
+</plist>

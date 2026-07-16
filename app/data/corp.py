@@ -53,7 +53,7 @@ def resolve_corp(corp_code: str) -> Optional[dict]:
         return None
     sql = """
         SELECT corp_code, corp_name, stock_code, market, fiscal_month,
-               is_active, coverage_class
+               is_active, coverage_class, induty_code
         FROM corporations
         WHERE corp_code = :cc
     """

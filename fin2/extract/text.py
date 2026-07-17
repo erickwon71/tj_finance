@@ -34,11 +34,14 @@ from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.section_detector import (
     detect_sections, find_section_tables, find_summary_tables,
     detect_unit_from_section, detect_periods_from_header,
+    assign_tables_to_dart_sections, table_direct_rows,
+    SEC_CONSOL_FS, SEC_SEP_FS,
 )
 from parser.xml.table_extractor import extract_rows
 from fin2.extract.xbrl import ExtractedFact
 from fin2.extract.statement_titles import (
-    title_text, classify_statement_title, SECTION_CODE_OF,
+    title_text, classify_statement_title, classify_statement_in_body_section,
+    SECTION_CODE_OF,
 )
 
 # 섹션 코드 → (basis, period_kind)
@@ -148,47 +151,105 @@ def _row_to_fact(
 
 
 def _detect_body_statement_tables(root, fin_type: str) -> dict[str, list[tuple]]:
-    """
-    **표제기반 본문표 식별**(1차 경로): 데이터 TABLE 의 직전 형제 표제로 본문 재무제표 표를
-    직접 분류한다(요약·주석·분할·자본변동 배제). 복잡문서(분할·기재정정)에서 find_section_tables
-    전방수집이 2차 조정표/요약을 오연결하던 문제를 구조적으로 회피한다.
+    """**DART 섹션 기반 본문표 식별**(2026-07-17 재설계).
 
-    반환: {section_code: [(table_elem, unit), ...]}. 셀 읽기(컬럼의미)는 호출측 _emit_section 이
-    기존 extract_rows 로직으로 수행한다(표 식별만 여기서).
+    `2.연결재무제표` / `4.재무제표` 섹션 **내부 표만** 본문 후보로 삼는다. 주석·요약은
+    다른 섹션이므로 **후보에 진입조차 못 한다**.
+
+    ── 왜 바꿨나 ────────────────────────────────────────────────────────────
+    구버전은 문서의 **모든 TABLE**(`root.findall(".//TABLE")`)을 후보로 놓고 표제 정규식으로
+    주석·요약을 걸러냈다. 그 정규식(`classify_statement_title`)에 사각지대가 있어
+    (접두 `반기`/`분기` 미허용 + 재무제표명 내부 공백 미처리) DB손해보험 20230927000457 은
+    **6개 섹션이 전부 거부**돼 레거시 폴백으로 떨어졌고, 앵커 없는 폴백이 **주석표**를 집어
+    별도 이익잉여금 **8.5경원**(정답 8.56조 × 10⁶)이 소비계층까지 적재됐다.
+
+    ── 실측 근거 ────────────────────────────────────────────────────────────
+    · 무작위 400건(fy≥2015): 표준 5섹션 보유 **399/400(99.8%)**
+    · 본문 섹션 표 **6,229** vs 주석 섹션 표 **149,831** → **전체 표의 96%가 주석**
+    · 검증: DB손해보험 6/6 섹션 정상 검출(구버전 0/6) · 3S 6/6 · 메가스터디 6/6
+
+    ⚠ 이 경로는 **2015+ 서식 전용**이다(사용자 결정). 2009~2013 은 `XI. 재무제표 등` +
+    `<P>` 구분자, 2000~2008 은 위치 미확인 → Track 3 별도 트랙. 해당 시대는 여기서 빈 dict 가
+    나오고 호출측이 보류 처리한다(추측으로 채우지 않는다).
+
+    반환: {section_code: [(table_elem, unit), ...]}.
     """
+    sec_tables = assign_tables_to_dart_sections(root)
     groups: dict[str, list[tuple]] = {}
-    for tbl in root.findall(".//TABLE"):
-        meta = classify_statement_title(title_text(tbl))
-        if meta is None:
-            continue
-        # ★ 표제가 재무제표명이라도 그 표가 **데이터행 없는 footer/stub**(예 '첨부된 주석은…' 1행,
-        # 제목/단위만)일 수 있다. 이런 표를 face 로 잡으면 그 섹션이 '커버됨'으로 표시돼 갭필
-        # (find_section_tables)이 진짜 데이터표를 못 채운다(극동유화류 임베디드-ACODE 분기보고서
-        # → std 빈행 8K). 데이터행(라벨+숫자) ≥3 인 표만 face 로 인정.
-        if not _table_has_data_rows(tbl):
-            continue
-        basis, stmt = meta
+
+    for sec_kind, basis in ((SEC_CONSOL_FS, "consolidated"), (SEC_SEP_FS, "separate")):
         if basis == "consolidated" and fin_type == "B":
             continue  # 연결 없는 기업의 연결 표 무시
-        section_code = SECTION_CODE_OF[(basis, stmt)]
-        unit = detect_unit_declaration(title_text(tbl)) or _detect_unit_near_table(tbl)
-        groups.setdefault(section_code, []).append((tbl, unit))
+        for tbl in sec_tables.get(sec_kind, []):
+            # 섹션이 이미 '본문'을 보장하므로 주석 배제 가드가 불필요 → 재무제표명만 본다
+            # (공백·반기/분기 접두 허용). 자본변동표(SCE)는 분류기가 배제한다.
+            stmt = classify_statement_in_body_section(title_text(tbl))
+            if stmt is None:
+                continue
+            # 데이터행 없는 stub(단위표·footer)·wrapper 배제. **직접 행 기준**(깨진 XML 대응).
+            if not _table_has_data_rows(tbl):
+                continue
+            section_code = SECTION_CODE_OF[(basis, stmt)]
+            # 단위는 **그 표가 명시 선언한 것만** 신뢰한다(추측 금지). 없으면 None → 보류.
+            unit = _declared_unit(tbl)
+            groups.setdefault(section_code, []).append((tbl, unit))
     return groups
+
+
+def _declared_unit(tbl) -> int | None:
+    """표가 **자기 단위를 명시 선언**한 경우만 그 배수를 반환. 없으면 None(추측 금지).
+
+    허용하는 선언 위치 — 둘 다 **그 표 소유**라 추측이 아니다:
+      1) 표제(직전 형제) — 예 '연결 재무상태표 제33기 … (단위 : 백만원)'
+      2) 표 자신의 첫 행 — 단위를 표 안 첫 줄에 쓰는 서식
+
+    ★ 의도적으로 **하지 않는** 것(구 `_detect_unit_near_table` 이 하던 추측):
+      · 앞 형제 <P> 를 5개까지 거슬러 스캔 — 남의 표 단위를 주워온다
+        (엘브이엠씨 2019: USD 기준 BS 표가 4형제 앞 '연결현금흐름표 단위:백만원' 을 주워
+         ×10⁶ → 자산총계 586조)
+      · 못 찾으면 원(1)으로 가정 — DB손해보험 별도 BS 가 ×10⁶ 오염된 경로의 사촌
+    선언이 없으면 **보류**(호출측이 스킵)한다. 결측 > 오염.
+    """
+    decl = detect_unit_declaration(title_text(tbl))
+    if decl is not None:
+        return decl
+    first_tr = next(iter(table_direct_rows(tbl)), None)
+    if first_tr is not None:
+        decl = detect_unit_declaration("".join(first_tr.itertext()))
+        if decl is not None:
+            return decl
+    return None
 
 
 _HANGUL_RE = re.compile(r"[가-힣]")
 
 
+# 실제 금액 표기 = 콤마 3자리 그룹('55,102,004,323', '(1,234)'). DART 재무제표 금액은 항상
+# 콤마 구분이라, 이 패턴이 '금액이 있는 데이터행'과 '날짜만 있는 표제행'을 가른다.
+_AMOUNT_CELL_RE = re.compile(r"^\(?-?\d{1,3}(?:,\d{3})+\)?$")
+
+
 def _table_has_data_rows(tbl, minimum: int = 2) -> int:
-    """표에 '라벨+숫자' 데이터행이 minimum 개 이상인지(footer/stub 표 배제. 실제 재무제표 면표는
-    계정행 다수라 항상 충족; footer('첨부된 주석은…')·제목/단위 stub 은 0~1행이라 배제)."""
+    """표에 **실제 금액**을 가진 직접 데이터행이 minimum 개 이상인지(표제표·stub·wrapper 배제).
+
+    ★ 두 가지를 모두 지켜야 한다(각각 실측 사고에서 나옴):
+
+    1) **직접 행만** 센다(`.//TR` 금지) — 깨진 XML(</TABLE> 누락)에서 wrapper 가 문서 전체를
+       품으면 `.//TR` 은 수천 행을 세어 stub 을 데이터표로 오인한다
+       (메가스터디 20190401004405: wrapper 직접 1행 vs `.//TR` 3,573행).
+
+    2) **콤마 금액**을 요구한다(`\\d{2,}` 금지) — DART 본문은 [표제표, 데이터표] 쌍 구조이고
+       표제표에도 '제 4 기 2023.12.31 현재' 같은 **날짜 숫자**가 있어 `\\d{2,}` 로는 데이터표와
+       구분되지 않는다. 실측(2015+ 무작위 120건): 이 조건 없이는 본문 표의 **147개가 표제표**인데
+       데이터표로 오인돼 '단위 미선언'으로 집계됐다(전체 미선언 160개의 92%).
+    """
     from parser.xml.table_extractor import _get_cells
     n = 0
-    for tr in tbl.findall(".//TR"):
-        cells = _get_cells(tr)
+    for tr in table_direct_rows(tbl):
+        cells = [c.strip() for c in _get_cells(tr)]
         has_label = any(_HANGUL_RE.search(c) for c in cells)
-        has_num = any(re.search(r"\d{2,}", c) for c in cells)
-        if has_label and has_num:
+        has_amount = any(_AMOUNT_CELL_RE.match(c) for c in cells)
+        if has_label and has_amount:
             n += 1
             if n >= minimum:
                 return True
@@ -231,6 +292,13 @@ def _emit_section(
         if has_2tier and cum_map is None:
             continue  # 2단 표 존재 시 연간비교(비2단) 표는 스킵
         unit = unit_of[id(table)]
+        # ★ 단위 미선언 표는 **추측하지 않고 통째로 건너뛴다**(추측 금지 원칙).
+        # 과거엔 앞 형제 5개를 뒤져 단위를 주워오거나(_detect_unit_near_table) 없으면 원(1)으로
+        # 가정했다. 그 추측이 3S(원문 (단위:백만원) 오기)·네오크레마(천원 오기) 같은 원문 결함과
+        # 겹치면 ×10³~10⁶ 오염이 그대로 적재된다. 미선언은 **보류큐** 대상이지 추측 대상이 아니다.
+        if unit is None:
+            logger.debug(f"[extract2/text] 단위 미선언 → 스킵(보류): {rcept_no} {section_code}")
+            continue
         # 누적컬럼이 4번째 등 뒤쪽일 수 있으므로 금액셀을 넉넉히 확보
         n_cols = max(cum_map) + 1 if cum_map else 3
         # ★ 귀속 섹션 컨텍스트(보험/금융 손익계산서): '당기순이익의 귀속' 다음의 지배/비지배는
@@ -238,7 +306,9 @@ def _emit_section(
         # 총포괄손익 귀속 → 같은 라벨('지배기업의소유주')이 max-abs 로 controlling_ni 를 총포괄값
         # (예 한화손해보험 267B vs 정답 손익귀속 61.26B)으로 오염. 총포괄 귀속 헤더 이후는 제외.
         comp_attr = False
-        for row in extract_rows(table, multiplier=unit, num_cols=n_cols):
+        # direct_only=True: 깨진 XML(</TABLE> 누락)에서 wrapper 가 문서 전체를 품는 경우
+        # `.//TR` 은 주석·후속 섹션 행까지 재무제표로 읽는다(DB손해보험 51행 → 5,218행).
+        for row in extract_rows(table, multiplier=unit, num_cols=n_cols, direct_only=True):
             if not row.account_name:
                 continue
             nm = row.account_name
@@ -319,39 +389,47 @@ def extract_facts(
     mapper = get_mapper()
     dedup: dict[tuple[str, str], ExtractedFact] = {}
 
+    conflicts: set[tuple[str, str]] = set()
+
     def _add(fact: ExtractedFact):
+        """같은 (acode, acontext) 셀 중복 처리.
+
+        ★ 2026-07-17: **max-abs 채택 폐지**(추측 금지 원칙).
+        구버전은 충돌 시 '더 큰 |금액|이 단위완전=정답'이라며 큰 쪽을 채택했다. 근거는 단일
+        사례(엘브이엠씨 USD/KRW 표)였는데, 그 가정을 **모든 충돌에 일반화**해 사실상 단위 추측을
+        dedup 으로 위장한 것이었다(패자는 흔적 없이 소멸). 실제로 원문 단위 오기(3S ×10⁶,
+        네오크레마 ×10³)가 실재하므로 '큰 쪽=정답'은 성립하지 않는다.
+        ⟹ **금액이 다른 충돌이 나면 둘 다 버리고 보류**한다(결측 > 오염).
+        금액이 같은 중복은 무해하므로 1개만 유지한다.
+        """
         key = (fact.acode, fact.acontext_raw)
         prev = dedup.get(key)
-        if prev is None or prev.amount_won is None:
+        if prev is None:
             dedup[key] = fact
-        elif fact.amount_won is not None and abs(fact.amount_won) > abs(prev.amount_won):
-            # ★ 동일 키 충돌 시 더 큰 |금액| 채택: 노트표는 이미 statement_titles 로 face 에서
-            # 배제됐으므로, 같은 (acode,acontext) 충돌은 같은 statement 의 단위/통화 표현 차이
-            # (예 엘브이엠씨: 'USD기준' 자산총계 586,325,742=원취급 586M vs 백만원 KRW 표 678.8B).
-            # 단위완전(=큰값)이 정답 → 큰 쪽 채택.
+            return
+        if prev.amount_won is None:
             dedup[key] = fact
+            return
+        if fact.amount_won is None or fact.amount_won == prev.amount_won:
+            return                      # 동일값 중복 → 무해, 기존 유지
+        conflicts.add(key)              # 값이 다른 충돌 → 판정 불가 → 보류
 
-    # ── 1차: 표제기반 본문표 식별(robust) ──────────────────────────────────
+    # ── DART 섹션 기반 본문표 식별 (유일 경로) ────────────────────────────
     groups = _detect_body_statement_tables(root, fin_type)
 
-    # ── 폴백(갭필): 표제기반이 놓친 핵심 섹션만 레거시 detect_sections 로 채운다 ──
-    # (표제기반이 일부 섹션만 잡아도 나머지 손실 없음 + <P>헤더·TABLE-GROUP 레거시 성과 보호.)
-    missing = [
-        c for c in _SECTION_META
-        if c not in groups and not (c.endswith("_C") and fin_type == "B")
-    ]
-    if missing:
-        sections = detect_sections(root)
-        for code in missing:
-            title_elem = sections.get(code)
-            if title_elem is None:
-                continue
-            tbls = find_section_tables(title_elem)
-            if not tbls:
-                continue
-            unit = detect_unit_from_section(title_elem)
-            groups[code] = [(t, unit) for t in tbls]
-
+    # ★ 폴백 2종 폐지(2026-07-17). 되살리지 말 것 — 둘 다 실제 오염원이었다:
+    #
+    #  · F4 레거시 갭필(detect_sections + find_section_tables): 표제 앵커가 없어 **주석표를
+    #    집었다**. DB손해보험 20230927000457 은 구 표제정규식이 6섹션을 전부 거부해 이 폴백으로
+    #    떨어졌고, 폴백이 빈 표제의 주석표(백만원 단위)를 BS_S 로 채택 → 별도 이익잉여금
+    #    **8.5경원**(정답 8.56조 × 10⁶)이 std_v2 에 적재돼 DQ=1(정상)로 앱에 노출됐다.
+    #    (DQ 는 항등식을 보는데 양변이 균일하게 ×10⁶ 되면 항등식이 성립해 못 잡는다.)
+    #
+    #  · F5 요약재무정보 폴백(_extract_summary): 요약표를 **본문과 동일한 fs_type/source_ref**
+    #    (`BS_C/자산총계`)로 적재해 사후 구분이 불가능했다. 요약은 본문이 아니다.
+    #
+    # 이제 섹션이 없거나(구형 서식) 본문 섹션에서 표를 못 찾으면 **빈 결과**를 반환한다.
+    # 호출측이 보류로 처리한다 — 추측으로 채우지 않는다(결측 > 오염).
     for code, tables_with_unit in groups.items():
         _emit_section(
             code, tables_with_unit, add=_add, mapper=mapper,
@@ -360,11 +438,15 @@ def extract_facts(
             report_fiscal_period=report_fiscal_period,
         )
 
-    # 핵심 섹션이 하나도 없으면 요약재무정보 폴백(분기/반기)
-    core_found = any(groups.get(c) for c in _SECTION_META)
-    if not core_found:
-        _extract_summary(root, mapper, fin_type, dedup, _add,
-                         corp_code, rcept_no, report_fiscal_year, report_fiscal_period)
+    # 값이 엇갈린 충돌 셀은 판정 불가 → 적재하지 않는다(보류큐 대상).
+    for key in conflicts:
+        dedup.pop(key, None)
+    if conflicts:
+        logger.debug(f"[extract2/text] 값 충돌로 보류한 셀 {len(conflicts)}개: {rcept_no}")
+
+    if not groups:
+        logger.debug(f"[extract2/text] 본문 섹션 없음 → 빈 결과(보류): {rcept_no} "
+                     f"fy{report_fiscal_year} {report_fiscal_period}")
 
     return list(dedup.values())
 

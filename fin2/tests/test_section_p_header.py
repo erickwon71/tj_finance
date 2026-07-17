@@ -122,7 +122,7 @@ def test_interim_is_cumulative_table_wins_over_annual_comparative():
     from fin2.extract.text import extract_facts
     xml = """<DOCUMENT><SECTION-2>
       <TITLE>2. 연결재무제표</TITLE>
-      <P>연 결 포 괄 손 익 계 산 서</P>
+      <P>연 결 포 괄 손 익 계 산 서 (단위 : 원)</P>
       <TABLE>
         <TR><TD>과목</TD><TD>주석</TD><TD>제65(당)반기</TD><TD></TD><TD>제64(전)반기</TD><TD></TD></TR>
         <TR><TD></TD><TD></TD><TD>3개월</TD><TD>누적</TD><TD>3개월</TD><TD>누적</TD></TR>
@@ -134,7 +134,7 @@ def test_interim_is_cumulative_table_wins_over_annual_comparative():
         <TR><TD>Ⅰ. 영업수익</TD><TD>37</TD><TD>566,000,000,000</TD><TD>753,000,000,000</TD></TR>
         <TR><TD>Ⅷ. 당기순이익</TD><TD>37</TD><TD>37,000,000,000</TD><TD>27,000,000,000</TD></TR>
       </TABLE>
-      <P>연 결 현 금 흐 름 표</P>
+      <P>연 결 현 금 흐 름 표 (단위 : 원)</P>
       <TABLE><TR><TD>영업활동현금흐름</TD><TD>5</TD></TR></TABLE>
     </SECTION-2></DOCUMENT>"""
     import tempfile, os
@@ -170,7 +170,7 @@ def test_sce_changes_in_equity_not_absorbed_into_is():
     from fin2.extract.text import extract_facts
     xml = """<DOCUMENT><SECTION-2>
       <TITLE>2. 연결재무제표</TITLE>
-      <P>연 결 포 괄 손 익 계 산 서</P>
+      <P>연 결 포 괄 손 익 계 산 서 (단위 : 원)</P>
       <TABLE>
         <TR><TD>과목</TD><TD>주석</TD><TD>제65(당)기</TD></TR>
         <TR><TD>Ⅰ. 영업수익</TD><TD>37</TD><TD>100,000,000,000</TD></TR>
@@ -181,7 +181,7 @@ def test_sce_changes_in_equity_not_absorbed_into_is():
         <TR><TD>과목</TD><TD>자본금</TD><TD>이익잉여금</TD><TD>총계</TD></TR>
         <TR><TD>5. 연결당기순이익</TD><TD></TD><TD>27,000,000,000</TD><TD>27,000,000,000</TD></TR>
       </TABLE>
-      <P>연 결 현 금 흐 름 표</P>
+      <P>연 결 현 금 흐 름 표 (단위 : 원)</P>
       <TABLE><TR><TD>영업활동현금흐름</TD><TD>5</TD></TR></TABLE>
     </SECTION-2></DOCUMENT>"""
     import tempfile, os

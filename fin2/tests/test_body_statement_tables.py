@@ -153,14 +153,73 @@ def _extract_from(xml: str):
         Path(path).unlink(missing_ok=True)
 
 
-def test_extract_facts_gapfill_covers_all_sections():
-    facts = _extract_from(_GAPFILL_XML)
-    # fs_type 은 source_ref 접두("BS_C/...")에 들어있다.
-    sections = {(f.source_ref or "").split("/")[0] for f in facts}
-    # BS=표제기반, IS·CF=<P>헤더 레거시 갭필 → 세 섹션 모두 추출돼야 한다(섹션 손실 0).
-    assert "BS_C" in sections, f"표제기반 BS 누락: {sections}"
-    assert "IS_C" in sections, f"갭필 IS 누락: {sections}"
-    assert "CF_C" in sections, f"갭필 CF 누락: {sections}"
+# ── 섹션 기반 재설계(2026-07-17) 회귀 테스트 ──────────────────────────────
+# 구 `test_extract_facts_gapfill_covers_all_sections` 는 **레거시 폴백을 검증**하던 테스트였다.
+# 그 폴백이 실제 오염원이었음이 드러나(DB손해보험 20230927000457: 표제 앵커가 6섹션을 전부
+# 거부 → 폴백이 주석표를 집어 별도 이익잉여금 8.5경원 적재) 폴백을 폐지했으므로, 그 테스트는
+# 삭제하고 아래 신설계 테스트로 대체한다.
+
+_SECTION_XML = """<DOCUMENT>
+ <SECTION-2><TITLE>1. 요약재무정보</TITLE>
+  <TABLE><TR><TD>요약자산총계</TD><TD>999,999</TD></TR>
+         <TR><TD>요약부채총계</TD><TD>888,888</TD></TR></TABLE>
+ </SECTION-2>
+ <SECTION-2><TITLE>2. 연결재무제표</TITLE>
+  <TABLE><TR><TD>연결 재무상태표 제5기 기말 (단위 : 원)</TD></TR></TABLE>
+  <TABLE><TR><TD>자산총계</TD><TD>75,907</TD></TR>
+         <TR><TD>부채총계</TD><TD>25,000</TD></TR></TABLE>
+ </SECTION-2>
+ <SECTION-2><TITLE>3. 연결재무제표 주석</TITLE>
+  <TABLE><TR><TD>연결 재무상태표에 인식된 금액 (단위 : 백만원)</TD></TR></TABLE>
+  <TABLE><TR><TD>자산총계</TD><TD>77,777</TD></TR>
+         <TR><TD>부채총계</TD><TD>11,111</TD></TR></TABLE>
+ </SECTION-2>
+</DOCUMENT>"""
+
+_NO_SECTION_XML = """<DOCUMENT>
+ <P>연결 재무상태표 제5기 기말 (단위 : 원)</P>
+ <TABLE><TR><TD>자산총계</TD><TD>75,907</TD></TR>
+        <TR><TD>부채총계</TD><TD>25,000</TD></TR></TABLE>
+</DOCUMENT>"""
+
+_NO_UNIT_XML = """<DOCUMENT>
+ <SECTION-2><TITLE>2. 연결재무제표</TITLE>
+  <TABLE><TR><TD>연결 재무상태표 제5기 기말</TD></TR></TABLE>
+  <TABLE><TR><TD>자산총계</TD><TD>75,907</TD></TR>
+         <TR><TD>부채총계</TD><TD>25,000</TD></TR></TABLE>
+ </SECTION-2>
+</DOCUMENT>"""
+
+
+def test_section_based_body_only_notes_excluded():
+    """본문 섹션 표만 적재하고, 주석 섹션 표는 **후보 진입 자체가 불가**해야 한다."""
+    facts = _extract_from(_SECTION_XML)
+    amounts = {f.amount_won for f in facts}
+    assert 75_907 in amounts, f"본문 자산총계(75,907원) 누락: {amounts}"
+    # 주석 섹션의 동명 계정(77,777)·요약 섹션(999,999)은 절대 들어오면 안 된다.
+    assert 77_777 not in amounts and 77_777_000_000 not in amounts, \
+        f"주석 섹션 값이 본문으로 유입됨: {amounts}"
+    assert 999_999 not in amounts, f"요약재무정보 값이 유입됨: {amounts}"
+
+
+def test_no_section_returns_empty_not_guessed():
+    """섹션 구조가 없으면(구형 서식 등) **빈 결과**여야 한다 — 추측으로 채우지 않는다.
+
+    구버전은 여기서 레거시 폴백/요약 폴백으로 넘어가 주석·요약을 본문으로 적재했다.
+    2009~2013(`XI. 재무제표 등`)·2000~2008 서식은 Track 3 에서 별도 지원한다.
+    """
+    facts = _extract_from(_NO_SECTION_XML)
+    assert facts == [], f"섹션 없는 문서에서 팩트가 나왔다(추측 발생): {len(facts)}건"
+
+
+def test_undeclared_unit_is_skipped_not_guessed():
+    """단위 미선언 표는 **스킵**해야 한다 — 앞 형제에서 주워오거나 원(1)으로 가정하지 않는다.
+
+    구버전 `_detect_unit_near_table` 은 앞 형제 5개까지 뒤져 단위를 가져왔고, 그 추측이
+    DB손해보험 별도 BS 를 ×10⁶ 오염시켰다(원 단위 표에 백만원 적용).
+    """
+    facts = _extract_from(_NO_UNIT_XML)
+    assert facts == [], f"단위 미선언인데 적재됨(추측 발생): {[(f.acode, f.amount_won) for f in facts]}"
 
 
 def test_extract_facts_excludes_correction_summary():

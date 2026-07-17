@@ -130,6 +130,99 @@ CHECKS: list[dict] = [
                   "AND COALESCE(data_quality,1) < 3 LIMIT 10",
     },
     {
+        # ★ 2026-07-17 — 단위 오염 발견(docs/qa/plan_note_body_separation_2026-07-17.md).
+        # 본문 재무제표 값이 ×10^3~10^6 부풀려진 채 소비계층에 도달했다
+        # (예: DB손해보험 2023 H1 별도 retained_earnings 8.5경원 = 정답 8.56조 × 10^6).
+        # 원인은 **최소 두 가지**(초기 진단 '주석표 누수' 는 일부만 맞았다 — 원문 대조로 정정):
+        #   (a) 추출기의 단위 추측 — 표에 단위가 없으면 앞 형제에서 주워오거나 기본값 가정.
+        #       DB손해보험이 이 경우. 섹션 기반 재설계 + '명시 선언만' 규칙으로 해소.
+        #   (b) **원문 자체의 단위 오기** — 회사가 (단위:백만원)이라 써놓고 원 단위 값을 기재.
+        #       3S 20230209000202(×10^6) · 네오크레마 20231226000346(천원 오기, ×10^3).
+        #       garbage-in 이라 재파싱으로 안 고쳐진다 → 이 어서션으로 탐지 후 사용자 확인.
+        #
+        # 왜 기존 게이트가 전부 놓쳤나: DQ 는 항등식(자산=부채+자본)을 보는데 **양변이 균일하게
+        # ×10^6 되면 항등식은 그대로 성립** → DQ=1(정상) 판정. shares_out/market_cap 에는 크기
+        # 어서션이 있었으나 **재무제표 본체 금액엔 없었다.** 이 어서션이 그 구멍을 막는다.
+        #
+        # 임계 보정(실측, 2026-07-17): 국내 상장사 정상 최대 = 삼성전자 2025 연결 FY
+        # (매출 334조·자산 567조·자본 436조·이익잉여금 402조), 자산 최대 = KB금융 830조.
+        # 오염 최소 = SKC 2004 자산 1,340조 / 코리아써키트 2019 매출 402조. 경계 검증 결과
+        # 임계 바로 위 행들이 전부 명백한 오염(중소사 매출 402~416조 등)이라 **오탐 0**.
+        # ⚠ 한계: 코리아써키트 매출 339조(오염) < 삼성전자 334조(정상)로 **구간이 겹쳐** 절대
+        # 임계로는 중간대역 오염을 못 잡는다. 이 어서션은 극단값 하한선이지 완전 검출이 아니다
+        # (완전 분리는 provenance 기록 + 재추출 = 계획서 Phase 2~5).
+        #
+        # is_discrete 포함: 파생분기(Q2=H1−Q1, Q4=FY−Q3)에 오염이 몰려 있고(196행) 앱 분기
+        # 차트가 이를 실제로 소비한다. 기존 nonpositive_total_assets 는 discrete 를 제외하나,
+        # 여기선 노출 실태를 그대로 드러내는 것이 목적이라 포함한다.
+        "name": "statement_magnitude_impossible",
+        "sev": "ERROR",
+        "desc": "재무제표 본체 금액이 물리적 불가 크기 (자산>1,000조·자본/이익잉여금>500조·매출>400조) "
+                "인데 미격리(DQ<3) — 단위 ×10³~10⁶ 오염이 소비계층 노출",
+        "count": "SELECT count(*) FROM std_financials_v2 WHERE version=1 "
+                 "AND NOT COALESCE(is_stub,false) AND COALESCE(data_quality,1) < 3 "
+                 "AND (abs(total_assets) > 1e15 OR abs(total_equity) > 5e14 "
+                 "     OR abs(retained_earnings) > 5e14 OR abs(revenue) > 4e14)",
+        "sample": "SELECT corp_code, fiscal_year, fiscal_period, statement_type, "
+                  "round(total_assets/1e12) AS assets_jo, round(total_equity/1e12) AS equity_jo, "
+                  "round(retained_earnings/1e12) AS re_jo, round(revenue/1e12) AS revenue_jo "
+                  "FROM std_financials_v2 WHERE version=1 "
+                  "AND NOT COALESCE(is_stub,false) AND COALESCE(data_quality,1) < 3 "
+                  "AND (abs(total_assets) > 1e15 OR abs(total_equity) > 5e14 "
+                  "     OR abs(retained_earnings) > 5e14 OR abs(revenue) > 4e14) "
+                  "ORDER BY GREATEST(COALESCE(abs(total_assets),0), COALESCE(abs(total_equity),0), "
+                  "COALESCE(abs(retained_earnings),0), COALESCE(abs(revenue),0)) DESC LIMIT 10",
+    },
+    {
+        # ★ 2026-07-17 — 위 절대임계가 못 잡는 **중간대역** 오염 검출(같은 조사 산물).
+        # 원리: 오염은 한 기간만 튀고 인접 기간엔 원복하는 **스파이크**로 나타난다(제주은행 2003
+        # 매출 1,697억 → 1,187,562,825억 → 1,311억). 정상 성장은 인접연도 대비 100배가 될 수
+        # 없다(삼성전자 334조 vs 이웃 301조 = 1.1배). 자기 자신과 비교하므로 대기업 오탐이 없다.
+        # 검출력 실측: FY 기준 절대임계 13행 vs 급변검출 26행(자산) / 6행 vs 32행(매출) — 2~5배.
+        # 전후 연도가 모두 있어야 판정 가능(첫·마지막 연도는 미검출) → 절대임계와 상호보완.
+        "name": "statement_magnitude_spike",
+        "sev": "WARN",
+        "desc": "FY 값이 인접 전·후 연도 대비 100배 이상 급등 후 원복 (단위/주석표 오염 스파이크)",
+        "count": """
+            WITH fy AS (
+              SELECT corp_code, statement_type, fiscal_year,
+                     revenue::numeric AS revenue, total_assets::numeric AS total_assets
+              FROM std_financials_v2
+              WHERE version=1 AND fiscal_period='FY' AND NOT COALESCE(is_stub,false)
+            ), nb AS (
+              SELECT f.*,
+                LAG(total_assets)  OVER w AS pa, LEAD(total_assets) OVER w AS na,
+                LAG(revenue)       OVER w AS pr, LEAD(revenue)      OVER w AS nr
+              FROM fy f
+              WINDOW w AS (PARTITION BY corp_code, statement_type ORDER BY fiscal_year)
+            )
+            SELECT count(*) FROM nb
+            WHERE (pa > 0 AND na > 0 AND total_assets/pa > 100 AND total_assets/na > 100)
+               OR (pr > 0 AND nr > 0 AND revenue/pr > 100 AND revenue/nr > 100)
+        """,
+        "sample": """
+            WITH fy AS (
+              SELECT corp_code, statement_type, fiscal_year,
+                     revenue::numeric AS revenue, total_assets::numeric AS total_assets
+              FROM std_financials_v2
+              WHERE version=1 AND fiscal_period='FY' AND NOT COALESCE(is_stub,false)
+            ), nb AS (
+              SELECT f.*,
+                LAG(total_assets)  OVER w AS pa, LEAD(total_assets) OVER w AS na,
+                LAG(revenue)       OVER w AS pr, LEAD(revenue)      OVER w AS nr
+              FROM fy f
+              WINDOW w AS (PARTITION BY corp_code, statement_type ORDER BY fiscal_year)
+            )
+            SELECT corp_code, fiscal_year, statement_type,
+                   round(pr/1e8) AS prev_rev_eok, round(revenue/1e8) AS cur_rev_eok,
+                   round(nr/1e8) AS next_rev_eok
+            FROM nb
+            WHERE (pa > 0 AND na > 0 AND total_assets/pa > 100 AND total_assets/na > 100)
+               OR (pr > 0 AND nr > 0 AND revenue/pr > 100 AND revenue/nr > 100)
+            ORDER BY GREATEST(COALESCE(total_assets,0), COALESCE(revenue,0)) DESC LIMIT 10
+        """,
+    },
+    {
         "name": "operating_income_eq_net_income",
         "sev": "WARN",
         "desc": "영업이익 == 순이익 (원단위 정확일치 = Track B 순이익 라인 오매핑 신호)",

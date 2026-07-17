@@ -165,6 +165,7 @@ def extract_rows(
     table_elem: etree._Element,
     multiplier: int = 1,
     num_cols: int = 3,
+    direct_only: bool = False,
 ) -> list[RowData]:
     """
     TABLE 요소에서 재무 행 데이터를 추출한다.
@@ -173,6 +174,11 @@ def extract_rows(
         table_elem: lxml TABLE 요소
         multiplier: 금액 단위 배수 (1 또는 1000)
         num_cols:   금액 열 수 (사업보고서=3, 반기/분기=2 가능)
+        direct_only: True 면 **직접 자식 행만** 읽고 중첩 TABLE 안의 행은 무시한다.
+            ★ 필요한 이유: DART 원문 XML 이 깨진 경우(</TABLE> 누락)가 흔해 lxml 이 이후 문서
+            전체를 그 표 안쪽에 중첩시킨다. 실측 — DB손해보험 20230927000457 연결 BS 는
+            `.//TR` 이 **5,218행**(중첩 TABLE 775개)이지만 **직접 행 51개**가 진짜 재무상태표다.
+            기본값 False = 기존 호출자(biz_section·order_backlog 등) 동작 보존.
 
     Returns:
         RowData 리스트 (헤더 행 제외, 빈 행 제외)
@@ -181,7 +187,11 @@ def extract_rows(
     row_order = 0
 
     # TBODY 또는 직접 TR 탐색
-    trs = table_elem.findall(".//TR")
+    if direct_only:
+        from parser.xml.section_detector import table_direct_rows
+        trs = table_direct_rows(table_elem)
+    else:
+        trs = table_elem.findall(".//TR")
 
     for tr in trs:
         cells = _get_cells(tr)

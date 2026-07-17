@@ -68,6 +68,155 @@ _PERIOD_MARKER_RE = re.compile(r"제\d+\s*기|\d{4}\s*년|부터")
 _BOUNDARY_EXTRA: list[list[str]] = [["자본변동표"]]
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# DART 문서 섹션(<SECTION-2>) 식별 — 본문/주석/요약을 **구조로** 가른다
+# ══════════════════════════════════════════════════════════════════════════
+# 배경: 기존 탐지는 문서의 **모든 TABLE** 을 후보로 놓고 표제 정규식으로 주석·요약을 걸러내려
+# 했다. 그러다 뚫려서 주석표(백만원 단위)가 본문으로 들어가 std_v2 에 이익잉여금 8.5경원 같은
+# 값이 실렸다(DB손해보험 2023 H1). DART 정기보고서는 이미 아래처럼 구획돼 있다:
+#
+#   <SECTION-2><TITLE>III. 재무에 관한 사항</TITLE>
+#   <SECTION-2><TITLE>1. 요약재무정보</TITLE>        → 본문 아님(적재 제외)
+#   <SECTION-2><TITLE>2. 연결재무제표</TITLE>        → 본문(연결)
+#   <SECTION-2><TITLE>3. 연결재무제표 주석</TITLE>   → 주석(연결)
+#   <SECTION-2><TITLE>4. 재무제표</TITLE>            → 본문(별도)
+#   <SECTION-2><TITLE>5. 재무제표 주석</TITLE>       → 주석(별도)
+#
+# 실측(무작위 400건, fy≥2015): 5개 섹션 전부 보유 399/400(99.8%).
+# 본문 섹션 내부 TABLE 6,229 vs 주석 섹션 내부 TABLE 149,831 → **전체 표의 96%가 주석**.
+# 섹션 경계로 자르면 그 96% 가 본문 후보에 **진입 자체 불가**가 된다.
+#
+# ★ 왜 '정확일치'인가(실측 근거, 무작위 600건 TITLE 전수):
+#   표준 5종이 압도적인 한편, 부분일치라면 본문으로 오인했을 함정이 실재한다 —
+#     '합병전ㆍ후의재무제표'(81) · '연결재무제표에대한감사인의감사의견등'(24) ·
+#     '재무제표이용상의유의점'(81) · '연결재무제표에관한사항'(3)
+#   → 정확일치가 이들을 자동 배제한다. 부분/퍼지 매칭은 금지(추측 금지 원칙).
+
+SEC_SUMMARY      = "요약재무정보"
+SEC_CONSOL_FS    = "연결재무제표"
+SEC_CONSOL_NOTE  = "연결재무제표주석"
+SEC_SEP_FS       = "재무제표"
+SEC_SEP_NOTE     = "재무제표주석"
+
+# 적재 대상 4종(요약은 의도적으로 제외 — 본문으로 쓰지 않는다)
+DART_BODY_SECTIONS = (SEC_CONSOL_FS, SEC_SEP_FS)
+DART_NOTE_SECTIONS = (SEC_CONSOL_NOTE, SEC_SEP_NOTE)
+
+# 정규화된 TITLE → 섹션 종류. **정확일치만** 인정한다.
+_DART_SECTION_EXACT: dict[str, str] = {
+    SEC_SUMMARY:     SEC_SUMMARY,
+    SEC_CONSOL_FS:   SEC_CONSOL_FS,
+    SEC_CONSOL_NOTE: SEC_CONSOL_NOTE,
+    SEC_SEP_FS:      SEC_SEP_FS,
+    SEC_SEP_NOTE:    SEC_SEP_NOTE,
+}
+
+# 선두 번호 접두("1.", "Ⅲ.", "2 )") 제거용. 번호는 문서마다 달라 분류 키에서 뺀다.
+_SEC_NUM_PREFIX_RE = re.compile(r"^[\dⅠ-Ⅻ IVXivx]+\s*[.．)]\s*")
+
+
+def normalize_dart_section_title(title: str) -> str:
+    """SECTION-2 TITLE → 분류 키(선두 번호 제거 + 공백 전제거).
+
+    '3. 연결재무제표 주석' → '연결재무제표주석'. 공백 제거는 '재무제표 주석'/'재무제표주석'
+    표기 흔들림을 흡수하기 위한 것이며, **의미를 바꾸는 변형(부분일치)은 하지 않는다.**
+    """
+    t = re.sub(r"\s+", " ", title).strip()
+    t = _SEC_NUM_PREFIX_RE.sub("", t)
+    return re.sub(r"\s+", "", t)
+
+
+def classify_dart_section(title: str) -> Optional[str]:
+    """SECTION-2 TITLE → 섹션 종류(정확일치) 또는 None(대상 아님)."""
+    return _DART_SECTION_EXACT.get(normalize_dart_section_title(title))
+
+
+def detect_dart_sections(root: etree._Element) -> dict[str, etree._Element]:
+    """DART <SECTION-2> 구조로 재무 섹션 컨테이너를 식별한다.
+
+    반환: {섹션종류: SECTION-2 요소}. **표를 꺼낼 때는 반드시 `section_own_tables()` 를 쓸 것**
+    (`.//TABLE` 직접 호출 금지 — 아래 중첩 경고 참조).
+
+    같은 종류가 여러 번 나오면 **첫 번째만** 취한다(중복 시 추측하지 않기 위함).
+    구조가 없는 서식(구형·감사보고서 등)에서는 빈 dict 를 반환한다 → 호출측이 보류 처리.
+    """
+    found: dict[str, etree._Element] = {}
+    for sec in root.iter("SECTION-2"):
+        title_elem = sec.find("TITLE")
+        if title_elem is None:
+            continue
+        kind = classify_dart_section("".join(title_elem.itertext()))
+        if kind is not None and kind not in found:
+            found[kind] = sec
+    return found
+
+
+def table_direct_rows(table: etree._Element) -> list[etree._Element]:
+    """표의 **직접** 데이터행(TR)만. 중첩 TABLE 안의 행은 제외한다.
+
+    ★ 반드시 이걸 써야 하는 이유(실측): **DART 원문 XML 이 깨져 있는 경우가 흔하다**
+    (</TABLE> 누락 → lxml 이 이후 문서 전체를 그 표 **안쪽에** 중첩시킴).
+
+      - DB손해보험 20230927000457: 연결 BS 표의 `.//TR` = **5,218행**, 중첩 TABLE **775개**.
+        하지만 **직접 행 51개**가 진짜 연결재무상태표다('1. 현금및예치금 985,598,436,033').
+      - 메가스터디 20190401004405: 진짜 BS = 직접 54행 / wrapper 표 = 직접 1행·중첩 472개.
+
+    ⟹ '중첩 TABLE 이 있으면 wrapper 이니 버린다'는 규칙은 **DB손해보험의 진짜 데이터를 버린다.**
+    반대로 `.//TR`(하위 전체)을 쓰면 문서 전체를 재무제표로 읽는다. **직접 행만**이 정답이다.
+    """
+    out: list[etree._Element] = []
+    for tr in table.iter("TR"):
+        anc = tr.getparent()
+        while anc is not None:
+            tag = anc.tag if isinstance(anc.tag, str) else ""
+            if tag == "TABLE":
+                break
+            anc = anc.getparent()
+        if anc is table:
+            out.append(tr)
+    return out
+
+
+def assign_tables_to_dart_sections(
+    root: etree._Element,
+) -> dict[str, list[etree._Element]]:
+    """각 TABLE 을 **문서 순서상 직전 섹션 표제**에 귀속시켜 {섹션종류: [TABLE,…]} 반환.
+
+    ★ 왜 '포함관계'가 아니라 '문서 순서'인가 (실측으로 확정):
+    DART 문서의 SECTION-2 는 형제가 아니라 **계단식 중첩**인 경우가 많다 —
+    DB손해보험(20230927000457) 실측 계층:
+
+        SECTION-1 'III. 재무에 관한 사항'          tables=781
+          SECTION-2 '1. 요약재무정보'              tables=4
+            SECTION-2 '2. 연결재무제표'            tables=777   ← 요약 안에 중첩
+              SECTION-2 '3. 연결재무제표 주석'     tables=769   ← 본문 안에 중첩
+                SECTION-2 '4. 재무제표'            tables=337
+                  SECTION-2 '5. 재무제표 주석'     tables=329
+
+    즉 각 섹션이 **다음 섹션을 통째로 품는다**. 그래서 `.//TABLE`(하위 전체)은 물론이고
+    "하위 SECTION-2 제외" 방식으로도 경계가 잡히지 않는다(중첩 깊이·무제 섹션이 문서마다 다름).
+    반면 **문서 순서**(= 사람이 읽는 순서)는 어떤 중첩 구조에서도 일관된다.
+
+    규칙: TITLE 을 가진 SECTION-* 을 만나면 현재 섹션을 그 분류로 갱신한다. 분류 불가 표제
+    ('6. 기타 재무에 관한 사항' 등)를 만나면 현재 섹션을 **해제**한다(그 뒤 표를 앞 섹션에
+    잘못 귀속시키지 않기 위함 — 추측 금지).
+    """
+    result: dict[str, list[etree._Element]] = {}
+    current: Optional[str] = None
+
+    for el in root.iter():
+        tag = el.tag.upper() if isinstance(el.tag, str) else ""
+        if tag.startswith("SECTION"):
+            title_elem = el.find("TITLE")
+            if title_elem is not None:
+                # 분류되면 그 섹션 시작, 분류 불가면 해제(= 대상 아님 구간)
+                current = classify_dart_section("".join(title_elem.itertext()))
+        elif tag == "TABLE" and current is not None:
+            result.setdefault(current, []).append(el)
+
+    return result
+
+
 def detect_sections(root: etree._Element) -> dict[str, Optional[etree._Element]]:
     """
     XML 루트 요소에서 TITLE 태그를 탐색해 재무제표 섹션별 위치를 반환한다.

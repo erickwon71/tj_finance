@@ -429,6 +429,25 @@ def _run_migrations() -> None:
                  f.canonical_account, ss.source_rcept_no
         """),
 
+        ("2026_07_fact_v2_provenance",
+         # ★ 재무데이터 재구축(계획: ~/.claude/plans/vast-nibbling-blum.md) — provenance 4종.
+         # 왜 필요한가: 이전 파이프라인은 추측값과 원본값을 구분하지 못했다. 주석표가 본문으로
+         # 새어도(요약폴백·레거시 갭필), 단위를 배율대입으로 추측해도, 후보 다중 시 max-abs 로
+         # 골라도 결과 행이 정상 행과 동일해 **"오염된 것만 삭제"를 SQL 로 표현할 수 없었다**
+         # (실측: DB손해보험 이익잉여금 8.5경원이 DQ=1 로 앱 노출). 이 컬럼들이 그 구분을
+         # 스키마로 강제한다. 선례 = statement_source.lineage.
+         # 신규 컬럼은 전부 nullable·DEFAULT 없음 → PG11+ 에서 **메타데이터 전용 즉시 반영**
+         # (87M 행 rewrite 없음, 재추출 전까지 NULL).
+         # ⚠ 인덱스는 **의도적으로 여기서 만들지 않는다**: 87M 행 CREATE INDEX 는 트랜잭션 안에서
+         # 테이블을 수 분간 잠그는데, 재추출 전까지 전 행이 NULL 이라 지금은 이득이 없다.
+         # 재구축 완료 후 별도 마이그레이션으로 추가할 것(불변식 어서션 성능용).
+         """
+         ALTER TABLE fact_v2 ADD COLUMN IF NOT EXISTS section_kind VARCHAR(20);
+         ALTER TABLE fact_v2 ADD COLUMN IF NOT EXISTS mapping_stage VARCHAR(12);
+         ALTER TABLE fact_v2 ADD COLUMN IF NOT EXISTS mapping_confidence DOUBLE PRECISION;
+         ALTER TABLE fact_v2 ADD COLUMN IF NOT EXISTS unit_source VARCHAR(10);
+         """),
+
         ("2026_07_extended_financials_view_distinct",
          # 2026-07-17 트리아지(dq_assertions extended_financials_n_facts_outlier) — 같은 rcept
          # 안에서 동일 canonical_account 가 서로 다른 표(본문표+증감명세 주석 등)에 완전히 같은

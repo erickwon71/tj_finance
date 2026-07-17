@@ -283,6 +283,29 @@ class FactV2(Base):
     context_parsed     = Column(Boolean,      default=True,   comment="ACONTEXT 구조 파싱 성공 여부")
     parsed_at          = Column(DateTime,     default=datetime.utcnow)
 
+    # ── provenance (2026-07-17 재구축) ────────────────────────────────────
+    # 배경: 이전 파이프라인은 **추측한 값과 원본을 그대로 읽은 값을 구분하지 못했다**.
+    # 주석표가 본문으로 새어들어도(요약재무정보 폴백·레거시 섹션 갭필), 단위를 배율 대입으로
+    # 추측해도, 후보가 여럿일 때 max-abs 로 골라도 — 결과 행은 정상 행과 **바이트 단위로 동일**
+    # 했다. 그래서 "오염된 것만 골라 삭제"를 SQL 로 표현할 수 없었고 전수 재파싱 외에 길이
+    # 없었다. 아래 컬럼들은 그 구분을 **스키마로 강제**해 같은 사고의 재발을 막는다.
+    # 모범 선례 = statement_source.lineage(후보 전체+선택근거 기록).
+    # index=False: 재추출 전까지 전 행 NULL 이라 인덱스 이득이 없고, 87M 행 CREATE INDEX 는
+    # 테이블을 오래 잠근다. 재구축 완료 후 별도 마이그레이션으로 추가.
+    section_kind       = Column(String(20),   nullable=True,
+                                comment="DART 섹션 출처: 연결재무제표 / 재무제표 / "
+                                        "연결재무제표주석 / 재무제표주석 "
+                                        "(요약재무정보는 적재하지 않음)")
+    mapping_stage      = Column(String(12),   nullable=True,
+                                comment="계정 매핑 근거: exact/normalized(사전 일치) · "
+                                        "guard · fuzzy(유사도 추측) · unknown. "
+                                        "fuzzy 는 canonical_account 를 부여하지 않는다")
+    mapping_confidence = Column(Float,        nullable=True,
+                                comment="매핑 신뢰도(참고용). exact=1.0")
+    unit_source        = Column(String(10),   nullable=True,
+                                comment="단위 출처: declared(원문에 (단위:…) 명시) 만 적재. "
+                                        "미표기/불명은 추측하지 않고 보류큐로 보낸다")
+
     __table_args__ = (
         # 한 보고서 내 (ACODE, ACONTEXT) 셀은 유일
         UniqueConstraint("rcept_no", "acode", "acontext_raw", name="uq_fact_v2_cell"),

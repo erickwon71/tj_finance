@@ -108,11 +108,13 @@ def test_body_table_selected_summary_excluded():
     assert set(groups) == {"BS_C"}, f"본문 BS 만 선택돼야 함: {set(groups)}"
     tbls = groups["BS_C"]
     assert len(tbls) == 1
-    tbl, unit = tbls[0]
+    tbl, unit, section_kind = tbls[0]
     txt = "".join(tbl.itertext())
     # 정정 요약표(175,700)가 아니라 본문 데이터표(182,000)가 선택돼야 한다(00259545 수정).
     assert "182,000" in txt and "175,700" not in txt
     assert unit == 1_000_000, f"표제 '단위: 백만원' 인식 실패: {unit}"
+    # provenance: 귀속 섹션을 그대로 들고 나와야 적재 후 감사가 가능하다.
+    assert section_kind == "연결재무제표", f"섹션 출처 미기록: {section_kind}"
 
 
 def test_fin_type_b_skips_consolidated():

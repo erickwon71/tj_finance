@@ -20,37 +20,20 @@ acontext 는 cf_da 계열과 같은 'note:{basis}:col0' 을 재사용 — 같은
 """
 from __future__ import annotations
 
-from math import log10
+import re
 from pathlib import Path
 
 from loguru import logger
 
 from parser.xml.dart_xml_parser import _parse_xml_file
-from parser.xml.note_extractor import _detect_unit_in_text
+from parser.xml.section_detector import SEC_CONSOL_NOTE, SEC_SEP_NOTE
 from fin2.extract.biz_section import expand_table_grid, _tag, _text
+from fin2.extract.text import declared_unit
 from fin2.extract.xbrl import ExtractedFact
-
-# da_total/revenue 현실 범위(notes.py 와 동일 철학). 이 밖이면 단위오류로 간주.
-_RATIO_LO, _RATIO_HI, _RATIO_TARGET = 3e-4, 2.0, 0.04
-_FACTORS = (1.0, 1e3, 1e-3, 1e6, 1e-6)
 
 
 def _norm(s: str) -> str:
     return s.replace(" ", "").replace("　", "").replace("\n", "")
-
-
-def _unit_factor(da_total_won: int | None, revenue_ref: int | None) -> float | None:
-    if not da_total_won or not revenue_ref or revenue_ref <= 0:
-        return 1.0
-    base = abs(da_total_won) / revenue_ref
-    best = None
-    for f in _FACTORS:
-        ratio = base * f
-        if _RATIO_LO <= ratio <= _RATIO_HI:
-            dist = abs(log10(ratio) - log10(_RATIO_TARGET))
-            if best is None or dist < best[0]:
-                best = (dist, f)
-    return best[1] if best else None
 
 
 def _parse_num(cell: str) -> int | None:
@@ -100,8 +83,13 @@ def _find_heading(els: list, basis: str) -> int | None:
     return cand[0][0] if cand else None
 
 
-def _find_data_table(els: list, start: int) -> list[list[str]] | None:
-    """헤딩 다음 첫 '성격별 비용' 데이터 표(당기). ≥2 시그널 라벨 + 숫자 + ≤30행."""
+def _find_data_table(els: list, start: int) -> tuple[list[list[str]], object] | None:
+    """헤딩 다음 첫 '성격별 비용' 데이터 표(당기). ≥2 시그널 라벨 + 숫자 + ≤30행.
+
+    반환 (grid, table_elem). **element 도 돌려주는 이유**: 단위 `(단위 : 백만원)` 는 grid 안이
+    아니라 **직전 표제표**에 있다(DART [표제표, 데이터표] 쌍 구조). 실측 4사 전부 그렇다 —
+    grid 만 넘기면 선언을 못 읽어 구버전처럼 '백만원 가정'으로 되돌아간다.
+    """
     for j in range(start + 1, min(start + 100, len(els))):
         if _tag(els[j]) != "TABLE":
             continue
@@ -115,21 +103,59 @@ def _find_data_table(els: list, start: int) -> list[list[str]] | None:
         nsig = sum(1 for sg in _DATA_SIG if sg in flat)
         has_num = any(_parse_num(c) is not None for row in grid for c in row)
         if nsig >= 2 and has_num:
-            return grid
+            return grid, els[j]
     return None
 
 
-def _row_label_value(row: list[str]) -> tuple[str | None, int | None]:
-    """행에서 (세부라벨, 값). 값=가장 오른쪽 숫자셀, 라벨=값 왼쪽의 가장 구체적(가까운) 비숫자셀."""
+# 열 헤더의 당기/전기 표기(공백 제거 후). '당기말'·'당반기' 등 변형 포함.
+_CURR_COL_RE = re.compile(r"^당(기|반기|분기)(말|초)?$")
+_PRIOR_COL_RE = re.compile(r"^전(기|반기|분기)(말|초)?$")
+
+
+def _current_col(grid: list[list[str]]) -> int | None:
+    """헤더행에서 **당기 열**의 인덱스. 당기/전기 헤더가 없으면 None(=단일 공시금액 열 서식).
+
+    ★ 왜 필요한가(2026-07-17 실측으로 발견한 오적재):
+    구버전 `_row_label_value` 는 **가장 오른쪽 숫자셀**을 값으로 삼았다. 이 모듈의 설계 표본
+    (2025 iXBRL 4사)은 값열이 '공시금액' **1열**이라 우연히 맞았지만, 구형 서식은
+    `[구분 | 당기 | 전기]` **2열**이다 → 오른쪽 = **전기**.
+      · 진양홀딩스 20160330000576: '무형자산상각비 | 18,607,826(당기) | 22,567,007(전기)'
+        → 전기값을 채택하고도 context_fiscal_year 는 당기로 적어 **전년 D&A 를 당기로 적재**.
+      · 유니트론텍 20160330001925: '감가상각비 | 85,182(당기) | 73,441(전기)' → 동일 오류.
+    헤더가 '당기'라고 **명시**하는데 위치로 추측할 이유가 없다(계획 X4~X7: 열 위치 추론 금지).
+    """
+    for row in grid:
+        for i, c in enumerate(row):
+            if _CURR_COL_RE.match(_norm(c)):
+                # '전기' 열도 함께 있어야 2열 서식으로 확정(단독 '당기' 표기는 캡션일 수 있음)
+                if any(_PRIOR_COL_RE.match(_norm(x)) for x in row):
+                    return i
+    return None
+
+
+def _row_label_value(row: list[str], curr_col: int | None = None) -> tuple[str | None, int | None]:
+    """행에서 (세부라벨, 값).
+
+    curr_col 이 주어지면 **그 열**을 값으로 쓴다(헤더가 확정한 당기 열).
+    없으면(단일 값열 서식) 가장 오른쪽 숫자셀. 라벨 = 값 왼쪽의 가장 가까운 비숫자셀.
+    """
     val = None
     val_idx = None
-    for idx in range(len(row) - 1, -1, -1):
-        v = _parse_num(row[idx])
-        if v is not None:
-            val, val_idx = v, idx
-            break
-    if val is None:
-        return None, None
+    if curr_col is not None:
+        if curr_col < len(row):
+            v = _parse_num(row[curr_col])
+            if v is not None:
+                val, val_idx = v, curr_col
+        if val is None:
+            return None, None       # 당기 열이 비면 그 행은 값 없음('-') — 추측해 채우지 않는다
+    else:
+        for idx in range(len(row) - 1, -1, -1):
+            v = _parse_num(row[idx])
+            if v is not None:
+                val, val_idx = v, idx
+                break
+        if val is None:
+            return None, None
     label = None
     for idx in range(val_idx - 1, -1, -1):
         c = row[idx].strip()
@@ -160,15 +186,38 @@ def _classify(label_norm: str) -> str | None:
     return None
 
 
-def _extract_one_basis(grid: list[list[str]], revenue_ref: int | None) -> dict[str, int] | None:
-    """데이터 표 grid → {canonical: 값(원)}. 단위감지+매출앵커 보정. 실패 시 None."""
-    # 표 스코프 텍스트에서 단위(백만원/천원) 감지 — grid 셀에 '(단위: ...)' 가 있을 수 있음.
-    unit_text = " ".join(c for row in grid for c in row)
-    unit_mult = _detect_unit_in_text(unit_text)   # 못 찾으면 1e6(백만원) 기본
+def _extract_one_basis(grid: list[list[str]], table_elem) -> dict[str, int] | None:
+    """데이터 표 grid → {canonical: 값(원)}. **선언 단위만** 사용. 미선언/무의미 시 None(보류).
+
+    ★ 2026-07-17(Phase A-3) — 추측 2종 제거:
+
+    1) **단위 추측 폐지**. 구버전은 `_detect_unit_in_text` 로 표 텍스트를 훑되 **못 찾으면
+       백만원(1e6)을 가정**하고, 그 위에 다시 배율 5종(1·10³·10⁻³·10⁶·10⁻⁶)을 대입해
+       **da_total/매출 비율이 4% 에 가장 가까운 배율**을 골라 **표의 전 계정에 적용**했다.
+       "그럴듯한 답 고르기"이며 배율을 기록하지 않아 역산도 불가능했다.
+       ⟹ `(단위 : …)` **명시 선언만** 사용하고, 없으면 **보류**(결측 > 오염).
+
+    2) **note.da_total 합성 폐지**(D8). 구버전은 감가상각비·무형자산상각비가 **따로** 공시된
+       표에서도 `by_code["note.da_total"] = dep + amo` 로 **합계를 만들어** 넣었다. 그러면
+       `rules.rule_additive_da` 가 이를 `_DA_TOTAL_CANON`(= **직접 공시된 합계**)으로 보고
+       우선 채택해, 회사가 실제로 공시한 합계와 코드가 더한 값이 DB 에서 **구분되지 않았다**.
+       ⟹ 결합 라인('감가상각비 및 무형자산상각비')이 **원문에 실재할 때만** note.da_total 을
+       방출한다. 분리 공시면 구성요소만 내보내고 합산은 rule_additive_da 가 하게 둔다 —
+       그쪽은 `applied_rules=['additive_da']` 로 **파생임이 기록**되는 투명한 경로다
+       (계획 §2 원칙 3: 투명한 파생은 허용하되 표시 필수).
+    """
+    # 단위는 그 표가 명시 선언한 것만 인정 — 표제(직전형제) 또는 표 자기 첫행(text.declared_unit).
+    # 실측: 4사 전부 표제표에 '(단위 : 백만원)' 이 있다.
+    unit_mult = declared_unit(table_elem)
+    if unit_mult is None:
+        return None
+
+    # 값 열: 헤더가 '당기/전기' 를 명시하면 그 당기 열, 아니면 단일 값열 서식.
+    curr_col = _current_col(grid)
 
     by_code: dict[str, int] = {}
     for row in grid:
-        label, val = _row_label_value(row)
+        label, val = _row_label_value(row, curr_col)
         if label is None or val is None:
             continue
         ln = _norm(label)
@@ -179,33 +228,21 @@ def _extract_one_basis(grid: list[list[str]], revenue_ref: int | None) -> dict[s
             continue
         by_code[code] = by_code.get(code, 0) + val * unit_mult
 
-    # da_total 계산(결합 라인 우선, 없으면 dep+amo+rou 합).
-    da_direct = by_code.get("note.da_total")
+    # 원문에 **결합 라인이 있을 때만** da_total 이 존재한다(_classify 가 note.da_total 부여).
+    # 없으면 만들지 않는다 — dep/amo 를 그대로 내보내고 합산은 rule_additive_da 담당.
     dep = by_code.get("note.depreciation", 0) + by_code.get("note.rou_depreciation", 0)
     amo = by_code.get("note.amortization", 0)
-    da_total = da_direct if da_direct else (dep + amo if (dep or amo) else None)
-    if not da_total:
-        return None
-
-    # 매출 앵커 단위보정 — 감지단위가 틀렸을 때 배율 재조정(notes.py 관례).
-    factor = _unit_factor(da_total, revenue_ref)
-    if factor is None:
-        return None
-    if factor != 1.0:
-        by_code = {c: int(round(v * factor)) for c, v in by_code.items()}
-        da_total = int(round(da_total * factor))
-
-    # da_total 을 항상 명시(결합/분리 무관) — rules.rule_additive_da 가 우선 소비.
-    by_code["note.da_total"] = da_total
+    if not (by_code.get("note.da_total") or dep or amo):
+        return None      # D&A 가 전무한 표 = 이 추출기의 대상이 아님
     return by_code
 
 
 def extract_expense_nature_facts(
     file_path: str | Path, *, rcept_no: str, corp_code: str,
     report_fiscal_year: int, report_fiscal_period: str,
-    basis: str = "consolidated", revenue_ref: int | None = None,
+    basis: str = "consolidated",
 ) -> list[ExtractedFact]:
-    """'비용의 성격별 분류' 주석 → note.* ExtractedFact(당기, col0). 실패 시 []."""
+    """'비용의 성격별 분류' 주석 → note.* ExtractedFact(당기, col0). 실패/보류 시 []."""
     root = _parse_xml_file(Path(file_path))
     if root is None:
         return []
@@ -213,13 +250,17 @@ def extract_expense_nature_facts(
     hpos = _find_heading(els, basis)
     if hpos is None:
         return []
-    grid = _find_data_table(els, hpos)
-    if grid is None:
+    found = _find_data_table(els, hpos)
+    if found is None:
         return []
-    by_code = _extract_one_basis(grid, revenue_ref)
+    grid, table_elem = found
+    by_code = _extract_one_basis(grid, table_elem)
     if not by_code:
         return []
 
+    # 이 추출기는 **주석**(비용의 성격별 분류)에서 읽는다 → section_kind 를 주석으로 명시.
+    # note.* 만 방출하므로 "주석 섹션이 본문 canonical 을 만들지 않는다" 불변식과 정합.
+    section_kind = SEC_CONSOL_NOTE if basis == "consolidated" else SEC_SEP_NOTE
     acontext = f"note:{basis}:col0"
     return [ExtractedFact(
         corp_code=corp_code, rcept_no=rcept_no,
@@ -229,4 +270,8 @@ def extract_expense_nature_facts(
         extra_dims=None, is_dimensional=False, adecimal=None, amount_won=int(amt),
         source_format="note_expense", source_ref=f"{basis}/note_expense"[:180],
         acontext_raw=acontext, context_parsed=True, canonical_account=code,
+        section_kind=section_kind,
+        mapping_stage="exact",        # _classify 가 고정 키워드로 직접 판정(퍼지 아님)
+        mapping_confidence=1.0,
+        unit_source="declared",       # _extract_one_basis 가 미선언이면 이미 보류시킴
     ) for code, amt in by_code.items() if amt]

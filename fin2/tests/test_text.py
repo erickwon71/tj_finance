@@ -15,7 +15,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from fin2.extract.text import extract_facts  # noqa: E402
+from fin2.extract.text import extract_facts, _canonical_of  # noqa: E402
+from parser.common.account_mapper import MappingResult  # noqa: E402
 
 _SAMPLE = (
     Path(__file__).resolve().parents[2]
@@ -93,6 +94,28 @@ def test_interim_cumulative_columns():
     assert rev.get((0, 2024)) == 30_488_775_643, f"2024 H1 누적 불일치: {rev}"
     assert rev.get((1, 2023)) == 23_273_515_096, f"2023 H1 누적 불일치: {rev}"
     assert rev.get((0, 2024)) != 17_044_235_442  # 3개월이 col0 으로 새면 안 됨
+
+
+def test_fuzzy_mapping_gets_no_canonical():
+    """퍼지 매치는 canonical 을 받지 못한다(M1/M2, 추측 금지).
+
+    실측 반례(2026-07-17): '금융부채'가 alias '단기금융부채' 와 0.96 유사도로 bs.short_term_debt
+    에, '기타무형자산'이 '무형자산'(상위개념!)에 붙었다. 유사도는 개념 동일성의 근거가 아니다.
+    """
+    fuzzy = MappingResult("bs.short_term_debt", 0.96, "fuzzy", "단기금융부채")
+    assert _canonical_of(fuzzy) is None, "퍼지에 canonical 을 주면 안 된다"
+
+
+def test_exact_and_guard_keep_canonical():
+    """정확/정규화 일치와 명시 가드는 canonical 을 유지한다(추측이 아니라 사전·규칙)."""
+    assert _canonical_of(MappingResult("bs.cash", 1.0, "exact", "현금및현금성자산")) == "bs.cash"
+    assert _canonical_of(MappingResult("is.revenue", 1.0, "normalized", "매출액")) == "is.revenue"
+    assert _canonical_of(MappingResult("is.ebt", 0.95, "guard", "법인세비용차감전이익")) == "is.ebt"
+
+
+def test_unknown_gets_no_canonical_but_row_survives():
+    """미매핑은 canonical NULL. 단 행은 acode 로 보존된다(무손실) — 여기선 canonical 만 검증."""
+    assert _canonical_of(MappingResult("unknown.무언가", 0.0, "unknown")) is None
 
 
 def _run():

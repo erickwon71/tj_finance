@@ -7,10 +7,14 @@ ACONTEXT/ACODE 가 없는 DART 정기보고서(분기/반기 다수, 구형 연�
 설계:
   - 기존 leaf 모듈(section_detector/table_extractor/account_mapper/amount_normalizer)
     재사용. **레거시 오케스트레이터(dart_xml_parser)에 의존하지 않음** → P6 폐기 대비.
-  - XBRL 과 달리 권위있는 구조(ADECIMAL/ACONTEXT)가 없으므로 일부 추론 불가피:
-    단위=가장 가까운 명시적 선언, 연결/별도=섹션, instant/duration=BS vs IS/CF.
+  - XBRL 과 달리 권위있는 구조(ADECIMAL/ACONTEXT)가 없다. **그렇다고 추측하지 않는다**
+    (2026-07-17 재설계): 연결/별도·BS/IS/CF 는 **DART 섹션**에서 확정하고, 단위는 그 표가
+    **명시 선언한 것만** 쓴다. 확정 못 하는 표는 채우지 않고 **통째로 건너뛴다**(보류).
+    결측 > 오염 — 추측으로 채운 값은 정상 행과 구분되지 않아 사후 제거가 불가능하다.
   - **무손실**: 매핑 실패(canonical NULL)해도 행을 버리지 않고 raw 계정명(acode)과 함께
     저장 → 추후 account_maps 보강 후 재파싱 없이 복구 가능(레거시는 미매핑 행 폐기).
+  - **provenance 기록**: section_kind / mapping_stage / mapping_confidence / unit_source 를
+    행마다 남긴다 → "무엇을 근거로 이 값이 됐는지"가 DB 에서 SQL 로 검증 가능.
   - fact_v2 정합:
       acode              = 정규화된 한국어 계정명(텍스트 레벨 source 개념)
       canonical_account  = account_mapper 결과(텍스트의 concept_map 역할), 미매핑 NULL
@@ -32,16 +36,13 @@ from parser.common.account_mapper import get_mapper, MappingResult
 from parser.common.amount_normalizer import normalize_account_name, detect_unit_declaration
 from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.section_detector import (
-    detect_sections, find_section_tables, find_summary_tables,
-    detect_unit_from_section, detect_periods_from_header,
     assign_tables_to_dart_sections, table_direct_rows,
     SEC_CONSOL_FS, SEC_SEP_FS,
 )
 from parser.xml.table_extractor import extract_rows
 from fin2.extract.xbrl import ExtractedFact
 from fin2.extract.statement_titles import (
-    title_text, classify_statement_title, classify_statement_in_body_section,
-    SECTION_CODE_OF,
+    title_text, classify_statement_in_body_section, SECTION_CODE_OF,
 )
 
 # 섹션 코드 → (basis, period_kind)
@@ -117,13 +118,54 @@ def _synth_acontext(basis: str, period_kind: str, col_idx: int, ctx_fy: int | No
     return f"text:{stmt}:{basis[:3]}:{'e' if period_kind == 'instant' else 'd'}:c{col_idx}:{ctx_fy}"
 
 
+def _canonical_of(mapping: MappingResult) -> str | None:
+    """매핑 결과 → 적재할 canonical. **퍼지 매치는 canonical 을 주지 않는다**(추측 금지).
+
+    퍼지(Stage 3)는 '포함 관계면 0.90~0.99' · 'Jaro-Winkler ≥ 0.88' 로 **닮았다는 이유만으로**
+    표준계정을 부여한다. 부분포함은 사실상 무조건 승리라 과잉매핑이 기본값이고, account_mapper 의
+    가드 6종(EBT·포괄손익귀속·지분법·계속영업·영업외·주당)이 전부 **사고 후 retrofit** 이라는 것이
+    그 증거다 — 가드는 이미 터진 오매핑만 막을 뿐 아직 안 터진 것은 그대로 통과한다.
+
+    ⟹ exact/normalized(사전 일치)와 guard(명시 규칙)만 canonical 을 갖는다.
+    행 자체는 버리지 않는다(무손실 원칙): canonical 이 없어도 acode 원문 + mapping_stage='fuzzy'
+    로 남으므로 alias 보강 후 **재파싱 없이 승격**할 수 있고, 그때까지 소비계층은 이 행을 보지
+    못한다(canonical NULL = build 의 수집 대상 아님).
+
+    ── ★ 이걸 켠 대가와 갚는 법 (2026-07-17 실측, 2015+ 무작위 287보고서) ──────────────
+    퍼지는 두 가지 일을 **동시에** 하고 있었다. 끄면 둘 다 멈춘다:
+
+      (B) **과잉매핑** — 이번 재구축의 표적. 없어지는 게 정답:
+          '금융부채'→bs.short_term_debt · '기타무형자산'→bs.intangibles(무형자산의 부분집합!) ·
+          '매출채권 및 기타유동채권'→bs.trade_receivables · 'I. 현금및예치금'→bs.cash
+          (뒤 둘은 _FUZZY_BLOCK 의 '현금및예적금' 과 **같은 계열**의 합산성 라벨이다).
+
+      (A) **정당한 표기변형 구제** — alias 미등록이라 퍼지로만 붙던 것. 이건 **빚**이다:
+          '법인세비용(수익)'(alias='법인세비용(이익)') · '판매비와일반관리비'(alias='판매비와관리비')
+          · '경상연구개발비'(alias='연구개발비') · '지배기업의 소유주에게 귀속되는 당기순이익(손실)'
+          ⟹ 실측 **287건 중 214건(74.6%)** 에서 std_v2 소비 canonical 이 사라진다:
+             is.controlling_ni 130 · bs.trade_payables 70 · bs.trade_receivables 64 ·
+             bs.controlling_equity 54 · is.tax_expense 47 · is.net_income 25 …
+
+    (A)는 **Phase C 패턴루프에서 account_maps alias 승격으로 갚는다**(값을 손으로 넣는 게 아니라
+    파서를 고친다 — 계획 §2 원칙 4). 갚기 전에는 커버리지가 크게 빈다: **재구축 결과를 DB 에
+    반영하기 전에 반드시 (A) 승격을 끝낼 것.** 작업목록은 이제 SQL 로 뽑을 수 있다 —
+    `SELECT acode, count(*) FROM fact_v2 WHERE mapping_stage='fuzzy' GROUP BY 1 ORDER BY 2 DESC`
+    (이 stage 기록이 없던 게 애초에 (A)/(B)를 구분 못 하던 이유였다).
+    """
+    if mapping.stage == "fuzzy":
+        return None
+    if mapping.account_code.startswith("unknown."):
+        return None
+    return mapping.account_code
+
+
 def _row_to_fact(
     *, row, col_idx, amount, basis, period_kind, mapping: MappingResult,
     corp_code, rcept_no, report_fiscal_year, report_fiscal_period,
-    fiscal_period, unit, fs_type,
+    fiscal_period, unit, fs_type, section_kind,
 ) -> ExtractedFact:
     ctx_fy = report_fiscal_year - col_idx
-    canonical = None if mapping.account_code.startswith("unknown.") else mapping.account_code
+    canonical = _canonical_of(mapping)
     is_cumulative = period_kind == "duration" and fiscal_period != "FY"
     acode = (normalize_account_name(row.account_name) or row.account_name)[:120]
     return ExtractedFact(
@@ -147,6 +189,12 @@ def _row_to_fact(
         acontext_raw=_synth_acontext(basis, period_kind, col_idx, ctx_fy, fs_type.split("_")[0]),
         context_parsed=False,
         canonical_account=canonical,
+        # provenance: 이 행이 어느 DART 섹션에서 왔고, canonical 을 무슨 근거로 얻었고,
+        # 단위를 어디서 읽었는지. 이 경로는 선언 단위만 통과시키므로 unit_source 는 항상 declared.
+        section_kind=section_kind,
+        mapping_stage=mapping.stage,
+        mapping_confidence=mapping.confidence,
+        unit_source="declared",
     )
 
 
@@ -172,7 +220,7 @@ def _detect_body_statement_tables(root, fin_type: str) -> dict[str, list[tuple]]
     `<P>` 구분자, 2000~2008 은 위치 미확인 → Track 3 별도 트랙. 해당 시대는 여기서 빈 dict 가
     나오고 호출측이 보류 처리한다(추측으로 채우지 않는다).
 
-    반환: {section_code: [(table_elem, unit), ...]}.
+    반환: {section_code: [(table_elem, unit, section_kind), ...]}.
     """
     sec_tables = assign_tables_to_dart_sections(root)
     groups: dict[str, list[tuple]] = {}
@@ -191,12 +239,14 @@ def _detect_body_statement_tables(root, fin_type: str) -> dict[str, list[tuple]]
                 continue
             section_code = SECTION_CODE_OF[(basis, stmt)]
             # 단위는 **그 표가 명시 선언한 것만** 신뢰한다(추측 금지). 없으면 None → 보류.
-            unit = _declared_unit(tbl)
-            groups.setdefault(section_code, []).append((tbl, unit))
+            unit = declared_unit(tbl)
+            # sec_kind 를 그대로 들고 간다(basis 에서 되유도하지 않음) — 적재된 행의
+            # section_kind 는 **실제로 귀속된 섹션**이어야 감사에 쓸 수 있다.
+            groups.setdefault(section_code, []).append((tbl, unit, sec_kind))
     return groups
 
 
-def _declared_unit(tbl) -> int | None:
+def declared_unit(tbl) -> int | None:
     """표가 **자기 단위를 명시 선언**한 경우만 그 배수를 반환. 없으면 None(추측 금지).
 
     허용하는 선언 위치 — 둘 다 **그 표 소유**라 추측이 아니다:
@@ -269,13 +319,14 @@ def _emit_section(
 ) -> None:
     """한 섹션(BS_C 등)의 데이터 TABLE 들을 컬럼기반으로 읽어 fact 방출.
 
-    표제기반 경로와 레거시 폴백이 **같은 헬퍼**를 호출 → 셀 읽기 의미 동일(저위험·DRY).
-    tables_with_unit = [(table_elem, unit), ...]. interim(H1/Q1/Q3) IS·CF 2단 누적컬럼 처리 포함.
+    tables_with_unit = [(table_elem, unit, section_kind), ...].
+    interim(H1/Q1/Q3) IS·CF 2단 누적컬럼 처리 포함.
     """
     basis, period_kind = _SECTION_META[section_code]
     fs_section = section_code.split("_")[0].lower()
-    tables = [t for t, _ in tables_with_unit]
-    unit_of = {id(t): u for t, u in tables_with_unit}
+    tables = [t for t, _, _ in tables_with_unit]
+    unit_of = {id(t): u for t, u, _ in tables_with_unit}
+    kind_of = {id(t): k for t, _, k in tables_with_unit}
     # 반기/1·3분기 flow(IS·CF) 표는 [3개월|누적] 2단 헤더에서 누적컬럼만 채택(연도 정합).
     # Q1 은 3개월=누적이라 [당기3개월,당기누적,전기3개월,전기누적] 4열에서 위치기반 num_cols=3
     # 절삭 시 당기값이 전기 슬롯에 중복되고 전기값이 전전기로 오라벨되는 버그가 있었음(DEF-4).
@@ -363,7 +414,7 @@ def _emit_section(
                     report_fiscal_year=report_fiscal_year,
                     report_fiscal_period=report_fiscal_period,
                     fiscal_period=report_fiscal_period, unit=unit,
-                    fs_type=section_code,
+                    fs_type=section_code, section_kind=kind_of[id(table)],
                 ))
 
 
@@ -449,73 +500,3 @@ def extract_facts(
                      f"fy{report_fiscal_year} {report_fiscal_period}")
 
     return list(dedup.values())
-
-
-def _extract_summary(root, mapper, fin_type, dedup, add,
-                     corp_code, rcept_no, report_fiscal_year, report_fiscal_period):
-    """요약재무정보 테이블 폴백. account_code 접두어로 BS/IS/CF·instant/duration 결정."""
-    summary = find_summary_tables(root)
-    if not any(v is not None for v in summary.values()):
-        return
-    for stmt_key, table_elem in summary.items():
-        if table_elem is None:
-            continue
-        basis = "consolidated" if stmt_key == "consolidated" else "separate"
-        if basis == "consolidated" and fin_type == "B":
-            continue
-        unit = _detect_unit_near_table(table_elem)
-        for row in extract_rows(table_elem, multiplier=unit):
-            if not row.account_name:
-                continue
-            mapping = mapper.map(row.account_name)
-            code = mapping.account_code
-            if code.startswith("bs."):
-                period_kind, fs_type = "instant", "BS_" + basis[:1].upper()
-            elif code.startswith("is."):
-                period_kind, fs_type = "duration", "IS_" + basis[:1].upper()
-            elif code.startswith("cf."):
-                period_kind, fs_type = "duration", "CF_" + basis[:1].upper()
-            else:
-                period_kind, fs_type = "instant", "BS_" + basis[:1].upper()
-            for col_idx, amount in enumerate(row.amounts):
-                if amount is None:
-                    continue
-                add(_row_to_fact(
-                    row=row, col_idx=col_idx, amount=amount,
-                    basis=basis, period_kind=period_kind, mapping=mapping,
-                    corp_code=corp_code, rcept_no=rcept_no,
-                    report_fiscal_year=report_fiscal_year,
-                    report_fiscal_period=report_fiscal_period,
-                    fiscal_period=report_fiscal_period, unit=unit,
-                    fs_type=fs_type,
-                ))
-
-
-def _detect_unit_near_table(table_elem) -> int:
-    """인접 단위 선언 탐지(표 첫 행 → 앞 형제 <P> 선언).
-
-    ⚠ 형제 TABLE 의 단위 선언은 **누설 금지**: 단위는 그 표 소유이지 인접 표 것이 아니다.
-    (엘브이엠씨 2019: USD기준 BS 표가 4형제 앞 '연결현금흐름표 단위:백만원' 을 주워 ×10^6 →
-    자산총계 586조. 표제(직전 형제)의 단위는 호출측 detect_unit_declaration(title_text) 이 이미
-    확인하므로, 폴백 스캔은 <P> 텍스트 선언만 본다.)"""
-    from parser.common.amount_normalizer import detect_unit_declaration
-    first_tr = table_elem.find(".//TR")
-    if first_tr is not None:
-        decl = detect_unit_declaration("".join(first_tr.itertext()))
-        if decl is not None:
-            return decl
-    parent = table_elem.getparent()
-    if parent is None:
-        return 1
-    siblings = list(parent)
-    try:
-        idx = siblings.index(table_elem)
-    except ValueError:
-        return 1
-    for s in reversed(siblings[max(0, idx - 5):idx]):
-        tag = s.tag.upper() if isinstance(s.tag, str) else ""
-        if tag == "P":  # <P> 텍스트 단위 선언만(형제 TABLE 단위 누설 차단)
-            decl = detect_unit_declaration("".join(s.itertext()))
-            if decl is not None:
-                return decl
-    return 1

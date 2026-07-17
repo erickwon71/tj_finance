@@ -69,14 +69,16 @@ def main():
         for i, t in enumerate(targets, 1):
             if not t.file_path or not Path(t.file_path).exists():
                 continue
+            # rev 는 이제 **표시용**(rd/rev 샘플 출력)일 뿐 추출에 관여하지 않는다.
+            # 구버전은 이 매출을 앵커로 배율 5종을 대입해 단위를 '골랐다'(추측) — 폐지됨
+            # (rd_note.py 2026-07-17). 단위는 원문 선언만 쓰고 미선언은 보류한다.
             rev = _revenue(session, t.rc)
             if not rev:
                 skip_norev += 1
                 continue
             facts = extract_rd_facts(
                 t.file_path, rcept_no=t.rc, corp_code=t.corp_code,
-                report_fiscal_year=t.fiscal_year, report_fiscal_period=t.fiscal_period,
-                revenue_ref=rev)
+                report_fiscal_year=t.fiscal_year, report_fiscal_period=t.fiscal_period)
             if not facts:
                 skip_none += 1
                 continue

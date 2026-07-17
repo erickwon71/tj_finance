@@ -62,12 +62,16 @@ def _face_da_facts(
     if dep <= 0 and amo <= 0:
         return None, []
 
+    # ★ note.da_total 합성 폐지(D11, 2026-07-17). CF 본문에는 감가상각·무형상각이 **개별
+    # 조정라인**으로 실려 있을 뿐 '합계'라는 공시 항목이 없다. 그런데 구버전은 dep+amo 를
+    # note.da_total 로 만들어 넣었고, rule_additive_da 는 _DA_TOTAL_CANON 을 **직접 공시된
+    # 합계**로 간주해 우선 채택한다 → 회사가 공시한 합계와 코드가 더한 값이 DB 에서 구분 불가.
+    # ⟹ 구성요소만 방출하고 합산은 rule_additive_da 에 맡긴다(applied_rules 에 기록되는 파생).
     by_code: dict[str, int] = {}
     if dep > 0:
         by_code["note.depreciation"] = dep
     if amo > 0:
         by_code["note.amortization"] = amo
-    by_code["note.da_total"] = dep + amo
     facts = _synth_facts(by_code, basis=basis, rcept_no=rcept_no, corp_code=corp_code,
                          report_fiscal_year=report_fiscal_year,
                          report_fiscal_period=report_fiscal_period,
@@ -77,6 +81,15 @@ def _face_da_facts(
 
 def _synth_facts(by_code, *, basis, rcept_no, corp_code, report_fiscal_year,
                  report_fiscal_period, source_format, acontext) -> list[ExtractedFact]:
+    """CF 본문(face)에서 모은 D&A 를 note.* 합성 fact 로. **여러 라인의 합**이라 단일 셀이 아니다.
+
+    section_kind=None 인 이유: 이 행은 CF 본문의 **여러 조정라인을 합산**해 만든 것이라
+    '어느 섹션의 어느 셀'로 지목할 수 없다. 억지로 '연결재무제표'를 넣으면 그건 거짓이고,
+    게다가 note.* canonical 을 본문 섹션이 생산한 꼴이 되어 Phase D 불변식
+    (본문 섹션은 note.* 를 만들지 않는다)과 충돌한다.
+    ⚠ note.* 를 rule_additive_da 로 가는 **운반 수단**으로 쓰는 이 설계 자체가 Phase C 재검토
+    대상이다(주석이 아닌데 note.* 를 단다).
+    """
     return [ExtractedFact(
         corp_code=corp_code, rcept_no=rcept_no,
         report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
@@ -85,6 +98,10 @@ def _synth_facts(by_code, *, basis, rcept_no, corp_code, report_fiscal_year,
         extra_dims=None, is_dimensional=False, adecimal=None, amount_won=int(amt),
         source_format=source_format, source_ref=f"{basis}/{source_format}"[:180],
         acontext_raw=acontext, context_parsed=True, canonical_account=code,
+        section_kind=None,
+        mapping_stage="exact",     # 구성 canonical 은 text.py 가 이미 확정한 cf.* 를 집계한 것
+        mapping_confidence=1.0,
+        unit_source="declared",    # 입력이 text.py 산출물 = 선언 단위만 통과된 값
     ) for code, amt in by_code.items()]
 
 

@@ -52,6 +52,14 @@ class ExtractedFact:
     context_parsed: bool
     canonical_account: str | None = None  # Track A=concept_map.map_acode, Track B=account_mapper. 미매핑 NULL
 
+    # ── provenance (2026-07-17 재구축) — fact_v2 동명 컬럼에 그대로 실린다 ──────
+    # 이 값들이 "원본을 읽은 행"과 "코드가 추측한 행"을 DB 에서 구분한다. 추출기가 채우지
+    # 않으면 NULL 로 남고(Track A 등 미개편 경로), 재구축 대상 경로는 반드시 채운다.
+    section_kind: str | None = None       # DART 섹션 출처(연결재무제표/재무제표/…주석)
+    mapping_stage: str | None = None      # exact/normalized/guard/fuzzy/unknown
+    mapping_confidence: float | None = None
+    unit_source: str | None = None        # 'declared' 만 적재(미표기·추측은 보류)
+
     def as_row(self) -> dict:
         """SQLAlchemy bulk upsert 용 dict (FactV2 컬럼명 기준)."""
         return {
@@ -75,6 +83,10 @@ class ExtractedFact:
             "source_ref": self.source_ref,
             "acontext_raw": self.acontext_raw,
             "context_parsed": self.context_parsed,
+            "section_kind": self.section_kind,
+            "mapping_stage": self.mapping_stage,
+            "mapping_confidence": self.mapping_confidence,
+            "unit_source": self.unit_source,
         }
 
 

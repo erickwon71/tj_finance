@@ -97,6 +97,10 @@ SEC_CONSOL_FS    = "연결재무제표"
 SEC_CONSOL_NOTE  = "연결재무제표주석"
 SEC_SEP_FS       = "재무제표"
 SEC_SEP_NOTE     = "재무제표주석"
+# 'II. 사업의 내용' — 재무제표가 아니라 **사업 서술** 구획. [연구개발비용]·생산능력 표가 산다.
+# 실측(2016+ 무작위 120건): 정확일치 TITLE 보유 **120/120(100%)**, '사업'+'내용' 을 포함하는
+# 다른 TITLE 은 **0건**(부분일치 함정 없음). rd_note 가 이 경계를 써서 동명 주석표를 배제한다.
+SEC_BIZ_CONTENT  = "사업의내용"
 
 # 적재 대상 4종(요약은 의도적으로 제외 — 본문으로 쓰지 않는다)
 DART_BODY_SECTIONS = (SEC_CONSOL_FS, SEC_SEP_FS)
@@ -109,6 +113,7 @@ _DART_SECTION_EXACT: dict[str, str] = {
     SEC_CONSOL_NOTE: SEC_CONSOL_NOTE,
     SEC_SEP_FS:      SEC_SEP_FS,
     SEC_SEP_NOTE:    SEC_SEP_NOTE,
+    SEC_BIZ_CONTENT: SEC_BIZ_CONTENT,
 }
 
 # 선두 번호 접두("1.", "Ⅲ.", "2 )") 제거용. 번호는 문서마다 달라 분류 키에서 뺀다.

@@ -42,14 +42,6 @@ _TARGET_SQL = """
 """
 
 
-def _revenue(session, rcept: str, basis: str) -> int | None:
-    return session.execute(text("""
-        SELECT MAX(amount_won) FROM fact_v2
-        WHERE rcept_no=:r AND canonical_account='is.revenue'
-          AND col_index=0 AND NOT is_dimensional AND basis=:b
-    """), {"r": rcept, "b": basis}).scalar()
-
-
 def sync_expense_nature(corps=None, year_min: int = 2024, basis: str = "consolidated",
                         max_corps: int | None = None) -> dict:
     """corp 한정 비용성격 주석 D&A 복원 + 재표준화. corps=None 이면 전체(백필용).
@@ -89,11 +81,10 @@ def sync_expense_nature(corps=None, year_min: int = 2024, basis: str = "consolid
                 for t in by_corp[corp]:
                     if not t.file_path or not Path(t.file_path).exists():
                         continue
-                    rev = _revenue(session, t.is_rcept, basis)
                     facts = extract_expense_nature_facts(
                         t.file_path, rcept_no=t.is_rcept, corp_code=t.corp_code,
                         report_fiscal_year=t.fiscal_year, report_fiscal_period=t.fiscal_period,
-                        basis=basis, revenue_ref=rev,
+                        basis=basis,
                     )
                     if facts:
                         corp_facts += store_facts(session, facts)

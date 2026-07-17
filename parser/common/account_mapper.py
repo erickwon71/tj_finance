@@ -34,14 +34,12 @@ from account_maps.note_accounts import NOTE_ACCOUNTS
 from parser.common.amount_normalizer import normalize_account_name
 
 
-# 퍼지 오매핑 차단 라벨: 표준 단일계정이 아닌 **합산성** 라벨(현금 + 예적금 = bs.cash +
-# 단기금융상품 혼합)이 Jaro-Winkler 로 bs.cash('현금및예금')에 오매핑되는 것을 방지.
-# 해당 기업들은 모두 별도로 '현금및현금성자산'(→bs.cash)을 보고하므로 이 라벨은 무매핑으로
-# 두어(raw 보존) bs.cash 과대계상(예적금 포함)을 막는다. exact/normalized 명시매핑은 우선.
-_FUZZY_BLOCK = {normalize_account_name(x) for x in (
-    "현금및예적금", "현금과예적금", "현금및예적금등",
-    "현금및현금성자산및예적금등",
-)}
+# 퍼지 오매핑 차단 라벨.
+# ★ 2026-07-18: 현금및예적금 계열을 **여기서 뺐다**(사용자: '현금및예금 계열은 모두 같은
+# 내용') → account_maps/bs_accounts.py 의 bs.cash exact alias 로 승급. 실측(2015+ 400건)에서
+# 이 라벨은 0건이라 과대계상 우려가 무의미했다. 현재 이 집합은 비어 있으나, 향후 퍼지
+# 오매핑이 확인되는 합산성 라벨을 여기에 추가하는 용도로 유지한다.
+_FUZZY_BLOCK: set[str] = set()
 
 
 @dataclass

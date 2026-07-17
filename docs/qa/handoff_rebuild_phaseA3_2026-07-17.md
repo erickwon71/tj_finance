@@ -59,38 +59,51 @@ launchctl print-disabled gui/$U | grep tjfinance  # enabled 여야 함
 | 6 | expense_nature 는 표 텍스트에서 단위를 찾는다 | **한 번도 못 찾고 백만원 기본값**을 써왔다. 실제 선언은 **표제표**에 있다(실측 선언: 천원 78·원 24·백만원 21) |
 | 7 | expense_nature 값열 = '공시금액' 1열 | 구형은 `[구분\|당기\|전기]` **2열**이고, '가장 오른쪽 숫자'는 **전기**다 → **전년 D&A 를 당기로 적재** |
 | 8 | 퍼지가 붙던 `이익잉여금,39>` = 유사 이름 | `<주석19/>` **엘리먼트 잔재**였다. 정제 실패이지 유사성이 아님 → normalizer 수정으로 정확일치 |
+| 9 | alias 를 추가하면 커버리지는 오르기만 한다 | 짧은 alias `지배주주지분`(6자)이 `비지배주주지분`의 **부분문자열**이라 비지배를 controlling 으로 퍼지 오염. 승급이 **역효과**(54.8→68.9%) — 재측정으로만 발견 |
+| 10 | 지배 자본 라벨 = `…소유주지분` | 실측 최다(143보고서)는 `…소유주에게 귀속되는 **자본**`(지분 아님). `지분` 변형만 넣으면 `자본` 이 그 변형에 0.95 퍼지매칭돼 오히려 퍼지-only 가 된다 |
 
 ---
 
 ## 3. ★★ 재구축 전에 갚아야 할 빚 (Phase C 착수 조건)
 
-### (1) 퍼지 alias 승격 — **최우선**
-M1/M2 로 퍼지 canonical 을 껐다. 실측(2015+ 287보고서) **214건(74.6%)** 에서 std_v2 소비
-canonical 이 사라진다:
+### (1) 퍼지 alias 승격 — **대부분 완료(2026-07-18)**
+M1/M2 로 퍼지 canonical 을 껐을 때 커버리지 손실이 **90.5%** 였다. 2026-07-18 작업으로
+account_maps 를 승급해 **41.1%** 로 낮췄다(사용자 A/B 판정 + 실측 검증).
 
+측정 추이(2015+ 300 표본, `scripts/fuzzy_alias_survey.py`):
 ```
-is.controlling_ni 130 · bs.trade_payables 70 · bs.trade_receivables 64
-bs.controlling_equity 54 · is.tax_expense 47 · is.net_income 25 · …
+승급전 90.5% → 라운드1 54.8% → (라운드2 버그 68.9%) → 최종 41.1%
+```
+- 승급 규모: is.tax_expense(222)·is.controlling_ni·bs.controlling_equity·매출채권/매입채무
+  유동변형·rd/sga/net_income/operating 변형·CF 순현금흐름·금융사 현금+예치금 등.
+- **(B) 무매핑은 자동 처리 확인**: 퍼지→canonical NULL(M1/M2)이라 `금융부채`→short_term_debt
+  등 과잉매핑은 별도 조치 불요(실측으로 확인).
+- ★ **실측으로 잡은 함정 2건**(§2 의 #9·#10 참조): 짧은 alias substring 오염(`지배주주지분`
+  ⊂ `비지배주주지분`) · 최다 라벨이 `지분`이 아니라 `자본`(`지배기업의 소유주에게 귀속되는
+  **자본**` 143보고서). **승급 후 반드시 재측정**해서 역효과를 걸러야 한다.
+
+**잔여 41.1% 의 성격**(대부분 승급 대상 아님):
+- 정당한 결측: CF gross(`재무활동으로인한현금유출액` = 순액 아님) · 보험 도메인
+  (`보험영업수익`/`투자영업비용`) · 총계-vs-세부(is.cogs 세부는 총계우선으로 held) ·
+  처분≠취득(`투자활동으로분류된무형자산의처분`).
+- 진짜 잔여 승급감: 차입금 세부(`장기차입부채`·`차입금및사채`)·`사용권자산` 계열 일부.
+  다음 라운드 후보. `docs/qa/fuzzy_alias_worklist.md` 의 `판정` 열 참고.
+
+**재측정 명령**:
+```bash
+python scripts/fuzzy_alias_survey.py --limit 300 --out docs/qa/fuzzy_alias_worklist.md \
+  --json /tmp/fuzzy.json   # 파일 파싱 기반(재추출 전에도 동작)
+# 재추출(Phase C) 후에는 DB 로 대체 가능:
+#   SELECT acode, count(*) FROM fact_v2 WHERE mapping_stage='fuzzy' GROUP BY 1 ORDER BY 2 DESC;
 ```
 
-퍼지가 하던 두 일을 갈라야 한다:
-
-- **(A) 승격 대상** — alias 미등록인 정당한 표기변형. account_maps 에 추가하면 exact/normalized 가 된다.
-  `법인세비용(수익)`(등록된 건 `법인세비용(이익)`) · `판매비와일반관리비`(vs `판매비와관리비`) ·
-  `경상연구개발비`(vs `연구개발비`) · `지배기업의 소유주에게 귀속되는 당기순이익(손실)` ·
-  `지배기업의 소유주지분`
-- **(B) 무매핑 확정** — 다른 개념에 붙던 것. **이번 재구축의 표적이므로 없어지는 게 정답.**
-  `금융부채`→short_term_debt · `기타무형자산`→intangibles(상위개념의 부분집합!) ·
-  `매출채권 및 기타유동채권`→trade_receivables · `I. 현금및예치금`→cash
-  (뒤 둘은 `_FUZZY_BLOCK` 의 `현금및예적금` 과 같은 **합산성 라벨** 계열)
-
-**작업목록 추출**(이제 가능 — stage 를 기록하므로):
-```sql
-SELECT acode, count(*) FROM fact_v2 WHERE mapping_stage='fuzzy'
-GROUP BY 1 ORDER BY 2 DESC LIMIT 100;
-```
-⚠ 단 이 SQL 은 **재추출 후**라야 의미가 있다(현 fact_v2 는 구 추출본이라 전 행 NULL).
-그 전에는 `scripts/` 에 표본 스크립트를 두고 파일에서 직접 뽑아야 한다.
+### (1-a) 승급을 안전하게 만든 build 변경(같이 커밋됨)
+- **stage 우선 `_collect`/`_resolve`**: 같은 canonical 후보가 갈리면 **더 엄격한 매핑
+  (exact > normalized > fuzzy)을 우선**한다. base(`매출채권` exact)가 승급 변형
+  (`매출채권및기타유동채권` normalized)을 이겨 **공존 기업 회귀 없음**. 추측이 아니라 기록된
+  provenance 우선순위. ⚠ 현 fact_v2 는 stage 전부 NULL 이라 재추출 전엔 무효(기존 conflict-hold).
+- **금융사 현금+예치금**(`rules.rule_cash_with_deposits`): 현금성(bs.cash) + 예치금(bs.deposits),
+  현금성 없으면 결합라벨(bs.cash_deposits_combined). 유안타=1,946B·흥국화재=139B·일반사 불변.
 
 ### (2) expense_nature 전기→당기 오적재 (사용자 결정: **A-3 후 Phase C 에서 함께**)
 `note_expense` 2015~2023 구간 **~29k facts** 가 전년값을 당기로 갖고 있을 수 있다

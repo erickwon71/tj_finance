@@ -86,6 +86,22 @@ def test_value_cols_always_present():
     assert "ebitda" in c.col
 
 
+def test_cash_with_deposits_financial():
+    """금융사 현금 = 현금성 + 예치금 (2026-07-18). 유안타형/흥국화재형/일반기업 모두."""
+    # 유안타: 현금성 812 + 예치금 1,133 + 결합총계 1,946(무시) = 1,946
+    c = _ctx({"bs.cash": 812, "bs.deposits": 1133, "bs.cash_deposits_combined": 1946})
+    assert c.col["cash"] == 812 + 1133, c.col["cash"]
+    assert "cash_plus_deposits" in c.applied
+    # 흥국화재: 결합 단독 → 그대로
+    c = _ctx({"bs.cash_deposits_combined": 139})
+    assert c.col["cash"] == 139
+    assert "cash_from_combined" in c.applied
+    # 일반기업: 현금성만 → 불변, 규칙 미관여
+    c = _ctx({"bs.cash": 500})
+    assert c.col["cash"] == 500
+    assert "cash_plus_deposits" not in c.applied and "cash_from_combined" not in c.applied
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

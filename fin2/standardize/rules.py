@@ -66,7 +66,8 @@ CONSUMED_CANON = (
     | set(_CAPEX_CANON) | set(_DEP_CANON) | set(_AMORT_CANON) | set(_DA_TOTAL_CANON)
     | set(_ST_DEBT_PARTS) | set(_LT_DEBT_PARTS)
     | {"note.rd_expense", "is.noncontrolling_ni",
-       "is.insurance_revenue", "is.operating_revenue_ins", "is.interest_revenue"}
+       "is.insurance_revenue", "is.operating_revenue_ins", "is.interest_revenue",
+       "bs.deposits", "bs.cash_deposits_combined"}   # 금융사 현금+예치금(rule_cash_with_deposits)
 )
 
 
@@ -121,6 +122,40 @@ def rule_map_direct(ctx: StdContext) -> None:
             continue
         ctx.col[col] = val
         ctx._mark("map_direct")
+
+
+def rule_cash_with_deposits(ctx: StdContext) -> None:
+    """금융사(증권·보험) 현금 = 현금성자산 + 예치금 (2026-07-18, 사용자 확정).
+
+    실측(유안타 원문): '현금및예치금'(총계) = '현금및현금성자산'(812B) + '예치금'(1,133B).
+    같은 라벨 '현금및예치금'이 보고서마다 총계/예치금계정/단독합산으로 역할이 달라(형제행으로만
+    구분 — 그건 이번 재구축이 없애려는 문맥추측) 구성요소로 나눠 저장하고 여기서 합산한다:
+
+      · base cash = bs.cash(현금및현금성자산) 우선, 없으면 bs.cash_deposits_combined(결합/단독 라벨).
+      · + bs.deposits(예치금).
+
+    이렇게 하면:
+      · 유안타(현금성 812 + 예치금 1,133, 결합 1,946 총계 공존) → 812 + 1,133 = 1,946 ✓
+        (결합총계 1,946 은 base 가 현금성으로 채워졌으므로 무시 = 이중계상 방지)
+      · 흥국화재/대신증권(현금및예치금 단독) → 결합값 그대로 ✓
+      · 상상인(현금성 + 현금및예치금, 예치금 라인 없음) → 현금성만(예치금 미포함, 사용자
+        '무리없으면' 수준으로 용인). 일반기업(예치금 무관)은 base=현금성, +0 = 불변.
+
+    map_direct 뒤에 실행(현금성이 이미 ctx.col['cash'] 에 있음). 대용치·합산 시 표시를 남긴다.
+    """
+    combined = ctx.canon.get("bs.cash_deposits_combined")
+    dep = ctx.canon.get("bs.deposits")
+    if combined is None and dep is None:
+        return   # 금융사 현금+예치금 구조 아님 → 관여하지 않음(일반기업 불변)
+    base = ctx.col.get("cash")           # 현금성자산(map_direct 결과)
+    if base is None and combined is not None:
+        base = combined
+        ctx._mark("cash_from_combined")   # 현금성 라인 없이 결합 라벨로 채움
+    if base is None:
+        return
+    ctx.col["cash"] = base + (dep or 0)
+    if dep:
+        ctx._mark("cash_plus_deposits")   # 예치금 합산됨(순수 현금 아님)
 
 
 def rule_additive_capex(ctx: StdContext) -> None:
@@ -271,6 +306,7 @@ def rule_derive_net_debt(ctx: StdContext) -> None:
 # 순서가 의미를 가짐: 매핑/합산 → 보완 → 파생
 RULES = [
     ("map_direct", rule_map_direct),
+    ("cash_with_deposits", rule_cash_with_deposits),
     ("additive_capex", rule_additive_capex),
     ("additive_da", rule_additive_da),
     ("additive_debt", rule_additive_debt),

@@ -36,8 +36,16 @@ _HEADLINE_COLS = ("total_assets", "total_equity", "current_assets",
 _DA_SUPP = set(_DEP_CANON) | set(_AMORT_CANON) | set(_DA_TOTAL_CANON) | {"note.rd_expense"}
 
 
+# 매핑 근거 우선순위 — 값이 갈릴 때 **더 엄격하게 매핑된 후보를 우선**한다(추측 아님, 기록된
+# provenance). exact/normalized(사전 일치) > guard(명시 규칙) > fuzzy(유사도) > 미상(NULL).
+# 이로써 base 라벨(예 '매출채권'=exact)이 승급 변형('매출채권및기타유동채권'=normalized)을
+# 이겨 승급이 공존 기업을 회귀시키지 않는다. 실측: 재추출 전 fact_v2 는 stage 전부 NULL 이라
+# 이 우선순위가 무효(전부 동급) → 기존 conflict-hold 동작. 재추출 후 활성화(forward-compatible).
+_STAGE_RANK = {"exact": 3, "normalized": 2, "guard": 2, "fuzzy": 1, None: 0}
+
+
 def _resolve(cands: dict[str, list[dict]]) -> tuple[dict[str, int], dict[str, list[dict]]]:
-    """후보 dict → (확정값, lineage). **값이 갈리면 고르지 않고 보류한다**(C1/C6/C7, 2026-07-17).
+    """후보 dict → (확정값, lineage). 값이 갈리면 **더 엄격한 매핑을 우선**, 그래도 갈리면 보류.
 
     ★ 왜 max-abs 를 없앴나
     구버전은 후보가 여럿이면 **절대값이 큰 쪽**을 집었다. 근거는 "단위가 온전한 값이 더 크다"
@@ -46,8 +54,10 @@ def _resolve(cands: dict[str, list[dict]]) -> tuple[dict[str, int], dict[str, li
     게다가 진 후보는 **흔적 없이 사라져** 사후에 무엇이 경합했는지 알 수 없었다 — 그래서
     "오염된 것만 골라 삭제"가 불가능했고 전수 재파싱 말고는 길이 없었다.
 
-    ⟹ 후보가 하나면 확정. 값이 갈리면 **적재하지 않고**(결측 > 오염) lineage 에 후보 전체를
-      남긴다(statement_source.lineage 선례). 그 lineage 가 Phase C 패턴루프의 작업목록이다.
+    ⟹ ① 후보가 하나면 확정. ② 여럿이면 **매핑 근거가 가장 엄격한 것**만 남긴다(exact >
+      normalized > fuzzy) — 이건 추측이 아니라 provenance 우선순위다. ③ 최엄격 등급에서도
+      값이 갈리면 **적재하지 않고**(결측 > 오염) lineage 에 후보 전체를 기록한다
+      (statement_source.lineage 선례). 그 lineage 가 Phase C 패턴루프의 작업목록이다.
 
     실측(2015+ 199보고서): 충돌은 std_v2 소비 셀의 **0.85%**(보고서의 14.6%)뿐이고,
     대부분 max-abs 가 눈감고 고르던 진짜 애매지점이다 — is.sga 28 · is.revenue 16 · is.cogs 12.
@@ -59,9 +69,16 @@ def _resolve(cands: dict[str, list[dict]]) -> tuple[dict[str, int], dict[str, li
         if len(vals) == 1:
             canon[c] = next(iter(vals))
             continue
-        # 값 충돌 → 판정 불가. 값은 비우고, **std_v2 가 실제로 읽는 canonical 일 때만** 후보를
-        # 기록한다(아무도 안 읽는 계정의 충돌까지 남기면 lineage 가 소음으로 부푼다 —
-        # 실측: 기록 대상을 안 거르면 bs.other_current_payables 만으로 1,647행).
+        # ② 최엄격 매핑등급만 후보로 남긴다(base exact 가 승급 변형 normalized 를 이김).
+        best = max(_STAGE_RANK.get(r.get("stage"), 0) for r in rows)
+        top = [r for r in rows if _STAGE_RANK.get(r.get("stage"), 0) == best]
+        top_vals = {r["value"] for r in top}
+        if len(top_vals) == 1:
+            canon[c] = next(iter(top_vals))
+            continue
+        # ③ 최엄격 등급에서도 값이 갈림 → 판정 불가. 값은 비우고, **std_v2 가 실제로 읽는
+        # canonical 일 때만** 후보를 기록한다(아무도 안 읽는 계정의 충돌까지 남기면 lineage 가
+        # 소음으로 부푼다 — 실측: 안 거르면 bs.other_current_payables 만으로 1,647행).
         if c in CONSUMED_CANON:
             lineage[c] = sorted(
                 ({**r, "chosen": False} for r in rows),
@@ -88,7 +105,7 @@ def _collect(session, basis: str, sources: dict[str, str],
     cands: dict[str, list[dict]] = {}
     cum_seen: set[str] = set()   # interim flow 에서 누적 셀이 있었던 canonical
 
-    def _add(c, v, is_cum, rcept):
+    def _add(c, v, is_cum, rcept, stage):
         if v is None:
             return
         flow = interim and (c.startswith("is.") or c.startswith("cf."))
@@ -100,30 +117,31 @@ def _collect(session, basis: str, sources: dict[str, str],
             elif c in cum_seen:
                 return                     # 누적이 이미 있으면 3개월은 후보 아님
         cands.setdefault(c, []).append(
-            {"value": v, "rcept": rcept, "cumulative": bool(is_cum)})
+            {"value": v, "rcept": rcept, "cumulative": bool(is_cum), "stage": stage})
 
     for stmt, rcept in sources.items():
         rows = session.execute(text("""
-            SELECT canonical_account, amount_won, COALESCE(is_cumulative, false) AS is_cum
+            SELECT canonical_account, amount_won, COALESCE(is_cumulative, false) AS is_cum,
+                   mapping_stage
             FROM fact_v2
             WHERE rcept_no = :r AND basis = :b AND col_index = 0
               AND NOT is_dimensional AND canonical_account LIKE :p
         """), {"r": rcept, "b": basis, "p": _PREFIX[stmt] + "%"}).fetchall()
-        for c, v, is_cum in rows:
-            _add(c, v, is_cum, rcept)
+        for c, v, is_cum, stage in rows:
+            _add(c, v, is_cum, rcept, stage)
 
     # D&A 보조: note./is./cf. 감가상각 — 선택 source 들의 union 에서
     union = list({r for r in sources.values()})
     if union:
         rows = session.execute(text("""
             SELECT canonical_account, amount_won, COALESCE(is_cumulative, false) AS is_cum,
-                   rcept_no
+                   rcept_no, mapping_stage
             FROM fact_v2
             WHERE rcept_no = ANY(:rs) AND basis = :b AND col_index = 0
               AND NOT is_dimensional AND canonical_account = ANY(:cs)
         """), {"rs": union, "b": basis, "cs": list(_DA_SUPP)}).fetchall()
-        for c, v, is_cum, rc in rows:
-            _add(c, v, is_cum, rc)
+        for c, v, is_cum, rc, stage in rows:
+            _add(c, v, is_cum, rc, stage)
 
     # ★ 폐지된 사후 재선택 2종(C3/C4/C5) — 되살리지 말 것.
     #
@@ -406,15 +424,16 @@ def _collect_comparative(session, basis: str,
     cands: dict[str, list[dict]] = {}
     for stmt, (rcept, col, cfy) in sources.items():
         rows = session.execute(text("""
-            SELECT canonical_account, amount_won FROM fact_v2
+            SELECT canonical_account, amount_won, mapping_stage FROM fact_v2
             WHERE rcept_no = :r AND basis = :b AND col_index = :ci
               AND context_fiscal_year = :cfy AND NOT is_dimensional
               AND (canonical_account LIKE :p OR canonical_account = ANY(:da))
         """), {"r": rcept, "b": basis, "ci": col, "cfy": cfy,
                "p": _PREFIX[stmt] + "%", "da": list(_DA_SUPP)}).fetchall()
-        for c, v in rows:
+        for c, v, stage in rows:
             if v is not None:
-                cands.setdefault(c, []).append({"value": v, "rcept": rcept, "col_index": col})
+                cands.setdefault(c, []).append(
+                    {"value": v, "rcept": rcept, "col_index": col, "stage": stage})
     return _resolve(cands)
 
 

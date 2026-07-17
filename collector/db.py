@@ -448,6 +448,19 @@ def _run_migrations() -> None:
          ALTER TABLE fact_v2 ADD COLUMN IF NOT EXISTS unit_source VARCHAR(10);
          """),
 
+        ("2026_07_std_v2_value_lineage",
+         # Phase A-3(C1/C6/C7) — max-abs 채택 폐지의 짝. 후보가 갈려 **보류한** canonical 의
+         # 후보 전체를 여기에 남긴다: {canonical: [{value, rcept, chosen:false}, ...]}.
+         # 구버전은 큰 값을 집고 진 후보를 흔적 없이 버려, 사후에 무엇이 경합했는지 알 수 없었다.
+         # 이 컬럼이 **Phase C 패턴루프의 작업목록**이 된다(어떤 계정이 왜 비었는지 SQL 로 조회):
+         #   SELECT corp_code, fiscal_year, jsonb_object_keys(value_lineage)
+         #     FROM std_financials_v2 WHERE value_lineage IS NOT NULL;
+         # 선례 = statement_source.lineage(후보 전체 + chosen 기록).
+         # nullable·DEFAULT 없음 → 메타데이터 전용 즉시 반영(테이블 rewrite 없음).
+         """
+         ALTER TABLE std_financials_v2 ADD COLUMN IF NOT EXISTS value_lineage JSONB;
+         """),
+
         ("2026_07_extended_financials_view_distinct",
          # 2026-07-17 트리아지(dq_assertions extended_financials_n_facts_outlier) — 같은 rcept
          # 안에서 동일 canonical_account 가 서로 다른 표(본문표+증감명세 주석 등)에 완전히 같은

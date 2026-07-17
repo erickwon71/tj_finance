@@ -548,6 +548,11 @@ class StdFinancialV2(Base):
     is_rcept            = Column(String(14),  nullable=True, comment="IS source filing")
     cf_rcept            = Column(String(14),  nullable=True, comment="CF source filing")
     applied_rules       = Column(JSONB,       nullable=True, comment="적용된 규칙 이름 목록")
+    # 후보가 갈려 **보류한** canonical 의 후보 전체(2026-07-17, C1/C6/C7 max-abs 폐지의 짝).
+    # {canonical: [{value, rcept, chosen:false}, ...]}. 값이 왜 비었는지의 근거이자
+    # Phase C 패턴루프의 작업목록. 선례 = statement_source.lineage.
+    value_lineage       = Column(JSONB,       nullable=True,
+                                 comment="충돌로 보류한 canonical 의 후보 전체(근거)")
     calculated_at       = Column(DateTime,    default=datetime.utcnow)
 
     __table_args__ = (

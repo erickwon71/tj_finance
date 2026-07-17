@@ -2,11 +2,12 @@
 fin2 표준화 규칙 엔진 (S-레이어).
 
 현 `analyzer/aggregator.py` 의 13 휴리스틱을 **명명·순서·테스트가능 규칙**으로 이식.
-입력: canonical→value(원 단위) dict(중복은 max-abs 로 이미 해소). 출력: std_financials_v2 컬럼.
+입력: canonical→value(원 단위) dict(중복 후보는 build._resolve 가 이미 판정 — 충돌은 보류). 출력: std_financials_v2 컬럼.
 
 fin2 구조적 단순화:
   - statement_source 가 BS/IS/CF source 를 분리 선택 → 섹션 혼용 fixup 대부분 불필요.
-  - canonical 코드가 명확 → 'revenue<1억→큰값 교체' 등은 수집단계 max-abs 로 흡수.
+  - canonical 코드가 명확 → 'revenue<1억→큰값 교체' 같은 값 고르기는 하지 않는다.
+    후보가 갈리면 build._resolve 가 **보류**(결측 > 오염, 2026-07-17).
 남은 본질 규칙만 명시적으로 둔다: 직접매핑·합산(CAPEX/D&A)·보완(net_income/controlling_ni)·파생(EBITDA/FCF/NetDebt).
 
 각 규칙은 StdContext 를 제자리 변경하고, 값에 영향을 주면 applied 에 이름을 남긴다.
@@ -52,6 +53,22 @@ VALUE_COLS = (
     | {"capex", "depreciation", "amortization", "da_total", "ebitda", "fcf", "net_debt"}
 )
 
+# 차입성부채 세부 → 단기/장기 합산 컴포넌트(개념별 1캐논 → 이중계상 없음)
+_ST_DEBT_PARTS = ("bs.short_term_debt", "bs.current_lt_debt", "bs.current_bonds")
+_LT_DEBT_PARTS = ("bs.long_term_debt", "bs.bonds")
+
+# ★ std_v2 컬럼에 실제로 닿는 canonical 전체(직접매핑 + 합산/보완/파생 입력).
+# build._collect 은 접두어(bs./is./cf.)로 훑기 때문에 **아무도 안 읽는 canonical** 도 딸려온다
+# (bs.other_current_payables·cf.ppe_proceeds 등). 그런 것의 충돌까지 value_lineage 에 남기면
+# 컬럼만 부풀고 패턴루프의 작업목록이 소음에 묻힌다 → 소비되는 것만 기록한다.
+CONSUMED_CANON = (
+    set(DIRECT_MAP)
+    | set(_CAPEX_CANON) | set(_DEP_CANON) | set(_AMORT_CANON) | set(_DA_TOTAL_CANON)
+    | set(_ST_DEBT_PARTS) | set(_LT_DEBT_PARTS)
+    | {"note.rd_expense", "is.noncontrolling_ni",
+       "is.insurance_revenue", "is.operating_revenue_ins", "is.interest_revenue"}
+)
+
 
 @dataclass
 class StdContext:
@@ -59,7 +76,7 @@ class StdContext:
     fiscal_year: int
     fiscal_period: str
     basis: str                       # consolidated / separate
-    canon: dict[str, int]            # canonical → value(원), 중복 max-abs 해소됨
+    canon: dict[str, int]            # canonical → value(원). 충돌 후보는 이미 보류돼 없음
     col: dict[str, int | None] = field(default_factory=dict)
     applied: list[str] = field(default_factory=list)
 
@@ -69,16 +86,41 @@ class StdContext:
 
 
 # ── 규칙들 ────────────────────────────────────────────────────────────────
+# 한 std 컬럼에 여러 canonical 이 매핑될 때의 **명시적 우선순위**(앞이 이김).
+# 현재 해당하는 컬럼은 interest_expense 뿐이다(그 외 DIRECT_MAP 은 1:1).
+#   is.interest_expense(이자비용) = 이 컬럼이 뜻하는 바로 그 개념.
+#   is.finance_cost(금융원가)     = 이자비용을 **포함하는 상위 개념**. 회사가 이자비용을 따로
+#                                  주지 않을 때만 쓰는 대용치.
+_COL_PRIORITY = {
+    "interest_expense": ("is.interest_expense", "is.finance_cost"),
+}
+
+
 def rule_map_direct(ctx: StdContext) -> None:
-    """canonical → std 컬럼 직접 매핑(비합산). 중복 컬럼은 max-abs 우선."""
+    """canonical → std 컬럼 직접 매핑(비합산).
+
+    ★ 2026-07-17(C7): **max-abs 폐지**. 구버전은 같은 컬럼에 후보가 여럿이면 절대값 큰 쪽을
+    집었다. 유일한 다중 컬럼인 interest_expense 에서 이는 **항상 금융원가(상위개념·더 큼)를
+    골라** 둘 다 공시한 기업의 이자비용을 체계적으로 과대계상한다는 뜻이다.
+    ⟹ 개념 우선순위(_COL_PRIORITY)로 **명시 선택**하고, 대용치를 쓴 경우 표시를 남긴다.
+    """
+    for col, order in _COL_PRIORITY.items():
+        for canon in order:
+            v = ctx.canon.get(canon)
+            if v is not None:
+                ctx.col[col] = v
+                ctx._mark("map_direct")
+                if canon != order[0]:
+                    # 대용치 채택 — 어떤 개념으로 채웠는지 남긴다(정확한 이자비용이 아님).
+                    ctx._mark(f"map_direct_proxy:{col}={canon}")
+                break
+
     for canon, val in ctx.canon.items():
         col = DIRECT_MAP.get(canon)
-        if col is None or val is None:
+        if col is None or val is None or col in _COL_PRIORITY:
             continue
-        cur = ctx.col.get(col)
-        if cur is None or abs(val) > abs(cur):
-            ctx.col[col] = val
-            ctx._mark("map_direct")
+        ctx.col[col] = val
+        ctx._mark("map_direct")
 
 
 def rule_additive_capex(ctx: StdContext) -> None:
@@ -145,17 +187,12 @@ def rule_revenue_from_cogs_gp(ctx: StdContext) -> None:
             ctx._mark("revenue_from_cogs_gp")
 
 
-# 차입성부채 세부 → 단기/장기 합산 컴포넌트(개념별 1캐논 → 이중계상 없음)
-_ST_DEBT_PARTS = ("bs.short_term_debt", "bs.current_lt_debt", "bs.current_bonds")
-_LT_DEBT_PARTS = ("bs.long_term_debt", "bs.bonds")
-
-
 def rule_additive_debt(ctx: StdContext) -> None:
     """단기/장기차입금 = 차입금 + 유동성장기부채·유동성사채 / 사채 등 세부 합산.
 
     세부항목이 하나라도 있으면 합산값으로 덮어 과소계상을 보정한다(차입금만 있던 기업은
     동일값 = 변화 없음, 세부만 있던 기업은 NULL→값). 각 leaf 개념은 단일 canonical 로만
-    매핑돼 max-abs 후 합산 → 이중계상 없음. map_direct 뒤에 실행.
+    매핑되므로 합산해도 이중계상 없음. map_direct 뒤에 실행.
 
     가드: 일부 보고서가 차입금을 롤업으로도 태깅해 합산이 총부채를 넘으면(이중계상 의심)
     합산을 적용하지 않고 기존(map_direct) 값을 유지한다(검증 표본 1,044중 2건만 해당)."""

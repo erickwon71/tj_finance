@@ -96,6 +96,41 @@ def test_interim_cumulative_columns():
     assert rev.get((0, 2024)) != 17_044_235_442  # 3개월이 col0 으로 새면 안 됨
 
 
+def test_note_ref_residue_stripped_to_exact_match():
+    """<주석N/> 잔재를 뗀 뒤 **정확일치**로 매핑된다(퍼지에 기대지 않는다).
+
+    실측 원문(DB손해보험 20230927000457):
+      <TD>Ⅵ. 이익잉여금<주석19/>,39&gt;</TD>
+    DART 편집기가 '<주석19,39>' 를 엘리먼트+꼬리텍스트로 저장해 itertext 가 '이익잉여금,39>' 를
+    만든다. 이건 유사한 이름이 아니라 정제 실패이므로 **파서가 고칠 일**이다(계획 §2 원칙 4).
+    이 테스트가 깨지면 8.5경 사고의 그 계정이 다시 canonical 을 잃는다.
+    """
+    from parser.common.amount_normalizer import normalize_account_name
+    assert normalize_account_name("이익잉여금,39>") == "이익잉여금"
+    assert normalize_account_name("4. 기타포괄손익-공정가치측정금융자산,22,32,42,44>") \
+        == "기타포괄손익-공정가치측정금융자산"
+    assert normalize_account_name("Ⅰ.현금및현금성자산(주석 9,37)") == "현금및현금성자산"
+    # 무관한 라벨은 건드리지 않는다(괄호 보존).
+    assert normalize_account_name("당기순이익(손실)") == "당기순이익(손실)"
+
+
+def test_db_insurance_retained_earnings_canary():
+    """★ 8.5경 사고 카나리아: DB손해보험 별도 이익잉여금이 정상 규모 + 정확매핑이어야 한다."""
+    p = Path(__file__).resolve().parents[2] / (
+        "raw_report/KOSPI/00159102_DB손해보험/half/2023/20230927000457.xml")
+    if not p.exists():
+        return
+    facts = extract_facts(p, rcept_no="20230927000457", corp_code="00159102",
+                          report_fiscal_year=2023, report_fiscal_period="H1")
+    got = [f for f in facts if f.canonical_account == "bs.retained_earnings"
+           and f.basis == "separate" and f.col_index == 0]
+    assert got, "별도 이익잉여금이 canonical 로 잡히지 않음(주석잔재 정제 회귀?)"
+    assert got[0].amount_won == 8_564_682_463_043, got[0].amount_won   # 구버전: ×10⁶ 오염
+    assert got[0].mapping_stage in ("exact", "normalized"), got[0].mapping_stage
+    assert got[0].unit_source == "declared"
+    assert got[0].section_kind == "재무제표"
+
+
 def test_fuzzy_mapping_gets_no_canonical():
     """퍼지 매치는 canonical 을 받지 못한다(M1/M2, 추측 금지).
 

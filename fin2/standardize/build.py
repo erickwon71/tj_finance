@@ -3,14 +3,16 @@ fin2 S-레이어 조립: statement_source 선택 → fact_v2 수집 → 규칙�
 
 (corp, fy, period, basis) 마다:
   1) statement_source 에서 BS/IS/CF source filing 조회.
-  2) 각 statement source 에서 해당 접두어 canonical 의 col0 값 수집(중복 max-abs).
+  2) 각 statement source 에서 해당 접두어 canonical 의 col0 값 수집
+     (후보 다중 시 **값이 갈리면 보류** + value_lineage 기록 — 고르지 않는다).
      + D&A 보조: 선택 source 들의 note./is./cf. 감가상각 canonical 합산용 수집.
   3) rules.run_rules 로 std 컬럼 산출.
   4) period_end 추정 · shares_out 조회 · DQ(항등식+교차연도) · std_financials_v2 upsert.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+import calendar
+from datetime import date, datetime
 
 from loguru import logger
 from sqlalchemy import text, bindparam
@@ -18,12 +20,14 @@ from sqlalchemy.dialects.postgresql import insert
 
 from collector.models import StdFinancialV2
 from fin2.standardize.rules import (
-    StdContext, run_rules, validate_equations, VALUE_COLS,
+    StdContext, run_rules, validate_equations, VALUE_COLS, CONSUMED_CANON,
     _DEP_CANON, _AMORT_CANON, _DA_TOTAL_CANON,
 )
 
 _PREFIX = {"BS": "bs.", "IS": "is.", "CF": "cf."}
-_FP_MONTH_DAY = {"FY": (12, 31), "H1": (6, 30), "Q1": (3, 31), "Q3": (9, 30), "Q2": (6, 30), "Q4": (12, 31)}
+# 기간 끝 = **그 기업의 FY 말일에서 N개월 뒤로**. (달력월 하드코딩이 아니라 결산월 상대 — 3월
+# 결산사의 H1 은 9/30 이다.) 실측 검증: 결산월 3·6·9월사에서 권위값(filings.period_end_date)과 일치.
+_FP_MONTHS_BEFORE_FY_END = {"FY": 0, "Q4": 0, "Q3": 3, "H1": 6, "Q2": 6, "Q1": 9}
 # 실제 재무제표 행이면 최소 하나는 있어야 하는 BS/IS 핵심 헤드라인(전무=빈/phantom 행).
 _HEADLINE_COLS = ("total_assets", "total_equity", "current_assets",
                   "revenue", "net_income", "operating_income", "gross_profit")
@@ -32,37 +36,71 @@ _HEADLINE_COLS = ("total_assets", "total_equity", "current_assets",
 _DA_SUPP = set(_DEP_CANON) | set(_AMORT_CANON) | set(_DA_TOTAL_CANON) | {"note.rd_expense"}
 
 
-def _collect(session, basis: str, sources: dict[str, str],
-             fiscal_period: str | None = None) -> dict[str, int]:
+def _resolve(cands: dict[str, list[dict]]) -> tuple[dict[str, int], dict[str, list[dict]]]:
+    """후보 dict → (확정값, lineage). **값이 갈리면 고르지 않고 보류한다**(C1/C6/C7, 2026-07-17).
+
+    ★ 왜 max-abs 를 없앴나
+    구버전은 후보가 여럿이면 **절대값이 큰 쪽**을 집었다. 근거는 "단위가 온전한 값이 더 크다"
+    였는데, 이는 단일 사례(엘브이엠씨 USD/KRW)를 전 충돌에 일반화한 것이고 실제로는
+    **원문 단위 오기**(3S ×10⁶·네오크레마 ×10³)가 실재하므로 '큰 쪽=정답'이 성립하지 않는다.
+    게다가 진 후보는 **흔적 없이 사라져** 사후에 무엇이 경합했는지 알 수 없었다 — 그래서
+    "오염된 것만 골라 삭제"가 불가능했고 전수 재파싱 말고는 길이 없었다.
+
+    ⟹ 후보가 하나면 확정. 값이 갈리면 **적재하지 않고**(결측 > 오염) lineage 에 후보 전체를
+      남긴다(statement_source.lineage 선례). 그 lineage 가 Phase C 패턴루프의 작업목록이다.
+
+    실측(2015+ 199보고서): 충돌은 std_v2 소비 셀의 **0.85%**(보고서의 14.6%)뿐이고,
+    대부분 max-abs 가 눈감고 고르던 진짜 애매지점이다 — is.sga 28 · is.revenue 16 · is.cogs 12.
     """
-    선택 source 들에서 canonical→value(원) 수집.
+    canon: dict[str, int] = {}
+    lineage: dict[str, list[dict]] = {}
+    for c, rows in cands.items():
+        vals = {r["value"] for r in rows}
+        if len(vals) == 1:
+            canon[c] = next(iter(vals))
+            continue
+        # 값 충돌 → 판정 불가. 값은 비우고, **std_v2 가 실제로 읽는 canonical 일 때만** 후보를
+        # 기록한다(아무도 안 읽는 계정의 충돌까지 남기면 lineage 가 소음으로 부푼다 —
+        # 실측: 기록 대상을 안 거르면 bs.other_current_payables 만으로 1,647행).
+        if c in CONSUMED_CANON:
+            lineage[c] = sorted(
+                ({**r, "chosen": False} for r in rows),
+                key=lambda r: (r["value"] is None, r["value"]),
+            )
+    return canon, lineage
+
+
+def _collect(session, basis: str, sources: dict[str, str],
+             fiscal_period: str | None = None) -> tuple[dict[str, int], dict[str, list[dict]]]:
+    """
+    선택 source 들에서 canonical→value(원) 수집. 반환 (canon, lineage).
 
     중복 셀 해소:
-      - 기본: max-abs(중복 컬럼은 절대값 큰 쪽).
       - **반기/3분기(H1/Q3) flow(IS/CF)**: Track A 보고서는 같은 acode 에 누적(YTD)·3개월 셀이
-        둘 다 col_index=0 으로 존재한다. std_v2 는 누적값을 저장해야 하므로 max-abs 가 아니라
-        **누적 셀(is_cumulative)을 권위**로 채택한다(누적 셀이 없을 때만 3개월로 폴백).
-        (max-abs 는 Q1 세액공제 등으로 3개월 절대값이 누적을 넘으면 오선택 — tax_expense 등.)
+        둘 다 col_index=0 으로 존재한다. std_v2 는 누적값을 저장해야 하므로 **누적 셀
+        (is_cumulative)만** 후보로 삼는다(누적 셀이 아예 없을 때만 3개월). 이건 추측이 아니라
+        std_v2 의 저장 규약이다 — 다만 **누적 셀끼리 값이 갈리면 보류**한다(구버전은 max-abs).
         BS(instant)·FY·Q1 은 영향 없음.
+      - 그 외: 후보를 모아 _resolve 가 판정(단일=확정 / 충돌=보류+lineage).
     """
     interim = fiscal_period in ("H1", "Q3")
-    canon: dict[str, int] = {}
-    cum_locked: set[str] = set()  # interim flow 에서 누적 셀로 확정된 canonical
+    # canonical → [{value, rcept, cumulative}] 후보 누적
+    cands: dict[str, list[dict]] = {}
+    cum_seen: set[str] = set()   # interim flow 에서 누적 셀이 있었던 canonical
 
-    def _merge(c, v, is_cum):
+    def _add(c, v, is_cum, rcept):
         if v is None:
             return
-        if interim and (c.startswith("is.") or c.startswith("cf.")):
+        flow = interim and (c.startswith("is.") or c.startswith("cf."))
+        if flow:
             if is_cum:
-                if c not in cum_locked or abs(v) > abs(canon[c]):
-                    canon[c] = v
-                    cum_locked.add(c)
-            elif c not in cum_locked:  # 3개월 폴백(누적 미확정인 경우만)
-                if c not in canon or abs(v) > abs(canon[c]):
-                    canon[c] = v
-        else:
-            if c not in canon or abs(v) > abs(canon[c]):
-                canon[c] = v
+                if c not in cum_seen:      # 누적 등장 → 그간의 3개월 후보는 폐기
+                    cands.pop(c, None)
+                    cum_seen.add(c)
+            elif c in cum_seen:
+                return                     # 누적이 이미 있으면 3개월은 후보 아님
+        cands.setdefault(c, []).append(
+            {"value": v, "rcept": rcept, "cumulative": bool(is_cum)})
 
     for stmt, rcept in sources.items():
         rows = session.execute(text("""
@@ -72,88 +110,78 @@ def _collect(session, basis: str, sources: dict[str, str],
               AND NOT is_dimensional AND canonical_account LIKE :p
         """), {"r": rcept, "b": basis, "p": _PREFIX[stmt] + "%"}).fetchall()
         for c, v, is_cum in rows:
-            _merge(c, v, is_cum)
+            _add(c, v, is_cum, rcept)
 
     # D&A 보조: note./is./cf. 감가상각 — 선택 source 들의 union 에서
     union = list({r for r in sources.values()})
     if union:
         rows = session.execute(text("""
-            SELECT canonical_account, amount_won, COALESCE(is_cumulative, false) AS is_cum
+            SELECT canonical_account, amount_won, COALESCE(is_cumulative, false) AS is_cum,
+                   rcept_no
             FROM fact_v2
             WHERE rcept_no = ANY(:rs) AND basis = :b AND col_index = 0
               AND NOT is_dimensional AND canonical_account = ANY(:cs)
         """), {"rs": union, "b": basis, "cs": list(_DA_SUPP)}).fetchall()
-        for c, v, is_cum in rows:
-            _merge(c, v, is_cum)
+        for c, v, is_cum, rc in rows:
+            _add(c, v, is_cum, rc)
 
-    # 영업이익 오선택 교정: operating_income 이 net_income 과 원 단위 정확 일치하면 Track B 가
-    # 순이익 라인을 is.operating_income canonical 로 오매핑 + max-abs 로 그 값을 오선택한 신호다
-    # (정상적으로 영업이익==순이익 이 원단위까지 같을 확률은 사실상 0). 순이익과 다른 비영(非0)
-    # 영업이익 후보가 있으면 그중 max-abs 를 채택한다. FY/Q1(비interim) 에만 적용(interim 은
-    # 누적/3개월 구분이 있어 별도) — 후보가 없으면 그대로 두고 DQ/어서션이 잡도록 남긴다.
-    op, ni = canon.get("is.operating_income"), canon.get("is.net_income")
-    if op is not None and ni is not None and op == ni:
-        # interim(H1/Q3)은 누적셀만 후보로(3개월셀 오선택 방지). FY/Q1 은 전체 col0 후보.
-        cum_filter = "AND COALESCE(is_cumulative, false)" if interim else ""
-        alt = session.execute(text(f"""
-            SELECT amount_won FROM fact_v2
-            WHERE rcept_no = ANY(:rs) AND basis = :b AND col_index = 0
-              AND NOT is_dimensional AND canonical_account = 'is.operating_income'
-              AND amount_won IS NOT NULL AND amount_won <> :ni AND amount_won <> 0
-              {cum_filter}
-        """), {"rs": list({r for r in sources.values()}), "b": basis, "ni": ni}).fetchall()
-        cands = [r[0] for r in alt]
-        if cands:
-            canon["is.operating_income"] = max(cands, key=abs)
-
-    # 지배주주 귀속 순이익 총포괄 오염 교정: Track B(텍스트) 보고서는 손익계산서의
-    # '지배기업 소유주 귀속 당기순이익'과 포괄손익계산서의 '지배기업 소유주 귀속 총포괄손익'을
-    # 회사마다 '지배기업소유주지분' 같은 동일 축약 라벨로 표기해 둘 다 is.controlling_ni 로
-    # 매핑된다(account_maps/is_accounts.py alias). max-abs 는 OCI 를 포함한 총포괄분(더 큼)을
-    # 오선택 → controlling_ni > net_income 항등식 위반(삼성전자 2023: 17.85조 채택, 정답 14.47조).
-    # 회계 항등식 controlling_ni + noncontrolling_ni = net_income 을 이용해, 후보가 여럿일 때
-    # (net_income - noncontrolling_ni)=기대 지배분에 가장 가까운 값을 채택한다. 후보가 하나뿐인
-    # 기업(정당하게 이 라벨로만 순이익 귀속분을 보고)은 그대로 유지되어 안전.
-    cni, ni2 = canon.get("is.controlling_ni"), canon.get("is.net_income")
-    if cni is not None and ni2 is not None:
-        nci = canon.get("is.noncontrolling_ni") or 0
-        expected = ni2 - nci
-        # 현재 선택값이 기대 지배분에서 유의미하게 벗어나면(총포괄 오염 의심) 후보 재선택.
-        if abs(cni - expected) > abs(expected) * 0.02 + 1_000_000:
-            cum_filter = "AND COALESCE(is_cumulative, false)" if interim else ""
-            alt = session.execute(text(f"""
-                SELECT DISTINCT amount_won FROM fact_v2
-                WHERE rcept_no = ANY(:rs) AND basis = :b AND col_index = 0
-                  AND NOT is_dimensional AND canonical_account = 'is.controlling_ni'
-                  AND amount_won IS NOT NULL
-                  {cum_filter}
-            """), {"rs": list({r for r in sources.values()}), "b": basis}).fetchall()
-            cands = [r[0] for r in alt]
-            if cands:
-                canon["is.controlling_ni"] = min(cands, key=lambda x: abs(x - expected))
-    return canon
+    # ★ 폐지된 사후 재선택 2종(C3/C4/C5) — 되살리지 말 것.
+    #
+    #  · operating_income 재선택: op==ni 면 오매핑 신호로 보고 **다른 후보 중 max-abs** 채택.
+    #  · controlling_ni 재선택: 회계 항등식(controlling+noncontrolling=net)에 비춰
+    #    (net-nci)에 **가장 가까운 후보**를 채택.
+    #
+    # 둘 다 "값을 로직으로 정하는" 행위이고, run_rules **이전**에 돌아 applied_rules 에
+    # 기록조차 남지 않았다(§2-A C3~C5). 즉 DB 에서 이 값이 원문인지 코드가 고른 것인지
+    # 구분 불가 — 이번 재구축이 없애려는 바로 그 성질이다.
+    #
+    # 대체: 애초에 후보가 갈리면 **보류**한다(_resolve). 총포괄 오염(삼성전자 2023 17.85조 vs
+    # 정답 14.47조)의 근본 원인은 '총포괄 귀속' 라인이 is.controlling_ni 로 매핑되던 것이고,
+    # 그건 text.py 의 귀속 섹션 가드(comp_attr)와 account_mapper 의 포괄손익 가드가 **입구에서**
+    # 막는다. 그래도 두 값이 남아 갈리면 이제 오염 대신 결측이 된다.
+    return _resolve(cands)
 
 
 def _period_end(session, corp_code: str, fiscal_year: int, fiscal_period: str,
                 rcept: str | None = None) -> date | None:
-    """period_end. 우선 source filing 의 period_end_date(보고 (YYYY.MM) 말일, PRD 01a)를 쓴다
-    — 결산월 변경·stub 에서도 정확. 없으면 비12월 결산은 corporations.fiscal_month 로 FY 말일 보정(폴백)."""
+    """period_end. **① 원문 filing 의 period_end_date(권위) → ② 기업 결산월로 도출 → ③ None.**
+
+    ★ 2026-07-17(F6) — '12월 가정' 제거 + 비12월 결산 오산 교정:
+
+    구버전은 filing 이 없으면 `_FP_MONTH_DAY` 로 **H1=6/30 · Q1=3/31 을 하드코딩**하고, FY 는
+    `fiscal_month or 12` 로 **결산월을 모르면 12월이라고 가정**했다. 둘 다 틀렸다:
+
+      · 비12월 결산 기업에서 하드코딩은 **실제와 다르다**(실측: 권위값과 비교해 결산월 3월사
+        2,116행 중 **1,827행 불일치**, 6월사 1,978중 1,588 불일치). 3월 결산사의 H1 은 6/30 이
+        아니라 **9/30** 이다.
+      · 결산월 미상인데 12월로 가정하면 그건 데이터가 아니라 추측이다.
+
+    대신 **회사가 신고한 결산월(corporations.fiscal_month)** 과 분기의 정의로 도출한다 —
+    FY 말일에서 {FY:0, Q3:3, H1:6, Q1:9}개월 뒤로 물린 달의 말일. 이 규칙은 실측으로 검증했다
+    (결산월 3·6·9월사 전 기간에서 권위값과 일치). 결산월이 없으면 **도출하지 않고 None**.
+
+    ①이 99.14%(filings.period_end_date 보유율)를 덮고, ②는 주로 비교컬럼 파생행(rcept 없음,
+    31,064행)에 쓰인다.
+    """
     if rcept:
         pe = session.execute(text(
             "SELECT period_end_date FROM filings WHERE rcept_no=:r"), {"r": rcept}).scalar()
         if pe:
             return pe
-    md = _FP_MONTH_DAY.get(fiscal_period, (12, 31))
+
+    off = _FP_MONTHS_BEFORE_FY_END.get(fiscal_period)
+    if off is None:
+        return None
+    fm = session.execute(text(
+        "SELECT fiscal_month FROM corporations WHERE corp_code=:c"), {"c": corp_code}).scalar()
+    if not fm:
+        return None      # 결산월 미상 → 추측하지 않는다(구버전은 12월로 가정했다)
     try:
-        if fiscal_period == "FY":
-            fm = session.execute(text(
-                "SELECT fiscal_month FROM corporations WHERE corp_code=:c"
-            ), {"c": corp_code}).scalar() or 12
-            import calendar
-            last = calendar.monthrange(fiscal_year, fm)[1]
-            return date(fiscal_year, fm, last)
-        return date(fiscal_year, md[0], md[1])
-    except Exception:
+        # FY 말일(fiscal_year, fm)에서 off 개월 뒤로 → 그 달의 말일
+        total = fiscal_year * 12 + (fm - 1) - off
+        y, m = divmod(total, 12)
+        return date(y, m + 1, calendar.monthrange(y, m + 1)[1])
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -163,18 +191,20 @@ def _future_guard(dq: int, period_end) -> int:
     return 3 if (period_end is not None and period_end > date.today()) else dq
 
 
-def _shares_out(session, corp_code: str, period_end: date | None) -> int | None:
-    if not period_end:
-        return None
-    row = session.execute(text("""
-        SELECT shares_out FROM stock_prices
-        WHERE stock_code = (SELECT stock_code FROM corporations WHERE corp_code = :cc)
-          AND shares_out IS NOT NULL
-          AND trade_date BETWEEN :d1 AND :d2
-        ORDER BY ABS(trade_date - :target) ASC LIMIT 1
-    """), {"cc": corp_code, "d1": period_end - timedelta(days=30),
-           "d2": period_end + timedelta(days=7), "target": period_end}).fetchone()
-    return row[0] if row else None
+# ★ C17 폐지(2026-07-17): `_shares_out` — period_end 기준 **−30/+7일 안에서 가장 가까운 거래일**의
+# stock_prices.shares_out 을 std_v2 에 적재하던 함수를 제거했다.
+#
+# 왜: 그 값은 **이 보고서가 말하는 주식수가 아니다.** 시세 테이블의 다른 날짜 스냅샷을 가져와
+# 재무제표 행에 붙인 것이고, 붙인 날짜조차 기록하지 않아 사후 검증이 불가능했다. 무상증자·
+# 분할·자사주 소각이 기말 근처에 있으면 조용히 틀린다.
+#
+# 대신: 주식수는 **보고서에서 읽는다**(fin2/extract/shares.py → std_v2.shares_out 백필).
+# 여기서는 record 에 shares_out 키를 **아예 넣지 않는다** → ON CONFLICT 갱신 대상에서 빠져
+# 기존 보고서 유래 값이 **보존**된다(None 을 넣으면 그 값을 지워버린다).
+#
+# ⚠ 재구축(Phase C)으로 std_v2 행이 새로 INSERT 되면 shares_out 은 NULL 로 시작한다 →
+# **직후 shares 재백필 필수**(계획 §4 Phase C · 핸드오프 §6-1). 놓치면 valuation_daily 의
+# PER/PBR/시총이 전부 NULL 이 된다.
 
 
 def _dq_cross_year(session, corp_code: str, basis: str, col: dict) -> int:
@@ -225,16 +255,14 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
 
     written = 0
     for (fy, fp, basis, is_stub), sources in groups.items():
-        canon = _collect(session, basis, sources, fiscal_period=fp)
+        canon, lineage = _collect(session, basis, sources, fiscal_period=fp)
         ctx = StdContext(corp_code=corp_code, fiscal_year=fy, fiscal_period=fp, basis=basis, canon=canon)
         run_rules(ctx)
 
         period_end = _period_end(session, corp_code, fy, fp,
                                  sources.get("BS") or sources.get("IS") or sources.get("CF"))
-        shares_out = _shares_out(session, corp_code, period_end)
-        # is_ifrs 도출: Track A(xbrl_acode) source 는 ifrs-full_/dart_ 택소노미만 방출 → IFRS.
-        # 그 외(Track B 텍스트)는 회계연도로 판정(K-IFRS 상장사 의무화 = FY2011~).
-        is_ifrs = _derive_is_ifrs(session, sources, fy)
+        # is_ifrs: Track A(xbrl_acode) source 가 있으면 IFRS(원문 증거). 없으면 None(연도 추론 폐지).
+        is_ifrs = _derive_is_ifrs(session, sources)
 
         dq = max(validate_equations(ctx.col),
                  _dq_cross_year(session, corp_code, basis, ctx.col) if fp == "FY" else 1)
@@ -250,13 +278,16 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
                 {"c": corp_code, "y": fy, "p": fp, "b": basis, "s": is_stub})
             continue
 
+        # ★ shares_out 은 **의도적으로 넣지 않는다**(C17): 넣지 않으면 ON CONFLICT 갱신 대상에서
+        # 빠져 보고서 유래 값(shares.py)이 보존된다. None 을 넣으면 그 값을 지운다.
         record = {
             "corp_code": corp_code, "fiscal_year": fy, "fiscal_period": fp,
             "statement_type": basis, "version": 1, "is_stub": is_stub,
             "period_end": period_end, "is_ifrs": is_ifrs,
             "data_quality": dq,
             "bs_rcept": sources.get("BS"), "is_rcept": sources.get("IS"), "cf_rcept": sources.get("CF"),
-            "applied_rules": ctx.applied, "shares_out": shares_out,
+            "applied_rules": ctx.applied,
+            "value_lineage": lineage or None,
             "calculated_at": datetime.utcnow(),
             **{c: ctx.col.get(c) for c in VALUE_COLS},
         }
@@ -271,15 +302,22 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
     return written
 
 
-def _derive_is_ifrs(session, sources: dict[str, str], fy: int) -> bool:
+def _derive_is_ifrs(session, sources: dict[str, str]) -> bool | None:
     """
-    std_v2 행의 회계기준(IFRS vs K-GAAP) 도출.
+    std_v2 행의 회계기준(IFRS vs K-GAAP). **증거가 있을 때만** True, 없으면 None.
 
     - Track A(xbrl_acode) source 가 하나라도 있으면 IFRS: 추출기(xbrl.py)는 ifrs-full_/dart_
       표준개념(ACODE)만 방출하고, 구 K-GAAP ACODE 보고서는 Track A 0행이라 Track B 로 가므로
-      xbrl_acode fact 존재 ⟺ IFRS 택소노미.
-    - 그 외(전부 Track B 텍스트)는 회계연도로 판정: K-IFRS 상장사 의무적용은 FY2011~ 이므로
-      fy≥2011 → IFRS, fy≤2010 → K-GAAP. (2009~10 조기채택사는 XBRL 제출 시 위 Track A 로 포착.)
+      **xbrl_acode fact 존재 ⟺ IFRS 택소노미**(원문에서 읽은 증거).
+
+    ★ 2026-07-17(F7): `return fy >= 2011` **연도 추론을 제거**했다. K-IFRS 상장사 의무적용이
+    FY2011~ 인 것은 사실이지만, 그건 **보고서에서 읽은 값이 아니라 연도로 미룬 추정**이고
+    (사용자 원칙: "로직으로 값을 정해서 db에 적재하는 것은 없도록 해") 틀릴 여지도 있다
+    (비상장 구간·재작성본 등). ⟹ 증거 없으면 **None**.
+
+    소비측 영향 없음: display 는 이미 `curr.get('is_ifrs', True)` 로 NULL 을 IFRS 로 표시하고,
+    std_v2 에는 이미 NULL 행이 55,755개 있다(비교컬럼 파생행). 원문에서 회계기준 문구를 읽어
+    채우는 것은 Phase C 파서 개선 과제.
     """
     rcepts = [r for r in {v for v in sources.values()} if r]
     if rcepts:
@@ -289,7 +327,7 @@ def _derive_is_ifrs(session, sources: dict[str, str], fy: int) -> bool:
         """).bindparams(bindparam("rs", expanding=True)), {"rs": rcepts}).first()
         if row is not None:
             return True
-    return fy >= 2011
+    return None
 
 
 _COMP_MARKER = "comparative_fallback"
@@ -327,14 +365,13 @@ def standardize_kgaap_gap_corp(session, corp_code: str) -> int:
     for (fy, fp, basis), sources in groups.items():
         if (fy, fp, basis) in existing:
             continue  # 기존 행 불가침(own/comparative 우선)
-        canon = _collect(session, basis, sources, fiscal_period=fp)
+        canon, lineage = _collect(session, basis, sources, fiscal_period=fp)
         if not (canon.get("is.revenue") or canon.get("bs.total_assets")):
             continue
         ctx = StdContext(corp_code=corp_code, fiscal_year=fy, fiscal_period=fp, basis=basis, canon=canon)
         run_rules(ctx)
         period_end = _period_end(session, corp_code, fy, fp,
                                  sources.get("BS") or sources.get("IS") or sources.get("CF"))
-        shares_out = _shares_out(session, corp_code, period_end)
         dq = max(validate_equations(ctx.col),
                  _dq_cross_year(session, corp_code, basis, ctx.col) if fp == "FY" else 1, 2)
         dq = _future_guard(dq, period_end)
@@ -344,7 +381,8 @@ def standardize_kgaap_gap_corp(session, corp_code: str) -> int:
             "period_end": period_end, "is_ifrs": False, "data_quality": dq,
             "bs_rcept": sources.get("BS"), "is_rcept": sources.get("IS"), "cf_rcept": sources.get("CF"),
             "applied_rules": list(ctx.applied) + [_KGAAP_MARKER],
-            "shares_out": shares_out, "calculated_at": datetime.utcnow(),
+            "value_lineage": lineage or None,
+            "calculated_at": datetime.utcnow(),
             **{c: ctx.col.get(c) for c in VALUE_COLS},
         }
         stmt = insert(StdFinancialV2).values(record)
@@ -358,17 +396,14 @@ def standardize_kgaap_gap_corp(session, corp_code: str) -> int:
     return written
 
 
-def _collect_comparative(session, basis: str, sources: dict[str, tuple]) -> dict[str, int]:
-    """비교컬럼 수집. sources: {statement: (rcept, col_index, cfy)}.
-    해당 source 의 col_index(1=전기/2=전전기)·context_fiscal_year=cfy 셀에서 canonical→value."""
-    canon: dict[str, int] = {}
+def _collect_comparative(session, basis: str,
+                         sources: dict[str, tuple]) -> tuple[dict[str, int], dict[str, list[dict]]]:
+    """비교컬럼 수집. sources: {statement: (rcept, col_index, cfy)}. 반환 (canon, lineage).
 
-    def _merge(c, v):
-        if v is None:
-            return
-        if c not in canon or abs(v) > abs(canon[c]):
-            canon[c] = v
-
+    해당 source 의 col_index(1=전기/2=전전기)·context_fiscal_year=cfy 셀에서 canonical→value.
+    _collect 과 동일하게 **max-abs 채택·항등식 재선택을 폐지**하고 충돌은 보류한다(C6).
+    """
+    cands: dict[str, list[dict]] = {}
     for stmt, (rcept, col, cfy) in sources.items():
         rows = session.execute(text("""
             SELECT canonical_account, amount_won FROM fact_v2
@@ -378,31 +413,9 @@ def _collect_comparative(session, basis: str, sources: dict[str, tuple]) -> dict
         """), {"r": rcept, "b": basis, "ci": col, "cfy": cfy,
                "p": _PREFIX[stmt] + "%", "da": list(_DA_SUPP)}).fetchall()
         for c, v in rows:
-            _merge(c, v)
-
-    # 총포괄 오염 교정(비교컬럼 경로) — _collect(line 109~) 와 동일 로직의 이식.
-    # 지배주주 귀속 '순이익'과 '총포괄손익'이 동일 축약 라벨로 둘 다 is.controlling_ni 로 매핑돼
-    # 위 _merge 의 max-abs 가 총포괄분(OCI 포함, 더 큼)을 오선택하는 것을, 항등식
-    # controlling+noncontrolling=net 으로 (net - nci)에 가장 가까운 후보로 재선택한다. 후보가
-    # 하나뿐이면 무변경이라 정당 케이스(비지배 음수 등) 안전. 비교컬럼은 col_index=col·
-    # context_fiscal_year=cfy 셀로 한정해 후보를 모은다(원 수집 쿼리와 동일 셀 의미).
-    cni, ni2 = canon.get("is.controlling_ni"), canon.get("is.net_income")
-    if cni is not None and ni2 is not None:
-        nci = canon.get("is.noncontrolling_ni") or 0
-        expected = ni2 - nci
-        if abs(cni - expected) > abs(expected) * 0.02 + 1_000_000:
-            cands: list[int] = []
-            for stmt, (rcept, col, cfy) in sources.items():
-                rows = session.execute(text("""
-                    SELECT DISTINCT amount_won FROM fact_v2
-                    WHERE rcept_no = :r AND basis = :b AND col_index = :ci
-                      AND context_fiscal_year = :cfy AND NOT is_dimensional
-                      AND canonical_account = 'is.controlling_ni' AND amount_won IS NOT NULL
-                """), {"r": rcept, "b": basis, "ci": col, "cfy": cfy}).fetchall()
-                cands += [r[0] for r in rows]
-            if cands:
-                canon["is.controlling_ni"] = min(cands, key=lambda x: abs(x - expected))
-    return canon
+            if v is not None:
+                cands.setdefault(c, []).append({"value": v, "rcept": rcept, "col_index": col})
+    return _resolve(cands)
 
 
 def standardize_comparative_corp(session, corp_code: str) -> int:
@@ -446,7 +459,7 @@ def standardize_comparative_corp(session, corp_code: str) -> int:
 
     written = 0
     for (cfy, fp, basis), sources in targets.items():
-        canon = _collect_comparative(session, basis, sources)
+        canon, lineage = _collect_comparative(session, basis, sources)
         if not (canon.get("is.revenue") or canon.get("bs.total_assets")):
             continue  # anchor 없으면 합성하지 않음
 
@@ -454,7 +467,6 @@ def standardize_comparative_corp(session, corp_code: str) -> int:
         run_rules(ctx)
 
         period_end = _period_end(session, corp_code, cfy, fp)
-        shares_out = _shares_out(session, corp_code, period_end)
         dq = max(validate_equations(ctx.col),
                  _dq_cross_year(session, corp_code, basis, ctx.col) if fp == "FY" else 1,
                  2)  # 비교컬럼 파생은 2차 출처 → 최소 DQ2(검토 등급)
@@ -468,7 +480,8 @@ def standardize_comparative_corp(session, corp_code: str) -> int:
             "is_rcept": sources.get("IS", (None,))[0],
             "cf_rcept": sources.get("CF", (None,))[0],
             "applied_rules": list(ctx.applied) + [_COMP_MARKER],
-            "shares_out": shares_out, "calculated_at": datetime.utcnow(),
+            "value_lineage": lineage or None,
+            "calculated_at": datetime.utcnow(),
             **{c: ctx.col.get(c) for c in VALUE_COLS},
         }
         stmt = insert(StdFinancialV2).values(record)

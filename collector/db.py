@@ -428,6 +428,39 @@ def _run_migrations() -> None:
         GROUP BY f.corp_code, ss.fiscal_year, ss.fiscal_period, ss.basis,
                  f.canonical_account, ss.source_rcept_no
         """),
+
+        ("2026_07_extended_financials_view_distinct",
+         # 2026-07-17 트리아지(dq_assertions extended_financials_n_facts_outlier) — 같은 rcept
+         # 안에서 동일 canonical_account 가 서로 다른 표(본문표+증감명세 주석 등)에 완전히 같은
+         # 금액으로 중복 등장하는 사례를 실측 확인(메가스터디 00422284 2018 별도 CF, 23,522,546원이
+         # AUTOSUM(ROWALL/COLALL) 셀+개별 셀+라벨변형(하이픈/언더스코어) 표까지 4곳에서 중복).
+         # SUM→SUM(DISTINCT)로 바꿔 완전 동일 금액 재등장을 1회로 접는다(정말 다른 항목들의 합인
+         # AUTOSUM 총계는 이 변경으로는 못 잡음 — 별도 추출단 AUTOSUM 속성 필터 필요, 후속 과제).
+         # 검증: dq_assertions 필터후 n_facts>5 위반 10,770→9,044(-16%), ERROR게이트/타 WARN 불변.
+         """
+        CREATE OR REPLACE VIEW extended_financials AS
+        SELECT f.corp_code, ss.fiscal_year, ss.fiscal_period, ss.basis,
+               f.canonical_account, SUM(DISTINCT f.amount_won) AS amount_won,
+               COUNT(DISTINCT f.amount_won) AS n_facts, ss.source_rcept_no
+        FROM statement_source ss
+        JOIN fact_v2 f ON f.rcept_no = ss.source_rcept_no
+          AND f.corp_code = ss.corp_code
+          AND f.report_fiscal_year = ss.fiscal_year
+          AND f.report_fiscal_period = ss.fiscal_period
+          AND f.basis = ss.basis
+        WHERE NOT ss.is_stub
+          AND f.col_index = 0
+          AND NOT f.is_dimensional
+          AND f.canonical_account IS NOT NULL AND f.amount_won IS NOT NULL
+          AND (
+                CASE left(f.canonical_account, 3)
+                  WHEN 'bs.' THEN 'BS' WHEN 'is.' THEN 'IS' WHEN 'cf.' THEN 'CF'
+                END = ss.statement
+                OR (f.canonical_account LIKE 'note.%' AND ss.statement = 'IS')
+              )
+        GROUP BY f.corp_code, ss.fiscal_year, ss.fiscal_period, ss.basis,
+                 f.canonical_account, ss.source_rcept_no
+        """),
     ]
 
     with engine.begin() as conn:

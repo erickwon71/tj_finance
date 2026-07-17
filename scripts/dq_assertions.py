@@ -190,12 +190,30 @@ CHECKS: list[dict] = [
         # 이 leaf-additive(리스부채=유동+비유동 등) 가정 위에 있다. n_facts 가 비정상적으로 크면
         # (일반적으로 2~3개 leaf 인데 5개 초과) 같은 rcept 안에 동일 canonical 로 잘못 매핑된
         # 무관 라인이 다수 섞여 합산 오염됐을 신호(controlling_ni 총포괄 오염과 같은 클래스의 버그).
+        #
+        # 2026-07-17 트리아지: 원 임계값(>5)으로 149,672건 검출 — 상위 20개 캐노니컬이 99.3%를
+        # 차지했는데, 그중 17개는 이름부터 `_detail`/`other_*`이거나 IFRS 상 원래 다항목인 계정
+        # (oci·cogs·capex·noncash_items_subtotal 등)이라 leaf 6~25개가 정상 동작 — 임계값이
+        # "2~3개 leaf" 가정과 안 맞는 확장 캐노니컬(PRD 12, 51종)군에 오적용된 노이즈였다.
+        # 이 17종은 제외하고, 이름상 단일 라인이어야 정상인 나머지(is.revenue·
+        # bs.short_term_investment·cf.available_for_sale_net 등 미확인 계정)만 계속 감시한다.
         "name": "extended_financials_n_facts_outlier",
         "sev": "WARN",
-        "desc": "extended_financials n_facts > 5 (동일 캐노니컬에 라인 다수 합산 — 오매핑 의심)",
-        "count": "SELECT count(*) FROM extended_financials WHERE n_facts > 5",
+        "desc": "extended_financials n_facts > 5, 설계상 다항목 계정(_detail/other_*/oci 등) 제외 (동일 캐노니컬에 라인 다수 합산 — 오매핑 의심)",
+        "count": "SELECT count(*) FROM extended_financials "
+                 "WHERE n_facts > 5 AND canonical_account NOT IN ("
+                 "'cf.capex','bs.ppe_detail','is.cogs','is.sga_detail','is.other_expense','is.oci',"
+                 "'is.other_income','bs.other_current_payables','cf.deposits_change','bs.inventory_detail',"
+                 "'cf.noncash_items_subtotal','bs.other_noncurrent_assets','cf.ppe_proceeds_detail',"
+                 "'bs.other_receivables','bs.accumulated_depreciation','cf.short_term_investment_net',"
+                 "'cf.borrowings_repaid')",
         "sample": "SELECT corp_code, fiscal_year, basis, canonical_account, n_facts, amount_won "
-                  "FROM extended_financials WHERE n_facts > 5 ORDER BY n_facts DESC LIMIT 10",
+                  "FROM extended_financials WHERE n_facts > 5 AND canonical_account NOT IN ("
+                  "'cf.capex','bs.ppe_detail','is.cogs','is.sga_detail','is.other_expense','is.oci',"
+                  "'is.other_income','bs.other_current_payables','cf.deposits_change','bs.inventory_detail',"
+                  "'cf.noncash_items_subtotal','bs.other_noncurrent_assets','cf.ppe_proceeds_detail',"
+                  "'bs.other_receivables','bs.accumulated_depreciation','cf.short_term_investment_net',"
+                  "'cf.borrowings_repaid') ORDER BY n_facts DESC LIMIT 10",
     },
     {
         "name": "capital_events_unknown_type",

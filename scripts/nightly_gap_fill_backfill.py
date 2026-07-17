@@ -46,6 +46,7 @@ _PLIST_LABEL = "com.tjfinance.gapfill"
 _PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{_PLIST_LABEL}.plist"
 
 _P3_STATE_FILE = "gap_fill_phase3_state.json"
+_P4_STATE_FILE = "gap_fill_phase4_state.json"
 
 
 def _current_year() -> int:
@@ -134,11 +135,13 @@ def run_phase3() -> int:
 # 비용성격별 분류 주석은 2024 이전 보고서에도 있어, da_total NULL 인 과거연도(2015~2023)의 EBITDA
 # 커버리지(연결 FY ~22-35%)를 끌어올린다. 멱등·단위가드(da/매출 범위) → 오염 없음. 밤당 상한으로 페이싱.
 _PHASE4_YEAR_MIN = 2015
-_PHASE4_TARGET_SQL = """
-    SELECT count(DISTINCT corp_code) FROM std_financials_v2
+# NULL D&A 대상 기업 목록(연결 FY, 2015+). attempt-tracking 판정용 모집단.
+_PHASE4_CORPS_SQL = """
+    SELECT DISTINCT corp_code FROM std_financials_v2
     WHERE statement_type='consolidated' AND version=1 AND fiscal_period='FY'
-      AND fiscal_year>=2015 AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false)
+      AND fiscal_year>=:ymin AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false)
       AND depreciation IS NULL AND da_total IS NULL
+    ORDER BY corp_code
 """
 
 
@@ -148,23 +151,36 @@ _PHASE4_MAX_CORPS_PER_NIGHT = 500
 
 
 def run_phase4() -> int:
-    """depreciation IS NULL AND da_total IS NULL 잔여를 기업단위 원자 처리(밤당 상한).
-    반환=처리 후 잔여 대상 수."""
+    """비용성격 D&A 복원 — **미시도 기업만** 밤당 상한으로 처리(Phase3 와 동일 attempt-tracking).
+
+    D&A 를 어느 서식에도 공시하지 않는 기업은 복원 후에도 NULL 로 남는다. 시도 여부를 상태파일에
+    기록하지 않으면 그런 영구-NULL 기업이 매일 재시도되어 잔여가 0 에 도달하지 못하고 잡이 자기
+    해제되지 않는다. 그래서 성공·실패 무관하게 **1회 시도한 기업은 기록해 재시도에서 제외**한다
+    (신규 보고서 분은 collect_new 파이프라인이 별도 커버). 반환=잔여 미시도 기업 수."""
+    from app.data import _localstore as _ls
     from collector.expense_nature_sync import sync_expense_nature
 
     with get_session() as s:
-        before = s.execute(text(_PHASE4_TARGET_SQL)).scalar()
-    logger.info(f"[gapfill] Phase4 대상(실행 전) {before}사 · 이번 밤 최대 {_PHASE4_MAX_CORPS_PER_NIGHT}사")
-    if before == 0:
+        targets = [r[0] for r in s.execute(text(_PHASE4_CORPS_SQL), {"ymin": _PHASE4_YEAR_MIN})]
+    state = _ls.load(_P4_STATE_FILE)
+    attempted: set[str] = set(state.get("attempted_corps", []))
+    todo = [c for c in targets if c not in attempted]
+    logger.info(f"[gapfill] Phase4 대상 {len(targets)}사(NULL D&A) · 미시도 {len(todo)}사 · "
+                f"이번 밤 최대 {_PHASE4_MAX_CORPS_PER_NIGHT}사")
+    if not todo:
         return 0
 
-    res = sync_expense_nature(year_min=_PHASE4_YEAR_MIN, max_corps=_PHASE4_MAX_CORPS_PER_NIGHT)
+    batch = todo[:_PHASE4_MAX_CORPS_PER_NIGHT]
+    res = sync_expense_nature(corps=batch, year_min=_PHASE4_YEAR_MIN)
     logger.info(f"[gapfill] Phase4 실행 결과: {res}")
 
-    with get_session() as s:
-        after = s.execute(text(_PHASE4_TARGET_SQL)).scalar()
-    logger.info(f"[gapfill] Phase4 잔여(실행 후) {after}사")
-    return after
+    # 성공·실패 무관 시도 기록(영구-NULL 재시도 방지) → 상태 저장.
+    attempted.update(batch)
+    _ls.save(_P4_STATE_FILE, {"attempted_corps": sorted(attempted)})
+
+    remaining = len([c for c in targets if c not in attempted])
+    logger.info(f"[gapfill] Phase4 잔여 미시도 기업: {remaining}")
+    return remaining
 
 
 # ── 자기 등록 해제 ────────────────────────────────────────────────────────

@@ -1,30 +1,30 @@
 # 퍼지 alias 승격 작업목록 (자동 생성)
 
 - 표본 보고서(본문 검출): **299**
-- 퍼지를 끄면 std_v2 소비 canonical 을 잃는 보고서: **123 (41.1%)**
+- 퍼지를 끄면 std_v2 소비 canonical 을 잃는 보고서: **108 (36.1%)**
 
 ## 1. 퍼지가 유일 출처인 canonical (승격 우선순위)
 
 | canonical | 영향 보고서 |
 |---|---|
-| `bs.long_term_debt` | 21 |
 | `cf.investing` | 19 |
 | `is.controlling_ni` | 18 |
 | `bs.short_term_debt` | 18 |
 | `is.net_income` | 12 |
 | `is.noncontrolling_ni` | 11 |
-| `cf.rou_depreciation` | 9 |
+| `bs.long_term_debt` | 9 |
 | `is.revenue` | 8 |
 | `is.cogs` | 8 |
 | `bs.trade_receivables` | 6 |
-| `bs.trade_payables` | 6 |
 | `cf.amortization` | 6 |
 | `bs.controlling_equity` | 6 |
+| `cf.rou_depreciation` | 5 |
 | `cf.depreciation` | 5 |
 | `cf.dividends_paid` | 5 |
 | `is.rd_expense` | 4 |
 | `is.tax_expense` | 4 |
 | `is.depreciation` | 3 |
+| `bs.trade_payables` | 3 |
 | `is.rou_depreciation` | 2 |
 | `is.amortization` | 2 |
 | `bs.inventory` | 2 |
@@ -62,15 +62,5 @@
 |  | `유동충당부채` | `bs.other_current_payables` | `충당부채` | 0.96 | 62 | 104 |
 |  | `배당금수취(영업)` | `cf.dividends_received` | `배당금수취` | 0.95 | 63 | 100 |
 |  | `기타부채` | `bs.other_current_payables` | `기타유동부채` | 0.911 | 42 | 98 |
-|  | `확정급여제도의재측정손익(세후기타포괄손익)` | `is.oci` | `기타포괄손익` | 0.925 | 58 | 93 |
-|  | `정부보조금의수취` | `cf.govt_grant` | `정부보조금` | 0.956 | 57 | 90 |
-|  | `단기금융상품의감소` | `cf.short_term_investment_net` | `단기금융상품의증감` | 0.956 | 51 | 87 |
-|  | `자기주식의처분` | `cf.treasury_stock_purchase` | `자기주식의취득` | 0.886 | 51 | 85 |
-|  | `비유동충당부채` | `bs.noncurrent_liabilities` | `비유동부채` | 0.933 | 52 | 84 |
-|  | `대여금의증가` | `cf.short_term_loans_change` | `단기대여금의증가` | 0.968 | 54 | 84 |
-|  | `대여금의감소` | `cf.short_term_loans_change` | `단기대여금의감소` | 0.968 | 56 | 82 |
-|  | `재무활동으로인한현금유출액` | ★`cf.financing` | `재무활동으로인한현금흐름` | 0.921 | 42 | 79 |
-|  | `당기손익인식금융자산의처분` | `cf.available_for_sale_net` | `당기손익-공정가치금융자산의처분` | 0.907 | 48 | 76 |
-|  | `자기주식의취득으로인한현금의유출` | `cf.treasury_stock_purchase` | `자기주식의취득` | 0.939 | 47 | 76 |
 
 ★ = std_v2 가 실제로 읽는 canonical (승격 효과가 지표로 나타남)

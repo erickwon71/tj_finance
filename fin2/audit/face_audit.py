@@ -244,8 +244,7 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
     """
     from parser.xml.table_extractor import _get_cells
     from parser.common.account_mapper import get_mapper
-    from parser.common.amount_normalizer import detect_unit_declaration
-    from fin2.extract.text import _detect_unit_near_table, _table_has_data_rows
+    from fin2.extract.text import declared_unit, _table_has_data_rows
     from fin2.extract.statement_titles import SECTION_CODE_OF
 
     root = _parse_xml_file(Path(file_path))
@@ -305,8 +304,11 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
         if not _table_has_data_rows(tbl):
             continue
         basis, stmt = meta
-        # 단위: 표제 선언 → 표 자체/인접 <P>(K-GAAP 천원 ×1000 false-fail 방지).
-        unit = detect_unit_declaration(title_text(tbl)) or _detect_unit_near_table(tbl)
+        # 단위: 표 **자기 소유 선언(표제+첫 행)만** 인정(declared_unit) — strict 추출기와 동일.
+        # 선언 없으면 스킵(추측 금지; 원 가정 시 ×10^6 false-fail 위험, Phase A §3-C).
+        unit = declared_unit(tbl)
+        if unit is None:
+            continue
         _read_table(tbl, basis, stmt, unit)
         covered.add(SECTION_CODE_OF[(basis, stmt)])
 

@@ -1,6 +1,6 @@
 # 핸드오프 — 재무데이터 재구축 Phase A (2026-07-17)
 
-> **다음 세션 시작점.** 마스터 계획 = `~/.claude/plans/vast-nibbling-blum.md` (먼저 읽을 것)
+> **다음 세션 시작점.** 마스터 계획 = `docs/plans/vast-nibbling-blum.md` (먼저 읽을 것)
 > 상세 조사기록 = `docs/qa/plan_note_body_separation_2026-07-17.md`
 
 ---

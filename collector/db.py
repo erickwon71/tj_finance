@@ -430,7 +430,7 @@ def _run_migrations() -> None:
         """),
 
         ("2026_07_fact_v2_provenance",
-         # ★ 재무데이터 재구축(계획: ~/.claude/plans/vast-nibbling-blum.md) — provenance 4종.
+         # ★ 재무데이터 재구축(계획: docs/plans/vast-nibbling-blum.md) — provenance 4종.
          # 왜 필요한가: 이전 파이프라인은 추측값과 원본값을 구분하지 못했다. 주석표가 본문으로
          # 새어도(요약폴백·레거시 갭필), 단위를 배율대입으로 추측해도, 후보 다중 시 max-abs 로
          # 골라도 결과 행이 정상 행과 동일해 **"오염된 것만 삭제"를 SQL 로 표현할 수 없었다**

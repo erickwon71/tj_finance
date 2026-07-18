@@ -2,7 +2,7 @@
 
 > 작성 2026-06-27. 데이터 레이어(PRD 01~04) 종결 후 **원래 개발 목표**인 블룸버그 터미널형
 > 시각화로 진입. 총괄: `00_pm_master_plan.md`. 스크리너는 `06_screener.md`.
-> 마스터 계획: `~/.claude/plans/curried-doodling-metcalfe.md`. 진행 체크리스트: `05_06_checklist.md`.
+> 마스터 계획: `docs/plans/curried-doodling-metcalfe.md`. 진행 체크리스트: `05_06_checklist.md`.
 
 ## 0. 왜 이 PRD 인가
 

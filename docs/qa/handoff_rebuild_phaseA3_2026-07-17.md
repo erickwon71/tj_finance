@@ -1,6 +1,6 @@
 # 핸드오프 — 재무데이터 재구축 **Phase A-3 완료** (2026-07-17)
 
-> **다음 세션 시작점.** 마스터 계획 = `~/.claude/plans/vast-nibbling-blum.md`
+> **다음 세션 시작점.** 마스터 계획 = `docs/plans/vast-nibbling-blum.md`
 > 직전 핸드오프(A-1/A-2) = `docs/qa/handoff_rebuild_phaseA_2026-07-17.md`
 > 커밋: `e30486d`(A-3 1/2 추출기) · `5652db5`(A-3 2/2 build.py)
 

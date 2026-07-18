@@ -1,6 +1,6 @@
 # Phase B — 재구축(Track 1) 대상 인벤토리 (2026-07-18)
 
-> 재구축 계획 = `~/.claude/plans/vast-nibbling-blum.md` §4 Phase B
+> 재구축 계획 = `docs/plans/vast-nibbling-blum.md` §4 Phase B
 > 산출 스크립트 = `scripts/phase_b_build_targets.py` (재현가능)
 > 결과 테이블 = `rebuild_target_track1` (Phase C 가 읽어 진행추적)
 

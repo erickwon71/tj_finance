@@ -1,6 +1,6 @@
 # 진행 체크리스트 — 시각화(PRD 05) + 스크리너(PRD 06)
 
-> 마스터 계획 `~/.claude/plans/curried-doodling-metcalfe.md`. 상태표기: ☐ todo · ◐ 진행중 · ☑ 완료.
+> 마스터 계획 `docs/plans/curried-doodling-metcalfe.md`. 상태표기: ☐ todo · ◐ 진행중 · ☑ 완료.
 > 각 Phase 는 검증 통과 후 다음으로. 동일 엔진 재사용이므로 `run.py` CLI 가 수치 oracle.
 
 ## Phase 0 — 스캐폴드 ☑ 완료 (2026-06-27)

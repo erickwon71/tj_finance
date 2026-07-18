@@ -2,7 +2,7 @@
 
 > 작성 2026-06-13. 본 문서는 TJ Finance 재무데이터 파이프라인을 **4개 전문가 역할 + PM** 으로
 > 분리하고, 두 개의 차단 게이트로 운영하기 위한 총괄 문서다. 개별 전문가 PRD 는 `01~04` 참조.
-> 마스터 계획: `~/.claude/plans/merry-conjuring-lark.md`. 진행 상태 메모리: `project-status`.
+> 마스터 계획: `docs/plans/merry-conjuring-lark.md`. 진행 상태 메모리: `project-status`.
 
 ## 0. 최우선 원칙 (변경 불가)
 

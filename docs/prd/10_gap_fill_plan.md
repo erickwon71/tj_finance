@@ -1,6 +1,6 @@
 # PRD 10 — 전문 서비스 갭 채우기 마스터 계획 (데이터 항목 확충 + 전수 인벤토리 감사 + 자유조합 차트 강화)
 
-> 작성 2026-07-12. 총괄: `00_pm_master_plan.md`. 마스터 계획 원본: `~/.claude/plans/cosmic-stirring-snail.md`.
+> 작성 2026-07-12. 총괄: `00_pm_master_plan.md`. 마스터 계획 원본: `docs/plans/cosmic-stirring-snail.md`.
 > Phase별 상세 PRD: `11_phase0_inventory_audit.md` ~ `16_phase5_chart_builder.md`.
 > 진행 체크리스트(+Phase별 권장 모델): `10_16_checklist.md`.
 

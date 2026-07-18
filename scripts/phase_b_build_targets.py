@@ -1,6 +1,6 @@
 """Phase B — 재구축(Track 1) 대상 인벤토리 산출.
 
-계획(~/.claude/plans/vast-nibbling-blum.md §4 Phase B)에 따라 **재파싱 대상 보고서**를 확정한다.
+계획(docs/plans/vast-nibbling-blum.md §4 Phase B)에 따라 **재파싱 대상 보고서**를 확정한다.
 Phase C 가 이 테이블을 읽어 샤딩·진행추적하며 재추출한다.
 
 ## 대상 기준 (사용자 확정)

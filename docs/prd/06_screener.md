@@ -1,7 +1,7 @@
 # PRD 06 — Screener (퀀트 스크리너 + 비파괴 분할 시각화)
 
 > 작성 2026-06-27. 시각화(PRD 05)와 짝을 이루는 스크리닝 기능. 총괄: `00_pm_master_plan.md`.
-> 마스터 계획: `~/.claude/plans/curried-doodling-metcalfe.md`. 진행 체크리스트: `05_06_checklist.md`.
+> 마스터 계획: `docs/plans/curried-doodling-metcalfe.md`. 진행 체크리스트: `05_06_checklist.md`.
 
 ## 0. 왜 이 PRD 인가
 

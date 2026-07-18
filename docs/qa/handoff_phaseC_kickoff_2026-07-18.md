@@ -1,6 +1,6 @@
 # 핸드오프 — Phase C 착수 논의 (다음 세션 시작점, 2026-07-18)
 
-> **이 문서부터 읽을 것.** 계획 = `~/.claude/plans/vast-nibbling-blum.md`
+> **이 문서부터 읽을 것.** 계획 = `docs/plans/vast-nibbling-blum.md`
 > 앞선 핸드오프: A-3 완료 = `handoff_rebuild_phaseA3_2026-07-17.md` ·
 > Phase B 인벤토리 = `phase_b_target_inventory_2026-07-18.md`
 

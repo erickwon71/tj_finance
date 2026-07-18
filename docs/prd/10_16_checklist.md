@@ -1,6 +1,6 @@
 # 진행 체크리스트 — 전문 서비스 갭 채우기(PRD 10~16)
 
-> 마스터 계획 `~/.claude/plans/cosmic-stirring-snail.md` / `10_gap_fill_plan.md`.
+> 마스터 계획 `docs/plans/cosmic-stirring-snail.md` / `10_gap_fill_plan.md`.
 > 상태표기: ☐ todo · ◐ 진행중 · ☑ 완료. 각 Phase 는 검증 통과 후 다음으로.
 > Phase 0·1·3·4 는 상호 독립 — 순서를 꼭 지킬 필요는 없으나 Phase 0(감사)을 먼저 하면
 > Phase 3·4 착수 근거가 확실해진다.

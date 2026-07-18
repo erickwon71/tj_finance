@@ -58,6 +58,15 @@ _CURRENT_STRICT = {"bs.trade_receivables", "bs.trade_payables",
                    "bs.short_term_debt", "bs.current_bonds"}
 _NONCURRENT_RE = _re.compile(r"장기|비유동")
 
+# D4 2R(2026-07-18): 협의 우선 — '및기타'(AndOther) 광의 계정보다 순수 계정을 우선(충돌시).
+# 순수 계정 없으면 광의 폴백(사용자 확정). trade_receivables/payables 에 적용.
+_NARROW_PREFER = {"bs.trade_receivables", "bs.trade_payables"}
+_BROAD_RE = _re.compile(r"및기타|및 기타|AndOther")
+
+# D4 2R: 특정 acode 우선(충돌시 그 acode 만; 없으면 폴백). interest_revenue = EIR(IFRS9) 우선.
+_PREFER_ACODE = {"is.interest_revenue":
+                 "ifrs-full_InterestRevenueCalculatedUsingEffectiveInterestMethod"}
+
 # ★ K-IFRS 전용(2026-07-18 사용자 확정, Option B): 정의가 IFRS 와 갈리는 항목(영업이익)은
 # concept_map 에서 IFRS 개념을 **별도 canonical 로 분리**해 컬럼에 유입 자체를 막는다
 # (ifrs-full_ProfitLossFromOperatingActivities → is.operating_income_ifrs, 컬럼 미소비).
@@ -70,6 +79,17 @@ def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
     """최엄격 등급에서도 값이 갈린 top 후보를 **추측 없이** 확정 가능하면 그 값을, 아니면 None(보류).
     ② 비유동 제외(유동 canonical) → ① EPS 근사중복. 둘 다 안 되면 None."""
     rows = top
+    # D4 2R: 특정 acode 우선(interest_revenue=EIR). 있으면 그것만, 없으면 폴백.
+    pref = _PREFER_ACODE.get(canon)
+    if pref:
+        p = [r for r in rows if (r.get("acode") or "") == pref]
+        if p:
+            rows = p
+    # D4 2R: 협의 우선 — 광의('및기타'/AndOther) 제외(순수 계정 있을 때만; 없으면 광의 폴백)
+    if canon in _NARROW_PREFER:
+        narrow = [r for r in rows if not _BROAD_RE.search(r.get("acode") or "")]
+        if narrow:
+            rows = narrow
     # ② 유동 canonical: 비유동(장기/비유동) 계정 후보 제외(부적격 매핑 배제 = 추측 아님)
     if canon in _CURRENT_STRICT:
         cur = [r for r in rows if not _NONCURRENT_RE.search(r.get("acode") or "")]

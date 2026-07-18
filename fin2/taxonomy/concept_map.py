@@ -94,8 +94,12 @@ _IS: dict[str, str] = {
     # R&D: face IS 에 표준개념으로 태깅한 기업(~327사)만 포착. 대다수는 비용의 성격별
     # 분류 주석에만 있어 별도 note 파서 필요(후속). rd_expense 는 정보컬럼(IS 항등식 무관).
     "ifrs-full_ResearchAndDevelopmentExpense": "is.rd_expense",
+    # ★ K-IFRS 전용(2026-07-18, Option B): 영업이익은 한국 표준(dart_OperatingIncomeLoss =
+    # 매출−매출원가−판관비)만 is.operating_income 으로. IFRS 영업손익은 정의가 달라(기타영업손익·
+    # 지분법 포함 재량) **별도 canonical 로 분리** → 컬럼 미소비(감사·비교용 보존, 혼입 구조적 차단).
+    # dart_ 없으면 영업이익 결측(IFRS 폴백 없음, 결측>혼입). KRX·증권사·포털 정합.
     "dart_OperatingIncomeLoss": "is.operating_income",
-    "ifrs-full_ProfitLossFromOperatingActivities": "is.operating_income",
+    "ifrs-full_ProfitLossFromOperatingActivities": "is.operating_income_ifrs",
     "ifrs-full_FinanceIncome": "is.finance_income",
     "ifrs-full_FinanceCosts": "is.finance_cost",
     "dart_OtherGains": "is.other_income",

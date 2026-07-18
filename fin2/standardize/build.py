@@ -58,10 +58,17 @@ _CURRENT_STRICT = {"bs.trade_receivables", "bs.trade_payables",
                    "bs.short_term_debt", "bs.current_bonds"}
 _NONCURRENT_RE = _re.compile(r"장기|비유동")
 
+# ★ K-IFRS 전용(2026-07-18 사용자 확정, Option B): 정의가 IFRS 와 갈리는 항목(영업이익)은
+# concept_map 에서 IFRS 개념을 **별도 canonical 로 분리**해 컬럼에 유입 자체를 막는다
+# (ifrs-full_ProfitLossFromOperatingActivities → is.operating_income_ifrs, 컬럼 미소비).
+# ⟹ is.operating_income 은 dart_(K-IFRS)·본문 영업이익 라벨만 → 혼입 구조적 불가·폴백 없음.
+# _reduce_conflict 는 충돌(둘 다 존재)만 다루므로 ifrs-only(단일후보) 혼입을 못 막는다 → 분리가 정답.
+# provenance 는 rule_mark_opinc_kifrs 가 applied_rules 에 'opinc_kifrs' 로 남긴다.
+
 
 def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
     """최엄격 등급에서도 값이 갈린 top 후보를 **추측 없이** 확정 가능하면 그 값을, 아니면 None(보류).
-    ② 비유동 계정 제외(유동 canonical) → ① EPS 근사중복 확정. 둘 다 안 되면 None."""
+    ② 비유동 제외(유동 canonical) → ① EPS 근사중복. 둘 다 안 되면 None."""
     rows = top
     # ② 유동 canonical: 비유동(장기/비유동) 계정 후보 제외(부적격 매핑 배제 = 추측 아님)
     if canon in _CURRENT_STRICT:

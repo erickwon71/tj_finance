@@ -105,6 +105,10 @@ def _build_discrete(end_row: dict, sub_row: dict | None, fp: str,
     # data_quality: 결측 구성요소로 일부 flow 가 None 이면 경고(2), 아니면 정상(1).
     rec["data_quality"] = 1 if all(rec.get(c) is not None
                                    for c in _FLOW_COLS if end_row.get(c) is not None) else 2
+    # provenance 승계: 이산분기 영업이익은 K-IFRS as-filed 행에서 파생 → opinc_kifrs 마크 전파.
+    if rec.get("operating_income") is not None and end_row.get("applied_rules") \
+            and "opinc_kifrs" in end_row["applied_rules"]:
+        rec["applied_rules"] = rec["applied_rules"] + ["opinc_kifrs"]
     return rec
 
 

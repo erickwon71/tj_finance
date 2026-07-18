@@ -272,6 +272,12 @@ def rebuild_corp(corp: str, fy_min: int, version: int = 2) -> dict:
            "comp": 0, "shares": 0, "q": 0, "c": 0}
     with get_session() as s:
         out["purged"] = _clean_slate(s, corp, fy_min)
+        # ★ 소비계층(v2) 잔여행 제거 — UPSERT 만으로는 재생성 안 되는 키(구 comparative 등)가
+        # 남아 "덮이지 않은 잔존 오염"이 된다(사용자 지적). corp 의 v2 를 비우고 새로 쌓는다.
+        s.execute(text("DELETE FROM std_financials_v2 WHERE corp_code=:c AND version=:v"),
+                  {"c": corp, "v": version})
+        s.execute(text("DELETE FROM std_financials_calendar WHERE corp_code=:c AND version=:v"),
+                  {"c": corp, "v": version})
         out["e_files"], out["e_facts"], outcome = _reextract_targets(s, corp)
         # 보존된 Track A 의 canonical 을 현 concept_map 으로 재적용(재추출 없이 매핑 변경 반영).
         out["remap"] = _remap_track_a_facts(s, corp)

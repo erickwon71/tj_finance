@@ -134,6 +134,17 @@ def rule_map_direct(ctx: StdContext) -> None:
         ctx._mark("map_direct")
 
 
+def rule_mark_opinc_kifrs(ctx: StdContext) -> None:
+    """★ provenance(2026-07-18, Option B): is.operating_income 은 K-IFRS 전용
+    (dart_OperatingIncomeLoss 또는 본문 '영업이익' 라벨 — 둘 다 K-IFRS). IFRS 영업손익은
+    concept_map 에서 is.operating_income_ifrs 로 분리돼 컬럼에 유입 불가.
+    operating_income 이 채워진 행에 'opinc_kifrs' 를 남겨 출처를 SQL 로 감사 가능하게 한다:
+      SELECT count(*) FROM std_financials_v2 WHERE operating_income IS NOT NULL
+        AND NOT (applied_rules @> '[\"opinc_kifrs\"]');   -- Phase D 불변식 = 0"""
+    if ctx.col.get("operating_income") is not None:
+        ctx._mark("opinc_kifrs")
+
+
 def rule_cash_with_deposits(ctx: StdContext) -> None:
     """금융사(증권·보험) 현금 = 현금성자산 + 예치금 (2026-07-18, 사용자 확정).
 
@@ -336,6 +347,7 @@ def rule_derive_net_debt(ctx: StdContext) -> None:
 # 순서가 의미를 가짐: 매핑/합산 → 보완 → 파생
 RULES = [
     ("map_direct", rule_map_direct),
+    ("mark_opinc_kifrs", rule_mark_opinc_kifrs),
     ("cash_with_deposits", rule_cash_with_deposits),
     ("additive_capex", rule_additive_capex),
     ("additive_da", rule_additive_da),

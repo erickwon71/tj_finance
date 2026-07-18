@@ -43,6 +43,45 @@ _DA_SUPP = set(_DEP_CANON) | set(_AMORT_CANON) | set(_DA_TOTAL_CANON) | {"note.r
 # 이 우선순위가 무효(전부 동급) → 기존 conflict-hold 동작. 재추출 후 활성화(forward-compatible).
 _STAGE_RANK = {"exact": 3, "normalized": 2, "guard": 2, "fuzzy": 1, None: 0}
 
+# ── 충돌 자동해소 규칙 (D4 패턴루프 1라운드, 2026-07-18) ────────────────────────
+# 값이 갈린 후보를 **추측 없이** 확정할 수 있는 두 경우에만 적용. 그 외엔 여전히 보류(§_resolve ③).
+import re as _re
+
+# ① 반올림 근사 중복: 후보 최대·최소가 상대오차 EPS(0.1%) 이내면 사실상 같은 값(원↔천원 반올림·
+#    XBRL 개념 중복 DividendsPaid vs …ClassifiedAsFinancingActivities 등) → 대표값(최대절대값) 확정.
+_CONFLICT_EPS = 0.001
+
+# ② 유동 canonical 은 **비유동(장기/비유동) 계정**을 후보에서 제외한다. 실측(에이프로젠 2015):
+#    '장기매출채권및기타비유동채권'(476M)이 '매출채권및기타유동채권'(17.6B)과 함께
+#    bs.trade_receivables 로 매핑돼 충돌 → 유동 자산/부채 canonical 에 비유동 계정은 부적격.
+_CURRENT_STRICT = {"bs.trade_receivables", "bs.trade_payables",
+                   "bs.short_term_debt", "bs.current_bonds"}
+_NONCURRENT_RE = _re.compile(r"장기|비유동")
+
+
+def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
+    """최엄격 등급에서도 값이 갈린 top 후보를 **추측 없이** 확정 가능하면 그 값을, 아니면 None(보류).
+    ② 비유동 계정 제외(유동 canonical) → ① EPS 근사중복 확정. 둘 다 안 되면 None."""
+    rows = top
+    # ② 유동 canonical: 비유동(장기/비유동) 계정 후보 제외(부적격 매핑 배제 = 추측 아님)
+    if canon in _CURRENT_STRICT:
+        cur = [r for r in rows if not _NONCURRENT_RE.search(r.get("acode") or "")]
+        if cur:
+            rows = cur
+    vals = {r["value"] for r in rows}
+    if len(vals) == 1:
+        return next(iter(vals))
+    # ① EPS 근사중복: 부호 동일 + 상대오차 EPS 이내면 같은 값 → 최대절대값 대표
+    nums = [v for v in vals if v is not None]
+    if len(nums) >= 2:
+        hi = max(nums, key=abs)
+        lo = min(nums, key=abs)
+        if hi == 0 or (hi > 0) != (lo > 0):   # 0 포함·부호 상이 = 진짜 충돌(예: 0 vs -3.8B)
+            return None
+        if abs(hi - lo) / abs(hi) <= _CONFLICT_EPS:
+            return hi
+    return None
+
 
 def _resolve(cands: dict[str, list[dict]]) -> tuple[dict[str, int], dict[str, list[dict]]]:
     """후보 dict → (확정값, lineage). 값이 갈리면 **더 엄격한 매핑을 우선**, 그래도 갈리면 보류.
@@ -76,6 +115,11 @@ def _resolve(cands: dict[str, list[dict]]) -> tuple[dict[str, int], dict[str, li
         if len(top_vals) == 1:
             canon[c] = next(iter(top_vals))
             continue
+        # ②①(D4 1라운드) 추측 없이 확정 가능한 충돌은 해소(비유동 제외·EPS 근사중복).
+        reduced = _reduce_conflict(c, top)
+        if reduced is not None:
+            canon[c] = reduced
+            continue
         # ③ 최엄격 등급에서도 값이 갈림 → 판정 불가. 값은 비우고, **std_v2 가 실제로 읽는
         # canonical 일 때만** 후보를 기록한다(아무도 안 읽는 계정의 충돌까지 남기면 lineage 가
         # 소음으로 부푼다 — 실측: 안 거르면 bs.other_current_payables 만으로 1,647행).
@@ -105,7 +149,7 @@ def _collect(session, basis: str, sources: dict[str, str],
     cands: dict[str, list[dict]] = {}
     cum_seen: set[str] = set()   # interim flow 에서 누적 셀이 있었던 canonical
 
-    def _add(c, v, is_cum, rcept, stage):
+    def _add(c, v, is_cum, rcept, stage, acode):
         if v is None:
             return
         flow = interim and (c.startswith("is.") or c.startswith("cf."))
@@ -117,31 +161,32 @@ def _collect(session, basis: str, sources: dict[str, str],
             elif c in cum_seen:
                 return                     # 누적이 이미 있으면 3개월은 후보 아님
         cands.setdefault(c, []).append(
-            {"value": v, "rcept": rcept, "cumulative": bool(is_cum), "stage": stage})
+            {"value": v, "rcept": rcept, "cumulative": bool(is_cum), "stage": stage,
+             "acode": acode})
 
     for stmt, rcept in sources.items():
         rows = session.execute(text("""
             SELECT canonical_account, amount_won, COALESCE(is_cumulative, false) AS is_cum,
-                   mapping_stage
+                   mapping_stage, acode
             FROM fact_v2
             WHERE rcept_no = :r AND basis = :b AND col_index = 0
               AND NOT is_dimensional AND canonical_account LIKE :p
         """), {"r": rcept, "b": basis, "p": _PREFIX[stmt] + "%"}).fetchall()
-        for c, v, is_cum, stage in rows:
-            _add(c, v, is_cum, rcept, stage)
+        for c, v, is_cum, stage, acode in rows:
+            _add(c, v, is_cum, rcept, stage, acode)
 
     # D&A 보조: note./is./cf. 감가상각 — 선택 source 들의 union 에서
     union = list({r for r in sources.values()})
     if union:
         rows = session.execute(text("""
             SELECT canonical_account, amount_won, COALESCE(is_cumulative, false) AS is_cum,
-                   rcept_no, mapping_stage
+                   rcept_no, mapping_stage, acode
             FROM fact_v2
             WHERE rcept_no = ANY(:rs) AND basis = :b AND col_index = 0
               AND NOT is_dimensional AND canonical_account = ANY(:cs)
         """), {"rs": union, "b": basis, "cs": list(_DA_SUPP)}).fetchall()
-        for c, v, is_cum, rc, stage in rows:
-            _add(c, v, is_cum, rc, stage)
+        for c, v, is_cum, rc, stage, acode in rows:
+            _add(c, v, is_cum, rc, stage, acode)
 
     # ★ 폐지된 사후 재선택 2종(C3/C4/C5) — 되살리지 말 것.
     #
@@ -427,16 +472,17 @@ def _collect_comparative(session, basis: str,
     cands: dict[str, list[dict]] = {}
     for stmt, (rcept, col, cfy) in sources.items():
         rows = session.execute(text("""
-            SELECT canonical_account, amount_won, mapping_stage FROM fact_v2
+            SELECT canonical_account, amount_won, mapping_stage, acode FROM fact_v2
             WHERE rcept_no = :r AND basis = :b AND col_index = :ci
               AND context_fiscal_year = :cfy AND NOT is_dimensional
               AND (canonical_account LIKE :p OR canonical_account = ANY(:da))
         """), {"r": rcept, "b": basis, "ci": col, "cfy": cfy,
                "p": _PREFIX[stmt] + "%", "da": list(_DA_SUPP)}).fetchall()
-        for c, v, stage in rows:
+        for c, v, stage, acode in rows:
             if v is not None:
                 cands.setdefault(c, []).append(
-                    {"value": v, "rcept": rcept, "col_index": col, "stage": stage})
+                    {"value": v, "rcept": rcept, "col_index": col, "stage": stage,
+                     "acode": acode})
     return _resolve(cands)
 
 

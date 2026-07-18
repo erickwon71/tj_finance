@@ -44,22 +44,22 @@ def _is_calendarizable_end(period_end: date, today: date | None = None) -> bool:
     return period_end <= (today or date.today())
 
 
-def _load_discrete(session, corp_code: str, basis: str):
+def _load_discrete(session, corp_code: str, basis: str, version: int = 1):
     """이산분기(is_discrete=True, NOT is_stub) → period_end 보유 행 목록."""
     rows = session.execute(text("""
         SELECT * FROM std_financials_v2
-        WHERE corp_code = :c AND statement_type = :b AND version = 1
+        WHERE corp_code = :c AND statement_type = :b AND version = :v
           AND is_discrete = true AND NOT COALESCE(is_stub, false)
           AND period_end IS NOT NULL
-    """), {"c": corp_code, "b": basis}).fetchall()
+    """), {"c": corp_code, "b": basis, "v": version}).fetchall()
     return [dict(r._mapping) for r in rows]
 
 
-def _cq_record(corp_code, basis, cyear, cq, src, derivation) -> dict:
+def _cq_record(corp_code, basis, cyear, cq, src, derivation, version: int = 1) -> dict:
     """달력분기(CQ) 레코드 = 그 이산분기 값 직배치(flow·stock 그대로)."""
     rec = {
         "corp_code": corp_code, "calendar_year": cyear, "calendar_period": cq,
-        "statement_type": basis, "version": 1,
+        "statement_type": basis, "version": version,
         "period_end": src["period_end"], "derivation": derivation,
         "is_complete": False,
         "source_lineage": [[src["fiscal_year"], src["fiscal_period"]]],
@@ -75,12 +75,12 @@ def _cq_record(corp_code, basis, cyear, cq, src, derivation) -> dict:
     return rec
 
 
-def _cy_record(corp_code, basis, cyear, quarters: dict, derivation) -> dict:
+def _cy_record(corp_code, basis, cyear, quarters: dict, derivation, version: int = 1) -> dict:
     """달력연도(CY) 레코드. flow=ΣCQ, stock=CQ4(12-31) 스냅샷. 4분기 완비 가정."""
     cq4 = quarters["CQ4"]
     rec = {
         "corp_code": corp_code, "calendar_year": cyear, "calendar_period": "CY",
-        "statement_type": basis, "version": 1,
+        "statement_type": basis, "version": version,
         "period_end": date(cyear, 12, 31), "derivation": derivation,
         "is_complete": True,
         "source_lineage": [[quarters[q]["fiscal_year"], quarters[q]["fiscal_period"]]
@@ -100,8 +100,9 @@ def _cy_record(corp_code, basis, cyear, quarters: dict, derivation) -> dict:
     return rec
 
 
-def calendarize_corp(session, corp_code: str) -> int:
-    """corp 의 이산분기를 달력분기/연도로 정규화·upsert. 반환=레코드 수."""
+def calendarize_corp(session, corp_code: str, version: int = 1) -> int:
+    """corp 의 이산분기를 달력분기/연도로 정규화·upsert. 반환=레코드 수.
+    version: 소비계층 버전(기본 1). Phase C 재구축은 version=2."""
     fiscal_month = _corp_fiscal_month(session, corp_code)
     written = 0
     for basis in ("consolidated", "separate"):
@@ -110,10 +111,10 @@ def calendarize_corp(session, corp_code: str) -> int:
         # (예: 미래로 오매핑된 CQ)가 남아 유령행이 되므로, 지운 뒤 새로 채워 제거가 전파되게 한다.
         session.execute(text(
             "DELETE FROM std_financials_calendar "
-            "WHERE corp_code = :c AND statement_type = :b AND version = 1"),
-            {"c": corp_code, "b": basis})
+            "WHERE corp_code = :c AND statement_type = :b AND version = :v"),
+            {"c": corp_code, "b": basis, "v": version})
 
-        discrete = _load_discrete(session, corp_code, basis)
+        discrete = _load_discrete(session, corp_code, basis, version)
         # (calendar_year, CQ) → 이산분기 행. 달력분기말 정렬분 + 이미 끝난 분기만.
         cq_map: dict[tuple, dict] = {}
         for r in discrete:
@@ -129,7 +130,7 @@ def calendarize_corp(session, corp_code: str) -> int:
 
         batch: list[dict] = []
         for (cyear, cq), src in cq_map.items():
-            batch.append(_cq_record(corp_code, basis, cyear, cq, src, derivation))
+            batch.append(_cq_record(corp_code, basis, cyear, cq, src, derivation, version))
         # CY: 그 달력연도 CQ1..CQ4 완비 시만.
         for cyear in sorted({cy for (cy, _q) in cq_map}):
             quarters = {q: cq_map.get((cyear, q)) for q in _CQ_ORDER}
@@ -140,7 +141,7 @@ def calendarize_corp(session, corp_code: str) -> int:
                 cy_deriv = ("native"
                             if len({quarters[q]["fiscal_year"] for q in _CQ_ORDER}) == 1
                             else "recomposed")
-                batch.append(_cy_record(corp_code, basis, cyear, quarters, cy_deriv))
+                batch.append(_cy_record(corp_code, basis, cyear, quarters, cy_deriv, version))
 
         session.execute(insert(StdFinancialCalendar).values(batch))
         written += len(batch)

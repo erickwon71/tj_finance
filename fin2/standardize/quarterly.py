@@ -54,27 +54,29 @@ _PK = ("corp_code", "fiscal_year", "fiscal_period", "statement_type", "version",
        "is_stub", "is_discrete")
 
 
-def _load_asfiled(session, corp_code: str, basis: str, fiscal_year: int | None):
+def _load_asfiled(session, corp_code: str, basis: str, fiscal_year: int | None,
+                  version: int = 1):
     """as-filed 누적행(is_discrete=False, NOT is_stub) → {(fy, fp): row dict}."""
     fy_clause = "AND fiscal_year = :fy" if fiscal_year is not None else ""
-    params: dict = {"c": corp_code, "b": basis}
+    params: dict = {"c": corp_code, "b": basis, "v": version}
     if fiscal_year is not None:
         params["fy"] = fiscal_year
     rows = session.execute(text(f"""
         SELECT * FROM std_financials_v2
-        WHERE corp_code = :c AND statement_type = :b AND version = 1
+        WHERE corp_code = :c AND statement_type = :b AND version = :v
           AND NOT COALESCE(is_stub, false) AND NOT COALESCE(is_discrete, false)
           {fy_clause}
     """), params).fetchall()
     return {(r.fiscal_year, r.fiscal_period): dict(r._mapping) for r in rows}
 
 
-def _build_discrete(end_row: dict, sub_row: dict | None, fp: str) -> dict | None:
+def _build_discrete(end_row: dict, sub_row: dict | None, fp: str,
+                    version: int = 1) -> dict | None:
     """한 이산분기 레코드 조립. end/sub = 누적행. sub None 이면 차감 없음(Q1)."""
     rec: dict = {
         "corp_code": end_row["corp_code"], "fiscal_year": end_row["fiscal_year"],
         "fiscal_period": fp, "statement_type": end_row["statement_type"],
-        "version": 1, "is_stub": False, "is_discrete": True,
+        "version": version, "is_stub": False, "is_discrete": True,
         # 시점·연원은 말(end) 누적행에서 승계.
         "period_end": end_row.get("period_end"), "is_ifrs": end_row.get("is_ifrs"),
         "bs_rcept": end_row.get("bs_rcept"), "is_rcept": end_row.get("is_rcept"),
@@ -106,11 +108,13 @@ def _build_discrete(end_row: dict, sub_row: dict | None, fp: str) -> dict | None
     return rec
 
 
-def derive_quarters_corp(session, corp_code: str, fiscal_year: int | None = None) -> int:
-    """corp 의 as-filed 누적행에서 이산분기 Q1~Q4 파생·upsert. 반환=레코드 수."""
+def derive_quarters_corp(session, corp_code: str, fiscal_year: int | None = None,
+                         version: int = 1) -> int:
+    """corp 의 as-filed 누적행에서 이산분기 Q1~Q4 파생·upsert. 반환=레코드 수.
+    version: 소비계층 버전(기본 1). Phase C 재구축은 version=2."""
     written = 0
     for basis in ("consolidated", "separate"):
-        asfiled = _load_asfiled(session, corp_code, basis, fiscal_year)
+        asfiled = _load_asfiled(session, corp_code, basis, fiscal_year, version)
         if not asfiled:
             continue
         years = sorted({fy for (fy, _fp) in asfiled})
@@ -123,7 +127,7 @@ def derive_quarters_corp(session, corp_code: str, fiscal_year: int | None = None
                 sub_row = asfiled.get((fy, sub_fp)) if sub_fp else None
                 if sub_fp is not None and sub_row is None:
                     continue  # 차감행 결측 → 미생성
-                rec = _build_discrete(end_row, sub_row, q)
+                rec = _build_discrete(end_row, sub_row, q, version)
                 if rec is not None:
                     batch.append(rec)
         if not batch:

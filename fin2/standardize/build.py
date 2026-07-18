@@ -225,8 +225,9 @@ def _future_guard(dq: int, period_end) -> int:
 # PER/PBR/시총이 전부 NULL 이 된다.
 
 
-def _dq_cross_year(session, corp_code: str, basis: str, col: dict) -> int:
-    """교차연도 이상값(중앙값 대비 200x→DQ3, 30x→DQ2). std_financials_v2 기준."""
+def _dq_cross_year(session, corp_code: str, basis: str, col: dict, version: int = 1) -> int:
+    """교차연도 이상값(중앙값 대비 200x→DQ3, 30x→DQ2). std_financials_v2 기준.
+    중앙값은 **같은 version** 기준(재구축 v2 는 v2 행끼리 비교)."""
     dq = 1
     for c, lim_err, lim_warn in (("revenue", 200, 30), ("total_assets", 200, 30)):
         nv = col.get(c)
@@ -236,8 +237,8 @@ def _dq_cross_year(session, corp_code: str, basis: str, col: dict) -> int:
             SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY {c})
             FROM std_financials_v2
             WHERE corp_code=:cc AND statement_type=:st AND fiscal_period='FY'
-              AND {c}>0 AND version=1 AND data_quality<3
-        """), {"cc": corp_code, "st": basis}).scalar()
+              AND {c}>0 AND version=:v AND data_quality<3
+        """), {"cc": corp_code, "st": basis, "v": version}).scalar()
         if med and med >= 1_000_000_000:
             ratio = nv / med
             if ratio > lim_err or ratio < 1.0 / lim_err:
@@ -247,8 +248,10 @@ def _dq_cross_year(session, corp_code: str, basis: str, col: dict) -> int:
     return dq
 
 
-def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) -> int:
-    """statement_source 를 읽어 std_financials_v2 upsert. 반환=레코드 수."""
+def standardize_corp(session, corp_code: str, fiscal_year: int | None = None,
+                     version: int = 1) -> int:
+    """statement_source 를 읽어 std_financials_v2 upsert. 반환=레코드 수.
+    version: 소비계층이 읽는 버전(기본 1). Phase C 재구축은 version=2 로 병행 구축(swap 대상)."""
     fy_clause = "AND fiscal_year = :fy" if fiscal_year is not None else ""
     params: dict = {"corp": corp_code}
     if fiscal_year is not None:
@@ -283,7 +286,7 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
         is_ifrs = _derive_is_ifrs(session, sources)
 
         dq = max(validate_equations(ctx.col),
-                 _dq_cross_year(session, corp_code, basis, ctx.col) if fp == "FY" else 1)
+                 _dq_cross_year(session, corp_code, basis, ctx.col, version) if fp == "FY" else 1)
         dq = _future_guard(dq, period_end)
 
         # ★ 헤드라인(BS/IS 핵심) 전무 행은 생성 안 함: 단일basis 기업의 반대basis phantom(stray CF
@@ -291,16 +294,16 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None) ->
         # (시각화도 불가). 기존에 있으면 삭제(재추출 후 orphan 정리). 비교/K-GAAP 폴백은 별도패스라 무영향.
         if all(ctx.col.get(c) is None for c in _HEADLINE_COLS):
             session.execute(text("""DELETE FROM std_financials_v2 WHERE corp_code=:c AND fiscal_year=:y
-                AND fiscal_period=:p AND statement_type=:b AND version=1 AND is_stub=:s
+                AND fiscal_period=:p AND statement_type=:b AND version=:v AND is_stub=:s
                 AND NOT COALESCE(is_discrete,false)"""),
-                {"c": corp_code, "y": fy, "p": fp, "b": basis, "s": is_stub})
+                {"c": corp_code, "y": fy, "p": fp, "b": basis, "s": is_stub, "v": version})
             continue
 
         # ★ shares_out 은 **의도적으로 넣지 않는다**(C17): 넣지 않으면 ON CONFLICT 갱신 대상에서
         # 빠져 보고서 유래 값(shares.py)이 보존된다. None 을 넣으면 그 값을 지운다.
         record = {
             "corp_code": corp_code, "fiscal_year": fy, "fiscal_period": fp,
-            "statement_type": basis, "version": 1, "is_stub": is_stub,
+            "statement_type": basis, "version": version, "is_stub": is_stub,
             "period_end": period_end, "is_ifrs": is_ifrs,
             "data_quality": dq,
             "bs_rcept": sources.get("BS"), "is_rcept": sources.get("IS"), "cf_rcept": sources.get("CF"),
@@ -437,10 +440,11 @@ def _collect_comparative(session, basis: str,
     return _resolve(cands)
 
 
-def standardize_comparative_corp(session, corp_code: str) -> int:
+def standardize_comparative_corp(session, corp_code: str, version: int = 1) -> int:
     """
     비교컬럼 폴백: 자기연도 정기보고서가 없어 std_v2 행이 없는 (corp,fy,period,basis) 키를,
     **나중 보고서의 비교컬럼**(전기=col1/전전기=col2)에서 합성한다.
+    version: 소비계층 버전(기본 1). Phase C 재구축은 version=2.
 
     source 는 reconcile 가 고른 좋은 보고서(statement_source)의 비교컬럼만 사용 →
     ×1000 버그본·period 불일치 회피(statement_source 는 period 별). statement 별 독립
@@ -452,9 +456,9 @@ def standardize_comparative_corp(session, corp_code: str) -> int:
     own = {(r.fiscal_year, r.fiscal_period, r.statement_type)
            for r in session.execute(text("""
                SELECT fiscal_year, fiscal_period, statement_type FROM std_financials_v2
-               WHERE corp_code = :c AND version = 1
+               WHERE corp_code = :c AND version = :v
                  AND NOT (applied_rules @> :m)
-           """), {"c": corp_code, "m": f'["{_COMP_MARKER}"]'})}
+           """), {"c": corp_code, "v": version, "m": f'["{_COMP_MARKER}"]'})}
 
     srcs = session.execute(text("""
         SELECT fiscal_year AS fy, fiscal_period AS fp, basis,
@@ -487,13 +491,13 @@ def standardize_comparative_corp(session, corp_code: str) -> int:
 
         period_end = _period_end(session, corp_code, cfy, fp)
         dq = max(validate_equations(ctx.col),
-                 _dq_cross_year(session, corp_code, basis, ctx.col) if fp == "FY" else 1,
+                 _dq_cross_year(session, corp_code, basis, ctx.col, version) if fp == "FY" else 1,
                  2)  # 비교컬럼 파생은 2차 출처 → 최소 DQ2(검토 등급)
         dq = _future_guard(dq, period_end)
 
         record = {
             "corp_code": corp_code, "fiscal_year": cfy, "fiscal_period": fp,
-            "statement_type": basis, "version": 1, "is_stub": False,
+            "statement_type": basis, "version": version, "is_stub": False,
             "period_end": period_end, "is_ifrs": None, "data_quality": dq,
             "bs_rcept": sources.get("BS", (None,))[0],
             "is_rcept": sources.get("IS", (None,))[0],

@@ -2834,13 +2834,16 @@ def cmd_standardize2(args):
 
 
 def process_corp(session, corp, stages=("extract", "reconcile", "standardize",
-                                        "quarterly", "calendar")):
+                                        "quarterly", "calendar"), version=1):
     """
     한 기업에 fin2 E→R→S(+분기·달력) 파이프라인 1패스 실행. 커밋은 호출자 책임.
 
     cmd_fin2_all 의 기업 루프 본문을 추출한 공유 헬퍼.
     scripts/verify_corp_sequential.py(기업 단위 순차 검증)도 동일 경로를 재사용한다.
     반환: {"e_files","e_facts","r","s","q","c"} 카운트 dict.
+
+    version: std 소비계층 버전(기본 1). Phase C 재구축(scripts/phase_c_rebuild.py)은
+    version=2 로 병행 구축한다(swap 대상). fact_v2·statement_source 는 버전 무관(rcept 단위).
     """
     from fin2.reconcile import reconcile_corp
     from fin2.standardize.build import standardize_corp
@@ -2855,11 +2858,11 @@ def process_corp(session, corp, stages=("extract", "reconcile", "standardize",
     if "reconcile" in stages:
         out["r"] += reconcile_corp(session, corp)
     if "standardize" in stages:
-        out["s"] += standardize_corp(session, corp)
+        out["s"] += standardize_corp(session, corp, version=version)
     if "quarterly" in stages:
-        out["q"] += derive_quarters_corp(session, corp)
+        out["q"] += derive_quarters_corp(session, corp, version=version)
     if "calendar" in stages:
-        out["c"] += calendarize_corp(session, corp)
+        out["c"] += calendarize_corp(session, corp, version=version)
     return out
 
 

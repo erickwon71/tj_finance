@@ -49,15 +49,19 @@ _BS: dict[str, str] = {
     # 단기 차입성부채 세부(유동성장기부채·유동성사채) → rule_additive_debt 가 단기차입금에 합산.
     # ※ 깨끗한 leaf 개념만(롤업 CurrentBorrowingsAndCurrentPortion… 등은 이중계상 위험으로 제외).
     "ifrs-full_CurrentPortionOfLongtermBorrowings": "bs.current_lt_debt",
-    "dart_CurrentPortionOfBonds": "bs.current_bonds",
-    "dart_CurrentPortionOfConvertibleBonds": "bs.current_bonds",
+    # 사채유동분 + 전환사채유동분 = 서로 다른 상품 → 별도 canonical, rule_additive_debt 가 합산
+    # (구: 둘 다 bs.current_bonds 로 collapse → 값충돌 317 보류 → short_term_debt 과소).
+    "dart_CurrentPortionOfBonds": "bs.current_bonds_plain",
+    "dart_CurrentPortionOfConvertibleBonds": "bs.current_bonds_conv",
     "ifrs-full_NoncurrentBorrowings": "bs.long_term_debt",
     "dart_LongTermBorrowingsGross": "bs.long_term_debt",
     "ifrs-full_LongtermBorrowings": "bs.long_term_debt",
     # 사채(비유동) → rule_additive_debt 가 장기차입금에 합산. 비유동 명시 개념만(총 BondsIssued 제외).
     "ifrs-full_NoncurrentPortionOfNoncurrentBondsIssued": "bs.bonds",
-    "ifrs-full_CurrentLeaseLiabilities": "bs.lease_liability",
-    "ifrs-full_NoncurrentLeaseLiabilities": "bs.lease_liability",
+    # 리스부채: 유동+비유동은 **서로 다른 항목** → 별도 canonical 로 두고 rule_additive_lease 가
+    # lease_liability 로 합산(구: 둘 다 bs.lease_liability 로 collapse → 값충돌 17,895 보류).
+    "ifrs-full_CurrentLeaseLiabilities": "bs.lease_current",
+    "ifrs-full_NoncurrentLeaseLiabilities": "bs.lease_noncurrent",
     "ifrs-full_TradeAndOtherCurrentPayables": "bs.trade_payables",
     "dart_ShortTermTradePayables": "bs.trade_payables",
     "ifrs-full_OtherCurrentLiabilities": "bs.other_current_payables",
@@ -117,7 +121,9 @@ _CF: dict[str, str] = {
     "ifrs-full_PurchaseOfIntangibleAssetsClassifiedAsInvestingActivities": "cf.capex_intangible",
     "ifrs-full_AcquisitionOfIntangibleAssets": "cf.capex_intangible",
     "ifrs-full_ProceedsFromSalesOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities": "cf.ppe_proceeds",
-    "ifrs-full_DividendsPaid": "cf.dividends_paid",
+    # ★ A(2026-07-18): bare ifrs-full_DividendsPaid 는 **자본변동표(SCE) 개념**(발생주의 분배액,
+    # 현 scope 밖) → cf.dividends_paid 에서 제거. 현금흐름표 값은 …ClassifiedAs…Activities 만.
+    # (구: bare 도 매핑 → SCE 값이 CF 값과 collapse, 값충돌 3,019. 참고 dart_xml_parser.py:377.)
     "ifrs-full_DividendsPaidClassifiedAsFinancingActivities": "cf.dividends_paid",
     "ifrs-full_DividendsPaidClassifiedAsOperatingActivities": "cf.dividends_paid",
     "ifrs-full_DividendsReceivedClassifiedAsOperatingActivities": "cf.dividends_received",
@@ -128,10 +134,12 @@ _CF: dict[str, str] = {
     "ifrs-full_EffectOfExchangeRateChangesOnCashAndCashEquivalents": "cf.fx_effect_on_cash",
     "dart_CashAndCashEquivalentsAtBeginningOfPeriodCf": "cf.beginning_cash",
     "dart_CashAndCashEquivalentsAtEndOfPeriodCf": "cf.ending_cash",
-    "dart_ProceedsFromShortTermBorrowings": "cf.borrowings_proceeds",
-    "dart_ProceedsFromLongTermBorrowings": "cf.borrowings_proceeds",
-    "dart_RepaymentsOfShortTermBorrowings": "cf.borrowings_repaid",
-    "dart_RepaymentsOfLongTermBorrowings": "cf.borrowings_repaid",
+    # 차입 유입/상환: 단기+장기는 서로 다른 흐름 → 별도 canonical, rule_additive_borrowings 가
+    # 합산(구: 각각 한 canonical 로 collapse → 값충돌 6,925/5,230 보류).
+    "dart_ProceedsFromShortTermBorrowings": "cf.borrow_proceeds_st",
+    "dart_ProceedsFromLongTermBorrowings": "cf.borrow_proceeds_lt",
+    "dart_RepaymentsOfShortTermBorrowings": "cf.borrow_repaid_st",
+    "dart_RepaymentsOfLongTermBorrowings": "cf.borrow_repaid_lt",
     "dart_RepaymentsOfConvertibleBonds": "cf.bond_repaid",
     "dart_AcquisitionOfTreasuryShares": "cf.treasury_stock_purchase",
     "dart_PaymentsOfFinanceLeaseLiabilitiesClassifiedAsFinancingActivities": "cf.lease_repaid",

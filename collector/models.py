@@ -541,6 +541,10 @@ class StdFinancialV2(Base):
     fcf                 = Column(BigInteger, nullable=True)
     net_debt            = Column(BigInteger, nullable=True)
     shares_out          = Column(BigInteger, nullable=True)
+    # C 합산(2026-07-18): 유동+비유동 리스부채 / 단기+장기 차입 유입·상환 합계.
+    lease_liability     = Column(BigInteger, nullable=True)
+    borrowings_proceeds = Column(BigInteger, nullable=True)
+    borrowings_repaid   = Column(BigInteger, nullable=True)
 
     # ── 메타·연원 ──
     data_quality        = Column(SmallInteger, default=0, comment="0:미검증 1:정상 2:경고 3:오류")

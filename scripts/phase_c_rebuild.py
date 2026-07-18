@@ -78,6 +78,27 @@ def _clean_slate(session, corp: str, fy_min: int) -> int:
     return res.rowcount or 0
 
 
+def _remap_track_a_facts(session, corp: str) -> int:
+    """보존된 Track A(xbrl_acode) fact 의 canonical_account 를 **현 concept_map 으로 재적용**.
+    clean_slate 는 Track A 2015+ 를 재추출 없이 보존하므로, concept_map(Track A 매핑) 변경은
+    재추출 없이는 반영되지 않는다. Track A canonical 은 acode 의 순수 함수(map_acode)이므로
+    XML 재파싱 없이 acode 별 bulk UPDATE 로 재적용한다. 반환=갱신 행수."""
+    from fin2.taxonomy.concept_map import map_acode
+    acodes = [r[0] for r in session.execute(text(
+        "SELECT DISTINCT acode FROM fact_v2 WHERE corp_code=:c "
+        "AND source_format='xbrl_acode' AND acode IS NOT NULL"), {"c": corp}).fetchall()]
+    n = 0
+    for ac in acodes:
+        canon = map_acode(ac)
+        res = session.execute(text(
+            "UPDATE fact_v2 SET canonical_account=:cn WHERE corp_code=:c "
+            "AND source_format='xbrl_acode' AND acode=:ac "
+            "AND canonical_account IS DISTINCT FROM :cn"),
+            {"cn": canon, "c": corp, "ac": ac})
+        n += res.rowcount or 0
+    return n
+
+
 def _reextract_targets(session, corp: str) -> tuple[int, int, dict[str, str]]:
     """corp 의 Track B 대상 rcept(rebuild_target_track1) 을 strict 재파싱 → fact_v2 재삽입.
     반환=(대상 파일수, fact 수, {rcept: outcome}). outcome ∈ done|held_no_facts|missing_file.
@@ -247,11 +268,13 @@ def rebuild_corp(corp: str, fy_min: int, version: int = 2) -> dict:
     from fin2.standardize.quarterly import derive_quarters_corp
     from fin2.standardize.calendar import calendarize_corp
 
-    out = {"purged": 0, "e_files": 0, "e_facts": 0, "r": 0, "s": 0, "notes": 0, "comp": 0,
-           "shares": 0, "q": 0, "c": 0}
+    out = {"purged": 0, "e_files": 0, "e_facts": 0, "remap": 0, "r": 0, "s": 0, "notes": 0,
+           "comp": 0, "shares": 0, "q": 0, "c": 0}
     with get_session() as s:
         out["purged"] = _clean_slate(s, corp, fy_min)
         out["e_files"], out["e_facts"], outcome = _reextract_targets(s, corp)
+        # 보존된 Track A 의 canonical 을 현 concept_map 으로 재적용(재추출 없이 매핑 변경 반영).
+        out["remap"] = _remap_track_a_facts(s, corp)
         # statement_source 재생성(파생층) — 정리된 fact_v2 만 반영되게 corp 것 삭제 후 reconcile.
         s.execute(text("DELETE FROM statement_source WHERE corp_code = :c"), {"c": corp})
         out["r"] = reconcile_corp(s, corp)
@@ -304,7 +327,7 @@ def main() -> None:
             agg["pass"] += 1
             logger.info(
                 f"[{i}/{len(todo)}] {corp} — purge {o['purged']} / 재파싱 {o['e_files']}파일 "
-                f"{o['e_facts']}fact(held {o['held']}) / stmt_src {o['r']} / std_v2 {o['s']}"
+                f"{o['e_facts']}fact(held {o['held']}) / remapA {o['remap']} / stmt_src {o['r']} / std_v2 {o['s']}"
                 f"(+comp {o['comp']}) / note {o['notes']} / shares {o['shares']} / "
                 f"분기 {o['q']} / 달력 {o['c']}")
         except Exception as e:  # noqa: BLE001 — 기업 예외 격리(루프 계속)

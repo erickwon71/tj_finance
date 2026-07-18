@@ -461,6 +461,17 @@ def _run_migrations() -> None:
          ALTER TABLE std_financials_v2 ADD COLUMN IF NOT EXISTS value_lineage JSONB;
          """),
 
+        ("2026_07_std_v2_lease_borrowings",
+         # C 합산(concept_map 감사, docs/qa/audit_concept_map_collapse_2026-07-18.md):
+         # 유동+비유동 리스부채, 단기+장기 차입 유입/상환을 합산한 신규 지표. 구 concept_map 은
+         # 서로 다른 부분을 한 canonical 로 collapse 해 값충돌(보류)만 냈다 → 별도 canonical +
+         # rule_additive_lease/borrowings 합산. nullable·DEFAULT 없음 → 즉시 반영, 재추출 전 NULL.
+         """
+         ALTER TABLE std_financials_v2 ADD COLUMN IF NOT EXISTS lease_liability BIGINT;
+         ALTER TABLE std_financials_v2 ADD COLUMN IF NOT EXISTS borrowings_proceeds BIGINT;
+         ALTER TABLE std_financials_v2 ADD COLUMN IF NOT EXISTS borrowings_repaid BIGINT;
+         """),
+
         ("2026_07_extended_financials_view_distinct",
          # 2026-07-17 트리아지(dq_assertions extended_financials_n_facts_outlier) — 같은 rcept
          # 안에서 동일 canonical_account 가 서로 다른 표(본문표+증감명세 주석 등)에 완전히 같은

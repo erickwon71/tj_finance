@@ -51,11 +51,20 @@ _DA_TOTAL_CANON = ("cf.da_total", "note.da_total")
 VALUE_COLS = (
     set(DIRECT_MAP.values())
     | {"capex", "depreciation", "amortization", "da_total", "ebitda", "fcf", "net_debt"}
+    | {"lease_liability", "borrowings_proceeds", "borrowings_repaid"}   # C 합산(2026-07-18)
 )
 
 # 차입성부채 세부 → 단기/장기 합산 컴포넌트(개념별 1캐논 → 이중계상 없음)
-_ST_DEBT_PARTS = ("bs.short_term_debt", "bs.current_lt_debt", "bs.current_bonds")
+# 사채유동분은 일반/전환 별도 canonical → 둘 다 단기부채에 합산(구 bs.current_bonds collapse 대체).
+_ST_DEBT_PARTS = ("bs.short_term_debt", "bs.current_lt_debt",
+                  "bs.current_bonds_plain", "bs.current_bonds_conv")
 _LT_DEBT_PARTS = ("bs.long_term_debt", "bs.bonds")
+
+# C 합산(2026-07-18): 유동+비유동 리스부채 → lease_liability, 단기+장기 차입 유입/상환 → 각 합계.
+# 서로 다른 항목이라 한 canonical 로 collapse 하면 값충돌(보류)이므로 별도 canonical 로 두고 합산.
+_LEASE_PARTS = ("bs.lease_current", "bs.lease_noncurrent")
+_BORROW_PROCEEDS_PARTS = ("cf.borrow_proceeds_st", "cf.borrow_proceeds_lt")
+_BORROW_REPAID_PARTS = ("cf.borrow_repaid_st", "cf.borrow_repaid_lt")
 
 # ★ std_v2 컬럼에 실제로 닿는 canonical 전체(직접매핑 + 합산/보완/파생 입력).
 # build._collect 은 접두어(bs./is./cf.)로 훑기 때문에 **아무도 안 읽는 canonical** 도 딸려온다
@@ -65,6 +74,7 @@ CONSUMED_CANON = (
     set(DIRECT_MAP)
     | set(_CAPEX_CANON) | set(_DEP_CANON) | set(_AMORT_CANON) | set(_DA_TOTAL_CANON)
     | set(_ST_DEBT_PARTS) | set(_LT_DEBT_PARTS)
+    | set(_LEASE_PARTS) | set(_BORROW_PROCEEDS_PARTS) | set(_BORROW_REPAID_PARTS)
     | {"note.rd_expense", "is.noncontrolling_ni",
        "is.insurance_revenue", "is.operating_revenue_ins", "is.interest_revenue",
        "bs.deposits", "bs.cash_deposits_combined"}   # 금융사 현금+예치금(rule_cash_with_deposits)
@@ -249,6 +259,26 @@ def rule_additive_debt(ctx: StdContext) -> None:
         ctx._mark("additive_debt")
 
 
+def rule_additive_lease(ctx: StdContext) -> None:
+    """리스부채(총) = 유동 + 비유동 리스부채. BS stock → 절대값 합(각 leaf 단일 canonical)."""
+    parts = [abs(ctx.canon[c]) for c in _LEASE_PARTS if ctx.canon.get(c) is not None]
+    if parts:
+        ctx.col["lease_liability"] = sum(parts)
+        ctx._mark("additive_lease")
+
+
+def rule_additive_borrowings(ctx: StdContext) -> None:
+    """차입 유입/상환(총) = 단기 + 장기. CF flow → **부호 보존 합**(유입 +, 상환 −)."""
+    pp = [ctx.canon[c] for c in _BORROW_PROCEEDS_PARTS if ctx.canon.get(c) is not None]
+    rp = [ctx.canon[c] for c in _BORROW_REPAID_PARTS if ctx.canon.get(c) is not None]
+    if pp:
+        ctx.col["borrowings_proceeds"] = sum(pp)
+        ctx._mark("additive_borrowings")
+    if rp:
+        ctx.col["borrowings_repaid"] = sum(rp)
+        ctx._mark("additive_borrowings")
+
+
 def rule_revenue_fallback(ctx: StdContext) -> None:
     """금융(보험) 매출 보완: 제조업 표준 revenue(ifrs-full_Revenue)가 없을 때만,
     **보험 주력**(보험수익 ≥ 이자수익) 기업에 한해 영업수익(보험)/보험수익을 매출로 채운다.
@@ -310,6 +340,8 @@ RULES = [
     ("additive_capex", rule_additive_capex),
     ("additive_da", rule_additive_da),
     ("additive_debt", rule_additive_debt),
+    ("additive_lease", rule_additive_lease),
+    ("additive_borrowings", rule_additive_borrowings),
     ("net_income_fill", rule_net_income_fill),
     ("controlling_ni_fill", rule_controlling_ni_fill),
     ("revenue_from_cogs_gp", rule_revenue_from_cogs_gp),

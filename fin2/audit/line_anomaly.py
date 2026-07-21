@@ -138,11 +138,20 @@ def _close_row_year(label: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def detect_sce_anomalies(lines, *, rcept_no: str, corp_code: str) -> list[LineAnomaly]:
+def detect_sce_anomalies(lines, *, rcept_no: str, corp_code: str,
+                         report_fiscal_period: str | None = None) -> list[LineAnomaly]:
     """SCE 기말자본 행 ↔ 같은 보고서 BS 항목별 대조 → 불일치 표시.
 
     `lines` 는 `extract_report_lines()` 결과 전체(BS 포함)여야 한다 — 교차대조가 목적이므로.
+
+    ★ **FY(사업보고서)만 대조한다**(실측 2026-07-22). 분기·반기 보고서는 BS 비교열이
+      '전기말(직전 연말)'인데 SCE 기말 행은 '전년 동분기말'이라 **다른 날짜를 비교**하게 된다:
+          Q1 보고서: BS(col1)=2014.12.31  ↔  SCE '2014.02.28 (기말자본)'
+      전량적재 시험 300건에서 이 오탐이 780건 나왔다(FY 는 0건). 연도만으로 열을 짝지을 수
+      없으므로 기간 종료일을 정확히 맞출 수 있게 되기 전까지는 FY 로 한정한다.
     """
+    if report_fiscal_period is not None and report_fiscal_period != "FY":
+        return []
     out: list[LineAnomaly] = []
     report_fy = next((l.report_fiscal_year for l in lines), None)
 
@@ -221,9 +230,11 @@ def detect_sce_anomalies(lines, *, rcept_no: str, corp_code: str) -> list[LineAn
     return out
 
 
-def detect_anomalies(lines, *, rcept_no: str, corp_code: str) -> list[LineAnomaly]:
+def detect_anomalies(lines, *, rcept_no: str, corp_code: str,
+                     report_fiscal_period: str | None = None) -> list[LineAnomaly]:
     """statement 별 탐지기 집합 진입점. 현재는 SCE 만 — BS/IS/CF 규칙 추가 시 여기에 붙인다."""
-    return detect_sce_anomalies(lines, rcept_no=rcept_no, corp_code=corp_code)
+    return detect_sce_anomalies(lines, rcept_no=rcept_no, corp_code=corp_code,
+                                report_fiscal_period=report_fiscal_period)
 
 
 def store_anomalies(session, rcept_no: str, anomalies: list[LineAnomaly]) -> int:

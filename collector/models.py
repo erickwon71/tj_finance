@@ -1413,3 +1413,24 @@ class ReportLineAnomaly(Base):
     def __repr__(self):
         return (f"<ReportLineAnomaly {self.corp_code} r{self.rcept_no} {self.statement} "
                 f"{self.anomaly_kind} {self.original_value}→{self.suggested_value}>")
+
+
+class ReportLineLoadProgress(Base):
+    """계층2 전량적재 진행 체크포인트 — rcept 단위. **재개 가능성의 근거**.
+
+    report_lines 에 행이 있는지로 재개를 판단하면 안 된다: 추출 결과가 0행인 보고서(단위
+    미선언·본문 섹션 없음 등 '보류')가 정상적으로 존재하므로, 그런 건은 매 재시작마다
+    무한 재처리된다. 그래서 처리 사실 자체를 따로 기록한다.
+
+    status: done(적재 완료, 0행 포함) / skip(파일 소실) / error(예외 — message 보존)
+    """
+    __tablename__ = "report_line_load_progress"
+
+    rcept_no     = Column(String(14), primary_key=True)
+    corp_code    = Column(String(8),  nullable=False, index=True)
+    fiscal_year  = Column(SmallInteger, nullable=True, index=True)
+    status       = Column(String(8),  nullable=False, index=True)
+    n_lines      = Column(Integer,    nullable=True)
+    n_anomalies  = Column(Integer,    nullable=True)
+    message      = Column(Text,       nullable=True)
+    processed_at = Column(DateTime,   default=datetime.utcnow)

@@ -79,7 +79,8 @@ def main():
             print(f"  ! ERR {t.rcept_no}: {type(e).__name__}: {e}")
             continue
         n_rep += 1
-        found = detect_anomalies(lines, rcept_no=t.rcept_no, corp_code=t.corp_code)
+        found = detect_anomalies(lines, rcept_no=t.rcept_no, corp_code=t.corp_code,
+                                 report_fiscal_period=t.fiscal_period)
         if found:
             per_report[len(found)] += 1
             for a in found:

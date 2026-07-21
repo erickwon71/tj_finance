@@ -20,7 +20,25 @@
   ⚠ 주석은 제외(include_notes=False). 포함 시 볼륨 5배(~150GB)로 디스크에 들어가지 않는다.
   ⚠ collect/gapfill 잡은 재구축 기간 중지 유지([[nightly-jobs-paused-phase-a3]]).
 
-  설치:
+  ★★ 설치 전 필수 — 이대로 load 하면 **전건 실패한다**(2026-07-22 실측) ★★
+    raw_report 는 NAS SMB 마운트의 심링크다:
+        raw_report -> /Volumes/tj_finance_data/raw_report
+        //tjkwon@192.168.0.96/tj_finance_data
+    launchd 백그라운드 에이전트는 여기를 읽지 못한다 — macOS TCC 차단:
+        PermissionError: [Errno 1] Operation not permitted: .../raw_report/...
+    (ENOENT 가 아니라 EPERM 이다. 마운트가 안 보이는 게 아니라 접근이 거부된 것.)
+    실제로 잡을 올렸다가 200건 연속 실패해 즉시 중지하고 progress 의 error 행을 지웠다.
+
+    해결하려면 **GUI 에서 사람이** 전체 디스크 접근 권한을 줘야 한다(자동화 불가):
+      시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한 → '+' 로 추가:
+        /Users/taejin/Project/tj_finance/.venv_tj_finance/bin/python
+      (caffeinate 도 함께 추가해야 할 수 있음)
+    권한 부여 전까지는 아래 대안으로 돌린다 — 로그인 세션 권한을 물려받으므로 잘 동작한다:
+      nohup caffeinate -i .venv_tj_finance/bin/python scripts/load_report_lines.py \
+        >> logs/layer2_load.out.log 2>> logs/layer2_load.err.log &
+    ⚠ 대안의 한계: 로그아웃/재부팅 시 죽는다(재실행하면 progress 기준으로 이어서 감).
+
+  설치(위 권한 부여 후):
     cp deploy/launchd/com.tjfinance.layer2load.plist ~/Library/LaunchAgents/
     launchctl load ~/Library/LaunchAgents/com.tjfinance.layer2load.plist
   진행 확인:

@@ -33,7 +33,9 @@ from loguru import logger
 import re
 
 from parser.xml.dart_xml_parser import _parse_xml_file
-from parser.xml.table_extractor import extract_rows, _split_label_amounts, _get_cells
+from parser.xml.table_extractor import (
+    extract_rows, _split_label_amounts, _get_cells, _NUMBER_PATTERN,
+)
 from parser.common.amount_normalizer import detect_unit_declaration, parse_amount, normalize_account_name
 
 from parser.xml.section_detector import (
@@ -48,6 +50,10 @@ from fin2.extract.text import (
 # 주석 표 한 행에서 캡처할 최대 컬럼 수(위치 기준). 주석 표는 컬럼 의미가 제각각(5개년·
 # 만기구간·공정가치수준 등)이라 넉넉히 잡아 위치 그대로 전사한다. 값 판단 아님.
 _NOTE_MAX_COLS = 8
+
+# 자본변동표 금액 열 최대 수(자본금·자본잉여금·기타자본·이익잉여금·지배지분계·비지배·총계 +여유).
+# 열은 기간이 아니라 자본 구성요소라 넉넉히 잡고 위치 그대로 전사한다.
+_SCE_MAX_COLS = 12
 
 # 표 헤더의 '제 N 기 (당)/(전)/(전전)' 기간 표기. 기간 수 판정용.
 _PERIOD_HDR_RE = re.compile(r"제\s*\d+\s*[（(]?\s*[당전]")
@@ -105,6 +111,7 @@ class ReportLineRow:
     node_role: str | None = None          # P/S/F — 순수 구조(다음 행 들여쓰기 비교). 소계 주장 아님
     table_seq: int | None = None          # 섹션 내 표 문서 순번. 정렬키=(table_seq, row_order)
     table_title: str | None = None        # 그 표의 원문 제목(위치 기록)
+    col_label: str | None = None          # 열 헤더 원문(SCE 전용 — 열=자본 구성요소)
 
     def as_row(self) -> dict:
         """SQLAlchemy bulk insert 용 dict (ReportLine 컬럼명 기준)."""
@@ -123,6 +130,7 @@ class ReportLineRow:
             "table_title": self.table_title,
             "label_raw": self.label_raw,
             "col_index": self.col_index,
+            "col_label": self.col_label,
             "context_fiscal_year": self.context_fiscal_year,
             "period_kind": self.period_kind,
             "is_cumulative": self.is_cumulative,
@@ -344,6 +352,77 @@ def _emit_section_lines(
                 ))
 
 
+def _cell_span(td, attr: str) -> int:
+    """COLSPAN/ROWSPAN 값(대소문자 혼용 대응). 없거나 파싱 불가면 1."""
+    for k in (attr, attr.lower(), attr.capitalize()):
+        if k in td.attrib:
+            try:
+                return max(1, int(td.attrib[k]))
+            except (TypeError, ValueError):
+                return 1
+    return 1
+
+
+def _build_col_labels(table) -> dict[int, str]:
+    """헤더 TR 들을 **COLSPAN/ROWSPAN 그리드로 복원**해 {금액열 인덱스: 열 라벨} 반환.
+
+    ★ 왜 필요한가: 자본변동표는 열이 기간이 아니라 자본 구성요소(자본금/자본잉여금/이익잉여금/
+    비지배지분/…)다. col_index 만으로는 어느 열인지 알 수 없어 데이터가 무의미해진다.
+    XBRL ACONTEXT(ComponentsOfEquityAxis)에도 같은 정보가 있지만 실측 커버리지가 **21.5%**
+    뿐이라(Track A 만 마킹) 헤더 복원이 주 경로다.
+
+    헤더는 다단이고 ROWSPAN 이 섞인다 — 단순 COLSPAN 확장만 하면 단마다 길이가 어긋난다:
+        TR0: [라벨칸 ROWSPAN=3][자본 COLSPAN=7]
+        TR1: [지배기업…지분 COLSPAN=5][비지배지분 ROWSPAN=2][자본 합계 ROWSPAN=2]
+        TR2: [자본금][자본잉여금][기타자본항목][이익잉여금][지배지분 합계]
+    → HTML 표와 동일한 방식으로 (row, col) 그리드를 채운 뒤 열별로 단을 위→아래 연결한다.
+
+    헤더 행 = **첫 데이터 행 직전까지**. 데이터 행은 '첫 셀 외에 숫자 셀이 있는 행'으로 본다.
+    반환 키는 **금액열 인덱스**(0번 라벨열을 뺀 값) — RowData.amounts 인덱스와 맞춘다.
+    """
+    trs = table_direct_rows(table)
+    if not trs:
+        return {}
+
+    # 헤더 구간 = 첫 데이터 행 전까지
+    n_header = 0
+    for tr in trs:
+        cells = [" ".join("".join(td.itertext()).split()) for td in tr]
+        if len(cells) > 1 and any(_NUMBER_PATTERN.search(c) for c in cells[1:]):
+            break
+        n_header += 1
+    if n_header == 0 or n_header >= len(trs):
+        return {}
+
+    grid: dict[tuple[int, int], str] = {}
+    occupied: set[tuple[int, int]] = set()
+    for r, tr in enumerate(trs[:n_header]):
+        c = 0
+        for td in tr:
+            while (r, c) in occupied:
+                c += 1
+            txt = " ".join("".join(td.itertext()).split())
+            cs, rs = _cell_span(td, "COLSPAN"), _cell_span(td, "ROWSPAN")
+            for dr in range(rs):
+                for dc in range(cs):
+                    occupied.add((r + dr, c + dc))
+                    if txt:
+                        grid[(r + dr, c + dc)] = txt
+            c += cs
+
+    width = max((col for _, col in occupied), default=0) + 1
+    out: dict[int, str] = {}
+    for col in range(1, width):                     # 0 열 = 계정명 라벨열
+        parts: list[str] = []
+        for r in range(n_header):
+            t = grid.get((r, col))
+            if t and (not parts or parts[-1] != t):  # 같은 셀이 세로로 늘어난 중복 제거
+                parts.append(t)
+        if parts:
+            out[col - 1] = ">".join(parts)          # 금액열 인덱스로 변환
+    return out
+
+
 def _note_heading(table) -> str | None:
     """주석 표 직전의 제목/설명 텍스트(section_path 로케이터). **위치 기록**이지 추측 아님.
 
@@ -432,6 +511,91 @@ def _emit_note_lines(
                     ))
 
 
+def _emit_sce_lines(
+    section_code: str,
+    tables_with_unit: list[tuple],
+    *,
+    emit,
+    corp_code: str,
+    rcept_no: str,
+    report_fiscal_year: int,
+    report_fiscal_period: str,
+) -> None:
+    """자본변동표(SCE)를 전사한다 — **본문/주석과 컬럼 규약이 다르다**.
+
+    SCE 는 '행=변동사유, 열=자본 구성요소'인 행렬이다:
+
+                       자본금  자본잉여금  이익잉여금  비지배지분   총계
+        2023.01.01(기초)   X       X         X         X        X
+          당기순이익         -       -         X         X        X
+          배당              -       -        (X)       (X)      (X)
+        2023.12.31(기말)   X       X         X         X        X
+
+    그래서 본문 규약(col_index=0 당기/1 전기 …, ctx_fy=report_fy-col_idx)을 쓰면
+    **자본잉여금 열이 '전기 데이터'로 둔갑**한다. 주석 슬라이스와 같은 규약을 쓴다:
+      · col_index = 위치, context_fiscal_year = NULL, period_kind = NULL
+      · 열 정체는 `col_label`(헤더 그리드 복원)로 별도 기록 — `_build_col_labels` 참고
+    또 당기/전기 블록이 **세로로 두 번** 쌓이는데 그 구분도 판단하지 않는다. 기초/기말 행의
+    라벨이 날짜("2023.01.01 (기초자본)")로 남으므로 계층3 이 읽는다.
+
+    ★ `date_labels_ok=True` 필수: 기본 경로는 날짜 라벨 행을 기간 헤더로 보고 드롭하는데,
+      SCE 에서는 그게 기초/기말 잔액 행이다(실측 2,519행/250보고서 유실).
+    """
+    basis, _ = _SECTION_META[section_code]
+    tables = [t for t, _, _ in tables_with_unit]
+    doc_seq = {id(t): i for i, t in enumerate(tables)}
+
+    for table in tables:
+        unit = next((u for t, u, _ in tables_with_unit if t is table), None)
+        if unit is None:
+            logger.debug(f"[report_lines/SCE] 단위 미선언 → 스킵(보류): {rcept_no} {section_code}")
+            continue
+        table_seq = doc_seq[id(table)]
+        table_title = _note_heading(table)
+        col_labels = _build_col_labels(table)
+        adecimal = _adecimal_from_unit(unit)
+
+        # preserve_col_positions=True 필수: 기본 경로는 앞쪽 빈 셀을 당겨(6-column IS 대응)
+        # 열을 밀어버린다. SCE 에서 빈 칸은 '그 자본 항목에 영향 없음'이라는 의미 있는 값이다.
+        rows = list(extract_rows(table, multiplier=unit, num_cols=_SCE_MAX_COLS,
+                                 direct_only=True, skip_junk=False,
+                                 date_labels_ok=True, preserve_col_positions=True))
+        section_paths = _assign_section_paths(rows, "SCE")
+        node_roles = _classify_positions(rows)
+
+        for row in rows:
+            if not row.account_name:
+                continue
+            for col_idx, amount in enumerate(row.amounts):
+                if amount is None:
+                    continue
+                emit(ReportLineRow(
+                    corp_code=corp_code,
+                    rcept_no=rcept_no,
+                    report_fiscal_year=report_fiscal_year,
+                    report_fiscal_period=report_fiscal_period,
+                    statement="SCE",
+                    basis=basis,
+                    section_path=section_paths.get(id(row)),
+                    label_raw=row.account_name,
+                    col_index=col_idx,                 # 위치(연도 아님)
+                    col_label=col_labels.get(col_idx),  # 자본 구성요소
+                    context_fiscal_year=None,          # ★ 연도 주장 안 함
+                    period_kind=None,                  # instant/duration 이 행마다 다름
+                    is_cumulative=False,
+                    value_won=amount,
+                    adecimal=adecimal,
+                    unit_source="declared",
+                    source_ref=f"{section_code}/{row.account_name[:80]}"[:180],
+                    context_raw=f"sce:{basis}:c{col_idx}",
+                    row_order=row.row_order,
+                    depth=row.raw_indent,
+                    node_role=node_roles.get(id(row)),
+                    table_seq=table_seq,
+                    table_title=table_title,
+                ))
+
+
 def extract_report_lines(
     file_path: str | Path,
     *,
@@ -458,9 +622,11 @@ def extract_report_lines(
     fin_type = _detect_fin_type(root)
     lines: list[ReportLineRow] = []
 
-    groups = _detect_body_statement_tables(root, fin_type)
+    # include_sce=True — 계층2 는 자본변동표도 전사한다(fact_v2 는 기본값 False 로 계속 배제).
+    groups = _detect_body_statement_tables(root, fin_type, include_sce=True)
     for code, tables_with_unit in groups.items():
-        _emit_section_lines(
+        emitter = _emit_sce_lines if code.startswith("SCE") else _emit_section_lines
+        emitter(
             code, tables_with_unit, emit=lines.append,
             corp_code=corp_code, rcept_no=rcept_no,
             report_fiscal_year=report_fiscal_year,

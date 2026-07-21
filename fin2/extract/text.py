@@ -53,6 +53,10 @@ _SECTION_META = {
     "BS_S": ("separate", "instant"),
     "IS_S": ("separate", "duration"),
     "CF_S": ("separate", "duration"),
+    # 자본변동표 — 계층2 전용. period_kind=None: SCE 는 instant(잔액)와 duration(변동)이 한 표에
+    # 섞여 행마다 다르므로 표 단위로 주장하지 않는다(계층3 이 행에서 판단).
+    "SCE_C": ("consolidated", None),
+    "SCE_S": ("separate", None),
 }
 
 # 보고서 기간(fiscal_period) → fact_v2 period_type
@@ -198,7 +202,8 @@ def _row_to_fact(
     )
 
 
-def _detect_body_statement_tables(root, fin_type: str) -> dict[str, list[tuple]]:
+def _detect_body_statement_tables(root, fin_type: str,
+                                  include_sce: bool = False) -> dict[str, list[tuple]]:
     """**DART 섹션 기반 본문표 식별**(2026-07-17 재설계).
 
     `2.연결재무제표` / `4.재무제표` 섹션 **내부 표만** 본문 후보로 삼는다. 주석·요약은
@@ -230,8 +235,9 @@ def _detect_body_statement_tables(root, fin_type: str) -> dict[str, list[tuple]]
             continue  # 연결 없는 기업의 연결 표 무시
         for tbl in sec_tables.get(sec_kind, []):
             # 섹션이 이미 '본문'을 보장하므로 주석 배제 가드가 불필요 → 재무제표명만 본다
-            # (공백·반기/분기 접두 허용). 자본변동표(SCE)는 분류기가 배제한다.
-            stmt = classify_statement_in_body_section(title_text(tbl))
+            # (공백·반기/분기 접두 허용). 자본변동표(SCE)는 분류기가 배제한다 —
+            # include_sce=True(계층2 report_lines 전용)일 때만 'SCE' 로 통과시킨다.
+            stmt = classify_statement_in_body_section(title_text(tbl), include_sce=include_sce)
             if stmt is None:
                 continue
             # 데이터행 없는 stub(단위표·footer)·wrapper 배제. **직접 행 기준**(깨진 XML 대응).

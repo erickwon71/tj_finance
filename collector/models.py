@@ -392,7 +392,13 @@ class ReportLine(Base):
                                 comment="원문 계정명 그대로(정규화 안 함). ★TEXT: 원문 충실전사가 "
                                         "원칙이라 잘라내면 안 된다 — section_path 를 구성하는 원자이기도 함.")
 
-    col_index          = Column(SmallInteger, nullable=True,  comment="0=당기 1=전기 2=전전기")
+    col_index          = Column(SmallInteger, nullable=True,
+                                comment="BS/IS/CF=0 당기 1 전기 2 전전기 / note·SCE=위치(연도 아님)")
+    col_label          = Column(Text,         nullable=True,
+                                comment="열 헤더 원문(다단이면 '>'로 연결). **자본변동표 전용** — "
+                                        "SCE 는 열이 기간이 아니라 자본 구성요소(자본금/이익잉여금/…)"
+                                        "라 이게 없으면 col_index 만으로는 어느 열인지 알 수 없다. "
+                                        "COLSPAN/ROWSPAN 그리드 복원으로 산출(원문 전사, 판단 아님)")
     context_fiscal_year= Column(SmallInteger, nullable=True,  index=True)
     period_kind        = Column(String(8),    nullable=True,  comment="instant(BS)/duration(IS·CF)")
     is_cumulative       = Column(Boolean,     default=False)

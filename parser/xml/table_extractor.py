@@ -170,6 +170,8 @@ def extract_rows(
     num_cols: int = 3,
     direct_only: bool = False,
     skip_junk: bool = True,
+    date_labels_ok: bool = False,
+    preserve_col_positions: bool = False,
 ) -> list[RowData]:
     """
     TABLE 요소에서 재무 행 데이터를 추출한다.
@@ -188,6 +190,10 @@ def extract_rows(
             않는다 — **계층2 report_lines(원문 충실전사)용**: 지분법자본변동·미처분이익잉여금·
             대손충당금·재고 세부 등은 원문 face 라인이므로 전사해야 한다(집계 이중계산 회피는
             계층3 몫). 진짜 열헤더(3개월·회사명 등)는 금액이 없어 자연 미방출되므로 무해하다.
+        date_labels_ok: True 면 첫 셀이 날짜여도 데이터 행으로 취급 — **자본변동표(SCE) 전용**.
+            상세는 `_is_header_cell(allow_date_label=)` 참고. 기본 False = 기존 동작 보존.
+        preserve_col_positions: True 면 앞쪽 빈 셀을 당기지 않고 **열 위치를 그대로 보존**한다 —
+            열이 기간이 아니라 축(자본 구성요소 등)인 행렬 표 전용. 기본 False = 기존 동작 보존.
 
     Returns:
         RowData 리스트 (헤더 행 제외, 빈 행 제외)
@@ -211,7 +217,7 @@ def extract_rows(
 
         # 헤더/제목/단위 행 감지 → 위치에 관계없이 항상 건너뜀
         # (DART 테이블은 반복 헤더 행 또는 섹션 구분 행이 중간에 나올 수 있음)
-        if _is_header_cell(first_text):
+        if _is_header_cell(first_text, allow_date_label=date_labels_ok):
             continue
 
         # 재무제표 이름만 있는 제목 행 건너뜀 (예: "재무상태표", "포괄손익계산서")
@@ -236,7 +242,11 @@ def extract_rows(
         # 6-column IS 형식 대응: 앞쪽 구조적 빈 셀(None) 제거
         # 예: [None, None, 42647억, None, 43360억] → [42647억, None, 43360억]
         # 조건: amount_cells ≥ 4개 (3-column IS는 영향 없음)
-        if len(all_parsed) >= 4:
+        # ★ preserve_col_positions=True 면 하지 않는다 — 자본변동표처럼 **열이 기간이 아니라
+        #   축(자본금/이익잉여금/…)**인 표에서는 선행 공란이 구조적 잡음이 아니라 "이 변동은
+        #   그 자본 항목에 영향이 없었다"는 **의미 있는 값**이다. 여기서 당기면 열이 통째로
+        #   밀려 이익잉여금 값이 자본금 열로 들어간다(실측: SCE 행 내부정합 95.3% 의 주원인).
+        if len(all_parsed) >= 4 and not preserve_col_positions:
             while all_parsed and all_parsed[0] is None:
                 all_parsed.pop(0)
 
@@ -336,15 +346,21 @@ def _split_label_amounts(cells: list[str]) -> tuple[str, list[str]]:
     return label, amount_cells
 
 
-def _is_header_cell(text: str) -> bool:
+def _is_header_cell(text: str, allow_date_label: bool = False) -> bool:
     """
     첫 번째 셀이 헤더/단위/기수 표기이면 True.
     DART 테이블에서 반복 출현하는 비데이터 행 패턴을 모두 포함.
+
+    allow_date_label: True 면 "기간 날짜" 규칙만 끈다 — **자본변동표(SCE) 전용**.
+        SCE 는 기초/기말 잔액 행의 라벨이 날짜다("2023.01.01 (기초자본)"). BS/IS/CF 에서
+        이 규칙은 기간 헤더 행을 거르는 올바른 동작이지만, SCE 에 그대로 적용하면 그 표의
+        **앵커 행이 통째로 사라진다**(실측 2,519행/250보고서 — 기초+Σ변동=기말 검산 불가).
+        날짜 '범위' 헤더("2023.01.01~2023.12.31")는 아래 별도 규칙이 계속 잡으므로 안전하다.
     """
     if not text:
         return False
     # 기간 날짜: "2023.12.31", "2023-12-31", "2023년"
-    if re.search(r'\d{4}[.\-년]', text):
+    if not allow_date_label and re.search(r'\d{4}[.\-년]', text):
         return True
     # 기수 표기: "제 72 기", "제72기"
     if re.search(r'제\s*\d+\s*기', text):

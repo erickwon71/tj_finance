@@ -54,6 +54,9 @@ _STMT_NAME = {
 SECTION_CODE_OF: dict[tuple[str, str], str] = {
     ("consolidated", "BS"): "BS_C", ("consolidated", "IS"): "IS_C", ("consolidated", "CF"): "CF_C",
     ("separate", "BS"): "BS_S", ("separate", "IS"): "IS_S", ("separate", "CF"): "CF_S",
+    # 자본변동표 — 계층2 report_lines 전용(include_sce=True 로 명시 요청할 때만 생성).
+    # fact_v2 경로는 classify_statement_in_body_section() 기본값이 SCE 를 배제하므로 영향 없음.
+    ("consolidated", "SCE"): "SCE_C", ("separate", "SCE"): "SCE_S",
 }
 
 
@@ -95,18 +98,24 @@ _BODY_STMT_ORDER: list[tuple[str, str]] = [
 ]
 
 
-def classify_statement_in_body_section(title: str) -> str | None:
-    """본문 섹션 **내부** 표의 표제 → 'BS'|'IS'|'CF' 또는 None(대상 아님).
+def classify_statement_in_body_section(title: str, include_sce: bool = False) -> str | None:
+    """본문 섹션 **내부** 표의 표제 → 'BS'|'IS'|'CF'(|'SCE') 또는 None(대상 아님).
 
     basis(연결/별도)는 **섹션이 결정**하므로 여기서 보지 않는다(표제 문구에 의존하지 않음).
     공백을 제거해 '반 기 재 무 상 태 표'·'반기재무상태표'·'연결 재무상태표' 를 모두 인식한다.
-    자본변동표는 None(배제). 단위표(빈 표제)도 None.
+    단위표(빈 표제)는 None.
+
+    include_sce: 기본 False 면 자본변동표를 **배제**한다(IS 오흡수 방지 — fact_v2 경로의
+        기존 동작 그대로). True 면 'SCE' 를 반환한다 — **계층2 report_lines 전용 opt-in**.
+        ★ 기본값을 바꾸지 말 것: fact_v2/std_v2(앱이 사용 중인 구 체인)가 이 함수를 공유하며,
+          SCE 가 흘러들면 순이익이 SCE 의 '연결당기순이익' 행으로 오염된다(부국증권 회귀,
+          커밋 1b13981 · fin2/tests/test_section_p_header.py 참고).
     """
     if not title:
         return None
     t = re.sub(r"\s+", "", title)
     if _SCE_RE.search(t):
-        return None                      # SCE 배제 — IS 오흡수 방지
+        return "SCE" if include_sce else None
     for name, code in _BODY_STMT_ORDER:
         if name in t:
             return code

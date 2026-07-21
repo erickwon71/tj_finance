@@ -320,6 +320,72 @@ class FactV2(Base):
 
 
 # ── 5c. fin2 R-레이어 statement source 선택 (statement_source) ───────────────
+# ── 5b2. 계층2 원문 tree (report_lines, 4계층 재설계 2026-07-19) ───────────
+class ReportLine(Base):
+    """
+    4계층 재설계의 계층2 산출물 — 보고서 원문을 **판단 없이** tree 구조 그대로 저장.
+
+    fact_v2 와의 차이:
+      - canonical_account 없음(계층3 산출). concept_map/account_mapper 를 전혀 호출하지 않는다.
+      - 라벨은 label_raw(원문 계정명, normalize_account_name 미적용) — acode 처럼 정규화하지 않는다.
+      - **중복 라벨을 병합하지 않는다**: 같은 계정명이 서로 다른 위치(예 금융업 이중섹션)에
+        나오면 그대로 둘 다 남는다(fact_v2 의 (acode, acontext) 충돌-시-보류와 다름 — 여기선
+        충돌 자체가 없다. 위치가 다르면 서로 다른 행이다).
+      - 재추출은 upsert 가 아니라 **rcept_no 단위 delete-then-insert**로 재현성을 보장한다
+        (report_lines.py:store_report_lines).
+
+    section_path/row_order/depth/is_subtotal — 2026-07-19 계획 §계층2 참고:
+      row_order/depth(indent_level)/is_subtotal 은 `parser.xml.table_extractor.RowData` 가
+      이미 계산해 두므로(재사용, 신규 로직 아님) 2B 에서 채운다. section_path(하위섹션 경로 —
+      유동/비유동/**금융업자산** 등 헤더 인식)는 아직 없는 신규 로직이라 2C 에서 채운다
+      (NULL = 미채움, 값판단이 아니라 미구현).
+
+    신규 테이블이므로 Base.metadata.create_all() 로 자동 생성(별도 마이그레이션 불요).
+    """
+    __tablename__ = "report_lines"
+
+    id                 = Column(BigInteger,   primary_key=True, autoincrement=True)
+    corp_code          = Column(String(8),    nullable=False, index=True)
+    rcept_no           = Column(String(14),   ForeignKey("filings.rcept_no"), nullable=False, index=True)
+
+    report_fiscal_year   = Column(SmallInteger, nullable=False, index=True, comment="보고서 회계연도")
+    report_fiscal_period = Column(String(5),    nullable=False, comment="보고서 기간 FY/H1/Q1/Q3")
+
+    statement          = Column(String(10),   nullable=False, comment="BS/IS/CF/SCE/note")
+    basis              = Column(String(12),   nullable=True,  comment="consolidated/separate")
+
+    # ── tree 구조 (계층2 핵심) ─────────────────────────────────────────────
+    section_path       = Column(String(255),  nullable=True,
+                                comment="하위섹션 경로 예 '자산>유동자산'/'자산>금융업자산' — "
+                                        "2C 에서 채움(NULL=미구현, 금융업 이중섹션 구분 핵심)")
+    row_order          = Column(SmallInteger, nullable=True,  comment="표 내 등장 순서(RowData.row_order 재사용)")
+    depth              = Column(SmallInteger, nullable=True,  comment="들여쓰기 수준(RowData.indent_level 재사용)")
+    is_subtotal        = Column(Boolean,      nullable=True,  comment="합계/소계 행 여부(RowData.is_subtotal 재사용)")
+
+    label_raw          = Column(String(255),  nullable=False, comment="원문 계정명 그대로(정규화 안 함)")
+
+    col_index          = Column(SmallInteger, nullable=True,  comment="0=당기 1=전기 2=전전기")
+    context_fiscal_year= Column(SmallInteger, nullable=True,  index=True)
+    period_kind        = Column(String(8),    nullable=True,  comment="instant(BS)/duration(IS·CF)")
+    is_cumulative       = Column(Boolean,     default=False)
+
+    value_won          = Column(BigInteger,   nullable=True,  comment="원 단위 정규화 금액")
+    adecimal           = Column(SmallInteger, nullable=True)
+    unit_source        = Column(String(10),   nullable=True,  comment="declared|none — 미선언 표는 애초에 스킵되므로 현재는 항상 declared")
+
+    source_ref         = Column(String(180),  nullable=True)
+    context_raw        = Column(String(255),  nullable=True,  comment="합성 위치 태그(감사용, uq 아님)")
+    parsed_at          = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_report_lines_lookup", "corp_code", "report_fiscal_year", "statement", "basis"),
+    )
+
+    def __repr__(self):
+        return (f"<ReportLine {self.corp_code} r{self.rcept_no} {self.statement} "
+                f"{self.label_raw!r} {self.value_won}>")
+
+
 class StatementSource(Base):
     """
     fin2 정합(R) 산출물: (기업·연도·기간·연결별도·재무제표) 단위로 **단일 source filing 선택**.

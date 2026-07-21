@@ -2785,6 +2785,84 @@ def _extract2_corp(session, corp, year=None, dry_run=False, verbose=True):
     return (total_files, n_track_a, n_track_b, total_facts)
 
 
+def cmd_extract_lines(args):
+    """
+    4계층 재설계 계층2: 보고서 XML → report_lines(원문 tree) 추출/저장. **파일럿 전용**
+    (docs/plans/rearchitecture_4layer_2026-07-19.md). 아직 데일리 파이프라인(collect_new.py)에
+    배선하지 않음 — 계층2 검증(원문 1:1 대조 + 금융업 카나리아) 통과 전까지는 수동 실행만.
+
+    옵션:
+      --corp CODE   : 대상 기업 (필수)
+      --year YEAR   : 특정 회계연도만
+      --notes       : 본문(BS/IS/CF) 외에 주석 화폐 표도 tree 로 전사(볼륨 큼)
+      --dry-run     : DB 저장 없이 추출 요약만 출력
+    """
+    from sqlalchemy import text
+    from collector.db import get_session
+    from fin2.extract.report_lines import extract_report_lines, store_report_lines
+
+    corp = getattr(args, "corp", None)
+    if not corp:
+        logger.error("extract-lines 는 --corp CODE 가 필요합니다.")
+        sys.exit(1)
+    year = getattr(args, "year", None)
+    dry_run = getattr(args, "dry_run", False)
+    include_notes = getattr(args, "notes", False)
+
+    sql = """
+        SELECT dt.rcept_no, dt.file_path,
+               f.corp_code, f.fiscal_year, f.fiscal_period
+        FROM download_tasks dt
+        JOIN filings f ON f.rcept_no = dt.rcept_no
+        WHERE dt.status = 'completed' AND dt.file_type = 'xml'
+          AND dt.file_path IS NOT NULL AND f.corp_code = :corp
+    """
+    params = {"corp": corp}
+    if year is not None:
+        sql += "  AND f.fiscal_year = :year\n"
+        params["year"] = year
+    sql += "ORDER BY f.fiscal_year DESC, f.fiscal_period, dt.rcept_no ASC"
+
+    total_files = total_lines = 0
+    with get_session() as session:
+        rows = session.execute(text(sql), params).fetchall()
+        if not rows:
+            logger.warning(f"[extract-lines] 대상 XML 없음: corp={corp} year={year}")
+            return
+        for r in rows:
+            tag = f"{r.fiscal_year}{r.fiscal_period}"
+            try:
+                lines = extract_report_lines(
+                    r.file_path, rcept_no=r.rcept_no, corp_code=r.corp_code,
+                    report_fiscal_year=r.fiscal_year, report_fiscal_period=r.fiscal_period,
+                    include_notes=include_notes,
+                )
+            except (FileNotFoundError, OSError) as e:
+                logger.warning(f"  [{tag}] r{r.rcept_no} — 파일 소실/손상 스킵: {e}")
+                total_files += 1
+                continue
+            total_files += 1
+            if not lines:
+                logger.info(f"  [{tag}] r{r.rcept_no} — 추출 0행(보류)")
+                continue
+            total_lines += len(lines)
+            if dry_run:
+                logger.info(f"  [{tag}] r{r.rcept_no} — {len(lines)}행 (dry-run, 미저장)")
+                for l in lines[:5]:
+                    logger.info(f"      {l.statement:3s} {l.basis or '-':12s} "
+                                f"{l.label_raw:30s} col={l.col_index} won={l.value_won:,}")
+            else:
+                n = store_report_lines(session, r.rcept_no, lines)
+                logger.success(f"  [{tag}] r{r.rcept_no} — {n}행 저장")
+        if not dry_run:
+            session.commit()
+
+    logger.success(
+        f"[extract-lines] corp={corp} 파일 {total_files}개, report_lines {total_lines:,}행"
+        + (" (dry-run, 미저장)" if dry_run else " 저장")
+    )
+
+
 def cmd_reconcile2(args):
     """
     fin2 R-레이어: fact_v2 → statement_source 정합.
@@ -2970,6 +3048,8 @@ def main():
             "parse", "parse-status", "parse-reset", "unknown-accounts",
             # fin2 재구축 (E·R·S-레이어 + 전수 오케스트레이션)
             "extract2", "reconcile2", "standardize2", "fin2-all",
+            # 4계층 재설계 — 계층2 report_lines tree (2026-07-19, 파일럿 전용)
+            "extract-lines",
             # PDF 파싱 (Phase 5B)
             "parse-pdf", "parse-pdf-reset",
             # 다운로더 보완 (Phase 6 전처리)
@@ -3062,6 +3142,11 @@ def main():
         action="store_true",
         dest="dry_run",
         help="aggregate: DB 저장 없이 변경 내용만 출력 (Side Effect 방어용)",
+    )
+    parser.add_argument(
+        "--notes",
+        action="store_true",
+        help="extract-lines: 본문 외 주석 화폐 표도 report_lines tree 로 전사",
     )
     parser.add_argument(
         "--sep",
@@ -3170,6 +3255,7 @@ def main():
         "reconcile2":       cmd_reconcile2,
         "standardize2":     cmd_standardize2,
         "fin2-all":         cmd_fin2_all,
+        "extract-lines":    cmd_extract_lines,
         # 분석 (Phase 3)
         "aggregate":        cmd_aggregate,
         "analyze":          cmd_analyze,

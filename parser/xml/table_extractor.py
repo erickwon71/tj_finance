@@ -29,16 +29,16 @@ from dataclasses import dataclass, field
 from typing import Optional
 from lxml import etree
 
-from parser.common.amount_normalizer import parse_amount, normalize_account_name
+from parser.common.amount_normalizer import parse_amount, normalize_account_name, _TRAIL_DECOR_RE
 
 
 # 숫자 컬럼으로 판단할 패턴 (쉼표 구분 숫자, 괄호음수 등)
 _NUMBER_PATTERN = re.compile(
     r'^[\s\-\─\—\―]$|'              # 공란 / 대시
-    r'^\([\d,]+\)$|'                 # (음수)
-    r'^[\d,]+$|'                     # 양수
-    r'^△[\d,]+$|'                    # △음수
-    r'^▲[\d,]+$'                     # ▲음수
+    r'^\([\d,]+\.?\d*\)$|'           # (음수) — 소수 허용(주당손익·비율 등)
+    r'^[\d,]+\.?\d*$|'               # 양수 — 소수 허용
+    r'^△[\d,]+\.?\d*$|'              # △음수
+    r'^▲[\d,]+\.?\d*$'               # ▲음수
 )
 
 # 소계/합계 행 판단 키워드
@@ -158,7 +158,10 @@ class RowData:
     amounts: list[Optional[int]]   # [당기, 전기, 전전기] (None=공란)
     row_order: int = 0
     is_subtotal: bool = False      # 합계/소계 행 여부
-    indent_level: int = 0          # 들여쓰기 수준 (0=최상위, 1=하위...)
+    indent_level: int = 0          # 들여쓰기 수준 (0=최상위, 1=하위...) — _detect_indent(//2)
+    raw_indent: int = 0            # 첫 셀 원문 선행 공백 수(전각 U+3000 포함, strip 전).
+    # ★ indent_level 은 _get_cells 가 strip 한 뒤라 항상 0(사문화). raw_indent 는 원문 들여쓰기를
+    #   그대로 보존한다 — 계층2 report_lines 의 section_path(하위섹션 tree) 산출용.
 
 
 def extract_rows(
@@ -166,6 +169,7 @@ def extract_rows(
     multiplier: int = 1,
     num_cols: int = 3,
     direct_only: bool = False,
+    skip_junk: bool = True,
 ) -> list[RowData]:
     """
     TABLE 요소에서 재무 행 데이터를 추출한다.
@@ -179,6 +183,11 @@ def extract_rows(
             전체를 그 표 안쪽에 중첩시킨다. 실측 — DB손해보험 20230927000457 연결 BS 는
             `.//TR` 이 **5,218행**(중첩 TABLE 775개)이지만 **직접 행 51개**가 진짜 재무상태표다.
             기본값 False = 기존 호출자(biz_section·order_backlog 등) 동작 보존.
+        skip_junk: True(기본) 면 `_JUNK_ACCOUNT_NAMES`(집계 이중계산 회피용 블록리스트)에 든
+            라벨 행을 버린다 — **fact_v2(집계) 파이프라인 동작**. False 면 그 블록리스트를 적용하지
+            않는다 — **계층2 report_lines(원문 충실전사)용**: 지분법자본변동·미처분이익잉여금·
+            대손충당금·재고 세부 등은 원문 face 라인이므로 전사해야 한다(집계 이중계산 회피는
+            계층3 몫). 진짜 열헤더(3개월·회사명 등)는 금액이 없어 자연 미방출되므로 무해하다.
 
     Returns:
         RowData 리스트 (헤더 행 제외, 빈 행 제외)
@@ -215,9 +224,10 @@ def extract_rows(
         if not label:
             continue
 
-        # 명백한 메타데이터/레이블 행 건너뜀 (재무 데이터 아님)
+        # 명백한 메타데이터/레이블 행 건너뜀 (재무 데이터 아님).
+        # skip_junk=False(계층2 충실전사)면 집계용 블록리스트를 적용하지 않는다.
         label_clean_check = label.strip()
-        if label_clean_check in _JUNK_ACCOUNT_NAMES:
+        if skip_junk and label_clean_check in _JUNK_ACCOUNT_NAMES:
             continue
 
         # 금액 파싱 (전체 amount_cells 파싱 후 재정렬)
@@ -243,10 +253,31 @@ def extract_rows(
             row_order=row_order,
             is_subtotal=_is_subtotal(label_clean),
             indent_level=indent,
+            raw_indent=_first_cell_indent(tr),
         ))
         row_order += 1
 
     return rows
+
+
+def _first_cell_indent(tr: etree._Element) -> int:
+    """첫 셀 원문의 선행 공백 수(전각 U+3000·NBSP 포함) — 원문 들여쓰기 계층 신호.
+
+    `_get_cells` 는 `.strip()` 으로 셀 텍스트를 다듬어 선행 공백(계층 정보)을 지운다. 여기서는
+    첫 데이터 셀의 raw itertext 를 직접 읽되, `<TE>`↔`<P>` 사이의 구조적 개행(`\\n`)만 건너뛰고
+    그 뒤의 들여쓰기 공백을 센다. **위치(구조) 판단이지 값 판단이 아니다**(재설계 원칙 유지)."""
+    for child in tr:
+        tag = child.tag.upper() if isinstance(child.tag, str) else ""
+        if tag in ("TD", "TH", "TE", "TU"):
+            raw = "".join(child.itertext()).lstrip("\n\r")
+            n = 0
+            for ch in raw:
+                if ch in (" ", "\t", "　", "\xa0"):
+                    n += 1
+                else:
+                    break
+            return n
+    return 0
 
 
 def _get_cells(tr: etree._Element) -> list[str]:
@@ -286,6 +317,8 @@ def _split_label_amounts(cells: list[str]) -> tuple[str, list[str]]:
             label = cell
         else:
             cell_nospace = cell.replace(' ', '')             # 쉼표 보존(주석 판정용)
+            # 합계행 밑줄 장식(숫자 뒤 '====' 등) 제거 — 숫자 셀 인식용(parse_amount 도 동일 처리).
+            cell_nospace = _TRAIL_DECOR_RE.sub('', cell_nospace)
             cell_stripped = cell_nospace.replace(',', '')      # 쉼표 제거(금액 판정용)
             # 첫 번째 숫자-유사 셀이 주석번호 패턴(소정수 나열)이면 건너뜀.
             # 예: "34", "4,28", "2,4,32,34,35,36"(금융업 다중 주석참조).

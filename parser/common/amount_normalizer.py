@@ -23,6 +23,9 @@ UNIT_MULTIPLIERS: dict[str, int] = {
 # 공란으로 취급할 문자열
 _BLANK_PATTERNS = frozenset(["", "-", "─", "—", "―", "　", " ", "·", ".", "...", "N/A", "n/a"])
 
+# 합계행 밑줄 장식(숫자 뒤 '=＝_─—―━~∼' 반복). 뒤쪽에 붙은 것만 제거 — 숫자 일부 아님.
+_TRAIL_DECOR_RE = re.compile(r"[=＝_─—―━~∼]+$")
+
 # 명시적 단위 선언 패턴: "(단위 : 천원)", "단위:백만원", "단위 : 원, %" 등
 # "단위적립방식" 같은 비단위 표현과 구분하기 위해 단위 키워드(억원/백만원/만원/천원/원)를 강제.
 _UNIT_DECL_RE = re.compile(r'단위\s*[:：]?\s*\(?\s*(억원|백만원|만원|천원|원)')
@@ -84,6 +87,10 @@ def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
          .replace('　', '')         # 전각공백
          .replace('​', '')     # zero-width space
          .replace('\xa0', ''))      # non-breaking space
+
+    # 합계행 밑줄 장식 제거: 일부 보고서(보험·구형)는 합계 셀에 숫자 뒤로 '====' / '────'
+    # 이중선을 붙여 렌더한다(예 '264653801=========='). 숫자의 일부가 아니므로 뒤쪽 장식만 제거.
+    s = _TRAIL_DECOR_RE.sub('', s)
 
     # 공란 체크
     if not s or s in _BLANK_PATTERNS:

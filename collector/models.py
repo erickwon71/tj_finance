@@ -1353,3 +1353,63 @@ class PeriodicApiProgress(Base):
                                   "hmvAuditAllSttus/indvdlByPay")
     status       = Column(String(10),   nullable=False,   comment="ok/no_data/error")
     checked_at   = Column(DateTime,     default=datetime.utcnow)
+
+
+class ReportLineAnomaly(Base):
+    """계층2 이상치 **표시**(2026-07-21) — 값을 고치지 않고 "이상하다"만 기록한다.
+
+    ★ 설계 원칙(사용자 확정): report_lines 는 **원문 그대로**를 유지하고, 보정은 계층3 이
+      이 플래그를 보고 판단해 적용한다. 계층2 에서 값을 덮어쓰지 않는 이유:
+        1. `scripts/verify_report_lines.py` 가 report_lines ↔ 원문 XML **완전일치**로 회귀를
+           잡는다(현재 299/300). 값을 고치면 이 1차 탐지기가 설계상 영구히 깨진다.
+        2. `store_report_lines` 는 rcept 단위 delete-then-insert 다 — 같은 행에 보정값을 두면
+           재추출 때마다 사라진다.
+        3. 판정 근거가 BS 교차대조(다른 재무제표)라 애초에 계층3 성격의 판단이다.
+
+    실측 사례(전부 공시 원문 자체의 오기. 같은 XML 의 BS 는 정상값이라 파서 결함 아님):
+      · 쏠리드 2019 연결   이익잉여금 BS 26,038,777,444 ↔ SCE 2,603,877,744  (끝자리 유실)
+      · 대림제지 2023 연결 자본조정 기말 부호 누락(기초+변동 = -5,480,372,400, 원문 +)
+      · 에스에이티 2019 연결 총계 부호 반전(사용자 원문 확인)
+
+    소비 방법: 계층3 에서 자연키로 조인해 `COALESCE(a.suggested_value, rl.value_won)` 형태로
+    쓰거나, confidence 를 보고 채택 여부를 정한다. suggested_value 는 **제안**이며 적용된 적 없다.
+
+    자연키를 쓰는 이유: report_lines.id 는 재추출(delete-then-insert)마다 바뀐다.
+    original_value 스냅샷은 재추출로 원문 값이 달라졌을 때 그 표시가 낡았음을 감지하는 장치다.
+    """
+    __tablename__ = "report_line_anomalies"
+
+    id             = Column(BigInteger,   primary_key=True, autoincrement=True)
+    rcept_no       = Column(String(14),   ForeignKey("filings.rcept_no"), nullable=False, index=True)
+    corp_code      = Column(String(8),    nullable=False, index=True)
+
+    # ── report_lines 를 지목하는 자연키 ──────────────────────────────────
+    statement      = Column(String(10),   nullable=False)
+    basis          = Column(String(12),   nullable=True)
+    table_seq      = Column(SmallInteger, nullable=True)
+    row_order      = Column(SmallInteger, nullable=True)
+    col_index      = Column(SmallInteger, nullable=True)
+    label_raw      = Column(Text,         nullable=True, comment="감사 편의용(자연키 아님)")
+
+    original_value = Column(BigInteger,   nullable=True, comment="표시 시점의 원문 값 스냅샷")
+    suggested_value= Column(BigInteger,   nullable=True,
+                            comment="근거로 유도된 값. **제안일 뿐 적용된 적 없음** — 계층3 판단")
+
+    anomaly_kind   = Column(String(20),   nullable=False,
+                            comment="SIGN(부호반전) / DIGIT_TRUNC(끝자리유실) / DIGIT_EXTRA / OTHER")
+    evidence       = Column(String(24),   nullable=False,
+                            comment="bs_crosscheck(다른 재무제표=최강) / sce_column_flow(기초+변동=기말) "
+                                    "/ sce_row_sum(구성요소=총계)")
+    evidence_detail= Column(Text,         nullable=True, comment="예 'BS 이익잉여금 -34,471,912,378'")
+    confidence     = Column(String(8),    nullable=False, default="medium", comment="high/medium/low")
+    detected_at    = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_rl_anomaly_lookup", "corp_code", "statement", "anomaly_kind"),
+        Index("ix_rl_anomaly_key", "rcept_no", "statement", "basis",
+              "table_seq", "row_order", "col_index"),
+    )
+
+    def __repr__(self):
+        return (f"<ReportLineAnomaly {self.corp_code} r{self.rcept_no} {self.statement} "
+                f"{self.anomaly_kind} {self.original_value}→{self.suggested_value}>")

@@ -12,9 +12,15 @@ fin2/extract/text.py(Track B) 의 추출엔진을 그대로 재사용한다 — 
   - 값 충돌 시 "둘 다 버리고 보류"(text.py `_add`)도 여기선 없음 — 같은 라벨이 서로 다른
     위치(예 금융업 이중섹션)에 나오면 **둘 다 보존**하는 게 계층2 의 목적이다(계층3 이 합산).
 
-row_order/depth(indent_level)/is_subtotal 은 `RowData`(table_extractor.extract_rows)가 이미
-계산해 두므로 그대로 옮겨 담는다(신규 로직 아님). section_path(하위섹션 헤더 인식 — 유동/비유동/
-**금융업자산** 등)는 아직 구현되지 않은 신규 로직이라 2C 에서 채운다(현재는 항상 NULL).
+row_order/depth(raw_indent)는 `RowData`(table_extractor.extract_rows)가 이미 계산해 두므로 그대로
+옮겨 담는다(신규 로직 아님). section_path(들여쓰기 stack 경로)·node_role(P/S/F)·table_seq/
+table_title 은 여기서 산출한다.
+
+★ is_subtotal 컬럼은 두지 않는다 — 2026-07-21 실측 결론. 진짜 소계의 55.3% 가 '자식을 거느린
+행'(node_role='P')이고 라벨에 '계'가 없어(유동자산·영업활동현금흐름 …) 텍스트 규칙으로는 잡히지
+않는다. 반대로 IS 의 매출총이익·영업이익은 자식이 없는 워터폴 이정표라 이중계산 위험 자체가 없고,
+그건 canonical 매핑(=계층3) 문제다. 그래서 계층2 는 node_role(구조 사실)만 남긴다. 근거·수치는
+`collector/models.py:ReportLine` docstring 과 `scripts/measure_subtotal_position.py` 참고.
 """
 from __future__ import annotations
 
@@ -93,10 +99,12 @@ class ReportLineRow:
     unit_source: str | None
     source_ref: str | None
     context_raw: str | None
-    section_path: str | None = None       # 2C 에서 채움(하위섹션 헤더 인식)
+    section_path: str | None = None       # 조상 라벨 경로(들여쓰기 stack)
     row_order: int | None = None
     depth: int | None = None
-    is_subtotal: bool | None = None
+    node_role: str | None = None          # P/S/F — 순수 구조(다음 행 들여쓰기 비교). 소계 주장 아님
+    table_seq: int | None = None          # 섹션 내 표 문서 순번. 정렬키=(table_seq, row_order)
+    table_title: str | None = None        # 그 표의 원문 제목(위치 기록)
 
     def as_row(self) -> dict:
         """SQLAlchemy bulk insert 용 dict (ReportLine 컬럼명 기준)."""
@@ -110,7 +118,9 @@ class ReportLineRow:
             "section_path": self.section_path,
             "row_order": self.row_order,
             "depth": self.depth,
-            "is_subtotal": self.is_subtotal,
+            "node_role": self.node_role,
+            "table_seq": self.table_seq,
+            "table_title": self.table_title,
             "label_raw": self.label_raw,
             "col_index": self.col_index,
             "context_fiscal_year": self.context_fiscal_year,
@@ -151,10 +161,32 @@ def _assign_section_paths(rows, statement: str) -> dict[int, str | None]:
     return out
 
 
+def _classify_positions(rows) -> dict[int, str]:
+    """각 행의 node_role(P/S/F) — **다음 행과의 raw_indent 비교만**. 텍스트를 보지 않는다.
+
+        P : 다음 행이 더 깊다  → 자식을 거느린 행. 예 `자산 288,712` 밑에 유동/비유동자산
+        S : 다음 행이 더 얕다 or 표 끝 → 형제 run 을 닫는 행. 예 `자산총계`
+        F : 다음 행이 같은 깊이 → 형제 중간. 예 IS 의 `매출총이익`
+
+    배타적·전수 분류라 모든 행이 정확히 하나를 받는다. "소계인가"를 주장하지 않는다 —
+    들여쓰기에서 기계적으로 나오는 사실만 기록하고, 해석은 계층3 몫(ReportLine docstring 참고).
+    """
+    out: dict[int, str] = {}
+    for i, row in enumerate(rows):
+        nxt = rows[i + 1] if i + 1 < len(rows) else None
+        if nxt is None or nxt.raw_indent < row.raw_indent:
+            out[id(row)] = "S"
+        elif nxt.raw_indent > row.raw_indent:
+            out[id(row)] = "P"
+        else:
+            out[id(row)] = "F"
+    return out
+
+
 def _row_to_line(
     *, row, col_idx, amount, basis, period_kind, statement,
     corp_code, rcept_no, report_fiscal_year, report_fiscal_period,
-    unit, section_code, section_path,
+    unit, section_code, section_path, node_role, table_seq, table_title,
 ) -> ReportLineRow:
     ctx_fy = report_fiscal_year - col_idx
     is_cumulative = period_kind == "duration" and report_fiscal_period != "FY"
@@ -178,12 +210,15 @@ def _row_to_line(
         context_raw=_synth_acontext(basis, period_kind, col_idx, ctx_fy, statement),
         row_order=row.row_order,
         depth=row.raw_indent,                 # 원문 들여쓰기(전각공백 수) — 구조 그대로
-        is_subtotal=row.is_subtotal,
+        node_role=node_role,
+        table_seq=table_seq,
+        table_title=table_title,
     )
 
 
 def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
-                    report_fiscal_year, report_fiscal_period) -> None:
+                    report_fiscal_year, report_fiscal_period,
+                    table_seq=None, table_title=None) -> None:
     """주당손익(EPS) 행을 **per-row 단위**로 전사한다(IS 표 전용).
 
     ★ 왜 별도 처리인가: 주당이익 라벨은 '계속영업기본주당이익 (단위 : 원)' 처럼 **행 자체에 단위**를
@@ -210,7 +245,9 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                 value_won=amount, adecimal=_adecimal_from_unit(unit), unit_source="declared",
                 source_ref=f"eps/{label[:70]}"[:180],
                 context_raw=_synth_acontext(basis, "duration", col_idx, ctx_fy, statement),
-                row_order=None, depth=None, is_subtotal=False,
+                # EPS 는 표 본류 순회 밖(별도 패스)이라 행 위치를 주장하지 않는다 → node_role NULL.
+                row_order=None, depth=None, node_role=None,
+                table_seq=table_seq, table_title=table_title,
             ))
 
 
@@ -233,6 +270,9 @@ def _emit_section_lines(
     statement = section_code.split("_")[0]
     tables = [t for t, _, _ in tables_with_unit]
     unit_of = {id(t): u for t, u, _ in tables_with_unit}
+    # ★ table_seq 는 **문서 순서**여야 한다. 아래 data_tables 는 표 크기순으로 정렬해 순회하므로
+    #   (큰 표 우선 = 기존 표 선택 로직) enumerate 를 쓰면 안 된다. tables 가 문서 순서다.
+    doc_seq = {id(t): i for i, t in enumerate(tables)}
     interim_flow = statement in ("IS", "CF") and report_fiscal_period in ("H1", "Q1", "Q3")
     cum_maps = {id(t): (_interim_cumulative_cols(t) if interim_flow else None) for t in tables}
     has_2tier = interim_flow and any(v is not None for v in cum_maps.values())
@@ -255,13 +295,19 @@ def _emit_section_lines(
         table_rows = list(extract_rows(table, multiplier=unit, num_cols=n_cols,
                                         direct_only=True, skip_junk=False))
         section_paths = _assign_section_paths(table_rows, statement)
+        node_roles = _classify_positions(table_rows)
+        table_seq = doc_seq[id(table)]
+        # 표 제목 — 주석 표에 쓰던 것과 **같은 헬퍼**(직전 형제 텍스트 탐색). 신규 로직 아님.
+        # 2표식이면 여기서 '연결손익계산서' / '연결포괄손익계산서' 가 각각 잡힌다.
+        table_title = _note_heading(table)
 
         # 주당손익(EPS)은 per-row 단위(원/주)라 표 본류에서 제외하고 아래 EPS 패스로 전사.
         if statement == "IS":
             _emit_eps_lines(table, emit=emit, basis=basis, statement=statement,
                             corp_code=corp_code, rcept_no=rcept_no,
                             report_fiscal_year=report_fiscal_year,
-                            report_fiscal_period=report_fiscal_period)
+                            report_fiscal_period=report_fiscal_period,
+                            table_seq=table_seq, table_title=table_title)
 
         for row in table_rows:
             if not row.account_name or "주당" in row.account_name:
@@ -293,6 +339,8 @@ def _emit_section_lines(
                     report_fiscal_year=report_fiscal_year,
                     report_fiscal_period=report_fiscal_period,
                     unit=unit, section_code=section_code, section_path=section_path,
+                    node_role=node_roles.get(id(row)),
+                    table_seq=table_seq, table_title=table_title,
                 ))
 
 
@@ -341,7 +389,7 @@ def _emit_note_lines(
     interim 누적컬럼 로직도 적용 안 함(주석엔 무의미)."""
     sec_tables = assign_tables_to_dart_sections(root)
     for sec_kind, basis in ((SEC_CONSOL_NOTE, "consolidated"), (SEC_SEP_NOTE, "separate")):
-        for table in sec_tables.get(sec_kind, []):
+        for table_seq, table in enumerate(sec_tables.get(sec_kind, [])):
             unit = declared_unit(table)
             if unit is None:
                 continue  # 비화폐/미선언 주석 표 → 보류(추측 금지)
@@ -349,8 +397,10 @@ def _emit_note_lines(
                 continue
             heading = _note_heading(table)
             adecimal = _adecimal_from_unit(unit)
-            for row in extract_rows(table, multiplier=unit, num_cols=_NOTE_MAX_COLS,
-                                    direct_only=True, skip_junk=False):
+            note_rows = list(extract_rows(table, multiplier=unit, num_cols=_NOTE_MAX_COLS,
+                                          direct_only=True, skip_junk=False))
+            node_roles = _classify_positions(note_rows)
+            for row in note_rows:
                 if not row.account_name:
                     continue
                 for col_idx, amount in enumerate(row.amounts):
@@ -376,7 +426,9 @@ def _emit_note_lines(
                         context_raw=f"note:{basis}:c{col_idx}",
                         row_order=row.row_order,
                         depth=row.raw_indent,
-                        is_subtotal=row.is_subtotal,
+                        node_role=node_roles.get(id(row)),
+                        table_seq=table_seq,
+                        table_title=heading,   # 주석은 제목이 곧 표 제목이자 section_path 로케이터
                     ))
 
 

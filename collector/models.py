@@ -334,11 +334,22 @@ class ReportLine(Base):
       - 재추출은 upsert 가 아니라 **rcept_no 단위 delete-then-insert**로 재현성을 보장한다
         (report_lines.py:store_report_lines).
 
-    section_path/row_order/depth/is_subtotal — 2026-07-19 계획 §계층2 참고:
-      row_order/depth(indent_level)/is_subtotal 은 `parser.xml.table_extractor.RowData` 가
-      이미 계산해 두므로(재사용, 신규 로직 아님) 2B 에서 채운다. section_path(하위섹션 경로 —
-      유동/비유동/**금융업자산** 등 헤더 인식)는 아직 없는 신규 로직이라 2C 에서 채운다
-      (NULL = 미채움, 값판단이 아니라 미구현).
+    tree 구조 컬럼 — 2026-07-19 계획 §계층2 + 2026-07-21 실측 재설계:
+      · section_path : 조상 라벨 경로('자산>유동자산'). 들여쓰기 stack 으로 산출.
+      · node_role    : P/S/F — **다음 행과의 들여쓰기 비교만**으로 나오는 순수 구조 사실.
+      · table_seq    : 한 섹션 안의 표 **문서 순번**. 정렬키는 항상 (table_seq, row_order).
+      · table_title  : 그 표의 원문 제목. 위치 기록이지 판단이 아니다.
+
+    ★ is_subtotal 을 두지 않는 이유(2026-07-21 실측, scripts/measure_subtotal_position.py):
+      구 체인 `table_extractor._is_subtotal()` 은 부분문자열 매칭이고 키워드에 맨 '계' 가 있어
+      관계기업투자·설계용역까지 소계로 찍는다(정밀도 49.5%). 그래서 계층2 전용 텍스트 규칙을
+      만들려 했으나, 측정 결과 **텍스트 규칙 자체가 불필요**하다는 결론:
+        - 진짜 소계의 55.3% 는 '자식을 거느린 행'(P) 이고 텍스트에 '계' 가 아예 없다
+          (유동자산·비유동부채·영업활동현금흐름 …). 어떤 텍스트 규칙으로도 못 잡는다.
+        - 반대로 IS 의 매출총이익·영업이익은 **자식이 없는 워터폴 이정표**라 애초에 이중계산
+          위험이 없다. 그건 소계 판정이 아니라 canonical 매핑 문제(=계층3).
+      → 계층2 는 node_role(구조 사실)만 남기고 "그래서 소계인가"는 계층3 이 조합해 판단한다.
+        집계행 후보 = `node_role='P' OR (node_role='S' AND value_won IS NOT NULL)`.
 
     신규 테이블이므로 Base.metadata.create_all() 로 자동 생성(별도 마이그레이션 불요).
     """
@@ -355,14 +366,31 @@ class ReportLine(Base):
     basis              = Column(String(12),   nullable=True,  comment="consolidated/separate")
 
     # ── tree 구조 (계층2 핵심) ─────────────────────────────────────────────
-    section_path       = Column(String(255),  nullable=True,
+    section_path       = Column(Text,         nullable=True,
                                 comment="하위섹션 경로 예 '자산>유동자산'/'자산>금융업자산' — "
-                                        "2C 에서 채움(NULL=미구현, 금융업 이중섹션 구분 핵심)")
+                                        "2C 에서 채움(NULL=미구현, 금융업 이중섹션 구분 핵심). "
+                                        "★TEXT: 깊은 tree + 긴 원문 라벨이면 255 를 넘겨 insert 가 "
+                                        "실패한다(전량 적재에서 터지는 종류) — 길이 제한 없음.")
+    table_seq          = Column(SmallInteger, nullable=True,
+                                comment="섹션 내 표의 문서 순번(0,1,…). 2표식(손익계산서/포괄손익"
+                                        "계산서 분리, 실측 10.7%)에서 row_order 가 표마다 0 부터 "
+                                        "다시 시작해 뒤섞이는 것을 막는다. 정렬키=(table_seq,row_order)")
+    table_title        = Column(Text,         nullable=True,
+                                comment="그 표의 원문 제목('연결포괄손익계산서' 등). 어느 표에서 온 "
+                                        "행인지의 **원문 근거** — 계층2 가 판정해주는 게 아니라 원문이 "
+                                        "그렇게 적혀 있다는 사실만 전달(NULL=제목 못 찾음)")
     row_order          = Column(SmallInteger, nullable=True,  comment="표 내 등장 순서(RowData.row_order 재사용)")
-    depth              = Column(SmallInteger, nullable=True,  comment="들여쓰기 수준(RowData.indent_level 재사용)")
-    is_subtotal        = Column(Boolean,      nullable=True,  comment="합계/소계 행 여부(RowData.is_subtotal 재사용)")
+    depth              = Column(SmallInteger, nullable=True,  comment="들여쓰기 수준=원문 전각공백 수(raw_indent). "
+                                                                     "★연속된 레벨번호가 아님(0→2→4 로 건너뜀) — "
+                                                                     "계층 판단은 section_path 로 할 것")
+    node_role          = Column(String(1),    nullable=True,
+                                comment="구조적 위치 P/S/F — 다음 행 raw_indent 비교만(텍스트 안 봄). "
+                                        "P=다음이 더 깊음(자식 거느림) S=다음이 더 얕음/표끝(형제 run 끝) "
+                                        "F=다음이 같은 깊이(형제 중간). 소계 여부 주장 아님 — 위 docstring 참고")
 
-    label_raw          = Column(String(255),  nullable=False, comment="원문 계정명 그대로(정규화 안 함)")
+    label_raw          = Column(Text,         nullable=False,
+                                comment="원문 계정명 그대로(정규화 안 함). ★TEXT: 원문 충실전사가 "
+                                        "원칙이라 잘라내면 안 된다 — section_path 를 구성하는 원자이기도 함.")
 
     col_index          = Column(SmallInteger, nullable=True,  comment="0=당기 1=전기 2=전전기")
     context_fiscal_year= Column(SmallInteger, nullable=True,  index=True)

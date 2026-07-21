@@ -378,7 +378,13 @@ def _build_col_labels(table) -> dict[int, str]:
     → HTML 표와 동일한 방식으로 (row, col) 그리드를 채운 뒤 열별로 단을 위→아래 연결한다.
 
     헤더 행 = **첫 데이터 행 직전까지**. 데이터 행은 '첫 셀 외에 숫자 셀이 있는 행'으로 본다.
-    반환 키는 **금액열 인덱스**(0번 라벨열을 뺀 값) — RowData.amounts 인덱스와 맞춘다.
+    반환 키는 **금액열 인덱스** — RowData.amounts 인덱스와 맞춘다.
+
+    ★ 라벨 영역이 몇 열인지는 **가정하지 않고 데이터에서 유도**한다. 실측상 1열이 아닌 표가
+      25.6% 다 — 라벨 칸이 `COLSPAN=3` 이거나(계정명 영역이 3열로 쪼개짐), 'Ⅱ.자본의 변동 >
+      (1)포괄손익 > 세부' 처럼 행 계층이 별도 열로 들어간다. 1열로 가정하면 열 라벨이 통째로
+      밀려 이익잉여금이 자본금으로 읽힌다. 그래서 **오른쪽 정렬**한다:
+          offset = 그리드 폭 − 금액열 수      (금액열 수 = 데이터 행의 금액 셀 수)
     """
     trs = table_direct_rows(table)
     if not trs:
@@ -392,6 +398,14 @@ def _build_col_labels(table) -> dict[int, str]:
             break
         n_header += 1
     if n_header == 0 or n_header >= len(trs):
+        return {}
+
+    # 금액열 수 — 데이터 행들이 실제로 갖는 금액 셀 수(빈 셀 포함, 위치 보존 전제).
+    n_amounts = 0
+    for tr in trs[n_header:]:
+        _, amount_cells = _split_label_amounts(_get_cells(tr))
+        n_amounts = max(n_amounts, len(amount_cells))
+    if n_amounts == 0:
         return {}
 
     grid: dict[tuple[int, int], str] = {}
@@ -411,15 +425,19 @@ def _build_col_labels(table) -> dict[int, str]:
             c += cs
 
     width = max((col for _, col in occupied), default=0) + 1
+    offset = width - n_amounts                       # 앞쪽 라벨 영역 폭(1 이라고 가정하지 않음)
+    if offset < 0:
+        return {}                                    # 헤더가 데이터보다 좁음 → 정렬 불가(보류)
+
     out: dict[int, str] = {}
-    for col in range(1, width):                     # 0 열 = 계정명 라벨열
+    for col in range(offset, width):
         parts: list[str] = []
         for r in range(n_header):
             t = grid.get((r, col))
             if t and (not parts or parts[-1] != t):  # 같은 셀이 세로로 늘어난 중복 제거
                 parts.append(t)
         if parts:
-            out[col - 1] = ">".join(parts)          # 금액열 인덱스로 변환
+            out[col - offset] = ">".join(parts)      # 금액열 인덱스로 변환
     return out
 
 

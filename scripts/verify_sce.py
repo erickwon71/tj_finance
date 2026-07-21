@@ -3,13 +3,15 @@
 SCE 는 BS/IS/CF 와 컬럼 규약이 달라(열=자본 구성요소) 기존 검증기가 커버하지 못한다.
 값·구조가 맞는지 **독립 근거 두 축**으로 확인한다:
 
-  [A] 행 내부 정합 — 총계 열 == 구성요소 열들의 합
+  [A] 행 내부 정합 — 총계 열 == 구성요소 열들의 합  (**참고 지표**)
       각 변동사유 행에서 '자본 합계' 열이 자본금/자본잉여금/기타자본/이익잉여금(연결이면
-      +비지배지분) 의 합이어야 한다. **col_label 복원이 맞았는지**를 동시에 검증한다
-      (열 라벨이 어긋나면 이 합이 깨진다).
+      +비지배지분) 의 합이어야 한다. 열 라벨이 통째로 밀리면 즉시 깨지므로 정렬 회귀 감지에
+      유용하다. 다만 **소계/구성요소를 열 라벨 정규식으로 가르는 데 한계**가 있어(회사마다
+      표기 상이) 잔여 불일치에는 검증기 결함과 원문 편차가 섞인다 — 판정 근거로 쓰지 말 것.
 
-  [B] BS 교차검증 — 최종 기말자본 총계 == 같은 보고서 BS 의 자본총계
-      계층2 안에서 서로 다른 재무제표를 대조하는 것이라 가장 강한 증거다.
+  [B] BS 교차검증 — 최종 기말자본 총계 == 같은 보고서 BS 의 자본총계  (**판정 지표**)
+      서로 다른 재무제표를 대조하는 것이라 추출 정확성의 가장 강한 독립 증거다. 열 정렬·단위·
+      행 누락 중 하나라도 틀리면 깨진다.
 
 추가로 커버리지(기초/기말 행 존재·col_label 채움률)를 센다 — 기초/기말 행은
 `_is_header_cell` 의 날짜 규칙에 걸려 통째로 유실됐던 이력이 있다(date_labels_ok 로 해소).
@@ -39,6 +41,10 @@ _OPEN = re.compile(r"기초")
 _CLOSE = re.compile(r"기말")
 # 열 라벨 분류. '지배기업…지분 합계' 는 **중간소계 열**이라 합산에서 빼야 이중계산이 없다.
 _TOTAL_COL = re.compile(r"자본\s*합계|자본총계|총\s*계")
+# ⚠ 이 규칙을 `지배기업|지배지분|소유주` 로 넓히지 말 것 — 실측에서 [A] 가 95.7%→93.1% 로
+#   **악화**했고 분모도 9,331→4,626 으로 반토막 났다(구성요소 열이 과도하게 소계로 분류돼
+#   비교 가능한 행 자체가 사라짐). 열 라벨 표기가 회사마다 제각각이라 정규식으로 소계/구성요소를
+#   가르는 접근 자체에 한계가 있다. [A] 는 **참고 지표**로만 쓰고, 판정은 [B](BS 교차검증)로 한다.
 _OWNERS_SUBTOTAL_COL = re.compile(r"지배기업.*합계|지배지분\s*합계|소유주.*합계")
 _NCI_COL = re.compile(r"비지배")
 _TOL = 0.001            # 상대오차 0.1% — 단위 반올림 흡수
@@ -48,17 +54,25 @@ def _norm(s: str | None) -> str:
     return (s or "").replace(" ", "").replace("　", "")
 
 
-def _classify_cols(col_labels: dict[int, str]) -> tuple[int | None, int | None, list[int]]:
-    """반환 (총계열, 지배지분소계열, 구성요소열들)."""
-    total = subtotal = None
+def _classify_cols(col_labels: dict[int, str]) -> tuple[int | None, list[int], list[int]]:
+    """반환 (총계열, 소계열들, 구성요소열들).
+
+    ★ 판정 순서가 중요하다: '비지배지분' 은 '지배지분' 을 부분문자열로 포함하므로 **NCI 를 먼저**
+      확인해야 한다. 뒤집으면 비지배지분이 소계로 분류돼 총계 합에서 빠지고, 연결 SCE 가 전부
+      거짓 불일치를 낸다.
+    """
+    total: int | None = None
+    subtotals: list[int] = []
     for c, lbl in col_labels.items():
         n = _norm(lbl)
+        if _NCI_COL.search(n):
+            continue                                        # 비지배지분 = 구성요소(총계의 일부)
         if _TOTAL_COL.search(n) and not _OWNERS_SUBTOTAL_COL.search(n):
             total = c if total is None else max(total, c)   # 가장 오른쪽을 총계로
         elif _OWNERS_SUBTOTAL_COL.search(n):
-            subtotal = c
-    comps = [c for c in col_labels if c not in (total, subtotal)]
-    return total, subtotal, comps
+            subtotals.append(c)
+    comps = [c for c in col_labels if c != total and c not in subtotals]
+    return total, subtotals, comps
 
 
 def _check_one(lines, basis: str):
@@ -77,7 +91,7 @@ def _check_one(lines, basis: str):
     for l in sce:
         by_row[(l.table_seq, l.row_order, l.label_raw)][l.col_index] = l.value_won
 
-    total_c, sub_c, comps = _classify_cols(col_labels)
+    total_c, sub_cs, comps = _classify_cols(col_labels)
 
     # [A] 행 내부 정합
     a_ok = a_bad = 0

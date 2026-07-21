@@ -41,6 +41,16 @@ def _should_exclude(corp_name: str) -> bool:
     return any(kw.upper() in name_upper for kw in CORP_EXCLUDE_KEYWORDS)
 
 
+def _is_foreign_stock(stock_code: Optional[str]) -> bool:
+    """국내 증시 상장 **외국 기업**(중국·홀딩스 구조 등) 판별.
+
+    KRX 는 외국기업에 **9 로 시작하는 종목코드대**(900xxx 직상장·950xxx DR/원주)를 부여한다.
+    실측(2026-07-19) 국내 9xxxxx 코드 전건이 외국기업(로스웰·소마젠·프레스티지바이오파마 등).
+    이들은 재무제표 서식이 이질적이라 파싱 정합이 낮아 **유니버스에서 제외**(사용자 결정).
+    이 필터는 sync 시 후보에서 걸러 **재유입을 차단**한다(기존 잔존분은 purge_foreign_corps.py)."""
+    return bool(stock_code) and stock_code[:1] == "9"
+
+
 # ── KRX 상장 종목 조회 ────────────────────────────────────────────────
 
 def _extract_code_column(df) -> Optional[str]:
@@ -175,7 +185,7 @@ def sync_corporations() -> dict:
                     excluded_no_dart += 1
                     continue
                 corp_code, corp_name, modify_date = dart_map[stock_code]
-                if _should_exclude(corp_name):
+                if _should_exclude(corp_name) or _is_foreign_stock(stock_code):
                     excluded_name += 1
                     excluded_name_list.append(f"{stock_code} {corp_name}")
                     continue
@@ -196,7 +206,7 @@ def sync_corporations() -> dict:
             # ── DART 단독: stock_code 있는 전체 → 이름 필터만 적용 ──
             market_map = {"Y": "KOSPI", "K": "KOSDAQ", "N": "KONEX"}
             for stock_code, (corp_code, corp_name, modify_date) in dart_map.items():
-                if _should_exclude(corp_name):
+                if _should_exclude(corp_name) or _is_foreign_stock(stock_code):
                     excluded_name += 1
                     excluded_name_list.append(f"{stock_code} {corp_name}")
                     continue

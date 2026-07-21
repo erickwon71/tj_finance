@@ -29,6 +29,7 @@ from dataclasses import dataclass, asdict
 # **정확일치만** 인정한다. 부분일치를 쓰면 '보통주자본금'이 '자본금'으로 잡혀 BS 값이 모호해진다.
 _CONCEPTS: dict[str, set[str]] = {
     "자본금":     {"자본금"},
+    "자본잉여금": {"자본잉여금", "주식발행초과금"},
     "이익잉여금": {"이익잉여금", "이익잉여금결손금", "결손금", "미처분이익잉여금"},
     "비지배지분": {"비지배지분"},
     "지배지분":   {"지배기업의소유주에게귀속되는자본", "지배기업의소유주에게귀속되는지분",
@@ -39,6 +40,23 @@ _CONCEPTS: dict[str, set[str]] = {
 _PAREN = re.compile(r"[（(][^)）]*[)）]")
 _CLOSE = re.compile(r"기말")
 _TOL = 0.001        # 상대오차 0.1% — 단위 반올림 흡수
+
+# ── 열 세분화 차이 허용 ────────────────────────────────────────────────────────
+# SCE 열이 BS 항목보다 **거칠게 묶여** 있는 경우가 있다. 실측(APS 054620 2022 별도):
+#     BS   자본금 10,895,916,500 + 자본잉여금 124,353,775,221 = 135,249,691,721
+#     SCE  '자본금' 열                                          135,249,691,721
+# 라벨은 '자본금'이지만 실제로는 납입자본(자본금+자본잉여금)을 합쳐 표시한 것.
+# 원문 오기도 파서 결함도 아닌 **표시 granularity 차이**다. 1:1 대응만 보면 거짓 이상치가 된다.
+# → 1차 대조 실패 시 아래 대체 조합으로 한 번 더 맞춰보고, 맞으면 이상치로 보지 않는다.
+#   (조합을 함부로 늘리면 진짜 오류를 덮으므로 실측으로 확인된 것만 등록한다.)
+_ALT_REFERENCES: dict[str, list[tuple[str, ...]]] = {
+    "자본금": [("자본금", "자본잉여금")],       # 납입자본 묶음 표시
+}
+
+# 실제로 SCE↔BS 대조를 수행할 개념. '자본잉여금' 은 위 집계의 **재료로만** 쓰고 직접
+# 대조하지 않는다 — SCE 쪽 표기가 자본잉여금/주식발행초과금/기타자본잉여금 등으로 갈려
+# granularity 차이가 잦고, 직접 대조하면 low 노이즈만 늘었다(실측 69건→77건).
+_CHECK_CONCEPTS = ("자본금", "이익잉여금", "비지배지분", "지배지분", "자본총계")
 
 
 @dataclass
@@ -166,12 +184,22 @@ def detect_sce_anomalies(lines, *, rcept_no: str, corp_code: str) -> list[LineAn
             if not bs:
                 continue
             for concept, c in concept_col.items():
+                if concept not in _CHECK_CONCEPTS:
+                    continue
                 ref = bs.get(concept)
                 cell = cells.get(c)
                 if ref is None or cell is None or cell.value_won is None:
                     continue
                 got = cell.value_won
                 if got == ref or abs(got - ref) <= abs(ref or 1) * _TOL:
+                    continue
+                # SCE 열이 BS 보다 거칠게 묶인 표시인지 확인(_ALT_REFERENCES). 맞으면 정상.
+                if any(
+                    all(p in bs for p in combo)
+                    and (got == (agg := sum(bs[p] for p in combo))
+                         or abs(got - agg) <= abs(agg or 1) * _TOL)
+                    for combo in _ALT_REFERENCES.get(concept, ())
+                ):
                     continue
                 kind = classify_anomaly(ref, got)
                 out.append(LineAnomaly(

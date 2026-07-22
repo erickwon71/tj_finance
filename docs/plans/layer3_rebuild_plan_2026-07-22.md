@@ -51,9 +51,12 @@
   (std 가 다른 리포트/열/basis 에서 채운 케이스). 어느 리포트/열(col_index 0/1/2)/basis 에서
   채울지 규칙화. 구 std_v2 lineage(bs/is/cf_rcept)를 참고자료로.
 
-### L3-3. std_v3 테이블 + 빌더
-- 새 테이블 `std_financials_v3` — std_v2 **동일 값 컬럼 계약** + lineage·applied_rules·value_lineage.
-- 2015+ 전량 빌드(102,633 filing 스케일).
+### L3-3. std_v3 테이블 + 빌더 — ◐ 프로토타입 완료 (2026-07-23)
+결과 = `docs/qa/layer3_L3-3_std_v3_build_2026-07-23.md`. 코드 = `StdFinancialV3`·`fin2/layer3/build.py`.
+- ✅ 스키마(std_v2 값계약 + provenance: source_rcepts·amended_cols·amend_chain·basis_fallback·conflicts).
+- ✅ 빌더 `build_corp`(combine_full 조립+provenance, 멱등). 샘플 3사 270행: MATCH 334·DIFF 1·v3만 41.
+- ✅ 삼성전자 4년 전지표 완벽일치. DIFF 1=보험 매출 alias 롱테일(엔진 아님).
+- ⬜ **전량 빌드**(전 corp → std_v3, 배치) 남음. 합산/파생 규칙(rules.py additive) 이식은 후속.
 
 ### L3-4. parity 회귀 (프로브 전수 확대)
 - 현재 400표본 프로브 → **전 유니버스** std_v3 ↔ 구 std_v2 대조.

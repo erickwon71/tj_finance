@@ -84,7 +84,7 @@
 ## 6. 사용자 실행
 
 전수 백필 + 재표준화 스윕(로컬 파일, DART API 미호출 — 쿼터 무관이나 재표준화가 장시간):
-`caffeinate -i .venv_tj_finance/bin/python scripts/fin2_extract_expense_nature.py --year-min 2024`
+`caffeinate -i .venv/bin/python scripts/fin2_extract_expense_nature.py --year-min 2024`
 (스크립트명은 착수 시 `fin2_extract_cf_da_consolidated.py` 네이밍 컨벤션에 맞춰 확정) — 순서 준수:
 추출 → 재표준화 → 이산 → 달력.
 

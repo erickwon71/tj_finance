@@ -4,7 +4,7 @@
 > 각 Phase 는 검증 통과 후 다음으로. 동일 엔진 재사용이므로 `run.py` CLI 가 수치 oracle.
 
 ## Phase 0 — 스캐폴드 ☑ 완료 (2026-06-27)
-- ☑ `.venv_tj_finance` 에 `streamlit==1.50.0` 설치 + `requirements.txt` 추가(plotly 6.7.0·pandas)
+- ☑ `.venv` 에 `streamlit==1.50.0` 설치 + `requirements.txt` 추가(plotly 6.7.0·pandas)
 - ☑ `app/` 패키지 골격 생성(main·state·cache·format + registry/data/compute/views/components)
 - ☑ `app/main.py` `st.navigation`(company/screener, url_path 지정) + 글로벌 사이드바(기업검색·연결/별도·분기/연간 = `st.radio`)
 - ☑ `app/data/corp.py:search_corps(q)`·`resolve_corp(corp_code)`·`table_counts()`

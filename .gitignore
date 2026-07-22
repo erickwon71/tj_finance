@@ -1,4 +1,5 @@
 # --- Python / venv ---
+.venv/
 .venv_tj_finance/
 __pycache__/
 *.pyc

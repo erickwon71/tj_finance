@@ -20,14 +20,14 @@ Resumable: skips (corp_code, combo) pairs already present in
 docs/qa/results/sweep_all_companies.csv.
 
 Usage:
-  .venv_tj_finance/bin/python3 scripts/qa/sweep_company_pages.py --input docs/qa/results/sample_set.csv
-  .venv_tj_finance/bin/python3 scripts/qa/sweep_company_pages.py --corp-codes 00126380,00164779
-  .venv_tj_finance/bin/python3 scripts/qa/sweep_company_pages.py --random 20   # random extra batch
+  .venv/bin/python3 scripts/qa/sweep_company_pages.py --input docs/qa/results/sample_set.csv
+  .venv/bin/python3 scripts/qa/sweep_company_pages.py --corp-codes 00126380,00164779
+  .venv/bin/python3 scripts/qa/sweep_company_pages.py --random 20   # random extra batch
 
 Sharding for parallel full-sweep runs (multiple concurrent OS processes):
-  .venv_tj_finance/bin/python3 scripts/qa/sweep_company_pages.py \\
+  .venv/bin/python3 scripts/qa/sweep_company_pages.py \\
       --input docs/qa/results/shards/shard_1.csv --port 8502 --shard-tag shard1
-  .venv_tj_finance/bin/python3 scripts/qa/sweep_company_pages.py \\
+  .venv/bin/python3 scripts/qa/sweep_company_pages.py \\
       --input docs/qa/results/shards/shard_2.csv --port 8503 --shard-tag shard2
   # ... one process per shard, each pointed at its OWN Streamlit instance (--port)
   # and its OWN output CSVs (--shard-tag) so concurrent writers never touch the

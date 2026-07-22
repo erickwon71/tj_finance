@@ -40,7 +40,7 @@ from collector.dart_periodic import API_NAMES
 from collector.db import get_session
 
 _ROOT = Path(__file__).resolve().parents[1]
-_PYTHON = str(_ROOT / ".venv_tj_finance" / "bin" / "python")
+_PYTHON = str(_ROOT / ".venv" / "bin" / "python")
 _START_YEAR = 2015
 _PLIST_LABEL = "com.tjfinance.gapfill"
 _PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{_PLIST_LABEL}.plist"

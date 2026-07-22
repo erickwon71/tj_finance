@@ -18,7 +18,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/taejin/Project/tj_finance/.venv_tj_finance/bin/python</string>
+        <string>/Users/taejin/Project/tj_finance/.venv/bin/python</string>
         <string>/Users/taejin/Project/tj_finance/scripts/nightly_valuation_refresh.py</string>
     </array>
 

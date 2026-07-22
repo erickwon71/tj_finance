@@ -1,7 +1,7 @@
 # TJ Finance 시각화 앱 — 사용자 매뉴얼
 
 **대상**: 기업 재무·주가 시각화 및 스크리너 앱의 모든 화면과 기능.
-**실행**: 프로젝트 루트에서 `.venv_tj_finance/bin/streamlit run app/main.py` 실행 후 브라우저에서 접속.
+**실행**: 프로젝트 루트에서 `.venv/bin/streamlit run app/main.py` 실행 후 브라우저에서 접속.
 **최종 갱신**: 2026-07-06
 
 ---

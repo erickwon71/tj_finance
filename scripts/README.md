@@ -55,7 +55,7 @@ resolution no longer resolves standalone. Run them from the repo root with the
 project on the path:
 
 ```
-PYTHONPATH=. .venv_tj_finance/bin/python scripts/archive/<folder>/<script>.py
+PYTHONPATH=. .venv/bin/python scripts/archive/<folder>/<script>.py
 ```
 
 ## Safety notes (before moving any script)

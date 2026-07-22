@@ -9,7 +9,7 @@
 멈춘 경우에만 재생성하므로 정상 기업엔 오버헤드가 거의 없다.
 
 실행:
-  .venv_tj_finance/bin/python scripts/collect_new.py [--days 7] [--timeout 120]
+  .venv/bin/python scripts/collect_new.py [--days 7] [--timeout 120]
 """
 from __future__ import annotations
 

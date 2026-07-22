@@ -26,7 +26,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/taejin/Project/tj_finance/.venv_tj_finance/bin/python</string>
+        <string>/Users/taejin/Project/tj_finance/.venv/bin/python</string>
         <string>/Users/taejin/Project/tj_finance/scripts/phase_c_rebuild.py</string>
         <string>--managed</string>
     </array>

@@ -23,7 +23,7 @@
 ## 3. 테스트 환경 & 사전조건
 | 항목 | 값 |
 |---|---|
-| 실행 | 프로젝트 루트에서 `.venv_tj_finance/bin/streamlit run app/main.py` |
+| 실행 | 프로젝트 루트에서 `.venv/bin/streamlit run app/main.py` |
 | URL | `http://localhost:8501` (기본 8501) |
 | 페이지 딥링크 | `url_path`로 이동: `/company`(기본) `/screener` `/quarter-change` `/valuation` `/compare` `/chart-builder` `/collect` `/help`. **기업 선택은 URL 불가** — 사이드바 검색창에 코드/명 입력 |
 | 사전조건 | PostgreSQL 기동 + `.env`의 `DATABASE_URL`이 적재된 DB를 가리킴. 사이드바 "DB 상태" expander가 **"DB 연결 OK"** 인지 먼저 확인 |

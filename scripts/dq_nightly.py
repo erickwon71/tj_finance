@@ -15,7 +15,7 @@ from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PY = str(ROOT / ".venv_tj_finance" / "bin" / "python")
+PY = str(ROOT / ".venv" / "bin" / "python")
 sys.path.insert(0, str(ROOT))
 
 

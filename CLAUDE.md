@@ -15,7 +15,7 @@
  - python 환경은 venv를 적용해서 다른 환경에 영향이 없도록 함.
  - DB는 postgresql local에서 사용
  - DB 크기가 커지는 것을 대비해서 query 시간을 일정하게 빠른 속도를 유지할 수 있도록 함.
- - venv는 .venv_tj_finance로 적용
+ - venv는 .venv로 적용
 # 파서/로더 추가·개선 시 필수 절차 (중요)
  - 보고서 파싱·DB 적재 항목을 새로 추가하거나 개선하면 **자동으로 전부 반영되지 않는다.**
    반드시 `docs/runbook_new_parser_pipeline_integration.md` 체크리스트를 따를 것:

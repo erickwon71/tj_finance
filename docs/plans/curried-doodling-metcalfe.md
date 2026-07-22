@@ -124,7 +124,7 @@ app/
 
 ## 3. 단계별 빌드 순서 + 검증
 
-- **Phase 0 — 스캐폴드**: `.venv_tj_finance`에 `streamlit` 설치(requirements.txt 추가), `app/main.py` + 사이드바 기업검색, DB 연결 스모크. *검증:* 앱 로드, `search_corps("삼성")` 반환.
+- **Phase 0 — 스캐폴드**: `.venv`에 `streamlit` 설치(requirements.txt 추가), `app/main.py` + 사이드바 기업검색, DB 연결 스모크. *검증:* 앱 로드, `search_corps("삼성")` 반환.
 - **Phase 1 — Company MVP(연간)**: `load_standard_financials`(FY)+`compute_ratios`+`compute_multiples`로 연간 재무표 + log 가능 주가차트 + CSV. *검증:* `python run.py analyze <corp>` 수치와 동일(동일 엔진).
 - **Phase 2 — 레지스트리+차트패널**: `MetricSpec`/`METRIC_REGISTRY`+`build_metric_frame`+멀티셀렉트+그래프/표 토글+분기/연간(연간=load_standard_financials, 분기=calendar discrete). *검증:* ROE/op_margin/매출 시계열이 엔진 출력과 기간별 일치, 분기 CQ1–4 합≈FY.
 - **Phase 3 — 스크리너 단일패스**: 카탈로그 필터+`screen()` 문법, 결과표 풀 식별자. *검증:* `run.py screen --roe ">15%"` 결과·정렬 일치.

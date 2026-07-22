@@ -8,7 +8,7 @@ nightly_gap_fill_backfill.run_phase4() 의 500사/회 상한(launchd 야간 무�
 사용 전: 다른 Phase4 실행(수동/launchd)이 동시에 돌고 있지 않은지 확인할 것
 (상태파일 gap_fill_phase4_state.json 동시 쓰기 충돌 방지).
 
-실행: .venv_tj_finance/bin/python scripts/gapfill_phase4_drain.py
+실행: .venv/bin/python scripts/gapfill_phase4_drain.py
 """
 from __future__ import annotations
 

@@ -31,10 +31,10 @@
 
     해결하려면 **GUI 에서 사람이** 전체 디스크 접근 권한을 줘야 한다(자동화 불가):
       시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한 → '+' 로 추가:
-        /Users/taejin/Project/tj_finance/.venv_tj_finance/bin/python
+        /Users/taejin/Project/tj_finance/.venv/bin/python
       (caffeinate 도 함께 추가해야 할 수 있음)
     권한 부여 전까지는 아래 대안으로 돌린다 — 로그인 세션 권한을 물려받으므로 잘 동작한다:
-      nohup caffeinate -i .venv_tj_finance/bin/python scripts/load_report_lines.py \
+      nohup caffeinate -i .venv/bin/python scripts/load_report_lines.py \
         >> logs/layer2_load.out.log 2>> logs/layer2_load.err.log &
     ⚠ 대안의 한계: 로그아웃/재부팅 시 죽는다(재실행하면 progress 기준으로 이어서 감).
 
@@ -56,7 +56,7 @@
     <array>
         <string>/usr/bin/caffeinate</string>
         <string>-i</string>
-        <string>/Users/taejin/Project/tj_finance/.venv_tj_finance/bin/python</string>
+        <string>/Users/taejin/Project/tj_finance/.venv/bin/python</string>
         <string>/Users/taejin/Project/tj_finance/scripts/load_report_lines.py</string>
         <string>--managed</string>
     </array>

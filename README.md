@@ -24,7 +24,7 @@ PostgreSQL에 적재하고, 주가와 연동해 시각화하는 로컬 분석 �
 
 ```bash
 cd ~/Project/tj_finance
-source .venv_tj_finance/bin/activate
+source .venv/bin/activate
 pip install -r requirements.txt
 
 createdb tj_finance            # 로컬 PostgreSQL

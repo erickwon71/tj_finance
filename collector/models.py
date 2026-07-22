@@ -10,7 +10,8 @@ SQLAlchemy ORM 모델 정의
 from datetime import datetime
 from sqlalchemy import (
     BigInteger, Boolean, Column, Date, DateTime, Float,
-    ForeignKey, Integer, SmallInteger, String, Text, UniqueConstraint, Index
+    ForeignKey, Integer, SmallInteger, String, Text, UniqueConstraint, Index,
+    CheckConstraint, func, text as sa_text
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -1434,3 +1435,113 @@ class ReportLineLoadProgress(Base):
     n_anomalies  = Column(Integer,    nullable=True)
     message      = Column(Text,       nullable=True)
     processed_at = Column(DateTime,   default=datetime.utcnow)
+
+
+class ReportLineCorrection(Base):
+    """계층2 원문오류 **보정 규칙**(2026-07-22) — 사람/탐지기의 **판정 저장소**.
+
+    ★ report_line_anomalies 와 역할이 다르다(전문가 자문 반영):
+      - anomalies = 탐지기 파생물. rcept 단위 delete-then-insert 로 매 실행마다 재생성된다.
+        → 사람이 원문 대조로 확정한 판정을 **여기 넣으면 다음 탐지 실행이 지운다.**
+      - corrections = 판정. **재생성되지 않는다.** 탐지기가 넣은 detector 판정과 사람이 넣은
+        human 판정이 공존하며, 계층3 이 이 표를 보고 보정을 적용한다.
+
+    ★ report_lines 의 value_won 은 **절대 고치지 않는다.** 원문 그대로 보존하고(원문 대조
+      회귀 유지) 보정은 이 표에 '규칙'으로만 남긴다. 계층3 적재 시 인메모리로 적용.
+
+    ── 왜 '값'이 아니라 '규칙(scope+operation)'인가 ──────────────────────────────
+    단위오류(HLB제약: 표제 '백만원'인데 실제 '원')는 **표 전체**가 대상이다. 행마다
+    suggested_value 를 넣으면 수천 행이 필요하고 의미도 왜곡된다. scope 로 적용범위를,
+    operation 으로 연산을 표현한다. 특히 단위오류는 배율(÷10⁶)이 아니라 **set_adecimal(0)**
+    으로 — 멱등이라 재추출 후 중복적용되지 않고 원문 인쇄값 복원 경로와 일치한다.
+
+    ── 재추출 내구성 (계층2 는 rcept 단위 delete-then-insert, 행 id 가 매번 바뀜) ──────
+    자연키(rcept/statement/basis/table_seq/row_order/col_index)로 행을 지목하되, table_seq·
+    row_order 는 **파서 산출물**이라 파서 개선 시 밀린다. 그래서 지문 2종을 함께 둔다:
+      · scope='row'  → expect_label + expect_value (라벨+값 이중지문. 값만으론 0/반복금액에서 오지목)
+      · scope in (filing,table) → expect_row_count (행을 특정 안 하므로 '이 표가 여전히 N행인가')
+    계층3 적재기는 규칙마다 대상을 찾아 지문을 검증하고, **불일치면 status='stale' 마킹 후
+    적재를 실패시킨다**(NULL 폴백 금지 — 오류가 사라진 것처럼 보이는 게 최악). 자동 재바인딩
+    (라벨 유사도로 행 재탐색)은 만들지 않는다 — 제거하기로 한 '추측'의 재발이다.
+
+    ── cross_verdict (2026-07-22 실측) ──────────────────────────────────────────
+    SIGN 이상치의 suggested_value 가 옳은지 **BS 시계열 연속성**(독립 근거)으로 교차확인한 결과:
+      제안우세(70.3%)=BS값 옳음 방증 → detector 자동판정 가능
+      혼재(25.5%)=근거부족 → 격리(status='held')
+      원문우세(3.0%)=오히려 BS 의심 → 사람 확인 필수(decided_by='human' 대기)
+    """
+    __tablename__ = "report_line_corrections"
+
+    id             = Column(BigInteger, primary_key=True, autoincrement=True)
+    rcept_no       = Column(String(14), ForeignKey("filings.rcept_no"), nullable=False, index=True)
+    corp_code      = Column(String(8),  nullable=False, index=True)
+
+    # ── 적용 범위 ──────────────────────────────────────────────────────
+    scope          = Column(String(8),  nullable=False, comment="filing | table | row")
+    statement      = Column(String(10), nullable=True,  comment="scope=filing 이면 NULL=전 재무제표")
+    basis          = Column(String(12), nullable=True)
+    table_seq      = Column(SmallInteger, nullable=True, comment="scope in (table,row) 에서 NOT NULL")
+    row_order      = Column(SmallInteger, nullable=True, comment="scope=row 에서 NOT NULL")
+    col_index      = Column(SmallInteger, nullable=True)
+
+    # ── 연산 ───────────────────────────────────────────────────────────
+    operation      = Column(String(16), nullable=False,
+                            comment="set_adecimal(단위) | negate(부호) | replace(값교체)")
+    op_adecimal    = Column(SmallInteger, nullable=True, comment="operation=set_adecimal 일 때")
+    op_value       = Column(BigInteger,   nullable=True, comment="operation=replace 일 때(원 단위)")
+
+    # ── 재추출 내구성 지문 ─────────────────────────────────────────────
+    expect_label   = Column(Text,       nullable=True, comment="scope=row 필수 — 지목행 라벨 지문")
+    expect_value   = Column(BigInteger, nullable=True, comment="scope=row 필수 — 지목행 원문값 스냅샷")
+    expect_row_count = Column(Integer,  nullable=True, comment="scope in (filing,table) — 표 행수 지문")
+
+    # ── 감사 추적 ──────────────────────────────────────────────────────
+    evidence       = Column(String(24), nullable=False,
+                            comment="bs_crosscheck | bs_series_link | manual_source_check | correction_filing")
+    evidence_detail= Column(Text,       nullable=True)
+    cross_verdict  = Column(String(8),  nullable=True, comment="제안우세 | 혼재 | 원문우세(BS시계열 교차)")
+    decided_by     = Column(String(8),  nullable=False, comment="detector | human")
+    # server_default: 원시 SQL INSERT(보정 스크립트·수동 판정)에서도 채워지도록 DB 기본값 사용.
+    decided_at     = Column(DateTime,   nullable=False,
+                            default=datetime.utcnow, server_default=func.now())
+    source_anomaly_id = Column(BigInteger,
+                              ForeignKey("report_line_anomalies.id", ondelete="SET NULL"),
+                              nullable=True)
+    status         = Column(String(8),  nullable=False, default="active",
+                            server_default=sa_text("'active'"),
+                            comment="active(적용) | held(격리·근거대기) | stale(지문불일치) | retired")
+
+    __table_args__ = (
+        CheckConstraint("scope IN ('filing','table','row')", name="ck_rlc_scope"),
+        CheckConstraint("operation IN ('set_adecimal','negate','replace')", name="ck_rlc_op"),
+        CheckConstraint("status IN ('active','held','stale','retired')", name="ck_rlc_status"),
+        CheckConstraint("decided_by IN ('detector','human')", name="ck_rlc_decided_by"),
+        # scope 별 필수 컬럼
+        CheckConstraint(
+            "scope <> 'row' OR (row_order IS NOT NULL AND table_seq IS NOT NULL "
+            "AND expect_label IS NOT NULL AND expect_value IS NOT NULL)",
+            name="ck_rlc_row_required"),
+        CheckConstraint("scope <> 'table' OR table_seq IS NOT NULL", name="ck_rlc_table_required"),
+        # operation 별 필수 컬럼
+        CheckConstraint("operation <> 'set_adecimal' OR op_adecimal IS NOT NULL",
+                        name="ck_rlc_setadec_val"),
+        CheckConstraint("operation <> 'replace' OR op_value IS NOT NULL", name="ck_rlc_replace_val"),
+        # set_adecimal 은 표/보고서 단위만 의미 있다(단위는 표 전체 속성)
+        CheckConstraint("operation <> 'set_adecimal' OR scope IN ('filing','table')",
+                        name="ck_rlc_setadec_scope"),
+        # 뷰 조인용 부분 인덱스(active 만)
+        Index("ix_rlc_row", "rcept_no", "statement", "table_seq", "row_order", "col_index",
+              postgresql_where=sa_text("status='active' AND scope='row'")),
+        Index("ix_rlc_scope_tab", "rcept_no", "statement", "table_seq",
+              postgresql_where=sa_text("status='active' AND scope<>'row'")),
+        # 같은 대상에 같은 연산이 두 번 붙는 사고 방지(active 만)
+        Index("uq_rlc_target", "rcept_no",
+              func.coalesce(Column("statement"), ""), func.coalesce(Column("basis"), ""),
+              func.coalesce(Column("table_seq"), -1), func.coalesce(Column("row_order"), -1),
+              func.coalesce(Column("col_index"), -1), "operation",
+              unique=True, postgresql_where=sa_text("status='active'")),
+    )
+
+    def __repr__(self):
+        return (f"<ReportLineCorrection {self.corp_code} r{self.rcept_no} "
+                f"{self.scope}/{self.operation} [{self.status}]>")

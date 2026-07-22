@@ -56,20 +56,25 @@ statement 단위 폴백으로 CONFLICT 가 ablation(std 자체 rcept 주입) 수
   · 00442455 2020(rev/assets/equity): 같은 rcept 인데 신 체인 report_lines 값(69.71B)≠구 체인
     fact_v2 값(70.79B) — **동일 filing 파서 간 차이**(정정 반영 시점 추정). L3-4 에서 대조.
 
-## 4. ★정책 결정 필요 — 소급재작성(2.5%, RCEPT_DIFF) 처리
-is_final 은 **가장 늦은 [기재정정]** 을 정본으로 본다. 그러나 std_v2(구 체인)는 **수년 후 소급
-재작성은 무시하고 원본 유지**한 사례가 있다(00106641 2015: is_final=2021정정 16.13조 vs
-std=2016원본 16.94조). 두 정책:
-- **(P1) 최신정정 우선(현 is_final)**: 항상 최신 [기재정정] = "현재 시점 정정 반영값(as-restated)".
-- **(P2) 원본+근시일정정, 소급재작성 별개(std 방식)**: 회계연도 근처 정정만 반영, N년 후
-  재작성은 원본 유지 = "당시 보고값(as-originally-filed)".
-→ 금융 DB 성격상 둘 다 수요 있음(point-in-time vs 현행). **어느 것을 std_v3 기본으로?** 미결.
-   비차단(97.5% 무관) — L3-2/L3-4 에서 함께 확정. 필요시 as-filed/as-restated 이중 뷰.
+## 4. ★정본 정책 확정 (사용자 2026-07-22) — 최초등록본 + 순차 델타 패치
+**단순 filing 교체가 아니라, 최초등록본을 베이스로 유지하고 기재정정의 실제 변경분만 셀 단위로
+오버레이한다.** (`build_merged_lines`, 커밋 6bd79a4)
+- 베이스 = 최초등록본(원본). 기재정정이 나오면 파싱해 **바뀐/추가된 셀만** 순차 오버레이.
+- 정정 여러 번 → `amend_chain` 누적. 패치/추가 셀에 **"기재정정 반영" 표시**(amended/amended_by).
+- 값 의미 = **P1(as-restated)** 이되, 델타로 구성해 **부분정정에서 원본 미변경분 보존**
+  (첨부정정·부분 본문정정 안전 — §1 대책의 상위호환).
+- 셀키 = (statement, basis, col_index, section_path, label_raw). 실측(60쌍): SAME 90.9%.
+- as-filed/as-restated 구분 수요는 **amend_chain 마커로 해소**(기본=as-restated, 이력 추적 가능)
+  → 별도 P2 임계값 불요.
+- ⚠ 정제(6지표 무관): ONLY_ORIG(1.2%) 라벨드리프트 시 세부항목 이중계상 가능 — 최상위 6지표는
+  라벨 안정이라 영향 없음. 세부 line item 확장 시 라벨정규화 키 보강 필요.
+
+**검증(n=800)**: 정정 반영 filing 107건, 지표별 ~2~4% amendment-affected, amend_chain 흐름 확인.
 
 ## 5. 판정 & 다음
 - ✅ L3-1b 완료. 정본 선택으로 CONFLICT 붕괴, 엔진 건전성 유지. combine 이 구 체인 오선택을
   여러 건 교정(개선 방향).
 - ⚠ 잔여 CONFLICT(filing 내부 이중섹션·다중 revenue) = **node_role/출처우선순위**가 풀 몫(다음
   refinement, 정본 선택 후로 미뤄둔 대로).
-- **다음 = L3-2 출처매칭(MISSING ~9%)** — 정본 filing 에 없는 지표를 어느 리포트/열/basis 에서
-  채울지. §4 재작성 정책과 함께 설계.
+- **다음 = L3-2 출처매칭(MISSING ~9%)** — 델타패치 병합 후에도 어느 filing 에도 report_lines
+  없는 진짜 갭(~122건 PDF-only 등) + std 가 다른 열/basis 에서 채운 케이스. 어디서 채울지 설계.

@@ -55,6 +55,84 @@ def _period_filings(session, corp: str, fy: int, period: str) -> list[str]:
     return [r[0] for r in rows]
 
 
+def _period_filings_chrono(session, corp: str, fy: int, period: str) -> list[tuple[str, bool]]:
+    """(rcept_no, is_amendment) for a period, ORIGINAL first (filed_at ASC).
+    Only filings that have report_lines (a base/overlay must have extractable rows)."""
+    rows = session.execute(text("""
+        SELECT f.rcept_no, COALESCE(f.is_amendment, false)
+        FROM filings f
+        WHERE f.corp_code=:c AND f.fiscal_year=:y AND f.fiscal_period=:p
+          AND EXISTS (SELECT 1 FROM report_lines rl WHERE rl.rcept_no=f.rcept_no)
+        ORDER BY f.filed_at ASC NULLS FIRST, f.rcept_no ASC
+    """), {"c": corp, "y": fy, "p": period}).fetchall()
+    return [(r[0], bool(r[1])) for r in rows]
+
+
+# cell identity for delta-patch (measured 2026-07-22: SAME 90.9% under this key).
+_CELL_KEY = ("statement", "basis", "col_index", "section_path", "label_raw")
+
+
+def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
+    """★정본 정책(사용자 2026-07-22): 최초등록본 + 순차 델타 패치.
+
+    Base = the ORIGINAL filing (최초등록본). For each 기재정정 (amendment) in
+    chronological order, overlay ONLY the cells whose value differs (edit) or that
+    are new (add); cells the amendment does not touch keep the original. Every
+    patched/added cell is marked (`amended=True`, `amended_by=<rcept>`,
+    `amend_chain=[...]`) so "기재정정 반영" provenance flows downstream.
+
+    Value semantics = P1 (final = as-restated), but constructed as original+deltas
+    so partial amendments (첨부정정 / 부분 본문정정) never drop the untouched base.
+
+    Cell identity = (statement, basis, col_index, section_path, label_raw). Measured
+    alignment: SAME 90.9% / CHANGED 6.4% / ONLY_ORIG 1.2% / ONLY_AMEND 1.5% over 60
+    original↔amendment pairs. ONLY_ORIG (amendment not re-listing a base row) is
+    KEPT (no deletion) — safe for the 6 top-level metrics (stable labels); label
+    drift on detailed line items is a documented refinement (may double-count a
+    renamed detail row, does not affect the top-level metrics).
+
+    Returns a list of merged cell dicts (col_index=0 only), each with:
+      statement, basis, col_index, section_path, label_raw, value_won, node_role,
+      table_seq, is_cumulative, source_rcept, amended(bool), amended_by, amend_chain.
+    """
+    chrono = _period_filings_chrono(session, corp, fy, period)
+    merged: dict[tuple, dict] = {}
+    for rcept, is_amend in chrono:
+        rows = session.execute(text("""
+            SELECT statement, basis, col_index, section_path, label_raw, value_won,
+                   node_role, table_seq, COALESCE(is_cumulative, false) AS is_cum
+            FROM report_lines
+            WHERE rcept_no=:r AND col_index=0 AND value_won IS NOT NULL
+        """), {"r": rcept}).fetchall()
+        for (statement, basis, col_index, section_path, label_raw, value_won,
+             node_role, table_seq, is_cum) in rows:
+            key = (statement, basis, col_index, section_path, label_raw)
+            cell = {
+                "statement": statement, "basis": basis, "col_index": col_index,
+                "section_path": section_path, "label_raw": label_raw,
+                "value_won": int(value_won), "node_role": node_role,
+                "table_seq": table_seq, "is_cumulative": bool(is_cum),
+            }
+            if key not in merged:
+                # base row (or a row added by an amendment)
+                cell["source_rcept"] = rcept
+                cell["amended"] = is_amend
+                cell["amended_by"] = rcept if is_amend else None
+                cell["amend_chain"] = [rcept] if is_amend else []
+                merged[key] = cell
+            else:
+                base = merged[key]
+                if int(value_won) != base["value_won"] and is_amend:
+                    # value edit by amendment → patch + mark
+                    cell["source_rcept"] = rcept
+                    cell["amended"] = True
+                    cell["amended_by"] = rcept
+                    cell["amend_chain"] = base["amend_chain"] + [rcept]
+                    merged[key] = cell
+                # equal value, or non-amendment duplicate → keep base (no-op)
+    return list(merged.values())
+
+
 def select_canonical_rcept(session, corp: str, fy: int, period: str) -> str | None:
     """L3-1b: pick ONE canonical filing (rcept_no) for a period — the most-final one.
 
@@ -161,33 +239,61 @@ def _resolve(cands: dict[str, list[dict]]):
     return confirmed, conflicts
 
 
-def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
-                       statements=("BS", "IS"),
-                       rcept_by_stmt: dict[str, str] | None = None) -> dict[str, list[dict]]:
-    """Map current-year (col_index=0) report_lines to {canonical: [candidate]}.
-
-    Each candidate: {value, stage, label_raw, node_role, section_path, table_seq,
-    is_cumulative}. Interim (H1/Q3) flow (is./cf.) keeps cumulative cells only,
-    mirroring the std_v2 storage convention (build._collect).
-
-    rcept_by_stmt: optional {statement: rcept_no} to restrict each statement to a
-    single filing. Without it, ALL filings for the period are pooled — which pools
-    original + amendment/restatement versions and produces spurious conflicts
-    until Layer-2 pass-4 (정본 선택) or a filing-selection step is applied.
-    """
+def _map_rows(rows, period: str, basis: str, statements) -> dict[str, list[dict]]:
+    """Map merged cell dicts → {canonical: [candidate]}. Shared by both paths.
+    Interim (H1/Q3) flow (is./cf.) keeps cumulative cells only (std_v2 convention).
+    Carries the amendment marker (amended/amended_by) onto each candidate."""
     mapper = get_mapper()
     interim = period in ("H1", "Q3")
     cands: dict[str, list[dict]] = defaultdict(list)
     cum_seen: set[str] = set()
+    stmt_set = set(statements)
+    for r in rows:
+        if r["statement"] not in stmt_set or r["basis"] != basis:
+            continue
+        fs = _FS.get(r["statement"])
+        res = mapper.map(r["label_raw"], fs_section=fs)
+        if res.confidence < 0.88 or res.account_code.startswith("unknown."):
+            continue
+        c = res.account_code
+        is_cum = r["is_cumulative"]
+        flow = interim and (c.startswith("is.") or c.startswith("cf."))
+        if flow:
+            if is_cum:
+                if c not in cum_seen:
+                    cands.pop(c, None)
+                    cum_seen.add(c)
+            elif c in cum_seen:
+                continue
+        cands[c].append({
+            "value": r["value_won"], "stage": res.stage, "label_raw": r["label_raw"],
+            "node_role": r["node_role"], "section_path": r["section_path"],
+            "table_seq": r["table_seq"], "is_cumulative": is_cum,
+            "amended": r.get("amended", False), "amended_by": r.get("amended_by"),
+        })
+    return dict(cands)
 
+
+def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
+                       statements=("BS", "IS"),
+                       rcept_by_stmt: dict[str, str] | None = None) -> dict[str, list[dict]]:
+    """Map current-year (col_index=0) report_lines to {canonical: [candidate]} by
+    querying report_lines directly (diagnostic / ablation path).
+
+    rcept_by_stmt: optional {statement: rcept_no} to restrict each statement to a
+    single filing. Without it, ALL filings for the period are pooled — which pools
+    original + amendment/restatement versions and produces spurious conflicts.
+    combine() uses build_merged_lines() instead (delta-patch); this stays for the
+    ablation/pooled diagnostics.
+    """
+    rows = []
     for statement in statements:
-        fs = _FS.get(statement)
         params = {"c": corp, "y": fy, "p": period, "b": basis, "s": statement}
         rcept_clause = ""
         if rcept_by_stmt and rcept_by_stmt.get(statement):
             rcept_clause = " AND rcept_no = :r"
             params["r"] = rcept_by_stmt[statement]
-        rows = session.execute(text(f"""
+        db_rows = session.execute(text(f"""
             SELECT label_raw, value_won, node_role, section_path, table_seq,
                    COALESCE(is_cumulative, false) AS is_cum
             FROM report_lines
@@ -195,47 +301,40 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
               AND basis=:b AND statement=:s AND col_index=0 AND value_won IS NOT NULL
               {rcept_clause}
         """), params).fetchall()
-
-        for label_raw, value_won, node_role, section_path, table_seq, is_cum in rows:
-            res = mapper.map(label_raw, fs_section=fs)
-            if res.confidence < 0.88 or res.account_code.startswith("unknown."):
-                continue
-            c = res.account_code
-            flow = interim and (c.startswith("is.") or c.startswith("cf."))
-            if flow:
-                if is_cum:
-                    if c not in cum_seen:
-                        cands.pop(c, None)
-                        cum_seen.add(c)
-                elif c in cum_seen:
-                    continue
-            cands[c].append({
-                "value": int(value_won), "stage": res.stage, "label_raw": label_raw,
-                "node_role": node_role, "section_path": section_path,
-                "table_seq": table_seq, "is_cumulative": bool(is_cum),
+        for label_raw, value_won, node_role, section_path, table_seq, is_cum in db_rows:
+            rows.append({
+                "statement": statement, "basis": basis, "label_raw": label_raw,
+                "value_won": int(value_won), "node_role": node_role,
+                "section_path": section_path, "table_seq": table_seq,
+                "is_cumulative": bool(is_cum),
             })
-    return dict(cands)
+    return _map_rows(rows, period, basis, statements)
 
 
 def combine(session, corp: str, fy: int, period: str, basis: str,
             rcept_by_stmt: dict[str, str] | None = None,
-            select_filing: bool = True):
-    """Assemble std columns for one filing. Returns (col, conflicts).
+            select_filing: bool = True, statements=("BS", "IS")):
+    """Assemble std columns for one period. Returns (col, conflicts).
 
     col: {std_column: value} for DIRECT_MAP canonicals that resolved to a single
     value. conflicts: {canonical: [held candidates]} for analysis.
 
-    select_filing (L3-1b): when True (default) and no explicit rcept_by_stmt is
-    given, restrict every statement to the canonical filing chosen by
-    select_canonical_rcept() — this removes the spurious conflicts caused by
-    pooling original + amendment + restatement versions. Set False to pool all
-    filings (diagnostic).
+    Default path (L3-1b, 정본 정책): build_merged_lines() — 최초등록본 + 순차 델타
+    패치(기재정정 반영 표시 포함). This removes spurious conflicts from pooling
+    versions AND preserves untouched base cells under partial amendments.
+
+    rcept_by_stmt: explicit {statement: rcept_no} bypasses the merge (ablation).
+    select_filing=False + no rcept_by_stmt: pool all filings (diagnostic).
     """
-    if rcept_by_stmt is None and select_filing:
-        # per-statement filing resolution (handles 첨부정정 / partial 본문정정)
-        rcept_by_stmt = select_canonical_rcepts(session, corp, fy, period)
-    cands = collect_candidates(session, corp, fy, period, basis,
-                               rcept_by_stmt=rcept_by_stmt)
+    if rcept_by_stmt is not None:
+        cands = collect_candidates(session, corp, fy, period, basis,
+                                   statements=statements, rcept_by_stmt=rcept_by_stmt)
+    elif select_filing:
+        merged = build_merged_lines(session, corp, fy, period)
+        cands = _map_rows(merged, period, basis, statements)
+    else:
+        cands = collect_candidates(session, corp, fy, period, basis,
+                                   statements=statements)
     confirmed, conflicts = _resolve(cands)
     col: dict[str, int] = {}
     for canon, value in confirmed.items():

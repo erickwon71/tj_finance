@@ -21,14 +21,23 @@
 
 ## 2. 빌드 순서 (위 결정에서 도출)
 
-### L3-1. 조합엔진 프로토타입 (하이브리드)
-- `fin2/standardize/build.py` 규칙 **인벤토리** → 계층3 이식 대상 선별(소계 이중계상 방지·
-  충돌해소·부호 규칙). 구 chain 전용 패치(`account_mapper` 가드)는 프로브가 카탈로그 무결성을
-  확인했으니(DIFF≈0) **선별 이식**.
-- 골격 = **node_role(P/S) + 출처우선순위**(잔액=BS · 현금=CF · SCE 보조 · 손익=IS).
-- 핵심 6지표(revenue·operating_income·net_income·total_assets·total_equity·retained_earnings)로
-  `report_lines → std_v3 후보값` end-to-end 1회. 프로브의 CONFLICT(retained_earnings 8% 등)를
-  이 엔진이 해소하는지 확인.
+### L3-1. 조합엔진 프로토타입 (하이브리드) — ✅ 완료 (2026-07-22)
+결과 = `docs/qa/layer3_L3-1_combine_prototype_2026-07-22.md`. 코드 = `fin2/layer3/combine.py`.
+- 구 체인 `build._resolve`/`_reduce_conflict` 이식(acode→label_raw 적응), DIRECT_MAP 6지표.
+- 측정: ablation(std 의 bs/is_rcept 주입)에서 **CONFLICT→0·std_v2 ~90% 재현** → 엔진 건전성 확인.
+- ★발견: pooled combine 의 잔여 CONFLICT 는 **filing 버전 다중성(원본+정정+재작성 공존)** 이 원인.
+  같은 filing 주면 소멸 → **라벨/해소 문제 아님, 정본(filing) 선택 미실행 때문.**
+- DIFF(1~3)은 회귀 아니라 개선(신 엔진이 총계 이익잉여금 채택, 구 체인은 fuzzy 미처분 sub-line).
+- node_role 규칙은 아직 미적용 — **정본 선택 후 잔여(진짜 소계 이중계상)에만 필요할 가능성**.
+
+### L3-1b. 정본(filing) 선택 — ✅ 완료 (2026-07-22, 계층3 선택 스텝 채택)
+결과 = `docs/qa/layer3_L3-1b_filing_selection_2026-07-22.md`. 코드 = `combine.select_canonical_rcept`.
+- 결정: **(B) 계층3 선택 스텝**(사용자). combine 진입 전 정본 rcept 1개 선택.
+- 규칙: `filings.is_final`(다운로드 계층의 최종 [기재정정]) 재활용. std_v2 와 **97.5% 일치**.
+- 측정: CONFLICT pooled ~18 → 정본선택 후 ~1(ablation 수준). DIFF ~0.7%(다수 combine 개선).
+- ⚠ **미결 정책(비차단, 2.5%)**: 소급재작성 처리 — (P1)최신정정 우선(현 is_final, as-restated) vs
+  (P2)원본+근시일정정, 수년후 재작성 별개(std 방식, as-filed). std_v3 기본값을 L3-2/L3-4 에서 확정.
+- ⚠ 잔여 CONFLICT(filing 내부 이중섹션·다중 revenue)는 **node_role/출처우선순위**가 풀 몫(다음).
 
 ### L3-2. 출처매칭(MISSING) 규칙
 - 프로브 MISSING(~9%)의 정체 = 그 (corp,fy,period,basis) 키에 report_lines 행 부재
@@ -65,4 +74,5 @@ L3-1/2 중 "2015+ 표준화 가정이 깨진다"고 판단되면 `layer3_design 
 - 주석 적재(볼륨 5배) — 배당·이익잉여금처분 완결성. 별도 단계.
 
 ## 5. 다음 착수 후보
-**L3-1(조합엔진 프로토타입)** — 신 체인 단독의 첫 실체. build.py 규칙 인벤토리부터.
+**L3-1b(정본 선택)** — L3-1 완료로 드러난 선결 의존성. 아키텍처 분기(계층2 4패스 A vs 계층3
+선택 스텝 B) 결정 후 착수. 정본 선택이 되면 CONFLICT 소멸 → L3-2(출처매칭) → L3-3(std_v3 빌드).

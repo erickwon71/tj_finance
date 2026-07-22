@@ -64,6 +64,52 @@ def test_no_synthetic_top_no_doubling():
     assert not any(l.section_path and l.section_path.startswith("자산>자산") for l in lines)
 
 
+# ── 제목표/데이터표 분리 서식 (2026-07-23, docs/qa/layer2_split_table_gap) ──────────
+# 재무제표명('연 결 재 무 상 태 표')이 데이터 없는 별도 표로 떨어지고 숫자·단위는 다음
+# 데이터표에 있는 서식(보험/증권 + 일반사 특정연도, 로더 done 중 2.9%가 이 탓에 0행이었다).
+# _detect_body_statement_tables 의 전방연결이 없으면 이 파일은 0행이 된다.
+_HK = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00103176_흥국화재/annual/2015/20160330003906.xml"
+)
+
+
+def _hk_lines():
+    return extract_report_lines(
+        _HK, rcept_no="20160330003906", corp_code="00103176",
+        report_fiscal_year=2015, report_fiscal_period="FY",
+    )
+
+
+def test_split_title_data_table_extracted():
+    """제목표/데이터표 분리 서식이 0행이 아니라 BS/IS/CF/SCE 를 전부 전사한다."""
+    if not _HK.exists():
+        return
+    lines = _hk_lines()
+    stmts = {(l.statement, l.basis) for l in lines}
+    for want in (("BS", "consolidated"), ("IS", "consolidated"), ("CF", "consolidated"),
+                 ("BS", "separate"), ("IS", "separate")):
+        assert want in stmts, (want, sorted(stmts))
+
+
+def test_split_table_values_match_source():
+    """전방연결로 붙인 데이터표의 값이 원문(=std_v2 산출)과 일치한다."""
+    if not _HK.exists():
+        return
+    lines = _hk_lines()
+    def col0(stmt, basis, needle):
+        for l in lines:
+            if (l.statement == stmt and l.basis == basis and l.col_index == 0
+                    and l.value_won is not None and needle in (l.label_raw or "").replace(" ", "")):
+                return l.value_won
+        return None
+    # 단위(백만원)가 데이터표에 선언 → declared_unit 이 전방연결로 따라온다.
+    assert col0("BS", "consolidated", "자산총계") == 8_987_851_000_000
+    assert col0("BS", "consolidated", "자본총계") == 442_022_000_000
+    assert col0("IS", "consolidated", "영업수익") == 4_235_585_000_000
+    assert col0("IS", "consolidated", "당기순이익") == 19_653_000_000
+
+
 def test_indent_stack_pure_structure():
     """section_path = 들여쓰기 조상 체인(순수 구조). 합성 RowData 로 로직만 검증(파일 무관)."""
     rows = [

@@ -233,22 +233,34 @@ def _detect_body_statement_tables(root, fin_type: str,
     for sec_kind, basis in ((SEC_CONSOL_FS, "consolidated"), (SEC_SEP_FS, "separate")):
         if basis == "consolidated" and fin_type == "B":
             continue  # 연결 없는 기업의 연결 표 무시
-        for tbl in sec_tables.get(sec_kind, []):
+        tbls = sec_tables.get(sec_kind, [])
+        for idx, tbl in enumerate(tbls):
             # 섹션이 이미 '본문'을 보장하므로 주석 배제 가드가 불필요 → 재무제표명만 본다
             # (공백·반기/분기 접두 허용). 자본변동표(SCE)는 분류기가 배제한다 —
             # include_sce=True(계층2 report_lines 전용)일 때만 'SCE' 로 통과시킨다.
             stmt = classify_statement_in_body_section(title_text(tbl), include_sce=include_sce)
             if stmt is None:
                 continue
-            # 데이터행 없는 stub(단위표·footer)·wrapper 배제. **직접 행 기준**(깨진 XML 대응).
-            if not _table_has_data_rows(tbl):
-                continue
             section_code = SECTION_CODE_OF[(basis, stmt)]
-            # 단위는 **그 표가 명시 선언한 것만** 신뢰한다(추측 금지). 없으면 None → 보류.
-            unit = declared_unit(tbl)
             # sec_kind 를 그대로 들고 간다(basis 에서 되유도하지 않음) — 적재된 행의
             # section_kind 는 **실제로 귀속된 섹션**이어야 감사에 쓸 수 있다.
-            groups.setdefault(section_code, []).append((tbl, unit, sec_kind))
+            if _table_has_data_rows(tbl):
+                # 정상 서식: 제목+데이터가 한 표(단위는 그 표가 명시 선언한 것만 신뢰).
+                groups.setdefault(section_code, []).append((tbl, declared_unit(tbl), sec_kind))
+                continue
+            # ★ 제목표/데이터표 분리 서식(2026-07-23, docs/qa/layer2_split_table_gap_2026-07-23.md):
+            # 재무제표명('연 결 재 무 상 태 표')이 **데이터 없는 별도 표**로 떨어져 있고, 숫자와
+            # 단위는 바로 뒤 데이터표에 있다(보험/증권 + 일반사 특정연도, 로더 done 중 2.9%가 0행).
+            # 이 경우 다음 '분류되는 제목표' 전까지 스캔해 **첫 데이터표를 이 재무제표의 데이터로
+            # 연결**한다. 정상 서식(위 branch)은 건드리지 않는 가산적 처리다.
+            title_unit = declared_unit(tbl)   # 드물게 제목표가 단위를 보유
+            for nxt in tbls[idx + 1:]:
+                if classify_statement_in_body_section(title_text(nxt), include_sce=include_sce) is not None:
+                    break   # 다음 재무제표 제목 도달 → 이 재무제표엔 데이터표 없음(보류)
+                if _table_has_data_rows(nxt):
+                    unit = title_unit if title_unit is not None else declared_unit(nxt)
+                    groups.setdefault(section_code, []).append((nxt, unit, sec_kind))
+                    break   # 첫 데이터표만 연결(재무제표 하나당 데이터표 하나)
     return groups
 
 

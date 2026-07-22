@@ -332,6 +332,16 @@ def combine(session, corp: str, fy: int, period: str, basis: str,
     elif select_filing:
         merged = build_merged_lines(session, corp, fy, period)
         cands = _map_rows(merged, period, basis, statements)
+        # L3-2 basis fallback: a company with no subsidiaries files only 별도(separate);
+        # its 연결(consolidated) figures = separate. When the requested basis is entirely
+        # absent but the period has only the other basis, fall back (verified: 45/45 such
+        # cases are single-basis companies whose other-basis value == std_v2). Mirrors the
+        # old chain (consolidated→separate for non-consolidating corps).
+        if not cands:
+            other = "separate" if basis == "consolidated" else "consolidated"
+            bases_present = {r["basis"] for r in merged}
+            if bases_present == {other}:
+                cands = _map_rows(merged, period, other, statements)
     else:
         cands = collect_candidates(session, corp, fy, period, basis,
                                    statements=statements)

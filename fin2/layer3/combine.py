@@ -45,6 +45,33 @@ _FS = {"IS": "is", "BS": "bs", "CF": "cf"}
 _STMT_OF_PREFIX = {"bs": "BS", "is": "IS", "cf": "CF"}
 
 
+def select_canonical_rcept(session, corp: str, fy: int, period: str) -> str | None:
+    """L3-1b filing selection: pick ONE canonical filing (rcept_no) for a period.
+
+    Rule (leverages the download layer's already-computed `is_final`, which marks
+    the final [기재정정] within a period_end_date group). Verified against std_v2:
+    is_final agrees with the old chain's choice on 97.5% of 2015+ FY filings.
+
+      1. Prefer is_final=True. Tie-break (29 dup groups exist) = latest filed_at,
+         then max rcept_no (deterministic).
+      2. Fallback (no is_final): latest filed_at among all filings for the period.
+
+    ⚠ Known edge (2.5%): a many-years-later [기재정정] (소급재작성) is is_final but the
+    old chain kept the original — that refinement is deferred (L3-2 / L3-4 parity).
+    This selector treats the latest amendment as canonical; restatement handling is
+    a separate rule to layer on top.
+
+    Returns rcept_no, or None if the period has no filing.
+    """
+    row = session.execute(text("""
+        SELECT rcept_no FROM filings
+        WHERE corp_code=:c AND fiscal_year=:y AND fiscal_period=:p
+        ORDER BY is_final DESC, filed_at DESC NULLS LAST, rcept_no DESC
+        LIMIT 1
+    """), {"c": corp, "y": fy, "p": period}).fetchone()
+    return row[0] if row else None
+
+
 def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
     """Confirm a split top-candidate set WITHOUT guessing, else None (hold).
 
@@ -162,12 +189,23 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
 
 
 def combine(session, corp: str, fy: int, period: str, basis: str,
-            rcept_by_stmt: dict[str, str] | None = None):
+            rcept_by_stmt: dict[str, str] | None = None,
+            select_filing: bool = True):
     """Assemble std columns for one filing. Returns (col, conflicts).
 
     col: {std_column: value} for DIRECT_MAP canonicals that resolved to a single
     value. conflicts: {canonical: [held candidates]} for analysis.
+
+    select_filing (L3-1b): when True (default) and no explicit rcept_by_stmt is
+    given, restrict every statement to the canonical filing chosen by
+    select_canonical_rcept() — this removes the spurious conflicts caused by
+    pooling original + amendment + restatement versions. Set False to pool all
+    filings (diagnostic).
     """
+    if rcept_by_stmt is None and select_filing:
+        rcept = select_canonical_rcept(session, corp, fy, period)
+        if rcept:
+            rcept_by_stmt = {"BS": rcept, "IS": rcept, "CF": rcept}
     cands = collect_candidates(session, corp, fy, period, basis,
                                rcept_by_stmt=rcept_by_stmt)
     confirmed, conflicts = _resolve(cands)

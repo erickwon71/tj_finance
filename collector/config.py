@@ -80,5 +80,11 @@ CORP_EXCLUDE_KEYWORDS = [
 COLLECT_START_DATE = "20000101"
 
 # ── 디렉토리 자동 생성 ──────────────────────────────────
+# RAW_REPORT_DIR 는 NAS(SMB) 심링크일 수 있다. NAS 미마운트 시 심링크는 "존재하지만 대상 없음"
+# (broken symlink) 상태가 되고, 그때 mkdir(exist_ok=True) 는 FileExistsError 로 죽는다 → import
+# 자체가 실패해 DB 전용 작업(원문 파일이 필요 없는 조회·표준화)까지 막힌다. 이미 존재하거나
+# 심링크면 생성하지 않는다(NAS 마운트 시 동작 불변). 실제 원문 접근은 사용 시점에 자연히 실패한다.
 for _d in (RAW_REPORT_DIR, LOG_DIR, TMP_DIR):
+    if _d.is_symlink() or _d.exists():
+        continue
     _d.mkdir(parents=True, exist_ok=True)

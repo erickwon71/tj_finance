@@ -59,6 +59,17 @@ def _targets(session, args) -> list:
     if args.shard:
         a, n = (int(x) for x in args.shard.split("/"))
         rows = [r for i, r in enumerate(rows) if i % n == a]
+    if getattr(args, "redo_empty", False):
+        # 제목표/데이터표 분리 서식 수정(2026-07-23) 소급 백필 전용: done 인데 0행인 filing 만
+        # 재처리한다(--recheck 는 전량 102k 재처리라 과함). store 는 delete-then-insert 라 멱등.
+        empty = {r[0] for r in session.execute(text(
+            "SELECT rcept_no FROM report_line_load_progress "
+            "WHERE status='done' AND COALESCE(n_lines,0)=0"
+        )).fetchall()}
+        rows = [r for r in rows if r.rcept_no in empty]
+        if args.limit:
+            rows = rows[: args.limit]
+        return rows
     if not args.recheck:
         done = {r[0] for r in session.execute(text(
             "SELECT rcept_no FROM report_line_load_progress WHERE status IN ('done','skip')"
@@ -117,6 +128,8 @@ def main() -> None:
     ap.add_argument("--shard", help="a/n 분할(정렬 후 i %% n == a)")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--recheck", action="store_true", help="done 도 재처리")
+    ap.add_argument("--redo-empty", action="store_true",
+                    help="done 인데 0행인 filing 만 재처리(제목표/데이터표 분리 수정 소급 백필)")
     ap.add_argument("--status", action="store_true", help="진행 현황만 출력")
     ap.add_argument("--managed", action="store_true",
                     help="launchd 연속잡 모드 — 완주 후 남은 대상 0 이면 스스로 잡 해제")

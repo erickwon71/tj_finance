@@ -326,6 +326,24 @@ def combine(session, corp: str, fy: int, period: str, basis: str,
     rcept_by_stmt: explicit {statement: rcept_no} bypasses the merge (ablation).
     select_filing=False + no rcept_by_stmt: pool all filings (diagnostic).
     """
+    col, conflicts, _prov = combine_full(
+        session, corp, fy, period, basis,
+        rcept_by_stmt=rcept_by_stmt, select_filing=select_filing, statements=statements)
+    return col, conflicts
+
+
+def combine_full(session, corp: str, fy: int, period: str, basis: str,
+                 rcept_by_stmt: dict[str, str] | None = None,
+                 select_filing: bool = True, statements=("BS", "IS", "CF")):
+    """Like combine() but also returns provenance (for std_v3 build, L3-3).
+
+    Returns (col, conflicts, prov) where prov = {
+      basis_fallback: bool,
+      amended_cols:   [std_col, ...]         # value came from a 기재정정-patched cell
+      amend_chain:    {std_col: [rcept,...]} # which amendments touched it
+    }. source_rcepts is resolved by the caller (build) from the merged filings.
+    """
+    prov = {"basis_fallback": False, "amended_cols": [], "amend_chain": {}}
     if rcept_by_stmt is not None:
         cands = collect_candidates(session, corp, fy, period, basis,
                                    statements=statements, rcept_by_stmt=rcept_by_stmt)
@@ -342,6 +360,7 @@ def combine(session, corp: str, fy: int, period: str, basis: str,
             bases_present = {r["basis"] for r in merged}
             if bases_present == {other}:
                 cands = _map_rows(merged, period, other, statements)
+                prov["basis_fallback"] = True
     else:
         cands = collect_candidates(session, corp, fy, period, basis,
                                    statements=statements)
@@ -349,6 +368,14 @@ def combine(session, corp: str, fy: int, period: str, basis: str,
     col: dict[str, int] = {}
     for canon, value in confirmed.items():
         std_col = DIRECT_MAP.get(canon)
-        if std_col is not None:
-            col[std_col] = value
-    return col, conflicts
+        if std_col is None:
+            continue
+        col[std_col] = value
+        # amendment provenance: did the winning value come from a 기재정정-patched cell?
+        amend_rcepts = [r["amended_by"] for r in cands.get(canon, [])
+                        if r["value"] == value and r.get("amended") and r.get("amended_by")]
+        if amend_rcepts:
+            prov["amended_cols"].append(std_col)
+            # dedupe preserving order
+            prov["amend_chain"][std_col] = list(dict.fromkeys(amend_rcepts))
+    return col, conflicts, prov

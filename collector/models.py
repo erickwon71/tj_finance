@@ -1545,3 +1545,80 @@ class ReportLineCorrection(Base):
     def __repr__(self):
         return (f"<ReportLineCorrection {self.corp_code} r{self.rcept_no} "
                 f"{self.scope}/{self.operation} [{self.status}]>")
+
+
+# ── 9. 계층3 산출 (std_financials_v3, 4계층 신 체인, L3-3 2026-07-23) ──────────────
+class StdFinancialV3(Base):
+    """계층3(조합) 산출물 — report_lines(계층2)에서 조립한 표준 재무. 신 체인 단독.
+
+    std_financials_v2(구 체인, fact_v2 경유)와 **동일 값 컬럼 계약**을 미러링하되, 출처는
+    report_lines 이고 조립은 `fin2.layer3.combine` 이다. swap 전까지 std_v2 와 병행 존재하며
+    L3-4 parity 대조 후 앱을 이쪽으로 전환한다(계획 결정 #2: 새 테이블 후 swap).
+
+    ★provenance(구 체인엔 없던 것):
+      - source_rcepts : {statement: rcept} — 각 재무제표를 실제로 읽은 정본 filing(statement 단위).
+      - amended_cols  : 기재정정 반영으로 값이 온 std 컬럼 목록(최초등록본+델타패치, L3-1b).
+      - amend_chain   : {std_col: [rcept,...]} — 그 컬럼을 고친 정정본 순서(감사·as-filed 복원용).
+      - basis_fallback: 단일 basis 기업(연결 없음→별도) 폴백 사용 여부(L3-2).
+      - conflicts     : 조립 중 값이 갈려 보류한 canonical(결측 근거).
+
+    값 컬럼은 combine 의 DIRECT_MAP 산출분(BS/IS/CF 직접매핑). 합산/파생(D&A·EBITDA·차입합계
+    ·capex)은 후속(rules.py additive 이식). 신규 테이블 → create_all 자동 생성.
+    """
+    __tablename__ = "std_financials_v3"
+
+    corp_code      = Column(String(8),    primary_key=True)
+    fiscal_year    = Column(SmallInteger, primary_key=True)
+    fiscal_period  = Column(String(5),    primary_key=True)   # FY/H1/Q1/Q3
+    statement_type = Column(String(12),   primary_key=True)   # consolidated/separate
+    period_end     = Column(Date,         nullable=True)
+
+    # ── BS ──
+    total_assets        = Column(BigInteger, nullable=True)
+    current_assets      = Column(BigInteger, nullable=True)
+    cash                = Column(BigInteger, nullable=True)
+    receivables         = Column(BigInteger, nullable=True)
+    inventory           = Column(BigInteger, nullable=True)
+    ppe                 = Column(BigInteger, nullable=True)
+    intangibles         = Column(BigInteger, nullable=True)
+    total_liabilities   = Column(BigInteger, nullable=True)
+    current_liabilities = Column(BigInteger, nullable=True)
+    short_term_debt     = Column(BigInteger, nullable=True)
+    long_term_debt      = Column(BigInteger, nullable=True)
+    total_equity        = Column(BigInteger, nullable=True)
+    controlling_equity  = Column(BigInteger, nullable=True)
+    retained_earnings   = Column(BigInteger, nullable=True)
+    trade_payables      = Column(BigInteger, nullable=True)
+    # ── IS ──
+    revenue             = Column(BigInteger, nullable=True)
+    cogs                = Column(BigInteger, nullable=True)
+    gross_profit        = Column(BigInteger, nullable=True)
+    sga                 = Column(BigInteger, nullable=True)
+    rd_expense          = Column(BigInteger, nullable=True)
+    operating_income    = Column(BigInteger, nullable=True)
+    interest_expense    = Column(BigInteger, nullable=True)
+    ebt                 = Column(BigInteger, nullable=True)
+    tax_expense         = Column(BigInteger, nullable=True)
+    net_income          = Column(BigInteger, nullable=True)
+    controlling_ni      = Column(BigInteger, nullable=True)
+    # ── CF ──
+    cfo                 = Column(BigInteger, nullable=True)
+    cfi                 = Column(BigInteger, nullable=True)
+    cff                 = Column(BigInteger, nullable=True)
+    dividends_paid      = Column(BigInteger, nullable=True)
+
+    # ── provenance ──
+    source_rcepts   = Column(JSONB, nullable=True, comment="{statement: rcept} 정본 filing(statement 단위)")
+    amended_cols    = Column(JSONB, nullable=True, comment="기재정정 반영으로 값이 온 std 컬럼 목록")
+    amend_chain     = Column(JSONB, nullable=True, comment="{std_col: [rcept,...]} 정정본 순서")
+    basis_fallback  = Column(Boolean, default=False, comment="단일 basis 기업 반대 basis 폴백")
+    conflicts       = Column(JSONB, nullable=True, comment="값 충돌로 보류한 canonical")
+    built_at        = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_stdv3_screening", "fiscal_year", "fiscal_period", "statement_type"),
+        Index("ix_stdv3_corp_year", "corp_code", "fiscal_year"),
+    )
+
+    def __repr__(self):
+        return f"<StdFinancialV3 {self.corp_code} {self.fiscal_year}{self.fiscal_period} {self.statement_type}>"

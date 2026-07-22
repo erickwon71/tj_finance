@@ -9,27 +9,36 @@ L3-1 이 지목한 잔여 CONFLICT 원인(=filing 버전 다중성)을 **정본 
 계층의 `is_final`(최종 [기재정정])을 정본 선택자로 채택 → **CONFLICT pooled ~18 → ~1 로 붕괴**.
 잔여 DIFF ~0.7%(대부분 combine 이 구 체인보다 정확 or filing 정책 엣지).
 
-## 1. 선택 규칙 (`select_canonical_rcept`)
-`filings.is_final` 재활용(다운로드 계층이 period_end_date 그룹당 최종 [기재정정] 표시).
-```
-ORDER BY is_final DESC, filed_at DESC NULLS LAST, rcept_no DESC  LIMIT 1
-```
-- tie-break: is_final 중복 29그룹 존재 → filed_at 최신 → rcept 최대(결정적).
-- fallback: is_final 없으면 filed_at 최신.
-- combine 은 기본적으로 이 정본 rcept 하나만 읽는다(BS/IS/CF 동일 filing). pooling 제거.
+## 1. 선택 규칙 — statement 단위 폴백 (`select_canonical_rcepts`)
+filing 체인을 `is_final DESC, filed_at DESC, rcept_no DESC` 로 정렬하고, **BS/IS/CF 각각을
+그 statement 의 report_lines 가 실제로 존재하는 가장 최신 filing 에서** 가져온다.
 
-**근거(실측)**: std_v2 FY 2015+ bs_rcept 44,773건 중 **is_final 과 97.5% 일치**(43,652).
+**★왜 filing 단위가 아니라 statement 단위인가 (사용자 지적 + 실측)**:
+`is_final` 이 가리키는 정본이 **본문/재무제표를 안 가진 경우**가 있다 —
+- **첨부정정 321건**: 본문 무변경(=원본과 동일), report_lines 없음이 정상.
+- **본문정정 미추출 125건**: PDF-only 등으로 report_lines 없음(진짜 갭).
+
+즉 `is_final` rcept 하나만 읽으면 이 446건이 전량 빈 값이 된다. statement 단위로 체인을 폴백하면:
+- 첨부정정 **307/321** 회복(원본 본문 사용 — 정의상 내용 동일).
+- 본문정정 **17/125** 회복(그 statement 있는 이전 filing).
+- 나머지 ~122건은 어느 filing 에도 report_lines 없음 = 진짜 데이터 갭(PDF-only) → MISSING 으로
+  표면화(L3-2 / PDF 패스 몫, 선택 문제 아님).
+
+**구 std_v2 도 동일**: bs_rcept/is_rcept/cf_rcept 를 따로 저장 = statement 단위 출처 해소(검증된 설계).
+
+**정본 자체의 근거(실측)**: std_v2 FY 2015+ bs_rcept 44,773건 중 **is_final 과 97.5% 일치**(43,652).
 불일치 2.5%(1,121)= std 가 is_final 아닌 filing 채택 = 소급재작성 엣지(§4).
 
 ## 2. 측정 (n=400)
 
 | | CONFLICT (pooled→선택) | DIFF | MISSING | MATCH% |
 |---|---|---:|---:|---:|
-| seed 7 | 6~11 → **0~2** | 1~4 | 41~43 | ~88.5 |
-| seed 42 | 18(rev)→ **1~9** | 0~5 | 37~44 | ~88.5 |
+| pooled(선택 없음) | 6~18 | 0~1 | ~35 | — |
+| filing 단위 선택 | 0~9 | 1~5 | 41~43 (↑) | ~88.5 |
+| **statement 단위 폴백**(최종) | **0~2** | 1~4 | **35~37** | **~90.0** |
 
-정본 선택으로 CONFLICT 가 ablation(std 자체 rcept 주입) 수준으로 수렴. 트레이드오프로
-MISSING 소폭↑(정본 하나만 읽어 그 filing 에 없는 지표는 결측 → L3-2 출처매칭이 담당).
+statement 단위 폴백으로 CONFLICT 가 ablation(std 자체 rcept 주입) 수준으로 수렴하면서 **MISSING
+도 회복**(첨부정정 폴백) → MATCH ~90%. filing 단위 선택의 MISSING↑ 부작용이 사라짐.
 
 ## 3. 잔여 DIFF 분류 (seed 7: SAME_RCEPT 9 · RCEPT_DIFF 8)
 

@@ -45,31 +45,60 @@ _FS = {"IS": "is", "BS": "bs", "CF": "cf"}
 _STMT_OF_PREFIX = {"bs": "BS", "is": "IS", "cf": "CF"}
 
 
-def select_canonical_rcept(session, corp: str, fy: int, period: str) -> str | None:
-    """L3-1b filing selection: pick ONE canonical filing (rcept_no) for a period.
-
-    Rule (leverages the download layer's already-computed `is_final`, which marks
-    the final [기재정정] within a period_end_date group). Verified against std_v2:
-    is_final agrees with the old chain's choice on 97.5% of 2015+ FY filings.
-
-      1. Prefer is_final=True. Tie-break (29 dup groups exist) = latest filed_at,
-         then max rcept_no (deterministic).
-      2. Fallback (no is_final): latest filed_at among all filings for the period.
-
-    ⚠ Known edge (2.5%): a many-years-later [기재정정] (소급재작성) is is_final but the
-    old chain kept the original — that refinement is deferred (L3-2 / L3-4 parity).
-    This selector treats the latest amendment as canonical; restatement handling is
-    a separate rule to layer on top.
-
-    Returns rcept_no, or None if the period has no filing.
-    """
-    row = session.execute(text("""
+def _period_filings(session, corp: str, fy: int, period: str) -> list[str]:
+    """All rcept_no for a (corp, fy, period), most-final/most-recent first."""
+    rows = session.execute(text("""
         SELECT rcept_no FROM filings
         WHERE corp_code=:c AND fiscal_year=:y AND fiscal_period=:p
         ORDER BY is_final DESC, filed_at DESC NULLS LAST, rcept_no DESC
-        LIMIT 1
-    """), {"c": corp, "y": fy, "p": period}).fetchone()
-    return row[0] if row else None
+    """), {"c": corp, "y": fy, "p": period}).fetchall()
+    return [r[0] for r in rows]
+
+
+def select_canonical_rcept(session, corp: str, fy: int, period: str) -> str | None:
+    """L3-1b: pick ONE canonical filing (rcept_no) for a period — the most-final one.
+
+    Kept for diagnostics/back-compat. Prefer select_canonical_rcepts() for
+    combine: the single-filing choice is unsafe when the final filing is a
+    첨부정정 (attachment-only amendment, body identical to original → no financial
+    statements in report_lines) or a 본문정정 whose statements were not extracted.
+    """
+    fl = _period_filings(session, corp, fy, period)
+    return fl[0] if fl else None
+
+
+def select_canonical_rcepts(session, corp: str, fy: int, period: str,
+                            statements=("BS", "IS", "CF")) -> dict[str, str]:
+    """L3-1b (per-statement): resolve each statement to the newest filing that
+    ACTUALLY contains report_lines for it.
+
+    Rationale (measured 2026-07-22): filing selection must be per-statement, not
+    per-filing. The final filing (is_final) can be a 첨부정정 (body identical → no
+    statements in report_lines; 321 cases) or a partially/never-extracted 본문정정
+    (125). Blindly reading only is_final would yield empty/MISSING. Walking the
+    filing chain (is_final → … → original) per statement recovers 307/321
+    attachment amendments (use the original body — identical by definition) and
+    17/125 body amendments. The rest have no report_lines in any filing = genuine
+    data gap (PDF-only / un-extracted), surfaced as MISSING for L3-2 / PDF pass.
+
+    This mirrors the old chain, which stored bs_rcept / is_rcept / cf_rcept
+    separately — per-statement source resolution is the proven design.
+
+    Returns {statement: rcept_no} for statements that have report_lines somewhere
+    (statements with no data anywhere are simply absent from the dict).
+    """
+    filings = _period_filings(session, corp, fy, period)
+    out: dict[str, str] = {}
+    for statement in statements:
+        for rcept in filings:  # most-final first
+            has = session.execute(text("""
+                SELECT 1 FROM report_lines
+                WHERE rcept_no=:r AND statement=:s LIMIT 1
+            """), {"r": rcept, "s": statement}).fetchone()
+            if has:
+                out[statement] = rcept
+                break
+    return out
 
 
 def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
@@ -203,9 +232,8 @@ def combine(session, corp: str, fy: int, period: str, basis: str,
     filings (diagnostic).
     """
     if rcept_by_stmt is None and select_filing:
-        rcept = select_canonical_rcept(session, corp, fy, period)
-        if rcept:
-            rcept_by_stmt = {"BS": rcept, "IS": rcept, "CF": rcept}
+        # per-statement filing resolution (handles 첨부정정 / partial 본문정정)
+        rcept_by_stmt = select_canonical_rcepts(session, corp, fy, period)
     cands = collect_candidates(session, corp, fy, period, basis,
                                rcept_by_stmt=rcept_by_stmt)
     confirmed, conflicts = _resolve(cands)

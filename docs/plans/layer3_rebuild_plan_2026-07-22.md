@@ -39,7 +39,14 @@
   (P2)원본+근시일정정, 수년후 재작성 별개(std 방식, as-filed). std_v3 기본값을 L3-2/L3-4 에서 확정.
 - ⚠ 잔여 CONFLICT(filing 내부 이중섹션·다중 revenue)는 **node_role/출처우선순위**가 풀 몫(다음).
 
-### L3-2. 출처매칭(MISSING) 규칙
+### L3-2. 출처매칭(MISSING) — ◐ 부분완료 (2026-07-22)
+결과 = `docs/qa/layer3_L3-2_source_matching_2026-07-22.md`.
+- ✅ **basis 폴백 구현**: 단일 basis 기업(연결 없음→별도) 반대basis 폴백. MATCH ~90→91.5%.
+- ⚠ **NO_LINES(7.1% 기간) 규명**: 자체연도 보고서 report_lines 미추출 → std 는 이웃해 비교열
+  (col_index 1/2)에서 채웠음. **결정 필요**: (a)Layer-2 완성=자체연도 백필(당기열 권위, 권고) vs
+  (b)비교열 백필(std 재현 쉬우나 재작성 얽힘). L3-3 빌드 전 확정.
+
+### L3-2(orig). 출처매칭(MISSING) 규칙 — 원래 메모
 - 프로브 MISSING(~9%)의 정체 = 그 (corp,fy,period,basis) 키에 report_lines 행 부재
   (std 가 다른 리포트/열/basis 에서 채운 케이스). 어느 리포트/열(col_index 0/1/2)/basis 에서
   채울지 규칙화. 구 std_v2 lineage(bs/is/cf_rcept)를 참고자료로.

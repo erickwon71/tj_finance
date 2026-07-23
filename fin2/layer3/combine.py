@@ -106,7 +106,11 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
     """
     chrono = _period_filings_chrono(session, corp, fy, period)
     merged: dict[tuple, dict] = {}
-    for rcept, is_amend in chrono:
+    for i, (rcept, is_amend) in enumerate(chrono):
+        # ★ base = the FIRST filing (chrono). Its cells are never "amended" even if that
+        # filing is itself a [기재정정] (no earlier original to patch → it IS the base).
+        # Only LATER filings (i>0) patch a value or add a new row → amended=True.
+        is_base = (i == 0)
         rows = session.execute(text("""
             SELECT statement, basis, col_index, section_path, label_raw, value_won,
                    node_role, table_seq, COALESCE(is_cumulative, false) AS is_cum
@@ -123,22 +127,23 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                 "table_seq": table_seq, "is_cumulative": bool(is_cum),
             }
             if key not in merged:
-                # base row (or a row added by an amendment)
+                # first occurrence. From the base filing → not amended. From a later
+                # filing → a row added by that amendment → amended.
                 cell["source_rcept"] = rcept
-                cell["amended"] = is_amend
-                cell["amended_by"] = rcept if is_amend else None
-                cell["amend_chain"] = [rcept] if is_amend else []
+                cell["amended"] = not is_base
+                cell["amended_by"] = None if is_base else rcept
+                cell["amend_chain"] = [] if is_base else [rcept]
                 merged[key] = cell
             else:
                 base = merged[key]
-                if int(value_won) != base["value_won"] and is_amend:
-                    # value edit by amendment → patch + mark
+                if not is_base and int(value_won) != base["value_won"]:
+                    # value edit by a later filing → patch + mark
                     cell["source_rcept"] = rcept
                     cell["amended"] = True
                     cell["amended_by"] = rcept
                     cell["amend_chain"] = base["amend_chain"] + [rcept]
                     merged[key] = cell
-                # equal value, or non-amendment duplicate → keep base (no-op)
+                # equal value, or same base filing duplicate → keep base (no-op)
     return list(merged.values())
 
 

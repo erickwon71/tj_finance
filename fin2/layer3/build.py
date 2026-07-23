@@ -68,6 +68,7 @@ def build_corp(session, corp: str, year_min: int = 2015,
                 amend_chain=prov["amend_chain"] or None,
                 basis_fallback=prov["basis_fallback"],
                 conflicts={k: [c["value"] for c in v] for k, v in conflicts.items()} or None,
+                industry_lines=prov.get("industry_lines"),
             )
             for c in _VALUE_COLS:
                 if c in col:

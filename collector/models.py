@@ -1613,6 +1613,10 @@ class StdFinancialV3(Base):
     amend_chain     = Column(JSONB, nullable=True, comment="{std_col: [rcept,...]} 정정본 순서")
     basis_fallback  = Column(Boolean, default=False, comment="단일 basis 기업 반대 basis 폴백")
     conflicts       = Column(JSONB, nullable=True, comment="값 충돌로 보류한 canonical")
+    # 업종별 매출 성분(P1) — K-IFRS 표준이 일반기업과 다른 업종(보험 등)에서 revenue 를
+    # 소계 합산으로 조립하고 그 성분을 보존. {"profile":"insurance","insurance_revenue":…,
+    # "investment_revenue":…}. general 기업=NULL. tearsheet 업종별 표시·조립 revenue 표식용.
+    industry_lines  = Column(JSONB, nullable=True, comment="업종별 매출 성분(보험 등 조립 revenue)")
     built_at        = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (

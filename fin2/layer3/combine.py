@@ -29,6 +29,7 @@ from sqlalchemy import text
 
 from parser.common.account_mapper import get_mapper
 from fin2.standardize.rules import DIRECT_MAP, CONSUMED_CANON
+from fin2.layer3.industry_profiles import apply_revenue_profile
 
 
 @lru_cache(maxsize=200_000)
@@ -425,4 +426,19 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
             prov["amended_cols"].append(std_col)
             # dedupe preserving order
             prov["amend_chain"][std_col] = list(dict.fromkeys(amend_rcepts))
+
+    # industry revenue profile (P1): for insurers etc. whose K-IFRS IS diverges from the
+    # general 매출액 standard, standardized revenue = Σ named subtotals, and the components
+    # are preserved for the industry-aware tearsheet. Only the build/select path (which has
+    # the raw merged lines) applies this; diagnostic (pooled/rcept) paths skip it.
+    if merged is not None and rcept_by_stmt is None:
+        is_lines = [r for r in merged if r["statement"] == "IS" and r["basis"] == basis]
+        if not is_lines and prov["basis_fallback"]:
+            other = "separate" if basis == "consolidated" else "consolidated"
+            is_lines = [r for r in merged if r["statement"] == "IS" and r["basis"] == other]
+        applied = apply_revenue_profile(is_lines)
+        if applied:
+            pname, revenue, components = applied
+            col["revenue"] = revenue
+            prov["industry_lines"] = {"profile": pname, **components}
     return col, conflicts, prov

@@ -88,7 +88,20 @@ INSURANCE = RevenueProfile(
     total_labels=frozenset({"영업수익"}),  # pre-IFRS17 grand total → defer to it
 )
 
-REVENUE_PROFILES: tuple[RevenueProfile, ...] = (INSURANCE,)
+BANK = RevenueProfile(
+    name="bank",
+    components=(
+        ("interest_revenue", frozenset({"이자수익"})),      # signature (gross)
+        ("fee_revenue", frozenset({"수수료수익"})),
+        ("other_op_revenue", frozenset({"기타영업수익"})),
+    ),
+    induty_prefixes=("64121",),            # KSIC 64121 = 일반은행 (pure banks). Bank/financial
+                                           # HOLDINGS(64992, mixed segments) & 인터넷은행 추출갭은
+                                           # 별도 tail (docs/plans/insurer_revenue_composition_*).
+    total_labels=frozenset({"영업수익"}),  # if a bank ever reports 영업수익 total → defer
+)
+
+REVENUE_PROFILES: tuple[RevenueProfile, ...] = (INSURANCE, BANK)
 
 
 def apply_revenue_profile(is_lines: list[dict],

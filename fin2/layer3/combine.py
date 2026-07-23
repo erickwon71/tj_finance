@@ -210,19 +210,47 @@ def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
         cur = [r for r in rows if not _NONCURRENT_RE.search(r.get("label_raw") or "")]
         if cur:
             rows = cur
-    vals = {r["value"] for r in rows}
-    if len(vals) == 1:
-        return next(iter(vals))
-    # EPS approx-dup: same sign + relative error <= EPS -> representative (max-abs)
-    nums = [v for v in vals if v is not None]
-    if len(nums) >= 2:
+    def _eps_dup(candidate_vals):
+        """Near-equal same-sign values (e.g. original vs restated) -> max-abs, else None."""
+        nums = [v for v in candidate_vals if v is not None]
+        if len(nums) < 2:
+            return None
         hi = max(nums, key=abs)
         lo = min(nums, key=abs)
         if hi == 0 or (hi > 0) != (lo > 0):
             return None
-        if abs(hi - lo) / abs(hi) <= _CONFLICT_EPS:
-            return hi
-    return None
+        return hi if abs(hi - lo) / abs(hi) <= _CONFLICT_EPS else None
+
+    vals = {r["value"] for r in rows}
+    if len(vals) == 1:
+        return next(iter(vals))
+    # EPS approx-dup FIRST: an immaterial restatement diff (original vs amended) resolves
+    # to max-abs, so the shallowest-depth rule below doesn't override it on a rounding gap.
+    dup = _eps_dup(vals)
+    if dup is not None:
+        return dup
+    # shallowest-depth preference: DIRECT_MAP canonicals are statement totals, so the
+    # least-nested line outranks deeper sub-items that map to the same canonical
+    # (e.g. 'Ⅰ.영업수익' total vs its '보험료수익' children; or IFRS17 '보험서비스수익'
+    # at 보험손익 depth-1 vs '수수료수익' at 투자손익>… depth-2). Only fires on an existing
+    # conflict, so it can fill a held NULL but never regress a match.
+    def _depth(r):
+        p = (r.get("section_path") or "").strip()
+        return 0 if not p else p.count(">") + 1
+    # exclude 0-valued candidates: an IFRS17 empty top-level header (e.g. '영업수익'=0
+    # above 보험손익/투자손익 sections) must not win as a shallowest "total".
+    pool = [r for r in rows if r["value"] not in (0, None)]
+    if not pool:
+        return None
+    pvals = {r["value"] for r in pool}
+    if len(pvals) == 1:
+        return next(iter(pvals))          # a single distinct non-zero value
+    min_depth = min(_depth(r) for r in pool)
+    shallow = [r for r in pool if _depth(r) == min_depth]
+    svals = {r["value"] for r in shallow}
+    if len(svals) == 1:
+        return next(iter(svals))
+    return _eps_dup(svals)  # shallowest still split → EPS among them, else hold
 
 
 def _resolve(cands: dict[str, list[dict]]):

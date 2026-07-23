@@ -45,10 +45,17 @@ class RevenueProfile:
     """
     name: str
     components: tuple
+    # KSIC(induty_code) prefixes this profile's industry standard applies to. Scopes the
+    # profile to PRIMARY-business corps (e.g. insurers=65), so a bank/holding (64) that
+    # merely consolidates an insurance subsidiary's 보험영업수익 is NOT mis-composed.
+    induty_prefixes: tuple = ()
     # grand-total labels (e.g. pre-IFRS17 '영업수익') that, when present as a real
     # non-zero line, are authoritative — DIRECT_MAP already uses them, so DON'T compose.
     # Only when no such total exists (IFRS17 split IS) do we sum the subtotals.
     total_labels: frozenset = frozenset()
+
+    def applies_to(self, induty: str | None) -> bool:
+        return bool(induty) and induty.startswith(self.induty_prefixes)
 
     def compose(self, is_lines: list[dict]) -> tuple[int, dict] | None:
         """is_lines = merged col0 IS cells of ONE basis. Returns (revenue, components)
@@ -77,16 +84,20 @@ INSURANCE = RevenueProfile(
         ("insurance_revenue", frozenset({"보험영업수익", "보험서비스수익"})),
         ("investment_revenue", frozenset({"투자영업수익", "투자서비스수익"})),
     ),
+    induty_prefixes=("65",),               # KSIC 65 = 보험 및 연금업 (primary insurers)
     total_labels=frozenset({"영업수익"}),  # pre-IFRS17 grand total → defer to it
 )
 
 REVENUE_PROFILES: tuple[RevenueProfile, ...] = (INSURANCE,)
 
 
-def apply_revenue_profile(is_lines: list[dict]) -> tuple[str, int, dict] | None:
-    """Try each industry profile on one basis's merged IS lines.
+def apply_revenue_profile(is_lines: list[dict],
+                          induty: str | None) -> tuple[str, int, dict] | None:
+    """Try each industry profile (scoped by induty_code) on one basis's merged IS lines.
     Returns (profile_name, revenue, {component_key: value}) or None (general company)."""
     for prof in REVENUE_PROFILES:
+        if not prof.applies_to(induty):
+            continue
         r = prof.compose(is_lines)
         if r is not None:
             revenue, components = r

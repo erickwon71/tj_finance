@@ -194,6 +194,18 @@ def select_canonical_rcepts(session, corp: str, fy: int, period: str,
     return out
 
 
+_INDUTY_CACHE: dict[str, str | None] = {}
+
+
+def _get_induty(session, corp: str) -> str | None:
+    """Cached corp → induty_code (KSIC) lookup (once per corp across the full build)."""
+    if corp not in _INDUTY_CACHE:
+        r = session.execute(text(
+            "SELECT induty_code FROM corporations WHERE corp_code=:c"), {"c": corp}).fetchone()
+        _INDUTY_CACHE[corp] = r[0] if r else None
+    return _INDUTY_CACHE[corp]
+
+
 def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
     """Confirm a split top-candidate set WITHOUT guessing, else None (hold).
 
@@ -436,7 +448,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
         if not is_lines and prov["basis_fallback"]:
             other = "separate" if basis == "consolidated" else "consolidated"
             is_lines = [r for r in merged if r["statement"] == "IS" and r["basis"] == other]
-        applied = apply_revenue_profile(is_lines)
+        applied = apply_revenue_profile(is_lines, _get_induty(session, corp))
         if applied:
             pname, revenue, components = applied
             col["revenue"] = revenue

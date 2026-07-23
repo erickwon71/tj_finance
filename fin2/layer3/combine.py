@@ -29,7 +29,11 @@ from sqlalchemy import text
 
 from parser.common.account_mapper import get_mapper
 from fin2.standardize.rules import DIRECT_MAP, CONSUMED_CANON
-from fin2.layer3.industry_profiles import apply_revenue_profile
+from fin2.layer3.industry_profiles import apply_revenue_profile, norm as _norm_label
+
+# grand-total revenue labels (normalized) that outrank component labels in is.revenue
+# conflicts (증권/지주: 영업수익 total vs 수수료수익 component).
+_REVENUE_TOTAL_LABELS = frozenset({"매출액", "영업수익", "매출", "순매출액"})
 
 
 @lru_cache(maxsize=200_000)
@@ -223,6 +227,18 @@ def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
         cur = [r for r in rows if not _NONCURRENT_RE.search(r.get("label_raw") or "")]
         if cur:
             rows = cur
+    # revenue grand-total preference: a grand-total label (매출액/영업수익) outranks a
+    # component label (수수료수익/이자수익/보험영업수익…) that also maps to is.revenue.
+    # Fixes securities/holdings where 영업수익 total conflicts with 수수료수익 component
+    # (both top-level exact). Insurers under IFRS17 have no such total (or =0) → unaffected.
+    if canon == "is.revenue":
+        grand = [r for r in rows
+                 if _norm_label(r.get("label_raw")) in _REVENUE_TOTAL_LABELS and r["value"]]
+        if grand:
+            gvals = {r["value"] for r in grand}
+            if len(gvals) == 1:
+                return next(iter(gvals))
+            rows = grand  # multiple grand totals disagree → decide among them below
     def _eps_dup(candidate_vals):
         """Near-equal same-sign values (e.g. original vs restated) -> max-abs, else None."""
         nums = [v for v in candidate_vals if v is not None]

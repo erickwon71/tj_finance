@@ -8,27 +8,27 @@ Rows = per-metric cells where BOTH std_v3 and std_v2 exist for the (corp,fy,peri
 | total_equity | 42,402 | 41,674 | 98.28 | 439 | 171 | 0 | 47 | 6 | 11 | 2 | 26 | 26 | 204 | 89 |
 | retained_earnings | 42,039 | 41,296 | 98.23 | 343 | 187 | 0 | 145 | 6 | 9 | 2 | 26 | 25 | 295 | 195 |
 | cash | 41,895 | 41,507 | 99.07 | 72 | 140 | 0 | 79 | 4 | 10 | 5 | 21 | 57 | 161 | 558 |
-| revenue | 41,816 | 41,225 | 98.59 | 200 | 102 | 0 | 100 | 0 | 19 | 8 | 20 | 142 | 311 | 382 |
+| revenue | 41,816 | 41,178 | 98.47 | 200 | 102 | 0 | 100 | 0 | 19 | 8 | 21 | 188 | 311 | 382 |
 | operating_income | 42,503 | 41,888 | 98.55 | 250 | 183 | 3 | 71 | 0 | 11 | 1 | 20 | 76 | 118 | 61 |
 | net_income | 42,336 | 41,410 | 97.81 | 353 | 182 | 3 | 231 | 1 | 11 | 4 | 26 | 115 | 113 | 215 |
 | cfo | 42,238 | 41,659 | 98.63 | 165 | 181 | 0 | 183 | 0 | 2 | 3 | 3 | 42 | 174 | 94 |
-| **TOTAL** | **337,688** | **332,368** | **98.42** | **2,230** | **1,326** | **6** | **904** | **23** | **95** | **30** | **174** | **532** | **1,543** | **1,667** |
+| **TOTAL** | **337,688** | **332,321** | **98.41** | **2,230** | **1,326** | **6** | **904** | **23** | **95** | **30** | **175** | **578** | **1,543** | **1,667** |
 
 ## Disposition roll-up (all 8 metrics)
 
-- (a) NORMAL  amended    (재작성 반영·회귀아님)             2,230  41.9% of DIFF
-- (a) NORMAL  rcept_diff (다른 정본filing·회귀아님)        1,326  24.9% of DIFF
+- (a) NORMAL  amended    (재작성 반영·회귀아님)             2,230  41.6% of DIFF
+- (a) NORMAL  rcept_diff (다른 정본filing·회귀아님)        1,326  24.7% of DIFF
 - (b) REGRESS sign_flip  (부호결함 ★조사)                    6  0.1% of DIFF
-- (b) REGRESS inspect    (양측 정상스케일·실질차 ★조사)          904  17.0% of DIFF
+- (b) REGRESS inspect    (양측 정상스케일·실질차 ★조사)          904  16.8% of DIFF
 - (c) v3-WIN  unit_1000x (×1000 단위불일치·v3정답)           23  0.4% of DIFF
 - (c) v3-WIN  v2_tiny    (v2 과소·오셀렉트·v3정답)            95  1.8% of DIFF
 - (c) v3-WIN  v2_huge    (v2 과대·오셀렉트·v3정답)            30  0.6% of DIFF
-- (c) LONGTL  rounding   (허용오차·양성)                   174  3.3% of DIFF
-- (c) LONGTL  fin_catalog(금융업 매출alias)               532  10.0% of DIFF
+- (c) LONGTL  rounding   (허용오차·양성)                   175  3.3% of DIFF
+- (c) LONGTL  fin_catalog(금융업 매출alias)               578  10.8% of DIFF
 - cov         v3only     (split-table 복구·우위)       1,543  
 - cov         v2only     (v3 결측·catalog gap)       1,667  
 
-  DIFF total = 5,320   (b) 조사대상 = 910  (17.1% of DIFF)
+  DIFF total = 5,367   (b) 조사대상 = 910  (17.0% of DIFF)
 
 ## (b) INSPECT anatomy — sign structure per metric
 
@@ -64,7 +64,7 @@ v3 값이 정본 filing 의 당기(col0) report_lines 값 중 하나와 정확�
 
 → inspect 의 **87%** 는 v3 가 filed 최상위값을 정확 반영 (v2 구 체인 오류). 나머지 119 건이 v3 조립/라인선택 드릴 대상(부호정규화·sub-line 등).
 
-## (b) INSPECT sample — top 15 by relative gap (both well-scaled, same-source, material — ★원문대조 대상)
+## (b) INSPECT sample — top 8 by relative gap (both well-scaled, same-source, material — ★원문대조 대상)
 
 | metric | corp | name | induty | fy | basis | v3 | v2 | relgap | rcept |
 |---|---|---|---|---|---|---:|---:|---:|---|
@@ -76,10 +76,3 @@ v3 값이 정본 filing 의 당기(col0) report_lines 값 중 하나와 정확�
 | cfo | 00311216 | 에이치엔에스하이텍 | 262 | 2018 | cons | 2,504,395,819 | -354,694,101 | 8.061 | 20190624000078 |
 | retained_earnings | 01112889 | 피엔에이치테크 | 20119 | 2016 | sepa | -4,077,555,103 | -527,000,000 | 6.737 | 20170331004685 |
 | cash | 01090471 | SFA넥셀 | 292 | 2016 | sepa | 11,737,313,491 | 1,520,885,317 | 6.717 | 20170331003810 |
-| total_equity | 01070149 | 올리패스 | 211 | 2018 | sepa | -34,558,800,553 | 7,672,642,000 | 5.504 | 20190401005080 |
-| cfo | 00867034 | 듀켐바이오 | 212 | 2015 | cons | -1,828,102,978 | -294,392,799 | 5.210 | 20160519000297 |
-| net_income | 01112889 | 피엔에이치테크 | 20119 | 2015 | sepa | 1,386,210,014 | -393,000,000 | 4.527 | 20160822000053 |
-| cfo | 00138190 | GS글로벌 | 468 | 2016 | sepa | 73,359,527,965 | 13,521,403,584 | 4.425 | 20170331003894 |
-| total_assets | 01170865 | 네오셈 | 292 | 2018 | sepa | 50,190,382,953 | 11,200,669,614 | 3.481 | 20190401003994 |
-| retained_earnings | 01070149 | 올리패스 | 211 | 2018 | sepa | -97,566,979,178 | -23,833,626,000 | 3.094 | 20190401005080 |
-| net_income | 00311216 | 에이치엔에스하이텍 | 262 | 2019 | cons | -10,740,916,692 | -2,810,765,062 | 2.821 | 20200325000812 |

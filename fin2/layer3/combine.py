@@ -23,11 +23,20 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from functools import lru_cache
 
 from sqlalchemy import text
 
 from parser.common.account_mapper import get_mapper
 from fin2.standardize.rules import DIRECT_MAP, CONSUMED_CANON
+
+
+@lru_cache(maxsize=200_000)
+def _map_label(label_raw: str, fs: str | None):
+    """Cached AccountMapper.map — the same face labels (자산총계·매출액…) recur across
+    every filing, and map() runs fuzzy Jaro-Winkler over all aliases, so caching by
+    (label_raw, fs) is the dominant speedup for the full std_v3 build. Deterministic."""
+    return get_mapper().map(label_raw, fs_section=fs)
 
 # mapping-stage provenance rank (exact/normalized beat fuzzy). Mirrors build._STAGE_RANK.
 _STAGE_RANK = {"exact": 3, "normalized": 2, "guard": 2, "fuzzy": 1, None: 0}
@@ -243,7 +252,6 @@ def _map_rows(rows, period: str, basis: str, statements) -> dict[str, list[dict]
     """Map merged cell dicts → {canonical: [candidate]}. Shared by both paths.
     Interim (H1/Q3) flow (is./cf.) keeps cumulative cells only (std_v2 convention).
     Carries the amendment marker (amended/amended_by) onto each candidate."""
-    mapper = get_mapper()
     interim = period in ("H1", "Q3")
     cands: dict[str, list[dict]] = defaultdict(list)
     cum_seen: set[str] = set()
@@ -252,7 +260,7 @@ def _map_rows(rows, period: str, basis: str, statements) -> dict[str, list[dict]
         if r["statement"] not in stmt_set or r["basis"] != basis:
             continue
         fs = _FS.get(r["statement"])
-        res = mapper.map(r["label_raw"], fs_section=fs)
+        res = _map_label(r["label_raw"], fs)
         if res.confidence < 0.88 or res.account_code.startswith("unknown."):
             continue
         c = res.account_code
@@ -334,7 +342,8 @@ def combine(session, corp: str, fy: int, period: str, basis: str,
 
 def combine_full(session, corp: str, fy: int, period: str, basis: str,
                  rcept_by_stmt: dict[str, str] | None = None,
-                 select_filing: bool = True, statements=("BS", "IS", "CF")):
+                 select_filing: bool = True, statements=("BS", "IS", "CF"),
+                 merged: list[dict] | None = None):
     """Like combine() but also returns provenance (for std_v3 build, L3-3).
 
     Returns (col, conflicts, prov) where prov = {
@@ -342,13 +351,18 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
       amended_cols:   [std_col, ...]         # value came from a 기재정정-patched cell
       amend_chain:    {std_col: [rcept,...]} # which amendments touched it
     }. source_rcepts is resolved by the caller (build) from the merged filings.
+
+    merged: pre-built build_merged_lines() result. Pass it to reuse the (basis-
+    independent) delta-patch merge across both bases — halves the query cost in
+    the full build.
     """
     prov = {"basis_fallback": False, "amended_cols": [], "amend_chain": {}}
     if rcept_by_stmt is not None:
         cands = collect_candidates(session, corp, fy, period, basis,
                                    statements=statements, rcept_by_stmt=rcept_by_stmt)
     elif select_filing:
-        merged = build_merged_lines(session, corp, fy, period)
+        if merged is None:
+            merged = build_merged_lines(session, corp, fy, period)
         cands = _map_rows(merged, period, basis, statements)
         # L3-2 basis fallback: a company with no subsidiaries files only 별도(separate);
         # its 연결(consolidated) figures = separate. When the requested basis is entirely

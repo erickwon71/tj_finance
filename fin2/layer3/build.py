@@ -13,7 +13,8 @@ from __future__ import annotations
 from sqlalchemy import text, delete
 
 from collector.models import StdFinancialV3
-from fin2.layer3.combine import combine_full, select_canonical_rcepts
+from fin2.layer3.combine import (combine_full, select_canonical_rcepts,
+                                 build_merged_lines)
 
 _VALUE_COLS = (
     "total_assets current_assets cash receivables inventory ppe intangibles "
@@ -40,11 +41,17 @@ def build_corp(session, corp: str, year_min: int = 2015,
     """Build std_v3 rows for one corp. Returns number of rows written."""
     n = 0
     for fy, period in _periods(session, corp, year_min):
+        # build the (basis-independent) delta-patch merge + source filings ONCE per period,
+        # reuse across both bases (halves report_lines queries in the full build).
+        merged = build_merged_lines(session, corp, fy, period)
+        if not merged:
+            continue
+        src = select_canonical_rcepts(session, corp, fy, period)
         for basis in bases:
-            col, conflicts, prov = combine_full(session, corp, fy, period, basis)
+            col, conflicts, prov = combine_full(session, corp, fy, period, basis,
+                                                merged=merged)
             if not col:
                 continue  # nothing assembled for this basis (missing / other-basis only)
-            src = select_canonical_rcepts(session, corp, fy, period)
             session.execute(
                 delete(StdFinancialV3).where(
                     StdFinancialV3.corp_code == corp,

@@ -64,8 +64,15 @@ _detect_body_statement_tables` 전방연결(데이터없는 분류표→다음 �
 
 ## 5. 다음 세션 — 무엇을 할지 (순서 제안)
 
-1. **L3-4 DIFF 전수 유형분류** — 8지표 DIFF 를 (a)정상불일치[소급재작성·연결범위변동] (b)회귀
-   (c)카탈로그 롱테일 로 자동분류. amended 플래그·source_rcept 대비로 (a) 대량 자동식별 가능.
+### ★ 착수 지점(사용자 확정) = 1. L3-4 DIFF 전수 유형분류
+8지표 DIFF(전수 std_v3↔std_v2, §4 baseline ~2%)를 자동 분류:
+- (a) **정상 불일치** [소급재작성·연결범위변동] — v3 의 `amended_cols`/`amend_chain` 있거나
+  source_rcept 가 v2 와 다르면 대량 자동식별(net_income 표본 38%가 여기). 회귀 아님.
+- (b) **회귀** — 같은 filing·같은 출처인데 값이 다른 것(엔진/매핑 결함). ★우선 조사 대상.
+- (c) **카탈로그 롱테일** — 보험/증권 매출 alias 등(2번에서 정제).
+착수 방법: `scripts/layer3_diff_characterize.py` 확장 or SQL 전수 집계(§4 쿼리 재사용) →
+지표별 (a)/(b)/(c) 비율 + (b) 표본 원문대조. 산출 = `docs/qa/layer3_L3-4_diff_classification_*.md`.
+DB 무변경(읽기전용 분석). 심링크 SD카드·야간잡 삭제 상태 그대로 이어감.
 2. **카탈로그 롱테일 정제** — 보험/증권 매출 alias(보험영업수익 승급 등). account_maps 수정 →
    ⚠계층2 재추출 불요(계층3 조합 재실행만: `build_std_v3.py --all` 25분).
 3. **합산/파생 지표 이식** — rules.py additive(D&A·EBITDA·차입합계·capex) → std_v3 컬럼 추가.

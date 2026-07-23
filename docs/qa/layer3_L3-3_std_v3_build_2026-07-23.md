@@ -32,6 +32,32 @@ std_v3 ↔ std_v2 (FY 2015+, 6지표):
   =2.6조가 stage=fuzzy 인데, 값 0 인 하위항목 `(3)보험료수익`이 stage=normalized(상위) → _resolve
   가 0 채택. **엔진 버그 아님 = account_maps 보험 매출 alias 롱테일**(보험영업수익 승급 필요).
 
+## 3b. 전량 빌드 완료 (2026-07-23)
+- **185,208행 · 2,534사 · 25분**. 전 기간 커버(Q1 49,130·FY 46,545·Q3 45,024·H1 44,509).
+- provenance: **정정반영(amended array) 3,328행** · basis폴백 18,744 · 충돌보류 있는 행 56,198.
+- 성능: 매핑 lru_cache + 병합 재사용으로 대형사 30s→4s(7.5×). 전량 25분.
+- ⚠ provenance 버그 수정(커밋): 원본 없이 [기재정정]본만 있는 기간(603)에서 베이스 셀 전체가
+  amended 오표시 → i==0(베이스)은 amended=False 로 교정(값 무관, 플래그만).
+  · JSONB 주의: 빈 값이 SQL NULL 아니라 JSONB `null` 스칼라로 저장됨 → 배열 카운트는
+    `jsonb_typeof='array'` 로. (기능상 무해)
+
+## 3c. L3-4 전수 parity baseline (std_v3 ↔ std_v2, FY version=1)
+| 지표 | both | MATCH% | DIFF | v3only | v2only |
+|---|---:|---:|---:|---:|---:|
+| total_assets | 42,450 | 98.2 | 744 | 167 | 82 |
+| total_equity | 42,385 | 98.3 | 716 | 204 | 106 |
+| revenue | 41,284 | 98.7 | 546 | 296 | 914 |
+| operating_income | 42,503 | 98.6 | 615 | 118 | 61 |
+| net_income | 42,321 | 97.8 | 922 | 113 | 230 |
+| retained_earnings | 41,984 | 98.2 | 736 | 295 | 250 |
+| cfo | 42,143 | 98.7 | 531 | 174 | 189 |
+| cash | 41,884 | 99.1 | 379 | 161 | 569 |
+
+**MATCH ~98% 전 지표.** DIFF 성격(net_income 922 표본): **353(38%)이 amended=v3 재작성 반영**
+(정책 P1 대로, 구 체인과 다르나 오히려 정확 — 회귀 아님). 나머지 569=카탈로그/부호/반올림(L3-4
+정제 대상). v3only=split-table 등 복구분. v2only(revenue 914 최다)=보험/증권 매출 alias +
+비교열-소싱 잔여.
+
 ## 4. 판정 & 다음
 - ✅ std_v3 스키마·빌더·provenance 동작. 일반사 완벽, parity 강함.
 - ⚠ 보험/증권 매출 alias 롱테일(account_maps) — 소수. L3-4 parity 에서 유형 집계 후 일괄 정제.

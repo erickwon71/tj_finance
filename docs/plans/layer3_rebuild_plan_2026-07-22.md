@@ -56,7 +56,14 @@
 - ✅ 스키마(std_v2 값계약 + provenance: source_rcepts·amended_cols·amend_chain·basis_fallback·conflicts).
 - ✅ 빌더 `build_corp`(combine_full 조립+provenance, 멱등). 샘플 3사 270행: MATCH 334·DIFF 1·v3만 41.
 - ✅ 삼성전자 4년 전지표 완벽일치. DIFF 1=보험 매출 alias 롱테일(엔진 아님).
-- ⬜ **전량 빌드**(전 corp → std_v3, 배치) 남음. 합산/파생 규칙(rules.py additive) 이식은 후속.
+- ✅ **전량 빌드 완료(2026-07-23)**: 185,208행·2,534사·25분. 전수 parity **MATCH ~98%**.
+  성능 최적화(매핑캐시+병합재사용) 7.5×. provenance 버그(베이스=정정 오표시) 수정.
+- ⬜ 합산/파생 규칙(rules.py additive → D&A/EBITDA/차입/capex) 이식은 후속.
+
+### L3-4. parity 회귀 — ◐ baseline 확보 (2026-07-23)
+전수 std_v3↔std_v2 (FY): 8지표 MATCH **97.8~99.1%**. DIFF~2% 성격: net_income 922 중 353(38%)
+=amended(v3 재작성반영, 회귀아님). 나머지=카탈로그(보험매출 alias)·부호·반올림. **남은 일 =
+DIFF 전수 유형분류**(정상불일치[재작성·연결범위] vs 회귀 vs 카탈로그) + 카탈로그 롱테일 정제.
 
 ### L3-4. parity 회귀 (프로브 전수 확대)
 - 현재 400표본 프로브 → **전 유니버스** std_v3 ↔ 구 std_v2 대조.

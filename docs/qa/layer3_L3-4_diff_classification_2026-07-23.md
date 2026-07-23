@@ -58,11 +58,30 @@ v3 값이 정본 filing 의 당기(col0) 기재 셀과 정확 일치하는지 �
 - net_income inspect 227 세부: v3==filed **209(92%)** · 미일치 **18** · 루닛형 부호결함 **4**.
 
 ## 5. 액션 백로그 (swap 비차단, 후속 정제)
-1. **fin_catalog + v2only 매출 alias(~529+914)** — 보험/증권 `보험영업수익` 등 승급. account_maps
-   수정 → 계층2 재추출 불요, `build_std_v3.py --all` 재조립만(L3-4 step2, 핸드오프 §5.2).
-2. **루닛형 부호정규화** — 순"손실"/"손실" 단독 라벨 + 양수값 → 부호반전 규칙(combine 매핑). 소수(net_income 4 등).
-3. **inspect 미일치 119** — 지표별 드릴(retained_earnings/cfo 조립·sub-line). 개별 원문대조.
-4. v2only 2,401 잔여(비-alias) — v3 결측 원인별(출처 없음 vs 조립 보류) 후속 분류.
+1. ✅ **[완료 2026-07-23] 금융업 매출 정제 (step2)** — 근본원인은 alias 갭이 아니라 **부모 top-line
+   vs 자식 하위항목 충돌보류**로 판명. 수정=combine `_reduce_conflict` 강화(EPS우선→min-depth→0헤더제외)
+   + is.revenue 승급(보험서비스수익 IFRS17·보험영업수익·매출(영업수익)). 커밋 `0b37f9a`. 재빌드 후:
+   **v2only 2,401→1,667(−734, 그중 +603 MATCH)**, 금융 revenue MATCH 2,112. 회귀 0(프로브 380사).
+   → §6 참조. **잔여 fin_catalog 142 = 보험 총매출 정의차(PRD 결정, 아래 2번).**
+2. **[PRD 결정 필요] 보험사 revenue 정의** — IFRS17 하 v3=`보험서비스수익`(보험영업만) vs v2=`영업수익`
+   (보험+투자 합산). 어느 것을 표준 revenue 로 할지 모델링 결정(파싱 버그 아님, v2도 비일관). 결정 후
+   보험사 조립 규칙 반영.
+3. **루닛형 부호정규화** — 순"손실"/"손실" 단독 라벨 + 양수값 → 부호반전 규칙(combine 매핑). 소수(net_income 4 등).
+4. **inspect 미일치 ~119** — 지표별 드릴(retained_earnings/cfo 조립·sub-line). 개별 원문대조.
+5. v2only 1,667 잔여(비-보험) — v3 결측 원인별(출처 없음 vs 조립 보류) 후속 분류.
+
+## 6. step2 재빌드 후 델타 (2026-07-23, build_std_v3 --all 재조립)
+| 지표 | v2only(전→후) | 비고 |
+|---|---|---|
+| revenue | 914 → 382 | 금융 매출 대량 복구 |
+| retained_earnings | 250 → 195 | |
+| total_equity | 106 → 89 | |
+| **TOTAL v2only** | **2,401 → 1,667** | **−734, 그중 +603 이 MATCH** |
+
+절대 MATCH 331,765→332,368(+603). MATCH% 98.46→98.42(복구셀 중 보험 정의차분이 fin_catalog/inspect 로
+분류돼 비율은 소폭 하락하나 절대 정확·커버리지는 상승). inspect 829→904(대부분 신규복구·회귀아님, 프로브
+away/emptied/0채움 0). **하단 임베드 표 = step2 전 baseline**(보존); **재빌드 후 전체 표 =
+companion `layer3_L3-4_diff_classification_tables_2026-07-23.md`**(방금 재생성).
 
 ## 재현
 ```

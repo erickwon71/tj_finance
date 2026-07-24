@@ -484,7 +484,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
         if not is_lines and prov["basis_fallback"]:
             other = "separate" if basis == "consolidated" else "consolidated"
             is_lines = [r for r in merged if r["statement"] == "IS" and r["basis"] == other]
-        applied = apply_revenue_profile(is_lines, _get_induty(session, corp))
+        applied = apply_revenue_profile(is_lines, _get_induty(session, corp), corp)
         if applied:
             pname, revenue, components = applied
             col["revenue"] = revenue

@@ -43,6 +43,7 @@ from parser.xml.table_extractor import extract_rows
 from fin2.extract.xbrl import ExtractedFact
 from fin2.extract.statement_titles import (
     title_text, title_text_for_classify, classify_statement_in_body_section, SECTION_CODE_OF,
+    _is_metadata_only, _STMT_TITLE,
 )
 
 # 섹션 코드 → (basis, period_kind)
@@ -277,10 +278,15 @@ def declared_unit(tbl) -> int | None:
       1) 표제(직전 형제) — 예 '연결 재무상태표 제33기 … (단위 : 백만원)'
       2) 표 자신의 첫 행 — 단위를 표 안 첫 줄에 쓰는 서식
 
+      3) 요약재무정보 서식의 제목·기간 클러스터(2026-07-24): [제목][기간][회사명·단위] 를
+         별도 <P>/표 로 분리하고 데이터표 직전은 빈 요소인 서식(시큐센 2018 등). 데이터표에서
+         뒤로 훑되 **재무제표명(제목)을 가진 형제를 만나면 멈춘다** — 그게 이 statement 의 경계라
+         남의 표 단위를 넘어가지 않는다(아래 ★엘브이엠씨 회귀를 구조적으로 회피).
+
     ★ 의도적으로 **하지 않는** 것(구 `_detect_unit_near_table` 이 하던 추측):
-      · 앞 형제 <P> 를 5개까지 거슬러 스캔 — 남의 표 단위를 주워온다
+      · 재무제표명 형제를 넘어 무제한 거슬러 스캔 — 남의 표 단위를 주워온다
         (엘브이엠씨 2019: USD 기준 BS 표가 4형제 앞 '연결현금흐름표 단위:백만원' 을 주워
-         ×10⁶ → 자산총계 586조)
+         ×10⁶ → 자산총계 586조). ⟹ (3)은 **재무제표명 경계에서 정지**해 이걸 막는다.
       · 못 찾으면 원(1)으로 가정 — DB손해보험 별도 BS 가 ×10⁶ 오염된 경로의 사촌
     선언이 없으면 **보류**(호출측이 스킵)한다. 결측 > 오염.
     """
@@ -292,6 +298,20 @@ def declared_unit(tbl) -> int | None:
         decl = detect_unit_declaration("".join(first_tr.itertext()))
         if decl is not None:
             return decl
+    # (3) 요약재무정보: 제목·기간 클러스터의 메타 형제에서 단위 획득(재무제표명 경계에서 정지).
+    prev = tbl.getprevious()
+    for _ in range(3):
+        if prev is None:
+            break
+        txt = " ".join("".join(prev.itertext()).split())
+        if any(p.search(txt) for p, _ in _STMT_TITLE):
+            break                       # 재무제표명(제목) 도달 = 경계 — 남의 표로 안 넘어감
+        d = detect_unit_declaration(txt)
+        if d is not None:
+            return d
+        if not _is_metadata_only(txt):
+            break                       # 라벨있는 비메타(데이터표 등) — 정지
+        prev = prev.getprevious()
     return None
 
 

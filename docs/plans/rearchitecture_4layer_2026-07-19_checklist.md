@@ -1,5 +1,9 @@
 # 진행 체크리스트 — 4계층 재설계 (파서=원문 tree 전사 / 취합 별도)
 
+> ⚠️ **이 체크리스트는 2026-07-19 시점 스냅샷 — STALE.** 이후 계층3 작업은 별도 트랙에서 진행돼
+> 여기 마커에 반영 안 됨. **전체 현황·문서 맵은 마스터 허브 [`rearchitecture_4layer.md`](rearchitecture_4layer.md) 참조.**
+> (이 파일은 계층2 세부 이력으로만 보존.)
+>
 > 마스터 계획 `docs/plans/rearchitecture_4layer_2026-07-19.md` · 착수 문서 `docs/qa/handoff_rearchitecture_2026-07-19.md`
 > 관련 메모리 [[rebuild-phase-a3-done]] · [[nightly-jobs-paused-phase-a3]] · 구 Phase C 계획 `docs/plans/loop-vivid-bubble.md`(보존)
 > 상태표기: ☐ todo · ◐ 진행중 · ☑ 완료. **각 계층은 검증 통과 후 다음으로.**

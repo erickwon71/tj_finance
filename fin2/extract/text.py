@@ -298,9 +298,15 @@ def declared_unit(tbl) -> int | None:
       · 못 찾으면 원(1)으로 가정 — DB손해보험 별도 BS 가 ×10⁶ 오염된 경로의 사촌
     선언이 없으면 **보류**(호출측이 스킵)한다. 결측 > 오염.
     """
-    decl = detect_unit_declaration(title_text(tbl))
-    if decl is not None:
-        return decl
+    # 직전 형제(표제)의 **잘리지 않은 전체 텍스트**로 단위 탐지. title_text 는 분류용이라 200자
+    # 절단이 있어 긴 안내문+제목이 한 <P> 로 붙은 서식(지노믹트리 2016: '…감사받지 않았습니다.
+    # 가.재무상태표 제17기…현재 (단위:원)' 260자)에서 끝의 단위를 놓친다. immediate sibling 은
+    # 이 표 소유라 전체를 봐도 남의 단위가 아니다.
+    prev0 = tbl.getprevious()
+    if prev0 is not None:
+        decl = detect_unit_declaration(" ".join("".join(prev0.itertext()).split()))
+        if decl is not None:
+            return decl
     first_tr = next(iter(table_direct_rows(tbl)), None)
     if first_tr is not None:
         decl = detect_unit_declaration("".join(first_tr.itertext()))

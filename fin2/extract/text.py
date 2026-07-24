@@ -246,6 +246,14 @@ def _detect_body_statement_tables(root, fin_type: str,
                 # 재시도(엠로/에스앤디 등 구형 KOSDAQ 요약; v2 는 XBRL 로 잡던 것). 가산적.
                 stmt = classify_statement_in_body_section(
                     title_text_for_classify(tbl), include_sce=include_sce)
+            # 내용기반 **BS오분류 교정**(타이트): BS 로 분류됐으나 IS 내용(매출+영업이익)을 갖고
+            # BS 내용(자산총계 등)이 **없는** 표만 IS 로 교정한다. 직전 형제가 'X 재무상태표는
+            # 재작성…' 주석이라 BS 로 오분류된 무제목 IS(지노믹트리 2016) 만 정확히 겨냥 —
+            # None/정상분류/실제 BS 는 안 건드려 과도발동(컴투스 IS 138→591) 회피.
+            if (stmt == "BS" and _table_has_data_rows(tbl)
+                    and _looks_like_income_statement(tbl)
+                    and not _looks_like_balance_sheet(tbl)):
+                stmt = "IS"
             if stmt is None:
                 continue
             section_code = SECTION_CODE_OF[(basis, stmt)]
@@ -347,6 +355,40 @@ def _table_has_data_rows(tbl, minimum: int = 2) -> int:
             n += 1
             if n >= minimum:
                 return True
+    return False
+
+
+# 손익계산서 내용 시그니처: 매출/영업수익 행 + 영업이익/당기순이익 행. BS(잔액)·SCE(자본변동)·
+# CF(현금흐름)·주석 어디에도 이 **조합**은 없다 → 무제목 IS·주석문장 오제목('재무상태표' 언급으로
+# BS 오분류) 을 내용으로 확정/교정한다(지노믹트리 2016 등).
+_IS_REV_RE = re.compile(r"매출액|매출총이익|영업수익|보험영업수익|보험서비스수익")
+_IS_PROFIT_RE = re.compile(r"영업이익|영업손익|당기순이익|당기순손익")
+_BS_TOTAL_RE = re.compile(r"자산총계|부채총계|자본총계|자산\s*총계|부채와자본총계")
+
+
+def _looks_like_income_statement(tbl) -> bool:
+    """표의 **행 라벨**에 매출/영업수익 계정과 영업이익/당기순이익 계정이 함께 있으면 IS."""
+    from parser.xml.table_extractor import _get_cells
+    has_rev = has_profit = False
+    for tr in table_direct_rows(tbl):
+        cells = _get_cells(tr)
+        label = cells[0] if cells else ""
+        if _IS_REV_RE.search(label):
+            has_rev = True
+        if _IS_PROFIT_RE.search(label):
+            has_profit = True
+        if has_rev and has_profit:
+            return True
+    return False
+
+
+def _looks_like_balance_sheet(tbl) -> bool:
+    """표의 행 라벨에 자산/부채/자본 총계가 있으면 BS(잔액표)."""
+    from parser.xml.table_extractor import _get_cells
+    for tr in table_direct_rows(tbl):
+        cells = _get_cells(tr)
+        if cells and _BS_TOTAL_RE.search(cells[0]):
+            return True
     return False
 
 

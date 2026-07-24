@@ -310,6 +310,23 @@ def _resolve(cands: dict[str, list[dict]]):
     return confirmed, conflicts
 
 
+# P&L 결과 계정(손실이 될 수 있음). 순'손실' 단독 라벨(이익 없음)에 양수값이면 손실을 양(+)으로
+# 기재한 서식(루닛 2021 'V.당기순손실'=+73.6B 등) → 표준화 시 부호반전. 이미 음수(괄호기재)이거나
+# 결합라벨('이익(손실)')·이익 라벨은 그대로. 실측: 손실단독 net_income 음수 1098 vs 양수 90(7.6%).
+_LOSS_CANON = frozenset({
+    "is.net_income", "is.operating_income", "is.ebt",
+    "is.controlling_ni", "is.gross_profit",
+})
+
+
+def _loss_signed(canon: str, label: str, value):
+    """순'손실' 단독 라벨 + 양수 → −value(손실). 그 외는 원값."""
+    if (value is not None and value > 0 and canon in _LOSS_CANON
+            and label and "손실" in label and "이익" not in label):
+        return -value
+    return value
+
+
 def _map_rows(rows, period: str, basis: str, statements) -> dict[str, list[dict]]:
     """Map merged cell dicts → {canonical: [candidate]}. Shared by both paths.
     Interim (H1/Q3) flow (is./cf.) keeps cumulative cells only (std_v2 convention).
@@ -336,7 +353,8 @@ def _map_rows(rows, period: str, basis: str, statements) -> dict[str, list[dict]
             elif c in cum_seen:
                 continue
         cands[c].append({
-            "value": r["value_won"], "stage": res.stage, "label_raw": r["label_raw"],
+            "value": _loss_signed(c, r["label_raw"], r["value_won"]),
+            "stage": res.stage, "label_raw": r["label_raw"],
             "node_role": r["node_role"], "section_path": r["section_path"],
             "table_seq": r["table_seq"], "is_cumulative": is_cum,
             "amended": r.get("amended", False), "amended_by": r.get("amended_by"),

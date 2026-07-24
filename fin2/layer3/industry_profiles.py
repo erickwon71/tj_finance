@@ -53,6 +53,11 @@ class RevenueProfile:
     # non-zero line, are authoritative — DIRECT_MAP already uses them, so DON'T compose.
     # Only when no such total exists (IFRS17 split IS) do we sum the subtotals.
     total_labels: frozenset = frozenset()
+    # data-driven signature: the profile applies only if AT LEAST ONE of these labels is
+    # present in the IS. Distinguishes an industry structure WITHIN a shared induty (bank
+    # HOLDINGS share KSIC 64992 with general holdings; 순이자손익 marks the bank ones).
+    # Empty = no signature gate (induty alone).
+    signature_labels: frozenset = frozenset()
 
     def applies_to(self, induty: str | None) -> bool:
         return bool(induty) and induty.startswith(self.induty_prefixes)
@@ -61,6 +66,10 @@ class RevenueProfile:
         """is_lines = merged col0 IS cells of ONE basis. Returns (revenue, components)
         if the signature subtotal is present AND no authoritative grand total exists;
         else None (not this industry / defer to the filed total)."""
+        # signature gate: within a shared induty, require the industry's marker line.
+        if self.signature_labels and not any(
+                norm(c["label_raw"]) in self.signature_labels for c in is_lines):
+            return None
         # defer to a real grand total when present (pre-IFRS17). A 0-valued total is an
         # IFRS17 empty header → not authoritative, keep composing.
         if any(norm(c["label_raw"]) in self.total_labels and c["value_won"]
@@ -91,17 +100,38 @@ INSURANCE = RevenueProfile(
 BANK = RevenueProfile(
     name="bank",
     components=(
-        ("interest_revenue", frozenset({"이자수익"})),      # signature (gross)
+        ("interest_revenue", frozenset({"이자수익"})),       # gross
         ("fee_revenue", frozenset({"수수료수익"})),
+        ("insurance_revenue", frozenset({"보험수익", "보험영업수익", "보험서비스수익"})),  # 지주 보험 세그먼트
         ("other_op_revenue", frozenset({"기타영업수익"})),
     ),
-    induty_prefixes=("64121",),            # KSIC 64121 = 일반은행 (pure banks). Bank/financial
-                                           # HOLDINGS(64992, mixed segments) & 인터넷은행 추출갭은
-                                           # 별도 tail (docs/plans/insurer_revenue_composition_*).
-    total_labels=frozenset({"영업수익"}),  # if a bank ever reports 영업수익 total → defer
+    # 순수 은행(64121) + 은행/금융 지주(64992, 일반지주와 혼재). signature_labels 로 일반지주 제외.
+    induty_prefixes=("64121", "64992"),
+    # ★signature: 순이자손익/순이자이익 = 은행 IS 구조 표지. 일반지주(롯데지주 등)엔 없어 배제.
+    signature_labels=frozenset({"순이자손익", "순이자이익"}),
+    total_labels=frozenset({"영업수익"}),  # 영업수익 총계 있으면 그것 우선(Tier-1과 동)
 )
 
-REVENUE_PROFILES: tuple[RevenueProfile, ...] = (INSURANCE, BANK)
+# 순액표시 증권(삼성증권/NH 등, 영업수익 총계 없음). GROSS = 수수료+이자+기타+트레이딩(사용자 결정).
+SECURITIES = RevenueProfile(
+    name="securities",
+    components=(
+        ("fee_revenue", frozenset({"수수료수익"})),
+        ("interest_revenue", frozenset({"이자수익"})),
+        ("trading_revenue", frozenset({
+            "당기손익공정가치측정금융자산관련이익", "당기손익-공정가치측정금융상품관련이익",
+            "당기손익공정가치측정금융상품관련이익", "당기손익-공정가치측정금융자산관련이익",
+        })),
+        ("other_op_revenue", frozenset({"기타영업수익"})),
+    ),
+    induty_prefixes=("66121",),            # KSIC 66121 = 증권 중개
+    # ★signature: 순수수료손익/순영업손익 = 순액표시 증권 구조. 영업수익 총계 있는 증권(미래에셋 등)은
+    #   total_labels 로 defer(Tier-1 이 총계 선택). 둘 다 없으면 이 프로파일이 gross 합산.
+    signature_labels=frozenset({"순수수료손익", "순영업손익", "순영업이익"}),
+    total_labels=frozenset({"영업수익"}),
+)
+
+REVENUE_PROFILES: tuple[RevenueProfile, ...] = (INSURANCE, BANK, SECURITIES)
 
 
 def apply_revenue_profile(is_lines: list[dict],

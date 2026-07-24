@@ -29,7 +29,9 @@ from sqlalchemy import text
 
 from parser.common.account_mapper import get_mapper
 from fin2.standardize.rules import DIRECT_MAP, CONSUMED_CANON
-from fin2.layer3.industry_profiles import apply_revenue_profile, norm as _norm_label
+from fin2.layer3.industry_profiles import (
+    apply_revenue_profile, norm as _norm_label, NO_REVENUE_CORPS,
+)
 
 # grand-total revenue labels (normalized) that outrank component labels in is.revenue
 # conflicts (증권/지주: 영업수익 total vs 수수료수익 component).
@@ -487,4 +489,11 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
             pname, revenue, components = applied
             col["revenue"] = revenue
             prov["industry_lines"] = {"profile": pname, **components}
+    # 증권성 금융지주: 매출액 개념이 없으므로 revenue 는 NULL(사실). DIRECT_MAP 이 수수료수익 등
+    # 성분을 revenue 로 오선택했거나 bank 프로파일이 gross 를 억지로 채운 것을 제거. op_income
+    # 이하는 그대로 유지(정확 적재됨).
+    if corp in NO_REVENUE_CORPS:
+        col.pop("revenue", None)
+        if prov.get("industry_lines"):
+            prov["industry_lines"] = None
     return col, conflicts, prov

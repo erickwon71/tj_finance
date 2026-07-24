@@ -133,6 +133,14 @@ SECURITIES = RevenueProfile(
 
 REVENUE_PROFILES: tuple[RevenueProfile, ...] = (INSURANCE, BANK, SECURITIES)
 
+# ★증권성 금융지주(매출액/영업수익 총계 없음 → revenue 는 사실상 없음, 사용자 결정 2026-07-24).
+# 영업이익~당기순이익 은 정확 적재되므로 revenue 만 NULL 로 둔다(억지 gross 합산·성분 오선택 방지).
+# 은행지주(신한/KB/하나/우리/BNK/iM/JB)와 IS 마커가 동일해 자동구분 불가 → curated 세트.
+# 확장: 순수 증권지주/투자지주(64992)가 추가되면 여기에 corp_code 를 넣는다.
+NO_REVENUE_CORPS: frozenset = frozenset({
+    "00432102",   # 한국금융지주 (한국투자금융지주 — 증권 주력, 매출액 개념 없음)
+})
+
 
 def apply_revenue_profile(is_lines: list[dict],
                           induty: str | None) -> tuple[str, int, dict] | None:

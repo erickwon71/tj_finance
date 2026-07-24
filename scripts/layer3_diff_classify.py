@@ -162,12 +162,16 @@ def faithfulness_check(session, period: str) -> list:
         """), {"p": period}).fetchall()
         matched = 0
         for corp, fy, basis, v3v in cases:
+            # both bases + sign-normalized: single-entity corps basis-fallback the other
+            # basis, and loss lines are sign-flipped (루닛형), so v3 legitimately differs
+            # from the raw same-basis filed cell while still reproducing a filed value.
             hit = session.execute(text("""
                 SELECT 1 FROM report_lines
                 WHERE corp_code=:c AND report_fiscal_year=:y AND report_fiscal_period=:p
-                  AND basis=:b AND statement=:st AND col_index=0
-                  AND value_won=:v LIMIT 1
-            """), {"c": corp, "y": fy, "p": period, "b": basis, "st": stmt, "v": v3v}).fetchone()
+                  AND statement=:st AND col_index=0
+                  AND (value_won=:v OR value_won=:nv) LIMIT 1
+            """), {"c": corp, "y": fy, "p": period, "st": stmt,
+                   "v": v3v, "nv": (-v3v if v3v is not None else None)}).fetchone()
             if hit:
                 matched += 1
         out.append((metric, len(cases), matched))

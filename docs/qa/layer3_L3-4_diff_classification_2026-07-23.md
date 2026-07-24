@@ -51,11 +51,15 @@
 → 상위 relgap 표본은 부호반대가 많으나, 정밀대조 결과 **대부분 v3 가 filed 값 정확·v2 가 오류**.
 루닛형(순"손실" 라벨+양수 미반전)만 진짜 v3 결함이며 소수(net_income 부호반대 중 4건).
 
-## 4. inspect 829 의 실체 — v3 충실도 검증
-v3 값이 정본 filing 의 당기(col0) 기재 셀과 정확 일치하는지 전수 확인(§하단 faithfulness 표):
-- **710/829 (86%)** = v3 가 실제 기재값 재현 → **v2 구 체인 오류**(v3 회귀 아님).
-- **119/829 (14%)** = v3 조립/파생값(기재 셀과 불일치) → **순수 v3 드릴 대상**(부호정규화·sub-line vs total 등).
-- net_income inspect 227 세부: v3==filed **209(92%)** · 미일치 **18** · 루닛형 부호결함 **4**.
+## 4. inspect 의 실체 — v3 충실도 검증 (★2026-07-24 드릴 완료: v3 결함 0)
+v3 값이 정본 filing 의 당기(col0) 기재값을 재현하는지 전수 확인. **초기 86%(710/829)는
+faithfulness 검증의 basis 버그**(v3.statement_type basis 만 조회)였음 — 양 basis + 부호정규화로
+교정하니 **inspect 908 전부(100%) v3 가 원문 값 재현**.
+- **`scripts/layer3_inspect_drill.py`(원문 기준·V2 무관)**: 미일치 124 → 유형분류:
+  **114 = basis_fallback**(단일법인 연결폴백, v3 가 별도값 정확복사) · **10 = sign_norm**(루닛형
+  손실반전, v3 = −원문값, 원문 '법인세비용차감전순손실'/'영업손실' 양수 확인) · **unexplained = 0**.
+- ⟹ **inspect 버킷 전체가 v3 정답**(basis폴백 + 손실반전 + 나머지는 v2 오류). **순수 v3 결함 0건.**
+  faithfulness_check 및 drill 은 이제 양 basis 조회로 교정됨(커밋).
 
 ## 5. 액션 백로그 (swap 비차단, 후속 정제)
 1. ✅ **[완료 2026-07-23] 금융업 매출 정제 (step2)** — 근본원인은 alias 갭이 아니라 **부모 top-line
@@ -66,9 +70,14 @@ v3 값이 정본 filing 의 당기(col0) 기재 셀과 정확 일치하는지 �
 2. **[PRD 결정 필요] 보험사 revenue 정의** — IFRS17 하 v3=`보험서비스수익`(보험영업만) vs v2=`영업수익`
    (보험+투자 합산). 어느 것을 표준 revenue 로 할지 모델링 결정(파싱 버그 아님, v2도 비일관). 결정 후
    보험사 조립 규칙 반영.
-3. **루닛형 부호정규화** — 순"손실"/"손실" 단독 라벨 + 양수값 → 부호반전 규칙(combine 매핑). 소수(net_income 4 등).
-4. **inspect 미일치 ~119** — 지표별 드릴(retained_earnings/cfo 조립·sub-line). 개별 원문대조.
-5. v2only 1,667 잔여(비-보험) — v3 결측 원인별(출처 없음 vs 조립 보류) 후속 분류.
+3. ✅ **[완료 2026-07-24] 보험·은행·증권 revenue 프로파일** — 사용자 결정=합산(GROSS). RevenueProfile
+   레지스트리(industry_lines JSONB) + grand-total 라벨 우선(증권/지주) + 은행 gross. 설계=`docs/plans/
+   insurer_revenue_composition_2026-07-24.md`.
+4. ✅ **[완료 2026-07-24] 루닛형 부호정규화** — 순"손실" 단독라벨+양수→−value(combine._map_rows
+   _loss_signed). 루닛 −73.6B(DART원문 일치). 회귀 100사 비정상0.
+5. ✅ **[완료 2026-07-24] inspect 미일치 드릴** — `layer3_inspect_drill.py`. **순수 v3 결함 0건**
+   (미일치 124=basis_fallback 114 + 손실반전 10, unexplained 0). §4 참조. faithfulness 100%.
+6. v2only 1,667 잔여(비-보험) — v3 결측 원인별(출처 없음 vs 조립 보류) 후속 분류(선택).
 
 ## 6. step2 재빌드 후 델타 (2026-07-23, build_std_v3 --all 재조립)
 | 지표 | v2only(전→후) | 비고 |

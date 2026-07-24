@@ -42,7 +42,7 @@ from parser.xml.section_detector import (
 from parser.xml.table_extractor import extract_rows
 from fin2.extract.xbrl import ExtractedFact
 from fin2.extract.statement_titles import (
-    title_text, classify_statement_in_body_section, SECTION_CODE_OF,
+    title_text, title_text_for_classify, classify_statement_in_body_section, SECTION_CODE_OF,
 )
 
 # 섹션 코드 → (basis, period_kind)
@@ -239,6 +239,12 @@ def _detect_body_statement_tables(root, fin_type: str,
             # (공백·반기/분기 접두 허용). 자본변동표(SCE)는 분류기가 배제한다 —
             # include_sce=True(계층2 report_lines 전용)일 때만 'SCE' 로 통과시킨다.
             stmt = classify_statement_in_body_section(title_text(tbl), include_sce=include_sce)
+            if stmt is None:
+                # 요약재무정보 서식: 제목과 단위가 별도 <P> 로 분리돼 데이터표의 직전 형제가
+                # 단위줄('(단위:천원)')이라 title_text 가 제목을 못 읽는다. 단위줄 1칸만 건너뛰고
+                # 재시도(엠로/에스앤디 등 구형 KOSDAQ 요약; v2 는 XBRL 로 잡던 것). 가산적.
+                stmt = classify_statement_in_body_section(
+                    title_text_for_classify(tbl), include_sce=include_sce)
             if stmt is None:
                 continue
             section_code = SECTION_CODE_OF[(basis, stmt)]

@@ -69,6 +69,41 @@ def title_text(tbl) -> str:
     return " ".join("".join(prev.itertext()).split())[:200]
 
 
+# 메타데이터 전용 형제(제목명 없음): 단위선언 '(단위 : 천원)' 또는 기간마커만 '제 19 기 : …'.
+# 요약재무정보 서식은 [제목][기간][단위] 를 별도 <P> 로 분리해 데이터표의 직전 형제(들)가
+# 메타줄이 된다(엠로/에스앤디 등 구형 KOSDAQ 요약).
+_UNIT_ONLY_RE = re.compile(r"^\(?\s*단위\s*[:：]")
+
+
+def _is_metadata_only(txt: str) -> bool:
+    """제목명이 없고 단위선언 또는 기간마커뿐인 형제인가(스킵 대상)."""
+    if not txt:
+        return True   # 빈 형제(장식/공백)도 건너뛴다
+    if any(p.search(txt) for p, _ in _STMT_TITLE):
+        return False  # 재무제표명이 있으면 그게 표제 — 스킵 안 함
+    return bool(_UNIT_ONLY_RE.match(txt)) or bool(_PERIOD_MARK.search(txt))
+
+
+def title_text_for_classify(tbl, max_skip: int = 3) -> str:
+    """**분류 전용** 표제 — 직전 형제가 메타데이터(단위/기간)뿐이면 그 형제(들)를 건너뛰고 그
+    앞의 표제를 본다(제목·기간·단위가 별도 <P> 로 분리된 요약재무정보 서식). 건너뛰는 대상은
+    **재무제표명이 없는 단위/기간 줄뿐**이고, 데이터표(TABLE) 나 라벨 있는 텍스트를 만나면 멈춘다
+    → 남의 표로 넘어가지 않는다(위험한 무제한 back-scan 아님, max_skip 로 상한).
+
+    ★ title_text(단위 획득용, declared_unit 이 사용)는 단위줄을 그대로 반환해야 하므로 건드리지
+      않는다 — 이 함수를 별도로 둔다(둘의 요구가 반대: declared_unit=단위줄 필요, 분류=제목 필요).
+    """
+    prev = tbl.getprevious()
+    for _ in range(max_skip):
+        if prev is None:
+            return ""
+        txt = " ".join("".join(prev.itertext()).split())
+        if not _is_metadata_only(txt):
+            return txt[:200]        # 표제(또는 라벨 있는 비메타 형제) — 여기서 멈춘다
+        prev = prev.getprevious()   # 메타줄(단위/기간/빈칸) 건너뛴다
+    return ""
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 본문 섹션 **내부** 전용 분류기 (섹션 기반 추출용)
 # ══════════════════════════════════════════════════════════════════════════

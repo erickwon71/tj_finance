@@ -40,7 +40,8 @@ from sqlalchemy import text
 
 from collector.db import get_session
 from collector.models import ReportLineLoadProgress
-from fin2.extract.report_lines import extract_report_lines, store_report_lines
+from fin2.extract.report_lines import (extract_report_lines, store_report_lines,
+                                        store_note_lines)
 from fin2.audit.line_anomaly import detect_anomalies, store_anomalies
 
 FY_MIN = 2015
@@ -71,9 +72,15 @@ def _targets(session, args) -> list:
             rows = rows[: args.limit]
         return rows
     if not args.recheck:
-        done = {r[0] for r in session.execute(text(
-            "SELECT rcept_no FROM report_line_load_progress WHERE status IN ('done','skip')"
-        )).fetchall()}
+        if getattr(args, "notes", False):
+            # 주석 패스 재개: 이미 note_lines 에 적재된 rcept 은 건너뛴다(본문 progress 와 독립 —
+            # note_lines 자체를 done 신호로 사용). --recheck 면 전량 재적재(delete-then-insert 멱등).
+            done = {r[0] for r in session.execute(text(
+                "SELECT DISTINCT rcept_no FROM note_lines")).fetchall()}
+        else:
+            done = {r[0] for r in session.execute(text(
+                "SELECT rcept_no FROM report_line_load_progress WHERE status IN ('done','skip')"
+            )).fetchall()}
         rows = [r for r in rows if r.rcept_no not in done]
     if args.limit:
         rows = rows[: args.limit]
@@ -128,6 +135,9 @@ def main() -> None:
     ap.add_argument("--shard", help="a/n 분할(정렬 후 i %% n == a)")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--recheck", action="store_true", help="done 도 재처리")
+    ap.add_argument("--notes", action="store_true",
+                    help="주석 전용 패스 — note_lines 에만 적재(본문 report_lines 무변경). "
+                         "재개는 note_lines 존재로 자체 추적. 볼륨 큼(~303M행)")
     ap.add_argument("--redo-empty", action="store_true",
                     help="done 인데 0행인 filing 만 재처리(제목표/데이터표 분리 수정 소급 백필)")
     ap.add_argument("--status", action="store_true", help="진행 현황만 출력")
@@ -164,19 +174,26 @@ def main() -> None:
                         r.file_path, rcept_no=r.rcept_no, corp_code=r.corp_code,
                         report_fiscal_year=r.fiscal_year,
                         report_fiscal_period=r.fiscal_period,
-                        include_notes=False,
+                        include_notes=args.notes,
                     )
-                    nl = store_report_lines(session, r.rcept_no, lines)
-                    found = detect_anomalies(lines, rcept_no=r.rcept_no, corp_code=r.corp_code,
-                                             report_fiscal_period=r.fiscal_period)
-                    na = store_anomalies(session, r.rcept_no, found)
+                    if args.notes:
+                        # 주석 전용 패스: note_lines 만 적재(본문 report_lines 는 이미 로드됨 — 재기록 안 함).
+                        nl = store_note_lines(session, r.rcept_no, lines)
+                    else:
+                        nl = store_report_lines(session, r.rcept_no, lines)
+                        found = detect_anomalies(lines, rcept_no=r.rcept_no, corp_code=r.corp_code,
+                                                 report_fiscal_period=r.fiscal_period)
+                        na = store_anomalies(session, r.rcept_no, found)
                 except Exception as e:                      # noqa: BLE001 — 한 건 실패가 전량을 멈추면 안 됨
                     status, msg = "error", f"{type(e).__name__}: {e}"[:500]
 
-            session.merge(ReportLineLoadProgress(
-                rcept_no=r.rcept_no, corp_code=r.corp_code, fiscal_year=r.fiscal_year,
-                status=status, n_lines=nl, n_anomalies=na, message=msg,
-                processed_at=datetime.utcnow()))
+            if not args.notes:
+                # 본문 패스만 progress 테이블에 기록. 주석 패스는 note_lines 존재로 자체 추적하므로
+                # 본문 progress 를 덮지 않는다(_targets 의 done 필터 참고).
+                session.merge(ReportLineLoadProgress(
+                    rcept_no=r.rcept_no, corp_code=r.corp_code, fiscal_year=r.fiscal_year,
+                    status=status, n_lines=nl, n_anomalies=na, message=msg,
+                    processed_at=datetime.utcnow()))
 
             if status == "done":
                 n_done += 1; n_lines += nl; n_anom += na

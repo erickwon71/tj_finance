@@ -20,8 +20,8 @@
 - **금융 revenue**: 여신전문·저축은행 gross 프로파일 + 다올 override(`d0c5dc0`), 잔여 KSIC census 종결 =
   프로파일 불필요(`ff54fb0`), 원문대조 15건 PASS. → `docs/plans/financial_sector_revenue_standards.md`.
 - **브리지 swap 계획**(`254766f`·`94a8d77`): std_v3(2015+) UNION std_v2(≤2014), enrichment v3-native, C-1 자동.
-- **std_v3 enrichment steps 1-2**(`d43974e`): 스키마 9컬럼 + combine 이 **capex/fcf/net_debt** 산출(삼성/SK/
-  NAVER v2 일치). ⚠ D&A/ebitda · shares_out · data_quality 미채움.
+- **std_v3 enrichment steps 1-2**(`d43974e`): 스키마 9컬럼 + combine 이 **capex/fcf/net_debt** 산출
+  → **2026-07-26 전량 재빌드로 std_v3 반영 완료**(§3.1b). ⚠ D&A/ebitda · shares_out · data_quality 미채움.
 - **★계층2 주석 전사**: `note_lines` 테이블(트윈, `38100fe`) + 로더 `--notes`(`2590191`) + **note 제목
   정확화**(running-header 번호제목, `9541a66`) + **백필 완료**(6shard SUCCESS · 에러 0 · ~2.1억행).
 
@@ -32,8 +32,31 @@
 |---|---|
 | `note_lines` | 210,346,832행 (reltuples) |
 | `report_lines` | 64,508,192행 |
-| `std_financials_v3` | 존재(enrichment 9컬럼 적용) |
+| `std_financials_v3` | 185,266행 · 2,534 corp (enrichment 반영 완료) |
 | git main | `9541a66`, 워킹트리 clean |
+
+### 3.1b ★std_v3 전량 재빌드 완료 (2026-07-26)
+`build_std_v3.py --all` 실행 — **2,534 corp · 185,266 rows · 1,885s · 오류 0**.
+⚠ 재빌드 전에는 enrichment 3컬럼이 **전부 0행**이었다(코드 `d43974e` 는 커밋됐으나 std_v3 미반영 상태였음.
+이전 핸드오프의 "capex/fcf/net_debt ✅완료"는 **combine 단계 스팟검증만** 한 것이었고 전량 빌드는 미실행).
+
+| 컬럼 | 채움 | 커버리지 |
+|---|---|---|
+| capex | 169,859 | 91.7% |
+| fcf | 168,966 | 91.2% |
+| net_debt | 128,158 | 69.2% |
+| da_total · ebitda | **0** | D&A 매핑(§4-1) 전이라 정상 |
+
+**v2 대조 검증** (v2 canonical = `not is_stub and not is_discrete`, version desc 최신 1행.
+⚠ v2 PK 는 `(corp,fy,fp,statement_type,version,is_stub,is_discrete)` 라 4키 조인만 하면 **팬아웃**한다):
+공통 169,257행 기준 capex 일치 91.0% · fcf 90.4% · net_debt 86.7%.
+- **대형주 정확 일치**: 삼성전자·현대차·셀트리온 FY2024 consolidated/separate 6/6 OK.
+- **불일치 13,885건 분해**: v2가 10배↑ 과대 **38.8%** + 10⁵배↑ 과대 0.1% = **약 39% 가 v2 스케일버그**
+  (예: 다원넥스뷰 FY2024Q3 v2 capex −220조 vs v3 −2.2억 = ×10⁶). **v3 가 정답.**
+  나머지 59.7% 는 동일 자릿수 차이 = capex 구성 CF라인 정의 차이 → **미조사, 잔여과제**.
+  1.4% 는 v3 가 10배↑ 큼 → 소수지만 **v3 쪽 의심 케이스, 우선 확인 대상**.
+- 불일치는 연도·분기에 고르게 분포(특정 연도 편중 없음) → 데이터 손상이 아니라 정의 차이 성격.
+- ★대전제 유지: **V2는 정답이 아님 — DART 원문이 기준**([[rebuild-phase-a3-done]]).
 
 ⚠ `section_path` 인덱스 없음 → `LIKE '%..%'` · `COUNT(*)` full-scan 느림
 (**corp_code 바운드 + reltuples** 로 우회할 것).
@@ -89,9 +112,11 @@ Removable, 477Gi 중 54% 사용). NAS(`//tjkwon@192.168.0.96/tj_finance_data`, 1
      `rule_additive_da` + `rule_derive_ebitda` → std_v3 `depreciation`/`amortization`/`da_total`/`ebitda`.
    - 파편 추출기(`notes.py`·`cf_da.py`·`rd_note.py`) 흡수.
    - ⚠ 이전 세션의 진단초안 `$CLAUDE_JOB_DIR/tmp/find_da_loc.py` 는 **휘발성 경로 → 소실**. `scripts/` 에 새로 작성.
-2. **shares_out**: 계층2 일반현황(주식의 총수) → 별도 shares 테이블(주석 아님).
-3. **collect_new 데일리 배선**(runbook 두 call site) — ⚠ 아직 미배선.
-4. **std_v3 재빌드** → **뷰 브리지 교체**(`collector/db.py` standard_financials → v3 UNION v2) →
+2. **capex 잔여 불일치 조사**(§3.1b): ① v3가 10배↑ 큰 193건(v3 의심, **우선**) ② 동일 자릿수 차이
+   8,291건(capex 구성 CF라인 정의 차이) — 원문 대조로 v3 정의 확정.
+3. **shares_out**: 계층2 일반현황(주식의 총수) → 별도 shares 테이블(주석 아님).
+4. **collect_new 데일리 배선**(runbook 두 call site) — ⚠ 아직 미배선.
+5. **뷰 브리지 교체**(`collector/db.py` standard_financials → v3 UNION v2) →
    **G2(★v3 = 원문 기준)** → **C-1 자동**(tearsheet 금융블록·스크리너).
    상세 = `docs/plans/layer3_v3_bridge_swap_2026-07-25.md` §4.
 

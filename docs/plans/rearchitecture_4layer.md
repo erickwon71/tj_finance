@@ -33,8 +33,9 @@
 | 3 취합 std_v3 | ✅ **정제 사실상 완료** (최종 재빌드 대기) | **185,214행 · 2,534사** · parity ~98% · inspect 전량 v3정답 · 업종 프로파일(보험/은행/증권/한국금융NULL) · **정본선택+기재정정 델타패치 반영**(3,338행/955사 정정 provenance). ⚠ **`--recheck` 완료 후 `build_std_v3.py --all` 재빌드 필수** |
 | 4 App swap | ☐ **미착수** | Path A 설계 완료(std_v3 직접소비). 앱 비사용 중·std_v2=교차검증용 |
 
-**남은 큰 덩어리**: ① 계층2 **2차(pre-2015)·3차(PDF-only)** 소급 적재(신규 파서) ② 계층3 **최종 재빌드**
-(`--recheck` 후) ③ **계층4 구현 + L3-5 swap**(앱 재배선·구 체인 제거·데일리/야간잡 재설치).
+**남은 큰 덩어리**: ① 계층2 **주석 전반 전사**(D&A 등 파생계정 소스, swap 선행 · [notes plan](layer2_notes_transcription_2026-07-25.md)) +
+**2차(pre-2015)·3차(PDF-only)** 소급 적재(신규 파서) ② 계층3 **enrichment 완성 + 최종 재빌드** ③ **계층4
+구현 + 브리지 swap**([plan](layer3_v3_bridge_swap_2026-07-25.md), 앱 재배선·구 체인 제거·데일리/야간잡 재설치).
 
 > 📌 **정정(기재정정) 처리 = 완료.** 07-19 체크리스트가 "계층2 4차 패스"로 잡았던 **정본선택 + 정정
 > 반영**은 실제로는 **계층3 combine 으로 흡수**되어 구현됨(원본 base + 각 정정본이 건드린 셀만 델타
@@ -55,6 +56,7 @@
 - [sce_statement_of_changes_in_equity_2026-07-21](sce_statement_of_changes_in_equity_2026-07-21.md) — 자본변동표(SCE) 편입 설계
 - [layer2_split_table_gap_2026-07-23](../qa/layer2_split_table_gap_2026-07-23.md) — "제목표/데이터표 분리" 추출 갭 근본원인
 - [layer2_full_load_report_2026-07-22](../qa/layer2_full_load_report_2026-07-22.md) — 전량적재 1차패스 결과보고
+- [★layer2_notes_transcription_2026-07-25](layer2_notes_transcription_2026-07-25.md) — **주석(note) 전반 전사**(D&A·R&D 등 파생계정 소스). `_emit_note_lines` 활성화+백필, 파편 note추출기 흡수. 볼륨(주석=표96%) 관건. **swap 선행**
 
 ### 계층3 — 취합 std_v3
 - [★financial_sector_revenue_standards](financial_sector_revenue_standards.md) — **금융섹터 revenue 표준 단일 출처**(증권=순영업수익 NET·보험/은행=gross·한국금융지주=NULL·잔여·회귀). 섹터별 census 결정 누적
@@ -70,6 +72,7 @@
 - [insurer_revenue_composition_2026-07-24](insurer_revenue_composition_2026-07-24.md) — 업종별 revenue/영업이익 표준화 설계
 
 ### 계층4 — App swap
+- [★layer3_v3_bridge_swap_2026-07-25](layer3_v3_bridge_swap_2026-07-25.md) — **브리지 swap 마스터**(std_v2→std_v3 뷰 전환, enrichment v3-native, C-1 자동). enrichment: capex/fcf/net_debt ✅완료(`d43974e`), D&A/shares=계층2 주석전사 선행
 - [layer4_industry_tearsheet_design_2026-07-24](layer4_industry_tearsheet_design_2026-07-24.md) — 업종 tearsheet + 스크리너 revenue (**Path A** 확정)
 - [sce_equity_movement_detail_2026-07-24](sce_equity_movement_detail_2026-07-24.md) — SCE 자본변동 상세 추출+앱 표출 (신규 테이블 `sce_equity_movements`, gap-fill과 비중복)
 
@@ -86,22 +89,27 @@
 
 ## 5. 현재 시작점 · 다음 액션 (순서)
 
-**지금 진행 중**: 사용자 `--recheck` 실행 중(요약재무 추출수정 전 코퍼스 소급, ~9.5h). 완료 대기.
+**완료(2026-07-25)**: `--recheck` + `build_std_v3 --all` 재빌드 · 금융섹터 revenue census 종결(보험/은행/
+증권/여신전문 프로파일 + 잔여 KSIC 프로파일 불필요, 원문대조 PASS) · **브리지 swap enrichment steps 1-2**
+(capex/fcf/net_debt v3-native, `d43974e`).
 
-1. **★`--recheck` 완료 → `build_std_v3.py --all` 재빌드**(25분). 재추출분+이번 세션 전 프로파일 std_v3 반영.
-2. **계층4(P2) 구현** — Path A(std_v3 직접소비): 업종 tearsheet + 스크리너 정규화 revenue.
-   설계 = [layer4 문서](layer4_industry_tearsheet_design_2026-07-24.md). ★재빌드 후 착수(현 std_v3 stale).
-3. **SCE 자본변동 상세**(신규, 재빌드와 독립): 계층3 추출 → `sce_equity_movements` → 앱 표출(배당
-   지배/비지배·자사주 취득/소각·주식보상·이익잉여금 사용처). recheck 완료 후 착수.
-   설계 = [SCE 상세 문서](sce_equity_movement_detail_2026-07-24.md).
-4. **L3-5 swap**(최종): 앱 std_v2→std_v3 재배선 · 구 체인 제거(fact_v2·std_v2·text.py) · report_lines
-   데일리 배선(`collect_new.py` **두 call site**) · 야간 잡 재설치(deploy/launchd) · 최근 IPO 6사 sync 재개.
-5. **(별도 규모) 계층2 소급 적재**: 2차 pre-2015 · 3차 PDF-only — 신규 파서 개발 필요. 우선순위 협의.
+**진행 방향 = 브리지 swap([plan](layer3_v3_bridge_swap_2026-07-25.md)) — 그 선행이 계층2 주석 전사.**
+1. **★계층2 주석 전반 전사**([notes plan](layer2_notes_transcription_2026-07-25.md)): `_emit_note_lines`
+   활성화(`include_notes=True`)+백필 → 계층3가 D&A/da_total/ebitda(+R&D) 파생. **볼륨(주석=표96%) 실측 선결.**
+   파편 note추출기(notes.py·cf_da.py·rd_note.py) 흡수.
+2. **계층3 enrichment 완성 + 재빌드**: 주석 반영 후 `build_std_v3 --all`. shares_out 은 계층2 일반현황(별도 테이블).
+3. **뷰 브리지 교체 + G2(v3=원문 기준) + C-1**(자동): tearsheet 금융블록·스크리너 정규화 revenue.
+4. **SCE 자본변동 상세**(독립): 계층3 추출 → `sce_equity_movements` → 앱 표출. 설계 = [SCE 문서](sce_equity_movement_detail_2026-07-24.md).
+5. **(별도 규모) 계층2 소급 적재**: 2차 pre-2015(브리지 UNION 제거용) · 3차 PDF-only — 신규 파서.
 
 ---
 
 ## 6. 확정 결정 (잠금)
 - **4계층 분리** — 파서=충실전사(판단 없음), 취합=별도 계층 (2026-07-19).
+- **★보고서 직접 read = 계층2 전용**: 원문 보고서 파일을 읽어 DB 적재하는 것은 **오직 계층2**(→
+  report_lines). 계층3·4·기타 어떤 코드도 보고서를 직접 읽지 않는다 — **검증(원문 대조·감사) 목적만 예외**.
+  파생계정(D&A 등)의 소스가 주석이면 **계층2가 주석을 전사**하고 계층3는 report_lines 에서만 읽는다.
+  (2026-07-25, 사용자 지침. 위반 예=폐기한 "cf_da.py 를 std_v3 백필".)
 - **적재순서 = 전량적재 → 계층3** (구 '계층3→전량'을 뒤집음, 2026-07-19).
 - **계층3 = 신 체인 단독**: 새 std_v3 빌드 후 swap, 구 체인은 swap 후 제거 (2026-07-22).
 - **정본선택·정정 반영 = 계층3 소관**(구 '계층2 4차'에서 이관): 원본 base + 기재정정 델타패치, 값의미=

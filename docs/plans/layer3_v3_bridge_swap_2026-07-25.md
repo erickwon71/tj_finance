@@ -9,11 +9,12 @@
 
 ## 0. 한 줄 요약
 앱의 단일 read 지점인 뷰 `standard_financials` 를 **std_v2 → std_v3 로 전환**한다. std_v3 는 (a) 2015+
-만 있고 (b) enrichment 컬럼 15개가 없으므로: **enrichment 를 std_v3 가 네이티브 산출**(사용자 결정
-"새 술은 새 부대에" — capex/fcf/net_debt=combine+run_rules, D&A/ebitda=cf_da 백필, shares_out=shares
-백필)하도록 빌드를 확장하고, pre-2015 이력만 std_v2 를 UNION(브리지). 비금융 회귀 0·이력 무손실을
-게이트로 확인하면, **C-1(금융 tearsheet·스크리너 정규화 revenue)은 뷰가 industry_lines·조립 revenue 를
-이미 실어주므로 자동 성립**한다.
+만 있고 (b) enrichment 컬럼 15개가 없으므로: **enrichment 를 std_v3 가 네이티브 산출**(사용자 "새 술은
+새 부대에")하도록 하되 **아키텍처 준수**(계층3는 계층2 report_lines 만 읽음)로 —
+capex/fcf/net_debt=combine+run_rules(✅완료), **D&A/ebitda= 계층2 주석 전사 선행 후** 계층3 파생,
+shares_out= 계층2 일반현황 추출. pre-2015 이력만 std_v2 를 UNION(브리지). **G2(v3=원문 기준)** 통과 시,
+**C-1(금융 tearsheet·스크리너)은 뷰가 industry_lines·조립 revenue 를 실어주므로 자동 성립**한다.
+⇒ 선행 = [`layer2_notes_transcription_2026-07-25.md`](layer2_notes_transcription_2026-07-25.md).
 
 ## 1. 배경 — 왜 swap 선행인가 (실측)
 - 앱의 모든 재무 read = 뷰 `standard_financials`(collector/db.py:160) → `std_financials_v2`.
@@ -31,19 +32,21 @@ mapper·rules 모듈**(`get_mapper()`·`from fin2.standardize.rules import DIREC
 | 컬럼 | v3-native 산출 방법 | 소스·커버리지 |
 |---|---|---|
 | `capex` | v3 combine 이 CONSUMED_CANON(cf.capex/cf.capex_intangible) resolve → `rule_additive_capex` | **report_lines CF**(유형·무형자산취득 존재) → 풀커버(~95%) |
-| `depreciation`·`amortization`·`da_total` | **`fin2/extract/cf_da.py` 를 std_v3 대상 백필**(주석+CF본문 face 추출, 자립) → `rule_additive_da` | raw 보고서 주석/CF본문(report_lines 아님) → v2 와 **동일 ~34%**(주석이연·안 나빠짐) |
-| `ebitda` | `rule_derive_ebitda`(=operating_income + da_total) | da_total 의존(~34%) |
+| `depreciation`·`amortization`·`da_total` | **★계층2 주석 전사 선행** → combine 이 note.* 매핑 → `rule_additive_da`. (계층3가 보고서 직접 read 금지 — 아키텍처.) | 주석 소스, 계획 [`layer2_notes_transcription_2026-07-25.md`](layer2_notes_transcription_2026-07-25.md) |
+| `ebitda` | `rule_derive_ebitda`(=operating_income + da_total) | da_total(=주석 전사 후) 의존 |
 | `fcf` | `rule_derive_fcf`(=cfo + capex, capex 음수) | 풀커버(cfo·capex 있음) |
 | `net_debt` | `rule_derive_net_debt`(=short+long_debt − cash) | 풀커버(BS) |
-| `shares_out` | **`fin2/extract/shares.py` 를 std_v3 대상 백필**(보고서 주식수, 자립) | raw 보고서 → 풀커버(~95%) |
-| `data_quality` | v3 DQ 룰 이식(항등식+교차연도) 또는 기본치 | 산출 |
+| `shares_out` | **계층2 일반현황 추출**(주식의 총수) → 별도 shares 테이블 권장(주석 전사 계획 §8) | raw 보고서 → 풀커버(~95%) |
+| `data_quality` | 계층3 DQ 룰 이식(항등식+교차연도) 또는 기본치 | 계층3 값판단 |
 | `gate_b_status`·`version`·`is_ifrs`·`rcept_no`·`calculated_at` | face_audit v3 조인 / 상수·메타 / source_rcepts→rcept_no / 뷰에서 채움 | — |
 
-> ★핵심(확정): report_lines 엔 **주석(note)이 없다**(CF·BS·SCE·IS 뿐). 그래서 D&A/EBITDA 는 report_lines
-> 만으로 못 만들고 **cf_da.py(주석+CF본문 추출기)를 std_v3 대상으로 실행**해 백필한다 — v2 와 동일 소스·
-> 동일 34% 가 v3 로 그대로 넘어옴(더 나빠지지 않음). **D&A 완성(주석 전량 적재)은 이 swap 과 무관한 별도
-> 이연 트랙.** capex/fcf/net_debt/shares_out 은 CF/BS/주식수 유래라 v3-native 풀커버.
-> ⇒ 재사용 자산: combine 의 canon resolve + `run_rules(ctx)` + `cf_da.recover_cf_da` + `shares.extract_*`.
+> ★핵심(2026-07-25 아키텍처 교정): report_lines 엔 **주석(note)이 없다**(CF·BS·SCE·IS 뿐). 계층3는
+> **보고서를 직접 읽지 않는다**(계층2만 읽음). 따라서 D&A/EBITDA 는 **계층2가 주석을 report_lines 에
+> 전사**한 뒤에야 계층3가 note.* 매핑으로 파생한다 → **선행 = [`layer2_notes_transcription_2026-07-25.md`]**
+> **(layer2_notes_transcription_2026-07-25.md)**. (이전 초안의 "cf_da.py 를 std_v3 백필"은 계층3가 보고서를
+> 읽는 아키텍처 위반 — 폐기.) capex/fcf/net_debt 은 CF/BS 유래·report_lines 에 이미 있어 계층3-native
+> 풀커버(steps 1-2 완료). ⇒ 재사용: combine 의 canon resolve + `run_rules(ctx)`(capex/fcf/net_debt),
+> 주석 전사 후 `rule_additive_da`(D&A).
 
 ### 1.2 관문 B: 커버리지 — std_v3 는 2015+ 만
 - FY연결: 뷰(v2) 28,112 vs std_v3 23,282. 연도범위 v2=1997~2026 / **v3=2015~2026**.
@@ -89,20 +92,21 @@ SELECT ... FROM std_financials_v2 s ... WHERE s.fiscal_year < 2015 AND (기존 �
 - 별도 사이드채널 reader 불요. 기존 read 코드 무변경(뷰가 계약 유지).
 
 ## 4. 구현 순서 (v3-native)
-1. **std_v3 스키마 확장**: `ALTER TABLE std_financials_v3 ADD` capex·depreciation·amortization·
-   da_total·ebitda·fcf·net_debt·shares_out·data_quality (+ 필요 메타). collector/models.py 반영.
-2. **v3 combine/build 확장**: combine 이 CONSUMED_CANON(cf.capex 등) resolve → `StdContext(canon,col)` 구성
-   → `run_rules(ctx)` 로 capex/da/ebitda/fcf/net_debt 산출 → build 가 새 컬럼 persist.
-3. **백필 추출기 v3 배선**: `cf_da.recover_cf_da`(D&A)·`shares.extract_*`(shares_out)를 std_v3 대상으로 실행.
-   (기존 std_v2 백필과 동일 로직·소스, 타깃만 v3.) data_quality DQ 룰 이식 or 기본치.
-4. **std_v3 전량 재빌드**(`build_std_v3 --all`, ~25분) + 백필 실행. enrichment 채움율 v2 대비 확인.
+1. **✅ std_v3 스키마 확장**(완료, `d43974e`): enrichment 9컬럼 ADD + collector/models.py.
+2. **✅ v3 combine 확장**(완료, `d43974e`): CONSUMED_CANON resolve → `run_rules` 로 **capex/fcf/net_debt**
+   산출(report_lines CF 유래). 스모크 삼성·SK·NAVER capex/fcf v2 완전일치.
+3. **★선행 = 계층2 주석 전사**([`layer2_notes_transcription_2026-07-25.md`](layer2_notes_transcription_2026-07-25.md)):
+   report_lines 에 주석 적재 → 계층3 combine 이 note.* 매핑으로 **D&A/da_total/ebitda** 파생. shares_out 은
+   계층2 일반현황 추출(별도 shares 테이블). **이게 이 swap 의 선행 관문**(아키텍처: 계층3는 계층2만 읽음).
+4. **std_v3 전량 재빌드**(`build_std_v3 --all`, ~25분) — 주석 반영 후. enrichment 채움율 원문 대비 확인.
 5. **뷰 교체**(collector/db.py `_ensure_views` standard_financials DDL → §2). idempotent CREATE OR REPLACE.
-6. **회귀 게이트 실행**(§5). 통과 못 하면 롤백(뷰 한 줄 되돌림 — 데이터 무변경).
+6. **회귀 게이트 실행**(§5). ★G2 는 **v3=원문** 기준(v2 아님 — 예: 차입금은 v3 가 원문 단기차입금 라인,
+   v2 는 XBRL 갭. v3 가 정답). 통과 못 하면 롤백(뷰 한 줄 되돌림 — 데이터 무변경).
 7. **C-1 렌더**(뷰 통과 후): tearsheet 금융블록 + 스크리너 revenue. 실제 industry_lines 형태 기준.
 8. **문서·메모리 갱신**, L3-5 진행표 반영.
 
-> 단계 1~4 = std_v3 를 v2 컬럼 파리티까지 끌어올리는 빌드작업(코드+재빌드). 5~7 = swap+C-1.
-> 1~4 를 먼저 커밋·검증 후 5(뷰 교체)로 넘어가면, 뷰 교체 리스크가 격리된다.
+> 순서: 1~2 완료. **3(계층2 주석 전사)이 선행 관문** → 4 재빌드 → 5 뷰교체(리스크 격리) → 6 게이트 → 7 C-1.
+> capex/fcf/net_debt 은 이미 계층3-native. D&A/shares 만 계층2 선행 필요.
 
 ## 5. 검증 게이트 (DoD)
 - **G1 커버리지 무손실**: 뷰 corp-year 수(전 basis/period) ≥ 기존. 특히 pre-2015 전건 보존, 2015+

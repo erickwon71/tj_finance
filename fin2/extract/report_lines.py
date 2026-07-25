@@ -39,7 +39,8 @@ from parser.xml.table_extractor import (
 from parser.common.amount_normalizer import detect_unit_declaration, parse_amount, normalize_account_name
 
 from parser.xml.section_detector import (
-    assign_tables_to_dart_sections, SEC_CONSOL_NOTE, SEC_SEP_NOTE, table_direct_rows,
+    assign_tables_to_dart_sections, assign_note_tables_with_titles,
+    SEC_CONSOL_NOTE, SEC_SEP_NOTE, table_direct_rows,
 )
 from fin2.extract.text import (
     _SECTION_META, _detect_fin_type, _detect_body_statement_tables,
@@ -484,15 +485,18 @@ def _emit_note_lines(
       · col_index = 위치(0,1,2,…) 그대로, context_fiscal_year = **NULL**(연도 주장 안 함).
       · period_kind = NULL. section_path = 주석 제목(로케이터).
     interim 누적컬럼 로직도 적용 안 함(주석엔 무의미)."""
-    sec_tables = assign_tables_to_dart_sections(root)
+    sec_tables = assign_note_tables_with_titles(root)
     for sec_kind, basis in ((SEC_CONSOL_NOTE, "consolidated"), (SEC_SEP_NOTE, "separate")):
-        for table_seq, table in enumerate(sec_tables.get(sec_kind, [])):
+        for table_seq, (table, note_title) in enumerate(sec_tables.get(sec_kind, [])):
             unit = declared_unit(table)
             if unit is None:
                 continue  # 비화폐/미선언 주석 표 → 보류(추측 금지)
             if not _table_has_data_rows(table):
                 continue
-            heading = _note_heading(table)
+            # section_path = 관장 번호 주석 제목('27. 현금흐름표')이 우선 — 주석 정체성 로케이터.
+            # 없으면 표 직전 설명 텍스트로 폴백. table_title 엔 지역 설명을 따로 남긴다.
+            local_heading = _note_heading(table)
+            heading = note_title or local_heading
             adecimal = _adecimal_from_unit(unit)
             note_rows = list(extract_rows(table, multiplier=unit, num_cols=_NOTE_MAX_COLS,
                                           direct_only=True, skip_junk=False))
@@ -510,7 +514,7 @@ def _emit_note_lines(
                         report_fiscal_period=report_fiscal_period,
                         statement="note",
                         basis=basis,
-                        section_path=heading,           # 주석 제목 = 위치 로케이터
+                        section_path=heading,           # 관장 번호 주석제목(정체성 로케이터)
                         label_raw=row.account_name,     # 원문 그대로
                         col_index=col_idx,              # 위치(연도 아님)
                         context_fiscal_year=None,       # ★ 연도 주장 안 함
@@ -525,7 +529,7 @@ def _emit_note_lines(
                         depth=row.raw_indent,
                         node_role=node_roles.get(id(row)),
                         table_seq=table_seq,
-                        table_title=heading,   # 주석은 제목이 곧 표 제목이자 section_path 로케이터
+                        table_title=local_heading,   # 표 직전 지역 설명(번호제목은 section_path)
                     ))
 
 

@@ -222,6 +222,47 @@ def assign_tables_to_dart_sections(
     return result
 
 
+# 개별 주석의 번호 제목("27. 현금흐름표 (연결)", "29. 부문별 보고", "10. 유형자산") —
+# 주석 섹션 안의 sub-heading. 이 번호 제목이 주석 정체성(로케이터)이다.
+_NUMBERED_NOTE_TITLE = re.compile(r"^\s*\d+\s*[.．]\s*\S")
+
+
+def assign_note_tables_with_titles(
+    root: etree._Element,
+) -> dict[str, list[tuple[etree._Element, Optional[str]]]]:
+    """`assign_tables_to_dart_sections` 와 동일한 문서순서 pass 이되, 주석 섹션 안에서는
+    **관장 번호 제목(running header)** 도 함께 추적해 각 표를 (TABLE, 번호제목) 으로 태깅한다.
+
+    반환: {주석섹션종류: [(TABLE, note_title), …]}. note_title = 그 표 직전(문서순서)의 가장
+    최근 '번호. 제목'(예 '27. 현금흐름표 (연결)'). 없으면 None. 본문 섹션은 대상 아님(주석만).
+
+    ★ 왜 running header 인가: 주석 표의 직전 형제 텍스트는 설명문장('보고부문 사이의 거래에…')
+    이라 로케이터로 부정확했다. 개별 주석의 번호 제목이 진짜 정체성이며, 계층3가 이걸로 어느
+    주석(현금흐름표/부문/유형자산)인지 판단해 D&A 등을 안전하게 집는다. (2026-07-25)
+    """
+    result: dict[str, list[tuple[etree._Element, Optional[str]]]] = {}
+    current: Optional[str] = None
+    note_title: Optional[str] = None
+
+    for el in root.iter():
+        tag = el.tag.upper() if isinstance(el.tag, str) else ""
+        if tag.startswith("SECTION"):
+            title_elem = el.find("TITLE")
+            if title_elem is not None:
+                new_current = classify_dart_section("".join(title_elem.itertext()))
+                if new_current != current:
+                    current = new_current
+                    note_title = None            # 섹션 경계 → 번호제목 초기화
+        elif tag == "TITLE" and current in DART_NOTE_SECTIONS:
+            txt = " ".join("".join(el.itertext()).split())
+            if _NUMBERED_NOTE_TITLE.match(txt) and len(txt) < 60:
+                note_title = txt[:255]           # 개별 주석 번호 제목 갱신
+        elif tag == "TABLE" and current in DART_NOTE_SECTIONS:
+            result.setdefault(current, []).append((el, note_title))
+
+    return result
+
+
 def detect_sections(root: etree._Element) -> dict[str, Optional[etree._Element]]:
     """
     XML 루트 요소에서 TITLE 태그를 탐색해 재무제표 섹션별 위치를 반환한다.

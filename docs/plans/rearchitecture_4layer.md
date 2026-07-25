@@ -4,7 +4,7 @@
 > 날짜 없는 이 파일을 계속 갱신한다(개별 문서는 시점 스냅샷·상세). 새 세션은 여기서 시작해
 > "현재 시작점"(§5)의 최신 핸드오프로 들어간다.
 >
-> 최종 갱신: **2026-07-24** · 현재 시작점 = [handoff_layer3_profiles_2026-07-24](../qa/handoff_layer3_profiles_2026-07-24.md)
+> 최종 갱신: **2026-07-26** · 현재 시작점 = [handoff_layer2_notes_2026-07-26](../qa/handoff_layer2_notes_2026-07-26.md)
 
 ---
 
@@ -79,7 +79,8 @@
 ---
 
 ## 4. 핸드오프 타임라인 (세션 진입점, 최신순)
-- **2026-07-24** [handoff_layer3_profiles](../qa/handoff_layer3_profiles_2026-07-24.md) — ★**현재 시작점**. 계층3 정제완료+업종 프로파일+IS추출갭 복구
+- **2026-07-26** [handoff_layer2_notes](../qa/handoff_layer2_notes_2026-07-26.md) — ★**현재 시작점**. 계층2 주석 전사 완료(note_lines 2.1억행)+계층3 note→D&A 매핑 착수점. ★D&A "주석에 없음" 진단 정정
+- 2026-07-24 [handoff_layer3_profiles](../qa/handoff_layer3_profiles_2026-07-24.md) — 계층3 정제완료+업종 프로파일+IS추출갭 복구
 - 2026-07-23 [handoff_layer3_skeleton](../qa/handoff_layer3_skeleton_2026-07-23.md) — 계층3 골격완성(L3-1~4 baseline)
 - 2026-07-22 [handoff_layer2_complete](../qa/handoff_layer2_complete_2026-07-22.md) — 계층2 전량적재 완료·계층3 방향확정
 - 2026-07-21 [handoff_rearchitecture](../qa/handoff_rearchitecture_2026-07-21.md) — 계층2 엔진·검증 완료

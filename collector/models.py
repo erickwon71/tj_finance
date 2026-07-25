@@ -1606,6 +1606,20 @@ class StdFinancialV3(Base):
     cfi                 = Column(BigInteger, nullable=True)
     cff                 = Column(BigInteger, nullable=True)
     dividends_paid      = Column(BigInteger, nullable=True)
+    # ── enrichment (v3-native, 2026-07-25: std_v2 컬럼 파리티) ──
+    # capex/fcf/net_debt = combine 이 run_rules(rule_additive_capex·derive_fcf·derive_net_debt)로 산출.
+    # depreciation/amortization/da_total/ebitda = cf_da 백필(주석+CF본문 하이브리드, ~34%) 후 UPDATE.
+    # shares_out = shares 백필, data_quality = DQ 백필. ★재빌드가 행을 delete-insert 하므로
+    # 백필은 재빌드 후 재실행 필요(v2 동일 패턴).
+    capex               = Column(BigInteger, nullable=True)
+    depreciation        = Column(BigInteger, nullable=True)
+    amortization        = Column(BigInteger, nullable=True)
+    da_total            = Column(BigInteger, nullable=True)
+    ebitda              = Column(BigInteger, nullable=True)
+    fcf                 = Column(BigInteger, nullable=True)
+    net_debt            = Column(BigInteger, nullable=True)
+    shares_out          = Column(BigInteger, nullable=True)
+    data_quality        = Column(SmallInteger, nullable=True)
 
     # ── provenance ──
     source_rcepts   = Column(JSONB, nullable=True, comment="{statement: rcept} 정본 filing(statement 단위)")

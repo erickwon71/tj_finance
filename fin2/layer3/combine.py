@@ -28,7 +28,9 @@ from functools import lru_cache
 from sqlalchemy import text
 
 from parser.common.account_mapper import get_mapper
-from fin2.standardize.rules import DIRECT_MAP, CONSUMED_CANON
+from fin2.standardize.rules import (DIRECT_MAP, CONSUMED_CANON, StdContext,
+                                    rule_additive_capex, rule_derive_fcf,
+                                    rule_derive_net_debt)
 from fin2.layer3.industry_profiles import (
     apply_revenue_profile, norm as _norm_label, NO_REVENUE_CORPS,
 )
@@ -496,4 +498,27 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
         col.pop("revenue", None)
         if prov.get("industry_lines"):
             prov["industry_lines"] = None
+    # enrichment (v3-native, 2026-07-25): capex/fcf/net_debt = report_lines-native, reusing
+    # the v2 standardize rules against the confirmed canonicals. Additive-only — writes new
+    # columns without mutating the existing DIRECT_MAP cols (debt/lease additive rules are NOT
+    # run here to avoid perturbing validated columns; net_debt uses v3's own debt/cash).
+    # D&A·EBITDA·shares_out·data_quality come from separate backfills (cf_da·shares·DQ), not here.
+    _apply_enrichment(corp, fy, period, basis, confirmed, col)
     return col, conflicts, prov
+
+
+def _apply_enrichment(corp, fy, period, basis, confirmed, col):
+    """Compute capex/fcf/net_debt in-place on `col` by reusing the v2 standardize rules on
+    the confirmed canonicals. Additive: only sets the three new keys, never mutates the
+    existing DIRECT_MAP cols. net_debt derives from v3's own short/long debt + cash (v3 debt
+    diverges from v2 for some firms — a pre-existing base-mapping matter tracked for G2, not
+    fixed here). D&A·EBITDA·shares_out·data_quality come from separate backfills."""
+    ctx = StdContext(corp_code=corp, fiscal_year=fy, fiscal_period=period,
+                     basis=basis, canon=dict(confirmed), col=dict(col))
+    rule_additive_capex(ctx)     # capex = -(|유형자산취득| + |무형자산취득|)  [cf.capex canonicals]
+    rule_derive_fcf(ctx)         # fcf = cfo - |capex|
+    rule_derive_net_debt(ctx)    # net_debt = (short+long debt) - cash  [v3's own values]
+    for k in ("capex", "fcf", "net_debt"):
+        v = ctx.col.get(k)
+        if v is not None:
+            col[k] = v

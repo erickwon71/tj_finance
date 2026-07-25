@@ -21,7 +21,10 @@ _VALUE_COLS = (
     "total_liabilities current_liabilities short_term_debt long_term_debt "
     "total_equity controlling_equity retained_earnings trade_payables "
     "revenue cogs gross_profit sga rd_expense operating_income interest_expense "
-    "ebt tax_expense net_income controlling_ni cfo cfi cff dividends_paid"
+    "ebt tax_expense net_income controlling_ni cfo cfi cff dividends_paid "
+    # enrichment (v3-native, 2026-07-25): combine 이 산출(capex/fcf/net_debt).
+    # da/depreciation/amortization/ebitda/shares_out/data_quality 는 백필 UPDATE(여기 없음).
+    "capex fcf net_debt"
 ).split()
 
 

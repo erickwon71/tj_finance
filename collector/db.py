@@ -504,6 +504,16 @@ def _run_migrations() -> None:
         GROUP BY f.corp_code, ss.fiscal_year, ss.fiscal_period, ss.basis,
                  f.canonical_account, ss.source_rcept_no
         """),
+
+        # 2026-07: 계층2 주석(note) 전사 별도 테이블. report_lines 구조 트윈(모델 중복 회피 —
+        # LIKE INCLUDING ALL 로 컬럼·인덱스 복제). 주석 볼륨(본문의 ~4.7배·수억 행)을 본문 조회에서
+        # 격리. statement='note' 행은 store_note_lines 가 여기에 적재. create_all 뒤(report_lines 존재).
+        ("2026_07_note_lines_table",
+         "CREATE TABLE IF NOT EXISTS note_lines (LIKE report_lines INCLUDING ALL)"),
+        ("2026_07_note_lines_seq",
+         "CREATE SEQUENCE IF NOT EXISTS note_lines_id_seq OWNED BY note_lines.id"),
+        ("2026_07_note_lines_seq_default",
+         "ALTER TABLE note_lines ALTER COLUMN id SET DEFAULT nextval('note_lines_id_seq')"),
     ]
 
     with engine.begin() as conn:

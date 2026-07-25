@@ -667,17 +667,53 @@ def extract_report_lines(
 def store_report_lines(session, rcept_no: str, lines: list[ReportLineRow]) -> int:
     """rcept_no 단위 delete-then-insert(재추출 재현성). fact_v2 처럼 셀 단위 upsert 가 아님 —
     report_lines 는 값판단이 없어 충돌 개념 자체가 없고, 재추출은 그 보고서의 이전 tree 를
-    통째로 교체하는 게 자연스럽다."""
+    통째로 교체하는 게 자연스럽다.
+
+    ★본문(BS/IS/CF/SCE)만 적재한다. statement='note' 는 별도 테이블 note_lines 로
+    (`store_note_lines`) — 주석 볼륨(본문의 ~4.7배)을 본문 조회에서 격리(2026-07-25)."""
     from sqlalchemy import delete, insert
     from collector.models import ReportLine
 
+    body = [l for l in lines if l.statement != "note"]
     session.execute(delete(ReportLine).where(ReportLine.rcept_no == rcept_no))
-    if not lines:
+    if not body:
         return 0
 
-    rows = [l.as_row() for l in lines]
+    rows = [l.as_row() for l in body]
     now = datetime.utcnow()
     for r in rows:
         r["parsed_at"] = now
     session.execute(insert(ReportLine).values(rows))
+    return len(rows)
+
+
+# note_lines = report_lines 구조 트윈(별도 테이블, collector/db 마이그레이션 생성). 모델 중복을
+# 피하려 Core 로 raw insert 한다(컬럼명 = ReportLineRow.as_row() + parsed_at).
+_NOTE_INSERT_COLS = (
+    "corp_code rcept_no report_fiscal_year report_fiscal_period statement basis "
+    "section_path row_order depth node_role table_seq table_title label_raw col_index "
+    "col_label context_fiscal_year period_kind is_cumulative value_won adecimal "
+    "unit_source source_ref context_raw parsed_at"
+).split()
+
+
+def store_note_lines(session, rcept_no: str, lines: list[ReportLineRow]) -> int:
+    """statement='note' 행을 note_lines 로 delete-then-insert(rcept 단위, 재현성).
+    본문과 동일 원칙 — 값판단 없음. mixed lines 를 넘겨도 note 만 걸러 적재한다."""
+    from sqlalchemy import text as _text
+
+    notes = [l for l in lines if l.statement == "note"]
+    session.execute(_text("DELETE FROM note_lines WHERE rcept_no = :r"), {"r": rcept_no})
+    if not notes:
+        return 0
+
+    now = datetime.utcnow()
+    rows = []
+    for l in notes:
+        d = l.as_row()
+        d["parsed_at"] = now
+        rows.append(d)
+    cols = ", ".join(_NOTE_INSERT_COLS)
+    ph = ", ".join(f":{c}" for c in _NOTE_INSERT_COLS)
+    session.execute(_text(f"INSERT INTO note_lines ({cols}) VALUES ({ph})"), rows)
     return len(rows)

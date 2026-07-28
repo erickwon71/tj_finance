@@ -69,6 +69,9 @@ def classify_da_label(label: str) -> Optional[str]:
 
     has_dep = "감가상각" in s
     has_amort = ("무형자산상각" in s) or ("무형자산감가상각" in s)
+    # ★'감가' 없이 '<자산종류>상각비' 로만 쓰는 기업이 많다(실측: 사용권자산상각비 ·
+    #   투자부동산상각비). '감가상각' 만 찾으면 통째로 누락된다 — 원문 대조로 확인한 결함.
+    has_amortize = "상각" in s
 
     # ① 한 줄에 둘 다 — '감가상각,무형자산상각'
     if has_dep and has_amort and "무형자산감가상각" not in s:
@@ -76,14 +79,17 @@ def classify_da_label(label: str) -> Optional[str]:
     # ② 무형자산 상각 (무형자산감가상각비 포함 — 표기만 '감가상각'일 뿐 무형이다)
     if has_amort:
         return AMORTIZATION
-    # ③ 사용권자산 감가상각 — 유형과 분리돼 나오므로 별도 버킷(합산 대상)
-    if has_dep and "사용권" in s:
+    # ③ 사용권자산 — '감가상각비,사용권자산' / '사용권자산상각비' 양쪽 다. 합산 대상.
+    if has_amortize and "사용권" in s:
         return DEPRECIATION_ROU
-    # ④ 그 외 감가상각
+    # ④ 투자부동산 상각 — 유형자산 성격의 감가상각.
+    if has_amortize and "투자부동산" in s:
+        return DEPRECIATION
+    # ⑤ 그 외 감가상각
     if has_dep:
         return DEPRECIATION
-    # ⑤ '무형자산상각비' 없이 '상각비'만 쓰는 소수 표기 — 무형으로 본다
-    if "무형" in s and "상각" in s:
+    # ⑥ '무형자산상각비' 없이 '무형…상각' 으로 쓰는 소수 표기
+    if "무형" in s and has_amortize:
         return AMORTIZATION
     return None
 

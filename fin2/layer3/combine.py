@@ -506,11 +506,16 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     # run here to avoid perturbing validated columns; net_debt uses v3's own debt/cash).
     # D&A·EBITDA are supplied v3-natively from note_lines (2026-07-28) — see _apply_enrichment.
     # shares_out·data_quality still come from separate backfills.
-    _apply_enrichment(session, corp, fy, period, basis, confirmed, col)
+    # ★ note_lines must be read with the *effective* basis: a non-consolidating corp files only
+    #   별도, and its notes are stored as basis='separate' even though this row is 'consolidated'.
+    #   Ignoring the fallback silently loses D&A for every such corp (실측 미채움의 주원인).
+    eff_basis = (("separate" if basis == "consolidated" else "consolidated")
+                 if prov["basis_fallback"] else basis)
+    _apply_enrichment(session, corp, fy, period, basis, confirmed, col, eff_basis)
     return col, conflicts, prov
 
 
-def _apply_enrichment(session, corp, fy, period, basis, confirmed, col):
+def _apply_enrichment(session, corp, fy, period, basis, confirmed, col, note_basis=None):
     """Compute capex/fcf/net_debt/D&A/EBITDA in-place on `col` by reusing the v2 standardize
     rules on the confirmed canonicals. Additive: only sets the new keys, never mutates the
     existing DIRECT_MAP cols. net_debt derives from v3's own short/long debt + cash (v3 debt
@@ -530,7 +535,8 @@ def _apply_enrichment(session, corp, fy, period, basis, confirmed, col):
         try:
             rcept = select_canonical_rcept(session, corp, fy, period)
             if rcept:
-                canon.update(note_da_canonicals(session, rcept, basis, period))
+                canon.update(note_da_canonicals(
+                    session, rcept, note_basis or basis, period))
         except Exception:  # noqa: BLE001 — 주석 소스 실패가 표준화 전체를 막으면 안 됨
             pass
 

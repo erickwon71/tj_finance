@@ -196,6 +196,24 @@ def _sync_cf_da(corps: list[str]) -> None:
         logger.warning(f"[collect] ④-2 D&A 복원(비용성격) 실패(비치명적): {exc}")
 
 
+def _sync_note_lines(corps: list[str]) -> None:
+    """④-3 주석(note) 증분 적재 — 신규 보고서의 주석 표를 note_lines(계층2)로 전사.
+
+    이게 없으면 백필을 끝내도 신규 공시분 주석이 영영 적재되지 않는다(2026-07-28 배선).
+    계층3 의 주석 파생 항목(D&A·R&D·리스·부문)이 전부 이 테이블을 읽으므로 데일리로 따라가야 한다.
+    비치명(수집 계속). 벌크 백필과 달리 인덱스는 그대로 두고 증분 INSERT 만 한다."""
+    if not corps:
+        return
+    try:
+        from collector.note_lines_sync import sync_note_lines
+        res = sync_note_lines(corps=corps)
+        if res["filings"]:
+            logger.info(f"[collect] ④-3 주석 전사 — 기업 {res['corps']} · "
+                        f"보고서 {res['filings']:,} · 행 {res['rows']:,}(실패 {res['errors']})")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ④-3 주석 전사 실패(비치명적): {exc}")
+
+
 def _sync_biz_metrics(corps: list[str]) -> None:
     """B4+Phase3 — 새로 수집된 기업의 사업보고서 본문 생산능력/생산실적/가동률 **및 부문·수출/내수
     매출실적**(metric='sales', channel) → biz_metrics. 매출 파서가 parse_biz_metrics 에 통합돼
@@ -334,6 +352,7 @@ def main() -> None:
         logger.success(f"[collect] 재개 완료 — std_v2 {agg.get('s', 0):,} · 이산분기 {agg.get('q', 0):,} · "
                        f"달력 {agg.get('c', 0):,} · 타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
         _sync_cf_da(affected)
+        _sync_note_lines(affected)
         _verify_and_log(agg, args)
         _sync_biz_metrics(affected)
         _sync_order_backlog(affected)
@@ -394,6 +413,9 @@ def main() -> None:
 
     # ④-2 D&A note 복원(B5) — 신규 기업의 연결 CF D&A 갭을 채워 EBITDA 재퇴행 방지.
     _sync_cf_da(affected)
+
+    # ④-3 주석 전사 — 신규 보고서의 주석 표 → note_lines(계층2).
+    _sync_note_lines(affected)
 
     # ⑤ 수집 후 DQ 게이트 — 새로 표준화된 기업만 Gate B(보고서==DB)+항등식 재검, corp_verify_status 적재.
     _verify_and_log(agg, args)

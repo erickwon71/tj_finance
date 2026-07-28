@@ -514,6 +514,27 @@ def _run_migrations() -> None:
          "CREATE SEQUENCE IF NOT EXISTS note_lines_id_seq OWNED BY note_lines.id"),
         ("2026_07_note_lines_seq_default",
          "ALTER TABLE note_lines ALTER COLUMN id SET DEFAULT nextval('note_lines_id_seq')"),
+
+        # 2026-07-28: 위 LIKE INCLUDING ALL 이 **본문용 인덱스 6개를 그대로 복제**하는데
+        # 주석에는 맞지 않는 것이 섞여 있다. 아래로 교정한다(신규 DB·기존 DB 모두 동일 상태로 수렴).
+        #   · context_fiscal_year : 주석은 연도를 주장하지 않아 이 컬럼이 **전량 NULL**(실측 non-null 0).
+        #                           btree 는 NULL 도 저장하므로 수억 개의 NULL 엔트리를 만들고 유지한다.
+        #   · corp_code           : 아래 복합 인덱스의 접두라 중복.
+        #   · report_fiscal_year  : 카디널리티 ~12 라 단독으로는 플래너가 거의 쓰지 않는다.
+        # 유지: note_lines_pkey · note_lines_rcept_no_idx
+        #   ★ rcept_no 는 store_note_lines 의 filing 단위 DELETE 가 쓰므로 절대 제거 금지.
+        ("2026_07_note_lines_drop_ctx_fy_idx",
+         "DROP INDEX IF EXISTS note_lines_context_fiscal_year_idx"),
+        ("2026_07_note_lines_drop_corp_idx",
+         "DROP INDEX IF EXISTS note_lines_corp_code_idx"),
+        ("2026_07_note_lines_drop_fy_idx",
+         "DROP INDEX IF EXISTS note_lines_report_fiscal_year_idx"),
+        # statement 는 note_lines 에서 상수('note')라 키에서 뺀다(원본 4컬럼 → 3컬럼).
+        ("2026_07_note_lines_drop_old_lookup_idx",
+         "DROP INDEX IF EXISTS note_lines_corp_code_report_fiscal_year_statement_basis_idx"),
+        ("2026_07_note_lines_corp_fy_basis_idx",
+         "CREATE INDEX IF NOT EXISTS note_lines_corp_fy_basis_idx "
+         "ON note_lines (corp_code, report_fiscal_year, basis)"),
     ]
 
     with engine.begin() as conn:

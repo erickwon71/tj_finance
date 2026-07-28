@@ -106,11 +106,19 @@ def note_da_canonicals(
 
             out: dict[str, int] = {}
             if acc.get(DA_COMBINED):
-                # 결합 표기('감가상각,무형자산상각')는 그 자체가 D&A 합계다.
-                out[DA_COMBINED] = acc[DA_COMBINED]
-            for k in (DEPRECIATION, DEPRECIATION_ROU, AMORTIZATION):
-                if acc.get(k):
-                    out[k] = acc[k]
+                # 결합 표기('감가상각비와 무형자산상각비')는 그 자체가 D&A 합계다.
+                # ★단, 결합 행과 **나란히** 별도 행이 오는 서식이 흔하다(실측 7건):
+                #     감가상각비와 무형자산상각비 26,573 + 사용권자산상각비 1,243
+                #   이때 세부 버킷을 따로 내보내면 rule_additive_da 가 _DA_TOTAL_CANON 을
+                #   우선(da_direct)하면서 별도 행을 **통째로 버린다**. → 여기서 합쳐 넘긴다.
+                out[DA_COMBINED] = (acc[DA_COMBINED]
+                                    + acc.get(DEPRECIATION, 0)
+                                    + acc.get(DEPRECIATION_ROU, 0)
+                                    + acc.get(AMORTIZATION, 0))
+            else:
+                for k in (DEPRECIATION, DEPRECIATION_ROU, AMORTIZATION):
+                    if acc.get(k):
+                        out[k] = acc[k]
             if out:
                 return out
     return {}

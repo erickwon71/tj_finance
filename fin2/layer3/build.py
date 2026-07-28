@@ -22,9 +22,12 @@ _VALUE_COLS = (
     "total_equity controlling_equity retained_earnings trade_payables "
     "revenue cogs gross_profit sga rd_expense operating_income interest_expense "
     "ebt tax_expense net_income controlling_ni cfo cfi cff dividends_paid "
-    # enrichment (v3-native, 2026-07-25): combine 이 산출(capex/fcf/net_debt).
-    # da/depreciation/amortization/ebitda/shares_out/data_quality 는 백필 UPDATE(여기 없음).
-    "capex fcf net_debt"
+    # enrichment (v3-native): combine 이 산출.
+    #   · capex/fcf/net_debt            (2026-07-25)
+    #   · depreciation/amortization/da_total/ebitda (2026-07-28, 주석 소스 — fin2/layer3/note_da.py)
+    # shares_out/data_quality 는 여전히 별도 백필 UPDATE(여기 없음).
+    # ★이 목록에 없는 컬럼은 combine 이 값을 내도 **테이블에 안 들어간다**.
+    "capex fcf net_debt depreciation amortization da_total ebitda"
 ).split()
 
 

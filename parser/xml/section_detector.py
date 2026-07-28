@@ -226,6 +226,50 @@ def assign_tables_to_dart_sections(
 # 주석 섹션 안의 sub-heading. 이 번호 제목이 주석 정체성(로케이터)이다.
 _NUMBERED_NOTE_TITLE = re.compile(r"^\s*\d+\s*[.．]\s*\S")
 
+# ── <P> 주석 헤딩 ────────────────────────────────────────────────────────────
+# 전체 기업의 ~57.5% 는 개별 주석 제목이 <TITLE> 이 아니라 평문 <P> 로만 존재한다
+# (DART XML 에는 주석 단위 구조 표시가 없다 — AASSOCNOTE 는 목차 수준 전용).
+# 이 경우 <TITLE> 만 추적하면 모든 주석 행이 상위 '3. 연결재무제표 주석' 하나로
+# 붕괴한다. (2026-07-27 실측: 붕괴 57.5%, 정상 23%)
+#
+# <P> 헤딩은 두 형태로 나타난다:
+#   ① 단독      : '2. 연결재무제표 작성기준 및 중요한 회계정책'
+#   ② 본문 접합 : '1. 회사의 개요 (1) 지배기업의 개요 주식회사 …' (len 316)
+# ② 때문에 <TITLE> 처럼 "전체가 짧을 것"을 요구할 수 없고 **접두 제목만** 뽑아야 한다.
+# 제목은 하위항목 표지 '(1)' 이나 본문 상투어에서 끝난다고 본다.
+_NOTE_HEADING_PREFIX = re.compile(
+    r"^\s*(\d{1,2})\s*[.．]\s*(?!\d)"          # 번호. — '1.1.5' 같은 다단 번호는 제외
+    r"(.{2,40}?)\s*"                           # 제목(접두)
+    r"(?=[(（]\s*[0-9①-⑮가-힣]\s*[)）]|보고기간|당기말|전기말|당기와|주식회사|$)"
+)
+
+
+# 폴백: 제목이 종결 표지 없이 본문과 붙은 경우('17. 리스 리스와 관련하여 재무상태표에…').
+# 이때 제목 경계는 확정할 수 없지만 **주석 번호**는 확실하며, 계층3 의 표-주석 귀속에는
+# 번호가 결정적이다(제목은 이후 topic 정규화 단계에서 다룬다). 그래서 번호를 살리고
+# 제목은 앞쪽 일부만 잠정 채택한다.
+_NOTE_HEADING_LOOSE = re.compile(r"^\s*(\d{1,2})\s*[.．]\s*(?!\d)([가-힣][^\n]{1,60})")
+_TITLE_TOKEN_CAP = 6          # 잠정 제목으로 취할 최대 토큰 수
+
+
+def _extract_note_heading(text: str) -> Optional[tuple[int, str]]:
+    """평문에서 (주석번호, 제목) 접두를 뽑는다. 주석 헤딩이 아니면 None."""
+    m = _NOTE_HEADING_PREFIX.match(text)
+    if m:
+        title = m.group(2).strip(" .·-—")
+        # 숫자 덩어리가 섞이면 표 셀에서 흘러든 텍스트일 확률이 높다.
+        if title and not re.search(r"\d{3}", title):
+            return int(m.group(1)), title
+
+    loose = _NOTE_HEADING_LOOSE.match(text)
+    if not loose:
+        return None
+    body = loose.group(2).strip()
+    if re.search(r"\d{3}", body.split()[0] if body.split() else ""):
+        return None
+    title = " ".join(body.split()[:_TITLE_TOKEN_CAP])[:40].strip(" .·-—")
+    return (int(loose.group(1)), title) if title else None
+
 
 def assign_note_tables_with_titles(
     root: etree._Element,
@@ -243,6 +287,7 @@ def assign_note_tables_with_titles(
     result: dict[str, list[tuple[etree._Element, Optional[str]]]] = {}
     current: Optional[str] = None
     note_title: Optional[str] = None
+    note_no: int = 0                             # 관장 주석 번호(단조 증가 가드용)
 
     for el in root.iter():
         tag = el.tag.upper() if isinstance(el.tag, str) else ""
@@ -253,10 +298,23 @@ def assign_note_tables_with_titles(
                 if new_current != current:
                     current = new_current
                     note_title = None            # 섹션 경계 → 번호제목 초기화
+                    note_no = 0                  # 연결/별도 주석은 각각 1번부터 재시작
         elif tag == "TITLE" and current in DART_NOTE_SECTIONS:
             txt = " ".join("".join(el.itertext()).split())
             if _NUMBERED_NOTE_TITLE.match(txt) and len(txt) < 60:
                 note_title = txt[:255]           # 개별 주석 번호 제목 갱신
+                head = _extract_note_heading(txt)
+                if head is not None:
+                    note_no = head[0]            # <P> 가드와 번호 기준을 공유
+        elif tag == "P" and current in DART_NOTE_SECTIONS:
+            # <TITLE> 우선. <P> 는 <TITLE> 이 주석 제목을 주지 못한 보고서를 메운다.
+            txt = " ".join("".join(el.itertext()).split())
+            head = _extract_note_heading(txt)
+            # 단조 증가 가드: 주석 번호는 순차적이므로 현재 번호보다 큰 것만 채택한다.
+            # 주석 본문 안의 '1. …' 같은 열거 항목이 헤딩으로 오인되는 것을 막는 핵심 장치.
+            if head is not None and head[0] > note_no:
+                note_no, name = head
+                note_title = f"{note_no}. {name}"[:255]
         elif tag == "TABLE" and current in DART_NOTE_SECTIONS:
             result.setdefault(current, []).append((el, note_title))
 

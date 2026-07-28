@@ -57,6 +57,11 @@ def _targets(session, args) -> list:
         ORDER BY dt.rcept_no
     """
     rows = session.execute(text(sql)).fetchall()
+    if getattr(args, "corp", None):
+        # 전량 백필 전에 소수 기업으로 end-to-end 확인하기 위한 필터
+        # (예: 주석 section_path 헤딩 복원 검증).
+        wanted = {c.strip() for c in args.corp.split(",") if c.strip()}
+        rows = [r for r in rows if r.corp_code in wanted]
     if args.shard:
         a, n = (int(x) for x in args.shard.split("/"))
         rows = [r for i, r in enumerate(rows) if i % n == a]
@@ -133,6 +138,7 @@ def _self_disable_if_done(label: str = "com.tjfinance.layer2load") -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--shard", help="a/n 분할(정렬 후 i %% n == a)")
+    ap.add_argument("--corp", help="쉼표구분 corp_code 만 처리(전량 백필 전 표적 검증용)")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--recheck", action="store_true", help="done 도 재처리")
     ap.add_argument("--notes", action="store_true",

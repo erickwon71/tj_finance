@@ -523,8 +523,14 @@ def _emit_note_lines(
                         value_won=amount,
                         adecimal=adecimal,
                         unit_source="declared",
-                        source_ref=f"note:{basis}/{row.account_name[:80]}"[:180],
-                        context_raw=f"note:{basis}:c{col_idx}",
+                        # ★ source_ref / context_raw 는 저장하지 않는다(2026-07-28).
+                        #   각각 f"note:{basis}/{label_raw[:80]}" · f"note:{basis}:c{col_index}" 로
+                        #   **같은 행의 basis·label_raw·col_index 에서 100% 복원**되는 파생 문자열이라
+                        #   정보를 하나도 더하지 않으면서 2.16억 행 기준 약 11.7GB(행당 54B)를 먹었다.
+                        #   NULL 은 널비트맵 1비트만 쓰므로 그대로 절감된다.
+                        #   (본문 report_lines 경로는 무변경 — 주석 경로만 해당)
+                        source_ref=None,
+                        context_raw=None,
                         row_order=row.row_order,
                         depth=row.raw_indent,
                         node_role=node_roles.get(id(row)),

@@ -47,6 +47,21 @@ _DEP_CANON = ("cf.depreciation", "is.depreciation", "note.depreciation",
 _AMORT_CANON = ("cf.amortization", "is.amortization", "note.amortization")
 _DA_TOTAL_CANON = ("cf.da_total", "note.da_total")
 
+# ── canonical 의 값 성격 선언 (2026-07-28) ──────────────────────────────────
+# 대부분의 canonical 은 **단일값**이다 — 한 보고서에 매출액/자산총계는 하나뿐이고,
+# 값이 여러 개면 매핑이 잘못된 것이므로 조합 단계(_resolve)가 충돌로 잡아 보류한다.
+#
+# 그러나 아래 계열은 **가산(additive)** 이다 — 한 canonical 에 여러 행이 정상적으로
+# 대응한다(cf.depreciation ← '감가상각비' + '투자부동산감가상각비'). 이걸 단일값으로
+# 취급하면 충돌 판정에 걸려 canonical 이 통째로 폐기된다.
+#   실측(연결 전 기업): FY2024 본문출처 541건 중 94건(17.4%)·1조 5,247억원,
+#                       FY2025 520건 중 93건(17.9%)·1조 4,463억원이 이렇게 사라졌다.
+# → 성격을 여기에 **선언**하고 _resolve 가 이를 존중한다(암묵적 예외를 두지 않는다).
+#
+# ⚠ _CAPEX_CANON 도 위 주석대로 성격상 가산이지만, 현재 값이 검증된 상태라
+#   규모 측정 없이 바꾸지 않는다. 측정 후 편입 여부를 판단할 것.
+ADDITIVE_CANON = frozenset(_DEP_CANON + _AMORT_CANON + _DA_TOTAL_CANON)
+
 # std_financials_v2 값 컬럼(항상 포함 → 기존 잘못된 값 NULL 로 정리)
 VALUE_COLS = (
     set(DIRECT_MAP.values())

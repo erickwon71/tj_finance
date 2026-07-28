@@ -31,8 +31,7 @@ from parser.common.account_mapper import get_mapper
 from fin2.standardize.rules import (DIRECT_MAP, CONSUMED_CANON, StdContext,
                                     rule_additive_capex, rule_derive_fcf,
                                     rule_derive_net_debt, rule_additive_da,
-                                    rule_derive_ebitda,
-                                    _DEP_CANON, _AMORT_CANON, _DA_TOTAL_CANON)
+                                    rule_derive_ebitda, ADDITIVE_CANON)
 from fin2.layer3.note_da import note_da_canonicals
 from fin2.layer3.industry_profiles import (
     apply_revenue_profile, norm as _norm_label, NO_REVENUE_CORPS,
@@ -298,6 +297,24 @@ def _resolve(cands: dict[str, list[dict]]):
     confirmed: dict[str, int] = {}
     conflicts: dict[str, list[dict]] = {}
     for c, rows in cands.items():
+        # 가산 계열(ADDITIVE_CANON)은 한 canonical 에 여러 행이 정상적으로 대응한다
+        # (cf.depreciation ← '감가상각비' + '투자부동산감가상각비'). 단일값 전제로 충돌
+        # 판정하면 canonical 이 통째로 폐기되므로, 선언된 계열만 합산한다.
+        # 성격 선언은 fin2/standardize/rules.py ADDITIVE_CANON 참조.
+        if c in ADDITIVE_CANON:
+            total, seen = 0, set()
+            for r in rows:
+                v = r.get("value")
+                if v is None:
+                    continue
+                key = ((r.get("label_raw") or "").strip(), v)
+                if key in seen:      # 정정 병합으로 같은 셀이 중복될 수 있다
+                    continue
+                seen.add(key)
+                total += abs(v)
+            if total:
+                confirmed[c] = total
+            continue
         vals = {r["value"] for r in rows}
         if len(vals) == 1:
             confirmed[c] = next(iter(vals))
@@ -531,10 +548,6 @@ def _apply_enrichment(session, corp, fy, period, basis, confirmed, col, note_bas
     canonical families and cf.* is listed ahead of note.*.
     """
     canon = dict(confirmed)
-    # ★D&A 는 가산 계열이라 _resolve 의 단일값 충돌 판정에 걸려 통째로 버려진다.
-    #   resolve 이전 후보를 합산해 덮어쓴다(_sum_da_candidates 주석 참조).
-    if cands:
-        canon.update(_sum_da_candidates(cands))
     # 주석 D&A 는 FY 만(비용의 성격별 분류 주석은 연간 총액 — interim 에 쓰면 누적/분기가 깨진다).
     # 본문에서 이미 D&A 를 확보했으면 주석을 덧대지 않는다(같은 비용 이중 계상 방지).
     if period == "FY" and not _has_body_da(canon):
@@ -568,30 +581,3 @@ _BODY_DA_CANON = ("cf.depreciation", "cf.amortization", "cf.da_total",
 def _has_body_da(canon: dict) -> bool:
     return any(canon.get(c) for c in _BODY_DA_CANON)
 
-
-# D&A 는 **가산 계열** canonical 이다 — 한 canonical 에 여러 행이 정상적으로 대응한다
-# (예: cf.depreciation ← '감가상각비' + '투자부동산감가상각비').
-# 그런데 _resolve 는 revenue·total_assets 같은 **단일값** canonical 을 전제로 만들어져
-# 값이 여러 개면 충돌로 보고 **통째로 버린다**. 그 결과 본문 D&A 가 통으로 사라졌다.
-# 실측(FY2024 연결 전수, 본문 출처 541건): 누락 94건(17.4%) · 누락 총액 1조 5,247억원.
-# _resolve(검증된 핵심 로직)는 건드리지 않고, D&A 계열만 **resolve 이전 후보를 합산**한다.
-_DA_FAMILY = tuple(dict.fromkeys(_DEP_CANON + _AMORT_CANON + _DA_TOTAL_CANON))
-
-
-def _sum_da_candidates(cands: dict) -> dict[str, int]:
-    """D&A canonical 별로 후보 행을 합산. 병합 중복은 (라벨, 값)으로 제거한다."""
-    out: dict[str, int] = {}
-    for canon in _DA_FAMILY:
-        total, seen = 0, set()
-        for r in cands.get(canon) or []:
-            v = r.get("value")
-            if v is None:
-                continue
-            key = ((r.get("label_raw") or "").strip(), v)
-            if key in seen:
-                continue
-            seen.add(key)
-            total += abs(v)
-        if total:
-            out[canon] = total
-    return out

@@ -30,10 +30,13 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+# ★이름은 기존 표준화 규칙(fin2/standardize/rules.py 의 _DEP_CANON/_AMORT_CANON/
+#   _DA_TOTAL_CANON)이 이미 기대하는 canonical 어휘에 맞춘다. 새 이름을 만들면
+#   rule_additive_da 가 못 알아본다.
 DEPRECIATION = "note.depreciation"          # 유형자산 등 감가상각비
-DEPRECIATION_ROU = "note.depreciation_rou"  # 사용권자산 감가상각비(합산 대상)
+DEPRECIATION_ROU = "note.rou_depreciation"  # 사용권자산 감가상각비(합산 대상)
 AMORTIZATION = "note.amortization"          # 무형자산상각비
-DA_COMBINED = "note.da_combined"            # 감가상각+무형자산상각 결합 표기
+DA_COMBINED = "note.da_total"               # 감가상각+무형자산상각 결합 = D&A 합계 그 자체
 
 # 라벨에 이 중 하나라도 있으면 D&A 후보에서 제외한다.
 _EXCLUDE = (

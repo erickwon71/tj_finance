@@ -30,7 +30,9 @@ from sqlalchemy import text
 from parser.common.account_mapper import get_mapper
 from fin2.standardize.rules import (DIRECT_MAP, CONSUMED_CANON, StdContext,
                                     rule_additive_capex, rule_derive_fcf,
-                                    rule_derive_net_debt)
+                                    rule_derive_net_debt, rule_additive_da,
+                                    rule_derive_ebitda)
+from fin2.layer3.note_da import note_da_canonicals
 from fin2.layer3.industry_profiles import (
     apply_revenue_profile, norm as _norm_label, NO_REVENUE_CORPS,
 )
@@ -502,23 +504,54 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     # the v2 standardize rules against the confirmed canonicals. Additive-only — writes new
     # columns without mutating the existing DIRECT_MAP cols (debt/lease additive rules are NOT
     # run here to avoid perturbing validated columns; net_debt uses v3's own debt/cash).
-    # D&A·EBITDA·shares_out·data_quality come from separate backfills (cf_da·shares·DQ), not here.
-    _apply_enrichment(corp, fy, period, basis, confirmed, col)
+    # D&A·EBITDA are supplied v3-natively from note_lines (2026-07-28) — see _apply_enrichment.
+    # shares_out·data_quality still come from separate backfills.
+    _apply_enrichment(session, corp, fy, period, basis, confirmed, col)
     return col, conflicts, prov
 
 
-def _apply_enrichment(corp, fy, period, basis, confirmed, col):
-    """Compute capex/fcf/net_debt in-place on `col` by reusing the v2 standardize rules on
-    the confirmed canonicals. Additive: only sets the three new keys, never mutates the
+def _apply_enrichment(session, corp, fy, period, basis, confirmed, col):
+    """Compute capex/fcf/net_debt/D&A/EBITDA in-place on `col` by reusing the v2 standardize
+    rules on the confirmed canonicals. Additive: only sets the new keys, never mutates the
     existing DIRECT_MAP cols. net_debt derives from v3's own short/long debt + cash (v3 debt
     diverges from v2 for some firms — a pre-existing base-mapping matter tracked for G2, not
-    fixed here). D&A·EBITDA·shares_out·data_quality come from separate backfills."""
+    fixed here). shares_out·data_quality still come from separate backfills.
+
+    D&A (2026-07-28): the body CF has no D&A for many firms, so notes are the real source.
+    note_da_canonicals() runs the layer-3 note interpretation chain (topic→period→label) and
+    returns note.* canonicals, which feed the *existing* rule_additive_da — no bespoke D&A
+    extractor. Notes only supplement: body canonicals win, since rule_additive_da sums the
+    canonical families and cf.* is listed ahead of note.*.
+    """
+    canon = dict(confirmed)
+    # 주석 D&A 는 FY 만(비용의 성격별 분류 주석은 연간 총액 — interim 에 쓰면 누적/분기가 깨진다).
+    # 본문에서 이미 D&A 를 확보했으면 주석을 덧대지 않는다(같은 비용 이중 계상 방지).
+    if period == "FY" and not _has_body_da(canon):
+        try:
+            rcept = select_canonical_rcept(session, corp, fy, period)
+            if rcept:
+                canon.update(note_da_canonicals(session, rcept, basis, period))
+        except Exception:  # noqa: BLE001 — 주석 소스 실패가 표준화 전체를 막으면 안 됨
+            pass
+
     ctx = StdContext(corp_code=corp, fiscal_year=fy, fiscal_period=period,
-                     basis=basis, canon=dict(confirmed), col=dict(col))
+                     basis=basis, canon=canon, col=dict(col))
     rule_additive_capex(ctx)     # capex = -(|유형자산취득| + |무형자산취득|)  [cf.capex canonicals]
     rule_derive_fcf(ctx)         # fcf = cfo - |capex|
     rule_derive_net_debt(ctx)    # net_debt = (short+long debt) - cash  [v3's own values]
-    for k in ("capex", "fcf", "net_debt"):
+    rule_additive_da(ctx)        # depreciation/amortization/da_total  [cf.* 우선, 없으면 note.*]
+    rule_derive_ebitda(ctx)      # ebitda = operating_income + da_total
+    for k in ("capex", "fcf", "net_debt",
+              "depreciation", "amortization", "da_total", "ebitda"):
         v = ctx.col.get(k)
         if v is not None:
             col[k] = v
+
+
+# 본문(CF/IS)에서 이미 D&A 가 잡혔는지 — 잡혔으면 주석을 덧대지 않는다.
+_BODY_DA_CANON = ("cf.depreciation", "cf.amortization", "cf.da_total",
+                  "cf.rou_depreciation", "is.depreciation", "is.amortization")
+
+
+def _has_body_da(canon: dict) -> bool:
+    return any(canon.get(c) for c in _BODY_DA_CANON)

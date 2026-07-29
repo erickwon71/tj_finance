@@ -46,6 +46,8 @@ DROP INDEX IF EXISTS note_lines_context_fiscal_year_idx;
 DROP INDEX IF EXISTS note_lines_corp_code_idx;
 DROP INDEX IF EXISTS note_lines_report_fiscal_year_idx;
 DROP INDEX IF EXISTS note_lines_corp_code_report_fiscal_year_statement_basis_idx;
+-- 신규 이름(create 단계가 만드는 것). 이걸 빠뜨려 2026-07-29 재적재가 인덱스를 단 채 돌았다.
+DROP INDEX IF EXISTS note_lines_corp_fy_basis_idx;
 SQL
     echo "남은 인덱스:"; status
     ;;

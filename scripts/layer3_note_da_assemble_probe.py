@@ -37,7 +37,7 @@ from parser.common.note_topics import DA_SOURCE_PRIORITY, map_topic
 
 ROWS_SQL = text(
     """
-    SELECT section_path, table_seq, row_order, col_index, label_raw, value_won
+    SELECT section_path, table_seq, row_order, col_index, col_label, label_raw, value_won
     FROM note_lines
     WHERE corp_code = :corp
       AND rcept_no = :rcept
@@ -60,11 +60,12 @@ FILINGS_SQL = text(
 
 class _Row:
     """resolve_periods 가 기대하는 속성만 가진 경량 행."""
-    __slots__ = ("table_seq", "col_index", "label_raw", "value_won", "row_order")
+    __slots__ = ("table_seq", "col_index", "col_label", "label_raw", "value_won", "row_order")
 
     def __init__(self, r):
         self.table_seq = r.table_seq
         self.col_index = r.col_index
+        self.col_label = getattr(r, "col_label", None)
         self.label_raw = r.label_raw
         self.value_won = r.value_won
         self.row_order = r.row_order

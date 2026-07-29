@@ -34,7 +34,7 @@ from parser.common.note_topics import DA_SOURCE_PRIORITY, map_topic
 
 _ROWS_SQL = text(
     """
-    SELECT section_path, table_seq, row_order, col_index, label_raw, value_won
+    SELECT section_path, table_seq, row_order, col_index, col_label, label_raw, value_won
     FROM note_lines
     WHERE rcept_no = :rcept
       AND basis = :basis
@@ -45,11 +45,15 @@ _ROWS_SQL = text(
 
 
 class _Row:
-    __slots__ = ("table_seq", "col_index", "label_raw", "value_won", "row_order")
+    # col_label 은 기간 판정(note_periods 의 COL_LABEL 규칙)에 쓰인다 — 빠뜨리면
+    # 헤더가 DB 에 있어도 계층3 가 못 보고 위치 추측으로 돌아간다.
+    __slots__ = ("table_seq", "col_index", "col_label", "label_raw",
+                 "value_won", "row_order")
 
     def __init__(self, r):
         self.table_seq = r.table_seq
         self.col_index = r.col_index
+        self.col_label = getattr(r, "col_label", None)
         self.label_raw = r.label_raw
         self.value_won = r.value_won
         self.row_order = r.row_order

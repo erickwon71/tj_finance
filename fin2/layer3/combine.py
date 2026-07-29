@@ -302,8 +302,15 @@ def _resolve(cands: dict[str, list[dict]]):
         # 판정하면 canonical 이 통째로 폐기되므로, 선언된 계열만 합산한다.
         # 성격 선언은 fin2/standardize/rules.py ADDITIVE_CANON 참조.
         if c in ADDITIVE_CANON:
+            # ★합산이라고 해서 품질 게이트를 건너뛰면 안 된다. 단일값 경로와 동일하게
+            #   **최상위 매핑 stage 만** 취한다. 실측 00109754: cf.depreciation 에
+            #   [exact] '감가상각비'(영업활동 조정) 와 [fuzzy] '유형자산의 증가'(투자활동=CAPEX)
+            #   가 함께 잡혔는데, stage 를 무시하고 합산해 CAPEX 를 D&A 에 더했다.
+            best = max(_STAGE_RANK.get(r.get("stage"), 0) for r in rows)
             total, seen = 0, set()
             for r in rows:
+                if _STAGE_RANK.get(r.get("stage"), 0) != best:
+                    continue
                 v = r.get("value")
                 if v is None:
                     continue

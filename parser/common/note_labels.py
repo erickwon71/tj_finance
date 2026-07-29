@@ -79,8 +79,9 @@ def classify_da_label(label: str) -> Optional[str]:
     # ② 무형자산 상각 (무형자산감가상각비 포함 — 표기만 '감가상각'일 뿐 무형이다)
     if has_amort:
         return AMORTIZATION
-    # ③ 사용권자산 — '감가상각비,사용권자산' / '사용권자산상각비' 양쪽 다. 합산 대상.
-    if has_amortize and "사용권" in s:
+    # ③ 사용권자산/리스자산 — '감가상각비,사용권자산' · '사용권자산상각비' · '리스자산상각비'.
+    #    리스자산은 사용권자산의 다른 표기다(실측). 합산 대상.
+    if has_amortize and ("사용권" in s or "리스자산" in s):
         return DEPRECIATION_ROU
     # ④ 투자부동산 상각 — 유형자산 성격의 감가상각.
     if has_amortize and "투자부동산" in s:

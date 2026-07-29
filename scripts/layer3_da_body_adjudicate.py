@@ -70,7 +70,9 @@ def body_candidates(merged, basis: str):
     """본문 CF 의 당기 상각 후보 행 전량 → [(label, bucket, value)]."""
     out = []
     for r in merged:
-        if r.get("basis") != basis or r.get("statement") != "CF":
+        # ★기준선은 CF+IS 둘 다 봐야 한다. CF 만 보면 IS 출처 D&A 가 빠져
+        #   v3 가 과다한 것처럼 보인다(허위 EXCESS).
+        if r.get("basis") != basis or r.get("statement") not in ("CF", "IS"):
             continue
         if (r.get("col_index") or 0) != 0:      # 본문은 col_index 0 = 당기
             continue

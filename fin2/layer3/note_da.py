@@ -131,10 +131,25 @@ def note_da_canonicals(
         return {}
 
     # ① 완결형은 **먼저 성립하는 하나**만 쓴다(여러 개를 합치면 같은 비용을 이중 계상).
+    #    ★단, '값이 하나라도 나왔다'로 채택하면 안 된다. 상위 소스가 **불완전한 결과**를
+    #      내놓으면 더 나은 하위 소스가 막힌다.
+    #      실측 01274329(성일하이텍) FY2024:
+    #        비용의성격별 → '당기손익으로 인식된 감가상각비, 무형자산상각비, 손상차손(환입)'
+    #          = 20,893,933,000 은 손상차손이 섞여 있어 배제 → 무형자산상각비 423,373,000 만 남음
+    #        현금흐름표   → '감가상각비에 대한 조정' 20,965,887,000
+    #                      '무형자산상각비에 대한 조정' 423,373,000  ← 깨끗하게 분리됨
+    #      감가상각 없이 상각비만 있는 결과는 D&A 로서 불완전하다 → 완전한 소스를 우선한다.
+    partial = None
     for topic in DA_SOURCE_BROAD:
         got = _from_topic(topic)
-        if got:
+        if not got:
+            continue
+        complete = bool(got.get(DA_COMBINED) or got.get(DEPRECIATION)
+                        or got.get(DEPRECIATION_ROU))
+        if complete:
             return got
+        if partial is None:
+            partial = got          # 감가상각분이 없는 반쪽 결과 — 마지막 수단으로만
 
     # ② 완결형이 없으면 구성요소형을 **전부 합산**한다. 자산군별 주석이라 하나만 고르면
     #    나머지가 통째로 빠진다(실측 01274329: 투자부동산 879만만 잡고 리스 14.9억 누락).
@@ -144,4 +159,6 @@ def note_da_canonicals(
             merged[k] = merged.get(k, 0) + v
     if merged:
         return merged
-    return {}
+
+    # ③ 마지막 수단 — 완결형의 반쪽 결과(감가상각분 없이 상각비만). 구성요소형까지 없을 때만.
+    return partial or {}

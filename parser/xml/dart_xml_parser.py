@@ -187,6 +187,51 @@ def parse_dart_xml(
     return result
 
 
+# ── 원문 이스케이프 복구 (2026-07-29) ────────────────────────────────────────
+# DART XML 은 특수문자를 이스케이프하지 않아 lxml 이 구조를 잘못 복구한다.
+# 실측(FY2024, 400 filing):
+#     꺾쇠 안 텍스트('<당기말')      99.8%  → 추출 영향 없음
+#     미이스케이프 '&'               91.8%  → 추출 영향 없음
+#     ★속성값 안 따옴표              2.0%  → **치명적**
+# 앞의 둘은 손상이 본문 텍스트에서 끝나지만, 속성 따옴표가 깨지면 태그 중첩이 무너져
+# 그 뒤 내용이 통째로 사라진다. 성일하이텍 FY2024 는 이 때문에 추출 셀 1,143 밖에 안 나왔고
+# 복구 후 3,407(주석 섹션 17→75)이 됐다. 오류 없이 조용히 손실되던 것이라 지금까지 안 보였다.
+#
+# 250 filing 검증: 파싱오류 15,720→238 · 고아TR 6,892→57 · 추출 셀 +0.32% ·
+#   값이 바뀐 filing 5(2%). 바뀐 것은 전부 **오귀속 교정**이었다
+#   (예: '차입금, 기준이자율' 이 '8. 관계기업투자' 밑 → '16. 차입금' 으로 이동).
+
+# 엔티티가 아닌 '&'  (&amp; &#123; &#x1F; 는 보존)
+_BAD_AMP = re.compile(
+    rb"&(?!(?:[a-zA-Z][a-zA-Z0-9]{1,7}|#[0-9]{1,7}|#x[0-9a-fA-F]{1,6});)"
+)
+# 속성값 안의 이스케이프 안 된 따옴표:  ENG=""KB Kookmin Bank" VALIGN="MIDDLE"
+# ★정상적인 빈 속성(ENG="" …)을 깨면 안 되므로, 따옴표 사이에 '=' '<' '>' 가 없고
+#   닫는 따옴표 뒤가 공백/'>' 일 때만 적용한다.
+_BAD_ATTR_QUOTE = re.compile(rb'=""([^"=<>]{1,120})"(?=[\s>])')
+# DART 실제 태그(실측 60 filing 에서 lxml 이 만든 '태그' 282종 중 진짜는 아래 40여 종뿐,
+# 나머지는 '<당기말>' '<파묘>' 같은 본문 텍스트였다). 화이트리스트 밖이면 텍스트로 본다.
+_DART_TAGS = (
+    "DOCUMENT DOCUMENT-NAME COMPANY-NAME FORMULA-VERSION COVER COVER-TITLE BODY "
+    "LIBRARY SUMMARY SECTION-1 SECTION-2 SECTION-3 TITLE P SPAN TABLE TABLE-GROUP "
+    "THEAD TBODY TR TD TH TE TU COL COLGROUP IMAGE IMG IMG-CAPTION PGBRK CORRECTION "
+    "EXTRACTION A BIG E FLY KNIGHTS MPN SHU THE WESTERN"
+).split()
+_BAD_LT = re.compile(
+    rb"<(?!/?(?:" + b"|".join(t.encode() for t in sorted(_DART_TAGS, key=len, reverse=True))
+    + rb")(?![A-Za-z0-9-])|[!?])",
+    re.IGNORECASE,
+)
+
+
+def sanitize_dart_xml(raw: bytes) -> bytes:
+    """파싱 전 원문 이스케이프 복구. 순서 주의 — '&' 를 먼저 고쳐야 뒤에서 넣는
+    &quot;/&lt; 가 다시 이스케이프되지 않는다."""
+    out = _BAD_AMP.sub(b"&amp;", raw)
+    out = _BAD_ATTR_QUOTE.sub(rb'="&quot;\1&quot;"', out)
+    return _BAD_LT.sub(b"&lt;", out)
+
+
 def _parse_xml_file(file_path: Path) -> Optional[etree._Element]:
     """
     DART XML 파일 파싱. 인코딩 자동 감지 (UTF-8 → EUC-KR 폴백).
@@ -194,11 +239,14 @@ def _parse_xml_file(file_path: Path) -> Optional[etree._Element]:
     구형 DART XML(~2010년대)은 XML 선언이 UTF-8이지만
     실제로는 EUC-KR로 저장된 경우가 많음.
     바이트 분포로 실제 인코딩을 감지 후 파싱.
+
+    파싱 전 sanitize_dart_xml() 로 원문 이스케이프를 복구한다(위 주석 참조).
     """
     with open(file_path, "rb") as f:
         raw = f.read()
 
     actual_enc = _detect_xml_encoding(raw)
+    raw = sanitize_dart_xml(raw)
     xml_parser = etree.XMLParser(recover=True)
 
     if actual_enc == "utf-8":

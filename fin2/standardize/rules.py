@@ -215,7 +215,13 @@ def rule_additive_da(ctx: StdContext) -> None:
     da_direct = next((abs(ctx.canon[c]) for c in _DA_TOTAL_CANON
                       if c in ctx.canon and ctx.canon[c]), None)
     if da_direct:
-        ctx.col["da_total"] = da_direct
+        # ★결합 표기('감가상각비 및 무형자산상각비')가 있어도 그것이 **전부는 아니다**.
+        #   현금흐름표 조정 항목은 줄마다 배타적이라, 결합 행 옆에 '사용권자산 감가상각비'·
+        #   '투자부동산상각비' 가 **별도 행**으로 함께 오는 서식이 흔하다.
+        #   da_direct 만 취하면 그 별도 행이 통째로 사라진다(실측 00176914: 결합 53,907,592,344
+        #   만 잡고 투자부동산 6,588,598,186 + 사용권자산 13,427,895,236 = 200억을 누락).
+        #   → 결합값에 별도 계상분을 더한다. 주석 경로(fin2/layer3/note_da.py)와 동일한 처리.
+        ctx.col["da_total"] = da_direct + dep + amo
         ctx._mark("additive_da")
     elif dep > 0 or amo > 0:
         ctx.col["da_total"] = dep + amo

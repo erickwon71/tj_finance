@@ -10,10 +10,14 @@ canonical dict 를 돌려준다.
     ③note_periods           → 어느 셀이 당기인가
     ④note_labels            → 어떤 계정인가
 
-★기간 제약 — FY 만 대상
-    1차 소스인 '비용의 성격별 분류' 주석은 **연간 총액**이다. interim(H1/Q1/Q3)에 그대로
-    쓰면 누적/분기 구분이 깨진다. 기존 collector/expense_nature_sync.py 도 같은 이유로
-    FY 만 타겟한다. 여기서도 동일 제약을 건다.
+★기간 — FY + interim(2026-07-29 확장)
+    처음에는 FY 만 대상으로 했다. interim 주석 표는 한 기간 안에서 열이 '3개월'(당해 분기)과
+    '누적'(기초~현재)로 갈려 어느 쪽인지 알 수 없었기 때문이다.
+    계층2 가 col_label 을 전사하면서 이 구분이 가능해졌다:
+        col0 '…>3개월' 감가상각비   837,708,000,000
+        col1 '…>누적'  감가상각비 1,656,460,000,000   ← std_financials interim = 누적
+    → interim 은 prefer_cumulative=True 로 누적 열을 고른다. 누적 열을 못 찾으면
+      값을 만들지 않는다(추측 금지).
 
 ★정정공시 — 반드시 단일 rcept 로 고정
     원본+정정이 함께 잡히면 값이 **정확히 2배**가 된다(실측). 호출측이 canonical rcept 를
@@ -30,7 +34,8 @@ from parser.common.note_labels import (
     AMORTIZATION, DA_COMBINED, DEPRECIATION, DEPRECIATION_ROU, classify_da_label,
 )
 from parser.common.note_periods import resolve_periods
-from parser.common.note_topics import DA_SOURCE_PRIORITY, map_topic
+from parser.common.note_topics import (DA_SOURCE_BROAD, DA_SOURCE_COMPONENT,
+                                       DA_SOURCE_PRIORITY, map_topic)
 
 _ROWS_SQL = text(
     """
@@ -68,8 +73,10 @@ def note_da_canonicals(
         {"note.depreciation": …, "note.rou_depreciation": …, "note.amortization": …,
          "note.da_total": …} 중 확보된 것만. 소스가 없으면 빈 dict.
     """
-    if period != "FY" or not rcept_no:
+    if not rcept_no or period not in ("FY", "H1", "Q1", "Q3"):
         return {}
+    # interim 은 누적 열을 골라야 한다(위 주석 참조).
+    prefer_cum = period != "FY"
 
     rows = session.execute(
         _ROWS_SQL, {"rcept": rcept_no, "basis": basis}
@@ -83,17 +90,15 @@ def note_da_canonicals(
         if topic in DA_SOURCE_PRIORITY:
             by_topic[topic][r.section_path].append(_Row(r))
 
-    # 우선순위대로 훑어 **처음 성립하는 주석 하나**만 쓴다.
-    # 여러 주석을 합치면 같은 비용을 이중 계상한다(성격별 분류와 유형자산 증감표가 겹침).
-    for topic in DA_SOURCE_PRIORITY:
+    def _from_topic(topic: str) -> dict[str, int]:
+        """한 주제에서 당기 D&A 버킷을 뽑는다(표 하나만 채택)."""
         for _section, srows in by_topic.get(topic, {}).items():
             # ★한 주석 안에 형제표가 아닌 표가 여러 개일 수 있다(판관비를 부문별로 쪼갠 표,
             #   법인세 주석의 일시적차이 표 등). 그 표들의 col_index=0 이 전부 rank 0 이므로
             #   그냥 합치면 **같은 비용을 여러 번 더한다**(실측: v2 대비 2.87배).
             #   → table_seq 단위로 모은 뒤 **표 하나만** 채택한다.
-            #   (SIBLING_TABLE 형태에서는 rank 0 셀이 모두 첫 표에 속하므로 동일하게 동작한다.)
             per_table: dict[int, dict[str, int]] = {}
-            for cell in resolve_periods(srows):
+            for cell in resolve_periods(srows, prefer_cumulative=prefer_cum):
                 if cell.period_rank != 0:          # 당기만
                     continue
                 bucket = classify_da_label(cell.label_raw)
@@ -101,7 +106,6 @@ def note_da_canonicals(
                     continue
                 acc = per_table.setdefault(cell.table_seq, {})
                 acc[bucket] = acc.get(bucket, 0) + abs(cell.value_won)
-
             if not per_table:
                 continue
             # 신호가 가장 풍부한 표(버킷 종류 수) → 동률이면 앞선 표(작은 table_seq).
@@ -111,10 +115,9 @@ def note_da_canonicals(
             out: dict[str, int] = {}
             if acc.get(DA_COMBINED):
                 # 결합 표기('감가상각비와 무형자산상각비')는 그 자체가 D&A 합계다.
-                # ★단, 결합 행과 **나란히** 별도 행이 오는 서식이 흔하다(실측 7건):
-                #     감가상각비와 무형자산상각비 26,573 + 사용권자산상각비 1,243
-                #   이때 세부 버킷을 따로 내보내면 rule_additive_da 가 _DA_TOTAL_CANON 을
-                #   우선(da_direct)하면서 별도 행을 **통째로 버린다**. → 여기서 합쳐 넘긴다.
+                # ★단, 결합 행과 **나란히** 별도 행이 오는 서식이 흔하다(실측 7건) →
+                #   세부 버킷을 따로 내보내면 rule_additive_da 가 da_direct 를 우선하며
+                #   별도 행을 버린다. 여기서 합쳐 넘긴다.
                 out[DA_COMBINED] = (acc[DA_COMBINED]
                                     + acc.get(DEPRECIATION, 0)
                                     + acc.get(DEPRECIATION_ROU, 0)
@@ -125,4 +128,20 @@ def note_da_canonicals(
                         out[k] = acc[k]
             if out:
                 return out
+        return {}
+
+    # ① 완결형은 **먼저 성립하는 하나**만 쓴다(여러 개를 합치면 같은 비용을 이중 계상).
+    for topic in DA_SOURCE_BROAD:
+        got = _from_topic(topic)
+        if got:
+            return got
+
+    # ② 완결형이 없으면 구성요소형을 **전부 합산**한다. 자산군별 주석이라 하나만 고르면
+    #    나머지가 통째로 빠진다(실측 01274329: 투자부동산 879만만 잡고 리스 14.9억 누락).
+    merged: dict[str, int] = {}
+    for topic in DA_SOURCE_COMPONENT:
+        for k, v in _from_topic(topic).items():
+            merged[k] = merged.get(k, 0) + v
+    if merged:
+        return merged
     return {}

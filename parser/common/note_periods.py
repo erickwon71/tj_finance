@@ -83,6 +83,25 @@ def period_rank_from_label(col_label: Optional[str]) -> Optional[int]:
     return None
 
 
+# ── interim(H1/Q1/Q3) 누적/분기 열 구분 (2026-07-29) ─────────────────────────
+# 반기·분기 보고서의 주석 표는 한 기간 안에서 열이 '3개월'(당해 분기)과 '누적'(기초~현재)로
+# 갈린다. std_financials 의 interim 행은 **누적** 기준이므로 누적 열을 골라야 한다.
+#   실측 현대차 H1 2024 비용의 성격별 분류:
+#     col0 '…>3개월' 감가상각비   837,708,000,000
+#     col1 '…>누적'  감가상각비 1,656,460,000,000   ← 이쪽을 써야 한다
+_CUM_RE = re.compile(r"누적")
+_DISCRETE_RE = re.compile(r"3개월|3\s*개월|당분기|당3분기")
+
+
+def cumulative_col(trows: list) -> Optional[int]:
+    """표에서 '누적' 열의 col_index. 헤더로 판별 불가하면 None."""
+    for r in trows:
+        lbl = getattr(r, "col_label", None) or ""
+        if _CUM_RE.search(lbl):
+            return r.col_index or 0
+    return None
+
+
 def _ranks_from_col_labels(trows: list) -> Optional[dict[int, int]]:
     """한 표의 {col_index: period_rank}. 헤더로 판정 불가하면 None.
 
@@ -174,7 +193,7 @@ def group_sibling_tables(rows: Iterable) -> list[TableGroup]:
     return groups
 
 
-def resolve_periods(rows: list) -> list[PeriodCell]:
+def resolve_periods(rows: list, prefer_cumulative: bool = False) -> list[PeriodCell]:
     """주석 하나(section_path 단위)의 행들에 period_rank 를 매긴다.
 
     우선순위:
@@ -182,6 +201,9 @@ def resolve_periods(rows: list) -> list[PeriodCell]:
          (형제표 형태에서 추가 컬럼은 기간이 아니다).
       2. 형제표가 아닌 단일 표에서 col_index 가 여러 개면 → col_index 가 기간축(0=당기).
       3. 단일 표·단일 컬럼 → rank 0.
+
+    prefer_cumulative: interim(H1/Q1/Q3) 용. 한 기간 표 안에서 '3개월' 대신 '누적' 열을
+      고른다(std_financials interim 행은 누적 기준). FY 에는 누적/분기 구분이 없어 무시된다.
     """
     out: list[PeriodCell] = []
     by_table: dict[int, list] = defaultdict(list)
@@ -198,11 +220,14 @@ def resolve_periods(rows: list) -> list[PeriodCell]:
 
         if group.rule == "SIBLING_TABLE" and len(seqs) > 1:
             for rank, seq in enumerate(seqs):
-                for r in by_table[seq]:
-                    if (r.col_index or 0) != 0:
+                trows = by_table[seq]
+                # interim 은 형제표 안에서도 '3개월/누적' 로 열이 갈린다 → 누적 열 채택.
+                want = (cumulative_col(trows) if prefer_cumulative else None) or 0
+                for r in trows:
+                    if (r.col_index or 0) != want:
                         continue          # 형제표에서 여분 컬럼은 기간이 아니다
                     out.append(PeriodCell(
-                        table_seq=seq, col_index=0, label_raw=r.label_raw,
+                        table_seq=seq, col_index=want, label_raw=r.label_raw,
                         value_won=r.value_won, period_rank=rank,
                         rule="SIBLING_TABLE", row_order=r.row_order,
                     ))
@@ -212,6 +237,19 @@ def resolve_periods(rows: list) -> list[PeriodCell]:
             trows = by_table[seq]
             # ★열 헤더가 있으면 그것으로 판정한다(위치 추측보다 정확).
             #   증감표('유형자산>건물>…')처럼 기간 표기가 없으면 None → 구조 규칙으로 폴백.
+            if prefer_cumulative:
+                cum = cumulative_col(trows)
+                if cum is not None:
+                    for r in trows:
+                        if (r.col_index or 0) != cum:
+                            continue
+                        out.append(PeriodCell(
+                            table_seq=seq, col_index=cum, label_raw=r.label_raw,
+                            value_won=r.value_won, period_rank=0,
+                            rule="COL_LABEL_CUM", row_order=r.row_order,
+                        ))
+                    continue
+
             col_ranks = _ranks_from_col_labels(trows)
             if col_ranks:
                 for r in trows:

@@ -124,14 +124,27 @@ def map_topic(section_path: Optional[str]) -> Optional[str]:
     return None
 
 
-# 계층3 D&A 가 볼 주석의 우선순위(2026-07-28 실측 커버리지 근거).
-# 단일 1차 소스는 존재하지 않는다 — 비용의성격별 66.1% · 유형자산 86.2% 등으로 분산.
-DA_SOURCE_PRIORITY: list[str] = [
+# 계층3 D&A 소스 — **성격이 다른 두 부류**로 나눈다(2026-07-29).
+#
+# ① 완결형(BROAD): 그 표 하나로 기업 전체 D&A 가 나온다. 먼저 성립하는 것 하나만 쓴다.
+# ② 구성요소형(COMPONENT): 특정 자산군만 다룬다. 하나만 골라 쓰면 **나머지가 통째로 빠진다**.
+#    → 완결형이 없을 때 **전부 합산**한다.
+#
+# 왜 나누는가: 예전에는 하나의 우선순위 목록에서 '먼저 값이 나오는 주제'를 채택했는데,
+# 좁은 주석이 앞서면 그것만 취하고 끝났다. 실측 01274329 FY2024:
+#     투자부동산 감가상각비 8,796,000  ← 이것만 채택(먼저 옴)
+#     리스 사용권자산 감가상각비 1,494,236,000  ← 통째로 무시
+#   → da_total 이 Q3(127억) 보다 3자릿수 작아지는 역전이 생겼다.
+DA_SOURCE_BROAD: list[str] = [
     EXPENSE_BY_NATURE,   # dep/amort 가 한 표에 나란히 — 가장 해석이 쉽다
     CASH_FLOW,           # 조정항목의 감가상각비/무형자산상각비
     SGA,                 # 판관비 내역의 감가상각비
+]
+DA_SOURCE_COMPONENT: list[str] = [
     PPE,                 # 유형자산 증감표의 감가상각 행
     INTANGIBLES,
     INVESTMENT_PROPERTY,
     LEASE,
 ]
+# 하위호환(기존 참조용) — 두 목록을 이은 것.
+DA_SOURCE_PRIORITY: list[str] = DA_SOURCE_BROAD + DA_SOURCE_COMPONENT

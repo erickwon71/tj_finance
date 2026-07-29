@@ -561,9 +561,10 @@ def _apply_enrichment(session, corp, fy, period, basis, confirmed, col, note_bas
     canonical families and cf.* is listed ahead of note.*.
     """
     canon = dict(confirmed)
-    # 주석 D&A 는 FY 만(비용의 성격별 분류 주석은 연간 총액 — interim 에 쓰면 누적/분기가 깨진다).
+    # 주석 D&A 는 FY + interim 모두 대상(2026-07-29). interim 은 note_da 가 col_label 로
+    # '누적' 열을 골라 std_financials 의 누적 기준과 맞춘다 — 누적 열을 못 찾으면 값을 만들지 않는다.
     # 본문에서 이미 D&A 를 확보했으면 주석을 덧대지 않는다(같은 비용 이중 계상 방지).
-    if period == "FY" and not _has_body_da(canon):
+    if not _has_body_da(canon):
         try:
             rcept = select_canonical_rcept(session, corp, fy, period)
             if rcept:

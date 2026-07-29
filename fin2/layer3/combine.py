@@ -33,6 +33,7 @@ from fin2.standardize.rules import (DIRECT_MAP, CONSUMED_CANON, StdContext,
                                     rule_derive_net_debt, rule_additive_da,
                                     rule_derive_ebitda, ADDITIVE_CANON)
 from fin2.layer3.note_da import note_da_canonicals
+from parser.common.note_labels import classify_da_label
 from fin2.layer3.industry_profiles import (
     apply_revenue_profile, norm as _norm_label, NO_REVENUE_CORPS,
 )
@@ -302,14 +303,19 @@ def _resolve(cands: dict[str, list[dict]]):
         # 판정하면 canonical 이 통째로 폐기되므로, 선언된 계열만 합산한다.
         # 성격 선언은 fin2/standardize/rules.py ADDITIVE_CANON 참조.
         if c in ADDITIVE_CANON:
-            # ★합산이라고 해서 품질 게이트를 건너뛰면 안 된다. 단일값 경로와 동일하게
-            #   **최상위 매핑 stage 만** 취한다. 실측 00109754: cf.depreciation 에
-            #   [exact] '감가상각비'(영업활동 조정) 와 [fuzzy] '유형자산의 증가'(투자활동=CAPEX)
-            #   가 함께 잡혔는데, stage 를 무시하고 합산해 CAPEX 를 D&A 에 더했다.
-            best = max(_STAGE_RANK.get(r.get("stage"), 0) for r in rows)
+            # ★합산이라고 품질 게이트를 건너뛰면 안 된다. 다만 어떤 게이트를 쓸지가 관건이다:
+            #   · stage 로 거르면 너무 뭉툭하다 — 실측 OVER 32→8 이지만 정상 행이 잘려 MISSING 3→57
+            #     (cf.depreciation 의 [exact]감가상각비 옆 [normalized]투자부동산감가상각비가 탈락).
+            #   · 섹션(투자/재무활동)만 거르면 영업활동 안의 오매칭을 못 잡는다
+            #     (실측 00102618: [fuzzy]'사용권자산손상차손'이 cf.rou_depreciation 에 붙음).
+            #   → **의미 기반 라벨 가드**를 쓴다. classify_da_label 은 '손상차손'·'대손상각'·
+            #     '누계액'·'상각후원가'를 배제하고 '유형자산의 증가'(=CAPEX)도 D&A 로 보지 않는다.
+            #     본문과 주석이 **같은 라벨 어휘**를 공유하게 되는 이점도 있다.
+            #   ※ 이 가드는 D&A 계열 전용이다. ADDITIVE_CANON 에 다른 계열(capex 등)을 넣으려면
+            #     계열별 가드를 함께 선언해야 한다.
             total, seen = 0, set()
             for r in rows:
-                if _STAGE_RANK.get(r.get("stage"), 0) != best:
+                if classify_da_label(r.get("label_raw") or "") is None:
                     continue
                 v = r.get("value")
                 if v is None:

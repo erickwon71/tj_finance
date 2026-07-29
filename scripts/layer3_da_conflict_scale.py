@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import text
 
 from collector.db import get_session
-from fin2.layer3.combine import build_merged_lines, _map_rows, _resolve
+from fin2.layer3.combine import build_merged_lines, _map_rows, _resolve, combine_full
 from parser.common.note_labels import classify_da_label
 
 _BODY_DA = ("cf.depreciation", "cf.amortization", "cf.da_total",
@@ -80,6 +80,8 @@ def main() -> int:
     ap.add_argument("--year", type=int, default=2024)
     ap.add_argument("--basis", default="consolidated")
     ap.add_argument("--limit", type=int, default=0, help="0 = 전수")
+    ap.add_argument("--live", action="store_true",
+                    help="std_v3 테이블 대신 combine_full 로 즉시 계산(재빌드 전 검증용)")
     args = ap.parse_args()
 
     tally: Counter[str] = Counter()
@@ -115,6 +117,13 @@ def main() -> int:
                 tally["ERROR"] += 1
                 continue
 
+            if args.live:
+                try:
+                    col, _, _ = combine_full(session, corp, args.year, "FY", args.basis)
+                    v3[corp] = col.get("da_total")
+                except Exception:  # noqa: BLE001
+                    tally["ERROR"] += 1
+                    continue
             cands = body_candidates(merged, basis)
             if not cands:
                 tally["NOTE_SRC(본문 D&A 없음)"] += 1

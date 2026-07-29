@@ -501,6 +501,11 @@ def _emit_note_lines(
             note_rows = list(extract_rows(table, multiplier=unit, num_cols=_NOTE_MAX_COLS,
                                           direct_only=True, skip_junk=False))
             node_roles = _classify_positions(note_rows)
+            # ★열 헤더 복원(2026-07-29). 주석 열은 기간일 수도(당기/전기) 자산분류일 수도
+            #   (토지/건물/기계) 있는데, 지금까지 col_label 을 안 채워 계층3 가 col_index 만으로
+            #   추측해야 했다(유형자산 증감표를 기간축으로 오인하는 원인). SCE 에서 쓰던
+            #   _build_col_labels 를 그대로 재사용한다 — 새 파싱 로직이 아니다.
+            note_col_labels = _build_col_labels(table)
             for row in note_rows:
                 if not row.account_name:
                     continue
@@ -536,6 +541,7 @@ def _emit_note_lines(
                         node_role=node_roles.get(id(row)),
                         table_seq=table_seq,
                         table_title=local_heading,   # 표 직전 지역 설명(번호제목은 section_path)
+                        col_label=note_col_labels.get(col_idx),  # 열 정체(당기/전기 · 자산분류)
                     ))
 
 

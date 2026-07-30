@@ -412,6 +412,49 @@ CHECKS: list[dict] = [
                   "AND a.revenue=b.revenue "
                   "AND a.operating_income IS NOT DISTINCT FROM b.operating_income LIMIT 10",
     },
+    # ── 계층2 (2026-07-31 F1·F4) ────────────────────────────────────────────
+    # 둘 다 **최근 filing 으로 범위를 좁혀** 돈다. note_lines 전량 스캔(75.9 GB heap)은
+    # 야간 어서션에 부적합하고, 회귀 감시에는 '새로 적재된 것이 깨끗한가'면 충분하다.
+    {
+        "name": "unit_contamination",
+        "sev": "WARN",
+        "desc": "비금액 열(이자율·지분율·주식수·외화)인데 value_won 이 채워진 행 — 단위 오적용. "
+                "★Phase 4 전량 재적재 전에는 구 포맷 행이 남아 있어 위반이 정상이다. "
+                "재적재 후 0 을 확인하면 sev 를 ERROR 로 올릴 것",
+        "count": """
+            SELECT count(*) FROM note_lines n
+            WHERE n.rcept_no IN (SELECT rcept_no FROM filings ORDER BY rcept_no DESC LIMIT 200)
+              AND n.value_won IS NOT NULL
+              AND n.col_label ~ '%|비율|이자율|할인율|지분율|주당|수량|주수|배수|USD|EUR|JPY|외화'
+        """,
+        "sample": """
+            SELECT n.rcept_no, n.col_label, n.label_raw, n.value_won FROM note_lines n
+            WHERE n.rcept_no IN (SELECT rcept_no FROM filings ORDER BY rcept_no DESC LIMIT 200)
+              AND n.value_won IS NOT NULL
+              AND n.col_label ~ '%|비율|이자율|지분율|USD'
+            ORDER BY abs(n.value_won) DESC LIMIT 10
+        """,
+    },
+    {
+        "name": "daily_body_load",
+        "sev": "WARN",
+        "desc": "최근 30일 다운로드 완료 보고서인데 report_lines 가 0행 — 데일리 본문 배선 사고"
+                "(2026-07-31 F4 이전에는 상시 위반이었다). 백필 미실행분도 여기 잡힌다",
+        "count": """
+            SELECT count(*) FROM download_tasks d JOIN filings f USING (rcept_no)
+            WHERE d.status='completed' AND d.file_type='xml' AND d.file_path IS NOT NULL
+              AND d.created_at > CURRENT_DATE - 30 AND f.fiscal_year >= 2015
+              AND NOT EXISTS (SELECT 1 FROM report_lines r WHERE r.rcept_no = f.rcept_no)
+        """,
+        "sample": """
+            SELECT f.rcept_no, f.corp_code, f.fiscal_year, f.fiscal_period
+            FROM download_tasks d JOIN filings f USING (rcept_no)
+            WHERE d.status='completed' AND d.file_type='xml' AND d.file_path IS NOT NULL
+              AND d.created_at > CURRENT_DATE - 30 AND f.fiscal_year >= 2015
+              AND NOT EXISTS (SELECT 1 FROM report_lines r WHERE r.rcept_no = f.rcept_no)
+            LIMIT 10
+        """,
+    },
 ]
 
 
@@ -497,7 +540,15 @@ def main() -> None:
     print("===== DQ 어서션 =====")
     with get_session() as s:
         for chk in CHECKS:
-            cnt = s.execute(text(chk["count"])).scalar() or 0
+            try:
+                cnt = s.execute(text(chk["count"])).scalar() or 0
+            except Exception as exc:  # noqa: BLE001
+                # 레거시 테이블이 드롭되면(예 extended_financials, P5 컷오버) 어서션 하나
+                # 때문에 **나머지 전부가 안 돈다**. 건너뛰고 계속한다(2026-07-31 실측 사고).
+                s.rollback()
+                print(f"  ⏭ [SKIP ] {chk['name']:<32} — {type(exc).__name__}: "
+                      f"{str(exc).splitlines()[0][:80]}")
+                continue
             mark = "✅" if cnt == 0 else ("❌" if chk["sev"] == "ERROR" else "⚠")
             print(f"  {mark} [{chk['sev']:<5}] {chk['name']:<32} 위반 {cnt:,} — {chk['desc']}")
             if cnt:

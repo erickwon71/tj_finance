@@ -20,6 +20,10 @@
 Usage
 -----
     python scripts/layer2_note_drop_audit.py --year 2024 --limit 120
+
+⚠ **2026-07-31 이후 구 계약이다** — `declared_unit is None → 폐기` 로 세지만, F1/D4 이후
+   로더는 데이터행이 있으면 전사한다(단위 미선언이면 value_won 만 빈다). 수치를 그대로
+   합격 근거로 쓰지 말 것. 대체 = `scripts/verify_phase4_reload.py` · `audit_unit_declarations.py`.
 """
 from __future__ import annotations
 

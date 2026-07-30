@@ -196,22 +196,28 @@ def _sync_cf_da(corps: list[str]) -> None:
         logger.warning(f"[collect] ④-2 D&A 복원(비용성격) 실패(비치명적): {exc}")
 
 
-def _sync_note_lines(corps: list[str]) -> None:
-    """④-3 주석(note) 증분 적재 — 신규 보고서의 주석 표를 note_lines(계층2)로 전사.
+def _sync_layer2_lines(corps: list[str]) -> None:
+    """④-3 계층2 증분 적재 — 신규 보고서를 **본문(report_lines) + 주석(note_lines)** 으로 전사.
 
-    이게 없으면 백필을 끝내도 신규 공시분 주석이 영영 적재되지 않는다(2026-07-28 배선).
-    계층3 의 주석 파생 항목(D&A·R&D·리스·부문)이 전부 이 테이블을 읽으므로 데일리로 따라가야 한다.
-    비치명(수집 계속). 벌크 백필과 달리 인덱스는 그대로 두고 증분 INSERT 만 한다."""
+    이게 없으면 백필을 끝내도 신규 공시분이 영영 적재되지 않는다(주석 2026-07-28 배선,
+    **본문 2026-07-31 배선** — 그전까지 본문은 배치 전용이라 데일리 경로에 없었다).
+    계층3 이 두 테이블을 다 읽으므로 데일리로 따라가야 한다.
+    비치명(수집 계속). 벌크 백필과 달리 인덱스는 그대로 두고 증분 INSERT 만 한다.
+
+    ★이 함수는 **두 call site** 에서 불린다(메인 ④-3 · `--standardize-only` 재개) —
+      `docs/runbook_new_parser_pipeline_integration.md` 체크리스트 ①. 하나만 배선하면
+      재개 경로에서 조용히 빠진다."""
     if not corps:
         return
     try:
-        from collector.note_lines_sync import sync_note_lines
-        res = sync_note_lines(corps=corps)
+        from collector.note_lines_sync import sync_layer2_lines
+        res = sync_layer2_lines(corps=corps)
         if res["filings"]:
-            logger.info(f"[collect] ④-3 주석 전사 — 기업 {res['corps']} · "
-                        f"보고서 {res['filings']:,} · 행 {res['rows']:,}(실패 {res['errors']})")
+            logger.info(f"[collect] ④-3 계층2 전사 — 기업 {res['corps']} · "
+                        f"보고서 {res['filings']:,} · 주석 {res['rows']:,}행 · "
+                        f"본문 {res['body_rows']:,}행 (실패 {res['errors']})")
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"[collect] ④-3 주석 전사 실패(비치명적): {exc}")
+        logger.warning(f"[collect] ④-3 계층2 전사 실패(비치명적): {exc}")
 
 
 def _sync_biz_metrics(corps: list[str]) -> None:
@@ -352,7 +358,7 @@ def main() -> None:
         logger.success(f"[collect] 재개 완료 — std_v2 {agg.get('s', 0):,} · 이산분기 {agg.get('q', 0):,} · "
                        f"달력 {agg.get('c', 0):,} · 타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
         _sync_cf_da(affected)
-        _sync_note_lines(affected)
+        _sync_layer2_lines(affected)
         _verify_and_log(agg, args)
         _sync_biz_metrics(affected)
         _sync_order_backlog(affected)
@@ -414,8 +420,8 @@ def main() -> None:
     # ④-2 D&A note 복원(B5) — 신규 기업의 연결 CF D&A 갭을 채워 EBITDA 재퇴행 방지.
     _sync_cf_da(affected)
 
-    # ④-3 주석 전사 — 신규 보고서의 주석 표 → note_lines(계층2).
-    _sync_note_lines(affected)
+    # ④-3 계층2 전사 — 신규 보고서 → report_lines(본문) + note_lines(주석).
+    _sync_layer2_lines(affected)
 
     # ⑤ 수집 후 DQ 게이트 — 새로 표준화된 기업만 Gate B(보고서==DB)+항등식 재검, corp_verify_status 적재.
     _verify_and_log(agg, args)

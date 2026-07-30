@@ -110,3 +110,37 @@ _해당 없음_
 
 ⚠ 합계는 추정이다 — W1 은 표본 투영, W4 는 하한(varlena 정렬 무시)이고, W3·W4 는
 서로 완전히 가법적이지 않다(상수 컬럼을 드롭하면 패딩 배치가 바뀐다). 실행 전 항목별 실측 필요.
+
+---
+
+## ★정정 (2026-07-31) — W2 의 drop 후보 하나는 **지우면 안 된다**
+
+`note_lines_corp_fy_basis_idx`(1.5 GB)는 `idx_scan = 0` 이라 drop 후보로 올라왔지만
+**유지**로 정정한다. 그 인덱스의 소비자는 데일리 증분 적재의 재개 질의다:
+
+```python
+# collector/note_lines_sync.py:43
+"SELECT DISTINCT rcept_no FROM note_lines WHERE corp_code = ANY(:corps)"
+```
+
+야간 잡이 **2026-07-22 에 전량 삭제**돼(memory: nightly-jobs-paused-phase-a3) 통계 창 안에서
+한 번도 실행되지 않았을 뿐이다. 지우면 데일리마다 75.9 GB heap 을 seq scan 한다.
+⇒ 이 원장이 스스로 적어 둔 경고("`스캔 0` 은 미사용의 증명이 아니다")의 **실제 사례**다.
+계량 도구가 소비자의 실행 여부까지는 모른다 — drop 전 코드 grep 은 형식이 아니라 필수다.
+
+### 실제로 지운 것 (2026-07-31, 마이그레이션 적용 완료)
+
+| 인덱스 | 크기 | 근거 |
+|---|---|---|
+| `ix_report_lines_report_fiscal_year` | 353 MB | `ix_report_lines_lookup` 의 접두라 중복. 단독 조건 질의 없음(grep) |
+| `ix_report_lines_context_fiscal_year` | 327 MB | report_lines 는 col_index=0 만 적재 → report_fiscal_year 와 동치. 주석·SCE 는 전량 NULL |
+
+회수 **680 MB**(원장의 '일반 인덱스 2.2 GB' 중 나머지 1.5 GB 는 위 정정으로 제외).
+모델의 `index=True` 도 함께 제거했다 — 안 그러면 신규 DB 에서 `create_all` 이 되살린다.
+
+## ★정정 2 — `note_lines.unit_source` 는 더 이상 상수가 아니다
+
+W3 은 `unit_source`('declared' 상수, 1.8 GB)를 drop 후보로 봤다. F1(2026-07-31)이 이 컬럼에
+**5 개 값**을 담게 했다(declared / col_money / non_monetary / undetermined / undeclared).
+값이 왜 비었는지를 설명하는 유일한 컬럼이므로 **유지**한다. 대신 `statement`(note 상수) ·
+`corp_code`(rcept 파생) · `parsed_at` 은 그대로 Phase 4 축소 대상이다.

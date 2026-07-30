@@ -34,8 +34,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import text
 
 from collector.db import get_session
-from fin2.extract.biz_section import (_load_root, _tag, _text, find_biz_subsections,
-                                      map_biz_table)
+from fin2.extract.biz_section import (_heading_metrics, _load_root, _tag, _text,
+                                      find_biz_subsections, map_biz_table)
 from fin2.extract.order_backlog import (_BACKLOG_KW, _ORDER_HEADING_KW,
                                         find_order_subsections, map_order_table)
 
@@ -85,6 +85,9 @@ def scan(root, t: Counter, samples: dict, rcept: str, fiscal_year: int) -> None:
             t["수주:0행 이유=진행률형(설계상 보류)"] += 1
         elif any(k in head for k in _BACKLOG_KW):
             t["★수주:0행 이유=잔고열 있는데 실패"] += 1
+            if len(samples["order_realfail"]) < 30:
+                samples["order_realfail"].append(
+                    (rcept, subs[0][0], [c[:14] for r in subs[0][2][:2] for c in r][:14]))
         else:
             t["수주:0행 이유=무관한 표(창 오검출)"] += 1
         if len(samples["order_norow"]) < 30:
@@ -121,8 +124,14 @@ def scan(root, t: Counter, samples: dict, rcept: str, fiscal_year: int) -> None:
             g = bsubs[0].grid
             samples["biz_norow"].append((rcept, bsubs[0].metric,
                                          [c[:16] for c in (g[0] if g else [])]))
+    elif any(_heading_metrics(_text(el) or "") for el in root.iter()
+             if _tag(el) in ("SPAN", "P")):
+        # 수주와 같은 함정: `find_biz_subsections` 는 헤딩 **뒤에 표가 있을 때만** 결과를
+        # 만든다. '보안 특성상 기재를 생략합니다' 처럼 표가 없는 절을 '헤딩 미검출'로
+        # 부르면 원인 진단이 틀린다.
+        t["가동률:헤딩은 있는데 표없음(기재생략 등)"] += 1
     elif has_biz_word:
-        t["가동률:글자는 있는데 헤딩 미검출"] += 1
+        t["가동률:글자만 있음(서술문)"] += 1
         # 헤딩 판정은 SPAN/P 만 본다(`find_biz_subsections`). 키워드를 가진 요소의 **태그**를
         # 세어 두면 "다른 태그에 있어서 못 봤다"인지 "서술문일 뿐"인지 가릴 수 있다.
         for el in root.iter():
@@ -181,7 +190,7 @@ def main() -> int:
 
     t: Counter[str] = Counter()
     samples = {"order_norow": [], "order_nohead": [], "order_notable": [],
-               "biz_norow": [], "biz_nohead": []}
+               "order_realfail": [], "biz_norow": [], "biz_nohead": []}
     t0 = time.time()
     for i, f in enumerate(rows, 1):
         if i % 20 == 0:
@@ -217,7 +226,8 @@ def main() -> int:
     print(f"\n  ※ 수주 열 키워드 = {_BACKLOG_KW} (이 열이 없으면 map_order_table 이 0행)")
     print(f"  ※ 수주 헤딩 키워드 = {_ORDER_HEADING_KW} (30자 이하 SPAN/P 만)")
 
-    for key, title in (("order_norow", "수주 헤딩·표는 있는데 0행 — 표의 첫 행(헤더)"),
+    for key, title in (("order_realfail", "★잔고 열이 있는데 0행 — 진짜 추출 실패 후보"),
+                       ("order_norow", "수주 헤딩·표는 있는데 0행 — 표의 첫 행(헤더)"),
                        ("order_notable", "수주 헤딩은 있는데 표 없음 — 그 헤딩"),
                        ("order_nohead", "'수주' 글자만 — 그 텍스트"),
                        ("biz_norow", "가동률 헤딩·표는 있는데 0행 — 표의 첫 행"),

@@ -346,6 +346,13 @@ def _split_label_amounts(cells: list[str]) -> tuple[str, list[str]]:
     return label, amount_cells
 
 
+# 셀 전체가 '기간(개월)' 열 헤더인 경우만: '3개월' '(3개월)' '당분기(3개월)' '3개월 누적' 등.
+# 라벨 본문에 '개월' 이 섞인 데이터 행('12개월 기대신용손실측정 …')은 여기 걸리지 않는다.
+_PERIOD_MONTH_CELL = re.compile(
+    r'[\s()]*(?:(?:당|전)?(?:분|반)?기?)?[\s()]*\d+\s*개월[\s()]*(?:누적)?[\s()]*'
+)
+
+
 def _is_header_cell(text: str, allow_date_label: bool = False) -> bool:
     """
     첫 번째 셀이 헤더/단위/기수 표기이면 True.
@@ -360,7 +367,12 @@ def _is_header_cell(text: str, allow_date_label: bool = False) -> bool:
     if not text:
         return False
     # 기간 날짜: "2023.12.31", "2023-12-31", "2023년"
-    if not allow_date_label and re.search(r'\d{4}[.\-년]', text):
+    # ★2026-07-30: 날짜/숫자·구두점을 걷어낸 뒤 **한글이 남으면 데이터 행**이다. 종전에는
+    #   `search` 라 라벨 어디에든 4자리 연도가 있으면 헤더로 봤고, 그래서
+    #   '지앤피2025-01호벤처투자조합'(25.00|1,500|1,451|1,451) 같은 실데이터 행이 통째로
+    #   사라졌다(전수 정방향 조사에서 발견).
+    if not allow_date_label and re.search(r'\d{4}[.\-년]', text) \
+            and not re.search(r'[가-힣]', re.sub(r'[\d.\-년월일\s()~／/]', '', text)):
         return True
     # 기수 표기: "제 72 기", "제72기"
     if re.search(r'제\s*\d+\s*기', text):
@@ -372,7 +384,10 @@ def _is_header_cell(text: str, allow_date_label: bool = False) -> bool:
     if re.fullmatch(r'[구과]\s*[분목]', text):
         return True
     # 기간 표기 열 헤더: "3개월", "6개월", "당분기(3개월)" 등 IS 분기 표 컬럼 헤더
-    if re.search(r'\d+개월', text):
+    # ★2026-07-30: 셀 **전체**가 기간 표기일 때만. 종전 `search` 는 라벨 안에 '개월' 이
+    #   들어가기만 하면 잡아 '12개월 기대신용손실측정 금융자산으로 대체'(대손충당금 변동
+    #   주석의 실데이터 행)를 통째로 버렸다.
+    if _PERIOD_MONTH_CELL.fullmatch(text):
         return True
     # 분기 레이블: "1분기", "2분기", "3분기", "4분기"
     if re.fullmatch(r'\d분기', text):

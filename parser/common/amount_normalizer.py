@@ -23,8 +23,39 @@ UNIT_MULTIPLIERS: dict[str, int] = {
 # 공란으로 취급할 문자열
 _BLANK_PATTERNS = frozenset(["", "-", "─", "—", "―", "　", " ", "·", ".", "...", "N/A", "n/a"])
 
-# 합계행 밑줄 장식(숫자 뒤 '=＝_─—―━~∼' 반복). 뒤쪽에 붙은 것만 제거 — 숫자 일부 아님.
-_TRAIL_DECOR_RE = re.compile(r"[=＝_─—―━~∼]+$")
+# 합계행 밑줄 장식(숫자 뒤 '=＝_─—―━' 반복). 뒤쪽에 붙은 것만 제거 — 숫자 일부 아님.
+# ★'~∼' 는 여기서 뺐다(2026-07-30) — 밑줄 장식이 아니라 **기간 범위 표기**다.
+#   장식으로 지우면 '2006.02~'(임원 재직기간)가 2,006 원이라는 금액으로 들어간다(실측 319건).
+_TRAIL_DECOR_RE = re.compile(r"[=＝_─—―━]+$")
+
+# ── R4: 범위 표기(물결)는 금액이 아니다. '2006.02~' · '1,000~2,000' 모두 거부한다.
+_RANGE_MARK_RE = re.compile(r"[~∼]")
+
+# 순수 정수 문자열(부호·콤마 제거 후). float 를 우회해 정확히 파싱하기 위한 판정.
+_PLAIN_INT_RE = re.compile(r"\d+")
+
+# 정상 금액 표기: 콤마는 3자리 그룹 경계에만 온다. 소수부 허용('1,106.52' 환율·주가).
+_WELL_FORMED_RE = re.compile(r"\d{1,3}(,\d{3})+(\.\d+)?")
+_DECIMAL_RE = re.compile(r"\d+\.\d+")
+
+# 금액 타당성 상한(원). 한국 상장사 최대 총자산 ≈ 5×10^14(500조). 넘으면 두 숫자가 붙은
+# 것으로 본다 — 단일 셀의 콤마 오배치는 숫자열을 바꾸지 않지만, 두 숫자가 이어붙으면
+# 자릿수가 폭발한다('316,305268,96147,344' → 3경 1,630조). 근거·실측은
+# docs/qa/layer2_fidelity_full_2026-07-30.md 참고.
+_AMOUNT_SANE_MAX = 10_000_000_000_000_000  # 1경원 (실측 최대치의 약 20배 여유)
+
+
+def _is_complete_number(tok: str) -> bool:
+    """토큰 하나가 **온전한 금액 표기**인가 — 부호·괄호를 벗긴 뒤 3자리 그룹 또는 무콤마
+    정수/소수. 한 셀 안에 이런 토큰이 둘 이상이면 이어붙이면 안 된다(`parse_amount` R1)."""
+    tk = tok.strip()
+    if tk.startswith("(") and tk.endswith(")"):
+        tk = tk[1:-1]
+    tk = tk.lstrip("-△▲+").rstrip(",")
+    if not tk:
+        return False
+    return bool(_WELL_FORMED_RE.fullmatch(tk) or _PLAIN_INT_RE.fullmatch(tk)
+                or _DECIMAL_RE.fullmatch(tk))
 
 # 명시적 단위 선언 패턴: "(단위 : 천원)", "단위:백만원", "단위 : 원, %" 등
 # "단위적립방식" 같은 비단위 표현과 구분하기 위해 단위 키워드(억원/백만원/만원/천원/원)를 강제.
@@ -80,9 +111,19 @@ def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
     if cell_text is None:
         return None
 
+    # ── R1: 한 셀에 **온전한 숫자가 공백으로 둘 이상** 나열된 경우(2026-07-30).
+    #   제출인이 두 논리행을 한 행에 접어 넣은 표에서 나온다 — 원문 실측:
+    #     <TD>723,570,750 723,570,750 </TD>  · 라벨도 '3.배당금   현금배당' · 다른 셀은 '- -'
+    #   아래에서 공백을 지우고 이어붙이면 원문에 없는 값이 된다. XML 이 깨진 게 아니라
+    #   원문 구조 자체가 그렇다(중첩 없는 단일 TD).
+    toks = cell_text.split()
+    if len(toks) >= 2 and all(_is_complete_number(tk) for tk in toks):
+        if len({tk.strip() for tk in toks}) > 1:
+            return None            # 어느 값이 이 셀 것인지 원문이 말하지 않는다 → 결측
+        cell_text = toks[0]        # 같은 값이 반복된 셀 → 하나로 취한다
+
     s = (cell_text
          .strip()
-         .replace(',', '')          # 천 단위 구분자 제거
          .replace(' ', '')          # 반각공백
          .replace('　', '')         # 전각공백
          .replace('​', '')     # zero-width space
@@ -96,6 +137,10 @@ def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
     if not s or s in _BLANK_PATTERNS:
         return None
 
+    # ── R4: 범위 표기가 남아 있으면 금액이 아니다(기간·구간).
+    if _RANGE_MARK_RE.search(s):
+        return None
+
     # 괄호 음수 표기: (1,234) → -1234
     negative = s.startswith('(') and s.endswith(')')
     if negative:
@@ -106,21 +151,38 @@ def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
         negative = True
         s = s.lstrip('-△▲')
 
+    # ── R2: 후행 콤마('135,582,')는 표기 실수다 — 제거하고 판정한다.
+    s = s.rstrip(',')
+
     # 다시 공란 체크
     if not s or s in _BLANK_PATTERNS:
         return None
 
-    # PostgreSQL BIGINT 한도: ±9,223,372,036,854,775,807 ≈ 9.2 × 10^18
-    # 한국 최대 기업(삼성전자) 총자산 ≈ 5 × 10^14 원 → BIGINT 범위 내
-    # 이상값(개발노이즈, 인코딩 오류)은 잘라냄
-    _BIGINT_MAX = 9_000_000_000_000_000_000  # 9 × 10^18 (safe margin)
+    # ── R2 (계속): 콤마가 있으면 3자리 그룹이어야 하지만, 그룹이 깨졌다고 값을 버리진
+    #   않는다. **단일 셀의 콤마 오배치는 숫자열을 바꾸지 않기 때문**이다:
+    #     '92,31386,801'  → 9,231,386,801  (자릿수 10 — 정상. 콤마만 잘못 찍힘)
+    #     '1,074,7100'    → 10,747,100     (자릿수 8  — 정상)
+    #   숫자열이 실제로 틀리는 건 **두 숫자가 이어붙은 때**이고, 그때는 자릿수가 폭발한다:
+    #     '316,305268,96147,344' → 3경 1,630조 (자릿수 17 — 날조)
+    #   그래서 콤마 문법은 못 믿어도 자릿수는 믿을 수 있다 → 아래 _AMOUNT_SANE_MAX 로 가린다.
+    s = s.replace(',', '')          # 천 단위 구분자 제거
+
+    if not s or s in _BLANK_PATTERNS:
+        return None
 
     try:
-        # 소수점 허용 (예: "1.5억원" 아닌 표 데이터상 "1.0" 등)
-        val = int(float(s))
+        # ★정수 문자열은 float 를 거치지 않는다. float64 는 유효자릿수가 15~17 자리라
+        #   2^53(9,007,199,254,740,992) 을 넘는 정수에서 값이 조용히 바뀐다:
+        #     int(float('723570750723570750')) = 723570750723570688
+        #   깨진 원문에서 셀이 병합돼 18 자리 문자열이 들어오면(예 '723,570,750 723,570,750')
+        #   이 경로를 타서 DB 에 원문에도 없는 값이 남았다(전수조사에서 17,771 행 발견).
+        #   소수 표기('1.0'·환율 '1,106.52')는 종전대로 float 경유가 필요하다.
+        val = int(s) if _PLAIN_INT_RE.fullmatch(s) else int(float(s))
         val *= multiplier
-        if abs(val) > _BIGINT_MAX:
-            return None   # 비정상 값 (인코딩 오류, 잘못된 셀 등) 무시
+        # ── R3: 금액 타당성 상한. 종전 상한 9×10^18 은 BIGINT 한도라 사실상 무제한이어서
+        #   병합으로 날조된 값(1.6×10^17 등)이 전부 통과했다(DB 실측 17,771 행).
+        if abs(val) > _AMOUNT_SANE_MAX:
+            return None   # 두 숫자 이어붙음·인코딩 오류 — 오염보다 결측을 택한다
         return -val if negative else val
     except (ValueError, OverflowError):
         return None
@@ -173,6 +235,14 @@ def normalize_account_name(raw: str) -> str:
     s = re.sub(r'\(Note\s*\d+\)', '', s, flags=re.IGNORECASE)
     # 주석 참조 — 후방 제거: "계정과목 (주5)" 형태
     s = re.sub(r'\s*\(주석?\s*\d[\d,\s]*\)\s*$', '', s)
+
+    # ★ literal '<주석N,...>' 제거(2026-07-30, 8.5경 카나리아 회귀로 발견):
+    # `sanitize_dart_xml()`(2026-07-29) 이후 이 표기가 **텍스트로 그대로 남는다** — 종전에는
+    # lxml 이 '<주석19/>' 를 엘리먼트로 만들어 꼬리 ',39>' 만 남았고 아래 규칙이 그걸 뗐다.
+    # 이제는 '<주석5,42>' 전체가 텍스트라 아래 규칙이 ',42>' 만 떼고 '<주석5' 를 남긴다:
+    #   '5. 이익잉여금<주석5,39>' → (구) '이익잉여금'  →  (신) '이익잉여금<주석5'  ← canonical 유실
+    # 실측: DB손해보험 별도 이익잉여금이 exact → fuzzy 로 떨어져 canonical 을 잃었다.
+    s = re.sub(r'<\s*주석?\s*\d[\d,\s]*>?', '', s)
 
     # ★ <주석N/> 엘리먼트 잔재 제거(2026-07-17, 실측 원문 대조로 발견):
     # DART 편집기는 작성자가 쓴 '<주석19,22,32,42,44>' 를 **엘리먼트 <주석19/> + 남은 텍스트

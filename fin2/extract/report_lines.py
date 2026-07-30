@@ -50,11 +50,20 @@ from fin2.extract.text import (
 
 # 주석 표 한 행에서 캡처할 최대 컬럼 수(위치 기준). 주석 표는 컬럼 의미가 제각각(5개년·
 # 만기구간·공정가치수준 등)이라 넉넉히 잡아 위치 그대로 전사한다. 값 판단 아님.
-_NOTE_MAX_COLS = 8
+#
+# ★2026-07-30: 8 → 200. 전수 정방향 조사에서 `extract_rows(num_cols=N)` 의
+#   `range(num_cols)` 가 N 번째 이후를 **조용히 버리는 것**이 확인됐다 — 주석
+#   3,592,401 셀(주석 원문의 1.62%). 잘리던 것이 유형자산 증감표(토지·건물·기계장치…)
+#   처럼 **D&A 산출의 1차 소스**였다. 실측 열 수 분포: 상한 8 은 표의 98.235% 만 덮고
+#   최대 열 수는 169 다(`scripts/qa_column_width_dist.py`).
+#   상한을 올려도 **빈 열은 행을 만들지 않는다**(None 은 방출 안 함) — 늘어나는 저장량은
+#   회수되는 실데이터 그 자체다. 그래서 '넉넉한 안전 한계'로 두고 실제 폭은 표가 정한다.
+_NOTE_MAX_COLS = 200
 
-# 자본변동표 금액 열 최대 수(자본금·자본잉여금·기타자본·이익잉여금·지배지분계·비지배·총계 +여유).
-# 열은 기간이 아니라 자본 구성요소라 넉넉히 잡고 위치 그대로 전사한다.
-_SCE_MAX_COLS = 12
+# 자본변동표 금액 열 최대 수. 열은 기간이 아니라 자본 구성요소라 위치 그대로 전사한다.
+# ★2026-07-30: 12 → 200(같은 이유). 실측 최대 15 열이고 12 는 98.759% 만 덮었다 —
+#   잘리던 col 12~14 에 자본총계가 있었다(20240927000935 '2021.01.01 (기초자본)').
+_SCE_MAX_COLS = 200
 
 # 표 헤더의 '제 N 기 (당)/(전)/(전전)' 기간 표기. 기간 수 판정용.
 _PERIOD_HDR_RE = re.compile(r"제\s*\d+\s*[（(]?\s*[당전]")
@@ -281,6 +290,12 @@ def _emit_section_lines(
     unit_of = {id(t): u for t, u, _ in tables_with_unit}
     # ★ table_seq 는 **문서 순서**여야 한다. 아래 data_tables 는 표 크기순으로 정렬해 순회하므로
     #   (큰 표 우선 = 기존 표 선택 로직) enumerate 를 쓰면 안 된다. tables 가 문서 순서다.
+    # ★같은 표 객체가 tables 에 두 번 담기는 경우가 있다(섹션 감지가 같은 TABLE 중복 수집).
+    #   dict 인 doc_seq 는 마지막 인덱스로 덮이는데 아래 루프는 그 표를 **두 번 순회**해,
+    #   같은 키(table_seq·row_order·col_index)에 **같은 값 행이 두 벌** 쌓였다 — 전수 실측
+    #   report_lines 중복 키 1,076,974 그룹의 정체(2026-07-30). dict 는 삽입 순서를
+    #   보존하므로 문서 순서를 유지한 채 중복만 제거한다.
+    tables = list(dict.fromkeys(tables))
     doc_seq = {id(t): i for i, t in enumerate(tables)}
     interim_flow = statement in ("IS", "CF") and report_fiscal_period in ("H1", "Q1", "Q3")
     cum_maps = {id(t): (_interim_cumulative_cols(t) if interim_flow else None) for t in tables}
@@ -577,6 +592,12 @@ def _emit_sce_lines(
     """
     basis, _ = _SECTION_META[section_code]
     tables = [t for t, _, _ in tables_with_unit]
+    # ★같은 표 객체가 tables 에 두 번 담기는 경우가 있다(섹션 감지가 같은 TABLE 중복 수집).
+    #   dict 인 doc_seq 는 마지막 인덱스로 덮이는데 아래 루프는 그 표를 **두 번 순회**해,
+    #   같은 키(table_seq·row_order·col_index)에 **같은 값 행이 두 벌** 쌓였다 — 전수 실측
+    #   report_lines 중복 키 1,076,974 그룹의 정체(2026-07-30). dict 는 삽입 순서를
+    #   보존하므로 문서 순서를 유지한 채 중복만 제거한다.
+    tables = list(dict.fromkeys(tables))
     doc_seq = {id(t): i for i, t in enumerate(tables)}
 
     for table in tables:
@@ -680,17 +701,45 @@ def extract_report_lines(
     return lines
 
 
+# 열이 **기간축**인 statement — 여기서만 col_index 가 '몇 기 전'을 뜻한다
+# (`_row_to_line`: context_fiscal_year = report_fiscal_year - col_index).
+#   · SCE  : 열 = 자본 구성요소(자본금·이익잉여금…), context_fiscal_year=NULL
+#   · note : 열 = 위치(자산분류·만기구간·공정가치수준), context_fiscal_year=NULL
+# 그래서 아래 규칙을 SCE/note 에 적용하면 기간이 아닌 실데이터가 삭제된다(SCE 1,555만 행).
+_PERIOD_AXIS_STATEMENTS = frozenset({"BS", "IS", "CF"})
+
+
+def _is_loadable(line: ReportLineRow) -> bool:
+    """적재 대상인가 — **당기(col_index=0)만 DB 로 옮긴다**(사용자 결정 2026-07-30).
+
+    이전 기간(전기=col1·전전기=col2)은 **그 기간의 보고서에서** 온다. 상장 후 첫 보고서도
+    예외 없이 같은 규칙을 적용한다(그 기업의 상장 이전 기간은 DB 에 존재하지 않는다).
+    나중 보고서의 비교컬럼을 쓰면 재작성 값이 원 보고서 값을 덮게 되는데, 그러지 않는다.
+
+    ★추출 단계가 아니라 **적재 단계**에서 걸러야 한다 — `detect_anomalies` 는 추출기 출력
+    (`extract_report_lines` 반환값)을 그대로 받아 SCE 기말 행을 BS 전기 열과 연도로 짝지어
+    교차검증한다(`fin2/audit/line_anomaly.py:180-196`). 추출기에서 지우면 그 감리가 조용히
+    무효화된다. 여기서 걸러야 감리는 온전하고 DB 만 가벼워진다.
+    """
+    if line.statement in _PERIOD_AXIS_STATEMENTS:
+        return (line.col_index or 0) == 0
+    return True
+
+
 def store_report_lines(session, rcept_no: str, lines: list[ReportLineRow]) -> int:
     """rcept_no 단위 delete-then-insert(재추출 재현성). fact_v2 처럼 셀 단위 upsert 가 아님 —
     report_lines 는 값판단이 없어 충돌 개념 자체가 없고, 재추출은 그 보고서의 이전 tree 를
     통째로 교체하는 게 자연스럽다.
 
     ★본문(BS/IS/CF/SCE)만 적재한다. statement='note' 는 별도 테이블 note_lines 로
-    (`store_note_lines`) — 주석 볼륨(본문의 ~4.7배)을 본문 조회에서 격리(2026-07-25)."""
+    (`store_note_lines`) — 주석 볼륨(본문의 ~4.7배)을 본문 조회에서 격리(2026-07-25).
+
+    ★★당기(col_index=0)만 적재한다 — 사용자 결정 2026-07-30(`_PERIOD_AXIS_STATEMENTS`).
+    상세는 `_is_loadable` 참고."""
     from sqlalchemy import delete, insert
     from collector.models import ReportLine
 
-    body = [l for l in lines if l.statement != "note"]
+    body = [l for l in lines if l.statement != "note" and _is_loadable(l)]
     session.execute(delete(ReportLine).where(ReportLine.rcept_no == rcept_no))
     if not body:
         return 0

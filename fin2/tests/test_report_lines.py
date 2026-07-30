@@ -159,8 +159,11 @@ def test_notes_monetary_transcribed_positional():
     assert all(l.period_kind is None for l in notes)
     assert all(l.value_won is not None and l.unit_source == "declared" for l in notes)
     # 종속기업 요약재무현황(천원 선언) 단위환산 검증: KG ETS 자산총계 = 767,614,120천원 → 원
+    # ★로케이터 필드 변경(2026-07-26 주석 전사): section_path = **관장 번호 주석 제목**
+    #   ('3. 연결재무제표 주석')이 되고, 표 직전 설명('…종속기업의 요약재무현황')은
+    #   table_title 로 옮겼다(`_emit_note_lines` 주석 참고). 검증 의도(천원→원 환산)는 그대로.
     ets = [l for l in notes if "KG ETS" in l.label_raw
-           and "요약재무현황" in (l.section_path or "") and l.col_index == 0]
+           and "요약재무현황" in (l.table_title or "") and l.col_index == 0]
     assert any(l.value_won == 767_614_120_000 for l in ets), [l.value_won for l in ets]
 
 

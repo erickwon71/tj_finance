@@ -525,7 +525,14 @@ def _emit_note_lines(
     sec_tables = assign_note_tables_with_titles(root)
     for sec_kind, basis in ((SEC_CONSOL_NOTE, "consolidated"), (SEC_SEP_NOTE, "separate")):
         for table_seq, (table, note_title) in enumerate(sec_tables.get(sec_kind, [])):
-            if not _table_has_data_rows(table):
+            # ★게이트 완화(사용자 결정 D4, 2026-07-31): 콤마 금액 행 **1 개**면 전사한다.
+            #   기본값 2 는 '16. 결손금'(2셀)·'담보설정금액'(1셀)·'특수관계자 자금거래'(1셀)
+            #   처럼 **작지만 진짜인 표**를 버렸다 — 전수 2,199,735 표 / 9,501,682 셀.
+            #   표본 30건 원문 대조에서 표제표·stub 은 0 건이었다(`probe_data_row_gate.py`).
+            #   1 이어도 콤마 금액 행을 최소 하나는 요구하므로 숫자 없는 표제표는 통과 못 한다.
+            #   ⚠ 기본값은 2 로 **그대로 둔다** — 본문 제목표/데이터표 연결 판정 등 다른
+            #     호출부의 동작을 바꾸지 않기 위해 주석 경로에서만 인자로 낮춘다.
+            if not _table_has_data_rows(table, minimum=1):
                 continue
             # section_path = 관장 번호 주석 제목('27. 현금흐름표')이 우선 — 주석 정체성 로케이터.
             # 없으면 표 직전 설명 텍스트로 폴백. table_title 엔 지역 설명을 따로 남긴다.

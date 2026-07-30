@@ -246,3 +246,26 @@ def test_inherited_unit_still_blocks_non_money_columns():
                                       inherited=True)
     assert cu.multiplier(0) == 1_000 and cu.source(0) == "inherited"
     assert cu.multiplier(1) is None and cu.source(1) == "non_monetary"
+
+
+def test_inherit_from_declaration_bearing_paragraph():
+    """항목 도입 문단이 단위를 선언하면 그 아래 **두 번째 데이터표**도 상속한다(D1 보완).
+
+    항목 내 관장 선언의 94%가 이 모양이다(표본 400 filing: 문단 667표 vs 선언전용표 68표).
+    """
+    from fin2.extract.text import inherited_declaration_text
+    intro = "<P>(2) 담보로 제공된 자산의 내역은 다음과 같습니다. (단위: 천원)</P>"
+    root = _tbl(f"<BODY>{intro}{_DATA}<P></P>{_DATA}</BODY>")
+    assert "천원" in (inherited_declaration_text(root[3]) or "")
+
+
+def test_no_inherit_across_statement_title():
+    """재무제표명은 예외 — 남의 statement 경계다.
+
+    엘브이엠씨 2019 사고(USD 기준 BS 표가 앞 '연결현금흐름표 단위:백만원' 을 주워 자산총계
+    586조)가 이 경계를 넘었을 때 벌어진 일이다.
+    """
+    from fin2.extract.text import inherited_declaration_text
+    title = "<P>연결 현금흐름표 제 33 기 (단위: 백만원)</P>"
+    root = _tbl(f"<BODY>{title}{_DATA}<P></P>{_DATA}</BODY>")
+    assert inherited_declaration_text(root[3]) is None

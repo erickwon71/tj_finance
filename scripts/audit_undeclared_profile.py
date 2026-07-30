@@ -179,7 +179,8 @@ def grid_preview(tbl, max_rows: int = 4, max_cols: int = 6) -> list[str]:
     return out
 
 
-def scan_filing(root, f, t: Counter, samples: list, titles: Counter) -> None:
+def scan_filing(root, f, t: Counter, samples: list, titles: Counter,
+                samples_missed: list) -> None:
     groups = _detect_body_statement_tables(root, _detect_fin_type(root), include_sce=True)
     scoped: list[tuple[str, object, str]] = []
     for code, tables_with_unit in groups.items():
@@ -220,6 +221,10 @@ def scan_filing(root, f, t: Counter, samples: list, titles: Counter) -> None:
             key = "선언전용표" if impl else "텍스트요소_안의_선언"
             t[f"C:상속경로:{key}"] += 1
             t[f"C셀:상속경로:{key}"] += cells
+            if not impl and len(samples_missed) < 60:
+                # 측정은 '상속 가능'이라는데 구현은 못 받는 표 — **왜 못 받는지**는 형제
+                # 사슬을 봐야 안다(집계로는 규칙을 더 넓혀야 하는지 판단할 수 없다).
+                samples_missed.append((f.rcept_no, (inh or "")[:60], sibling_chain(tb, 5)))
         if title:
             titles[title.strip()[:50]] += 1
         if len(samples) < 400:
@@ -251,6 +256,7 @@ def main() -> int:
 
     t: Counter[str] = Counter()
     samples: list = []
+    samples_missed: list = []
     titles: Counter[str] = Counter()
     t0 = time.time()
     for i, f in enumerate(rows, 1):
@@ -265,7 +271,7 @@ def main() -> int:
             if root is None:
                 t["파싱실패"] += 1
                 continue
-            scan_filing(root, f, t, samples, titles)
+            scan_filing(root, f, t, samples, titles, samples_missed)
         except Exception as e:  # noqa: BLE001
             t["스캔실패"] += 1
             if t["스캔실패"] <= 3:
@@ -309,6 +315,13 @@ def main() -> int:
         print("\n--- C 표의 주석 표제 상위 15 ---")
         for ttl, c in titles.most_common(15):
             print(f"  {c:>5}  {ttl}")
+
+    if args.show and samples_missed:
+        print(f"\n--- 측정=상속가능 · 구현=미상속 인 표의 형제 사슬 {min(args.show, len(samples_missed))} ---")
+        for rc, inh, sibs in samples_missed[: args.show]:
+            print(f"\n  [{rc}] 측정이 찾은 선언: {inh!r}")
+            for i, sb in enumerate(sibs, 1):
+                print(f"    -{i}: {sb}")
 
     if args.show and samples:
         print(f"\n--- C 원문 그리드 표본 {min(args.show, len(samples))} ---")

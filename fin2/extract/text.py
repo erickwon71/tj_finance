@@ -387,7 +387,17 @@ def inherited_declaration_text(tbl) -> str | None:
                 return txt                  # ★선언 전용 표 — 여기서만 상속한다
             return None                     # 데이터도 선언도 없는 표 → 근거 없음
         if txt:
-            return None                     # 텍스트가 있는 요소 = 새 소항목 시작 → 정지
+            # 텍스트가 있는 요소에서 멈춘다. 단 **그 요소 자신이 선언을 가지면** 그것이 이
+            # 항목의 선언이다(사용자 결정 D1 보완, 2026-07-31) — 실측 서식:
+            #   <P> (2) 담보로 제공된 자산 … 다음과 같습니다. (단위: 천원)
+            #   <TABLE> [데이터표A]      <P>(빈)      <TABLE> [데이터표B] ← B 가 상속
+            # 항목 내 관장 선언의 **94%가 이 모양**이다(표본 400 filing: 문단 667표/21,268셀
+            # vs 선언전용표 68표/1,316셀). 새 소항목은 자기 문단을 가지므로 경계는 유지된다.
+            if any(p.search(txt) for p, _ in _STMT_TITLE):
+                return None                 # ★재무제표명은 예외 — 남의 statement 경계다
+                                            #   (엘브이엠씨 2019: USD 표가 앞 '연결현금흐름표
+                                            #    단위:백만원' 을 주워 자산총계 586조가 된 사고)
+            return txt if detect_unit_tokens(txt) else None
         prev = prev.getprevious()            # 빈 요소만 건너뛴다
     return None
 

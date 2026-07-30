@@ -190,3 +190,59 @@ def test_non_money_table_yields_no_value():
 if __name__ == "__main__":
     from tests._util import run_tests
     sys.exit(1 if run_tests(globals()) else 0)
+
+
+# ── D1 · 선언 전용 표에서만 단위를 상속한다 (2026-07-31 사용자 결정) ────────────
+def _tbl(xml: str):
+    from lxml import etree
+    return etree.fromstring(xml)
+
+
+_DECL_ONLY = "<TABLE><TR><TD>(단위: 천원)</TD></TR></TABLE>"
+# ★기간 표기('당기말' 등)를 넣지 않는다 — 그러면 `_is_metadata_only` 가 이 표를 메타로 보고
+#   기존 (3) 경로가 이미 건너뛰어, 새 상속 규칙을 시험하지 못한다(초판 테스트가 그랬다).
+_DATA = ("<TABLE><TR><TD>구분</TD><TD>금액</TD></TR>"
+         "<TR><TD>매입채무및기타채무</TD><TD>3,855,977</TD></TR>"
+         "<TR><TD>단기차입금</TD><TD>14,420,000</TD></TR></TABLE>")
+
+
+def test_inherit_from_declaration_only_table_across_empty_sibling():
+    """[선언표][데이터표A][빈 P][데이터표B] — B 가 A 와 같은 선언을 상속한다.
+
+    실측 서식(20230515001080 8.범주별 금융상품)에서 B 가 단위를 잃던 자리다.
+    """
+    from fin2.extract.text import declaration_text, inherited_declaration_text
+    root = _tbl(f"<BODY><P>(1) 내역은 다음과 같습니다.</P>{_DECL_ONLY}{_DATA}<P></P>{_DATA}</BODY>")
+    b = root[4]
+    assert declaration_text(b) is None            # 자기 선언은 없다
+    assert "천원" in (inherited_declaration_text(b) or "")
+
+
+def test_no_inherit_across_text_paragraph():
+    """사이에 **문장이 있는 <P>** 가 있으면 새 소항목이므로 상속하지 않는다.
+
+    실측 반례(20230512001205): '(단위 : 원/주)' 선언표 뒤 데이터표 다음에 설명 <P> 가 오고
+    그 뒤가 **주식 적수 표**다. 여기서 상속하면 주식수에 금액 단위가 붙는다.
+    """
+    from fin2.extract.text import inherited_declaration_text
+    root = _tbl(f"<BODY>{_DECL_ONLY}{_DATA}<P>(*) 가중평균유통보통주식수의 산출근거입니다.</P>{_DATA}</BODY>")
+    assert inherited_declaration_text(root[3]) is None
+
+
+def test_no_inherit_from_a_data_table_declaration():
+    """앞 표가 **데이터표**면(그 표 자신의 표제에 선언이 있어도) 상속하지 않는다 —
+    상속 근거는 '선언 전용 표'라는 원문 구조 사실 하나뿐이다."""
+    from fin2.extract.text import inherited_declaration_text
+    data_with_decl = ("<TABLE><TR><TD>(단위: 백만원)</TD></TR>"
+                      "<TR><TD>가</TD><TD>1,000</TD></TR><TR><TD>나</TD><TD>2,000</TD></TR></TABLE>")
+    root = _tbl(f"<BODY>{data_with_decl}<P></P>{_DATA}</BODY>")
+    # 데이터표는 건너뛰기만 하고, 그 앞에 선언 전용 표가 없으므로 근거 없음
+    assert inherited_declaration_text(root[2]) is None
+
+
+def test_inherited_unit_still_blocks_non_money_columns():
+    """상속한 단위에도 비금액 열 차단은 그대로 적용되고, 근거는 'inherited' 로 표시된다."""
+    cu = ColumnUnits.from_declaration("(단위: 천원)", {0: "장부금액", 1: "지분율(%)"},
+                                      inherited=True)
+    assert cu.multiplier(0) == 1_000 and cu.source(0) == "inherited"
+    assert cu.multiplier(1) is None and cu.source(1) == "non_monetary"

@@ -45,7 +45,7 @@ from parser.xml.section_detector import (
 from fin2.extract.text import (
     _SECTION_META, _detect_fin_type, _detect_body_statement_tables,
     _interim_cumulative_cols, _adecimal_from_unit, _synth_acontext,
-    declared_unit, declaration_text, _table_has_data_rows,
+    declared_unit, declaration_text, inherited_declaration_text, _table_has_data_rows,
 )
 from fin2.extract.units import ColumnUnits
 
@@ -540,7 +540,12 @@ def _emit_note_lines(
             note_col_labels = _build_col_labels(table, all_cells=True)
             # ★단위는 표 단위가 아니라 **열 단위**로 정한다(F1, 2026-07-31 — units.py).
             #   선언이 없어도 전사는 계속한다: value_won 은 비고 value_raw 에 원문이 남는다.
-            cu = ColumnUnits.from_declaration(declaration_text(table), note_col_labels)
+            #   표 자신의 선언이 없으면 **앞선 '선언 전용 표'** 에서만 상속한다(D1) —
+            #   상속 조건은 `inherited_declaration_text` docstring 참고(그 외엔 아무것도 안 줍는다).
+            own_decl = declaration_text(table)
+            inherited = None if own_decl else inherited_declaration_text(table)
+            cu = ColumnUnits.from_declaration(own_decl or inherited, note_col_labels,
+                                              inherited=bool(inherited))
             # 셀 원문 확보용으로 ×1 파싱한다 — 실제 값은 열 배수로 다시 파싱한다.
             # keep_header_rows=True(F2): 헤더 규칙에 걸린 행도 전사하고 규칙 이름만 남긴다.
             # 행이 기간축인 주석 표('당기말' 행 + 자산분류 열)에서 그 행이 실데이터이기 때문.

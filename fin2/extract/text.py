@@ -344,6 +344,54 @@ def declaration_text(tbl) -> str | None:
     return None
 
 
+# 상속 탐색에서 **건너뛰어도 되는 것**은 두 가지뿐이다(사용자 결정 D1, 2026-07-31).
+_INHERIT_SPAN = 6
+
+
+def inherited_declaration_text(tbl) -> str | None:
+    """앞선 **'선언 전용 표'** 의 단위 선언을 상속한다. 그 외에는 아무것도 주워오지 않는다.
+
+    왜 필요한가 — 원문 실측 서식(20230515001080 `8. 범주별 금융상품`):
+
+        <P>     (1) … 범주별 금융상품의 내역은 다음과 같습니다.<당분기말>
+        <TABLE> (단위: 천원)      ← 데이터 없는 **선언 전용 표**
+        <TABLE> [자산 데이터표]    ← 직전 형제가 선언표 → declaration_text 가 잡는다
+        <P>     (빈 요소)
+        <TABLE> [부채 데이터표]    ← ★여기서 단위를 잃었다(콤마금액 27~29 셀)
+
+    같은 선언이 관장하는 **두 번째 데이터표부터** 단위가 끊긴다. 미선언 데이터표 셀의 53%
+    (전수 환산 약 4.9M 셀)가 이 모양이다(`docs/qa/undeclared_bucket_profile_2026-07-31.md`).
+
+    ★ 상속을 '선언 전용 표'로만 한정하는 이유 — 상속은 본질적으로 추측이라, 근거를 **원문
+      구조 사실**로 좁혀야 안전하다. 다음 셋을 지킨다:
+        · 건너뛸 수 있는 것 = **빈 요소** 와 **데이터표**(같은 선언 아래 형제들)뿐
+        · 텍스트가 있는 요소(<P> 문장·제목·재무제표명)를 만나면 **즉시 정지** — 새 소항목의
+          시작이기 때문이다. 실측 반례(20230512001205)가 여기서 걸린다: '(단위 : 원/주)'
+          선언표 뒤 데이터표 다음에 **주식 적수 표**가 오는데, 그 사이에 설명 <P> 가 있어
+          상속이 발동하지 않는다(발동했다면 주식수에 금액 단위가 붙을 뻔했다).
+        · 받아들이는 것 = **데이터행이 없고 유효 선언이 있는 표**뿐
+      비금액 열 차단(units.py)은 상속된 단위에도 그대로 적용되고, 상속으로 채운 값은
+      `unit_source='inherited'` 로 표시돼 계층3 이 구분할 수 있다.
+    """
+    prev = tbl.getprevious()
+    for _ in range(_INHERIT_SPAN):
+        if prev is None:
+            return None
+        tag = prev.tag.upper() if isinstance(prev.tag, str) else ""
+        txt = " ".join("".join(prev.itertext()).split())
+        if tag == "TABLE":
+            if _table_has_data_rows(prev):
+                prev = prev.getprevious()   # 같은 선언 아래 형제 데이터표 — 건너뛴다
+                continue
+            if detect_unit_tokens(txt):
+                return txt                  # ★선언 전용 표 — 여기서만 상속한다
+            return None                     # 데이터도 선언도 없는 표 → 근거 없음
+        if txt:
+            return None                     # 텍스트가 있는 요소 = 새 소항목 시작 → 정지
+        prev = prev.getprevious()            # 빈 요소만 건너뛴다
+    return None
+
+
 _HANGUL_RE = re.compile(r"[가-힣]")
 
 

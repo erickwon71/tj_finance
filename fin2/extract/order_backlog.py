@@ -61,6 +61,8 @@ _UNIT_NOTE_RE = re.compile(r"[\(（]\s*단위\s*[:：][^)\]）]*[\)）]")
 # 담는 관행(실측 제이오) — 앞 숫자는 당기분, 괄호 안은 누적(=계약잔액 계산에 실제 쓰이는 값:
 # 기본도급액-누적완성공사액=계약잔액 정확히 성립, 당기분으로는 안 맞음). 괄호 안 숫자를 우선 채택.
 _TRAILING_PAREN_NUM_RE = re.compile(r"\(([\d,]+)\)\s*$")
+# 원문이 "없음"을 표로 말하는 표기(D3). 공란은 여기 넣지 않는다 — 병합 셀과 구분되지 않는다.
+_DASH_MARKS = frozenset(("-", "－", "—", "―", "─"))
 
 
 @dataclass
@@ -220,6 +222,19 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
         if "backlog" in vals:
             rows.append(OrderBacklogRow(
                 category=category, backlog_amt=vals.get("backlog"),
+                new_orders=vals.get("total"), completed=vals.get("completed"), unit=unit,
+            ))
+        elif (vals.get("total") is not None or vals.get("completed") is not None) and any(
+                drow[c].strip() in _DASH_MARKS for c, k in col_kind.items() if k == "backlog"):
+            # ★잔고 열이 있는데 그 칸이 '-' 인 행(사용자 결정 D3, 2026-07-31).
+            #   실측(20250313000769 레미콘): 수주총액 40,385,176 · 기납품액 40,385,176 ·
+            #   수주잔고 '-' — 납품이 끝나 **잔고가 실제로 0** 인 회사다. 종전에는 이 행이
+            #   통째로 사라져 수주총액·기납품액(실데이터)까지 같이 없어졌다.
+            #   ⚠ 다른 열에 실데이터가 있을 때만 만든다 — 전 열이 비면 그건 빈 행이다.
+            #   ⚠ 공란이 아니라 **명시적 대시**만 인정한다: 빈 칸은 '해당 없음'인지 '병합 셀'
+            #     인지 원문이 말해주지 않으므로 0 이라고 적을 근거가 없다.
+            rows.append(OrderBacklogRow(
+                category=category, backlog_amt=0,
                 new_orders=vals.get("total"), completed=vals.get("completed"), unit=unit,
             ))
     return rows

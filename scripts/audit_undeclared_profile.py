@@ -42,7 +42,7 @@ from sqlalchemy import text
 
 from collector.db import get_session
 from fin2.extract.text import (_detect_body_statement_tables, _detect_fin_type,
-                               _table_has_data_rows)
+                               _table_has_data_rows, inherited_declaration_text)
 from parser.common.amount_normalizer import detect_unit_declaration
 from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.section_detector import (SEC_CONSOL_NOTE, SEC_SEP_NOTE,
@@ -213,6 +213,13 @@ def scan_filing(root, f, t: Counter, samples: list, titles: Counter) -> None:
         inh = inherited_declaration(tb)
         t["C:항목내_선언있음" if inh else "C:항목내_선언없음"] += 1
         t[("C셀:항목내_선언있음" if inh else "C셀:항목내_선언없음")] += cells
+        # 그 '항목 내 선언' 을 **어디서** 찾았는지로 다시 가른다 — 채택한 규칙(D1 안 ③)은
+        # '선언 전용 표'에서만 상속하므로, 나머지는 규칙을 넓혀야만 회수된다.
+        if inh:
+            impl = inherited_declaration_text(tb)      # 실제 적재에 쓰이는 규칙(안 ③)
+            key = "선언전용표" if impl else "텍스트요소_안의_선언"
+            t[f"C:상속경로:{key}"] += 1
+            t[f"C셀:상속경로:{key}"] += cells
         if title:
             titles[title.strip()[:50]] += 1
         if len(samples) < 400:
@@ -293,6 +300,10 @@ def main() -> int:
           f"· 셀 {t['C셀:항목내_선언없음']:,}   ← 추측 금지(value_won NULL 적재만)")
     print(f"  (참고) 경계 무시 넓은 창  : 표 {t['C:넓힌창에_선언있음']:,} "
           f"· 셀 {t['C셀:넓힌창에_선언있음']:,}   ← 남의 표 선언까지 포함, 채택 금지")
+    print("\n--- 그 '항목 내 선언' 을 어디서 찾았나 (D1 규칙 선택의 근거) ---")
+    for key, why in (("선언전용표", "채택된 규칙(안 ③) — 지금 실제로 상속한다"),
+                     ("텍스트요소_안의_선언", "안 ②로 넓혀야만 회수된다(문단 안에 선언이 있다)")):
+        print(f"  {key:<18} 표 {t[f'C:상속경로:{key}']:>6,} · 셀 {t[f'C셀:상속경로:{key}']:>8,}   ← {why}")
 
     if titles:
         print("\n--- C 표의 주석 표제 상위 15 ---")

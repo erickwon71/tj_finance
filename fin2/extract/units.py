@@ -90,6 +90,7 @@ UNDECLARED = "undeclared"
 
 # unit_source 값(DB 에 그대로 들어간다) — 그 행의 value_won 이 어떤 근거로 채워졌는가/왜 비었나.
 SRC_DECLARED = "declared"        # 표 선언 배수 적용(금액단독)
+SRC_INHERITED = "inherited"      # 앞선 **선언 전용 표**의 단위를 상속(D1) — 표 자신의 선언 아님
 SRC_COL_MONEY = "col_money"      # 혼합 선언 + 열 헤더가 금액이라고 말함
 SRC_NON_MONEY = "non_monetary"   # 비금액 열/표 — value_won 없음(원문은 value_raw)
 SRC_UNDET = "undetermined"       # 단위 확정 못 함 — value_won 없음(원문은 value_raw)
@@ -167,18 +168,23 @@ class ColumnUnits:
         unit_source = cu.source(col_idx)
     """
 
-    def __init__(self, tokens: list[str], col_labels: dict[int, str] | None):
+    def __init__(self, tokens: list[str], col_labels: dict[int, str] | None,
+                 inherited: bool = False):
         self.tokens = tokens
         self.raw_decl: str | None = None
         self.col_labels = col_labels or {}
         self.kind = classify_tokens(tokens)
         self.money_mult = first_money_multiplier(tokens)
+        # 표 자신의 선언이 아니라 **앞선 선언 전용 표**에서 받아온 것인가(D1).
+        # 값 판정 규칙은 같고, `unit_source` 만 'inherited' 로 표시해 계층3 이 구분하게 한다.
+        self.inherited = inherited
 
     @classmethod
     def from_declaration(cls, decl_text: str | None,
-                         col_labels: dict[int, str] | None = None) -> "ColumnUnits":
+                         col_labels: dict[int, str] | None = None,
+                         inherited: bool = False) -> "ColumnUnits":
         tokens = detect_unit_tokens(decl_text) if decl_text else []
-        obj = cls(tokens, col_labels)
+        obj = cls(tokens, col_labels, inherited=inherited)
         obj.raw_decl = (decl_text or "").strip()[:120] or None
         return obj
 
@@ -209,8 +215,10 @@ class ColumnUnits:
         if column_is_non_money(label):
             return SRC_NON_MONEY
         if self.kind == MONEY_ONLY:
-            return SRC_DECLARED
-        return SRC_COL_MONEY if column_is_money(label) else SRC_UNDET
+            return SRC_INHERITED if self.inherited else SRC_DECLARED
+        if not column_is_money(label):
+            return SRC_UNDET
+        return SRC_INHERITED if self.inherited else SRC_COL_MONEY
 
     @property
     def has_money_column(self) -> bool:

@@ -48,6 +48,8 @@ DROP INDEX IF EXISTS note_lines_report_fiscal_year_idx;
 DROP INDEX IF EXISTS note_lines_corp_code_report_fiscal_year_statement_basis_idx;
 -- 신규 이름(create 단계가 만드는 것). 이걸 빠뜨려 2026-07-29 재적재가 인덱스를 단 채 돌았다.
 DROP INDEX IF EXISTS note_lines_corp_fy_basis_idx;
+-- F2(2026-07-31) header_hint 부분 인덱스도 같은 이유로 적재 중에는 뗀다(create 가 다시 만든다).
+DROP INDEX IF EXISTS ix_note_lines_header_hint;
 SQL
     echo "남은 인덱스:"; status
     ;;
@@ -61,6 +63,9 @@ SET maintenance_work_mem = '2GB';
 -- corp 바운드 조회(corp_code / corp+연도 / corp+연도+basis)를 모두 접두로 커버한다.
 CREATE INDEX IF NOT EXISTS note_lines_corp_fy_basis_idx
     ON note_lines (corp_code, report_fiscal_year, basis);
+-- F2: 헤더 규칙에 걸린 행만(전체의 ~0.9%) — 부분 인덱스라 NULL 엔트리를 만들지 않는다.
+CREATE INDEX IF NOT EXISTS ix_note_lines_header_hint
+    ON note_lines (header_hint) WHERE header_hint IS NOT NULL;
 SQL
     echo "최종 인덱스:"; status
     psql -d "$DB" -c "

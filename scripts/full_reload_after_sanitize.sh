@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 #
-# XML 이스케이프 복구(53d440b) 반영 전량 재적재 — 본문 + 주석.
+# 전량 재적재 — 본문 + 주석 + 표 메타.
+#
+# 2026-07-31 판(Phase 4): F1(단위 열귀속)·F2(header_hint)·D1(단위 상속)·D4(데이터행 게이트
+# 완화)·F3(report_tables 정규화)을 **한 번의 재적재**로 반영한다. 이 재적재 전까지 DB 는
+# 구 포맷이고 오염 6,130,738 행이 그대로 남아 있다.
+# 원판: XML 이스케이프 복구(53d440b) 반영 재적재.
 #
 # ★DB 크기 원칙: delete-then-insert 는 헌 튜플을 남겨 테이블을 부풀린다(2026-07-27 에
 #   이것 때문에 디스크가 100% 차서 백필이 전멸했다). 두 테이블 모두 **TRUNCATE 후 순수
@@ -37,6 +42,10 @@ say "① report_lines TRUNCATE"
 psql -d tj_finance -v ON_ERROR_STOP=1 <<'SQL' >>"$LOG/main.log" 2>&1 || exit 1
 TRUNCATE TABLE report_lines;
 TRUNCATE TABLE report_line_load_progress;
+-- ★F3(2026-07-31): 표 단위 메타(table_title·주석 section_path·단위 선언 원문)를 담는 새 테이블.
+--   두 적재 패스가 rcept 단위로 delete-then-insert 하지만, 전량 재적재에서는 먼저 비운다
+--   (구 포맷 잔재가 남지 않도록 — 라인 테이블과 같은 원칙).
+TRUNCATE TABLE report_tables;
 -- ★report_line_corrections 가 report_line_anomalies 를 FK 로 참조한다. 따로 비우면
 --   "cannot truncate a table referenced in a foreign key constraint" 로 막힌다.
 --   두 테이블을 **한 문장에서** 함께 비워야 한다(2026-07-29 여기서 중단됨).

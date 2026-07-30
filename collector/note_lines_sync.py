@@ -27,7 +27,7 @@ from sqlalchemy import text
 
 from collector.db import get_session
 from fin2.extract.report_lines import (extract_report_lines, store_note_lines,
-                                       store_report_lines)
+                                       store_report_lines, store_report_tables)
 
 FY_MIN = 2015
 
@@ -108,6 +108,7 @@ def sync_layer2_lines(
                     include_notes=True,
                 )
                 out["rows"] += store_note_lines(session, t.rcept_no, lines)
+                store_report_tables(session, t.rcept_no, lines)   # 표 메타(F3)
                 if include_body:
                     # 같은 추출 결과에서 본문(BS/IS/CF/SCE)을 적재한다. store_report_lines 가
                     # rcept 단위 delete-then-insert + col_index=0 필터를 이미 한다.

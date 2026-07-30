@@ -39,17 +39,24 @@ from parser.common.note_topics import (DA_SOURCE_BROAD, DA_SOURCE_COMPONENT,
 
 _ROWS_SQL = text(
     """
-    SELECT section_path, table_seq, row_order, col_index, col_label, label_raw, value_won
-    FROM note_lines
-    WHERE rcept_no = :rcept
-      AND basis = :basis
-      AND statement = 'note'
-      AND value_won IS NOT NULL
+    -- ★F3(2026-07-31): 주석 제목(section_path)이 **표 단위**라 `report_tables` 로 옮겨졌다.
+    --   행마다 반복하던 33 B × 2.2억 행(6.4 GB)을 없앤 것이라, 여기서는 표 키로 조인해 읽는다.
+    --   조인 키는 함수종속이 측정된 (rcept_no, statement, basis, table_seq) 그대로다.
+    SELECT rt.section_path, n.table_seq, n.row_order, n.col_index, n.col_label,
+           n.label_raw, n.value_won
+    FROM note_lines n
+    LEFT JOIN report_tables rt
+           ON rt.rcept_no = n.rcept_no AND rt.statement = 'note'
+          AND rt.basis = n.basis AND rt.table_seq = n.table_seq
+    WHERE n.rcept_no = :rcept
+      AND n.basis = :basis
+      AND n.statement = 'note'
+      AND n.value_won IS NOT NULL
       -- ★F2 가드(2026-07-31): 계층2 가 헤더 규칙에 걸린 행을 **버리지 않고 전사**하게 됐다.
       --   그 행은 대개 진짜 열 헤더('당기말'·'제 72 기')라 D&A 합산에 섞이면 오염이다.
       --   행이 기간축인 표에서만 실데이터인데, 그 판단은 이 쿼리가 아니라 note_periods 가
       --   '기간라벨' hint 를 신호로 쓰는 쪽에서 한다. 기본은 제외.
-      AND header_hint IS NULL
+      AND n.header_hint IS NULL
     """
 )
 

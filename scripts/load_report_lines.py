@@ -41,7 +41,7 @@ from sqlalchemy import text
 from collector.db import get_session
 from collector.models import ReportLineLoadProgress
 from fin2.extract.report_lines import (extract_report_lines, store_report_lines,
-                                        store_note_lines)
+                                        store_note_lines, store_report_tables)
 from fin2.audit.line_anomaly import detect_anomalies, store_anomalies
 
 FY_MIN = 2015
@@ -185,8 +185,13 @@ def main() -> None:
                     if args.notes:
                         # 주석 전용 패스: note_lines 만 적재(본문 report_lines 는 이미 로드됨 — 재기록 안 함).
                         nl = store_note_lines(session, r.rcept_no, lines)
+                        # ★표 메타(F3)는 주석 패스에서 적는다 — 주석이 표 수의 대부분이고,
+                        #   본문 패스가 먼저 돌아 같은 rcept 를 이미 지웠다 해도 여기서 다시
+                        #   전체(본문+주석)를 써 넣으므로 결과가 온전하다.
+                        store_report_tables(session, r.rcept_no, lines)
                     else:
                         nl = store_report_lines(session, r.rcept_no, lines)
+                        store_report_tables(session, r.rcept_no, lines)
                         found = detect_anomalies(lines, rcept_no=r.rcept_no, corp_code=r.corp_code,
                                                  report_fiscal_period=r.fiscal_period)
                         na = store_anomalies(session, r.rcept_no, found)

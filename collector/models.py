@@ -443,6 +443,58 @@ class ReportLine(Base):
                 f"{self.label_raw!r} {self.value_won}>")
 
 
+class ReportTable(Base):
+    """계층2 **표 단위** 메타데이터 — 행마다 반복되던 값을 한 곳으로 모은다(F3, 2026-07-31).
+
+    왜 별 테이블인가 — 측정된 함수종속
+    ----------------------------------
+    `scripts/audit_db_waste.py` 가 `GROUP BY 키 HAVING count(DISTINCT col) > 1` 을 **실제로
+    질의**해, 아래 컬럼들이 `(rcept_no, statement, basis, table_seq)` 에 함수종속임을 확인했다
+    (표본 300 rcept: note 995,310행 → 48,037그룹, 위반 0). 즉 한 표의 모든 행이 같은 값을
+    들고 있었다. 실측 회수량:
+
+        note_lines.table_title    141 B × 2.2억 행  → **27.6 GB**
+        note_lines.section_path    33 B × 2.2억 행  →  **6.4 GB**
+        report_lines.table_title  164 B × 3,748만 행 → **5.6 GB**
+        parsed_at                   8 B × 양쪽       →  **1.9 GB**
+
+    ★ `report_lines.section_path` 는 **여기 오지 않는다.** 그건 들여쓰기 stack 경로
+      ('자산>유동자산')라 **행마다 다르다**. 이름이 같다고 같은 것이 아니다 — 주석의
+      section_path 만 '그 표의 주석 제목'이라 표 단위다.
+
+    단위 정보도 함께 둔다(F1). 행에는 `unit_source`(그 칸을 왜 그렇게 판정했는가)만 남기고,
+    **표가 원문에 뭐라고 적었는지**(`unit_decl_raw`)는 여기 한 번만 적는다 — 계층3 이 나중에
+    다시 해석할 수 있게 하는 근거이며, 행마다 반복하면 그 자체가 새 낭비가 된다.
+    """
+    __tablename__ = "report_tables"
+
+    rcept_no    = Column(String(14), ForeignKey("filings.rcept_no"), primary_key=True)
+    statement   = Column(String(10), primary_key=True, comment="BS/IS/CF/SCE/note")
+    basis       = Column(String(12), primary_key=True, comment="consolidated/separate")
+    table_seq   = Column(SmallInteger, primary_key=True, comment="섹션 내 표 문서 순번")
+
+    table_title = Column(Text, nullable=True,
+                         comment="그 표의 원문 제목(위치 기록). 종전 report_lines/note_lines 의 "
+                                 "동명 컬럼이 여기로 왔다")
+    section_path= Column(Text, nullable=True,
+                         comment="**주석 전용** — 관장 번호 주석 제목('27. 현금흐름표'). "
+                                 "본문 report_lines.section_path(들여쓰기 경로)와는 다른 것이라 "
+                                 "본문 행에는 계속 행마다 남는다")
+    unit_decl_raw = Column(Text, nullable=True,
+                           comment="표가 원문에 적은 단위 선언 문자열 그대로('(단위 : 주, 천원)')")
+    declared_unit = Column(BigInteger, nullable=True, comment="선언에서 읽은 금액 배수(없으면 NULL)")
+    unit_kind     = Column(String(12), nullable=True,
+                           comment="money_only/mixed/non_money/undeclared (fin2/extract/units.py)")
+    unit_inherited= Column(Boolean, default=False,
+                           comment="표 자신의 선언이 아니라 앞선 선언 전용 표·항목 도입 문단에서 "
+                                   "상속했는가(사용자 결정 D1)")
+    parsed_at     = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return (f"<ReportTable r{self.rcept_no} {self.statement}/{self.basis}"
+                f"#{self.table_seq} {self.table_title!r}>")
+
+
 class StatementSource(Base):
     """
     fin2 정합(R) 산출물: (기업·연도·기간·연결별도·재무제표) 단위로 **단일 source filing 선택**.

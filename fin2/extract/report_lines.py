@@ -130,6 +130,13 @@ class ReportLineRow:
     # 헤더 판정 규칙 이름(F2, 2026-07-31). NULL = 규칙에 안 걸린 평범한 데이터 행.
     # 계층3 소비자는 기본적으로 `header_hint IS NULL` 로 거른다(fin2/layer3 가드).
     header_hint: str | None = None
+    # ── 표 단위 메타(F3, 2026-07-31) — **DB 의 행에는 안 들어간다.**
+    #   `store_report_tables` 가 (rcept_no, statement, basis, table_seq) 로 묶어
+    #   `report_tables` 한 행으로 적는다. 메모리에서만 행에 붙여 다니는 이유는 추출기 반환
+    #   시그니처를 바꾸지 않기 위해서다(호출부가 여럿이다).
+    unit_decl_raw: str | None = None
+    unit_kind: str | None = None
+    unit_inherited: bool = False
 
     def as_row(self) -> dict:
         """SQLAlchemy bulk insert 용 dict (ReportLine 컬럼명 기준)."""
@@ -241,6 +248,9 @@ def _row_to_line(
         node_role=node_role,
         table_seq=table_seq,
         table_title=table_title,
+        # 본문은 열별 판정을 하지 않는다(열=기간). 표가 적은 선언 원문만 표 메타로 남긴다(F3).
+        unit_decl_raw=None,
+        unit_kind=None,
     )
 
 
@@ -606,6 +616,10 @@ def _emit_note_lines(
                         col_label=note_col_labels.get(col_idx),  # 열 정체(당기/전기 · 자산분류)
                         # 헤더 규칙에 걸린 행이라는 **관찰**(판단 아님). 계층3 가 표별로 판단한다.
                         header_hint=row.header_hint,
+                        # 표 단위 메타(F3) — 행에는 안 들어가고 report_tables 로 모인다.
+                        unit_decl_raw=cu.raw_decl,
+                        unit_kind=cu.kind,
+                        unit_inherited=cu.inherited,
                     ))
 
 
@@ -793,22 +807,76 @@ def store_report_lines(session, rcept_no: str, lines: list[ReportLineRow]) -> in
     if not body:
         return 0
 
-    rows = [l.as_row() for l in body]
-    now = datetime.utcnow()
-    for r in rows:
-        r["parsed_at"] = now
+    # ★F3(2026-07-31): `table_title`·`parsed_at` 은 **행에 넣지 않는다** — 표 단위 값이라
+    #   `report_tables` 로 갔다(측정된 함수종속, models.ReportTable docstring 참고).
+    #   `section_path` 는 본문에서는 들여쓰기 경로라 **행마다 다르므로 그대로 둔다.**
+    rows = [{k: v for k, v in l.as_row().items() if k not in _TABLE_LEVEL_COLS} for l in body]
     session.execute(insert(ReportLine).values(rows))
     return len(rows)
 
 
 # note_lines = report_lines 구조 트윈(별도 테이블, collector/db 마이그레이션 생성). 모델 중복을
 # 피하려 Core 로 raw insert 한다(컬럼명 = ReportLineRow.as_row() + parsed_at).
+# ★F3(2026-07-31): 표 단위 컬럼은 `report_tables` 로 이동했다. 주석에서는 `section_path`
+#   (=관장 주석 제목)도 표 단위라 함께 갔다 — 본문의 동명 컬럼(들여쓰기 경로)과 다른 것이다.
+_TABLE_LEVEL_COLS = frozenset(("table_title", "parsed_at"))
+_NOTE_TABLE_LEVEL_COLS = _TABLE_LEVEL_COLS | {"section_path"}
+
 _NOTE_INSERT_COLS = (
     "corp_code rcept_no report_fiscal_year report_fiscal_period statement basis "
-    "section_path row_order depth node_role table_seq table_title label_raw col_index "
+    "row_order depth node_role table_seq label_raw col_index "
     "col_label context_fiscal_year period_kind is_cumulative value_won value_raw adecimal "
-    "unit_source header_hint source_ref context_raw parsed_at"
+    "unit_source header_hint source_ref context_raw"
 ).split()
+
+
+def store_report_tables(session, rcept_no: str, lines: list[ReportLineRow]) -> int:
+    """표 단위 메타를 `report_tables` 로 rcept 단위 delete-then-insert (F3, 2026-07-31).
+
+    행 테이블에서 뺀 값들(제목·주석 제목·단위 선언 원문)을 **표마다 한 번** 적는다.
+    키는 `(rcept_no, statement, basis, table_seq)` — 함수종속이 측정된 바로 그 키다
+    (`collector/models.py:ReportTable` docstring).
+
+    ★ `section_path` 는 **주석 행에서만** 가져온다. 본문의 동명 컬럼은 들여쓰기 경로라 행마다
+      다르고, 그건 계속 `report_lines` 에 남는다(같은 이름의 다른 것 — 섞으면 본문 tree 가
+      표 단위로 뭉개진다).
+    ★ 같은 표의 행이 서로 다른 값을 들고 있으면 **첫 값을 쓴다.** 함수종속은 측정으로 확인됐고
+      (표본 300 rcept 위반 0), 그래도 어긋나는 경우는 원문 자체가 그런 것이라 판단하지 않는다.
+    """
+    from sqlalchemy import delete, insert
+    from collector.models import ReportTable
+
+    session.execute(delete(ReportTable).where(ReportTable.rcept_no == rcept_no))
+    stored = [l for l in lines
+              if (l.statement == "note") or _is_loadable(l)]
+    if not stored:
+        return 0
+
+    now = datetime.utcnow()
+    seen: dict[tuple, dict] = {}
+    for l in stored:
+        key = (l.statement, l.basis, l.table_seq)
+        row = seen.get(key)
+        if row is None:
+            row = seen[key] = {
+                "rcept_no": rcept_no, "statement": l.statement, "basis": l.basis,
+                "table_seq": l.table_seq, "table_title": None, "section_path": None,
+                "unit_decl_raw": l.unit_decl_raw, "declared_unit": None,
+                "unit_kind": l.unit_kind, "unit_inherited": bool(l.unit_inherited),
+                "parsed_at": now,
+            }
+        if row["table_title"] is None:
+            row["table_title"] = l.table_title
+        if l.statement == "note" and row["section_path"] is None:
+            row["section_path"] = l.section_path
+        if row["unit_decl_raw"] is None:
+            row["unit_decl_raw"] = l.unit_decl_raw
+        if row["declared_unit"] is None and l.adecimal is not None:
+            row["declared_unit"] = 10 ** (-l.adecimal) if l.adecimal <= 0 else None
+    if not seen:
+        return 0
+    session.execute(insert(ReportTable).values(list(seen.values())))
+    return len(seen)
 
 
 def store_note_lines(session, rcept_no: str, lines: list[ReportLineRow]) -> int:
@@ -821,12 +889,8 @@ def store_note_lines(session, rcept_no: str, lines: list[ReportLineRow]) -> int:
     if not notes:
         return 0
 
-    now = datetime.utcnow()
-    rows = []
-    for l in notes:
-        d = l.as_row()
-        d["parsed_at"] = now
-        rows.append(d)
+    rows = [{k: v for k, v in l.as_row().items() if k not in _NOTE_TABLE_LEVEL_COLS}
+            for l in notes]
     cols = ", ".join(_NOTE_INSERT_COLS)
     ph = ", ".join(f":{c}" for c in _NOTE_INSERT_COLS)
     session.execute(_text(f"INSERT INTO note_lines ({cols}) VALUES ({ph})"), rows)

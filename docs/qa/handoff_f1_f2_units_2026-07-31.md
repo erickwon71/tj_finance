@@ -197,7 +197,19 @@ census 의 "87.1% 공백"은 '사업의 내용 섹션 귀속' 기준이라 **다
    그래야 "전사는 됐지만 계층3 이 못 쓴다"를 유실과 구분할 수 있다.
 
 참고: 지금 나오는 `헤더행 오판 드롭 1,483` 은 **본문 경로**다(F2 를 주석만 켰으므로 정상).
-같은 도구의 census 판 (`audit_unit_declarations.py`)은 이번에 갱신해 두었다.
+
+같은 이유로 계약이 어긋난 도구가 넷 더 있다(전부 `declared_unit(...) is None → 폐기`):
+
+| 파일·줄 | 영향 |
+|---|---|
+| `scripts/layer2_forward_cells.py:277` | 커버리지·폐기 수치가 과소·과대 |
+| `scripts/layer2_fidelity_full.py:135` | '표:폐기(단위 미선언)' 이 이제 폐기가 아니다 |
+| `scripts/layer2_note_drop_audit.py:96` | 같은 이유 |
+| `scripts/layer2_note_heading_fix_verify.py:86` | 같은 이유 |
+| `fin2/audit/report_line_audit.py:106` | 본문 감사라 영향 작음(본문 계약은 그대로) |
+
+census 판(`audit_unit_declarations.py`)은 이번에 새 계약으로 갱신했다 — 다른 도구를 고칠 때
+그 `scan_filing()` 의 `loaded` 판정을 참고하면 된다.
 
 ## 7. 새로 만든 도구 6종
 

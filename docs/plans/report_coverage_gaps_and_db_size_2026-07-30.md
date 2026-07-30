@@ -222,6 +222,16 @@ detect_unit_tokens(text)      -> list[str]       # 신규: ['백만원','천USD'
 
 ### Phase 4 — 스키마 축소 + 재적재 1회
 
+> **실행됨 2026-07-31 07:29 시작**(커밋 `6671ecc`·`72f76ef`). 계획과 달라진 점:
+> · `report_lines.section_path` 는 **옮기지 않았다** — 들여쓰기 경로라 행마다 다르다.
+>   주석의 동명 컬럼(=주석 제목)만 표 단위라 옮겼다(계획서엔 이 구분이 없었다).
+> · `unit_source` 는 **유지**한다 — F1 이후 상수가 아니다(5 값).
+> · `corp_code`·`statement` 는 이번에 안 건드린다 — 회수 ~3 GB 대비 소비처가 많고,
+>   `note_lines_corp_fy_basis_idx`(데일리 증분 적재가 쓴다)가 corp_code 에 걸려 있다.
+> · 단위 선언 원문(`unit_decl_raw`)·분류·상속 여부를 `report_tables` 에 함께 담았다 —
+>   계층3 이 나중에 재해석할 근거를 표마다 한 번만 저장한다.
+
+
 **F3. `report_tables` 정규화** (W1·W3·W4 + F1·F2 를 **한 번의 재적재**에)
 - 신규 `report_tables`: PK `(rcept_no, statement, basis, table_seq)` +
   `table_title`·`unit_decl_raw`·`declared_unit`·`parsed_at`

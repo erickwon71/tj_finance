@@ -378,10 +378,8 @@ class ReportLine(Base):
                                 comment="섹션 내 표의 문서 순번(0,1,…). 2표식(손익계산서/포괄손익"
                                         "계산서 분리, 실측 10.7%)에서 row_order 가 표마다 0 부터 "
                                         "다시 시작해 뒤섞이는 것을 막는다. 정렬키=(table_seq,row_order)")
-    table_title        = Column(Text,         nullable=True,
-                                comment="그 표의 원문 제목('연결포괄손익계산서' 등). 어느 표에서 온 "
-                                        "행인지의 **원문 근거** — 계층2 가 판정해주는 게 아니라 원문이 "
-                                        "그렇게 적혀 있다는 사실만 전달(NULL=제목 못 찾음)")
+    # table_title 은 `report_tables` 로 이동(F3, 2026-07-31) — 표 단위 값이라 행마다 반복하면
+    # note 27.6 GB · 본문 5.6 GB 를 쓴다. 함수종속은 audit_db_waste 가 질의로 측정했다.
     row_order          = Column(SmallInteger, nullable=True,  comment="표 내 등장 순서(RowData.row_order 재사용)")
     depth              = Column(SmallInteger, nullable=True,  comment="들여쓰기 수준=원문 전각공백 수(raw_indent). "
                                                                      "★연속된 레벨번호가 아님(0→2→4 로 건너뜀) — "
@@ -432,7 +430,7 @@ class ReportLine(Base):
 
     source_ref         = Column(String(180),  nullable=True)
     context_raw        = Column(String(255),  nullable=True,  comment="합성 위치 태그(감사용, uq 아님)")
-    parsed_at          = Column(DateTime,     default=datetime.utcnow)
+    # parsed_at 도 `report_tables` 로 이동(F3) — rcept 단위로 같은 값이라 행마다 둘 이유가 없다.
 
     __table_args__ = (
         Index("ix_report_lines_lookup", "corp_code", "report_fiscal_year", "statement", "basis"),

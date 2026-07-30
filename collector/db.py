@@ -582,6 +582,25 @@ def _run_migrations() -> None:
         ("2026_07_31_note_lines_header_hint_idx",
          "CREATE INDEX IF NOT EXISTS ix_note_lines_header_hint ON note_lines (header_hint) "
          "WHERE header_hint IS NOT NULL"),
+
+        # 2026-07-31 (F3 마무리): 표 단위 값이 `report_tables` 로 옮겨간 뒤, 라인 테이블에서
+        # **비어 버린 컬럼**을 제거한다. 전량 재적재가 끝나고 `verify_phase4_reload.py` 가
+        # 통과한 뒤에만 의미가 있다(그 전에는 구 포맷 값이 아직 들어 있다).
+        #
+        # ⚠ PostgreSQL 의 DROP COLUMN 은 **공간을 즉시 돌려주지 않는다** — 카탈로그에서 숨길
+        #   뿐이고 튜플 안의 바이트는 테이블이 재작성될 때 사라진다. 이번에는 재적재 자체가
+        #   재작성이라 note_lines 의 세 컬럼은 이미 값이 없다(= 공간을 안 쓴다).
+        #   report_lines.parsed_at 만 이번 판에 값이 들어갔으므로(ORM default 사고) 그쪽은
+        #   drop 후 VACUUM FULL 로 회수한다 — 재적재 후 17 GB 규모라 수 분이면 끝난다.
+        ("2026_07_31_note_lines_drop_table_level_cols",
+         "ALTER TABLE note_lines "
+         "  DROP COLUMN IF EXISTS table_title, "
+         "  DROP COLUMN IF EXISTS section_path, "
+         "  DROP COLUMN IF EXISTS parsed_at"),
+        ("2026_07_31_report_lines_drop_table_level_cols",
+         "ALTER TABLE report_lines "
+         "  DROP COLUMN IF EXISTS table_title, "
+         "  DROP COLUMN IF EXISTS parsed_at"),
     ]
 
     with engine.begin() as conn:

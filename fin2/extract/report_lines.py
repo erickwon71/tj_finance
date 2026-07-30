@@ -811,11 +811,9 @@ def store_report_lines(session, rcept_no: str, lines: list[ReportLineRow]) -> in
     #   `report_tables` 로 갔다(측정된 함수종속, models.ReportTable docstring 참고).
     #   `section_path` 는 본문에서는 들여쓰기 경로라 **행마다 다르므로 그대로 둔다.**
     rows = [{k: v for k, v in l.as_row().items() if k not in _TABLE_LEVEL_COLS} for l in body]
-    # ★키를 빼는 것만으로는 안 된다 — `ReportLine.parsed_at` 에 파이썬측 default 가 걸려 있어
-    #   **컬럼을 생략하면 SQLAlchemy 가 대신 채운다**(전량 재적재 중 실측으로 발견: 482,386/
-    #   482,386 행이 채워짐). 명시적으로 None 을 줘야 NULL 로 들어간다.
-    for r in rows:
-        r["parsed_at"] = None
+    # ★한때 여기서 `r["parsed_at"] = None` 을 넣었다 — 모델에 파이썬측 default 가 있어서
+    #   **키를 빼기만 하면 SQLAlchemy 가 대신 채웠기 때문**이다(재적재 중 482,386/482,386 행이
+    #   채워진 것으로 실측). 지금은 모델에서 컬럼 자체를 뺐으므로 그 우회가 필요 없다.
     session.execute(insert(ReportLine).values(rows))
     return len(rows)
 

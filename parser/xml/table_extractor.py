@@ -156,6 +156,10 @@ _JUNK_ACCOUNT_NAMES = frozenset([
 class RowData:
     account_name: str              # 원문 계정과목명
     amounts: list[Optional[int]]   # [당기, 전기, 전전기] (None=공란)
+    # 금액 셀의 **원문 문자열**(amounts 와 같은 인덱스). 단위를 확정하지 못해 value_won 을
+    # 비우는 열(fin2/extract/units.py)에서 원문을 잃지 않기 위한 것 — F1, 2026-07-31.
+    # 재정렬(6열 IS 선행공란 제거)에도 amounts 와 **함께** 이동한다.
+    raw_amounts: list[str] = field(default_factory=list)
     row_order: int = 0
     is_subtotal: bool = False      # 합계/소계 행 여부
     indent_level: int = 0          # 들여쓰기 수준 (0=최상위, 1=하위...) — _detect_indent(//2)
@@ -172,6 +176,7 @@ def extract_rows(
     skip_junk: bool = True,
     date_labels_ok: bool = False,
     preserve_col_positions: bool = False,
+    keep_all_amount_cells: bool = False,
 ) -> list[RowData]:
     """
     TABLE 요소에서 재무 행 데이터를 추출한다.
@@ -194,6 +199,15 @@ def extract_rows(
             상세는 `_is_header_cell(allow_date_label=)` 참고. 기본 False = 기존 동작 보존.
         preserve_col_positions: True 면 앞쪽 빈 셀을 당기지 않고 **열 위치를 그대로 보존**한다 —
             열이 기간이 아니라 축(자본 구성요소 등)인 행렬 표 전용. 기본 False = 기존 동작 보존.
+        keep_all_amount_cells: True 면 라벨 뒤의 **모든 셀**을 열 위치 그대로 담는다(숫자가
+            아닌 셀도 자리를 차지하고 값은 None). **주석 전용**(2026-07-31 F1).
+            ★필요한 이유 — 열 라벨 밀림: 기본 경로는 숫자가 아닌 셀('4.27%'·'일반대(장기)')을
+              amount_cells 에서 **빼버려** 열 위치가 앞으로 당겨진다. 그런데 `col_label` 은
+              헤더 그리드의 위치로 붙으므로 둘이 어긋난다. 실측(에쎈테크 20150817000851
+              14.장기차입금): 원문 [차입처|만기|이자율|당반기말|전기말|대출종류] 인데 '4.27%'
+              가 빠져 당반기말 금액 813,559 에 '당반기말현재이자율' 라벨이 붙었다. F1 은 이
+              라벨로 단위를 정하므로(비금액 열이면 value_won 을 비운다) 밀림이 곧 오판이다.
+              숫자가 아닌 셀은 parse_amount 가 None 이라 **값을 만들지 않는다** — 자리만 잡는다.
 
     Returns:
         RowData 리스트 (헤더 행 제외, 빈 행 제외)
@@ -225,7 +239,10 @@ def extract_rows(
             continue
 
         # 계정과목명 + 금액 분리
-        label, amount_cells = _split_label_amounts(cells)
+        if keep_all_amount_cells:
+            label, amount_cells = cells[0], list(cells[1:])   # 위치 보존(주석 전용)
+        else:
+            label, amount_cells = _split_label_amounts(cells)
 
         if not label:
             continue
@@ -246,13 +263,20 @@ def extract_rows(
         #   축(자본금/이익잉여금/…)**인 표에서는 선행 공란이 구조적 잡음이 아니라 "이 변동은
         #   그 자본 항목에 영향이 없었다"는 **의미 있는 값**이다. 여기서 당기면 열이 통째로
         #   밀려 이익잉여금 값이 자본금 열로 들어간다(실측: SCE 행 내부정합 95.3% 의 주원인).
-        if len(all_parsed) >= 4 and not preserve_col_positions:
+        # 원문 문자열은 파싱값과 **같은 인덱스**를 유지해야 한다(value_raw 용) — 아래 재정렬에서
+        # 함께 이동시킨다. 따로 움직이면 원문이 다른 열의 값으로 붙는다.
+        all_raw: list[str] = list(amount_cells)
+        if len(all_parsed) >= 4 and not (preserve_col_positions or keep_all_amount_cells):
             while all_parsed and all_parsed[0] is None:
                 all_parsed.pop(0)
+                if all_raw:
+                    all_raw.pop(0)
 
         amounts: list[Optional[int]] = []
+        raw_amounts: list[str] = []
         for i in range(num_cols):
             amounts.append(all_parsed[i] if i < len(all_parsed) else None)
+            raw_amounts.append(all_raw[i] if i < len(all_raw) else "")
 
         indent = _detect_indent(label)
         label_clean = label.lstrip()  # 들여쓰기 공백 제거
@@ -260,6 +284,7 @@ def extract_rows(
         rows.append(RowData(
             account_name=label_clean,
             amounts=amounts,
+            raw_amounts=raw_amounts,
             row_order=row_order,
             is_subtotal=_is_subtotal(label_clean),
             indent_level=indent,

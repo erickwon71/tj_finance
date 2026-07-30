@@ -57,26 +57,208 @@ def _is_complete_number(tok: str) -> bool:
     return bool(_WELL_FORMED_RE.fullmatch(tk) or _PLAIN_INT_RE.fullmatch(tk)
                 or _DECIMAL_RE.fullmatch(tk))
 
-# 명시적 단위 선언 패턴: "(단위 : 천원)", "단위:백만원", "단위 : 원, %" 등
-# "단위적립방식" 같은 비단위 표현과 구분하기 위해 단위 키워드(억원/백만원/만원/천원/원)를 강제.
-_UNIT_DECL_RE = re.compile(r'단위\s*[:：]?\s*\(?\s*(억원|백만원|만원|천원|원)')
+# ── 단위 선언 토큰화 (2026-07-31, F1) ─────────────────────────────────
+# 구 정규식은 `단위` **직후**에 금액 토큰을 요구했다:
+#     _UNIT_DECL_RE = r'단위\s*[:：]?\s*\(?\s*(억원|백만원|만원|천원|원)'
+# 전수 census(docs/qa/unit_declaration_census_2026-07-30.md) 실측 결과 그 한 줄이 세 가지
+# 사고를 냈다:
+#   ① '(단위 : 주, 천원)' — 금액을 선언했는데 첫 토큰이 비금액이라 매칭 실패 → **표째 폐기**
+#      (187,189 표 / 2,626,779 셀 유실)
+#   ② '(단위 : 천 원)'   — 자간 공백 때문에 매칭 실패 → 표째 폐기
+#   ③ '(단위 : 천원, USD)' — 첫 금액 배수를 **전 열**에 적용 → USD·이자율 열이 ×1,000 오염
+#      (DB 실측 6,130,738 행: '이자율(%)' 열에 2,228조원)
+# 그래서 선언을 **토큰 리스트**로 읽는다. ③의 열 귀속은 `fin2/extract/units.py` 가 맡는다.
+#
+# ★ 왜 "금액 토큰을 아무 위치에서나" 찾지 않는가 — 그러면 서술문이 선언으로 오인된다:
+#     '회사는 단위 사업부문별로 백만원 이상의 …'  → 백만원 발견 → ×10⁶ 오염
+#   유실보다 오염이 나쁘다는 원칙(결측 > 오염)이 여기서 방향을 정한다. 그래서 선언으로
+#   인정하는 조건을 **본문 전체가 단위 토큰 목록일 때**로 좁힌다(아래 `_is_unit_token`).
+
+_DECL_BODY_MAX = 40                       # 실측 최장 선언 '천원, 외화단위: USD' 수준
+_DECL_TAIL_MAX = 12                       # 괄호 없이 문자열 끝으로 닫히는 선언('단위:백만원')
+
+# '단위' 뒤의 구분자·여는 괄호. 본문은 여기서부터 **닫는 문자까지**.
+_DECL_HEAD_RE = re.compile(r'단위\s*[:：]?\s*[(（]?\s*')
+_DECL_END_RE = re.compile(r'[)）\]\n]')
+#
+# ★한 정규식으로 `단위…본문…닫는문자` 를 통째로 매칭하려다 되돌렸다(2026-07-31):
+#   `단위\s*[:：]?\s*[(（]?\s*([^)）\]\n]{0,40})[)）\]\n]` 로 하면 **앞선 서술문의 '단위' 가
+#   뒤에 있는 진짜 선언을 삼킨다** — '…현금창출단위의 회수가능액을 … 없습니다. (단위 : 천원)'
+#   에서 앞 '단위' 의 본문이 40자를 뻗어 뒤 선언의 ')' 를 먹어치우고, finditer 는 그 뒤부터
+#   재개하므로 '(단위 : 천원)' 을 **못 본다**(bench 에서 None 으로 잡혔다).
+#   그래서 출현마다 독립적으로 판정한다 — 느린 대신 조용한 유실이 없다.
+
+# '천 원'·'백 만 원' 자간 공백 접합. '주 원'(두 단위)은 건드리지 않는다 — 접두사 목록으로 한정.
+_MONEY_GLUE_RE = re.compile(r'(억|백\s*만|만|천)\s+(원)')
+
+# 금액 토큰. '원/주'(주당 금액)도 금액으로 본다 — 배수는 앞의 금액 단위가 정한다.
+_MONEY_TOKEN_RE = re.compile(
+    r'^[(（]?\s*(억원|백만원|만원|천원|원)\s*(?:[/／]\s*[가-힣A-Za-z]{1,4})?\s*[)）]?[.,]?$')
+
+# 비금액 단위 토큰(주·%·명·톤·USD·천USD…). **짧아야** 한다 — 문장 단어를 선언으로 오인하지
+# 않기 위한 방어선이라, 한글 토큰은 4자·비한글 토큰은 8자로 끊는다(실측 최장 '외화단위',
+# 'tCO2-eq'). 이 상한이 '사업부문별로'(6자) 같은 문장 단어를 걸러낸다.
+# 한글이 섞인 토큰도 허용해야 한다 — '천USD'·'천JPY'·'백만달러'(실측). 종전에는 한글이 하나라도
+# 있으면 **한글만** 허용하는 정규식을 걸어 '천USD' 가 탈락했고, 그 토큰 하나 때문에 선언 전체가
+# 버려져 금액 표가 통째로 유실됐다(구·신 차분에서 12건 실측).
+_UNIT_TOKEN_RE = re.compile(r'^[(（]?\s*[가-힣A-Za-z0-9$%\-㎡㎥㎏㎖ℓ°]{1,8}\s*[)）]?[.,:：]?$')
+_HANGUL_MAX = 4                      # 한글 글자 수 상한 — 문장 단어('사업부문별로'=6) 배제
+
+# **알려진** 단위 토큰. 선언으로 인정하려면 본문에 이것이 하나 이상 있어야 한다 —
+# 길이 상한만으로는 '단위로 반영' → ['로','반영'] 같은 문장 꼬리가 선언으로 통과한다(실측).
+# 반대로 모든 토큰을 화이트리스트로 강제하면 '(단위: 천원, 큐빅미터)' 처럼 낯선 단위가 하나
+# 섞인 **금액 표를 통째로 잃는다**. 그래서 "하나 이상 알려진 것 + 나머지는 짧아야"로 나눈다.
+_KNOWN_NON_MONEY_RE = re.compile(
+    r'^[(（]?\s*(?:%|퍼센트|비율|지분율|백분율'
+    r'|(?:천|백만|십억|억|만|백)?(?:주|주식|주수|주식수|톤|달러|USD|EUR|JPY|CNY|GBP|CHF'
+    r'|HKD|VND|IDR|엔|위안|유로|원화|외화|배럴|배)'
+    # ★'원화단위'·'외화단위' 는 **대상 이름**이지 단위가 아니다 — 여기 넣으면 콜론 왼쪽이
+    #   단위로 인정돼 '외화단위:천USD' 가 한 토큰으로 남고, 길이 상한에 걸려 선언 전체가
+    #   버려진다(구·신 차분에서 19 표 유실로 실측).
+    r'|명|인|건|매|개|대|좌|본|일|시간|분|초|개월|년|월|회|차|평|점|세트|박스'
+    r'|리터|ℓ|미터|㎡|㎥|㎏|㎖|kg|g|t|KAU|KOC|KCU|tCO2-eq|CO2'
+    r'|\$|US\$|￦|€|¥'
+    r')\s*[)）]?[.,:：]?$', re.IGNORECASE)
+
+_TOK_SPLIT_RE = re.compile(r'[,，·|;、\s]+')
+_PUNCT_ONLY_RE = re.compile(r'^[:：/／.,\-]+$')
+
+
+def _is_unit_token(tok: str) -> bool:
+    """토큰이 **단위 표기**로 볼 만한가(금액이든 아니든) — 길이 게이트."""
+    if _MONEY_TOKEN_RE.match(tok):
+        return True
+    if sum(1 for ch in tok if '가' <= ch <= '힣') > _HANGUL_MAX:
+        return False
+    return bool(_UNIT_TOKEN_RE.match(tok))
+
+
+def _is_known_unit_token(tok: str) -> bool:
+    """**알려진** 단위인가(금액 또는 위 목록). 선언 인정의 필수 조건 — 문장 꼬리 차단용."""
+    return bool(_MONEY_TOKEN_RE.match(tok) or _KNOWN_NON_MONEY_RE.match(tok))
+
+
+def _money_multiplier(tok: str) -> Optional[int]:
+    m = _MONEY_TOKEN_RE.match(tok)
+    if not m:
+        return None
+    return UNIT_MULTIPLIERS[m.group(1)]
+
+
+_DECL_SCAN_MAX = 2_000                    # 한 텍스트에서 검사할 '단위' 출현 수 상한(아래 ★)
+
+
+def _iter_declarations(text: str):
+    """텍스트 안의 **단위 선언마다** 토큰 목록을 yield 한다(원문 표기·순서 보존).
+
+    선언으로 인정하는 조건 — 넷 다 만족해야 한다:
+      · 본문이 **닫는 괄호·줄끝으로 닫힌다**. 괄호로 닫히면 40자까지, 문자열 끝으로 닫히면
+        12자까지 — 후자를 짧게 잡는 이유는 '단위: 백만원 기준으로 산정' 같은 서술 꼬리가
+        문자열 끝까지 통째로 본문이 되는 것을 막기 위해서다(실측 오염 방향).
+      · 토큰이 1~12개(통화 나열 '천원, USD, 천JPY, EUR, NZD, CNY, AUD' 이 7개다)
+      · **모든** 토큰이 짧다(`_is_unit_token`) — 문장 단어 배제
+      · **하나 이상**이 알려진 단위다(`_is_known_unit_token`) — '단위로 반영' 배제
+
+    ★ 지연 평가인 이유: 깨진 XML(`</TABLE>` 누락)에서는 한 형제의 itertext 가 문서 전체가 되어
+      '단위' 가 수천 번 나온다. 구 정규식은 첫 매칭에서 멈췄지만 이 함수는 선언을 전부 만들 수
+      있으므로, 호출부가 **첫 금액 선언에서 멈출 수 있게** generator 로 둔다.
+      실측(`scripts/bench_unit_declaration.py`): 정상 표제 2.9 µs · '단위' 400 회 서술문
+      236 µs(출현당 ~590 ns). 실제 전수 스윕 처리량은 0.14 s/filing 으로 F1 전과 같다.
+    """
+    if not text or "단위" not in text:
+        return
+    s = text.replace('：', ':').replace('　', ' ')
+    pos = 0
+    for _ in range(_DECL_SCAN_MAX):
+        i = s.find('단위', pos)              # C 레벨 탐색(정규식 search 보다 싸다)
+        if i < 0:
+            return
+        m = _DECL_HEAD_RE.match(s, i)
+        pos = m.end()
+        rest = s[pos: pos + _DECL_BODY_MAX + 1]
+        end = _DECL_END_RE.search(rest)
+        if end:
+            body = rest[: end.start()]       # 괄호/줄바꿈으로 닫힌 선언
+        elif len(s) - pos <= _DECL_TAIL_MAX:
+            body = rest                      # 문자열 끝에서 닫힌 짧은 선언('단위:천원')
+        else:
+            continue                         # 닫히지 않았다 → 서술문
+        toks = _body_tokens(body)
+        if toks:
+            yield toks
+
+
+def _body_tokens(body: str) -> list[str]:
+    """선언 본문 → 토큰. 단위 목록으로 보이지 않으면 [](=선언 아님).
+
+    본문은 쉼표로 나뉜 항목의 나열이고, 항목은 `대상 : 단위` 형태를 가질 수 있다 —
+    '(단위 : 천원, 주당순이익 : 원)' · '(원화단위:천원, 외화단위:천USD)'. 대상 이름은 단위가
+    아니므로 **콜론 뒤만** 취한다. 이걸 안 하면 '주당순이익'(5자) 때문에 토큰 검사가 실패해
+    **선언 전체가 버려진다**(구·신 차분에서 실측된 유실 사례).
+    """
+    body = _MONEY_GLUE_RE.sub(lambda mm: mm.group(1).replace(' ', '') + mm.group(2), body)
+    body = re.sub(r'\s*:\s*', ':', body)     # '주당순이익 : 원' → '주당순이익:원' (짝을 한 토큰으로)
+    toks: list[str] = []
+    for raw in _TOK_SPLIT_RE.split(body.strip(' .:')):
+        if not raw or _PUNCT_ONLY_RE.match(raw):
+            continue
+        if ':' in raw:
+            left, right = raw.rsplit(':', 1)
+            # 콜론 왼쪽이 **대상 이름**이면(알려진 단위가 아니다) 버리고 오른쪽만 취한다.
+            # 왼쪽이 단위면 둘 다 살린다 — '(단위: 천원/USD : $)' 에서 왼쪽을 버리면 금액
+            # 단위 '천원' 이 사라져 금액 표가 통째로 유실된다(구·신 차분 실측).
+            for t in ((left, right) if _is_known_unit_token(left) else (right,)):
+                if t and not _PUNCT_ONLY_RE.match(t):
+                    toks.append(t)
+        else:
+            toks.append(raw)
+    # 상한은 통화 나열을 담을 만큼 넉넉해야 한다 — 실측 '(단위: 천원, USD, 천JPY, EUR, NZD,
+    # CNY, AUD)' 는 7 토큰이라 종전 상한 6 에서 **선언 자체가 무시됐다**.
+    if not toks or len(toks) > 12:
+        return []
+    if all(_is_unit_token(t) for t in toks) and any(_is_known_unit_token(t) for t in toks):
+        return toks
+    return []
+
+
+def detect_unit_tokens(text: str) -> list[str]:
+    """단위 선언의 토큰 전부를 **원문 표기 그대로·선언 순서대로** 반환. 선언이 없으면 [].
+
+        '(단위 : 주, 천원)'      → ['주', '천원']
+        '(단위 : 천원, 천USD)'   → ['천원', '천USD']
+        '(단위 : %)'             → ['%']
+        '단위 사업부문별 매출은'  → []            (서술문 — 선언 아님)
+
+    여러 선언이 있으면 **금액 토큰을 가진 첫 선언**을, 그것이 없으면 첫 선언을 돌려준다.
+    열별 단위 귀속은 이 토큰을 받아 `fin2/extract/units.py` 가 결정한다.
+    """
+    first: list[str] = []
+    for toks in _iter_declarations(text):
+        if any(_money_multiplier(t) is not None for t in toks):
+            return toks                      # 금액 선언 발견 → 즉시 종료(긴 텍스트 방어)
+        if not first:
+            first = toks
+    return first
 
 
 def detect_unit_declaration(text: str) -> Optional[int]:
     """
-    '단위 : 천원' 같은 **명시적 단위 선언**이 있을 때만 배수를 반환, 없으면 None.
+    '단위 : 천원' 같은 **명시적 단위 선언**의 금액 배수. 금액 선언이 없으면 None.
 
     detect_unit_multiplier()와 달리 '원' 선언(배수 1)도 None이 아니라 1로 구분 반환한다.
     → 호출부가 "가장 가까운 단위 선언"을 (원 포함) 채택할 수 있게 한다.
     '단위적립방식', '단위의 회수가능액' 처럼 단위 키워드가 없는 경우 None.
+
+    ★ 반환값은 **표의 첫 금액 토큰 배수**다. 혼합 선언('천원, USD')에서 이 값을 전 열에
+      적용하면 오염이 된다 — 호출부는 `detect_unit_tokens` + `units.resolve_column_units`
+      를 써야 한다. 이 함수는 "금액 표인가"의 판정과 단일 단위 표의 배수용으로 남긴다.
     """
-    if not text or "단위" not in text:
-        return None
-    normalized = text.replace('：', ':').replace('　', ' ')
-    m = _UNIT_DECL_RE.search(normalized)
-    if not m:
-        return None
-    return UNIT_MULTIPLIERS[m.group(1)]
+    for toks in _iter_declarations(text):
+        for t in toks:
+            mult = _money_multiplier(t)
+            if mult is not None:
+                return mult
+    return None
 
 
 def detect_unit_multiplier(section_text: str) -> int:

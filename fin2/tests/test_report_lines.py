@@ -157,7 +157,18 @@ def test_notes_monetary_transcribed_positional():
     # 연도 판단 금지: 주석 라인은 context_fiscal_year/period_kind 를 주장하지 않는다
     assert all(l.context_fiscal_year is None for l in notes)
     assert all(l.period_kind is None for l in notes)
-    assert all(l.value_won is not None and l.unit_source == "declared" for l in notes)
+    # ★F1(2026-07-31): 주석은 이제 **비금액·단위미확정 표까지 전사**한다. 불변식이 바뀌었다 —
+    #   "모든 행에 value_won 이 있다"가 아니라 **"값이 없으면 원문이 있다"**가 계약이다.
+    #   (종전 계약은 단위를 선언한 표만 적재했으므로 항상 declared 였다.)
+    money_src = {"declared", "col_money"}
+    for l in notes:
+        if l.value_won is not None:
+            assert l.unit_source in money_src, (l.unit_source, l.label_raw)
+            assert l.value_raw is None, "값이 있으면 원문은 중복이라 저장하지 않는다"
+        else:
+            assert l.unit_source in {"non_monetary", "undetermined", "undeclared"}, l.unit_source
+            assert l.value_raw, f"단위 미확정 칸인데 원문이 없다: {l.label_raw}"
+    assert any(l.value_won is not None for l in notes), "금액 주석 표가 하나도 전사되지 않음"
     # 종속기업 요약재무현황(천원 선언) 단위환산 검증: KG ETS 자산총계 = 767,614,120천원 → 원
     # ★로케이터 필드 변경(2026-07-26 주석 전사): section_path = **관장 번호 주석 제목**
     #   ('3. 연결재무제표 주석')이 되고, 표 직전 설명('…종속기업의 요약재무현황')은

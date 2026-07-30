@@ -535,6 +535,42 @@ def _run_migrations() -> None:
         ("2026_07_note_lines_corp_fy_basis_idx",
          "CREATE INDEX IF NOT EXISTS note_lines_corp_fy_basis_idx "
          "ON note_lines (corp_code, report_fiscal_year, basis)"),
+
+        # 2026-07-31 (F1): 단위 판정을 표 단위 → **열 단위**로 내리면서 생긴 두 컬럼 변경.
+        #   · value_raw   : 단위를 확정하지 못한 칸의 **셀 원문**. 이게 있어야 'value_won=NULL'
+        #                   이 정보손실이 아니다(fin2/extract/units.py 참고).
+        #   · unit_source : 값 4종(declared/col_money/non_monetary/undetermined/undeclared)을
+        #                   담아야 해서 varchar(10) → varchar(14).
+        # ADD COLUMN(nullable, DEFAULT 없음)은 PG11+ 에서 카탈로그만 바꾸므로 84 GB 테이블에도
+        # 즉시 적용된다. 기존 행의 value_raw 는 NULL 로 남고, 전량 재적재(Phase 4)에서 채워진다.
+        ("2026_07_31_report_lines_value_raw",
+         "ALTER TABLE report_lines ADD COLUMN IF NOT EXISTS value_raw TEXT"),
+        ("2026_07_31_note_lines_value_raw",
+         "ALTER TABLE note_lines ADD COLUMN IF NOT EXISTS value_raw TEXT"),
+        ("2026_07_31_report_lines_unit_source_len",
+         "ALTER TABLE report_lines ALTER COLUMN unit_source TYPE varchar(14)"),
+        ("2026_07_31_note_lines_unit_source_len",
+         "ALTER TABLE note_lines ALTER COLUMN unit_source TYPE varchar(14)"),
+
+        # 2026-07-31: 미사용 단일컬럼 인덱스 정리(`docs/qa/db_waste_ledger_2026-07-30.md` W2).
+        # 둘 다 `ix_report_lines_lookup(corp_code, report_fiscal_year, statement, basis)` 가
+        # 대신하고, 코드에서 이 컬럼을 단독 조건으로 쓰는 질의가 없다(grep 확인):
+        #   · report_fiscal_year  단독 — 카디널리티 ~12. `build.py:_periods` 는 corp_code 와
+        #     함께 쓰므로 복합 인덱스가 이긴다. 통계 창에서 스캔 5.
+        #   · context_fiscal_year — report_lines 는 col_index=0 만 적재하므로 사실상
+        #     report_fiscal_year 와 같고, 주석·SCE 에서는 전량 NULL. 스캔 0.
+        # 모델의 index=True 도 함께 제거했다 — 안 그러면 신규 DB 에서 create_all 이 되살린다.
+        #
+        # ⚠ `note_lines_corp_fy_basis_idx`(1.5 GB)는 **지우지 않는다.** 원장은 idx_scan=0 을
+        #   근거로 drop 후보로 올렸지만, 그 인덱스의 소비자는 데일리 증분 적재의 재개 질의
+        #   (`collector/note_lines_sync.py:43` — `WHERE corp_code = ANY(:corps)`)이고
+        #   야간 잡이 2026-07-22 에 전량 삭제돼 통계 창 안에서 한 번도 돌지 않았다.
+        #   지우면 데일리마다 76 GB heap seq scan 이 된다. 'scan 0 은 미사용의 증명이 아니다'의
+        #   실제 사례라 원장에도 정정해 두었다.
+        ("2026_07_31_drop_report_lines_report_fy_idx",
+         "DROP INDEX IF EXISTS ix_report_lines_report_fiscal_year"),
+        ("2026_07_31_drop_report_lines_context_fy_idx",
+         "DROP INDEX IF EXISTS ix_report_lines_context_fiscal_year"),
     ]
 
     with engine.begin() as conn:

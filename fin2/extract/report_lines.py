@@ -45,8 +45,9 @@ from parser.xml.section_detector import (
 from fin2.extract.text import (
     _SECTION_META, _detect_fin_type, _detect_body_statement_tables,
     _interim_cumulative_cols, _adecimal_from_unit, _synth_acontext,
-    declared_unit, _table_has_data_rows,
+    declared_unit, declaration_text, _table_has_data_rows,
 )
+from fin2.extract.units import ColumnUnits
 
 # 주석 표 한 행에서 캡처할 최대 컬럼 수(위치 기준). 주석 표는 컬럼 의미가 제각각(5개년·
 # 만기구간·공정가치수준 등)이라 넉넉히 잡아 위치 그대로 전사한다. 값 판단 아님.
@@ -122,6 +123,10 @@ class ReportLineRow:
     table_seq: int | None = None          # 섹션 내 표 문서 순번. 정렬키=(table_seq, row_order)
     table_title: str | None = None        # 그 표의 원문 제목(위치 기록)
     col_label: str | None = None          # 열 헤더 원문(SCE 전용 — 열=자본 구성요소)
+    # 셀 원문 문자열. **value_won 을 채우지 못한 칸에만** 넣는다(F1, 2026-07-31):
+    # 단위를 확정하지 못했거나 비금액 열이라 원 단위로 환산할 수 없는 경우. 값이 채워진 칸은
+    # 원문이 value_won 에서 복원되므로 NULL 로 둬 용량을 쓰지 않는다.
+    value_raw: str | None = None
 
     def as_row(self) -> dict:
         """SQLAlchemy bulk insert 용 dict (ReportLine 컬럼명 기준)."""
@@ -145,6 +150,7 @@ class ReportLineRow:
             "period_kind": self.period_kind,
             "is_cumulative": self.is_cumulative,
             "value_won": self.value_won,
+            "value_raw": self.value_raw,
             "adecimal": self.adecimal,
             "unit_source": self.unit_source,
             "source_ref": self.source_ref,
@@ -379,7 +385,7 @@ def _cell_span(td, attr: str) -> int:
     return 1
 
 
-def _build_col_labels(table) -> dict[int, str]:
+def _build_col_labels(table, all_cells: bool = False) -> dict[int, str]:
     """헤더 TR 들을 **COLSPAN/ROWSPAN 그리드로 복원**해 {금액열 인덱스: 열 라벨} 반환.
 
     ★ 왜 필요한가: 자본변동표는 열이 기간이 아니라 자본 구성요소(자본금/자본잉여금/이익잉여금/
@@ -417,10 +423,16 @@ def _build_col_labels(table) -> dict[int, str]:
         return {}
 
     # 금액열 수 — 데이터 행들이 실제로 갖는 금액 셀 수(빈 셀 포함, 위치 보존 전제).
+    # ★all_cells=True 는 `extract_rows(keep_all_amount_cells=True)` 와 **같은 셈**을 해야 한다
+    #   (주석 경로). 한쪽만 비숫자 셀을 빼면 오른쪽 정렬 offset 이 어긋나 열 라벨이 밀린다.
     n_amounts = 0
     for tr in trs[n_header:]:
-        _, amount_cells = _split_label_amounts(_get_cells(tr))
-        n_amounts = max(n_amounts, len(amount_cells))
+        cells = _get_cells(tr)
+        if all_cells:
+            n_amounts = max(n_amounts, max(0, len(cells) - 1))
+        else:
+            _, amount_cells = _split_label_amounts(cells)
+            n_amounts = max(n_amounts, len(amount_cells))
     if n_amounts == 0:
         return {}
 
@@ -491,9 +503,15 @@ def _emit_note_lines(
 ) -> None:
     """주석 섹션(연결/별도) 표를 tree 로 전사한다 — **본문과 동일 원칙**(충실전사·판단 없음).
 
-    ★ 커버 범위(첫 슬라이스): **단위를 선언하고 금액 데이터행이 있는 주석 표만**. 종속기업
-    목록·회계정책 등 비화폐 텍스트 표는 단위 미선언 → 스킵(보류). 본문 path 의 '미선언은 보류'
-    원칙을 그대로 계승(결측 > 오염).
+    ★ 커버 범위(2026-07-31 F1 로 확대): **데이터행이 있는 주석 표는 전부** 전사한다.
+    종전에는 '단위를 선언한 표'만 적재했다(미선언은 표째 보류). 전수 census 실측 결과 그
+    보류가 다음을 통째로 버리고 있었다(`docs/qa/unit_declaration_census_2026-07-30.md`):
+      · 비금액 단독 선언('(단위: 주)'·'(단위: %)')  2,871,937 셀 — 주식수·지분율 전량 부재
+      · 금액을 선언했는데 못 읽은 표                2,626,779 셀 — 정규식 결함(F1 으로 해소)
+      · 미선언 표 중 **데이터표**                  약 9,100,000 셀(주주현황·주당손익·외화환산)
+    이제는 적재하되 **단위를 확정한 열만 value_won 을 채우고**, 나머지는 `value_raw`(셀 원문)
+    로 남긴다 — 결측 > 오염 원칙은 표 단위에서 **열 단위**로 내려온 것이고, 원문은 잃지 않는다.
+    열 귀속 규칙은 `fin2/extract/units.py` 참고.
 
     ★ 본문과의 차이 — **컬럼을 연도로 판단하지 않는다**. 주석 컬럼은 자산총계/부채총계 같은
     지표거나 만기구간·5개년·공정가치수준이라 '당기/전기'가 아니다. 따라서:
@@ -503,30 +521,36 @@ def _emit_note_lines(
     sec_tables = assign_note_tables_with_titles(root)
     for sec_kind, basis in ((SEC_CONSOL_NOTE, "consolidated"), (SEC_SEP_NOTE, "separate")):
         for table_seq, (table, note_title) in enumerate(sec_tables.get(sec_kind, [])):
-            unit = declared_unit(table)
-            if unit is None:
-                continue  # 비화폐/미선언 주석 표 → 보류(추측 금지)
             if not _table_has_data_rows(table):
                 continue
             # section_path = 관장 번호 주석 제목('27. 현금흐름표')이 우선 — 주석 정체성 로케이터.
             # 없으면 표 직전 설명 텍스트로 폴백. table_title 엔 지역 설명을 따로 남긴다.
             local_heading = _note_heading(table)
             heading = note_title or local_heading
-            adecimal = _adecimal_from_unit(unit)
-            note_rows = list(extract_rows(table, multiplier=unit, num_cols=_NOTE_MAX_COLS,
-                                          direct_only=True, skip_junk=False))
-            node_roles = _classify_positions(note_rows)
             # ★열 헤더 복원(2026-07-29). 주석 열은 기간일 수도(당기/전기) 자산분류일 수도
             #   (토지/건물/기계) 있는데, 지금까지 col_label 을 안 채워 계층3 가 col_index 만으로
             #   추측해야 했다(유형자산 증감표를 기간축으로 오인하는 원인). SCE 에서 쓰던
             #   _build_col_labels 를 그대로 재사용한다 — 새 파싱 로직이 아니다.
-            note_col_labels = _build_col_labels(table)
+            #   ★2026-07-31: 열 위치를 원문 그대로 보존해 라벨 밀림을 없앤다
+            #   (`keep_all_amount_cells` — 그 docstring의 장기차입금 실측 참고).
+            note_col_labels = _build_col_labels(table, all_cells=True)
+            # ★단위는 표 단위가 아니라 **열 단위**로 정한다(F1, 2026-07-31 — units.py).
+            #   선언이 없어도 전사는 계속한다: value_won 은 비고 value_raw 에 원문이 남는다.
+            cu = ColumnUnits.from_declaration(declaration_text(table), note_col_labels)
+            # 셀 원문 확보용으로 ×1 파싱한다 — 실제 값은 열 배수로 다시 파싱한다.
+            note_rows = list(extract_rows(table, multiplier=1, num_cols=_NOTE_MAX_COLS,
+                                          direct_only=True, skip_junk=False,
+                                          keep_all_amount_cells=True))
+            node_roles = _classify_positions(note_rows)
             for row in note_rows:
                 if not row.account_name:
                     continue
                 for col_idx, amount in enumerate(row.amounts):
                     if amount is None:
-                        continue
+                        continue            # 원문에 숫자가 없는 칸 — 행을 만들지 않는다(종전과 동일)
+                    raw = row.raw_amounts[col_idx] if col_idx < len(row.raw_amounts) else ""
+                    mult = cu.multiplier(col_idx)
+                    value = parse_amount(raw, mult) if mult is not None else None
                     emit(ReportLineRow(
                         corp_code=corp_code,
                         rcept_no=rcept_no,
@@ -540,9 +564,13 @@ def _emit_note_lines(
                         context_fiscal_year=None,       # ★ 연도 주장 안 함
                         period_kind=None,
                         is_cumulative=False,
-                        value_won=amount,
-                        adecimal=adecimal,
-                        unit_source="declared",
+                        value_won=value,
+                        # 단위를 확정한 열만 원문 문자열을 버린다(값으로 복원 가능).
+                        # 확정 못 한 열은 **원문을 남긴다** — 그것이 NULL 을 정보손실이
+                        # 아니게 만드는 유일한 장치다(units.py docstring 참고).
+                        value_raw=None if value is not None else (raw.strip()[:64] or None),
+                        adecimal=_adecimal_from_unit(mult) if mult is not None else None,
+                        unit_source=cu.source(col_idx),
                         # ★ source_ref / context_raw 는 저장하지 않는다(2026-07-28).
                         #   각각 f"note:{basis}/{label_raw[:80]}" · f"note:{basis}:c{col_index}" 로
                         #   **같은 행의 basis·label_raw·col_index 에서 100% 복원**되는 파생 문자열이라
@@ -757,7 +785,7 @@ def store_report_lines(session, rcept_no: str, lines: list[ReportLineRow]) -> in
 _NOTE_INSERT_COLS = (
     "corp_code rcept_no report_fiscal_year report_fiscal_period statement basis "
     "section_path row_order depth node_role table_seq table_title label_raw col_index "
-    "col_label context_fiscal_year period_kind is_cumulative value_won adecimal "
+    "col_label context_fiscal_year period_kind is_cumulative value_won value_raw adecimal "
     "unit_source source_ref context_raw parsed_at"
 ).split()
 

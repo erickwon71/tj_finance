@@ -360,7 +360,9 @@ class ReportLine(Base):
     corp_code          = Column(String(8),    nullable=False, index=True)
     rcept_no           = Column(String(14),   ForeignKey("filings.rcept_no"), nullable=False, index=True)
 
-    report_fiscal_year   = Column(SmallInteger, nullable=False, index=True, comment="보고서 회계연도")
+    # index=True 제거(2026-07-31): 단독 인덱스는 카디널리티 ~12 라 플래너가 쓰지 않고
+    # `ix_report_lines_lookup` 의 접두라 중복이다. 353 MB 회수(db.py 마이그레이션 참고).
+    report_fiscal_year   = Column(SmallInteger, nullable=False, comment="보고서 회계연도")
     report_fiscal_period = Column(String(5),    nullable=False, comment="보고서 기간 FY/H1/Q1/Q3")
 
     statement          = Column(String(10),   nullable=False, comment="BS/IS/CF/SCE/note")
@@ -400,13 +402,25 @@ class ReportLine(Base):
                                         "SCE 는 열이 기간이 아니라 자본 구성요소(자본금/이익잉여금/…)"
                                         "라 이게 없으면 col_index 만으로는 어느 열인지 알 수 없다. "
                                         "COLSPAN/ROWSPAN 그리드 복원으로 산출(원문 전사, 판단 아님)")
-    context_fiscal_year= Column(SmallInteger, nullable=True,  index=True)
+    # index=True 제거(2026-07-31): report_lines 는 col_index=0 만 적재해 사실상
+    # report_fiscal_year 와 같고 주석·SCE 에서는 전량 NULL 이다. 327 MB 회수.
+    context_fiscal_year= Column(SmallInteger, nullable=True)
     period_kind        = Column(String(8),    nullable=True,  comment="instant(BS)/duration(IS·CF)")
     is_cumulative       = Column(Boolean,     default=False)
 
     value_won          = Column(BigInteger,   nullable=True,  comment="원 단위 정규화 금액")
+    value_raw          = Column(Text,         nullable=True,
+                                comment="셀 원문 문자열. **value_won 이 NULL 인 칸에만** 채운다 — "
+                                        "비금액 열(이자율·지분율·주식수)이나 단위 미확정 열이라 원 "
+                                        "단위로 환산할 수 없는 경우(2026-07-31 F1). 값이 있는 칸은 "
+                                        "원문이 value_won 에서 복원되므로 NULL(용량 0). "
+                                        "이 컬럼이 있어야 '단위 미확정 → NULL' 이 정보손실이 아니다.")
     adecimal           = Column(SmallInteger, nullable=True)
-    unit_source        = Column(String(10),   nullable=True,  comment="declared|none — 미선언 표는 애초에 스킵되므로 현재는 항상 declared")
+    unit_source        = Column(String(14),   nullable=True,
+                                comment="value_won 의 근거(fin2/extract/units.py): declared(표 선언 "
+                                        "배수) | col_money(혼합 선언+열 헤더가 금액) | non_monetary"
+                                        "(비금액 열/표 — value_won 없음) | undetermined(단위 확정 실패) "
+                                        "| undeclared(선언 자체가 없는 표)")
 
     source_ref         = Column(String(180),  nullable=True)
     context_raw        = Column(String(255),  nullable=True,  comment="합성 위치 태그(감사용, uq 아님)")

@@ -33,7 +33,8 @@ from pathlib import Path
 from loguru import logger
 
 from parser.common.account_mapper import get_mapper, MappingResult
-from parser.common.amount_normalizer import normalize_account_name, detect_unit_declaration
+from parser.common.amount_normalizer import (normalize_account_name, detect_unit_declaration,
+                                             detect_unit_tokens)
 from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.section_detector import (
     assign_tables_to_dart_sections, table_direct_rows,
@@ -298,32 +299,46 @@ def declared_unit(tbl) -> int | None:
       · 못 찾으면 원(1)으로 가정 — DB손해보험 별도 BS 가 ×10⁶ 오염된 경로의 사촌
     선언이 없으면 **보류**(호출측이 스킵)한다. 결측 > 오염.
     """
+    txt = declaration_text(tbl)
+    return detect_unit_declaration(txt) if txt else None
+
+
+def declaration_text(tbl) -> str | None:
+    """표가 **자기 소유로** 들고 있는 단위 선언의 **원문 텍스트**. 위치 규칙은 위와 동일.
+
+    `declared_unit` 이 이 함수 위에 있다 — 위치 탐색을 한 곳에만 두기 위한 것이다.
+    감사 도구(`scripts/audit_unit_declarations.py`)도 이것을 import 해서 같은 위치를 본다.
+
+    ★ 금액 선언만 찾지 않는다(2026-07-31 F1). 종전에는 `detect_unit_declaration` 이 None 인
+      위치를 '선언 없음'으로 보고 다음 위치로 넘어갔다. 그래서 표제가 '(단위 : 주)' 인 표가
+      뒤쪽 메타 형제의 '(단위 : 천원)' 을 주워 **주식수를 ×1,000** 할 수 있었다.
+      이제는 **가장 가까운 유효 선언에서 멈춘다** — 금액 여부는 그 다음 문제다.
+    """
     # 직전 형제(표제)의 **잘리지 않은 전체 텍스트**로 단위 탐지. title_text 는 분류용이라 200자
     # 절단이 있어 긴 안내문+제목이 한 <P> 로 붙은 서식(지노믹트리 2016: '…감사받지 않았습니다.
     # 가.재무상태표 제17기…현재 (단위:원)' 260자)에서 끝의 단위를 놓친다. immediate sibling 은
     # 이 표 소유라 전체를 봐도 남의 단위가 아니다.
     prev0 = tbl.getprevious()
     if prev0 is not None:
-        decl = detect_unit_declaration(" ".join("".join(prev0.itertext()).split()))
-        if decl is not None:
-            return decl
+        t = " ".join("".join(prev0.itertext()).split())
+        if detect_unit_tokens(t):
+            return t
     first_tr = next(iter(table_direct_rows(tbl)), None)
     if first_tr is not None:
-        decl = detect_unit_declaration("".join(first_tr.itertext()))
-        if decl is not None:
-            return decl
+        t = "".join(first_tr.itertext())
+        if detect_unit_tokens(t):
+            return t
     # (3) 요약재무정보: 제목·기간 클러스터의 메타 형제에서 단위 획득(재무제표명 경계에서 정지).
     prev = tbl.getprevious()
     for _ in range(3):
         if prev is None:
             break
-        txt = " ".join("".join(prev.itertext()).split())
-        if any(p.search(txt) for p, _ in _STMT_TITLE):
+        t = " ".join("".join(prev.itertext()).split())
+        if any(p.search(t) for p, _ in _STMT_TITLE):
             break                       # 재무제표명(제목) 도달 = 경계 — 남의 표로 안 넘어감
-        d = detect_unit_declaration(txt)
-        if d is not None:
-            return d
-        if not _is_metadata_only(txt):
+        if detect_unit_tokens(t):
+            return t
+        if not _is_metadata_only(t):
             break                       # 라벨있는 비메타(데이터표 등) — 정지
         prev = prev.getprevious()
     return None

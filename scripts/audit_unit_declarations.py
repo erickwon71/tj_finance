@@ -51,9 +51,15 @@ from sqlalchemy import text
 from collector.db import get_session
 from fin2.extract.text import (_STMT_TITLE, _detect_body_statement_tables,
                                _detect_fin_type, _is_metadata_only,
-                               _table_has_data_rows, declared_unit)
+                               _table_has_data_rows, declaration_text,
+                               declared_unit)
+from fin2.extract.report_lines import _build_col_labels
+from fin2.extract.text import declaration_text as text_declaration
+from fin2.extract.units import (CONTAMINATION_MARKERS, MIXED, MONEY_ONLY,
+                                NON_MONEY_ONLY, ColumnUnits, classify_tokens)
 from parser.common.amount_normalizer import (UNIT_MULTIPLIERS,
-                                             detect_unit_declaration)
+                                             detect_unit_declaration,
+                                             detect_unit_tokens)
 from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.section_detector import (SEC_CONSOL_NOTE, SEC_SEP_NOTE,
                                          assign_note_tables_with_titles,
@@ -62,22 +68,13 @@ from parser.xml.table_extractor import _get_cells
 
 MONEY = set(UNIT_MULTIPLIERS)                      # 억원 백만원 만원 천원 원
 
-# ★금액 토큰 판정은 **부분문자열 금지**. `any('원' in tok)` 로 하면 '원화'·'각1단위'·'직원'
-#   까지 금액으로 세어 분류가 오염된다(초판에서 실제로 그랬다). 토큰이 금액 단위로 **끝나야**
-#   하고 그 앞은 배수 표기(억/백만/만/천) 또는 없음이어야 한다.
-_MONEY_TOKEN = re.compile(r"^\(?\s*(?:약\s*)?(?:억|백만|만|천|십억|조)?원\s*\)?[.,]?$")
-
-# '단위' 뒤의 선언 본문. 괄호·따옴표로 닫히거나 줄이 끝날 때까지.
-_DECL_BODY = re.compile(r"단위\s*[:：]?\s*(.{0,60}?)(?=[)）\]]|$)")
-
-# 토큰 분리자 — '백만원, 천USD' · '원/주' · '주 · %' 등.
-_TOK_SPLIT = re.compile(r"[,，/·|;、\s]+")
-
 # 숫자 셀 판정(금액 여부는 보지 않는다 — 이 도구는 '숫자가 몇 개 있었나'만 센다).
 _NUMERIC_CELL = re.compile(r"^\(?-?[\d,]+(?:\.\d+)?\)?%?$")
 
 # 비금액 열임을 원문이 말해주는 표지. 오염 판정에 쓴다(추측이 아니라 열 헤더 원문 근거).
-_NON_MONEY_COL = re.compile(r"%|비율|이자율|할인율|지분율|주당|수량|주수|배수|USD|EUR|JPY|외화")
+# ★2026-07-31: 정의를 `fin2/extract/units.py` 로 옮겼다 — 로더와 감사가 같은 잣대를 써야
+#   "오염 = 0" 을 같은 의미로 확인할 수 있다. 여기 값은 그 상수를 그대로 쓴다(수치 비교 가능).
+_NON_MONEY_COL = re.compile(CONTAMINATION_MARKERS)
 
 TARGETS_SQL = """
     SELECT f.rcept_no, f.corp_code, f.fiscal_year, f.fiscal_period, d.file_path
@@ -89,13 +86,12 @@ TARGETS_SQL = """
 """
 
 
-def declaration_text(tbl) -> str | None:
-    """`declared_unit()` 이 들여다보는 **바로 그 위치들**에서 '단위' 선언 텍스트를 찾는다.
+def declaration_text_loose(tbl) -> str | None:
+    """`declared_unit` 위치들에서 '단위' 가 든 텍스트를 **선언 유효성과 무관하게** 찾는다.
 
-    위치 순서를 `fin2/extract/text.py:declared_unit` 과 일치시킨다:
-      ① 직전 형제(표제)  ② 표 자신의 첫 행  ③ 메타 형제 최대 3칸(재무제표명에서 정지)
-    금액 토큰 매칭 여부와 **무관하게** 텍스트를 돌려주는 것이 요점 — 그래야 '선언은 있었는데
-    우리가 못 읽은' 경우를 셀 수 있다.
+    `fin2.extract.text.declaration_text` 와의 차이가 요점이다: 저쪽은 **유효한 선언**만
+    돌려주고(로더가 쓰는 것), 이쪽은 '단위' 라는 글자만 있으면 돌려준다. 그래야
+    "선언은 있었는데 우리가 못 읽었다"는 경우를 셀 수 있다.
     """
     prev0 = tbl.getprevious()
     if prev0 is not None:
@@ -122,35 +118,38 @@ def declaration_text(tbl) -> str | None:
     return None
 
 
+_KIND_KO = {MONEY_ONLY: "금액단독", NON_MONEY_ONLY: "비금액단독", MIXED: "혼합"}
+
+
 def classify(decl: str | None) -> tuple[str, list[str]]:
-    """선언 텍스트 → (분류, 토큰 목록). 토큰은 원문 표기를 그대로 둔다(판단 금지)."""
+    """선언 텍스트 → (분류, 토큰 목록). **로더와 같은 토큰화**를 쓴다(2026-07-31).
+
+    초판은 자체 정규식으로 토큰을 쪼갰다. 로더가 F1 로 토큰화를 갖게 된 뒤로는 그러면
+    감사와 적재가 서로 다른 잣대를 갖는다 — 그래서 `detect_unit_tokens` 를 그대로 쓴다.
+    """
     if not decl:
         return "미선언", []
-    m = _DECL_BODY.search(decl)
-    if not m:
-        return "미선언", []
-    body = m.group(1).strip(" .)]}")
-    toks = [t for t in _TOK_SPLIT.split(body) if t]
+    toks = detect_unit_tokens(decl)
     if not toks:
         return "미선언", []
-    money = [t for t in toks if _MONEY_TOKEN.match(t)]
-    non_money = [t for t in toks if t not in money]
-    has_money = money
-    if has_money and non_money:
-        return "혼합", toks
-    if has_money:
-        return "금액단독", toks
-    return "비금액단독", toks
+    return _KIND_KO[classify_tokens(toks)], toks
 
 
-def count_numeric_cells(tbl) -> int:
-    """표의 숫자 셀 수. 유실·오염 규모를 '표 수' 가 아니라 **셀 수** 로 말하기 위한 것."""
+def count_numeric_cells(tbl, cu=None) -> int:
+    """표의 숫자 셀 수. 유실·오염 규모를 '표 수' 가 아니라 **셀 수** 로 말하기 위한 것.
+
+    `cu`(ColumnUnits)를 주면 **그 열의 단위가 확정된 셀만** 센다 → value_won 이 채워질 셀 수.
+    셀의 열 인덱스는 첫 칸(라벨) 다음부터 0 으로 센다(`_build_col_labels` 키 규약과 동일).
+    """
     n = 0
     for tr in table_direct_rows(tbl):
-        for c in _get_cells(tr):
+        for i, c in enumerate(_get_cells(tr)):
             s = c.strip().replace(" ", "").replace("　", "")
-            if s and _NUMERIC_CELL.match(s) and any(ch.isdigit() for ch in s):
-                n += 1
+            if not (s and _NUMERIC_CELL.match(s) and any(ch.isdigit() for ch in s)):
+                continue
+            if cu is not None and cu.multiplier(max(0, i - 1)) is None:
+                continue
+            n += 1
     return n
 
 
@@ -167,11 +166,20 @@ def scan_filing(root, f, t: Counter, samples: dict) -> None:
             scoped.append(("주석", tb))
 
     for scope, tb in scoped:
-        decl = declaration_text(tb)
+        decl = declaration_text_loose(tb)
         cls, toks = classify(decl)
         cells = count_numeric_cells(tb)
-        loaded = declared_unit(tb) is not None
-        has_rows = _table_has_data_rows(tb)
+        has_rows = bool(_table_has_data_rows(tb))
+        # ★적재 여부는 **로더의 실제 계약**을 따라야 한다(2026-07-31 F1 로 바뀜):
+        #   주석 = 데이터행이 있으면 전사(단위 미선언이어도 value_raw 로 남는다)
+        #   본문·SCE = 종전대로 금액 단위를 선언한 표만
+        loaded = has_rows if scope == "주석" else (declared_unit(tb) is not None and has_rows)
+        # 그 표에서 value_won 을 채울 수 있는 셀 수 — F1 이후 '쓸 수 있게 된 양'의 지표.
+        if loaded and cells:
+            cu = ColumnUnits.from_declaration(text_declaration(tb), _build_col_labels(tb))
+            filled = count_numeric_cells(tb, cu)
+            t[f"값채움셀:{cls}"] += filled
+            t[f"원문만셀:{cls}"] += cells - filled
 
         t[f"표:{cls}"] += 1
         t[f"셀:{cls}"] += cells
@@ -251,6 +259,9 @@ def main() -> int:
     ap.add_argument("--contamination-only", action="store_true",
                     help="XML 스캔 없이 DB 오염 실측만(수 초)")
     ap.add_argument("--rcept", help="단건 드릴 — 그 filing 의 표별 선언을 전부 나열")
+    ap.add_argument("--skip-db-check", action="store_true",
+                    help="끝의 DB 오염 실측(note_lines 전량 스캔)을 건너뛴다. 샤드 6개를 동시에 "
+                         "돌릴 때 필수 — 84 GB 스캔이 6 개 겹친다")
     args = ap.parse_args()
 
     if args.contamination_only:
@@ -331,6 +342,17 @@ def main() -> int:
     print(f"  비금액단독 폐기 셀           : {t['폐기셀:비금액단독']:,} "
           f"← 현재 DB 에 전혀 없는 정보")
 
+    # F1 이후의 핵심 지표 — 적재되는 셀 중 **값을 채우는 것 vs 원문만 남기는 것**.
+    fill = sum(v for k, v in t.items() if k.startswith("값채움셀:"))
+    rawn = sum(v for k, v in t.items() if k.startswith("원문만셀:"))
+    print(f"\n=== 적재 셀의 단위 확정 (F1) ===")
+    print(f"  value_won 채움 : {fill:,}")
+    print(f"  value_raw 만   : {rawn:,}  ({100*rawn/max(fill+rawn,1):.1f}%) "
+          f"← 비금액 열 + 단위 미확정(원문 보존, 계층3 판단 대기)")
+    for c in ("금액단독", "혼합", "비금액단독", "미선언"):
+        if t[f"값채움셀:{c}"] or t[f"원문만셀:{c}"]:
+            print(f"    {c:<8} 채움 {t[f'값채움셀:{c}']:>12,} · 원문만 {t[f'원문만셀:{c}']:>12,}")
+
     for key, title in (("missed", "금액 선언인데 폐기"),
                        ("mixed", "혼합 단위로 적재"),
                        ("nonmoney", "비금액 단독(전량 폐기)")):
@@ -348,8 +370,9 @@ def main() -> int:
         if t[k]:
             print(f"  {k}: {t[k]}")
 
-    with get_session() as s:
-        report_contamination(s)
+    if not args.skip_db_check:
+        with get_session() as s:
+            report_contamination(s)
     return 0
 
 

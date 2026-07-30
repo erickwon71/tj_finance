@@ -571,6 +571,17 @@ def _run_migrations() -> None:
          "DROP INDEX IF EXISTS ix_report_lines_report_fiscal_year"),
         ("2026_07_31_drop_report_lines_context_fy_idx",
          "DROP INDEX IF EXISTS ix_report_lines_context_fiscal_year"),
+
+        # 2026-07-31 (F2): 헤더 판정을 **삭제 대신 기록**으로 바꾼다(주석 경로 한정).
+        # 설계안 `docs/plans/layer2_header_hint_lossless_2026-07-30.md`. NOT NULL 비율이
+        # 낮아(표본 0.6%) 부분 인덱스로 충분하다 — 전체 인덱스는 수억 개 NULL 엔트리를 만든다.
+        ("2026_07_31_report_lines_header_hint",
+         "ALTER TABLE report_lines ADD COLUMN IF NOT EXISTS header_hint TEXT"),
+        ("2026_07_31_note_lines_header_hint",
+         "ALTER TABLE note_lines ADD COLUMN IF NOT EXISTS header_hint TEXT"),
+        ("2026_07_31_note_lines_header_hint_idx",
+         "CREATE INDEX IF NOT EXISTS ix_note_lines_header_hint ON note_lines (header_hint) "
+         "WHERE header_hint IS NOT NULL"),
     ]
 
     with engine.begin() as conn:

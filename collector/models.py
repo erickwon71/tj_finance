@@ -415,6 +415,14 @@ class ReportLine(Base):
                                         "단위로 환산할 수 없는 경우(2026-07-31 F1). 값이 있는 칸은 "
                                         "원문이 value_won 에서 복원되므로 NULL(용량 0). "
                                         "이 컬럼이 있어야 '단위 미확정 → NULL' 이 정보손실이 아니다.")
+    header_hint        = Column(Text,         nullable=True,
+                                comment="헤더 판정 규칙 이름(날짜/기수/단위표기/구분과목/N개월/"
+                                        "N분기/날짜범위/기준일/기간라벨/공정가치수준/빈셀). "
+                                        "NULL=규칙에 안 걸린 평범한 데이터 행. **관찰이지 판단이 "
+                                        "아니다** — 행이 기간축인 표에서 '당기말' 은 헤더가 아니라 "
+                                        "데이터 행 라벨이다(2026-07-31 F2). 계층3 소비자는 기본 "
+                                        "`header_hint IS NULL` 로 거르고, note_periods 는 반대로 "
+                                        "'기간라벨' 을 기간축 식별 신호로 쓴다.")
     adecimal           = Column(SmallInteger, nullable=True)
     unit_source        = Column(String(14),   nullable=True,
                                 comment="value_won 의 근거(fin2/extract/units.py): declared(표 선언 "

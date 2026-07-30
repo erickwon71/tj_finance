@@ -80,6 +80,9 @@ def main() -> int:
         stats["note행"] += len(lines)
         for l in lines:
             src[l.unit_source] += 1
+            if l.header_hint:                       # F2: 종전에는 통째로 삭제되던 행
+                stats["header_hint행"] += 1
+                by_src_label[f"hint:{l.header_hint}"][(l.label_raw or "")[:30]] += 1
             by_src_label[l.unit_source][(l.col_label or "(헤더없음)")[:44]] += 1
             if l.value_won is None and not l.value_raw:
                 stats["★값도원문도없음"] += 1
@@ -92,6 +95,8 @@ def main() -> int:
     print(f"\n=== F1 열별 판정 (filing {n}, note 행 {stats['note행']:,}, "
           f"{(time.time()-t0)/n:.2f}s/filing) ===")
     print(f"  채움 {stats['채움']:,} / 원문만 {stats['note행']-stats['채움']:,}")
+    print(f"  header_hint 행(F2 로 회복): {stats['header_hint행']:,} "
+          f"({100*stats['header_hint행']/max(stats['note행'],1):.2f}%)")
     print(f"  ★값도 원문도 없음: {stats['★값도원문도없음']:,} (0 이어야)   "
           f"★값·원문 중복: {stats['★값과원문중복']:,} (0 이어야)")
     print(f"\n{'unit_source':<14}{'행':>12}{'비율':>8}")
@@ -102,7 +107,10 @@ def main() -> int:
                      ("col_money", "혼합 선언에서 금액이라 판정 — 가장 위험한 판정(오염 방향)"),
                      ("non_monetary", "비금액이라 비움 — 실제로 금액인 열이 섞였는지(유실 방향)"),
                      ("undetermined", "확정 실패 — 무엇을 놓치고 있는지"),
-                     ("undeclared", "선언 자체가 없는 표")):
+                     ("undeclared", "선언 자체가 없는 표"),
+                     ("hint:기간라벨", "★F2 로 살아난 '기간라벨' 행 — 행이 기간축인 표의 실데이터"),
+                     ("hint:날짜", "★F2 로 살아난 '날짜' 행"),
+                     ("hint:기수", "★F2 로 살아난 '기수' 행")):
         if not by_src_label.get(key):
             continue
         print(f"\n--- {key} 상위 열 헤더 ({why}) ---")

@@ -45,6 +45,11 @@ _ROWS_SQL = text(
       AND basis = :basis
       AND statement = 'note'
       AND value_won IS NOT NULL
+      -- ★F2 가드(2026-07-31): 계층2 가 헤더 규칙에 걸린 행을 **버리지 않고 전사**하게 됐다.
+      --   그 행은 대개 진짜 열 헤더('당기말'·'제 72 기')라 D&A 합산에 섞이면 오염이다.
+      --   행이 기간축인 표에서만 실데이터인데, 그 판단은 이 쿼리가 아니라 note_periods 가
+      --   '기간라벨' hint 를 신호로 쓰는 쪽에서 한다. 기본은 제외.
+      AND header_hint IS NULL
     """
 )
 

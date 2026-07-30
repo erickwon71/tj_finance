@@ -97,6 +97,13 @@ def main() -> int:
 
     print(f"filing {args.rcept} · note 행 {len(lines):,}\n")
 
+    hints = Counter(l.header_hint for l in lines if l.header_hint)
+    if hints:
+        print("--- header_hint 분포 (F2 — 종전에는 이 행들이 통째로 삭제됐다) ---")
+        for k, v in hints.most_common():
+            print(f"  {k:<12}{v:>8,}")
+        print()
+
     src = Counter(l.unit_source for l in lines)
     filled = sum(1 for l in lines if l.value_won is not None)
     print("--- unit_source 분포 ---")

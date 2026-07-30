@@ -127,6 +127,9 @@ class ReportLineRow:
     # 단위를 확정하지 못했거나 비금액 열이라 원 단위로 환산할 수 없는 경우. 값이 채워진 칸은
     # 원문이 value_won 에서 복원되므로 NULL 로 둬 용량을 쓰지 않는다.
     value_raw: str | None = None
+    # 헤더 판정 규칙 이름(F2, 2026-07-31). NULL = 규칙에 안 걸린 평범한 데이터 행.
+    # 계층3 소비자는 기본적으로 `header_hint IS NULL` 로 거른다(fin2/layer3 가드).
+    header_hint: str | None = None
 
     def as_row(self) -> dict:
         """SQLAlchemy bulk insert 용 dict (ReportLine 컬럼명 기준)."""
@@ -151,6 +154,7 @@ class ReportLineRow:
             "is_cumulative": self.is_cumulative,
             "value_won": self.value_won,
             "value_raw": self.value_raw,
+            "header_hint": self.header_hint,
             "adecimal": self.adecimal,
             "unit_source": self.unit_source,
             "source_ref": self.source_ref,
@@ -538,9 +542,12 @@ def _emit_note_lines(
             #   선언이 없어도 전사는 계속한다: value_won 은 비고 value_raw 에 원문이 남는다.
             cu = ColumnUnits.from_declaration(declaration_text(table), note_col_labels)
             # 셀 원문 확보용으로 ×1 파싱한다 — 실제 값은 열 배수로 다시 파싱한다.
+            # keep_header_rows=True(F2): 헤더 규칙에 걸린 행도 전사하고 규칙 이름만 남긴다.
+            # 행이 기간축인 주석 표('당기말' 행 + 자산분류 열)에서 그 행이 실데이터이기 때문.
             note_rows = list(extract_rows(table, multiplier=1, num_cols=_NOTE_MAX_COLS,
                                           direct_only=True, skip_junk=False,
-                                          keep_all_amount_cells=True))
+                                          keep_all_amount_cells=True,
+                                          keep_header_rows=True))
             node_roles = _classify_positions(note_rows)
             for row in note_rows:
                 if not row.account_name:
@@ -585,6 +592,8 @@ def _emit_note_lines(
                         table_seq=table_seq,
                         table_title=local_heading,   # 표 직전 지역 설명(번호제목은 section_path)
                         col_label=note_col_labels.get(col_idx),  # 열 정체(당기/전기 · 자산분류)
+                        # 헤더 규칙에 걸린 행이라는 **관찰**(판단 아님). 계층3 가 표별로 판단한다.
+                        header_hint=row.header_hint,
                     ))
 
 
@@ -786,7 +795,7 @@ _NOTE_INSERT_COLS = (
     "corp_code rcept_no report_fiscal_year report_fiscal_period statement basis "
     "section_path row_order depth node_role table_seq table_title label_raw col_index "
     "col_label context_fiscal_year period_kind is_cumulative value_won value_raw adecimal "
-    "unit_source source_ref context_raw parsed_at"
+    "unit_source header_hint source_ref context_raw parsed_at"
 ).split()
 
 

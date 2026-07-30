@@ -160,6 +160,9 @@ class RowData:
     # 비우는 열(fin2/extract/units.py)에서 원문을 잃지 않기 위한 것 — F1, 2026-07-31.
     # 재정렬(6열 IS 선행공란 제거)에도 amounts 와 **함께** 이동한다.
     raw_amounts: list[str] = field(default_factory=list)
+    # 헤더 판정 규칙 이름(`_header_rule_name`) — `keep_header_rows=True` 로 뽑았을 때만 채워진다.
+    # 값이 있으면 "이 행은 헤더 규칙에 걸렸다"는 **관찰**이지 "헤더다"라는 판단이 아니다(F2).
+    header_hint: Optional[str] = None
     row_order: int = 0
     is_subtotal: bool = False      # 합계/소계 행 여부
     indent_level: int = 0          # 들여쓰기 수준 (0=최상위, 1=하위...) — _detect_indent(//2)
@@ -177,6 +180,7 @@ def extract_rows(
     date_labels_ok: bool = False,
     preserve_col_positions: bool = False,
     keep_all_amount_cells: bool = False,
+    keep_header_rows: bool = False,
 ) -> list[RowData]:
     """
     TABLE 요소에서 재무 행 데이터를 추출한다.
@@ -208,6 +212,9 @@ def extract_rows(
               가 빠져 당반기말 금액 813,559 에 '당반기말현재이자율' 라벨이 붙었다. F1 은 이
               라벨로 단위를 정하므로(비금액 열이면 value_won 을 비운다) 밀림이 곧 오판이다.
               숫자가 아닌 셀은 parse_amount 가 None 이라 **값을 만들지 않는다** — 자리만 잡는다.
+        keep_header_rows: True 면 헤더 규칙에 걸린 행을 **버리지 않고** `RowData.header_hint` 에
+            규칙 이름을 담아 전사한다. **주석 전용**(F2, 2026-07-31 — 설계안
+            `docs/plans/layer2_header_hint_lossless_2026-07-30.md`). 기본 False = 기존 동작.
 
     Returns:
         RowData 리스트 (헤더 행 제외, 빈 행 제외)
@@ -231,7 +238,11 @@ def extract_rows(
 
         # 헤더/제목/단위 행 감지 → 위치에 관계없이 항상 건너뜀
         # (DART 테이블은 반복 헤더 행 또는 섹션 구분 행이 중간에 나올 수 있음)
-        if _is_header_cell(first_text, allow_date_label=date_labels_ok):
+        # ★keep_header_rows=True(F2·주석 전용)면 **버리지 않고 규칙 이름만 기록**한다.
+        #   행이 기간축인 표에서 '당기말'·'전기초' 는 헤더가 아니라 데이터 행이기 때문 —
+        #   판단은 계층3 이 header_hint 를 보고 한다(`_header_rule_name` docstring).
+        header_hint = _header_rule_name(first_text, allow_date_label=date_labels_ok)
+        if header_hint and not keep_header_rows:
             continue
 
         # 재무제표 이름만 있는 제목 행 건너뜀 (예: "재무상태표", "포괄손익계산서")
@@ -285,6 +296,7 @@ def extract_rows(
             account_name=label_clean,
             amounts=amounts,
             raw_amounts=raw_amounts,
+            header_hint=header_hint,
             row_order=row_order,
             is_subtotal=_is_subtotal(label_clean),
             indent_level=indent,
@@ -379,8 +391,26 @@ _PERIOD_MONTH_CELL = re.compile(
 
 
 def _is_header_cell(text: str, allow_date_label: bool = False) -> bool:
+    """첫 셀이 헤더/단위/기수 표기이면 True — 판정은 `_header_rule_name` 이 한다(동작 동일).
+
+    ★F2(2026-07-31): 규칙은 그대로 두고 **결과를 쓰는 방식만** 열었다. 어느 규칙에 걸렸는지를
+      밖(=`extract_rows(keep_header_rows=True)`)에서 `header_hint` 로 전사할 수 있게 하기 위함.
     """
-    첫 번째 셀이 헤더/단위/기수 표기이면 True.
+    return _header_rule_name(text, allow_date_label) is not None
+
+
+def _header_rule_name(text: str, allow_date_label: bool = False) -> Optional[str]:
+    """첫 셀이 헤더 표기면 **어느 규칙에 걸렸는지**(고정 이름), 아니면 None.
+
+    왜 이름을 돌려주나 — 계층2 는 "판단 없이 충실전사"가 원칙인데 이 규칙들은 집계가 필요했던
+    구 fact_v2 파이프라인의 유산이라, 규칙이 틀리면 **행이 조용히 사라진다.** 실측
+    (`docs/plans/layer2_header_hint_lossless_2026-07-30.md`): 유형자산 증감표처럼 행이 기간축인
+    주석 표에서 '당기말'·'전기초' 는 열 헤더가 아니라 **데이터 행 라벨**이고 금액 4 개가 통째로
+    드롭됐다(정방향 미도달 셀의 95%가 '기간라벨'·'날짜' 두 규칙).
+    ⇒ 이름을 `header_hint` 로 전사해 두면 판단은 계층3 이 표별로 하고, 조사도 원문 재파싱 대신
+      SQL 로 된다. 이름은 **고정 집합**이라 새 표 구조를 만날 때마다 늘어나지 않는다
+      (규칙에 안 걸리면 hint=NULL 인 평범한 데이터 행이 될 뿐).
+
     DART 테이블에서 반복 출현하는 비데이터 행 패턴을 모두 포함.
 
     allow_date_label: True 면 "기간 날짜" 규칙만 끈다 — **자본변동표(SCE) 전용**.
@@ -390,7 +420,7 @@ def _is_header_cell(text: str, allow_date_label: bool = False) -> bool:
         날짜 '범위' 헤더("2023.01.01~2023.12.31")는 아래 별도 규칙이 계속 잡으므로 안전하다.
     """
     if not text:
-        return False
+        return None
     # 기간 날짜: "2023.12.31", "2023-12-31", "2023년"
     # ★2026-07-30: 날짜/숫자·구두점을 걷어낸 뒤 **한글이 남으면 데이터 행**이다. 종전에는
     #   `search` 라 라벨 어디에든 4자리 연도가 있으면 헤더로 봤고, 그래서
@@ -398,41 +428,41 @@ def _is_header_cell(text: str, allow_date_label: bool = False) -> bool:
     #   사라졌다(전수 정방향 조사에서 발견).
     if not allow_date_label and re.search(r'\d{4}[.\-년]', text) \
             and not re.search(r'[가-힣]', re.sub(r'[\d.\-년월일\s()~／/]', '', text)):
-        return True
+        return "날짜"
     # 기수 표기: "제 72 기", "제72기"
     if re.search(r'제\s*\d+\s*기', text):
-        return True
+        return "기수"
     # 단위 표기: "(단위 : 원)", "단위:천원"
     if re.search(r'단위\s*[:\(]', text):
-        return True
+        return "단위표기"
     # 열 헤더: "구 분", "구분", "과 목", "과목"
     if re.fullmatch(r'[구과]\s*[분목]', text):
-        return True
+        return "구분과목"
     # 기간 표기 열 헤더: "3개월", "6개월", "당분기(3개월)" 등 IS 분기 표 컬럼 헤더
     # ★2026-07-30: 셀 **전체**가 기간 표기일 때만. 종전 `search` 는 라벨 안에 '개월' 이
     #   들어가기만 하면 잡아 '12개월 기대신용손실측정 금융자산으로 대체'(대손충당금 변동
     #   주석의 실데이터 행)를 통째로 버렸다.
     if _PERIOD_MONTH_CELL.fullmatch(text):
-        return True
+        return "N개월"
     # 분기 레이블: "1분기", "2분기", "3분기", "4분기"
     if re.fullmatch(r'\d분기', text):
-        return True
+        return "N분기"
     # 날짜 범위 헤더: "2023.01.01~2023.03.31"
     if re.search(r'\d{4}\.\d{2}\.\d{2}[~\-～]', text):
-        return True
+        return "날짜범위"
     # "(기준일 :" 으로 시작하는 NOTE 날짜 표기
     if text.startswith("(기준일") or text.startswith("기준일"):
-        return True
+        return "기준일"
     # NOTE 테이블 period-end 열 헤더: "당기말", "전기말", "당기초", "당분기말", "당반기말" 등
     if re.fullmatch(r'(당기|전기|당기초|전기초|당분기|전분기|당반기|전반기)(말|초)?', text):
-        return True
+        return "기간라벨"
     # NOTE 공정가치 계층 열 헤더: "수준 1", "수준 2", "수준 3"
     if re.fullmatch(r'수준\s*[123]', text):
-        return True
+        return "공정가치수준"
     # 빈 값이거나 "-"만 있는 첫 셀
     if re.fullmatch(r'[\s\-\─\—\―　]*', text):
-        return True
-    return False
+        return "빈셀"
+    return None
 
 
 # 재무제표 이름만 있는 단독 행 (섹션 제목이 TABLE 안에 포함된 경우)

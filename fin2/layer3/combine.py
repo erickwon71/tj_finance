@@ -128,6 +128,10 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                    node_role, table_seq, COALESCE(is_cumulative, false) AS is_cum
             FROM report_lines
             WHERE rcept_no=:r AND col_index=0 AND value_won IS NOT NULL
+              -- F2 가드(2026-07-31): 헤더 규칙에 걸린 행은 기본 제외(계층2 가 이제 버리지
+              -- 않고 header_hint 로 전사한다). 본문 경로는 아직 전사하지 않지만 같은 계약을
+              -- 미리 건다 — 나중에 켤 때 계층3 을 다시 손대지 않기 위해서다.
+              AND header_hint IS NULL
         """), {"r": rcept}).fetchall()
         for (statement, basis, col_index, section_path, label_raw, value_won,
              node_role, table_seq, is_cum) in rows:
@@ -424,6 +428,7 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
             FROM report_lines
             WHERE corp_code=:c AND report_fiscal_year=:y AND report_fiscal_period=:p
               AND basis=:b AND statement=:s AND col_index=0 AND value_won IS NOT NULL
+              AND header_hint IS NULL          -- F2 가드(위와 같은 이유)
               {rcept_clause}
         """), params).fetchall()
         for label_raw, value_won, node_role, section_path, table_seq, is_cum in db_rows:

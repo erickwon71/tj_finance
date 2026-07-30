@@ -229,8 +229,15 @@ census 의 "87.1% 공백"은 '사업의 내용 섹션 귀속' 기준이라 **다
 | `scripts/layer2_note_heading_fix_verify.py:86` | 같은 이유 |
 | `fin2/audit/report_line_audit.py:106` | 본문 감사라 영향 작음(본문 계약은 그대로) |
 
-census 판(`audit_unit_declarations.py`)은 이번에 새 계약으로 갱신했다 — 다른 도구를 고칠 때
-그 `scan_filing()` 의 `loaded` 판정을 참고하면 된다.
+census 판(`audit_unit_declarations.py`)과 `layer2_fidelity_full.py`(③ 주석 표 집계)는 이번에
+새 계약으로 갱신했다 — 다른 도구를 고칠 때 그 `scan_filing()` 의 `loaded` 판정을 참고하면 된다.
+
+### ★★재적재 전에는 '추출 ↔ DB' 비교가 어긋나는 것이 정상이다
+
+`layer2_fidelity_full.py` 의 ② 적재 항목은 **추출기 출력과 현재 DB** 를 비교한다. 코드는
+F1·F2 를 반영했고 DB 는 아직 구 포맷이므로, 지금 돌리면 표본 8 filing 에서
+`누락 12,290 · 값불일치 111` 처럼 큰 수가 나온다. 이건 결함이 아니라 **아직 안 한 재적재**의
+그림자다. 재적재 후에 다시 재서 `누락 0 · 값불일치 0` 을 확인하는 것이 순서다.
 
 ## 7. 새로 만든 도구 6종
 

@@ -132,12 +132,15 @@ def main() -> int:
             for sec in (SEC_CONSOL_NOTE, SEC_SEP_NOTE):
                 for tbl_el, _title in assign_note_tables_with_titles(root).get(sec, []):
                     t["표:총계"] += 1
-                    if declared_unit(tbl_el) is None:
-                        t["표:폐기(단위 미선언)"] += 1
-                    elif not _table_has_data_rows(tbl_el):
+                    # ★2026-07-31(F1): 적재 조건이 바뀌었다 — 주석 표는 **데이터행만 있으면**
+                    #   전사한다(단위 미선언이면 value_won 을 비우고 value_raw 로 남긴다).
+                    #   종전처럼 '단위 미선언 = 폐기'로 세면 적재된 표를 폐기로 보고한다.
+                    if not _table_has_data_rows(tbl_el):
                         t["표:폐기(데이터행 없음)"] += 1
                     else:
                         t["표:적재대상"] += 1
+                        if declared_unit(tbl_el) is None:
+                            t["표:적재대상(단위 미선언)"] += 1
 
             # ── 추출기 출력
             try:
@@ -198,7 +201,8 @@ def main() -> int:
               f"누락 {t[f'{tbl}:적재누락']:,} · 값불일치 {t[f'{tbl}:값불일치']:,}")
     tt = max(t["표:총계"], 1)
     print(f"\n  ③ 주석 표 {tt:,} — 적재대상 {t['표:적재대상']:,} ({t['표:적재대상']/tt*100:.1f}%) · "
-          f"단위미선언 {t['표:폐기(단위 미선언)']:,} · 데이터행없음 {t['표:폐기(데이터행 없음)']:,}")
+          f"그중 단위미선언 {t['표:적재대상(단위 미선언)']:,}(값 없이 원문만 전사) · "
+          f"데이터행없음 {t['표:폐기(데이터행 없음)']:,}")
     for k in ("파일없음", "파싱실패", "추출실패"):
         if t[k]:
             print(f"  {k}: {t[k]}")

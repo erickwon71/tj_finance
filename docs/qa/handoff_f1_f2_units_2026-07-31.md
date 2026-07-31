@@ -16,11 +16,15 @@
 
 ## 0-1. ★다음 세션 첫 작업
 
-1. **§4 결정 4건은 전부 반영됐다** — 재적재 한 번에 같이 들어간다(추가 결정 없음).
-2. 바로 **Phase 4 = F3 스키마 축소 → 전량 재적재 1회(~5h)**. (F4 는 이미 했다)
-   ⚠ `delete-then-insert` 금지 — `scripts/full_reload_after_sanitize.sh`(TRUNCATE 후 INSERT).
-3. 재적재 후 검증: `audit_unit_declarations --contamination-only` 로 **오염 행 0** 확인 ·
-   `build_std_v3 --all` 재빌드 · Gate B value_diff=0.
+**Phase 4 까지 끝났다**(2026-07-31 12:49 · `docs/qa/phase4_reload_2026-07-31.md`).
+DB 108.9 → **74 GB** · note_lines 220.6M → **246.6M 행** · 오염 **0** · 검증 전 항목 통과.
+
+1. **셀 병합 결함 처리 방향 결정**(사용자 판단 대기) — 한 셀에 두 숫자가 구분자 없이 붙는
+   서식('500,0001,302,500'). 1,000조 이상 **4,112 행 / 666 filing**. 재추출은 수 분.
+   상세·선택지 = `docs/qa/phase4_reload_2026-07-31.md` §3.
+2. **검증도구 4종이 구 계약을 본다** — 같은 문서 §4. 특히 Gate B 의 Phase B 라인 대조는
+   빈 `fact_v2` 를 보므로 지금 의미 있는 신호는 `fail_a`·`value_diff` 뿐이다.
+3. 그 다음은 **Phase 3 신규 추출기**(사채 미상환·감사의견·대주주거래 등, T2 셀 수 순서).
 
 ---
 

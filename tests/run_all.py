@@ -22,6 +22,8 @@ _MODULES = [
     "test_checks",
     "test_screen_eval",
     "test_master_metrics",
+    "test_storage_guard",
+    "test_corp_universe_guard",
 ]
 
 

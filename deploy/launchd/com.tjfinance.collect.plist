@@ -13,12 +13,20 @@
     <array>
         <string>/Users/taejin/Project/tj_finance/.venv/bin/python</string>
         <string>/Users/taejin/Project/tj_finance/scripts/collect_new.py</string>
+        <!--
+          auto = 마지막 성공 실행(pipeline_runs) 이후를 자동 회수. 3일 겹침·90일 상한.
+          ※ 예전 값 `3`(고정)이 2026-07 의 21일 공백을 만든 직접 원인이다 —
+            3일 넘는 장애가 나면 그 사이 공시를 영구 누락시키고 아무도 모른다.
+        -->
         <string>--days</string>
-        <string>3</string>
-        <!-- 기업당 파싱·표준화 타임아웃(초). 대형 보고서(≈120초 경계) 완주 위해 600. -->
-        <string>--timeout</string>
-        <string>600</string>
-        <!-- 수집 전 상장 유니버스 갱신(신규 상장 반영·상장폐지 비활성화). 실패해도 수집은 계속. -->
+        <string>auto</string>
+        <!--
+          download-only: 유니버스 갱신·탐지·다운로드·미러·완전성감사까지만.
+          파싱/표준화/계층2·3 적재는 계층3 재설계 완료 후 이 플래그를 빼면 되살아난다
+          (docs/plans/collection_pipeline_restore_2026-07-31.md §5.1 · Phase 5).
+        -->
+        <string>--download-only</string>
+        <!-- 수집 전 상장 유니버스 갱신(KRX OpenAPI+FDR). 실패해도 수집은 계속. -->
         <string>--refresh-universe</string>
     </array>
 

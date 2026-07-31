@@ -1,35 +1,108 @@
-"""C10 · Failure notification — macOS notification on nonzero exit / assertion failure.
+"""C10 · Failure notification — macOS 알림 + 이메일.
 
 W7(전문가 리뷰): dqcheck/backup 실패가 로그 파일에만 남아 아무도 매일 읽지 않는다 — 그래서
 백업이 며칠간 미실행이었던 것도 모르고 지나갔다. `osascript`로 macOS 알림센터에 띄워
 launchd LaunchAgent(GUI 세션에서 실행됨)에서 바로 눈에 띄게 한다.
 
-usage (다른 스크립트에서 import):
+2026-07-31 추가 — **이메일 경로**:
+  macOS 알림은 그 Mac 앞에 있어야 보인다. KRX/DART 인증키 만료처럼 "며칠 안에 조치하지 않으면
+  수집이 멈추는" 사건은 자리를 비워도 알아야 하므로 메일로도 보낸다.
+
+  설정(.env):
+      ALERT_EMAIL_TO    수신 주소 (없으면 이메일 생략, 알림만)
+      SMTP_HOST         기본 smtp.gmail.com
+      SMTP_PORT         기본 587 (STARTTLS)
+      SMTP_USER         발신 계정
+      SMTP_PASSWORD     ※ Gmail 은 **앱 비밀번호**여야 한다(2단계 인증 계정의 일반 비밀번호 불가)
+                          https://myaccount.google.com/apppasswords
+
+  SMTP 설정이 없거나 실패해도 **호출자를 막지 않는다** — 알림은 부가 기능이지 게이트가 아니다.
+
+usage:
     from scripts.notify import notify_failure
-    notify_failure("백업 실패", "pg_dump rc=1: ...")
+    notify_failure("KRX 인증 실패", "유가증권 활용기간 만료 — 재신청 필요")
 
 standalone test:
     python scripts/notify.py "제목" "본문"
 """
 from __future__ import annotations
 
+import os
+import smtplib
 import subprocess
 import sys
+from email.message import EmailMessage
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+try:  # .env 로드(collector.config 가 담당). 단독 실행에서도 설정이 보이도록.
+    import collector.config  # noqa: F401
+except Exception:  # noqa: BLE001
+    pass
+
+from loguru import logger
 
 
-def notify_failure(title: str, message: str) -> None:
-    """macOS 알림센터에 실패 알림을 띄운다. 알림 전송 자체가 실패해도(예: headless SSH 세션)
-    호출자를 막지 않는다 — 알림은 부가 기능이지 게이트가 아니다."""
-    # AppleScript 문자열 리터럴 이스케이프(따옴표·백슬래시)
+def notify_macos(title: str, message: str) -> None:
+    """macOS 알림센터. 실패해도 조용히 넘어간다(headless SSH 등)."""
     safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
     safe_message = message.replace("\\", "\\\\").replace('"', '\\"')[:500]
-    script = f'display notification "{safe_message}" with title "TJ Finance" subtitle "{safe_title}" sound name "Basso"'
+    script = (f'display notification "{safe_message}" with title "TJ Finance" '
+              f'subtitle "{safe_title}" sound name "Basso"')
     try:
-        subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=10)
+        subprocess.run(["osascript", "-e", script],
+                       capture_output=True, text=True, timeout=10)
     except Exception:  # noqa: BLE001
-        pass  # GUI 세션이 없는 환경(예: headless) — 로그만으로 충분, 알림은 best-effort
+        pass
+
+
+def notify_email(subject: str, body: str) -> bool:
+    """이메일 발송. 설정이 없으면 False(경고 없이 스킵), 실패하면 로그만 남기고 False."""
+    to_addr = os.getenv("ALERT_EMAIL_TO", "").strip()
+    if not to_addr:
+        return False
+
+    host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
+    port = int(os.getenv("SMTP_PORT", "587"))
+    user = os.getenv("SMTP_USER", "").strip()
+    password = os.getenv("SMTP_PASSWORD", "").strip()
+    if not user or not password:
+        logger.warning(
+            "[notify] ALERT_EMAIL_TO 는 있는데 SMTP_USER/SMTP_PASSWORD 가 없어 이메일을 건너뛴다. "
+            "Gmail 은 앱 비밀번호가 필요하다: https://myaccount.google.com/apppasswords")
+        return False
+
+    msg = EmailMessage()
+    msg["Subject"] = f"[TJ Finance] {subject}"
+    msg["From"] = user
+    msg["To"] = to_addr
+    msg.set_content(body)
+
+    try:
+        with smtplib.SMTP(host, port, timeout=20) as smtp:
+            smtp.starttls()
+            smtp.login(user, password)
+            smtp.send_message(msg)
+        logger.info(f"[notify] 이메일 발송: {to_addr} — {subject}")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[notify] 이메일 발송 실패({type(exc).__name__}: {exc}) — 알림만 남긴다")
+        return False
+
+
+def notify_failure(title: str, message: str, email: bool = True) -> None:
+    """실패 알림 — macOS 알림센터 + (설정돼 있으면) 이메일.
+
+    Args:
+        email: 이메일까지 보낼지. 소음이 큰 경고는 False 로 알림만.
+    """
+    logger.error(f"[notify] {title} — {message}")
+    notify_macos(title, message)
+    if email:
+        notify_email(title, message)
 
 
 if __name__ == "__main__":
     notify_failure(sys.argv[1] if len(sys.argv) > 1 else "테스트",
-                    sys.argv[2] if len(sys.argv) > 2 else "notify.py 직접 실행 테스트")
+                   sys.argv[2] if len(sys.argv) > 2 else "notify.py 직접 실행 테스트")

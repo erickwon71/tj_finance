@@ -64,49 +64,160 @@ def _extract_code_column(df) -> Optional[str]:
     return None  # index에 코드가 있는 경우
 
 
-def _get_krx_universe() -> Optional[dict]:
+_MARKETS = ("KOSPI", "KOSDAQ")
+
+# 두 소스가 이 비율 미만으로 겹치면 "실질적 불일치"로 보고 경고(+메일).
+_CROSS_CHECK_MIN_OVERLAP = 0.95
+
+
+def _get_fdr_universe() -> tuple[dict, dict[str, Optional[int]]]:
+    """FinanceDataReader(비인증 스크래핑) 경로. 반환: (universe, {market: 건수|None})
+
+    ⚠️ 빈 결과(`df.empty`)는 **실패로 간주**한다 — 정상 조회와 구분되지 않으면
+    그 시장 전체가 상장폐지로 오인된다.
     """
-    FinanceDataReader로 KRX 상장 법인 목록 조회.
-    KIND(한국거래소 기업공시) 기준 → 법인당 1개(보통주 코드), ETF/ETN/우선주 미포함.
-    반환: {stock_code(6자리): market} 또는 None
-    """
+    status: dict[str, Optional[int]] = {m: None for m in _MARKETS}
+    universe: dict[str, str] = {}
+
     try:
         import FinanceDataReader as fdr
     except ImportError:
-        logger.warning("finance-datareader 미설치 — DART 단독 모드로 진행합니다.")
-        return None
+        logger.warning("  FDR 미설치")
+        return universe, status
 
-    universe = {}
-    for market in ("KOSPI", "KOSDAQ"):
+    for market in _MARKETS:
         try:
             df = fdr.StockListing(market)
             if df is None or df.empty:
-                logger.warning(f"  FDR {market}: 빈 결과")
+                logger.warning(f"  FDR {market}: 빈 결과 → 조회 실패로 간주")
                 continue
 
-            # 종목코드 컬럼 탐지
             code_col = _extract_code_column(df)
-            if code_col:
-                codes = df[code_col].astype(str).str.strip()
-            else:
-                # index가 코드인 경우
-                codes = df.index.astype(str).str.strip()
+            codes = (df[code_col].astype(str).str.strip() if code_col
+                     else df.index.astype(str).str.strip())
 
+            n_before = len(universe)
             for code in codes:
                 if code and len(code) <= 7:   # 6~7자리 종목코드만
                     universe[code.zfill(6)] = market
 
+            status[market] = len(universe) - n_before
             logger.info(f"  FDR {market}: {len(df):,}개")
         except Exception as e:
             logger.warning(f"  FDR {market} 조회 실패: {type(e).__name__}: {e}")
 
-    if not universe:
-        logger.warning("FinanceDataReader 조회 실패 — DART 단독 모드로 진행합니다.")
-        logger.warning("※ DART 단독 모드는 상장폐지 기업이 포함될 수 있습니다.")
-        return None
+    return universe, status
 
-    logger.info(f"KRX 전체 상장 법인: {len(universe):,}개 (ETF/ETN/우선주 미포함)")
-    return universe
+
+def _get_krx_universe() -> tuple[Optional[dict], dict]:
+    """상장 유니버스 — **KRX OpenAPI 1차 + FinanceDataReader 2차(상호보완)**.
+
+    반환: (universe, market_status)
+      universe      {stock_code(6자리): market} 또는 None(전 시장 실패 = DART 단독 모드)
+      market_status {market: {"krx": 건수|None, "fdr": 건수|None,
+                              "used": "krx"|"fdr"|None, "count": 건수|None}}
+                    `used=None` = **그 시장을 신뢰할 수 없다**
+
+    설계 의도
+    ─────────
+    · **KRX OpenAPI 를 기준**으로 쓴다. 인증 기반이라 실패가 401 로 명시적이고,
+      `KIND_STKCERT_TP_NM`/`SECUGRP_NM` 으로 우선주·인프라펀드·투자회사를 소스에서 바로
+      걸러준다(FDR 은 우선주가 섞여 들어와 DART 매핑 실패로 간접 제외됐다).
+    · **한 소스가 죽어도 다른 소스로 그 시장을 살린다.** pykrx 는 이미 차단됐고 FDR 도
+      비인증 스크래핑이라 같은 운명이 될 수 있다. 반대로 KRX 는 서비스별 활용기간이 있어
+      만료되면 401 이 난다(2026-07-31 기준 유가증권 1개월·코스닥 1년).
+    · **둘 다 죽은 시장이 하나라도 있으면** 호출자가 비활성 처리를 건너뛴다 — 그 시장
+      전체가 상장폐지로 오인되는 사고(KOSPI 809개)를 막는다.
+    · 인증 문제는 조용히 넘기지 않고 **알림+메일**로 띄운다(만료는 며칠 안에 조치해야 한다).
+    """
+    from collector import krx_client as kc
+
+    market_status: dict[str, dict] = {
+        m: {"krx": None, "fdr": None, "used": None, "count": None} for m in _MARKETS
+    }
+
+    # ── 1차: KRX OpenAPI ──────────────────────────────────
+    logger.info("KRX OpenAPI 조회...")
+    try:
+        krx_uni, krx_results = kc.fetch_all()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"  KRX OpenAPI 호출 실패: {type(e).__name__}: {e}")
+        krx_uni, krx_results = {}, {}
+
+    auth_errors: list[str] = []
+    for m in _MARKETS:
+        lst = krx_results.get(m)
+        if lst is None:
+            continue
+        if lst.ok:
+            market_status[m]["krx"] = sum(1 for k, v in krx_uni.items() if v == m)
+        elif lst.error and ("미승인" in lst.error or "인증키" in lst.error):
+            auth_errors.append(f"{m}: {lst.error}")
+
+    # 인증·구독 문제는 방치하면 수집이 멈춘다 → 알림 + 메일
+    if auth_errors:
+        try:
+            from scripts.notify import notify_failure
+            notify_failure(
+                "KRX OpenAPI 인증 실패",
+                "KRX 상장목록 조회가 인증 문제로 실패했습니다. data.krx.co.kr 에서 "
+                "해당 API 활용신청(재)승인이 필요합니다.\n\n" + "\n".join(auth_errors)
+                + "\n\n지금은 FinanceDataReader 로 폴백합니다. 두 소스가 모두 실패한 시장이 "
+                  "있으면 상장폐지 판정은 자동으로 중단됩니다.",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"  알림 발송 실패(비치명적): {type(e).__name__}: {e}")
+
+    # ── 2차: FinanceDataReader ────────────────────────────
+    logger.info("FinanceDataReader 조회...")
+    fdr_uni, fdr_status = _get_fdr_universe()
+    for m in _MARKETS:
+        market_status[m]["fdr"] = fdr_status[m]
+
+    # ── 병합: 시장별로 KRX 우선, 없으면 FDR ────────────────
+    universe: dict[str, str] = {}
+    for m in _MARKETS:
+        st = market_status[m]
+        if st["krx"]:
+            universe.update({c: mk for c, mk in krx_uni.items() if mk == m})
+            st["used"], st["count"] = "krx", st["krx"]
+        elif st["fdr"]:
+            universe.update({c: mk for c, mk in fdr_uni.items() if mk == m})
+            st["used"], st["count"] = "fdr", st["fdr"]
+            logger.warning(f"  {m}: KRX 실패 → FDR 로 대체(우선주가 섞일 수 있음)")
+        else:
+            logger.error(f"  ⚠ {m}: **두 소스 모두 실패** — 비활성 처리 금지 대상")
+
+    # ── 교차 검증: 둘 다 성공한 경우 실질적 불일치 감지 ────
+    if krx_uni and fdr_uni:
+        overlap = len(set(krx_uni) & set(fdr_uni)) / max(1, len(krx_uni))
+        if overlap < _CROSS_CHECK_MIN_OVERLAP:
+            msg = (f"KRX·FDR 상장목록이 크게 어긋납니다 — 겹침 {overlap:.1%} "
+                   f"(KRX {len(krx_uni):,} · FDR {len(fdr_uni):,}). "
+                   f"어느 한쪽이 오염됐을 수 있으니 확인이 필요합니다.")
+            logger.error(f"  ⚠ {msg}")
+            try:
+                from scripts.notify import notify_failure
+                notify_failure("상장목록 소스 불일치", msg)
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            logger.info(f"  교차검증 OK — KRX·FDR 겹침 {overlap:.1%}")
+
+    if not universe:
+        logger.warning("KRX·FDR 모두 실패 — DART 단독 모드로 진행합니다.")
+        logger.warning("※ DART 단독 모드는 상장폐지 기업이 포함될 수 있습니다.")
+        return None, market_status
+
+    untrusted = [m for m in _MARKETS if market_status[m]["used"] is None]
+    if untrusted:
+        logger.error(
+            f"  ⚠ 신뢰 불가 시장: {', '.join(untrusted)} — "
+            f"이번 실행은 **비활성 처리를 건너뛴다**(그 시장 전체가 상장폐지로 오인되는 것 방지)")
+
+    used = ", ".join(f"{m}={market_status[m]['used']}" for m in _MARKETS)
+    logger.info(f"KRX 전체 상장 법인: {len(universe):,}개 (소스: {used})")
+    return universe, market_status
 
 
 # ── DART corpCode.xml 파싱 ────────────────────────────────────────────
@@ -157,8 +268,18 @@ def sync_corporations() -> dict:
     try:
         # ── Step 1: KRX 상장 종목 (실패 시 DART 단독 모드) ──────
         logger.info("KRX 상장 종목 조회 중...")
-        krx_universe = _get_krx_universe()
+        krx_universe, market_status = _get_krx_universe()
         krx_mode = krx_universe is not None
+
+        # 비활성 처리(파괴적 방향)를 수행해도 되는가 — upsert(신규 반영)는 항상 한다.
+        #  · 시장별 부분 실패: 실패한 시장 전체가 상장폐지로 오인된다
+        #  · DART 단독 모드: 상장폐지 기업을 걸러내지 못하므로 판정 근거가 없다
+        failed_markets = [m for m, st in market_status.items() if st["used"] is None]
+        may_deactivate = krx_mode and not failed_markets
+        if not may_deactivate:
+            reason = ("DART 단독 모드" if not krx_mode
+                      else f"신뢰 불가 시장({', '.join(failed_markets)}) — KRX·FDR 모두 실패")
+            logger.warning(f"※ 비활성 처리 생략 — {reason}. 신규 상장 반영(upsert)은 정상 수행")
 
         if krx_mode:
             logger.info(f"KRX 전체 상장 종목(주권): {len(krx_universe):,}개  [KRX+DART 모드]")
@@ -261,10 +382,12 @@ def sync_corporations() -> dict:
 
             # 이전에 있었으나 이번 KRX 목록에서 빠진 기업 → is_active=False
             # (상장폐지 또는 필터 대상으로 변경된 경우)
+            # ※ may_deactivate=False(부분 실패·DART 단독)면 후보를 만들지 않는다.
             existing_active = session.scalars(
                 select(Corporation.corp_code).where(Corporation.is_active == True)
             ).all()
-            to_deactivate = [c for c in existing_active if c not in final_codes]
+            to_deactivate = ([c for c in existing_active if c not in final_codes]
+                             if may_deactivate else [])
 
             # 제외 대상 이름 조회(업데이트 전) — UI/로그 노출용.
             deactivated_corps = []
@@ -310,6 +433,10 @@ def sync_corporations() -> dict:
             "new_count":        len(new_corps),
             "new_corps":        new_corps,          # [{corp_code, corp_name, market}]
             "deactivated_corps": deactivated_corps,  # [{corp_code, corp_name, market}]
+            # 상장폐지 판정 엔진(collector.delisting)이 소스 신뢰도를 판단하는 데 쓴다.
+            "krx_mode":         "krx" if krx_mode else "dart_only",
+            "market_status":    market_status,      # {"KOSPI": 건수|None, ...}
+            "may_deactivate":   may_deactivate,
         }
         logger.success(
             f"기업 목록 동기화 완료 — 최종 {len(candidates):,}개 기업"

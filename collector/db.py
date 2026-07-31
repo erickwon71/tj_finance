@@ -601,6 +601,89 @@ def _run_migrations() -> None:
          "ALTER TABLE report_lines "
          "  DROP COLUMN IF EXISTS table_title, "
          "  DROP COLUMN IF EXISTS parsed_at"),
+
+        # ── 2026-07-31: 수집 파이프라인 복구·강화 ─────────────────────────────
+        # 계획: docs/plans/collection_pipeline_restore_2026-07-31.md
+        # 전부 **추가만** — 기존 컬럼·데이터 무변경.
+
+        # 상장폐지 상태기계(§6.2). `is_active` 는 KRX 관측 사실 그대로 두고, 파일 아카이브 등
+        # **조치 판단은 오직 delisting_status** 가 한다. 두 개념을 분리해야 오탐(조회 실패)이
+        # 원문에 손대지 못한다. 값: NULL | candidate | confirmed | reinstated
+        ("2026_07_31_corp_delisting_status",
+         "ALTER TABLE corporations ADD COLUMN IF NOT EXISTS delisting_status VARCHAR(12)"),
+        ("2026_07_31_corp_delisting_first_seen",
+         # KRX 목록 부재를 처음 관측한 날 — G1(10영업일 연속 부재) 계산 기준
+         "ALTER TABLE corporations ADD COLUMN IF NOT EXISTS delisting_first_seen DATE"),
+        ("2026_07_31_corp_delisted_at",
+         "ALTER TABLE corporations ADD COLUMN IF NOT EXISTS delisted_at DATE"),
+        ("2026_07_31_corp_archive_path",
+         # NAS 아카이브로 옮긴 원문의 위치(되돌리기용). 삭제는 하지 않는다(결정 D1).
+         "ALTER TABLE corporations ADD COLUMN IF NOT EXISTS archive_path VARCHAR(500)"),
+        ("2026_07_31_ix_corp_delisting_status",
+         "CREATE INDEX IF NOT EXISTS ix_corporations_delisting_status "
+         "ON corporations (delisting_status) WHERE delisting_status IS NOT NULL"),
+
+        # 판정 근거 원장(§6.3). **왜 확정했는지**가 남아야 오탐을 사후 추적할 수 있다.
+        # G0 스킵(소스 불신)도 기록한다 — 조회 실패가 반복되는 것을 알아채야 하기 때문.
+        ("2026_07_31_delisting_audit",
+         """
+        CREATE TABLE IF NOT EXISTS delisting_audit (
+            id                 BIGSERIAL PRIMARY KEY,
+            corp_code          VARCHAR(8),          -- NULL = 그날 전체 스킵(G0) 기록
+            checked_at         TIMESTAMP NOT NULL DEFAULT now(),
+            krx_mode           VARCHAR(10),         -- krx | dart_only            (G0c)
+            krx_market_ok      VARCHAR(64),         -- 'KOSPI:ok,KOSDAQ:fail'     (G0a)
+            krx_market_size    INTEGER,             -- 해당 시장 목록 크기        (G0b)
+            krx_present        BOOLEAN,
+            days_absent        INTEGER,
+            regulatory_event   VARCHAR(200),
+            last_price_date    DATE,
+            dart_recent_filing DATE,
+            verdict            VARCHAR(20) NOT NULL,
+            reason             TEXT
+        )
+        """),
+        ("2026_07_31_ix_delisting_audit_corp",
+         "CREATE INDEX IF NOT EXISTS ix_delisting_audit_corp "
+         "ON delisting_audit (corp_code, checked_at DESC)"),
+
+        # 데일리 실행 워터마크(§5.2). `--days 3` 고정이 21일 공백을 만든 직접 원인이라,
+        # 다음 실행이 마지막 성공 구간부터 다시 훑도록 이력을 남긴다(자가복구).
+        ("2026_07_31_pipeline_runs",
+         """
+        CREATE TABLE IF NOT EXISTS pipeline_runs (
+            id          BIGSERIAL PRIMARY KEY,
+            mode        VARCHAR(24) NOT NULL,      -- download_only | full | ...
+            started_at  TIMESTAMP NOT NULL DEFAULT now(),
+            finished_at TIMESTAMP,
+            status      VARCHAR(12) NOT NULL,      -- running | success | failed
+            window_bgn  DATE,
+            window_end  DATE,
+            summary     JSONB
+        )
+        """),
+        ("2026_07_31_ix_pipeline_runs_lookup",
+         "CREATE INDEX IF NOT EXISTS ix_pipeline_runs_lookup "
+         "ON pipeline_runs (mode, status, window_end DESC)"),
+
+        # 미러 이력(§5.3). 덧붙이기 전용으로 바꾼 대가가 '백업이 조용히 낡는 것'이라
+        # 마지막 성공 시각을 근거로 신선도를 감시한다(§5.4).
+        ("2026_07_31_storage_sync_log",
+         """
+        CREATE TABLE IF NOT EXISTS storage_sync_log (
+            id            BIGSERIAL PRIMARY KEY,
+            started_at    TIMESTAMP NOT NULL DEFAULT now(),
+            finished_at   TIMESTAMP,
+            status        VARCHAR(12) NOT NULL,    -- success | failed | skipped
+            files_sent    INTEGER,
+            bytes_sent    BIGINT,
+            duration_sec  DOUBLE PRECISION,
+            message       TEXT
+        )
+        """),
+        ("2026_07_31_ix_storage_sync_log_status",
+         "CREATE INDEX IF NOT EXISTS ix_storage_sync_log_status "
+         "ON storage_sync_log (status, started_at DESC)"),
     ]
 
     with engine.begin() as conn:

@@ -73,20 +73,17 @@ CHECKS = [
      "SELECT count(*) FROM note_lines WHERE value_won IS NOT NULL AND value_raw IS NOT NULL",
      lambda v: v == 0, None),
 
-    ("F3 — note_lines 에 남은 table_title",
-     "표 단위 값은 report_tables 로 갔다",
-     "SELECT count(*) FROM note_lines WHERE table_title IS NOT NULL",
-     lambda v: v == 0, None),
-
-    ("F3 — note_lines 에 남은 section_path",
-     "주석 제목은 표 단위라 report_tables 로 갔다(본문은 행마다 유지)",
-     "SELECT count(*) FROM note_lines WHERE section_path IS NOT NULL",
-     lambda v: v == 0, None),
-
-    ("F3 — report_lines 에 남은 table_title",
-     "본문도 표 제목은 report_tables 로",
-     "SELECT count(*) FROM report_lines WHERE table_title IS NOT NULL",
-     lambda v: v == 0, None),
+    # ★컬럼 **존재 여부**로 본다. 값 검사(`WHERE table_title IS NOT NULL`)는 drop 전에만
+    #   가능했고(그때 0 확인), drop 후에는 쿼리 자체가 깨진다 — 실제로 여기서 깨졌다.
+    ("F3 — 라인 테이블에 남은 이동 컬럼",
+     "table_title(양쪽)·section_path(주석)·parsed_at(양쪽)은 report_tables 로 갔다",
+     """SELECT count(*) FROM information_schema.columns
+        WHERE (table_name='note_lines'   AND column_name IN ('table_title','section_path','parsed_at'))
+           OR (table_name='report_lines' AND column_name IN ('table_title','parsed_at'))""",
+     lambda v: v == 0,
+     """SELECT table_name, column_name FROM information_schema.columns
+        WHERE (table_name='note_lines'   AND column_name IN ('table_title','section_path','parsed_at'))
+           OR (table_name='report_lines' AND column_name IN ('table_title','parsed_at'))"""),
 
     ("F3 — 본문 section_path 는 **남아야** 한다",
      "본문의 section_path 는 들여쓰기 경로라 행마다 다르다(옮기면 tree 가 뭉개진다)",
@@ -152,7 +149,14 @@ def main() -> int:
 
         print("\n=== 합격 판정 ===")
         for name, why, sql, ok, sample in CHECKS:
-            v = s.execute(text(sql)).scalar() or 0
+            try:
+                v = s.execute(text(sql)).scalar() or 0
+            except Exception as exc:  # noqa: BLE001 — 검사 하나가 나머지를 막으면 안 된다
+                s.rollback()
+                fails += 1
+                print(f"  ⏭ {name:<34}{'실행 실패':>14}   — {type(exc).__name__}: "
+                      f"{str(exc).splitlines()[0][:70]}")
+                continue
             good = ok(v)
             fails += 0 if good else 1
             print(f"  {'✅' if good else '❌'} {name:<34}{v:>14,}   — {why}")

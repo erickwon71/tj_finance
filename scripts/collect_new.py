@@ -143,6 +143,160 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
     return summ
 
 
+def _resolve_window(days_arg: str, mode: str) -> tuple[int, str]:
+    """조회 창 결정. `--days auto` 면 마지막 성공 실행 이후를 자동으로 다시 훑는다.
+
+    `--days 3` 고정이 2026-07 의 21일 공백을 만든 직접 원인이다. 3일 넘는 장애가 나면
+    그 사이 공시가 **영구 누락**되고 아무도 모른다. 워터마크(pipeline_runs)를 두면
+    며칠 멈춰 있었어도 다음 실행이 그 구간을 자동으로 회수한다.
+
+    반환: (days, 설명)
+    """
+    if days_arg != "auto":
+        return int(days_arg), f"고정 {days_arg}일"
+
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    try:
+        with get_session() as s:
+            last = s.execute(text(
+                "SELECT max(window_end) FROM pipeline_runs "
+                "WHERE mode = :m AND status = 'success'"), {"m": mode}).scalar()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] 워터마크 조회 실패({exc}) — 기본 7일로 진행")
+        return 7, "워터마크 실패 → 기본 7일"
+
+    if last is None:
+        return 7, "이전 성공 이력 없음 → 기본 7일"
+
+    # 3일 겹침 = DART 반영 지연 대비(수집은 rcept_no 단위 멱등이라 중복 무해).
+    # 90일 상한 = 장기 중단 시 DART 쿼터 폭주 방지. 그보다 긴 공백은 수동 백필.
+    days = (date.today() - last).days + 3
+    if days > 90:
+        logger.warning(f"[collect] 마지막 성공 {last} — 공백 {days}일이 상한(90) 초과. "
+                       f"90일만 훑는다. 나머지는 수동 백필 필요")
+        return 90, f"공백 {days}일 → 90일로 절단"
+    return max(days, 3), f"마지막 성공 {last} 기준 자동 {days}일"
+
+
+def _start_run(mode: str, days: int) -> int | None:
+    """pipeline_runs 에 실행 시작을 기록하고 id 반환."""
+    from sqlalchemy import text
+    from collector.db import get_session
+    try:
+        with get_session() as s:
+            rid = s.execute(text("""
+                INSERT INTO pipeline_runs (mode, status, window_bgn, window_end)
+                VALUES (:m, 'running', :bgn, :end) RETURNING id
+            """), {"m": mode, "bgn": date.today() - timedelta(days=days),
+                   "end": date.today()}).scalar()
+            s.commit()
+            return rid
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] 실행 이력 기록 실패(비치명적): {exc}")
+        return None
+
+
+def _finish_run(run_id: int | None, status: str, summary: dict) -> None:
+    """실행 종료 기록. status='success' 여야 다음 실행의 워터마크가 전진한다."""
+    if run_id is None:
+        return
+    import json
+
+    from sqlalchemy import text
+    from collector.db import get_session
+    try:
+        with get_session() as s:
+            s.execute(text("""
+                UPDATE pipeline_runs SET finished_at = now(), status = :st, summary = :sm
+                WHERE id = :id
+            """), {"id": run_id, "st": status, "sm": json.dumps(summary, default=str)})
+            s.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] 실행 이력 갱신 실패(비치명적): {exc}")
+
+
+def _audit_completeness(days: int) -> dict:
+    """⑦ 수집 완전성 감사 — DART 목록 대비 미탐지·미다운로드가 0인지.
+
+    이것이 있었다면 2026-07-17 의 다운로드 13건 전건 실패가 당일 드러났다.
+    추가로 `status='completed'` 인데 파일이 실재하지 않는 건을 찾아 `pending` 으로 되돌린다
+    (큐 조건이 pending|failed 뿐이라 한 번 completed 가 되면 파일이 사라져도 재수집되지 않는다).
+    """
+    from sqlalchemy import text
+    from collector.db import get_session
+
+    summary = {"missing_filing": 0, "not_downloaded": 0, "vanished_files": 0}
+
+    # ① DART 대조
+    try:
+        import subprocess
+        proc = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve().parents[0] / "qa" / "audit_download_gap.py"),
+             "--days", str(days)],
+            capture_output=True, text=True, timeout=600)
+        for line in proc.stdout.splitlines():
+            if line.startswith("① filings 테이블에 없음"):
+                summary["missing_filing"] = int(line.split(":")[1].strip().split("건")[0].replace(",", ""))
+            elif line.startswith("② filings 에는 있으나"):
+                summary["not_downloaded"] = int(line.split(":")[1].strip().split("건")[0].replace(",", ""))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[audit] DART 대조 실패(비치명적): {type(exc).__name__}: {exc}")
+
+    # ② 당일 다운로드분 파일 실재 확인(§5.4 최후 안전망)
+    try:
+        with get_session() as s:
+            rows = s.execute(text("""
+                SELECT rcept_no, file_path FROM download_tasks
+                WHERE status = 'completed' AND file_path IS NOT NULL
+                  AND completed_at >= current_date - 1
+            """)).fetchall()
+            gone = [r[0] for r in rows if not Path(r[1]).exists()]
+            if gone:
+                s.execute(text("""
+                    UPDATE download_tasks SET status = 'pending'
+                    WHERE rcept_no = ANY(:r)
+                """), {"r": gone})
+                s.commit()
+                summary["vanished_files"] = len(gone)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[audit] 파일 실재 확인 실패(비치명적): {type(exc).__name__}: {exc}")
+
+    bad = summary["missing_filing"] + summary["not_downloaded"] + summary["vanished_files"]
+    msg = (f"[audit] 완전성 — 미탐지 {summary['missing_filing']} · "
+           f"미다운로드 {summary['not_downloaded']} · 유실복구 {summary['vanished_files']}")
+    if bad:
+        logger.error(msg + "  ⚠ 수집 누락 발견!")
+        try:
+            from scripts.notify import notify_failure
+            notify_failure("수집 완전성 경고", msg)
+        except Exception:  # noqa: BLE001
+            pass
+    else:
+        logger.success(msg)
+    return summary
+
+
+def _run_mirror_and_audit(days: int) -> dict:
+    """⑥ NAS→SD 덧붙이기 미러 + ⑦ 수집 완전성 감사. 둘 다 비치명적(수집을 되돌리지 않는다)."""
+    out: dict = {}
+    try:
+        from scripts.sync_storage_mirror import check_freshness, run_mirror
+        r = run_mirror()
+        out["mirror"] = r.get("status")
+        out["mirror_files"] = r.get("files_sent")
+        check_freshness()      # `--delete` 를 뺀 대가 — 백업이 조용히 낡는 것 감시
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ⑥ 미러 실패(비치명적): {type(exc).__name__}: {exc}")
+        out["mirror"] = "error"
+    try:
+        out.update(_audit_completeness(days))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ⑦ 완전성 감사 실패(비치명적): {type(exc).__name__}: {exc}")
+    return out
+
+
 def _sync_regulatory(lookback_days: int = 5) -> None:
     """시장조치(관리종목/상장폐지/매매정지 등) 감지 — 정기보고와 무관하게 매일 상시 실행.
     비치명적 실패(네트워크 등)는 본 수집을 막지 않는다. lookback_days 여유로 결측 방지."""
@@ -322,7 +476,12 @@ def _verify_and_log(agg: dict, args) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=7, help="실행일로부터 최근 N일 정기공시 확인")
+    ap.add_argument("--days", type=str, default="7",
+                    help="최근 N일 정기공시 확인. 'auto' = 마지막 성공 실행 이후를 자동 회수"
+                         "(3일 겹침·90일 상한). 고정값은 장애 시 그 기간을 영구 누락시킨다")
+    ap.add_argument("--download-only", action="store_true",
+                    help="⓪~③+미러+감사만 — 파싱·표준화·계층2/3 적재는 전부 생략. "
+                         "계층3 재설계 중 데일리 운영용(계획 §5.1)")
     ap.add_argument("--timeout", type=int, default=120, help="기업당 파싱·표준화 타임아웃(초)")
     ap.add_argument("--standardize-only", action="store_true",
                     help="①②③ 건너뛰고 ④(파싱·표준화)만 — 다운로드는 됐는데 표준화 남은 전체 기업 대상. 중단 후 재개용")
@@ -336,6 +495,22 @@ def main() -> None:
     ap.add_argument("--verify-fy-min", type=int, default=2015,
                     help="DQ 게이트 Gate B 재감사 최소 회계연도(기본 2015)")
     args = ap.parse_args()
+
+    # ⓪ 저장소 계약 — 최우선. 실패면 아무것도 하지 않는다.
+    #    2026-07-17 실행은 이 검사가 없어 다운로드 13/13 이 EPERM 으로 실패하는데도
+    #    "비치명적"으로 넘기고 성공 로그를 남겼다.
+    if not args.standardize_only:
+        from collector.storage_guard import StorageContractError, assert_storage
+        try:
+            assert_storage(require_backup=False)
+        except StorageContractError as exc:
+            logger.error(f"[collect] ⓪ 저장소 계약 위반 — 수집 중단\n{exc}")
+            try:
+                from scripts.notify import notify_failure
+                notify_failure("수집 중단 — 저장소 계약 위반", str(exc))
+            except Exception:  # noqa: BLE001
+                pass
+            sys.exit(1)
 
     # ⓪-1 시장조치 감지 — 모드와 무관하게 매일 상시(정기보고 유무와 독립적인 이벤트).
     _sync_regulatory()
@@ -387,16 +562,24 @@ def main() -> None:
 
     # ① 탐지 — DART 쿼터초과([020]) 등 API 실패 시 하드 크래시 대신 정상 종료(비치명).
     #    밸류에이션 refresh 는 별도 잡(nightly_valuation_refresh)이 담당하므로 여기서 죽어도 무방.
+    mode = "download_only" if args.download_only else "full"
+    days, window_desc = _resolve_window(args.days, mode)
+    logger.info(f"[collect] 조회 창: {window_desc}")
+    run_id = _start_run(mode, days)
+
     try:
-        disc = collect.discover_recent_corps(args.days)
+        disc = collect.discover_recent_corps(days)
     except Exception as exc:  # noqa: BLE001
         logger.error(f"[collect] ① 탐지 실패(수집 중단): {type(exc).__name__}: {exc}")
+        _finish_run(run_id, "failed", {"stage": "discover", "error": str(exc)})
         return
     corps = disc["corps"]
-    logger.info(f"[collect] ① 최근 {args.days}일({disc['window']}) 정기공시 "
+    logger.info(f"[collect] ① 최근 {days}일({disc['window']}) 정기공시 "
                 f"{disc['total_filings']}건 → 활성 보통주 {len(corps)}개 기업")
     if not corps:
-        logger.success("[collect] 신규 공시 없음 — 종료")
+        logger.success("[collect] 신규 공시 없음 — 미러·감사만 수행")
+        _run_mirror_and_audit(days)
+        _finish_run(run_id, "success", {"corps": 0})
         return
 
     # ② 공시목록 동기화(force: 기존 기업의 신규 공시 재확인)
@@ -407,6 +590,19 @@ def main() -> None:
     r2 = run_downloads(only_corp_codes=corps)
     logger.info(f"[collect] ③ 다운로드 완료 {r2.get('completed', 0)} / 실패 {r2.get('failed', 0)} / "
                 f"스킵 {r2.get('skipped', 0)} (큐 {r2.get('total_queued', 0)})")
+
+    # ── download-only: 여기서 멈춘다(파싱·표준화·계층2/3 적재는 Phase 5 로 이월) ──
+    #    ⛔ 항목들은 삭제가 아니라 조건 분기다. 계층3 재설계가 끝나면 이 플래그만 내리면
+    #    되살아나야 한다(계획 §5.1 · runbook_new_parser_pipeline_integration.md).
+    if args.download_only:
+        logger.info("[collect] --download-only — ④ 파싱·표준화 이하 전 단계 생략")
+        audit = _run_mirror_and_audit(days)
+        _finish_run(run_id, "success", {
+            "corps": len(corps), "downloaded": r2.get("completed", 0),
+            "failed": r2.get("failed", 0), **audit})
+        logger.success(f"[collect] 완료(download-only) — 기업 {len(corps)} · "
+                       f"다운로드 {r2.get('completed', 0)} · 실패 {r2.get('failed', 0)}")
+        return
 
     # ④ 파싱·표준화·분기·달력 (신규 기업만, 기업당 타임아웃)
     affected = collect.needs_standardize_corps(only=corps)
@@ -437,6 +633,10 @@ def main() -> None:
 
     # ⑥ valuation_daily matview 갱신(A4a) — 오늘 반영분(신규 재무·주가)까지 밸류에이션 뷰에 즉시 노출.
     _refresh_valuation_daily()
+
+    # ⑦ 미러 + 완전성 감사 (full 모드도 동일하게 수행)
+    audit = _run_mirror_and_audit(days)
+    _finish_run(run_id, "success", {"corps": len(corps), **audit})
 
 
 if __name__ == "__main__":

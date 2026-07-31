@@ -318,11 +318,73 @@ rsync -a --exclude '._*' --exclude '.DS_Store' \
 
 ## 6. Phase 4 — 상장폐지 확정 판정 · 안전장치 · DB 반영
 
-### 6.1 왜 안전장치가 필수인가 (실측 근거)
+### 6.1 현행 판정 로직과 그 구멍 (실측)
 
-현재 비활성 10개사 중 **더존비즈온(012510, KOSPI)** 은 2026-07-17 에 `is_active=False` 가 됐는데 대응하는 `regulatory_events` 행이 **없다**. 코스피 주요 상장사이므로 실제 상장폐지보다 **KRX 목록 조회 실패**로 보인다.
+#### 6.1.1 대상기업 리스트는 매 실행 처음부터 다시 만든다
 
-만약 지금 `is_active=False` 에 파일 삭제를 연결해 뒀다면, 일시적 네트워크 오류 한 번으로 **327개 원문이 영구 삭제**됐을 것이다. 단일 신호로는 절대 확정하지 않는다.
+`collector/corp_collector.py:sync_corporations()` — 증분이 아니라 **전량 재구성**이다.
+
+```
+① KRX 상장목록      FinanceDataReader.StockListing("KOSPI"/"KOSDAQ")
+                    → ETF/ETN/우선주 미포함 (KIND 기준, 법인당 보통주 1개)
+② DART corpCode.xml → {stock_code: (corp_code, corp_name, modify_date)}
+③ stock_code JOIN   → DART 에 없으면 제외 (우선주·DART미등록)
+④ 이름 필터         → 스팩/SPAC/기업인수목적·선박투자·리츠·부동산투자회사·인프라투자·투자회사
+⑤ 외국기업 필터     → stock_code 가 '9' 로 시작 (900xxx·950xxx)
+⑥ corporations upsert (is_active=True)
+```
+
+실측 이력(`collection_runs`, run_type='corp_sync'): KRX 2,765 → 제외 211 → **최종 2,554**. 최근 한 달 `krx_total` 2,765~2,766 으로 안정적.
+
+#### 6.1.2 비활성 판정은 이 한 줄이 전부다
+
+`corp_collector.py:265`
+
+```python
+to_deactivate = [c for c in existing_active if c not in final_codes]
+```
+
+**"이번 실행의 최종 후보에 없으면 비활성."** 조건이 하나뿐인데, 후보에서 빠지는 경로는 4가지이고 **전부 구분 없이 똑같이 처리된다.**
+
+| | 경로 | 실제 의미 |
+|---|---|---|
+| (a) | KRX 목록에서 사라짐 | 진짜 상장폐지 |
+| (b) | FDR 조회 실패 | **일시적 네트워크 오류** |
+| (c) | DART corpCode.xml 매핑 실패 | DART 쪽 일시 누락 |
+| (d) | 이름·외국기업 필터에 새로 걸림 | 사명 변경 등 |
+
+#### 6.1.3 ★가장 위험한 구멍 — 시장별 부분 실패
+
+`_get_krx_universe()` (`corp_collector.py:71`):
+
+```python
+for market in ("KOSPI", "KOSDAQ"):
+    try:
+        df = fdr.StockListing(market)
+        ...
+    except Exception as e:
+        logger.warning(...)      # ← 경고만 하고 넘어감(호출자는 모른다)
+if not universe:                 # ← 둘 다 실패해야 None
+    return None
+```
+
+**KOSPI 조회만 실패하면** `universe` 에 KOSDAQ 만 담긴 채 `krx_mode=True` 로 진행한다.
+→ `final_codes` 에 KOSPI 가 통째로 없으므로 **KOSPI 809개 전부가 `to_deactivate`** 가 된다.
+
+지금은 `is_active=False` 만 되고 다음 실행에 자동 복구되어 티가 안 난다. 그러나 **여기에 파일 삭제를 붙였다면 KOSPI 전 종목 원문이 한 번에 사라진다.** 목록 크기 sanity 검사는 어디에도 없다.
+
+**DART 단독 모드 폴백은 반대 방향으로 위험하다.** 둘 다 실패하면 DART corpCode.xml 전체를 후보로 쓰는데, 코드 주석이 이미 `※ DART 단독 모드는 상장폐지 기업이 포함될 수 있습니다` 라고 경고한다. 이 모드에서는 `market=None` 으로 덮어쓰기까지 한다.
+
+#### 6.1.4 더존비즈온 건 — 판단 근거 정정 (2026-07-31)
+
+초안에서 "KRX 조회 실패에 의한 오탐 유력"이라고 썼으나 `collection_runs` 이력이 이를 지지하지 않는다.
+
+- 07-13 `krx_total=2766` → 07-17 `krx_total=2765` (**정확히 -1**)
+- 대량 실패 흔적 없음. 같은 날 레메디가 신규 편입되어 `final_count` 는 2,554 유지
+
+→ **KRX 목록에서 실제로 빠진 것**으로 보인다. 다만 `regulatory_events` 가 없으므로 상태는 "오탐 유력"이 아니라 **"교차 신호 부재로 미확정"**이다. §6.7 재판정 대상으로 남긴다.
+
+이 정정은 결론을 바꾸지 않는다 — **단일 신호로 확정하지 않는다**는 원칙은 6.1.3 만으로도 충분히 정당하다.
 
 ### 6.2 상태 기계
 
@@ -341,9 +403,14 @@ NULL ─────────────────────────
 
 ### 6.3 확정(confirmed) 조건 — 전부 충족해야 함
 
+**G0 계열은 "소스가 믿을 만한가"를 보고, G1~G4 는 "이 기업이 정말 빠졌나"를 본다.**
+G0 중 하나라도 걸리면 **그날 판정 전체를 스킵**한다(개별 기업 판정으로 내려가지 않는다).
+
 | 게이트 | 조건 | 막아내는 것 |
 |---|---|---|
-| **G0 (전역)** | KRX 목록 크기가 직전 성공 대비 **-5% 이상 감소하면 그날 판정 전체를 스킵** | 조회 자체가 깨졌을 때 전 종목 일괄 오탐. **더존비즈온 사례의 1차 방어** |
+| **G0a (소스)** | **시장별 조회 성공 여부를 개별 확인** — KOSPI·KOSDAQ 중 **하나라도 실패하면 전체 스킵** | §6.1.3 부분 실패. 현재는 부분 성공으로 그냥 진행해 **한 시장 전체가 비활성**이 될 수 있다 |
+| **G0b (소스)** | 목록 크기 -5% 가드를 **KOSPI/KOSDAQ 각각** 적용 (전체 합계 아님) | 전체 합계로는 부분 실패가 묻힌다. 기준값은 `collection_runs` 의 직전 성공 실행 |
+| **G0c (소스)** | **DART 단독 모드(`krx_mode=False`)에서는 상장폐지 판정 전면 금지** — candidate 감지조차 안 함 | 이 모드는 상장폐지 기업을 걸러내지 못한다고 코드 주석이 명시 |
 | **G1** | `delisting_first_seen` 이후 **10영업일 이상 연속** 부재 | 일시적 조회 실패 (회복 시간 충분히 확보) |
 | **G2** | 교차 신호 **≥ 1개**: <br>ⓐ `regulatory_events` 에 상장폐지·정리매매·상장적격성 이벤트 <br>ⓑ `stock_prices` 에 10영업일 이상 신규 시세 없음 <br>ⓒ DART 최근 정기공시 부재 | 단일 소스(KRX) 의존 |
 | **G3** | 하루 `confirmed` 전환 **상한 5개** | 대량 오탐의 폭발 반경 제한 |
@@ -352,10 +419,16 @@ NULL ─────────────────────────
 판정 근거는 매 검사마다 신규 테이블 `delisting_audit` 에 남긴다:
 
 ```
-delisting_audit(corp_code, checked_at, krx_present, krx_list_size,
+delisting_audit(corp_code, checked_at,
+                krx_mode,              -- krx | dart_only  (G0c)
+                krx_market_ok,         -- 'KOSPI:ok,KOSDAQ:ok'  (G0a)
+                krx_present,
+                krx_market_size,       -- 해당 시장 목록 크기  (G0b)
                 days_absent, regulatory_event, last_price_date,
                 dart_recent_filing, verdict, reason)
 ```
+
+G0 스킵도 **기록한다** — "그날 판정을 왜 안 했는지"가 남아야 조회 실패가 반복되는 것을 알아챈다.
 
 **왜 확정했는지 나중에 추적할 수 있어야 한다.** 오탐이 나면 이 테이블이 유일한 단서다.
 
@@ -398,20 +471,39 @@ scripts/delisting_manage.py --sync-backup --apply     # 실제 삭제
 
 전부 **추가만** — 기존 컬럼·데이터 무변경.
 
-### 6.6 신규 스크립트
+### 6.6 코드 변경
+
+#### 6.6.1 기존 파일 수정 — `collector/corp_collector.py` (G0a 전제조건)
+
+**G0a 는 이 수정 없이는 구현할 수 없다.** 현재 `_get_krx_universe()` 는 시장별 실패를
+`logger.warning` 으로 삼켜서 **호출자가 어느 시장이 실패했는지 알 방법이 없다.**
+
+| 항목 | 현재 | 변경 |
+|---|---|---|
+| 반환값 | `dict \| None` | `(dict, per_market_status: dict[str, bool \| int])` — 시장별 성공 여부·건수 동반 |
+| 부분 실패 | 경고만 하고 성공한 시장으로 진행 | 호출자에게 전달. `sync_corporations` 은 **비활성 처리를 건너뛴다**(upsert 는 정상 수행) |
+| 빈 결과(`df.empty`) | `continue` — 실패와 구분 안 됨 | 실패로 간주 |
+
+> ⚠️ **비활성 처리만 건너뛰고 upsert 는 계속한다.** 부분 실패 시 신규 상장 반영은 되되,
+> 기존 기업을 내리는 파괴적 방향만 막는 것이 목적이다.
+
+이 수정은 `delisting_status` 도입과 **독립적으로 그 자체가 버그 수정**이므로 우선 적용한다.
+
+#### 6.6.2 신규 파일
 
 ```
-collector/delisting.py                 판정 엔진 (G0~G4 + 상태 전이)
-scripts/delisting_manage.py            --list / --confirm <code> / --restore <code> / --dry-run
+collector/delisting.py                 판정 엔진 (G0a~G0c·G1~G4 + 상태 전이)
+scripts/delisting_manage.py            --list / --confirm <code> / --restore <code>
+                                       --sync-backup (§6.4b)
 ```
 
-`--dry-run` 이 기본. 아카이브 이동은 명시적 `--apply` 에서만 일어난다.
+`--dry-run` 이 기본. 아카이브 이동·SD 삭제는 명시적 `--apply` 에서만 일어난다.
 
 ### 6.7 즉시 조치 — 현재 비활성 10사 재판정
 
 Phase 4 구현 직후 10개사를 새 규칙으로 전건 재판정한다.
 
-- **더존비즈온(012510)** — 오탐 강력 의심. 재확인 후 `is_active=True` 복원 대상
+- **더존비즈온(012510)** — `krx_total` 이 정확히 -1 만 움직여 조회 글리치 근거는 약하나(§6.1.4), 교차 신호(`regulatory_events`)가 없어 **미확정**. KRX·DART 원문 확인 필요
 - 일정실업(008500), 바이온(032980) 등도 `regulatory_events` 부재 → 개별 확인
 - 에코마케팅(230360) 은 `주식교환·이전` 매매거래정지 기록 있음 → 실제 상장폐지로 확정 가능
 
@@ -445,7 +537,10 @@ Phase 4 구현 직후 10개사를 새 규칙으로 전건 재판정한다.
 | V3 | 미러 정합 | `scripts/qa/verify_storage_mirror.py` (오늘 쓴 `sync_diff2.sh` 를 정식화). 당일 변경분 전수 + 표본 90사 | 실파일 불일치 0 |
 | V4 | 수집 완전성 | `audit_download_gap.py --days 30` | 미탐지 0 · 미다운로드 0 |
 | V5 | 정정보고서 | 백필 후 최근 30일 정정 전건이 `filings` 에 존재하고 `is_final` 그룹당 정확히 1건 | 위반 0 |
-| V6 | 상장폐지 판정 | 과거 6개월 데이터로 백테스트 — 실제 상장폐지사 재현율, 오탐(더존비즈온류) 0 | 오탐 0 |
+| V6 | 상장폐지 판정 | 과거 6개월 데이터로 백테스트 — 실제 상장폐지사 재현율, 오탐 0 | 오탐 0 |
+| **V6a** | **G0a 부분 실패** | `fdr.StockListing("KOSPI")` 가 예외를 던지도록 주입하고 `sync_corporations` 실행 | **`to_deactivate` 0건** (현행 코드는 809건 비활성 — 회귀 방지 기준선) |
+| **V6b** | G0b 시장별 급감 | KOSDAQ 목록을 90%로 축소해 주입 | 판정 스킵 + `delisting_audit` 에 사유 기록 |
+| **V6c** | G0c DART 단독 모드 | FDR 전체 실패 주입 | candidate 감지 **0건**, upsert 는 정상 |
 | V7 | 회귀 | `pytest` | 253/253 유지 |
 
 ---
@@ -458,7 +553,9 @@ Phase 4 구현 직후 10개사를 새 규칙으로 전건 재판정한다.
 1. Phase 1  저장소 계약        S1 → S2 → V1 → S2b(역방향 정산) → S3 → V2 → V1b·V1c → S5
 2. Phase 2  밀린 분 백필        B1 → B2 → B3 → B4 → B5(V4)
 3. Phase 3  데일리 재구성       5.1 → 5.2 → 5.3(V3) → 5.4 → V7 → 5.5 launchd
-4. Phase 4  상장폐지            6.5 DDL → 6.6 엔진 → V6 → 6.7 재판정 보고 → [사용자 승인] → 조치
+4. Phase 4  상장폐지            6.6.1 corp_collector 수정(G0a 전제·단독 버그수정) → V6a
+                               → 6.5 DDL → 6.6.2 엔진 → V6·V6b·V6c
+                               → 6.7 재판정 보고 → [사용자 승인] → 조치
 5. Phase 5  파싱·적재 재편입    (계층3 재설계 완료 후, 별도 계획)
 ```
 
@@ -475,7 +572,8 @@ Phase 4 구현 직후 10개사를 새 규칙으로 전건 재판정한다.
 | 심링크 드리프트 5회차 | **중간**(치명→강등) | G2(I1) 로 차단. 뚫려도 덧붙이기 미러라 파일이 지워지지 않고 "NAS 에 안 올라감"에 그침 → S2b 역방향 정산으로 회수. 단 드리프트 근본 원인은 미규명(§3.3) |
 | **SD 미러가 조용히 낡음** (덧붙이기 전환의 대가) | 중간 | §5.4 미러 신선도 검사 — 마지막 성공 7일 초과 경고 / 30일 초과 error+알림 |
 | Gate A 가 데일리에 없어 파일 유실이 조용히 지나감 | 높음 | §5.4 완전성 감사에서 `download_tasks.completed` 대비 **파일 실재 여부** 검사 추가(당일분 전수) |
-| 상장폐지 오탐으로 원문 유실 | 높음 | 결정 D1 로 **삭제 자체를 안 함**(아카이브 영구 보존) + G0~G4 |
+| 상장폐지 오탐으로 원문 유실 | 높음 | 결정 D1 로 **삭제 자체를 안 함**(아카이브 영구 보존) + G0a~G4 |
+| **KRX 시장별 부분 실패로 한 시장 전체 비활성** (§6.1.3, 현행 코드에 가드 0) | 높음 | 6.6.1 `corp_collector` 수정 + G0a. **`delisting_status` 도입과 무관한 단독 버그이므로 Phase 4 최우선** |
 | SD 용량 70% → 포화 | 중간 | 상장폐지 이관은 **회수량이 미미**(857MB/10사)하므로 대책이 못 된다. 진짜 지렛대는 **SD 를 최근 N년만 미러링**하는 부분 백업(결정 D5, 보류). M3 가드가 임계 도달을 먼저 알린다 |
 | DART API 쿼터 초과 (장기 공백 백필) | 중간 | 조회 창 90일 상한 + 기존 `rate_limiter` |
 | Phase 5 까지 재무 DB가 21일+ 낡음 | 중간 | **의도된 상태**. 원문은 확보되므로 소급 재표준화로 복구 가능. 앱에 기준일 캡션 노출 |

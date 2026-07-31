@@ -12,9 +12,18 @@ BASE_DIR = Path(__file__).parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 # ── 경로 설정 ──────────────────────────────────────────
-RAW_REPORT_DIR = BASE_DIR / "raw_report"   # PDF 저장 루트
+RAW_REPORT_DIR = BASE_DIR / "raw_report"   # PDF 저장 루트(심링크 → PRIMARY_ROOT)
 LOG_DIR        = BASE_DIR / "logs"          # 로그 파일
 TMP_DIR        = BASE_DIR / "tmp"           # ZIP 임시 압축 해제
+
+# ── 저장소 계약 ────────────────────────────────────────
+# 원문의 물리 위치. RAW_REPORT_DIR 는 PRIMARY_ROOT 를 가리키는 심링크이고, 코드는 계속
+# RAW_REPORT_DIR 만 쓴다(경로가 DB 에 18만 건 저장돼 있어 바꾸지 않는다). 아래 상수는
+# 미러·아카이브처럼 **물리 볼륨을 직접 지정해야 하는 곳**에서만 쓴다.
+# 검증은 collector.storage_guard.assert_storage() — 정의도 그쪽이 단일 출처다.
+from collector.storage_guard import (  # noqa: E402
+    ARCHIVE_ROOT, BACKUP_ROOT, PRIMARY_ROOT,
+)
 
 # ── DART API ────────────────────────────────────────────
 DART_API_KEY  = os.getenv("OPENDART_API_KEY", "")

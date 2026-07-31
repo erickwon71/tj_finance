@@ -417,22 +417,38 @@ CHECKS: list[dict] = [
     # 야간 어서션에 부적합하고, 회귀 감시에는 '새로 적재된 것이 깨끗한가'면 충분하다.
     {
         "name": "unit_contamination",
-        "sev": "WARN",
-        "desc": "비금액 열(이자율·지분율·주식수·외화)인데 value_won 이 채워진 행 — 단위 오적용. "
-                "★Phase 4 전량 재적재 전에는 구 포맷 행이 남아 있어 위반이 정상이다. "
-                "재적재 후 0 을 확인하면 sev 를 ERROR 로 올릴 것",
+        "sev": "ERROR",
+        "sev_note": "재적재(2026-07-31) 후 0 확인 → ERROR 승격",
+        "desc": "비금액 열(이자율·지분율·주식수·외화)인데 value_won 이 채워진 행 — 단위 오적용",
+        # ★판정 규칙은 **로더와 같아야** 한다(fin2/extract/units.py). 초판은 2026-07-30 측정용
+        #   정의(맨 % + 선언 접두 포함)를 그대로 써서, 재적재 후에도 2,401 행을 위반으로 셌다.
+        #   전부 원문 대조로 **의도해서 제외한** 거짓양성 3종이었다:
+        #     · '(단위: 천원, 천USD)>실행금액' — 'USD' 는 **표의 선언**이지 그 열의 성격이 아니다
+        #     · '전기말>10% 상승시'            — 환위험 시나리오 열. 값은 천원 금액이다
+        #     · '…>지분100%를 취득'            — 문장 속 '%'
+        #   그래서 여기서도 ① '단위' 가 든 단(segment)을 걷어내고 ② '%' 는 단위로 쓰인 때만 본다.
         "count": """
-            SELECT count(*) FROM note_lines n
-            WHERE n.rcept_no IN (SELECT rcept_no FROM filings ORDER BY rcept_no DESC LIMIT 200)
-              AND n.value_won IS NOT NULL
-              AND n.col_label ~ '%|비율|이자율|할인율|지분율|주당|수량|주수|배수|USD|EUR|JPY|외화'
+            WITH x AS (
+              SELECT n.value_won,
+                     regexp_replace(n.col_label, '(^|>)[^>]*단위[^>]*', '', 'g') AS lbl
+              FROM note_lines n
+              WHERE n.rcept_no IN (SELECT rcept_no FROM filings ORDER BY rcept_no DESC LIMIT 200)
+                AND n.value_won IS NOT NULL AND n.col_label IS NOT NULL)
+            SELECT count(*) FROM x
+            WHERE lbl ~ '(\(\s*%\s*\)|%\s*(>|$)|율|률|비율|주당|수량|주수|배수|USD|EUR|JPY'
+                        '|외화|주식수|소유주식|보유주식|발행주식|의결권|일수|적수|천주|백만주'
+                        '|인원|건수|톤)'
         """,
         "sample": """
-            SELECT n.rcept_no, n.col_label, n.label_raw, n.value_won FROM note_lines n
-            WHERE n.rcept_no IN (SELECT rcept_no FROM filings ORDER BY rcept_no DESC LIMIT 200)
-              AND n.value_won IS NOT NULL
-              AND n.col_label ~ '%|비율|이자율|지분율|USD'
-            ORDER BY abs(n.value_won) DESC LIMIT 10
+            WITH x AS (
+              SELECT n.rcept_no, n.col_label, n.label_raw, n.value_won,
+                     regexp_replace(n.col_label, '(^|>)[^>]*단위[^>]*', '', 'g') AS lbl
+              FROM note_lines n
+              WHERE n.rcept_no IN (SELECT rcept_no FROM filings ORDER BY rcept_no DESC LIMIT 200)
+                AND n.value_won IS NOT NULL AND n.col_label IS NOT NULL)
+            SELECT rcept_no, col_label, label_raw, value_won FROM x
+            WHERE lbl ~ '(\(\s*%\s*\)|%\s*(>|$)|율|률|비율|주당|USD|주식수)'
+            ORDER BY abs(value_won) DESC LIMIT 10
         """,
     },
     {

@@ -79,7 +79,7 @@
 ---
 
 ## 4. 핸드오프 타임라인 (세션 진입점, 최신순)
-- **2026-07-31** [handoff_f1_f2_units](../qa/handoff_f1_f2_units_2026-07-31.md) — ★**현재 시작점**. F1(단위 판정 표→**열** 단위, 오염 제거)·F2(헤더 삭제→`header_hint` 전사) 구현. 구·신 차분에서 **본문·SCE 변화 0**. 미선언 11.2M셀·수주/가동률 공백 규명 완료. **재적재는 아직 안 함** — 사용자 결정 3건(§4) 후 Phase 4 에서 1회
+- **2026-07-31** [handoff_f1_f2_units](../qa/handoff_f1_f2_units_2026-07-31.md) — ★**현재 시작점** · 세션 전체 정리 = [session_summary](../qa/session_summary_2026-07-31.md) · 재적재 결과 = [phase4_reload](../qa/phase4_reload_2026-07-31.md). F1(단위 판정 표→**열** 단위, 오염 제거)·F2(헤더 삭제→`header_hint` 전사) 구현. 구·신 차분에서 **본문·SCE 변화 0**. 미선언 11.2M셀·수주/가동률 공백 규명 완료. **Phase 4 재적재까지 완료**(DB 108.9→74 GB · 오염 6,130,738행→0 · note_lines 246.6M행)
 - 2026-07-30(밤) [handoff_coverage_gaps](../qa/handoff_coverage_gaps_2026-07-30b.md) — 검증도구 3종(단위 census·문서 census·낭비 원장) 신설 + 전수 실측(오염 6.13M행·미귀속 19.8%·회수가능 52.3GB)
 - 2026-07-30(낮) [handoff_layer2_sanitize_da](../qa/handoff_layer2_sanitize_da_2026-07-30.md) — DART XML 이스케이프 결함 수정+전량 재적재, D&A FY 97.4%
 - 2026-07-26 [handoff_layer2_notes](../qa/handoff_layer2_notes_2026-07-26.md) — 계층2 주석 전사 완료(note_lines 2.1억행)+계층3 note→D&A 매핑 착수점. ★D&A "주석에 없음" 진단 정정

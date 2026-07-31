@@ -278,6 +278,47 @@ def _audit_completeness(days: int) -> dict:
     return summary
 
 
+def _sync_delisting() -> dict:
+    """⓪-3 상장폐지 판정 — 상태(DB)만 갱신한다. **원문 파일은 절대 건드리지 않는다.**
+
+    자동으로 하는 것: delisting_status(candidate/confirmed/reinstated) + delisted_at 기록.
+    사람이 하는 것:   원문 NAS 아카이브 이관 · SD 백업 정리 · 오탐 복원
+                     → `scripts/delisting_manage.py --archive / --sync-backup / --restore`
+
+    이렇게 가르는 이유: 상태 갱신은 UPDATE 한 줄로 되돌릴 수 있지만 파일 이동은 아니다.
+    판정에는 G0(소스 신뢰)·G1(연속 부재)·G2(교차 신호)·G3(일일 상한)·G4(알림) 가 걸려 있고,
+    폐지 명부처럼 폐지일·사유가 명시된 **양성 증거**는 G1 을 건너뛴다(collector/delisting.py).
+
+    비치명적 — 실패해도 수집은 계속한다.
+    """
+    try:
+        from collector import krx_client as kc
+        from collector.corp_collector import _get_krx_universe
+        from collector.delisting import evaluate
+
+        universe, market_status = _get_krx_universe()
+        _, results = kc.fetch_all()
+        listed = kc.listed_codes(list(results.values())) or set(universe or {})
+        registry = kc.fetch_delisted()
+
+        r = evaluate(listed, market_status, krx_mode=universe is not None,
+                     apply=True, delisted_registry=registry)
+        if r["skipped"]:
+            logger.warning(f"[collect] ⓪-3 상장폐지 판정 스킵 — {r['reason']}")
+            return {"delisting": "skipped"}
+
+        c = r["counts"]
+        logger.info(f"[collect] ⓪-3 상장폐지 — 후보 {c['candidate']} · 확정 {c['confirmed']} · "
+                    f"복귀 {c['reinstated']} · 보류 {c['hold']}")
+        if c["confirmed"]:
+            logger.info("[collect]    원문 아카이브는 자동이 아니다 → "
+                        "scripts/delisting_manage.py --archive")
+        return {"delisting_confirmed": c["confirmed"], "delisting_candidate": c["candidate"]}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ⓪-3 상장폐지 판정 실패(비치명적): {type(exc).__name__}: {exc}")
+        return {"delisting": "error"}
+
+
 def _run_mirror_and_audit(days: int) -> dict:
     """⑥ NAS→SD 덧붙이기 미러 + ⑦ 수집 완전성 감사. 둘 다 비치명적(수집을 되돌리지 않는다)."""
     out: dict = {}
@@ -485,8 +526,15 @@ def main() -> None:
     ap.add_argument("--timeout", type=int, default=120, help="기업당 파싱·표준화 타임아웃(초)")
     ap.add_argument("--standardize-only", action="store_true",
                     help="①②③ 건너뛰고 ④(파싱·표준화)만 — 다운로드는 됐는데 표준화 남은 전체 기업 대상. 중단 후 재개용")
+    # ⓪ 유니버스 갱신 + 상장폐지 판정은 **기본 ON**.
+    #   예전엔 opt-in 이라 플래그를 안 주면 신규 상장이 영원히 안 들어오고 상장폐지 판정도
+    #   통째로 건너뛰었다. 데일리에서 이건 옵션이 아니라 필수 단계다.
+    #   `--refresh-universe` 는 기존 호출부(plist·스크립트) 호환을 위해 받기만 하고 무시한다.
     ap.add_argument("--refresh-universe", action="store_true",
-                    help="⓪ 수집 전 상장 유니버스 갱신(KRX 기준 신규 상장 반영·상장폐지 비활성화)")
+                    help="(기본 동작 — 하위호환용으로 남겨둔 무시되는 플래그)")
+    ap.add_argument("--no-refresh-universe", dest="refresh_universe_off",
+                    action="store_true",
+                    help="⓪ 유니버스 갱신·상장폐지 판정 생략(네트워크 차단 환경 등 예외용)")
     ap.add_argument("--corps", type=str, default=None,
                     help="쉼표구분 corp_code — 이 기업들만 ④ 처리(--standardize-only 와 함께). "
                          "예: 타임아웃 스킵분 재시도")
@@ -544,9 +592,9 @@ def main() -> None:
     from collector.downloader import run_downloads
     from collector.filing_collector import sync_filings
 
-    # ⓪ 상장 유니버스 갱신(옵션) — 신규 상장 반영 + 상장폐지·제외 비활성화.
+    # ⓪ 상장 유니버스 갱신 — 신규 상장 반영 + 상장폐지·제외 비활성화.
     #    네트워크(KRX/DART) 조회라 실패해도 수집은 계속(비치명적).
-    if args.refresh_universe:
+    if not args.refresh_universe_off:
         try:
             u = collect.refresh_universe()
             new_names = ", ".join(c.get("corp_name", "") for c in (u.get("new_corps") or [])[:20])
@@ -559,6 +607,9 @@ def main() -> None:
                 logger.info(f"[collect]    제외: {deact_names}")
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"[collect] ⓪ 유니버스 갱신 실패(수집은 계속): {exc}")
+
+        # ⓪-3 상장폐지 판정 — 유니버스 갱신 직후(같은 소스를 봐야 판단이 일관된다).
+        _sync_delisting()
 
     # ① 탐지 — DART 쿼터초과([020]) 등 API 실패 시 하드 크래시 대신 정상 종료(비치명).
     #    밸류에이션 refresh 는 별도 잡(nightly_valuation_refresh)이 담당하므로 여기서 죽어도 무방.
@@ -591,9 +642,22 @@ def main() -> None:
     logger.info(f"[collect] ③ 다운로드 완료 {r2.get('completed', 0)} / 실패 {r2.get('failed', 0)} / "
                 f"스킵 {r2.get('skipped', 0)} (큐 {r2.get('total_queued', 0)})")
 
-    # ── download-only: 여기서 멈춘다(파싱·표준화·계층2/3 적재는 Phase 5 로 이월) ──
-    #    ⛔ 항목들은 삭제가 아니라 조건 분기다. 계층3 재설계가 끝나면 이 플래그만 내리면
-    #    되살아나야 한다(계획 §5.1 · runbook_new_parser_pipeline_integration.md).
+    # ══════════════════════════════════════════════════════════════════════
+    #  확장 지점 (Phase 5) — 파싱·적재 재편입
+    # ══════════════════════════════════════════════════════════════════════
+    #  현재 데일리는 여기서 멈춘다. 아래는 **삭제한 게 아니라 조건 분기**이며,
+    #  계층3 재설계가 끝나면 plist 에서 `--download-only` 를 빼는 것만으로 되살아난다.
+    #
+    #  되살릴 때 반드시 확인할 것 (docs/runbook_new_parser_pipeline_integration.md):
+    #    ① **두 call site 모두** 배선 — 여기(메인)와 `--standardize-only` 재개 경로
+    #    ② 소급 백필은 자동이 아니다 — download-only 기간에 받은 원문은 별도 재표준화
+    #       (대상: `SELECT window_bgn, window_end FROM pipeline_runs WHERE mode='download_only'`)
+    #    ③ 검증 — 회귀 테스트 + 원문 대조 + Gate B 무영향
+    #
+    #  ⚠ 상장폐지 확정 기업(delisting_status='confirmed')의 원문은 아카이브로 옮겨져
+    #    raw_report 밖에 있다. 전량 재적재 시 **기존 DB 데이터를 보존하고 명시적으로
+    #    스킵**해야 한다 — 조용히 빈 값으로 덮어쓰면 과거 시계열이 사라진다.
+    # ══════════════════════════════════════════════════════════════════════
     if args.download_only:
         logger.info("[collect] --download-only — ④ 파싱·표준화 이하 전 단계 생략")
         audit = _run_mirror_and_audit(days)

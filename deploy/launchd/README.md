@@ -57,16 +57,45 @@ python scripts/nightly_gap_fill_backfill.py    # 즉시 1회 수동 실행(포�
 ## 설치 (최초 1회)
 
 ```bash
-# 1) plist 배치 (이미 복사돼 있으면 생략)
+# 1) plist 배치
 cp deploy/launchd/com.tjfinance.collect.plist ~/Library/LaunchAgents/
 mkdir -p logs
 
-# 2) launchd 등록 (사용자 세션)
-launchctl load -w ~/Library/LaunchAgents/com.tjfinance.collect.plist
+# 2) ★ disabled 해제 — 이거 없으면 3)이 'Input/output error' 로 실패한다
+launchctl enable gui/$(id -u)/com.tjfinance.collect
 
-# 3) 잠자기에서 17:58 깨우기 (sudo 필요, 매일)
+# 3) launchd 등록 (사용자 세션)
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tjfinance.collect.plist
+
+# 4) 확인 — 레이블이 보여야 한다
+launchctl list | grep tjfinance
+
+# 5) 잠자기에서 17:58 깨우기 (sudo 필요, 매일)
 sudo pmset repeat wakeorpoweron MTWRFSU 17:58:00
 ```
+
+### ⚠ `Bootstrap failed: 5: Input/output error` 가 나면
+
+2026-07-31 설치 때 실제로 겪은 것이고, 원인이 메시지에 전혀 안 드러난다. 순서대로 확인:
+
+1. **disabled 상태로 남아 있는가** ← 이번 원인
+   ```bash
+   launchctl print-disabled gui/$(id -u) | grep tjfinance
+   ```
+   한 번 `bootout`/삭제한 레이블은 **disabled 로 남는다**. 2026-07-22 에 야간 잡을
+   전량 삭제한 뒤 `com.tjfinance.collect` 와 `gapfill` 이 그 상태였다.
+   `launchctl enable gui/$(id -u)/<레이블>` 로 해제해야 등록된다.
+
+2. **DOCTYPE 이 있는가**
+   `plutil -lint` 는 DOCTYPE 없이도 OK 를 내지만 launchd 는 거부한다.
+   ```xml
+   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+   ```
+
+3. 같은 레이블이 이미 부트스트랩돼 있는가 — `launchctl bootout gui/$(id -u)/<레이블>` 후 재시도
+
+> 진단 팁: 최소 plist(Label + ProgramArguments 만)로 같은 레이블을 등록해 보면
+> **plist 내용 문제인지 레이블 상태 문제인지** 바로 갈린다.
 
 ## 확인 / 운영
 

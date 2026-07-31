@@ -44,6 +44,25 @@ except Exception:  # noqa: BLE001
 from loguru import logger
 
 
+def _suppressed() -> str | None:
+    """테스트 환경이면 억제 사유를, 아니면 None.
+
+    2026-07-31 사고 — `tests/test_corp_universe_guard.py` 는 `krx_client.fetch_all` 만
+    가짜로 바꾸고 **진짜** `_get_krx_universe()` 를 부른다. 그 안의 `notify_failure` 도
+    진짜라서 스위트 1회 실행마다 실제 Gmail SMTP 로 7통(KRX 인증 실패 6 + 소스 불일치 1)이
+    나갔다. 하루 7회 돌려 49통이 발송됐고, 본문의 `(주입)` 이 유일한 단서였다.
+
+    그래서 억제는 **호출자가 아니라 여기**에 둔다 — 앞으로 추가될 테스트도 자동 보호된다.
+    `PYTEST_CURRENT_TEST` 는 pytest 가 심어주고, 자체 러너(tests/run_all.py·tests/_util.py)
+    는 `TJ_NOTIFY_DISABLE=1` 을 심는다. 운영 경로에는 둘 다 없으므로 영향이 없다.
+    """
+    if os.getenv("TJ_NOTIFY_DISABLE", "").strip() not in ("", "0"):
+        return "TJ_NOTIFY_DISABLE"
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return "pytest"
+    return None
+
+
 def notify_macos(title: str, message: str) -> None:
     """macOS 알림센터. 실패해도 조용히 넘어간다(headless SSH 등)."""
     safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
@@ -98,6 +117,9 @@ def notify_failure(title: str, message: str, email: bool = True) -> None:
         email: 이메일까지 보낼지. 소음이 큰 경고는 False 로 알림만.
     """
     logger.error(f"[notify] {title} — {message}")
+    if (why := _suppressed()) is not None:
+        logger.info(f"[notify] 발송 생략({why}) — 테스트 환경")
+        return
     notify_macos(title, message)
     if email:
         notify_email(title, message)

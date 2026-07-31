@@ -7,6 +7,13 @@
 """
 from __future__ import annotations
 
+import os
+
+# 이 모듈은 모든 test_*.py 가 import 한다 — 그래서 여기에 세워두면
+# `python tests/test_x.py` 단독 실행에서도 실제 메일·알림이 나가지 않는다
+# (일괄 실행은 tests/run_all.py, pytest 는 PYTEST_CURRENT_TEST 로 각각 커버).
+os.environ.setdefault("TJ_NOTIFY_DISABLE", "1")
+
 
 def approx(a, b, tol: float = 1e-9) -> bool:
     """None 안전 근사 비교(절대+상대 허용오차)."""

@@ -21,18 +21,45 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import text
 
 from collector.db import get_session
-from fin2.extract.units import CONTAMINATION_MARKERS
 
 # (이름, 설명, SQL, 합격조건 함수, 표본 SQL)
 CHECKS = [
+    # ★판정은 **로더와 같은 규칙**이어야 한다(fin2/extract/units.py). 초판은 2026-07-30
+    #   측정용 정의(`CONTAMINATION_MARKERS` 를 라벨 전체에 그대로)를 써서 재적재 후에도
+    #   1,598,596 행을 위반으로 셌는데, 열어 보니 전부 **선언 접두**가 걸린 것이었다:
+    #     '(원화단위 : 천원, 외화단위 : 1단위)>차입금액' — 'USD/외화' 는 표의 선언이지
+    #     그 열의 성격이 아니다. 로더는 `label_segments()` 가 단위 단을 버린 뒤 판정한다.
+    #   그래서 SQL 도 ① '단 위'(자간 공백 포함) 가 든 단을 걷어내고 ② '%' 는 단위로 쓰인
+    #   때만 본다. 이 규칙으로 전수 246.6M 행에서 **0**.
     ("오염 — 비금액 열에 value_won",
      "F1 의 핵심 목표. 재적재 전 6,130,738 행 → **0 이어야 한다**",
-     f"""SELECT count(*) FROM note_lines
-         WHERE value_won IS NOT NULL AND col_label ~ '{CONTAMINATION_MARKERS}'""",
+     r"""WITH x AS (
+           SELECT value_won,
+                  regexp_replace(col_label, '(^|>)[^>]*단\s*위[^>]*', '', 'g') AS lbl
+           FROM note_lines WHERE value_won IS NOT NULL AND col_label IS NOT NULL)
+         SELECT count(*) FROM x
+         WHERE lbl ~ '(\(\s*%\s*\)|%\s*(>|$)|율|률|비율|주당|수량|주수|배수|USD|EUR|JPY'
+                     '|외화|주식수|소유주식|보유주식|발행주식|의결권|일수|적수|천주|백만주'
+                     '|인원|건수|톤)'""",
      lambda v: v == 0,
-     f"""SELECT rcept_no, col_label, label_raw, value_won FROM note_lines
-         WHERE value_won IS NOT NULL AND col_label ~ '{CONTAMINATION_MARKERS}'
+     r"""WITH x AS (
+           SELECT rcept_no, col_label, label_raw, value_won,
+                  regexp_replace(col_label, '(^|>)[^>]*단\s*위[^>]*', '', 'g') AS lbl
+           FROM note_lines WHERE value_won IS NOT NULL AND col_label IS NOT NULL)
+         SELECT rcept_no, col_label, label_raw, value_won FROM x
+         WHERE lbl ~ '(\(\s*%\s*\)|%\s*(>|$)|율|률|비율|주당|USD|주식수)'
          ORDER BY abs(value_won) DESC LIMIT 10"""),
+
+    # 재적재로 드러난 **별개 결함**(F1 소관 아님) — 한 셀에 두 숫자가 구분자 없이 붙는 서식.
+    #   원문 실측 20200814000694 담보제공자산: '500,0001,302,500' = '500,000' + '1,302,500'.
+    #   `parse_amount` R1 은 **공백으로 나뉜** 다중 숫자만 거부하고, R3 상한은 1경이라 통과한다.
+    #   한국 상장사 최대 총자산 ≈ 500조(5×10^14) 이므로 단일 셀 1,000조 이상은 실값일 수 없다.
+    ("타당성 — 1,000조 이상(셀 병합 의심)",
+     "R3 상한(1경)이 느슨해 붙은 숫자가 통과한다. 사용자 판단 대기 — 현재는 관찰만",
+     "SELECT count(*) FROM note_lines WHERE abs(value_won) >= 1e15",
+     lambda v: True,
+     "SELECT rcept_no, label_raw, col_label, value_won FROM note_lines "
+     "WHERE abs(value_won) >= 1e15 ORDER BY abs(value_won) DESC LIMIT 5"),
 
     ("정보 손실 — 값도 원문도 없는 행",
      "value_won 이 비었으면 value_raw 가 있어야 한다(F1 의 불변식)",

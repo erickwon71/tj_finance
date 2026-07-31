@@ -164,6 +164,82 @@ def to_universe(listings: list[MarketListing]) -> dict[str, str]:
     return universe
 
 
+def listed_codes(listings: list[MarketListing]) -> set[str]:
+    """성공한 시장의 **전 증권** 종목코드(우선주·펀드·리츠 포함).
+
+    상장폐지 판정은 이 집합으로 해야 한다. `to_universe()` 는 우리 투자대상(보통주 주권)만
+    남기므로, KRX 에 멀쩡히 상장된 인프라펀드·리츠가 "목록에 없음"으로 보여 **상장폐지로
+    오판**된다. 두 질문은 다르다:
+        · 거래소에 아직 상장돼 있나   → listed_codes()
+        · 우리 수집·분석 대상인가      → to_universe()
+    """
+    codes: set[str] = set()
+    for lst in listings:
+        if not lst.ok:
+            continue
+        for row in lst.rows:
+            code = (row.get("ISU_SRT_CD") or "").strip()
+            if len(code) == 6:
+                codes.add(code)
+    return codes
+
+
+def fetch_delisted() -> dict[str, dict]:
+    """상장폐지 종목 명부 — {stock_code: {name, market, delisting_date, reason}}.
+
+    소스는 FinanceDataReader 의 `KRX-DELISTING`(KRX 상장폐지 종목 목록, 2026-07-31 기준 4,170행).
+    KRX OpenAPI 의 종목기본정보(`stk_isu_base_info`)에는 **현재 상장 종목만** 있어서
+    폐지 사실을 알 수 없다 — 그래서 이 목록이 필요하다.
+
+    **왜 중요한가 — 이것은 '부재 추론'이 아니라 '명시적 사실'이다.**
+    기존 판정은 "목록에 없으니 폐지겠지"라는 추론이었고, 조회 실패와 구분되지 않아
+    10영업일 대기 + 교차신호를 요구해야 했다. 이 명부는 **폐지일과 사유가 적힌 양성 증거**라
+    한 건만으로 확정할 수 있다.
+
+    실측(2026-07-31): DART 시장조치(`regulatory_events`)로는 더존비즈온·일정실업의 폐지를
+    전혀 잡지 못했다(이벤트 0건). 지주회사 완전자회사화·시가총액 미달은 시장조치 공시로
+    발생하지 않기 때문이다. 이 명부가 그 공백을 메운다.
+
+    실패 시 **빈 dict** 를 돌려준다 — 이 신호의 부재는 "폐지 아님"이 아니라 "모름"이므로,
+    호출자는 기존 부재-추론 경로(G1+G2)로 자연히 폴백한다.
+    """
+    try:
+        import FinanceDataReader as fdr
+    except ImportError:
+        logger.warning("[krx] FDR 미설치 — 상장폐지 명부 조회 불가")
+        return {}
+
+    try:
+        df = fdr.StockListing("KRX-DELISTING")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[krx] 상장폐지 명부 조회 실패: {type(exc).__name__}: {exc}")
+        return {}
+
+    if df is None or df.empty:
+        logger.warning("[krx] 상장폐지 명부가 비었다 — 조회 이상으로 간주(신호 미사용)")
+        return {}
+
+    col = next((c for c in ("Symbol", "Code") if c in df.columns), None)
+    if col is None:
+        logger.warning(f"[krx] 상장폐지 명부에 종목코드 컬럼 없음: {list(df.columns)[:8]}")
+        return {}
+
+    out: dict[str, dict] = {}
+    for _, r in df.iterrows():
+        code = str(r[col]).strip().zfill(6)
+        if len(code) != 6:
+            continue
+        d = r.get("DelistingDate")
+        out[code] = {
+            "name": str(r.get("Name", "")).strip(),
+            "market": str(r.get("Market", "")).strip(),
+            "delisting_date": getattr(d, "date", lambda: None)() if d is not None else None,
+            "reason": str(r.get("Reason", "")).strip(),
+        }
+    logger.info(f"[krx] 상장폐지 명부 {len(out):,}건")
+    return out
+
+
 def fetch_all(bas_dd: Optional[str] = None) -> tuple[dict[str, str], dict[str, MarketListing]]:
     """전 시장 조회. 반환: (universe, {market: MarketListing})
 

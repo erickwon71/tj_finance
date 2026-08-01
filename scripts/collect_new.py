@@ -247,10 +247,17 @@ def _audit_completeness(days: int) -> dict:
     # ② 당일 다운로드분 파일 실재 확인(§5.4 최후 안전망)
     try:
         with get_session() as s:
+            # ⓪-4 로 아카이브된 기업은 제외한다. 원문이 raw_report 밖으로 **의도적으로**
+            # 옮겨진 것이라 '유실'이 아니다. 빼지 않으면 completed → pending 으로 되돌려
+            # 원장이 영구히 어긋난다(어제 받고 오늘 폐지 확정된 기업에서 실제로 발생).
             rows = s.execute(text("""
-                SELECT rcept_no, file_path FROM download_tasks
-                WHERE status = 'completed' AND file_path IS NOT NULL
-                  AND completed_at >= current_date - 1
+                SELECT dt.rcept_no, dt.file_path FROM download_tasks dt
+                WHERE dt.status = 'completed' AND dt.file_path IS NOT NULL
+                  AND dt.completed_at >= current_date - 1
+                  AND NOT EXISTS (
+                      SELECT 1 FROM filings f
+                      JOIN corporations c ON c.corp_code = f.corp_code
+                      WHERE f.rcept_no = dt.rcept_no AND c.archive_path IS NOT NULL)
             """)).fetchall()
             gone = [r[0] for r in rows if not Path(r[1]).exists()]
             if gone:
@@ -279,13 +286,12 @@ def _audit_completeness(days: int) -> dict:
 
 
 def _sync_delisting() -> dict:
-    """⓪-3 상장폐지 판정 — 상태(DB)만 갱신한다. **원문 파일은 절대 건드리지 않는다.**
+    """⓪-3 상장폐지 판정 — 상태(DB)만 갱신한다. **원문 파일은 여기서 건드리지 않는다.**
 
-    자동으로 하는 것: delisting_status(candidate/confirmed/reinstated) + delisted_at 기록.
-    사람이 하는 것:   원문 NAS 아카이브 이관 · SD 백업 정리 · 오탐 복원
-                     → `scripts/delisting_manage.py --archive / --sync-backup / --restore`
+    여기서 하는 것: delisting_status(candidate/confirmed/reinstated) + delisted_at 기록.
+    파일 조치는 판정과 분리해 다음 단계(⓪-4)에서 한다 — 판정이 틀렸을 때 상태만 되돌리면
+    되는 구간을 남겨두기 위해서다.
 
-    이렇게 가르는 이유: 상태 갱신은 UPDATE 한 줄로 되돌릴 수 있지만 파일 이동은 아니다.
     판정에는 G0(소스 신뢰)·G1(연속 부재)·G2(교차 신호)·G3(일일 상한)·G4(알림) 가 걸려 있고,
     폐지 명부처럼 폐지일·사유가 명시된 **양성 증거**는 G1 을 건너뛴다(collector/delisting.py).
 
@@ -310,13 +316,42 @@ def _sync_delisting() -> dict:
         c = r["counts"]
         logger.info(f"[collect] ⓪-3 상장폐지 — 후보 {c['candidate']} · 확정 {c['confirmed']} · "
                     f"복귀 {c['reinstated']} · 보류 {c['hold']}")
-        if c["confirmed"]:
-            logger.info("[collect]    원문 아카이브는 자동이 아니다 → "
-                        "scripts/delisting_manage.py --archive")
         return {"delisting_confirmed": c["confirmed"], "delisting_candidate": c["candidate"]}
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[collect] ⓪-3 상장폐지 판정 실패(비치명적): {type(exc).__name__}: {exc}")
         return {"delisting": "error"}
+
+
+def _sync_delisting_archive() -> dict:
+    """⓪-4 상장폐지 확정분 원문 조치 — NAS 아카이브 이관 + SD 백업 폴더 삭제.
+
+    사용자 결정(2026-08-01): 원래 수동이던 §6.4/§6.4b 를 데일리 자동으로 돌린다.
+    · NAS: raw_report/{시장}/{기업}/ → archive/delisted/{연도}/{기업}/ **이동**(영구 보존, D1)
+    · SD : 같은 폴더 **삭제** — NAS 아카이브 실물+파일 수를 대조한 뒤에만
+
+    ★ 순서가 중요하다: 반드시 ⑥ 미러보다 **먼저** 돌아야 한다. 원문이 raw_report 밖으로
+      나간 뒤에 미러가 돌아야 방금 지운 SD 폴더를 미러가 다시 채우지 않는다.
+
+    오탐 복원: `scripts/delisting_manage.py --restore <corp_code> --apply`
+      (아카이브에서 원위치 + 상태 해제. SD 는 다음 미러가 다시 채운다.)
+
+    ★ `--standardize-only`(재개) 경로에는 **일부러 배선하지 않는다.** 재개는 이미 받아둔
+      원문을 다시 파싱하는 모드라 파일을 옮기면 그 실행 자신의 입력이 사라진다.
+      (파서 편입 런북의 "두 call site" 규칙에 대한 명시적 예외 — 암묵적 누락이 아니다.)
+
+    비치명적 — 실패해도 수집은 계속한다. 상한 초과·정합 불일치는 메일로 알린다.
+    """
+    try:
+        from collector.delisting_archive import run_daily
+        r = run_daily(apply=True)
+        if r["archived"] or r["backup_purged"] or r["archive_capped"]:
+            logger.info(f"[collect] ⓪-4 원문 이관 — 아카이브 {r['archived']}개 · "
+                        f"SD 정리 {r['backup_purged']}개({r['backup_purged_mb']:.0f}MB)"
+                        f"{' · ⚠상한초과로 중단' if r['archive_capped'] else ''}")
+        return r
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ⓪-4 원문 이관 실패(비치명적): {type(exc).__name__}: {exc}")
+        return {"delisting_archive": "error"}
 
 
 def _run_mirror_and_audit(days: int) -> dict:
@@ -547,7 +582,21 @@ def main() -> None:
                     help="⑤ 수집 후 DQ 게이트(Gate B 재감사+항등식) 생략")
     ap.add_argument("--verify-fy-min", type=int, default=2015,
                     help="DQ 게이트 Gate B 재감사 최소 회계연도(기본 2015)")
+    ap.add_argument("--skip-holidays", action="store_true",
+                    help="KRX 휴장일(주말·공휴일)이면 아무것도 하지 않고 종료. 스케줄 실행(plist)용 — "
+                         "손으로 돌릴 때는 주지 않으므로 휴일에도 그대로 작업할 수 있다")
     args = ap.parse_args()
+
+    # ⓪-0 휴장일 스킵 — **저장소 계약보다 먼저**. 안 돌 날이면 볼륨조차 건드리지 않는다.
+    #     정기보고서 접수·시세·상장폐지는 전부 영업일에만 생긴다.
+    #     여기서 종료해도 누락은 없다: pipeline_runs 에 기록을 남기지 않으므로 워터마크가
+    #     그대로 유지되고, 다음 영업일 `--days auto` 가 건너뛴 구간까지 함께 회수한다.
+    if args.skip_holidays:
+        from collector.market_calendar import skip_reason
+        reason = skip_reason()
+        if reason:
+            logger.info(f"[collect] ⓪-0 {reason} — 실행 스킵(다음 영업일에 --days auto 가 회수)")
+            return
 
     # ⓪ 저장소 계약 — 최우선. 실패면 아무것도 하지 않는다.
     #    2026-07-17 실행은 이 검사가 없어 다운로드 13/13 이 EPERM 으로 실패하는데도
@@ -616,6 +665,11 @@ def main() -> None:
         # ⓪-3 상장폐지 판정 — 유니버스 갱신 직후(같은 소스를 봐야 판단이 일관된다).
         _sync_delisting()
 
+    # ⓪-4 확정분 원문 조치(NAS 아카이브 이관 + SD 폴더 삭제).
+    #     유니버스 갱신 여부와 무관하게 돌린다 — 대상은 DB 에 이미 기록된 확정분이고,
+    #     ⑥ 미러보다 먼저 끝나야 지운 SD 폴더가 되살아나지 않는다.
+    archive_stats = _sync_delisting_archive()
+
     # ① 탐지 — DART 쿼터초과([020]) 등 API 실패 시 하드 크래시 대신 정상 종료(비치명).
     #    밸류에이션 refresh 는 별도 잡(nightly_valuation_refresh)이 담당하므로 여기서 죽어도 무방.
     mode = "download_only" if args.download_only else "full"
@@ -634,8 +688,8 @@ def main() -> None:
                 f"{disc['total_filings']}건 → 활성 보통주 {len(corps)}개 기업")
     if not corps:
         logger.success("[collect] 신규 공시 없음 — 미러·감사만 수행")
-        _run_mirror_and_audit(days)
-        _finish_run(run_id, "success", {"corps": 0})
+        audit = _run_mirror_and_audit(days)
+        _finish_run(run_id, "success", {"corps": 0, **archive_stats, **audit})
         return
 
     # ② 공시목록 동기화(force: 기존 기업의 신규 공시 재확인)
@@ -668,7 +722,7 @@ def main() -> None:
         audit = _run_mirror_and_audit(days)
         _finish_run(run_id, "success", {
             "corps": len(corps), "downloaded": r2.get("completed", 0),
-            "failed": r2.get("failed", 0), **audit})
+            "failed": r2.get("failed", 0), **archive_stats, **audit})
         logger.success(f"[collect] 완료(download-only) — 기업 {len(corps)} · "
                        f"다운로드 {r2.get('completed', 0)} · 실패 {r2.get('failed', 0)}")
         return
@@ -705,7 +759,7 @@ def main() -> None:
 
     # ⑦ 미러 + 완전성 감사 (full 모드도 동일하게 수행)
     audit = _run_mirror_and_audit(days)
-    _finish_run(run_id, "success", {"corps": len(corps), **audit})
+    _finish_run(run_id, "success", {"corps": len(corps), **archive_stats, **audit})
 
 
 if __name__ == "__main__":

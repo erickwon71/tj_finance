@@ -53,6 +53,7 @@ python scripts/nightly_gap_fill_backfill.py    # 즉시 1회 수동 실행(포�
 
 `scripts/collect_new.py`(⓪유니버스 갱신→탐지→동기화→다운로드→파싱·표준화)를 매일 18:00
 자동 실행한다. 맥북이 잠자기여도 `pmset` 예약 wake(17:58)로 깨운 뒤 launchd 가 18:00 에 실행한다.
+**KRX 휴장일(주말·공휴일·임시휴장)에는 `--skip-holidays` 가드가 즉시 종료시킨다(2026-08-01~, `collector/market_calendar.py`).** 건너뛴 날은 `pipeline_runs` 에 기록을 남기지 않으므로 다음 영업일 `--days auto` 가 그 구간까지 함께 회수한다.
 
 ## 설치 (최초 1회)
 
@@ -70,7 +71,9 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tjfinance.collect.pl
 # 4) 확인 — 레이블이 보여야 한다
 launchctl list | grep tjfinance
 
-# 5) 잠자기에서 17:58 깨우기 (sudo 필요, 매일)
+# 5) 잠자기에서 17:58 깨우기 (sudo 필요)
+#    잡 자체가 휴장일을 걸러내므로(--skip-holidays) 주말 기상은 2.5초 만에 끝난다.
+#    기상 자체를 평일로 줄이려면 MTWRF 로. (공휴일은 pmset 으로 표현 불가 → 코드가 처리)
 sudo pmset repeat wakeorpoweron MTWRFSU 17:58:00
 ```
 

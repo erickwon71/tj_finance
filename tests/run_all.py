@@ -29,6 +29,8 @@ _MODULES = [
     "test_master_metrics",
     "test_storage_guard",
     "test_corp_universe_guard",
+    "test_delisting_archive",
+    "test_market_calendar",
 ]
 
 

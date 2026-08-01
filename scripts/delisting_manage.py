@@ -4,6 +4,11 @@
 
 **드라이런이 기본이다.** 원문 이동·SD 삭제는 명시적 `--apply` 에서만 일어난다.
 그리고 결정 D1 에 따라 **원문은 절대 삭제하지 않는다** — NAS 아카이브로 옮겨 영구 보존한다.
+(SD 백업 폴더는 지운다. 아카이브에 실물이 확인된 뒤에만.)
+
+★ 2026-08-01 부터 이관·SD 정리는 **데일리가 자동으로** 한다(collect_new.py ⓪-4).
+  실제 동작은 전부 `collector/delisting_archive.py` 에 있고 여기는 수동 진입점이다.
+  손으로 쓸 일은 드라이런 확인·오탐 복원·상한(A1)에 걸려 멈춘 백로그 해소 정도.
 
 사용:
     python scripts/delisting_manage.py --evaluate            # 판정 드라이런
@@ -12,7 +17,7 @@
     python scripts/delisting_manage.py --archive             # 확정분 원문 이관(드라이런)
     python scripts/delisting_manage.py --archive --apply
     python scripts/delisting_manage.py --restore 00172291    # 되돌리기
-    python scripts/delisting_manage.py --sync-backup         # SD 정리(드라이런, 연 1~2회)
+    python scripts/delisting_manage.py --sync-backup         # SD 정리(드라이런)
     python scripts/delisting_manage.py --sync-backup --apply
 """
 from __future__ import annotations
@@ -20,29 +25,17 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
-from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from loguru import logger
 from sqlalchemy import text
 
 from collector.db import get_session
-from collector.storage_guard import (
-    ARCHIVE_ROOT, BACKUP_ROOT, PRIMARY_ROOT, assert_storage,
+from collector.delisting_archive import (
+    MAX_ARCHIVE_PER_RUN, archive_confirmed, purge_backup,
 )
-
-
-def _corp_dir(root: Path, market: str, corp_code: str, corp_name: str) -> Path | None:
-    """raw_report/{시장}/{코드_이름}/ 을 찾는다. 이름 표기가 달라졌을 수 있어 코드로 탐색."""
-    mroot = root / (market or "")
-    if not mroot.is_dir():
-        return None
-    for child in mroot.iterdir():
-        if child.is_dir() and child.name.startswith(corp_code):
-            return child
-    return None
+from collector.storage_guard import PRIMARY_ROOT, assert_storage
 
 
 def cmd_evaluate(apply: bool) -> int:
@@ -104,43 +97,26 @@ def cmd_list() -> int:
 
 def cmd_archive(apply: bool) -> int:
     """확정분 원문을 NAS 아카이브로 **이동**(삭제 아님, 결정 D1)."""
-    assert_storage(require_backup=False)
-    with get_session() as s:
-        rows = s.execute(text("""
-            SELECT corp_code, corp_name, market FROM corporations
-            WHERE delisting_status = 'confirmed' AND archive_path IS NULL
-            ORDER BY corp_name
-        """)).fetchall()
-    if not rows:
+    r = archive_confirmed(apply=apply)
+    if not r["pending"]:
         print("아카이브 대상 없음(확정이면서 미이관인 기업).")
         return 0
+    if r["capped"]:
+        print(f"! 이관 대상 {r['pending']}개 > 상한 {MAX_ARCHIVE_PER_RUN}개 — 중단.\n"
+              f"  판정이 비정상적으로 쌓였는지 --list 로 먼저 확인할 것.")
+        return 1
+    for corp_code, corp_name, dst, mb in r["moved"]:
+        print(f"  {'이동' if apply else '(드라이런)'} {corp_code} {corp_name} → {dst}  ({mb:.0f}MB)")
+    for corp_code, corp_name in r["no_source"]:
+        print(f"  - {corp_code} {corp_name}: 원문 폴더 없음 — 건너뜀")
+    for corp_code, corp_name, msg in r["errors"]:
+        print(f"  ! {corp_code} {corp_name}: {msg}")
 
-    year = str(date.today().year)
-    moved = 0
-    for corp_code, corp_name, market in rows:
-        src = _corp_dir(PRIMARY_ROOT, market, corp_code, corp_name)
-        if src is None:
-            print(f"  - {corp_code} {corp_name}: 원문 폴더 없음 — 건너뜀")
-            continue
-        dst = ARCHIVE_ROOT / year / src.name
-        size = sum(f.stat().st_size for f in src.rglob("*") if f.is_file()) / 1024 ** 2
-        print(f"  {'이동' if apply else '(드라이런)'} {src} → {dst}  ({size:.0f}MB)")
-        if not apply:
-            continue
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src), str(dst))
-        with get_session() as s:
-            s.execute(text(
-                "UPDATE corporations SET archive_path = :p, updated_at = now() "
-                "WHERE corp_code = :c"), {"p": str(dst), "c": corp_code})
-            s.commit()
-        moved += 1
-
-    print(f"\n{'이관 완료' if apply else '드라이런'} — 대상 {len(rows)}개"
-          f"{f' · 이동 {moved}개' if apply else ''}")
-    if apply and moved:
-        print("SD 백업 정리는 --sync-backup 으로 별도 실행(연 1~2회면 충분).")
-    return 0
+    print(f"\n{'이관 완료' if apply else '드라이런'} — 대상 {r['pending']}개")
+    if apply:
+        print(f"이동 {len(r['moved'])}개 · 원문없음 {len(r['no_source'])}개 · 실패 {len(r['errors'])}개")
+        print("SD 백업 정리는 데일리(⓪-4)가 이어서 한다. 지금 하려면 --sync-backup --apply.")
+    return 1 if r["errors"] else 0
 
 
 def cmd_restore(corp_code: str, apply: bool) -> int:
@@ -184,41 +160,23 @@ def cmd_restore(corp_code: str, apply: bool) -> int:
 def cmd_sync_backup(apply: bool) -> int:
     """SD 백업에서 아카이브된 기업 폴더를 제거한다(§6.4b).
 
-    데일리 미러는 덧붙이기 전용이라 아카이브 이관분이 SD 에 그대로 남는다. 여기서 정리하되
-    **전역 `rsync --delete` 를 쓰지 않는다** — 확정+아카이브 실재가 확인된 폴더 목록만 지운다.
-    급하지 않다: 10개사 = 857MB, SD 여유 128GB.
+    데일리 미러는 덧붙이기 전용이라 아카이브 이관분이 SD 에 그대로 남는다. 정리하되
+    **전역 `rsync --delete` 를 쓰지 않는다** — 확정+아카이브 실재(파일 수 포함)가 확인된
+    폴더 목록만 지운다. 2026-08-01 부터 데일리 ⓪-4 가 같은 함수를 자동으로 돌린다.
     """
-    assert_storage(require_backup=True)
-    with get_session() as s:
-        rows = s.execute(text("""
-            SELECT corp_code, corp_name, market, archive_path FROM corporations
-            WHERE delisting_status = 'confirmed' AND archive_path IS NOT NULL
-            ORDER BY corp_name
-        """)).fetchall()
-    if not rows:
+    r = purge_backup(apply=apply)
+    for corp_code, corp_name, sd_dir, mb in r["purged"]:
+        print(f"  {'삭제' if apply else '(드라이런)'} {corp_code} {corp_name} {sd_dir}  ({mb:.0f}MB)")
+    for corp_code, corp_name, reason in r["skipped"]:
+        print(f"  ! {corp_code} {corp_name}: {reason} — 제외")
+    for corp_code, corp_name, msg in r["errors"]:
+        print(f"  ! {corp_code} {corp_name}: {msg}")
+    if not r["purged"] and not r["skipped"]:
         print("SD 정리 대상 없음.")
         return 0
-
-    total = 0.0
-    targets = []
-    for corp_code, corp_name, market, archive_path in rows:
-        # ★ 원본 없이 백업만 지우는 사고 방지 — NAS 아카이브 실재를 먼저 확인한다.
-        if not Path(archive_path).is_dir():
-            print(f"  ! {corp_code} {corp_name}: NAS 아카이브가 없다({archive_path}) — 제외")
-            continue
-        sd_dir = _corp_dir(BACKUP_ROOT, market, corp_code, corp_name)
-        if sd_dir is None:
-            continue
-        size = sum(f.stat().st_size for f in sd_dir.rglob("*") if f.is_file()) / 1024 ** 2
-        total += size
-        targets.append((sd_dir, corp_name, size))
-        print(f"  {'삭제' if apply else '(드라이런)'} {sd_dir}  ({size:.0f}MB)")
-
-    if apply:
-        for sd_dir, _, _ in targets:
-            shutil.rmtree(sd_dir)
-    print(f"\n{'삭제 완료' if apply else '드라이런'} — {len(targets)}개 폴더 · {total:.0f}MB")
-    return 0
+    print(f"\n{'삭제 완료' if apply else '드라이런'} — "
+          f"{len(r['purged'])}개 폴더 · {r['mb']:.0f}MB · 제외 {len(r['skipped'])}개")
+    return 1 if r["errors"] else 0
 
 
 def main() -> None:

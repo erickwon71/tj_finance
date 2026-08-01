@@ -56,11 +56,13 @@ Phase 1~4 완료. Phase 5(파싱·적재 재편입)는 계층3 재설계 후로 
 ## 3. 지금 데일리가 하는 일 (실증됨, 19:07 launchd 실행 `exit 0`)
 
 ```
+⓪-0 휴장일 스킵           KRX 휴장(주말·공휴일)이면 즉시 종료 (2026-08-01 추가)
 ⓪   저장소 계약 검증      실패 시 즉시 중단 + 메일 (경고 후 진행 금지)
 ⓪-1 시장조치 이벤트
 ⓪-2 자본 이벤트
 ⓪   유니버스 갱신         KRX OpenAPI 1차 + FDR 2차 (기본 ON)
 ⓪-3 상장폐지 판정         DB 상태만 — 원문 파일은 안 건드림
+⓪-4 확정분 원문 조치      NAS 아카이브 이관 + SD 폴더 삭제 (2026-08-01 추가 · 상한 20/실행)
 ①   공시 탐지             --days auto (pipeline_runs 워터마크, 3일 겹침·90일 상한)
 ②   공시목록 동기화       정정보고서 버전관리
 ③   다운로드              → NAS
@@ -83,6 +85,7 @@ Phase 1~4 완료. Phase 5(파싱·적재 재편입)는 계층3 재설계 후로 
 | `collector/delisting.py` | 판정 엔진. G0(소스신뢰)/G1~G4 + **양성증거 경로**(명부는 G1 우회) |
 | `scripts/sync_storage_mirror.py` | 덧붙이기 전용 미러(`--delete` 없음) · 증분 기본 · 신선도 감시 |
 | `scripts/delisting_manage.py` | `--evaluate/--list/--archive/--restore/--sync-backup` (드라이런 기본) |
+| `collector/delisting_archive.py` | 이관·SD 정리 단일 구현 (2026-08-01 신설). 데일리 ⓪-4 와 위 CLI 가 공유 |
 | `scripts/backfill_corps.py` | 기업 지정 전 기간 백필 (`--zero-filings`) |
 | `scripts/qa/audit_download_gap.py` | DART 대조 수집 완전성 감사 |
 | `scripts/qa/verify_storage_mirror.py` | NAS↔SD 정합 검증 (`--full/--sample/--since`) |
@@ -98,14 +101,18 @@ DB 추가: `corporations` 4컬럼(`delisting_status`·`delisting_first_seen`·`d
 
 ## 5. 상장폐지 12사 확정 (원문 미이관)
 
-`delisting_status='confirmed'` + `is_active=false` + 폐지일 기록. **원문은 그대로 `raw_report` 에 있다.**
+`delisting_status='confirmed'` + `is_active=false` + 폐지일 기록.
+
+> ★ 2026-08-01 변경: 원문 조치가 **데일리 자동**이 됐다(⓪-4). 첫 자동 실행에서 이 12사(≈1.1GB)가
+> NAS `archive/delisted/2026/` 로 이동하고 SD 폴더는 삭제된다. 계획 §13 참조.
 
 노블엠앤비·더존비즈온·바이온·비유테크놀러지·스타코링크·아이엠·아크솔루션스·에코마케팅·
 일정실업·프로브잇·현대홈쇼핑·NPX
 (완전자회사화 4 · 상장적격성 5 · 감사의견거절 1 · 시총미달 1 · 기타 1)
 
 - 펀드 3사(맥쿼리인프라·맵스리얼티·KB발해인프라)는 **폐지 아님**으로 정확히 제외됨
-- 아카이브 이관은 수동: `scripts/delisting_manage.py --archive --apply`
+- 아카이브 이관·SD 정리는 **데일리 ⓪-4 자동**(2026-08-01~). 손으로 미리 돌리려면
+  `scripts/delisting_manage.py --archive --apply` → `--sync-backup --apply`
 - 되돌리기: `--restore <corp_code> --apply`
 
 ---

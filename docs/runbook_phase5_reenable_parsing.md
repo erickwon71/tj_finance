@@ -118,7 +118,8 @@ ORDER BY 2;
 
 ## 4. ⚠상장폐지 확정 기업의 원문은 `raw_report` 밖에 있다
 
-`delisting_status='confirmed'` 이고 `--archive` 를 실행한 기업의 원문은
+`delisting_status='confirmed'` 인 기업의 원문은 (2026-08-01 부터 데일리 ⓪-4 가 자동 이관하므로
+**확정 = 이미 이관됨**으로 봐도 된다. `archive_path IS NOT NULL` 로 확인)
 `/Volumes/tj_finance_data/archive/delisted/<연도>/<코드_이름>/` 로 **이동**돼 있다(삭제 아님).
 
 전량 재적재를 돌리면 그 기업들은 원문을 못 찾는다. 이때:

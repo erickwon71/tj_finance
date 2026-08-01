@@ -14,63 +14,77 @@ from pathlib import Path
 from loguru import logger
 from sqlalchemy import text
 
+from collector.biz_merge import merge_filings
+from collector.filing_select import period_groups
 from collector.models import BizMetric, BizSectionTable
 from fin2.extract.biz_section import parse_biz_metrics
 
 
 def find_annual_reports(session, corp_code: str, year: int | None = None,
                         latest_only: bool = False) -> list[tuple[str, str, int]]:
-    """(rcept_no, file_path, fiscal_year) 목록. year 지정 시 그 연도만, latest_only 면 최신 1건."""
-    sql = """
-        SELECT dt.rcept_no, dt.file_path, f.fiscal_year
-        FROM download_tasks dt
-        JOIN filings f ON f.rcept_no = dt.rcept_no
-        WHERE f.corp_code = :c
-          AND f.report_type = 'annual'
-          AND f.is_final = TRUE
-          AND dt.status = 'completed'
-          AND dt.file_type = 'xml'
-          AND dt.file_path IS NOT NULL
+    """(rcept_no, file_path, fiscal_year) — 한 기간의 **모든** 보고서를 오래된 것부터.
+
+    ★ `is_final` 로 거르지 않는다(docs/PARSING_RULES.md R0/R2-0). `is_final` 은 "그룹에서
+    가장 나중 접수" 표지일 뿐 내용 완전성과 무관하고, 본문을 하나도 담지 않는 `[첨부정정]`
+    이 그 표지를 가져간다(실측: 본문 포함률 0%, 260건 조사). 이걸로 필터링하던 종전 구현이
+    **본문이 있는 판을 통째로 배제**해 547건(447개사)을 미적재로 만들었다.
+
+    호출측은 반환된 보고서를 **모두 같은 파서로** 읽고, 뒤 보고서가 다시 낸 항목만 덮어쓰면
+    된다(collector/biz_merge.py). 정정본이 일부만 담고 있어도 나머지는 앞 보고서 것이 남는다.
     """
-    params: dict = {"c": corp_code}
-    if year is not None:
-        sql += " AND f.fiscal_year = :y"
-        params["y"] = year
-    sql += " ORDER BY f.fiscal_year DESC, dt.rcept_no DESC"
-    if latest_only:
-        sql += " LIMIT 1"
-    return [(r.rcept_no, r.file_path, r.fiscal_year)
-            for r in session.execute(text(sql), params).fetchall()]
+    groups = period_groups(session, corp_code, "annual", year=year, latest_only=latest_only)
+    return [(f.rcept_no, f.file_path, f.fiscal_year) for g in groups for f in g]
 
 
 def sync_biz_metrics_corp(session, corp_code: str, year: int | None = None,
                           latest_only: bool = False) -> dict:
-    """한 기업의 대상 사업보고서를 파싱해 두 테이블에 적재(rcept 단위 멱등). 반환=카운트."""
-    agg = {"reports": 0, "tables": 0, "metric_rows": 0, "missing_file": 0}
-    for rcept_no, file_path, fy in find_annual_reports(session, corp_code, year, latest_only):
-        fp = Path(file_path)
-        if not fp.exists():
-            agg["missing_file"] += 1
+    """한 기업의 사업보고서를 **기간 단위**로 파싱·병합해 적재(기간 단위 멱등). 반환=카운트.
+
+    ★ 기간(연도) 안의 원본·정정본을 **모두 같은 파서로** 읽고 시간순으로 항목을 덮어쓴다
+    (docs/PARSING_RULES.md R0). 정정본에 없는 항목은 앞 보고서 것이 그대로 남는다.
+
+    멱등 범위가 rcept → **(corp, fiscal_year)** 로 바뀐 이유: 한 연도의 결과가 여러 보고서에서
+    합성되므로, rcept 단위로 지우면 다른 보고서가 넣어 둔 같은 연도 행이 남아 중복된다.
+    """
+    agg = {"reports": 0, "tables": 0, "metric_rows": 0, "missing_file": 0, "repeated": 0}
+    for group in period_groups(session, corp_code, "annual", year=year, latest_only=latest_only):
+        fy = group[0].fiscal_year
+        parsed: list[tuple[str, list[dict], list[dict]]] = []
+        for f in group:
+            fp = Path(f.file_path)
+            if not fp.exists():
+                agg["missing_file"] += 1
+                continue
+            try:
+                sec_rows, met_rows = parse_biz_metrics(fp, corp_code, f.fiscal_year)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[biz] {corp_code} {f.rcept_no} 파싱 실패: "
+                               f"{type(exc).__name__}: {exc}")
+                continue
+            # 이 보고서가 그 부분을 안 담고 있으면 그냥 건너뛴다 — 오류가 아니다(R0).
+            parsed.append((f.rcept_no, sec_rows, met_rows))
+            agg["reports"] += 1
+        if not parsed:
             continue
-        try:
-            sec_rows, met_rows = parse_biz_metrics(fp, corp_code, fy)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"[biz] {corp_code} {rcept_no} 파싱 실패: {type(exc).__name__}: {exc}")
-            continue
 
-        # rcept 단위 재적재(멱등) — 표가 0개여도 이전 잔재를 지운다.
-        session.execute(text("DELETE FROM biz_metrics WHERE rcept_no=:r"), {"r": rcept_no})
-        session.execute(text("DELETE FROM biz_section_tables WHERE rcept_no=:r"), {"r": rcept_no})
+        sec_all, met_merged, stats = merge_filings(parsed)
+        agg["repeated"] += stats.get("repeated_identity", 0)
 
-        for s in sec_rows:
-            session.execute(BizSectionTable.__table__.insert().values(rcept_no=rcept_no, **s))
-        if met_rows:
-            session.execute(BizMetric.__table__.insert(),
-                            [{**m, "rcept_no": rcept_no} for m in met_rows])
+        # 기간 단위 재적재(멱등) — 이 연도 것을 전부 지우고 병합 결과를 다시 넣는다.
+        session.execute(text(
+            "DELETE FROM biz_metrics WHERE corp_code=:c AND fiscal_year=:y"),
+            {"c": corp_code, "y": fy})
+        session.execute(text(
+            "DELETE FROM biz_section_tables WHERE corp_code=:c AND fiscal_year=:y"),
+            {"c": corp_code, "y": fy})
 
-        agg["reports"] += 1
-        agg["tables"] += len(sec_rows)
-        agg["metric_rows"] += len(met_rows)
+        for s in sec_all:
+            session.execute(BizSectionTable.__table__.insert().values(**s))
+        if met_merged:
+            session.execute(BizMetric.__table__.insert(), met_merged)
+
+        agg["tables"] += len(sec_all)
+        agg["metric_rows"] += len(met_merged)
     return agg
 
 

@@ -416,10 +416,15 @@ def _sync_layer2_lines(corps: list[str]) -> None:
 
 
 def _sync_biz_metrics(corps: list[str]) -> None:
-    """B4+Phase3 — 새로 수집된 기업의 사업보고서 본문 생산능력/생산실적/가동률 **및 부문·수출/내수
-    매출실적**(metric='sales', channel) → biz_metrics. 매출 파서가 parse_biz_metrics 에 통합돼
-    같은 sync 진입점에서 함께 방출된다(PRD 14). 사업의 내용 절은 annual 에만 있어 이번에 표준화된
-    기업의 최신 사업보고서만 대상. 비치명적 실패는 본 수집을 막지 않는다(rcept 단위 멱등)."""
+    """B4+Phase3+B5 — 새로 수집된 기업의 사업보고서 '사업의 내용' 본문표 → biz_metrics.
+
+    한 진입점(`parse_biz_metrics`)이 세 파서를 모두 방출한다:
+      · B4  생산능력/생산실적/가동률            (biz_section)
+      · P3  부문·수출/내수 매출실적(metric='sales', channel)  (sales_section)
+      · B5  캡션 카탈로그 — 제품/원재료 현황·가격변동추이·생산설비·부문별 재무·점유율·
+            매출처·투자계획·지식재산권 + 업종특수(보험/증권/건설/제약)  (biz_catalog)
+    따라서 파서를 늘려도 이 배선은 바뀌지 않는다. 사업의 내용 절은 annual 에만 있어 이번에
+    표준화된 기업의 최신 사업보고서만 대상. 비치명적 실패는 본 수집을 막지 않는다(rcept 단위 멱등)."""
     if not corps:
         return
     try:

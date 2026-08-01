@@ -223,14 +223,18 @@ def backfill_shares_corp(session, corp: str, version: int) -> int:
     rows = session.execute(text("""
         SELECT DISTINCT ON (s.fiscal_year) s.fiscal_year, d.file_path
         FROM std_financials_v2 s
+        -- ★ is_final 로 거르지 않는다(PARSING_RULES.md R2-0): 본문 없는 [첨부정정]이 그
+        --   표지를 가져가면 본문 있는 판이 통째로 배제된다. 대신 접수 역순으로 정렬해
+        --   DISTINCT ON 이 **가장 최신 보고서부터** 고르게 하고, 아래 루프가 주식수를 못 찾으면
+        --   자연히 다음 후보로 넘어간다(있으면 읽고 없으면 넘어간다 = R0).
         JOIN filings f ON f.corp_code = s.corp_code AND f.fiscal_year = s.fiscal_year
-                      AND f.report_type = 'annual' AND f.is_final = true
+                      AND f.report_type = 'annual'
         JOIN download_tasks d ON d.rcept_no = f.rcept_no AND d.file_type = 'xml'
                              AND d.file_path IS NOT NULL
         WHERE s.corp_code = :c AND s.version = :v AND s.fiscal_period = 'FY'
           AND NOT COALESCE(s.is_discrete, false) AND NOT COALESCE(s.is_stub, false)
           AND (s.shares_out IS NULL OR s.shares_out = 0)
-        ORDER BY s.fiscal_year, f.filed_at DESC
+        ORDER BY s.fiscal_year, f.filed_at DESC NULLS LAST, f.rcept_no DESC
     """), {"c": corp, "v": version}).fetchall()
 
     n = 0

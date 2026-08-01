@@ -46,6 +46,13 @@ def _pick(session, args) -> list[str]:
         done = {r[0] for r in session.execute(text(
             "SELECT DISTINCT corp_code FROM order_backlog")).fetchall()}
         corps = [c for c in corps if c not in done]
+    if args.shard:
+        # 전수 백필 병렬화 — collect_biz_metrics.py 와 동일 규약. 기업 단위로 나누므로
+        # 샤드끼리 (corp, fiscal_year) 삭제 범위가 겹치지 않는다.
+        idx, total = (int(x) for x in args.shard.split("/"))
+        if not (0 <= idx < total):
+            raise SystemExit(f"--shard {args.shard}: 0 <= i < n 이어야 함")
+        corps = [c for i, c in enumerate(corps) if i % total == idx]
     if args.sample:
         random.Random(args.seed).shuffle(corps)
         corps = corps[: args.sample]
@@ -60,6 +67,8 @@ def main() -> None:
     ap.add_argument("--latest", action="store_true", help="기업별 최신 사업보고서 1건만")
     ap.add_argument("--skip-existing", action="store_true",
                     help="이미 order_backlog 있는 기업 건너뜀(중단 후 재개용)")
+    ap.add_argument("--shard", metavar="i/n",
+                    help="전수 백필 병렬 분할(예: 0/8). 기업 단위라 샤드끼리 겹치지 않음")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 

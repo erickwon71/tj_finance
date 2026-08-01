@@ -93,7 +93,9 @@ def _phase3_target_corps(session) -> list[str]:
     """완료 다운로드된 사업보고서(annual)가 있는 활성 상장기업 전체(파싱 대상 모집단)."""
     rows = session.execute(text("""
         SELECT DISTINCT c.corp_code FROM corporations c
-        JOIN filings f ON f.corp_code = c.corp_code AND f.report_type='annual' AND f.is_final
+        -- is_final 로 거르지 않는다(PARSING_RULES.md R2-0) — 여기서 걸러 버리면 본문이
+        -- 비최종본에만 있는 기업이 백필 모집단에서 통째로 빠진다.
+        JOIN filings f ON f.corp_code = c.corp_code AND f.report_type='annual'
         JOIN download_tasks dt ON dt.rcept_no = f.rcept_no AND dt.status='completed'
             AND dt.file_type='xml' AND dt.file_path IS NOT NULL
         WHERE c.is_active AND c.stock_code IS NOT NULL

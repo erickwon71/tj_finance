@@ -197,7 +197,11 @@ def _pure_metric_label(text: str) -> list[str]:
     반영)", 34자)까지 지표라벨로 오인해 해당 열 전체를 전치형으로 잘못 승격시킨다(실측:
     현대위아 2006, 비고열의 각주 1건이 60% 문턱을 채워 가동가능시간/실제가동시간 수치까지
     가동률(%)로 오염). 진짜 라벨은 훨씬 짧으므로 상한을 대폭 낮춘다."""
-    t = text.strip().replace("가동율", "가동률")
+    # 원문은 자간을 공백으로 벌려 쓰는 일이 흔하다("가 동 율", "생 산 실 적"). 공백을 남겨두면
+    # 키워드 매칭이 실패해 **전치형 지표열 승격이 무산되고, 모든 행이 표 metric 폴백(capacity)
+    # 으로 뭉개진다**(실측 엠플러스: '생산실적' 행이 capacity 로 적재됨). 공백 제거 후 매칭한다.
+    # 길이 상한은 공백 제거 뒤에도 그대로 적용돼 각주 문장이 라벨로 오인될 여지는 없다.
+    t = re.sub(r"\s+", "", text).replace("가동율", "가동률")
     if not t or len(t) > _METRIC_LABEL_MAX_LEN:
         return []
     return [key for key, kw in _MARKERS.items() if kw in t]
@@ -370,11 +374,81 @@ def _is_clean_number(s: str) -> bool:
     return len(tail) <= 6
 
 
+# 기간을 나타내는 헤더 셀 — 연도 단독("2023"/"2025년"), 추정("2025(E)"), 기수("제34기").
+# _is_clean_number 는 이런 셀도 '수치'로 보기 때문에, 헤더/데이터 경계를 잡을 때 이걸로 걸러야
+# 한다. 안 그러면 **연도만 적힌 헤더 첫 행이 데이터행으로 판정돼 표 전체가 버려진다.**
+#   ★ '년도' 와 '연도' 를 모두 받아야 한다(두음법칙 표기 흔들림). '연도' 를 빼면
+#     '2024연도' 헤더가 데이터로 오판돼 그 표가 통째로 버려진다(실측 나무에이엑스 0행 원인).
+_PERIOD_HEADER_RE = re.compile(
+    r"^[\(（\[]?\s*(?:19|20)\d{2}\s*(?:년도|연도|년|연)?\s*"
+    r"(?:[\(（]?\s*(?:E|F|P|추정|예상|계획)\s*[\)）]?)?\s*[\)）\]]?$")
+
+
+def _is_period_header_cell(s: str) -> bool:
+    t = re.sub(r"\s+", "", s or "")
+    if not t:
+        return False
+    if _PERIOD_GI_RE.search(t):
+        return True
+    return bool(_PERIOD_HEADER_RE.match(t))
+
+
+# ── 병합열 셀 판정 ──────────────────────────────────────────────────────────
+# 제출사가 열 전체를 셀 하나에 몰아넣은 표가 있다(실측 일양약품 20260318000595 지적재산권
+# 보유현황: <TD HEIGHT="1794"> 안에 44개 연도가 구분자 없이 이어붙음). DART 웹은 고정폭
+# 줄바꿈으로 정상처럼 보이지만 **행 구조가 문서에 기록돼 있지 않다** — 그 표의 열별 항목 수가
+# 44/68/56 으로 서로 맞지 않아 짝을 지을 방법이 없다(추측 금지 = R6).
+# 이런 셀을 그대로 파싱하면 44개 연도가 이어붙은 2.025e+175 같은 **날조된 값**이 나온다.
+_YEAR_RUN_RE = re.compile(r"(?:(?:19|20)\d{2}){4,}")   # 4자리 연도가 4개 이상 연속
+_NUM_TOKEN_RE = re.compile(r"[\d,]{3,}")
+
+# 한 값이 가질 수 있는 최대 자릿수. 원 단위로 봐도 대형 은행 파생 명목금액이 1e15(16자리)
+# 수준이고, 19자리(=100경원)짜리 공시 값은 존재하지 않는다. 그래서 19자리 이상은 '큰 값'이
+# 아니라 **여러 값이 이어붙은 것**으로 확정할 수 있다. 크기가 아니라 자릿수로 보는 이유는
+# 콤마가 섞인 병합("500,0001,302,500")도 같이 잡기 위함이다.
+_MAX_PLAUSIBLE_DIGITS = 19
+
+
+def merged_cell_reason(cell: str) -> Optional[str]:
+    """셀이 '여러 값이 병합된 것'으로 확정되면 사유를, 아니면 None.
+
+    값의 **크기**가 아니라 **자릿수·구조**로 판정한다 — 파생상품 명목금액처럼 실제로 조 단위인
+    값(다올투자증권 9.88조 = 13자리)을 잘못 버리지 않기 위함이다.
+    """
+    t = (cell or "").strip()
+    if not t:
+        return None
+    if _YEAR_RUN_RE.search(t.replace(" ", "")):
+        return "연도 4개+ 연속"
+    for tok in _NUM_TOKEN_RE.findall(t.replace(" ", "")):
+        if len(tok.replace(",", "")) >= _MAX_PLAUSIBLE_DIGITS:
+            return f"단일 값 불가 자릿수({len(tok.replace(',', ''))}자리)"
+    return None
+
+
+def is_merged_column_table(grid: list[list[str]]) -> Optional[str]:
+    """표 안에 병합열 셀이 하나라도 있으면 사유. 그 표는 값을 만들지 않는다."""
+    for row in grid or []:
+        for cell in row:
+            why = merged_cell_reason(cell)
+            if why:
+                return why
+    return None
+
+
 def _parse_value(s: str) -> tuple[Optional[float], bool, Optional[str]]:
     """셀 → (숫자값, 비율여부, 인라인단위). 파싱 실패 시 (None, ..)."""
     t = s.strip()
     if not t or t in ("-", "－", "—", "N/A", "해당없음"):
         return None, False, None
+    # DART 표의 음수 표기 '△'(및 유니코드 마이너스) — _NUM_LEAD_RE 는 선두가 숫자/괄호/ASCII
+    # 하이픈일 때만 매치하므로 이 셀들은 통째로 **버려진다**(실측 삼성전자 2024 주요제품 매출
+    # '기타 △285,155'가 유실). 희소하지만(카탈로그 대상 표 400사 중 1사 6셀) 조용한 손실이라
+    # 여기서 부호로 정규화한다. '▲/▼'는 증감 표시로도 쓰여 의미가 확정되지 않으므로 건드리지 않는다.
+    tri_neg = False
+    if t[0] in ("△", "▽", "−"):
+        tri_neg = True
+        t = t[1:].lstrip()
     m = _NUM_LEAD_RE.match(t)
     if not m:
         return None, False, None
@@ -387,6 +461,10 @@ def _parse_value(s: str) -> tuple[Optional[float], bool, Optional[str]]:
     # 실측 GS 2023 "194,013 (24.7%)": 추출값은 194,013 인데 뒤 괄호비중 % 때문에 비율로
     # 오분류될 뻔함. 매칭 직후로 한정해야 안전).
     tail_full = t[m.end():].strip()
+    # 괄호음수 "(703)" 의 닫는 괄호가 남으면 아래 inline_unit 로직이 그것을 **단위 ')'** 로
+    # 읽어 버린다(실측 한솔홈데코 부문별 영업이익 -703 의 unit=')'). 부호로 이미 해석했으니 뗀다.
+    if neg and tail_full.endswith(")"):
+        tail_full = tail_full[:-1].strip()
     is_ratio = tail_full.startswith("%")
     # 콤마-소수점 오기 보정(퍼센트 셀 한정) — 마침표 없이 콤마 뒤 1~2자리만 있으면 그 콤마를
     # 소수점으로 재해석(실측: 네오티스 "84,38%"→8438%, 위더스제약 "43,94%"→4394% 버그).
@@ -397,7 +475,7 @@ def _parse_value(s: str) -> tuple[Optional[float], bool, Optional[str]]:
             if 1 <= len(frac) <= 2 and frac.isdigit():
                 raw = raw[:ci] + "." + frac
     num = float(raw.replace("(", "").replace(",", "").strip())
-    if neg:
+    if neg or tri_neg:
         num = -num
     # 후행 인라인 단위(예: "362.2일", "8,692시간") — 남은 텍스트에 숫자 없고 %가 아니면 단위로.
     tail = tail_full.lstrip("%").strip()
@@ -422,13 +500,23 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
     grid = [list(r) for r in bt.grid if r]
     if len(grid) < 2:
         return []
+    # 열 전체가 한 셀에 병합된 표는 값을 만들지 않는다 — 행 구조가 원문에 없어 짝을 지을 수
+    # 없고, 그대로 파싱하면 날조된 값이 나온다(사용자 결정 2026-08-01: 이런 표는 일단 건너뛰고
+    # 더 나은 방법을 찾은 뒤 보강). 원본 grid 는 biz_section_tables 에 그대로 남는다.
+    if is_merged_column_table(grid):
+        return []
     ncols = max(len(r) for r in grid)
     grid = [r + [""] * (ncols - len(r)) for r in grid]
 
     # 1) 헤더행/데이터행 분리 — '깨끗한 수치' 셀이 처음 나오는 행부터 데이터.
     #    _looks_numeric(선두숫자만) 은 헤더의 날짜셀 "2025.06.30(제47기)" 도 수치로 오인해
     #    header_rows 를 비워버림 → _is_clean_number(짧은 후행단위만 허용) 로 판정.
-    first_data = next((i for i, r in enumerate(grid) if any(_is_clean_number(c) for c in r)), None)
+    #    또한 연도만 적힌 헤더행("사업부문|2025년|2025년|2024년")도 _is_clean_number 에는 수치로
+    #    보여 first_data=0 이 되고 표가 통째로 버려진다 — 실측(2026-07-31, 250사 표본) 생산표
+    #    420개 중 33개(7.9%)가 이 경로로 조용히 유실되고 있었다. 기간 헤더 셀은 제외한다.
+    first_data = next((i for i, r in enumerate(grid)
+                       if any(_is_clean_number(c) and not _is_period_header_cell(c) for c in r)),
+                      None)
     if first_data is None or first_data == 0:
         return []
     header_rows, data_rows = grid[:first_data], grid[first_data:]
@@ -594,6 +682,10 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
         if metric_col is not None:
             mh = _pure_metric_label(drow[metric_col].strip())
             row_metric = mh[0] if mh else None
+            # 전치형 표에서 구분열 값이 지표명이 아닌 행(실측 엠플러스 '기말재고')은 생산지표가
+            # 아니다. 그냥 두면 표 metric 폴백으로 capacity/output 에 섞여 집계를 오염시킨다.
+            if row_metric is None:
+                continue
         for c in val_cols:
             val, is_ratio, inline_unit = _parse_value(drow[c])
             if val is None:
@@ -671,5 +763,19 @@ def parse_biz_metrics(file_path: Path, corp_code: str, fiscal_year: int) -> tupl
     sales_sec, sales_met = extract_sales_from_root(root, corp_code, fiscal_year, start_ord=len(tables))
     section_rows.extend(sales_sec)
     metric_rows.extend(sales_met)
+
+    # B5 캡션 카탈로그 — Tier1/Tier2/업종특수(제품·원재료 현황/가격추이·생산설비·부문별 재무·
+    # 점유율·매출처·투자계획·지식재산권·보험/증권/건설 특수표…). 같은 sync 진입점에 이어붙여
+    # rcept 단위 delete-then-insert 멱등과 데일리 배선을 그대로 재사용한다.
+    #
+    # ★ 이중 캡처 차단은 캡션 키워드가 아니라 **grid 내용 해시**로 한다 — 생산/매출 파서가
+    #   헤딩 창 방식이라 같은 물리 표를 카탈로그 주행부가 다시 만날 수 있고, 키워드 목록은
+    #   규칙이 늘 때마다 새는 구멍이 생긴다.
+    from fin2.extract.biz_catalog import extract_catalog_from_root, grid_key
+    seen = {grid_key(s["grid"]) for s in section_rows if s.get("grid")}
+    cat_sec, cat_met = extract_catalog_from_root(
+        root, corp_code, fiscal_year, start_ord=len(section_rows), seen_grids=seen)
+    section_rows.extend(cat_sec)
+    metric_rows.extend(cat_met)
 
     return section_rows, metric_rows

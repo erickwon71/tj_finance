@@ -117,3 +117,39 @@ def test_appropriation_statement_not_loaded_as_cashflow():
     picked = {a for code in groups for a in _amounts(groups, code)}
     assert "110,890" not in picked, "이익잉여금처분계산서가 본문으로 샜다"
     assert len(groups.get("CF_S", [])) == 1, "CF 에 표가 둘 붙었다"
+
+
+# ── 3) 표제 인식 완화(2026-08-05) — 거짓 부재 회수 ──────────────────────────
+# `_is_metadata_only` 가 표제를 '건너뛸 메타줄' 로 오판해 표가 통째로 유실되던 두 형태.
+# 둘 다 **앞단 필터가 뒷단 분류기보다 엄격해서** 생긴 것이다.
+
+def test_spaced_statement_name_is_a_title_not_metadata():
+    """★자간 벌림 — DART 가 흔히 쓴다. 종전에는 기간마커만 보고 메타줄로 판정해 건너뛰었다.
+
+    실측: 롯데렌탈 20151113000605(BS/IS/CF 전부 유실) · 세화피앤씨 20171114002715(BS·SCE).
+    """
+    from fin2.extract.statement_titles import _is_metadata_only, has_statement_name
+    for t in ("분 기 연 결 재 무 상 태 표 제 11 기 3 분 기 : 2015년 9월 30일 현재",
+              "재 무 상 태 표 제 2기 2017년 9월 30일 현재 (단위 : 원)",
+              "자 본변동표 제2(당)기 반기 2015년 1월 1일 부터",
+              "현 금 흐름표 제2(당)기 반기 2015년 1월 1일 부터"):
+        assert has_statement_name(t), t
+        assert _is_metadata_only(t) is False, t
+
+
+def test_company_prefixed_unit_line_is_metadata():
+    """★회사명이 앞에 붙은 단위줄 — '(단위' 로 시작하지 않아 메타로 인식되지 못했다.
+
+    실측: 다올투자증권 20150817000725 — 제목표와 데이터표 사이에 이 줄이 끼어 있어
+    back-scan 이 여기서 멈추고 진짜 표제에 닿지 못했다(연결 BS/IS 등 전부 유실).
+    """
+    from fin2.extract.statement_titles import _is_metadata_only
+    assert _is_metadata_only("케이티비투자증권주식회사와 그 종속기업 (단위 : 원)") is True
+    assert _is_metadata_only("동부제2호기업인수목적(주) (단위:원)") is True
+
+
+def test_plain_sentence_is_not_metadata():
+    """단위·기간·재무제표명이 없는 평범한 문장은 메타가 아니다(경계로 남아야 한다)."""
+    from fin2.extract.statement_titles import _is_metadata_only
+    assert _is_metadata_only("상기 재무정보는 내부거래 제거 전 기준으로 작성되었습니다.") is False
+    assert _is_metadata_only("2. 연결재무제표") is False

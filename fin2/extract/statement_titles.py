@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 
+from parser.common.amount_normalizer import detect_unit_tokens
 from parser.xml.section_detector import table_has_amount_rows
 
 # 본문 재무제표 표제 패턴(제목 표 텍스트에서). 요약/주석/분할·합병/자본변동표 배제.
@@ -77,13 +78,43 @@ def title_text(tbl) -> str:
 _UNIT_ONLY_RE = re.compile(r"^\(?\s*단위\s*[:：]")
 
 
+# 재무제표명 판정 — **공백을 제거하고** 본다. `_STMT_TITLE` 을 원문에 그대로 걸면
+# DART 가 흔히 쓰는 자간 벌림('분 기 연 결 재 무 상 태 표')이 매칭되지 않는다.
+# 자본변동표도 포함한다 — 이 술어의 쓰임은 "이게 표제인가"이지 "추출 대상인가"가 아니다.
+_STMT_NAME_ANY = re.compile(
+    r"재무상태표|대차대조표|포괄손익계산서|손익계산서|현금흐름표|자본변동표")
+
+
+def has_statement_name(txt: str) -> bool:
+    """텍스트에 재무제표명이 있는가(자간 공백 무시)."""
+    return bool(txt) and bool(_STMT_NAME_ANY.search(re.sub(r"\s+", "", txt)))
+
+
 def _is_metadata_only(txt: str) -> bool:
-    """제목명이 없고 단위선언 또는 기간마커뿐인 형제인가(스킵 대상)."""
+    """제목명이 없고 단위선언 또는 기간마커뿐인 형제인가(스킵 대상).
+
+    ★2026-08-05 두 가지를 고쳤다. 둘 다 **거짓 부재**(표제를 못 읽어 표가 통째로 유실)였다:
+
+    1) **자간 공백** — 종전에는 `_STMT_TITLE` 을 원문에 그대로 걸어 '분 기 연 결 재 무 상 태 표'
+       가 재무제표명으로 인식되지 않았다. 그러면 기간마커('제 11 기')만 보고 **메타줄로 판정해
+       표제를 건너뛰었다.** 정작 뒷단 분류기(`classify_statement_in_body_section`)는 공백을
+       제거해 이것을 BS 로 맞힌다 — **앞단 필터가 뒷단보다 엄격해서 생긴 유실**이다.
+       실측: 롯데렌탈 20151113000605(BS/IS/CF 전부) · 세화피앤씨 20171114002715(BS·SCE).
+       자본변동표가 `_STMT_TITLE` 에 아예 없던 것도 같은 계열의 누락이다.
+
+    2) **회사명이 앞에 붙은 단위줄** — '케이티비투자증권주식회사와 그 종속기업 (단위 : 원)'.
+       `_UNIT_ONLY_RE` 는 문자열이 '(단위' 로 **시작**할 것을 요구해 이 줄을 메타로 보지 못했고,
+       back-scan 이 여기서 멈춰 그 앞의 진짜 표제에 닿지 못했다.
+       실측: 다올투자증권 20150817000725(연결 BS/IS 등).
+       → 재무제표명이 **없으면서** 단위 선언을 품은 줄은 표제가 아니다 → 건너뛴다.
+    """
     if not txt:
         return True   # 빈 형제(장식/공백)도 건너뛴다
-    if any(p.search(txt) for p, _ in _STMT_TITLE):
+    if has_statement_name(txt):
         return False  # 재무제표명이 있으면 그게 표제 — 스킵 안 함
-    return bool(_UNIT_ONLY_RE.match(txt)) or bool(_PERIOD_MARK.search(txt))
+    if _UNIT_ONLY_RE.match(txt) or _PERIOD_MARK.search(txt):
+        return True
+    return bool(detect_unit_tokens(txt))    # 회사명 등이 앞에 붙은 단위줄
 
 
 def _is_data_boundary(el) -> bool:

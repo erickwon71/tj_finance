@@ -38,13 +38,15 @@ from parser.common.amount_normalizer import (normalize_account_name, detect_unit
 from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.section_detector import (
     assign_tables_to_dart_sections, table_direct_rows,
-    SEC_CONSOL_FS, SEC_SEP_FS,
+    SEC_CONSOL_FS, SEC_SEP_FS, SEC_LEGACY_FS, iter_section_elements,
+    table_has_amount_rows,
 )
 from parser.xml.table_extractor import extract_rows
 from fin2.extract.xbrl import ExtractedFact
 from fin2.extract.statement_titles import (
     title_text, title_text_for_classify, classify_statement_in_body_section, SECTION_CODE_OF,
     _is_metadata_only, _STMT_TITLE,
+    classify_legacy_statement_heading, is_legacy_note_marker,
 )
 
 # 섹션 코드 → (basis, period_kind)
@@ -223,13 +225,19 @@ def _detect_body_statement_tables(root, fin_type: str,
     · 본문 섹션 표 **6,229** vs 주석 섹션 표 **149,831** → **전체 표의 96%가 주석**
     · 검증: DB손해보험 6/6 섹션 정상 검출(구버전 0/6) · 3S 6/6 · 메가스터디 6/6
 
-    ⚠ 이 경로는 **2015+ 서식 전용**이다(사용자 결정). 2009~2013 은 `XI. 재무제표 등` +
-    `<P>` 구분자, 2000~2008 은 위치 미확인 → Track 3 별도 트랙. 해당 시대는 여기서 빈 dict 가
-    나오고 호출측이 보류 처리한다(추측으로 채우지 않는다).
+    ⚠ 이 경로는 **2015+ 서식 전용**이다(사용자 결정). 2000~2008 은 위치 미확인 → Track 3
+    별도 트랙. 해당 시대는 여기서 빈 dict 가 나오고 호출측이 보류 처리한다.
+
+    ★ 구형 레이아웃(`XI. 재무제표 등`) 보완 — 2026-08-04.
+      본문 섹션이 **하나도 없는** 문서에 한해 `_detect_legacy_body_statement_tables` 로
+      넘긴다(아래 함수 docstring 에 실측 근거). 본문 섹션이 있으면 이 폴백은 발동하지
+      않으므로 기존 102,067건의 동작은 그대로다 — 순수 가산.
 
     반환: {section_code: [(table_elem, unit, section_kind), ...]}.
     """
     sec_tables = assign_tables_to_dart_sections(root)
+    if not sec_tables.get(SEC_CONSOL_FS) and not sec_tables.get(SEC_SEP_FS):
+        return _detect_legacy_body_statement_tables(root, fin_type, include_sce)
     groups: dict[str, list[tuple]] = {}
 
     for sec_kind, basis in ((SEC_CONSOL_FS, "consolidated"), (SEC_SEP_FS, "separate")):
@@ -277,6 +285,98 @@ def _detect_body_statement_tables(root, fin_type: str,
                     unit = title_unit if title_unit is not None else declared_unit(nxt)
                     groups.setdefault(section_code, []).append((nxt, unit, sec_kind))
                     break   # 첫 데이터표만 연결(재무제표 하나당 데이터표 하나)
+    return groups
+
+
+# 헤딩이 데이터표를 기다릴 수 있는 최대 요소 수. 실측 거리는 1칸 571 · 2칸 48 · 3칸 이상 0
+# (`scripts/verify_legacy_detector.py`). 관측 최대의 2배를 상한으로 둔다.
+_LEGACY_PENDING_SPAN = 4
+
+
+def _detect_legacy_body_statement_tables(root, fin_type: str,
+                                         include_sce: bool) -> dict[str, list[tuple]]:
+    """구형 레이아웃(`XI. 재무제표 등`)에서 본문 재무제표 표를 찾는다 (2026-08-04).
+
+    ── 왜 별도 경로인가 ──────────────────────────────────────────────────────
+    2015+ 서식은 `2.연결재무제표`/`4.재무제표` SECTION-2 가 ①본문임을 보장하고 ②basis 를
+    알려준다. 구형 서식에는 그 구획이 없다 — **재무제표와 주석이 한 섹션에 같이 산다.**
+    실측 문서순서(20141128001023, 글로본 2015H1):
+
+        [연결 BS 제목표][연결 BS 데이터] … [연결 CF 데이터]
+        <P>연결재무제표에 대한 주석          ← 여기부터 주석표 150여 개
+        [재무상태표 제목표][별도 BS 데이터] … [별도 CF 데이터]
+        <P>별도재무제표에 대한 주석
+
+    그래서 섹션 경계는 아무것도 걸러주지 못하고, **표제 헤딩이 유일한 판별 근거**다.
+    판별은 `classify_legacy_statement_heading`(앵커 5조건)에 두고, 여기서는 그 헤딩을
+    문서순서로 따라가며 **헤딩 다음 첫 데이터표 하나**만 연결한다.
+
+    ── 실측 근거 (2026-08-04, 2015+ 계층2 공백 189건 전수 원문 파싱) ─────────
+    · 공백 189건 중 **본문 섹션이 아예 없는 문서 109건** → 그중 87건이 `XI. 재무제표 등` 보유
+    · 앵커가 고른 표의 시퀀스는 전부 정상 재무제표 조합이고 **주석표 채택 0건**:
+        con.BS→con.IS→con.CF→sep.BS→sep.IS→sep.CF  40건
+        sep.BS→sep.IS→sep.CF                        18건 (연결 미작성사)
+        con.BS→con.IS→con.IS→con.CF→sep…            15건 (손익계산서+포괄손익계산서 2표 서식)
+    · 나머지 22건은 이 섹션 자체가 없다(감사보고서 첨부 서식 · 웅진 계열 XML 절단) — 대상 아님
+
+    ── 안전장치 ──────────────────────────────────────────────────────────────
+    1. 이 함수는 본문 섹션이 **하나도 없을 때만** 호출된다(호출측 가드) → 기존 문서 무영향.
+    2. 주석 마커(`연결재무제표에 대한 주석`)를 만나면 수집 상태를 **해제**한다. 헤딩 앵커가
+       이미 주석을 떨구지만, 구조 신호를 하나 더 둔다(과거 사고 비용이 컸다).
+    3. 헤딩 하나당 데이터표 **하나**만 취한다(2015+ 경로의 '제목표/데이터표 분리 서식'과
+       같은 규약). 대기는 `_LEGACY_PENDING_SPAN` 요소 안에서만 유효하다 — 실측 거리는
+       **1칸 571건 · 2칸 48건 · 그 이상 0건**이라, 멀리 떨어진 표를 끌어오는 것은
+       구조가 아니라 추측이다(그런 헤딩은 데이터표 없이 끝난 것으로 보고 버린다).
+    4. 단위는 `declared_unit` 규약 그대로 — 못 찾으면 None 으로 두고 계층2 가 보류한다.
+
+    반환 계약은 `_detect_body_statement_tables` 와 동일:
+    {section_code: [(table_elem, unit, section_kind), ...]}.
+    section_kind 는 실제 귀속 섹션이어야 감사에 쓸 수 있으므로 `SEC_LEGACY_FS` 를 그대로 쓴다.
+    """
+    elements = iter_section_elements(root, SEC_LEGACY_FS)
+    if not elements:
+        return {}
+
+    groups: dict[str, list[tuple]] = {}
+    pending: tuple[str, str] | None = None   # (basis, stmt) — 데이터표를 기다리는 헤딩
+    pending_unit: int | None = None
+    pending_age = 0
+
+    for tag, el in elements:
+        text_ = " ".join("".join(el.itertext()).split())
+
+        if pending is not None:
+            pending_age += 1
+            if pending_age > _LEGACY_PENDING_SPAN:
+                pending = None                # 데이터표 없이 끝난 헤딩 — 멀리서 끌어오지 않는다
+                pending_unit = None
+
+        if tag == "TABLE" and _table_has_data_rows(el):
+            if pending is None:
+                continue                      # 관장 헤딩 없는 데이터표 = 주석표 → 취하지 않음
+            basis, stmt = pending
+            if basis == "consolidated" and fin_type == "B":
+                pending = None                # 연결 없는 기업의 연결 표 무시(2015+ 경로와 동일)
+                continue
+            unit = pending_unit if pending_unit is not None else declared_unit(el)
+            groups.setdefault(SECTION_CODE_OF[(basis, stmt)], []).append(
+                (el, unit, SEC_LEGACY_FS))
+            pending = None
+            pending_unit = None
+            continue
+
+        if is_legacy_note_marker(text_):
+            pending = None                    # 주석 구간 진입 — 대기 중 헤딩도 버린다
+            pending_unit = None
+            continue
+
+        head = classify_legacy_statement_heading(text_, include_sce=include_sce)
+        if head is not None:
+            pending = head
+            pending_age = 0
+            # 헤딩이 표(제목표)면 그 표가 단위를 들고 있을 수 있다(A형 '… (단위 : 원)').
+            pending_unit = declared_unit(el) if tag == "TABLE" else None
+
     return groups
 
 
@@ -424,17 +524,9 @@ def _table_has_data_rows(tbl, minimum: int = 2) -> int:
        구분되지 않는다. 실측(2015+ 무작위 120건): 이 조건 없이는 본문 표의 **147개가 표제표**인데
        데이터표로 오인돼 '단위 미선언'으로 집계됐다(전체 미선언 160개의 92%).
     """
-    from parser.xml.table_extractor import _get_cells
-    n = 0
-    for tr in table_direct_rows(tbl):
-        cells = [c.strip() for c in _get_cells(tr)]
-        has_label = any(_HANGUL_RE.search(c) for c in cells)
-        has_amount = any(_AMOUNT_CELL_RE.match(c) for c in cells)
-        if has_label and has_amount:
-            n += 1
-            if n >= minimum:
-                return True
-    return False
+    # 판정 실체는 `section_detector.table_has_amount_rows` 한 곳에 있다 —
+    # 표제 back-scan 경계(statement_titles)와 같은 술어를 써야 어긋나지 않는다.
+    return table_has_amount_rows(tbl, minimum)
 
 
 # 손익계산서 내용 시그니처: 매출/영업수익 행 + 영업이익/당기순이익 행. BS(잔액)·SCE(자본변동)·

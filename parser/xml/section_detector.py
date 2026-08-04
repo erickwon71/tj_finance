@@ -222,6 +222,89 @@ def assign_tables_to_dart_sections(
     return result
 
 
+# ── 데이터표 판정(단일 출처) ────────────────────────────────────────────────
+# 이 술어는 두 곳이 쓴다: `fin2.extract.text._table_has_data_rows`(표 선택)와
+# `fin2.extract.statement_titles.title_text_for_classify`(표제 back-scan 경계).
+# 같은 판정을 두 벌 두면 어긋나므로 **여기 한 곳에만** 둔다.
+_HANGUL_RE = re.compile(r"[가-힣]")
+# 실제 금액 표기 = 콤마 3자리 그룹('55,102,004,323', '(1,234)'). DART 재무제표 금액은 항상
+# 콤마 구분이라, 이 패턴이 '금액이 있는 데이터행'과 '날짜만 있는 표제행'을 가른다.
+_AMOUNT_CELL_RE = re.compile(r"^\(?-?\d{1,3}(?:,\d{3})+\)?$")
+
+
+def table_has_amount_rows(tbl: etree._Element, minimum: int = 2) -> bool:
+    """표에 **실제 금액**을 가진 직접 데이터행이 minimum 개 이상인가(표제표·stub·wrapper 배제).
+
+    ★ 두 가지를 모두 지켜야 한다(각각 실측 사고에서 나옴):
+
+    1) **직접 행만** 센다(`.//TR` 금지) — 깨진 XML(</TABLE> 누락)에서 wrapper 가 문서 전체를
+       품으면 `.//TR` 은 수천 행을 세어 stub 을 데이터표로 오인한다
+       (메가스터디 20190401004405: wrapper 직접 1행 vs `.//TR` 3,573행).
+
+    2) **콤마 금액**을 요구한다(`\\d{2,}` 금지) — DART 본문은 [표제표, 데이터표] 쌍 구조이고
+       표제표에도 '제 4 기 2023.12.31 현재' 같은 **날짜 숫자**가 있어 `\\d{2,}` 로는 데이터표와
+       구분되지 않는다. 실측(2015+ 무작위 120건): 이 조건 없이는 본문 표의 **147개가 표제표**인데
+       데이터표로 오인돼 '단위 미선언'으로 집계됐다(전체 미선언 160개의 92%).
+    """
+    from parser.xml.table_extractor import _get_cells
+    n = 0
+    for tr in table_direct_rows(tbl):
+        cells = [c.strip() for c in _get_cells(tr)]
+        has_label = any(_HANGUL_RE.search(c) for c in cells)
+        has_amount = any(_AMOUNT_CELL_RE.match(c) for c in cells)
+        if has_label and has_amount:
+            n += 1
+            if n >= minimum:
+                return True
+    return False
+
+
+# ── 구형 레이아웃 섹션 ──────────────────────────────────────────────────────
+# 2015+ 서식은 재무제표를 `2.연결재무제표`/`4.재무제표` 로 구획하지만, 구형 서식은
+# **`XI. 재무제표 등` 한 섹션에 연결·별도 재무제표와 주석을 모두** 담는다.
+# ★ `_DART_SECTION_EXACT` 에는 **일부러 넣지 않는다** — 넣으면
+#   `assign_tables_to_dart_sections` 가 주석표까지 이 섹션 키로 귀속시켜, 섹션이 곧 본문이라고
+#   믿는 기존 소비자들에게 주석표를 흘린다(2023년 8.5경원 사고의 형태). 구형 레이아웃은
+#   아래 전용 워커로 **표제 헤딩을 보며** 본문 구간만 잘라 쓴다.
+SEC_LEGACY_FS = "재무제표등"
+
+
+def iter_section_elements(
+    root: etree._Element, normalized_title: str,
+) -> "list[tuple[str, etree._Element]]":
+    """`normalized_title` 섹션 구간의 요소를 **문서 순서**로 [(태그, 요소), …] 반환한다.
+
+    구간 = 그 섹션 표제를 만난 지점부터 **다음 SECTION 표제 직전**까지
+    (`assign_tables_to_dart_sections` 와 같은 문서순서 pass — 중첩 구조에 영향받지 않는다).
+
+    표 **안쪽** 요소(셀의 <P> 등)는 문서 구조가 아니므로 제외하고, TABLE 자신만 낸다.
+    """
+    out: list[tuple[str, etree._Element]] = []
+    inside = False
+
+    for el in root.iter():
+        tag = el.tag.upper() if isinstance(el.tag, str) else ""
+        if tag.startswith("SECTION"):
+            title_elem = el.find("TITLE")
+            if title_elem is None:
+                continue
+            norm = normalize_dart_section_title("".join(title_elem.itertext()))
+            if inside and norm != normalized_title:
+                break                      # 다음 섹션 도달 → 구간 종료
+            inside = norm == normalized_title
+            continue
+        if not inside:
+            continue
+        anc = el.getparent()
+        while anc is not None:
+            if isinstance(anc.tag, str) and anc.tag.upper() == "TABLE":
+                break                      # 표 안쪽 = 구조 아님
+            anc = anc.getparent()
+        else:
+            out.append((tag, el))
+    return out
+
+
 # 개별 주석의 번호 제목("27. 현금흐름표 (연결)", "29. 부문별 보고", "10. 유형자산") —
 # 주석 섹션 안의 sub-heading. 이 번호 제목이 주석 정체성(로케이터)이다.
 _NUMBERED_NOTE_TITLE = re.compile(r"^\s*\d+\s*[.．]\s*\S")

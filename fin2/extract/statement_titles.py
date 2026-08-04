@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import re
 
+from parser.xml.section_detector import table_has_amount_rows
+
 # 본문 재무제표 표제 패턴(제목 표 텍스트에서). 요약/주석/분할·합병/자본변동표 배제.
 _STMT_TITLE = [
     (re.compile(r"재무상태표|대차대조표"), "BS"),
@@ -84,6 +86,22 @@ def _is_metadata_only(txt: str) -> bool:
     return bool(_UNIT_ONLY_RE.match(txt)) or bool(_PERIOD_MARK.search(txt))
 
 
+def _is_data_boundary(el) -> bool:
+    """이 형제가 **다른 재무제표의 몸통**인가(= back-scan 을 여기서 멈춰야 하는가).
+
+    ★ `<TABLE>` 만 보면 안 된다. DART 는 같은 문서 안에서도 표를 두 가지로 담는다:
+        · `<TABLE-GROUP>[제목표, 데이터표]` 로 묶는 경우
+        · 제목표·데이터표를 `<SECTION-2>` 직계 형제로 나란히 두는 경우
+      실측 일진홀딩스 20210318000893 은 **둘이 섞여 있다** — 현금흐름표는 TABLE-GROUP 안,
+      이익잉여금처분계산서는 SECTION-2 직계. 그래서 처분계산서 제목표에서 뒤로 훑으면
+      형제가 `<TABLE>` 이 아니라 `<TABLE-GROUP>` 이라 경계 검사를 그냥 통과해 버렸다.
+    """
+    tag = el.tag.upper() if isinstance(el.tag, str) else ""
+    if tag == "TABLE":
+        return table_has_amount_rows(el)
+    return any(table_has_amount_rows(t) for t in el.iter("TABLE"))
+
+
 def title_text_for_classify(tbl, max_skip: int = 3) -> str:
     """**분류 전용** 표제 — 직전 형제가 메타데이터(단위/기간)뿐이면 그 형제(들)를 건너뛰고 그
     앞의 표제를 본다(제목·기간·단위가 별도 <P> 로 분리된 요약재무정보 서식). 건너뛰는 대상은
@@ -92,11 +110,27 @@ def title_text_for_classify(tbl, max_skip: int = 3) -> str:
 
     ★ title_text(단위 획득용, declared_unit 이 사용)는 단위줄을 그대로 반환해야 하므로 건드리지
       않는다 — 이 함수를 별도로 둔다(둘의 요구가 반대: declared_unit=단위줄 필요, 분류=제목 필요).
+
+    ★★ 2026-08-04 — **데이터표 경계가 구현돼 있지 않았다**(위 설명이 약속하는 계약인데
+       코드에 검사가 없었다). `_is_metadata_only` 는 텍스트만 보므로, 기간 헤더로 시작하는
+       데이터표('제 39 기 제 38 기 … 영업활동으로 인한 현금흐름 …')를 '기간줄' 로 오인해
+       **통째로 건너뛰고 그 앞 재무제표의 제목을 주워왔다.**
+
+       실측 사고 — 일진홀딩스 2020FY(20210318000893) 섹션 '재무제표':
+           [7] 현금흐름표 데이터표(54행)
+           [8] 이익잉여금처분계산서 **제목표**(데이터 없음) ← 여기서 [7]을 건너뛰어 CF 로 분류
+           [9] 이익잉여금처분계산서 데이터표(11행, 단위 백만원)
+       [8]이 CF 로 분류되자 '제목표/데이터표 분리 서식' 분기가 [9]를 **CF 데이터로 연결**해,
+       처분계산서 11행이 현금흐름표로 적재됐다(한솔제지 2022FY 등 동일 형태).
+
+       데이터표는 **다른 재무제표의 몸통**이다. 그 너머의 제목은 남의 것이므로 여기서 멈춘다.
     """
     prev = tbl.getprevious()
     for _ in range(max_skip):
         if prev is None:
             return ""
+        if _is_data_boundary(prev):
+            return ""               # 데이터표 = 남의 재무제표 몸통 — 넘어가지 않는다
         txt = " ".join("".join(prev.itertext()).split())
         if not _is_metadata_only(txt):
             return txt[:200]        # 표제(또는 라벨 있는 비메타 형제) — 여기서 멈춘다
@@ -155,6 +189,102 @@ def classify_statement_in_body_section(title: str, include_sce: bool = False) ->
         if name in t:
             return code
     return None
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 구형 레이아웃(`XI. 재무제표 등`) 전용 헤딩 분류기
+# ══════════════════════════════════════════════════════════════════════════
+# 2015+ 서식은 `2.연결재무제표`/`4.재무제표` SECTION-2 가 본문을 보장하고 basis 도 알려준다.
+# 구형 서식(주로 12월 결산이 아닌 기업의 2014년 제출분)은 그런 구획이 없다 —
+# **재무제표와 주석이 `XI. 재무제표 등` 한 섹션에 같이 산다**(실측 20141128001023:
+# 연결 BS/IS/SCE/CF → `연결재무제표에 대한 주석` → 별도 4표 → `별도재무제표에 대한 주석`).
+# 따라서 섹션은 아무것도 보장해주지 않고, **표제 앵커가 유일한 방어선**이다.
+#
+# ⚠ 여기서 느슨해지면 2023년 DB손해보험 사고가 재현된다(앵커 없는 폴백이 천원단위 주석표를
+#   본문으로 집어 이익잉여금 8.5경원 적재). 그래서 아래 5가지를 모두 통과해야 헤딩으로 본다.
+#
+# ★ 결정적 함정 — 주석 헤딩도 재무제표명으로 시작한다: `<P>29. 현금흐름표`(실측
+#   20141128001023 요소 161). 이것을 헤딩으로 채택하면 뒤따르는 주석표가 CF 본문이 된다.
+#   가르는 근거는 **번호 접두**다 — 주석은 번호를 달고, 본문 재무제표 표제는 달지 않는다.
+#   (추측이 아니라 서식의 구조 사실이다.)
+
+# 번호 접두('29.', 'Ⅲ.', '1)') = 주석·세부항목 표지. 본문 재무제표 표제에는 없다.
+_LEGACY_ENUM_PREFIX = re.compile(r"^[\dⅠ-Ⅻ]+\s*[.．)）]")
+# 본문 face 가 아닌 것(첫 45자 기준). '주석' 은 여기서도 배제한다.
+_LEGACY_EXCLUDE = re.compile(r"분할|합병|요약|명세|부속|주석|검토보고서|감사보고서")
+# 재무제표명 앞에 붙을 수 있는 수식어. 공백 제거 후 판정하므로 '반 기 연 결' 도 흡수된다.
+_LEGACY_HEAD = re.compile(
+    r"^(?:연결|별도|개별|반기|분기|중간|당|전)*"
+    r"(재무상태표|대차대조표|포괄손익계산서|손익계산서|현금흐름표|자본변동표)"
+)
+# 재무제표명 **직후**에 와야 하는 기간/단위 마커(공백 제거 기준). 이게 있어야 표제로 확정한다.
+# 없으면(=명칭만 있는 단독 헤딩) 별도 규칙으로 받는다 — 아래 docstring 참조.
+_LEGACY_PERIOD_AFTER = re.compile(
+    r"^(?:제\d+(?:\([^)]*\))?기|\d{4}[.\-년]|[당전]?(?:반기말|분기말|기말)|"
+    r"[(（]?단위|[당전]기(?=[\d(（]))"
+)
+_LEGACY_NAME_TO_CODE = {
+    "재무상태표": "BS", "대차대조표": "BS",
+    "포괄손익계산서": "IS", "손익계산서": "IS",
+    "현금흐름표": "CF", "자본변동표": "SCE",
+}
+# 주석 구간 시작 마커 — 이 뒤의 표는 본문 후보에서 제외한다(실측 '연결재무제표에 대한 주석').
+_LEGACY_NOTE_MARK = re.compile(r"재무제표에?대한주석|^주석$")
+
+
+def is_legacy_note_marker(text: str) -> bool:
+    """구형 레이아웃에서 **주석 구간의 시작**을 알리는 헤딩인가."""
+    if not text:
+        return False
+    return bool(_LEGACY_NOTE_MARK.search(re.sub(r"\s+", "", text)[:40]))
+
+
+def classify_legacy_statement_heading(
+    text: str, include_sce: bool = False,
+) -> tuple[str, str] | None:
+    """구형 레이아웃의 재무제표 **표제 헤딩** → (basis, statement) 또는 None.
+
+    basis 를 섹션이 알려주지 않으므로 **표제 문구에서** 읽는다('연결' 유무).
+
+    통과 조건(전부 만족해야 함):
+      1. 번호 접두가 없다 — `29. 현금흐름표` 같은 **주석 헤딩을 여기서 떨군다**.
+      2. 배제어(분할·합병·요약·명세·부속·주석·감사보고서)가 없다.
+      3. 공백 제거 후 **재무제표명으로 시작**한다(수식어 접두만 허용).
+         문장 속 언급('…리스와 관련하여 연결재무상태표에 인식된…')이 여기서 떨어진다.
+      4. 재무제표명 **직후**가 기간/단위 마커이거나(표제에 기간이 인라인된 서식),
+         **명칭만 있는 단독 헤딩**이다(기간이 다음 형제 표에 있는 서식).
+         → 4의 두 갈래가 실측된 두 하위서식이다:
+            · A형 `연결 재무상태표 제 30 기 반기말 2014.09.30 현재 … (단위 : 원)` (73건)
+            · B형 `<P>반 기 연 결 재 무 상 태 표` + 다음 표에 기간/단위 (14건)
+         명칭 뒤에 **다른 한글이 이어지면 거부**한다 — '현금흐름표의 현금은 …' 같은
+         주석 문장이 B형으로 위장하는 것을 막는다.
+
+    include_sce: 계층2(report_lines) 전용 opt-in. 기본 False 는 자본변동표를 배제한다
+        (fact_v2/std_v2 구 체인이 SCE 의 '연결당기순이익' 행을 IS 로 흡수하면 순이익 오염).
+    """
+    if not text:
+        return None
+    t = re.sub(r"\s+", "", text)
+    if not t or _LEGACY_ENUM_PREFIX.match(t):
+        return None
+    if _LEGACY_EXCLUDE.search(t[:45]):
+        return None
+    m = _LEGACY_HEAD.match(t)
+    if m is None:
+        return None
+    stmt = _LEGACY_NAME_TO_CODE[m.group(1)]
+    if stmt == "SCE" and not include_sce:
+        return None
+
+    rest = t[m.end():].lstrip("：:·-—")
+    if rest:
+        # A형: 기간/단위 마커가 곧바로 따라와야 한다. 그 외 문자가 이어지면 표제가 아니다.
+        if not _LEGACY_PERIOD_AFTER.match(rest):
+            return None
+    # rest == "" 이면 B형(명칭 단독 헤딩) — 조건 1~3 을 이미 통과했다.
+
+    basis = "consolidated" if "연결" in t[:m.start(1)] else "separate"
+    return (basis, stmt)
 
 
 def classify_statement_title(title: str) -> tuple[str, str] | None:

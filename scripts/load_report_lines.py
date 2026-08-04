@@ -65,6 +65,16 @@ def _targets(session, args) -> list:
     if args.shard:
         a, n = (int(x) for x in args.shard.split("/"))
         rows = [r for i, r in enumerate(rows) if i % n == a]
+    if getattr(args, "rcept_file", None):
+        # 파서 수정의 **소급 백필 전용** — 영향받은 filing 만 명시 지정한다.
+        # `--redo-empty` 와 같은 성격이되 대상 판정 근거가 '0행' 이 아니라 호출자가 만든
+        # 목록이다(예: 처분계산서가 CF 로 적재된 filing 을 DB 질의로 뽑은 것).
+        # done 여부를 보지 않는다 — 이미 done 인 것을 고치는 게 목적이기 때문이다.
+        wanted = {t for t in Path(args.rcept_file).read_text().split() if t}
+        rows = [r for r in rows if r.rcept_no in wanted]
+        if args.limit:
+            rows = rows[: args.limit]
+        return rows
     if getattr(args, "redo_empty", False):
         # 제목표/데이터표 분리 서식 수정(2026-07-23) 소급 백필 전용: done 인데 0행인 filing 만
         # 재처리한다(--recheck 는 전량 102k 재처리라 과함). store 는 delete-then-insert 라 멱등.
@@ -146,6 +156,10 @@ def main() -> None:
                          "재개는 note_lines 존재로 자체 추적. 볼륨 큼(~303M행)")
     ap.add_argument("--redo-empty", action="store_true",
                     help="done 인데 0행인 filing 만 재처리(제목표/데이터표 분리 수정 소급 백필)")
+    ap.add_argument("--rcept-file",
+                    help="rcept_no 목록 파일(줄바꿈/공백 구분)만 재처리. 파서 수정의 소급 백필에서 "
+                         "영향받은 filing 만 골라 돌릴 때 쓴다(--recheck 는 전량이라 과함). "
+                         "done 여부와 무관하게 처리한다 — store 가 delete-then-insert 라 멱등")
     ap.add_argument("--status", action="store_true", help="진행 현황만 출력")
     ap.add_argument("--managed", action="store_true",
                     help="launchd 연속잡 모드 — 완주 후 남은 대상 0 이면 스스로 잡 해제")

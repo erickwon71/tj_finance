@@ -217,9 +217,21 @@ _DART_TAGS = (
     "THEAD TBODY TR TD TH TE TU COL COLGROUP IMAGE IMG IMG-CAPTION PGBRK CORRECTION "
     "EXTRACTION A BIG E FLY KNIGHTS MPN SHU THE WESTERN"
 ).split()
+# ★ `<?` / `<!` 를 무조건 예외로 두면 안 된다(2026-08-05). 종전에는 `|[!?]` 로 통째 면제해,
+#   본문에 나온 '<?틴 블레이크의 걸작선>'(책 제목 — 제출사가 이 하나만 이스케이프를 빠뜨렸다)이
+#   **처리명령(PI)의 시작**으로 해석됐다. `?>` 가 없으니 PI 가 끝나지 않아 **그 지점부터 파일
+#   끝까지 통째로 삼켜졌다** — 웅진 20190401004194 는 문서의 5.9% 에서 파싱이 죽어 원문 929표
+#   중 101표만 남았다(오류 없이 조용히). 웅진 계열 19건이 같은 형태다.
+#   lxml 은 이걸 recover 로 못 살린다: 마지막 에러가 'ParsePI: PI 틴 never end' 하나뿐이고
+#   그 앞은 정상 파싱된 것처럼 보인다.
+#
+#   실측(무작위 497 filing): `<?` 는 **XML 선언 `<?xml` 뿐**이고 `<!` 는 **0건**이다
+#   (주석·CDATA·DOCTYPE 을 쓰지 않는다). 그래서 예외를 그 둘로 좁혀도 잃는 것이 없다.
 _BAD_LT = re.compile(
     rb"<(?!/?(?:" + b"|".join(t.encode() for t in sorted(_DART_TAGS, key=len, reverse=True))
-    + rb")(?![A-Za-z0-9-])|[!?])",
+    + rb")(?![A-Za-z0-9-])"
+    rb"|\?xml[\s?]"                       # XML 선언만 PI 로 인정
+    rb"|!--|!\[CDATA\[|!DOCTYPE)",        # 마크업 선언(실측 0건이나 방어적으로 유지)
     re.IGNORECASE,
 )
 

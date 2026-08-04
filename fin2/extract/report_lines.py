@@ -47,7 +47,7 @@ from fin2.extract.text import (
     _interim_cumulative_cols, _adecimal_from_unit, _synth_acontext,
     declared_unit, declaration_text, inherited_declaration_text, _table_has_data_rows,
 )
-from fin2.extract.units import ColumnUnits
+from fin2.extract.units import ColumnUnits, FX_ONLY, SRC_FX
 
 # 주석 표 한 행에서 캡처할 최대 컬럼 수(위치 기준). 주석 표는 컬럼 의미가 제각각(5개년·
 # 만기구간·공정가치수준 등)이라 넉넉히 잡아 위치 그대로 전사한다. 값 판단 아님.
@@ -137,6 +137,10 @@ class ReportLineRow:
     unit_decl_raw: str | None = None
     unit_kind: str | None = None
     unit_inherited: bool = False
+    # 표시통화(ISO 코드). **원화 표는 None** — 외화로 표시된 표만 채운다. 이것도 표 단위
+    # 사실이라 report_tables.currency 로 간다(행마다 반복하지 않는다).
+    # 행 수준에서 "이 값이 원화가 아니다"는 `unit_source='fx_declared'` 로 알 수 있다.
+    currency: str | None = None
 
     def as_row(self) -> dict:
         """SQLAlchemy bulk insert 용 dict (ReportLine 컬럼명 기준)."""
@@ -222,6 +226,7 @@ def _row_to_line(
     *, row, col_idx, amount, basis, period_kind, statement,
     corp_code, rcept_no, report_fiscal_year, report_fiscal_period,
     unit, section_code, section_path, node_role, table_seq, table_title,
+    unit_source="declared", currency=None, unit_decl_raw=None,
 ) -> ReportLineRow:
     ctx_fy = report_fiscal_year - col_idx
     is_cumulative = period_kind == "duration" and report_fiscal_period != "FY"
@@ -240,7 +245,9 @@ def _row_to_line(
         is_cumulative=is_cumulative,
         value_won=amount,
         adecimal=_adecimal_from_unit(unit),
-        unit_source="declared",               # 미선언 표는 호출측에서 이미 스킵됨
+        # 미선언 표는 호출측에서 이미 스킵됐다. 'fx_declared' 는 **표시통화 금액 그대로**라는
+        # 뜻이다(원화 환산 아님) — 통화 코드는 report_tables.currency.
+        unit_source=unit_source,
         source_ref=f"{section_code}/{row.account_name[:80]}"[:180],
         context_raw=_synth_acontext(basis, period_kind, col_idx, ctx_fy, statement),
         row_order=row.row_order,
@@ -249,8 +256,9 @@ def _row_to_line(
         table_seq=table_seq,
         table_title=table_title,
         # 본문은 열별 판정을 하지 않는다(열=기간). 표가 적은 선언 원문만 표 메타로 남긴다(F3).
-        unit_decl_raw=None,
+        unit_decl_raw=unit_decl_raw,
         unit_kind=None,
+        currency=currency,
     )
 
 
@@ -269,7 +277,15 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
         if not cells or "주당" not in cells[0]:
             continue
         label = cells[0].strip()
-        unit = detect_unit_declaration(label) or 1     # 주당은 원(₩)/주 — 인라인 단위, 없으면 원
+        # ★행 인라인 단위가 **외화**일 수 있다 — '계속영업기본주당이익(손실) (단위 : USD)'
+        #   (실측 아남전자). 원화 배수가 없다고 1(원)로 가정하면 USD/주 값이 원/주 로 둔갑한다.
+        #   표 경로와 같은 규약으로 fx 를 표시한다(2026-08-05).
+        eps_cu = ColumnUnits.from_declaration(label)
+        if eps_cu.kind == FX_ONLY:
+            unit, eps_source, eps_currency = eps_cu.fx_mult, SRC_FX, eps_cu.currency
+        else:
+            unit, eps_source, eps_currency = (
+                detect_unit_declaration(label) or 1, "declared", None)
         _, amt_cells = _split_label_amounts(cells)
         present = [a for a in (parse_amount(c, unit) for c in amt_cells) if a is not None]
         for col_idx, amount in enumerate(present[:3]):
@@ -280,7 +296,8 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                 statement=statement, basis=basis, section_path="주당손익",
                 label_raw=label, col_index=col_idx, context_fiscal_year=ctx_fy,
                 period_kind="duration", is_cumulative=(report_fiscal_period != "FY"),
-                value_won=amount, adecimal=_adecimal_from_unit(unit), unit_source="declared",
+                value_won=amount, adecimal=_adecimal_from_unit(unit), unit_source=eps_source,
+                currency=eps_currency,
                 source_ref=f"eps/{label[:70]}"[:180],
                 context_raw=_synth_acontext(basis, "duration", col_idx, ctx_fy, statement),
                 # EPS 는 표 본류 순회 밖(별도 패스)이라 행 위치를 주장하지 않는다 → node_role NULL.
@@ -327,9 +344,21 @@ def _emit_section_lines(
         if has_2tier and cum_map is None:
             continue  # 2단(3개월/누적) 표 존재 시 연간비교(비2단) 표는 스킵(중복 데이터원 배제)
         unit = unit_of[id(table)]
+        unit_source, currency, decl_raw = "declared", None, None
         if unit is None:
-            logger.debug(f"[report_lines] 단위 미선언 → 스킵(보류): {rcept_no} {section_code}")
-            continue
+            # ★ 원화 배수가 없다고 곧바로 버리지 않는다 — **표시통화가 외화**일 수 있다
+            #   (실측 아남전자 008700: 2019+ 본문 8표 전부 '(단위 : USD)'). 그 경우 환산하지
+            #   않고 표시통화 금액 그대로 담고, unit_source='fx_declared' 로 사실을 남긴다
+            #   (사용자 결정 2026-08-05). 외화가 **원화와 섞인** 선언은 FX_ONLY 가 아니므로
+            #   여기 오지 않는다 — 그런 표는 종전대로 열 판정을 따른다.
+            decl = declaration_text(table) or inherited_declaration_text(table)
+            cu = ColumnUnits.from_declaration(decl)
+            if cu.kind == FX_ONLY:
+                unit = cu.fx_mult
+                unit_source, currency, decl_raw = SRC_FX, cu.currency, cu.raw_decl
+            else:
+                logger.debug(f"[report_lines] 단위 미선언 → 스킵(보류): {rcept_no} {section_code}")
+                continue
 
         # 보험/증권 기간당 다열 포맷 감지(2단 누적표는 별도 경로라 제외).
         n_periods, multicol = (3, False) if cum_map is not None else _detect_period_layout(table)
@@ -385,6 +414,7 @@ def _emit_section_lines(
                     unit=unit, section_code=section_code, section_path=section_path,
                     node_role=node_roles.get(id(row)),
                     table_seq=table_seq, table_title=table_title,
+                    unit_source=unit_source, currency=currency, unit_decl_raw=decl_raw,
                 ))
 
 
@@ -665,9 +695,18 @@ def _emit_sce_lines(
 
     for table in tables:
         unit = next((u for t, u, _ in tables_with_unit if t is table), None)
+        fx_source, fx_currency, fx_decl = None, None, None
         if unit is None:
-            logger.debug(f"[report_lines/SCE] 단위 미선언 → 스킵(보류): {rcept_no} {section_code}")
-            continue
+            # 본문 경로와 같은 규약 — 외화 표시 표는 버리지 않고 표시통화 그대로 담는다
+            # (2026-08-05). 자본변동표도 같은 선언을 공유한다(아남전자 SCE_C/SCE_S).
+            cu = ColumnUnits.from_declaration(
+                declaration_text(table) or inherited_declaration_text(table))
+            if cu.kind == FX_ONLY:
+                unit, fx_source, fx_currency, fx_decl = (
+                    cu.fx_mult, SRC_FX, cu.currency, cu.raw_decl)
+            else:
+                logger.debug(f"[report_lines/SCE] 단위 미선언 → 스킵(보류): {rcept_no} {section_code}")
+                continue
         table_seq = doc_seq[id(table)]
         table_title = _note_heading(table)
         col_labels = _build_col_labels(table)
@@ -703,7 +742,7 @@ def _emit_sce_lines(
                     is_cumulative=False,
                     value_won=amount,
                     adecimal=adecimal,
-                    unit_source="declared",
+                    unit_source=fx_source or "declared",
                     source_ref=f"{section_code}/{row.account_name[:80]}"[:180],
                     context_raw=f"sce:{basis}:c{col_idx}",
                     row_order=row.row_order,
@@ -711,6 +750,7 @@ def _emit_sce_lines(
                     node_role=node_roles.get(id(row)),
                     table_seq=table_seq,
                     table_title=table_title,
+                    currency=fx_currency, unit_decl_raw=fx_decl,
                 ))
 
 
@@ -866,6 +906,7 @@ def store_report_tables(session, rcept_no: str, lines: list[ReportLineRow]) -> i
                 "table_seq": l.table_seq, "table_title": None, "section_path": None,
                 "unit_decl_raw": l.unit_decl_raw, "declared_unit": None,
                 "unit_kind": l.unit_kind, "unit_inherited": bool(l.unit_inherited),
+                "currency": l.currency,
                 "parsed_at": now,
             }
         if row["table_title"] is None:
@@ -874,6 +915,8 @@ def store_report_tables(session, rcept_no: str, lines: list[ReportLineRow]) -> i
             row["section_path"] = l.section_path
         if row["unit_decl_raw"] is None:
             row["unit_decl_raw"] = l.unit_decl_raw
+        if row["currency"] is None:
+            row["currency"] = l.currency
         if row["declared_unit"] is None and l.adecimal is not None:
             row["declared_unit"] = 10 ** (-l.adecimal) if l.adecimal <= 0 else None
     if not seen:

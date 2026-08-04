@@ -406,7 +406,17 @@ class ReportLine(Base):
     period_kind        = Column(String(8),    nullable=True,  comment="instant(BS)/duration(IS·CF)")
     is_cumulative       = Column(Boolean,     default=False)
 
-    value_won          = Column(BigInteger,   nullable=True,  comment="원 단위 정규화 금액")
+    value_won          = Column(BigInteger,   nullable=True,
+                                comment="원 단위 정규화 금액. **단 하나의 예외** — "
+                                        "`unit_source='fx_declared'` 인 행은 원화가 아니라 "
+                                        "**표시통화 금액 그대로**다(환산하지 않는다). 통화 코드는 "
+                                        "`report_tables.currency`(조인키 rcept_no+statement+basis+"
+                                        "table_seq). 국내 기업이 표시통화를 외화로 쓰는 경우가 있어 "
+                                        "(아남전자 008700 은 2019+ 전 재무제표가 USD) 종전에는 표를 "
+                                        "통째로 보류했는데, 그건 숫자를 못 읽어서가 아니라 통화를 "
+                                        "표현할 방법이 없어서였다(사용자 결정 2026-08-05). "
+                                        "★계층3 소비자는 원화 집계에서 이 행을 **반드시 제외**할 것 — "
+                                        "`fin2/layer3/combine.py` 가 기본 가드를 건다")
     value_raw          = Column(Text,         nullable=True,
                                 comment="셀 원문 문자열. **value_won 이 NULL 인 칸에만** 채운다 — "
                                         "비금액 열(이자율·지분율·주식수)이나 단위 미확정 열이라 원 "
@@ -486,6 +496,17 @@ class ReportTable(Base):
     unit_inherited= Column(Boolean, default=False,
                            comment="표 자신의 선언이 아니라 앞선 선언 전용 표·항목 도입 문단에서 "
                                    "상속했는가(사용자 결정 D1)")
+    currency      = Column(String(3), nullable=True,
+                           comment="표시통화 ISO 코드. **원화 표는 NULL** — 외화로 표시된 표만 "
+                                   "채운다(실측: 아남전자 008700 이 2019 사업연도부터 본문 전체를 "
+                                   "'(단위 : USD)' 로 표시). 이 표의 행들은 report_lines.value_won "
+                                   "에 **표시통화 금액 그대로** 들어가고(원화 환산 아님) "
+                                   "unit_source='fx_declared' 로 표시된다. "
+                                   "★행 단위 판별은 unit_source 로 충분하고, 이 컬럼은 '어느 통화인가' "
+                                   "를 답한다 — 통화는 표 단위 사실이라 행마다 반복하지 않는다(F3 원칙). "
+                                   "혼합 선언('1USD, 천원')은 NULL 이다: 그런 표는 원화 열만 적재되고 "
+                                   "외화 셀은 원문이 'USD 12,000,000' 처럼 통화 접두를 달아 금액으로 "
+                                   "파싱되지 않는다")
     parsed_at     = Column(DateTime, default=datetime.utcnow)
 
     def __repr__(self):

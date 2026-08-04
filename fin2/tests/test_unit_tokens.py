@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from fin2.extract.units import (ColumnUnits, MIXED, MONEY_ONLY, NON_MONEY_ONLY,  # noqa: E402
+from fin2.extract.units import (ColumnUnits, FX_ONLY, MIXED, MONEY_ONLY, NON_MONEY_ONLY,  # noqa: E402
                                 UNDECLARED, classify_tokens)
 from parser.common.amount_normalizer import (detect_unit_declaration,  # noqa: E402
                                              detect_unit_tokens)
@@ -86,9 +86,19 @@ def test_label_colon_unit_pairs():
 
 
 def test_foreign_only_table_has_no_won_unit():
-    """'(단위: USD)' 표는 원 단위 금액이 아니다 — 옆 표의 '천원' 을 주워오면 오염이다."""
-    assert detect_unit_declaration("(단위: USD)") is None
-    assert classify_tokens(detect_unit_tokens("(단위: USD)")) == NON_MONEY_ONLY
+    """'(단위: USD)' 표는 **원 단위 금액이 아니다** — 옆 표의 '천원' 을 주워오면 오염이다.
+
+    ★2026-08-05: 분류가 NON_MONEY_ONLY → FX_ONLY 로 바뀌었다(외화 표시 재무제표 지원).
+      이 테스트가 지키는 불변식은 그대로다 — **원화 배수를 갖지 않는다.** 달라진 것은
+      "그래서 표를 통째로 버린다"에서 "표시통화 금액 그대로 담고 fx 로 표시한다"로 바뀐 것뿐이다
+      (`test_fx_declared_units.py` 참고). 원화 오염 방지라는 원래 의도는 아래 두 줄이 계속 지킨다.
+    """
+    assert detect_unit_declaration("(단위: USD)") is None      # 원화 배수 없음(불변)
+    assert classify_tokens(detect_unit_tokens("(단위: USD)")) == FX_ONLY
+    # 외화 표는 원화 금액 열을 만들지 않는다 — value_won 은 담기되 원화가 아님을 source 가 알린다.
+    cu = ColumnUnits.from_declaration("(단위: USD)", {0: "당기"})
+    assert cu.money_mult is None
+    assert cu.source(0) == "fx_declared"
 
 
 def test_no_declaration_at_all():

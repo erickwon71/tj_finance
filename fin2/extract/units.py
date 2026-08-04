@@ -82,11 +82,46 @@ _MONEY_COL_RE = re.compile(
     r"|[가-힣]금$|[가-힣]액$"
 )
 
+# ── 외화 표시 재무제표 ─────────────────────────────────────────────────
+# 국내 기업이 **표시통화를 외화로** 쓰는 경우가 있다(실측 아남전자 008700: 2019 사업연도부터
+# 본문 8표 전부 '(단위 : USD)'). 종전에는 'USD' 에 원화 배수가 없어 `NON_MONEY_ONLY` 로
+# 분류돼 표 전체가 보류됐다 — 즉 **숫자를 못 읽은 게 아니라 통화를 표현할 방법이 없어서**
+# 버린 것이다(2019~2026 정기보고서 30건이 report_lines 0 행).
+#
+# 사용자 결정 2026-08-05 — 환산하지 않고 **표시통화 금액 그대로** value_won 에 담고,
+# 그 사실을 행에서 바로 알 수 있게 `unit_source='fx_declared'` 로 표시한다. 통화 코드는
+# 표 단위 사실이므로 `report_tables.currency` 에 적는다(행마다 반복하지 않는다 — F3 원칙).
+#
+# ⚠ 적용 범위를 **외화 단독 선언으로만** 좁힌다. '1USD, 천원' 처럼 원화와 섞인 선언
+#   (주석표 대부분, 실측 137,680표 중 다수)은 **건드리지 않는다** — 그런 표는 원화 열만
+#   적재되고 USD 셀은 원문이 'USD 12,000,000' 처럼 통화 접두를 달고 있어 금액 정규식에
+#   걸리지 않는다. 이미 올바르게 동작하므로 손대면 오히려 위험하다.
+FX_CODES = ("USD", "EUR", "JPY", "CNY", "HKD", "GBP", "CHF", "VND", "IDR", "SGD", "AUD")
+# 토큰 형태: 'USD' · '천USD' · '백만USD' · '천/USD'(스케일 접두 또는 슬래시 표기).
+_FX_TOKEN_RE = re.compile(
+    r"^[(（]?\s*(천|만|백만|억)?\s*[/／]?\s*(" + "|".join(FX_CODES) + r")\s*[)）]?[.,]?$",
+    re.I)
+_FX_SCALE = {None: 1, "천": 1_000, "만": 10_000, "백만": 1_000_000, "억": 100_000_000}
+
+
+def fx_token(tok: str) -> tuple[str, int] | None:
+    """외화 단위 토큰 → (통화코드, 스케일). 외화가 아니면 None.
+
+    '(단위 : USD)' → ('USD', 1) · '천USD' → ('USD', 1000) · '천/USD' → ('USD', 1000)
+    """
+    m = _FX_TOKEN_RE.match(tok.strip())
+    if not m:
+        return None
+    return m.group(2).upper(), _FX_SCALE[m.group(1)]
+
+
 # 선언 분류
 MONEY_ONLY = "money_only"
 NON_MONEY_ONLY = "non_money"
 MIXED = "mixed"
 UNDECLARED = "undeclared"
+# 외화 **단독** 선언 — 원화 토큰이 없고 외화 토큰만 있는 표(위 설명 참고).
+FX_ONLY = "fx_only"
 
 # unit_source 값(DB 에 그대로 들어간다) — 그 행의 value_won 이 어떤 근거로 채워졌는가/왜 비었나.
 SRC_DECLARED = "declared"        # 표 선언 배수 적용(금액단독)
@@ -95,10 +130,17 @@ SRC_COL_MONEY = "col_money"      # 혼합 선언 + 열 헤더가 금액이라고
 SRC_NON_MONEY = "non_monetary"   # 비금액 열/표 — value_won 없음(원문은 value_raw)
 SRC_UNDET = "undetermined"       # 단위 확정 못 함 — value_won 없음(원문은 value_raw)
 SRC_UNDECLARED = "undeclared"    # 표에 단위 선언 자체가 없음 — value_won 없음
+# ★외화 표시 — value_won 에 **표시통화 금액 그대로** 들어간다(원화 환산 아님).
+#   통화 코드는 report_tables.currency. 계층3 소비자는 기본적으로 이 행을 걸러야 한다.
+SRC_FX = "fx_declared"
 
 
 def classify_tokens(tokens: list[str]) -> str:
-    """선언 토큰 목록 → 분류(MONEY_ONLY / NON_MONEY_ONLY / MIXED / UNDECLARED)."""
+    """선언 토큰 목록 → 분류(MONEY_ONLY / FX_ONLY / NON_MONEY_ONLY / MIXED / UNDECLARED).
+
+    ★ FX_ONLY 는 **원화 토큰이 하나도 없고** 외화 토큰이 있을 때만이다. 원화가 섞이면
+      (예 '1USD, 천원') 종전대로 MIXED — 그 표는 열 헤더로 원화 열만 골라 적재한다.
+    """
     if not tokens:
         return UNDECLARED
     money = [t for t in tokens if _money_multiplier(t) is not None]
@@ -106,7 +148,18 @@ def classify_tokens(tokens: list[str]) -> str:
         return MONEY_ONLY
     if money:
         return MIXED
+    if any(fx_token(t) for t in tokens):
+        return FX_ONLY
     return NON_MONEY_ONLY
+
+
+def first_fx(tokens: list[str]) -> tuple[str, int] | None:
+    """선언의 첫 외화 토큰 → (통화코드, 스케일). 없으면 None."""
+    for t in tokens:
+        fx = fx_token(t)
+        if fx:
+            return fx
+    return None
 
 
 def first_money_multiplier(tokens: list[str]) -> int | None:
@@ -175,6 +228,10 @@ class ColumnUnits:
         self.col_labels = col_labels or {}
         self.kind = classify_tokens(tokens)
         self.money_mult = first_money_multiplier(tokens)
+        # 외화 단독 선언이면 (통화코드, 스케일). 그 외에는 None — 혼합 선언은 여기 안 온다.
+        fx = first_fx(tokens) if self.kind == FX_ONLY else None
+        self.currency: str | None = fx[0] if fx else None
+        self.fx_mult: int | None = fx[1] if fx else None
         # 표 자신의 선언이 아니라 **앞선 선언 전용 표**에서 받아온 것인가(D1).
         # 값 판정 규칙은 같고, `unit_source` 만 'inherited' 로 표시해 계층3 이 구분하게 한다.
         self.inherited = inherited
@@ -195,12 +252,18 @@ class ColumnUnits:
 
     # ── 판정 ────────────────────────────────────────────────────────────
     def multiplier(self, col_idx: int) -> int | None:
-        """그 열의 금액 배수. None = 금액 열이 아니거나 단위를 확정하지 못했다."""
+        """그 열의 금액 배수. None = 금액 열이 아니거나 단위를 확정하지 못했다.
+
+        ★ FX_ONLY 표에서 이 배수는 **표시통화 스케일**이다(USD=1, 천USD=1000). 원화 환산이
+          아니므로 곱한 결과도 USD 금액이다 — 그 사실은 `source()` 가 'fx_declared' 로 알린다.
+        """
         label = self.col_labels.get(col_idx)
         if self.kind in (NON_MONEY_ONLY, UNDECLARED):
             return None
         if column_is_non_money(label):
             return None                      # ★오염 차단 — 선언이 금액단독이어도 여기서 막는다
+        if self.kind == FX_ONLY:
+            return self.fx_mult
         if self.kind == MONEY_ONLY:
             return self.money_mult
         # 혼합 — 양의 근거(열 헤더가 금액)를 요구한다. 헤더가 침묵하면 확정 불가.
@@ -214,6 +277,8 @@ class ColumnUnits:
             return SRC_NON_MONEY
         if column_is_non_money(label):
             return SRC_NON_MONEY
+        if self.kind == FX_ONLY:
+            return SRC_FX
         if self.kind == MONEY_ONLY:
             return SRC_INHERITED if self.inherited else SRC_DECLARED
         if not column_is_money(label):
@@ -223,7 +288,7 @@ class ColumnUnits:
     @property
     def has_money_column(self) -> bool:
         """열 계획에 금액 열이 하나라도 있는가(열 헤더가 없으면 금액단독 선언 기준으로 판단)."""
-        if self.kind == MONEY_ONLY:
+        if self.kind in (MONEY_ONLY, FX_ONLY):
             return True
         if self.kind == MIXED:
             return any(self.multiplier(i) is not None for i in self.col_labels)

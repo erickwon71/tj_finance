@@ -132,6 +132,12 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
               -- 않고 header_hint 로 전사한다). 본문 경로는 아직 전사하지 않지만 같은 계약을
               -- 미리 건다 — 나중에 켤 때 계층3 을 다시 손대지 않기 위해서다.
               AND header_hint IS NULL
+              -- ★외화 가드(2026-08-05): unit_source='fx_declared' 인 행의 value_won 은
+              -- 원화가 아니라 **표시통화 금액 그대로**다(아남전자 = USD). 여기서 막지 않으면
+              -- USD 금액이 원화 집계에 그대로 섞인다 — 유실이 아니라 오염이다.
+              -- 외화 재무제표를 소비하려면 report_tables.currency 를 읽어 통화를 인지하는
+              -- 별도 경로를 만들어야 한다(환산은 계층3 의 판단이지 계층2 가 할 일이 아니다).
+              AND COALESCE(unit_source, '') <> 'fx_declared'
         """), {"r": rcept}).fetchall()
         for (statement, basis, col_index, section_path, label_raw, value_won,
              node_role, table_seq, is_cum) in rows:

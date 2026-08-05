@@ -209,6 +209,27 @@ _BAD_AMP = re.compile(
 # ★정상적인 빈 속성(ENG="" …)을 깨면 안 되므로, 따옴표 사이에 '=' '<' '>' 가 없고
 #   닫는 따옴표 뒤가 공백/'>' 일 때만 적용한다.
 _BAD_ATTR_QUOTE = re.compile(rb'=""([^"=<>]{1,120})"(?=[\s>])')
+# ★ 위 규칙은 `=""값"` **한 형태**만 본다. 2026-08-05 전수 절단 스캔(102,123건)에서 나머지
+#   형태들이 그대로 남아 **255건이 조용히 절단**되고 있었다(최악 NHN KCP 886표→98표).
+#   실측 형태:
+#     ENG="" Shinhan Securities Co., Ltd. ""        양끝 2개
+#     ENG="Vietnam""                                 끝 2개
+#     ENG="Medical … Laboratories ("GCML")"          중간
+#   형태를 열거하는 대신 **구조**로 일반화한다 — 진짜 닫는 따옴표는 그 뒤가 '다음 속성'
+#   이거나 '태그 끝'인 것뿐이고, 그 앞의 따옴표는 전부 값의 일부다.
+#   값에 `<`/`>` 는 허용하지 않는다(태그 경계를 넘지 않기 위한 안전선).
+_ATTR_VALUE_RE = re.compile(
+    rb'(\s[A-Za-z][A-Za-z0-9_.:-]*\s*=\s*)"([^<>]*?)"'
+    rb'(?=\s+[A-Za-z][A-Za-z0-9_.:-]*\s*=|\s*/?>)'
+)
+
+
+def _escape_attr_quotes(m: "re.Match") -> bytes:
+    """속성값 안에 남은 날 따옴표만 `&quot;` 로. 없으면 원문 그대로(불필요한 재작성 방지)."""
+    name, val = m.group(1), m.group(2)
+    if b'"' not in val:
+        return m.group(0)
+    return name + b'"' + val.replace(b'"', b"&quot;") + b'"'
 # DART 실제 태그(실측 60 filing 에서 lxml 이 만든 '태그' 282종 중 진짜는 아래 40여 종뿐,
 # 나머지는 '<당기말>' '<파묘>' 같은 본문 텍스트였다). 화이트리스트 밖이면 텍스트로 본다.
 _DART_TAGS = (
@@ -241,6 +262,9 @@ def sanitize_dart_xml(raw: bytes) -> bytes:
     &quot;/&lt; 가 다시 이스케이프되지 않는다."""
     out = _BAD_AMP.sub(b"&amp;", raw)
     out = _BAD_ATTR_QUOTE.sub(rb'="&quot;\1&quot;"', out)
+    # 위에서 못 잡은 나머지 형태(양끝 2개·끝 2개·중간)를 구조로 마저 처리한다.
+    # 이미 &quot; 로 바뀐 값은 날 따옴표가 없어 여기서 다시 건드리지 않는다.
+    out = _ATTR_VALUE_RE.sub(_escape_attr_quotes, out)
     return _BAD_LT.sub(b"&lt;", out)
 
 

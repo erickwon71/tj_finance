@@ -95,3 +95,47 @@ def test_real_dart_tags_survive():
     assert root.find(".//SECTION-1") is not None
     assert root.find(".//TABLE-GROUP") is not None
     assert len(root.findall(".//TABLE")) == 1
+
+
+# ── 속성값 안 날 따옴표 (2026-08-05 전수 스캔에서 255건 절단으로 드러남) ──────────
+# 기존 `_BAD_ATTR_QUOTE` 는 `=""값"` 한 형태만 봤고, 나머지 형태가 태그 구조를 무너뜨려
+# 그 뒤가 통째로 사라졌다. 최악 NHN KCP 20251114000755: 원문 886표 → 파싱 98표.
+
+def _doc(attr: str) -> bytes:
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        "<DOCUMENT><BODY>"
+        f"<TABLE><TR><TE {attr} VALIGN=\"MIDDLE\">신한금융투자</TE>"
+        "<TD><P>1,234,567</P></TD></TR></TABLE>"
+        "<TABLE><TR><TD><P>자산총계</P></TD><TD><P>9,999,999</P></TD></TR></TABLE>"
+        "</BODY></DOCUMENT>"
+    ).encode()
+
+
+def test_attr_quotes_wrapped_both_ends():
+    """ENG="" 값 "" — 양끝에 따옴표 2개(신한금융투자 실측)."""
+    root = _parse(_doc('ENG="" Shinhan Securities Co., Ltd. ""'))
+    assert len(root.findall(".//TABLE")) == 2
+    assert "자산총계" in "".join(root.itertext())
+
+
+def test_attr_quotes_trailing():
+    """ENG="값"" — 끝에 따옴표 2개(베트남·GC 실측)."""
+    root = _parse(_doc('ENG="Vietnam""'))
+    assert len(root.findall(".//TABLE")) == 2
+
+
+def test_attr_quotes_inside_value():
+    """ENG="… ("GCML")" — 값 중간에 따옴표(녹십자 실측)."""
+    root = _parse(_doc('ENG="Green Cross Medical Laboratories ("GCML")"'))
+    assert len(root.findall(".//TABLE")) == 2
+
+
+def test_normal_attributes_untouched():
+    """정상 속성은 그대로 — 빈 값·여러 속성이 깨지지 않는다."""
+    raw = _doc('ENG="" ACODE="ifrs-full_Assets"')
+    out = sanitize_dart_xml(raw)
+    assert b'ENG=""' in out
+    assert b'ACODE="ifrs-full_Assets"' in out
+    root = _parse(raw)
+    assert len(root.findall(".//TABLE")) == 2

@@ -25,7 +25,7 @@ from collector.db import get_session
 from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.section_detector import table_direct_rows
 import fin2.extract.text as T
-from fin2.extract.statement_titles import _is_metadata_only
+
 
 SQL = """
 SELECT f.corp_name, f.fiscal_year, f.fiscal_period, f.rcept_no, d.file_path
@@ -36,17 +36,10 @@ SELECT f.corp_name, f.fiscal_year, f.fiscal_period, f.rcept_no, d.file_path
 """
 
 
-def old_title_text_for_classify(tbl, max_skip: int = 3) -> str:
-    """수정 **이전** 구현 그대로(데이터표 경계 없음). 비교 기준선."""
-    prev = tbl.getprevious()
-    for _ in range(max_skip):
-        if prev is None:
-            return ""
-        txt = " ".join("".join(prev.itertext()).split())
-        if not _is_metadata_only(txt):
-            return txt[:200]
-        prev = prev.getprevious()
-    return ""
+def old_title_text_owned(tbl) -> str:
+    """수정 **이전** 구현 — 분류용 표제에 데이터표 경계가 없던 상태(= title_text 그대로)."""
+    from fin2.extract.statement_titles import title_text
+    return title_text(tbl)
 
 
 def snapshot(root):
@@ -74,7 +67,7 @@ def main() -> int:
     with get_session() as s:
         rows = s.execute(text(SQL), {"n": args.sample}).fetchall()
 
-    new_impl = T.title_text_for_classify
+    new_impl = T.title_text_owned
     docs = changed = 0
     removed_n = added_n = 0
     removed_rows = 0
@@ -90,9 +83,9 @@ def main() -> int:
             continue
         docs += 1
 
-        T.title_text_for_classify = old_title_text_for_classify
+        T.title_text_owned = old_title_text_owned
         before = snapshot(root)
-        T.title_text_for_classify = new_impl
+        T.title_text_owned = new_impl
         after = snapshot(root)
 
         removed = {k: v for k, v in before.items() if k not in after}

@@ -133,6 +133,31 @@ def _is_data_boundary(el) -> bool:
     return any(table_has_amount_rows(t) for t in el.iter("TABLE"))
 
 
+def title_text_owned(tbl) -> str:
+    """**분류용** 직전 형제 표제 — 그 형제가 남의 재무제표 몸통이면 빈 문자열.
+
+    `title_text` 는 단위 획득(`declared_unit`)에도 쓰이므로 원문을 그대로 돌려줘야 한다.
+    분류는 요구가 달라서, 여기서 경계를 한 겹 더 씌운다.
+
+    ★ 왜 필요한가(2026-08-05 실측, 대원 20200330003731 등 264 filing):
+
+        [TABLE-GROUP: 현금흐름표 제목표 + CF 데이터표 104행]
+        [표] '주) 제46기는 종전 기준서인 K-IFRS …'   ← 각주표(데이터 없음)
+        [표] '이 익 잉 여 금 처 분 계 산 서'          ← 처분계산서 제목표
+        [표] '제 48 기 2019년 1월 1일부터 …'          ← 기간표
+        [표] 처분계산서 데이터 10행
+
+      각주표의 **직전 형제가 TABLE-GROUP** 이라 `title_text` 가 그 안의 '현금흐름표 …' 를
+      표제로 읽어 **CF 로 분류**했다. 각주표엔 데이터가 없으니 '제목표/데이터표 분리 서식'
+      분기가 발동해 앞으로 스캔했고, 그 결과 **처분계산서 데이터가 CF 로 붙었다.**
+      (2026-08-04 에 `title_text_for_classify` 에만 경계를 넣어 이 경로가 남아 있었다.)
+    """
+    prev = tbl.getprevious()
+    if prev is None or _is_data_boundary(prev):
+        return ""
+    return title_text(tbl)
+
+
 def title_text_for_classify(tbl, max_skip: int = 3) -> str:
     """**분류 전용** 표제 — 직전 형제가 메타데이터(단위/기간)뿐이면 그 형제(들)를 건너뛰고 그
     앞의 표제를 본다(제목·기간·단위가 별도 <P> 로 분리된 요약재무정보 서식). 건너뛰는 대상은

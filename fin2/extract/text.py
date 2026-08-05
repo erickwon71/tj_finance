@@ -44,7 +44,8 @@ from parser.xml.section_detector import (
 from parser.xml.table_extractor import extract_rows
 from fin2.extract.xbrl import ExtractedFact
 from fin2.extract.statement_titles import (
-    title_text, title_text_for_classify, classify_statement_in_body_section, SECTION_CODE_OF,
+    title_text, title_text_owned, title_text_for_classify,
+    classify_statement_in_body_section, SECTION_CODE_OF,
     _is_metadata_only, _STMT_TITLE,
     classify_legacy_statement_heading, is_legacy_note_marker,
 )
@@ -248,7 +249,8 @@ def _detect_body_statement_tables(root, fin_type: str,
             # 섹션이 이미 '본문'을 보장하므로 주석 배제 가드가 불필요 → 재무제표명만 본다
             # (공백·반기/분기 접두 허용). 자본변동표(SCE)는 분류기가 배제한다 —
             # include_sce=True(계층2 report_lines 전용)일 때만 'SCE' 로 통과시킨다.
-            stmt = classify_statement_in_body_section(title_text(tbl), include_sce=include_sce)
+            # ★분류용 표제는 데이터표 경계를 넘지 않는다(남의 재무제표 제목 차용 방지).
+            stmt = classify_statement_in_body_section(title_text_owned(tbl), include_sce=include_sce)
             if stmt is None:
                 # 요약재무정보 서식: 제목과 단위가 별도 <P> 로 분리돼 데이터표의 직전 형제가
                 # 단위줄('(단위:천원)')이라 title_text 가 제목을 못 읽는다. 단위줄 1칸만 건너뛰고
@@ -279,7 +281,7 @@ def _detect_body_statement_tables(root, fin_type: str,
             # 연결**한다. 정상 서식(위 branch)은 건드리지 않는 가산적 처리다.
             title_unit = declared_unit(tbl)   # 드물게 제목표가 단위를 보유
             for nxt in tbls[idx + 1:]:
-                if classify_statement_in_body_section(title_text(nxt), include_sce=include_sce) is not None:
+                if classify_statement_in_body_section(title_text_owned(nxt), include_sce=include_sce) is not None:
                     break   # 다음 재무제표 제목 도달 → 이 재무제표엔 데이터표 없음(보류)
                 if _table_has_data_rows(nxt):
                     unit = title_unit if title_unit is not None else declared_unit(nxt)

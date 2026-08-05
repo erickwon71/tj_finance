@@ -153,3 +153,30 @@ def test_plain_sentence_is_not_metadata():
     from fin2.extract.statement_titles import _is_metadata_only
     assert _is_metadata_only("상기 재무정보는 내부거래 제거 전 기준으로 작성되었습니다.") is False
     assert _is_metadata_only("2. 연결재무제표") is False
+
+
+def test_footnote_table_does_not_borrow_previous_statement_title():
+    """★각주표가 앞 그룹의 제목을 빌려 분리서식 분기를 발동시키면 안 된다.
+
+    실측 대원 20200330003731 외 264 filing:
+        [TABLE-GROUP: 현금흐름표 제목표 + CF 데이터표]
+        [표] '주) 제46기는 종전 기준서인 …'      ← 각주표(데이터 없음)
+        [표] '이 익 잉 여 금 처 분 계 산 서'
+        [표] 처분계산서 데이터
+    각주표의 직전 형제가 TABLE-GROUP 이라 `title_text` 가 그 안의 '현금흐름표' 를 읽어
+    CF 로 분류했고, 데이터가 없으니 앞으로 스캔해 **처분계산서를 CF 데이터로 붙였다.**
+    """
+    doc = f"""<DOCUMENT><SECTION-2><TITLE>4. 재무제표</TITLE>
+      <TABLE-GROUP>{_title('현금흐름표 제 48 기 2019.01.01 부터 (단위 : 원)')}{CF_DATA}</TABLE-GROUP>
+      {_title('주) 제46기는 종전 기준서인 K-IFRS 제1011호에 따라 작성되었습니다.')}
+      {_title('이 익 잉 여 금 처 분 계 산 서')}
+      {_title('제 48 기 2019년 1월 1일부터 2019년 12월 31일까지')}
+      {APPROP}
+    </SECTION-2></DOCUMENT>"""
+    root = etree.fromstring(doc.encode())
+    groups = _detect_body_statement_tables(root, fin_type="B", include_sce=True)
+
+    assert "1,111,111,111" in _amounts(groups, "CF_S")          # 진짜 CF 유지
+    picked = {a for code in groups for a in _amounts(groups, code)}
+    assert "110,890" not in picked, "처분계산서가 CF 로 붙었다"
+    assert len(groups.get("CF_S", [])) == 1

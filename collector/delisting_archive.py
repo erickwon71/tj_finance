@@ -13,6 +13,11 @@
   · NAS(PRIMARY)  raw_report/{시장}/{코드_이름}/  →  archive/delisted/{연도}/{코드_이름}/  **이동**
   · SD(BACKUP)    같은 폴더 **삭제** — NAS 아카이브에 실물이 있다는 것을 확인한 뒤에만
   · 삭제는 SD(백업)에만 일어난다. 원문 자체는 어떤 경우에도 지우지 않는다(결정 D1).
+  · 이동 직후 그 폴더 아래 filing 들의 `download_tasks.file_path` 도 새 위치로 **같은
+    트랜잭션에서** 갱신한다(`_repoint_download_tasks`). 안 그러면 로더들이 옛 경로를
+    계속 보다가 "file missing" 으로 조용히 영구 스킵한다 — 2026-08 상장폐지 12사 923건이
+    이렇게 났었다(당시엔 `file_path` 미갱신 → 파생 데이터를 통째로 삭제하는 것으로 우회,
+    `scripts/purge_delisted_data.py`). 이 수정으로 다음 상장폐지부터는 재발하지 않는다.
 
 자동화하면서 새로 필요해진 가드
 ───────────────────────────────
@@ -69,13 +74,41 @@ def _dir_stats(path: Path) -> tuple[int, float]:
     return n, size / 1024 ** 2
 
 
+def _repoint_download_tasks(session, corp_code: str, old_root: str, new_root: str) -> int:
+    """이관으로 옮겨진 폴더 아래 filing 들의 `download_tasks.file_path` 를 새 위치로 갱신한다.
+
+    ★ 이 함수를 빼먹으면 재발하는 버그(2026-08 상장폐지 12사 923건 원인):
+    `archive_confirmed()` 는 폴더를 `shutil.move` 로 통째로 옮기지만 `corporations.
+    archive_path` 만 갱신하고 `download_tasks.file_path` 는 옛 경로(raw_report 쪽)를
+    그대로 가리킨다. 그러면 그 filing 들은 로더마다(`load_report_lines.py` 등 file_path
+    로 원문을 여는 모든 곳) "file missing" → `status='skip'` 으로 **오류 없이** 파싱
+    대상에서 영구히 빠진다. 원문 자체는 archive 에 멀쩡히 있는데도 그렇다.
+
+    archive_confirmed() 가 이동 직후 같은 트랜잭션에서 호출해야 한다.
+    """
+    rows = session.execute(text("""
+        SELECT dt.rcept_no, dt.file_path
+        FROM download_tasks dt
+        JOIN filings f ON f.rcept_no = dt.rcept_no
+        WHERE f.corp_code = :c AND dt.file_path IS NOT NULL
+    """), {"c": corp_code}).fetchall()
+    n = 0
+    for rcept_no, fp in rows:
+        if fp.startswith(old_root):
+            session.execute(text(
+                "UPDATE download_tasks SET file_path = :fp WHERE rcept_no = :r"),
+                {"fp": new_root + fp[len(old_root):], "r": rcept_no})
+            n += 1
+    return n
+
+
 def archive_confirmed(apply: bool = False,
                       limit: int = MAX_ARCHIVE_PER_RUN) -> dict:
     """확정분 원문을 NAS 아카이브로 **이동**한다(삭제 아님, 결정 D1).
 
     Returns:
         {"moved": [(corp_code, corp_name, dst, mb)], "no_source": [(code, name)],
-         "pending": int, "capped": bool, "errors": [(code, name, msg)]}
+         "pending": int, "capped": bool, "errors": [(code, name, msg)], "repointed": int}
     """
     assert_storage(require_backup=False)
     with get_session() as s:
@@ -86,7 +119,7 @@ def archive_confirmed(apply: bool = False,
         """)).fetchall()
 
     out: dict = {"moved": [], "no_source": [], "errors": [],
-                 "pending": len(rows), "capped": False}
+                 "pending": len(rows), "capped": False, "repointed": 0}
     if not rows:
         return out
 
@@ -117,12 +150,15 @@ def archive_confirmed(apply: bool = False,
                 raise FileExistsError(f"아카이브 대상이 이미 존재: {dst}")
             shutil.move(str(src), str(dst))
             with get_session() as s:
+                n_repointed = _repoint_download_tasks(s, corp_code, str(src), str(dst))
                 s.execute(text(
                     "UPDATE corporations SET archive_path = :p, updated_at = now() "
                     "WHERE corp_code = :c"), {"p": str(dst), "c": corp_code})
                 s.commit()
             out["moved"].append((corp_code, corp_name, dst, mb))
-            logger.info(f"[archive] 이관 {corp_name}({corp_code}) → {dst}  ({mb:.0f}MB)")
+            out["repointed"] += n_repointed
+            logger.info(f"[archive] 이관 {corp_name}({corp_code}) → {dst}  ({mb:.0f}MB) · "
+                        f"file_path 재배선 {n_repointed}건")
         except Exception as exc:  # noqa: BLE001
             out["errors"].append((corp_code, corp_name, f"{type(exc).__name__}: {exc}"))
             logger.error(f"[archive] 이관 실패 {corp_name}({corp_code}): {exc}")
@@ -208,12 +244,14 @@ def run_daily(apply: bool = True) -> dict:
     summary = {
         "archived": len(a["moved"]), "archive_no_source": len(a["no_source"]),
         "archive_capped": a["capped"], "archive_errors": len(a["errors"]),
+        "archive_repointed": a["repointed"],
         "backup_purged": len(p["purged"]), "backup_purged_mb": round(p["mb"], 1),
         "backup_skipped": len(p["skipped"]), "backup_errors": len(p["errors"]),
     }
     if a["moved"] or p["purged"]:
         logger.success(
-            f"[archive] 상장폐지 원문 이관 {summary['archived']}개 · "
+            f"[archive] 상장폐지 원문 이관 {summary['archived']}개"
+            f"(file_path 재배선 {summary['archive_repointed']}건) · "
             f"SD 정리 {summary['backup_purged']}개({summary['backup_purged_mb']:.0f}MB)")
     if alerts:
         try:

@@ -38,18 +38,29 @@ class _FakeResult:
 
 
 class _FakeSession:
-    """corporations 한 테이블만 흉내낸다. SQL 은 키워드로 분기."""
+    """corporations + download_tasks 두 테이블을 흉내낸다. SQL 은 키워드로 분기."""
 
-    def __init__(self, store: list[dict]):
+    def __init__(self, store: list[dict], tasks: list[dict] = ()):
         self.store = store
+        self.tasks = list(tasks)  # [{rcept_no, corp_code, file_path}]
 
     def execute(self, stmt, params=None):
         sql = str(stmt)
-        if sql.lstrip().upper().startswith("UPDATE"):
+        upper = sql.lstrip().upper()
+        if upper.startswith("UPDATE DOWNLOAD_TASKS"):
+            for t in self.tasks:
+                if t["rcept_no"] == params["r"]:
+                    t["file_path"] = params["fp"]
+            return _FakeResult([])
+        if upper.startswith("UPDATE"):
             for row in self.store:
                 if row["corp_code"] == params["c"]:
                     row["archive_path"] = params["p"]
             return _FakeResult([])
+        if "DOWNLOAD_TASKS" in upper:
+            rows = [t for t in self.tasks
+                    if t["corp_code"] == params["c"] and t["file_path"] is not None]
+            return _FakeResult([(t["rcept_no"], t["file_path"]) for t in rows])
         pending = "archive_path IS NULL" in sql
         rows = [r for r in self.store
                 if r["delisting_status"] == "confirmed"
@@ -64,16 +75,19 @@ class _FakeSession:
 
 
 @contextmanager
-def fake_env(corps: list[dict], on_nas: list[str] = (), on_sd: list[str] = ()):
+def fake_env(corps: list[dict], on_nas: list[str] = (), on_sd: list[str] = (),
+             tasks: list[dict] = ()):
     """tmp NAS/SD 볼륨 + 가짜 세션으로 모듈 상수를 교체.
 
     corps: [{corp_code, corp_name, market, delisting_status, archive_path}]
     on_nas/on_sd: 폴더를 만들어 둘 corp_code 목록 (각 폴더에 파일 2개)
+    tasks: [{rcept_no, corp_code, file_path}] — download_tasks 흉내(재배선 검증용)
     """
     tmp = Path(tempfile.mkdtemp(prefix="tj_da_"))
     saved = {k: getattr(da, k) for k in
              ("PRIMARY_ROOT", "BACKUP_ROOT", "ARCHIVE_ROOT", "get_session", "assert_storage")}
     calls: list[bool] = []
+    task_store = [dict(t) for t in tasks]
     try:
         da.PRIMARY_ROOT = tmp / "nas" / "raw_report"
         da.BACKUP_ROOT = tmp / "sd" / "raw_report"
@@ -88,11 +102,11 @@ def fake_env(corps: list[dict], on_nas: list[str] = (), on_sd: list[str] = ()):
 
         @contextmanager
         def _session():
-            yield _FakeSession(corps)
+            yield _FakeSession(corps, task_store)
 
         da.get_session = _session
         da.assert_storage = lambda require_backup=False: calls.append(require_backup)
-        yield tmp, calls
+        yield tmp, calls, task_store
     finally:
         for k, v in saved.items():
             setattr(da, k, v)
@@ -108,7 +122,7 @@ def _corp(code, name="테스트", market="KOSPI", status="confirmed", archive_pa
 
 def test_archive_moves_and_records_path():
     corps = [_corp("00000001", "노블")]
-    with fake_env(corps, on_nas=["00000001"]) as (tmp, _):
+    with fake_env(corps, on_nas=["00000001"]) as (tmp, _, __):
         r = da.archive_confirmed(apply=True)
         assert len(r["moved"]) == 1 and not r["errors"], r
         dst = da.ARCHIVE_ROOT / str(date.today().year) / "00000001_노블"
@@ -148,6 +162,42 @@ def test_archive_never_overwrites_existing():
         assert (da.PRIMARY_ROOT / "KOSPI" / "00000001_노블").is_dir(), "원문이 사라졌다"
 
 
+# ── ⑦ download_tasks.file_path 재배선(2026-08 923건 재발 방지) ─────
+
+def test_archive_repoints_download_tasks_file_path():
+    """이동된 폴더 아래 filing 의 file_path 가 새 위치로 갱신돼야 한다."""
+    corps = [_corp("00000001", "노블")]
+    with fake_env(corps, on_nas=["00000001"]) as (tmp, _, task_store):
+        old_dir = da.PRIMARY_ROOT / "KOSPI" / "00000001_노블" / "2025"
+        task_store.append({"rcept_no": "R1", "corp_code": "00000001",
+                            "file_path": str(old_dir / "a.xml")})
+        r = da.archive_confirmed(apply=True)
+        assert r["repointed"] == 1, r
+        dst = da.ARCHIVE_ROOT / str(date.today().year) / "00000001_노블"
+        new_path = task_store[0]["file_path"]
+        assert new_path == str(dst / "2025" / "a.xml"), new_path
+        assert Path(new_path).is_file(), "재배선된 경로에 실제 파일이 없다"
+
+
+def test_archive_dry_run_does_not_repoint():
+    corps = [_corp("00000001", "노블")]
+    with fake_env(corps, on_nas=["00000001"]) as (tmp, _, task_store):
+        old_path = str(da.PRIMARY_ROOT / "KOSPI" / "00000001_노블" / "2025" / "a.xml")
+        task_store.append({"rcept_no": "R1", "corp_code": "00000001", "file_path": old_path})
+        da.archive_confirmed(apply=False)
+        assert task_store[0]["file_path"] == old_path, "드라이런인데 file_path 를 바꿨다"
+
+
+def test_archive_repoint_leaves_other_corps_alone():
+    """다른 기업의 file_path 는 건드리지 않는다(corp_code 로 좁혀 조회)."""
+    corps = [_corp("00000001", "노블"), _corp("00000002", "바이온", status="active_ignore")]
+    with fake_env(corps, on_nas=["00000001"]) as (tmp, _, task_store):
+        other_path = "/some/other/place/00000002_바이온/2025/x.xml"
+        task_store.append({"rcept_no": "R2", "corp_code": "00000002", "file_path": other_path})
+        da.archive_confirmed(apply=True)
+        assert task_store[0]["file_path"] == other_path, "다른 기업 file_path 가 바뀌었다"
+
+
 # ── ⑤ A1 상한: 부분 실행이 아니라 전면 중단 ────────────────────────
 
 def test_cap_exceeded_stops_everything():
@@ -166,7 +216,7 @@ def test_run_daily_skips_purge_when_capped():
     da.MAX_ARCHIVE_PER_RUN = 3
     try:
         with fake_env(corps, on_nas=[c["corp_code"] for c in corps],
-                      on_sd=[c["corp_code"] for c in corps]) as (tmp, calls):
+                      on_sd=[c["corp_code"] for c in corps]) as (tmp, calls, _tasks):
             s = da.run_daily(apply=True)
             assert s["archive_capped"] and s["backup_purged"] == 0, s
             assert True not in calls, "상한 중단인데 백업 계약 검사를 돌렸다(=SD 를 만졌다)"
@@ -178,7 +228,7 @@ def test_run_daily_skips_purge_when_capped():
 
 def test_purge_removes_sd_only_after_archive_exists():
     corps = [_corp("00000001", "노블")]
-    with fake_env(corps, on_nas=["00000001"], on_sd=["00000001"]) as (tmp, calls):
+    with fake_env(corps, on_nas=["00000001"], on_sd=["00000001"]) as (tmp, calls, _tasks):
         da.archive_confirmed(apply=True)
         r = da.purge_backup(apply=True)
         assert len(r["purged"]) == 1 and not r["skipped"], r

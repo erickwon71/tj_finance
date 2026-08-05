@@ -167,6 +167,49 @@ def _build_file_path(
     return dest_dir
 
 
+def _try_xbrl_instance_fallback(
+    scraper: "LegacyDartScraper",
+    task: DownloadTask,
+    filing: Filing,
+    corp: Corporation,
+) -> Optional[bool]:
+    """
+    OpenDART 014 오류 시, 웹 뷰어(PDF/HTML) 폴백보다 **먼저** 표준 XBRL 원문(ifrs.do) 시도.
+    docs/plans/xbrl_instance_parser_2026-08-05.md — 정형 데이터라 PDF 텍스트 파싱보다 우선.
+
+    실패(파라미터 추출 실패/XBRL 부재)해도 예외를 던지지 않고 None만 반환 —
+    호출부가 그대로 기존 `_try_legacy_fallback()`으로 이어지게 한다(회귀 없음).
+    반환: True=completed, None=여기서는 못 받음(호출부가 다음 폴백 시도)
+    """
+    logger.info(f"  ↷ API 014 → XBRL 원문(ifrs.do) 시도...")
+    try:
+        zip_bytes, dcm_no = scraper.fetch_xbrl_zip(task.rcept_no)
+    except Exception as e:
+        logger.debug(f"  XBRL fetch 오류: {e}")
+        return None
+
+    if not zip_bytes:
+        return None
+
+    dest_dir  = _build_file_path(corp, filing)
+    dest_path = dest_dir / f"{task.rcept_no}.zip"
+    tmp_path  = TMP_DIR / f"{task.rcept_no}.zip"
+
+    tmp_path.write_bytes(zip_bytes)
+    shutil.move(str(tmp_path), dest_path)
+
+    file_size = dest_path.stat().st_size
+    logger.success(
+        f"  ✓ 저장 완료 [XBRL 원문]: {dest_path.relative_to(RAW_REPORT_DIR)} "
+        f"({file_size / 1024:.0f} KB)"
+    )
+    _mark_completed(
+        task.rcept_no, dest_path, "xbrl_zip", file_size,
+        parser_track="XBRL_INSTANCE", dcm_no=dcm_no,
+    )
+    return True
+
+
 def _try_legacy_fallback(
     scraper: "LegacyDartScraper",
     task: DownloadTask,
@@ -366,7 +409,9 @@ def _download_one(
             err_msg = f"DART 오류 [{status_code}]: {message}"
 
             if status_code == "014":
-                # ── 014: 파일없음 → 웹 뷰어(레거시) 폴백 ────────
+                # ── 014: 파일없음 → 먼저 표준 XBRL 원문(ifrs.do) 시도, 없으면 웹 뷰어(레거시) 폴백 ──
+                if _try_xbrl_instance_fallback(scraper, task, filing, corp):
+                    return True
                 return _try_legacy_fallback(scraper, task, filing, corp, err_msg)
 
             elif status_code == "020":
@@ -506,17 +551,29 @@ def _mark_completed(
     dest_path: Path,
     file_type: str,
     file_size: int,
+    parser_track: Optional[str] = None,
+    dcm_no: Optional[str] = None,
 ) -> None:
-    """다운로드 성공 시 DB 업데이트"""
+    """다운로드 성공 시 DB 업데이트.
+
+    parser_track/dcm_no는 XBRL 원문 폴백(_try_xbrl_instance_fallback) 전용 —
+    기존 호출부는 넘기지 않으므로 해당 컬럼은 그대로 NULL 유지(회귀 없음).
+    """
+    values = dict(
+        status="completed",
+        file_path=str(dest_path),
+        file_type=file_type.lstrip("."),
+        file_size=file_size,
+        completed_at=datetime.utcnow(),
+    )
+    if parser_track is not None:
+        values["parser_track"] = parser_track
+    if dcm_no is not None:
+        values["dcm_no"] = dcm_no
+
     with get_session() as session:
         session.execute(
             update(DownloadTask)
             .where(DownloadTask.rcept_no == rcept_no)
-            .values(
-                status="completed",
-                file_path=str(dest_path),
-                file_type=file_type.lstrip("."),
-                file_size=file_size,
-                completed_at=datetime.utcnow(),
-            )
+            .values(**values)
         )

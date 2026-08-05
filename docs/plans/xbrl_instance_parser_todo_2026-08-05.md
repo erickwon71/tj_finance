@@ -27,22 +27,35 @@
 - [x] Phase 0 조사 결과를 짧은 메모로 정리(이 문서 하단 "Phase 0 결과" 섹션에 채워넣기) — 이후 세션이 재조사 없이 이어받을 수 있도록
 - [x] (추가 실측) 한화에어로스페이스(`20260513000860`, 2026Q1)로 교차검증 — 이 트랙의 실제 동기가 된 사례라 박셀바이오(소형·별도만) 외에 대형·연결+별도 병존 케이스도 확인
 
-## Phase 1 — 데이터 모델 변경
+## Phase 1 — 데이터 모델 변경 (완료 2026-08-05)
 
-- [ ] `collector/db.py::_run_migrations()`에 `dcm_no` 컬럼 추가 마이그레이션 항목 추가 (`ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS dcm_no VARCHAR(20)`)
-- [ ] 같은 곳에 `file_type` 폭 확장 마이그레이션 추가 (`String(5)→String(10)`)
-- [ ] `collector/models.py`의 `DownloadTask`에 `dcm_no` 컬럼 선언 추가, `file_type` 컬럼 타입/코멘트 갱신
-- [ ] `parser_track` 코멘트에 `XBRL_INSTANCE` 값 추가 (폭 변경 불필요, `String(15)`로 충분)
-- [ ] 로컬 DB에 마이그레이션 적용 후 스키마 반영 확인 (`\d download_tasks` 등)
+- [x] `collector/db.py::_run_migrations()`에 `dcm_no` 컬럼 추가 마이그레이션 항목 추가 (`ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS dcm_no VARCHAR(20)`)
+- [x] 같은 곳에 `file_type` 폭 확장 마이그레이션 추가 (`String(5)→String(10)`)
+- [x] `collector/models.py`의 `DownloadTask`에 `dcm_no` 컬럼 선언 추가, `file_type` 컬럼 타입/코멘트 갱신
+- [x] `parser_track` 코멘트에 `XBRL_INSTANCE` 값 추가 (폭 변경 불필요, `String(15)`로 충분)
+- [x] 로컬 DB에 마이그레이션 적용 후 스키마 반영 확인 (`information_schema.columns` 조회 — `dcm_no VARCHAR(20)`/`file_type VARCHAR(10)` 확인)
 
-## Phase 2 — 다운로더 확장
+migration id: `2026_08_download_tasks_dcm_no` / `2026_08_download_tasks_file_type_widen` (schema_migrations 에 기록됨, 멱등). `pytest fin2/tests/` 263 passed(기존 실패 1건 `test_lxintl_facility_table_dropped` 은 이 변경과 무관 — stash 재확인, 이번 변경 전부터 실패).
 
-- [ ] `collector/legacy_downloader.py`에 `LegacyDartScraper._fetch_xbrl_instance(rcept_no, dcm_no)` 구현 (`_fetch_pdf()` 패턴 — Referer 헤더, 매직바이트 확인)
-- [ ] 같은 파일에 공개 메서드 `fetch_xbrl_zip(rcept_no)` 추가 (내부에서 `_get_view_params` 호출 후 위 메서드 호출)
-- [ ] `collector/downloader.py::_download_one()`의 `status_code == "014"` 분기에서 `_try_legacy_fallback()` 호출 전에 `_try_xbrl_instance_fallback()` 신설·삽입
-- [ ] 성공 시 zip 저장 로직 — `_build_file_path()` + tmp-then-move 패턴 재사용, `file_type='xbrl_zip'`, `parser_track='XBRL_INSTANCE'`, `dcm_no` 저장
-- [ ] 실패/부재 시 기존 `_try_legacy_fallback()`(PDF 폴백)으로 자연스럽게 이어지는지 확인 (기존 동작 회귀 없음)
-- [ ] `_mark_completed()`에 `dcm_no` 저장용 파라미터 추가
+## Phase 2 — 다운로더 확장 (완료 2026-08-06)
+
+- [x] `collector/legacy_downloader.py`에 `LegacyDartScraper._fetch_xbrl_instance(rcept_no, dcm_no)` 구현 (`_fetch_pdf()` 패턴 — Referer 헤더, 매직바이트 확인)
+- [x] 같은 파일에 공개 메서드 `fetch_xbrl_zip(rcept_no)` 추가 (내부에서 `_get_view_params` 호출 후 위 메서드 호출)
+- [x] `collector/downloader.py::_download_one()`의 `status_code == "014"` 분기에서 `_try_legacy_fallback()` 호출 전에 `_try_xbrl_instance_fallback()` 신설·삽입
+- [x] 성공 시 zip 저장 로직 — `_build_file_path()` + tmp-then-move 패턴 재사용, `file_type='xbrl_zip'`, `parser_track='XBRL_INSTANCE'`, `dcm_no` 저장
+- [x] 실패/부재 시 기존 `_try_legacy_fallback()`(PDF 폴백)으로 자연스럽게 이어지는지 확인 (기존 동작 회귀 없음)
+- [x] `_mark_completed()`에 `dcm_no` 저장용 파라미터 추가
+
+**★Phase 0 기록 정정(실제 구현 중 재확인, 2026-08-06)**: Phase 0 §1 "1회 GET으로 충분"은 맞지만,
+`ifrs.do` 요청의 **`Referer` 헤더는 `/pdf/download/main.do?rcp_no=...&dcm_no=...` 여야 함** —
+`/dsaf001/main.do?rcpNo=...`(Phase 0 조사 스크립트가 실제로 썼던 값과 다르게 최초 구현 시 잘못
+추정한 값)로 보내면 서버가 **200 + `Content-Length: 0`(빈 바디)**를 반환해 조용히 실패한다
+(HTML 오류 페이지도 아니고 매직바이트 불일치로만 드러남 — 로그만 보면 "XBRL 없음"으로 오판하기 쉬움).
+`main.do`를 실제로 먼저 호출할 필요는 없음(Referer 값만 올바르면 충분, 재확인됨) — 계획대로 1회 GET 유지.
+`_fetch_xbrl_instance()`가 올바른 Referer로 수정 후 박셀바이오(44,076B)·한화에어로스페이스(1,144,829B)
+둘 다 Phase 0 기록과 정확히 일치하는 크기로 재현 확인(zip 매직바이트·박셀바이오 7파일 구성도 확인).
+
+`pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, Phase 1과 동일).
 
 ## Phase 3 — 파서 핵심 (Phase 0 결론 확정 후 착수)
 

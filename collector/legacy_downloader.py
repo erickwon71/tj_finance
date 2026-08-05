@@ -104,6 +104,28 @@ class LegacyDartScraper:
         )
         return None, ""
 
+    def fetch_xbrl_zip(self, rcept_no: str) -> tuple[Optional[bytes], Optional[str]]:
+        """
+        표준 XBRL 원문(instance+taxonomy zip) 다운로드 (docs/plans/xbrl_instance_parser_2026-08-05.md
+        Phase 0 실측 기반). `_get_view_params()`로 dcm_no 확보 후 ifrs.do 1회 GET이면 충분
+        (PDF 흐름의 main.do 존재확인 단계는 필요 없음 — Phase 0 §1).
+
+        반환: (zip_bytes, dcm_no) — 실패(파라미터 추출 실패 또는 XBRL 부재) 시 (None, None)
+        """
+        params = self._get_view_params(rcept_no)
+        if not params:
+            logger.debug(f"    [legacy] XBRL: 뷰어 파라미터 추출 실패")
+            return None, None
+
+        dcm_no = params["dcmNo"]
+        zip_bytes = self._fetch_xbrl_instance(rcept_no, dcm_no)
+        if zip_bytes:
+            logger.debug(f"    [legacy] XBRL zip 성공: {len(zip_bytes):,}B (dcm_no={dcm_no})")
+            return zip_bytes, dcm_no
+
+        logger.debug(f"    [legacy] XBRL zip 없음/실패 (dcm_no={dcm_no})")
+        return None, None
+
     # ── 내부 메서드 ─────────────────────────────────────────────
 
     def _throttle(self) -> None:
@@ -170,6 +192,48 @@ class LegacyDartScraper:
         if content[:4] != b"%PDF":
             logger.debug(
                 f"    [legacy] PDF 매직 바이트 불일치 "
+                f"(첫 8B={content[:8].hex()}, "
+                f"Content-Type={resp.headers.get('content-type', '?')})"
+            )
+            return None
+
+        return content
+
+    def _fetch_xbrl_instance(self, rcept_no: str, dcm_no: str) -> Optional[bytes]:
+        """
+        dart.fss.or.kr/pdf/download/ifrs.do 엔드포인트로 표준 XBRL instance zip 다운로드.
+
+        PDF 흐름(`_fetch_pdf`)의 main.do 존재확인 2단계와 달리, 여기는 **1회 GET으로 충분**
+        (Phase 0 실측 §1 — main.do는 PDF 존재 여부만 알려주고 XBRL 존재와는 무관).
+        """
+        self._throttle()
+        try:
+            resp = self._client.get(
+                f"{DART_WEB_BASE}/pdf/download/ifrs.do",
+                params={"rcp_no": rcept_no, "dcm_no": dcm_no, "lang": "ko"},
+                headers={
+                    **_HEADERS,
+                    # Referer는 반드시 /pdf/download/main.do (dsaf001/main.do 아님) — 아니면
+                    # 서버가 200 + Content-Length 0(빈 바디)만 반환함(_fetch_pdf 패턴과 동일 Referer 필요,
+                    # main.do를 실제로 먼저 호출할 필요는 없음 — Referer 값만 맞으면 충분, 재확인됨).
+                    "Referer": (
+                        f"{DART_WEB_BASE}/pdf/download/main.do"
+                        f"?rcp_no={rcept_no}&dcm_no={dcm_no}"
+                    ),
+                },
+                timeout=120,  # 대형 연결기업 zip은 수십MB (Phase 0: 한화 1.1MB, 더 큰 필링 가능)
+            )
+            resp.raise_for_status()
+            self._last_ts = time.monotonic()
+        except Exception as e:
+            logger.debug(f"    [legacy] XBRL instance 다운로드 실패: {e}")
+            return None
+
+        content = resp.content
+        # zip 매직 바이트 확인 (PK\x03\x04). HTML 오류 페이지와 구분(Phase 0: 2866B HTML vs zip).
+        if content[:4] != b"PK\x03\x04":
+            logger.debug(
+                f"    [legacy] XBRL zip 매직 바이트 불일치 "
                 f"(첫 8B={content[:8].hex()}, "
                 f"Content-Type={resp.headers.get('content-type', '?')})"
             )

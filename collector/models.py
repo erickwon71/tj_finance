@@ -109,7 +109,7 @@ class DownloadTask(Base):
     status           = Column(String(15), default="pending", nullable=False, index=True,
                                comment="pending/downloading/completed/failed/skipped")
     file_path        = Column(String(1000), nullable=True,  comment="저장된 파일 절대경로")
-    file_type        = Column(String(5),   nullable=True,   comment="pdf/html/hwp/zip/xml")
+    file_type        = Column(String(10),  nullable=True,   comment="pdf/html/hwp/zip/xml/xbrl_zip")
     file_size        = Column(BigInteger,  nullable=True,   comment="바이트")
     attempts         = Column(Integer,     default=0,       comment="시도 횟수")
     last_error       = Column(Text,        nullable=True,   comment="마지막 오류 메시지")
@@ -123,7 +123,11 @@ class DownloadTask(Base):
     parse_error      = Column(Text,       nullable=True)
     parsed_at        = Column(DateTime,   nullable=True)
     parsed_facts     = Column(Integer,    nullable=True, comment="추출된 fact 행 수")
-    parser_track     = Column(String(15), nullable=True, comment="A/B/PDF/PDF_AMEND")
+    parser_track     = Column(String(15), nullable=True, comment="A/B/PDF/PDF_AMEND/XBRL_INSTANCE")
+
+    # XBRL 원문 파서(docs/plans/xbrl_instance_parser_2026-08-05.md) Phase 1:
+    # ifrs.do 다운로드에 필요한 DART 문서번호(_get_view_params 로 획득).
+    dcm_no           = Column(String(20), nullable=True, comment="DART 문서번호(ifrs.do 다운로드용)")
 
     # PRD 02 Gate A: 다운로드 유효성 검증
     gate_a_status    = Column(String(12), nullable=True, index=True,

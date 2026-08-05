@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 
 from parser.common.amount_normalizer import detect_unit_tokens
-from parser.xml.section_detector import table_has_amount_rows
+from parser.xml.section_detector import table_has_amount_rows, table_direct_rows
 
 # 본문 재무제표 표제 패턴(제목 표 텍스트에서). 요약/주석/분할·합병/자본변동표 배제.
 _STMT_TITLE = [
@@ -192,6 +192,87 @@ def title_text_for_classify(tbl, max_skip: int = 3) -> str:
             return txt[:200]        # 표제(또는 라벨 있는 비메타 형제) — 여기서 멈춘다
         prev = prev.getprevious()   # 메타줄(단위/기간/빈칸) 건너뛴다
     return ""
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# R4-2: title_text_owned/title_text_for_classify 가 **둘 다 실패**했을 때만 시도하는
+# 최후 폴백 2종 — "제목+데이터 병합 표"(§3-A) · "제목 자체가 없는 표"(§3-B).
+# 근거·census·안전성 검증: docs/plans/merged_title_data_table_r4-2_2026-08-05.md
+# ══════════════════════════════════════════════════════════════════════════
+
+_MERGED_TITLE_STMT = {
+    "재무상태표": "BS", "대차대조표": "BS",
+    "포괄손익계산서": "IS", "손익계산서": "IS",
+    "현금흐름표": "CF", "자본변동표": "SCE",
+}
+
+
+def owned_merged_title(tbl, include_sce: bool = False) -> str | None:
+    """표 자신의 **첫 행**이 재무제표명 하나뿐이면 그 statement 코드(BS/IS/CF/SCE).
+
+    '재무제표_직접작성' 수기입력 서식(실측 특수건설 20151116001903·팬엔터테인먼트
+    20181114002948)은 제목·기간·회사명·단위·헤더·데이터가 **한 TABLE 안에** 전부
+    들어있어, 직전 형제를 보는 `title_text_owned`/`title_text_for_classify` 가 표제를
+    못 찾는다. 이 함수는 표 자신의 내용을 직접 읽는다.
+
+    ★★ 호출측 필수 조건 — 반드시 **`table_has_amount_rows(tbl)` 가 참인 표에만** 호출할
+    것. 표제/데이터표가 **분리된** 정상 서식의 순수 제목표(예 '이 익 잉 여 금 처 분
+    계 산 서' 한 줄뿐, 데이터는 다음 형제 표)도 첫 행이 재무제표명뿐이라 이 함수에
+    걸린다 — 그런 제목표에 적용하면 그 표의 진짜 데이터가 (a) 이 함수의 forward-scan
+    경로와 (b) 다음 idx 에서 도는 정상 title_text_owned 경로 **양쪽**에서 잡혀 같은
+    데이터표가 그룹에 중복 append 된다(표본 대다수가 이 분리 서식이라 광범위하게
+    번진다 — 반드시 데이터 보유 표로 좁힐 것).
+    """
+    trs = table_direct_rows(tbl)
+    if not trs:
+        return None
+    first_txt = " ".join("".join(trs[0].itertext()).split())
+    compact = re.sub(r"\s+", "", first_txt).strip("()（）")
+    stmt = _MERGED_TITLE_STMT.get(compact)
+    if stmt == "SCE" and not include_sce:
+        return None
+    return stmt
+
+
+_HEADER_LABEL_RE = re.compile(r"^(과\s*목|계\s*정\s*과\s*목|계\s*정\s*명)$")
+# 헤더 다음 행의 "첫 계정명"으로 오인하면 안 되는 기간/날짜 패턴. "과목" 헤더 셀이
+# ROWSPAN=2(과목/기간 2단 헤더)를 쓰면 다음 TR 은 1열이 통째로 없어져 그 TR 의 첫 TD 가
+# 이미 2열째 값(날짜)이 된다 — 실측 포시에스: 이 패턴 없이는 "2017-09-30" 을 계정명으로
+# 오인해 BS 판정이 실패했다.
+_PERIOD_ROW_RE = re.compile(
+    r"^\d{4}[-.]\d{1,2}([-.]\d{1,2})?$|^제\s*\d+\s*\(?[당전]?\)?기|^\d+\s*기")
+
+
+def _row_first_cell_text(tr) -> str:
+    for td in tr:
+        tag = td.tag.upper() if isinstance(td.tag, str) else ""
+        if tag in ("TD", "TE", "TH"):
+            return " ".join("".join(td.itertext()).split())
+    return ""
+
+
+def titleless_bs_start(tbl) -> bool:
+    """표에 제목이 **전혀 없이** 곧바로 헤더행("과목" 등)으로 시작하고, 헤더 다음 첫
+    계정명이 "자산"이면 BS 시작 신호로 인정한다(실측 포시에스 20171114002836 BS —
+    "4.재무제표"/"2.연결재무제표" 섹션 아래 표 안 어디에도 "재무상태표" 문구가 없다).
+
+    ★★ 호출측 필수 조건 — 반드시 **그 표가 속한 DART 섹션(`2.연결재무제표`/`4.재무제표`)
+    안에서 첫 번째 금액표일 때만**(위치) 호출할 것. 이 함수 자체는 표 구조만 보고
+    위치를 모른다 — 사용자 확정 census(2026-08-05, 398건 전수) 결과 위치 조건 없이
+    "과목으로 바로 시작"만 걸면 주석/CF/IS 표까지 9건이 오검출됐고(미래아이앤지·메지온·
+    올리패스·라파스·이엔플러스·한탑 등), 위치 조건을 더하니 포시에스 2표만 남았다.
+    """
+    trs = table_direct_rows(tbl)
+    if not trs:
+        return False
+    if not _HEADER_LABEL_RE.match(re.sub(r"\s+", "", _row_first_cell_text(trs[0]))):
+        return False
+    for tr in trs[1:]:
+        compact = re.sub(r"\s+", "", _row_first_cell_text(tr))
+        if not compact or _PERIOD_ROW_RE.match(compact):
+            continue
+        return compact == "자산"
+    return False
 
 
 # ══════════════════════════════════════════════════════════════════════════

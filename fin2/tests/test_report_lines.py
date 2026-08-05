@@ -149,8 +149,10 @@ def test_notes_off_by_default():
 # 경우가 있다 — 08-04/08-05 잔여공백 24건 재분해 중 발견(핸드오프
 # handoff_delisting_filepath_and_gap_recheck_2026-08-05.md §5 "표잡힘(현대)-적재만안됨").
 # 근거는 magnitude 추론이 아니라 문서 안 텍스트 선언(요약재무정보 표 단위·회계정책 주석의
-# 표시통화 문구)뿐이다. 특수건설(20151116001903)은 **별개 결함**(제목+데이터 병합 표라
-# BS/IS 분류 자체가 실패)이라 이 회귀 대상에서 제외 — docs/PARSING_RULES.md 부록C 참고.
+# 표시통화 문구)뿐이다. ★특수건설(20151116001903)·포시에스(20171114002836)·
+# 팬엔터테인먼트(20181114002948)는 애초 **별개 결함**(제목+데이터 병합 표/제목 자체 없는
+# 표라 BS/IS 분류 자체가 실패)이라 이 회귀에서 제외했으나, R4-2(아래)로 해결됐다 —
+# docs/plans/merged_title_data_table_r4-2_2026-08-05.md.
 _ELP_A = (
     Path(__file__).resolve().parents[2]
     / "raw_report/KOSDAQ/00374020_이엘피/annual/2015/20160330001530.xml"
@@ -233,6 +235,135 @@ def test_previously_gap_filings_now_load_with_doc_default_source():
         assert all(l.unit_source == "doc_default" for l in body), (
             rcept, {l.unit_source for l in body})
         assert all(l.value_won is not None for l in body)
+
+
+# ── R4-2: 제목+데이터 병합 표 / 제목 자체 없는 표 (2026-08-05) ──────────────
+# docs/plans/merged_title_data_table_r4-2_2026-08-05.md. 위 R4-1 로도 못 고치던 특수건설·
+# 팬엔터테인먼트(제목이 표 자신의 첫 행에 병합)·포시에스(BS 는 제목 자체가 없음, 위치+
+# 계정명 규칙)를 해결한다.
+_TUKGUN = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00186939_특수건설/quarter/2015/20151116001903.xml"
+)
+_PANENT = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00397191_팬엔터테인먼트/quarter/2018/20181114002948.xml"
+)
+_FORCS = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00939942_포시에스/quarter/2018/20171114002836.xml"
+)
+
+
+def test_owned_merged_title_reads_bare_title_row():
+    """표 자신의 첫 행이 재무제표명 하나뿐이면 statement 코드를 반환한다(특수건설 패턴)."""
+    from lxml import etree
+    from fin2.extract.statement_titles import owned_merged_title
+
+    xml = (
+        "<TABLE><TBODY>"
+        "<TR><TD COLSPAN='6'>재무상태표</TD></TR>"
+        "<TR><TD>계정명</TD><TD>금액</TD></TR>"
+        "<TR><TD>유동자산</TD><TD>95,539,541,976</TD></TR>"
+        "</TBODY></TABLE>"
+    )
+    tbl = etree.fromstring(xml)
+    assert owned_merged_title(tbl) == "BS"
+
+
+def test_owned_merged_title_none_when_first_row_is_data():
+    """첫 행이 재무제표명이 아니면(정상 표) None — 광범위 오검출 방지의 핵심 가드."""
+    from lxml import etree
+    from fin2.extract.statement_titles import owned_merged_title
+
+    xml = "<TABLE><TBODY><TR><TD>계정명</TD><TD>금액</TD></TR></TBODY></TABLE>"
+    tbl = etree.fromstring(xml)
+    assert owned_merged_title(tbl) is None
+
+
+def test_merged_table_local_unit_finds_inline_declaration():
+    """병합표 안, 헤더행 이전 메타행의 '(단위 : 원)' 을 찾는다(특수건설·팬엔터 패턴)."""
+    from lxml import etree
+    from fin2.extract.text import merged_table_local_unit
+
+    xml = (
+        "<TABLE><TBODY>"
+        "<TR><TD COLSPAN='6'>재무상태표</TD></TR>"
+        "<TR><TD>회사명 : (주)특수건설</TD><TD>(단위 : 원)</TD></TR>"
+        "<TR><TD>계정명</TD><TD>금액</TD></TR>"
+        "<TR><TD>유동자산</TD><TD>95,539,541,976</TD></TR>"
+        "</TBODY></TABLE>"
+    )
+    tbl = etree.fromstring(xml)
+    assert merged_table_local_unit(tbl) == 1
+
+
+def test_titleless_bs_start_position_rule():
+    """제목 없이 곧바로 '과목' 헤더로 시작 + 첫 계정명 '자산' → BS 시작 신호(포시에스 패턴).
+
+    ★ROWSPAN 함정: "과목" 헤더 셀이 ROWSPAN=2 라 다음 행 첫 TD 가 날짜값으로 밀린다 —
+    그 날짜를 계정명으로 오인하지 않고 건너뛰어 진짜 첫 계정명("자산")까지 가야 한다.
+    """
+    from lxml import etree
+    from fin2.extract.statement_titles import titleless_bs_start
+
+    xml = (
+        "<TABLE><TBODY>"
+        "<TR><TD ROWSPAN='2'>과 목</TD><TD>당기말</TD><TD>전기말</TD></TR>"
+        "<TR><TD>2017-09-30</TD><TD>2017-06-30</TD></TR>"
+        "<TR><TD>자산</TD><TD></TD><TD></TD></TR>"
+        "<TR><TD>유동자산</TD><TD>12,459,539,381</TD><TD>13,954,627,977</TD></TR>"
+        "</TBODY></TABLE>"
+    )
+    tbl = etree.fromstring(xml)
+    assert titleless_bs_start(tbl) is True
+
+
+def test_titleless_bs_start_false_for_income_statement():
+    """제목 없이 '과목' 으로 시작해도 첫 계정명이 '자산'이 아니면(예 매출) BS 신호 아님."""
+    from lxml import etree
+    from fin2.extract.statement_titles import titleless_bs_start
+
+    xml = (
+        "<TABLE><TBODY>"
+        "<TR><TD>과목</TD><TD>당기</TD></TR>"
+        "<TR><TD>매출액</TD><TD>2,637,279,464</TD></TR>"
+        "</TBODY></TABLE>"
+    )
+    tbl = etree.fromstring(xml)
+    assert titleless_bs_start(tbl) is False
+
+
+def test_r4_2_merged_and_titleless_filings_fully_loaded():
+    """특수건설·팬엔터(병합표)·포시에스(위치+계정명 BS)가 이제 BS/IS 전 섹션을 적재한다.
+
+    원문 대조(2026-08-05): 특수건설 유동자산 95,539,541,976·매출액 109,300,142,706,
+    포시에스 자산총계 44,370,779,689, 팬엔터 부채자본총계 62,471,323,149.
+    """
+    targets = [
+        (_TUKGUN, "20151116001903", "00186939", 2015, "Q3",
+         [("BS", "separate", "유동자산", 95_539_541_976),
+          ("IS", "separate", "매출액", 109_300_142_706)]),
+        (_PANENT, "20181114002948", "00397191", 2018, "Q3",
+         [("BS", "consolidated", "부채자본총계", 62_471_323_149),
+          ("BS", "separate", "부채자본총계", 62_471_323_149)]),
+        (_FORCS, "20171114002836", "00939942", 2017, "Q3",
+         [("BS", "consolidated", "자  산  총  계", 44_370_779_689),
+          ("BS", "separate", "자  산  총  계", 44_370_779_689)]),
+    ]
+    for path, rcept, corp, fy, period, checks in targets:
+        if not path.exists():
+            continue
+        lines = extract_report_lines(
+            path, rcept_no=rcept, corp_code=corp,
+            report_fiscal_year=fy, report_fiscal_period=period,
+        )
+        assert lines, f"{rcept} 여전히 0행"
+        for stmt, basis, label, expect in checks:
+            hits = [l for l in lines if l.statement == stmt and l.basis == basis
+                    and l.col_index == 0 and l.label_raw.strip() == label.strip()]
+            assert any(l.value_won == expect for l in hits), (
+                rcept, stmt, basis, label, [l.value_won for l in hits])
 
 
 def test_notes_monetary_transcribed_positional():

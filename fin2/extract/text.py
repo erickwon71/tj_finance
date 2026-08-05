@@ -48,6 +48,7 @@ from fin2.extract.statement_titles import (
     classify_statement_in_body_section, SECTION_CODE_OF,
     _is_metadata_only, _STMT_TITLE,
     classify_legacy_statement_heading, is_legacy_note_marker,
+    owned_merged_title, titleless_bs_start,
 )
 
 # 섹션 코드 → (basis, period_kind)
@@ -245,6 +246,10 @@ def _detect_body_statement_tables(root, fin_type: str,
         if basis == "consolidated" and fin_type == "B":
             continue  # 연결 없는 기업의 연결 표 무시
         tbls = sec_tables.get(sec_kind, [])
+        # R4-2 §3-B 위치 조건(포시에스 패턴) — 섹션의 첫 **금액표** 인덱스를 미리 구해둔다.
+        # `titleless_bs_start` 는 이 인덱스와 일치할 때만 시도한다(그 아래 참고).
+        first_amount_idx = next(
+            (i for i, t in enumerate(tbls) if table_has_amount_rows(t)), None)
         for idx, tbl in enumerate(tbls):
             # 섹션이 이미 '본문'을 보장하므로 주석 배제 가드가 불필요 → 재무제표명만 본다
             # (공백·반기/분기 접두 허용). 자본변동표(SCE)는 분류기가 배제한다 —
@@ -257,6 +262,17 @@ def _detect_body_statement_tables(root, fin_type: str,
                 # 재시도(엠로/에스앤디 등 구형 KOSDAQ 요약; v2 는 XBRL 로 잡던 것). 가산적.
                 stmt = classify_statement_in_body_section(
                     title_text_for_classify(tbl), include_sce=include_sce)
+            # R4-2(2026-08-05, docs/plans/merged_title_data_table_r4-2_2026-08-05.md) —
+            # 위 둘이 **모두** 실패했을 때만 시도하는 최후 폴백 2종. 반드시
+            # `table_has_amount_rows(tbl)`(=`_table_has_data_rows`) 가 참인 표에만 적용한다 —
+            # 그렇지 않으면 표제/데이터표 분리 서식의 순수 제목표에도 걸려 다음 idx 의 정상
+            # 분류와 중복 append 된다(owned_merged_title 문서화 참고, 광범위 서식이라 위험).
+            used_merged_title = False
+            if stmt is None and _table_has_data_rows(tbl):
+                stmt = owned_merged_title(tbl, include_sce=include_sce)
+                used_merged_title = stmt is not None
+            if stmt is None and idx == first_amount_idx and titleless_bs_start(tbl):
+                stmt = "BS"
             # 내용기반 **BS오분류 교정**(타이트): BS 로 분류됐으나 IS 내용(매출+영업이익)을 갖고
             # BS 내용(자산총계 등)이 **없는** 표만 IS 로 교정한다. 직전 형제가 'X 재무상태표는
             # 재작성…' 주석이라 BS 로 오분류된 무제목 IS(지노믹트리 2016) 만 정확히 겨냥 —
@@ -276,7 +292,14 @@ def _detect_body_statement_tables(root, fin_type: str,
             # section_kind 는 **실제로 귀속된 섹션**이어야 감사에 쓸 수 있다.
             if _table_has_data_rows(tbl):
                 # 정상 서식: 제목+데이터가 한 표(단위는 그 표가 명시 선언한 것만 신뢰).
-                groups.setdefault(section_code, []).append((tbl, declared_unit(tbl), sec_kind))
+                unit = declared_unit(tbl)
+                # R4-2: 병합표(owned_merged_title 로 확정된 표)만 표 **내부** 메타행에서
+                # 단위를 추가로 찾는다 — declared_unit 은 직전 형제/표 첫 행만 보므로 여기
+                # 있는 단위(제목 다음 몇 행)를 못 찾는다. 정상 표에 이 스캔을 걸면 첫 행이
+                # 이미 헤더/데이터라 그 뒤를 단위로 오인할 위험이 있어 이 표에만 좁힌다.
+                if unit is None and used_merged_title:
+                    unit = merged_table_local_unit(tbl)
+                groups.setdefault(section_code, []).append((tbl, unit, sec_kind))
                 continue
             # ★ 제목표/데이터표 분리 서식(2026-07-23, docs/qa/layer2_split_table_gap_2026-07-23.md):
             # 재무제표명('연 결 재 무 상 태 표')이 **데이터 없는 별도 표**로 떨어져 있고, 숫자와
@@ -452,6 +475,36 @@ def declaration_text(tbl) -> str | None:
     return None
 
 
+# ── R4-2 병합표 내부 단위 (2026-08-05) ───────────────────────────────────────
+_MERGED_HEADER_LABELS = ("과목", "계정과목", "계정명")
+
+
+def merged_table_local_unit(tbl) -> int | None:
+    """'제목+데이터 병합 표'(`statement_titles.owned_merged_title` 로 확정된 표) 안,
+    헤더행 이전 메타행들에서 단위 배수를 찾는다.
+
+    `declared_unit`(직전 형제 / 표 첫 행만 봄)이 이런 표에서 단위를 못 찾는 이유는 단위가
+    **표 안쪽(제목 다음 2~5번째 행)** 에 있기 때문이다(실측 특수건설 20151116001903·
+    팬엔터테인먼트 20181114002948: "회사명 : … (단위 : 원)" 행이 헤더 바로 위에 옴).
+
+    ★★ 호출측 필수 조건 — `owned_merged_title(tbl)` 이 이 표의 첫 행을 재무제표명으로
+    이미 확정했을 때만 호출할 것(trs[0]을 무조건 제목행으로 보고 건너뛴다). 그 확정 없이
+    일반 표에 걸면 첫 행이 이미 헤더/데이터일 수 있어 데이터를 단위로 오인할 위험이 있다.
+
+    헤더행("과목"/"계정명" 등)에 도달하면 멈춘다 — 그 뒤는 데이터이므로 스캔하지 않는다.
+    """
+    trs = table_direct_rows(tbl)
+    for tr in trs[1:]:                       # trs[0] = 제목행(owned_merged_title 이 확정) — 스킵
+        txt = " ".join("".join(tr.itertext()).split())
+        compact = re.sub(r"\s+", "", txt)
+        if compact in _MERGED_HEADER_LABELS:
+            break                            # 헤더 도달 — 그 뒤는 데이터, 더 스캔하지 않는다
+        unit = detect_unit_declaration(txt)
+        if unit is not None:
+            return unit
+    return None
+
+
 # 상속 탐색에서 **건너뛰어도 되는 것**은 두 가지뿐이다(사용자 결정 D1, 2026-07-31).
 _INHERIT_SPAN = 6
 
@@ -536,6 +589,14 @@ def document_default_unit(root) -> tuple[int | None, str | None]:
     """본문 표에 로컬 단위 선언이 전혀 없을 때 쓰는 **문서 전체 기본 단위**.
 
     반환 (multiplier, 근거 원문). 못 찾으면 (None, None) — 여전히 추측하지 않는다.
+
+    ★2026-08-05(R4-2) — 요약재무정보 섹션 안에서 **단위 선언 표와 데이터 표가 붙어있지
+    않을 수 있다**(실측 포시에스 20171114002836: [단위선언 표 "(단위:원)"] → [연결범위
+    표(데이터 없음, 단위선언도 없음)] → [실제 데이터 표] 순서라, 데이터 표의 "직전 형제"
+    는 연결범위 표라 종전 로직(`declared_unit(tbl)`, 직전 형제/표 첫 행만 봄)이 단위선언
+    표를 못 찾았다). 이 섹션은 R4-1 원칙상 이미 "**문서 전체 단일 단위**"로 취급하므로,
+    데이터 없는 표를 만나면 그 단위 선언을 **기억해두고**(pending), 데이터 표 자신에게
+    선언이 없을 때 최후 수단으로 그걸 쓴다 — 표별 인접성이 아니라 섹션 전체가 근거다.
     """
     for sec2 in root.iter("SECTION-2"):
         title_el = sec2.find("TITLE")
@@ -543,12 +604,21 @@ def document_default_unit(root) -> tuple[int | None, str | None]:
             continue
         if not _SUMMARY_SECTION_RE.search("".join(title_el.itertext())):
             continue
+        pending_text: str | None = None
         for tbl in sec2.iter("TABLE"):
             if not _table_has_data_rows(tbl):
+                # 데이터 없는 표(단위 전용·연결범위 등) — 단위 선언만 있으면 기억해둔다.
+                txt = " ".join("".join(tbl.itertext()).split())
+                if detect_unit_tokens(txt):
+                    pending_text = txt
                 continue
             unit = declared_unit(tbl)
+            decl_text = declaration_text(tbl)
+            if unit is None and pending_text is not None:
+                unit = detect_unit_declaration(pending_text)
+                decl_text = pending_text
             if unit is not None:
-                return unit, declaration_text(tbl)
+                return unit, decl_text
         break  # 요약재무정보 섹션은 문서에 하나뿐 — 못 찾았으면 ②로 넘어간다
 
     for p in root.iter("P"):
@@ -615,9 +685,15 @@ _APPROP_ROW_RE = re.compile(
     r"미처분이익잉여금|미처리결손금|처분전이익잉여금|처분전결손금"
     r"|이익잉여금처분액|결손금처리액|차기이월")
 # 4대 재무제표임을 확정하는 행 라벨(있으면 처분계산서가 아니다).
+# ★2026-08-05(R4-2) — "부채자본총계"·"자본과부채총계"(순서가 뒤바뀐 BS 대차합계 표기) 추가.
+#   팬엔터테인먼트 20181114002948 BS(재무제표_직접작성 수기입력 서식)는 대차합계를
+#   "부채자본총계"로만 쓰고 "자산총계"/"부채총계"/"부채와자본총계" 어느 것도 안 쓴다.
+#   같은 표에 자본 세부항목으로 "미처분이익잉여금" 행이 있어(정상 BS 구성) 이 확정 라벨이
+#   없으면 처분계산서로 오판돼 진짜 BS 가 통째로 배제됐다(R4-2 로 분류가 성공하기 전엔
+#   stmt=None 에서 이미 걸러져 이 가드에 도달하지 못해 드러나지 않던 결함).
 _REAL_STMT_ROW_RE = re.compile(
     r"영업활동현금흐름|영업활동으로인한현금흐름|투자활동현금흐름|재무활동현금흐름"
-    r"|자산총계|부채총계|부채와자본총계|매출액|영업수익|매출총이익")
+    r"|자산총계|부채총계|부채와자본총계|부채자본총계|자본과부채총계|매출액|영업수익|매출총이익")
 
 
 def _looks_like_appropriation(tbl) -> bool:

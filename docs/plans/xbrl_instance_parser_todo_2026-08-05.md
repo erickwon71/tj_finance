@@ -1,0 +1,172 @@
+# TODO — DART 표준 XBRL 원문(ifrs.do) 파서 구현
+
+계획 원문: [`xbrl_instance_parser_2026-08-05.md`](xbrl_instance_parser_2026-08-05.md). 이 문서는 그 계획을 실행 가능한 세부 작업 단위로 쪼갠 체크리스트다. **아직 구현 시작 전 — 다음 세션에서 Phase 0부터.**
+
+각 항목은 순서대로 진행하되, Phase 0의 결론이 나오기 전엔 Phase 2(파서 핵심 로직) 세부 설계를 확정하지 않는다.
+
+---
+
+## Phase 0 — 실제 샘플 조사 (구현 착수 전 필수, 코드 작성 없음)
+
+- [x] `LegacyDartScraper._get_view_params("20250828000534")` 실행해 박셀바이오 `dcm_no` + 세션 쿠키 확보
+- [x] 같은 세션으로 `https://dart.fss.or.kr/pdf/download/ifrs.do?rcp_no=20250828000534&dcm_no=...&lang=ko` 요청 — 원샷 다운로드인지 2단계(main.do 확인→실제 다운로드)인지 확인
+- [x] 응답이 실제 zip인지 매직바이트(`PK\x03\x04`)로 확인, HTML 오류 페이지와 구분
+- [x] zip 다운로드 후 `dart.fss.or.kr`가 요청을 차단(캡차/레이트리밋)하지 않는지, OpenDART API 쿼터(40,000/일)와 무관한지 확인
+- [x] unzip 후 파일 목록·크기 기록 (`.xbrl`/`.xsd`/`_def.xml`/`_cal.xml`/`_pre.xml`/`_lab-ko.xml`/`_lab-en.xml`)
+- [x] instance(`.xbrl`) 루트 네임스페이스 선언 전체 기록 — `ifrs-full:` vs `dart:` 확장 프리픽스 확인
+- [x] `<xbrli:context>` 3~5개 원문 그대로 기록 — period(instant/duration), entity, segment/scenario 내용 확인
+- [x] 연결/별도(basis) 구분 방식 확정 — context 안의 dimension/member인지, 별도 instance 파일 2개인지
+- [x] `<xbrli:unit>` 5~10개 원문 기록 (통화/단위 declaration 방식)
+- [x] fact 10~15개 샘플(BS성 5개 + IS성 5개 이상) 원문 기록 — QName/contextRef/unitRef/decimals/값
+- [x] context의 실제 날짜를 박셀바이오 2024H1 `Filing.period_end_date`와 대조해 col_index(0/1/2) 매핑 규칙·허용 오차 확정
+- [x] `_pre.xml`의 distinct roleURI 전부 나열, 각 role의 정의(`link:definition`)로 BS/IS/CF/SCE/note 매핑표 초안 작성
+- [x] `_pre.xml`에서 재무상태표로 보이는 role 하나의 `presentationLink`(loc/presentationArc, order, preferredLabel) 40줄 정도 원문 기록
+- [x] `_lab-ko.xml` 라벨 5~10개 원문 기록 — `xml:lang="ko"` + DART가 쓰는 표준 라벨 role 확인 (label vs terseLabel vs verboseLabel)
+- [x] `_cal.xml`에서 weight 속성 샘플 확인 — document.xml도 있는 유사 taxonomy 필링과 값 대조해 부호 반전 필요 여부 판정
+- [x] `sanitize_dart_xml()`/`_parse_xml_file()`(`parser/xml/dart_xml_parser.py`)를 XBRL instance에 그대로 먹여도 되는지, 순수 `lxml.etree.parse`가 나은지 결론
+- [x] Phase 0 조사 결과를 짧은 메모로 정리(이 문서 하단 "Phase 0 결과" 섹션에 채워넣기) — 이후 세션이 재조사 없이 이어받을 수 있도록
+- [x] (추가 실측) 한화에어로스페이스(`20260513000860`, 2026Q1)로 교차검증 — 이 트랙의 실제 동기가 된 사례라 박셀바이오(소형·별도만) 외에 대형·연결+별도 병존 케이스도 확인
+
+## Phase 1 — 데이터 모델 변경
+
+- [ ] `collector/db.py::_run_migrations()`에 `dcm_no` 컬럼 추가 마이그레이션 항목 추가 (`ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS dcm_no VARCHAR(20)`)
+- [ ] 같은 곳에 `file_type` 폭 확장 마이그레이션 추가 (`String(5)→String(10)`)
+- [ ] `collector/models.py`의 `DownloadTask`에 `dcm_no` 컬럼 선언 추가, `file_type` 컬럼 타입/코멘트 갱신
+- [ ] `parser_track` 코멘트에 `XBRL_INSTANCE` 값 추가 (폭 변경 불필요, `String(15)`로 충분)
+- [ ] 로컬 DB에 마이그레이션 적용 후 스키마 반영 확인 (`\d download_tasks` 등)
+
+## Phase 2 — 다운로더 확장
+
+- [ ] `collector/legacy_downloader.py`에 `LegacyDartScraper._fetch_xbrl_instance(rcept_no, dcm_no)` 구현 (`_fetch_pdf()` 패턴 — Referer 헤더, 매직바이트 확인)
+- [ ] 같은 파일에 공개 메서드 `fetch_xbrl_zip(rcept_no)` 추가 (내부에서 `_get_view_params` 호출 후 위 메서드 호출)
+- [ ] `collector/downloader.py::_download_one()`의 `status_code == "014"` 분기에서 `_try_legacy_fallback()` 호출 전에 `_try_xbrl_instance_fallback()` 신설·삽입
+- [ ] 성공 시 zip 저장 로직 — `_build_file_path()` + tmp-then-move 패턴 재사용, `file_type='xbrl_zip'`, `parser_track='XBRL_INSTANCE'`, `dcm_no` 저장
+- [ ] 실패/부재 시 기존 `_try_legacy_fallback()`(PDF 폴백)으로 자연스럽게 이어지는지 확인 (기존 동작 회귀 없음)
+- [ ] `_mark_completed()`에 `dcm_no` 저장용 파라미터 추가
+
+## Phase 3 — 파서 핵심 (Phase 0 결론 확정 후 착수)
+
+- [ ] `parser/xbrl_instance/` 패키지 신설 (`__init__.py`)
+- [ ] `instance_parser.py` — `.xbrl` instance 로드, context/unit/fact 구조화 파싱 (Phase 0에서 확정한 sanitize 필요 여부 반영)
+- [ ] `taxonomy_linkbase.py` — `_pre.xml` 파싱(role→트리 구조, order→row_order/depth), `_lab-ko.xml`/`_lab-en.xml` 파싱(라벨), 필요시 `_cal.xml` 파싱(weight 부호)
+- [ ] `role_map.py` — roleURI→statement(BS/IS/CF/SCE/note) 매핑표, Phase 0 조사 결과로 초기 채움
+- [ ] `fin2/extract/report_lines_xbrl.py` — `extract_report_lines_xbrl()` 진입점 구현, 기존 `ReportLineRow` 형태로 반환
+- [ ] basis(연결/별도) 해석 로직 구현
+- [ ] col_index/period_kind/is_cumulative 판정 로직 구현 (날짜 대조 + 허용오차)
+- [ ] presentation 트리 워크로 section_path/table_seq/row_order/depth/node_role 산출
+- [ ] 라벨 해석(한글 우선, 폴백 영문) 구현
+- [ ] 값/단위 추출 + (필요시) weight 부호 반영, `unit_source` 등 R4 규율 준수
+- [ ] note 포함 여부(`include_notes`) 처리 — DART 태깅 깊이가 얕을 수 있음, 1차는 본문(BS/IS/CF/SCE)만으로 범위 축소 검토
+
+## Phase 4 — 데일리 파이프라인 배선 (두 call site 필수)
+
+- [ ] `collector/xbrl_instance_lines_sync.py` 신설 — `note_lines_sync.py` 구조 재사용, `file_type='xbrl_zip'` 대상 쿼리
+- [ ] `scripts/collect_new.py`에 `_sync_xbrl_instance_lines(corps)` 래퍼 함수 추가 (비치명 try/except)
+- [ ] call site 1: `collect_new.py`의 `--standardize-only` 재개 분기(기존 `_sync_layer2_lines(affected)` 호출 직후)에 추가
+- [ ] call site 2: `collect_new.py`의 메인 경로(기존 `_sync_layer2_lines(affected)` 호출 직후)에 추가
+- [ ] 두 call site 모두에서 실제로 호출되는지 로그로 확인 (더미/드라이런)
+- [ ] 기존 `sync_layer2_lines`(`file_type='xml'`)와 겹치는 rcept_no가 없는지 재확인 (중복 적재 가드 불필요 여부 최종 검증)
+
+## Phase 5 — 소급 백필 (5건)
+
+- [ ] 대상 5건 corp_code 확인: 박셀바이오·웰킵스하이텍(3필링, 동일기업)·한화에어로스페이스
+- [ ] 해당 `download_tasks.status`를 `pending`으로 리셋하는 원샷 스크립트 작성
+- [ ] `run_downloads(only_corp_codes=[...])` 실행 — XBRL zip 다운로드 확인
+- [ ] `sync_xbrl_instance_lines(corps=[...], recheck=True)` 실행 — `report_lines`/`report_tables`/`note_lines` 신규 행 확인
+- [ ] 6건(자비스 제외 5건) 각각 `n_loaded>0`으로 전환됐는지 재확인 (`probe_residual_gap_breakdown.py` 재실행)
+- [ ] layer3(std_v2/std_v3) 재표준화 필요 여부 확인 (`needs_standardize_corps()` 조건) — 필요시 타겟 재실행
+
+## Phase 6 — 검증
+
+- [ ] `fin2/tests/test_xbrl_instance.py` 신설 — 박셀바이오 실 샘플 기반, 주요 계정 하드코딩 대조, 구조/라벨/instant-duration 검증
+- [ ] 박셀바이오 2024H1 값 3~5개 DART 웹뷰어와 수동 대조
+- [ ] 한화에어로스페이스 2026Q1 값 3~5개 DART 웹뷰어와 수동 대조 (실거래 활성기업 — 공개된 실제 수치와도 대조 가능하면 추가 확인)
+- [ ] Gate B 전/후 비교 — 이 6건이 "무데이터→pass/fail"로만 이동하고 기존 다른 필링 회귀 없는지 (`run_dq_gate`/`face_audit`)
+- [ ] 항등식 점검 (자산=부채+자본 등) — 부호 규약 오류 조기 발견용
+- [ ] `pytest` 전체 회귀 실행 — 기존 테스트 통과 유지 확인
+- [ ] `docs/PARSING_RULES.md`에 이번에 확정한 규칙(있다면, 예: XBRL 원문 unit/기간 판정 방식)을 R-번호로 반영
+
+---
+
+## Phase 0 결과 (2026-08-05 실측 완료)
+
+조사 대상 2건: **박셀바이오**(`20250828000534`, 2024H1, 소형·별도만) + **한화에어로스페이스**(`20260513000860`, 2026Q1, 대형·연결+별도 병존 — 이 트랙의 실제 동기). 조사 스크립트/원본 zip은 세션 scratchpad에만 저장(레포 미포함), 재현 가능(코드는 아래 "다운로드 흐름" 참고).
+
+### 1. 다운로드 흐름 — 계획보다 단순함
+
+- `LegacyDartScraper._get_view_params(rcept_no)`로 `dcm_no` 획득(세션 쿠키도 같이 확보됨) → **곧바로** `GET /pdf/download/ifrs.do?rcp_no=...&dcm_no=...&lang=ko` 하면 **원샷으로 zip이 온다.** PDF 흐름(`_fetch_pdf`)처럼 `/pdf/download/main.do`로 먼저 존재 확인하는 2단계가 **필요 없음** — 오히려 `main.do`는 "PDF 파일 보려면 Adobe Reader 설치…" HTML만 반환(PDF 없다는 뜻일 뿐, XBRL 존재와 무관).
+- 응답 `Content-Type: application/zip`, 매직바이트 `PK\x03\x04` 확인됨. HTML 오류 페이지와 확실히 구분됨(2866B HTML vs 44KB~1.1MB zip).
+- 두 회사 다 1회 요청으로 성공, 캡차/차단 없음(2초 쓰로틀 유지). OpenDART API(`opendart.fss.or.kr`) 쿼터와는 무관한 `dart.fss.or.kr` 웹 엔드포인트라 확인대로 무관.
+- 계획의 `_fetch_xbrl_instance()` 설계는 **`_fetch_pdf()`의 2단계 패턴을 따르지 말고** 1회 GET으로 단순화할 것.
+
+### 2. zip 구성 — 계획과 정확히 일치
+
+파일명 패턴: `entity{CIK}_{period_end}.{ext}` (`.xbrl`/`.xsd`/`_def.xml`/`_cal.xml`/`_pre.xml`/`_lab-ko.xml`/`_lab-en.xml` 7개, 예외 없음). 박셀바이오 44KB→7파일 합계 ~720KB(대부분 라벨/정의), 한화 1.1MB→7파일 합계 ~26MB(`_def.xml`/`_lab-*.xml`가 각 5MB대 — 대형 연결기업은 주석까지 광범위하게 태깅돼 훨씬 큼).
+
+### 3. 루트 네임스페이스
+
+`ifrs-full:`(IFRS 표준), `dart:`(DART 확장 계정), `dart-gcd:`(DART 공통정보축 — 작성자/기간축 등 메타), `entity{CIK}:`(**기업별 커스텀 확장** — 예: 박셀바이오 `entity01335851:udf_CF_...PaymentsOfFinanceLeaseLiabilities...`) 4종 프리픽스가 항상 나옴. 커스텀 확장 element는 해당 기업의 `.xsd`에 선언되고 라벨은 `_lab-ko.xml`에서 옴 — role_map/label 해석 시 이 네임스페이스도 반드시 커버해야 함.
+
+### 4. 연결/별도(basis) — 별도 instance 파일 아님, context dimension으로 구분 (실측 확정)
+
+`ifrs-full:ConsolidatedAndSeparateFinancialStatementsAxis` 축의 멤버로 구분됨: `ifrs-full:ConsolidatedMember`(연결) / `ifrs-full:SeparateMember`(별도). **하나의 `.xbrl` 파일 안에 둘 다 들어있음.**
+- 박셀바이오(자회사 없는 소형 바이오): **`SeparateMember`만 존재**, `ConsolidatedMember` 컨텍스트 0개 — 연결 자체가 작성 대상이 아닌 케이스도 있다는 뜻, 파서가 "연결 없으면 그냥 없는 것"으로 처리해야 함(에러 아님).
+- 한화에어로스페이스(대형 지주): 2,850개 컨텍스트 중 `ConsolidatedMember` 1,635개 + `SeparateMember` 1,207개 **둘 다 풍부하게 존재**.
+- → basis 판정 로직은 각 context의 `xbrldi:explicitMember[@dimension='ifrs-full:ConsolidatedAndSeparateFinancialStatementsAxis']` 값을 보면 되고, "연결/별도 인스턴스 파일 2개" 가설은 **기각**.
+
+### 5. context 명명 규칙 — ID 문자열은 힌트일 뿐, 실제 판정은 period 값으로
+
+관측된 패턴: `{CFY|PFY|BPFY}{연도}{d|e}{보고유형코드}[A|Q]_...`
+- `CFY`=당기(Current FY), `PFY`=전기(Prior FY), `BPFY`=전전기(Before-Prior FY, 주석 비교용으로만 등장)
+- `d`=duration(구간), `e`=instant(시점)
+- 보고유형코드는 **보고서 종류에 따라 달라짐** — 반기보고서(박셀바이오)는 `HY`(반기)/`HYA`(반기누적)/`HYQ`(반기중 분기), 분기보고서(한화 Q1)는 `FQ`(분기)/`FQA`(분기누적)/`FQQ`(분기중 분기). **다른 보고서 종류(사업보고서 등)에서 또 다른 접미사가 나올 가능성이 있음 — 하드코딩 매핑 대신 이 명명 패턴을 정규식으로 일반화하되, 최종 판정은 반드시 `<xbrli:period>`의 실제 `instant`/`startDate+endDate` 값을 `Filing.period_end_date`와 대조해서 확정할 것(R9, 문자열만 믿지 않기).**
+- 예시(박셀바이오, 반기): `CFY2024eHYA`→instant 2024-06-30(당기말) / `PFY2023eHYA`→instant 2023-06-30(전년동기말) / `PFY2023eHY`→instant 2023-12-31(직전 사업연도말, 비교 BS) / `CFY2024dHYA`→2024-01-01~06-30(당기누적) / `CFY2024dHYQ`→2024-04-01~06-30(당기 2분기 단독).
+- 예시(한화, 분기): `CFY2026eFQA`→instant 2026-03-31 / `PFY2025eFQA`→instant 2025-03-31(전년동기말) / `PFY2025eFQ`→instant 2025-12-31(직전 사업연도말) / `BPFY2024eFQ`→instant 2024-12-31(전전 사업연도말, 주석 비교용).
+
+### 6. 단위(unit) — 단순함
+
+관측 3종뿐: `KRW`(`iso4217:KRW`), `PURE`(`xbrli:pure`, 비율/배수), `KRWEPS`(KRW÷`xbrli:shares` divide 단위, EPS 전용). 계획의 "5~10개 기록" 대비 실제로 매우 단순 — 통화 혼재나 이상 단위 케이스는 이번 샘플엔 없었음(외화 표시 필링이 섞일 가능성은 [[fx-declared-statements]] 규약과 별개로 추후 확인 필요).
+
+### 7. ★가장 중요한 발견 — fact는 tag+context만으론 유일하지 않음, presentation 트리 워크 필수
+
+같은 QName(`ifrs-full:Assets`/`Liabilities`/`Equity` 등)이 **본문 재무제표 총계뿐 아니라 주석의 세그먼트별/거래처별/카테고리별 분해표에도 반복 태깅됨.** 한화 샘플에서 `ifrs-full:Assets` 태그로 단순 검색하면 40개 이상 걸리는데(세그먼트 자산, 계약별 자산 등 포함, 심지어 증감내역 주석이라 음수도 섞임), 그중 실제 재무상태표 총자산은 **`ConsolidatedAndSeparateFinancialStatementsAxis` 축 하나만 걸린(다른 axis 없는) context 것 정확히 1개**였음(56,659,594,923,000원 — 유동자산 32,208,963,769,000 + 비유동자산 24,450,631,154,000과 일치, 부채(39,219,529,796,000)+자본(17,440,065,127,000)과도 정확히 일치해 항등식 검증 통과).
+→ **계획의 "presentation linkbase 트리 워크로 section_path/depth/row_order 산출" 설계가 필수임을 재확인.** tag명 기반 스캔이나 "axis 개수" 같은 얕은 휴리스틱으로 본문 vs 주석을 구분하려 하지 말 것 — 반드시 대상 role(D2/D4/D5/D6)의 `_pre.xml` loc/arc 트리에 실제로 걸린 (element, context) 쌍만 채택.
+
+### 8. `_pre.xml` role 매핑 — roleURI 숫자 대신 `link:definition`의 한글 텍스트로 매핑 (강력 추천)
+
+roleURI 자체(`http://dart.fss.or.kr/role/ifrs/dart_2024-06-30_role-D210005`)는 taxonomy 버전 날짜가 박혀 있어 필링마다 달라짐 — 하드코딩 매핑표로 관리하면 매번 깨짐. 대신 `.xsd`의 `<link:roleType roleURI="..."><link:definition>` 텍스트에 **역할이 한글로 그대로 적혀 있음**:
+- `[D210005] 재무상태표, 유동/비유동법 - 별도` / `[D210000] ... - 연결`
+- `[D431415] 단일 포괄손익계산서, 기능별 분류, 세후 - 별도` / `[D431410] ... - 연결`
+- `[D520005] 현금흐름표, 간접법 - 별도` / `[D520000] ... - 연결`
+- `[D610005] 자본변동표 - 별도` / `[D610000] ... - 연결`
+- 한화 샘플엔 이 4쌍(8개) 외에 `D8xxxxx`/`U8xxxxx` 계열 role이 **310개 더** 있음 — 전부 주석(금융위험관리·공정가치측정·유형자산·무형자산 등 번호가 매겨진 주석 챕터). 박셀바이오(반기, 소형)는 이 4개 role만 존재, 주석 role 0개.
+- → `role_map.py`는 `link:definition` 문자열에서 "재무상태표"/"포괄손익계산서"/"현금흐름표"/"자본변동표" 키워드 매칭 + "- 연결"/"- 별도" 접미사로 분류(숫자 코드는 참고용 로그에만 사용). 본문(BS/IS/CF/SCE) 4역할만 있는 필링과 주석까지 수백 개 있는 필링이 둘 다 존재함을 전제로 설계할 것.
+
+### 9. presentation 트리 구조 — 계획대로 loc/arc/order로 깊이·순서 산출 가능
+
+`<link:loc>`(요소 참조, 표준 IFRS 요소는 `href`가 외부 IFRS taxonomy URL, 커스텀 확장은 자사 `.xsd#element`) + `<link:presentationArc>`(`xlink:from`/`xlink:to`/`order`/`use="optional"`/`priority`) 구조 확인. **`order`는 정수 아님 — `1`, `1.5`, `3`, `7`, `12`, `12.8` 등 소수 섞여 있음** → 정렬 시 반드시 float 파싱(문자열/int 캐스팅 금지). 트리 깊이는 arc의 from→to 체인을 재귀적으로 따라가면 산출됨(계획대로).
+
+### 10. 라벨(`_lab-ko.xml`) — `preferredLabel` 속성이 있으면 그대로 따르면 됨
+
+관측된 label role 10종: 표준 `label`(기본), DART 자체 `dart_label`(원문 표시와 더 가까운 경우 있음, 예: `기타이익` vs 표준 `기타수익`), `terseLabel`/`verboseLabel`/`totalLabel`/`periodStartLabel`/`periodEndLabel`/`negatedLabel`/`negatedTerseLabel`/`netLabel`. **`presentationArc`에 `preferredLabel` 속성이 박혀 있어(관측: terseLabel 8건·dart_label 7건·totalLabel 6건·negatedTerseLabel 2건 등) 트리의 그 위치에서 어떤 label role을 써야 하는지 필링이 직접 알려줌** — 별도 추론 로직 불필요, `preferredLabel` 있으면 그 role 우선 조회, 없으면 표준 `label`로 폴백, 한글 없으면 `_lab-en.xml` 폴백(계획대로).
+
+### 11. `_cal.xml` weight — 부호 반전 불필요, 값은 이미 "표시된 그대로" 저장돼 있음
+
+박셀바이오 BS calc: weight `1`(59건)/`-1`(11건) 혼재. 그런데 실제 fact 값(자산=83,142,583,571 / 부채=4,867,937,672 / 자본=78,274,645,899)은 **부호 반전 없이 그대로 더하면 항등식이 맞음**(부채+자본=자산 정확히 일치). weight=-1은 calculation linkbase가 "합산 시 이 항목을 빼라"는 rollup 검증용 메타데이터일 뿐, **fact 자체의 표시값에는 이미 반영돼 있어 저장 시 추가 부호처리 불필요**로 잠정 결론. 다만 IS(포괄손익계산서)의 비용 항목처럼 "빼는 게 자연스러운" 계정에서 실제로 음수로 저장돼 있는지는 화면에 보이는 표시 그대로 저장하면 되므로 파서 구현 시 값 그대로 적재 후 항등식 검증(Phase 6)에서 최종 확인.
+
+### 12. `sanitize_dart_xml()` 불필요 — 순수 `lxml.etree.parse()`로 충분
+
+박셀바이오(87KB)·한화(6.6MB) 양쪽 다 7개 파일 전부 `lxml.etree.parse()`로 **에러 0, 파싱 시간 30ms 이내**로 성공. `document.xml`(DART 자체 `<TABLE>/<TE>` 서식)에서 나타났던 속성 따옴표 절단·PI 이스케이프 등 [[layer2-silent-loss-patterns]]류 함정은 **표준 XBRL instance엔 해당 없음**(별개 생성 파이프라인이라 추정). → `parser/xbrl_instance/instance_parser.py`는 `sanitize_dart_xml()` 호출하지 말고 `lxml.etree.parse()` 직접 사용.
+
+### Phase 3 설계에 주는 결론 (착수 시 그대로 반영)
+
+1. 다운로더: 1단계(`_get_view_params`) + 1회 GET(`ifrs.do`)만으로 충분, `_fetch_pdf()`의 2단계 존재확인 패턴 불필요.
+2. basis(연결/별도): context의 `ConsolidatedAndSeparateFinancialStatementsAxis` 멤버로 판정, 별도 파일 처리 로직 불필요. 연결이 아예 없는 필링(소형사)도 정상 케이스로 처리.
+3. col_index/period_kind: context ID 명명 패턴(CFY/PFY/BPFY + d/e + 보고유형코드)을 1차 힌트로 파싱하되, **최종 판정은 실제 `<xbrli:period>` 날짜값을 `Filing.period_end_date`와 대조**해서 확정(하드코딩 금지, 필요시 필링마다 새 보고유형코드 나올 수 있음을 전제).
+4. role→statement 매핑: roleURI 숫자 코드가 아니라 `.xsd`의 `link:definition` 한글 텍스트로 매핑(버전 불변). 본문 4역할(BS/IS/CF/SCE, 연결+별도 각각 최대 8개)만 우선 지원, 주석(D8/U8 계열)은 계획대로 1차 범위 밖.
+5. **fact 추출은 반드시 role별 presentation 트리를 먼저 워크한 뒤, 그 트리에 실제로 걸린 (element, context) 쌍만 채택** — tag명 단독 검색 절대 금지(같은 QName이 주석에도 반복 태깅돼 총계 아닌 값이 섞여 들어옴, 항등식 깨짐의 가장 유력한 원인이 될 것).
+6. order는 float로 정렬.
+7. label: `preferredLabel` 속성이 있으면 그 role 우선 조회 → 없으면 표준 label → 한글 없으면 en 폴백.
+8. calculation linkbase(weight)는 값 저장에 직접 관여 안 함(표시값 그대로 저장), 항등식 자체검증(Gate) 용도로만 사용.
+9. sanitize 불필요, `lxml.etree.parse()` 직접 사용.
+10. 두 샘플(소형·별도만 / 대형·연결+별도) 다 사이즈·구조 편차가 커서(87KB vs 26MB), 파서 성능/메모리 가정을 소형 샘플만으로 확정하지 말 것 — 대형 필링(한화류) 기준으로도 검증 필요(Phase 6에 반영됨).

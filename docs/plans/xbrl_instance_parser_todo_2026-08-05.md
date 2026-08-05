@@ -63,13 +63,13 @@ migration id: `2026_08_download_tasks_dcm_no` / `2026_08_download_tasks_file_typ
 - [x] `instance_parser.py` — `.xbrl` instance 로드, context/unit/fact 구조화 파싱 (Phase 0에서 확정한 sanitize 필요 여부 반영)
 - [x] `taxonomy_linkbase.py` — `_pre.xml` 파싱(role→트리 구조, order→row_order/depth), `_lab-ko.xml`/`_lab-en.xml` 파싱(라벨), `_cal.xml` 파싱(weight 부호) — 완료 2026-08-06
 - [x] `role_map.py` — roleURI→statement(BS/IS/CF/SCE/note) 매핑표, Phase 0 조사 결과로 초기 채움 — 완료 2026-08-06
-- [ ] `fin2/extract/report_lines_xbrl.py` — `extract_report_lines_xbrl()` 진입점 구현, 기존 `ReportLineRow` 형태로 반환
-- [ ] basis(연결/별도) 해석 로직 구현
-- [ ] col_index/period_kind/is_cumulative 판정 로직 구현 (날짜 대조 + 허용오차)
-- [ ] presentation 트리 워크로 section_path/table_seq/row_order/depth/node_role 산출
-- [ ] 라벨 해석(한글 우선, 폴백 영문) 구현
-- [ ] 값/단위 추출 + (필요시) weight 부호 반영, `unit_source` 등 R4 규율 준수
-- [ ] note 포함 여부(`include_notes`) 처리 — DART 태깅 깊이가 얕을 수 있음, 1차는 본문(BS/IS/CF/SCE)만으로 범위 축소 검토
+- [x] `fin2/extract/report_lines_xbrl.py` — `extract_report_lines_xbrl()` 진입점 구현, 기존 `ReportLineRow` 형태로 반환 — 완료 2026-08-06(BS/IS/CF만, SCE 보류 — 아래 "Phase 3 진행 기록" 참고)
+- [x] basis(연결/별도) 해석 로직 구현 — context dims 정확히 1개(basis dim만)일 때만 채택
+- [x] col_index/period_kind/is_cumulative 판정 로직 구현 — 허용오차 없이 날짜 정확매치(아래 기록 참고, 필요성이 없었음)
+- [x] presentation 트리 워크로 section_path/table_seq/row_order/depth/node_role 산출
+- [x] 라벨 해석(한글 우선, 폴백 영문) 구현
+- [x] 값/단위 추출(KRW/KRWEPS만), weight 는 저장 시 미반영(Phase 0 §11 그대로 — 항등식 검증에만 필요함을 재확인, 아래 기록), `unit_source='xbrl'` 신설
+- [x] note 포함 여부(`include_notes`) 처리 — Phase 3-5 범위 밖으로 확정(본문 BS/IS/CF만, SCE 도 이번엔 보류 — 아래 기록)
 
 ## Phase 4 — 데일리 파이프라인 배선 (두 call site 필수)
 
@@ -232,6 +232,56 @@ RoleInfo 역인덱스 제공(둘 이상 겹치면 raise 대신 경고 로그, Ph
 걸러짐(리크 0건, 수동 확인).
 
 `pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, 이번 변경과 무관).
+
+**3-5 완료(2026-08-06)**: `fin2/extract/report_lines_xbrl.py` 신설 — `extract_report_lines_xbrl()`.
+두 샘플 zip 을 다시 받아(크기 Phase 0/3-1 과 정확히 일치, `LegacyDartScraper.fetch_xbrl_zip()` 재현)
+실제로 파싱·검증했다(레포에는 미포함, 세션 scratchpad 만).
+
+- **범위: BS/IS/CF 만.** SCE(자본변동표)는 이번엔 보류 — 열 축이 기간(당기/전기)이 아니라
+  `ifrs-full:ComponentsOfEquityAxis` 이고, 그 멤버 자체가 계층 구조다(한화 연결 SCE 를 직접 실측:
+  `EquityMember`(도메인=총계) → `EquityAttributableToOwnersOfParentMember`(지배지분 소계, 자체가 또
+  `IssuedCapitalMember`/`CapitalSurplusMember`/… 자식을 가짐) 형제로 `NoncontrollingInterestsMember`).
+  게다가 `report_lines.py::_is_loadable()` 는 SCE 를 `col_index==0` 필터에서 제외해 **SCE 행은 나오는
+  대로 전부 저장**된다 — 열 의미를 잘못 짚으면 그대로 오염된 채 적재된다. R9(원문 대조 없이 넘겨짚지
+  않기) 원칙상 이 구조는 별도 조사 후 다음 스텝에서 다루기로 결정(코드에 이유와 함께 명시적으로 보류
+  — 3-3 이 note role 의 DAG 를 범위 밖으로 명시한 것과 같은 방식).
+
+- **basis 재확인**: context dims 가 **정확히 1개**(basis dim 만)일 때만 채택하는 Phase 0 §7 규칙을
+  그대로 구현. 실측: 한화 연결 BS `Assets` = 56,659,594,923,000(Phase 0 §7 기록과 정확히 일치),
+  `Liabilities`(39,219,529,796,000) + `Equity`(17,440,065,127,000) = `Assets` 정확히 일치, 별도도
+  마찬가지(26,535,096,702,000 = 17,268,806,425,000 + 9,266,290,277,000), 박셀바이오도 마찬가지
+  (83,142,583,571 = 4,867,937,672 + 78,274,645,899). 항등식이 두 회사·양쪽 basis 전부에서
+  맞아떨어져 basis 필터·라벨·값 추출 전체 경로가 교차검증됐다.
+
+- **col_index(당기)는 날짜 정확매치, 허용오차 불필요로 판명**: instant 는 `ctx.instant ==
+  period_end_date`, duration 은 `ctx.end_date == period_end_date` 중 `start_date` 가 가장 이른(=
+  가장 긴, 즉 누적) 것 채택 — `HYA`/`FQA` 같은 접미사 문자열을 하드코딩하지 않고 날짜 구조 자체로
+  "누적" 을 일반화(설계결론 3). 한화 Q1(FQA=FQQ 값이 우연히 동일, Q1 은 전분기가 없어 누적=단일분기)
+  로 이 로직이 접미사 없이도 정확히 동작함을 확인. **허용오차(계획에 있던 "tolerance")는 실측상
+  전혀 필요 없었다** — 두 샘플 전부 예외 없이 정확히 일치하는 날짜가 존재했다. col_index=2(전전기)
+  는 시도하지 않음 — 유일하게 관측된 3번째 기간 컨텍스트(`BPFY...`, 한화 BS 역할에 2개 fact)가
+  실제로는 다른 주석 비교용 값이 role 에 새어든 노이즈였다(전체 facts 대비 극소수, 표준 컬럼이
+  아님). col_index=1(전기)은 최선노력으로만 채움 — `_is_loadable()` 이 BS/IS/CF 는 col_index==0 만
+  저장하므로 정확도가 적재 결과에 영향을 주지 않는다.
+
+- **weight 는 값 저장에 정말 관여하지 않는다는 것을 실측 재확인, 동시에 항등식 검증엔 필수임도
+  확인**: 박셀바이오 CF `영업활동현금흐름`(-5,586,995,010) = `영업으로부터창출된현금흐름`
+  (-5,931,095,417) + `이자수취`(+249,435,527) + `법인세환급(납부)`(-94,664,880) 는 weight 를 무시하고
+  그대로 더하면 안 맞는다(단순합=-5,776,324,770, 차이 189,329,760). `_cal.xml` 을 실제로 조회해보니
+  `IncomeTaxesPaidRefundClassifiedAsOperatingActivities` 의 weight 가 **-1**(나머지는 +1) —
+  weight 를 반영해 재계산하면 -5,931,095,417 + 249,435,527 - (-1)×(-94,664,880) = 정확히
+  -5,586,995,010 로 맞아떨어진다. 즉 **저장된 fact 값 자체는(weight 적용 여부와 무관하게) 원문
+  그대로가 맞고**, weight 는 오직 "부모=Σ(weight×자식)" 항등식을 검증할 때만 필요하다 — Phase 0 §11의
+  결론이 실측으로 재확인됐고, Phase 6 항등식 점검이 반드시 calc linkbase weight 를 써야 한다는
+  근거가 됐다(단순합으로 검증하면 이런 정상 케이스도 오탐된다).
+- **교차 통계 검증**: 한화 CF `기초의 현금및현금성자산`(7,713,355,500,000)이 BS 의 전기(PFY) 현금
+  잔액과, `분기말의 현금및현금성자산`(6,886,229,564,000)이 BS 당기(CFY) 현금잔액과 정확히 일치.
+  CF 전체 항등식(기초현금 + 영업/투자/재무활동현금흐름 + 환율변동효과 = 기말현금)도 두 샘플 모두
+  정확히 성립. IS 도 매출-매출원가=매출총이익 등 소계가 정확히 일치.
+- **행 수(둘 다 col0+col1 합계, BS/IS/CF 3문·연결+별도)**: 박셀바이오 132행(별도만), 한화 464행
+  (연결+별도). `pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지). 새 모듈에서 발생한 경고
+  0건(파싱 중 뜨는 189건 경고는 전부 기존에 문서화된 `taxonomy_linkbase.py` 의 note-role DAG 노이즈,
+  이 파일이 새로 만든 것이 아님).
 
 ### Phase 3 설계에 주는 결론 (착수 시 그대로 반영)
 

@@ -9,17 +9,32 @@ taxonomy_linkbase,role_map}.py (Phase 3-1~3-4) and produces the exact same
 ``ReportLineRow`` shape as report_lines.py so the two sources can share
 storage (`store_report_lines`/`store_report_tables`).
 
-★ v1 scope: BS/IS/CF only. SCE (자본변동표) is deferred — its column axis is
-not the fiscal-period axis used here (col_index=당기/전기/전전기) but
-`ifrs-full:ComponentsOfEquityAxis`, whose members form their own hierarchy
-(지배지분귀속/비지배지분 subtotals nested under leaf components — confirmed by
-walking the presentation subtree under hanwha's SCE role, 2026-08-06) rather
-than a flat list. Getting that column-ordering wrong would silently corrupt
-SCE rows (and, unlike BS/IS/CF, `_is_loadable()` does NOT restrict SCE rows
-to col_index=0 — every SCE row emitted here would be stored). Per R9 ("검증은
-집계가 아니라 원문 대조로"), that structure needs dedicated verification
-against DART's own rendering before being trusted with storage — tracked as
-a follow-up, not silently guessed at.
+★ Scope: BS/IS/CF (Phase 3-5) + SCE (자본변동표, Phase 3-7, added 2026-08-06 —
+option A from docs/plans/xbrl_instance_parser_todo_2026-08-05.md's Phase 3-6
+survey). SCE's column axis is NOT the fiscal-period axis used by BS/IS/CF
+(col_index=당기/전기/전전기) but `ifrs-full:ComponentsOfEquityAxis`, whose
+members form a hierarchy (지배지분귀속/비지배지분 subtotals nested under leaf
+components — confirmed by walking hanwha's SCE presentation subtree). So SCE
+reuses the existing HTML-parser convention instead of inventing a new one:
+col_index = position among 자본 구성요소 columns (NOT a period), col_label =
+the ">"-joined component ancestor chain, context_fiscal_year/period_kind =
+NULL, and period (당기/전기/전전기) is instead encoded by (a) `row_order`
+block-stacking per period and (b) a date suffix synthesized into `label_raw`
+for the two instant-typed "boundary" concepts (기초/기말) — this is what lets
+the existing `fin2/audit/line_anomaly.py::detect_sce_anomalies()` (which
+greps `label_raw` for "기말" + a date) keep working unmodified against
+XBRL-sourced SCE rows. See `_emit_sce_lines()` below for the full design, and
+the Phase 3-6 section of the todo doc for the empirical survey this is built
+on. Unlike BS/IS/CF, `_is_loadable()` does NOT restrict SCE rows to
+col_index=0 — every SCE row emitted here is stored, so `_emit_sce_lines()`
+also runs a self-consistency check (`_check_sce_column_rollup`) that logs
+(never raises/drops) when a parent component column's value doesn't equal
+the sum of its child columns for the same row+period — a parser-bug signal,
+distinct from `detect_sce_anomalies()`'s post-storage SCE↔BS cross-check of
+real filing anomalies. A *row*-rollup check (기초+포괄손익+자본거래=기말) is
+NOT implemented here — it would need calculation-linkbase weights for the
+SCE role, which haven't been verified to exist (Phase 0 §11 only confirmed
+this for BS/CF); left as a follow-up rather than guessed at (R9).
 
 Design decisions (all empirically verified against the two Phase 0 samples —
 박셀바이오 20250828000534 / 한화에어로스페이스 20260513000860 — re-fetched and
@@ -99,7 +114,7 @@ from pathlib import Path
 from loguru import logger
 
 from parser.xbrl_instance.instance_parser import (
-    QName, XbrlContext, XbrlFact, XbrlUnit, parse_instance,
+    Dimension, QName, XbrlContext, XbrlFact, XbrlUnit, parse_instance,
 )
 from parser.xbrl_instance.taxonomy_linkbase import (
     Label, PresentationTree, merge_label_catalogs, parse_labels, parse_presentation,
@@ -115,12 +130,28 @@ _BASIS_MEMBER_LOCAL = {"consolidated": "ConsolidatedMember", "separate": "Separa
 # report_lines.unit_source is varchar(14) (collector/models.py:ReportLine) — fits easily.
 UNIT_SOURCE_XBRL = "xbrl"
 
-# Statements handled in this pass. SCE deferred — see module docstring.
+# Statements handled by the period-axis path (_emit_statement_lines). SCE has
+# its own emitter (_emit_sce_lines) — see module docstring.
 _SUPPORTED_STATEMENTS = ("BS", "IS", "CF")
+_SUPPORTED_SCE_STATEMENT = "SCE"
 
 # col_index we attempt to resolve. Only col0 is stored for BS/IS/CF
 # (report_lines.py::_is_loadable) — col1 is best-effort extra context.
 _MAX_COL_INDEX = 1
+
+# SCE-specific concept/axis names (Phase 3-6 survey, both in the ifrs-full
+# namespace like the basis axis — Phase 0 §4/§7).
+_CE_AXIS_LOCAL = "ComponentsOfEquityAxis"
+_SCE_LINEITEMS_LOCAL = "StatementOfChangesInEquityLineItems"
+# The two instant-typed "boundary" concepts whose label gets a synthesized
+# date suffix so detect_sce_anomalies() (which greps label_raw for "기말" +
+# a date, fin2/audit/line_anomaly.py) keeps working — see _sce_row_label().
+_SCE_ENDING_LOCAL = "Equity"                    # 기말자본 — the only one detect_sce_anomalies checks
+_SCE_BEGINNING_LOCAL = "EquityAtBeginningOfPeriod"  # 기초자본 — dated too, for symmetry/fidelity, not required for compat
+
+# Relative tolerance for the column-rollup self-check (_check_sce_column_rollup) —
+# same magnitude as fin2/audit/line_anomaly.py::_TOL (rounding, not real drift).
+_SCE_ROLLUP_TOL = 0.001
 
 
 @dataclass
@@ -256,20 +287,28 @@ def _basis_candidates(
     return out
 
 
-def _resolve_columns(
-    candidates: list[tuple[XbrlFact, XbrlContext]], period_end_date: date, source: str,
-) -> list[tuple[int, XbrlFact, XbrlContext]]:
-    """col0 requires an exact date match to `period_end_date` — if none of the
-    candidates match, this element contributes nothing (see module docstring
-    on why col1+ is best-effort and col0-or-nothing is the right trade-off)."""
+def _bucket_by_period(
+    candidates: list[tuple[XbrlFact, XbrlContext]], source: str,
+) -> dict[date, tuple[XbrlFact, XbrlContext]]:
+    """Group candidate (fact, context) pairs by resolved period date, picking
+    exactly one representative per date. Duration candidates sharing an
+    end_date are disambiguated by earliest start_date (= cumulative, "누적" —
+    generalizes HYA/FQA vs HYQ/FQQ without hardcoding those literal suffixes,
+    module docstring). Used by `_resolve_columns` (BS/IS/CF, anchored to
+    `period_end_date`) and directly by `_emit_sce_lines` (SCE, which ranks by
+    recency instead — module docstring's SCE section explains why SCE can't
+    anchor to `period_end_date`, and why it resolves periods once per row
+    from the total column rather than per column)."""
     kinds = {ctx.period_kind for _, ctx in candidates}
     if not kinds:
-        return []
+        return {}
     if len(kinds) > 1:
         counts = {k: sum(1 for _, c in candidates if c.period_kind == k) for k in kinds}
         majority = max(counts, key=counts.get)
         logger.warning(f"{source}: mixed instant/duration contexts ({counts}), using {majority!r}")
         candidates = [(f, ctx) for f, ctx in candidates if ctx.period_kind == majority]
+    if not candidates:
+        return {}
     kind = candidates[0][1].period_kind
 
     buckets: dict[date, tuple[XbrlFact, XbrlContext]] = {}
@@ -291,7 +330,16 @@ def _resolve_columns(
         for d, group in by_end.items():
             group.sort(key=lambda pair: pair[1].start_date)
             buckets[d] = group[0]
+    return buckets
 
+
+def _resolve_columns(
+    candidates: list[tuple[XbrlFact, XbrlContext]], period_end_date: date, source: str,
+) -> list[tuple[int, XbrlFact, XbrlContext]]:
+    """col0 requires an exact date match to `period_end_date` — if none of the
+    candidates match, this element contributes nothing (see module docstring
+    on why col1+ is best-effort and col0-or-nothing is the right trade-off)."""
+    buckets = _bucket_by_period(candidates, source)
     if not buckets:
         return []
 
@@ -326,6 +374,129 @@ def _numeric_value(fact: XbrlFact, units: dict[str, XbrlUnit]) -> int | None:
         logger.warning(f"non-numeric value_raw for {fact.qname}: {fact.value_raw!r}")
         return None
     return int(num.to_integral_value(rounding=ROUND_HALF_UP))
+
+
+def _flatten_from(tree: PresentationTree, start: str) -> list[str]:
+    """DFS pre-order starting at an arbitrary node (not necessarily a tree
+    root) — used to walk the LineItems/Axis *subtrees* of an SCE role rather
+    than the whole role tree (module docstring's SCE section)."""
+    out: list[str] = []
+
+    def visit(loc_label: str) -> None:
+        out.append(loc_label)
+        for child in tree.nodes[loc_label].children:
+            visit(child)
+
+    visit(start)
+    return out
+
+
+def _find_by_local(tree: PresentationTree, ns: str, local: str, source: str) -> str | None:
+    """Locate the (expected-unique) node whose element is `{ns}local` — used
+    to find the SCE role's `ComponentsOfEquityAxis` and
+    `StatementOfChangesInEquityLineItems` locators by concept identity rather
+    than by position (Phase 3-6 §1/§2)."""
+    matches = [label for label, node in tree.nodes.items()
+               if node.element.ns == ns and node.element.local == local]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        logger.warning(f"{source}: {len(matches)} nodes with element {{{ns}}}{local}, using the first")
+    return matches[0]
+
+
+def _col_label_chain(loc_label: str, tree: PresentationTree, label_of: dict[str, str], stop_before: str) -> str:
+    """Ancestor label chain for an SCE column, bounded to the
+    `ComponentsOfEquityAxis` subtree (excludes the Axis locator itself and
+    everything above it — Table/LineItems-abstract/role-root are not part of
+    the *column* hierarchy). ">"-joined, same convention as
+    `report_lines.py::_build_col_labels` (whose `detect_sce_anomalies()`
+    consumer only reads the LAST segment via `lab.split(">")[-1]`, so an
+    extra/short ancestor chain here is harmless either way — this just aims
+    to be a faithful rendering of the true XBRL structure)."""
+    chain: list[str] = [label_of[loc_label]]
+    parent = tree.nodes[loc_label].parent_loc_label
+    while parent is not None and parent != stop_before:
+        chain.append(label_of[parent])
+        parent = tree.nodes[parent].parent_loc_label
+    chain.reverse()
+    return ">".join(chain)
+
+
+def _dim_candidates(
+    element: QName,
+    facts_by_qname: dict[QName, list[XbrlFact]],
+    contexts: dict[str, XbrlContext],
+    required_dims: frozenset[Dimension],
+) -> list[tuple[XbrlFact, XbrlContext]]:
+    """Generalizes `_basis_candidates` to an arbitrary exact dimension set —
+    SCE non-total columns need basis + `ComponentsOfEquityAxis`=member (2
+    dims), not just basis (1 dim). Still an *exact* set match (Phase 0 §7):
+    a context carrying any dimension beyond `required_dims` is excluded, same
+    reasoning as `_basis_candidates` (note-role reuse of the same axis)."""
+    out: list[tuple[XbrlFact, XbrlContext]] = []
+    for f in facts_by_qname.get(element, []):
+        if f.is_nil or not f.value_raw:
+            continue
+        ctx = contexts.get(f.context_ref)
+        if ctx is None or frozenset(ctx.dims) != required_dims:
+            continue
+        out.append((f, ctx))
+    return out
+
+
+def _sce_row_label(base_label: str, element: QName, ifrs_full_ns: str, ctx: XbrlContext) -> str:
+    """Synthesizes the date (+ 기말/기초 marker) suffix that lets
+    `detect_sce_anomalies()` keep working unmodified (module docstring). Only
+    instant-typed rows get a suffix — duration rows (flow items: 당기순이익/
+    배당/유상증자…) keep the bare concept label, matching the HTML source
+    where only 기초/기말 balance rows carry a date in their account-name text
+    (report_lines.py::_emit_sce_lines docstring)."""
+    if ctx.period_kind != "instant":
+        return base_label
+    marker = None
+    if element.ns == ifrs_full_ns and element.local == _SCE_ENDING_LOCAL:
+        marker = "기말"          # the ONLY marker detect_sce_anomalies() greps for
+    elif element.ns == ifrs_full_ns and element.local == _SCE_BEGINNING_LOCAL:
+        marker = "기초"          # not required for compat, added for fidelity/symmetry
+    suffix = f" ({marker})" if marker else ""
+    return f"{base_label}{suffix} ({ctx.instant})"
+
+
+def _check_sce_column_rollup(
+    lines: list[ReportLineRow], col_parent_of: dict[int, int | None], source: str,
+) -> None:
+    """Self-consistency check, NOT a filter — logs only (module docstring).
+    For every (row_order) group, verifies each parent column's value equals
+    the sum of its *direct* child columns' values, when both are present.
+    This can only ever catch OUR OWN column-tree wiring bugs (a real filing
+    typo would show up here too, but `detect_sce_anomalies()` is the intended
+    place to surface real 원문 anomalies post-storage, with `original_value`/
+    `suggested_value` semantics `report_lines` rows don't carry)."""
+    children_of: dict[int, list[int]] = {}
+    for child, parent in col_parent_of.items():
+        if parent is not None:
+            children_of.setdefault(parent, []).append(child)
+    if not children_of:
+        return
+
+    by_row: dict[int, dict[int, int]] = {}
+    for l in lines:
+        if l.value_won is not None:
+            by_row.setdefault(l.row_order, {})[l.col_index] = l.value_won
+
+    for row_order, cells in by_row.items():
+        for parent_col, child_cols in children_of.items():
+            parent_val = cells.get(parent_col)
+            child_vals = [cells[c] for c in child_cols if c in cells]
+            if parent_val is None or len(child_vals) != len(child_cols):
+                continue  # incomplete row (e.g. 비지배지분 not present in a prior period) — not comparable
+            total = sum(child_vals)
+            if total != parent_val and abs(total - parent_val) > abs(parent_val or 1) * _SCE_ROLLUP_TOL:
+                logger.warning(
+                    f"{source}: row_order={row_order} col{parent_col} column-rollup mismatch: "
+                    f"parent={parent_val:,} != sum(children {child_cols})={total:,}"
+                )
 
 
 def _emit_statement_lines(
@@ -381,6 +552,146 @@ def _emit_statement_lines(
     return out
 
 
+def _emit_sce_lines(
+    *, tree: PresentationTree, facts_by_qname: dict[QName, list[XbrlFact]],
+    contexts: dict[str, XbrlContext], units: dict[str, XbrlUnit],
+    labels: dict[QName, list[Label]], basis_axis: QName, basis_member: QName,
+    ifrs_full_ns: str, basis: str, corp_code: str, rcept_no: str,
+    report_fiscal_year: int, report_fiscal_period: str,
+) -> list[ReportLineRow]:
+    """SCE emitter — see module docstring's SCE section for the full design
+    (col_index=자본구성요소 위치, period encoded via row_order block-stacking +
+    label_raw date suffix, not context_fiscal_year/period_kind)."""
+    source = f"{rcept_no}/SCE/{basis}"
+
+    axis_loc = _find_by_local(tree, ifrs_full_ns, _CE_AXIS_LOCAL, source)
+    lineitems_loc = _find_by_local(tree, ifrs_full_ns, _SCE_LINEITEMS_LOCAL, source)
+    if axis_loc is None or lineitems_loc is None:
+        logger.warning(f"{source}: ComponentsOfEquityAxis 또는 LineItems 노드 없음, 스킵")
+        return []
+    ce_axis = QName(ns=ifrs_full_ns, local=_CE_AXIS_LOCAL)
+
+    # Labels resolved for the WHOLE role tree, not just the column/row
+    # subtrees — `_section_path` walks a row's ancestor chain past
+    # `lineitems_loc` up to the role's true root (Table/Abstract), so it
+    # needs labels for those ancestors too (same reason `_emit_statement_lines`
+    # resolves labels over `tree.nodes` wholesale, not just its own flat list).
+    label_of = {
+        loc_label: _resolve_label(node.element, node.preferred_label, labels)
+        for loc_label, node in tree.nodes.items()
+    }
+
+    # ── Columns: DFS over the axis's domain subtree(s) (Phase 3-6 §1). ──────
+    axis_children = tree.nodes[axis_loc].children
+    if not axis_children:
+        logger.warning(f"{source}: ComponentsOfEquityAxis 에 domain 자식 없음, 스킵")
+        return []
+    col_flat: list[str] = []
+    for domain_root in axis_children:
+        col_flat.extend(_flatten_from(tree, domain_root))
+    col_index_of = {loc_label: i for i, loc_label in enumerate(col_flat)}
+    col_label_of = {
+        loc_label: _col_label_chain(loc_label, tree, label_of, stop_before=axis_loc)
+        for loc_label in col_flat
+    }
+    col_parent_of: dict[int, int | None] = {}
+    for loc_label in col_flat:
+        parent = tree.nodes[loc_label].parent_loc_label
+        col_parent_of[col_index_of[loc_label]] = col_index_of.get(parent)  # None if parent == axis_loc (a root)
+    total_col = col_flat[0]  # the axis's first domain member = the "총계" root (Phase 3-6 §1)
+
+    # ── Rows: DFS over the LineItems subtree (Phase 3-6 §2). ────────────────
+    row_flat = _flatten_from(tree, lineitems_loc)
+    row_index_of = {loc_label: i for i, loc_label in enumerate(row_flat)}
+    row_node_role_of = _compute_node_roles(row_flat, tree)
+    # Period blocks are stacked at a fixed stride so they never overlap
+    # regardless of how many periods a given row actually has (module
+    # docstring's SCE section — row_order here is a display/grouping
+    # convenience, not a period claim; context_fiscal_year/period_kind stay
+    # NULL, matching the HTML-parser SCE convention).
+    stride = len(row_flat)
+
+    out: list[ReportLineRow] = []
+    for row_loc in row_flat:
+        row_node = tree.nodes[row_loc]
+        row_depth = row_node.depth
+        row_role = row_node_role_of[row_loc]
+        row_section_path = _section_path(row_loc, tree, label_of)
+        base_label = label_of[row_loc]
+
+        # ★ Canonical period ranking comes from the TOTAL column only, then
+        # every other column looks up that *same date* in its own bucket —
+        # resolving periods independently per column (rank-by-recency on each
+        # column's own candidate set) is wrong whenever a member column is
+        # missing a period a sibling has (e.g. 비지배지분 absent in an
+        # earlier year): the local rankings then shift out of step and
+        # period_idx 1 can mean a different real date in different columns,
+        # silently mixing unrelated periods into the same row_order (found
+        # empirically — hanwha/baxelbio both tripped `_check_sce_column_rollup`
+        # until this was fixed). The total column is the right anchor because
+        # a statement's grand-total line exists for every period covered
+        # (Phase 3-6 §1: "총계열은 context dims==1"), while member columns can
+        # legitimately be sparse.
+        total_required = frozenset({Dimension(axis=basis_axis, member=basis_member)})
+        total_candidates = _dim_candidates(row_node.element, facts_by_qname, contexts, total_required)
+        total_buckets = _bucket_by_period(total_candidates, source)
+        canonical_dates = sorted(total_buckets, reverse=True)
+        if not canonical_dates:
+            continue  # this row concept has no total-column value anywhere — nothing to anchor periods to
+
+        for col_loc in col_flat:
+            col_idx = col_index_of[col_loc]
+            if col_loc == total_col:
+                col_buckets = total_buckets
+            else:
+                col_element = tree.nodes[col_loc].element
+                required = frozenset({
+                    Dimension(axis=basis_axis, member=basis_member),
+                    Dimension(axis=ce_axis, member=col_element),
+                })
+                candidates = _dim_candidates(row_node.element, facts_by_qname, contexts, required)
+                col_buckets = _bucket_by_period(candidates, source)
+            if not col_buckets:
+                continue
+
+            for period_idx, d in enumerate(canonical_dates):
+                bucket = col_buckets.get(d)
+                if bucket is None:
+                    continue  # this column has no value for this particular period — sparse, not an error
+                fact, ctx = bucket
+                value = _numeric_value(fact, units)
+                if value is None:
+                    continue
+                out.append(ReportLineRow(
+                    corp_code=corp_code,
+                    rcept_no=rcept_no,
+                    report_fiscal_year=report_fiscal_year,
+                    report_fiscal_period=report_fiscal_period,
+                    statement="SCE",
+                    basis=basis,
+                    section_path=row_section_path,
+                    label_raw=_sce_row_label(base_label, row_node.element, ifrs_full_ns, ctx),
+                    col_index=col_idx,                       # position (자본 구성요소), NOT a period
+                    col_label=col_label_of[col_loc],
+                    context_fiscal_year=None,                # ★ no year claim (module docstring)
+                    period_kind=None,                        # varies per row/period, same as HTML SCE
+                    is_cumulative=False,
+                    value_won=value,
+                    adecimal=0,
+                    unit_source=UNIT_SOURCE_XBRL,
+                    source_ref=f"SCE_{basis}/{row_node.element.local}"[:180],
+                    context_raw=fact.context_ref[:255],
+                    row_order=period_idx * stride + row_index_of[row_loc],
+                    depth=row_depth,
+                    node_role=row_role,
+                    table_seq=0,
+                    table_title=None,
+                ))
+
+    _check_sce_column_rollup(out, col_parent_of, source)
+    return out
+
+
 def extract_report_lines_xbrl(
     zip_path: str | Path,
     *,
@@ -429,22 +740,40 @@ def extract_report_lines_xbrl(
 
             lines: list[ReportLineRow] = []
             for (statement, basis), role_info in core_roles.items():
-                if statement not in _SUPPORTED_STATEMENTS:
-                    continue  # SCE — deferred, see module docstring
+                if statement not in _SUPPORTED_STATEMENTS and statement != _SUPPORTED_SCE_STATEMENT:
+                    continue  # note-adjacent statement kinds, if role_map.py ever adds one
                 tree = pre_trees.get(role_info.role_uri)
                 if tree is None:
                     logger.warning(f"[report_lines_xbrl] {rcept_no}: role {role_info.role_uri} "
                                     f"_pre.xml 에 없음, 스킵")
                     continue
                 basis_member = QName(ns=basis_axis_ns, local=_BASIS_MEMBER_LOCAL[basis])
-                lines.extend(_emit_statement_lines(
-                    tree=tree, facts_by_qname=facts_by_qname, contexts=instance.contexts,
-                    units=instance.units, labels=labels, basis_axis=basis_axis,
-                    basis_member=basis_member, statement=statement, basis=basis,
-                    corp_code=corp_code, rcept_no=rcept_no,
-                    report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
-                    period_end_date=period_end_date,
-                ))
+                # ★ per-(statement, basis) try/except — one bad role (a parser
+                # bug, or a malformed/unusual filing) must not zero out the
+                # other statements this rcept already extracted cleanly. The
+                # outer try/except (bad zip, unparseable member) is a
+                # different failure class and stays coarse-grained.
+                try:
+                    if statement == _SUPPORTED_SCE_STATEMENT:
+                        lines.extend(_emit_sce_lines(
+                            tree=tree, facts_by_qname=facts_by_qname, contexts=instance.contexts,
+                            units=instance.units, labels=labels, basis_axis=basis_axis,
+                            basis_member=basis_member, ifrs_full_ns=basis_axis_ns, basis=basis,
+                            corp_code=corp_code, rcept_no=rcept_no,
+                            report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
+                        ))
+                    else:
+                        lines.extend(_emit_statement_lines(
+                            tree=tree, facts_by_qname=facts_by_qname, contexts=instance.contexts,
+                            units=instance.units, labels=labels, basis_axis=basis_axis,
+                            basis_member=basis_member, statement=statement, basis=basis,
+                            corp_code=corp_code, rcept_no=rcept_no,
+                            report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
+                            period_end_date=period_end_date,
+                        ))
+                except Exception as e:
+                    logger.warning(f"[report_lines_xbrl] {rcept_no}: {statement}/{basis} 추출 실패 "
+                                    f"({type(e).__name__}: {e}), 이 role 만 스킵")
 
             if not core_roles:
                 logger.debug(f"[report_lines_xbrl] {rcept_no}: core statement role 없음 → 빈 결과")

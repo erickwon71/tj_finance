@@ -70,6 +70,7 @@ migration id: `2026_08_download_tasks_dcm_no` / `2026_08_download_tasks_file_typ
 - [x] 라벨 해석(한글 우선, 폴백 영문) 구현
 - [x] 값/단위 추출(KRW/KRWEPS만), weight 는 저장 시 미반영(Phase 0 §11 그대로 — 항등식 검증에만 필요함을 재확인, 아래 기록), `unit_source='xbrl'` 신설
 - [x] note 포함 여부(`include_notes`) 처리 — Phase 3-5 범위 밖으로 확정(본문 BS/IS/CF만, SCE 도 이번엔 보류 — 아래 기록)
+- [x] 3-7: SCE(자본변동표) 구현 — 완료 2026-08-06(아래 "Phase 3-7 진행 기록" 참고)
 
 ## Phase 4 — 데일리 파이프라인 배선 (두 call site 필수)
 
@@ -282,6 +283,156 @@ RoleInfo 역인덱스 제공(둘 이상 겹치면 raise 대신 경고 로그, Ph
   (연결+별도). `pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지). 새 모듈에서 발생한 경고
   0건(파싱 중 뜨는 189건 경고는 전부 기존에 문서화된 `taxonomy_linkbase.py` 의 note-role DAG 노이즈,
   이 파일이 새로 만든 것이 아님).
+
+### Phase 3-6 — SCE(자본변동표) 구조 조사 (2026-08-06, 코드 변경 없음)
+
+두 샘플 zip을 다시 받아(`LegacyDartScraper.fetch_xbrl_zip()` 재현) SCE role의 presentation
+tree(D610000/D610005)와 실제 `ComponentsOfEquityAxis` context를 전량 walk했다(레포 미포함,
+세션 scratchpad만). 목적: 3-5에서 보류한 "열 축이 기간이 아니라 자본구성요소 계층"이라는
+구조를 파악해 추출 설계를 확정할 수 있는지 판단.
+
+**결론: 구조는 명확히 파악됐다. 다만 기존 저장 스키마(`report_lines`)와의 호환을 위해
+설계 결정이 하나 더 필요해 이번엔 설계만 정리하고 구현은 보류한다** (아래 "핵심 난제" 참고).
+
+#### 1. 열(자본구성요소) — presentation tree로 정확히 산출 가능, 계층형
+
+`StatementOfChangesInEquityTable` 로케이터의 자식 `ComponentsOfEquityAxis` 서브트리가 곧
+열 정의다. 도메인 루트(`EquityMember`, "자본"="총계")부터 DFS order-정렬로 순회하면 그대로
+열 순서가 나온다:
+
+- 박셀바이오(별도만): `EquityMember`(총계) → `IssuedCapitalMember`(자본금) →
+  `CapitalSurplusMember`(자본잉여금) → `ElementsOfOtherStockholdersEquityMember`(기타자본) →
+  `RetainedEarningsMember`(이익잉여금). 5열, 평평한 구조(자식이 자식을 안 가짐).
+- 한화 연결: `EquityMember`(총계) → `EquityAttributableToOwnersOfParentMember`(지배지분
+  **소계**, 그 아래 `IssuedCapitalMember`/`CapitalSurplusMember`/
+  `ElementsOfOtherStockholdersEquityMember`/`OtherComprehensiveIncomeLossAccumulatedAmountMember`/
+  `RetainedEarningsMember` 5개 자식) → `NoncontrollingInterestsMember`(비지배지분, 형제).
+  8열, **2단 계층**(소계 열이 자기 자식 열들을 거느림 — 기존 HTML 파서의 다단 헤더
+  `_build_col_labels`의 ">"join 관례와 개념적으로 동일, 오히려 XBRL 쪽이 추측 없이 정확함).
+- 값 조회 규약: `EquityMember`(총계) 열은 context dims==1(basis만, BS/IS/CF와 같은
+  `_basis_candidates` 그대로 재사용 가능). 나머지 열은 context dims==2(basis +
+  `ComponentsOfEquityAxis`=해당 멤버, 정확히 그 QName)만 채택 — 실측 확인: 한화 연결에서
+  같은 축이 주석(하이브리드채권 세부표)에도 재사용돼 멤버 13종 중 6종이 SCE와 무관한
+  주석 오염(`The8/9/10ThPrivateUnsecuredConvertibleBondsOf...Member`)이었다. **반드시
+  presentation tree에 실제로 걸린 (concept, member) 조합만 채택**해야 한다(3-5의 "tag명
+  단독 검색 금지" 원칙이 열 축에도 그대로 적용됨).
+
+#### 2. 행(변동사유) — `StatementOfChangesInEquityLineItems` 서브트리, 기존과 개념 동일
+
+`기초자본`(`EquityAtBeginningOfPeriod`) → `포괄손익`(`ComprehensiveIncome`, 그 아래
+당기순이익/기타포괄손익 항목들) → `주식기준보상`/`배당금`/`기타변동` 등 자본거래 항목들 →
+`자본`(`Equity`, 기말) 순으로 LineItems 트리를 order-정렬 DFS 순회하면 행이 그대로 나온다.
+기존 HTML 파서가 "날짜 라벨 행"(기초/기말)을 별도 규칙(`date_labels_ok=True`)으로 살려야
+했던 것과 달리, XBRL은 애초에 `EquityAtBeginningOfPeriod`/`Equity` 자체가 정식 라인아이템
+개념이라 특별 취급이 필요 없다.
+
+#### 3. ★핵심 난제 — 기간(당기/전기) 인코딩이 기존 스키마의 "행 안에 날짜 문자열" 관례에 의존
+
+- 각 라인아이템 concept(예: `Equity`=기말자본)은 기간마다 **다른 context**를 가진다 — 당기말
+  instant 하나, 전기말 instant 하나(둘 다 같은 concept). BS/IS/CF와 똑같이 "같은 concept,
+  다른 날짜 context가 여러 개"인 구조라 겉보기엔 col0/col1 로직을 그대로 쓸 수 있어 보인다.
+- 그런데 기존 HTML 기반 SCE 파서(`report_lines.py::_emit_sce_lines`)는 애초에
+  `context_fiscal_year=NULL`/`period_kind=NULL`로 저장하고, 기간 구분을 **`label_raw`에
+  박힌 실제 날짜 문자열**("2023.12.31(기말자본)")로만 남긴다 — `col_index`는 오직
+  자본구성요소 열 위치다. 그리고 `fin2/audit/line_anomaly.py::detect_sce_anomalies()`가
+  이 관례에 **직접 의존**한다: `_CLOSE`(정규식 `"기말"`) + `_close_row_year()`(라벨에서
+  정규식으로 연도 추출)로 "기말" 행을 찾아 BS의 해당 연도 열과 대조한다.
+- 즉 XBRL 추출기가 열=자본구성요소·행=변동사유까지는 정확히 산출해도, **`label_raw`에
+  실제 종료일 문자열을 합성해 넣지 않으면** `detect_sce_anomalies()`의 SCE↔BS 교차검증이
+  XBRL 유입 행에서 에러 없이 조용히 공백(대조 0건)이 된다 — Gate가 "통과"가 아니라
+  "적용 자체가 안 됨"으로 조용히 새는 패턴(참고: `[[layer2-silent-loss-patterns]]`류).
+  기간 버킷 자체는 BS/IS/CF의 `_resolve_columns()`를 그대로 재사용 가능(상대적 최신순으로
+  당기/전기 판정, `period_end_date` 정확매치가 아니라 "가장 최근"="당기"로 판정해야 함 —
+  `EquityAtBeginningOfPeriod`의 instant는 기말일이 아니라 기초일이라 정확매치가 원천적으로
+  안 됨).
+
+#### 4. ★★적재 리스크가 BS/IS/CF보다 크다 — `_is_loadable()`이 SCE를 col_index로 안 거른다
+
+`report_lines.py::_is_loadable()`은 BS/IS/CF는 `col_index==0`만 저장하지만 SCE는 전량
+저장한다(위 §3 인용, 열축이 기간이 아니므로). 즉 이 설계에서 열/행/기간 판정 중 하나라도
+틀리면 **그 오염이 필터 없이 그대로 DB에 들어간다** — BS/IS/CF에서 실수해도 피해가
+"최선노력 col1"에 국한됐던 것과 다르다. 구현 시 저장 이전에 항등식 하드 게이트를 강력
+권장: 지배지분소계+비지배지분=자본총계(있는 필링만), 기초자본+포괄손익+자본거래=기말자본
+(두 샘플 다 이 항등식이 실제로 성립하는지는 아직 값 단위로는 확인 안 함 — 구조만 확인,
+다음 단계에서 값 검증 필요).
+
+#### 결정 (2026-08-06, 사용자 확인)
+
+**옵션 A 채택 — SCE도 지금 구현한다.** 위 §1~§4 설계대로:
+`label_raw`에 날짜 합성(예: `"자본 (2026-03-31)"`)해 기존 `detect_sce_anomalies()` 정규식과
+호환 유지, 열 계층(">"join)은 `col_label`로, 기간 버킷은 BS/IS/CF의 `_resolve_columns()`
+재사용(정확매치 아닌 "가장 최근"=당기 판정), 저장 전 항등식 하드 게이트
+(지배지분소계+비지배지분=자본총계, 기초자본+포괄손익+자본거래=기말자본) 필수.
+→ Phase 3에 **3-7(SCE 구현)** 항목으로 반영, 착수는 별도 명시적 요청 시.
+
+### Phase 3-7 진행 기록 (완료 2026-08-06)
+
+`fin2/extract/report_lines_xbrl.py`에 `_emit_sce_lines()` 신설(기존 BS/IS/CF `_emit_statement_lines()`와
+나란히), `extract_report_lines_xbrl()`의 통계 분기에서 SCE를 이 새 함수로 디스패치. 두 샘플 zip을 다시
+받아(크기 Phase 0 기록과 정확히 일치) 실제로 파싱·검증했다(레포에는 미포함, 세션 scratchpad만).
+
+- **열**: `ComponentsOfEquityAxis` 로케이터의 domain 자식(들)부터 DFS order-정렬로 순회
+  (`_flatten_from()` — `_flatten_preorder()`를 임의 시작 노드로 일반화한 버전). `col_label`은 그 축
+  서브트리 안에서만의 조상 라벨 체인(`_col_label_chain()`, Table/LineItems/role-root는 배제) —
+  실측: 박셀바이오 5열(평평), 한화 연결 8열(지배지분 소계가 자기 자식 5개를 거느리는 2단 계층), 한화
+  별도 6열(평평) — Phase 3-6 §1 기록과 정확히 일치.
+- **행**: `StatementOfChangesInEquityLineItems` 서브트리를 같은 방식으로 DFS(`row_flat`).
+  `node_role`/`section_path`는 BS/IS/CF와 동일한 함수(`_compute_node_roles`/`_section_path`) 재사용 —
+  단 `label_of`는 **행/열 서브트리가 아니라 tree 전체**에서 구해야 한다(행의 조상 체인이 LineItems를
+  지나 Table/role-root까지 올라가므로) — 처음엔 서브트리로만 만들어서 `KeyError`가 났다(아래 "실측 중
+  발견한 버그" 참고).
+- **기간(당기/전기/전전기)**: `_resolve_columns()`(BS/IS/CF, `period_end_date` 정확매치)와
+  `_bucket_by_period()`라는 공통 헬퍼를 공유하도록 리팩터(순수 리팩터, BS/IS/CF 동작 불변 —
+  pytest 263 그대로 통과 확인). SCE는 **행마다 한 번, 총계열(col0) 후보에서만** 날짜를 최신순으로
+  랭킹해 "정본 기간 목록"을 만들고, 그 정본 날짜로 나머지 모든 열의 값을 조회한다(날짜로 직접 매칭,
+  열마다 독립적으로 재랭킹하지 않음). `row_order = period_idx * stride + row_index`
+  (`stride = len(row_flat)`) — 기간 블록이 절대 겹치지 않게 층으로 쌓는다(HTML 파서의 "당기/전기
+  블록이 세로로 두 번 쌓인다"는 것과 같은 효과, 순서는 최신이 먼저).
+- **`label_raw` 날짜 합성**: instant 컨텍스트 행에만 날짜 접미사를 붙인다(duration인 흐름 항목은
+  원문처럼 그대로 둠). concept이 정확히 `ifrs-full:Equity`(기말자본)일 때만 `"(기말)"` 마커를
+  붙여 `detect_sce_anomalies()`의 `기말` 정규식과 호환(그 함수가 실제로 찾는 유일한 마커).
+  `ifrs-full:EquityAtBeginningOfPeriod`(기초자본)에도 대칭성을 위해 `"(기초)"`를 붙였으나 이건
+  호환에 필수는 아님.
+- **저장 전 항등식 하드 게이트**: 계획대로 "지배지분소계+비지배지분=자본총계" 유형의 **열 rollup
+  체크**(`_check_sce_column_rollup()` — 부모 열 값과 직계 자식 열 값들의 합을 행·기간마다 비교, 상대오차
+  0.1% 초과 시 `logger.warning`만, 저장을 막거나 값을 고치지 않음 — `detect_sce_anomalies()`가 이미
+  저장 후 SCE↔BS 대조를 값 제안까지 포함해서 하고 있어 그 역할과 안 겹치게 이건 "우리 파서 배선 버그
+  감지용"으로만 씀). **"기초자본+포괄손익+자본거래=기말자본"(행 rollup)은 계획과 달리 이번엔 구현
+  안 함** — 실측으로 이유가 드러났다(아래 "실측 중 발견한 버그·판단" 참고): 단순합으로는 두 샘플
+  전부 안 맞고(가중치 없이는 배당금처럼 "표시는 양수지만 자본을 줄이는" 항목을 못 구분), Phase 0
+  §11처럼 `_cal.xml`의 weight가 SCE role에도 있는지가 먼저 확인돼야 하는데 이번 조사에서 그 확인을
+  안 했다(BS/CF는 Phase 0에서 이미 확인됨). R9 원칙상 넘겨짚지 않고 **명시적으로 보류**(Phase 6 항등식
+  점검 항목으로 이월 — 거기서 `_cal.xml`을 SCE에도 로드해 weight 반영 여부부터 확인).
+
+**검증(두 샘플 재다운로드해 실파싱, 회귀 없음 확인)**:
+- `pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, 이번 변경과 무관).
+- SCE 행 수: 박셀바이오 별도 37행, 한화 연결 115행 + 별도 109행(=224행).
+- 열 rollup 체크(`_check_sce_column_rollup`) **경고 0건**(양 샘플·양 basis 전부) — 수동 재확인으로
+  박셀바이오 4개 행에서 col0==sum(col1..4) 4/4 일치 재확인.
+- 값 대조: 박셀바이오 SCE 기말(col0, 2024-06-30)=78,274,645,899, 한화 연결 SCE
+  기말(col0, 2026-03-31)=17,440,065,127,000, 한화 별도=9,266,290,277,000 — 전부 Phase 0 §7/3-5의
+  BS 자본총계 기록과 정확히 일치(같은 개념, 다른 재무제표, 같은 값 — 강한 교차검증).
+  한화 연결 지배지분(9,958,578,459,000)+비지배지분(7,481,486,668,000)=17,440,065,127,000 —
+  총계와 정확히 일치.
+
+**실측 중 발견한 버그·판단(구현하며 잡음, 계획 문서엔 없던 것)**:
+1. **`label_of` 범위 버그**: 처음엔 행/열 서브트리 노드만으로 `label_of`를 만들었다가
+   `_section_path()`가 LineItems 밖(Table/role-root)의 조상을 찾다 `KeyError`. `tree.nodes` 전체에서
+   라벨을 구하도록 수정(BS/IS/CF `_emit_statement_lines()`가 원래 하던 방식과 통일).
+2. **★기간 정렬 버그(값 오염 직행 사례, 고쳐서 다행)**: 최초 구현은 열마다 독립적으로
+   `_resolve_sce_periods()`(랭킹 함수, 결국 폐기)를 불러 "최신순=0"을 매겼다. 그런데 특정 열(예:
+   비지배지분)이 일부 기간에 값이 없으면 그 열만의 랭킹이 밀려서, 같은 `row_order`(=같은 "기간
+   블록"으로 간주됨)에 실제로는 **다른 날짜의 값들이 섞였다** — 실측: `_check_sce_column_rollup`이
+   "row_order=17: parent=83,493,267,971(2023-06-30 값) != sum(children)=18,696,472,616(다른 기간
+   합)" 같은 거대한 불일치를 잡아냈다(하드 게이트가 실제로 제 역할을 함). 총계열(col0)에서만 정본
+   기간 목록을 뽑고 나머지 열은 그 날짜로 직접 조회하도록 다시 설계해서 해결 — 재검증 결과 경고
+   0건. **이 버그는 저장 전 자체검증(열 rollup 게이트)이 없었으면 조용히 DB로 들어갔을 뻔한
+   사례**라 §4의 "하드 게이트 강력 권장"이 실제로 유효했음을 실측으로 보여준다.
+3. **행 rollup 단순합은 실제로 틀린다는 것도 실측 확인**(3번째 항목과 별개, 위 "저장 전 항등식
+   하드 게이트" 문단 참고) — 한화 연차배당이 원문엔 양수로 표시되지만 자본을 줄이는 항목이라
+   가중치 없는 단순합은 기초+변동 합이 기말보다 정확히 배당액의 2배만큼 크게 나온다(연결
+   820,440,670,000 = 2×410,220,335,000, 별도 720,283,032,000 = 2×360,141,516,000 — 정확히
+   일치). 구현하지 않기로 한 판단이 맞았다는 근거.
 
 ### Phase 3 설계에 주는 결론 (착수 시 그대로 반영)
 

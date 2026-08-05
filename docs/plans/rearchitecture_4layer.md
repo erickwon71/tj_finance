@@ -15,6 +15,15 @@
 >   [collection_pipeline_restore_2026-07-31](collection_pipeline_restore_2026-07-31.md) §13·§14 +
 >   [handoff_collection_pipeline_2026-07-31](../qa/handoff_collection_pipeline_2026-07-31.md)(갱신됨).
 >   계층1(다운로드) 운영 강화이며 계층2/3 데일리 재편입은 여전히 Phase 5 대기.
+>
+> **08-04~08-05 병행 트랙**(재설계 범위 밖 — 계층2 적재공백 감사 및 수정): 189건 원인 전수분해
+> ([handoff_layer2_gap_analysis_2026-08-04](../qa/handoff_layer2_gap_analysis_2026-08-04.md)) →
+> 조용한 손실 6종 수정+외화(USD) 지원+상장폐지 데이터 정리
+> ([handoff_layer2_silent_loss_2026-08-05](../qa/handoff_layer2_silent_loss_2026-08-05.md)) →
+> ⓪-4 file_path 재발 방지 + 08-04 원인표 재확인, 활성기업 잔여공백 **24건**으로 확정 및
+> 정밀 재분해(신규 패턴 "XML 파싱 자체 실패" 9건 발견) —
+> **★이 트랙 현재 시작점** = [handoff_delisting_filepath_and_gap_recheck_2026-08-05](../qa/handoff_delisting_filepath_and_gap_recheck_2026-08-05.md).
+> 브랜치는 main 에 병합·push 완료(`df13bfe`).
 
 ---
 

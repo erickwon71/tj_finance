@@ -144,6 +144,97 @@ def test_notes_off_by_default():
     assert not any(l.statement == "note" for l in lines)
 
 
+# ── 문서 전체 기본 단위 (2026-08-05, ★사용자 결정) ──────────────────────────
+# '재무제표_직접작성' 수기입력 서식은 본문(BS/IS/SCE/CF) 표에 단위를 재선언하지 않는
+# 경우가 있다 — 08-04/08-05 잔여공백 24건 재분해 중 발견(핸드오프
+# handoff_delisting_filepath_and_gap_recheck_2026-08-05.md §5 "표잡힘(현대)-적재만안됨").
+# 근거는 magnitude 추론이 아니라 문서 안 텍스트 선언(요약재무정보 표 단위·회계정책 주석의
+# 표시통화 문구)뿐이다. 특수건설(20151116001903)은 **별개 결함**(제목+데이터 병합 표라
+# BS/IS 분류 자체가 실패)이라 이 회귀 대상에서 제외 — docs/PARSING_RULES.md 부록C 참고.
+_ELP_A = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00374020_이엘피/annual/2015/20160330001530.xml"
+)
+_ELP_B = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00374020_이엘피/annual/2015/20160513002038.xml"
+)
+_WINGSFOOT = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/01405585_윙스풋/quarter/2021/20210517000207.xml"
+)
+_INCA = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/01013694_인카금융서비스/quarter/2017/20170516000038.xml"
+)
+
+
+def test_doc_default_unit_from_summary_section():
+    """요약재무정보 표의 '(단위 : 원)' 선언을 문서 기본값으로 찾는다(이엘피 실측)."""
+    if not _ELP_A.exists():
+        return
+    from parser.xml.dart_xml_parser import _parse_xml_file
+    from fin2.extract.text import document_default_unit
+    root = _parse_xml_file(_ELP_A)
+    unit, decl = document_default_unit(root)
+    assert unit == 1, (unit, decl)
+    assert "원" in (decl or "")
+
+
+def test_doc_default_unit_from_presentation_currency_note():
+    """요약재무정보 표에 선언이 없으면 회계정책 주석의 '표시통화…원(KRW)' 문구로 찾는다.
+
+    실측 문구(윙스풋 20210517000207) 그대로 합성 — 이 문서는 요약재무정보에도 단위가 있어
+    ①경로가 먼저 잡히므로(정상 우선순위), ②경로 단독을 시험하려면 ①을 뺀 합성 문서가 필요.
+    """
+    from lxml import etree
+    from fin2.extract.text import document_default_unit
+    xml = (
+        "<DOCUMENT><BODY>"
+        "<SECTION-2><TITLE>1. 요약재무정보</TITLE><P>해당사항 없습니다.</P></SECTION-2>"
+        "<P>재무제표는 회사의 기능통화이면서 표시통화인 \"원(KRW)\"으로 표시되고 있으며 "
+        "별도로 언급하고 있는 사항을 제외하고는 \"원(KRW)\" 단위로 표시되고 있습니다.</P>"
+        "</BODY></DOCUMENT>"
+    )
+    root = etree.fromstring(xml)
+    unit, decl = document_default_unit(root)
+    assert unit == 1, (unit, decl)
+    assert "표시통화" in (decl or "")
+
+
+def test_doc_default_unit_absent_returns_none():
+    """텍스트 근거가 전혀 없는 합성 문서는 (None, None) — 추측하지 않는다."""
+    from lxml import etree
+    from fin2.extract.text import document_default_unit
+    root = etree.fromstring("<DOCUMENT><BODY><P>해당사항 없습니다.</P></BODY></DOCUMENT>")
+    assert document_default_unit(root) == (None, None)
+
+
+def test_previously_gap_filings_now_load_with_doc_default_source():
+    """08-05 재로드에서 0행이던 4건이 이제 unit_source='doc_default'로 채워진다."""
+    targets = [
+        (_ELP_A, "20160330001530", "00374020", 2015, "FY"),
+        (_ELP_B, "20160513002038", "00374020", 2015, "FY"),
+        (_WINGSFOOT, "20210517000207", "01405585", 2021, "Q1"),
+        (_INCA, "20170516000038", "01013694", 2017, "Q1"),
+    ]
+    for path, rcept, corp, fy, period in targets:
+        if not path.exists():
+            continue
+        lines = extract_report_lines(
+            path, rcept_no=rcept, corp_code=corp,
+            report_fiscal_year=fy, report_fiscal_period=period,
+        )
+        assert lines, f"{rcept} 여전히 0행"
+        # 주당손익(EPS)행은 제외 — 그건 표 단위가 아니라 라벨 단위(원/주)라 별도 경로(늘 'declared').
+        body = [l for l in lines if l.statement in ("BS", "IS", "SCE", "CF")
+                and l.section_path != "주당손익"]
+        assert body, f"{rcept} 본문 행 없음"
+        assert all(l.unit_source == "doc_default" for l in body), (
+            rcept, {l.unit_source for l in body})
+        assert all(l.value_won is not None for l in body)
+
+
 def test_notes_monetary_transcribed_positional():
     """include_notes=True: 화폐 주석 표가 전사되되 컬럼은 위치(연도 아님)·context_fy NULL."""
     if not _KG.exists():

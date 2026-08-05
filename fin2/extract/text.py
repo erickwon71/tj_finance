@@ -510,6 +510,54 @@ def inherited_declaration_text(tbl) -> str | None:
     return None
 
 
+# ── 문서 전체 기본 단위 (2026-08-05, 사용자 결정) ───────────────────────────
+# '재무제표_직접작성' 수기입력 서식은 본문(BS/IS/SCE/CF) 표 자체에 단위를 아예 재선언하지
+# 않는 경우가 있다(실측 이엘피 20160330001530·20160513002038, 인카금융서비스
+# 20170516000038, 윙스풋 20210517000207 — 4건 전부 로컬 선언 0건). `declaration_text`·
+# `inherited_declaration_text` 는 이 표들의 **직전 형제**만 보므로 근거가 없어 스킵된다.
+#
+# 이건 statement 경계를 넘는 상속(엘브이엠씨 사고의 그 패턴)이 아니라 **문서 전체 공통
+# 기본값**이다 — 근거는 magnitude 추론이 아니라 문서 안의 **명시 텍스트 선언 두 곳뿐**:
+#   ① '요약재무정보' 섹션 데이터표의 단위 선언(본문과 같은 회사·같은 기간 수치가 그대로
+#      반복되므로 같은 단위임이 구조적으로 보장된다 — 실측 이엘피: 유동자산 12,744,686,267
+#      이 요약표·본문표에 동일하게 나타남).
+#   ② 회계정책 주석의 '표시통화 … 원(KRW)/원화' 문구(재무제표 작성기준 절, 실측
+#      인카금융서비스·윙스풋).
+# 호출측(`_emit_section_lines`/`_emit_sce_lines`)은 그 표 **자신에게 이미 통화 선언이
+# 있으면**(FX_ONLY 등) 여기까지 오지 않는다 — 그래서 엘브이엠씨류(표마다 통화가 다른 문서)
+# 사고를 재현하지 않는다: 그 사고는 '다른 표의 선언을 넘겨받는' 경우였고, 여기는 '어느 표도
+# 아무것도 선언 안 했을 때 문서 공통 선언을 쓰는' 경우다.
+_SUMMARY_SECTION_RE = re.compile(r"요약재무정보")
+_PRESENTATION_CCY_RE = re.compile(r"표시통화.{0,40}(원화|원\s*[\(（]\s*KRW\s*[\)）])",
+                                  re.IGNORECASE)
+
+
+def document_default_unit(root) -> tuple[int | None, str | None]:
+    """본문 표에 로컬 단위 선언이 전혀 없을 때 쓰는 **문서 전체 기본 단위**.
+
+    반환 (multiplier, 근거 원문). 못 찾으면 (None, None) — 여전히 추측하지 않는다.
+    """
+    for sec2 in root.iter("SECTION-2"):
+        title_el = sec2.find("TITLE")
+        if title_el is None:
+            continue
+        if not _SUMMARY_SECTION_RE.search("".join(title_el.itertext())):
+            continue
+        for tbl in sec2.iter("TABLE"):
+            if not _table_has_data_rows(tbl):
+                continue
+            unit = declared_unit(tbl)
+            if unit is not None:
+                return unit, declaration_text(tbl)
+        break  # 요약재무정보 섹션은 문서에 하나뿐 — 못 찾았으면 ②로 넘어간다
+
+    for p in root.iter("P"):
+        txt = " ".join("".join(p.itertext()).split())
+        if _PRESENTATION_CCY_RE.search(txt):
+            return 1, txt[:200]
+    return None, None
+
+
 _HANGUL_RE = re.compile(r"[가-힣]")
 
 

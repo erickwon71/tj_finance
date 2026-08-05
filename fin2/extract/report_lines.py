@@ -46,8 +46,14 @@ from fin2.extract.text import (
     _SECTION_META, _detect_fin_type, _detect_body_statement_tables,
     _interim_cumulative_cols, _adecimal_from_unit, _synth_acontext,
     declared_unit, declaration_text, inherited_declaration_text, _table_has_data_rows,
+    document_default_unit,
 )
 from fin2.extract.units import ColumnUnits, FX_ONLY, SRC_FX
+
+# 로컬 선언이 전혀 없을 때 문서 전체 기본 단위를 썼다는 provenance(2026-08-05).
+# `fin2/extract/text.py::document_default_unit` 참고.
+# ★ report_lines.unit_source 는 varchar(14) — "document_default"(16자)는 INSERT 를 터뜨린다.
+SRC_DOC_DEFAULT = "doc_default"
 
 # 주석 표 한 행에서 캡처할 최대 컬럼 수(위치 기준). 주석 표는 컬럼 의미가 제각각(5개년·
 # 만기구간·공정가치수준 등)이라 넉넉히 잡아 위치 그대로 전사한다. 값 판단 아님.
@@ -315,11 +321,15 @@ def _emit_section_lines(
     rcept_no: str,
     report_fiscal_year: int,
     report_fiscal_period: str,
+    doc_default_unit: tuple = (None, None),
 ) -> None:
     """한 섹션(BS_C 등)의 데이터 TABLE 들을 컬럼기반으로 읽어 report_lines 행 방출.
 
     text.py `_emit_section` 과 동일한 표 선택/컬럼 판독 로직(interim 누적컬럼 선택 포함) —
     canonical 매핑·귀속행 라우팅만 제거. 상세 판단 근거는 text.py 쪽 주석 참고(그대로 재사용).
+
+    `doc_default_unit` — `text.py::document_default_unit()` 이 문서 전체에서 미리 찾아둔
+    (multiplier, 근거원문). 그 표에 로컬 선언이 전혀 없을 때만 최후 수단으로 쓴다.
     """
     basis, period_kind = _SECTION_META[section_code]
     statement = section_code.split("_")[0]
@@ -356,6 +366,11 @@ def _emit_section_lines(
             if cu.kind == FX_ONLY:
                 unit = cu.fx_mult
                 unit_source, currency, decl_raw = SRC_FX, cu.currency, cu.raw_decl
+            elif doc_default_unit[0] is not None:
+                # 이 표엔 로컬 선언이 아예 없다(cu.kind != FX_ONLY 는 통화 충돌 표가 아니라는
+                # 뜻이기도 하다) → 문서 전체 기본 단위로 채운다(2026-08-05, 텍스트 근거만).
+                unit = doc_default_unit[0]
+                unit_source, decl_raw = SRC_DOC_DEFAULT, doc_default_unit[1]
             else:
                 logger.debug(f"[report_lines] 단위 미선언 → 스킵(보류): {rcept_no} {section_code}")
                 continue
@@ -662,6 +677,7 @@ def _emit_sce_lines(
     rcept_no: str,
     report_fiscal_year: int,
     report_fiscal_period: str,
+    doc_default_unit: tuple = (None, None),
 ) -> None:
     """자본변동표(SCE)를 전사한다 — **본문/주석과 컬럼 규약이 다르다**.
 
@@ -704,6 +720,9 @@ def _emit_sce_lines(
             if cu.kind == FX_ONLY:
                 unit, fx_source, fx_currency, fx_decl = (
                     cu.fx_mult, SRC_FX, cu.currency, cu.raw_decl)
+            elif doc_default_unit[0] is not None:
+                unit, fx_source, fx_decl = (
+                    doc_default_unit[0], SRC_DOC_DEFAULT, doc_default_unit[1])
             else:
                 logger.debug(f"[report_lines/SCE] 단위 미선언 → 스킵(보류): {rcept_no} {section_code}")
                 continue
@@ -782,6 +801,12 @@ def extract_report_lines(
 
     # include_sce=True — 계층2 는 자본변동표도 전사한다(fact_v2 는 기본값 False 로 계속 배제).
     groups = _detect_body_statement_tables(root, fin_type, include_sce=True)
+    # 문서 전체 기본 단위는 **로컬 선언이 없는 표가 실제로 있을 때만** 찾는다(비용 절감 —
+    # 대다수 문서는 표마다 선언이 있어 이 스캔이 불필요하다). `_detect_body_statement_tables`
+    # 가 이미 붙여준 표 단위 unit 이 하나라도 None 이면 후보.
+    needs_doc_default = any(
+        u is None for tws in groups.values() for _, u, _ in tws)
+    doc_default_unit = document_default_unit(root) if needs_doc_default else (None, None)
     for code, tables_with_unit in groups.items():
         emitter = _emit_sce_lines if code.startswith("SCE") else _emit_section_lines
         emitter(
@@ -789,6 +814,7 @@ def extract_report_lines(
             corp_code=corp_code, rcept_no=rcept_no,
             report_fiscal_year=report_fiscal_year,
             report_fiscal_period=report_fiscal_period,
+            doc_default_unit=doc_default_unit,
         )
 
     if not groups:

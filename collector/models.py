@@ -436,7 +436,11 @@ class ReportLine(Base):
                                 comment="value_won 의 근거(fin2/extract/units.py): declared(표 선언 "
                                         "배수) | col_money(혼합 선언+열 헤더가 금액) | non_monetary"
                                         "(비금액 열/표 — value_won 없음) | undetermined(단위 확정 실패) "
-                                        "| undeclared(선언 자체가 없는 표)")
+                                        "| undeclared(선언 자체가 없는 표) | fx_declared(표시통화가 "
+                                        "외화, value_won 은 환산 안 한 원문 그대로) | doc_default(그 "
+                                        "표엔 로컬 선언이 전혀 없어 문서 전체 기본 단위를 씀 — 근거는 "
+                                        "요약재무정보 표 단위 또는 회계정책 주석의 표시통화 문구, "
+                                        "2026-08-05. fin2/extract/text.py::document_default_unit)")
 
     source_ref         = Column(String(180),  nullable=True)
     context_raw        = Column(String(255),  nullable=True,  comment="합성 위치 태그(감사용, uq 아님)")

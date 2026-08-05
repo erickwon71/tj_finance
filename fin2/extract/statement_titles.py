@@ -213,6 +213,19 @@ def title_text_for_classify(tbl, max_skip: int = 3) -> str:
 # 실측 본문 섹션 구성(3S·DB손해보험 공통): [단위표 4행 + 데이터표] × 4 = BS·IS·SCE·CF.
 
 _SCE_RE = re.compile(r"자본변동표")
+# 이익잉여금처분계산서/결손금처리계산서 표지(공백 제거 후). **4대 재무제표가 아니다.**
+#
+# ★ 왜 이름 매칭만으로는 부족한가(2026-08-05 실측) — 본문 섹션 안에 처분계산서가 함께 오는데,
+#   그 표제가 다른 재무제표 이름을 달고 있는 경우가 실재한다:
+#     · 비에이치 20190515000715 — 제출사가 제목을 잘못 씀:
+#       '현금흐름표 제 21 기 : … **처분확정일**: - 제 20 기 : …'  (내용은 미처분이익잉여금)
+#     · 삼성화재 20190515002191 — 분류에 쓰인 각주 문장이
+#       '註) 당분기 **현금흐름표**는 … 소급재작성되지 아니하였습니다. **이익잉여금처분계산서**'
+#   둘 다 '현금흐름표' 라는 낱말 때문에 CF 로 분류돼 처분계산서 데이터가 CF 에 붙었다.
+#   그래서 이름보다 **먼저** 이 표지를 본다 — 처분/처리 확정·예정일은 처분계산서 고유 어휘다.
+_APPROPRIATION_RE = re.compile(
+    r"이익잉여금처분계산서|결손금처리계산서|이익잉여금처분|결손금처리"
+    r"|처분확정일|처분예정일|처리확정일|처리예정일")
 # 재무제표명(공백 제거 후). 순서 중요 — '포괄손익계산서'가 '손익계산서'보다 먼저.
 _BODY_STMT_ORDER: list[tuple[str, str]] = [
     ("재무상태표", "BS"),
@@ -239,6 +252,8 @@ def classify_statement_in_body_section(title: str, include_sce: bool = False) ->
     if not title:
         return None
     t = re.sub(r"\s+", "", title)
+    if _APPROPRIATION_RE.search(t):
+        return None                 # 이익잉여금처분계산서/결손금처리계산서 — 4대 재무제표 아님
     if _SCE_RE.search(t):
         return "SCE" if include_sce else None
     for name, code in _BODY_STMT_ORDER:

@@ -180,3 +180,24 @@ def test_footnote_table_does_not_borrow_previous_statement_title():
     picked = {a for code in groups for a in _amounts(groups, code)}
     assert "110,890" not in picked, "처분계산서가 CF 로 붙었다"
     assert len(groups.get("CF_S", [])) == 1
+
+
+def test_appropriation_markers_override_statement_name():
+    """★제출사가 처분계산서에 다른 재무제표 이름을 달아도 본문으로 채택하면 안 된다.
+
+    실측 두 형태:
+      · 비에이치 20190515000715 — 제목 자체가 틀림:
+        '현금흐름표 제 21 기 : … 처분확정일: - …'  (내용은 미처분이익잉여금)
+      · 삼성화재 20190515002191 — 분류에 쓰인 각주 문장:
+        '註) 당분기 현금흐름표는 … 이익잉여금처분계산서'
+    둘 다 '현금흐름표' 때문에 CF 로 분류돼 처분계산서가 CF 에 붙었다.
+    """
+    from fin2.extract.statement_titles import classify_statement_in_body_section as clf
+    assert clf("현금흐름표 제 21 기 : 2019년 01월 01일 처분확정일: - 제 20 기") is None
+    assert clf("註) 당분기 현금흐름표는 … 아니하였습니다. 이익잉여금처분계산서") is None
+    assert clf("이 익 잉 여 금 처 분 계 산 서") is None
+    assert clf("결손금처리계산서 제 5 기") is None
+    # 정상 표제는 그대로 통과한다
+    assert clf("연결 현금흐름표 제 39 기 2020.01.01 부터") == "CF"
+    assert clf("분 기 연 결 재 무 상 태 표 제 11 기") == "BS"
+    assert clf("연결 자본변동표 제 30 기", include_sce=True) == "SCE"

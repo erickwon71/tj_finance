@@ -36,10 +36,22 @@ SELECT f.corp_name, f.fiscal_year, f.fiscal_period, f.rcept_no, d.file_path
 """
 
 
-def old_title_text_owned(tbl) -> str:
-    """수정 **이전** 구현 — 분류용 표제에 데이터표 경계가 없던 상태(= title_text 그대로)."""
-    from fin2.extract.statement_titles import title_text
-    return title_text(tbl)
+import fin2.extract.statement_titles as _ST
+_NEW_CLASSIFY = _ST.classify_statement_in_body_section
+
+
+def old_classify(title, include_sce=False):
+    """수정 **이전** 분류기 — 처분계산서 배제가 없던 상태."""
+    import re as _re
+    if not title:
+        return None
+    t = _re.sub(r"\s+", "", title)
+    if _ST._SCE_RE.search(t):
+        return "SCE" if include_sce else None
+    for name, code in _ST._BODY_STMT_ORDER:
+        if name in t:
+            return code
+    return None
 
 
 def snapshot(root):
@@ -67,7 +79,7 @@ def main() -> int:
     with get_session() as s:
         rows = s.execute(text(SQL), {"n": args.sample}).fetchall()
 
-    new_impl = T.title_text_owned
+    new_impl = _NEW_CLASSIFY
     docs = changed = 0
     removed_n = added_n = 0
     removed_rows = 0
@@ -83,9 +95,9 @@ def main() -> int:
             continue
         docs += 1
 
-        T.title_text_owned = old_title_text_owned
+        T.classify_statement_in_body_section = old_classify
         before = snapshot(root)
-        T.title_text_owned = new_impl
+        T.classify_statement_in_body_section = new_impl
         after = snapshot(root)
 
         removed = {k: v for k, v in before.items() if k not in after}

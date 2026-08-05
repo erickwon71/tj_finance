@@ -201,3 +201,22 @@ def test_appropriation_markers_override_statement_name():
     assert clf("연결 현금흐름표 제 39 기 2020.01.01 부터") == "CF"
     assert clf("분 기 연 결 재 무 상 태 표 제 11 기") == "BS"
     assert clf("연결 자본변동표 제 30 기", include_sce=True) == "SCE"
+
+
+def test_appropriation_detected_by_content_when_title_identical():
+    """★제목이 현금흐름표와 **글자 그대로 같아도** 내용이 처분계산서면 본문이 아니다.
+
+    실측 계양전기 20220420000289 — 제출사가 같은 제목표를 재사용해, 표제·구조로는
+    구분이 불가능하다. 행 라벨만이 가른다.
+    """
+    from fin2.extract.text import _looks_like_appropriation
+    approp = etree.fromstring(_data(("Ⅰ. 처분전 이익잉여금(결손금)", "5,282,975,386"),
+                                    ("Ⅱ. 이익잉여금처분액", "1,000,000,000")).encode())
+    assert _looks_like_appropriation(approp) is True
+    # 진짜 CF 는 아니다
+    cf = etree.fromstring(CF_DATA.encode())
+    assert _looks_like_appropriation(cf) is False
+    # ★'미처분이익잉여금' 한 줄을 가진 정상 BS 를 오판하면 안 된다
+    bs = etree.fromstring(_data(("자산총계", "9,999,999,999"),
+                                ("미처분이익잉여금(미처리결손금)", "123,456,789")).encode())
+    assert _looks_like_appropriation(bs) is False

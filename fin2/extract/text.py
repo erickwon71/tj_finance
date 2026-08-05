@@ -267,6 +267,10 @@ def _detect_body_statement_tables(root, fin_type: str,
                 stmt = "IS"
             if stmt is None:
                 continue
+            # ★내용 기반 최종 가드 — 표제가 CF/BS/IS 를 가리켜도 **행 라벨이 처분계산서**면
+            #   본문이 아니다(계양전기 20220420000289: 제목표가 현금흐름표와 동일 문자열).
+            if _table_has_data_rows(tbl) and _looks_like_appropriation(tbl):
+                continue
             section_code = SECTION_CODE_OF[(basis, stmt)]
             # sec_kind 를 그대로 들고 간다(basis 에서 되유도하지 않음) — 적재된 행의
             # section_kind 는 **실제로 귀속된 섹션**이어야 감사에 쓸 수 있다.
@@ -284,6 +288,8 @@ def _detect_body_statement_tables(root, fin_type: str,
                 if classify_statement_in_body_section(title_text_owned(nxt), include_sce=include_sce) is not None:
                     break   # 다음 재무제표 제목 도달 → 이 재무제표엔 데이터표 없음(보류)
                 if _table_has_data_rows(nxt):
+                    if _looks_like_appropriation(nxt):
+                        break              # 처분계산서 — 이 재무제표의 데이터가 아니다
                     unit = title_unit if title_unit is not None else declared_unit(nxt)
                     groups.setdefault(section_code, []).append((nxt, unit, sec_kind))
                     break   # 첫 데이터표만 연결(재무제표 하나당 데이터표 하나)
@@ -553,6 +559,42 @@ def _looks_like_income_statement(tbl) -> bool:
         if has_rev and has_profit:
             return True
     return False
+
+
+# 이익잉여금처분계산서/결손금처리계산서의 **행 라벨** 시그니처. 4대 재무제표 어디에도
+# 이 계정들은 나오지 않는다(BS 의 '미처분이익잉여금' 은 자본 항목 한 줄이라 아래 ②가 가른다).
+_APPROP_ROW_RE = re.compile(
+    r"미처분이익잉여금|미처리결손금|처분전이익잉여금|처분전결손금"
+    r"|이익잉여금처분액|결손금처리액|차기이월")
+# 4대 재무제표임을 확정하는 행 라벨(있으면 처분계산서가 아니다).
+_REAL_STMT_ROW_RE = re.compile(
+    r"영업활동현금흐름|영업활동으로인한현금흐름|투자활동현금흐름|재무활동현금흐름"
+    r"|자산총계|부채총계|부채와자본총계|매출액|영업수익|매출총이익")
+
+
+def _looks_like_appropriation(tbl) -> bool:
+    """표의 **행 라벨**이 이익잉여금처분계산서/결손금처리계산서인가.
+
+    ★ 왜 내용까지 봐야 하는가(2026-08-05 실측, 계양전기 20220420000289):
+      처분계산서의 표제가 **현금흐름표 표제와 글자 그대로 동일**한 문서가 있다 —
+      제출사가 같은 제목표를 재사용했다. 제목·구조로는 구분이 불가능하고 내용만이 가른다.
+      (이름 표지는 `_APPROPRIATION_RE`, 구조는 `title_text_owned` 가 이미 맡는다.)
+
+    판정은 두 조건을 **모두** 요구한다 — 값이 아니라 계정명만 보므로 추측이 아니다:
+      ① 처분계산서 고유 계정이 있다(미처분이익잉여금·이익잉여금처분액·차기이월 …)
+      ② 4대 재무제표 확정 계정이 **없다**(영업활동현금흐름·자산총계·매출액 …)
+    ②가 없으면 '미처분이익잉여금' 한 줄을 가진 정상 BS 를 처분계산서로 오판한다.
+    """
+    from parser.xml.table_extractor import _get_cells
+    has_approp = False
+    for tr in table_direct_rows(tbl):
+        cells = _get_cells(tr)
+        label = re.sub(r"\s+", "", cells[0]) if cells else ""
+        if _REAL_STMT_ROW_RE.search(label):
+            return False                 # 진짜 재무제표 — 판정 종료
+        if _APPROP_ROW_RE.search(label):
+            has_approp = True
+    return has_approp
 
 
 def _looks_like_balance_sheet(tbl) -> bool:

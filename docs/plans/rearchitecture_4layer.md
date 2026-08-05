@@ -4,8 +4,17 @@
 > 날짜 없는 이 파일을 계속 갱신한다(개별 문서는 시점 스냅샷·상세). 새 세션은 여기서 시작해
 > "현재 시작점"(§5)의 최신 핸드오프로 들어간다.
 >
-> 최종 갱신: **2026-07-31** · 현재 시작점 = [handoff_f1_f2_units_2026-07-31](../qa/handoff_f1_f2_units_2026-07-31.md)
+> 최종 갱신: **2026-08-01** · 현재 시작점(재설계 본류) = [handoff_f1_f2_units_2026-07-31](../qa/handoff_f1_f2_units_2026-07-31.md) — **08-01 에 본류 진행 없음**, 브리지 swap 방향(§5) 그대로.
 > (하루치 전체 정리 = [session_summary_2026-07-31](../qa/session_summary_2026-07-31.md))
+>
+> **08-01 병행 트랙 2건**(재설계 범위 밖 — 각자 별도 문서가 정본, 아래 요약만 링크):
+> - **사업의 내용 카탈로그 + R0 원칙** — [handoff_biz_catalog_r0_2026-08-01](../qa/handoff_biz_catalog_r0_2026-08-01.md).
+>   `biz_metrics`/`order_backlog` 신규 적재(계층2 우회 현행 유지 — "계층2 편입 여부 미결", 아래 참고)
+>   + `docs/PARSING_RULES.md` 단일화(R0~R9). R0 원칙은 계층2 파서에도 적용 가능하니 계층2 작업 전 일독 권장.
+> - **데일리 파이프라인 자동화**(상장폐지 원문 NAS 이관 + KRX 휴장일 스킵) — 정본은
+>   [collection_pipeline_restore_2026-07-31](collection_pipeline_restore_2026-07-31.md) §13·§14 +
+>   [handoff_collection_pipeline_2026-07-31](../qa/handoff_collection_pipeline_2026-07-31.md)(갱신됨).
+>   계층1(다운로드) 운영 강화이며 계층2/3 데일리 재편입은 여전히 Phase 5 대기.
 
 ---
 
@@ -29,7 +38,7 @@
 
 | 계층 | 상태 | 실측 / 요지 |
 |---|---|---|
-| 1 다운로드 | ✅ 기존 유지 | raw_report 심링크 = SD카드(`/Volumes/dart_data`). NAS 원복 별도 |
+| 1 다운로드 | ✅ 기존 유지 + 운영 자동화 진행 중 | raw_report 심링크 = SD카드(`/Volumes/dart_data`). NAS 원복 별도. **2026-08-01**: 상장폐지 확정분 원문 NAS 이관 자동화 + KRX 휴장일 스킵 데일리 배선(정본=[collection_pipeline_restore](collection_pipeline_restore_2026-07-31.md)) — 계층2/3 데일리 재편입은 Phase 5 대기 그대로 |
 | 2 report_lines | ✅ 엔진·검증·**1차적재(2015+)** 완료 | **102,067 filing · 63.5M행 · 2,534사** (min year 2014). **정정본 포함 적재**(정정 filing 9,377·6.8M행). ⚠ **pre-2015·PDF-only 미적재**(2·3차 신규파서 필요) |
 | 3 취합 std_v3 | ✅ **정제 사실상 완료** (최종 재빌드 대기) | **185,214행 · 2,534사** · parity ~98% · inspect 전량 v3정답 · 업종 프로파일(보험/은행/증권/한국금융NULL) · **정본선택+기재정정 델타패치 반영**(3,338행/955사 정정 provenance). ⚠ **`--recheck` 완료 후 `build_std_v3.py --all` 재빌드 필수** |
 | 4 App swap | ☐ **미착수** | Path A 설계 완료(std_v3 직접소비). 앱 비사용 중·std_v2=교차검증용 |
@@ -58,6 +67,7 @@
 - [layer2_split_table_gap_2026-07-23](../qa/layer2_split_table_gap_2026-07-23.md) — "제목표/데이터표 분리" 추출 갭 근본원인
 - [layer2_full_load_report_2026-07-22](../qa/layer2_full_load_report_2026-07-22.md) — 전량적재 1차패스 결과보고
 - [★layer2_notes_transcription_2026-07-25](layer2_notes_transcription_2026-07-25.md) — **주석(note) 전반 전사**(D&A·R&D 등 파생계정 소스). `_emit_note_lines` 활성화+백필, 파편 note추출기 흡수. 볼륨(주석=표96%) 관건. **swap 선행**
+- [docs/PARSING_RULES.md](../PARSING_RULES.md) — **파싱 규칙 단일 진입점(2026-08-01 신설)**. R0(지배 원칙: 있으면 파싱·없으면 넘어감, 거짓부재 금지)~R9 + 원문 XML 함정 15종. 계층2 파서 신설·수정 전 필독. 배경 = [handoff_biz_catalog_r0_2026-08-01](../qa/handoff_biz_catalog_r0_2026-08-01.md)(병행 트랙, §0 참고) — 그 세션에서 확립된 원칙이나 R0 자체는 계층2 전반에 적용
 
 ### 계층3 — 취합 std_v3
 - [★financial_sector_revenue_standards](financial_sector_revenue_standards.md) — **금융섹터 revenue 표준 단일 출처**(증권=순영업수익 NET·보험/은행=gross·한국금융지주=NULL·잔여·회귀). 섹터별 census 결정 누적
@@ -80,7 +90,9 @@
 ---
 
 ## 4. 핸드오프 타임라인 (세션 진입점, 최신순)
-- **2026-07-31** [handoff_f1_f2_units](../qa/handoff_f1_f2_units_2026-07-31.md) — ★**현재 시작점** · 세션 전체 정리 = [session_summary](../qa/session_summary_2026-07-31.md) · 재적재 결과 = [phase4_reload](../qa/phase4_reload_2026-07-31.md). F1(단위 판정 표→**열** 단위, 오염 제거)·F2(헤더 삭제→`header_hint` 전사) 구현. 구·신 차분에서 **본문·SCE 변화 0**. 미선언 11.2M셀·수주/가동률 공백 규명 완료. **Phase 4 재적재까지 완료**(DB 108.9→74 GB · 오염 6,130,738행→0 · note_lines 246.6M행)
+- 2026-08-01(병행, 재설계 범위 밖) [handoff_biz_catalog_r0](../qa/handoff_biz_catalog_r0_2026-08-01.md) — 사업의 내용 27항목 신규적재(`biz_metrics` 7.81M행·2,524사, `order_backlog` 24,687행) + R0 원칙 확립 + `docs/PARSING_RULES.md` 단일화 + 거짓부재 결함 10건 수정 + 전수 재적재(오류0·회귀130). 미결: 계층2 편입 여부
+- 2026-08-01(병행, 재설계 범위 밖) [handoff_collection_pipeline_2026-07-31 갱신](../qa/handoff_collection_pipeline_2026-07-31.md) — 상장폐지 원문 NAS 이관 자동화(⓪-4)+KRX 휴장일 스킵(⓪-0) 데일리 배선. 정본=[collection_pipeline_restore §13·§14](collection_pipeline_restore_2026-07-31.md). 신규 테스트 19건·pytest 149/149
+- **2026-07-31** [handoff_f1_f2_units](../qa/handoff_f1_f2_units_2026-07-31.md) — ★**현재 시작점(재설계 본류)** · 세션 전체 정리 = [session_summary](../qa/session_summary_2026-07-31.md) · 재적재 결과 = [phase4_reload](../qa/phase4_reload_2026-07-31.md). F1(단위 판정 표→**열** 단위, 오염 제거)·F2(헤더 삭제→`header_hint` 전사) 구현. 구·신 차분에서 **본문·SCE 변화 0**. 미선언 11.2M셀·수주/가동률 공백 규명 완료. **Phase 4 재적재까지 완료**(DB 108.9→74 GB · 오염 6,130,738행→0 · note_lines 246.6M행)
 - 2026-07-30(밤) [handoff_coverage_gaps](../qa/handoff_coverage_gaps_2026-07-30b.md) — 검증도구 3종(단위 census·문서 census·낭비 원장) 신설 + 전수 실측(오염 6.13M행·미귀속 19.8%·회수가능 52.3GB)
 - 2026-07-30(낮) [handoff_layer2_sanitize_da](../qa/handoff_layer2_sanitize_da_2026-07-30.md) — DART XML 이스케이프 결함 수정+전량 재적재, D&A FY 97.4%
 - 2026-07-26 [handoff_layer2_notes](../qa/handoff_layer2_notes_2026-07-26.md) — 계층2 주석 전사 완료(note_lines 2.1억행)+계층3 note→D&A 매핑 착수점. ★D&A "주석에 없음" 진단 정정
@@ -122,6 +134,10 @@
   report_lines). 계층3·4·기타 어떤 코드도 보고서를 직접 읽지 않는다 — **검증(원문 대조·감사) 목적만 예외**.
   파생계정(D&A 등)의 소스가 주석이면 **계층2가 주석을 전사**하고 계층3는 report_lines 에서만 읽는다.
   (2026-07-25, 사용자 지침. 위반 예=폐기한 "cf_da.py 를 std_v3 백필".)
+  ⚠ **현재 미해결 위반**: `collector/biz_metrics.py`(+`filing_select.py`·`biz_merge.py`)가 '사업의 내용'
+  파싱을 위해 원문 DART XML 을 **직접 read** — `report_lines` 를 거치지 않아 이 원칙과 정면 충돌.
+  `docs/PARSING_RULES.md` 는 R1 "의도된 현행" 예외로만 적어 뒀을 뿐 **계층2 편입 여부 미결**
+  (2026-08-01, R0 세션에서 인지·미조치. 위 §0 08-01 병행 트랙 참고).
 - **적재순서 = 전량적재 → 계층3** (구 '계층3→전량'을 뒤집음, 2026-07-19).
 - **계층3 = 신 체인 단독**: 새 std_v3 빌드 후 swap, 구 체인은 swap 후 제거 (2026-07-22).
 - **정본선택·정정 반영 = 계층3 소관**(구 '계층2 4차'에서 이관): 원본 base + 기재정정 델타패치, 값의미=

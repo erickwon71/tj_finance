@@ -59,10 +59,10 @@ migration id: `2026_08_download_tasks_dcm_no` / `2026_08_download_tasks_file_typ
 
 ## Phase 3 — 파서 핵심 (Phase 0 결론 확정 후 착수)
 
-- [ ] `parser/xbrl_instance/` 패키지 신설 (`__init__.py`)
-- [ ] `instance_parser.py` — `.xbrl` instance 로드, context/unit/fact 구조화 파싱 (Phase 0에서 확정한 sanitize 필요 여부 반영)
-- [ ] `taxonomy_linkbase.py` — `_pre.xml` 파싱(role→트리 구조, order→row_order/depth), `_lab-ko.xml`/`_lab-en.xml` 파싱(라벨), 필요시 `_cal.xml` 파싱(weight 부호)
-- [ ] `role_map.py` — roleURI→statement(BS/IS/CF/SCE/note) 매핑표, Phase 0 조사 결과로 초기 채움
+- [x] `parser/xbrl_instance/` 패키지 신설 (`__init__.py`)
+- [x] `instance_parser.py` — `.xbrl` instance 로드, context/unit/fact 구조화 파싱 (Phase 0에서 확정한 sanitize 필요 여부 반영)
+- [x] `taxonomy_linkbase.py` — `_pre.xml` 파싱(role→트리 구조, order→row_order/depth), `_lab-ko.xml`/`_lab-en.xml` 파싱(라벨), `_cal.xml` 파싱(weight 부호) — 완료 2026-08-06
+- [x] `role_map.py` — roleURI→statement(BS/IS/CF/SCE/note) 매핑표, Phase 0 조사 결과로 초기 채움 — 완료 2026-08-06
 - [ ] `fin2/extract/report_lines_xbrl.py` — `extract_report_lines_xbrl()` 진입점 구현, 기존 `ReportLineRow` 형태로 반환
 - [ ] basis(연결/별도) 해석 로직 구현
 - [ ] col_index/period_kind/is_cumulative 판정 로직 구현 (날짜 대조 + 허용오차)
@@ -170,6 +170,68 @@ roleURI 자체(`http://dart.fss.or.kr/role/ifrs/dart_2024-06-30_role-D210005`)�
 ### 12. `sanitize_dart_xml()` 불필요 — 순수 `lxml.etree.parse()`로 충분
 
 박셀바이오(87KB)·한화(6.6MB) 양쪽 다 7개 파일 전부 `lxml.etree.parse()`로 **에러 0, 파싱 시간 30ms 이내**로 성공. `document.xml`(DART 자체 `<TABLE>/<TE>` 서식)에서 나타났던 속성 따옴표 절단·PI 이스케이프 등 [[layer2-silent-loss-patterns]]류 함정은 **표준 XBRL instance엔 해당 없음**(별개 생성 파이프라인이라 추정). → `parser/xbrl_instance/instance_parser.py`는 `sanitize_dart_xml()` 호출하지 말고 `lxml.etree.parse()` 직접 사용.
+
+### Phase 3 진행 기록
+
+**3-1·3-2 완료(2026-08-06)**: `parser/xbrl_instance/__init__.py`(빈 파일, `parser/xml`·`parser/pdf` 컨벤션과 동일) +
+`instance_parser.py`(`parse_instance()` — context/unit/fact 순수 구조 파싱, 판정 로직 없음. dataclass
+`QName`/`Dimension`/`XbrlContext`/`XbrlUnit`/`XbrlFact`/`XbrlInstance`, `_validate()`로 dangling
+contextRef/unitRef 경고 로그).
+
+**실제 두 샘플로 재검증(Phase 0 zip을 다시 받아 파서에 직접 통과)**: 박셀바이오 44,076B/한화 1,144,829B —
+크기 Phase 0 기록과 정확히 일치. 박셀바이오 32 contexts/3 units/289 facts, 한화 2,850 contexts/10
+units/8,004 facts, 파싱 속도 5ms/139ms(문제 없음). 한화의 "basis 축만 걸린 `Assets`" 값
+**56,659,594,923,000원**(연결·당기)이 Phase 0 §7 기록과 정확히 일치 — 파서 정확성 교차검증됨.
+Multi-dim context(SCE 성분축 등 basis 외 추가 축) 정상 파싱 확인.
+
+**Phase 0 기록 보완(정정 아님, 미확인 항목 실측 확인)**: Phase 0 §6 "단위 관측 3종뿐(KRW/PURE/KRWEPS),
+외화 혼재는 미확인"이라 적었던 것을 한화(대형·연결) 샘플에서 실측 확인 — **10종 단위 관측**
+(KRW/PURE/KRWEPS + PHP/USD/AED/ROL/AUD/EUR, 해외종속회사 주석 공시로 추정). 파서 코드 영향 없음
+(measure 파싱은 이미 임의 `iso4217:XXX` 통화코드에 범용적으로 대응) — role_map/추출 범위(Phase 3 후속
+항목)에서 본문(BS/IS/CF/SCE, 항상 KRW로 추정)만 다루는 한 무관하나, 주석까지 범위를 넓힐 경우 대비 기록.
+
+`pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, `test_lxintl_facility_table_dropped`).
+
+**3-3 완료(2026-08-06)**: `taxonomy_linkbase.py` 신설 — `_pre.xml`(presentation)·`_cal.xml`(calculation)
+role→트리(loc/arc/order→parent/children/depth, `preferredLabel`/`weight` 보존) + `_lab-ko.xml`/`_lab-en.xml`
+라벨 카탈로그(concept→[Label(role,lang,text)], `merge_label_catalogs()`로 ko+en 병합). 핵심 설계:
+- `resolve_href_fragment()` — 로케이터 href의 URL fragment(`"{prefix}_{LocalName}"`)를 QName으로 변환.
+  prefix가 `_`를 포함하지 않는다는 taxonomy 관례(ifrs-full/dart/dart-gcd/entity{CIK})로 첫 `_`에서만
+  split — entity 확장 로컬명 안의 추가 `_`(예: `entity01335851_udf_CF_...`)도 정확히 처리됨. nsmap은
+  linkbase 파일 자체엔 선언 안 돼 있어(instance root에만 있음, Phase 0 §3) 호출자가 공급
+  (→ `instance_parser.py`에 `XbrlInstance.nsmap` 필드 신규 추가, 순수 기록용·판단 없음).
+- 트리 노드는 concept이 아니라 **loc_label(linkbase 고유 wiring id)로 키잉** — 실측 확인: 같은 concept이
+  한 role 안에서 두 자리(예: 주석 롤포워드표 기초/기말 잔액, `_periodStartLabel`/`_periodEndLabel` 접미
+  loc)를 차지하는 경우가 실재함.
+- 실측 검증(두 샘플 재파싱, 예외 0): BS role root=`StatementOfFinancialPositionAbstract` 단일(양쪽 다),
+  calc role `Assets`→`CurrentAssets`/`NoncurrentAssets` weight 둘 다 1.0(Phase 0 §11과 일치), `OtherGains`
+  라벨 카탈로그가 `label`(기타수익)/`dart_label`(기타이익)/`terseLabel`/`totalLabel` 등 role별로 정확히
+  분리돼 나옴. **핵심 4역할(D210/D431/D520/D610)은 두 샘플 전부 깨끗한 단일부모 트리**로 확인.
+- **신규 발견(범위 밖으로 확인, 코드 영향 없음)**: 주석/차원 role(D8xxx/U8xxx)에서는 presentation
+  "트리"가 실제로는 **DAG**일 수 있음 — 같은 Axis가 여러 Table 로케이터에서 공유돼 한 노드가 둘 이상의
+  parent arc를 가짐(한화 샘플에서 189건 관측, 전부 note role, core 4역할 0건). `_build_tree_shape()`는
+  첫 arc를 유지하고 경고 로그만 남김 — Phase 3 현재 범위(본문만)엔 무관, role_map.py가 note role을
+  걸러내는 한 이 경고는 무해한 노이즈로 봐도 됨(단, 향후 주석까지 범위를 넓히면 트리 대신 DAG 모델링이
+  필요해짐 — 미해결 과제로 기록).
+
+`pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, 이번 변경과 무관).
+
+**3-4 완료(2026-08-06)**: `role_map.py` 신설 — `.xsd`의 `<link:roleType><link:definition>`
+텍스트(`"[{role_id}] {한글정의} | {영문정의}"`)를 키워드+접미사로 분류. 핵심 발견: roleURI
+숫자코드(`D210000` 등)는 taxonomy 버전에 종속돼 필링마다 바뀌므로 **절대 매핑 키로 안 씀** —
+`definition_ko`의 "재무상태표"/"포괄손익계산서"(손익계산서 폴백)/"현금흐름표"/"자본변동표" 키워드
++ **"- 연결"/"- 별도" 접미사 존재 여부**로만 판정. 이 접미사 유무가 본문(core) role과 동명의
+주석(note) role을 가르는 유일한 신호임을 실측으로 확인 — 한화 샘플의 `[D851100] 42. 현금흐름표`
+(현금흐름표 관련 주석 챕터, 접미사 없음)이 키워드는 일치하지만 접미사 부재로 정확히 배제됨(수동
+검증: `role_map.build_role_map()` 결과에 D851100/D851105 없음 확인).
+`build_role_map(xsd_path)`가 두 샘플에서 정확히 Phase 0 §8 기록과 일치하는 개수 산출 — 박셀바이오
+4개(별도만, D210005/D431415/D520005/D610005), 한화 8개(연결+별도 각 4, D210000/D210005/
+D431410/D431415/D520000/D520005/D610000/D610005). `index_core_roles()`로 (statement,basis)→
+RoleInfo 역인덱스 제공(둘 이상 겹치면 raise 대신 경고 로그, Phase 0 "최대 8개" 가정이 깨지는
+필링을 조용히 넘기지 않기 위함). 주석 role(D8xxx/U8xxx 등 310개, 한화 기준)은 전부 정상적으로
+걸러짐(리크 0건, 수동 확인).
+
+`pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, 이번 변경과 무관).
 
 ### Phase 3 설계에 주는 결론 (착수 시 그대로 반영)
 

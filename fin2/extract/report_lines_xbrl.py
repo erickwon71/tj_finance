@@ -100,7 +100,11 @@ re-walked for this phase, 2026-08-06):
   for this pass and simply skipped. `unit_source='xbrl'` — a new value
   distinct from the text-pipeline's declared/inherited/fx_declared/
   doc_default family, since the provenance here (a formal unit declaration,
-  not a Korean-text unit label) is categorically different.
+  not a Korean-text unit label) is categorically different. ★2026-08-06
+  amendment: the magnitude needs no multiplier, but the SIGN does in one
+  case — see `_value_sign()`, a `preferredLabel` in the "negated*" family
+  means the raw fact must be negated before storage to match what DART's
+  viewer actually displays (found via Phase 6-2 manual cross-check).
 """
 from __future__ import annotations
 
@@ -228,6 +232,27 @@ def _extract_zip_members(zip_path: Path, dest_dir: Path) -> _ZipMembers:
         lab_ko=dest_dir / n if (n := _find_member(names, "lab_ko", source, required=False)) else None,
         lab_en=dest_dir / n if (n := _find_member(names, "lab_en", source, required=False)) else None,
     )
+
+
+def _value_sign(preferred_label: str | None) -> int:
+    """★ Bug fix (2026-08-06, found during Phase 6-2 manual DART-viewer cross
+    check — see docs/plans/xbrl_instance_parser_todo_2026-08-05.md Phase 6-2
+    record for the full trace): a presentationArc's `preferredLabel` in the
+    XBRL 2009 "negated*" family (`negatedLabel`/`negatedTerseLabel`/
+    `negatedTotalLabel`/`negatedNetLabel`/...) is a standard rendering
+    instruction — "display -1 x the raw tagged fact value at this tree
+    position" — distinct from calc:weight (rollup-validation metadata only,
+    see the module docstring's original "value/unit" note, which is still
+    correct for that separate purpose). DART's own web viewer applies this
+    negation when rendering to a human, so skipping it left `value_won`
+    disagreeing in SIGN with the actual filed document for any XBRL-sourced
+    line whose presentation node carries this role — confirmed on 박셀바이오
+    CF `법인세환급(납부)`(raw -94,664,880 vs DART page +94,664,880) and
+    `2. 재무활동으로 인한 현금 유출액`(raw +347,076,273 vs DART page
+    -347,076,273), both tagged `preferredLabel=".../negatedTerseLabel"`."""
+    if preferred_label and preferred_label.rsplit("/", 1)[-1].startswith("negated"):
+        return -1
+    return 1
 
 
 def _resolve_label(element: QName, preferred_role: str | None, labels: dict[QName, list[Label]]) -> str:
@@ -564,6 +589,7 @@ def _emit_statement_lines(
             value = _numeric_value(fact, units)
             if value is None:
                 continue
+            value *= _value_sign(node.preferred_label)
             out.append(ReportLineRow(
                 corp_code=corp_code,
                 rcept_no=rcept_no,
@@ -701,6 +727,7 @@ def _emit_sce_lines(
                 value = _numeric_value(fact, units)
                 if value is None:
                     continue
+                value *= _value_sign(row_node.preferred_label)
                 out.append(ReportLineRow(
                     corp_code=corp_code,
                     rcept_no=rcept_no,

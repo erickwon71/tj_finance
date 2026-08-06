@@ -8,7 +8,7 @@
 > **읽는 법.** 각 규칙은 `규칙 / 근거(파일:줄 or 문서) / 어기면 생기는 일` 3단으로 적는다.
 > 근거 없는 규칙은 규칙이 아니다 — "그렇게 해왔다"는 여기에 쓰지 않는다.
 >
-> 최종 갱신 2026-07-31.
+> 최종 갱신 2026-08-06.
 
 ---
 
@@ -62,6 +62,7 @@
 | R7 | 유니버스 = KOSPI/KOSDAQ 보통주, 외국기업 제외 | 수집 |
 | R8 | 새 파서는 배선 2곳 + 소급 백필 + 검증 | 파이프라인 |
 | R9 | 검증은 집계가 아니라 원문 대조로 | 작업방식 |
+| **R10** | **XBRL 원문(instance) — `preferredLabel=negated*`면 값 부호 반전, `calc:weight`는 저장에 반영 안 함** | 계층2(XBRL) |
 
 ---
 
@@ -432,6 +433,51 @@ R4 의 NULL 규약.
 
 ---
 
+## R10. XBRL 원문(instance) — 값 부호는 `preferredLabel`이 결정, `calc:weight`는 저장에 안 씀
+
+**규칙** — DART 표준 XBRL instance(`/pdf/download/ifrs.do` zip, `parser/xbrl_instance/`,
+`fin2/extract/report_lines_xbrl.py`)에서 presentation 위치별로 저장할 값의 **부호**를 정하는
+신호는 두 가지가 있고, 서로 다른 역할이다 — **섞어 쓰면 틀린다.**
+
+1. **`preferredLabel`이 "negated\*" 계열**(`http://www.xbrl.org/2009/role/negatedLabel` /
+   `negatedTerseLabel` / `negatedTotalLabel` / `negatedNetLabel` 등)이면, 그 presentation
+   위치에서 raw fact 값에 **-1을 곱해서 저장한다.** 이게 DART 자체 웹뷰어가 사람에게 보여주는
+   화면과 부호를 맞추는 유일한 메커니즘이다.
+2. **`calc:weight`(calculation linkbase)는 저장값에 절대 반영하지 않는다** — 이건 "부모 =
+   Σ(weight×자식)" 항등식을 **검증**할 때만 쓰는 메타데이터다. fact 자체의 저장값은
+   `preferredLabel` 반영 후에는 weight 없이 단순합만으로 항등식이 성립해야 정상이다.
+
+**근거** — 2026-08-06, Phase 6-2(`docs/plans/xbrl_instance_parser_todo_2026-08-05.md`)
+박셀바이오 CF를 DART 웹뷰어(`/report/viewer.do`)와 셀 단위로 대조하다 발견. `_pre.xml`에서
+두 계정(`법인세환급(납부)`/`2. 재무활동으로 인한 현금 유출액`) 모두
+`preferredLabel=".../negatedTerseLabel"`이 걸려 있었다. `fin2/extract/report_lines_xbrl.py::
+_value_sign()`. Phase 6-5에서 박셀바이오·한화(모던 vintage) 전체 basis에 대해 BS/CF/IS/SCE
+4종 항등식을 전수 재검증(불일치 0건)해 이 수정이 일반화됨을 확인.
+
+**어기면** — raw XBRL fact 값을 그대로 저장하면 DART 웹뷰어와 부호가 반대로 들어간다(실측:
+`법인세환급(납부)` 저장 -94,664,880 vs DART 화면 +94,664,880; `2. 재무활동으로 인한 현금
+유출액` 저장 +347,076,273 vs DART 화면 -347,076,273). 이 프로젝트의 "표시된 그대로 저장한다"
+원칙(R0·[[layer2-unit-column-attribution]] 계열)이 XBRL 소스에서만 조용히 깨진다 — HTML
+소스(계층2 본류)에선 해당 없는, XBRL instance 고유의 함정이다.
+
+**★기존에 틀렸던 결론** — Phase 0 §11/Phase 3-5는 "저장값은 weight 미반영 원문 그대로가
+맞고, weight는 항등식 검증에만 쓴다"고 결론 냈는데, 이는 BS만 검증했을 때는 우연히 맞았을
+뿐이고 **CF의 negated-label 케이스에서 틀렸음이 드러났다.** `calc:weight`와
+`preferredLabel=negated*`는 서로 다른 메커니즘인데 후자를 놓쳤던 것 — 새 XBRL 파서를 만들 때
+이 둘을 같은 것으로 착각하지 말 것.
+
+**XBRL instance 파싱의 나머지 확정 설계(요약, 상세는 링크)** — Phase 0(실측)·Phase 3(구현)이
+확정한 것: 다운로드는 1회 GET(`_fetch_pdf`류 2단계 확인 불필요) · basis(연결/별도)는 context의
+`dims`가 **정확히 1개**(basis 축만)일 때만 채택 · fact 추출은 반드시 role별 presentation
+트리를 먼저 워크한 뒤 그 트리에 실제로 걸린 (element, context) 쌍만 채택(같은 QName이 주석에도
+반복 태깅되므로 tag명 단독 검색 금지) · role→statement 매핑은 roleURI 숫자코드가 아니라
+`.xsd`의 `link:definition` 한글 텍스트로(버전에 안 변함) · label은 `preferredLabel` 우선 →
+표준 `label` → en 폴백 · `order`는 float로 정렬(정수 아님). 전체 근거·실측 수치는
+`docs/plans/xbrl_instance_parser_todo_2026-08-05.md`의 "Phase 0 결과"·"Phase 3 설계에 주는
+결론" 절.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -469,6 +515,7 @@ R4 의 NULL 규약.
 | R7 | 메모리 `foreign-corps-excluded` · `CLAUDE.md` |
 | R8 | `docs/runbook_new_parser_pipeline_integration.md` · `CLAUDE.md` |
 | R9 | 메모리 `feedback-verify-against-source` |
+| R10 | `docs/plans/xbrl_instance_parser_todo_2026-08-05.md` Phase 6-2/6-5 · `fin2/extract/report_lines_xbrl.py::_value_sign()` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황

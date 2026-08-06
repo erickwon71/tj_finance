@@ -321,7 +321,7 @@ magnitude 추론이 아니라 문서 안 **명시 텍스트 선언 두 곳뿐**(
 ## R4-2. 제목+데이터 병합 표 / 제목 자체가 없는 표
 
 **규칙** — `title_text_owned`/`title_text_for_classify`(직전 형제 기반)가 **둘 다** 제목을
-못 찾았을 때만 시도하는 최후 폴백 2종. 근거는 이번에도 magnitude 추론이 아니라 표 자신의
+못 찾았을 때만 시도하는 최후 폴백 3종. 근거는 이번에도 magnitude 추론이 아니라 표 자신의
 **구조 사실**뿐이다:
 
 1. **병합표** (`owned_merged_title`) — 표 자신의 첫 행이 재무제표명 하나뿐이면(제목·기간·
@@ -335,6 +335,13 @@ magnitude 추론이 아니라 문서 안 **명시 텍스트 선언 두 곳뿐**(
    그 표가 `2.연결재무제표`/`4.재무제표` 섹션의 **첫 번째 금액표**이고, 헤더행이 곧바로
    "과목"/"계정명"으로 시작하며, 헤더 다음 첫 계정명이 **"자산"** 이면 BS 로 확정한다.
    단위는 표 안에 없으므로 R4-1 doc_default 로 확보한다.
+3. **헤더 재등장 분리** (`_split_headed_multi_statement_table`) — 위 둘도 실패했고, 그 표가
+   섹션의 **첫 번째 금액표**인데 표 **안**에서 헤더행("과목"류)이 2회 이상 나타나면(복수
+   재무제표가 한 물리적 TABLE 에 이어붙은 서식), 헤더 재등장 지점으로 표를 구간별로 잘라
+   각 구간을 **내용**(행 라벨)만으로 BS(`_looks_like_balance_sheet`)→
+   IS(`_looks_like_income_statement`)→CF(`_looks_like_cashflow`) 순으로 판별한다. 구간이
+   2개 미만이거나 어느 구간이든 판별 실패·같은 statement 중복이면 **전체 보류**(부분 성공
+   불허). 단위는 표 안에 없으므로 R4-1 doc_default 로 확보(②와 동일 근거).
 
 `unit_source` 는 기존 값을 그대로 쓴다(로컬 발견 시 `declared`, doc_default 위임 시
 `doc_default`) — 새 provenance 값을 만들지 않는다.
@@ -345,6 +352,13 @@ census 결과 §1 패턴 정확히 3건(특수건설 20151116001903·팬엔터�
 기업 오적용 **0건**. `fin2/extract/statement_titles.py::owned_merged_title/
 titleless_bs_start`, `fin2/extract/text.py::merged_table_local_unit`,
 `docs/plans/merged_title_data_table_r4-2_2026-08-05.md`.
+③은 2026-08-07, R4-2 잔여 백로그("표못잡음(헤딩섹션은 있음)") 착수 census 재실행 중 발견.
+`n_loaded=0`(활성기업, 2015+) 모집단 안에서 "섹션 있는데 표 못 잡음" 3건을 재확인한 결과
+이노시뮬레이션(2018FY `20190405000147`·2019FY `20200330004128`) 2건이 이 패턴, 자비스
+2018Q3(`20181114001626`)는 원문 XML 자체에 상세표가 없는 별개 문제(파서로 해결 불가, 보류)
+로 갈렸다. 재census로 "헤더 재등장" 신호를 가진 필링이 이 2건이 전수임을 확인 — 다른 기업
+오적용 **0건**. `fin2/extract/text.py::_split_headed_multi_statement_table/
+_build_synthetic_table/_looks_like_cashflow`.
 
 **함정(실측)** —
 - 병합표 폴백을 `table_has_amount_rows` 가드 없이 걸면 표제/데이터표 분리 서식(다수)의

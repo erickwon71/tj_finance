@@ -26,11 +26,13 @@ run.py extract2 에서 Track A(xbrl)가 0행이면 자동 폴백으로 호출.
 """
 from __future__ import annotations
 
+import copy
 import math
 import re
 from pathlib import Path
 
 from loguru import logger
+from lxml import etree
 
 from parser.common.account_mapper import get_mapper, MappingResult
 from parser.common.amount_normalizer import (normalize_account_name, detect_unit_declaration,
@@ -41,12 +43,12 @@ from parser.xml.section_detector import (
     SEC_CONSOL_FS, SEC_SEP_FS, SEC_LEGACY_FS, iter_section_elements,
     table_has_amount_rows,
 )
-from parser.xml.table_extractor import extract_rows
+from parser.xml.table_extractor import extract_rows, _get_cells
 from fin2.extract.xbrl import ExtractedFact
 from fin2.extract.statement_titles import (
     title_text, title_text_owned, title_text_for_classify,
     classify_statement_in_body_section, SECTION_CODE_OF,
-    _is_metadata_only, _STMT_TITLE,
+    _is_metadata_only, _STMT_TITLE, _HEADER_LABEL_RE,
     classify_legacy_statement_heading, is_legacy_note_marker,
     owned_merged_title, titleless_bs_start,
 )
@@ -273,6 +275,20 @@ def _detect_body_statement_tables(root, fin_type: str,
                 used_merged_title = stmt is not None
             if stmt is None and idx == first_amount_idx and titleless_bs_start(tbl):
                 stmt = "BS"
+            # R4-2 §3(2026-08-07) — 위 폴백 2종도 실패했을 때, 표 자신이 섹션의 첫 번째
+            # 금액표이고 표 **안**에서 헤더행이 재등장하면(복수 재무제표가 한 물리적 TABLE 에
+            # 이어붙은 서식) 헤더 재등장 지점으로 잘라 각각 분리 처리한다(실측 이노시뮬레이션
+            # 20190405000147·20200330004128 — 자세한 근거는 `_split_headed_multi_statement_table`
+            # 문서화 참고). 이 idx 는 이 폴백으로 완결되므로 아래 단일-stmt 경로를 타지 않는다.
+            if stmt is None and idx == first_amount_idx:
+                multi = _split_headed_multi_statement_table(tbl)
+                if multi is not None:
+                    for sub_stmt, sub_tbl in multi:
+                        if sub_stmt == "SCE" and not include_sce:
+                            continue
+                        sub_code = SECTION_CODE_OF[(basis, sub_stmt)]
+                        groups.setdefault(sub_code, []).append((sub_tbl, None, sec_kind))
+                    continue
             # 내용기반 **BS오분류 교정**(타이트): BS 로 분류됐으나 IS 내용(매출+영업이익)을 갖고
             # BS 내용(자산총계 등)이 **없는** 표만 IS 로 교정한다. 직전 형제가 'X 재무상태표는
             # 재작성…' 주석이라 BS 로 오분류된 무제목 IS(지노믹트리 2016) 만 정확히 겨냥 —
@@ -729,6 +745,97 @@ def _looks_like_balance_sheet(tbl) -> bool:
         if cells and _BS_TOTAL_RE.search(cells[0]):
             return True
     return False
+
+
+_CF_ROW_RE = re.compile(r"영업활동현금흐름|영업활동으로인한현금흐름|투자활동현금흐름|재무활동현금흐름")
+
+
+def _looks_like_cashflow(tbl) -> bool:
+    """표의 행 라벨에 영업/투자/재무활동현금흐름이 있으면 CF."""
+    for tr in table_direct_rows(tbl):
+        cells = _get_cells(tr)
+        label = re.sub(r"\s+", "", cells[0]) if cells else ""
+        if _CF_ROW_RE.search(label):
+            return True
+    return False
+
+
+def _build_synthetic_table(rows: list) -> etree._Element:
+    """TR 목록을 독립된 `<TABLE><TBODY>...</TBODY></TABLE>` 로 깊은 복사해 담는다.
+
+    원본 트리는 건드리지 않는다 — 원본 TR 을 그대로 reparent 하면 원본 문서에서 그 행들이
+    사라져(lxml 은 자식을 붙이면 기존 부모에서 떼어낸다) 같은 파싱 패스 안의 이후 주석
+    전사 등에 영향을 준다. `deepcopy` 로 독립 복제본을 만들어 원본은 그대로 둔다.
+    """
+    tbl = etree.Element("TABLE")
+    tbody = etree.SubElement(tbl, "TBODY")
+    for tr in rows:
+        tbody.append(copy.deepcopy(tr))
+    return tbl
+
+
+def _split_headed_multi_statement_table(tbl) -> list[tuple[str, "etree._Element"]] | None:
+    """표 하나에 재무제표 여러 개가 물리적으로 이어붙어 있을 때(헤더행 재등장으로 경계
+    표시) 구간별로 분리해 `[(stmt_code, synthetic_table), ...]` 로 반환한다.
+
+    실측 이노시뮬레이션 20190405000147·20200330004128(2026-08-07) — `2.연결재무제표`/
+    `4.재무제표` 섹션 안 물리적 TABLE 이 **딱 1개**인데, BS 데이터(자산총계~부채와자본총계)가
+    끝나자마자 같은 TABLE 안에서 헤더행("과 목"+기간)이 **다시** 나타나며 IS 데이터가
+    이어붙어 있다. 기존 R4-2 폴백 2종 어느 것도 이 패턴을 못 잡는다:
+      · `owned_merged_title` — 표가 여러 개일 때 표 자신 첫 행이 재무제표명이어야 하는데,
+        여긴 표가 1개뿐이고 첫 행이 제목이 아니라 헤더다.
+      · `titleless_bs_start` — 헤더 다음 첫 계정명이 정확히 "자산" 이어야 하는데, 이 표는
+        중간 총계 행 없이 "Ⅰ.유동자산" 으로 바로 시작해 조건에 안 걸린다.
+
+    ★★ 호출측 필수 조건 — `titleless_bs_start` 와 동일하게, 그 표가 섹션의 **첫 번째
+    금액표일 때만**(위치) 호출할 것.
+
+    구간 판별은 각 구간의 **내용**(행 라벨)만 본다 — `_looks_like_balance_sheet`
+    (자산총계/부채총계/부채와자본총계) → `_looks_like_income_statement`(매출+영업이익) →
+    `_looks_like_cashflow`(영업/투자/재무활동현금흐름) 순으로 시도한다. 구간이 2개 미만
+    (헤더 재등장 없음)이거나, 어느 구간이든 판별 실패·같은 statement 중복이면 **전체
+    None**(R6: 확정 못 하면 추측하지 않는다 — 부분 성공을 허용하지 않는다. 자본변동표는
+    이 패턴에서 실측된 바 없어 다루지 않는다 — 나오면 판별 실패로 자연히 보류된다).
+
+    단위는 이 표 안에 없다(R4-1 doc_default 로 확보 — `titleless_bs_start` 와 동일 근거).
+    """
+    trs = table_direct_rows(tbl)
+    if not trs:
+        return None
+
+    segments: list[list] = []
+    cur: list = []
+    for tr in trs:
+        cells = _get_cells(tr)
+        first = re.sub(r"\s+", "", cells[0]) if cells else ""
+        if _HEADER_LABEL_RE.match(first):
+            if cur:
+                segments.append(cur)
+            cur = [tr]
+        elif cur:
+            cur.append(tr)
+    if cur:
+        segments.append(cur)
+    if len(segments) < 2:
+        return None  # 헤더 재등장 없음 — 이 함수의 대상이 아니다
+
+    results: list[tuple[str, "etree._Element"]] = []
+    seen: set[str] = set()
+    for seg_rows in segments:
+        synth = _build_synthetic_table(seg_rows)
+        if _looks_like_balance_sheet(synth):
+            stmt = "BS"
+        elif _looks_like_income_statement(synth):
+            stmt = "IS"
+        elif _looks_like_cashflow(synth):
+            stmt = "CF"
+        else:
+            stmt = None
+        if stmt is None or stmt in seen:
+            return None  # 구간 판별 실패 또는 중복 — 전체 보류
+        seen.add(stmt)
+        results.append((stmt, synth))
+    return results
 
 
 def _emit_section(

@@ -366,6 +366,90 @@ def test_r4_2_merged_and_titleless_filings_fully_loaded():
                 rcept, stmt, basis, label, [l.value_won for l in hits])
 
 
+# ── R4-2 §3: 헤더 재등장으로 병합된 복수 재무제표 (2026-08-07) ──────────────
+# `_split_headed_multi_statement_table` — 섹션 안 물리적 TABLE 이 1개뿐인데 그 표 안에서
+# BS 데이터 뒤에 헤더행("과 목"+기간)이 다시 나타나며 IS 가 이어붙은 서식(이노시뮬레이션 패턴).
+# `owned_merged_title`(표가 여럿이어야 함)도 `titleless_bs_start`(첫 계정명이 정확히 '자산'
+# 이어야 함, 이 표는 '유동자산'으로 시작)도 안 걸리는 세 번째 폴백.
+_INNOSIM_2018 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00965318_이노시뮬레이션/annual/2018/20190405000147.xml"
+)
+_INNOSIM_2019 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00965318_이노시뮬레이션/annual/2019/20200330004128.xml"
+)
+
+
+def test_split_headed_multi_statement_table_bs_then_is():
+    """헤더행 재등장으로 BS→IS 두 구간이 이어붙은 표를 BS/IS 로 정확히 분리한다."""
+    from lxml import etree
+    from fin2.extract.text import _split_headed_multi_statement_table
+
+    xml = (
+        "<TABLE><TBODY>"
+        "<TR><TD>과   목</TD><TD>당기</TD><TD>전기</TD></TR>"
+        "<TR><TD>Ⅰ.유동자산</TD><TD>14,985,801,573</TD><TD>16,135,644,358</TD></TR>"
+        "<TR><TD>자산총계</TD><TD>29,825,708,825</TD><TD>21,599,508,385</TD></TR>"
+        "<TR><TD>부채총계</TD><TD>19,803,372,402</TD><TD>8,976,306,526</TD></TR>"
+        "<TR><TD>자본총계</TD><TD>10,022,336,423</TD><TD>12,623,201,859</TD></TR>"
+        "<TR><TD>과   목</TD><TD>당기</TD><TD>전기</TD></TR>"
+        "<TR><TD>매출액</TD><TD>15,307,775,916</TD><TD>29,622,802,160</TD></TR>"
+        "<TR><TD>영업이익(영업손실)</TD><TD>(6,609,440,874)</TD><TD>2,430,632,717</TD></TR>"
+        "</TBODY></TABLE>"
+    )
+    tbl = etree.fromstring(xml)
+    result = _split_headed_multi_statement_table(tbl)
+    assert result is not None
+    stmts = [s for s, _ in result]
+    assert stmts == ["BS", "IS"]
+
+
+def test_split_headed_multi_statement_table_none_for_single_header():
+    """헤더행이 한 번뿐인 정상 표는 재등장이 없으므로 None(이 폴백의 대상이 아님)."""
+    from lxml import etree
+    from fin2.extract.text import _split_headed_multi_statement_table
+
+    xml = (
+        "<TABLE><TBODY>"
+        "<TR><TD>과목</TD><TD>당기</TD></TR>"
+        "<TR><TD>Ⅰ.유동자산</TD><TD>12,459,539,381</TD></TR>"
+        "<TR><TD>자산총계</TD><TD>95,539,541,976</TD></TR>"
+        "</TBODY></TABLE>"
+    )
+    tbl = etree.fromstring(xml)
+    assert _split_headed_multi_statement_table(tbl) is None
+
+
+def test_r4_2_headed_multi_statement_filings_fully_loaded():
+    """이노시뮬레이션 2018FY·2019FY — 원문 대조(2026-08-07): 연결 자산총계·매출액 등."""
+    targets = [
+        (_INNOSIM_2018, "20190405000147", "00965318", 2018, "FY",
+         [("BS", "consolidated", "자산총계", 29_825_708_825),
+          ("BS", "consolidated", "부채총계", 19_803_372_402),
+          ("BS", "consolidated", "자본총계", 10_022_336_423),
+          ("IS", "consolidated", "매출액", 15_307_775_916),
+          ("IS", "consolidated", "영업이익(영업손실)", -6_609_440_874),
+          ("IS", "consolidated", "당기순이익(당기순손실)", -6_522_062_497)]),
+        (_INNOSIM_2019, "20200330004128", "00965318", 2019, "FY",
+         [("BS", "consolidated", "자산총계", 44_405_816_652),
+          ("IS", "consolidated", "매출액", 19_408_742_657)]),
+    ]
+    for path, rcept, corp, fy, period, checks in targets:
+        if not path.exists():
+            continue
+        lines = extract_report_lines(
+            path, rcept_no=rcept, corp_code=corp,
+            report_fiscal_year=fy, report_fiscal_period=period,
+        )
+        assert lines, f"{rcept} 여전히 0행"
+        for stmt, basis, label, expect in checks:
+            hits = [l for l in lines if l.statement == stmt and l.basis == basis
+                    and l.col_index == 0 and l.label_raw.strip() == label.strip()]
+            assert any(l.value_won == expect for l in hits), (
+                rcept, stmt, basis, label, [l.value_won for l in hits])
+
+
 def test_notes_monetary_transcribed_positional():
     """include_notes=True: 화폐 주석 표가 전사되되 컬럼은 위치(연도 아님)·context_fy NULL."""
     if not _KG.exists():

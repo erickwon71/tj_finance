@@ -1,6 +1,6 @@
 # TODO — DART 표준 XBRL 원문(ifrs.do) 파서 구현
 
-계획 원문: [`xbrl_instance_parser_2026-08-05.md`](xbrl_instance_parser_2026-08-05.md). 이 문서는 그 계획을 실행 가능한 세부 작업 단위로 쪼갠 체크리스트다. **아직 구현 시작 전 — 다음 세션에서 Phase 0부터.**
+계획 원문: [`xbrl_instance_parser_2026-08-05.md`](xbrl_instance_parser_2026-08-05.md). 이 문서는 그 계획을 실행 가능한 세부 작업 단위로 쪼갠 체크리스트다. **Phase 0~6 전체 완료(2026-08-06). PARSING_RULES.md R10 반영까지 끝남 — 이 트랙은 종료.**
 
 각 항목은 순서대로 진행하되, Phase 0의 결론이 나오기 전엔 Phase 2(파서 핵심 로직) 세부 설계를 확정하지 않는다.
 
@@ -313,13 +313,227 @@ Assets(=CurrentAssets+NoncurrentAssets, 이 필링 자체가 "Assets" 총계 행
 
 ## Phase 6 — 검증
 
-- [ ] `fin2/tests/test_xbrl_instance.py` 신설 — 박셀바이오 실 샘플 기반, 주요 계정 하드코딩 대조, 구조/라벨/instant-duration 검증
-- [ ] 박셀바이오 2024H1 값 3~5개 DART 웹뷰어와 수동 대조
-- [ ] 한화에어로스페이스 2026Q1 값 3~5개 DART 웹뷰어와 수동 대조 (실거래 활성기업 — 공개된 실제 수치와도 대조 가능하면 추가 확인)
-- [ ] Gate B 전/후 비교 — 이 6건이 "무데이터→pass/fail"로만 이동하고 기존 다른 필링 회귀 없는지 (`run_dq_gate`/`face_audit`)
-- [ ] 항등식 점검 (자산=부채+자본 등) — 부호 규약 오류 조기 발견용
-- [ ] `pytest` 전체 회귀 실행 — 기존 테스트 통과 유지 확인
-- [ ] `docs/PARSING_RULES.md`에 이번에 확정한 규칙(있다면, 예: XBRL 원문 unit/기간 판정 방식)을 R-번호로 반영
+- [x] `fin2/tests/test_xbrl_instance.py` 신설 — 박셀바이오 실 샘플 기반, 주요 계정 하드코딩 대조, 구조/라벨/instant-duration 검증 — 완료 2026-08-06
+- [x] 박셀바이오 2024H1 값 3~5개 DART 웹뷰어와 수동 대조 — 완료 2026-08-06, **버그 발견+수정** (아래 "Phase 6-2 진행 기록" 참고)
+- [x] 한화에어로스페이스 2026Q1 값 3~5개 DART 웹뷰어와 수동 대조 — 완료 2026-08-06, 불일치 0건(아래 "Phase 6-3 진행 기록" 참고)
+- [x] Gate B 전/후 비교 — 완료 2026-08-06, **체크리스트 전제 자체가 틀렸음을 확인**(아래 "Phase 6-4 진행 기록" 참고)
+- [x] 항등식 점검 (자산=부채+자본 등) — 완료 2026-08-06, 5건 전수(아래 "Phase 6-5 진행 기록" 참고)
+- [x] `pytest` 전체 회귀 실행 — 완료 2026-08-06, 273 passed/1 failed(기존 무관 실패 그대로,
+  회귀 0). Phase 1(263)부터 Phase 6-1(신규 10건 추가로 273) 내내 동일하게 유지돼온 카운트와
+  일치 — `test_lxintl_facility_table_dropped`(생산 지표 오포착 방지 테스트, `test_biz_section.py`,
+  XBRL/report_lines_xbrl.py와 무관한 사업의내용 파서 결함)는 이 트랙 착수 이전부터 실패해온
+  것으로 todo 문서 전체에 일관되게 기록돼 있음(별도 트랙 소관, 이번 세션에서 손대지 않음).
+- [x] `docs/PARSING_RULES.md`에 이번에 확정한 규칙(있다면, 예: XBRL 원문 unit/기간 판정 방식)을 R-번호로 반영
+  — 완료 2026-08-06, **R10** 신설(아래 "Phase 6-7 진행 기록" 참고). Phase 6 전 항목 완료.
+
+### Phase 6-7 진행 기록 (2026-08-06)
+
+`docs/PARSING_RULES.md`에 **R10. XBRL 원문(instance) — 값 부호는 `preferredLabel`이 결정,
+`calc:weight`는 저장에 안 씀** 신설(규칙 색인 표 + 본문 + 부록 B 원출처 3곳 갱신). 이 트랙의
+Phase 6에서 실제로 발견·수정한 결함(6-2)을 R-번호로 등재해, 다음에 XBRL 파서를 손댈 때
+`calc:weight`와 `preferredLabel=negated*`를 다시 혼동하지 않도록 했다. 본문에 나머지 확정
+설계(basis 판정=context dims 정확히 1개·presentation 트리 워크 필수·role→statement는
+`link:definition` 텍스트로·label은 preferredLabel 우선·order는 float)도 요약 + 이 todo
+문서의 "Phase 0 결과"/"Phase 3 설계에 주는 결론" 절로 링크(전체 근거 중복 없이 단일
+진입점 유지).
+
+**Phase 6 전체 완료.** 남은 것은 이 트랙 자체가 아니라 부수적으로 발견된 별도 판단 대기
+사항들뿐(SCE 미지원 vintage·std_v3 combine.py label-ambiguity conflicts 등, 각 Phase
+기록에 "별도 판단 필요"로 명시됨).
+
+### Phase 6-2 진행 기록 (2026-08-06)
+
+**방법**: 기존 `LegacyDartScraper._get_view_params()`로 `dcmNo` 확보 →
+`https://dart.fss.or.kr/dsaf001/main.do?rcpNo=...` 원문을 직접 받아 JS 목차 트리에서
+"4-1. 재무상태표"/"4-2. 포괄손익계산서"/"4-4. 현금흐름표"의 `eleId`/`offset`/`length` 추출 →
+`/report/viewer.do`로 **DART가 실제 사람에게 보여주는 본문 HTML**을 가져와
+`report_lines`(unit_source='xbrl') 저장값과 셀 단위 대조.
+
+**결과**: BS 21개·IS 15개 값 = 부호까지 전부 정확히 일치. **CF는 21개 중 2개 불일치 발견**:
+
+| 계정 | DART 화면 | 기존 저장값 |
+|---|---|---|
+| 법인세환급(납부) | +94,664,880 | -94,664,880 |
+| 2. 재무활동으로 인한 현금 유출액 | -347,076,273 | +347,076,273 |
+
+**근본 원인(원문까지 추적 완료)**: 이 두 계정의 `_pre.xml` presentationArc에 공통으로
+`preferredLabel="http://www.xbrl.org/2009/role/negatedTerseLabel"`가 걸려 있음. XBRL 표준
+관례상 `preferredLabel`이 "negated*" 계열(`negatedLabel`/`negatedTerseLabel`/
+`negatedTotalLabel`/`negatedNetLabel` 등)이면 "이 위치에 표시할 땐 raw fact 값에 -1을 곱해서
+보여줘라"는 뜻이고, DART 자체 렌더러가 실제로 이 규칙을 적용해서 화면에 그린다. Phase 3
+구현은 `preferredLabel`을 **라벨 텍스트 선택**에만 썼고(Phase 0 §10 그대로) **부호 반전은
+구현하지 않았다** — 이게 빠진 부분이었다. `_pre.xml` 전체에 negated* arc는 정확히 3개뿐이고
+(3번째 `법인세비용`은 이 기간 값 자체가 없어 무해), 값이 실재하는 나머지 2개가 정확히 이번에
+발견된 2건과 일치해 원인이 100% 확정됐다.
+
+★기존 결론 정정: Phase 0 §11/Phase 3-5는 "저장값은 weight 미반영 원문 그대로가 맞고,
+weight는 항등식 검증에만 쓴다"고 결론 냈는데, 이는 **BS만 검증했을 때는 맞았지만 일반화가
+틀렸다** — `calc:weight`(항등식 검증용 메타데이터)와 `preferredLabel=negated*`(표시 부호
+규약)는 서로 다른 메커니즘인데 후자를 검증 안 하고 넘어간 것. CF 21개 중 정확히 이 2개
+(negated* 있고 값도 있는 것)만 어긋났다는 사실 자체가 이 메커니즘을 확증한다.
+
+**수정**: `fin2/extract/report_lines_xbrl.py`에 `_value_sign(preferred_label)` 신설 — role
+URI가 `/negated`로 시작하는 local name이면 -1, 아니면 1. `_emit_statement_lines()`/
+`_emit_sce_lines()` 양쪽의 값 emit 지점에 곱해서 적용. 모듈 docstring의 "value/unit" 설계
+결정 문단에도 이 예외를 추가 기록.
+
+**검증**:
+- 박셀바이오 zip 재파싱 결과: 두 계정 모두 DART 화면과 정확히 일치하는 부호로 전환, CF
+  영업활동/재무활동 항등식이 이제 **weight 없이 단순합만으로** 성립(예:
+  영업으로부터창출된현금흐름+이자수취+법인세환급(납부) = 영업활동현금흐름, weight 반영 로직
+  불필요해짐).
+- BS(33행)·IS(15행)·SCE(37행) 건수·값 전부 불변(영향 0) — 이 수정이 CF의 negated-label
+  케이스에만 정확히 국소적으로 작용함을 확인.
+- `fin2/tests/test_xbrl_instance.py`의 `test_cf_values_and_weighted_identity`가 옛 기대값
+  (weight 보정 필요 가정)으로 실패 → DART 대조로 검증된 새 기대값(단순합 항등식)으로 갱신,
+  두 번째 negated-label 케이스(재무활동 유출액)도 새 assertion으로 커버 추가. 10/10 통과.
+- `sync_xbrl_instance_lines(corps=['01335851','00126566','00260611'], recheck=True)` 재실행
+  — 5필링·1549행·오류 0, 박셀바이오(106행)·한화(456행) 건수 Phase 5 기록과 정확히 동일(구조
+  회귀 없음, 부호만 정정됨). `build_std_v3.py --corp 01335851,00126566,00260611` 재빌드
+  (226행) 완료.
+- `pytest fin2/tests/` 273 passed/1 failed(기존 무관 실패 `test_lxintl_facility_table_dropped`
+  그대로, 회귀 없음).
+
+**미확인/후속**: 한화에어로스페이스·웰킵스하이텍 3건에도 같은 negated-label 케이스가 있는지는
+아직 값 단위로 대조 안 함(범용 XBRL 관례라 있을 가능성 높음, 코드 수정은 이미 전 필링에
+적용됨) — Phase 6-3(한화 대조)에서 확인 예정.
+
+### Phase 6-3 진행 기록 (2026-08-06)
+
+**방법**: 6-2와 동일한 방식 — `main.do` JS 목차에서 연결(eleId 20/21/23: 2-1 재무상태표/2-2
+포괄손익계산서/2-4 현금흐름표)과 별도(eleId 70/71/73: 4-1/4-2/4-4)의 offset/length를 뽑아
+`/report/viewer.do`로 DART 원문 화면 6개 표(연결+별도 × BS/IS/CF) 전부를 가져와
+`report_lines`(unit_source='xbrl', col_index=0) 저장값과 셀 단위 전수 대조.
+
+**결과**: 연결 110개 + 별도 122개 = **총 232개 값 전부 부호까지 정확히 일치, 신규 불일치
+0건**(DART 표시 단위가 "천원"이라 ×1,000 환산해 대조). 6-2에서 수정한 `_value_sign()`
+(negated-label 부호반전)이 이 필링에는 부작용 없이 적용됐고(연결/별도 CF의 "영업으로부터
+창출된 현금흐름"/"법인세 납부" 등도 전부 정상 일치), 6-2에서 발견한 것 같은 새로운
+negated-label 불일치 케이스는 이 필링에서 관측되지 않았다 — 즉 그 버그가 박셀바이오 CF의
+특정 두 계정(dart: 총액개념 이중 태깅 패턴)에 국소적이었을 가능성이 높고, 수정 자체는
+전 필링에 안전하게 일반화됨을 재확인.
+
+**참고**: "비지배지분의 증가"가 -4,824,679천원(음수)로 표시되는 등 라벨과 부호가 어긋나
+보이는 항목이 있으나, DART 원문 자체가 그렇게 표시돼 있음을 확인(원문 그대로 저장 원칙 준수,
+파서 결함 아님).
+
+`pytest` 재실행 불필요(코드 변경 없음, 대조만 수행).
+
+### Phase 6-4 진행 기록 (2026-08-06)
+
+**★체크리스트 항목의 전제("이 6건이 무데이터→pass/fail로 이동")가 이 아키텍처와 안 맞음을
+확인.** Gate B(`scripts/gateb_audit.py`)는 `std_financials_v2`(구 체인)를 감사하는데, 이
+XBRL 파이프라인(`report_lines_xbrl.py`/`xbrl_instance_lines_sync.py`/`build_std_v3.py`)은
+`report_lines`/`report_tables`/`std_financials_v3`(신 체인)만 건드리고 `std_financials_v2`/
+`face_audit`는 코드 경로상 전혀 쓰지 않는다(grep으로 확인, 두 체인이 완전히 분리돼 있음).
+
+**구조적 확인(코드+DB)**:
+1. `gateb_audit.py::file_path_map()`이 `download_tasks`에서 `file_type IN ('xml','pdf')`만
+   조회 — 우리 5건은 `file_type='xbrl_zip'`이라 Gate B 쿼리에 애초에 안 걸림.
+2. `std_financials_v2`에 이 5개 rcept를 `bs_rcept`/`is_rcept`/`cf_rcept`로 참조하는 행 **0건**
+   (SQL로 실측).
+
+**★더 흥미로운 발견**: `face_audit`엔 이미 이 3사·해당 (fy,fp) 슬롯에 **우리 작업 이전부터**
+`pass` 상태가 존재했다(박셀바이오 2024H1/separate=pass, 한화 2026Q1 양쪽=pass, 웰킵스하이텍
+2019Q3/separate=pass·consolidated=pending). 원인을 추적하니 — 박셀바이오 2024H1의 경우 std_v2는
+`rcept_no=20250828000461`("반기보고서 2025.06")의 **전기(비교) 컬럼**에서 2024H1 데이터를
+가져오고 있었다. 이건 우리 XBRL 대상 rcept(`20250828000534`, "반기보고서 2024.06" 원본)와는
+**완전히 다른 필링**이다 — `filings` 테이블 조회로 report_nm까지 확인(같은 날 2025-08-28에
+등록된 배치이지만 서로 다른 보고서 5건: Q1/Q3/FY/H1(2025)/H1(2024) 정정묶음). 즉 std_v2는 애초에
+이 기간을 "무데이터"로 본 적이 없었다 — 다른 소스로 이미 채워져 있었을 뿐.
+
+**결론**: Gate B 카운트는 우리 작업 전후로 완전히 불변(코드상 쓰기 경로 자체가 없어 회귀
+자체가 성립 불가능한 구조, DB로도 재확인). "무데이터→데이터 있음"이라는 실제 전환은
+`report_lines`/`std_financials_v3`(신 체인)에서 일어났고, 이건 Phase 5에서 이미 검증됨
+(0건 → 유효 데이터, 항등식 일치).
+
+**부수 발견(범위 밖, 기록만 — 버그 아님)**: std_v3의 `conflicts` 진단 컬럼을 보다가 한화
+2026Q1(consolidated)의 `long_term_debt`/`controlling_ni`/`noncontrolling_ni`가 **NULL**로
+저장된 걸 발견. 원인: `report_lines`에 "차입금및사채"가 유동/비유동 두 section에 동일 라벨로,
+"지배기업의 소유주지분"이 순이익귀속/총포괄손익귀속 두 section에 동일 라벨로 각각 2번씩
+나오는데, `fin2/layer3/combine.py`의 후보 매칭이 `label_raw` 텍스트만 보고 `section_path`
+(부모 구획)는 안 써서 후보를 못 좁힌다. 그런데 **같은 회사(00126566)·같은 필드의 conflicts가
+2015~2025년(전부 HTML 소스, XBRL과 무관) 데이터에도 이미 광범위하게 있었음**을 `conflicts IS
+NOT NULL` 전수 조회로 확인 — XBRL이 새로 만든 문제가 아니라 `combine.py::_reduce_conflict()`의
+기존 일반 한계(이 회사류 재무제표 구조 특유)다. `_reduce_conflict()` 자체가 "확정 못 하면
+NULL로 보류, 추측 안 함"이라는 설계(docstring 그대로) — 조용한 오염이 아니라 안전장치가 정상
+작동한 것. `net_income`처럼 라벨이 유일한 필드는 정상 반영됨(한화 2026Q1: 526,260,028,000,
+6-3에서 DART 원문과 일치 확인됨). Phase 6-4 범위 밖이라 수정 없이 기록만 남김 — 재투자 여부는
+별도 판단(layer3 소관, XBRL 전용 이슈 아님).
+
+### Phase 6-5 진행 기록 (2026-08-06)
+
+**방법**: DB `report_lines`(unit_source='xbrl')를 코드로 전수 조회해 5필링(박셀바이오·한화·
+웰킵스하이텍×3) × 전체 basis에 대해 4종 항등식을 자동 점검(스크립트는 세션 scratchpad,
+레포 미포함) — 6-2/6-3의 "DART 화면과 셀 대조"와 달리 이건 **저장값들끼리의 내부 정합성**을
+5건 전수로 확인하는 것이 목적.
+
+**모던 vintage(박셀바이오·한화, 3개 basis)** — 4종 항등식 전부 **불일치 0건**:
+1. BS: Assets = Liabilities + Equity
+2. CF: 기초현금 + 영업활동 + 투자활동 + 재무활동(+환율변동, 있으면) = 기말현금
+3. IS: 당기순이익 + 기타포괄손익 = 총포괄손익
+4. SCE: 기말자본(총계열) == BS 자본총계
+
+6-2에서 고친 negated-label 부호 수정 이후 **단순합만으로** 전부 성립함을 재확인(가중치 보정
+불필요, 6-2 결론 그대로) — 이 픽스가 5필링 전체에 안정적으로 일반화됨을 뒷받침하는 추가 증거.
+
+**구형 vintage(웰킵스하이텍 3건 × 2basis = 6케이스)** — Phase 5-A가 이미 밝힌 대로 이 vintage는
+`Assets`/`Liabilities`/`Equity`/`ProfitLoss`/`ComprehensiveIncome`/현금잔액(기초·기말) 개념을
+presentation tree에 **아예 안 태깅**한다. 그래서:
+- **BS는 소계 레벨로 대체 검증**: Assets(=CurrentAssets+NoncurrentAssets) =
+  Liabilities(=CurrentLiabilities+NoncurrentLiabilities) +
+  Equity(=IssuedCapital+CapitalSurplus+ElementsOfOtherStockholdersEquity+
+  OtherComprehensiveIncomeLossAccumulatedAmount+RetainedEarnings) → **6/6 전부 일치**.
+  Phase 5-A가 별도 기준 1건만 손으로 확인했던 것을 3필링×2basis 전부로 확장 검증 완료.
+- **CF/IS는 항등식 검증 자체가 불가능**: `source_ref`(=element.local) 전수 조회로 재확인한
+  결과 `ProfitLoss`/`ComprehensiveIncome`/현금잔액 개념이 이 필링들의 CF/IS presentation
+  tree에 **0건** 존재(CF는 영업/투자/재무 흐름 소계만, 현금잔액 instant 항목 자체가 없음; IS는
+  매출·매출원가·판관비·기타손익·금융손익까지만 있고 법인세비용차감전순이익/당기순이익/
+  총포괄손익이 없음). Phase 5-A는 이를 "IS쪽 ProfitLoss도 추정"이라고 적어뒀는데, 이번 전수
+  조회로 **확정**(추정이 아니라 실측 0건)됐다 — 파서 결함이 아니라 이 필링 자체의 태깅 공백이고,
+  이미 Phase 5-A에서 "layer3 소관, 별도 결정 필요"로 수용된 사항과 같은 종류다. 새로 발견된
+  범위 확장은 없음(Phase 5-A가 이미 예견한 한계가 이번에 구체 수치로 확정된 것).
+
+**결론**: 5건 전체에서 항등식 위반 0건. 검증 가능한 곳(모던 vintage 4종, 구형 vintage BS
+소계)은 전부 통과했고, 검증 불가능한 곳(구형 vintage CF/IS)은 파서가 아니라 원문 태깅 공백이
+원인임을 재확인했다 — Phase 6-5 범위에서 신규로 조치할 것 없음.
+
+### Phase 6-1 진행 기록
+
+**6-1 완료(2026-08-06)**: `fin2/tests/test_xbrl_instance.py` 신설(`fin2/tests/test_xbrl.py`
+— Track A XBRL 회귀 테스트 — 와 동일한 관례: DB 비의존, 실측 zip 로컬 파일 직접 파싱, 파일
+없으면 `_run()`에서 스킵). 대상 = 박셀바이오(01335851, rcept_no=20250828000534) — Phase 5
+백필로 `raw_report/KOSDAQ/01335851_박셀바이오/half/2024/20250828000534.zip`에 이미 로컬
+저장돼 있음(44,076B, Phase 0 기록과 정확히 일치 재확인 — 별도 원격 fetch 불필요, 프로젝트
+"원문은 local folder에서" 원칙 그대로).
+
+10개 테스트, 하드코딩 기대값은 전부 이 문서의 기존 실측 기록(Phase 0 §1~§12, 3-1, 3-5, 3-7)에서
+그대로 옮김(짐작 없음, R9):
+- `test_zip_size_matches_phase0_record` — 잘못된 파일이 재검증되는 사고 조기 차단용 가드.
+- `test_instance_structure_counts` — contexts=32/units=3/facts=289(3-1 실측).
+- `test_basis_separate_only_no_consolidated` — SeparateMember만 존재, ConsolidatedMember 0개가
+  정상 케이스임(Phase 0 §4).
+- `test_bs_values_and_identity` — 자산총계/부채총계/자본총계/현금 등 하드코딩 + 자산=부채+자본
+  항등식.
+- `test_is_values_and_rollup` — 매출총이익/영업이익/당기순이익+기타포괄손익=총포괄손익 rollup.
+- `test_cf_values_and_weighted_identity` — 영업활동현금흐름 weight 반영 항등식(3-5의 -1 weight
+  케이스) + CF 기말현금==BS 현금및현금성자산 교차검증.
+- `test_sce_matches_bs_equity` — SCE 총계열 기말자본(2024-06-30)==BS 자본총계, 열 계층 라벨
+  체인(3-7 실측: 5열 평평).
+- `test_period_kind_instant_vs_duration` — BS=instant, IS=duration, CF=흐름duration/현금잔액
+  instant, SCE=None(3-7 설계대로).
+- `test_labels_are_korean_not_bare_qname` — `_resolve_label()` 폴백(영문 QName 로컬명)으로 안
+  샜는지.
+- `test_row_structure_sane` — P/S/F node_role·section_path·depth 순서.
+
+**실측 중 잡은 내 실수(테스트 작성, 코드 아님)**: CF weight 반영 항등식을 처음
+`-(-1)×법인세환급` 으로 썼다가 실행하니 이중부호로 상쇄돼 결국 "weight 미반영 단순합"과
+똑같은 값이 나와 실패(assert 대조군과 우연히 동일값이라 원인 파악에 재계산 필요) — 올바른
+식은 `weight×value`(=`-법인세환급`, weight=-1)이지 `-weight×value`가 아님. 고쳐서 재확인.
+
+**검증**: `python -m fin2.tests.test_xbrl_instance` 10/10 통과. `pytest fin2/tests/` 전체
+273 passed/1 failed(기존 무관 실패 `test_lxintl_facility_table_dropped` 그대로, 263→273은
+신규 10건 추가분과 정확히 일치 — 다른 회귀 없음).
 
 ---
 

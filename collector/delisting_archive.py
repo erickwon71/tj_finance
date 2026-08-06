@@ -64,11 +64,22 @@ def _corp_dir(root: Path, market: Optional[str], corp_code: str) -> Optional[Pat
     return None
 
 
+def _is_macos_metadata(f: Path) -> bool:
+    """AppleDouble 사이드카(`._foo`)나 `.DS_Store` 같은 macOS 전용 메타파일인지.
+
+    2026-08-06 실측으로 발견: SD 백업(exFAT류 카드로 추정)은 macOS 가 xattr 을 담으려고
+    파일마다 `._filename` 그림자 파일을 만드는데, NAS(SMB 공유)에는 이게 안 생긴다.
+    A3(파일 수 대조)가 이걸 그대로 세면 "NAS 가 SD 보다 적다"는 오탐이 난다(더존비즈온·
+    바이온·일정실업 3사, 실 콘텐츠는 이름까지 완전히 일치했는데 그림자 파일만큼만 어긋났음).
+    """
+    return f.name.startswith("._") or f.name == ".DS_Store"
+
+
 def _dir_stats(path: Path) -> tuple[int, float]:
-    """(파일 수, MB). 파일 수는 A3 대조용이라 정확해야 한다."""
+    """(파일 수, MB). 파일 수는 A3 대조용이라 정확해야 한다 — macOS 메타파일은 제외."""
     n, size = 0, 0
     for f in path.rglob("*"):
-        if f.is_file():
+        if f.is_file() and not _is_macos_metadata(f):
             n += 1
             size += f.stat().st_size
     return n, size / 1024 ** 2

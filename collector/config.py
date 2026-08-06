@@ -16,6 +16,13 @@ RAW_REPORT_DIR = BASE_DIR / "raw_report"   # PDF 저장 루트(심링크 → PRI
 LOG_DIR        = BASE_DIR / "logs"          # 로그 파일
 TMP_DIR        = BASE_DIR / "tmp"           # ZIP 임시 압축 해제
 
+# XBRL 원문 파서(Phase 5-A, docs/plans/xbrl_instance_parser_todo_2026-08-05.md) — 구형
+# taxonomy vintage는 roleType(BS/IS/CF/SCE 정의)를 필링 zip에 안 담고 DART 공유 taxonomy
+# 외부 URL을 참조한다(parser/xbrl_instance/role_map.py 참고). 그 외부 xsd는 필링과 무관하게
+# vintage(날짜) 하나에 고정이라 디스크에 캐시해 재요청을 피한다. 원문 문서가 아니라 taxonomy
+# 스키마라 raw_report/ 와는 분리(★ .gitignore 에도 추가할 것).
+TAXONOMY_CACHE_DIR = BASE_DIR / "taxonomy_cache"
+
 # ── 저장소 계약 ────────────────────────────────────────
 # 원문의 물리 위치. RAW_REPORT_DIR 는 PRIMARY_ROOT 를 가리키는 심링크이고, 코드는 계속
 # RAW_REPORT_DIR 만 쓴다(경로가 DB 에 18만 건 저장돼 있어 바꾸지 않는다). 아래 상수는

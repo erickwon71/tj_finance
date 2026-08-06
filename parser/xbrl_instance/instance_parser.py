@@ -23,6 +23,16 @@ Verified against real filings (see docs/plans/xbrl_instance_parser_todo_2026-08-
   applicable); no calculation-linkbase weight reversal is needed (Phase 0 §11).
 - `decimals` is preserved verbatim ("0", "INF", negative strings, …) — numeric
   interpretation is the caller's responsibility.
+
+Phase 5-A addition (docs/plans/xbrl_instance_parser_todo_2026-08-05.md, 웰킵스하이텍
+2019Q3, taxonomy vintage 2019-10-01): dimensional members aren't always inside
+`<xbrli:entity><xbrli:segment>` — the XBRL 2.1 spec also allows them directly
+under `<xbrli:context><xbrli:scenario>` (a sibling of `<entity>`, not a child of
+it), and DART's older filer packages actually use that placement (67 contexts
+observed, 0 with segment, 66 with scenario — vs. the two Phase 0 samples,
+which used segment exclusively and had 0 scenario). Both are read here and
+merged in document order (segment first, then scenario) — no filing observed
+so far uses both on the same context, but nothing stops one from doing so.
 """
 from __future__ import annotations
 
@@ -105,10 +115,21 @@ class XbrlInstance:
 def _resolve_qname_str(value: str, nsmap: dict[str, str]) -> QName:
     """Resolve an in-content QName string (e.g. "ifrs-full:SeparateMember") using
     the element's visible prefix->URI map. Raises if the prefix isn't declared —
-    silently falling back to an empty namespace would corrupt axis/member identity."""
+    silently falling back to an empty namespace would corrupt axis/member identity.
+
+    Phase 5-A: a bare (unprefixed) value is not automatically an error — per
+    XML QName-content resolution, an unprefixed name falls back to whatever
+    default namespace (`xmlns="..."`, lxml key `None`) is in scope. Observed
+    in a 2019-vintage filing whose root declares `xmlns="...instance"` (xbrli
+    as the *default* namespace, no explicit `xbrli:` prefix at all) with
+    `<measure>pure</measure>`/`<measure>shares</measure>` written bare — those
+    are exactly `xbrli:pure`/`xbrli:shares`, not "no namespace"."""
     prefix, sep, local = value.strip().partition(":")
     if not sep:
-        raise ValueError(f"expected a prefixed QName, got {value!r} (no ':')")
+        ns = nsmap.get(None)
+        if ns is None:
+            raise ValueError(f"expected a prefixed QName or a default namespace in scope, got {value!r} (no ':')")
+        return QName(ns=ns, local=prefix)
     ns = nsmap.get(prefix)
     if ns is None:
         raise ValueError(f"namespace prefix {prefix!r} not declared (value={value!r})")
@@ -127,19 +148,26 @@ def _parse_context(el: etree._Element) -> XbrlContext:
         ident_el = entity_el.find(f"{{{_XBRLI_NS}}}identifier")
         if ident_el is not None and ident_el.text:
             cik = ident_el.text.strip()
-        segment_el = entity_el.find(f"{{{_XBRLI_NS}}}segment")
-        if segment_el is not None:
-            for member_el in segment_el.findall(f"{{{_XBRLDI_NS}}}explicitMember"):
-                dim_attr = member_el.get("dimension")
-                member_text = (member_el.text or "").strip()
-                if not dim_attr or not member_text:
-                    logger.warning(f"context {ctx_id}: explicitMember missing dimension/text, skipped")
-                    continue
-                nsmap = member_el.nsmap
-                dims.append(Dimension(
-                    axis=_resolve_qname_str(dim_attr, nsmap),
-                    member=_resolve_qname_str(member_text, nsmap),
-                ))
+
+    # Dimensional members live in <entity><segment> (Phase 0 samples) or
+    # directly in <context><scenario> (Phase 5-A, older vintage) — both are
+    # legal per XBRL 2.1, see module docstring. Read whichever is present.
+    segment_el = entity_el.find(f"{{{_XBRLI_NS}}}segment") if entity_el is not None else None
+    scenario_el = el.find(f"{{{_XBRLI_NS}}}scenario")
+    for container in (segment_el, scenario_el):
+        if container is None:
+            continue
+        for member_el in container.findall(f"{{{_XBRLDI_NS}}}explicitMember"):
+            dim_attr = member_el.get("dimension")
+            member_text = (member_el.text or "").strip()
+            if not dim_attr or not member_text:
+                logger.warning(f"context {ctx_id}: explicitMember missing dimension/text, skipped")
+                continue
+            nsmap = member_el.nsmap
+            dims.append(Dimension(
+                axis=_resolve_qname_str(dim_attr, nsmap),
+                member=_resolve_qname_str(member_text, nsmap),
+            ))
 
     period_el = el.find(f"{{{_XBRLI_NS}}}period")
     if period_el is None:

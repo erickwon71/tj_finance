@@ -336,3 +336,77 @@ def merge_label_catalogs(*catalogs: dict[QName, list[Label]]) -> dict[QName, lis
         for element, labels in catalog.items():
             merged.setdefault(element, []).extend(labels)
     return merged
+
+
+# Phase 5-A: a handful of xsd:import hops to find the shared entry point that
+# declares the shared label linkbases — not a big BFS like role_map.py's
+# (that one hunts for a specific roleURI across many candidate files; this
+# one stops at the first file that declares ANY labelLinkbaseRef, since a
+# taxonomy vintage only has one shared entry point).
+_EXTERNAL_LABEL_FETCH_BUDGET = 8
+
+
+def resolve_external_labels(xsd_path: Path, nsmap: dict[str, str]) -> dict[QName, list[Label]]:
+    """Phase 5-A fallback (docs/plans/xbrl_instance_parser_todo_2026-08-05.md
+    — 웰킵스하이텍 2019Q3, taxonomy vintage 2019-10-01): the same older DART
+    taxonomy vintages that don't bundle `<link:roleType>` locally at all
+    (role_map.py) also don't bundle a Korean/English label for *standard*
+    `ifrs-full:`/`dart:` concepts — a filer's own `_lab-ko.xml`/`_lab-en.xml`
+    only carries labels for that filer's own entity-specific extensions
+    (verified: 웰킵스하이텍's local label file has "매입채무"/"장기기타채권" for
+    its `dart:`/`entity{CIK}:` concepts, but nothing at all for standard ones
+    like `ifrs-full:CurrentAssets` — those come back as the bare English local
+    name from `_resolve_label()`'s fallback, which the Korean-keyword-driven
+    layer3 mapper can't recognize, silently leaving std_v3 totals NULL).
+
+    Standard concepts' labels live in DART's shared taxonomy package,
+    reached the same way role_map.py reaches shared roleType definitions:
+    follow the local xsd's `xsd:import` chain out to the shared
+    `dart_entry_point_{vintage}.xsd`, then follow **that** file's
+    `<link:linkbaseRef role=".../labelLinkbaseRef">` entries — a different
+    mechanism from `xsd:import`/`xsd:include` (those wire in other *schemas*;
+    a linkbaseRef is how an entry point declares which *linkbase files*
+    belong to it, the same way a filer's own `.xsd` declares its own
+    `_lab-ko.xml`/`_lab-en.xml`). Verified directly against the DART server
+    for vintage 2019-10-01: the shared entry point declares 6 label
+    linkbases (`lab_ifrs-ko`/`lab_ifrs-en`/`lab_dart-ko`/`lab_dart-en`/
+    `lab_dart-gcd-ko`/`lab_dart-gcd-en`), all fetched and merged here."""
+    from parser.xbrl_instance import external_taxonomy as ext
+
+    source = str(xsd_path)
+    seen: set[str] = set()
+    queue = ext.dart_first(ext.local_import_urls(xsd_path))
+
+    label_urls: list[str] = []
+    fetches = 0
+    while queue and fetches < _EXTERNAL_LABEL_FETCH_BUDGET and not label_urls:
+        url = queue.pop(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        fetches += 1
+        root = ext.parse(url)
+        if root is None:
+            continue
+        label_urls = ext.linkbase_ref_urls(root, url, "labelLinkbaseRef")
+        if label_urls:
+            break
+        queue = ext.dart_first(queue + [u for u in ext.import_urls(root, url) if u not in seen])
+
+    if not label_urls:
+        logger.warning(f"{source}: 외부 taxonomy에서도 label linkbase 못 찾음({fetches}건 fetch)")
+        return {}
+
+    catalogs: list[dict[QName, list[Label]]] = []
+    for label_url in label_urls:
+        label_path = ext.fetch(label_url)
+        if label_path is None:
+            continue
+        try:
+            catalogs.append(parse_labels(label_path, nsmap))
+        except Exception as e:  # noqa: BLE001 — one bad label file shouldn't drop the rest
+            logger.warning(f"{source}: 외부 label linkbase 파싱 실패({label_url}): {type(e).__name__}: {e}")
+    merged = merge_label_catalogs(*catalogs)
+    logger.info(f"{source}: 외부 label linkbase {len(catalogs)}/{len(label_urls)}개에서 "
+                f"concept {len(merged)}개 라벨 확보({fetches}건 fetch로 entry point 발견)")
+    return merged

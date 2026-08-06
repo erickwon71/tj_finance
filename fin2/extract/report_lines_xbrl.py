@@ -104,6 +104,7 @@ re-walked for this phase, 2026-08-06):
 """
 from __future__ import annotations
 
+import re
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -118,8 +119,9 @@ from parser.xbrl_instance.instance_parser import (
 )
 from parser.xbrl_instance.taxonomy_linkbase import (
     Label, PresentationTree, merge_label_catalogs, parse_labels, parse_presentation,
+    resolve_external_labels,
 )
-from parser.xbrl_instance.role_map import build_role_map, index_core_roles
+from parser.xbrl_instance.role_map import build_role_map, has_local_role_types, index_core_roles
 
 from fin2.extract.report_lines import ReportLineRow
 
@@ -163,31 +165,68 @@ class _ZipMembers:
     lab_en: Path | None
 
 
-def _find_one(names: list[str], suffix: str, source: str, required: bool = True) -> str | None:
-    matches = [n for n in names if n.endswith(suffix)]
-    if not matches:
-        if required:
-            raise ValueError(f"{source}: no member ending with {suffix!r} in zip")
-        return None
-    if len(matches) > 1:
-        logger.warning(f"{source}: {len(matches)} members end with {suffix!r}, using {matches[0]!r}")
-    return matches[0]
+def _member_basename(name: str) -> str:
+    """Zip member name -> its filename component. Phase 5-A's older-vintage
+    zips are packed on Windows with **literal** backslashes in the member
+    name (not real subdirectories — `zipfile.extractall` writes them as a
+    single flat file with the backslash as an ordinary character on POSIX,
+    verified against a real 웰킵스하이텍 zip). Normalizing both separators
+    here means the matching below only ever looks at the actual filename,
+    regardless of which convention produced it."""
+    return name.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+# role -> ordered list of basename regexes, first match wins. The first
+# pattern in each list is Phase 0's modern vintage (`entity{CIK}_{date}_
+# {role}.ext`, suffix-based, flat); the second is Phase 5-A's older vintage
+# (`{role}_ifrs_for_{CIK}_{date}.xml` / `lab_{CIK}-{lang}_{date}.xml`,
+# prefix-based, nested — docs/plans/xbrl_instance_parser_todo_2026-08-05.md,
+# "Phase 5-A"). Both were verified against real zips, not guessed.
+_MEMBER_PATTERNS: dict[str, tuple[re.Pattern, ...]] = {
+    "xbrl": (re.compile(r"\.xbrl$"),),
+    # Older-vintage zips carry 2 .xsd members (the entry-point + a
+    # dimension-role-only one); prefer the entry-point by name when >1 match.
+    "xsd": (re.compile(r"entry_point.*\.xsd$"), re.compile(r"\.xsd$")),
+    "pre": (re.compile(r"_pre\.xml$"), re.compile(r"^pre_.*\.xml$")),
+    "lab_ko": (re.compile(r"_lab-ko\.xml$"), re.compile(r"^lab_.*-ko[_.].*\.xml$")),
+    "lab_en": (re.compile(r"_lab-en\.xml$"), re.compile(r"^lab_.*-en[_.].*\.xml$")),
+}
+
+
+def _find_member(names: list[str], role: str, source: str, required: bool = True) -> str | None:
+    """Locate the zip member for `role` (see `_MEMBER_PATTERNS`), trying each
+    candidate naming convention in order and returning the first one that
+    matches anything. Matches on the member's basename, not its full path —
+    the older vintage's members sit under a subfolder-like prefix that isn't
+    meaningful for identification (see `_member_basename`)."""
+    by_basename = [(n, _member_basename(n)) for n in names]
+    for pattern in _MEMBER_PATTERNS[role]:
+        matches = [n for n, base in by_basename if pattern.search(base)]
+        if matches:
+            if len(matches) > 1:
+                logger.warning(f"{source}: {len(matches)} members match role={role!r} "
+                                f"pattern={pattern.pattern!r}, using {matches[0]!r}")
+            return matches[0]
+    if required:
+        raise ValueError(f"{source}: no member found for role={role!r} in zip (tried "
+                          f"{[p.pattern for p in _MEMBER_PATTERNS[role]]})")
+    return None
 
 
 def _extract_zip_members(zip_path: Path, dest_dir: Path) -> _ZipMembers:
     """Unzip the 7-file DART XBRL bundle and locate the 5 members this pass
-    needs by filename suffix (`_def.xml`/`_cal.xml` unused here — Phase 0 §2's
-    fixed naming pattern `entity{CIK}_{period_end}.{ext}`)."""
+    needs (`_def.xml`/`_cal.xml`-equivalents unused here). Naming convention
+    varies by taxonomy vintage — see `_MEMBER_PATTERNS`."""
     source = str(zip_path)
     with zipfile.ZipFile(zip_path) as zf:
         names = zf.namelist()
         zf.extractall(dest_dir)
     return _ZipMembers(
-        xbrl=dest_dir / _find_one(names, ".xbrl", source),
-        xsd=dest_dir / _find_one(names, ".xsd", source),
-        pre=dest_dir / _find_one(names, "_pre.xml", source),
-        lab_ko=dest_dir / n if (n := _find_one(names, "_lab-ko.xml", source, required=False)) else None,
-        lab_en=dest_dir / n if (n := _find_one(names, "_lab-en.xml", source, required=False)) else None,
+        xbrl=dest_dir / _find_member(names, "xbrl", source),
+        xsd=dest_dir / _find_member(names, "xsd", source),
+        pre=dest_dir / _find_member(names, "pre", source),
+        lab_ko=dest_dir / n if (n := _find_member(names, "lab_ko", source, required=False)) else None,
+        lab_en=dest_dir / n if (n := _find_member(names, "lab_en", source, required=False)) else None,
     )
 
 
@@ -726,7 +765,24 @@ def extract_report_lines_xbrl(
                 parse_labels(members.lab_ko, instance.nsmap) if members.lab_ko else {},
                 parse_labels(members.lab_en, instance.nsmap) if members.lab_en else {},
             )
-            core_roles = index_core_roles(build_role_map(members.xsd))
+            # Phase 5-A: taxonomy vintages with no local <link:roleType> also
+            # have no local label for *standard* concepts (only this filer's
+            # own extensions) — same root cause, same external-taxonomy
+            # fallback, checked once here and reused for both. Without this,
+            # standard concepts silently fall back to their bare English
+            # local name (_resolve_label()'s last resort), which the
+            # Korean-keyword layer3 mapper doesn't recognize — BS/IS/CF rows
+            # would still get stored, just with none of their values reaching
+            # std_v3's DIRECT_MAP totals.
+            if not has_local_role_types(members.xsd):
+                labels = merge_label_catalogs(labels, resolve_external_labels(members.xsd, instance.nsmap))
+            # needed_role_uris = every role actually present in this filing's
+            # _pre.xml (Phase 5-A) — lets build_role_map() know what to look
+            # for if it has to fall back to DART's external shared taxonomy
+            # (older vintages don't bundle roleType locally at all).
+            core_roles = index_core_roles(
+                build_role_map(members.xsd, needed_role_uris=set(pre_trees.keys()))
+            )
 
             basis_axis_ns = instance.nsmap.get("ifrs-full")
             if basis_axis_ns is None:

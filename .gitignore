@@ -8,6 +8,7 @@ __pycache__/
 raw_report/
 raw_report
 tmp/
+taxonomy_cache/
 scratchpad/
 logs/
 *.log

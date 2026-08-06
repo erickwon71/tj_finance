@@ -126,14 +126,190 @@ dry-run 스크립트가 `_run_mirror_and_audit()`를 스텁 처리 못 해 실�
 
 `pytest fin2/tests/` — NAS 마운트 상태에서 263 passed(기존 무관 실패 1건 유지, 이번 변경과 무관).
 
-## Phase 5 — 소급 백필 (5건)
+## Phase 5 — 소급 백필 (5건) — 완료 2026-08-06 (Phase 5-A 포함, 5/5)
 
-- [ ] 대상 5건 corp_code 확인: 박셀바이오·웰킵스하이텍(3필링, 동일기업)·한화에어로스페이스
-- [ ] 해당 `download_tasks.status`를 `pending`으로 리셋하는 원샷 스크립트 작성
-- [ ] `run_downloads(only_corp_codes=[...])` 실행 — XBRL zip 다운로드 확인
-- [ ] `sync_xbrl_instance_lines(corps=[...], recheck=True)` 실행 — `report_lines`/`report_tables`/`note_lines` 신규 행 확인
-- [ ] 6건(자비스 제외 5건) 각각 `n_loaded>0`으로 전환됐는지 재확인 (`probe_residual_gap_breakdown.py` 재실행)
-- [ ] layer3(std_v2/std_v3) 재표준화 필요 여부 확인 (`needs_standardize_corps()` 조건) — 필요시 타겟 재실행
+- [x] 대상 5건 corp_code 확인: 박셀바이오(01335851)·웰킵스하이텍(00260611, 3필링·동일기업동일분기)·한화에어로스페이스(00126566)
+- [x] 해당 `download_tasks.status`를 `pending`으로 리셋하는 원샷 스크립트 작성 — `scripts/backfill_xbrl_phase5.py` 신설
+- [x] `run_downloads(only_corp_codes=[...])` 실행 — **XBRL zip 다운로드는 5/5 전부 성공**(`file_type='xbrl_zip'`로 전환 확인)
+- [x] `sync_xbrl_instance_lines(corps=[...], recheck=True)` 실행 — **5/5 전부 성공**(1차 시도 2/5, Phase 5-A로 나머지 3/5 해결 — 아래 "Phase 5 진행 기록"/"Phase 5-A 진행 기록" 참고)
+- [x] 5건 각각 `n_loaded>0`으로 전환됐는지 재확인 — **5/5 전환**(`report_lines.unit_source='xbrl'` 카운트: 박셀바이오106·한화456·웰킵스하이텍×3 각 329, 아래 검증 SQL 참고). `probe_residual_gap_breakdown.py` 전체 재실행은 안 함(대상이 이미 특정된 5건이라 타겟 검증으로 충분)
+- [x] layer3(std_v2/std_v3) 재표준화 필요 여부 확인 (`needs_standardize_corps()` 조건) — **이 함수는 `file_type='xml'`만 봐서 XBRL 경로는 애초에 못 잡는다(구조적으로, 다음 세션도 착각 주의)**. 대신 `scripts/build_std_v3.py --corp 01335851,00126566,00260611` 타겟 실행 — 3사 전부 std_v3 신규 반영 확인(웰킵스하이텍은 아래 "Phase 5-A §4" 참고 — total_assets 등 DIRECT_MAP 합계 컬럼은 이 필링 고유의 사정으로 NULL 유지, report_lines 원장은 완전함)
+
+### Phase 5 진행 기록 (2026-08-06)
+
+**다운로드+적재 실행**: `scripts/backfill_xbrl_phase5.py`(①status pending 리셋 → ②`run_downloads` →
+③`sync_xbrl_instance_lines(recheck=True)` → ④검증) 실행 결과:
+
+| rcept_no | 기업 | 다운로드 | report_lines(unit_source='xbrl') | report_tables |
+|---|---|---|---|---|
+| 20250828000534 | 박셀바이오 | ✅ xbrl_zip | **106** | 4 |
+| 20260513000860 | 한화에어로스페이스 | ✅ xbrl_zip | **456** | 8 |
+| 20191118000002 | 웰킵스하이텍 | ✅ xbrl_zip | 0 | 0 |
+| 20191119000045 | 웰킵스하이텍 | ✅ xbrl_zip | 0 | 0 |
+| 20191119000058 | 웰킵스하이텍 | ✅ xbrl_zip | 0 | 0 |
+
+성공 2건은 `scripts/build_std_v3.py --corp 01335851,00126566`로 std_v3까지 재빌드(136행), 값이
+Phase 0 실측 기록과 **정확히 일치** 재확인(한화 총자산 56,659,594,923,000·박셀바이오 총자산
+83,142,583,571). `pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, 회귀 없음).
+
+**★신규 발견 — 웰킵스하이텍 3건은 Phase 0이 조사하지 않은 "구형 taxonomy vintage" 패키징을 쓴다.**
+`extract_report_lines_xbrl()`을 직접 호출해보니 `ValueError: no member ending with '_pre.xml' in zip`
+— zip을 열어 직접 조사(3필링 전부 구조 동일, 같은 회사·같은 분기라 당연함):
+
+```
+00260611_2012-03-20.xbrl                                            ← instance, flat, OK
+00260611_entry_point_2012-03-20.xsd                                 ← entry-point xsd
+ifrs_for_00260611\dimensions_ifrs_for_00260611\pre_ifrs_for_..xml    ← "pre_" 접두사(접미사 아님) + 하위폴더
+ifrs_for_00260611\dimensions_ifrs_for_00260611\cal_ifrs_for_..xml
+ifrs_for_00260611\dimensions_ifrs_for_00260611\dim_ifrs_for_..xml    ← _def.xml 대응(domain-member arcrole 확인됨)
+ifrs_for_00260611\dimensions_ifrs_for_00260611\role_ifrs_for_00260611-dim_..xsd
+labels\lab_00260611-ko_2012-03-20.xml                                ← "lab_..-ko" (접미사 "_lab-ko" 아님)
+labels\lab_00260611-en_2012-03-20.xml
+```
+
+경로 구분자가 **리터럴 백슬래시 문자**(Windows에서 생성된 zip 그대로, macOS `zipfile.extractall`은
+이걸 디렉터리로 안 풀고 파일명에 `\`가 박힌 채로 만든다 — 참고용, 파싱엔 무관 `zipfile.namelist()`
+문자열 매칭이라 OS 무관).
+
+세부 조사 결과(구현 판단에 필요한 것만):
+1. **zip 멤버 명명 규칙이 통째로 다르다** — 모던 포맷(박셀바이오/한화)은
+   `entity{CIK}_{date}_{role}.{ext}`(접미사 기반, flat), 이 vintage는 `{role}_ifrs_for_{CIK}_{date}.xml`
+   (접두사 기반) + `lab_{CIK}-{lang}_{date}.xml`(label만 또 다른 패턴) + 하위폴더 계층. `_find_one()`의
+   "ends with '_pre.xml'" 같은 접미사 매칭이 구조적으로 안 맞는다 — 매칭 전략을 새로 짜야 한다(포맷
+   버전 감지 후 분기, 또는 basename에서 role 토큰을 위치 무관하게 정규식 추출).
+2. **basis(연결/별도) 축이 `<scenario>`에 있다, `<entity><segment>`가 아니다** — 실측: 67개 context
+   중 segment 0개·scenario 66개. `instance_parser.py:130`(`entity_el.find(".../segment")`)이 scenario는
+   아예 안 읽는다 — 멤버 매칭 고쳐도 이 부분이 또 막힌다. `<xbrli:context><xbrli:scenario>`도
+   `<xbrldi:explicitMember>`를 읽도록 파서 확장 필요(XBRL 2.1 스펙상 segment/scenario 둘 다 합법적
+   위치라 이례적이지 않음 — DART가 vintage마다 다른 위치를 골랐을 뿐).
+3. **roleType/definition 텍스트가 로컬 xsd에 없다** — `entry_point.xsd`·`role_*-dim.xsd` 둘 다
+   `roleType` 태그 0개. `entry_point.xsd`의 `xsd:import`가 외부 URL을 가리킨다:
+   `http://dart.fss.or.kr/Resource/Taxonomy/ifrs/2019-10-01/dart_entry_point_2019-10-01.xsd`
+   — 이 vintage는 표준 역할 정의를 DART 공유 taxonomy(회사마다 안 바뀌는 공통분)에서 참조하고,
+   회사 패키지엔 자기 확장분(presentation/calc/definition/label)만 담는 구조로 보인다.
+   `role_map.py`가 지금처럼 로컬 xsd만 보면 이 vintage에선 역할 매핑표가 통째로 빈다.
+   **다만** `pre_ifrs_for_...xml`이 참조하는 roleURI를 직접 열어보니 —
+   `dart_2019-10-01_role-D210000/D210005/D431410/D431415/D520000/D520005/D610000/D610005`
+   — **Phase 0 §8이 모던 포맷(2024/2026 vintage)에서 문서화한 것과 정확히 같은 8개 핵심
+   role_id다.** 다만 Phase 0 §8은 "roleURI 숫자코드는 taxonomy 버전에 종속되니 절대 하드코딩
+   매핑 키로 쓰지 말라"고 명시적으로 경고했다 — 이번 표본(vintage 2019-10-01 대 모던 vintage)
+   2개에서 코드가 우연히 같았을 뿐인지, 실제로 안정적인 것인지는 **표본 2개로는 결론 낼 수 없음**
+   (섣불리 하드코딩하면 R9 위반). 필요하면 `dart_entry_point_2019-10-01.xsd`를 실제로
+   fetch해 `link:definition` 텍스트를 확인하는 게 안전한 경로.
+4. **order(float)·weight(±1)·preferredLabel 관례는 모던 포맷과 동일**(order 예: `0.5`/`0.625`/`1.125`,
+   weight `1`/`-1`/`1.0`/`-1.0`, `preferredLabel="...dart_label"`/`terseLabel`/`totalLabel`/
+   `negatedLabel`/`negatedTerseLabel`/`netLabel` 전부 관측) — Phase 3 로직 자체(트리 워크·라벨
+   해석·값 저장)는 그대로 재사용 가능해 보인다, 문제는 순전히 "파일을 못 찾는다"·"scenario를
+   안 읽는다"·"역할표가 빈다" 이 3가지 입구 단계.
+5. **데이터 자체는 정상 — 항등식으로 교차검증 완료**: `CFY2019eTQA`(2019Q3 당기) 별도 기준
+   Assets=38,366,922,357, Liabilities=21,787,682,948 + Equity=16,579,239,409 = 정확히 일치.
+   즉 이 vintage를 지원하면 실제로 쓸 수 있는 진짜 재무데이터라는 것은 확인됐다 — 구조 문제일
+   뿐 데이터 품질 문제가 아니다.
+6. **범위는 완전히 닫혀있다(추가 미지 위험 없음)**: `docs/qa/handoff_xml_parse_failure_xbrl_finding_2026-08-05.md`
+   §7 census(활성기업 2015+ 전수)가 이미 "document.xml 없음 & 구조화데이터 복구 가능" 패턴의
+   전체 모집단을 확정해뒀다 — 그 결과가 정확히 이 5건(+XBRL도 없는 자비스 1건)이었다. 즉 이
+   vintage를 지원해도 추가로 복구되는 필링은 **이 3건이 전부**(동일 회사·동일 분기의 정정 3본이라
+   사실상 "1개 분기 데이터")다 — 새 census나 미지의 추가 모집단 걱정은 불필요.
+
+**판단(구현 안 함, 조사만)**: 위 1~3번은 각각 별도 구현 작업(zip 포맷 감지+매칭 일반화,
+scenario 파싱 지원, 외부 taxonomy fetch 또는 신중한 하드코딩)이 필요하고, 5~6번을 보면 투자
+대비 효과는 "정확히 3건"으로 작다. R9(계획 후 대기) 원칙상 결정 없이 구현하지 않는다 —
+착수 여부는 사용자 판단.
+
+### Phase 5-A — 구형 vintage(2019-10-01, scenario 축) 지원 — 완료 2026-08-06
+
+구현 순서는 아래 §1~4 그대로(위 "후보 작업" 스케치와 동일하게 착수), 실측하며 스케치에 없던
+발견 2건(§5의 unprefixed measure, §6의 외부 label 필요성)이 추가로 드러났다. 대상 3건(웰킵스하이텍
+2019Q3 정정 3본)을 재차 실파싱해 검증했다(레포 미포함, 세션 scratchpad).
+
+**§1 — `instance_parser.py`: `<scenario>` dimension 파싱 추가.** `_parse_context()`가 이제
+`<entity><segment>`와 `<context><scenario>` 둘 다 확인해 `xbrldi:explicitMember`를 읽는다(둘 다
+있으면 document order로 병합, 실측 3건 전부 segment 0 / scenario 66개 — 상호배타적으로 관측됨).
+
+**§2 — `report_lines_xbrl.py`: zip 멤버 탐색 일반화.** `_find_one(suffix)`를
+`_find_member(role, patterns)`로 교체 — 역할(`xbrl`/`xsd`/`pre`/`lab_ko`/`lab_en`)마다 정규식
+후보 목록(모던 접미사 패턴 먼저, 구형 접두사 패턴 폴백)을 `_member_basename()`(리터럴 백슬래시
+정규화 포함)에 대해 매칭. `.xsd`는 구형 vintage가 2개(entry-point + dimension-role) 가지고
+있어 `entry_point` 이름을 우선한다.
+
+**§3 — `role_map.py`: 외부 taxonomy BFS 폴백.** 로컬 xsd에 `roleType`이 0개면(`build_role_map`의
+`needed_role_uris` 파라미터로 `_pre.xml`에 실제 걸린 roleURI 목록을 넘겨받아) `xsd:import`/
+`xsd:include` 체인을 `dart.fss.or.kr`까지 BFS(fetch 예산 12건, dart 호스트 우선순위)해 외부
+스키마에서 `roleType`을 찾는다. **위 "후보 작업" §3의 옵션 ①(외부 fetch)을 채택** — 실측으로
+D-코드가 vintage 무관 안정적인지 아직 불확실하다는 판단(옵션 ②)이 맞았음이 드러났다: 실제로
+fetch한 공유 taxonomy(`rol_dart_2019-10-01.xsd`, 260개 roleType)에는 BS 하나에도 D210000
+("current/non-current")과 D220000("order of liquidity") 등 **같은 statement의 여러 표시방식
+변형이 공존**했다 — `needed_role_uris`로 필터링하지 않으면 `index_core_roles()`의 "(statement,
+basis)당 최대 1개" 불변식이 깨진다(실측: 26개 매칭 중 8개만 이 필링이 실제로 쓴 것). 인증 관련
+함정도 실측으로 발견: `requests.get`에 커스텀 User-Agent(`"...tj_finance-collector/1.0"`)를 쓰면
+DART 서버가 **연결을 리셋**한다(`ConnectionResetError`, 매직바이트/HTML 에러조차 아니라 조용히
+실패) — `collector/legacy_downloader.py`가 이미 쓰는 브라우저 UA로 교체하니 즉시 해결. 캐시+가벼운
+재시도(tenacity, 3회/1~8s)를 `parser/xbrl_instance/external_taxonomy.py`(신설, role_map.py와
+taxonomy_linkbase.py가 공유)에 모았다 — 두 곳이 각자 fetch 로직을 만들지 않게.
+
+**§4 — ★스케치에 없던 발견: 라벨도 외부 taxonomy 필요.** roleType과 별개로, 이 vintage는
+**표준 `ifrs-full:`/`dart:` 개념의 한글 라벨도 로컬에 없다** — 필러 자신의 `_lab-ko.xml`에는
+그 필러가 만든 확장 개념(`dart:`/`entity{CIK}:`)의 라벨만 있고("매입채무"/"장기기타채권" 등
+실측 확인), `ifrs-full:CurrentAssets` 같은 표준 개념은 로컬 카탈로그에 없어 `_resolve_label()`의
+최후 폴백(영문 local name 그대로)으로 떨어진다 — 저장 자체는 되지만(`label_raw='CurrentAssets'`),
+layer3의 한글 키워드 기반 매퍼(`fin2/standardize/rules.py::DIRECT_MAP` 계열)가 영문 concept명을
+인식 못 해 **std_v3 합계 컬럼이 조용히 NULL로 새는** 패턴이었다(오류 없음, 그냥 매칭 실패) —
+[[layer2-silent-loss-patterns]]류와 같은 종류의 함정. `dart_entry_point_2019-10-01.xsd`(§3에서
+이미 fetch됨)의 `<link:linkbaseRef role=".../labelLinkbaseRef">` 6개(`lab_ifrs-ko`/`lab_ifrs-en`/
+`lab_dart-ko`/`lab_dart-en`/`lab_dart-gcd-ko`/`lab_dart-gcd-en`, ko 파일 2.4MB)를 찾아 전부
+fetch·병합하는 `taxonomy_linkbase.py::resolve_external_labels()`를 신설. `report_lines_xbrl.py`는
+`role_map.has_local_role_types(xsd)`가 False일 때만(=이 vintage 감지 신호 재사용, 추가 판정 로직
+불필요) 이 폴백을 추가로 호출한다. 결과: `label_raw`가 "CurrentAssets"→"유동자산"으로 바뀌고
+`revenue`(매출액) 등 일부 DIRECT_MAP 컬럼이 실제로 채워짐.
+
+**§5 — ★스케치에 없던 발견: unprefixed QName(`<measure>pure</measure>`).** 이 필링의 instance
+루트가 `xmlns="http://www.xbrl.org/2003/instance"`(xbrli를 **기본 네임스페이스**로 선언, `xbrli:`
+접두사 자체가 없음)라서 `<unit><measure>pure</measure></unit>`처럼 접두사 없는 QName 콘텐츠가
+나온다. `instance_parser.py::_resolve_qname_str()`이 콜론 없으면 무조건 raise했던 것을, XML
+QName-content 해석 규칙대로 **범위 안의 기본 네임스페이스(`nsmap[None]`)로 폴백**하도록 수정
+(다른 값이 동일 규칙으로 잘못 해석될 부작용 없음 — 실측 3건 전부 `pure`/`shares` 딱 2개뿐).
+
+**§6 — SCE는 이번에도 미지원으로 확정(범위 내 결정, 추가조사 아님).** `_emit_sce_lines()`가 찾는
+`ComponentsOfEquityAxis` 로케이터가 이 필링의 D610000 presentation tree에 **아예 없다**(0회 관측,
+`StatementOfChangesInEquityLineItems`는 있음) — 반면 instance의 실제 context는 그 축의 dimension을
+쓴다(scenario에 `ifrs-full:ComponentsOfEquityAxis`+`dart:CapitalSurplusMember` 등 확인됨). 즉 이
+vintage의 SCE는 열 축을 presentation tree가 아니라 다른 경로(추정: definition linkbase의
+hypercube 선언, 미확인)로 찾아야 해서 Phase 3-6/3-7의 설계 전제(트리워크로 열 산출)가 그대로 안
+맞는다 — **이번 백필 범위 밖으로 재확인**(기존 SCE 미지원 경고가 조용히·정상적으로 스킵, BS/IS/CF
+저장은 막지 않음). 재투자 여부는 별도 판단 필요(SCE 없이도 BS/IS/CF/자본구성요소는 이미 확보됨).
+
+**신설/변경 파일**:
+- `parser/xbrl_instance/external_taxonomy.py`(신설) — fetch+cache+retry(tenacity)+BFS 헬퍼,
+  role_map.py·taxonomy_linkbase.py 공유.
+- `parser/xbrl_instance/instance_parser.py` — `<scenario>` dims, unprefixed QName 기본 네임스페이스
+  폴백.
+- `fin2/extract/report_lines_xbrl.py` — `_find_member()`로 zip 멤버 탐색 일반화,
+  `has_local_role_types()`/`resolve_external_labels()` 배선.
+- `parser/xbrl_instance/role_map.py` — 영문 keyword+basis suffix 분류 추가, 외부 BFS 폴백
+  (`_resolve_external_roles`), `has_local_role_types()` 신설.
+- `parser/xbrl_instance/taxonomy_linkbase.py` — `resolve_external_labels()` 신설.
+- `collector/config.py` — `TAXONOMY_CACHE_DIR`(`taxonomy_cache/`, `.gitignore` 추가) 신설.
+
+**검증**: 3건 재적재(`sync_xbrl_instance_lines(corps=["00260611"], recheck=True)`) — 987행/errors
+0. `build_role_map`/`resolve_external_labels` 둘 다 첫 회 fetch 후 디스크 캐시로 재사용(3건째부터는
+네트워크 재요청 0, 로그로 확인). 항등식 재확인(코드 경유, 파서 산출값으로): 연결 기준
+Assets(=CurrentAssets+NoncurrentAssets, 이 필링 자체가 "Assets" 총계 행을 안 태깅함 — 아래 참고)
+41,072,227,158 = Liabilities(24,978,634,935)+Equity(16,093,592,223) 정확히 일치, 별도 기준도
+동일 검증. `revenue` std_v3 반영 확인(연결 28,092,330,742). 회귀: 박셀바이오·한화(모던 포맷, 이번
+변경과 무관해야 함) 재실행 결과 rows=562로 최초 Phase 5 실행과 정확히 동일 — 회귀 없음.
+`pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, 이번 변경으로 인한 신규 실패 0).
+
+**★알려진 잔여 한계(Phase 5-A 범위 내에서 수용, 별도 트랙 아님)**:
+1. **SCE 미지원**(§6) — 열 축 발견 메커니즘이 다름, 재투자는 별도 판단.
+2. **std_v3 합계 컬럼 일부 NULL** — 이 필링 자체가 재무상태표 D210000 role에 `ifrs-full:Assets`/
+   `Liabilities`/`Equity`/(IS 쪽 `ProfitLoss`도 추정) **총계 행을 아예 태깅 안 함**(하위 소계만 —
+   `CurrentAssets`/`NoncurrentAssets` 등, 실측: presentation tree 전체에서 0회 관측, 파서 버그
+   아님 — R9 검증). `report_lines`는 값이 전부 정확히 들어있고(항등식 성립), `fin2/layer3/combine.py`
+   의 DIRECT_MAP이 "총계 행이 없으면 하위 소계를 합산" 하는 폴백이 없어(그런 필링을 다뤄본 적이
+   없어서로 추정) `total_assets`/`total_liabilities`/`total_equity`/`net_income`이 NULL로 남는다
+   (revenue는 매출액 행이 직접 태깅돼 있어 정상 반영됨). **layer3 소관이라 Phase 5-A 범위 밖 —
+   고치려면 별도 결정 필요**(HTML 소스 필링에도 같은 패턴이 있을 수 있어 XBRL 전용 수정이 아닌
+   `combine.py` 일반 개선이어야 함).
 
 ## Phase 6 — 검증
 

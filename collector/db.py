@@ -684,6 +684,14 @@ def _run_migrations() -> None:
         ("2026_07_31_ix_storage_sync_log_status",
          "CREATE INDEX IF NOT EXISTS ix_storage_sync_log_status "
          "ON storage_sync_log (status, started_at DESC)"),
+
+        # XBRL 원문 파서(docs/plans/xbrl_instance_parser_2026-08-05.md) Phase 1.
+        # dcm_no: ifrs.do 다운로드에 필요한 DART 문서번호(view_params 로 얻음, PDF 폴백에도 재사용 가능).
+        ("2026_08_download_tasks_dcm_no",
+         "ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS dcm_no VARCHAR(20)"),
+        # file_type 이 'pdf'/'html'/'hwp'/'zip'/'xml'(5자) 대비 'xbrl_zip'(8자)로 늘어남 — 폭만 확장, 값 무변경.
+        ("2026_08_download_tasks_file_type_widen",
+         "ALTER TABLE download_tasks ALTER COLUMN file_type TYPE VARCHAR(10)"),
     ]
 
     with engine.begin() as conn:

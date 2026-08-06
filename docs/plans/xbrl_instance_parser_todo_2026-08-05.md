@@ -27,54 +27,289 @@
 - [x] Phase 0 조사 결과를 짧은 메모로 정리(이 문서 하단 "Phase 0 결과" 섹션에 채워넣기) — 이후 세션이 재조사 없이 이어받을 수 있도록
 - [x] (추가 실측) 한화에어로스페이스(`20260513000860`, 2026Q1)로 교차검증 — 이 트랙의 실제 동기가 된 사례라 박셀바이오(소형·별도만) 외에 대형·연결+별도 병존 케이스도 확인
 
-## Phase 1 — 데이터 모델 변경
+## Phase 1 — 데이터 모델 변경 (완료 2026-08-05)
 
-- [ ] `collector/db.py::_run_migrations()`에 `dcm_no` 컬럼 추가 마이그레이션 항목 추가 (`ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS dcm_no VARCHAR(20)`)
-- [ ] 같은 곳에 `file_type` 폭 확장 마이그레이션 추가 (`String(5)→String(10)`)
-- [ ] `collector/models.py`의 `DownloadTask`에 `dcm_no` 컬럼 선언 추가, `file_type` 컬럼 타입/코멘트 갱신
-- [ ] `parser_track` 코멘트에 `XBRL_INSTANCE` 값 추가 (폭 변경 불필요, `String(15)`로 충분)
-- [ ] 로컬 DB에 마이그레이션 적용 후 스키마 반영 확인 (`\d download_tasks` 등)
+- [x] `collector/db.py::_run_migrations()`에 `dcm_no` 컬럼 추가 마이그레이션 항목 추가 (`ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS dcm_no VARCHAR(20)`)
+- [x] 같은 곳에 `file_type` 폭 확장 마이그레이션 추가 (`String(5)→String(10)`)
+- [x] `collector/models.py`의 `DownloadTask`에 `dcm_no` 컬럼 선언 추가, `file_type` 컬럼 타입/코멘트 갱신
+- [x] `parser_track` 코멘트에 `XBRL_INSTANCE` 값 추가 (폭 변경 불필요, `String(15)`로 충분)
+- [x] 로컬 DB에 마이그레이션 적용 후 스키마 반영 확인 (`information_schema.columns` 조회 — `dcm_no VARCHAR(20)`/`file_type VARCHAR(10)` 확인)
 
-## Phase 2 — 다운로더 확장
+migration id: `2026_08_download_tasks_dcm_no` / `2026_08_download_tasks_file_type_widen` (schema_migrations 에 기록됨, 멱등). `pytest fin2/tests/` 263 passed(기존 실패 1건 `test_lxintl_facility_table_dropped` 은 이 변경과 무관 — stash 재확인, 이번 변경 전부터 실패).
 
-- [ ] `collector/legacy_downloader.py`에 `LegacyDartScraper._fetch_xbrl_instance(rcept_no, dcm_no)` 구현 (`_fetch_pdf()` 패턴 — Referer 헤더, 매직바이트 확인)
-- [ ] 같은 파일에 공개 메서드 `fetch_xbrl_zip(rcept_no)` 추가 (내부에서 `_get_view_params` 호출 후 위 메서드 호출)
-- [ ] `collector/downloader.py::_download_one()`의 `status_code == "014"` 분기에서 `_try_legacy_fallback()` 호출 전에 `_try_xbrl_instance_fallback()` 신설·삽입
-- [ ] 성공 시 zip 저장 로직 — `_build_file_path()` + tmp-then-move 패턴 재사용, `file_type='xbrl_zip'`, `parser_track='XBRL_INSTANCE'`, `dcm_no` 저장
-- [ ] 실패/부재 시 기존 `_try_legacy_fallback()`(PDF 폴백)으로 자연스럽게 이어지는지 확인 (기존 동작 회귀 없음)
-- [ ] `_mark_completed()`에 `dcm_no` 저장용 파라미터 추가
+## Phase 2 — 다운로더 확장 (완료 2026-08-06)
+
+- [x] `collector/legacy_downloader.py`에 `LegacyDartScraper._fetch_xbrl_instance(rcept_no, dcm_no)` 구현 (`_fetch_pdf()` 패턴 — Referer 헤더, 매직바이트 확인)
+- [x] 같은 파일에 공개 메서드 `fetch_xbrl_zip(rcept_no)` 추가 (내부에서 `_get_view_params` 호출 후 위 메서드 호출)
+- [x] `collector/downloader.py::_download_one()`의 `status_code == "014"` 분기에서 `_try_legacy_fallback()` 호출 전에 `_try_xbrl_instance_fallback()` 신설·삽입
+- [x] 성공 시 zip 저장 로직 — `_build_file_path()` + tmp-then-move 패턴 재사용, `file_type='xbrl_zip'`, `parser_track='XBRL_INSTANCE'`, `dcm_no` 저장
+- [x] 실패/부재 시 기존 `_try_legacy_fallback()`(PDF 폴백)으로 자연스럽게 이어지는지 확인 (기존 동작 회귀 없음)
+- [x] `_mark_completed()`에 `dcm_no` 저장용 파라미터 추가
+
+**★Phase 0 기록 정정(실제 구현 중 재확인, 2026-08-06)**: Phase 0 §1 "1회 GET으로 충분"은 맞지만,
+`ifrs.do` 요청의 **`Referer` 헤더는 `/pdf/download/main.do?rcp_no=...&dcm_no=...` 여야 함** —
+`/dsaf001/main.do?rcpNo=...`(Phase 0 조사 스크립트가 실제로 썼던 값과 다르게 최초 구현 시 잘못
+추정한 값)로 보내면 서버가 **200 + `Content-Length: 0`(빈 바디)**를 반환해 조용히 실패한다
+(HTML 오류 페이지도 아니고 매직바이트 불일치로만 드러남 — 로그만 보면 "XBRL 없음"으로 오판하기 쉬움).
+`main.do`를 실제로 먼저 호출할 필요는 없음(Referer 값만 올바르면 충분, 재확인됨) — 계획대로 1회 GET 유지.
+`_fetch_xbrl_instance()`가 올바른 Referer로 수정 후 박셀바이오(44,076B)·한화에어로스페이스(1,144,829B)
+둘 다 Phase 0 기록과 정확히 일치하는 크기로 재현 확인(zip 매직바이트·박셀바이오 7파일 구성도 확인).
+
+`pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, Phase 1과 동일).
 
 ## Phase 3 — 파서 핵심 (Phase 0 결론 확정 후 착수)
 
-- [ ] `parser/xbrl_instance/` 패키지 신설 (`__init__.py`)
-- [ ] `instance_parser.py` — `.xbrl` instance 로드, context/unit/fact 구조화 파싱 (Phase 0에서 확정한 sanitize 필요 여부 반영)
-- [ ] `taxonomy_linkbase.py` — `_pre.xml` 파싱(role→트리 구조, order→row_order/depth), `_lab-ko.xml`/`_lab-en.xml` 파싱(라벨), 필요시 `_cal.xml` 파싱(weight 부호)
-- [ ] `role_map.py` — roleURI→statement(BS/IS/CF/SCE/note) 매핑표, Phase 0 조사 결과로 초기 채움
-- [ ] `fin2/extract/report_lines_xbrl.py` — `extract_report_lines_xbrl()` 진입점 구현, 기존 `ReportLineRow` 형태로 반환
-- [ ] basis(연결/별도) 해석 로직 구현
-- [ ] col_index/period_kind/is_cumulative 판정 로직 구현 (날짜 대조 + 허용오차)
-- [ ] presentation 트리 워크로 section_path/table_seq/row_order/depth/node_role 산출
-- [ ] 라벨 해석(한글 우선, 폴백 영문) 구현
-- [ ] 값/단위 추출 + (필요시) weight 부호 반영, `unit_source` 등 R4 규율 준수
-- [ ] note 포함 여부(`include_notes`) 처리 — DART 태깅 깊이가 얕을 수 있음, 1차는 본문(BS/IS/CF/SCE)만으로 범위 축소 검토
+- [x] `parser/xbrl_instance/` 패키지 신설 (`__init__.py`)
+- [x] `instance_parser.py` — `.xbrl` instance 로드, context/unit/fact 구조화 파싱 (Phase 0에서 확정한 sanitize 필요 여부 반영)
+- [x] `taxonomy_linkbase.py` — `_pre.xml` 파싱(role→트리 구조, order→row_order/depth), `_lab-ko.xml`/`_lab-en.xml` 파싱(라벨), `_cal.xml` 파싱(weight 부호) — 완료 2026-08-06
+- [x] `role_map.py` — roleURI→statement(BS/IS/CF/SCE/note) 매핑표, Phase 0 조사 결과로 초기 채움 — 완료 2026-08-06
+- [x] `fin2/extract/report_lines_xbrl.py` — `extract_report_lines_xbrl()` 진입점 구현, 기존 `ReportLineRow` 형태로 반환 — 완료 2026-08-06(BS/IS/CF만, SCE 보류 — 아래 "Phase 3 진행 기록" 참고)
+- [x] basis(연결/별도) 해석 로직 구현 — context dims 정확히 1개(basis dim만)일 때만 채택
+- [x] col_index/period_kind/is_cumulative 판정 로직 구현 — 허용오차 없이 날짜 정확매치(아래 기록 참고, 필요성이 없었음)
+- [x] presentation 트리 워크로 section_path/table_seq/row_order/depth/node_role 산출
+- [x] 라벨 해석(한글 우선, 폴백 영문) 구현
+- [x] 값/단위 추출(KRW/KRWEPS만), weight 는 저장 시 미반영(Phase 0 §11 그대로 — 항등식 검증에만 필요함을 재확인, 아래 기록), `unit_source='xbrl'` 신설
+- [x] note 포함 여부(`include_notes`) 처리 — Phase 3-5 범위 밖으로 확정(본문 BS/IS/CF만, SCE 도 이번엔 보류 — 아래 기록)
+- [x] 3-7: SCE(자본변동표) 구현 — 완료 2026-08-06(아래 "Phase 3-7 진행 기록" 참고)
 
-## Phase 4 — 데일리 파이프라인 배선 (두 call site 필수)
+## Phase 4 — 데일리 파이프라인 배선 (두 call site 필수) — 완료 2026-08-06
 
-- [ ] `collector/xbrl_instance_lines_sync.py` 신설 — `note_lines_sync.py` 구조 재사용, `file_type='xbrl_zip'` 대상 쿼리
-- [ ] `scripts/collect_new.py`에 `_sync_xbrl_instance_lines(corps)` 래퍼 함수 추가 (비치명 try/except)
-- [ ] call site 1: `collect_new.py`의 `--standardize-only` 재개 분기(기존 `_sync_layer2_lines(affected)` 호출 직후)에 추가
-- [ ] call site 2: `collect_new.py`의 메인 경로(기존 `_sync_layer2_lines(affected)` 호출 직후)에 추가
-- [ ] 두 call site 모두에서 실제로 호출되는지 로그로 확인 (더미/드라이런)
-- [ ] 기존 `sync_layer2_lines`(`file_type='xml'`)와 겹치는 rcept_no가 없는지 재확인 (중복 적재 가드 불필요 여부 최종 검증)
+- [x] `collector/xbrl_instance_lines_sync.py` 신설 — `note_lines_sync.py` 구조 재사용, `file_type='xbrl_zip'` 대상 쿼리
+- [x] `scripts/collect_new.py`에 `_sync_xbrl_instance_lines(corps)` 래퍼 함수 추가 (비치명 try/except)
+- [x] call site 1: `collect_new.py`의 `--standardize-only` 재개 분기(기존 `_sync_layer2_lines(affected)` 호출 직후)에 추가
+- [x] call site 2: `collect_new.py`의 메인 경로(기존 `_sync_layer2_lines(affected)` 호출 직후)에 추가
+- [x] 두 call site 모두에서 실제로 호출되는지 로그로 확인 (더미/드라이런)
+- [x] 기존 `sync_layer2_lines`(`file_type='xml'`)와 겹치는 rcept_no가 없는지 재확인 (중복 적재 가드 불필요 여부 최종 검증)
 
-## Phase 5 — 소급 백필 (5건)
+### Phase 4 진행 기록
 
-- [ ] 대상 5건 corp_code 확인: 박셀바이오·웰킵스하이텍(3필링, 동일기업)·한화에어로스페이스
-- [ ] 해당 `download_tasks.status`를 `pending`으로 리셋하는 원샷 스크립트 작성
-- [ ] `run_downloads(only_corp_codes=[...])` 실행 — XBRL zip 다운로드 확인
-- [ ] `sync_xbrl_instance_lines(corps=[...], recheck=True)` 실행 — `report_lines`/`report_tables`/`note_lines` 신규 행 확인
-- [ ] 6건(자비스 제외 5건) 각각 `n_loaded>0`으로 전환됐는지 재확인 (`probe_residual_gap_breakdown.py` 재실행)
-- [ ] layer3(std_v2/std_v3) 재표준화 필요 여부 확인 (`needs_standardize_corps()` 조건) — 필요시 타겟 재실행
+**4-1**: `collector/xbrl_instance_lines_sync.py` 신설 — `sync_xbrl_instance_lines(corps, year_min=2015,
+recheck=False)`. `note_lines_sync.py`와 구조 동일(corp 바운드 재개, rcept 단위 delete-then-insert
+멱등, 한 건 실패가 전체를 안 막음)이지만 대상이 다르다: `download_tasks.file_type='xbrl_zip'`.
+`extract_report_lines_xbrl()`(Phase 3)은 본문(BS/IS/CF/SCE)만 만들고 주석은 안 만들어서
+`store_report_lines`/`store_report_tables`만 호출(`store_note_lines` 불필요). 재개 판정은
+`report_lines.unit_source='xbrl'`로 좁혔다(단순 rcept_no 존재 여부가 아니라) — 아래 4-6 검증으로
+이게 실제로 구분이 필요 없는 상황(두 경로가 애초에 안 겹침)임이 드러났지만, 안전장치로 유지.
+
+**4-2**: `scripts/collect_new.py`에 `_sync_xbrl_instance_lines(corps)` 래퍼(`④-4` 마커) 신설,
+`_sync_layer2_lines`(`④-3`) 바로 뒤에 배치. 두 call site 모두 배선 — `--standardize-only` 재개
+분기(`main():664`)와 메인 경로(`main():772`), 둘 다 `_sync_layer2_lines(affected)` 직후.
+
+**4-마지막 항목(dedup 가드 필요성 검증, 2026-08-06)**: 결론 — **불필요, 구조적으로 겹칠 수 없다.**
+세 층위로 확인했다:
+1. **스키마**: `download_tasks.rcept_no`에 `ix_download_tasks_rcept_no` UNIQUE INDEX가 실제로
+   걸려 있음(`pg_indexes` 조회로 확인, `collector/models.py::DownloadTask.rcept_no`의
+   `unique=True` 선언대로 반영됨) — 필링(rcept_no) 하나당 `download_tasks` 행이 **정확히 하나**이므로
+   `file_type` 값도 하나뿐이다. 같은 rcept_no가 `'xml'`이면서 동시에 `'xbrl_zip'`인 상태 자체가
+   DB 레벨에서 불가능.
+2. **코드 경로**: `collector/downloader.py::_download_one()`(:411~415) — `_try_xbrl_instance_fallback()`
+   은 오직 OpenDART API 응답이 `status_code == "014"`(파일없음)일 때만 호출된다. 이 상태코드는 그
+   필링이 실제로 `document.xml`을 아예 안 가지고 있다는 DART 서버측 사실이라 재시도해도 값이
+   안 바뀐다 — 즉 어떤 rcept_no 가 한 번 `'xml'` 로 성공했다면 그 rcept_no 는 절대 이 분기에
+   진입할 수 없고, 반대로 `'014'`가 뜨는 rcept_no 는 재시도해도 계속 `'014'`만 뜬다(같은 이유로
+   `'xbrl_zip'`이 나중에 `'xml'`로 뒤집히는 것도 불가능). 두 경로가 필링 콘텐츠 자체로 영구히
+   갈린다.
+3. **실측(DB 쿼리)**: `SELECT file_type, status, count(*) FROM download_tasks GROUP BY 1,2` —
+   현재 `xbrl_zip` 완료 행 **0건**(Phase 5 백필 미실행 상태라 예상대로), `report_lines`에서
+   `unit_source='xbrl'`인 rcept_no 도 0건(당연히 아직 없음) — 겹칠 데이터 자체가 아직 없어
+   "현재 겹침 없음"은 자명하지만, 위 1·2 번이 "앞으로도 구조적으로 못 겹친다"는 걸 보장한다.
+   `report_lines`에 unit_source 가 2종 이상 섞인 rcept_no 44건이 실제로 있긴 했으나(전부
+   `declared`/`doc_default`/`fx_declared` 조합, 기존 HTML 파서 내부의 열 단위 판정 다중값 —
+   `[[layer2-unit-column-attribution]]` 범위, XBRL 경로와 무관) `'xbrl'`이 낀 것은 0건.
+
+**부수 발견(작업 중, Phase 4 범위 밖 — 사용자에게 별도 보고·조치 완료)**: 4-5(call site 로그 확인)용
+dry-run 스크립트가 `_run_mirror_and_audit()`를 스텁 처리 못 해 실제로 실행시켰고, 그 감사가 진짜
+갭(한일철강 정정공시 2건, 오늘 18:00 정기배치가 NAS 미마운트로 저장소 계약 위반 중단된 여파)을
+발견해 실제 알림 이메일이 나갔다. 사용자 확인 후 `--days 1 --download-only` 수동 실행으로 즉시
+해소(미탐지 0으로 재확인). 이 과정에서 상장폐지 원문 이관 보류 알림도 별도로 발생(3개사, NAS
+파일수 부족 — 가드 정상 동작, 데이터 유실 아님, 미해결로 남김).
+
+`pytest fin2/tests/` — NAS 마운트 상태에서 263 passed(기존 무관 실패 1건 유지, 이번 변경과 무관).
+
+## Phase 5 — 소급 백필 (5건) — 완료 2026-08-06 (Phase 5-A 포함, 5/5)
+
+- [x] 대상 5건 corp_code 확인: 박셀바이오(01335851)·웰킵스하이텍(00260611, 3필링·동일기업동일분기)·한화에어로스페이스(00126566)
+- [x] 해당 `download_tasks.status`를 `pending`으로 리셋하는 원샷 스크립트 작성 — `scripts/backfill_xbrl_phase5.py` 신설
+- [x] `run_downloads(only_corp_codes=[...])` 실행 — **XBRL zip 다운로드는 5/5 전부 성공**(`file_type='xbrl_zip'`로 전환 확인)
+- [x] `sync_xbrl_instance_lines(corps=[...], recheck=True)` 실행 — **5/5 전부 성공**(1차 시도 2/5, Phase 5-A로 나머지 3/5 해결 — 아래 "Phase 5 진행 기록"/"Phase 5-A 진행 기록" 참고)
+- [x] 5건 각각 `n_loaded>0`으로 전환됐는지 재확인 — **5/5 전환**(`report_lines.unit_source='xbrl'` 카운트: 박셀바이오106·한화456·웰킵스하이텍×3 각 329, 아래 검증 SQL 참고). `probe_residual_gap_breakdown.py` 전체 재실행은 안 함(대상이 이미 특정된 5건이라 타겟 검증으로 충분)
+- [x] layer3(std_v2/std_v3) 재표준화 필요 여부 확인 (`needs_standardize_corps()` 조건) — **이 함수는 `file_type='xml'`만 봐서 XBRL 경로는 애초에 못 잡는다(구조적으로, 다음 세션도 착각 주의)**. 대신 `scripts/build_std_v3.py --corp 01335851,00126566,00260611` 타겟 실행 — 3사 전부 std_v3 신규 반영 확인(웰킵스하이텍은 아래 "Phase 5-A §4" 참고 — total_assets 등 DIRECT_MAP 합계 컬럼은 이 필링 고유의 사정으로 NULL 유지, report_lines 원장은 완전함)
+
+### Phase 5 진행 기록 (2026-08-06)
+
+**다운로드+적재 실행**: `scripts/backfill_xbrl_phase5.py`(①status pending 리셋 → ②`run_downloads` →
+③`sync_xbrl_instance_lines(recheck=True)` → ④검증) 실행 결과:
+
+| rcept_no | 기업 | 다운로드 | report_lines(unit_source='xbrl') | report_tables |
+|---|---|---|---|---|
+| 20250828000534 | 박셀바이오 | ✅ xbrl_zip | **106** | 4 |
+| 20260513000860 | 한화에어로스페이스 | ✅ xbrl_zip | **456** | 8 |
+| 20191118000002 | 웰킵스하이텍 | ✅ xbrl_zip | 0 | 0 |
+| 20191119000045 | 웰킵스하이텍 | ✅ xbrl_zip | 0 | 0 |
+| 20191119000058 | 웰킵스하이텍 | ✅ xbrl_zip | 0 | 0 |
+
+성공 2건은 `scripts/build_std_v3.py --corp 01335851,00126566`로 std_v3까지 재빌드(136행), 값이
+Phase 0 실측 기록과 **정확히 일치** 재확인(한화 총자산 56,659,594,923,000·박셀바이오 총자산
+83,142,583,571). `pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, 회귀 없음).
+
+**★신규 발견 — 웰킵스하이텍 3건은 Phase 0이 조사하지 않은 "구형 taxonomy vintage" 패키징을 쓴다.**
+`extract_report_lines_xbrl()`을 직접 호출해보니 `ValueError: no member ending with '_pre.xml' in zip`
+— zip을 열어 직접 조사(3필링 전부 구조 동일, 같은 회사·같은 분기라 당연함):
+
+```
+00260611_2012-03-20.xbrl                                            ← instance, flat, OK
+00260611_entry_point_2012-03-20.xsd                                 ← entry-point xsd
+ifrs_for_00260611\dimensions_ifrs_for_00260611\pre_ifrs_for_..xml    ← "pre_" 접두사(접미사 아님) + 하위폴더
+ifrs_for_00260611\dimensions_ifrs_for_00260611\cal_ifrs_for_..xml
+ifrs_for_00260611\dimensions_ifrs_for_00260611\dim_ifrs_for_..xml    ← _def.xml 대응(domain-member arcrole 확인됨)
+ifrs_for_00260611\dimensions_ifrs_for_00260611\role_ifrs_for_00260611-dim_..xsd
+labels\lab_00260611-ko_2012-03-20.xml                                ← "lab_..-ko" (접미사 "_lab-ko" 아님)
+labels\lab_00260611-en_2012-03-20.xml
+```
+
+경로 구분자가 **리터럴 백슬래시 문자**(Windows에서 생성된 zip 그대로, macOS `zipfile.extractall`은
+이걸 디렉터리로 안 풀고 파일명에 `\`가 박힌 채로 만든다 — 참고용, 파싱엔 무관 `zipfile.namelist()`
+문자열 매칭이라 OS 무관).
+
+세부 조사 결과(구현 판단에 필요한 것만):
+1. **zip 멤버 명명 규칙이 통째로 다르다** — 모던 포맷(박셀바이오/한화)은
+   `entity{CIK}_{date}_{role}.{ext}`(접미사 기반, flat), 이 vintage는 `{role}_ifrs_for_{CIK}_{date}.xml`
+   (접두사 기반) + `lab_{CIK}-{lang}_{date}.xml`(label만 또 다른 패턴) + 하위폴더 계층. `_find_one()`의
+   "ends with '_pre.xml'" 같은 접미사 매칭이 구조적으로 안 맞는다 — 매칭 전략을 새로 짜야 한다(포맷
+   버전 감지 후 분기, 또는 basename에서 role 토큰을 위치 무관하게 정규식 추출).
+2. **basis(연결/별도) 축이 `<scenario>`에 있다, `<entity><segment>`가 아니다** — 실측: 67개 context
+   중 segment 0개·scenario 66개. `instance_parser.py:130`(`entity_el.find(".../segment")`)이 scenario는
+   아예 안 읽는다 — 멤버 매칭 고쳐도 이 부분이 또 막힌다. `<xbrli:context><xbrli:scenario>`도
+   `<xbrldi:explicitMember>`를 읽도록 파서 확장 필요(XBRL 2.1 스펙상 segment/scenario 둘 다 합법적
+   위치라 이례적이지 않음 — DART가 vintage마다 다른 위치를 골랐을 뿐).
+3. **roleType/definition 텍스트가 로컬 xsd에 없다** — `entry_point.xsd`·`role_*-dim.xsd` 둘 다
+   `roleType` 태그 0개. `entry_point.xsd`의 `xsd:import`가 외부 URL을 가리킨다:
+   `http://dart.fss.or.kr/Resource/Taxonomy/ifrs/2019-10-01/dart_entry_point_2019-10-01.xsd`
+   — 이 vintage는 표준 역할 정의를 DART 공유 taxonomy(회사마다 안 바뀌는 공통분)에서 참조하고,
+   회사 패키지엔 자기 확장분(presentation/calc/definition/label)만 담는 구조로 보인다.
+   `role_map.py`가 지금처럼 로컬 xsd만 보면 이 vintage에선 역할 매핑표가 통째로 빈다.
+   **다만** `pre_ifrs_for_...xml`이 참조하는 roleURI를 직접 열어보니 —
+   `dart_2019-10-01_role-D210000/D210005/D431410/D431415/D520000/D520005/D610000/D610005`
+   — **Phase 0 §8이 모던 포맷(2024/2026 vintage)에서 문서화한 것과 정확히 같은 8개 핵심
+   role_id다.** 다만 Phase 0 §8은 "roleURI 숫자코드는 taxonomy 버전에 종속되니 절대 하드코딩
+   매핑 키로 쓰지 말라"고 명시적으로 경고했다 — 이번 표본(vintage 2019-10-01 대 모던 vintage)
+   2개에서 코드가 우연히 같았을 뿐인지, 실제로 안정적인 것인지는 **표본 2개로는 결론 낼 수 없음**
+   (섣불리 하드코딩하면 R9 위반). 필요하면 `dart_entry_point_2019-10-01.xsd`를 실제로
+   fetch해 `link:definition` 텍스트를 확인하는 게 안전한 경로.
+4. **order(float)·weight(±1)·preferredLabel 관례는 모던 포맷과 동일**(order 예: `0.5`/`0.625`/`1.125`,
+   weight `1`/`-1`/`1.0`/`-1.0`, `preferredLabel="...dart_label"`/`terseLabel`/`totalLabel`/
+   `negatedLabel`/`negatedTerseLabel`/`netLabel` 전부 관측) — Phase 3 로직 자체(트리 워크·라벨
+   해석·값 저장)는 그대로 재사용 가능해 보인다, 문제는 순전히 "파일을 못 찾는다"·"scenario를
+   안 읽는다"·"역할표가 빈다" 이 3가지 입구 단계.
+5. **데이터 자체는 정상 — 항등식으로 교차검증 완료**: `CFY2019eTQA`(2019Q3 당기) 별도 기준
+   Assets=38,366,922,357, Liabilities=21,787,682,948 + Equity=16,579,239,409 = 정확히 일치.
+   즉 이 vintage를 지원하면 실제로 쓸 수 있는 진짜 재무데이터라는 것은 확인됐다 — 구조 문제일
+   뿐 데이터 품질 문제가 아니다.
+6. **범위는 완전히 닫혀있다(추가 미지 위험 없음)**: `docs/qa/handoff_xml_parse_failure_xbrl_finding_2026-08-05.md`
+   §7 census(활성기업 2015+ 전수)가 이미 "document.xml 없음 & 구조화데이터 복구 가능" 패턴의
+   전체 모집단을 확정해뒀다 — 그 결과가 정확히 이 5건(+XBRL도 없는 자비스 1건)이었다. 즉 이
+   vintage를 지원해도 추가로 복구되는 필링은 **이 3건이 전부**(동일 회사·동일 분기의 정정 3본이라
+   사실상 "1개 분기 데이터")다 — 새 census나 미지의 추가 모집단 걱정은 불필요.
+
+**판단(구현 안 함, 조사만)**: 위 1~3번은 각각 별도 구현 작업(zip 포맷 감지+매칭 일반화,
+scenario 파싱 지원, 외부 taxonomy fetch 또는 신중한 하드코딩)이 필요하고, 5~6번을 보면 투자
+대비 효과는 "정확히 3건"으로 작다. R9(계획 후 대기) 원칙상 결정 없이 구현하지 않는다 —
+착수 여부는 사용자 판단.
+
+### Phase 5-A — 구형 vintage(2019-10-01, scenario 축) 지원 — 완료 2026-08-06
+
+구현 순서는 아래 §1~4 그대로(위 "후보 작업" 스케치와 동일하게 착수), 실측하며 스케치에 없던
+발견 2건(§5의 unprefixed measure, §6의 외부 label 필요성)이 추가로 드러났다. 대상 3건(웰킵스하이텍
+2019Q3 정정 3본)을 재차 실파싱해 검증했다(레포 미포함, 세션 scratchpad).
+
+**§1 — `instance_parser.py`: `<scenario>` dimension 파싱 추가.** `_parse_context()`가 이제
+`<entity><segment>`와 `<context><scenario>` 둘 다 확인해 `xbrldi:explicitMember`를 읽는다(둘 다
+있으면 document order로 병합, 실측 3건 전부 segment 0 / scenario 66개 — 상호배타적으로 관측됨).
+
+**§2 — `report_lines_xbrl.py`: zip 멤버 탐색 일반화.** `_find_one(suffix)`를
+`_find_member(role, patterns)`로 교체 — 역할(`xbrl`/`xsd`/`pre`/`lab_ko`/`lab_en`)마다 정규식
+후보 목록(모던 접미사 패턴 먼저, 구형 접두사 패턴 폴백)을 `_member_basename()`(리터럴 백슬래시
+정규화 포함)에 대해 매칭. `.xsd`는 구형 vintage가 2개(entry-point + dimension-role) 가지고
+있어 `entry_point` 이름을 우선한다.
+
+**§3 — `role_map.py`: 외부 taxonomy BFS 폴백.** 로컬 xsd에 `roleType`이 0개면(`build_role_map`의
+`needed_role_uris` 파라미터로 `_pre.xml`에 실제 걸린 roleURI 목록을 넘겨받아) `xsd:import`/
+`xsd:include` 체인을 `dart.fss.or.kr`까지 BFS(fetch 예산 12건, dart 호스트 우선순위)해 외부
+스키마에서 `roleType`을 찾는다. **위 "후보 작업" §3의 옵션 ①(외부 fetch)을 채택** — 실측으로
+D-코드가 vintage 무관 안정적인지 아직 불확실하다는 판단(옵션 ②)이 맞았음이 드러났다: 실제로
+fetch한 공유 taxonomy(`rol_dart_2019-10-01.xsd`, 260개 roleType)에는 BS 하나에도 D210000
+("current/non-current")과 D220000("order of liquidity") 등 **같은 statement의 여러 표시방식
+변형이 공존**했다 — `needed_role_uris`로 필터링하지 않으면 `index_core_roles()`의 "(statement,
+basis)당 최대 1개" 불변식이 깨진다(실측: 26개 매칭 중 8개만 이 필링이 실제로 쓴 것). 인증 관련
+함정도 실측으로 발견: `requests.get`에 커스텀 User-Agent(`"...tj_finance-collector/1.0"`)를 쓰면
+DART 서버가 **연결을 리셋**한다(`ConnectionResetError`, 매직바이트/HTML 에러조차 아니라 조용히
+실패) — `collector/legacy_downloader.py`가 이미 쓰는 브라우저 UA로 교체하니 즉시 해결. 캐시+가벼운
+재시도(tenacity, 3회/1~8s)를 `parser/xbrl_instance/external_taxonomy.py`(신설, role_map.py와
+taxonomy_linkbase.py가 공유)에 모았다 — 두 곳이 각자 fetch 로직을 만들지 않게.
+
+**§4 — ★스케치에 없던 발견: 라벨도 외부 taxonomy 필요.** roleType과 별개로, 이 vintage는
+**표준 `ifrs-full:`/`dart:` 개념의 한글 라벨도 로컬에 없다** — 필러 자신의 `_lab-ko.xml`에는
+그 필러가 만든 확장 개념(`dart:`/`entity{CIK}:`)의 라벨만 있고("매입채무"/"장기기타채권" 등
+실측 확인), `ifrs-full:CurrentAssets` 같은 표준 개념은 로컬 카탈로그에 없어 `_resolve_label()`의
+최후 폴백(영문 local name 그대로)으로 떨어진다 — 저장 자체는 되지만(`label_raw='CurrentAssets'`),
+layer3의 한글 키워드 기반 매퍼(`fin2/standardize/rules.py::DIRECT_MAP` 계열)가 영문 concept명을
+인식 못 해 **std_v3 합계 컬럼이 조용히 NULL로 새는** 패턴이었다(오류 없음, 그냥 매칭 실패) —
+[[layer2-silent-loss-patterns]]류와 같은 종류의 함정. `dart_entry_point_2019-10-01.xsd`(§3에서
+이미 fetch됨)의 `<link:linkbaseRef role=".../labelLinkbaseRef">` 6개(`lab_ifrs-ko`/`lab_ifrs-en`/
+`lab_dart-ko`/`lab_dart-en`/`lab_dart-gcd-ko`/`lab_dart-gcd-en`, ko 파일 2.4MB)를 찾아 전부
+fetch·병합하는 `taxonomy_linkbase.py::resolve_external_labels()`를 신설. `report_lines_xbrl.py`는
+`role_map.has_local_role_types(xsd)`가 False일 때만(=이 vintage 감지 신호 재사용, 추가 판정 로직
+불필요) 이 폴백을 추가로 호출한다. 결과: `label_raw`가 "CurrentAssets"→"유동자산"으로 바뀌고
+`revenue`(매출액) 등 일부 DIRECT_MAP 컬럼이 실제로 채워짐.
+
+**§5 — ★스케치에 없던 발견: unprefixed QName(`<measure>pure</measure>`).** 이 필링의 instance
+루트가 `xmlns="http://www.xbrl.org/2003/instance"`(xbrli를 **기본 네임스페이스**로 선언, `xbrli:`
+접두사 자체가 없음)라서 `<unit><measure>pure</measure></unit>`처럼 접두사 없는 QName 콘텐츠가
+나온다. `instance_parser.py::_resolve_qname_str()`이 콜론 없으면 무조건 raise했던 것을, XML
+QName-content 해석 규칙대로 **범위 안의 기본 네임스페이스(`nsmap[None]`)로 폴백**하도록 수정
+(다른 값이 동일 규칙으로 잘못 해석될 부작용 없음 — 실측 3건 전부 `pure`/`shares` 딱 2개뿐).
+
+**§6 — SCE는 이번에도 미지원으로 확정(범위 내 결정, 추가조사 아님).** `_emit_sce_lines()`가 찾는
+`ComponentsOfEquityAxis` 로케이터가 이 필링의 D610000 presentation tree에 **아예 없다**(0회 관측,
+`StatementOfChangesInEquityLineItems`는 있음) — 반면 instance의 실제 context는 그 축의 dimension을
+쓴다(scenario에 `ifrs-full:ComponentsOfEquityAxis`+`dart:CapitalSurplusMember` 등 확인됨). 즉 이
+vintage의 SCE는 열 축을 presentation tree가 아니라 다른 경로(추정: definition linkbase의
+hypercube 선언, 미확인)로 찾아야 해서 Phase 3-6/3-7의 설계 전제(트리워크로 열 산출)가 그대로 안
+맞는다 — **이번 백필 범위 밖으로 재확인**(기존 SCE 미지원 경고가 조용히·정상적으로 스킵, BS/IS/CF
+저장은 막지 않음). 재투자 여부는 별도 판단 필요(SCE 없이도 BS/IS/CF/자본구성요소는 이미 확보됨).
+
+**신설/변경 파일**:
+- `parser/xbrl_instance/external_taxonomy.py`(신설) — fetch+cache+retry(tenacity)+BFS 헬퍼,
+  role_map.py·taxonomy_linkbase.py 공유.
+- `parser/xbrl_instance/instance_parser.py` — `<scenario>` dims, unprefixed QName 기본 네임스페이스
+  폴백.
+- `fin2/extract/report_lines_xbrl.py` — `_find_member()`로 zip 멤버 탐색 일반화,
+  `has_local_role_types()`/`resolve_external_labels()` 배선.
+- `parser/xbrl_instance/role_map.py` — 영문 keyword+basis suffix 분류 추가, 외부 BFS 폴백
+  (`_resolve_external_roles`), `has_local_role_types()` 신설.
+- `parser/xbrl_instance/taxonomy_linkbase.py` — `resolve_external_labels()` 신설.
+- `collector/config.py` — `TAXONOMY_CACHE_DIR`(`taxonomy_cache/`, `.gitignore` 추가) 신설.
+
+**검증**: 3건 재적재(`sync_xbrl_instance_lines(corps=["00260611"], recheck=True)`) — 987행/errors
+0. `build_role_map`/`resolve_external_labels` 둘 다 첫 회 fetch 후 디스크 캐시로 재사용(3건째부터는
+네트워크 재요청 0, 로그로 확인). 항등식 재확인(코드 경유, 파서 산출값으로): 연결 기준
+Assets(=CurrentAssets+NoncurrentAssets, 이 필링 자체가 "Assets" 총계 행을 안 태깅함 — 아래 참고)
+41,072,227,158 = Liabilities(24,978,634,935)+Equity(16,093,592,223) 정확히 일치, 별도 기준도
+동일 검증. `revenue` std_v3 반영 확인(연결 28,092,330,742). 회귀: 박셀바이오·한화(모던 포맷, 이번
+변경과 무관해야 함) 재실행 결과 rows=562로 최초 Phase 5 실행과 정확히 동일 — 회귀 없음.
+`pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, 이번 변경으로 인한 신규 실패 0).
+
+**★알려진 잔여 한계(Phase 5-A 범위 내에서 수용, 별도 트랙 아님)**:
+1. **SCE 미지원**(§6) — 열 축 발견 메커니즘이 다름, 재투자는 별도 판단.
+2. **std_v3 합계 컬럼 일부 NULL** — 이 필링 자체가 재무상태표 D210000 role에 `ifrs-full:Assets`/
+   `Liabilities`/`Equity`/(IS 쪽 `ProfitLoss`도 추정) **총계 행을 아예 태깅 안 함**(하위 소계만 —
+   `CurrentAssets`/`NoncurrentAssets` 등, 실측: presentation tree 전체에서 0회 관측, 파서 버그
+   아님 — R9 검증). `report_lines`는 값이 전부 정확히 들어있고(항등식 성립), `fin2/layer3/combine.py`
+   의 DIRECT_MAP이 "총계 행이 없으면 하위 소계를 합산" 하는 폴백이 없어(그런 필링을 다뤄본 적이
+   없어서로 추정) `total_assets`/`total_liabilities`/`total_equity`/`net_income`이 NULL로 남는다
+   (revenue는 매출액 행이 직접 태깅돼 있어 정상 반영됨). **layer3 소관이라 Phase 5-A 범위 밖 —
+   고치려면 별도 결정 필요**(HTML 소스 필링에도 같은 패턴이 있을 수 있어 XBRL 전용 수정이 아닌
+   `combine.py` 일반 개선이어야 함).
 
 ## Phase 6 — 검증
 
@@ -157,6 +392,268 @@ roleURI 자체(`http://dart.fss.or.kr/role/ifrs/dart_2024-06-30_role-D210005`)�
 ### 12. `sanitize_dart_xml()` 불필요 — 순수 `lxml.etree.parse()`로 충분
 
 박셀바이오(87KB)·한화(6.6MB) 양쪽 다 7개 파일 전부 `lxml.etree.parse()`로 **에러 0, 파싱 시간 30ms 이내**로 성공. `document.xml`(DART 자체 `<TABLE>/<TE>` 서식)에서 나타났던 속성 따옴표 절단·PI 이스케이프 등 [[layer2-silent-loss-patterns]]류 함정은 **표준 XBRL instance엔 해당 없음**(별개 생성 파이프라인이라 추정). → `parser/xbrl_instance/instance_parser.py`는 `sanitize_dart_xml()` 호출하지 말고 `lxml.etree.parse()` 직접 사용.
+
+### Phase 3 진행 기록
+
+**3-1·3-2 완료(2026-08-06)**: `parser/xbrl_instance/__init__.py`(빈 파일, `parser/xml`·`parser/pdf` 컨벤션과 동일) +
+`instance_parser.py`(`parse_instance()` — context/unit/fact 순수 구조 파싱, 판정 로직 없음. dataclass
+`QName`/`Dimension`/`XbrlContext`/`XbrlUnit`/`XbrlFact`/`XbrlInstance`, `_validate()`로 dangling
+contextRef/unitRef 경고 로그).
+
+**실제 두 샘플로 재검증(Phase 0 zip을 다시 받아 파서에 직접 통과)**: 박셀바이오 44,076B/한화 1,144,829B —
+크기 Phase 0 기록과 정확히 일치. 박셀바이오 32 contexts/3 units/289 facts, 한화 2,850 contexts/10
+units/8,004 facts, 파싱 속도 5ms/139ms(문제 없음). 한화의 "basis 축만 걸린 `Assets`" 값
+**56,659,594,923,000원**(연결·당기)이 Phase 0 §7 기록과 정확히 일치 — 파서 정확성 교차검증됨.
+Multi-dim context(SCE 성분축 등 basis 외 추가 축) 정상 파싱 확인.
+
+**Phase 0 기록 보완(정정 아님, 미확인 항목 실측 확인)**: Phase 0 §6 "단위 관측 3종뿐(KRW/PURE/KRWEPS),
+외화 혼재는 미확인"이라 적었던 것을 한화(대형·연결) 샘플에서 실측 확인 — **10종 단위 관측**
+(KRW/PURE/KRWEPS + PHP/USD/AED/ROL/AUD/EUR, 해외종속회사 주석 공시로 추정). 파서 코드 영향 없음
+(measure 파싱은 이미 임의 `iso4217:XXX` 통화코드에 범용적으로 대응) — role_map/추출 범위(Phase 3 후속
+항목)에서 본문(BS/IS/CF/SCE, 항상 KRW로 추정)만 다루는 한 무관하나, 주석까지 범위를 넓힐 경우 대비 기록.
+
+`pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, `test_lxintl_facility_table_dropped`).
+
+**3-3 완료(2026-08-06)**: `taxonomy_linkbase.py` 신설 — `_pre.xml`(presentation)·`_cal.xml`(calculation)
+role→트리(loc/arc/order→parent/children/depth, `preferredLabel`/`weight` 보존) + `_lab-ko.xml`/`_lab-en.xml`
+라벨 카탈로그(concept→[Label(role,lang,text)], `merge_label_catalogs()`로 ko+en 병합). 핵심 설계:
+- `resolve_href_fragment()` — 로케이터 href의 URL fragment(`"{prefix}_{LocalName}"`)를 QName으로 변환.
+  prefix가 `_`를 포함하지 않는다는 taxonomy 관례(ifrs-full/dart/dart-gcd/entity{CIK})로 첫 `_`에서만
+  split — entity 확장 로컬명 안의 추가 `_`(예: `entity01335851_udf_CF_...`)도 정확히 처리됨. nsmap은
+  linkbase 파일 자체엔 선언 안 돼 있어(instance root에만 있음, Phase 0 §3) 호출자가 공급
+  (→ `instance_parser.py`에 `XbrlInstance.nsmap` 필드 신규 추가, 순수 기록용·판단 없음).
+- 트리 노드는 concept이 아니라 **loc_label(linkbase 고유 wiring id)로 키잉** — 실측 확인: 같은 concept이
+  한 role 안에서 두 자리(예: 주석 롤포워드표 기초/기말 잔액, `_periodStartLabel`/`_periodEndLabel` 접미
+  loc)를 차지하는 경우가 실재함.
+- 실측 검증(두 샘플 재파싱, 예외 0): BS role root=`StatementOfFinancialPositionAbstract` 단일(양쪽 다),
+  calc role `Assets`→`CurrentAssets`/`NoncurrentAssets` weight 둘 다 1.0(Phase 0 §11과 일치), `OtherGains`
+  라벨 카탈로그가 `label`(기타수익)/`dart_label`(기타이익)/`terseLabel`/`totalLabel` 등 role별로 정확히
+  분리돼 나옴. **핵심 4역할(D210/D431/D520/D610)은 두 샘플 전부 깨끗한 단일부모 트리**로 확인.
+- **신규 발견(범위 밖으로 확인, 코드 영향 없음)**: 주석/차원 role(D8xxx/U8xxx)에서는 presentation
+  "트리"가 실제로는 **DAG**일 수 있음 — 같은 Axis가 여러 Table 로케이터에서 공유돼 한 노드가 둘 이상의
+  parent arc를 가짐(한화 샘플에서 189건 관측, 전부 note role, core 4역할 0건). `_build_tree_shape()`는
+  첫 arc를 유지하고 경고 로그만 남김 — Phase 3 현재 범위(본문만)엔 무관, role_map.py가 note role을
+  걸러내는 한 이 경고는 무해한 노이즈로 봐도 됨(단, 향후 주석까지 범위를 넓히면 트리 대신 DAG 모델링이
+  필요해짐 — 미해결 과제로 기록).
+
+`pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, 이번 변경과 무관).
+
+**3-4 완료(2026-08-06)**: `role_map.py` 신설 — `.xsd`의 `<link:roleType><link:definition>`
+텍스트(`"[{role_id}] {한글정의} | {영문정의}"`)를 키워드+접미사로 분류. 핵심 발견: roleURI
+숫자코드(`D210000` 등)는 taxonomy 버전에 종속돼 필링마다 바뀌므로 **절대 매핑 키로 안 씀** —
+`definition_ko`의 "재무상태표"/"포괄손익계산서"(손익계산서 폴백)/"현금흐름표"/"자본변동표" 키워드
++ **"- 연결"/"- 별도" 접미사 존재 여부**로만 판정. 이 접미사 유무가 본문(core) role과 동명의
+주석(note) role을 가르는 유일한 신호임을 실측으로 확인 — 한화 샘플의 `[D851100] 42. 현금흐름표`
+(현금흐름표 관련 주석 챕터, 접미사 없음)이 키워드는 일치하지만 접미사 부재로 정확히 배제됨(수동
+검증: `role_map.build_role_map()` 결과에 D851100/D851105 없음 확인).
+`build_role_map(xsd_path)`가 두 샘플에서 정확히 Phase 0 §8 기록과 일치하는 개수 산출 — 박셀바이오
+4개(별도만, D210005/D431415/D520005/D610005), 한화 8개(연결+별도 각 4, D210000/D210005/
+D431410/D431415/D520000/D520005/D610000/D610005). `index_core_roles()`로 (statement,basis)→
+RoleInfo 역인덱스 제공(둘 이상 겹치면 raise 대신 경고 로그, Phase 0 "최대 8개" 가정이 깨지는
+필링을 조용히 넘기지 않기 위함). 주석 role(D8xxx/U8xxx 등 310개, 한화 기준)은 전부 정상적으로
+걸러짐(리크 0건, 수동 확인).
+
+`pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, 이번 변경과 무관).
+
+**3-5 완료(2026-08-06)**: `fin2/extract/report_lines_xbrl.py` 신설 — `extract_report_lines_xbrl()`.
+두 샘플 zip 을 다시 받아(크기 Phase 0/3-1 과 정확히 일치, `LegacyDartScraper.fetch_xbrl_zip()` 재현)
+실제로 파싱·검증했다(레포에는 미포함, 세션 scratchpad 만).
+
+- **범위: BS/IS/CF 만.** SCE(자본변동표)는 이번엔 보류 — 열 축이 기간(당기/전기)이 아니라
+  `ifrs-full:ComponentsOfEquityAxis` 이고, 그 멤버 자체가 계층 구조다(한화 연결 SCE 를 직접 실측:
+  `EquityMember`(도메인=총계) → `EquityAttributableToOwnersOfParentMember`(지배지분 소계, 자체가 또
+  `IssuedCapitalMember`/`CapitalSurplusMember`/… 자식을 가짐) 형제로 `NoncontrollingInterestsMember`).
+  게다가 `report_lines.py::_is_loadable()` 는 SCE 를 `col_index==0` 필터에서 제외해 **SCE 행은 나오는
+  대로 전부 저장**된다 — 열 의미를 잘못 짚으면 그대로 오염된 채 적재된다. R9(원문 대조 없이 넘겨짚지
+  않기) 원칙상 이 구조는 별도 조사 후 다음 스텝에서 다루기로 결정(코드에 이유와 함께 명시적으로 보류
+  — 3-3 이 note role 의 DAG 를 범위 밖으로 명시한 것과 같은 방식).
+
+- **basis 재확인**: context dims 가 **정확히 1개**(basis dim 만)일 때만 채택하는 Phase 0 §7 규칙을
+  그대로 구현. 실측: 한화 연결 BS `Assets` = 56,659,594,923,000(Phase 0 §7 기록과 정확히 일치),
+  `Liabilities`(39,219,529,796,000) + `Equity`(17,440,065,127,000) = `Assets` 정확히 일치, 별도도
+  마찬가지(26,535,096,702,000 = 17,268,806,425,000 + 9,266,290,277,000), 박셀바이오도 마찬가지
+  (83,142,583,571 = 4,867,937,672 + 78,274,645,899). 항등식이 두 회사·양쪽 basis 전부에서
+  맞아떨어져 basis 필터·라벨·값 추출 전체 경로가 교차검증됐다.
+
+- **col_index(당기)는 날짜 정확매치, 허용오차 불필요로 판명**: instant 는 `ctx.instant ==
+  period_end_date`, duration 은 `ctx.end_date == period_end_date` 중 `start_date` 가 가장 이른(=
+  가장 긴, 즉 누적) 것 채택 — `HYA`/`FQA` 같은 접미사 문자열을 하드코딩하지 않고 날짜 구조 자체로
+  "누적" 을 일반화(설계결론 3). 한화 Q1(FQA=FQQ 값이 우연히 동일, Q1 은 전분기가 없어 누적=단일분기)
+  로 이 로직이 접미사 없이도 정확히 동작함을 확인. **허용오차(계획에 있던 "tolerance")는 실측상
+  전혀 필요 없었다** — 두 샘플 전부 예외 없이 정확히 일치하는 날짜가 존재했다. col_index=2(전전기)
+  는 시도하지 않음 — 유일하게 관측된 3번째 기간 컨텍스트(`BPFY...`, 한화 BS 역할에 2개 fact)가
+  실제로는 다른 주석 비교용 값이 role 에 새어든 노이즈였다(전체 facts 대비 극소수, 표준 컬럼이
+  아님). col_index=1(전기)은 최선노력으로만 채움 — `_is_loadable()` 이 BS/IS/CF 는 col_index==0 만
+  저장하므로 정확도가 적재 결과에 영향을 주지 않는다.
+
+- **weight 는 값 저장에 정말 관여하지 않는다는 것을 실측 재확인, 동시에 항등식 검증엔 필수임도
+  확인**: 박셀바이오 CF `영업활동현금흐름`(-5,586,995,010) = `영업으로부터창출된현금흐름`
+  (-5,931,095,417) + `이자수취`(+249,435,527) + `법인세환급(납부)`(-94,664,880) 는 weight 를 무시하고
+  그대로 더하면 안 맞는다(단순합=-5,776,324,770, 차이 189,329,760). `_cal.xml` 을 실제로 조회해보니
+  `IncomeTaxesPaidRefundClassifiedAsOperatingActivities` 의 weight 가 **-1**(나머지는 +1) —
+  weight 를 반영해 재계산하면 -5,931,095,417 + 249,435,527 - (-1)×(-94,664,880) = 정확히
+  -5,586,995,010 로 맞아떨어진다. 즉 **저장된 fact 값 자체는(weight 적용 여부와 무관하게) 원문
+  그대로가 맞고**, weight 는 오직 "부모=Σ(weight×자식)" 항등식을 검증할 때만 필요하다 — Phase 0 §11의
+  결론이 실측으로 재확인됐고, Phase 6 항등식 점검이 반드시 calc linkbase weight 를 써야 한다는
+  근거가 됐다(단순합으로 검증하면 이런 정상 케이스도 오탐된다).
+- **교차 통계 검증**: 한화 CF `기초의 현금및현금성자산`(7,713,355,500,000)이 BS 의 전기(PFY) 현금
+  잔액과, `분기말의 현금및현금성자산`(6,886,229,564,000)이 BS 당기(CFY) 현금잔액과 정확히 일치.
+  CF 전체 항등식(기초현금 + 영업/투자/재무활동현금흐름 + 환율변동효과 = 기말현금)도 두 샘플 모두
+  정확히 성립. IS 도 매출-매출원가=매출총이익 등 소계가 정확히 일치.
+- **행 수(둘 다 col0+col1 합계, BS/IS/CF 3문·연결+별도)**: 박셀바이오 132행(별도만), 한화 464행
+  (연결+별도). `pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지). 새 모듈에서 발생한 경고
+  0건(파싱 중 뜨는 189건 경고는 전부 기존에 문서화된 `taxonomy_linkbase.py` 의 note-role DAG 노이즈,
+  이 파일이 새로 만든 것이 아님).
+
+### Phase 3-6 — SCE(자본변동표) 구조 조사 (2026-08-06, 코드 변경 없음)
+
+두 샘플 zip을 다시 받아(`LegacyDartScraper.fetch_xbrl_zip()` 재현) SCE role의 presentation
+tree(D610000/D610005)와 실제 `ComponentsOfEquityAxis` context를 전량 walk했다(레포 미포함,
+세션 scratchpad만). 목적: 3-5에서 보류한 "열 축이 기간이 아니라 자본구성요소 계층"이라는
+구조를 파악해 추출 설계를 확정할 수 있는지 판단.
+
+**결론: 구조는 명확히 파악됐다. 다만 기존 저장 스키마(`report_lines`)와의 호환을 위해
+설계 결정이 하나 더 필요해 이번엔 설계만 정리하고 구현은 보류한다** (아래 "핵심 난제" 참고).
+
+#### 1. 열(자본구성요소) — presentation tree로 정확히 산출 가능, 계층형
+
+`StatementOfChangesInEquityTable` 로케이터의 자식 `ComponentsOfEquityAxis` 서브트리가 곧
+열 정의다. 도메인 루트(`EquityMember`, "자본"="총계")부터 DFS order-정렬로 순회하면 그대로
+열 순서가 나온다:
+
+- 박셀바이오(별도만): `EquityMember`(총계) → `IssuedCapitalMember`(자본금) →
+  `CapitalSurplusMember`(자본잉여금) → `ElementsOfOtherStockholdersEquityMember`(기타자본) →
+  `RetainedEarningsMember`(이익잉여금). 5열, 평평한 구조(자식이 자식을 안 가짐).
+- 한화 연결: `EquityMember`(총계) → `EquityAttributableToOwnersOfParentMember`(지배지분
+  **소계**, 그 아래 `IssuedCapitalMember`/`CapitalSurplusMember`/
+  `ElementsOfOtherStockholdersEquityMember`/`OtherComprehensiveIncomeLossAccumulatedAmountMember`/
+  `RetainedEarningsMember` 5개 자식) → `NoncontrollingInterestsMember`(비지배지분, 형제).
+  8열, **2단 계층**(소계 열이 자기 자식 열들을 거느림 — 기존 HTML 파서의 다단 헤더
+  `_build_col_labels`의 ">"join 관례와 개념적으로 동일, 오히려 XBRL 쪽이 추측 없이 정확함).
+- 값 조회 규약: `EquityMember`(총계) 열은 context dims==1(basis만, BS/IS/CF와 같은
+  `_basis_candidates` 그대로 재사용 가능). 나머지 열은 context dims==2(basis +
+  `ComponentsOfEquityAxis`=해당 멤버, 정확히 그 QName)만 채택 — 실측 확인: 한화 연결에서
+  같은 축이 주석(하이브리드채권 세부표)에도 재사용돼 멤버 13종 중 6종이 SCE와 무관한
+  주석 오염(`The8/9/10ThPrivateUnsecuredConvertibleBondsOf...Member`)이었다. **반드시
+  presentation tree에 실제로 걸린 (concept, member) 조합만 채택**해야 한다(3-5의 "tag명
+  단독 검색 금지" 원칙이 열 축에도 그대로 적용됨).
+
+#### 2. 행(변동사유) — `StatementOfChangesInEquityLineItems` 서브트리, 기존과 개념 동일
+
+`기초자본`(`EquityAtBeginningOfPeriod`) → `포괄손익`(`ComprehensiveIncome`, 그 아래
+당기순이익/기타포괄손익 항목들) → `주식기준보상`/`배당금`/`기타변동` 등 자본거래 항목들 →
+`자본`(`Equity`, 기말) 순으로 LineItems 트리를 order-정렬 DFS 순회하면 행이 그대로 나온다.
+기존 HTML 파서가 "날짜 라벨 행"(기초/기말)을 별도 규칙(`date_labels_ok=True`)으로 살려야
+했던 것과 달리, XBRL은 애초에 `EquityAtBeginningOfPeriod`/`Equity` 자체가 정식 라인아이템
+개념이라 특별 취급이 필요 없다.
+
+#### 3. ★핵심 난제 — 기간(당기/전기) 인코딩이 기존 스키마의 "행 안에 날짜 문자열" 관례에 의존
+
+- 각 라인아이템 concept(예: `Equity`=기말자본)은 기간마다 **다른 context**를 가진다 — 당기말
+  instant 하나, 전기말 instant 하나(둘 다 같은 concept). BS/IS/CF와 똑같이 "같은 concept,
+  다른 날짜 context가 여러 개"인 구조라 겉보기엔 col0/col1 로직을 그대로 쓸 수 있어 보인다.
+- 그런데 기존 HTML 기반 SCE 파서(`report_lines.py::_emit_sce_lines`)는 애초에
+  `context_fiscal_year=NULL`/`period_kind=NULL`로 저장하고, 기간 구분을 **`label_raw`에
+  박힌 실제 날짜 문자열**("2023.12.31(기말자본)")로만 남긴다 — `col_index`는 오직
+  자본구성요소 열 위치다. 그리고 `fin2/audit/line_anomaly.py::detect_sce_anomalies()`가
+  이 관례에 **직접 의존**한다: `_CLOSE`(정규식 `"기말"`) + `_close_row_year()`(라벨에서
+  정규식으로 연도 추출)로 "기말" 행을 찾아 BS의 해당 연도 열과 대조한다.
+- 즉 XBRL 추출기가 열=자본구성요소·행=변동사유까지는 정확히 산출해도, **`label_raw`에
+  실제 종료일 문자열을 합성해 넣지 않으면** `detect_sce_anomalies()`의 SCE↔BS 교차검증이
+  XBRL 유입 행에서 에러 없이 조용히 공백(대조 0건)이 된다 — Gate가 "통과"가 아니라
+  "적용 자체가 안 됨"으로 조용히 새는 패턴(참고: `[[layer2-silent-loss-patterns]]`류).
+  기간 버킷 자체는 BS/IS/CF의 `_resolve_columns()`를 그대로 재사용 가능(상대적 최신순으로
+  당기/전기 판정, `period_end_date` 정확매치가 아니라 "가장 최근"="당기"로 판정해야 함 —
+  `EquityAtBeginningOfPeriod`의 instant는 기말일이 아니라 기초일이라 정확매치가 원천적으로
+  안 됨).
+
+#### 4. ★★적재 리스크가 BS/IS/CF보다 크다 — `_is_loadable()`이 SCE를 col_index로 안 거른다
+
+`report_lines.py::_is_loadable()`은 BS/IS/CF는 `col_index==0`만 저장하지만 SCE는 전량
+저장한다(위 §3 인용, 열축이 기간이 아니므로). 즉 이 설계에서 열/행/기간 판정 중 하나라도
+틀리면 **그 오염이 필터 없이 그대로 DB에 들어간다** — BS/IS/CF에서 실수해도 피해가
+"최선노력 col1"에 국한됐던 것과 다르다. 구현 시 저장 이전에 항등식 하드 게이트를 강력
+권장: 지배지분소계+비지배지분=자본총계(있는 필링만), 기초자본+포괄손익+자본거래=기말자본
+(두 샘플 다 이 항등식이 실제로 성립하는지는 아직 값 단위로는 확인 안 함 — 구조만 확인,
+다음 단계에서 값 검증 필요).
+
+#### 결정 (2026-08-06, 사용자 확인)
+
+**옵션 A 채택 — SCE도 지금 구현한다.** 위 §1~§4 설계대로:
+`label_raw`에 날짜 합성(예: `"자본 (2026-03-31)"`)해 기존 `detect_sce_anomalies()` 정규식과
+호환 유지, 열 계층(">"join)은 `col_label`로, 기간 버킷은 BS/IS/CF의 `_resolve_columns()`
+재사용(정확매치 아닌 "가장 최근"=당기 판정), 저장 전 항등식 하드 게이트
+(지배지분소계+비지배지분=자본총계, 기초자본+포괄손익+자본거래=기말자본) 필수.
+→ Phase 3에 **3-7(SCE 구현)** 항목으로 반영, 착수는 별도 명시적 요청 시.
+
+### Phase 3-7 진행 기록 (완료 2026-08-06)
+
+`fin2/extract/report_lines_xbrl.py`에 `_emit_sce_lines()` 신설(기존 BS/IS/CF `_emit_statement_lines()`와
+나란히), `extract_report_lines_xbrl()`의 통계 분기에서 SCE를 이 새 함수로 디스패치. 두 샘플 zip을 다시
+받아(크기 Phase 0 기록과 정확히 일치) 실제로 파싱·검증했다(레포에는 미포함, 세션 scratchpad만).
+
+- **열**: `ComponentsOfEquityAxis` 로케이터의 domain 자식(들)부터 DFS order-정렬로 순회
+  (`_flatten_from()` — `_flatten_preorder()`를 임의 시작 노드로 일반화한 버전). `col_label`은 그 축
+  서브트리 안에서만의 조상 라벨 체인(`_col_label_chain()`, Table/LineItems/role-root는 배제) —
+  실측: 박셀바이오 5열(평평), 한화 연결 8열(지배지분 소계가 자기 자식 5개를 거느리는 2단 계층), 한화
+  별도 6열(평평) — Phase 3-6 §1 기록과 정확히 일치.
+- **행**: `StatementOfChangesInEquityLineItems` 서브트리를 같은 방식으로 DFS(`row_flat`).
+  `node_role`/`section_path`는 BS/IS/CF와 동일한 함수(`_compute_node_roles`/`_section_path`) 재사용 —
+  단 `label_of`는 **행/열 서브트리가 아니라 tree 전체**에서 구해야 한다(행의 조상 체인이 LineItems를
+  지나 Table/role-root까지 올라가므로) — 처음엔 서브트리로만 만들어서 `KeyError`가 났다(아래 "실측 중
+  발견한 버그" 참고).
+- **기간(당기/전기/전전기)**: `_resolve_columns()`(BS/IS/CF, `period_end_date` 정확매치)와
+  `_bucket_by_period()`라는 공통 헬퍼를 공유하도록 리팩터(순수 리팩터, BS/IS/CF 동작 불변 —
+  pytest 263 그대로 통과 확인). SCE는 **행마다 한 번, 총계열(col0) 후보에서만** 날짜를 최신순으로
+  랭킹해 "정본 기간 목록"을 만들고, 그 정본 날짜로 나머지 모든 열의 값을 조회한다(날짜로 직접 매칭,
+  열마다 독립적으로 재랭킹하지 않음). `row_order = period_idx * stride + row_index`
+  (`stride = len(row_flat)`) — 기간 블록이 절대 겹치지 않게 층으로 쌓는다(HTML 파서의 "당기/전기
+  블록이 세로로 두 번 쌓인다"는 것과 같은 효과, 순서는 최신이 먼저).
+- **`label_raw` 날짜 합성**: instant 컨텍스트 행에만 날짜 접미사를 붙인다(duration인 흐름 항목은
+  원문처럼 그대로 둠). concept이 정확히 `ifrs-full:Equity`(기말자본)일 때만 `"(기말)"` 마커를
+  붙여 `detect_sce_anomalies()`의 `기말` 정규식과 호환(그 함수가 실제로 찾는 유일한 마커).
+  `ifrs-full:EquityAtBeginningOfPeriod`(기초자본)에도 대칭성을 위해 `"(기초)"`를 붙였으나 이건
+  호환에 필수는 아님.
+- **저장 전 항등식 하드 게이트**: 계획대로 "지배지분소계+비지배지분=자본총계" 유형의 **열 rollup
+  체크**(`_check_sce_column_rollup()` — 부모 열 값과 직계 자식 열 값들의 합을 행·기간마다 비교, 상대오차
+  0.1% 초과 시 `logger.warning`만, 저장을 막거나 값을 고치지 않음 — `detect_sce_anomalies()`가 이미
+  저장 후 SCE↔BS 대조를 값 제안까지 포함해서 하고 있어 그 역할과 안 겹치게 이건 "우리 파서 배선 버그
+  감지용"으로만 씀). **"기초자본+포괄손익+자본거래=기말자본"(행 rollup)은 계획과 달리 이번엔 구현
+  안 함** — 실측으로 이유가 드러났다(아래 "실측 중 발견한 버그·판단" 참고): 단순합으로는 두 샘플
+  전부 안 맞고(가중치 없이는 배당금처럼 "표시는 양수지만 자본을 줄이는" 항목을 못 구분), Phase 0
+  §11처럼 `_cal.xml`의 weight가 SCE role에도 있는지가 먼저 확인돼야 하는데 이번 조사에서 그 확인을
+  안 했다(BS/CF는 Phase 0에서 이미 확인됨). R9 원칙상 넘겨짚지 않고 **명시적으로 보류**(Phase 6 항등식
+  점검 항목으로 이월 — 거기서 `_cal.xml`을 SCE에도 로드해 weight 반영 여부부터 확인).
+
+**검증(두 샘플 재다운로드해 실파싱, 회귀 없음 확인)**:
+- `pytest fin2/tests/` 263 passed(기존 무관 실패 1건 유지, 이번 변경과 무관).
+- SCE 행 수: 박셀바이오 별도 37행, 한화 연결 115행 + 별도 109행(=224행).
+- 열 rollup 체크(`_check_sce_column_rollup`) **경고 0건**(양 샘플·양 basis 전부) — 수동 재확인으로
+  박셀바이오 4개 행에서 col0==sum(col1..4) 4/4 일치 재확인.
+- 값 대조: 박셀바이오 SCE 기말(col0, 2024-06-30)=78,274,645,899, 한화 연결 SCE
+  기말(col0, 2026-03-31)=17,440,065,127,000, 한화 별도=9,266,290,277,000 — 전부 Phase 0 §7/3-5의
+  BS 자본총계 기록과 정확히 일치(같은 개념, 다른 재무제표, 같은 값 — 강한 교차검증).
+  한화 연결 지배지분(9,958,578,459,000)+비지배지분(7,481,486,668,000)=17,440,065,127,000 —
+  총계와 정확히 일치.
+
+**실측 중 발견한 버그·판단(구현하며 잡음, 계획 문서엔 없던 것)**:
+1. **`label_of` 범위 버그**: 처음엔 행/열 서브트리 노드만으로 `label_of`를 만들었다가
+   `_section_path()`가 LineItems 밖(Table/role-root)의 조상을 찾다 `KeyError`. `tree.nodes` 전체에서
+   라벨을 구하도록 수정(BS/IS/CF `_emit_statement_lines()`가 원래 하던 방식과 통일).
+2. **★기간 정렬 버그(값 오염 직행 사례, 고쳐서 다행)**: 최초 구현은 열마다 독립적으로
+   `_resolve_sce_periods()`(랭킹 함수, 결국 폐기)를 불러 "최신순=0"을 매겼다. 그런데 특정 열(예:
+   비지배지분)이 일부 기간에 값이 없으면 그 열만의 랭킹이 밀려서, 같은 `row_order`(=같은 "기간
+   블록"으로 간주됨)에 실제로는 **다른 날짜의 값들이 섞였다** — 실측: `_check_sce_column_rollup`이
+   "row_order=17: parent=83,493,267,971(2023-06-30 값) != sum(children)=18,696,472,616(다른 기간
+   합)" 같은 거대한 불일치를 잡아냈다(하드 게이트가 실제로 제 역할을 함). 총계열(col0)에서만 정본
+   기간 목록을 뽑고 나머지 열은 그 날짜로 직접 조회하도록 다시 설계해서 해결 — 재검증 결과 경고
+   0건. **이 버그는 저장 전 자체검증(열 rollup 게이트)이 없었으면 조용히 DB로 들어갔을 뻔한
+   사례**라 §4의 "하드 게이트 강력 권장"이 실제로 유효했음을 실측으로 보여준다.
+3. **행 rollup 단순합은 실제로 틀린다는 것도 실측 확인**(3번째 항목과 별개, 위 "저장 전 항등식
+   하드 게이트" 문단 참고) — 한화 연차배당이 원문엔 양수로 표시되지만 자본을 줄이는 항목이라
+   가중치 없는 단순합은 기초+변동 합이 기말보다 정확히 배당액의 2배만큼 크게 나온다(연결
+   820,440,670,000 = 2×410,220,335,000, 별도 720,283,032,000 = 2×360,141,516,000 — 정확히
+   일치). 구현하지 않기로 한 판단이 맞았다는 근거.
 
 ### Phase 3 설계에 주는 결론 (착수 시 그대로 반영)
 

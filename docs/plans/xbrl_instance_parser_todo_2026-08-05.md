@@ -72,14 +72,59 @@ migration id: `2026_08_download_tasks_dcm_no` / `2026_08_download_tasks_file_typ
 - [x] note 포함 여부(`include_notes`) 처리 — Phase 3-5 범위 밖으로 확정(본문 BS/IS/CF만, SCE 도 이번엔 보류 — 아래 기록)
 - [x] 3-7: SCE(자본변동표) 구현 — 완료 2026-08-06(아래 "Phase 3-7 진행 기록" 참고)
 
-## Phase 4 — 데일리 파이프라인 배선 (두 call site 필수)
+## Phase 4 — 데일리 파이프라인 배선 (두 call site 필수) — 완료 2026-08-06
 
-- [ ] `collector/xbrl_instance_lines_sync.py` 신설 — `note_lines_sync.py` 구조 재사용, `file_type='xbrl_zip'` 대상 쿼리
-- [ ] `scripts/collect_new.py`에 `_sync_xbrl_instance_lines(corps)` 래퍼 함수 추가 (비치명 try/except)
-- [ ] call site 1: `collect_new.py`의 `--standardize-only` 재개 분기(기존 `_sync_layer2_lines(affected)` 호출 직후)에 추가
-- [ ] call site 2: `collect_new.py`의 메인 경로(기존 `_sync_layer2_lines(affected)` 호출 직후)에 추가
-- [ ] 두 call site 모두에서 실제로 호출되는지 로그로 확인 (더미/드라이런)
-- [ ] 기존 `sync_layer2_lines`(`file_type='xml'`)와 겹치는 rcept_no가 없는지 재확인 (중복 적재 가드 불필요 여부 최종 검증)
+- [x] `collector/xbrl_instance_lines_sync.py` 신설 — `note_lines_sync.py` 구조 재사용, `file_type='xbrl_zip'` 대상 쿼리
+- [x] `scripts/collect_new.py`에 `_sync_xbrl_instance_lines(corps)` 래퍼 함수 추가 (비치명 try/except)
+- [x] call site 1: `collect_new.py`의 `--standardize-only` 재개 분기(기존 `_sync_layer2_lines(affected)` 호출 직후)에 추가
+- [x] call site 2: `collect_new.py`의 메인 경로(기존 `_sync_layer2_lines(affected)` 호출 직후)에 추가
+- [x] 두 call site 모두에서 실제로 호출되는지 로그로 확인 (더미/드라이런)
+- [x] 기존 `sync_layer2_lines`(`file_type='xml'`)와 겹치는 rcept_no가 없는지 재확인 (중복 적재 가드 불필요 여부 최종 검증)
+
+### Phase 4 진행 기록
+
+**4-1**: `collector/xbrl_instance_lines_sync.py` 신설 — `sync_xbrl_instance_lines(corps, year_min=2015,
+recheck=False)`. `note_lines_sync.py`와 구조 동일(corp 바운드 재개, rcept 단위 delete-then-insert
+멱등, 한 건 실패가 전체를 안 막음)이지만 대상이 다르다: `download_tasks.file_type='xbrl_zip'`.
+`extract_report_lines_xbrl()`(Phase 3)은 본문(BS/IS/CF/SCE)만 만들고 주석은 안 만들어서
+`store_report_lines`/`store_report_tables`만 호출(`store_note_lines` 불필요). 재개 판정은
+`report_lines.unit_source='xbrl'`로 좁혔다(단순 rcept_no 존재 여부가 아니라) — 아래 4-6 검증으로
+이게 실제로 구분이 필요 없는 상황(두 경로가 애초에 안 겹침)임이 드러났지만, 안전장치로 유지.
+
+**4-2**: `scripts/collect_new.py`에 `_sync_xbrl_instance_lines(corps)` 래퍼(`④-4` 마커) 신설,
+`_sync_layer2_lines`(`④-3`) 바로 뒤에 배치. 두 call site 모두 배선 — `--standardize-only` 재개
+분기(`main():664`)와 메인 경로(`main():772`), 둘 다 `_sync_layer2_lines(affected)` 직후.
+
+**4-마지막 항목(dedup 가드 필요성 검증, 2026-08-06)**: 결론 — **불필요, 구조적으로 겹칠 수 없다.**
+세 층위로 확인했다:
+1. **스키마**: `download_tasks.rcept_no`에 `ix_download_tasks_rcept_no` UNIQUE INDEX가 실제로
+   걸려 있음(`pg_indexes` 조회로 확인, `collector/models.py::DownloadTask.rcept_no`의
+   `unique=True` 선언대로 반영됨) — 필링(rcept_no) 하나당 `download_tasks` 행이 **정확히 하나**이므로
+   `file_type` 값도 하나뿐이다. 같은 rcept_no가 `'xml'`이면서 동시에 `'xbrl_zip'`인 상태 자체가
+   DB 레벨에서 불가능.
+2. **코드 경로**: `collector/downloader.py::_download_one()`(:411~415) — `_try_xbrl_instance_fallback()`
+   은 오직 OpenDART API 응답이 `status_code == "014"`(파일없음)일 때만 호출된다. 이 상태코드는 그
+   필링이 실제로 `document.xml`을 아예 안 가지고 있다는 DART 서버측 사실이라 재시도해도 값이
+   안 바뀐다 — 즉 어떤 rcept_no 가 한 번 `'xml'` 로 성공했다면 그 rcept_no 는 절대 이 분기에
+   진입할 수 없고, 반대로 `'014'`가 뜨는 rcept_no 는 재시도해도 계속 `'014'`만 뜬다(같은 이유로
+   `'xbrl_zip'`이 나중에 `'xml'`로 뒤집히는 것도 불가능). 두 경로가 필링 콘텐츠 자체로 영구히
+   갈린다.
+3. **실측(DB 쿼리)**: `SELECT file_type, status, count(*) FROM download_tasks GROUP BY 1,2` —
+   현재 `xbrl_zip` 완료 행 **0건**(Phase 5 백필 미실행 상태라 예상대로), `report_lines`에서
+   `unit_source='xbrl'`인 rcept_no 도 0건(당연히 아직 없음) — 겹칠 데이터 자체가 아직 없어
+   "현재 겹침 없음"은 자명하지만, 위 1·2 번이 "앞으로도 구조적으로 못 겹친다"는 걸 보장한다.
+   `report_lines`에 unit_source 가 2종 이상 섞인 rcept_no 44건이 실제로 있긴 했으나(전부
+   `declared`/`doc_default`/`fx_declared` 조합, 기존 HTML 파서 내부의 열 단위 판정 다중값 —
+   `[[layer2-unit-column-attribution]]` 범위, XBRL 경로와 무관) `'xbrl'`이 낀 것은 0건.
+
+**부수 발견(작업 중, Phase 4 범위 밖 — 사용자에게 별도 보고·조치 완료)**: 4-5(call site 로그 확인)용
+dry-run 스크립트가 `_run_mirror_and_audit()`를 스텁 처리 못 해 실제로 실행시켰고, 그 감사가 진짜
+갭(한일철강 정정공시 2건, 오늘 18:00 정기배치가 NAS 미마운트로 저장소 계약 위반 중단된 여파)을
+발견해 실제 알림 이메일이 나갔다. 사용자 확인 후 `--days 1 --download-only` 수동 실행으로 즉시
+해소(미탐지 0으로 재확인). 이 과정에서 상장폐지 원문 이관 보류 알림도 별도로 발생(3개사, NAS
+파일수 부족 — 가드 정상 동작, 데이터 유실 아님, 미해결로 남김).
+
+`pytest fin2/tests/` — NAS 마운트 상태에서 263 passed(기존 무관 실패 1건 유지, 이번 변경과 무관).
 
 ## Phase 5 — 소급 백필 (5건)
 

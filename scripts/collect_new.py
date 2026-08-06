@@ -450,6 +450,31 @@ def _sync_layer2_lines(corps: list[str]) -> None:
         logger.warning(f"[collect] ④-3 계층2 전사 실패(비치명적): {exc}")
 
 
+def _sync_xbrl_instance_lines(corps: list[str]) -> None:
+    """④-4 계층2 증분 적재 — DART 표준 XBRL instance zip(`file_type='xbrl_zip'`) 경로.
+
+    `_sync_layer2_lines`(④-3, `file_type='xml'`)와 대상이 다른 별도 파이프라인이다 —
+    `document.xml`(014, "파일없음")로 XML 본문을 못 받은 필링을 다운로더가 XBRL instance
+    zip 으로 폴백 수집했을 때만 대상이 생긴다(`collector/downloader.py::
+    _try_xbrl_instance_fallback`, Phase 2). 본문(BS/IS/CF/SCE)만 만든다 — 주석 없음
+    (`fin2/extract/report_lines_xbrl.py` 모듈 docstring).
+
+    ★이 함수도 **두 call site** 에서 불려야 한다(메인 ④-4 · `--standardize-only` 재개) —
+      `docs/runbook_new_parser_pipeline_integration.md` 체크리스트 ①, `_sync_layer2_lines`
+      와 동일 원칙. 비치명(수집 계속)."""
+    if not corps:
+        return
+    try:
+        from collector.xbrl_instance_lines_sync import sync_xbrl_instance_lines
+        res = sync_xbrl_instance_lines(corps=corps)
+        if res["filings"]:
+            logger.info(f"[collect] ④-4 XBRL 원문 계층2 전사 — 기업 {res['corps']} · "
+                        f"보고서 {res['filings']:,} · 본문 {res['rows']:,}행 · "
+                        f"표 {res['table_rows']:,} (실패 {res['errors']})")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ④-4 XBRL 원문 계층2 전사 실패(비치명적): {exc}")
+
+
 def _sync_biz_metrics(corps: list[str]) -> None:
     """B4+Phase3+B5 — 새로 수집된 기업의 사업보고서 '사업의 내용' 본문표 → biz_metrics.
 
@@ -636,6 +661,7 @@ def main() -> None:
                        f"달력 {agg.get('c', 0):,} · 타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
         _sync_cf_da(affected)
         _sync_layer2_lines(affected)
+        _sync_xbrl_instance_lines(affected)
         _verify_and_log(agg, args)
         _sync_biz_metrics(affected)
         _sync_order_backlog(affected)
@@ -741,6 +767,9 @@ def main() -> None:
 
     # ④-3 계층2 전사 — 신규 보고서 → report_lines(본문) + note_lines(주석).
     _sync_layer2_lines(affected)
+
+    # ④-4 계층2 전사(XBRL 원문 zip 경로) — file_type='xbrl_zip' 대상만(document.xml 014 폴백).
+    _sync_xbrl_instance_lines(affected)
 
     # ⑤ 수집 후 DQ 게이트 — 새로 표준화된 기업만 Gate B(보고서==DB)+항등식 재검, corp_verify_status 적재.
     _verify_and_log(agg, args)

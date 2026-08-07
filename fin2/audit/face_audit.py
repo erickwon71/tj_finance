@@ -22,7 +22,6 @@ from pathlib import Path
 
 from parser.xml.dart_xml_parser import _parse_xml_file
 from fin2.extract.acontext import parse_acontext
-from fin2.extract.statement_titles import title_text, classify_statement_title
 from fin2.taxonomy.concept_map import map_acode
 
 _XBRL_PREFIXES = ("ifrs-full_", "dart_")
@@ -225,27 +224,31 @@ def _adecimal_from_unit(unit: int) -> int:
     return -int(round(math.log10(unit)))
 
 
-# 표제기반 본문표 식별은 fin2.extract.statement_titles 로 이전(추출기와 공유, 단일 진실원).
-# title_text / classify_statement_title 를 import 해 사용한다.
-
-
 def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
     """
     Track B(텍스트) 보고서의 **본문 재무제표 face 표** 라인을 독립 재추출.
 
-    설계(NAVER 트리아지 교훈): section_detector.find_section_tables 는 복잡문서(분할·정정)에서
-    본문 표 대신 2차 조정표/요약을 오연결한다 → **표제(제목 표)로 본문 재무제표 표를 직접 식별**한다.
-    DART 본문 = `<TABLE-GROUP>[표제 TABLE("연결 재무상태표 제N기..."), 데이터 TABLE]` 구조.
-    표제에 statement명+기간마커가 있고 분할/주석/요약/자본변동이 아니면 그 데이터 표가 본문 face.
+    표 위치·basis(연결/별도) 식별 = 추출기(`fin2.extract.text._detect_body_statement_tables`)와
+    **공유**(2026-08-07 수정). 예전엔 이 함수가 독자적으로 "전체 TABLE 스캔 +
+    `classify_statement_title(title_text(tbl))`"(표제=데이터표의 **직전 형제 1개**만 봄)를 1차로
+    쓰고, 실패하면 `section_detector.detect_sections/find_section_tables`(복잡문서에서 주석·조정표를
+    오연결하는 것으로 이미 알려진 legacy 함수) 로 폴백했다. 재무제표명(TITLE)과 기간·단위 표가
+    **서로 다른 두 형제 노드**로 분리된 서식(예: `<TITLE>재무상태표</TITLE>` 다음에 별도
+    "(단위:원)" 표)에서 표제 텍스트에 재무제표명 토큰 자체가 안 잡혀 1차가 통째로 실패 →
+    legacy 폴백이 연결 표 값을 별도 basis 로 오귀속(또는 아예 못 찾음)해 Gate B 가 **오탐
+    value_diff** 를 냈다(실측 2023-11 제출 3분기보고서 10개사 479건 — DB 값은 원문과 정확히
+    일치했고 감사기만 틀렸다).
+    `_detect_body_statement_tables` 는 DART 챕터 섹션(`2.연결재무제표`/`4.재무제표`) 을
+    basis 의 권위 있는 근거로 삼아(표제 텍스트의 "연결" 유무에 의존하지 않음) 2026-07-17 재설계
+    이후 이 문제 부류를 이미 해결했다 — 감사기가 구버전에 머물러 있었을 뿐이다.
 
-    독립성: 표 위치는 표제로 찾되, 셀은 table_extractor 컬럼로직 비재사용하고 **행 내 모든
-    숫자 셀 리터럴** 읽기(any-column). is_cumulative=True 로 interim 필터 통과.
-    요약재무정보표·주석표는 제외(본문만).
+    독립성(유지): 표 **위치**는 추출기와 공유하되, 셀은 table_extractor 컬럼로직 비재사용하고
+    **행 내 모든 숫자 셀 리터럴** 읽기(any-column). is_cumulative=True 로 interim 필터 통과.
+    요약재무정보표·주석표는 제외(본문만, `_detect_body_statement_tables` 가 이미 보장).
     """
     from parser.xml.table_extractor import _get_cells
     from parser.common.account_mapper import get_mapper
-    from fin2.extract.text import declared_unit, _table_has_data_rows
-    from fin2.extract.statement_titles import SECTION_CODE_OF
+    from fin2.extract.text import declared_unit, _detect_body_statement_tables, _detect_fin_type
 
     root = _parse_xml_file(Path(file_path))
     if root is None:
@@ -294,50 +297,21 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
                     is_cumulative=True, from_gapfill=from_gapfill,
                 ))
 
-    # ── 1차: 표제기반 본문표(robust, 복잡문서 오연결 회피) ──
-    covered: set[str] = set()
-    for tbl in root.findall(".//TABLE"):
-        meta = classify_statement_title(title_text(tbl))
-        if meta is None:
-            continue
-        # 데이터행 없는 footer/stub 표(제목만)는 face 아님 → 커버로 치지 않음(갭필이 진짜표 채우게).
-        if not _table_has_data_rows(tbl):
-            continue
-        basis, stmt = meta
-        # 단위: 표 **자기 소유 선언(표제+첫 행)만** 인정(declared_unit) — strict 추출기와 동일.
-        # 선언 없으면 스킵(추측 금지; 원 가정 시 ×10^6 false-fail 위험, Phase A §3-C).
-        unit = declared_unit(tbl)
-        if unit is None:
-            continue
-        _read_table(tbl, basis, stmt, unit)
-        covered.add(SECTION_CODE_OF[(basis, stmt)])
-
-    # ── 폴백(갭필): 표제기반이 못 잡은 섹션(구 K-GAAP 면표는 제목이 stub 표에 분리돼 classify 실패)
-    # 은 추출기와 동일하게 detect_sections/find_section_tables 로 찾는다(K-GAAP 등 커버리지 확장).
-    # 셀 읽기는 동일 _read_table(any-column, 독립 숫자파서) → 수치/단위 검증 독립성 유지.
-    _META_OF = {"BS_C": ("consolidated", "BS"), "BS_S": ("separate", "BS"),
-                "IS_C": ("consolidated", "IS"), "IS_S": ("separate", "IS"),
-                "CF_C": ("consolidated", "CF"), "CF_S": ("separate", "CF")}
-    missing = [c for c in _META_OF if c not in covered]
-    if missing:
-        from parser.xml.section_detector import (
-            detect_sections, find_section_tables, detect_unit_from_section)
-        try:
-            sections = detect_sections(root)
-        except Exception:
-            sections = {}
-        for code in missing:
-            title_elem = sections.get(code)
-            if title_elem is None:
+    # ── DART 섹션 기반 본문표 식별 (추출기와 공유, 단일 진실원) ──
+    fin_type = _detect_fin_type(root)
+    groups = _detect_body_statement_tables(root, fin_type)
+    for section_code, tables_with_unit in groups.items():
+        stmt = section_code.split("_")[0]
+        if stmt not in ("BS", "IS", "CF"):
+            continue   # SCE 등은 이 감사 대상 아님(include_sce=False 라 기본은 안 나오지만 방어)
+        basis = "consolidated" if section_code.endswith("_C") else "separate"
+        for tbl, unit, _kind in tables_with_unit:
+            # 단위: 섹션 그룹이 이미 준 것 우선, 없으면 표 자기 선언으로 재시도(추측 금지 —
+            # strict 추출기와 동일, Phase A §3-C). 둘 다 없으면 스킵.
+            u = unit if unit is not None else declared_unit(tbl)
+            if u is None:
                 continue
-            try:
-                tbls = find_section_tables(title_elem)
-                unit = detect_unit_from_section(title_elem)
-            except Exception:
-                continue
-            basis, stmt = _META_OF[code]
-            for t in tbls:
-                _read_table(t, basis, stmt, unit, from_gapfill=True)
+            _read_table(tbl, basis, stmt, u)
     return lines
 
 

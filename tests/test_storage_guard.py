@@ -11,6 +11,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -128,6 +129,45 @@ def test_primary_not_writable_raises():
             assert _raises(sg.assert_storage)
         finally:
             sg.PRIMARY_ROOT.chmod(0o755)
+
+
+# ── ensure_mounted: SMB 자동 재마운트(최선형) ──────────────────────
+
+def test_ensure_mounted_skips_non_production_path():
+    """PRIMARY_VOLUME 이 실제 마운트포인트가 아니면(테스트처럼) 아무것도 안 한다."""
+    with fake_volumes(), patch("subprocess.run") as mock_run:
+        sg.ensure_mounted()
+        mock_run.assert_not_called()
+
+
+def test_ensure_mounted_noop_when_already_mounted():
+    """이미 마운트돼 있으면 재마운트를 시도하지 않는다."""
+    with patch.object(sg, "PRIMARY_VOLUME", sg._PRODUCTION_MOUNT_POINT), \
+         patch("os.path.ismount", return_value=True), \
+         patch("subprocess.run") as mock_run:
+        sg.ensure_mounted()
+        mock_run.assert_not_called()
+
+
+def test_ensure_mounted_attempts_remount_when_unmounted():
+    """언마운트 상태면 `open smb://...` 로 재마운트를 시도한다."""
+    with patch.object(sg, "PRIMARY_VOLUME", sg._PRODUCTION_MOUNT_POINT), \
+         patch("os.path.ismount", return_value=False), \
+         patch("subprocess.run") as mock_run, \
+         patch("time.sleep"):
+        sg.ensure_mounted()
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0][0]
+        assert args[0] == "open"
+        assert "smb://" in args[1]
+
+
+def test_ensure_mounted_never_raises_on_failure():
+    """재마운트 시도 자체가 실패해도(예: open 명령 없음) 예외를 던지지 않는다."""
+    with patch.object(sg, "PRIMARY_VOLUME", sg._PRODUCTION_MOUNT_POINT), \
+         patch("os.path.ismount", return_value=False), \
+         patch("subprocess.run", side_effect=OSError("no such command")):
+        sg.ensure_mounted()  # 예외 없이 반환돼야 한다
 
 
 # ── 계약 위반은 예외여야 한다(경고 후 진행 금지) ──────────────────

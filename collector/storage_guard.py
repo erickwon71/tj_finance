@@ -24,6 +24,8 @@ sentinel 이 백업으로 전파돼 서로 덮어쓰는 일이 없다.
 from __future__ import annotations
 
 import os
+import subprocess
+import time
 from pathlib import Path
 
 from loguru import logger
@@ -31,6 +33,12 @@ from loguru import logger
 # ── 저장소 계약 상수 ────────────────────────────────────────────────
 PRIMARY_VOLUME = Path("/Volumes/tj_finance_data")   # NAS(RAID1)
 BACKUP_VOLUME  = Path("/Volumes/dart_data")         # SD카드
+
+# 자동 재마운트 대상 — PRIMARY_VOLUME 과 별개 상수로 둔다. 테스트는 PRIMARY_VOLUME 을
+# tmp 디렉터리로 갈아끼우므로, 이 고정값과 비교하면 테스트에서 자연히 스킵된다.
+_PRODUCTION_MOUNT_POINT = Path("/Volumes/tj_finance_data")
+_SMB_URL = "smb://tjkwon@192.168.0.96/tj_finance_data"
+_MOUNT_WAIT_S = 20
 
 PRIMARY_ROOT = PRIMARY_VOLUME / "raw_report"        # 쓰기 대상 · 미러 소스
 BACKUP_ROOT  = BACKUP_VOLUME / "raw_report"         # 미러 목적지
@@ -133,6 +141,38 @@ def check_readable(root: Path) -> None:
         ) from exc
 
 
+def ensure_mounted() -> None:
+    """NAS(SMB) 가 언마운트 상태면 재마운트를 시도한다 — 사용자가 지금 수동으로 하는
+    Finder Cmd+K 와 같은 경로(`open smb://...`)라 저장된 Keychain 자격증명을 그대로
+    재사용한다(비밀번호를 코드/설정에 저장하지 않는다).
+
+    **최선형 편의 기능**이다 — 실패해도 예외를 던지지 않는다. 이 함수 다음에 오는
+    `assert_storage` 의 기존 검사(I1/I2/I3)가 여전히 명확한 에러로 막으므로, 재마운트에
+    실패해도 07-17 의 "경고 후 진행" 패턴으로 되돌아가지 않는다.
+
+    PRIMARY_VOLUME 이 실제 프로덕션 마운트포인트일 때만 시도한다 — 테스트는 PRIMARY_VOLUME
+    을 tmp 디렉터리로 갈아끼우므로 자연히 스킵된다.
+    """
+    if PRIMARY_VOLUME != _PRODUCTION_MOUNT_POINT:
+        return
+    if os.path.ismount(PRIMARY_VOLUME):
+        return
+    logger.warning(f"[storage] {PRIMARY_VOLUME} 마운트 안 됨 — SMB 재마운트 시도")
+    try:
+        subprocess.run(["open", _SMB_URL], check=False, timeout=5)
+    except Exception as exc:                        # noqa: BLE001 — 편의 기능, 실패해도 계속
+        logger.warning(f"[storage] SMB 재마운트 명령 실행 실패(계약 검증이 계속 막을 것): {exc}")
+        return
+    for _ in range(_MOUNT_WAIT_S):
+        time.sleep(1)
+        if os.path.ismount(PRIMARY_VOLUME):
+            logger.success(f"[storage] SMB 재마운트 성공 — {PRIMARY_VOLUME}")
+            return
+    logger.warning(
+        f"[storage] SMB 재마운트 {_MOUNT_WAIT_S}초 대기 후에도 안 됨 "
+        f"(Keychain 자격증명 미저장이거나 서버 응답 없음) — 계약 검증에서 명확한 에러로 막힘")
+
+
 # ── 통합 진입점 ─────────────────────────────────────────────────────
 
 def assert_storage(require_backup: bool = False) -> None:
@@ -141,6 +181,7 @@ def assert_storage(require_backup: bool = False) -> None:
     Args:
         require_backup: 미러 단계처럼 BACKUP 볼륨까지 필요할 때 True.
     """
+    ensure_mounted()                             # NAS 언마운트 상태면 재마운트 시도(최선형)
     check_sentinel(PRIMARY_VOLUME, PRIMARY_ID)   # G1 (I2)
     check_symlink()                              # G2 (I1)
     check_writable(PRIMARY_ROOT)                 # G3 (I3)

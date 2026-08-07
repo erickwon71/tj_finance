@@ -4,7 +4,7 @@
 > 날짜 없는 이 파일을 계속 갱신한다(개별 문서는 시점 스냅샷·상세). 새 세션은 여기서 시작해
 > "현재 시작점"(§5)의 최신 핸드오프로 들어간다.
 >
-> 최종 갱신: **2026-08-01** · 현재 시작점(재설계 본류) = [handoff_f1_f2_units_2026-07-31](../qa/handoff_f1_f2_units_2026-07-31.md) — **08-01 에 본류 진행 없음**, 브리지 swap 방향(§5) 그대로.
+> 최종 갱신: **2026-08-07** · 현재 시작점(재설계 본류) = [handoff_f1_f2_units_2026-07-31](../qa/handoff_f1_f2_units_2026-07-31.md) — **08-01~08-07 본류 진행 없음**(아래 병행 트랙만 진행, 08-07 부로 전부 종료), 브리지 swap 방향(§5) 그대로.
 > (하루치 전체 정리 = [session_summary_2026-07-31](../qa/session_summary_2026-07-31.md))
 >
 > **08-01 병행 트랙 2건**(재설계 범위 밖 — 각자 별도 문서가 정본, 아래 요약만 링크):
@@ -16,14 +16,26 @@
 >   [handoff_collection_pipeline_2026-07-31](../qa/handoff_collection_pipeline_2026-07-31.md)(갱신됨).
 >   계층1(다운로드) 운영 강화이며 계층2/3 데일리 재편입은 여전히 Phase 5 대기.
 >
-> **08-04~08-05 병행 트랙**(재설계 범위 밖 — 계층2 적재공백 감사 및 수정): 189건 원인 전수분해
-> ([handoff_layer2_gap_analysis_2026-08-04](../qa/handoff_layer2_gap_analysis_2026-08-04.md)) →
+> **08-04~08-07 병행 트랙**(재설계 범위 밖 — 계층2 적재공백 감사 및 R4-2 파생 백로그, **트랙 종료**):
+> 189건 원인 전수분해([handoff_layer2_gap_analysis_2026-08-04](../qa/handoff_layer2_gap_analysis_2026-08-04.md)) →
 > 조용한 손실 6종 수정+외화(USD) 지원+상장폐지 데이터 정리
 > ([handoff_layer2_silent_loss_2026-08-05](../qa/handoff_layer2_silent_loss_2026-08-05.md)) →
 > ⓪-4 file_path 재발 방지 + 08-04 원인표 재확인, 활성기업 잔여공백 **24건**으로 확정 및
-> 정밀 재분해(신규 패턴 "XML 파싱 자체 실패" 9건 발견) —
-> **★이 트랙 현재 시작점** = [handoff_delisting_filepath_and_gap_recheck_2026-08-05](../qa/handoff_delisting_filepath_and_gap_recheck_2026-08-05.md).
-> 브랜치는 main 에 병합·push 완료(`df13bfe`).
+> 정밀 재분해(신규 패턴 "XML 파싱 자체 실패" 9건 발견,
+> [handoff_delisting_filepath_and_gap_recheck_2026-08-05](../qa/handoff_delisting_filepath_and_gap_recheck_2026-08-05.md)) →
+> 그 잔여공백에서 파생된 "미착수 후보 3건"을 한곳에 정리
+> ([handoff_r4_2_remaining_backlog_2026-08-06](../qa/handoff_r4_2_remaining_backlog_2026-08-06.md)) →
+> **2026-08-07 3건 전부 종료**: ①"표못잡음" 6건 추정 → 실측 3건(이노시뮬레이션 2건은 신규
+> 파서 폴백 `_split_headed_multi_statement_table`로 해결·R4-2 §3 등재, 자비스 1건은 원문
+> 자체에 계정 데이터가 없어 파서로 불가·정상 보류) · ②표제 인식 수정(`0b93816`) 소급 미반영
+> 260건 추정 → 전수 스캔 실측 **55건**, 전량 백필 완료(순수 회수, 손실 0) · ③08-04 트랙
+> download-only 백로그 72건 중 **64건 해소**(잔여 8건은 원문이 PDF뿐이라 파서로 불가·정상
+> 종결). **부수 발견**: ③ 재감사 중 16개사에서 Gate B `line_value_diff` 856건 검출 →
+> 원인은 데이터 손상이 아니라 감사기(`fin2/audit/face_audit.py`)가 표 위치·basis 식별에
+> 낡은 로직을 쓰던 자체 버그(추출기는 2026-07-17 재설계로 이미 해결한 문제를 감사기만
+> 못 따라감), `_detect_body_statement_tables` 재사용으로 수정 후 재감사 value_diff **0**
+> (`75d526e`). 전부 main 병합·push 완료(`3e9fef6`). **이 트랙은 여기서 완전히 닫혔다** —
+> 재개할 남은 후보 없음, 새 세션은 본류(§5) 또는 신규 트랙을 선택한다.
 
 ---
 
@@ -99,6 +111,14 @@
 ---
 
 ## 4. 핸드오프 타임라인 (세션 진입점, 최신순)
+- 2026-08-07(병행, 재설계 범위 밖 — **트랙 종료**) R4-2 파생 백로그 3건 전부 완료(①표못잡음 실측3건·②표제인식 소급 55건 백필·③download-only 64/72건 해소) + 부수 발견 Gate B 오탐 856건 해소(감사기 표 식별 버그, `75d526e`). 정본 문서 없음(메모리 기록: `r4-2-backlog-items-2-3-done-2026-08-07`·`r4-2-item1-headed-multistmt-done-2026-08-07`·`key-bugs-fixed` #9), 원출처는 아래 08-06 항목
+- 2026-08-06(병행, 재설계 범위 밖) [handoff_r4_2_remaining_backlog](../qa/handoff_r4_2_remaining_backlog_2026-08-06.md) — 08-04/08-05 트랙이 남긴 미착수 후보 3건을 한곳에 정리(구현 없음, 정리만). 다음날(08-07) 위 항목에서 3건 전부 처리됨
+- 2026-08-05(병행, 재설계 범위 밖) [handoff_delisting_filepath_and_gap_recheck](../qa/handoff_delisting_filepath_and_gap_recheck_2026-08-05.md) — ⓪-4 file_path 재발버그 수정+소급교정, 활성기업 잔여공백 **24건** 확정·정밀분해(신규 패턴 XML파싱자체실패 9건)
+- 2026-08-05(병행, 재설계 범위 밖) [handoff_doc_default_unit_gap5](../qa/handoff_doc_default_unit_gap5_2026-08-05.md) — R4-1 신설(문서 전체 기본단위) + 특수건설류 별개결함 분리
+- 2026-08-05(병행, 재설계 범위 밖) [handoff_r4_2_merged_title_table](../qa/handoff_r4_2_merged_title_table_2026-08-05.md) — R4-2 신설(제목+데이터 병합 표·제목없는 표 2종 폴백), 특수건설·팬엔터테인먼트·포시에스 3건 복구
+- 2026-08-05(병행, 재설계 범위 밖) [handoff_xml_parse_failure_xbrl_finding](../qa/handoff_xml_parse_failure_xbrl_finding_2026-08-05.md) — XML파싱실패 재확인(진짜 6건)+DART XBRL 원문 대체 경로(`ifrs.do`) 발견(조사만, 코드/DB 변경 없음)
+- 2026-08-05(병행, 재설계 범위 밖) [handoff_layer2_silent_loss](../qa/handoff_layer2_silent_loss_2026-08-05.md) — 계층2 조용한 손실 6종 수정+외화(USD) 지원+상장폐지 데이터 정리, 공백 189→24
+- 2026-08-04(병행, 재설계 범위 밖) [handoff_layer2_gap_analysis](../qa/handoff_layer2_gap_analysis_2026-08-04.md) — 계층2 적재공백 189건 원인 전수분해 착수
 - 2026-08-01(병행, 재설계 범위 밖) [handoff_biz_catalog_r0](../qa/handoff_biz_catalog_r0_2026-08-01.md) — 사업의 내용 27항목 신규적재(`biz_metrics` 7.81M행·2,524사, `order_backlog` 24,687행) + R0 원칙 확립 + `docs/PARSING_RULES.md` 단일화 + 거짓부재 결함 10건 수정 + 전수 재적재(오류0·회귀130). 미결: 계층2 편입 여부
 - 2026-08-01(병행, 재설계 범위 밖) [handoff_collection_pipeline_2026-07-31 갱신](../qa/handoff_collection_pipeline_2026-07-31.md) — 상장폐지 원문 NAS 이관 자동화(⓪-4)+KRX 휴장일 스킵(⓪-0) 데일리 배선. 정본=[collection_pipeline_restore §13·§14](collection_pipeline_restore_2026-07-31.md). 신규 테스트 19건·pytest 149/149
 - **2026-07-31** [handoff_f1_f2_units](../qa/handoff_f1_f2_units_2026-07-31.md) — ★**현재 시작점(재설계 본류)** · 세션 전체 정리 = [session_summary](../qa/session_summary_2026-07-31.md) · 재적재 결과 = [phase4_reload](../qa/phase4_reload_2026-07-31.md). F1(단위 판정 표→**열** 단위, 오염 제거)·F2(헤더 삭제→`header_hint` 전사) 구현. 구·신 차분에서 **본문·SCE 변화 0**. 미선언 11.2M셀·수주/가동률 공백 규명 완료. **Phase 4 재적재까지 완료**(DB 108.9→74 GB · 오염 6,130,738행→0 · note_lines 246.6M행)
@@ -121,6 +141,11 @@
 > 다음 액션은 [현재 핸드오프 §0-1](../qa/handoff_f1_f2_units_2026-07-31.md) 을 따른다
 > (1순위 = 셀 병합 결함 처리 방향 결정 · 2순위 = 구 계약을 보는 검증도구 4종 갱신).
 > 아래 목록은 브리지 swap 쪽 흐름으로 계속 유효하다.
+>
+> **2026-08-07 갱신** — 08-01~08-07 은 전부 본류 밖 병행 트랙(§0 참고, 계층2 적재공백
+> 감사 + R4-2 파생 백로그 3건 + Gate B 감사기 버그)이었고 08-07 부로 그 트랙이 **완전히
+> 종료**됐다. 본류(아래 1~5번)는 07-31 이후 진행이 없어 순서·상태 그대로 유효 — **1순위는
+> 여전히 셀 병합 결함 처리방향 결정**(사용자 판단 대기), 그다음 검증도구 4종 갱신.
 
 **완료(2026-07-25)**: `--recheck` + `build_std_v3 --all` 재빌드 · 금융섹터 revenue census 종결(보험/은행/
 증권/여신전문 프로파일 + 잔여 KSIC 프로파일 불필요, 원문대조 PASS) · **브리지 swap enrichment steps 1-2**

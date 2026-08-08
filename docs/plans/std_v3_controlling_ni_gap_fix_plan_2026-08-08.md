@@ -65,7 +65,63 @@ v2의 `fin2/standardize/build.py::_collect`는 이 상황 전용 규칙이 있�
 
 측정: `controlling_ni IS NULL AND conflicts ? 'is.controlling_ni'` = 26,420행(전체 NULL
 142,078행의 18.6%). `noncontrolling_ni`도 라벨('비지배지분' vs '비지배지분에 귀속되는
-당기순이익(손실)')이 같은 패턴으로 충돌하므로 동일 결함일 가능성이 높음(미측정 — 조사범위).
+당기순이익(손실)')이 같은 패턴으로 충돌하므로 동일 결함일 가능성이 높음 —
+**Phase B 착수 전 선행조사로 확정함(2026-08-08, §3-2 앞 문단 참고)**.
+
+### 1-B-부록. 선행조사 결과 — noncontrolling_ni도 동일 결함 확정 (2026-08-08)
+
+`account_maps/is_accounts.py`의 `is.noncontrolling_ni` alias 목록에 맨 라벨 `'비지배지분'`이
+들어있다(`is.controlling_ni`의 `'지배기업 소유주지분'`과 완전히 같은 함정). 삼성전자 FY2023
+연결로 직접 확인:
+
+```
+report_lines 원문(둘 다 실재, 섹션 다름):
+  '포괄손익의 귀속'         섹션 → "비지배지분"                    = 991,750,000,000   (총포괄분, 오답)
+  '당기순이익(손실)의 귀속' 섹션 → "비지배지분에 귀속되는 당기순이익(손실)" = 1,013,699,000,000 (정답)
+
+검산: 14,473,401,000,000(정답 controlling) + 1,013,699,000,000(정답 noncontrolling)
+     = 15,487,100,000,000 = net_income ✓
+     17,845,661,000,000(오답 controlling) + 991,750,000,000(오답 noncontrolling)
+     = 18,837,411,000,000 ≠ net_income (총포괄이익, 다른 개념)
+```
+
+DB 전수 측정(현재 std_v3, consolidated, 92,290행 기준):
+| 축 | 수치 |
+|---|---|
+| `is.controlling_ni` held conflict (controlling_ni NULL) | 26,420행 (consolidated 26,112 + separate 잔류 308) |
+| `is.noncontrolling_ni` held conflict | 16,825행 |
+| 위 두 conflict가 **동시에** 걸린 행 | 13,809행 |
+| controlling_ni-conflict 중 net_income 있는 행 | 25,865행 |
+| — 그중 noncontrolling_ni도 동시 conflict | 13,704행 |
+| — 그중 noncontrolling_ni는 clean(단일확정 또는 후보없음) | 12,161행 |
+
+항등식 재선택 실현가능성 표본검증(13,704행 **전수**, `controlling+noncontrolling==net_income`
+정확매칭 여부 — ⚠최초 300건 표본에서 "복수매칭 2.7%"로 측정했었으나 **버그였다**: 동일
+값이 candidate 리스트에 중복으로 들어간 걸 별개 매칭으로 잘못 셈. 값 기준 dedupe 후 전수
+재측정한 아래 표가 정답):
+| 결과 | 건수 | 비율 |
+|---|---|---|
+| 후보조합 중 **유일하게** 일치 | 13,175 | 96.1% |
+| **복수** 조합이 일치(진짜 동률) | 8 | 0.06% |
+| 일치하는 조합 **없음**(보류 유지가 안전) | 521 | 3.8% |
+
+**타이브레이크는 도입하지 않기로 함(2026-08-08, 사용자 결정 반영)**: 위 진짜 동률 8건을
+`amended`(기재정정) 여부로 재확인했더니 **전부 `amended=False`** — 기재정정과 무관했다(최초
+가설 오류, 정정). 대신 8건 전부 §1-B와 동일한 라벨충돌(같은 라벨이 "순이익 귀속"/"포괄손익
+귀속" 두 섹션에 동시 존재)이었고, 우연히 그 기간 기타포괄손익(OCI)이 작아 두 섹션 합계가 둘 다
+net_income과 맞아떨어져 항등식으로도 못 갈랐을 뿐. "섹션명에 '포괄'이 있으면 버린다"는
+대안도 검토했으나(149건 표본 중 96.6% 항등식과 일치) **반례 2건(0.5%)을 발견**해 기각—
+DH오토웨어(00110583, 2022반기, https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20220812001066)
+· 에프알텍(00442561, 2017반기, https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20170814000908)은
+**원문 자체에서 "순이익의 귀속"/"총포괄손익의 귀속" 두 섹션 라벨이 서로 뒤바뀌어 있다**(사용자가
+원문 표로 직접 대조·확인). 섹션명 필터였다면 이 2건에서 오답을 골랐을 것 — 항등식 교차매칭은
+net_income 실값에 고정돼 있어 라벨이 뒤바뀌어도 정답을 찾아낸다. **결론**: 타이브레이크
+규칙을 새로 만들지 않는다 — 진짜 동률 8건(0.06%)·무매칭 521건(3.8%) 둘 다 그냥 보류(NULL
+유지)한다("결측 > 오염" 원칙, 규모도 무시할 만큼 작음).
+
+**§3-2 재선택 로직 확정**: `is.controlling_ni` 단독이 아니라 `is.controlling_ni`+
+`is.noncontrolling_ni` **후보쌍을 함께** 놓고 confirmed net_income과의 항등식으로 재선택.
+유일 매칭이면 채택, 아니면(0건·2건 이상 모두) 보류.
 
 ### 1-C. 파일 상단 주석과의 불일치
 
@@ -109,8 +165,19 @@ v2 규칙 그대로 포팅(별도는 무조건 net_income 대입). 위험 낮음
    `is.controlling_ni`/`is.noncontrolling_ni`만 confirmed net_income 참조해 재선택.
 2. `_resolve` 내부에서 처리 순서를 강제(net_income을 먼저 처리하도록 정렬).
 
-옵션 1이 기존 구조를 덜 건드림. `noncontrolling_ni`도 같은 패턴이면 **먼저 조사 필요**
-(현재 결함이 controlling_ni에만 있는지, 두 canonical 모두에 있는지 §1-B 끝의 미측정 항목).
+옵션 1이 기존 구조를 덜 건드림. **선행조사 결과(§1-B-부록, 2026-08-08 완료)**: `noncontrolling_ni`도
+동일 결함 확정(라벨 `'비지배지분'` 충돌). 2차 패스는 `is.controlling_ni` 후보 하나만 보지 말고
+**`is.controlling_ni`×`is.noncontrolling_ni` 후보쌍을 교차**해 confirmed net_income과 정확히
+합이 맞는 조합을 찾는다(전수 96.1%는 유일 매칭 → 즉시 채택, 0.06%(진짜 동률)·3.8%(무매칭)는
+타이브레이크 없이 그대로 보류 — 근거는 §1-B-부록 끝부분). noncontrolling_ni 자체는 std 컬럼이
+아니므로(DIRECT_MAP에 없음) 저장 대상이 아니라 재선택 판정에만 쓰인다.
+
+**구현 완료(2026-08-08)**: `fin2/layer3/combine.py::_resolve_ni_attribution()` 신설,
+`combine_full()`에서 `_resolve()` 직후 호출. 삼성전자·삼성물산·현대해상·기업은행(§4 표본) +
+라벨스왑 2사(DH오토웨어·에프알텍) + 진짜동률 1건(00684802, 보류 유지 확인) 전부 검증 통과.
+150개 기업(5,724행) 재빌드 회귀 대조 — 기존 non-NULL 값 변경 0건, 신규 채움 1,538건.
+pytest 439 passed / 1 failed(무관 — `test_lxintl_facility_table_dropped`, 사업개황 파싱,
+`fin2/layer3/combine.py`와 무관).
 
 ### 3-3. 백필
 
@@ -161,16 +228,22 @@ delete-then-insert(`fin2/layer3/build.py::build_corp`, line 60~66)이므로, 코
       controlling_ni == net_income 확인, 자본값(138,722억) 오염 없음(--corp 단일 재빌드로 검증)
 - [x] 커밋(A만 단독으로, B와 분리) — 커밋 후 해시 기록 예정
 
-### Phase B — consolidated 라벨충돌 재선택 (§3-2, 순서 의존성 있음)
-- [ ] **선행조사**: `noncontrolling_ni`도 같은 라벨충돌 패턴(§1-B)이 있는지 실측
-      (`_map_label()`로 '비지배지분' 계열 라벨 재현 + held-conflict 카운트)
-- [ ] `_resolve()`를 2-패스로 재구성: 1차 패스 = `is.net_income` 등 일반 canonical 확정,
-      2차 패스 = `is.controlling_ni`/`is.noncontrolling_ni`를 confirmed net_income 기준
-      항등식 재선택(§3-2 옵션 1)
-- [ ] 기존 non-NULL 값이 하나도 안 바뀌는지 회귀 확인(2-패스가 이미 확정된 값을 덮지 않는지)
-- [ ] 단위 검증: 삼성전자 FY2023 연결(14,473,401,000,000), 삼성물산 2023Q3(18,305억),
-      현대해상 2022FY(5,746억) 재현
-- [ ] 커밋
+### Phase B — consolidated 라벨충돌 재선택 (§3-2, 순서 의존성 있음) — ✅완료(2026-08-08)
+- [x] **선행조사**(2026-08-08 완료): `noncontrolling_ni`도 같은 라벨충돌 패턴(§1-B) 확정 —
+      alias `'비지배지분'`이 `is.noncontrolling_ni`에 등재돼 있어 controlling_ni와 동일 함정.
+      DB 전수측정 16,825행 held-conflict, controlling_ni-conflict와 동시발생 13,809행.
+      항등식 재선택 전수측정(13,704행): 유일매칭 96.1%·진짜동률 0.06%·무매칭 3.8%.
+      타이브레이크 불필요 결론(라벨스왑 반례 2사 발견, §1-B-부록 끝부분). 상세 = §1-B-부록.
+- [x] `_resolve()`를 2-패스로 재구성: `combine.py::_resolve_ni_attribution()` 신설,
+      `_resolve()` 직후 호출. `is.controlling_ni`×`is.noncontrolling_ni` 후보쌍을 confirmed
+      net_income과 교차해 유일 매칭만 채택(§3-2 옵션 1, 타이브레이크 없음)
+- [x] 기존 non-NULL 값이 하나도 안 바뀌는지 회귀 확인 — 150개 기업(5,724행) 재빌드 대조,
+      **변경 0건**·신규 채움 1,538건
+- [x] 단위 검증: 삼성전자 FY2023 연결(14,473,401,000,000) ✓ · 삼성물산 2023Q3(1,830,533,213,586
+      ≈18,305억) ✓ · 현대해상 2022FY(574,557,219,967=net) ✓ · 기업은행 별도 재확인(Phase A
+      무회귀) ✓ · 라벨스왑 2사(DH오토웨어·에프알텍) 정답 채택 ✓ · 진짜동률(00684802) 보류 유지 ✓
+- [x] pytest 439 passed / 1 failed(무관, 사업개황 파싱)
+- [ ] 커밋(B만 단독)
 
 ### 전량 재빌드 + 검증
 - [ ] `scripts/build_std_v3.py --all` 전량 재빌드(idempotent delete-then-insert,

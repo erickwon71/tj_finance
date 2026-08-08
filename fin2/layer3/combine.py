@@ -357,6 +357,53 @@ def _resolve(cands: dict[str, list[dict]]):
     return confirmed, conflicts
 
 
+def _resolve_ni_attribution(cands: dict, confirmed: dict, conflicts: dict) -> None:
+    """2nd pass (Phase B, docs/plans/std_v3_controlling_ni_gap_fix_plan_2026-08-08.md §3-2):
+    re-select a held is.controlling_ni conflict via the accounting identity
+    controlling_ni + noncontrolling_ni = net_income.
+
+    Root cause (§1-B/§1-B-부록): the alias catalog has bare labels ('지배기업
+    소유주지분'·'비지배지분') that legitimately appear in BOTH the '당기순이익의 귀속'
+    section (what we want) and the '포괄손익의 귀속' section (총포괄이익 몫, wrong
+    concept) — both exact-match the same canonical, so _resolve() above holds instead
+    of guessing. Cross-matching the candidate pairs against the already-confirmed
+    net_income disambiguates without guessing (mutates confirmed/conflicts in place).
+
+    Deliberately NOT a section_path text filter ('포괄' 있으면 버림): measured
+    (2026-08-08) that ~0.5% of filings have the two section labels literally swapped
+    in the source (DH오토웨어 00110583 2022H1, 에프알텍 00442561 2017H1) — a text
+    filter would pick the wrong candidate there, while the identity check still finds
+    the right one because it's anchored to the actual net_income value, not a label.
+
+    Only fires when net_income is confirmed and controlling_ni is held. If the
+    identity match isn't unique (ambiguous or none — measured 3.9% of the held
+    population, mostly small-value coincidences or genuine OCI-driven non-matches),
+    stays held (결측 > 오염, no guessing)."""
+    if "is.controlling_ni" not in conflicts or "is.net_income" not in confirmed:
+        return
+    net_income = confirmed["is.net_income"]
+    cni_vals = {r["value"] for r in conflicts["is.controlling_ni"]}
+
+    if "is.noncontrolling_ni" in confirmed:
+        nci_vals = {confirmed["is.noncontrolling_ni"]}
+    elif "is.noncontrolling_ni" in conflicts:
+        nci_vals = {r["value"] for r in conflicts["is.noncontrolling_ni"]}
+    elif "is.noncontrolling_ni" in cands:
+        nci_vals = {r["value"] for r in cands["is.noncontrolling_ni"]}
+    else:
+        nci_vals = {0}  # wholly-owned consolidation: no NCI line at all (mirrors v2's `nci or 0`)
+
+    matches = {(c, n) for c in cni_vals for n in nci_vals if c + n == net_income}
+    if len(matches) != 1:
+        return
+    c_val, n_val = next(iter(matches))
+    confirmed["is.controlling_ni"] = c_val
+    del conflicts["is.controlling_ni"]
+    if "is.noncontrolling_ni" in conflicts:
+        confirmed["is.noncontrolling_ni"] = n_val
+        del conflicts["is.noncontrolling_ni"]
+
+
 # P&L 결과 계정(손실이 될 수 있음). 순'손실' 단독 라벨(이익 없음)에 양수값이면 손실을 양(+)으로
 # 기재한 서식(루닛 2021 'V.당기순손실'=+73.6B 등) → 표준화 시 부호반전. 이미 음수(괄호기재)이거나
 # 결합라벨('이익(손실)')·이익 라벨은 그대로. 실측: 손실단독 net_income 음수 1098 vs 양수 90(7.6%).
@@ -507,6 +554,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
         cands = collect_candidates(session, corp, fy, period, basis,
                                    statements=statements)
     confirmed, conflicts = _resolve(cands)
+    _resolve_ni_attribution(cands, confirmed, conflicts)
     col: dict[str, int] = {}
     for canon, value in confirmed.items():
         std_col = DIRECT_MAP.get(canon)

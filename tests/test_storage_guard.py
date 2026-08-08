@@ -170,6 +170,45 @@ def test_ensure_mounted_never_raises_on_failure():
         sg.ensure_mounted()  # 예외 없이 반환돼야 한다
 
 
+# ── ensure_root: opt-in SD 폴백(수동 스크립트 전용) ────────────────
+
+def test_ensure_root_default_is_pure_passthrough():
+    """allow_sd_fallback=False 는 assert_storage() 와 100% 동일 — 기존 호출부 무변화."""
+    with fake_volumes():
+        assert sg.ensure_root() == sg.PRIMARY_ROOT
+    with fake_volumes(primary_sentinel=None):
+        assert _raises(sg.ensure_root)
+
+
+def test_ensure_root_falls_back_to_backup_when_primary_dead():
+    """PRIMARY 불가 + allow_sd_fallback=True 면 BACKUP 으로 폴백하고 심링크도 따라간다."""
+    with fake_volumes(primary_sentinel=None):
+        root = sg.ensure_root(allow_sd_fallback=True)
+        assert root == sg.BACKUP_ROOT
+        assert sg.SYMLINK.resolve() == sg.BACKUP_ROOT.resolve()
+
+
+def test_ensure_root_without_fallback_still_raises_when_primary_dead():
+    """allow_sd_fallback 을 안 주면 PRIMARY 가 죽어도 절대 BACKUP 으로 안 넘어간다."""
+    with fake_volumes(primary_sentinel=None):
+        assert _raises(lambda: sg.ensure_root(allow_sd_fallback=False))
+        # 심링크가 실수로라도 안 바뀌었어야 한다
+        assert sg.SYMLINK.resolve() == sg.PRIMARY_ROOT.resolve()
+
+
+def test_ensure_root_self_heals_drift_when_primary_is_actually_fine():
+    """심링크가 BACKUP 을 가리키는 상태(과거 드리프트)라도 PRIMARY 가 멀쩡하면 자동 원복."""
+    with fake_volumes(symlink_to_backup=True):
+        root = sg.ensure_root(allow_sd_fallback=True)
+        assert root == sg.PRIMARY_ROOT
+        assert sg.SYMLINK.resolve() == sg.PRIMARY_ROOT.resolve()
+
+
+def test_ensure_root_raises_when_both_volumes_dead():
+    with fake_volumes(primary_sentinel=None, backup_sentinel=None):
+        assert _raises(lambda: sg.ensure_root(allow_sd_fallback=True))
+
+
 # ── 계약 위반은 예외여야 한다(경고 후 진행 금지) ──────────────────
 
 def test_failure_is_exception_not_return_value():

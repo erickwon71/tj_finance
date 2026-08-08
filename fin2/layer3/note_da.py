@@ -79,7 +79,7 @@ class _Row:
 def note_da_canonicals(
     session, rcept_no: str, basis: str, period: str = "FY"
 ) -> dict[str, int]:
-    """주석에서 당기 D&A canonical 을 뽑는다.
+    """주석에서 당기 D&A canonical 을 뽑는다. DB(`note_lines`+`report_tables`)에서 읽는다.
 
     Returns:
         {"note.depreciation": …, "note.rou_depreciation": …, "note.amortization": …,
@@ -87,14 +87,25 @@ def note_da_canonicals(
     """
     if not rcept_no or period not in ("FY", "H1", "Q1", "Q3"):
         return {}
-    # interim 은 누적 열을 골라야 한다(위 주석 참조).
-    prefer_cum = period != "FY"
-
     rows = session.execute(
         _ROWS_SQL, {"rcept": rcept_no, "basis": basis}
     ).fetchall()
     if not rows:
         return {}
+    return _note_da_canonicals_from_rows(rows, period)
+
+
+def _note_da_canonicals_from_rows(rows, period: str = "FY") -> dict[str, int]:
+    """`note_da_canonicals`의 핵심 로직 — DB 를 거치지 않고 이미 손에 든 행 목록에서 계산한다
+    (2026-08-08, T3.6). `rows`는 `.section_path/.table_seq/.row_order/.col_index/.col_label/
+    .label_raw/.value_won`를 노출하는 객체 목록이면 된다 — SQL 결과 행(`_ROWS_SQL`)도,
+    `fin2/extract/report_lines.py::extract_report_lines`가 메모리에서 돌려주는
+    `ReportLineRow`(statement='note'로 필터링한 것)도 그대로 쓸 수 있다. 이 분리 덕분에
+    DB 백필 전에도 "고친 코드로 재추출하면 어떻게 나오는가"를 raw XML 재파싱만으로 검증할
+    수 있다(백필 없이 note_lines 를 갱신할 필요가 없다).
+    """
+    # interim 은 누적 열을 골라야 한다(모듈 docstring 참조).
+    prefer_cum = period != "FY"
 
     by_topic: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
     for r in rows:

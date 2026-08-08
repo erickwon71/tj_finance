@@ -338,6 +338,121 @@ def _get_cells(tr: etree._Element) -> list[str]:
     return cells
 
 
+def _is_cell_element(el: etree._Element) -> bool:
+    """True 면 이 자식이 셀(TD/TH/TE/TU)이다 — `_get_cells` 와 같은 태그 집합."""
+    tag = el.tag.upper() if isinstance(el.tag, str) else ""
+    return tag in ("TD", "TH", "TE", "TU")
+
+
+def _grid_cell_span(el: etree._Element, attr: str) -> int:
+    """COLSPAN/ROWSPAN 값(대소문자 혼용 대응). 없거나 파싱 불가면 1.
+
+    `fin2/extract/report_lines.py::_cell_span` 과 판정 로직이 동일해야 한다 — 헤더 그리드
+    복원(`_build_col_labels`)과 이 파일의 본문 확장(`expand_table_grid`)이 서로 다른
+    COLSPAN/ROWSPAN 판정을 쓰면 두 좌표계가 어긋난다. `report_lines.py` 가 이미 이 모듈에서
+    `extract_rows` 등을 임포트하므로 반대 방향 임포트는 순환이 된다 — 그래서 여기 복제한다.
+    """
+    for k in (attr, attr.lower(), attr.capitalize()):
+        if k in el.attrib:
+            try:
+                return max(1, int(el.attrib[k]))
+            except (TypeError, ValueError):
+                return 1
+    return 1
+
+
+@dataclass
+class GridCell:
+    """확장 그리드(`expand_table_grid`)의 한 칸.
+
+    `inherited=False` — 이 칸이 실제 `<TD>`/`<TH>`/`<TE>`/`<TU>` 원문 셀의 좌상단 origin이다
+    (`text`는 그 셀의 원문, `colspan`/`rowspan`은 그 셀의 선언값).
+    `inherited=True` — 이 칸엔 이 행 자신의 물리적 셀이 없다. 더 위쪽 행의 ROWSPAN 이
+    이어져 채워진 칸이라, `text`/`colspan`/`rowspan`은 **origin 셀의 값을 그대로 복사**해
+    "이 칸에 논리적으로 무엇이 있는지"를 보여준다 — 물리적 `<TD>` 가 실제로 여기 있다는
+    뜻이 아니다.
+    """
+    text: str
+    grid_row: int
+    grid_col: int
+    colspan: int
+    rowspan: int
+    inherited: bool
+
+
+def expand_table_grid(table_elem: etree._Element) -> list[list[GridCell]]:
+    """표를 헤더·본문을 관통하는 **하나의 연속 (row,col) occupied-grid** 로 펼친다.
+
+    `fin2/extract/report_lines.py::_build_col_labels`가 헤더 행에만 해 오던 ROWSPAN/COLSPAN
+    그리드 복원을, 본문 행까지 **같은 좌표계로 이어서** 계산한다. 반환값은 TR 순서의
+    리스트이고, 각 원소는 그 행이 차지하는 그리드 칸을 왼쪽부터 나열한 `GridCell` 리스트다
+    (물리적 칸이든 ROWSPAN 이 이어받은 칸이든 전부 포함) — 그래서 어느 행이든
+    `row[k].grid_col` 이 **진짜** 열 위치다. 이 표의 물리적 `<TD>` 등장 순서를 그대로
+    열 인덱스로 쓰면(`_get_cells`/`extract_rows` 의 현재 동작) ROWSPAN 이어짐 행·COLSPAN
+    병합 라벨 행마다 그 이후 값이 왼쪽으로 밀려 엉뚱한 열에 저장된다 — 부록 A T16·T17,
+    R11 참고.
+
+    ★기존 `_get_cells`/`extract_rows` 는 이 함수가 있어도 **동작이 전혀 바뀌지 않는다.**
+    이 함수는 새로 추가된 것일 뿐이고, 기존 호출자(biz_section·order_backlog·본문
+    report_lines)는 여전히 물리적 위치 기반 경로를 그대로 쓴다. 본문(BS/IS/CF)은 이
+    결함의 영향이 실측 0건이므로(`docs/qa/handoff_note_lines_span_misattribution_
+    2026-08-07.md` §10) 옵트인 대상이 아니다 — 주석(note)·SCE 경로만 이 함수로 옮겨간다
+    (계획 `docs/plans/note_span_fix_plan_2026-08-07.md` Phase 2, T2.3/T2.4 — 이 함수 자체는
+    아직 어디서도 호출되지 않는다).
+
+    원형 — `scripts/census_note_span_misattribution.py::analyze_table`(조사 전용 스크립트가
+    먼저 이 그리드 워크로 결함 규모를 쟀다). 이 함수는 그 로직을 파이프라인 유틸로 옮긴
+    것이다.
+
+    Args:
+        table_elem: lxml TABLE 요소
+
+    Returns:
+        행(TR)별 `GridCell` 리스트. 직접 TR 이 없는 표는 `[]`.
+    """
+    from parser.xml.section_detector import table_direct_rows
+
+    trs = table_direct_rows(table_elem)
+    # (grid_row, grid_col) → 그 칸을 예약한 origin 셀의 (text, colspan, rowspan).
+    # ROWSPAN 이 남은 미래 행이 자기 칸을 건너뛸 때(= "상속" GridCell 을 만들 때) 참조한다.
+    occupied: dict[tuple[int, int], tuple[str, int, int]] = {}
+    grid_rows: list[list[GridCell]] = []
+
+    for r, tr in enumerate(trs):
+        row_cells: list[GridCell] = []
+        c = 0
+        for el in tr:
+            if not _is_cell_element(el):
+                continue
+            # 이 물리적 셀을 놓기 전, ROWSPAN 이 이어받은 칸을 전부 "상속" 항목으로 채운다
+            # (이 루프가 앞쪽 몇 칸을 채우고 나면 텔코웨어 `ROWSPAN=6` 처럼 그 행의 진짜 첫
+            #  물리 셀이 grid_col 0 이 아니라 1 에서 시작하게 된다 — 이게 이 함수의 핵심).
+            while (r, c) in occupied:
+                otext, ocs, ors = occupied[(r, c)]
+                row_cells.append(GridCell(otext, r, c, ocs, ors, True))
+                c += 1
+            text = ''.join(el.itertext()).strip()
+            cs = _grid_cell_span(el, "COLSPAN")
+            rs = _grid_cell_span(el, "ROWSPAN")
+            row_cells.append(GridCell(text, r, c, cs, rs, False))
+            for dr in range(rs):
+                for dc in range(cs):
+                    if dr == 0 and dc == 0:
+                        continue  # 이 칸 자체는 방금 물리 셀로 넣었다
+                    occupied[(r + dr, c + dc)] = (text, cs, rs)
+            c += cs
+        # 이 행의 마지막 물리 셀 오른쪽에 남은 ROWSPAN 이어짐 칸도 채운다 — 안 그러면
+        # (이 행 자신에겐 그 뒤로 물리 셀이 없는 경우) 그 행의 오른쪽 끝 칸이 그리드에서
+        # 누락된다.
+        while (r, c) in occupied:
+            otext, ocs, ors = occupied[(r, c)]
+            row_cells.append(GridCell(otext, r, c, ocs, ors, True))
+            c += 1
+        grid_rows.append(row_cells)
+
+    return grid_rows
+
+
 _NOTE_REF_PATTERN = re.compile(r'^[1-9]\d{0,2}(,[1-9]\d{0,2})*$')
 # 정상 3자리 그룹 금액(예: "2,433", "496,412,633,753"). 주석 교차참조와 구별용.
 # 주석은 1~2자리 그룹의 비정규 나열("2,4,32,34,35,36")이라 이 패턴에 안 맞는다.

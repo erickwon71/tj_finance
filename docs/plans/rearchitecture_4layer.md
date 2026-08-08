@@ -111,6 +111,9 @@
 ---
 
 ## 4. 핸드오프 타임라인 (세션 진입점, 최신순)
+- 2026-08-08(병행, 재설계 범위 밖 — **트랙 종료**) [note_span_fix_plan](note_span_fix_plan_2026-08-07.md) — 바로 아래 항목(08-07 2회차)이 연 note_lines/SCE 열 오귀속(R11) 트랙의 **Phase 1~4 전부 완료**. Phase 1(측정: `LV′` 라벨영역 규칙 확정)→Phase 2(구현: `expand_table_grid`+`_grid_header_split`/`_grid_body_rows`, `docs/PARSING_RULES.md` R11/R11-1/R11-2)→Phase 3(검증: 전수 census 결함 0건, 진행 중 R11 자체 회귀 2종 발견+수정)→Phase 4(**DB 반영**: note_lines 전량 재적재 245M→**247.2M행**(+0.73%, 1차 시도 외부요인 중단→`RESUME_NOTES=1` 재개로 완주) + std_v3 재빌드(184,298→184,580행) + 재검증(DB 직접 대조·Gate B `line_value_diff=0`·D&A 재확인) 전부 통과). 부수 개선: `collector/storage_guard.py`에 opt-in SD 폴백(`ensure_root`) 신설. **다음 세션이 이 트랙에서 시작할 필요 없음** — Phase 5(문서·메모리 마감)까지 마치면 완전 종결.
+- 2026-08-07(병행, 재설계 범위 밖, 같은 날 2회차) [handoff_note_lines_span_misattribution](../qa/handoff_note_lines_span_misattribution_2026-08-07.md) — 위 항목(08-08, Phase 1~4 완료)으로 대체됨. 바로 아래 항목(같은 날 1회차)의 §4-1(외화열) 진단을 뒤집음 — 원인은 헤더 정규식이 아니라 `parser/xml/table_extractor.py`가 **본문 행에서 ROWSPAN/COLSPAN을 전혀 확장하지 않는** 구조적 결함(POSCO·풍강 원문 대조로 확정). note_lines 원문 전수 재파싱(101,327건, 오류 0) 완료 — 값 2억4,550만 개 중 **2,819만 개(11.48%) 컬럼 오귀속, 필링의 99.0% 영향**. report_lines(본문) 영향은 미측정. 코드/DB 변경 없음(조사만, census 스크립트는 `scripts/census_note_span_misattribution*.py`로 영구 보존) — 다음 세션 첫 작업 = 수정 로직 설계.
+- 2026-08-07(병행, 재설계 범위 밖 — ⚠**진단 번복됨, 위 항목 참고**) [handoff_unit_multiplier_misattribution](../qa/handoff_unit_multiplier_misattribution_2026-08-07.md) — 07-31 이 "셀 병합 결함"이라 부른 것을 재조사 → 단일 결함이 아니라 **단위(배수) 오귀속 최소 3종**(외화열 오적용·계정별 예외단위·미상)으로 재분류. `PARSING_RULES.md` 부록C의 "✅완료" 표기가 biz_metrics 한정임을 발견(report_lines/note_lines 쪽은 미조치) — 이 부분은 유효. 외화열(§4-1) 원인 진단은 위 2회차 항목에서 뒤집힘.
 - 2026-08-07(병행, 재설계 범위 밖 — **트랙 종료**) R4-2 파생 백로그 3건 전부 완료(①표못잡음 실측3건·②표제인식 소급 55건 백필·③download-only 64/72건 해소) + 부수 발견 Gate B 오탐 856건 해소(감사기 표 식별 버그, `75d526e`). 정본 문서 없음(메모리 기록: `r4-2-backlog-items-2-3-done-2026-08-07`·`r4-2-item1-headed-multistmt-done-2026-08-07`·`key-bugs-fixed` #9), 원출처는 아래 08-06 항목
 - 2026-08-06(병행, 재설계 범위 밖) [handoff_r4_2_remaining_backlog](../qa/handoff_r4_2_remaining_backlog_2026-08-06.md) — 08-04/08-05 트랙이 남긴 미착수 후보 3건을 한곳에 정리(구현 없음, 정리만). 다음날(08-07) 위 항목에서 3건 전부 처리됨
 - 2026-08-05(병행, 재설계 범위 밖) [handoff_delisting_filepath_and_gap_recheck](../qa/handoff_delisting_filepath_and_gap_recheck_2026-08-05.md) — ⓪-4 file_path 재발버그 수정+소급교정, 활성기업 잔여공백 **24건** 확정·정밀분해(신규 패턴 XML파싱자체실패 9건)
@@ -144,8 +147,15 @@
 >
 > **2026-08-07 갱신** — 08-01~08-07 은 전부 본류 밖 병행 트랙(§0 참고, 계층2 적재공백
 > 감사 + R4-2 파생 백로그 3건 + Gate B 감사기 버그)이었고 08-07 부로 그 트랙이 **완전히
-> 종료**됐다. 본류(아래 1~5번)는 07-31 이후 진행이 없어 순서·상태 그대로 유효 — **1순위는
-> 여전히 셀 병합 결함 처리방향 결정**(사용자 판단 대기), 그다음 검증도구 4종 갱신.
+> 종료**됐다. 본류(아래 1~5번)는 07-31 이후 진행이 없어 순서·상태 그대로 유효.
+>
+> **2026-08-07 재갱신(같은 날 세 번째)** — "셀 병합 결함 처리방향 결정"(7/31 1순위)은
+> **원인 재규명 + 정밀 전수조사까지 끝났다.** 진짜 원인은 `parser/xml/table_extractor.py`의
+> 본문 행 추출이 ROWSPAN/COLSPAN을 확장하지 않는 구조적 결함이고, note_lines 값의
+> **11.48%(2,819만 개)가 컬럼 오귀속**, 필링의 99.0%가 영향권이다. 새 시작점 =
+> [handoff_note_lines_span_misattribution](../qa/handoff_note_lines_span_misattribution_2026-08-07.md)
+> (다음 세션 첫 작업 = 수정 로직 설계). 그다음 2순위(구 계약을 보는 검증도구 4종 갱신)는
+> 순서 그대로 유효.
 
 **완료(2026-07-25)**: `--recheck` + `build_std_v3 --all` 재빌드 · 금융섹터 revenue census 종결(보험/은행/
 증권/여신전문 프로파일 + 잔여 KSIC 프로파일 불필요, 원문대조 PASS) · **브리지 swap enrichment steps 1-2**

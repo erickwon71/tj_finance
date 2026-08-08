@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 from collector.db import get_session
 from collector.note_lines_sync import sync_layer2_lines
+from collector.storage_guard import StorageContractError, ensure_root
 
 COUNT_SQL = text("""
     SELECT (SELECT count(*) FROM report_lines WHERE corp_code=:c) AS body,
@@ -41,7 +42,17 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--corp", required=True)
     ap.add_argument("--dry", action="store_true")
+    ap.add_argument("--allow-sd-fallback", action="store_true",
+                    help="NAS 재마운트도 실패하면 SD카드(dart_data)로 폴백(수동 실행 전제, "
+                         "collector.storage_guard 참고)")
     args = ap.parse_args()
+
+    try:
+        root = ensure_root(allow_sd_fallback=args.allow_sd_fallback)
+    except StorageContractError as exc:
+        print(f"[storage] 계약 위반 — 중단: {exc}")
+        return 1
+    print(f"[storage] raw_report 루트 확인 — {root}")
 
     with get_session() as s:
         before = snapshot(s, args.corp)

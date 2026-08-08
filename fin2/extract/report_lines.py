@@ -34,7 +34,8 @@ import re
 
 from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.table_extractor import (
-    extract_rows, _split_label_amounts, _get_cells, _NUMBER_PATTERN,
+    extract_rows, _split_label_amounts, _get_cells, _NUMBER_PATTERN, expand_table_grid,
+    RowData, _header_rule_name, _is_fs_title_row, _detect_indent, _first_cell_indent,
 )
 from parser.common.amount_normalizer import detect_unit_declaration, parse_amount, normalize_account_name
 
@@ -444,7 +445,98 @@ def _cell_span(td, attr: str) -> int:
     return 1
 
 
-def _build_col_labels(table, all_cells: bool = False) -> dict[int, str]:
+# 라벨 영역 판정(LV′, 아래 `_build_col_labels`)에서 "금액이 아니어도 금액열 취급"할 placeholder.
+# 원문에서 값이 없는 금액 열은 대시/공란으로 표기되는데, 그 열이 표본 행 전체에서 우연히
+# 전부 이 표기이면 "금액 후보"로도 안 잡혀 라벨 영역이 과대해진다(T1.1 에서 반증된 첫 후보의
+# 실패 원인) — 그래서 파싱 성공 **또는** 이 집합에 속하면 금액열로 카운트한다.
+_LABEL_REGION_PLACEHOLDERS = frozenset(["", "-", "‐", "―", "–", "—", "ㅡ"])
+
+
+def _grid_header_split(table):
+    """`expand_table_grid`로 표를 펼치고 헤더 구간(n_header)·라벨 영역 폭(offset=LV′)·
+    헤더 그리드 폭(width)을 계산한다 — **한 곳에서만** 한다.
+
+    ★왜 공용 함수인가(T1.3 반드시 지킬 전제) — 헤더 라벨 사전(`_build_col_labels`)과 본문
+    행 산출(`_emit_note_lines`)이 서로 **다른 offset 계산**을 쓰면 `col_label.get(col_idx)`
+    조회가 어긋난다. 두 곳이 각자 다시 계산하게 두면 알고리즘이 미묘하게 갈릴 위험이 있어
+    (예: whitespace 정규화를 한쪽만 빼먹는 식) 계산 자체를 여기 하나로 묶는다.
+
+    Returns:
+        `(grid_rows, n_header, offset, width)` — 판정 불가(헤더/본문 경계 못 찾음·표가
+        비어 있음)면 `(grid_rows_or_[], None, None, None)`. `grid_rows`는 판정 실패해도
+        (호출자가 원하면) 그대로 돌려준다 — 표 자체는 파싱됐을 수 있어서다.
+    """
+    grid_rows = expand_table_grid(table)
+    if not grid_rows:
+        return grid_rows, None, None, None
+
+    # 헤더 구간 = 첫 데이터 행 전까지. 판정 텍스트는 이 행의 **물리적** 셀만 본다(상속 칸은
+    # 원문에 없는 칸이라 이 판정에 넣지 않는다) — whitespace 접기는 구 버전과 동일하게
+    # 유지한다(멀티라인 헤더 셀 대응, `_NUMBER_PATTERN`이 앵커드 패턴이라 접지 않으면
+    # 내부개행이 있는 셀에서 판정이 갈린다).
+    n_header = 0
+    for row in grid_rows:
+        physical_texts = [" ".join(c.text.split()) for c in row if not c.inherited]
+        if len(physical_texts) > 1 and any(_NUMBER_PATTERN.search(t) for t in physical_texts[1:]):
+            break
+        n_header += 1
+    if (n_header == 0 or n_header >= len(grid_rows)) and len(grid_rows) > 1:
+        # ★2026-08-08(T3.6 회귀 수정): 판정 실패의 두 형태를 전부 헤더=1행으로 강제 폴백한다.
+        #   ①n_header==0 — 첫 행 자체가 "숫자처럼" 보여 즉시 break(예: 헤더 셀이 연도 "2020"
+        #     하나뿐 — _NUMBER_PATTERN 은 콤마 없는 4자리 숫자도 맞다고 본다).
+        #   ②n_header>=len(grid_rows) — 끝까지 한 번도 안 깨져 전부 헤더처럼 보임(예: 데이터
+        #     행이 죄다 음수인데 "-1,339"처럼 **선행 마이너스**라 `_NUMBER_PATTERN`이 숫자로
+        #     못 잡음 — 괄호식 "(1,339)"만 인식). 실측(잔여, `census_note_header_none_
+        #     fallback.py` 수정후 재실행) 775건/15,070,642표.
+        #   DART 표는 관례상 데이터 앞에 헤더 행이 최소 하나 있다(`_table_has_data_rows`
+        #   게이트를 통과했다는 것 자체가 진짜 데이터 표란 뜻이지, 첫 행부터 데이터란 뜻이
+        #   아니다) — 두 경우 다 첫 행을 데이터로 오인하는 것보다 헤더로 강제 취급하는 쪽이
+        #   훨씬 안전하다. 이 보정이 없으면 호출부가 offset=0 폴백으로 빠져 라벨 열 폭을
+        #   반영 못 해 값 열이 통째로 밀린다(수정 전 실측 348,099 값 셀/1,629 필링). 표에
+        #   물리 행이 1개뿐이면(강제해도 본문이 안 남음) 아래 가드가 그대로 막는다.
+        n_header = 1
+    if n_header >= len(grid_rows):
+        # ★2026-08-08(T3.6 2차 보정): 물리 행이 1개뿐이라 위 강제(n_header=1)조차 못 하는
+        #   경우 — 헤더 자체가 원래 없는 표다(성호전자 `20240814002619` "순금융비용" 단일행
+        #   표, 현대위아 `20240320001675` "납입자본금" 단일행 표 등 실측). 그래도 offset 은
+        #   이 행 자신을 본문으로 보고 LV′ 로 구할 수 있다 — 헤더가 없으니 col_label 은
+        #   못 채우지만(진짜 없으니 정상), 값 열 위치는 안전하게 나온다. `None` 폴백(offset
+        #   강제 0)보다 훨씬 안전하다 — `_grid_body_rows`가 어차피 physical[0]을 라벨로
+        #   빼므로, offset 을 안 구하면 그 라벨 폭만큼 값 열이 밀린다.
+        n_header = 0
+    if not grid_rows[n_header:]:
+        return grid_rows, None, None, None
+
+    header_rows = grid_rows[:n_header]
+    body_rows = grid_rows[n_header:]
+
+    # width — 표 전체 그리드 폭. 위 보정으로 header_rows 가 비어 있을 수 있으니(헤더 없는
+    # 표) header_rows 대신 grid_rows 전체에서 구한다 — 정상 표는 헤더도 본문과 같은 폭을
+    # 채우므로(HTML 표 관례) 결과가 달라지지 않는다.
+    width = 0
+    for row in grid_rows:
+        for c in row:
+            width = max(width, c.grid_col + c.colspan)
+
+    # 라벨 영역 폭(L=offset) — LV′: 본문(물리 셀만, 각 행의 첫 물리 셀=그 행의 라벨은 제외)에서
+    # 한 번이라도 금액 또는 placeholder 였던 grid_col 중 가장 왼쪽 것.
+    amount_cols: set[int] = set()
+    for row in body_rows:
+        physical = [c for c in row if not c.inherited]
+        for c in physical[1:]:                        # physical[0] = 이 행 자신의 라벨 셀
+            if parse_amount(c.text, 1) is not None or c.text.strip() in _LABEL_REGION_PLACEHOLDERS:
+                amount_cols.add(c.grid_col)
+
+    offset = 0
+    while offset < width and offset not in amount_cols:
+        offset += 1
+    # 본문에 금액 후보가 전혀 없으면(amount_cols 공집합) offset==width 로 끝나 호출자가
+    # 빈 결과를 낸다 — 구 버전의 "n_amounts==0 → {}" 조기 반환과 동치.
+
+    return grid_rows, n_header, offset, width
+
+
+def _build_col_labels(table) -> dict[int, str]:
     """헤더 TR 들을 **COLSPAN/ROWSPAN 그리드로 복원**해 {금액열 인덱스: 열 라벨} 반환.
 
     ★ 왜 필요한가: 자본변동표는 열이 기간이 아니라 자본 구성요소(자본금/자본잉여금/이익잉여금/
@@ -456,65 +548,63 @@ def _build_col_labels(table, all_cells: bool = False) -> dict[int, str]:
         TR0: [라벨칸 ROWSPAN=3][자본 COLSPAN=7]
         TR1: [지배기업…지분 COLSPAN=5][비지배지분 ROWSPAN=2][자본 합계 ROWSPAN=2]
         TR2: [자본금][자본잉여금][기타자본항목][이익잉여금][지배지분 합계]
-    → HTML 표와 동일한 방식으로 (row, col) 그리드를 채운 뒤 열별로 단을 위→아래 연결한다.
+    → HTML 표와 동일한 방식으로 (row, col) 그리드를 채운 뒤 열별로 단을 위→아래 연결한다
+    (`table_extractor.expand_table_grid`가 헤더·본문을 **관통하는 하나의 그리드**로 이 계산을
+    한다 — 여기서는 그 결과를 재사용할 뿐, 그리드 워크 자체를 다시 하지 않는다).
 
     헤더 행 = **첫 데이터 행 직전까지**. 데이터 행은 '첫 셀 외에 숫자 셀이 있는 행'으로 본다.
     반환 키는 **금액열 인덱스** — RowData.amounts 인덱스와 맞춘다.
 
-    ★ 라벨 영역이 몇 열인지는 **가정하지 않고 데이터에서 유도**한다. 실측상 1열이 아닌 표가
-      25.6% 다 — 라벨 칸이 `COLSPAN=3` 이거나(계정명 영역이 3열로 쪼개짐), 'Ⅱ.자본의 변동 >
-      (1)포괄손익 > 세부' 처럼 행 계층이 별도 열로 들어간다. 1열로 가정하면 열 라벨이 통째로
-      밀려 이익잉여금이 자본금으로 읽힌다. 그래서 **오른쪽 정렬**한다:
-          offset = 그리드 폭 − 금액열 수      (금액열 수 = 데이터 행의 금액 셀 수)
+    ★ 라벨 영역 폭(L, 아래에서는 `offset`) 판정 — R11/T1.1(2026-08-07)로 재정의됐다.
+    **구 버전(2026-08-07 이전)**은 "데이터 행의 **물리적** 금액 셀 수 최댓값"으로 냈다
+    (`all_cells` 인자로 주석/SCE 가 셈법을 조금씩 달리했다 — 인자는 이제 폐지). ROWSPAN
+    이어짐·COLSPAN 병합 라벨 행이 있으면 물리적 셀 수 자체가 행마다 원문 열 개수보다
+    줄어들어 이 셈법이 깨진다 — 부록 A T16·T17, R11(`docs/PARSING_RULES.md`)이 문서화한
+    결함이 정확히 이것이다.
+
+    실측(유진증권 `20220316000791` table 4) — 헤더 [구분(COLSPAN=2)｜제69(당)기｜제68(전)기],
+    ROWSPAN 이어짐 행이 섞여 있어 물리 셀 수 기반 계산은 `offset=1`(오답)을 냈지만, 그리드
+    폭 4 중 라벨 영역은 실제로 **2**칸이다. 물리 셀 수는 "표 전체에서 가장 넓었던 행이 몇
+    칸이었는지"일 뿐 "라벨이 몇 칸인지"를 말해주지 않는다 — 최댓값을 취해도 소용없다.
+
+    **새 규칙(`LV′`, T1.1 확정)** — **헤더 구조가 아니라 본문 값의 유무로 판정한다**: 그리드
+    열 중 "본문 전체를 통틀어 파싱 가능한 금액 또는 `-`/공란류 placeholder 가 **한 번도**
+    나온 적 없는" 선행 열까지가 라벨 영역이다. 헤더 구조 신호(세로 관통 셀·최하단 행 등)
+    만으로는 판정할 수 없다 — 실측 표의 41.8%가 헤더 행 1개뿐이라 그런 구조 신호 자체가
+    없다(`docs/plans/note_span_fix_plan_2026-08-07.md` T1.1, 156→800필링·123,475표
+    재검증). `LV′`는 결함 없는 표에서 구 `offset`과 95.3% 일치하고, 잔여 4.7%도 저장 결과
+    (값·라벨)에 영향이 없음이 구조적으로 보장된다(위 문서 §T1.1 안전성 논증 — `LV′`는
+    정의상 진짜 금액 열의 grid_col보다 항상 작거나 같다, 음수 인덱스 발생 불가).
+
+    ★`all_cells` 인자는 폐지됐다(2026-08-07) — 구 셈법에서만 의미가 있었다. `LV′`는 본문
+    전체를 다시 훑어 판정하므로 호출자가 물리 셀을 어떻게 골라내든(주석·SCE) 관계없이
+    **하나의 규칙**으로 통일된다(핸드오프 §T1.4).
     """
-    trs = table_direct_rows(table)
-    if not trs:
+    grid_rows, n_header, offset, width = _grid_header_split(table)
+    if n_header is None:
         return {}
+    return _label_dict_from_header(grid_rows[:n_header], n_header, offset, width)
 
-    # 헤더 구간 = 첫 데이터 행 전까지
-    n_header = 0
-    for tr in trs:
-        cells = [" ".join("".join(td.itertext()).split()) for td in tr]
-        if len(cells) > 1 and any(_NUMBER_PATTERN.search(c) for c in cells[1:]):
-            break
-        n_header += 1
-    if n_header == 0 or n_header >= len(trs):
-        return {}
 
-    # 금액열 수 — 데이터 행들이 실제로 갖는 금액 셀 수(빈 셀 포함, 위치 보존 전제).
-    # ★all_cells=True 는 `extract_rows(keep_all_amount_cells=True)` 와 **같은 셈**을 해야 한다
-    #   (주석 경로). 한쪽만 비숫자 셀을 빼면 오른쪽 정렬 offset 이 어긋나 열 라벨이 밀린다.
-    n_amounts = 0
-    for tr in trs[n_header:]:
-        cells = _get_cells(tr)
-        if all_cells:
-            n_amounts = max(n_amounts, max(0, len(cells) - 1))
-        else:
-            _, amount_cells = _split_label_amounts(cells)
-            n_amounts = max(n_amounts, len(amount_cells))
-    if n_amounts == 0:
-        return {}
-
+def _label_dict_from_header(header_rows, n_header: int, offset: int, width: int) -> dict[int, str]:
+    """`_grid_header_split`이 이미 나눈 헤더 구간·offset·width로 {금액열 인덱스: 열 라벨}을
+    만든다 — `_build_col_labels`(테이블 전체를 받는 공개 진입점)와 `_emit_note_lines`
+    (본문 행 산출과 **같은 한 번의 `_grid_header_split` 호출**을 공유해야 하는 호출자, T1.3)
+    양쪽에서 쓴다. 순수 함수 — 여기서 그리드를 다시 만들지 않는다.
+    """
+    # 물리 셀만 자기 (rowspan×colspan) 영역에 텍스트를 새긴다(상속 칸은 origin 텍스트를 이미
+    # 복사해 두므로 다시 채울 필요 없음 — 중복 방지를 위해 물리 셀만).
     grid: dict[tuple[int, int], str] = {}
-    occupied: set[tuple[int, int]] = set()
-    for r, tr in enumerate(trs[:n_header]):
-        c = 0
-        for td in tr:
-            while (r, c) in occupied:
-                c += 1
-            txt = " ".join("".join(td.itertext()).split())
-            cs, rs = _cell_span(td, "COLSPAN"), _cell_span(td, "ROWSPAN")
-            for dr in range(rs):
-                for dc in range(cs):
-                    occupied.add((r + dr, c + dc))
-                    if txt:
-                        grid[(r + dr, c + dc)] = txt
-            c += cs
-
-    width = max((col for _, col in occupied), default=0) + 1
-    offset = width - n_amounts                       # 앞쪽 라벨 영역 폭(1 이라고 가정하지 않음)
-    if offset < 0:
-        return {}                                    # 헤더가 데이터보다 좁음 → 정렬 불가(보류)
+    for row in header_rows:
+        for c in row:
+            if c.inherited:
+                continue
+            txt = " ".join(c.text.split())
+            if not txt:
+                continue
+            for dr in range(c.rowspan):
+                for dc in range(c.colspan):
+                    grid[(c.grid_row + dr, c.grid_col + dc)] = txt
 
     out: dict[int, str] = {}
     for col in range(offset, width):
@@ -557,6 +647,96 @@ def _note_heading(table) -> str | None:
     return unit_only_fallback
 
 
+def _grid_body_rows(
+    table, grid_rows, n_header: int, offset: int, *,
+    multiplier: int = 1, allow_date_label: bool = False, keep_header_rows: bool = True,
+) -> list[RowData]:
+    """`expand_table_grid`의 본문(헤더 이후) 그리드 행을 `RowData`로 변환한다(R11) —
+    주석(`_emit_note_lines`, T2.4)·SCE(`_emit_sce_lines`, T2.5) **공용**. T1.4가 "L 규칙은
+    LV′ 하나로 통일(노트·SCE 공용 그리드 확장 유틸, 배선은 각자)"이라 정한 대로, 그리드
+    워크는 여기 하나로 묶고 호출부별 차이(단위 배수·헤더행 처리)만 인자로 받는다.
+
+    ★ 이게 결함을 실제로 고치는 지점이다. 옛 경로(`extract_rows`)는 각 행의 **물리적** 셀
+    위치를 그대로 `amounts` 인덱스로 썼다 — ROWSPAN 이어짐 행은 물리적 셀 수가 줄어들어 그
+    인덱스가 진짜 열보다 왼쪽으로 밀린다(R11 본문, 텔코웨어 실측 — 미수수익 행의
+    442,190/470,100 이 물리 위치 0·1 로 저장되던 것). 여기서는 각 값 셀의 **진짜
+    grid_col**(`expand_table_grid`가 이미 계산해 둠)에서 `offset`을 빼 `col_idx`를 정한다 —
+    `offset`은 `_build_col_labels`/`_label_dict_from_header`가 쓰는 것과 **반드시 같은
+    값**이어야 하므로(T1.3), 호출자가 `_grid_header_split`을 **한 번만** 호출해 여기와
+    공유한다(이 함수는 다시 계산 안 함).
+
+    T1.2 결정(상속 안 함) — `label_raw`는 **이 행 자신의 첫 물리 셀** 그대로 쓴다. 옛
+    코드도 실은 이미 그랬다(`_get_cells(tr)[0]`은 물리 셀 기준이라 ROWSPAN 을 상속받지
+    않는다) — 바뀌는 건 값 열 산출뿐, 라벨은 무변경이다.
+
+    각 값 후보 셀이 `offset` 보다 왼쪽 grid_col 이면(=라벨 영역 안의 텍스트 열, 예: 유진증권
+    표의 '거래처'류) 건너뛴다 — `LV′`의 안전성 논증(T1.1)대로 이런 셀은 애초에 금액으로
+    파싱되지 않으므로 버려도 정보 손실이 없다(음수 col_idx 로 배열을 역방향 인덱싱하는 버그도
+    막는다). 이게 옛 `preserve_col_positions=True`(SCE)가 하려던 것을 **더 정확히** 한다 —
+    필터링된 위치가 아니라 진짜 그리드 열을 그대로 쓰므로, 이 인자 자체가 필요 없어졌다.
+
+    Args:
+        table: 원본 TABLE 요소 — `raw_indent`(원문 선행공백, section_path/depth 신호)는
+            `expand_table_grid`가 버리므로(텍스트만 `.strip()` 해 담는 최소가공 계약, T2.2)
+            원 TR을 다시 대조해 구한다.
+        grid_rows: 호출자가 `_grid_header_split(table)`로 이미 만든 전체 그리드(헤더+본문).
+        n_header: 헤더 구간 행 수 — `grid_rows[n_header:]`가 본문.
+        offset: `_build_col_labels`와 공유하는 라벨 영역 폭(`LV′`).
+        multiplier: 값 셀을 파싱할 때 바로 곱할 배수. 주석은 옛 `extract_rows(multiplier=1,
+            ...)`과 동일하게 **×1**로 원문만 확보하고 호출부가 열별 배수로 다시 파싱한다
+            (`units.py`, 표마다 열 단위가 다를 수 있어서). SCE는 표 전체가 단일 배수라
+            (옛 `extract_rows(multiplier=unit, ...)`과 동일하게) 여기서 바로 최종값을 낸다.
+        allow_date_label: True 면 날짜 라벨을 헤더 판정에서 뺀다(`_header_rule_name`
+            `allow_date_label`) — **SCE 전용**. 기초/기말 잔액 행의 라벨이 날짜라 이 규칙이
+            켜져 있으면 그 앵커 행이 통째로 사라진다(옛 `date_labels_ok=True`와 동일).
+        keep_header_rows: False 면 `header_hint` 가 붙는 행을 **버린다**(옛 SCE 기본,
+            `extract_rows(keep_header_rows=False 기본)`). True(주석 기본, F2)면 버리지 않고
+            hint 만 기록한다.
+    """
+    trs = table_direct_rows(table)          # expand_table_grid 내부와 같은 순서(순수 함수)
+    body_rows = grid_rows[n_header:]
+    body_trs = trs[n_header:]
+
+    out: list[RowData] = []
+    row_order = 0
+    for tr, row in zip(body_trs, body_rows):
+        physical = [c for c in row if not c.inherited]
+        if not physical:
+            continue                        # ROWSPAN 이 이 행 전체를 흡수(자기 물리 셀 없음)
+        label = physical[0].text
+        # ★순서는 옛 `extract_rows`와 동일해야 한다: header_hint 판정·드롭 → 제목행 가드 →
+        #   label 공백 가드. 셋 다 "이 행을 아예 버릴지"를 정하는 게이트라 순서가 바뀌면
+        #   드문 조합(예: 빈 라벨인데 헤더 패턴)에서 결과가 갈릴 수 있다.
+        header_hint = _header_rule_name(label.strip(), allow_date_label=allow_date_label)
+        if header_hint and not keep_header_rows:
+            continue                        # 옛 SCE 기본 동작(keep_header_rows=False)
+        if _is_fs_title_row([c.text for c in physical]):
+            continue                        # 재무제표 이름만 있는 제목 행(기존과 동일 가드)
+        if not label:
+            continue
+
+        value_cells = [c for c in physical[1:] if c.grid_col >= offset]
+        max_idx = max((c.grid_col - offset for c in value_cells), default=-1)
+        amounts: list[int | None] = [None] * (max_idx + 1)
+        raw_amounts: list[str] = [""] * (max_idx + 1)
+        for c in value_cells:
+            idx = c.grid_col - offset
+            amounts[idx] = parse_amount(c.text, multiplier)
+            raw_amounts[idx] = c.text
+
+        out.append(RowData(
+            account_name=label.lstrip(),
+            amounts=amounts,
+            raw_amounts=raw_amounts,
+            header_hint=header_hint,
+            row_order=row_order,
+            indent_level=_detect_indent(label),
+            raw_indent=_first_cell_indent(tr),
+        ))
+        row_order += 1
+    return out
+
+
 def _emit_note_lines(
     root, *, emit, corp_code, rcept_no, report_fiscal_year, report_fiscal_period,
 ) -> None:
@@ -597,9 +777,24 @@ def _emit_note_lines(
             #   (토지/건물/기계) 있는데, 지금까지 col_label 을 안 채워 계층3 가 col_index 만으로
             #   추측해야 했다(유형자산 증감표를 기간축으로 오인하는 원인). SCE 에서 쓰던
             #   _build_col_labels 를 그대로 재사용한다 — 새 파싱 로직이 아니다.
-            #   ★2026-07-31: 열 위치를 원문 그대로 보존해 라벨 밀림을 없앤다
-            #   (`keep_all_amount_cells` — 그 docstring의 장기차입금 실측 참고).
-            note_col_labels = _build_col_labels(table, all_cells=True)
+            #   ★2026-08-07(R11/T2.3+T2.4): `_grid_header_split`을 **여기서 한 번만** 호출해
+            #   헤더 라벨 사전(`_label_dict_from_header`)과 본문 행 산출(`_grid_body_rows`)이
+            #   **반드시 같은 offset(LV′)**을 쓰도록 보장한다(T1.3 전제 — 따로 계산하면
+            #   좌표계가 어긋날 위험). 물리 위치 기반이던 `extract_rows(keep_all_amount_cells=
+            #   True)`는 이제 안 쓴다 — 본문 값도 진짜 grid_col로 산출한다(R11 결함 수정 본체).
+            grid_rows, n_header, offset, width = _grid_header_split(table)
+            if n_header is None:
+                # 헤더 구간을 못 찾았다(데이터가 첫 행부터 시작 — 실전에서 드묾, `_table_has_
+                # data_rows` 게이트를 통과한 표는 항상 어딘가에 콤마금액 행이 있으므로
+                # n_header>=len(rows) 는 발생 안 함). col_label 없이도 값은 잃지 않는다(R6) —
+                # 옛 `_build_col_labels`도 이 경우 {} 를 냈지만 그때도 `extract_rows`는
+                # 독립적으로 계속 값을 뽑았다(그 동작 보존). 표 전체를 본문으로, offset=0.
+                note_col_labels: dict[int, str] = {}
+                note_rows = _grid_body_rows(table, grid_rows, 0, 0, multiplier=1)
+            else:
+                note_col_labels = _label_dict_from_header(
+                    grid_rows[:n_header], n_header, offset, width)
+                note_rows = _grid_body_rows(table, grid_rows, n_header, offset, multiplier=1)
             # ★단위는 표 단위가 아니라 **열 단위**로 정한다(F1, 2026-07-31 — units.py).
             #   선언이 없어도 전사는 계속한다: value_won 은 비고 value_raw 에 원문이 남는다.
             #   표 자신의 선언이 없으면 **앞선 '선언 전용 표'** 에서만 상속한다(D1) —
@@ -608,13 +803,6 @@ def _emit_note_lines(
             inherited = None if own_decl else inherited_declaration_text(table)
             cu = ColumnUnits.from_declaration(own_decl or inherited, note_col_labels,
                                               inherited=bool(inherited))
-            # 셀 원문 확보용으로 ×1 파싱한다 — 실제 값은 열 배수로 다시 파싱한다.
-            # keep_header_rows=True(F2): 헤더 규칙에 걸린 행도 전사하고 규칙 이름만 남긴다.
-            # 행이 기간축인 주석 표('당기말' 행 + 자산분류 열)에서 그 행이 실데이터이기 때문.
-            note_rows = list(extract_rows(table, multiplier=1, num_cols=_NOTE_MAX_COLS,
-                                          direct_only=True, skip_junk=False,
-                                          keep_all_amount_cells=True,
-                                          keep_header_rows=True))
             node_roles = _classify_positions(note_rows)
             for row in note_rows:
                 if not row.account_name:
@@ -696,8 +884,18 @@ def _emit_sce_lines(
     또 당기/전기 블록이 **세로로 두 번** 쌓이는데 그 구분도 판단하지 않는다. 기초/기말 행의
     라벨이 날짜("2023.01.01 (기초자본)")로 남으므로 계층3 이 읽는다.
 
-    ★ `date_labels_ok=True` 필수: 기본 경로는 날짜 라벨 행을 기간 헤더로 보고 드롭하는데,
+    ★ `allow_date_label=True` 필수: 기본 경로는 날짜 라벨 행을 기간 헤더로 보고 드롭하는데,
       SCE 에서는 그게 기초/기말 잔액 행이다(실측 2,519행/250보고서 유실).
+
+    ★2026-08-08(R11/T2.5) — 본문 행 산출을 `_grid_body_rows`(주석과 공용, T2.4)로 교체.
+      SCE 도 note 와 **같은 구조적 결함**을 갖고 있었다(T1.4 실측, 400필링·741표·69,033값
+      중 15.68%의 행에서 값이 밀림 — 비중이 note(11.48%)보다 오히려 크다). 옛 `preserve_
+      col_positions=True`는 "필터링(비숫자 셀 제거)된 위치를 보존"하는 근사였는데, ROWSPAN
+      이어짐 행은 애초에 그 필터링 전 물리 셀 수 자체가 원문 열 개수보다 줄어 근사가
+      깨진다 — `_grid_body_rows`가 쓰는 **진짜 grid_col** 은 이 근사가 필요 없다(그래서
+      `preserve_col_positions` 인자 자체를 없앴다). `multiplier=unit`(표 전체 단일 배수 —
+      SCE 는 주석과 달리 열별 단위 판정을 안 한다)·`allow_date_label=True`·
+      `keep_header_rows=False`(옛 SCE 기본 — 헤더 패턴 행은 버림, 주석과 다른 점)로 호출.
     """
     basis, _ = _SECTION_META[section_code]
     tables = [t for t, _, _ in tables_with_unit]
@@ -728,14 +926,21 @@ def _emit_sce_lines(
                 continue
         table_seq = doc_seq[id(table)]
         table_title = _note_heading(table)
-        col_labels = _build_col_labels(table)
+        # ★2026-08-08(R11/T2.5): `_grid_header_split`을 **여기서 한 번만** 호출해 헤더 라벨
+        #   사전(`_label_dict_from_header`)과 본문 행 산출(`_grid_body_rows`)이 반드시 같은
+        #   offset(LV′)을 쓰도록 한다(T1.3 전제 — T2.3/T2.4와 동일 패턴, `_build_col_labels`
+        #   를 그대로 호출해도 결과는 같지만 두 번 그리드를 만들지 않도록 여기서 공유한다).
+        grid_rows, n_header, offset, width = _grid_header_split(table)
+        if n_header is None:
+            # 헤더 구간을 못 찾음(실전에서 드묾) — col_label 없이도 값은 잃지 않는다(R6).
+            col_labels: dict[int, str] = {}
+            rows = _grid_body_rows(table, grid_rows, 0, 0, multiplier=unit,
+                                   allow_date_label=True, keep_header_rows=False)
+        else:
+            col_labels = _label_dict_from_header(grid_rows[:n_header], n_header, offset, width)
+            rows = _grid_body_rows(table, grid_rows, n_header, offset, multiplier=unit,
+                                   allow_date_label=True, keep_header_rows=False)
         adecimal = _adecimal_from_unit(unit)
-
-        # preserve_col_positions=True 필수: 기본 경로는 앞쪽 빈 셀을 당겨(6-column IS 대응)
-        # 열을 밀어버린다. SCE 에서 빈 칸은 '그 자본 항목에 영향 없음'이라는 의미 있는 값이다.
-        rows = list(extract_rows(table, multiplier=unit, num_cols=_SCE_MAX_COLS,
-                                 direct_only=True, skip_junk=False,
-                                 date_labels_ok=True, preserve_col_positions=True))
         section_paths = _assign_section_paths(rows, "SCE")
         node_roles = _classify_positions(rows)
 

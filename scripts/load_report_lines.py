@@ -163,7 +163,20 @@ def main() -> None:
     ap.add_argument("--status", action="store_true", help="진행 현황만 출력")
     ap.add_argument("--managed", action="store_true",
                     help="launchd 연속잡 모드 — 완주 후 남은 대상 0 이면 스스로 잡 해제")
+    ap.add_argument("--allow-sd-fallback", action="store_true",
+                    help="NAS 재마운트도 실패하면 SD카드(dart_data)로 raw_report 심링크를 폴백"
+                         "(수동 실행 전제 — 데일리에는 배선하지 않음, collector.storage_guard 참고). "
+                         "기본은 끔: NAS 안 되면 그냥 실패한다(드리프트 재발 방지)")
     args = ap.parse_args()
+
+    if not args.status:
+        from collector.storage_guard import StorageContractError, ensure_root
+        try:
+            root = ensure_root(allow_sd_fallback=args.allow_sd_fallback)
+        except StorageContractError as exc:
+            logger.error(f"[storage] 계약 위반 — 중단: {exc}")
+            sys.exit(1)
+        logger.info(f"[storage] raw_report 루트 확인 — {root}")
 
     with get_session() as s:
         if args.status:

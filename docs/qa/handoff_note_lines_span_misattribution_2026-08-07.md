@@ -1,5 +1,11 @@
 # 핸드오프 — note_lines ROWSPAN/COLSPAN 본문행 미확장 결함: 전수조사 + 독립 재검증 완료 (2026-08-07, 병행 트랙 2·3회차)
 
+> ✅ **★수정 완료(2026-08-08)** — 이 문서가 규명한 결함은 `docs/plans/note_span_fix_plan_2026-08-07.md`
+> Phase 1~4로 전부 해소됐다(측정→구현(R11/R11-1/R11-2, `docs/PARSING_RULES.md`)→검증(census
+> 결함 0건)→**DB 반영**(note_lines 245,452,947→**247,244,387행**, +0.73% · std_v3 184,298→
+> 184,580행) → 재검증(DB 직접 대조·Gate B `line_value_diff=0`·D&A 재확인) 전부 통과. **새 세션이
+> 여기서 시작할 필요 없음** — 아래 내용은 원인 규명 기록으로 보존.
+>
 > **새 세션은 여기서 시작.** 재설계 본류(`rearchitecture_4layer.md`)와 별개 병행 트랙.
 > `docs/qa/handoff_unit_multiplier_misattribution_2026-08-07.md`(같은 날 앞선 세션)의
 > §4-1 진단을 뒤집는다 — 원인 재규명 + 전수 재파싱(코드 변경 없음, 조사만).

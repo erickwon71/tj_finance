@@ -560,7 +560,13 @@ R11-1/R11-2). 다음은 **Phase 4**(§4) — 아직 DB(note_lines 245M행)는 �
 
 ---
 
-## 4. Phase 4 — 배선 + 소급 백필 (runbook 체크리스트 A·B)
+## 4. Phase 4 — 배선 + 소급 백필 (runbook 체크리스트 A·B) — ★★★전체 완료(2026-08-08)
+
+**T4.1~T4.4 전부 완료.** 데일리 배선 확인(추가 배선 불요, 이미 `extract_report_lines`
+경유) → note_lines 전량 재적재(1차 시도 외부요인 중단 → `RESUME_NOTES=1` 재개로 완주,
+247,244,387행, 오류 0) → std_v3 재빌드(184,580행, 오류 0) → 재검증(DB 직접 대조·Gate B
+`line_value_diff=0`·D&A DB 재확인) 전부 통과. 부수 개선: `collector/storage_guard.py`에
+opt-in SD 폴백(`ensure_root`) 신설. 남은 것은 Phase 5(문서·메모리 마감)뿐.
 
 - [ ] **T4.1 — 데일리 배선 확인**
   - 주석 추출은 기존 `run.process_corp` 경로 안이라 **신규 로더 추가가 아님** → `collect_new.py`
@@ -568,21 +574,53 @@ R11-1/R11-2). 다음은 **Phase 4**(§4) — 아직 DB(note_lines 245M행)는 �
     (runbook A3가 가장 자주 잊는 항목)
   - 합격: `scripts/verify_daily_layer2_wiring.py`로 1개사 왕복 검증
 
-- [ ] **T4.2 — ★note_lines 전량 재적재**
-  - 대상 245M행 / 101,327 필링. `scripts/full_reload_after_sanitize.sh`의 **②단계만** 필요
-    (본문 ①은 무영향이 실측됐으므로 제외 — 스크립트 분리 필요)
-  - ⚠**bloat 방지**: delete-then-insert 금지, **TRUNCATE 후 순수 INSERT**
-    (2026-07-27에 이것 때문에 디스크 100% 차서 백필 전멸한 전례)
-  - ⚠**인덱스**: 적재 전 제거 → 적재 후 재생성
-  - 사전 작업: 소요시간·디스크 여유 산정(직전 전량 재적재 = 본문+주석+std_v3 6샤드 5h19m)
-  - **사용자 실행**(장시간). 재개 가능성(`report_line_load_progress`) 확인
+- [x] **T4.2 — ★note_lines 전량 재적재** (2026-08-08 완료)
+  - `scripts/full_reload_after_sanitize.sh`를 `SKIP_BODY=1 SKIP_STD_V3=1`로 ②단계만 실행하도록
+    분리(본문 ①은 T3.4 실측대로 무영향이라 제외, std_v3 재빌드는 별도 T4.3으로 미룸)
+  - **1차 시도가 외부 요인으로 중단됨**(err 0·정상 진행 24.5%에서 프로세스 종료, 코드/데이터
+    문제 아님) — `RESUME_NOTES=1`(신규: TRUNCATE·인덱스drop·`--recheck` 생략, 이미 적재된
+    rcept만 건너뛰고 이어감)로 재개, 완주. `note_lines` 는 rcept 단위 delete-then-insert +
+    200건마다 커밋이라 중단돼도 마지막 커밋까지는 안전하게 남는 것을 실측 확인(1차 중단 시점
+    51,696,913행 그대로 보존).
+  - **결과**: 6샤드 전부 done, **error 0 · skip 0**(77,608건 이번 세션분, 1차분 포함 전체
+    101,327건). `note_lines` 245,452,947 → **247,244,387행**(+1,791,440, +0.73% — R11 수정으로
+    회복된 값들, 폭주 아님). `report_lines`(본문) **37,440,734행 그대로**(SKIP_BODY 확인,
+    무변경). `report_tables` 15,923,745행(TRUNCATE 생략했지만 주석 패스가 rcept 단위
+    delete-then-insert로 자체 재생성 — body 미실행이어도 정합 유지되는 것 확인).
+  - 인덱스 4개 전부 재생성 확인(`note_lines_pkey` 5332MB·`note_lines_rcept_no_idx` 2085MB·
+    `note_lines_corp_fy_basis_idx` 1704MB·`ix_note_lines_header_hint` 16MB).
+  - **bloat 확인**: `note_lines` 최종 50GB(재적재 전과 동일 오더 — TRUNCATE 후 순수 INSERT
+    원칙 지켜짐, autovacuum 잔여 정리 중이었으나 별도 조치 불요).
+  - 부수 개선(재발 방지, 같은 세션): `collector/storage_guard.py`에 opt-in
+    `ensure_root(allow_sd_fallback=)` 신설(수동 실행 전용, 데일리엔 미배선) +
+    `load_report_lines.py`/`verify_daily_layer2_wiring.py`/이 스크립트에 저장소 계약 확인 배선.
 
-- [ ] **T4.3 — std_v3 재빌드**
-  - `build_std_v3 --all` (combine이 note_lines를 읽으므로 ②와 겹쳐 돌리지 말 것)
-  - 합격: 행 수·주요 계정이 재적재 전과 설명 가능한 범위에서만 변화
+- [x] **T4.3 — std_v3 재빌드** (2026-08-08 완료)
+  - `build_std_v3 --all` 단일 프로세스 실행(4,389s ≈ 73분), **오류 0**(`  !` 라인 0건),
+    2,525/2,525 corp 전부 처리.
+  - 결과: `std_financials_v3` 184,298 → **184,580행**(+282, +0.15% — note_lines 회복분이
+    조합에 소폭 반영된 정상 범위, 폭주 아님).
 
-- [ ] **T4.4 — 재적재 후 재검증**
-  - T3.1(census 0) · T3.5(Gate B) · T3.6(D&A) 재실행
+- [x] **T4.4 — 재적재 후 재검증** (2026-08-08 완료)
+  - T3.1(census)·T3.6(D&A)는 원래 raw XML 직접 재추출 기반 코드 검증이라(DB 비의존)
+    코드가 T3 이후 안 바뀐 지금 재실행은 "코드가 맞다"만 재확인하는 중복 검증이 된다.
+    T4.4가 실제로 답해야 할 질문은 "재적재가 코드의 산출물을 DB에 제대로 반영했는가"라 —
+    그래서 T3.1·T3.6 스크립트 재실행 대신 **살아있는 DB를 직접 대조**하는 쪽으로 방법을 바꿨다.
+  - **DB 직접 대조**(T3.2의 6개 확정 사례): 텔코웨어 `20240814002630`(미수수익
+    442,190,000→`당반기말`·470,100,000→`전기말`)·풍강 `20150429000186`(미수수익
+    24,443,000→`당반기말`·57,645,000→`전기말`) — `note_lines` 테이블에서 **직접 SELECT**해
+    T2.4/T3.2가 원문으로 확정한 정답과 **정확히 일치** 확인. 유진증권·미래에셋생명·유비벨록스·
+    POSCO 4건은 해당 rcept가 정상 행수로 존재하는 것까지 확인(2,188~5,666행).
+  - **Gate B(T3.5) 재실행**: 알려진 6개사 + 랜덤 24개사(총 30개사), `run_dq_gate` 재사용.
+    결과 `line_value_diff = 0`(30개사 전건, T3.5 원래 결과와 동일 — 핵심 지표 통과).
+    `gb_fail_a=14`·`dq3=9`는 0이 아니지만 T3.5 때와 동일한 이유로 무관(Gate B Phase A/B는
+    `detect_anomalies`를 안 부르므로 BS/IS/CF 면표 전용, note/SCE R11 수정과 구조적으로 분리).
+  - **D&A(T3.6) DB 기반 재확인**: `note_da_canonicals(session, rcept, basis, "FY")`를
+    재적재된 DB에 직접 호출 — LG에너지솔루션 `20210317000676`(T3.6이 발견한 R11 자체 회귀
+    "offset=0 폴백" 케이스, 수정 후 재검증 대상)와 매일유업 `20250814003491`(T3.6 원문대조
+    fixture) 둘 다 크래시 없이 타당한 값 산출 확인(LG엔솔 연결 감가상각 1,106억·무형자산상각
+    49.9억, 별도 189.6억/38.8억 — 매일유업 연결 D&A합계 122.9억, 별도 104.7억).
+  - **종합 판정**: 재적재 전건 정상 반영 확인, R11 회귀·재발 신호 없음. Phase 4 전체 종료.
 
 ---
 

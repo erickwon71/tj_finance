@@ -530,11 +530,14 @@ _value_sign()`. Phase 6-5에서 박셀바이오·한화(모던 vintage) 전체 b
 (`docs/qa/handoff_note_lines_span_misattribution_2026-08-07.md` §10, 250필링·1,867표·
 145,045값 동치성 검사) — **본문 경로는 건드리지 않는다.**
 
-**상태(2026-08-08) — ★코드 구현 + 검증(Phase 2·3) 전부 완료.** `parser/xml/table_extractor.py
-::expand_table_grid`(그리드 확장 유틸) 신설 + `fin2/extract/report_lines.py::_grid_header_split`
-/`_grid_body_rows` 배선(주석·SCE 공용). 전수 재검증(`scripts/census_note_span_misattribution_
-mp.py`, 101,327건, 오류 0): 프로덕션 코드 실측 결함 **0건**(원래 28,189,281개→0). 회귀
-테스트 434 passed. 상세는 부록 C·`docs/plans/note_span_fix_plan_2026-08-07.md`.
+**상태(2026-08-08) — ★코드 구현 + 검증 + DB 반영(Phase 1~4) 전부 완료.** `parser/xml/
+table_extractor.py::expand_table_grid`(그리드 확장 유틸) 신설 + `fin2/extract/report_lines.py
+::_grid_header_split`/`_grid_body_rows` 배선(주석·SCE 공용). 전수 재검증(`scripts/census_
+note_span_misattribution_mp.py`, 101,327건, 오류 0): 프로덕션 코드 실측 결함 **0건**(원래
+28,189,281개→0). 회귀 테스트 434 passed. **note_lines 전량 재적재 완료**(245,452,947 →
+247,244,387행, +0.73%) + **std_v3 재빌드 완료**(184,298→184,580행) + 재검증(DB 직접
+대조·Gate B `line_value_diff=0`·D&A DB 재확인) 전부 통과 — 상세는 부록 C·
+`docs/plans/note_span_fix_plan_2026-08-07.md` Phase 4.
 
 ### R11-1. 헤더 경계 판정이 실패하는 경우 (★T3.6에서 발견한 R11 자체 회귀, 2026-08-08 수정)
 
@@ -617,7 +620,7 @@ IFRS 필수 단일공시(확정기여제도 퇴직급여비용 등)가 전형적
 | R2-1 `biz_metrics`·`order_backlog` 가 정본 정책 미적용 | **미조치** — 547건(447개사) 미파싱, 505건 회수 가능. 2026-07-31 백필 완료 후 착수 예정 |
 | R1 '사업의 내용' 이 계층2 를 우회 | 의도된 현행. 계층2 편입 여부 미결 |
 | **셀 병합 결함(`biz_metrics` 한정)** | **✅ 조치 완료 2026-08-01** — 아래 T14 참조. `biz_section.py`(사업의 내용) 전용, 이상치 2,599행 → **162행**(94% 제거) |
-| ~~note_lines/SCE 본문행 ROWSPAN/COLSPAN 미확장~~ | **✅ 코드+검증(Phase 2·3) 완료 2026-08-08** — R11/R11-1/R11-2 참조. `expand_table_grid`+`_grid_header_split`/`_grid_body_rows` 신설·배선. 전수 재검증(101,327건) 프로덕션 결함 0건(원래 28,189,281개→0). **진행 중 R11 자체의 새 회귀 2종 발견+수정**(R11-1: 헤더판정실패 폴백 offset=0, note 348,099셀/1,629필링→480셀/107필링, 남은 잔여는 R11-2(헤더 없는 단일행 표, 정상)). ⚠**아직 DB 미반영** — note_lines 전량 재적재(Phase 4 T4.2, 245M행)가 남아 있다. 상세 = `docs/plans/note_span_fix_plan_2026-08-07.md` Phase 3 |
+| ~~note_lines/SCE 본문행 ROWSPAN/COLSPAN 미확장(= 단위(배수) 오귀속의 실제 원인)~~ | **✅ 전체 완료 2026-08-08**(코드+검증+DB 반영, Phase 1~4) — R11/R11-1/R11-2 참조. `expand_table_grid`+`_grid_header_split`/`_grid_body_rows` 신설·배선. 원인·규모는 `docs/qa/handoff_note_lines_span_misattribution_2026-08-07.md` §9~§10 확정: 전수 재파싱 실측 11.48%(2,819만 개) 컬럼 오귀속이지만 **값 자체가 무의미해지는 건 0.24%뿐**(비금액 열 배수 오적용) · 회수가능 누락 0.75% · 나머지 **89.6%(전체 값의 9.25%)는 크기는 맞고 열 정체(당기/전기 등)만 틀림**(`label_diff`, `note_periods`/`units.py` 기간·배수 판정에 영향). **본문(BS/IS/CF)은 실측 0건**(§10, 코드 경로가 달라 ROWSPAN 이어짐이 `_split_label_amounts`에서 자동 흡수됨 — 재적재 불필요, F1 회귀 가설도 기각). 전수 재검증(101,327건) 프로덕션 결함 0건(원래 28,189,281개→0). **진행 중 R11 자체의 새 회귀 2종 발견+수정**(R11-1: 헤더판정실패 폴백 offset=0, note 348,099셀/1,629필링→480셀/107필링, 잔여는 R11-2로 정상 분류). **Phase 4(2026-08-08) — note_lines 전량 재적재 완료**(245,452,947→247,244,387행, +0.73%) + std_v3 재빌드(184,298→184,580행) + 재검증(DB 직접 대조 텔코웨어·풍강 값 일치·Gate B `line_value_diff=0`·D&A DB 재확인) 전부 통과. 상세 = `docs/plans/note_span_fix_plan_2026-08-07.md` |
 | 계정별 예외단위(자본금류, `report_lines`) | **미조치·미재검증** — 에스티아이 사례(자본금류 계정이 표 선언 배수 무시하고 원 단위 그대로 표기) 위 ROWSPAN 결함과 별개로 남아 있음. 상세 = `docs/qa/handoff_unit_multiplier_misattribution_2026-08-07.md` §4-2 |
 | 캡션 상속(연속표) 회수율 | 미측정 |
 | `가. 매출유형별 매출액` 류 캡션 | `sales_section`·카탈로그 모두 미포착(실측 나무에이엑스). 캡션 규칙 확장 대상 |

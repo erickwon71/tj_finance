@@ -173,6 +173,84 @@ def ensure_mounted() -> None:
         f"(Keychain 자격증명 미저장이거나 서버 응답 없음) — 계약 검증에서 명확한 에러로 막힘")
 
 
+def _volume_usable(volume: Path, expected_id: str, root: Path) -> bool:
+    """sentinel 일치 + 읽기 가능이면 True. 예외를 삼키는 내부 헬퍼 — `ensure_root()`의
+    분기 판단에만 쓴다(사용자에게 보이는 실패는 여전히 예외로 낸다)."""
+    try:
+        check_sentinel(volume, expected_id)
+        check_readable(root)
+    except StorageContractError:
+        return False
+    return True
+
+
+def _relink(target_root: Path) -> None:
+    """`raw_report` 심링크를 target_root 로 원자적으로 재지정(`ln -sfn` 과 동일 효과).
+    이미 그 대상이면 아무것도 안 한다. 임시 심링크를 만들어 `os.replace`로 갈아끼우므로
+    도중에 다른 프로세스가 SYMLINK 를 보더라도 "없는 상태"가 관측되지 않는다."""
+    try:
+        if SYMLINK.resolve(strict=True) == target_root.resolve():
+            return
+    except OSError:
+        pass  # 끊어진 심링크 — 그냥 새로 건다
+    tmp = SYMLINK.with_name(SYMLINK.name + f".tmp{os.getpid()}")
+    if tmp.is_symlink() or tmp.exists():
+        tmp.unlink()
+    os.symlink(target_root, tmp)
+    os.replace(tmp, SYMLINK)
+    logger.warning(f"[storage] 심링크 재지정: {SYMLINK} -> {target_root}")
+
+
+def ensure_root(allow_sd_fallback: bool = False) -> Path:
+    """읽기 전용/수동 스크립트용 진입점 — 지금 원문을 읽을 수 있는 루트를 돌려준다.
+
+    기본(`allow_sd_fallback=False`)은 `assert_storage()` 그대로 위임하는 순수 패스스루다
+    (기존 호출부·데일리 파이프라인과 동작 100% 동일, 이 인자를 안 쓰면 아무것도 안 바뀐다).
+
+    `allow_sd_fallback=True` 는 **명시적으로 opt-in 한 수동 실행에서만** 쓴다 — 데일리
+    (`collect_new.py`)·launchd 무인 잡에는 절대 배선하지 않는다. `raw_report` 심링크가
+    SD카드(BACKUP)를 조용히 가리키는 상태가 바로 [[nas-migration-plan]]에 기록된 4회
+    드리프트(2026-07-07/13/26, 08-01)의 원인이었고, `assert_storage()`는 그 재발을 막으려고
+    일부러 "실패는 예외" 원칙을 지킨다(`test_symlink_drift_to_backup_raises`). 이 함수는 그
+    원칙을 어기지 않는다 — SD 폴백은 **사람이 직접 호출한 스크립트에서만, 크게 로그를 남기고**
+    일어난다.
+
+    동작:
+      1. `ensure_mounted()` 로 NAS 재마운트 시도(기존 최선형 동작 그대로).
+      2. PRIMARY(NAS) 가 지금 쓸 수 있으면 심링크를 PRIMARY 로 맞추고(드리프트 자동 원복 —
+         이 방향은 안전해서 조건 없이 한다) PRIMARY_ROOT 를 돌려준다.
+      3. `allow_sd_fallback=False` 면 여기서 끝 — PRIMARY 가 안 되면 `StorageContractError`.
+      4. `allow_sd_fallback=True` 면 BACKUP(SD)이 쓸 수 있는지 확인 후, 되면 ERROR 레벨로
+         드리프트 사실을 남기고 심링크를 BACKUP 으로 돌려 BACKUP_ROOT 를 반환한다(새로 여기서
+         쓰는 파일은 NAS 에 반영되지 않는다는 경고 포함 — 읽기 전용 작업 전제). 다음에 이 함수를
+         다시 부르면(2번) NAS 복귀를 자동 감지해 원복한다.
+      5. 둘 다 안 되면 `StorageContractError`.
+
+    Returns:
+        지금 살아있는 루트(PRIMARY_ROOT 또는, opt-in 폴백이 실제로 일어난 경우 BACKUP_ROOT).
+    """
+    if not allow_sd_fallback:
+        assert_storage()
+        return PRIMARY_ROOT
+
+    ensure_mounted()
+    if _volume_usable(PRIMARY_VOLUME, PRIMARY_ID, PRIMARY_ROOT):
+        _relink(PRIMARY_ROOT)
+        return PRIMARY_ROOT
+
+    logger.error(
+        f"[storage] NAS({PRIMARY_VOLUME}) 접근 불가 — SD카드({BACKUP_VOLUME})로 raw_report "
+        f"폴백(--allow-sd-fallback). ⚠이 상태에서 새로 쓰는 파일은 NAS 에 반영되지 않는다 — "
+        f"읽기 전용 작업에서만 쓸 것. NAS 복귀 후 아무 호출이나 다시 하면 자동 원복된다."
+    )
+    if not _volume_usable(BACKUP_VOLUME, BACKUP_ID, BACKUP_ROOT):
+        raise StorageContractError(
+            f"[storage] PRIMARY({PRIMARY_VOLUME})·BACKUP({BACKUP_VOLUME}) 둘 다 사용 불가"
+        )
+    _relink(BACKUP_ROOT)
+    return BACKUP_ROOT
+
+
 # ── 통합 진입점 ─────────────────────────────────────────────────────
 
 def assert_storage(require_backup: bool = False) -> None:

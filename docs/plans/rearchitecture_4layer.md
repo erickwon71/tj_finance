@@ -156,6 +156,14 @@
 > [handoff_note_lines_span_misattribution](../qa/handoff_note_lines_span_misattribution_2026-08-07.md)
 > (다음 세션 첫 작업 = 수정 로직 설계). 그다음 2순위(구 계약을 보는 검증도구 4종 갱신)는
 > 순서 그대로 유효.
+>
+> **2026-08-09 갱신** — 본류 착수 전 상태 점검(§1 ①controlling_ni 소급 재표준화 확인) 중
+> `std_financials_v3`(브리지 swap 이후 앱이 옮겨갈 목표 테이블)에서 controlling_ni 대량 공백
+> 재발(23%만 채움, 삼성전자도 NULL)을 발견 → 원인규명·수정·전량 재빌드까지 완료
+> ([계획서](std_v3_controlling_ni_gap_fix_plan_2026-08-08.md), 브랜치
+> `fix/std-v3-controlling-ni-separate-basis`, 미머지). **커버리지 23.0%→85.4%**
+> (157,637/184,580행), 원문대조 50건 불일치 0. 브리지 swap(위 3번)의 전제조건인 "v3 데이터
+> 품질" 중 이 항목은 해소됨 — swap 착수 전 main 머지 필요.
 
 **완료(2026-07-25)**: `--recheck` + `build_std_v3 --all` 재빌드 · 금융섹터 revenue census 종결(보험/은행/
 증권/여신전문 프로파일 + 잔여 KSIC 프로파일 불필요, 원문대조 PASS) · **브리지 swap enrichment steps 1-2**

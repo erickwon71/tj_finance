@@ -58,6 +58,15 @@ def build_corp(session, corp: str, year_min: int = 2015,
                                                 merged=merged)
             if not col:
                 continue  # nothing assembled for this basis (missing / other-basis only)
+            if basis == "separate":
+                # Separate financial statements have no non-controlling interest —
+                # controlling_ni is always net_income by accounting definition, so
+                # force it regardless of whether it's NULL or mis-mapped (e.g. a
+                # capital-line 'owners' equity' value). Ported from v2's
+                # fin2/standardize/rules.py::rule_controlling_ni_fill.
+                ni = col.get("net_income")
+                if ni is not None and col.get("controlling_ni") != ni:
+                    col["controlling_ni"] = ni
             session.execute(
                 delete(StdFinancialV3).where(
                     StdFinancialV3.corp_code == corp,

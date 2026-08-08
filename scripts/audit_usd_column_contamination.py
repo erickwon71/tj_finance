@@ -78,7 +78,7 @@ def main() -> int:
                 decl = declaration_text(tbl) or inherited_declaration_text(tbl)
                 if not decl or not _FX.search(decl):
                     continue                       # USD 선언 표만 본다
-                col_labels = _build_col_labels(tbl, all_cells=True)
+                col_labels = _build_col_labels(tbl)  # all_cells 인자 폐지(2026-08-07, R11/T2.3)
                 cu = ColumnUnits.from_declaration(decl, col_labels)
                 if cu.money_mult is None:
                     continue

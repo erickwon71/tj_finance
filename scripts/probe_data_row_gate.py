@@ -95,7 +95,7 @@ def main() -> int:
                 t["★신규 편입 표"] += 1
                 own = declaration_text(tb)
                 decl = own or inherited_declaration_text(tb)
-                cu = ColumnUnits.from_declaration(decl, _build_col_labels(tb, all_cells=True),
+                cu = ColumnUnits.from_declaration(decl, _build_col_labels(tb),  # all_cells 폐지(R11/T2.3)
                                                   inherited=bool(decl and not own))
                 cells = sum(1 for tr in table_direct_rows(tb) for c in _get_cells(tr)
                             if any(ch.isdigit() for ch in c))

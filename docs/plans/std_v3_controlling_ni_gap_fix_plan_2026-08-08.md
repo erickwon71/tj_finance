@@ -1,7 +1,7 @@
-# 수정 계획 — `std_financials_v3` controlling_ni 대량 공백 (2026-08-08 작성, **미실행**)
+# 수정 계획 — `std_financials_v3` controlling_ni 대량 공백 (2026-08-08 작성, ✅**2026-08-09 실행 완료**)
 
-> ⚠**이 문서는 계획이다. 승인 전 어떤 코드/DB 변경도 하지 않는다.**
-> (CLAUDE.md: 계획 작성 후 자동 실행 금지 — 실행은 별도 요청으로 받는다.)
+> Phase A+B 구현·전량 재빌드·원문대조까지 §6 체크리스트 전부 완료(범위 밖 후순위 항목 제외).
+> 브랜치 `fix/std-v3-controlling-ni-separate-basis`(커밋 `19ffdfa`+`52f1323`), **main 미머지**.
 
 배경: `docs/qa/handoff_post_r11_next_steps_2026-08-08`(메모리 `handoff-post-r11-next-steps-2026-08-08`)
 §1 "재설계 본류 다음 액션"을 착수하기 전 상태 점검(①controlling_ni 소급 재표준화·D&A 커버리지
@@ -243,16 +243,19 @@ delete-then-insert(`fin2/layer3/build.py::build_corp`, line 60~66)이므로, 코
       ≈18,305억) ✓ · 현대해상 2022FY(574,557,219,967=net) ✓ · 기업은행 별도 재확인(Phase A
       무회귀) ✓ · 라벨스왑 2사(DH오토웨어·에프알텍) 정답 채택 ✓ · 진짜동률(00684802) 보류 유지 ✓
 - [x] pytest 439 passed / 1 failed(무관, 사업개황 파싱)
-- [ ] 커밋(B만 단독)
+- [x] 커밋(B만 단독) — `52f1323`
 
-### 전량 재빌드 + 검증
-- [ ] `scripts/build_std_v3.py --all` 전량 재빌드(idempotent delete-then-insert,
-      **사용자 터미널 직접 실행** — `[[feedback-long-running-commands]]`)
-- [ ] 커버리지 재측정: `controlling_ni` non-NULL 카운트가 §2 추정치(~160,000행, 86.7%)에
-      부합하는지
-- [ ] 원문 대조: 회수된 값 중 무작위 20~30건을 `report_lines` 원문과 직접 대조
-- [ ] `docs/plans/rearchitecture_4layer.md` §5에 이번 수정 완료 반영(뷰 브리지 전환의
-      전제조건 중 하나 해소로 기록)
+### 전량 재빌드 + 검증 — ✅완료(2026-08-09)
+- [x] `scripts/build_std_v3.py --all` 전량 재빌드(사용자 터미널 직접 실행 완료)
+- [x] 커버리지 재측정: **23.0%(42,502) → 85.4%(157,637/184,580)** — §2 추정치(~160,000행,
+      86.7%)에 근접 부합(separate 99.6%·consolidated 71.2%, 최신FY 2023+ 연결 73.1%).
+      삼성전자 FY2023 재확인(14,473,401,000,000) 유지.
+- [x] 원문 대조: consolidated 25건 + separate 25건(총 50건) 무작위 `report_lines` 직접
+      대조 — consolidated 25/25 원문 금액 일치(1건은 `basis_fallback=True`라 separate
+      basis 쪽 report_lines에서 확인, 정상), separate 25/25 `controlling_ni==net_income`
+      원문과 일치. 불일치 0건.
+- [x] `docs/plans/rearchitecture_4layer.md` §5에 이번 수정 완료 반영(2026-08-09 갱신 블록,
+      뷰 브리지 전환의 전제조건 중 하나 해소로 기록 + main 머지 필요 안내)
 
 ### 범위 밖(이번엔 안 함, 후속 후보로만 기록)
 - [ ] (후순위) v2 R&D 커버리지 저하 원인 수정 — `fin2_extract_rd_note.py`가 `fact_v2` 대신

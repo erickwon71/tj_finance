@@ -59,6 +59,37 @@ _CURRENT_STRICT = {"bs.trade_receivables", "bs.trade_payables",
 _NONCURRENT_RE = re.compile(r"장기|비유동")
 _NARROW_PREFER = {"bs.trade_receivables", "bs.trade_payables"}
 _BROAD_RE = re.compile(r"및기타|및 기타|AndOther")
+# a BS grand-total canonical must not be sourced from a fiduciary/trust-account
+# sub-statement embedded in the same filing (banks commonly attach a 신탁계정 balance
+# sheet alongside their own — legitimately '자산총계'==부채총계' there, no equity, since
+# a trust account holds no residual interest). Such a table's clean-label '자산총계' can
+# reach stage='exact' while the real statement's letter-spaced '자    산    총    계'
+# (older filing format) only reaches 'normalized', so without an explicit guard the
+# trust table's exact match wins over the real one.
+# ★ Deliberately narrow and self-verifying (not a blanket table_seq=0 preference —
+# that was tried and reverted after a verified regression: 네오셈/01170865 has table_seq=1
+# as its correct current-period 별도 BS with table_seq=0 being a stale/mismatched table,
+# i.e. table order alone is not a reliable primary-statement signal). A table_seq is only
+# excluded when, from *its own* candidates, total_assets == total_liabilities exactly AND
+# it has no total_equity candidate at all — the trust-account signature specifically,
+# not "a second BS-shaped table exists" in general.
+# Real 실측 (2026-08-09): 제주은행(00148832)·기업은행(00149646) — see docs/plans/
+# std_v3_dq_shares_period_backfill_todo_2026-08-09.md.
+_BS_GRAND_TOTAL = {"bs.total_assets", "bs.total_liabilities", "bs.total_equity"}
+
+
+def _trust_account_table_seqs(cands: dict[str, list[dict]]) -> set:
+    """table_seq values whose own total_assets == total_liabilities with no total_equity
+    candidate at all — see _BS_GRAND_TOTAL comment. Computed once per _resolve() call."""
+    ta = cands.get("bs.total_assets", [])
+    tl = cands.get("bs.total_liabilities", [])
+    if not ta or not tl:
+        return set()
+    ta_by_seq = {r["table_seq"]: r["value"] for r in ta}
+    tl_by_seq = {r["table_seq"]: r["value"] for r in tl}
+    eq_seqs = {r["table_seq"] for r in cands.get("bs.total_equity", [])}
+    return {seq for seq, v in ta_by_seq.items()
+            if tl_by_seq.get(seq) == v and seq not in eq_seqs}
 
 # statement -> AccountMapper fs_section hint
 _FS = {"IS": "is", "BS": "bs", "CF": "cf"}
@@ -307,7 +338,17 @@ def _resolve(cands: dict[str, list[dict]]):
     """
     confirmed: dict[str, int] = {}
     conflicts: dict[str, list[dict]] = {}
+    trust_seqs = _trust_account_table_seqs(cands)
     for c, rows in cands.items():
+        # BS grand-total: drop candidates from a confirmed trust-account sub-statement
+        # (see _BS_GRAND_TOTAL / _trust_account_table_seqs above) before stage ranking, so
+        # its clean-label 'exact' match can never outrank the real statement's
+        # letter-spaced 'normalized' one. Only fires on the specific trust-account
+        # signature — never a blanket table_seq preference.
+        if c in _BS_GRAND_TOTAL and trust_seqs:
+            filtered = [r for r in rows if r.get("table_seq") not in trust_seqs]
+            if filtered:
+                rows = filtered
         # 가산 계열(ADDITIVE_CANON)은 한 canonical 에 여러 행이 정상적으로 대응한다
         # (cf.depreciation ← '감가상각비' + '투자부동산감가상각비'). 단일값 전제로 충돌
         # 판정하면 canonical 이 통째로 폐기되므로, 선언된 계열만 합산한다.
@@ -555,6 +596,15 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
                                    statements=statements)
     confirmed, conflicts = _resolve(cands)
     _resolve_ni_attribution(cands, confirmed, conflicts)
+    # net_income fallback (ported from fin2/standardize/rules.py::rule_net_income_fill,
+    # missing from the v3 port — 실측 2026-08-09: 삼성증권 FY2025 등 470행/119개사).
+    # A nonstandard total-NI label (e.g. '보통주 당기순이익' instead of '당기순이익') can
+    # fail to match is.net_income while the attribution lines (controlling/noncontrolling —
+    # distinct labels, reliably matched) still resolve. Recompose the total from those
+    # rather than leaving it NULL. Non-controlling defaults to 0 (e.g. 별도, no subsidiaries).
+    if "is.net_income" not in confirmed and "is.controlling_ni" in confirmed:
+        nci = confirmed.get("is.noncontrolling_ni", 0)
+        confirmed["is.net_income"] = confirmed["is.controlling_ni"] + nci
     col: dict[str, int] = {}
     for canon, value in confirmed.items():
         std_col = DIRECT_MAP.get(canon)

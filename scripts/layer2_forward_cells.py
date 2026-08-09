@@ -1,15 +1,5 @@
 """계층2 정방향 셀 커버리지 — **원문 셀 → 추출기** 구간 (READ-ONLY, 샤딩 지원).
 
-⚠⚠ **이 도구는 2026-07-31 현재 구 계약을 재현한다 — 숫자를 그대로 믿지 말 것.**
-    아래 주석 스코프가 `declared_unit(tb) is None → 폐기` 로 세는데, F1/D4 이후 로더는
-    **데이터행이 하나라도 있으면 전사**한다(단위 미선언이면 value_won 만 비운다). 또 F2 로
-    주석에서는 헤더 규칙 행도 버리지 않으므로 `헤더행 오판 드롭` 도 주석분은 과대계상이다.
-    고칠 지점: ① 주석 스코프를 `_table_has_data_rows(tb, minimum=1)` 로
-    ② '방출' 을 **값 채움 / 원문만(value_raw)** 으로 쪼갤 것.
-    갱신 전까지의 대체 수단 = `scripts/verify_phase4_reload.py`(DB 기준, 재구현 없음) ·
-    `scripts/audit_unit_declarations.py`(census, 새 계약 반영됨).
-
-
 `layer2_fidelity_full.py` 가 못 보는 구간을 메운다. 그쪽의 "정방향"은
 **추출기 출력 → DB** 비교라서, 추출기가 원문 셀을 애초에 못 본 경우엔 추출 결과와 DB가
 똑같이 비어 있어 통과한다. 2026-07-29 sanitize 결함(성일하이텍 셀 1,143→6,011)이 바로
@@ -21,17 +11,37 @@
 귀속**시킨다. 사유 없이 사라지는 셀(`설명안됨`)이 0 이어야 한다.
 
     원문 금액셀
-      ├─ 헤더행드롭   : `_is_header_cell`/`_is_fs_title_row` 가 데이터행을 헤더로 오판
+      ├─ 헤더행드롭   : 본문·SCE(`_is_header_cell`/`_is_fs_title_row`, row-기반) 또는
+      │                 주석(`_header_rule_name`/`_is_fs_title_row`, grid-기반)이
+      │                 데이터행을 헤더/제목행으로 오판
       │                 (★SCE date_labels_ok 결함이 이 버킷이었다 — 2,519행 유실)
-      ├─ 라벨없음     : `_split_label_amounts` 가 라벨을 못 뽑음 → 귀속 불가로 폐기
-      ├─ 열절단       : `extract_rows(num_cols=N)` 의 `range(num_cols)` 가 N 번째 이후를
-      │                 **조용히 버린다**. 본문 3(다열 8) · 주석 8 · SCE 12
-      ├─ interim3개월 : 누적열 표에서 3개월 열 배제(의도)
-      └─ 방출         : 추출기가 실제로 낸 셀
-    표 단위 폐기       : 단위미선언 · 데이터행없음 · 2단표중복배제 (전부 의도)
+      ├─ 라벨없음     : 라벨 칸이 비어 귀속 불가로 폐기
+      ├─ 열절단       : **본문(BS/IS/CF)만 해당.** `extract_rows(num_cols=N)` 의
+      │                 `range(num_cols)` 가 N 번째 이후를 **조용히 버린다**(본문 3·다열 8).
+      │                 주석·SCE는 R11(2026-08-07/08)로 grid 기반(`_grid_body_rows`)이 되며
+      │                 열 절단 자체가 구조적으로 사라졌다(★항상 0).
+      ├─ interim3개월 : 누적열 표에서 3개월 열 배제(의도, 본문만)
+      └─ 방출         : 추출기가 실제로 낸 셀. **주석만** 값채움(value_won)/원문만
+                        (value_raw, 단위 미확정 열)으로 갈린다 — 둘 다 "방출"이며 유실 아님
+                        (F1, 2026-07-31). 본문·SCE는 표 단위 단일 배수라 늘 값채움.
+    표 단위 폐기       : 데이터행없음(주석) · 단위미선언(본문·SCE, FX/문서기본단위 폴백
+                        전부 실패했을 때만) · 2단표중복배제 (전부 의도)
 
 `열절단`·`헤더행드롭`·`라벨없음` 은 **의도된 폐기가 아니다** — 0 이 목표이며 값이 크면
 그만큼 원문이 DB 에 없다는 뜻이다.
+
+★ 갱신 이력(2026-08-09, `docs/plans/verification_tools_4_refresh_2026-08-09.md`) — 이 도구는
+  세 겹으로 낡아 있었다. 전면 재작성으로 전부 반영:
+    ① F1/D4(2026-07-31) — 주석 표 폐기가 `declared_unit is None` 이 아니라
+       `note_table_retained()`(≡ 데이터행 ≥1) 하나뿐이라는 사실.
+    ② R11(2026-08-07/08) — 주석·SCE 추출이 row-기반(`extract_rows`)에서 grid-기반
+       (`_grid_header_split`/`_grid_body_rows`, `fin2/extract/report_lines.py`)으로 전환.
+       본문(BS/IS/CF)은 여전히 row-기반이라 그쪽 시뮬레이션(`scan_table`)은 원래도 정확했다.
+    ③ FX/문서기본단위 폴백(2026-08-05, `fx-declared-statements`) — 표 자체 선언이 없어도
+       `ColumnUnits.from_declaration(...).kind == FX_ONLY` 나 `document_default_unit()` 로
+       살아나는 표를 이 도구가 "단위미선언 폐기"로 과다계상하고 있었다(본문·SCE 공통).
+  재작성 후에도 **표 하나를 절대 참조원으로 삼지 않는다** — `main()`의 표별 후보↔실제
+  방출(`extract_report_lines` 호출 결과) 대조가 최종 검증이다(아래 참고).
 
 Usage
 -----
@@ -54,12 +64,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import text
 
 from collector.db import get_session
-from fin2.extract.report_lines import (_NOTE_MAX_COLS, _SCE_MAX_COLS,
+from fin2.extract.report_lines import (_grid_body_rows, _grid_header_split,
                                        _detect_period_layout,
-                                       extract_report_lines)
+                                       _header_rule_name, _label_dict_from_header,
+                                       extract_report_lines, note_column_units,
+                                       note_table_retained)
 from fin2.extract.text import (_SECTION_META, _detect_body_statement_tables,
                                _detect_fin_type, _interim_cumulative_cols,
-                               _table_has_data_rows, declared_unit)
+                               declaration_text, document_default_unit,
+                               inherited_declaration_text)
+from fin2.extract.units import FX_ONLY, ColumnUnits
 from parser.common.amount_normalizer import parse_amount
 from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.section_detector import (SEC_CONSOL_NOTE, SEC_SEP_NOTE,
@@ -78,21 +92,37 @@ TARGETS_SQL = """
 """
 
 
+def resolve_table_unit(table, doc_default_unit: tuple):
+    """표 자체 선언이 없을 때(`unit_of[...] is None`)의 최후 수단 — `_emit_section_lines`/
+    `_emit_sce_lines`(fin2/extract/report_lines.py)와 **정확히 같은 순서**로 재시도한다:
+    ① 표시통화가 외화 단독 선언(FX_ONLY)이면 그 환산배수 ② 문서 전체 기본단위
+    (`document_default_unit`, 로컬 선언이 전혀 없는 문서에서 요약재무정보 텍스트로 채움).
+    둘 다 실패하면 None(진짜 폐기). 이 함수가 없으면 이 도구가 실제로는 살아나는 표를
+    '단위미선언 폐기'로 과다계상한다(2026-08-05 결정 미반영 버그, 08-09 재작성에서 수정)."""
+    decl = declaration_text(table) or inherited_declaration_text(table)
+    cu = ColumnUnits.from_declaration(decl)
+    if cu.kind == FX_ONLY:
+        return cu.fx_mult
+    return doc_default_unit[0]
+
+
 class TableScan:
     """한 표의 셀 회계. 카운트만 하며 값 판단은 하지 않는다."""
 
     __slots__ = ("header_drop", "no_label", "truncated", "candidate", "cand_pos",
-                 "num_cols", "mult", "eps_pass")
+                 "num_cols", "mult", "eps_pass", "value_filled", "raw_only")
 
     def __init__(self) -> None:
-        self.header_drop = 0      # 헤더로 오판된 행의 금액 셀
+        self.header_drop = 0      # 헤더/제목행으로 오판된 행의 금액 셀
         self.no_label = 0         # 라벨을 못 뽑은 행의 금액 셀
-        self.truncated = 0        # num_cols 밖으로 잘린 셀 ★
-        self.candidate = 0        # extract_rows 가 amounts 로 넘긴 non-None 셀
+        self.truncated = 0        # num_cols 밖으로 잘린 셀 ★(본문만 해당, grid 표는 항상 0)
+        self.candidate = 0        # 추출기가 amounts 로 넘긴 non-None 셀(값채움+원문만)
         self.cand_pos = defaultdict(set)  # row_order -> {col 위치}
-        self.num_cols = 0         # 이 표에 적용된 절단 한계(진단용)
+        self.num_cols = 0         # 이 표에 적용된 절단 한계(진단용, grid 표는 -1=해당없음)
         self.mult = 1             # 방출기가 이 표를 순회하는 횟수(중복 객체면 >1)
         self.eps_pass = 0         # '주당' 행 — EPS 별도 패스가 방출(유실 아님)
+        self.value_filled = 0     # candidate 중 value_won 이 채워질 셀(단위 확정, 주석만 분리 의미있음)
+        self.raw_only = 0         # candidate 중 value_raw 만 남을 셀(단위 미확정 열, 주석 F1)
 
     @property
     def source(self) -> int:
@@ -195,6 +225,76 @@ def scan_table(table, unit: int, num_cols: int, *,
     return sc
 
 
+def scan_grid_table(table, *, allow_date_label: bool, keep_header_rows: bool,
+                    col_multiplier, sink: list | None = None) -> TableScan:
+    """`_grid_body_rows`(fin2/extract/report_lines.py, R11) 의 행/셀 취급을 **그대로**
+    재현하되, 버려지는 셀을 사유별로 센다. `scan_table`의 grid-기반 대응물 — 주석·SCE 는
+    이제 이 함수를, 본문(BS/IS/CF)은 여전히 `scan_table`을 쓴다(그쪽은 row-기반 그대로다).
+
+    재현 대상: `_grid_header_split` → (ROWSPAN 흡수 행 스킵) → `_header_rule_name` →
+    `_is_fs_title_row` → 라벨 공백 가드 → `grid_col - offset` 위치로 값 셀 확정. **열 절단은
+    없다** — `_grid_body_rows`는 `num_cols` 개념 자체가 없어(R11, 위치는 진짜 grid_col) 구
+    row-기반 경로의 "N번째 이후 조용히 버림" 실패모드가 구조적으로 사라졌다.
+
+    `col_multiplier(col_idx) -> int|None` — 셀 하나가 실제로 값채움(단위 확정)될지
+    원문만(단위 미확정) 남을지 결정한다. SCE 는 표 전체 단일 배수(`lambda _: unit`, 항상
+    확정)라 raw_only 가 나오지 않는다. 주석은 열별 `ColumnUnits.multiplier`(F1) — None 이면
+    라벨/제목/ROWSPAN 게이트는 통과했어도 그 셀은 value_raw 로만 방출된다(유실 아님, "방출"
+    버킷 안에서 갈릴 뿐).
+    """
+    sc = TableScan()
+    grid_rows, n_header, offset, width = _grid_header_split(table)
+    if n_header is None:
+        # `_emit_note_lines`/`_emit_sce_lines`와 동일 폴백 — 헤더 구간 못 찾으면 표 전체를
+        # 본문으로, offset=0(R6, 값 유실 아님).
+        n_header, offset = 0, 0
+    body_rows = grid_rows[n_header:]
+    body_trs = table_direct_rows(table)[n_header:]
+    row_order = 0
+    for tr, row in zip(body_trs, body_rows):
+        physical = [c for c in row if not c.inherited]
+        if not physical:
+            continue  # ROWSPAN 이 이 행을 통째로 흡수 — 원문에 이 행 몫의 물리 셀이 없다(유실 아님)
+        label = physical[0].text
+        value_cells = [c for c in physical[1:] if c.grid_col >= offset]
+        amt_hits = [(c, parse_amount(c.text, 1)) for c in value_cells]
+        amt_hits = [(c, v) for c, v in amt_hits if v is not None]
+
+        header_hint = _header_rule_name(label.strip(), allow_date_label=allow_date_label)
+        if header_hint and not keep_header_rows:
+            if "주당" in label:
+                sc.eps_pass += len(amt_hits)
+            else:
+                sc.header_drop += len(amt_hits)
+                if amt_hits:
+                    _RULE_HITS[header_hint] += len(amt_hits)
+            if sink is not None and amt_hits:
+                sink.append(("헤더드롭", label[:40], -1,
+                             " | ".join(c.text for c, _ in amt_hits[:4])))
+            row_order += 1
+            continue
+        if _is_fs_title_row([c.text for c in physical]):
+            sc.header_drop += len(amt_hits)
+            if sink is not None and amt_hits:
+                sink.append(("제목행드롭", label[:40], -1,
+                             " | ".join(c.text for c, _ in amt_hits[:4])))
+            continue
+        if not label:
+            sc.no_label += len(amt_hits)
+            continue
+
+        for c, _v in amt_hits:
+            col_idx = c.grid_col - offset
+            sc.candidate += 1
+            sc.cand_pos[row_order].add(col_idx)
+            if col_multiplier(col_idx) is None:
+                sc.raw_only += 1
+            else:
+                sc.value_filled += 1
+        row_order += 1
+    return sc
+
+
 def scan_filing(root, f, sink: dict | None = None) -> tuple[Counter, dict]:
     """filing 하나의 셀 회계. 반환 = (카운터, 표별 상세).
 
@@ -207,6 +307,10 @@ def scan_filing(root, f, sink: dict | None = None) -> tuple[Counter, dict]:
     # ── 본문 + SCE : `extract_report_lines` 의 표 스코프를 그대로 재현
     fin_type = _detect_fin_type(root)
     groups = _detect_body_statement_tables(root, fin_type, include_sce=True)
+    # `document_default_unit`는 로컬 선언이 없는 표가 있을 때만 의미가 있지만, 이 도구는
+    # (실측용이라) 늘 한 번 계산해 둔다 — `extract_report_lines`처럼 `needs_doc_default`
+    # 게이트로 아끼지 않는다(정확성 우선, 비용은 필링당 1회뿐).
+    doc_default_unit = document_default_unit(root)
     for code, tables_with_unit in groups.items():
         basis = _SECTION_META[code][0]
         is_sce = code.startswith("SCE")
@@ -236,27 +340,36 @@ def scan_filing(root, f, sink: dict | None = None) -> tuple[Counter, dict]:
             unit = unit_of[id(tb)]
             cum_map = cum_maps[id(tb)]
             if unit is None:
-                t["표:폐기(단위 미선언)"] += 1
-                continue
+                # ★2026-08-05 결정(FX/문서기본단위 폴백) 반영 — `_emit_section_lines`/
+                #   `_emit_sce_lines`와 같은 순서로 재시도한 뒤에만 진짜 폐기로 센다.
+                unit = resolve_table_unit(tb, doc_default_unit)
+                if unit is None:
+                    t["표:폐기(단위 미선언)"] += 1
+                    continue
             if not is_sce and has_2tier and cum_map is None:
                 t["표:폐기(2단표 중복배제)"] += 1
                 continue
             t["표:적재대상"] += 1
-
-            n_periods, multicol = 0, False
-            if is_sce:
-                num_cols, dlo, preserve = _SCE_MAX_COLS, True, True
-            else:
-                dlo = preserve = False
-                if cum_map is not None:
-                    num_cols = max(cum_map) + 1
-                else:
-                    n_periods, multicol = _detect_period_layout(tb)
-                    num_cols = 8 if multicol else 3
-
             key = (statement, basis, seq)
             bucket = sink.setdefault(key, []) if sink is not None else None
-            sc = scan_table(tb, unit, num_cols, date_labels_ok=dlo, preserve=preserve,
+
+            if is_sce:
+                # R11(2026-08-08/T2.5) — SCE도 grid 기반. 표 전체 단일 배수라 raw_only 없음.
+                sc = scan_grid_table(tb, allow_date_label=True, keep_header_rows=False,
+                                     col_multiplier=lambda _c, u=unit: u, sink=bucket)
+                sc.num_cols = -1  # grid 기반: 절단 개념 없음(진단 표시용)
+                sc.mult = 1
+                detail[key] = sc
+                continue
+
+            n_periods, multicol = 0, False
+            if cum_map is not None:
+                num_cols = max(cum_map) + 1
+            else:
+                n_periods, multicol = _detect_period_layout(tb)
+                num_cols = 8 if multicol else 3
+
+            sc = scan_table(tb, unit, num_cols, date_labels_ok=False, preserve=False,
                             sink=bucket)
             sc.num_cols = num_cols
             # ★방출기가 2026-07-30 부터 `tables` 를 dedupe 하므로 순회는 항상 1 회다.
@@ -280,22 +393,29 @@ def scan_filing(root, f, sink: dict | None = None) -> tuple[Counter, dict]:
                     #   전수 '설명안됨' 104,068 의 대부분(IS 99%)을 만들었다.
                     t["cell:interim3개월"] += sum(1 for c in cols if c not in keep) * sc.mult
 
-    # ── 주석 : `_emit_note_lines` 의 표 스코프를 그대로 재현
+    # ── 주석 : `_emit_note_lines` 의 표 스코프를 그대로 재현(R11, grid 기반)
     sec_tables = assign_note_tables_with_titles(root)
     for sec_kind, basis in ((SEC_CONSOL_NOTE, "consolidated"), (SEC_SEP_NOTE, "separate")):
         for seq, (tb, _title) in enumerate(sec_tables.get(sec_kind, [])):
-            unit = declared_unit(tb)
-            if unit is None:
-                t["표:폐기(단위 미선언)"] += 1
-                continue
-            if not _table_has_data_rows(tb):
+            # ★F1/D4(2026-07-31) 반영 — 게이트는 데이터행 유무 하나뿐, 단위선언 무관.
+            if not note_table_retained(tb):
                 t["표:폐기(데이터행 없음)"] += 1
                 continue
             t["표:적재대상"] += 1
             key = ("note", basis, seq)
-            sc = scan_table(tb, unit, _NOTE_MAX_COLS,
-                            sink=sink.setdefault(key, []) if sink is not None else None)
-            sc.num_cols = _NOTE_MAX_COLS
+            # `_emit_note_lines`와 같은 순서로 헤더 라벨 사전을 만들어야 열별 단위판정
+            # (`note_column_units`)이 실제 로더와 일치한다(T1.3, 좌표계 공유).
+            grid_rows, n_header, offset, width = _grid_header_split(tb)
+            if n_header is None:
+                note_col_labels: dict[int, str] = {}
+            else:
+                note_col_labels = _label_dict_from_header(
+                    grid_rows[:n_header], n_header, offset, width)
+            cu = note_column_units(tb, note_col_labels)
+            sc = scan_grid_table(tb, allow_date_label=False, keep_header_rows=True,
+                                 col_multiplier=cu.multiplier,
+                                 sink=sink.setdefault(key, []) if sink is not None else None)
+            sc.num_cols = -1  # grid 기반: 절단 개념 없음(진단 표시용)
             detail[key] = sc
 
     for k, sc in detail.items():
@@ -379,10 +499,15 @@ def main() -> int:
         t.update(ft)
 
         # 방출 셀을 표 단위로 집계해 '후보' 와 맞춘다. 남는 것이 설명 안 되는 유실이다.
+        # ★값채움(value_won)만 세지 않는다 — 주석은 F1(2026-07-31)로 단위 미확정 열이
+        #   value_raw 만 채워진 채로도 **행이 생성된다**(유실이 아니라 "방출"의 한 형태).
+        #   value_won 만 세면 그만큼이 허위 '설명안됨'(candidate 초과분)으로 잡힌다.
         em_by_tbl: Counter[tuple] = Counter()
         for x in emitted:
-            if x.value_won is not None:
-                em_by_tbl[(x.statement, x.basis, x.table_seq)] += 1
+            em_by_tbl[(x.statement, x.basis, x.table_seq)] += 1
+            if x.statement == "note":
+                t["cell:방출:값채움"] += x.value_won is not None
+                t["cell:방출:원문만"] += x.value_won is None
         t["cell:방출"] += sum(em_by_tbl.values())
 
         unexplained = 0
@@ -460,11 +585,17 @@ def main() -> int:
         print(f"   {mark} {label:<24} {t[k]:>12,} ({t[k]/src*100:6.3f}%)")
     cov = t["cell:방출"] / src * 100
     print(f"\n  방출 커버리지 {cov:.3f}%  (목표: 절단·헤더드롭·라벨없음·설명안됨 = 0)")
+    note_emit = t["cell:방출:값채움"] + t["cell:방출:원문만"]
+    if note_emit:
+        print(f"  주석 방출 내역 — 값채움 {t['cell:방출:값채움']:,} "
+              f"({t['cell:방출:값채움']/note_emit*100:5.1f}%) · "
+              f"원문만(단위미확정) {t['cell:방출:원문만']:,} "
+              f"({t['cell:방출:원문만']/note_emit*100:5.1f}%)  ※ 둘 다 방출(유실 아님, F1)")
 
-    print("\n  ── statement 별 열절단 (실질 우선순위가 다르다) ──")
-    for b, why in (("note", "★P0 — note_da 가 전 열을 읽는다"),
-                   ("본문", "무영향 — 잘리는 건 전기·전전기(적재 대상 아님)"),
-                   ("SCE", "신 체인은 col0 만 읽음")):
+    print("\n  ── statement 별 열절단 (본문만 해당 — 주석·SCE 는 R11 로 그리드 기반이라 항상 0) ──")
+    for b, why in (("note", "R11(08-07) 이후 grid 기반, 열 절단 개념 없음(항상 0)"),
+                   ("본문", "여전히 row-기반. 잘리는 건 전기·전전기(적재 대상 아님)"),
+                   ("SCE", "R11(08-08) 이후 grid 기반, 열 절단 개념 없음(항상 0)")):
         s_b = max(t[f"cell:원문:{b}"], 1)
         print(f"    {b:<5} 원문 {t[f'cell:원문:{b}']:>12,} · 절단 {t[f'cell:열절단:{b}']:>10,} "
               f"({t[f'cell:열절단:{b}']/s_b*100:6.3f}%)  {why}")

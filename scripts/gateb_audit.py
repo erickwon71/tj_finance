@@ -197,6 +197,13 @@ def audit_lines(session, corp, rcepts, face_of, track_of, args, agg):
     face 는 std-row 패스에서 이미 읽힌 face_cache 재사용(추가 XML 파싱 없음).
     Track A(XBRL acode 정확대조)·Track B(텍스트, C1: canonical 값-집합) 모두 pass/fail_a
     등급. PDF(C)·0라인은 pending(본 단계 비대상).
+
+    ★ `fact_v2` 커버리지 참고(2026-08-09) — 상세는 `fin2/audit/line_audit.py` 모듈 docstring.
+      요지: `fact_v2`가 아직 전체 rcept 의 일부에만 있어(≈2.4%, 2026-08-09 시점) 대다수
+      rcept 는 `n_missing` 이 전량으로 나오지만, 등급(`line_gate_status`)은 값불일치만
+      보므로 오탐 차단은 아니다. "구 체인 은퇴로 fact_v2 가 비어 있다"는 2026-07-31 시점
+      서술은 더 이상 정확하지 않다(신규 XBRL 파서가 채우는 중) — 다만 완전성 지표로 쓰기엔
+      아직 이르다.
     """
     if not rcepts:
         return

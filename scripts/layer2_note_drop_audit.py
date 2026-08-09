@@ -12,18 +12,16 @@
 
 그래서 추측하지 않고 **추출기에게 직접 묻는다**. assign_note_tables_with_titles 가 찾은
 주석 표 전체를 열거하고, 각 표가 왜 버려졌는지 정확한 사유를 센다:
-    · 단위 미선언  (declared_unit is None)      ← 설계상 보류(결측 > 오염)
-    · 데이터행 없음(_table_has_data_rows False) ← 서술형 표
+    · 데이터행 없음(`note_table_retained` False, ≡ `_table_has_data_rows(tb, minimum=1)`)
+      ← 서술형 표. F1/D4(2026-07-31)로 단위 미선언은 더 이상 폐기 사유가 아니다(값이
+      확정되면 value_won, 아니면 value_raw 만 채워 전사한다) — 이 게이트 하나뿐이다.
     · 정상 적재
-이건 휴리스틱이 아니라 실제 코드 경로라 거짓양성이 없다.
+이건 휴리스틱이 아니라 실제 코드 경로(`fin2/extract/report_lines.py::note_table_retained`)라
+거짓양성이 없다.
 
 Usage
 -----
     python scripts/layer2_note_drop_audit.py --year 2024 --limit 120
-
-⚠ **2026-07-31 이후 구 계약이다** — `declared_unit is None → 폐기` 로 세지만, F1/D4 이후
-   로더는 데이터행이 있으면 전사한다(단위 미선언이면 value_won 만 빈다). 수치를 그대로
-   합격 근거로 쓰지 말 것. 대체 = `scripts/verify_phase4_reload.py` · `audit_unit_declarations.py`.
 """
 from __future__ import annotations
 
@@ -39,7 +37,7 @@ from lxml import etree
 from sqlalchemy import text
 
 from collector.db import get_session
-from fin2.extract.report_lines import _table_has_data_rows, declared_unit
+from fin2.extract.report_lines import note_table_retained
 from parser.common.note_topics import DA_SOURCE_BROAD, map_topic
 from parser.xml.section_detector import (SEC_CONSOL_NOTE, SEC_SEP_NOTE,
                                          assign_note_tables_with_titles)
@@ -97,9 +95,7 @@ def main() -> int:
                     topic = map_topic(note_title)
                     if topic in DA_SOURCE_BROAD:
                         seen[topic] += 1
-                    if declared_unit(table) is None:
-                        tally["폐기:단위 미선언"] += 1
-                    elif not _table_has_data_rows(table):
+                    if not note_table_retained(table):
                         tally["폐기:데이터행 없음"] += 1
                     else:
                         tally["적재"] += 1

@@ -17,8 +17,11 @@ This harness answers the two questions that matter:
   2. RECOVERY  — for collapsed filings, how many distinct notes does the new code
      now resolve (was: 1)?
 
-The table filters (declared unit + has data rows) are reused from the real
-extractor so the comparison matches what would actually be written.
+The table filter (`note_table_retained`, ≡ has data rows) is reused from the real extractor
+(fin2/extract/report_lines.py) so the comparison matches what would actually be written.
+F1/D4 (2026-07-31) removed the unit-declared requirement — a note table is kept whenever it
+has at least one comma-amount data row; unit determination only affects value_won vs
+value_raw per column, not table retention.
 
 Writes nothing to the DB.
 
@@ -26,10 +29,6 @@ Usage
 -----
     python scripts/layer2_note_heading_fix_verify.py --corps 60
     python scripts/layer2_note_heading_fix_verify.py --only 00540863 -v
-
-⚠ **2026-07-31 이후 구 계약이다** — `declared_unit is None → 폐기` 로 세지만, F1/D4 이후
-   로더는 데이터행이 있으면 전사한다(단위 미선언이면 value_won 만 빈다). 수치를 그대로
-   합격 근거로 쓰지 말 것. 대체 = `scripts/verify_phase4_reload.py` · `audit_unit_declarations.py`.
 """
 from __future__ import annotations
 
@@ -47,7 +46,7 @@ from lxml import etree
 from sqlalchemy import text
 
 from collector.db import get_session
-from fin2.extract.report_lines import _table_has_data_rows, declared_unit
+from fin2.extract.report_lines import note_table_retained
 from parser.xml.section_detector import (
     SEC_CONSOL_NOTE,
     SEC_SEP_NOTE,
@@ -69,7 +68,7 @@ FILINGS_SQL = text(
 DB_SECTIONS_SQL = text(
     """
     SELECT DISTINCT section_path
-    FROM note_lines
+    FROM report_tables
     WHERE rcept_no = :rcept AND basis = :basis AND statement = 'note'
     """
 )
@@ -87,9 +86,7 @@ def new_titles(root, sec_kind: str) -> list[str]:
     """Note titles the NEW code assigns, restricted to tables that get written."""
     out = []
     for table, note_title in assign_note_tables_with_titles(root).get(sec_kind, []):
-        if declared_unit(table) is None:
-            continue
-        if not _table_has_data_rows(table):
+        if not note_table_retained(table):
             continue
         out.append(note_title or "<none>")
     return out

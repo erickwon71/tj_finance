@@ -737,6 +737,30 @@ def _grid_body_rows(
     return out
 
 
+def note_table_retained(table, minimum: int = 1) -> bool:
+    """Whether a note table survives the F1/D4 loader gate (2026-07-31) — the *only* real
+    criterion. There is no unit-declared requirement any more: a note table is kept whenever
+    it has at least `minimum` direct data row(s) with a comma amount (`_table_has_data_rows`).
+    Column-level unit determination (value_won vs value_raw-only) is separate — see
+    `note_column_units`. Audit tools (`layer2_forward_cells.py`, `layer2_note_drop_audit.py`,
+    `layer2_note_heading_fix_verify.py`) must call this instead of reimplementing the gate —
+    that reimplementation (`declared_unit(tb) is None`) is exactly the "old contract" bug this
+    function exists to prevent from recurring (docs/plans/verification_tools_4_refresh_2026-08-09.md).
+    """
+    return _table_has_data_rows(table, minimum=minimum)
+
+
+def note_column_units(table, note_col_labels: dict) -> "ColumnUnits":
+    """Per-column unit determination for a note table — the exact code path `_emit_note_lines`
+    uses to decide, column by column, whether a cell gets `value_won` (multiplier resolved) or
+    stays `value_raw`-only (multiplier is None). Factored out so audit tools can reproduce the
+    real "emit" split instead of guessing at it (F1, 2026-07-31 — units.py)."""
+    own_decl = declaration_text(table)
+    inherited = None if own_decl else inherited_declaration_text(table)
+    return ColumnUnits.from_declaration(own_decl or inherited, note_col_labels,
+                                        inherited=bool(inherited))
+
+
 def _emit_note_lines(
     root, *, emit, corp_code, rcept_no, report_fiscal_year, report_fiscal_period,
 ) -> None:
@@ -767,7 +791,7 @@ def _emit_note_lines(
             #   1 이어도 콤마 금액 행을 최소 하나는 요구하므로 숫자 없는 표제표는 통과 못 한다.
             #   ⚠ 기본값은 2 로 **그대로 둔다** — 본문 제목표/데이터표 연결 판정 등 다른
             #     호출부의 동작을 바꾸지 않기 위해 주석 경로에서만 인자로 낮춘다.
-            if not _table_has_data_rows(table, minimum=1):
+            if not note_table_retained(table):
                 continue
             # section_path = 관장 번호 주석 제목('27. 현금흐름표')이 우선 — 주석 정체성 로케이터.
             # 없으면 표 직전 설명 텍스트로 폴백. table_title 엔 지역 설명을 따로 남긴다.
@@ -799,10 +823,7 @@ def _emit_note_lines(
             #   선언이 없어도 전사는 계속한다: value_won 은 비고 value_raw 에 원문이 남는다.
             #   표 자신의 선언이 없으면 **앞선 '선언 전용 표'** 에서만 상속한다(D1) —
             #   상속 조건은 `inherited_declaration_text` docstring 참고(그 외엔 아무것도 안 줍는다).
-            own_decl = declaration_text(table)
-            inherited = None if own_decl else inherited_declaration_text(table)
-            cu = ColumnUnits.from_declaration(own_decl or inherited, note_col_labels,
-                                              inherited=bool(inherited))
+            cu = note_column_units(table, note_col_labels)
             node_roles = _classify_positions(note_rows)
             for row in note_rows:
                 if not row.account_name:

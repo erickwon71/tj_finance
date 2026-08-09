@@ -72,13 +72,15 @@ R1 은 **공백으로 나뉜** 다중 숫자만 거부하고, R3 상한이 1경�
   ② 콤마 그룹 문법 위반(4자리 그룹 등)을 병합 신호로 본다 ③ 현행 유지.
   ①은 재추출이 666 filing 뿐이라 수 분이면 끝난다.
 
-## 4. 남은 부채 — 검증도구가 구 계약을 본다
+## 4. 남은 부채 — 검증도구가 구 계약을 본다 (★2026-08-09 갱신완료)
 
-| 도구 | 문제 |
-|---|---|
-| `layer2_forward_cells.py` | 주석 스코프를 `declared_unit is None → 폐기` 로 센다(F1/D4 이후 사실 아님) |
-| `layer2_note_drop_audit.py`·`layer2_note_heading_fix_verify.py` | 같은 전제 |
-| Gate B **Phase B 라인 대조** | `fact_v2` 를 본다 — 그 테이블은 **비어 있다**(구 체인 은퇴). 그래서 match 0 / missing 전량으로 나온다. 지금 의미 있는 신호는 `fail_a` 와 `value_diff` 뿐이다 |
+> **갱신 완료** — [`docs/plans/verification_tools_4_refresh_2026-08-09.md`](../plans/verification_tools_4_refresh_2026-08-09.md)
+> 로 4종 전부 반영. 아래는 당시 문제 기록(경과 참고용)이었고, 지금은 해소됨.
 
-전부 docstring 에 경고를 달아 뒀다. 갱신 전까지의 대체 수단 = `verify_phase4_reload.py`
-(DB 기준·재구현 없음) · `audit_unit_declarations.py`(새 계약 반영됨).
+| 도구 | 문제(2026-07-31 당시) | 조치(2026-08-09) |
+|---|---|---|
+| `layer2_forward_cells.py` | 주석 스코프를 `declared_unit is None → 폐기` 로 센다(F1/D4 이후 사실 아님) | 전면 재작성. 조사 중 두 겹 더 발견: ①주석·SCE 추출이 R11(08-07/08)로 row-기반→grid-기반 전환됐는데 시뮬레이션은 옛 경로였음 ②본문·SCE 단위판정이 FX/문서기본단위 폴백(08-05)을 안 봐서 폐기 과다계상. 셋 다 수정. 300건 표본 재실행 — 설명안됨 0, 단위미선언폐기 0, note/SCE 열절단 0(구조적으로 이제 불가능) |
+| `layer2_note_drop_audit.py`·`layer2_note_heading_fix_verify.py` | 같은 전제 | `note_table_retained()` 로 게이트 교체. 부수로 `layer2_note_heading_fix_verify.py`가 F3(07-31) 리팩터로 없어진 `note_lines.section_path` 컬럼을 참조해 크래시 나던 것도 발견·수정(`report_tables.section_path`로 이전됨). 150개사 재실행 — REGRESSED 2건(00121969, 00133812) 발견, 원인 미조사·팔로업 필요 |
+| Gate B **Phase B 라인 대조** | `fact_v2` 를 본다 — 그 테이블은 **비어 있다**(구 체인 은퇴). 그래서 match 0 / missing 전량으로 나온다 | 코드는 원래도 맞았음(값불일치만 fail_a, missing은 완전성 지표일 뿐 차단 안 함) — docstring만 정정. `fact_v2`는 신규 XBRL 파서(08-06)가 채우는 중이라 이제 완전히 빈 것은 아니지만(1,451,930행/2,956 rcept) 전체의 ~2.4%뿐이라 대다수는 여전히 missing 위주 |
+
+대체 수단(`verify_phase4_reload.py`·`audit_unit_declarations.py`)은 계속 유효.

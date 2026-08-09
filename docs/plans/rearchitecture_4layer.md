@@ -177,6 +177,16 @@
 > G3(금융 industry_lines)·G4(데이터 계층 스모크) 통과, pytest 439/1(무관) 유지. **미커밋**(git
 > 승인 대기) — 상세는 위 문서 최신 갱신 블록. 다음 = 커밋 승인 → §5 4~5번(검증도구 4종 갱신,
 > C-1 렌더 확인) 또는 Streamlit UI 풀스모크.
+>
+> **2026-08-09 갱신(세 번째) — 검증도구 4종 갱신 완료.** `ed12b5e` push 확인 후 착수, 계획서
+> [`verification_tools_4_refresh_2026-08-09.md`](verification_tools_4_refresh_2026-08-09.md)로
+> 진행. 조사 중 계획에 없던 확장(R11 grid 재작성 미반영·FX/문서기본단위 폴백 누락) 발견 →
+> 사용자 승인 후 `layer2_forward_cells.py` 전면 재작성까지 포함해 완료. 커밋 `2adae75`
+> (**미push**, 사용자 지시로 보류). 다음 세션 시작점 = [핸드오프
+> `handoff_verification_tools_4_refresh_2026-08-09.md`](../qa/handoff_verification_tools_4_refresh_2026-08-09.md)
+> — ① `2adae75` push 확인 ② `layer2_note_heading_fix_verify.py` REGRESSED 2건(00121969·
+> 00133812) 원인규명(팔로업, 우선순위낮음) ③ 본류 복귀 = 아래 §5 4~5번(C-1 렌더 확인·
+> Streamlit UI 풀스모크).
 
 **완료(2026-07-25)**: `--recheck` + `build_std_v3 --all` 재빌드 · 금융섹터 revenue census 종결(보험/은행/
 증권/여신전문 프로파일 + 잔여 KSIC 프로파일 불필요, 원문대조 PASS) · **브리지 swap enrichment steps 1-2**

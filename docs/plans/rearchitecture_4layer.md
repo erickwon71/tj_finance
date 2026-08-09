@@ -4,12 +4,14 @@
 > 날짜 없는 이 파일을 계속 갱신한다(개별 문서는 시점 스냅샷·상세). 새 세션은 여기서 시작해
 > "현재 시작점"(§5)의 최신 핸드오프로 들어간다.
 >
-> 최종 갱신: **2026-08-09(여섯 번째)** · 현재 시작점(재설계 본류) = §5 맨 아래 갱신 블록 —
-> 지난 세션이 보류했던 **push 완료**(`d707a03`+`9dd4851`+`cc03326`+`482abce`, origin/main과 동기화)
-> 및 팔로업 ③(`layer2_note_heading_fix_verify.py` REGRESSED 2건, `00121969`·`00133812`) **원인규명+
-> 수정+push 완료** — 검증 스크립트가 sanitize 없이 원문을 직접 파싱해 생긴 오탐이었고 운영
-> 파이프라인·DB엔 문제 없었음(소급 조치 불필요). 다음 액션 = 본류 §5 4~5번(C-1 렌더 확인·
-> Streamlit 풀스모크)만 남음.
+> 최종 갱신: **2026-08-09(일곱 번째) — 재설계 본류(브리지 swap 계획, §5 전체) 완전 종료.**
+> C-1 렌더 확인(headless, 금융 5프로필+baseline 전부 크래시 없음·revenue 설계대로)과 Streamlit UI
+> 풀스모크(실제 브라우저, 4개사+스크리너 실행, headless 실측과 수치 완전일치)까지 마쳐
+> [`layer3_v3_bridge_swap_2026-07-25.md`](layer3_v3_bridge_swap_2026-07-25.md) §4 단계 1~7·G1~G4
+> **전 항목 완료**. 지난 세션이 보류했던 push(`d707a03`+`9dd4851`+`cc03326`+`482abce`)와 팔로업
+> ③(`layer2_note_heading_fix_verify.py` REGRESSED 오탐)도 모두 종료됨. **다음 액션 = §7 후속
+> (pre-2015 2차 패스·v3-native 품질게이트·v2 폐기) 중 우선순위 결정**, 그전엔 새 트랙 착수 여부를
+> 사용자와 논의.
 > (하루치 전체 정리 = [session_summary_2026-07-31](../qa/session_summary_2026-07-31.md))
 >
 > **08-01 병행 트랙 2건**(재설계 범위 밖 — 각자 별도 문서가 정본, 아래 요약만 링크):
@@ -240,6 +242,16 @@
 > 0건. 커밋 `482abce`, **push 완료**(origin/main과 완전 동기화, ahead/behind 0).
 > **다음 세션 시작점 = 본류 §5 4~5번만 남음**(C-1 렌더 확인 → Streamlit UI 풀스모크). 팔로업
 > 트랙은 전부 종료.
+>
+> **2026-08-09 갱신(일곱 번째, 같은 날 후속 세션) — §5 4~5번(C-1 렌더 확인·Streamlit 풀스모크)
+> 완료, 재설계 본류(브리지 swap 트랙) 전체 종료.** 상세는
+> [`layer3_v3_bridge_swap_2026-07-25.md`](layer3_v3_bridge_swap_2026-07-25.md) 맨 아래 갱신 블록.
+> 요약: `industry_lines`를 직접 소비하는 UI는 아직 없음(향후 별도 작업)이나, "C-1 자동성립"의
+> 핵심인 **뷰의 조립 `revenue`를 tearsheet·스크리너가 그대로 읽어 자동 정정되는 것**은 headless
+> (bank·insurance·securities·credit_finance·revenue=NULL 오버라이드·비금융 baseline 6종) +
+> 실제 브라우저(Streamlit 기동, Claude in Chrome) 양쪽에서 크래시 0건·수치 완전일치로 확인.
+> **다음 세션 시작점 = §7 후속 트랙**(pre-2015 2차 패스로 std_v2 UNION 제거·v3-native 품질게이트로
+> face_audit v2 의존 제거·데일리 파이프라인 배선·v2 폐기) — 우선순위는 다음 세션에 사용자와 결정.
 
 **완료(2026-07-25)**: `--recheck` + `build_std_v3 --all` 재빌드 · 금융섹터 revenue census 종결(보험/은행/
 증권/여신전문 프로파일 + 잔여 KSIC 프로파일 불필요, 원문대조 PASS) · **브리지 swap enrichment steps 1-2**

@@ -1,6 +1,8 @@
 # 계획 — std_v2→std_v3 브리지 swap (L3-5 선행, C-1 포함) 2026-07-25
 
-> 상태: **§4 단계 5(뷰 교체) 실행 완료(2026-08-09)**. 사용자 결정(2026-07-25): **브리지 swap 선행**
+> 상태: **전체 완료(2026-08-09)** — §4 단계 5(뷰 교체) + 단계 7(C-1 렌더 확인) + G4(Streamlit UI
+> 풀스모크)까지 전부 실행 완료. 상세는 이 파일 맨 아래 "2026-08-09 갱신 — C-1 렌더 확인 +
+> Streamlit 풀스모크" 블록. 사용자 결정(2026-07-25): **브리지 swap 선행**
 > → 그 위에 C-1(계층4) 자동. 최종 목표 = **v2 제거·v3 단독**. 마스터 허브
 > [`rearchitecture_4layer.md`](rearchitecture_4layer.md).
 > 관련: [`layer4_industry_tearsheet_design_2026-07-24.md`](layer4_industry_tearsheet_design_2026-07-24.md)(C-1 설계) ·
@@ -158,3 +160,31 @@ SELECT ... FROM std_financials_v2 s ... WHERE s.fiscal_year < 2015 AND (기존 �
 - 결정 완료: enrichment = **v3-native**(사용자 "새 술은 새 부대에", §1.1). 브리지는 pre-2015 이력 UNION 만.
 - 검토 포인트: ① std_v3 스키마 확장 컬럼 계약(§1.1 표) ② 브리지 뷰(§2) ③ G1~G4 게이트(§5) ④ 착수 순서(§4).
 - 승인 시 착수 = §4 순서(스키마→combine/build 확장→백필→재빌드→뷰 교체→게이트→C-1). 1~4 선커밋·검증 후 5.
+
+---
+
+## 2026-08-09 갱신 — C-1 렌더 확인 + Streamlit 풀스모크 (§4 단계 7, G4) 완료
+
+뷰 교체(§4 단계 5) 이후 미실행이던 마지막 두 단계를 마무리해 이 계획을 **전체 종료**한다.
+
+**C-1 렌더 확인**: `app/`를 grep한 결과 `industry_lines`를 직접 소비하는 UI 코드는 아직 없음(0건) —
+§3가 말한 "C-1 자동성립"의 실체는 **tearsheet·스크리너가 뷰의 `revenue`(조립값)를 그대로 읽는 것만으로
+정정된다**는 것이었고(industry_lines 자체의 breakdown 표시 UI는 별도 미착수 작업), 이 부분을 headless로
+실측 검증:
+- 대상: bank(제주은행)·credit_finance(푸른저축은행)·insurance(흥국화재)·securities(삼성증권)·
+  revenue=NULL 설계 오버라이드(한국금융지주)·비금융 baseline(삼성전자).
+- `app/cache.py::tearsheet_pdf`/`company_multiples`와 `analyzer.screener.screen`을 그대로(데코레이터만
+  제외) 호출 — 6건 전부 크래시 없이 PDF 생성·전체 스크리너 모집단(2,520개사) 정상 포함, revenue/PSR
+  값이 설계대로(한국금융지주는 revenue=None이지만 PSR=None으로 우아하게 처리, 크래시 없음).
+
+**G4 Streamlit UI 풀스모크**: 로컬 `streamlit run app/main.py` 기동 + Claude in Chrome으로 실제
+브라우저 조작. 기업 시각화 페이지에서 제주은행·흥국화재·삼성증권·한국금융지주 검색→렌더, 스크리너 페이지
+스크리닝 실행까지 확인:
+- 4개사 전부 크래시 없음, 매출액 등 재무요약 표 값이 **headless 실측과 소수점까지 정확히 일치**
+  (예: 삼성증권 2025 매출액 18,803억 = headless 1,880,286,893,526원).
+- 한국금융지주는 매출액 행 전부 "—"로 정상 표시(DEF-2 수정된 결측 처리 유지, "None" 문자열 누출 없음).
+- 삼성증권 페이지에 Gate B pass 186·불일치 0 배지 확인.
+- 콘솔 에러 1건(WebSocket 재연결 블립) — 뷰 교체와 무관한 일시적 현상, 이후 정상 동작.
+
+**결론**: G1~G4 전 게이트 통과, §4 순서(1~7) 전부 완료. **이 계획 문서 트랙 종료** — 남은 것은 §7
+후속(브리지 이후 → v2 폐기, pre-2015 2차 패스 등)뿐이며 이는 별도 우선순위 트랙.

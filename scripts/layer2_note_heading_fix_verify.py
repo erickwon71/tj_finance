@@ -42,11 +42,11 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lxml import etree
 from sqlalchemy import text
 
 from collector.db import get_session
 from fin2.extract.report_lines import note_table_retained
+from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.section_detector import (
     SEC_CONSOL_NOTE,
     SEC_SEP_NOTE,
@@ -135,9 +135,14 @@ def main() -> int:
             if xml is None:
                 verdicts["NO_XML"] += 1
                 continue
-            try:
-                root = etree.parse(str(xml), etree.XMLParser(recover=True)).getroot()
-            except Exception:
+            # Use the production parser (sanitize_dart_xml() + recover) so this harness
+            # sees the same tree the real pipeline built the DB baseline from. A raw
+            # etree.parse(recover=True) here diverges on filings with genuine markup
+            # defects (unescaped '&', broken attr quoting) — recover-mode then drops
+            # whole trailing sections, producing false REGRESSED verdicts (00121969,
+            # 00133812 traced 2026-08-09; see docs/qa handoff for this session).
+            root = _parse_xml_file(xml)
+            if root is None:
                 verdicts["PARSE_ERROR"] += 1
                 continue
 

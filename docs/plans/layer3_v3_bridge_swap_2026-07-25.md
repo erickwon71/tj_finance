@@ -1,9 +1,30 @@
 # 계획 — std_v2→std_v3 브리지 swap (L3-5 선행, C-1 포함) 2026-07-25
 
-> 상태: **계획 초안 (미실행)**. 사용자 결정(2026-07-25): **브리지 swap 선행** → 그 위에 C-1(계층4)
-> 자동. 최종 목표 = **v2 제거·v3 단독**. 마스터 허브 [`rearchitecture_4layer.md`](rearchitecture_4layer.md).
+> 상태: **§4 단계 5(뷰 교체) 실행 완료(2026-08-09)**. 사용자 결정(2026-07-25): **브리지 swap 선행**
+> → 그 위에 C-1(계층4) 자동. 최종 목표 = **v2 제거·v3 단독**. 마스터 허브
+> [`rearchitecture_4layer.md`](rearchitecture_4layer.md).
 > 관련: [`layer4_industry_tearsheet_design_2026-07-24.md`](layer4_industry_tearsheet_design_2026-07-24.md)(C-1 설계) ·
 > [`financial_sector_revenue_standards.md`](financial_sector_revenue_standards.md)(금융 revenue 표준) · 메모리 [[rebuild-phase-a3-done]]
+>
+> **2026-08-09 갱신 — 뷰 교체 실행 결과**: `collector/db.py` 마이그레이션
+> `2026_08_standard_financials_v3_bridge_swap` 로 `standard_financials` 뷰를 std_v3(2015+) +
+> std_v2 UNION ALL 폴백(pre-2015 전체 + 2015+ 중 std_v3 미빌드 corp-period 6,390건)으로 교체.
+> §2 원안(pre-2015만 UNION)에서 **폴백 조건을 확장**했다 — 2015+ 갭 6,390건(927개사, 대부분
+> total_assets 등 실값 보유)을 그대로 두면 앱에서 사라지는 회귀가 생기므로, `NOT EXISTS`
+> 조건으로 std_v3 미보유 2015+ corp-period 도 std_v2 로 폴백(G1 무손실 요구사항 충족).
+> **G1 결과**: 구뷰 263,792행 → 신뷰 279,860행, **손실 0 · 순증 16,068**(std_v3 가 std_v2 에
+> 없던 corp-period 도 보유). **G2 결과**: 2015+ 공통 corp-period(168,512건) 표본대조 시
+> total_assets/revenue/net_income 등 핵심계정 2~6% 가 std_v2 와 값이 다름 — 표본조사(지아이에스
+> 2019 basis_fallback 사례·00426068 2018 Q3 사례)로 원인 확인: **std_v2 쪽의 기존 버그**(비교연도
+> 컬럼이 다른 시점 필링에서 잘못 유입되는 "comparative bleed" 패턴, own-report 원칙 위반)이고
+> std_v3 가 이를 바로잡은 것으로 판단(정밀 전수감사는 미실행, 표본 근거). **G3**: 금융섹터
+> industry_lines 정상 노출·revenue 성분합 정합 확인(기업은행 등). **G4**: `ratio_engine`
+> 데이터 계층 스모크(삼성전자 10개년 무크래시, gate_b_status 전부 pass) — Streamlit UI 자체
+> 풀스모크는 미실행. pytest 439 passed / 1 failed(기존에도 실패하던 무관 테스트,
+> `test_lxintl_facility_table_dropped`, 뷰와 무관한 사업의내용 파서 이슈). **미커밋** — git 승인 대기.
+> ⚠ **알려진 잔여 이슈**: `app/data/shareholder_return.py::load_dividend_series_for_chart` 가
+> `standard_financials` 뷰를 거치지 않고 `std_financials_v2` 를 직접 조인(period_end 정렬용) —
+> 이번 작업 범위 밖, v2 폐기 단계(§7-6)에서 함께 정리 필요.
 
 ---
 

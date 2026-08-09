@@ -79,10 +79,17 @@
 **어기면** — 파서=충실전사 / 취합=값판단 의 4계층 분리가 무너지고, 같은 원문을 여러 계층이
 제각기 해석해 값이 갈린다. 폐기된 위반 예: "계층3 가 `cf_da.py` 로 보고서를 직접 읽어 std_v3 백필".
 
-> ⚠ **현재 예외 상태**: `biz_metrics` 계열(`biz_section`·`sales_section`·`order_backlog`·
-> `biz_catalog`)은 '사업의 내용' 본문표를 계층2 를 거치지 않고 직접 읽는다. 이 구간은
-> `report_lines` 전사 대상이 아니기 때문이다(계층2 는 재무제표·주석만 전사). 의도된 현행이지만
-> R1 의 완전한 준수는 아니며, 사업의 내용을 계층2 로 편입할지는 미결이다.
+> ✅ **위반 해소 완료(2026-08-09)**: `biz_metrics` 계열(`biz_section`·`sales_section`·
+> `order_backlog`·`biz_catalog`)이 '사업의 내용' 본문표를 파일에서 직접 읽던 예외를 없앴다.
+> `biz_section_tables`(도메인 컬럼 `production`/`sales`/`catalog`/`order_backlog` 4종 공용,
+> `collector/models.py::BizSectionTable`)를 계층2 원본 grid 저장소로 일반화하고,
+> `collector/biz_metrics.py::sync_biz_metrics_corp`·`collector/order_backlog.py::sync_order_backlog_corp`
+> 를 이 테이블만 읽도록 재작성했다. 원문 파일을 여는 지점은
+> `fin2/layer2/biz_raw_tables.py::ensure_biz_raw_tables`(이 필링의 raw grid 가 아직 없을 때만
+> 온디맨드로 계층2 쓰기를 트리거) 하나뿐이다. 상세 = `docs/plans/biz_content_layer2_migration_2026-08-09.md`
+> · `docs/plans/biz_content_layer2_migration_todo_2026-08-09.md`(Phase 0~6 전부 완료, 150개사
+> 표본 전/후 diff `biz_metrics` 0건 불일치·`order_backlog` 4,666행 중 1건만 원문대조로 확인된
+> 무해한 개선).
 
 ---
 
@@ -635,7 +642,7 @@ NULL 유지.
 
 | 규칙 | 원출처 |
 |---|---|
-| R1 | 메모리 `architecture-report-read-layer2-only` · `docs/plans/rearchitecture_4layer.md` §6 |
+| R1 | 메모리 `architecture-report-read-layer2-only` · `docs/plans/rearchitecture_4layer.md` §6 · 위반 해소 = `docs/plans/biz_content_layer2_migration_2026-08-09.md` |
 | R2 | `fin2/layer3/combine.py:79,96` docstring |
 | R3 | `collector/filing_collector.py:524` · 실측 |
 | R4 | 메모리 `layer2-unit-column-attribution` · `fin2/extract/units.py` |
@@ -656,7 +663,7 @@ NULL 유지.
 | 항목 | 상태 |
 |---|---|
 | R2-1 `biz_metrics`·`order_backlog` 가 정본 정책 미적용 | **미조치** — 547건(447개사) 미파싱, 505건 회수 가능. 2026-07-31 백필 완료 후 착수 예정 |
-| R1 '사업의 내용' 이 계층2 를 우회 | 의도된 현행. 계층2 편입 여부 미결 |
+| ~~R1 '사업의 내용' 이 계층2 를 우회~~ | **✅ 해소 완료 2026-08-09** — `biz_section_tables` 4도메인 공용화+재배선. R1 본문 참조. |
 | **셀 병합 결함(`biz_metrics` 한정)** | **✅ 조치 완료 2026-08-01** — 아래 T14 참조. `biz_section.py`(사업의 내용) 전용, 이상치 2,599행 → **162행**(94% 제거) |
 | ~~note_lines/SCE 본문행 ROWSPAN/COLSPAN 미확장(= 단위(배수) 오귀속의 실제 원인)~~ | **✅ 전체 완료 2026-08-08**(코드+검증+DB 반영, Phase 1~4) — R11/R11-1/R11-2 참조. `expand_table_grid`+`_grid_header_split`/`_grid_body_rows` 신설·배선. 원인·규모는 `docs/qa/handoff_note_lines_span_misattribution_2026-08-07.md` §9~§10 확정: 전수 재파싱 실측 11.48%(2,819만 개) 컬럼 오귀속이지만 **값 자체가 무의미해지는 건 0.24%뿐**(비금액 열 배수 오적용) · 회수가능 누락 0.75% · 나머지 **89.6%(전체 값의 9.25%)는 크기는 맞고 열 정체(당기/전기 등)만 틀림**(`label_diff`, `note_periods`/`units.py` 기간·배수 판정에 영향). **본문(BS/IS/CF)은 실측 0건**(§10, 코드 경로가 달라 ROWSPAN 이어짐이 `_split_label_amounts`에서 자동 흡수됨 — 재적재 불필요, F1 회귀 가설도 기각). 전수 재검증(101,327건) 프로덕션 결함 0건(원래 28,189,281개→0). **진행 중 R11 자체의 새 회귀 2종 발견+수정**(R11-1: 헤더판정실패 폴백 offset=0, note 348,099셀/1,629필링→480셀/107필링, 잔여는 R11-2로 정상 분류). **Phase 4(2026-08-08) — note_lines 전량 재적재 완료**(245,452,947→247,244,387행, +0.73%) + std_v3 재빌드(184,298→184,580행) + 재검증(DB 직접 대조 텔코웨어·풍강 값 일치·Gate B `line_value_diff=0`·D&A DB 재확인) 전부 통과. 상세 = `docs/plans/note_span_fix_plan_2026-08-07.md` |
 | 계정별 예외단위(자본금류, `report_lines`) | **미조치·미재검증** — 에스티아이 사례(자본금류 계정이 표 선언 배수 무시하고 원 단위 그대로 표기) 위 ROWSPAN 결함과 별개로 남아 있음. 상세 = `docs/qa/handoff_unit_multiplier_misattribution_2026-08-07.md` §4-2 |

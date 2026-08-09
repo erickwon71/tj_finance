@@ -777,6 +777,42 @@ def _run_migrations() -> None:
             END IF;
         END $$
         """),
+        # biz_content_layer2_migration_2026-08-09 §Phase1 — biz_section_tables 를 4개 도메인
+        # (production/sales/catalog/order_backlog) 공용 원본 grid 저장소로 일반화. 기존
+        # 528,564행(production/sales/catalog만 존재, order_backlog는 아직 미편입)의 domain을
+        # metric 값에서 역산 채움 — SELECT DISTINCT metric 실측(2026-08-09)으로 검증된 매핑:
+        # biz_section.py는 capacity/output/utilization(+조합)만 방출, sales_section.py와
+        # biz_catalog.py는 둘 다 metric='sales'를 공유(biz_catalog.py:266 주석 — 의도된 통일),
+        # 그 외는 전부 biz_catalog.py의 CATALOG 규칙표 라벨(catalog).
+        ("2026_08_biz_section_tables_domain", """
+            ALTER TABLE biz_section_tables ADD COLUMN IF NOT EXISTS domain VARCHAR(20);
+
+            UPDATE biz_section_tables SET domain = CASE
+                WHEN metric IN ('capacity', 'output', 'utilization',
+                                 'capacity+output', 'output+utilization', 'capacity+utilization',
+                                 'capacity+output+utilization') THEN 'production'
+                WHEN metric = 'sales' THEN 'sales'
+                ELSE 'catalog'
+            END
+            WHERE domain IS NULL;
+
+            ALTER TABLE biz_section_tables ALTER COLUMN domain SET NOT NULL;
+        """),
+        # Correction found during Phase3 parity testing (biz_content_layer2_migration_todo_
+        # 2026-08-09.md) — the migration above classified purely by `metric`, missing that
+        # fin2/extract/biz_catalog.py *also* emits metric='sales' for its own supplementary
+        # captions (biz_catalog.py:266). Those rows carry the catalog composite narrative shape
+        # "[{subsection}] {caption_raw}[ (연속표)] :: {narrative}" (verified 2026-08-09: 0/141,646
+        # production rows match it, 300,000/300,000 sampled catalog rows do) — a reliable,
+        # metric-independent signal. 6,148/63,167 metric='sales' rows matched it and were
+        # mis-tagged domain='sales' when they need map_catalog_table (not map_sales_table) to
+        # reconstruct correctly.
+        ("2026_08_biz_section_tables_domain_sales_catalog_fix", r"""
+            UPDATE biz_section_tables
+            SET domain = 'catalog'
+            WHERE domain = 'sales'
+              AND narrative ~ '^\[.*?\] .*?( \(연속표\))? :: '
+        """),
     ]
 
     with engine.begin() as conn:

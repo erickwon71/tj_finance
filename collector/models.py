@@ -1281,10 +1281,13 @@ class RetailOwnership(Base):
 # ── 12. 사업의 내용 · 생산능력/생산실적/가동률 (B4) ────────────────────────────
 class BizSectionTable(Base):
     """
-    사업보고서 "II. 사업의 내용" 본문 생산능력/생산실적/가동률 소제목의 원본 표(무손실).
-    XBRL 비대상 순수 HTML형 표라 fin2/extract/biz_section.py 가 ROWSPAN/COLSPAN 확장한
-    2D 그리드를 그대로 보존한다(캐노니컬 매핑 실패/부분 대비 audit 원천). 구조화된 long-format
-    행은 biz_metrics 에 별도 적재. corp+rcept 단위 delete-then-insert(멱등).
+    사업보고서 "II. 사업의 내용" 본문 표의 원본(무손실) — 계층2 편입 대상(R1 위반 해소,
+    docs/plans/biz_content_layer2_migration_2026-08-09.md). 생산능력/생산실적/가동률
+    (biz_section.py) · 매출채널(sales_section.py) · 27항목 카탈로그(biz_catalog.py) · 수주상황
+    (order_backlog.py) 4개 도메인이 공유(`domain` 컬럼으로 구분). XBRL 비대상 순수 HTML형 표라
+    각 도메인 파서가 ROWSPAN/COLSPAN 확장한 2D 그리드를 판단 없이 그대로 보존한다(캐노니컬 매핑
+    실패/부분 대비 audit 원천이자, 계층3 소비자가 원문 재오픈 없이 읽는 유일한 인터페이스).
+    구조화된 long-format 행은 `biz_metrics`/`order_backlog`에 별도 적재.
     """
     __tablename__ = "biz_section_tables"
 
@@ -1293,15 +1296,17 @@ class BizSectionTable(Base):
     fiscal_year  = Column(SmallInteger, nullable=False)
     rcept_no     = Column(String(14),   nullable=False)
     table_ord    = Column(SmallInteger, nullable=False,   comment="보고서 내 추출 표 순번(0-based)")
-    metric       = Column(String(40),   nullable=True,    comment="소제목 파생 지표: capacity/output/utilization(+결합)")
+    domain       = Column(String(20),   nullable=False,   comment="production/sales/catalog/order_backlog 4종 중 하나")
+    metric       = Column(String(40),   nullable=True,    comment="소제목 파생 지표: capacity/output/utilization(+결합) 또는 biz_catalog.CATALOG 라벨")
     narrative    = Column(Text,         nullable=True,    comment="소제목 다음 설명 문단(단위·산출기준)")
     grid         = Column(JSONB,        nullable=False,   comment="원본 2D 텍스트 그리드(헤더 포함)")
-    n_metric_rows = Column(SmallInteger, nullable=True,   comment="이 표에서 매핑된 biz_metrics 행 수")
+    n_metric_rows = Column(SmallInteger, nullable=True,   comment="이 표에서 매핑된 biz_metrics/order_backlog 행 수")
     fetched_at   = Column(DateTime,     default=datetime.utcnow)
 
     __table_args__ = (
         UniqueConstraint("rcept_no", "table_ord", name="uq_biz_section_tables"),
         Index("ix_biz_sec_corp_year", "corp_code", "fiscal_year"),
+        Index("ix_biz_sec_domain", "domain"),
     )
 
 

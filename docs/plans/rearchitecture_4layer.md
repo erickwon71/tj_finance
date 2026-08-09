@@ -16,7 +16,7 @@
 >
 > **08-01 병행 트랙 2건**(재설계 범위 밖 — 각자 별도 문서가 정본, 아래 요약만 링크):
 > - **사업의 내용 카탈로그 + R0 원칙** — [handoff_biz_catalog_r0_2026-08-01](../qa/handoff_biz_catalog_r0_2026-08-01.md).
->   `biz_metrics`/`order_backlog` 신규 적재(계층2 우회 현행 유지 — "계층2 편입 여부 미결", 아래 참고)
+>   `biz_metrics`/`order_backlog` 신규 적재(계층2 우회는 **2026-08-09 해소 완료** — §6 R1 항목 참고)
 >   + `docs/PARSING_RULES.md` 단일화(R0~R9). R0 원칙은 계층2 파서에도 적용 가능하니 계층2 작업 전 일독 권장.
 > - **데일리 파이프라인 자동화**(상장폐지 원문 NAS 이관 + KRX 휴장일 스킵) — 정본은
 >   [collection_pipeline_restore_2026-07-31](collection_pipeline_restore_2026-07-31.md) §13·§14 +
@@ -274,10 +274,17 @@
   report_lines). 계층3·4·기타 어떤 코드도 보고서를 직접 읽지 않는다 — **검증(원문 대조·감사) 목적만 예외**.
   파생계정(D&A 등)의 소스가 주석이면 **계층2가 주석을 전사**하고 계층3는 report_lines 에서만 읽는다.
   (2026-07-25, 사용자 지침. 위반 예=폐기한 "cf_da.py 를 std_v3 백필".)
-  ⚠ **현재 미해결 위반**: `collector/biz_metrics.py`(+`filing_select.py`·`biz_merge.py`)가 '사업의 내용'
-  파싱을 위해 원문 DART XML 을 **직접 read** — `report_lines` 를 거치지 않아 이 원칙과 정면 충돌.
-  `docs/PARSING_RULES.md` 는 R1 "의도된 현행" 예외로만 적어 뒀을 뿐 **계층2 편입 여부 미결**
-  (2026-08-01, R0 세션에서 인지·미조치. 위 §0 08-01 병행 트랙 참고).
+  ✅ **위반 해소 완료(2026-08-09)**: `collector/biz_metrics.py`/`collector/order_backlog.py`가
+  '사업의 내용' 본문표를 원문 DART XML 에서 직접 read 하던 예외를 없앴다. `biz_section_tables`
+  (도메인 컬럼 `production`/`sales`/`catalog`/`order_backlog` 4종 공용)를 계층2 원본 grid
+  저장소로 일반화하고, 두 sync 함수를 이 테이블만 읽도록 재작성 — 원문 파일을 여는 지점은
+  `fin2/layer2/biz_raw_tables.py::ensure_biz_raw_tables`(온디맨드 계층2 쓰기 가드) 하나뿐이다.
+  Phase 0~6(실측→스키마→계층2 신설→계층3 재배선→파이프라인 확인→전량 소급백필→검증) 전부 완료,
+  검증 결과: 150개사 표본 전/후 diff `biz_metrics` 568,926행 0건 불일치·`order_backlog` 4,666행 중
+  1건만(원문대조로 확인된 무해한 개선, 회귀 아님) · pytest 443 passed(무관 기존결함 1건 그대로) ·
+  Gate B 무영향. 상세 = [`biz_content_layer2_migration_2026-08-09.md`](biz_content_layer2_migration_2026-08-09.md)
+  (설계) · [`biz_content_layer2_migration_todo_2026-08-09.md`](biz_content_layer2_migration_todo_2026-08-09.md)
+  (실행 체크리스트, Phase 0~6 전부 ☑). 남은 것은 Phase 7(마감: 문서 갱신·커밋)뿐.
 - **적재순서 = 전량적재 → 계층3** (구 '계층3→전량'을 뒤집음, 2026-07-19).
 - **계층3 = 신 체인 단독**: 새 std_v3 빌드 후 swap, 구 체인은 swap 후 제거 (2026-07-22).
 - **정본선택·정정 반영 = 계층3 소관**(구 '계층2 4차'에서 이관): 원본 base + 기재정정 델타패치, 값의미=

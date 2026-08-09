@@ -580,8 +580,14 @@ def extract_catalog_from_root(root: etree._Element, corp_code: str, fiscal_year:
         section_rows.append({
             "corp_code": corp_code, "fiscal_year": fiscal_year, "table_ord": ord_,
             "metric": _clip(metric, 40),
+            # ★ 잘라내지 않는다(무손실 원칙) — 예전 [:4000] 절단이 layer3(collector/biz_metrics.py
+            # `_map_row`)가 이 narrative 만으로 CaptionedTable 을 복원할 때 뒤쪽에 있는 "(단위 :
+            # 백만원)" 표기를 통째로 날려 unit 유실을 일으키는 걸 실측함(2026-08-09,
+            # biz_content_layer2_migration_todo_2026-08-09.md Phase3 — LG 00120021 FY2020
+            # 파생상품 표, 3,128/329,899=0.95% 행이 이 상한에 걸려 있었음). Text 컬럼이라 길이
+            # 제약이 없어 자를 이유가 없다.
             "narrative": (f"[{ct.subsection}] {ct.caption_raw}"
-                          f"{' (연속표)' if ct.inherited else ''} :: {ct.narrative}")[:4000],
+                          f"{' (연속표)' if ct.inherited else ''} :: {ct.narrative}"),
             "grid": ct.grid, "n_metric_rows": len(mrows),
         })
         for m in mrows:

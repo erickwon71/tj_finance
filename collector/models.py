@@ -522,6 +522,51 @@ class ReportTable(Base):
                 f"#{self.table_seq} {self.table_title!r}>")
 
 
+class ReportSharesOutstanding(Base):
+    """계층2 cross-cutting 스칼라 전사 — 각 정기보고서 '주식의 총수 등'(일반현황) 절의
+    발행주식 총수(보통주). std_v3_dq_shares_period_backfill_plan_2026-08-09.md §3.3 옵션A.
+
+    BS/IS/CF/주석 tree(report_lines/note_lines)와 구조가 다른 corp×시점 스칼라값이라
+    (stock_prices 와 같은 성격) 별도 테이블로 둔다. 파싱은 fin2/extract/shares.py::
+    extract_issued_common_shares 를 그대로 재사용(v2 시절부터 검증됨) — 호출 위치만
+    v2 사후 백필(scripts/phase_c_rebuild.py)에서 계층2 증분 파이프라인
+    (fin2/extract/shares_transcribe.py)으로 옮긴 것.
+
+    Grain = filing 단위(rcept_no PK) — report_lines/report_tables 와 동일한 rcept 단위
+    delete-then-insert 로 멱등(store_report_shares). 같은 회사의 다른 filing 이 다른 시점
+    주식수를 보고할 수 있어 filing 단위로 남기고, corp+fy+period 당 대표값 선택은
+    **계층3 소관**(fin2/layer3/build.py::build_corp 가 select_canonical_rcepts 의 정본
+    filing 에 대응하는 행을 조인) — 여기서는 원문 그대로 전사만 한다(architecture-report-
+    read-layer2-only 준수, 계층3는 원문을 직접 read 하지 않는다).
+
+    as_of_date: 보고서 본문의 '기준일' 문구는 별도 추출하지 않으므로(범위 밖), **그 filing 의
+    filings.period_end_date 를 근사값**으로 둔다 — 발행주식수는 보고서가 다루는 회계기간 말
+    현재 수치를 신고하는 것이 통상적 관행이라는 가정. 실제 기준일과 다를 수 있음을 명시.
+
+    신규 테이블이므로 Base.metadata.create_all() 로 자동 생성(별도 마이그레이션 불요).
+    """
+    __tablename__ = "report_shares_outstanding"
+
+    rcept_no      = Column(String(14), ForeignKey("filings.rcept_no"), primary_key=True)
+    corp_code     = Column(String(8), nullable=False, index=True)
+    fiscal_year   = Column(SmallInteger, nullable=False, comment="보고서 회계연도")
+    fiscal_period = Column(String(5), nullable=False, comment="FY/H1/Q1/Q3")
+    shares_out    = Column(BigInteger, nullable=False, comment="발행주식의 총수(보통주)")
+    as_of_date    = Column(Date, nullable=True,
+                           comment="filings.period_end_date 근사(원문 기준일 문구는 미추출)")
+    source_ref    = Column(String(40), nullable=True,
+                           comment="채택된 원문 라벨('발행주식의 총수' Ⅳ 또는 "
+                                   "'현재까지 발행한 주식의 총수' Ⅱ 폴백)")
+    parsed_at     = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_shares_out_corp_period", "corp_code", "fiscal_year", "fiscal_period"),
+    )
+
+    def __repr__(self):
+        return f"<ReportSharesOutstanding r{self.rcept_no} {self.corp_code} {self.shares_out:,}>"
+
+
 class StatementSource(Base):
     """
     fin2 정합(R) 산출물: (기업·연도·기간·연결별도·재무제표) 단위로 **단일 source filing 선택**.
@@ -1710,8 +1755,10 @@ class StdFinancialV3(Base):
     # ── enrichment (v3-native, 2026-07-25: std_v2 컬럼 파리티) ──
     # capex/fcf/net_debt = combine 이 run_rules(rule_additive_capex·derive_fcf·derive_net_debt)로 산출.
     # depreciation/amortization/da_total/ebitda = cf_da 백필(주석+CF본문 하이브리드, ~34%) 후 UPDATE.
-    # shares_out = shares 백필, data_quality = DQ 백필. ★재빌드가 행을 delete-insert 하므로
-    # 백필은 재빌드 후 재실행 필요(v2 동일 패턴).
+    # data_quality/period_end = fin2/layer3/build.py::build_corp 가 인라인 산출(2026-08-09,
+    # Phase 1 — std_v3_dq_shares_period_backfill_plan_2026-08-09.md §3.1/3.2). shares_out 은
+    # 여전히 별도 백필 대상(계층2 신설, 같은 계획 §3.3/Phase 2, 미완료). ★재빌드가 행을
+    # delete-insert 하므로 shares_out 백필은 재빌드 후 재실행 필요(v2 동일 패턴).
     capex               = Column(BigInteger, nullable=True)
     depreciation        = Column(BigInteger, nullable=True)
     amortization        = Column(BigInteger, nullable=True)

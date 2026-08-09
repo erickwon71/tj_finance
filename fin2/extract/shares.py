@@ -42,8 +42,14 @@ def _cells(tr: str) -> list[str]:
     return [_WS.sub(' ', _TAG.sub('', c)).strip() for c in _CELL.findall(tr)]
 
 
-def extract_issued_common_shares(path: str | Path) -> int | None:
-    """발행주식의 총수(Ⅳ) 보통주. 없으면 현재까지 발행한 주식의 총수(Ⅱ) 폴백. 실패 시 None."""
+_LABEL_ISSUED = "발행주식의 총수"              # Ⅳ (채택 우선)
+_LABEL_ISSUED_TO_DATE = "현재까지 발행한 주식의 총수"  # Ⅱ (폴백)
+
+
+def extract_issued_common_shares_detailed(path: str | Path) -> tuple[int, str] | None:
+    """발행주식의 총수(Ⅳ) 보통주. 없으면 현재까지 발행한 주식의 총수(Ⅱ) 폴백. 실패 시 None.
+    반환 (shares, matched_label) — matched_label 은 provenance(어느 원문 항목을 채택했는지,
+    계층2 전사 source_ref 용, 2026-08-09 Phase 2)."""
     text = _decode(path)
     # '주식의 총수' 출현마다(목차 포함) 이후 가까운 TABLE 들에서 행 탐색.
     for sec in (m.start() for m in re.finditer("주식의 총수", text)):
@@ -57,12 +63,19 @@ def extract_issued_common_shares(path: str | Path) -> int | None:
                 break
             pos = en + 8
             rows = [_cells(tr) for tr in _TR.findall(text[st:pos])]
-            val = _pick(rows, "발행주식의 총수")          # Ⅳ
-            if val is None:
-                val = _pick(rows, "현재까지 발행한 주식의 총수")  # Ⅱ 폴백
+            val = _pick(rows, _LABEL_ISSUED)          # Ⅳ
             if val is not None:
-                return val
+                return val, _LABEL_ISSUED
+            val = _pick(rows, _LABEL_ISSUED_TO_DATE)  # Ⅱ 폴백
+            if val is not None:
+                return val, _LABEL_ISSUED_TO_DATE
     return None
+
+
+def extract_issued_common_shares(path: str | Path) -> int | None:
+    """발행주식의 총수(Ⅳ) 보통주. 없으면 현재까지 발행한 주식의 총수(Ⅱ) 폴백. 실패 시 None."""
+    r = extract_issued_common_shares_detailed(path)
+    return r[0] if r else None
 
 
 def _pick(rows: list[list[str]], key: str) -> int | None:

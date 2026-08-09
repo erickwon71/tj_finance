@@ -475,6 +475,29 @@ def _sync_xbrl_instance_lines(corps: list[str]) -> None:
         logger.warning(f"[collect] ④-4 XBRL 원문 계층2 전사 실패(비치명적): {exc}")
 
 
+def _sync_shares_transcribe(corps: list[str]) -> None:
+    """④-5 계층2 cross-cutting 전사 — 신규 정기보고서 '주식의 총수 등' 절 →
+    `report_shares_outstanding`(std_v3_dq_shares_period_backfill_plan_2026-08-09.md §3.3, Phase 2).
+
+    이게 없으면 소급 백필을 끝내도 신규 공시분의 발행주식수가 영영 적재되지 않는다 —
+    `_sync_layer2_lines`(④-3)와 동일한 이유. 계층3(`build_corp`)가 이 테이블을 조인해
+    std_v3.shares_out 을 채운다(원문 직접 read 없음).
+
+    ★이 함수는 **두 call site** 에서 불린다(메인 ④-5 · `--standardize-only` 재개) —
+      `docs/runbook_new_parser_pipeline_integration.md` 체크리스트 ①. 하나만 배선하면
+      재개 경로에서 조용히 빠진다. 비치명(수집 계속)."""
+    if not corps:
+        return
+    try:
+        from fin2.extract.shares_transcribe import sync_shares_transcribe
+        res = sync_shares_transcribe(corps=corps)
+        if res["filings"]:
+            logger.info(f"[collect] ④-5 발행주식수 전사 — 기업 {res['corps']} · "
+                        f"보고서 {res['filings']:,} · 적재 {res['rows']:,} (실패 {res['errors']})")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ④-5 발행주식수 전사 실패(비치명적): {exc}")
+
+
 def _sync_biz_metrics(corps: list[str]) -> None:
     """B4+Phase3+B5 — 새로 수집된 기업의 사업보고서 '사업의 내용' 본문표 → biz_metrics.
 
@@ -662,6 +685,7 @@ def main() -> None:
         _sync_cf_da(affected)
         _sync_layer2_lines(affected)
         _sync_xbrl_instance_lines(affected)
+        _sync_shares_transcribe(affected)
         _verify_and_log(agg, args)
         _sync_biz_metrics(affected)
         _sync_order_backlog(affected)
@@ -770,6 +794,9 @@ def main() -> None:
 
     # ④-4 계층2 전사(XBRL 원문 zip 경로) — file_type='xbrl_zip' 대상만(document.xml 014 폴백).
     _sync_xbrl_instance_lines(affected)
+
+    # ④-5 발행주식수 전사(계층2 cross-cutting) — 신규 보고서 → report_shares_outstanding.
+    _sync_shares_transcribe(affected)
 
     # ⑤ 수집 후 DQ 게이트 — 새로 표준화된 기업만 Gate B(보고서==DB)+항등식 재검, corp_verify_status 적재.
     _verify_and_log(agg, args)

@@ -15,6 +15,8 @@ from sqlalchemy import text, delete
 from collector.models import StdFinancialV3
 from fin2.layer3.combine import (combine_full, select_canonical_rcepts,
                                  build_merged_lines)
+from fin2.standardize.build import _period_end, _future_guard
+from fin2.standardize.rules import validate_equations
 
 _VALUE_COLS = (
     "total_assets current_assets cash receivables inventory ppe intangibles "
@@ -25,10 +27,65 @@ _VALUE_COLS = (
     # enrichment (v3-native): combine 이 산출.
     #   · capex/fcf/net_debt            (2026-07-25)
     #   · depreciation/amortization/da_total/ebitda (2026-07-28, 주석 소스 — fin2/layer3/note_da.py)
-    # shares_out/data_quality 는 여전히 별도 백필 UPDATE(여기 없음).
+    # shares_out 은 여전히 별도 백필 필요(계층2 신설 대상, Phase 2). data_quality/period_end 는
+    # _VALUE_COLS 에 안 넣고 build_corp 에서 row 에 직접 대입한다(아래 참고, Phase 1 2026-08-09).
     # ★이 목록에 없는 컬럼은 combine 이 값을 내도 **테이블에 안 들어간다**.
     "capex fcf net_debt depreciation amortization da_total ebitda"
 ).split()
+
+
+def _dq_cross_year_v3(session, corp_code: str, basis: str, col: dict) -> int:
+    """Cross-year outlier check, ported for std_financials_v3 from
+    fin2/standardize/build.py::_dq_cross_year (200x median → DQ3, 30x → DQ2).
+
+    std_v3 has no `version`/`is_stub` columns (unlike std_v2) — key is just
+    corp_code + statement_type(basis) + fiscal_period='FY'. Within one build_corp
+    call, periods are processed in ascending fiscal_year order in the same session,
+    so by the time year Y is checked, prior years' data_quality (this call, this
+    session) is already flushed and visible to this raw-SQL SELECT.
+    """
+    dq = 1
+    for c, lim_err, lim_warn in (("revenue", 200, 30), ("total_assets", 200, 30)):
+        nv = col.get(c)
+        if not nv or nv <= 0:
+            continue
+        med = session.execute(text(f"""
+            SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY {c})
+            FROM std_financials_v3
+            WHERE corp_code=:cc AND statement_type=:st AND fiscal_period='FY'
+              AND {c}>0 AND data_quality<3
+        """), {"cc": corp_code, "st": basis}).scalar()
+        if med and med >= 1_000_000_000:
+            ratio = nv / med
+            if ratio > lim_err or ratio < 1.0 / lim_err:
+                return 3
+            if ratio > lim_warn or ratio < 1.0 / lim_warn:
+                dq = max(dq, 2)
+    return dq
+
+
+def _select_shares_out(session, corp: str, fy: int, period: str, src: dict) -> int | None:
+    """shares_out 정본선택 (Phase 2, 2026-08-09 — 계층2 신설, report_shares_outstanding 조인
+    전용, 원문 직접 read 없음: architecture-report-read-layer2-only 준수).
+
+    ① 이 (fy, period) 의 재무제표 정본 filing(src — select_canonical_rcepts 결과)과 **같은
+       rcept**에서 보고된 주식수를 우선한다 — 같은 filing 이 낸 숫자끼리 provenance 가
+       일관된다. ② 못 찾으면(그 filing 이 섹션 자체를 안 담았거나 파싱 실패) 이 corp+fy+period
+       를 보고한 아무 filing 에서나 **가장 최근(rcept_no 최대) 값**으로 폴백 — 여러 filing 이
+       같은 기간을 다르게 보고할 때(기재정정 등) 최신 정정을 우선한다는 원칙과 일치.
+    """
+    primary = (src.get("BS") or src.get("IS") or src.get("CF")) if src else None
+    if primary:
+        v = session.execute(text(
+            "SELECT shares_out FROM report_shares_outstanding WHERE rcept_no=:r"),
+            {"r": primary}).scalar()
+        if v:
+            return v
+    return session.execute(text("""
+        SELECT shares_out FROM report_shares_outstanding
+        WHERE corp_code=:c AND fiscal_year=:y AND fiscal_period=:p
+        ORDER BY rcept_no DESC LIMIT 1
+    """), {"c": corp, "y": fy, "p": period}).scalar()
 
 
 def _periods(session, corp: str, year_min: int):
@@ -88,6 +145,17 @@ def build_corp(session, corp: str, year_min: int = 2015,
             for c in _VALUE_COLS:
                 if c in col:
                     setattr(row, c, col[c])
+            # data_quality/period_end (Phase 1, 2026-08-09): ported from std_v2's
+            # standardize_corp — see docs/plans/std_v3_dq_shares_period_backfill_plan_2026-08-09.md §3.1/3.2.
+            dq = validate_equations(col)
+            if period == "FY":
+                dq = max(dq, _dq_cross_year_v3(session, corp, basis, col))
+            period_end = _period_end(session, corp, fy, period,
+                                     src.get("BS") or src.get("IS") or src.get("CF") if src else None)
+            dq = _future_guard(dq, period_end)
+            row.data_quality = dq
+            row.period_end = period_end
+            row.shares_out = _select_shares_out(session, corp, fy, period, src)
             session.add(row)
             n += 1
     return n

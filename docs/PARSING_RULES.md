@@ -64,6 +64,7 @@
 | R9 | 검증은 집계가 아니라 원문 대조로 | 작업방식 |
 | **R10** | **XBRL 원문(instance) — `preferredLabel=negated*`면 값 부호 반전, `calc:weight`는 저장에 반영 안 함** | 계층2(XBRL) |
 | **R11** | **표의 논리적 열 = 헤더·본문을 관통하는 하나의 occupied-grid(본문 행도 ROWSPAN/COLSPAN 확장), 라벨 영역 폭은 `LV′`(본문 값 유무 기반)로 판정** | 계층2(주석·SCE) |
+| R12 | 발행주식수("주식의 총수 등")는 BS/IS/CF/주석 tree 밖 cross-cutting 스칼라 — 별도 계층2 테이블·별도 파싱패스 | 계층2(일반현황) |
 
 ---
 
@@ -570,6 +571,42 @@ IFRS 필수 단일공시(확정기여제도 퇴직급여비용 등)가 전형적
 
 ---
 
+## R12. 발행주식수("주식의 총수 등") — 계층2 cross-cutting 스칼라 전사
+
+발행주식수는 사업/반기/분기보고서의 **일반현황** 절에 있고, BS/IS/CF/주석의 계정×기간
+tree(`report_lines`/`note_lines`)와 구조가 근본적으로 다르다(계정과목이 아니라 corp×시점
+스칼라값 — `stock_prices`와 같은 성격). 그래서 tree에 억지로 끼워 넣지 않고 **별도
+계층2 테이블**(`report_shares_outstanding`, `collector/models.py::ReportSharesOutstanding`)
+로 둔다.
+
+**파싱**(`fin2/extract/shares.py::extract_issued_common_shares_detailed`): 문서에서
+"주식의 총수" 문자열이 나오는 자리마다(목차 포함) 뒤따르는 최대 3개 `<TABLE>`을 훑어
+Ⅳ "발행주식의 총수" 행을 우선 채택, 없으면 Ⅱ "현재까지 발행한 주식의 총수"로 폴백. 각
+행의 첫 숫자 컬럼(보통주)을 값으로 삼는다. 물리적 상한(10^11, KOSPI 최다주식 삼성전자의
+10배 초과)을 넘으면 단위 오인·셀 병합 등 파싱 오류로 보고 채택하지 않는다(R6).
+
+**적재 파이프라인**(`fin2/extract/shares_transcribe.py`): `report_lines`(lxml tree)와
+파싱 방식이 근본적으로 달라(raw-text 정규식 스캔) 같은 파싱결과를 공유할 수 없다 — 그래서
+`collector/note_lines_sync.py`(본문/주석 전사)와 **별도의 독립 패스**로 둔다(파일을
+다시 열지만, 작은 XML이라 비용이 낮고 실패격리가 더 안전하다는 판단, 2026-08-09). Grain =
+filing(rcept_no) 단위, `store_report_shares`가 rcept 단위 delete-then-insert(R2/R3와
+동일 관례). `as_of_date`는 원문의 "기준일" 문구를 별도 추출하지 않고 **그 filing 의
+`filings.period_end_date`로 근사**한다(발행주식수는 보고서가 다루는 회계기간 말 현재
+수치를 신고하는 것이 통상 관행이라는 가정 — 실제 기준일과 다를 수 있음을 명시).
+
+**정본선택(계층3, `fin2/layer3/build.py::_select_shares_out`)**: 같은 (corp, fy, period)를
+여러 filing이 다른 시점 값으로 보고할 수 있다. ① 그 기간의 재무제표 정본 filing(`src` —
+BS>IS>CF 우선순위, `_period_end`와 동일 우선순위 재사용)과 **같은 rcept**의 값을 우선한다
+(provenance 일관성). ② 없으면 그 corp+fy+period를 보고한 아무 filing 중 **rcept_no
+최대(최신 정정 우선)**로 폴백. 계층3는 이 테이블만 읽고 원문을 직접 read하지 않는다(R1
+준수).
+
+실측(2026-08-09 전량 백필): 대상 filing 101,489건 중 95,862건(94.5%) 추출 성공. 나머지는
+원문에 섹션 자체가 없거나 3-TABLE 탐색 창을 벗어난 케이스로 추정 — R0 원칙대로 짐작 없이
+NULL 유지.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -611,6 +648,7 @@ IFRS 필수 단일공시(확정기여제도 퇴직급여비용 등)가 전형적
 | R9 | 메모리 `feedback-verify-against-source` |
 | R10 | `docs/plans/xbrl_instance_parser_todo_2026-08-05.md` Phase 6-2/6-5 · `fin2/extract/report_lines_xbrl.py::_value_sign()` |
 | R11 | 사용자 지시 2026-08-07 · `docs/qa/handoff_note_lines_span_misattribution_2026-08-07.md` §8~§11 · `docs/plans/note_span_fix_plan_2026-08-07.md` Phase 1(T1.1)~Phase 3(T3.6, 2026-08-08 완료) |
+| R12 | 사용자 결정 2026-08-09(옵션A, 계층2 신설) · `docs/plans/std_v3_dq_shares_period_backfill_plan_2026-08-09.md` §3.3 · `fin2/extract/shares_transcribe.py`·`fin2/layer3/build.py::_select_shares_out` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황

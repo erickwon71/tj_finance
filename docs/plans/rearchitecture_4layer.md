@@ -112,6 +112,19 @@
 ---
 
 ## 4. 핸드오프 타임라인 (세션 진입점, 최신순)
+- 2026-08-09(본류, §5 4번 C-1 렌더 확인 작업 중 발견 — **트랙 종료**) [std_v3_dq_shares_period_backfill_plan](std_v3_dq_shares_period_backfill_plan_2026-08-09.md) —
+  C-1 렌더 확인 중 `std_financials_v3`의 `data_quality`·`period_end`·`shares_out` **3개 컬럼이
+  전량(100%) NULL**임을 발견(스크리너가 `data_quality<3`을 직접 필터링해 모집단 668개사
+  조용히 누락 등 치명적 피해). Phase 1(DQ/period_end 인라인 산출, v2 로직 이식)→Phase 2
+  (shares_out 계층2 신설 — `report_shares_outstanding` 신규 테이블+`fin2/extract/
+  shares_transcribe.py`+전 filing 소급백필 95,862행/94.5%)→Phase 3(`build_std_v3 --all`
+  전량재빌드 2,525corp·184,580행+6종 검증) 전부 완료. **스크리너 모집단 1,852→2,520개사로
+  정확 회복**, 기업은행 FY2025 매출 19.0조 등 원래 버그리포트 사례 전부 해소 확인. DQ=3 판정도
+  실제 작동 확인(동국홀딩스 인적분할·제주은행 별도 항등식위반 정확히 캐치). `docs/PARSING_RULES.md`
+  R12(발행주식수 계층2 cross-cutting 스칼라) 신설. 부수발견(범위밖): 제주은행 별도 자산=부채
+  항등식 위반·삼성증권 FY2025 net_income NULL — combine 레이어 기존 결함, 별도 트랙 필요.
+  실행체크리스트 = [`std_v3_dq_shares_period_backfill_todo_2026-08-09.md`](std_v3_dq_shares_period_backfill_todo_2026-08-09.md)
+  (Phase1~4 전부 ☑). C-1 렌더 확인은 이 트랙 완료로 재개 가능해짐 — §5 최신 갱신 참고.
 - 2026-08-08(병행, 재설계 범위 밖 — **트랙 종료**) [note_span_fix_plan](note_span_fix_plan_2026-08-07.md) — 바로 아래 항목(08-07 2회차)이 연 note_lines/SCE 열 오귀속(R11) 트랙의 **Phase 1~4 전부 완료**. Phase 1(측정: `LV′` 라벨영역 규칙 확정)→Phase 2(구현: `expand_table_grid`+`_grid_header_split`/`_grid_body_rows`, `docs/PARSING_RULES.md` R11/R11-1/R11-2)→Phase 3(검증: 전수 census 결함 0건, 진행 중 R11 자체 회귀 2종 발견+수정)→Phase 4(**DB 반영**: note_lines 전량 재적재 245M→**247.2M행**(+0.73%, 1차 시도 외부요인 중단→`RESUME_NOTES=1` 재개로 완주) + std_v3 재빌드(184,298→184,580행) + 재검증(DB 직접 대조·Gate B `line_value_diff=0`·D&A 재확인) 전부 통과). 부수 개선: `collector/storage_guard.py`에 opt-in SD 폴백(`ensure_root`) 신설. **다음 세션이 이 트랙에서 시작할 필요 없음** — Phase 5(문서·메모리 마감)까지 마치면 완전 종결.
 - 2026-08-07(병행, 재설계 범위 밖, 같은 날 2회차) [handoff_note_lines_span_misattribution](../qa/handoff_note_lines_span_misattribution_2026-08-07.md) — 위 항목(08-08, Phase 1~4 완료)으로 대체됨. 바로 아래 항목(같은 날 1회차)의 §4-1(외화열) 진단을 뒤집음 — 원인은 헤더 정규식이 아니라 `parser/xml/table_extractor.py`가 **본문 행에서 ROWSPAN/COLSPAN을 전혀 확장하지 않는** 구조적 결함(POSCO·풍강 원문 대조로 확정). note_lines 원문 전수 재파싱(101,327건, 오류 0) 완료 — 값 2억4,550만 개 중 **2,819만 개(11.48%) 컬럼 오귀속, 필링의 99.0% 영향**. report_lines(본문) 영향은 미측정. 코드/DB 변경 없음(조사만, census 스크립트는 `scripts/census_note_span_misattribution*.py`로 영구 보존) — 다음 세션 첫 작업 = 수정 로직 설계.
 - 2026-08-07(병행, 재설계 범위 밖 — ⚠**진단 번복됨, 위 항목 참고**) [handoff_unit_multiplier_misattribution](../qa/handoff_unit_multiplier_misattribution_2026-08-07.md) — 07-31 이 "셀 병합 결함"이라 부른 것을 재조사 → 단일 결함이 아니라 **단위(배수) 오귀속 최소 3종**(외화열 오적용·계정별 예외단위·미상)으로 재분류. `PARSING_RULES.md` 부록C의 "✅완료" 표기가 biz_metrics 한정임을 발견(report_lines/note_lines 쪽은 미조치) — 이 부분은 유효. 외화열(§4-1) 원인 진단은 위 2회차 항목에서 뒤집힘.
@@ -186,6 +199,17 @@
 > `handoff_verification_tools_4_refresh_2026-08-09.md`](../qa/handoff_verification_tools_4_refresh_2026-08-09.md)
 > — ① `layer2_note_heading_fix_verify.py` REGRESSED 2건(00121969·00133812) 원인규명(팔로업,
 > 우선순위낮음) ② 본류 복귀 = 아래 §5 4~5번(C-1 렌더 확인·Streamlit UI 풀스모크).
+>
+> **2026-08-09 갱신(네 번째) — §5 4번(C-1 렌더 확인) 진행 중 std_v3 DQ/period_end/shares_out
+> 전량NULL 발견→해소 완료, 트랙 종료.** [`std_v3_dq_shares_period_backfill_plan_2026-08-09.md`](std_v3_dq_shares_period_backfill_plan_2026-08-09.md)
+> 참고(§4 최신 항목). Phase1~4 전부 완료 — 스크리너 모집단 1,852→2,520개사 정확 회복, `docs/
+> PARSING_RULES.md` R12 신설. **커밋 완료**: 브랜치 `fix/std-v3-dq-period-shares-backfill`
+> 커밋 `4f57576`(main 아님 — default 브랜치 직커밋 금지 정책, main 머지·push는 미실행).
+> **다음 세션 시작점**(전부 [`..._todo_2026-08-09.md`](std_v3_dq_shares_period_backfill_todo_2026-08-09.md)
+> "잔여 작업" 절에 상세 기록): ① main 머지·push 여부 결정 ② 부수발견 2건 원인규명(제주은행
+> 별도 자산=부채 항등식 위반·삼성증권 FY2025 net_income NULL, 둘 다 combine 레이어 기존결함
+> 추정) ③ `layer2_note_heading_fix_verify.py` REGRESSED 2건 원인규명(여전히 유효) ④ C-1
+> 렌더 확인 재개(데이터 정상화로 재개 가능) ⑤ Streamlit UI 풀스모크.
 
 **완료(2026-07-25)**: `--recheck` + `build_std_v3 --all` 재빌드 · 금융섹터 revenue census 종결(보험/은행/
 증권/여신전문 프로파일 + 잔여 KSIC 프로파일 불필요, 원문대조 PASS) · **브리지 swap enrichment steps 1-2**
@@ -195,7 +219,7 @@
 1. **★계층2 주석 전반 전사**([notes plan](layer2_notes_transcription_2026-07-25.md)): `_emit_note_lines`
    활성화(`include_notes=True`)+백필 → 계층3가 D&A/da_total/ebitda(+R&D) 파생. **볼륨(주석=표96%) 실측 선결.**
    파편 note추출기(notes.py·cf_da.py·rd_note.py) 흡수.
-2. **계층3 enrichment 완성 + 재빌드**: 주석 반영 후 `build_std_v3 --all`. shares_out 은 계층2 일반현황(별도 테이블).
+2. **계층3 enrichment 완성 + 재빌드**: 주석 반영 후 `build_std_v3 --all`. shares_out 은 계층2 일반현황(별도 테이블) — ✅ 완료(2026-08-09, `report_shares_outstanding`).
 3. **뷰 브리지 교체 + G2(v3=원문 기준) + C-1**(자동): tearsheet 금융블록·스크리너 정규화 revenue.
 4. **SCE 자본변동 상세**(독립): 계층3 추출 → `sce_equity_movements` → 앱 표출. 설계 = [SCE 문서](sce_equity_movement_detail_2026-07-24.md).
 5. **(별도 규모) 계층2 소급 적재**: 2차 pre-2015(브리지 UNION 제거용) · 3차 PDF-only — 신규 파서.

@@ -138,19 +138,37 @@
 
 ## 잔여 작업 (다음 세션 — 이 트랙 자체는 종료, 아래는 후속 필요 항목)
 
-- ☐ **main 머지·push 여부 결정** — 지금 `fix/std-v3-dq-period-shares-backfill`(커밋
-  `4f57576`) 상태. `git log origin/main..HEAD` 로 diff 확인 후 사용자 승인 시 머지.
-- ☐ **제주은행(00148832) 별도재무제표 자산=부채 항등식 위반** — 2015~2022·2024~2025 FY
-  separate에서 `total_assets == total_liabilities`(값이 완전히 같음) + `total_equity`가
-  연결 값과 동일하게 찍혀 있음(§3-5에서 발견). `validate_equations`가 DQ3로 정확히 걸러내고
-  있어 스크리너엔 영향 없지만, **combine 레이어(`fin2/layer3/combine.py`)의 실제 데이터
-  결함으로 추정** — 원문 대조로 원인 규명 필요(계좌 매핑 오류인지 report_lines 자체 결손인지).
-- ☐ **삼성증권(00104856) FY2025 `net_income` NULL** — 같은 기업의 다른 연도는 정상 매핑됨.
-  combine 레이어 매핑 갭 추정, 원문 대조로 원인 규명 필요.
+- ☑ **제주은행(00148832) 별도재무제표 자산=부채 항등식 위반** — 원인규명+수정+검증 완료
+  (2026-08-09 같은 날 후속 세션). 원인 = 은행 필링에 본표 외 **신탁계정(trust account)
+  보조 재무상태표**가 별도 table_seq로 함께 실림(신탁계정은 자산=부채가 정상, 자기자본 없음).
+  옛 서식 본표의 "총계" 라벨이 글자간격 삽입이라 `stage='normalized'`에 머무는 반면 신탁계정의
+  깨끗한 라벨은 `stage='exact'`로 잡혀 `_resolve`가 신탁계정을 우선시 → 자산/부채는 신탁계정,
+  자본총계는 본표에서 오는 식으로 표가 섞임. `fin2/layer3/combine.py`에
+  `_trust_account_table_seqs`(같은 table_seq 안에서 자산총계==부채총계이고 total_equity
+  후보가 아예 없을 때만 제외 — 좁고 자기검증 가능한 신호) 신설로 수정. **교훈**: 처음
+  "table_seq=0 우선"이라는 일반 규칙을 시도했으나 네오셈(01170865)에서 정반대 사례(table_seq=1이
+  정답)를 발견해 회귀 직전 되돌림. 실측: 항등식 위반 41행→0행(기업은행 00149646도 같은
+  패턴으로 동반 발견·수정). 상세 = [[std-v3-side-findings-trust-account-net-income-2026-08-09]].
+- ☑ **삼성증권(00104856) FY2025 `net_income` NULL** — 원인규명+수정+검증 완료(같은 세션).
+  원인 = v3 포팅 시 std_v2의 `rule_net_income_fill`(net_income NULL이면
+  controlling_ni+noncontrolling_ni 합산) 이식 누락 — `rule_controlling_ni_fill`(반대방향)만
+  포팅됨. 비표준 순이익 라벨('보통주 당기순이익')이 매퍼를 못 통과하면 net_income NULL로
+  남던 문제. `combine_full`에 폴백 추가로 수정. 웰크론(00362159) 사례로 EBT−법인세 독립계산과
+  정확히 일치 검증(부호반전 케이스 포함). 실측: NULL(controlling_ni는 있음) 470행/119개사→0/0.
+- ☑ **DB 반영·재검증** — 영향 119개사(9,734행)만 scoped rebuild(`--corp` 콤마구분, 254초,
+  전체 `--all` 62분 불필요 — 두 버그 모두 발동조건이 SQL로 완전히 특정되고 enrichment(capex/
+  fcf/net_debt/D&A/EBITDA)는 total_assets/liabilities/equity/net_income을 전혀 참조하지 않아
+  scoped rebuild가 곧 완전한 rebuild임을 코드 검토+19개사 전수 대조로 확인). 전체 184,580행
+  불변, pytest 443 passed(무관 기존결함 1건 그대로). main 커밋 `9dd4851`.
+- ☐ **push 여부 결정** — 로컬 `main`이 `origin/main` 대비 **2커밋** 앞섬(`d707a03`
+  data_quality/period_end/shares_out 백필, `9dd4851` 신탁계정+net_income 폴백). working tree
+  clean. `git push origin main`으로 동기화할지 사용자 결정 필요(2026-08-09 세션에서 "다른
+  할일부터" 선택으로 보류됨).
 - ☐ **재설계 본류 복귀** — 이 트랙은 §5 "4번 C-1 렌더 확인" 작업 중 발견된 병행 트랙이었음.
-  본류로 복귀하려면: ① C-1 렌더 확인 재개(이번 트랙 완료로 데이터 정상화됐으니 재개 가능)
-  ② Streamlit UI 풀스모크 ③ (별개 트랙) `layer2_note_heading_fix_verify.py` REGRESSED
-  2건(00121969·00133812) 원인규명 — [[verification-tools-4-refresh-2026-08-09]] 참고.
+  본류로 복귀하려면: ① C-1 렌더 확인 재개(데이터 정상화 완료로 재개 가능) ② Streamlit UI
+  풀스모크.
+- ☐ **(별개 트랙, 우선순위 낮음) `layer2_note_heading_fix_verify.py` REGRESSED 2건**
+  (00121969·00133812) 원인규명 — [[verification-tools-4-refresh-2026-08-09]] 참고.
 - ☐ **(선택) Gate B 정식 XML 대조 감사** — 이번엔 코드경로 미변경 근거로 대체 검증했음
   (§3-6). 더 엄격한 확인이 필요하면 `python scripts/gateb_audit.py --sample 200` 등으로
   원문 재대조(장시간, 사용자 실행 권장).

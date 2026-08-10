@@ -45,6 +45,7 @@ from fin2.extract.biz_section import (
     _tag,
     _text,
     expand_table_grid,
+    is_merged_column_table,
 )
 
 # 매출 소제목 키워드(공백 무시 매칭). '판매경로'는 S-Oil 실측상 수주잔고표로 이어지는 경우가
@@ -180,6 +181,11 @@ def map_sales_table(st: SalesTable, fiscal_year: int) -> list[SalesMetricRow]:
     """무손실 grid → 부문×채널×연도 매출행. 값열은 금액(비-비율)만 채택."""
     grid = [list(r) for r in st.grid if r]
     if len(grid) < 2:
+        return []
+    # T14 가드(docs/PARSING_RULES.md 부록A) — biz_section.map_biz_table/biz_catalog 와 동일하게
+    # 재사용. 이 파서만 누락돼 있었음(order_backlog 크래시 조사 중 발견, 지금까지는 크래시 없이
+    # 조용히 날조된 큰 값이 들어갈 수 있는 미검증 구멍이었다).
+    if is_merged_column_table(grid):
         return []
     ncols = max(len(r) for r in grid)
     grid = [r + [""] * (ncols - len(r)) for r in grid]

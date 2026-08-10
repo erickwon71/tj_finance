@@ -19,19 +19,29 @@ DART 는 수주잔고 구조화 API 가 없다(`collector/models.py::OrderBacklo
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from fin2.extract.biz_section import (
-    _FINANCIAL_STMT_KW, _is_clean_number, _load_root, _narrative_unit, _parse_value, _tag, _text,
-    expand_table_grid,
+    _FINANCIAL_STMT_KW, _is_clean_number, _is_period_header_cell, _load_root, _narrative_unit,
+    _parse_value, _tag, _text, expand_table_grid, is_merged_column_table,
 )
 
 # 소제목 판정 — biz_section 과 동일하게 짧은 SPAN/P 요소만(내러티브 문단과 구별).
 _HEADING_MAX_LEN = 30
 _ORDER_HEADING_KW = ("수주상황", "수주 상황", "수주현황", "수주 현황", "수주계약")
+# 다음 절 경계 판정 — 가./나. 식 한글순번만 인식(**아라비아 숫자 순번 확장은 시도했다가
+# 되돌림**, 2026-08-09). 시도 경위: "5. 수주상황" 다음 진짜 경계 "6. 시장위험과 위험관리"류를
+# 놓쳐 무관한 표가 섞일 수 있는 사례(실측 STX엔진 `20150331003320`)를 잡으려 `\d{1,2}\.`를
+# 추가했으나, 한국전력공사 등 대기업 보고서에서 수주현황 표 **안**의 항목 라벨("1. 한국전력기술
+# (주)" 같은 회사명 리스트, 한글이 있어 한글가드로도 못 거름)까지 절 경계로 오인해 진짜 수주
+# 데이터를 대량 삭제하는 훨씬 심각한 회귀를 냄(실측 KEPCO 100→39행 등 6개사 확인, 전수 스캔
+# 1,002개사 중 원래 버그의 실제 영향은 1개사뿐이었던 것과 비교해 손익이 맞지 않음). 원래 버그는
+# `_MAX_TABLES_PER_MARKER` 상한 + `map_order_table`의 컬럼형태 가드가 대부분 걸러줘 실질 피해가
+# 거의 없었으므로(Phase6 2026-08-09 감사 기록), 아라비아 숫자 확장 없이 원래 규칙을 유지한다.
 _NUMBERED_HEADING_RE = re.compile(r"^[가-힣]\s*\.\s*\S")
 
 # 열 판별 키워드(회사마다 표기 변이 — 괄호부기 "(A+B)"/"(매출액,A)" 등은 in 매칭이라 무관).
@@ -63,6 +73,15 @@ _UNIT_NOTE_RE = re.compile(r"[\(（]\s*단위\s*[:：][^)\]）]*[\)）]")
 _TRAILING_PAREN_NUM_RE = re.compile(r"\(([\d,]+)\)\s*$")
 # 원문이 "없음"을 표로 말하는 표기(D3). 공란은 여기 넣지 않는다 — 병합 셀과 구분되지 않는다.
 _DASH_MARKS = frozenset(("-", "－", "—", "―", "─"))
+
+# 롤포워드형(전치형: 라벨=행, 연도=열) 수주현황표 — "구분|당기|전기" 또는 "구분|2017년|2016년"
+# 헤더에 기초/신규수주/수익인식/기말 수주잔액이 행으로 나열된 형태. map_order_table 의 열-기반
+# 판정(수주총액/기납품/수주잔고 헤더열)과 정반대라 별도 경로가 필요. 실측: 싸이맥스 FY2017
+# `20180330000166` table_ord=12(0행 처리되던 커버리지 공백, 2026-08-09 order_backlog 검증 중 발견).
+_ROLLFORWARD_BACKLOG_LABEL_KW = ("수주잔액", "수주잔고", "계약잔액")
+_ROLLFORWARD_OPEN_KW = ("기초",)
+_ROLLFORWARD_END_KW = ("기말",)
+_ROLLFORWARD_NEW_KW = ("신규수주",)
 
 
 @dataclass
@@ -132,16 +151,78 @@ def _col_kind(header_text: str) -> Optional[str]:
     return None
 
 
+def _map_rollforward_table(header_rows: list[list[str]], data_rows: list[list[str]], ncols: int,
+                           default_unit: Optional[str] = None) -> Optional[OrderBacklogRow]:
+    """롤포워드형(기초/신규수주/수익인식/기말 수주잔액 = 행, 당기/전기 = 열) 표 하나를 회사
+    전체 1행으로 축약. `map_order_table`의 열-기반 판정이 실패했을 때(헤더에 수주총액/기납품/
+    수주잔고 같은 열이 없을 때)만 폴백으로 호출된다(이미 나눠둔 header_rows/data_rows 재사용).
+    신뢰불가면 None(짐작 금지, R0)."""
+    header = header_rows[-1] if header_rows else [""] * ncols
+
+    rows_by_kind: dict[str, list[str]] = {}
+    for row in data_rows:
+        # T12 가드(docs/PARSING_RULES.md 부록A) — 원문이 자간을 공백으로 벌려 쓰는 일이 흔하다
+        # (실측: 00164724 "수 익 인 식 액"). 공백 제거 후 매칭.
+        label = re.sub(r"\s+", "", row[0])
+        if any(k in label for k in _ROLLFORWARD_END_KW) and any(
+                k in label for k in _ROLLFORWARD_BACKLOG_LABEL_KW):
+            rows_by_kind["end"] = row
+        elif any(k in label for k in _ROLLFORWARD_OPEN_KW) and any(
+                k in label for k in _ROLLFORWARD_BACKLOG_LABEL_KW):
+            rows_by_kind["open"] = row  # 참고용(현재 스키마엔 opening 컬럼이 없어 저장 안 함)
+        elif any(k in label for k in _ROLLFORWARD_NEW_KW):
+            rows_by_kind["new"] = row
+        elif any(k in label for k in _COMPLETED_KW):
+            rows_by_kind["completed"] = row
+
+    if "end" not in rows_by_kind:
+        return None  # 기말 수주잔액 행이 없으면 이 형태가 아님 — 신뢰 불가
+
+    # 현재 기간 열 = 헤더에 "당기" 있으면 그 열, 없으면 첫 데이터열(DART 관행상 당기가 좌측).
+    col = 1
+    for c in range(1, ncols):
+        if "당기" in re.sub(r"\s+", "", header[c]):
+            col = c
+            break
+
+    def _cell_int(row: Optional[list[str]]) -> Optional[int]:
+        if row is None or col >= len(row):
+            return None
+        v, _, _ = _parse_value(row[col])
+        return int(v) if v is not None and math.isfinite(v) else None
+
+    backlog_amt = _cell_int(rows_by_kind.get("end"))
+    if backlog_amt is None:
+        return None
+    completed = _cell_int(rows_by_kind.get("completed"))
+    return OrderBacklogRow(
+        category=None, backlog_amt=backlog_amt, new_orders=_cell_int(rows_by_kind.get("new")),
+        completed=abs(completed) if completed is not None else None, unit=default_unit,
+    )
+
+
 def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -> list[OrderBacklogRow]:
     """표 그리드 → OrderBacklogRow 리스트. 계약잔액/수주잔고 컬럼이 없으면(진행률형) 빈 리스트.
     default_unit: 표 앞 "(단위 : 억원)" 식 안내문에서 캡처한 단위(행별 단위열 없을 때 폴백)."""
     grid = [list(r) for r in grid if r]
     if len(grid) < 2:
         return []
+    # T14 가드(docs/PARSING_RULES.md 부록A) — 제출사가 여러 줄을 셀 하나(P 스택)에 몰아넣으면
+    # 그리드 확장 후에도 열 값이 구분자 없이 이어붙어 날조된 수치가 된다(실측 00633835 FY2010:
+    # 69개 프로젝트 금액이 한 셀에 뭉쳐 float('inf') → OverflowError). biz_metrics(map_biz_table)와
+    # 동일한 검증된 가드를 재사용 — 자릿수로 판정하므로 진짜 큰 값(조 단위 등)은 오탐하지 않는다.
+    if is_merged_column_table(grid):
+        return []
     ncols = max(len(r) for r in grid)
     grid = [r + [""] * (ncols - len(r)) for r in grid]
 
-    first_data = next((i for i, r in enumerate(grid) if any(_is_clean_number(c) for c in r)), None)
+    # T7 가드(docs/PARSING_RULES.md 부록A) — "2017년"/"2016년"처럼 연도만 있는 헤더 셀도
+    # _is_clean_number 엔 수치로 보여 first_data=0 이 되고 표가 통째로 버려진다(biz_section.
+    # map_biz_table·biz_catalog 엔 이미 있던 가드, order_backlog 엔 누락 — 실측 싸이맥스 FY2017
+    # 롤포워드표가 이 경로로 0행 처리되고 있었다).
+    first_data = next((i for i, r in enumerate(grid)
+                       if any(_is_clean_number(c) and not _is_period_header_cell(c) for c in r)),
+                      None)
     if first_data is None or first_data == 0:
         return []
     header_rows, data_rows = grid[:first_data], grid[first_data:]
@@ -175,7 +256,10 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
                 or any(kw in head for kw in _PERIOD_FLOW_COL_KW)):
             skip_cols.add(c)
     if "backlog" not in col_kind.values():
-        return []  # 수주잔고/계약잔액 컬럼 자체가 없으면 신뢰 파생 불가 → 스킵
+        # 열-기반 판정 실패 — 롤포워드형(행=기초/신규수주/수익인식/기말, 열=당기/전기)일 수
+        # 있으니 폴백으로 확인(실측 싸이맥스 FY2017). 둘 다 아니면 신뢰 파생 불가 → 스킵.
+        rf = _map_rollforward_table(header_rows, data_rows, ncols, default_unit)
+        return [rf] if rf else []
 
     dim_cols = [c for c in range(ncols) if c not in col_kind and c != unit_col and c not in skip_cols]
     unit = None

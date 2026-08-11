@@ -813,6 +813,82 @@ def _run_migrations() -> None:
             WHERE domain = 'sales'
               AND narrative ~ '^\[.*?\] .*?( \(연속표\))? :: '
         """),
+
+        ("2026_08_standard_financials_v3_pre2015_dedup",
+         # 2026-08-11: pre-2015 2차 패스(docs/plans/pre2015_layer2_backfill_plan_2026-08-10.md
+         # Phase7) — std_v3 가 이제 pre-2015 corp-period 도 빌드하므로, 위 08-09 bridge swap
+         # 뷰의 std_v2 분기가 갖고 있던 하드코딩 `s.fiscal_year < 2015 OR` 조건을 제거한다.
+         # 그 조건이 남아있으면 std_v3 에 이미 존재하는 pre-2015 corp-period 에 대해 std_v2
+         # 쪽도 무조건 UNION ALL 돼 **중복행**이 생긴다(NOT EXISTS 만으로는 안 걸러짐 — OR 로
+         # 묶여 있었기 때문). 남기는 `NOT EXISTS` 조건 하나로 2015+/pre-2015 를 동일하게
+         # 취급 — std_v3 에 없는 corp-period(PDF-only 1,405건처럼 이번 트랙 스코프 밖인 것
+         # 포함)만 std_v2 로 계속 폴백한다. SELECT 목록·JOIN 은 무변경, WHERE 절 한 줄만 수정.
+         """
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_class WHERE relname='standard_financials' AND relkind='v') THEN
+                CREATE OR REPLACE VIEW standard_financials AS
+                SELECT
+                    v3.corp_code, v3.fiscal_year, v3.fiscal_period, v3.statement_type,
+                    1::smallint AS version,
+                    v3.period_end,
+                    TRUE AS is_ifrs,
+                    COALESCE(v3.source_rcepts->>'BS', v3.source_rcepts->>'IS', v3.source_rcepts->>'CF')::varchar(14) AS rcept_no,
+                    v3.total_assets, v3.current_assets, v3.cash, v3.receivables, v3.inventory, v3.ppe, v3.intangibles,
+                    v3.total_liabilities, v3.current_liabilities, v3.short_term_debt, v3.long_term_debt,
+                    v3.total_equity, v3.controlling_equity, v3.retained_earnings, v3.trade_payables,
+                    v3.revenue, v3.cogs, v3.gross_profit, v3.sga, v3.rd_expense, v3.operating_income,
+                    v3.interest_expense, v3.ebt, v3.tax_expense, v3.net_income, v3.controlling_ni,
+                    v3.cfo, v3.cfi, v3.cff, v3.capex, v3.dividends_paid,
+                    v3.depreciation, v3.amortization, v3.da_total, v3.ebitda, v3.fcf, v3.net_debt, v3.shares_out,
+                    v3.data_quality,
+                    NULL::timestamp without time zone AS superseded_at,
+                    v3.built_at AS calculated_at,
+                    COALESCE(fa.gate_status, 'unaudited') AS gate_b_status,
+                    v3.industry_lines
+                FROM std_financials_v3 v3
+                LEFT JOIN face_audit fa
+                  ON  fa.corp_code = v3.corp_code
+                  AND fa.fiscal_year = v3.fiscal_year
+                  AND fa.fiscal_period = v3.fiscal_period
+                  AND fa.statement_type = v3.statement_type
+                  AND NOT COALESCE(fa.is_stub, false)
+                WHERE COALESCE(fa.gate_status, 'unaudited') <> 'fail_a'
+
+                UNION ALL
+
+                SELECT
+                    s.corp_code, s.fiscal_year, s.fiscal_period, s.statement_type, s.version,
+                    s.period_end, s.is_ifrs,
+                    COALESCE(s.bs_rcept, s.is_rcept, s.cf_rcept) AS rcept_no,
+                    s.total_assets, s.current_assets, s.cash, s.receivables, s.inventory, s.ppe, s.intangibles,
+                    s.total_liabilities, s.current_liabilities, s.short_term_debt, s.long_term_debt,
+                    s.total_equity, s.controlling_equity, s.retained_earnings, s.trade_payables,
+                    s.revenue, s.cogs, s.gross_profit, s.sga, s.rd_expense, s.operating_income,
+                    s.interest_expense, s.ebt, s.tax_expense, s.net_income, s.controlling_ni,
+                    s.cfo, s.cfi, s.cff, s.capex, s.dividends_paid,
+                    s.depreciation, s.amortization, s.da_total, s.ebitda, s.fcf, s.net_debt, s.shares_out,
+                    s.data_quality,
+                    NULL::timestamp without time zone AS superseded_at,
+                    s.calculated_at,
+                    COALESCE(fa.gate_status, 'unaudited') AS gate_b_status,
+                    NULL::jsonb AS industry_lines
+                FROM std_financials_v2 s
+                LEFT JOIN face_audit fa
+                  ON  fa.corp_code = s.corp_code
+                  AND fa.fiscal_year = s.fiscal_year
+                  AND fa.fiscal_period = s.fiscal_period
+                  AND fa.statement_type = s.statement_type
+                  AND NOT COALESCE(fa.is_stub, false)
+                WHERE s.version = 1 AND NOT COALESCE(s.is_stub, false) AND NOT COALESCE(s.is_discrete, false)
+                  AND COALESCE(fa.gate_status, 'unaudited') <> 'fail_a'
+                  AND NOT EXISTS (
+                        SELECT 1 FROM std_financials_v3 v3b
+                        WHERE v3b.corp_code = s.corp_code AND v3b.fiscal_year = s.fiscal_year
+                          AND v3b.fiscal_period = s.fiscal_period AND v3b.statement_type = s.statement_type
+                      );
+            END IF;
+        END $$
+        """),
     ]
 
     with engine.begin() as conn:

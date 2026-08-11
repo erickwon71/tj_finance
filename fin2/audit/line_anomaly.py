@@ -230,11 +230,106 @@ def detect_sce_anomalies(lines, *, rcept_no: str, corp_code: str,
     return out
 
 
+# ── BS 항등식(자산=부채+자본) 대조 (2026-08-10) ─────────────────────────────
+# 배경 — pre-2015 파일럿 백필 검증 중 발견: 일부 filer(실측 KG케미칼 2003~2008)는 "부채총계"
+# 당기(col0) 셀만 괄호로 감싸(표준 괄호=음수 관례로 읽으면 부채가 음수가 됨) 자산=부채+자본
+# 항등식이 깨진다. 반면 "부채와자본총계"(결합 총계 행)는 매번 자산과 정확히 일치해 원문에
+# 진짜 오류(또는 filer 특유 표기 습관)가 있음을 강하게 시사한다. 근본원인이 원문 자체에
+# 있어 파서 결값이 아니라면(R0: "판단 없이 전사") 계층2 에서 값을 고치지 않고, 여기서
+# **표시만** 한다 — SCE↔BS 교차대조와 같은 원칙("계층3 이 보정 여부를 판단").
+_ASSETS_LABELS = {"자산총계"}
+_LIAB_LABELS = {"부채총계"}
+_EQUITY_LABELS = {"자본총계", "자본합계", "총자본"}
+_COMBINED_LABELS = {"부채와자본총계", "부채및자본총계", "부채자본총계"}
+
+
+def _bs_total_rows(lines, basis: str, col_index: int) -> dict[str, object]:
+    """BS 한 기간의 자산총계/부채총계/자본총계/(있으면)결합총계 **행 객체**.
+
+    `_bs_concepts` 와 같은 모호성 원칙(같은 개념이 다른 값으로 여럿 나오면 제외, 추측 안 함)
+    이되, 이상치 위치 표시(table_seq/row_order)를 위해 값이 아니라 행 자체를 돌려준다.
+    """
+    buckets: dict[str, list] = defaultdict(list)
+    for l in lines:
+        if l.statement != "BS" or l.basis != basis or l.col_index != col_index:
+            continue
+        if l.value_won is None:
+            continue
+        key = _norm(_PAREN.sub("", l.label_raw or ""))
+        for concept, names in (("assets", _ASSETS_LABELS), ("liab", _LIAB_LABELS),
+                                ("equity", _EQUITY_LABELS), ("combined", _COMBINED_LABELS)):
+            if key in names:
+                buckets[concept].append(l)
+    out: dict[str, object] = {}
+    for concept, rows in buckets.items():
+        if len({r.value_won for r in rows}) == 1:
+            out[concept] = rows[0]
+    return out
+
+
+def detect_bs_identity_anomalies(lines, *, rcept_no: str, corp_code: str) -> list[LineAnomaly]:
+    """자산총계 ≠ 부채총계+자본총계 인 (basis, col_index) 를 표시한다.
+
+    같은 표 안의 검산이라 SCE↔BS 대조보다 근거는 약하지만(다른 재무제표가 아니라 자기
+    자신과의 산술), "부채와자본총계"(결합행)가 **따로** 존재하고 그게 자산과 일치하면
+    분리행(부채총계/자본총계) 쪽에 확정적 근거가 생긴다 — 그 경우만 `suggested_value`
+    (항등식이 함의하는 값)와 `classify_anomaly` 로 세분류해 confidence="high" 를 준다.
+    결합행이 없거나 그것도 안 맞으면 "무언가 안 맞는다"만 낮은 신뢰도로 표시한다(추측 금지).
+
+    반기/분기 포함 전체 report_fiscal_period 에 적용(SCE 대조와 달리 기간 매칭이 필요
+    없는 같은 열 안 검산이라 FY 로 좁힐 이유가 없다).
+    """
+    out: list[LineAnomaly] = []
+    cols = sorted({l.col_index for l in lines
+                   if l.statement == "BS" and l.col_index is not None})
+    for basis in ("consolidated", "separate"):
+        for col in cols:
+            rows = _bs_total_rows(lines, basis, col)
+            assets, liab, equity = rows.get("assets"), rows.get("liab"), rows.get("equity")
+            if assets is None or liab is None or equity is None:
+                continue
+            observed_sum = liab.value_won + equity.value_won
+            diff = assets.value_won - observed_sum
+            if abs(diff) <= max(2, abs(assets.value_won) * _TOL):
+                continue
+            combined = rows.get("combined")
+            evidence_detail = (
+                f"col{col} 자산총계 {assets.value_won:,} vs 부채총계+자본총계 {observed_sum:,}"
+                f"(부채 {liab.value_won:,} + 자본 {equity.value_won:,}) diff {diff:,}")
+            combined_confirms = (
+                combined is not None
+                and abs(combined.value_won - assets.value_won) <= max(2, abs(assets.value_won) * _TOL))
+            if combined_confirms:
+                evidence_detail += f" · 부채와자본총계 {combined.value_won:,}(자산과 일치)"
+                reference = assets.value_won - equity.value_won   # 항등식이 함의하는 부채총계
+                out.append(LineAnomaly(
+                    rcept_no=rcept_no, corp_code=corp_code, statement="BS", basis=basis,
+                    table_seq=liab.table_seq, row_order=liab.row_order, col_index=col,
+                    label_raw=liab.label_raw, original_value=liab.value_won,
+                    suggested_value=reference,
+                    anomaly_kind=classify_anomaly(reference, liab.value_won),
+                    evidence="bs_identity_confirmed", evidence_detail=evidence_detail,
+                    confidence="high",
+                ))
+            else:
+                out.append(LineAnomaly(
+                    rcept_no=rcept_no, corp_code=corp_code, statement="BS", basis=basis,
+                    table_seq=liab.table_seq, row_order=liab.row_order, col_index=col,
+                    label_raw=liab.label_raw, original_value=liab.value_won,
+                    suggested_value=None, anomaly_kind="OTHER",
+                    evidence="bs_identity", evidence_detail=evidence_detail, confidence="low",
+                ))
+    return out
+
+
 def detect_anomalies(lines, *, rcept_no: str, corp_code: str,
                      report_fiscal_period: str | None = None) -> list[LineAnomaly]:
-    """statement 별 탐지기 집합 진입점. 현재는 SCE 만 — BS/IS/CF 규칙 추가 시 여기에 붙인다."""
-    return detect_sce_anomalies(lines, rcept_no=rcept_no, corp_code=corp_code,
-                                report_fiscal_period=report_fiscal_period)
+    """statement 별 탐지기 집합 진입점."""
+    return (
+        detect_sce_anomalies(lines, rcept_no=rcept_no, corp_code=corp_code,
+                             report_fiscal_period=report_fiscal_period)
+        + detect_bs_identity_anomalies(lines, rcept_no=rcept_no, corp_code=corp_code)
+    )
 
 
 def store_anomalies(session, rcept_no: str, anomalies: list[LineAnomaly]) -> int:

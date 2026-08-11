@@ -36,6 +36,11 @@ from parser.common.amount_normalizer import parse_amount, normalize_account_name
 _NUMBER_PATTERN = re.compile(
     r'^[\s\-\─\—\―]$|'              # 공란 / 대시
     r'^\([\d,]+\.?\d*\)$|'           # (음수) — 소수 허용(주당손익·비율 등)
+    r'^\(-\)[\d,]+\.?\d*$|'          # (-)음수 — 괄호로 안 감싸고 "(-)" 자체를 부호마커로 붙이는
+                                      #   이중표기(일부 K-GAAP filer 실측, 2026-08-10 pre-2015
+                                      #   파일럿 백필 항등식 검증 중 발견 — 이 게이트를 안 넓히면
+                                      #   `parse_amount` 가 이 형태를 읽게 고쳐도 셀 자체가 여기서
+                                      #   "숫자 아님"으로 걸러져 amount_cells 에 못 들어간다)
     r'^[\d,]+\.?\d*$|'               # 양수 — 소수 허용
     r'^△[\d,]+\.?\d*$|'              # △음수
     r'^▲[\d,]+\.?\d*$'               # ▲음수

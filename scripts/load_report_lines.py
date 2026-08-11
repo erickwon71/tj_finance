@@ -23,6 +23,14 @@
     python scripts/load_report_lines.py --limit 100          # 소량 시험
     python scripts/load_report_lines.py --status             # 진행 현황만 출력
     python scripts/load_report_lines.py --recheck            # done 도 재처리
+
+## pre-2015(2차 패스) 확장 (2026-08-10)
+`--fy-min`/`--fy-max` 로 연도 범위를 바꿀 수 있다(기본은 종전과 동일하게 `--fy-min 2015`
+`--fy-max` 없음 = 전체). 대상 XML 자체는 `fin2.extract.report_lines.extract_report_lines`
+가 이미 `report_fiscal_year<=2010` 이면 `fin2/extract/legacy_pre2015.py` 로 라우팅하므로
+(설계 = `docs/plans/pre2015_layer2_backfill_phase2_design_2026-08-10.md`), 이 스크립트는
+연도 필터만 열어주면 된다 — 새 추출 로직 자체는 이미 이 파일 밖에서 배선 완료.
+    python scripts/load_report_lines.py --fy-min 1999 --fy-max 2014 --corp 00126380,...
 """
 from __future__ import annotations
 
@@ -44,19 +52,30 @@ from fin2.extract.report_lines import (extract_report_lines, store_report_lines,
                                         store_note_lines, store_report_tables)
 from fin2.audit.line_anomaly import detect_anomalies, store_anomalies
 
-FY_MIN = 2015
+FY_MIN = 2015        # 기본값(기존 2015+ 1차 패스). --fy-min 으로 재정의 가능(pre-2015 2차 패스).
 BATCH = 200          # 커밋 주기(보고서 수)
 
 
 def _targets(session, args) -> list:
+    # ★ is_active 필터는 기본으로 두지 않는다 — 기존 2015+ 전량 백필 대상집합(behavior)을
+    # 바꾸지 않기 위함(승인 안 된 변경). `--active-only`(opt-in, 2026-08-10 pre-2015 Phase5용)
+    # 로 명시할 때만 적용한다 — Q2 결정(상장폐지 8개사 제외)을 정확히 반영하려면 --corp 로
+    # 1,551개 코드를 나열하는 대신 이 플래그가 필요했다.
+    fy_min = getattr(args, "fy_min", None) or FY_MIN
+    fy_max_clause = " AND f.fiscal_year <= :fy_max" if getattr(args, "fy_max", None) else ""
+    active_join = " JOIN corporations c ON c.corp_code = f.corp_code" if getattr(args, "active_only", False) else ""
+    active_clause = " AND c.is_active = true" if getattr(args, "active_only", False) else ""
     sql = f"""
         SELECT dt.rcept_no, dt.file_path, f.corp_code, f.fiscal_year, f.fiscal_period
-        FROM download_tasks dt JOIN filings f USING(rcept_no)
+        FROM download_tasks dt JOIN filings f USING(rcept_no){active_join}
         WHERE dt.status='completed' AND dt.file_type='xml' AND dt.file_path IS NOT NULL
-          AND f.fiscal_year >= {FY_MIN}
+          AND f.fiscal_year >= :fy_min{fy_max_clause}{active_clause}
         ORDER BY dt.rcept_no
     """
-    rows = session.execute(text(sql)).fetchall()
+    params = {"fy_min": fy_min}
+    if fy_max_clause:
+        params["fy_max"] = args.fy_max
+    rows = session.execute(text(sql), params).fetchall()
     if getattr(args, "corp", None):
         # 전량 백필 전에 소수 기업으로 end-to-end 확인하기 위한 필터
         # (예: 주석 section_path 헤딩 복원 검증).
@@ -123,6 +142,22 @@ def _print_status(session) -> None:
     print(f"  report_lines     {n_lines:,} 행 ({size})")
     print(f"  이상치 표시      {n_anom:,} 건")
 
+    # pre-2015 2차 패스(Phase5) 진행 — 위 2015+ 블록과 별도 집계(같은 progress 테이블,
+    # fiscal_year 로만 구분). `--fy-min`/`--fy-max` 로 돌릴 때 이 블록으로 진행을 본다.
+    pre_tot = session.execute(text("""
+        SELECT count(*) FROM download_tasks dt JOIN filings f USING(rcept_no)
+        WHERE dt.status='completed' AND dt.file_type='xml' AND dt.file_path IS NOT NULL
+          AND f.fiscal_year < 2015""")).scalar()
+    pre_rows = session.execute(text("""
+        SELECT status, count(*), sum(n_lines) FROM report_line_load_progress
+        WHERE fiscal_year < 2015 GROUP BY status""")).fetchall()
+    pre_done = sum(c for s, c, _ in pre_rows)
+    print(f"\n=== 계층2 pre-2015 2차 패스 진행(Phase5) ===")
+    print(f"  대상(pre-2015 XML) {pre_tot:,}")
+    for s, c, l in sorted(pre_rows):
+        print(f"    {s:6s} {c:8,}  행 {(l or 0):,}")
+    print(f"  진행률             {100*pre_done/max(pre_tot,1):.1f}%  ({pre_done:,}/{pre_tot:,})")
+
 
 def _self_disable_if_done(label: str = "com.tjfinance.layer2load") -> None:
     """launchd 연속잡: 남은 대상이 0 이면 잡 unload + plist 삭제(gapfill·phasec 선례)."""
@@ -150,6 +185,14 @@ def main() -> None:
     ap.add_argument("--shard", help="a/n 분할(정렬 후 i %% n == a)")
     ap.add_argument("--corp", help="쉼표구분 corp_code 만 처리(전량 백필 전 표적 검증용)")
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--fy-min", type=int, default=None,
+                    help=f"대상 fiscal_year 하한(기본 {FY_MIN} — 기존 2015+ 1차 패스와 동일). "
+                         "pre-2015 2차 패스는 예: --fy-min 1999")
+    ap.add_argument("--fy-max", type=int, default=None,
+                    help="대상 fiscal_year 상한(기본 없음=무제한). pre-2015 2차 패스는 예: --fy-max 2014")
+    ap.add_argument("--active-only", action="store_true",
+                    help="corporations.is_active=true 인 corp 만(기본 끔, 기존 2015+ 동작 무변경). "
+                         "pre-2015 Phase5 는 Q2 결정(상장폐지 8개사 제외)을 이걸로 반영한다")
     ap.add_argument("--recheck", action="store_true", help="done 도 재처리")
     ap.add_argument("--notes", action="store_true",
                     help="주석 전용 패스 — note_lines 에만 적재(본문 report_lines 무변경). "

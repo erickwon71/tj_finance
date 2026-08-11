@@ -50,6 +50,30 @@ from fin2.extract.text import (
     document_default_unit,
 )
 from fin2.extract.units import ColumnUnits, FX_ONLY, SRC_FX
+from fin2.extract.legacy_pre2015 import detect_pre2015_body_statement_tables
+
+# report_fiscal_year 가 이 값 이하면 pre-2015 K-GAAP 라우팅을 먼저 시도한다(설계문서
+# `docs/plans/pre2015_layer2_backfill_phase2_design_2026-08-10.md` §2-1·§3-3 잔여항목③
+# "2009~2010 전환기 라우팅 순서"의 구현 결정). 2011+ 는 손대지 않는다 — Phase2 실측
+# (`pre2015_boundary_walk_prototype_probe_2026-08-10.md`)이 **2011~2014 는 기존 2015+
+# 주경로가 이미 100% 성공**(TITLE 소멸로 우연히 형제 back-scan 이 맞아떨어짐)한다고 확정했고,
+# 새 경로는 1999~2010 표본에서만 검증됐다(회귀 방지 원칙, 설계문서 §4).
+_PRE2015_ROUTING_MAX_FY = 2010
+
+# ★2026-08-10(Phase3 구현, canary 실측으로 발견) — 문서 전체 단위 "신규경로 빈 결과 시에만
+# 폴백"은 전환기(2009~2010)에서 손해다: 신규경로가 IS/CF 는 잡지만 BS 는 못 잡는 문서에서
+# "그룹이 비지 않았다"는 이유로 기존 2015+ 경로가 그 문서에서 BS 를 잡을 기회(설계문서 §1-1
+# 실측: 2010년 BS 30%·IS/CF 90%, 둘 다 부분적으로 맞는 구간)를 통째로 버린다. 대신 **섹션
+# 코드(BS_C/IS_S 등) 단위로 병합**한다 — 신규경로가 채운 키는 그대로 두고, 신규경로가 못 채운
+# 키만 기존경로 결과로 보충한다. 같은 표가 두 경로에서 서로 다른 키로 갈릴 위험은 있으나(실측
+# 안 됨, 극히 드묾) 완전 누락보다 낫고, 같은 키에 두 번 담기는 중복은 애초에 발생하지 않는다
+# (덮어쓰지 않고 setdefault 로만 채움).
+def _detect_pre2015_body_statement_tables_merged(root, fin_type: str) -> dict[str, list[tuple]]:
+    groups = detect_pre2015_body_statement_tables(root, fin_type, include_sce=True)
+    fallback = _detect_body_statement_tables(root, fin_type, include_sce=True)
+    for code, tables in fallback.items():
+        groups.setdefault(code, tables)
+    return groups
 
 # 로컬 선언이 전혀 없을 때 문서 전체 기본 단위를 썼다는 provenance(2026-08-05).
 # `fin2/extract/text.py::document_default_unit` 참고.
@@ -1026,7 +1050,12 @@ def extract_report_lines(
     lines: list[ReportLineRow] = []
 
     # include_sce=True — 계층2 는 자본변동표도 전사한다(fact_v2 는 기본값 False 로 계속 배제).
-    groups = _detect_body_statement_tables(root, fin_type, include_sce=True)
+    # pre-2015(≤2010) 라우팅 — 섹션 코드 단위 병합(위 헬퍼 docstring). 2015+ 소비 경로
+    # (`_detect_body_statement_tables`)는 이 분기 밖에서 무변경으로 그대로 쓴다.
+    if report_fiscal_year <= _PRE2015_ROUTING_MAX_FY:
+        groups = _detect_pre2015_body_statement_tables_merged(root, fin_type)
+    else:
+        groups = _detect_body_statement_tables(root, fin_type, include_sce=True)
     # 문서 전체 기본 단위는 **로컬 선언이 없는 표가 실제로 있을 때만** 찾는다(비용 절감 —
     # 대다수 문서는 표마다 선언이 있어 이 스캔이 불필요하다). `_detect_body_statement_tables`
     # 가 이미 붙여준 표 단위 unit 이 하나라도 None 이면 후보.

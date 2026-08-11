@@ -67,8 +67,8 @@
 | 계층 | 상태 | 실측 / 요지 |
 |---|---|---|
 | 1 다운로드 | ✅ 기존 유지 + 운영 자동화 진행 중 | raw_report 심링크 = SD카드(`/Volumes/dart_data`). NAS 원복 별도. **2026-08-01**: 상장폐지 확정분 원문 NAS 이관 자동화 + KRX 휴장일 스킵 데일리 배선(정본=[collection_pipeline_restore](collection_pipeline_restore_2026-07-31.md)) — 계층2/3 데일리 재편입은 Phase 5 대기 그대로 |
-| 2 report_lines | ✅ 엔진·검증·**1차적재(2015+)** 완료 | **102,067 filing · 63.5M행 · 2,534사** (min year 2014). **정정본 포함 적재**(정정 filing 9,377·6.8M행). ⚠ **pre-2015·PDF-only 미적재**(2·3차 신규파서 필요) |
-| 3 취합 std_v3 | ✅ **정제 사실상 완료** (최종 재빌드 대기) | **185,214행 · 2,534사** · parity ~98% · inspect 전량 v3정답 · 업종 프로파일(보험/은행/증권/한국금융NULL) · **정본선택+기재정정 델타패치 반영**(3,338행/955사 정정 provenance). ⚠ **`--recheck` 완료 후 `build_std_v3.py --all` 재빌드 필수** |
+| 2 report_lines | ✅ 엔진·검증·**1차(2015+)+2차(pre-2015) 적재** 완료 | 1차: **102,067 filing · 63.5M행 · 2,534사**(min year 2014, 정정본 포함 9,377필링·6.8M행). **2차(pre-2015, 2026-08-11 완료)**: 신규 모듈(`docs/PARSING_RULES.md` R13) + 전량백필 81,660/82,005건(99.6%, 활성유니버스 1,551개사) · report_lines 22.2M행 · BS항등식 전수 98.8% 성립. 데일리 배선(`collector/note_lines_sync.py::FY_MIN`)도 1999로 낮춰 향후 재수집분 자동 반영. ⚠ **PDF-only 1,405건만 미적재**(3차 신규파서 필요, 별도 트랙) |
+| 3 취합 std_v3 | ✅ **정제 완료 + pre-2015 반영** | **297,429행 · 2,525사**(2026-08-11, `--year-min 1999` 전량재빌드로 pre-2015 112,849행 신규 반영, 오류0) · parity ~98% · inspect 전량 v3정답 · 업종 프로파일(보험/은행/증권/한국금융NULL) · **정본선택+기재정정 델타패치 반영**. `standard_financials` 뷰의 std_v2 UNION 폴백은 pre-2015도 이제 `NOT EXISTS` 하나로 통일(중복행 버그 발견+수정, 마이그레이션 `2026_08_standard_financials_v3_pre2015_dedup`) — PDF-only 등 std_v3 미커버 잔여만 폴백 |
 | 4 App swap | ☐ **미착수** | Path A 설계 완료(std_v3 직접소비). 앱 비사용 중·std_v2=교차검증용 |
 
 **남은 큰 덩어리**: ① 계층2 **주석 전반 전사**(D&A 등 파생계정 소스, swap 선행 · [notes plan](layer2_notes_transcription_2026-07-25.md)) +
@@ -96,6 +96,7 @@
 - [layer2_full_load_report_2026-07-22](../qa/layer2_full_load_report_2026-07-22.md) — 전량적재 1차패스 결과보고
 - [★layer2_notes_transcription_2026-07-25](layer2_notes_transcription_2026-07-25.md) — **주석(note) 전반 전사**(D&A·R&D 등 파생계정 소스). `_emit_note_lines` 활성화+백필, 파편 note추출기 흡수. 볼륨(주석=표96%) 관건. **swap 선행**
 - [docs/PARSING_RULES.md](../PARSING_RULES.md) — **파싱 규칙 단일 진입점(2026-08-01 신설)**. R0(지배 원칙: 있으면 파싱·없으면 넘어감, 거짓부재 금지)~R9 + 원문 XML 함정 15종. 계층2 파서 신설·수정 전 필독. 배경 = [handoff_biz_catalog_r0_2026-08-01](../qa/handoff_biz_catalog_r0_2026-08-01.md)(병행 트랙, §0 참고) — 그 세션에서 확립된 원칙이나 R0 자체는 계층2 전반에 적용
+- [★pre2015_layer2_backfill_plan_2026-08-10](pre2015_layer2_backfill_plan_2026-08-10.md) — **pre-2015 2차 패스 — Phase 1~6 전부 완료(2026-08-11)**. XML 79,283건·활성 1,551개사 스코프, 신규 모듈(`docs/PARSING_RULES.md` R13) + 전량백필 81,660건(err0) + 데일리 배선(`FY_MIN` 1999로 하향) + 문서화. 잔여 = Phase7(std_v3 백필, 별도 승인). 실행 체크리스트 = [pre2015_layer2_backfill_todo_2026-08-10](pre2015_layer2_backfill_todo_2026-08-10.md)(Phase1~6 전부 ☑)
 
 ### 계층3 — 취합 std_v3
 - [★financial_sector_revenue_standards](financial_sector_revenue_standards.md) — **금융섹터 revenue 표준 단일 출처**(증권=순영업수익 NET·보험/은행=gross·한국금융지주=NULL·잔여·회귀). 섹터별 census 결정 누적
@@ -118,6 +119,11 @@
 ---
 
 ## 4. 핸드오프 타임라인 (세션 진입점, 최신순)
+- 2026-08-11(본류, §7 후속 1번 — **Phase1~7 전부 완료, 트랙 종료**) [pre2015_layer2_backfill_todo](pre2015_layer2_backfill_todo_2026-08-10.md) —
+  Phase5(전량백필 81,660건, err0) 결과를 DB 직접검증(BS항등식 전수 98.8% 성립·상장폐지 정상제외)
+  + Phase6(파이프라인 편입: 데일리 배선 갭 발견+수정 `note_lines_sync.py::FY_MIN` 2015→1999 ·
+  `docs/PARSING_RULES.md` R13 신설 · pytest 471 passed) + Phase7(std_v3 백필 297,429행 ·
+  뷰 중복버그 발견+수정 · std_v2는 보존 결정) 전부 완료. 상세는 §5 최신 갱신 블록.
 - 2026-08-09(본류, §5 4번 C-1 렌더 확인 작업 중 발견 — **트랙 종료**) [std_v3_dq_shares_period_backfill_plan](std_v3_dq_shares_period_backfill_plan_2026-08-09.md) —
   C-1 렌더 확인 중 `std_financials_v3`의 `data_quality`·`period_end`·`shares_out` **3개 컬럼이
   전량(100%) NULL**임을 발견(스크리너가 `data_quality<3`을 직접 필터링해 모집단 668개사
@@ -252,6 +258,133 @@
 > 실제 브라우저(Streamlit 기동, Claude in Chrome) 양쪽에서 크래시 0건·수치 완전일치로 확인.
 > **다음 세션 시작점 = §7 후속 트랙**(pre-2015 2차 패스로 std_v2 UNION 제거·v3-native 품질게이트로
 > face_audit v2 의존 제거·데일리 파이프라인 배선·v2 폐기) — 우선순위는 다음 세션에 사용자와 결정.
+>
+> **2026-08-10 갱신 — 후속 트랙 중 "pre-2015 2차 패스" 계획 초안 작성.**
+> [`pre2015_layer2_backfill_plan_2026-08-10.md`](pre2015_layer2_backfill_plan_2026-08-10.md)
+> (+ 실행 체크리스트 [`pre2015_layer2_backfill_todo_2026-08-10.md`](pre2015_layer2_backfill_todo_2026-08-10.md)).
+> DB 직접 쿼리로 스코프 갱신(과거 추정 70,374건 → **XML 79,283건·활성 1,551개사**, PDF-only
+> 1,405건은 별도 3차 트랙으로 분리, 상장폐지 8개사는 유니버스 헌장상 제외) + FY1999 샘플
+> 원문 직접 대조로 구조 실측(SECTION-2/TITLE 골격은 유지되나 연결/별도 구분이 리프 TITLE이
+> 아니라 상위 헤딩 계층에 있음을 확인 — "신규 파서 필요" 판단은 유효, 단 "완전히 다른 포맷"은
+> 아님). **설계 초안만 완료, 실행요청 대기**(정책상 자동 실행 금지) — Phase 1(구조 실측, 밀린
+> T4 부활)부터 사용자 승인 필요.
+>
+> **2026-08-10 갱신(같은 날 두 번째) — 사용자 결정(Q1=K-GAAP 표 포함·Q2=상장폐지 제외·Q3=Phase1
+> 먼저) 후 Phase 1(층화표본 188건, 읽기전용) 실행.** 인코딩은 기존 인프라가 완전히 커버(추가
+> 작업 불요, 188/188 파싱 성공). **★신규 발견**: 1999~2011은 SECTION-2/TITLE 계층 유지되나
+> 2012~2014 표본(SUN&L FY2013 원문대조 확인)은 표제가 TITLE이 아니라 문단 내 굵은
+> `<SPAN>` 인라인 마크업 — 데이터는 있으나 TITLE 기반 검출이 전혀 못 찾음. 즉 "K-GAAP구서식
+> vs 2015+신서식" 이분법이 아니라 **최소 3세대**(TITLE계층형/SPAN인라인형/2015+현행형)일
+> 가능성. 경계 연도 미확정. 상세 = [`pre2015_structure_probe_2026-08-10.md`](../qa/pre2015_structure_probe_2026-08-10.md).
+> **Phase 1 "완료" 대신 사용자 확인 요청 상태**(계획서 원 범위를 넘어선 신규 발견 때문) — 후속
+> 표본으로 경계를 좁힐지 여기서 판단할지 다음 세션 결정 필요.
+>
+> **2026-08-10 갱신(같은 날 세 번째) — 사용자 승인으로 후속 표본 2라운드 추가 실행, Phase 1
+> 완료.** ①밀도표본(연도당 15건, 2004~2014)으로 경계 확정: 1999~2009 TITLE 100% 유지,
+> **FY2011부터 TITLE 완전 소멸**. ②SPAN 가설은 부분원인뿐임을 발견(2011~2014 다수는
+> 태그 없는 평문 라벨, 제출대행사별 마크업 상이) → 전략 전환: 계정 라벨(자산총계/당기순이익/
+> 영업활동으로 인한 현금흐름)로 표를 먼저 찾고 근접 평문에서 연결/별도만 읽는 "앵커 기반"
+> 방식으로 3차 표본(48건) 실행 → **CF 91%(52/57) 적중**, hop거리 4~6으로 매우 안정적.
+> BS/IS는 요약블록(SPAN)과 본문(평문) 두 계층이 섞여 적중률 낮음(46%/18%, 구분규칙 미확정).
+> 산출물 3종: [`pre2015_structure_probe`](../qa/pre2015_structure_probe_2026-08-10.md)·
+> [`pre2015_span_boundary_probe`](../qa/pre2015_span_boundary_probe_2026-08-10.md)·
+> [`pre2015_label_pattern_probe`](../qa/pre2015_label_pattern_probe_2026-08-10.md)(전부
+> 2026-08-10). **Phase 2(파서 설계) 착수는 별도 승인 대기** — 제안 방향은 연도 분기
+> 라우팅(TITLE 1999~2009 / 앵커기반 2011~2014) + CF부터 pilot.
+>
+> **2026-08-10 갱신(같은 날 네 번째) — Phase 2(파서 설계) 완료.** 원문·프로덕션 함수 직접
+> 실행(무변경)으로 근본원인 재규명: 병목은 TITLE 유무가 아니라 `assign_tables_to_dart_
+> sections`/`iter_section_elements`가 중첩 SECTION 하위표제("가.대차대조표")에서 **즉시
+> 리셋**하는 결함 — 1999~2008 실측 **0%**(2011~2014 는 반대로 이미 100%, 우연히 이 결함을
+> 피해감). 수정 프로토타입(신규모듈, 기존함수 무변경)으로 2004~2007 annual 8/8=100% 회복
+> 검증. 결정 4가지(§2-1~2-4): 신규모듈+연도라우팅(기존함수 무변경) · K-GAAP전용표 포함(신규
+> 코드 APPR, DB마이그레이션 불요) · table_extractor/단위판정 전량 재사용. 설계문서 =
+> [`pre2015_layer2_backfill_phase2_design_2026-08-10.md`](pre2015_layer2_backfill_phase2_design_2026-08-10.md).
+>
+> **2026-08-10 갱신(같은 날 다섯 번째) — 사용자 승인으로 Phase 3(구현) 착수+완료.** 신규
+> 모듈 `fin2/extract/legacy_pre2015.py`(3함수) + `report_lines.py` 라우팅(`report_fiscal_
+> year<=2010`, 섹션코드 단위 병합 — canary 로 문서단위 all-or-nothing 폴백의 손해를 발견해
+> 교체) + `SECTION_CODE_OF`/`_SECTION_META` APPR 가산. 프로덕션 함수로 실측(188건, 1999~2014,
+> DB 미기록) — **2004~2008 BS/IS/CF 회복 재확인**(설계문서 프로토타입과 일치), 회귀 테스트
+> 12건 신설, `pytest tests/ fin2/tests/` 전체 통과(무관 기존 실패 1건 제외), 2015+ 소비
+> 경로 무변경·Gate B 무영향 확인. 잔여 미해결(2009~2010 전환기·1999~2000·2008년 APPR 급락)
+> 은 설계 단계부터 Phase3 범위 밖으로 이관 예정이었던 항목 그대로 미해결. 상세 =
+> [`pre2015_phase3_canary_verify_2026-08-10.md`](../qa/pre2015_phase3_canary_verify_2026-08-10.md).
+> **다음 = Phase 4(파일럿 백필, DB 기록 시작) 착수 여부 — 별도 승인 필요**(체크리스트
+> [`pre2015_layer2_backfill_todo_2026-08-10.md`](pre2015_layer2_backfill_todo_2026-08-10.md)).
+>
+> **2026-08-10 갱신(같은 날 여섯~아홉 번째) — Phase 4(파일럿 백필+검증) 실행, 사용자
+> 승인으로 DB 기록 시작.** 26개 활성 corp(1999~2014, 2,032건) 실제 적재 — 오류 0. 실패율
+> 20.7%는 대부분 설명됨(원본손상 5.3%·원문에 재무제표 섹션 자체 없음 11.7%·설계단계부터
+> 예정된 잔여 3.7%) → Phase3 신규모듈 자체는 건전 재확인. BS 항등식(자산=부채+자본) 검증
+> 중 **공용코드 버그 발견+수정**: 일부 K-GAAP filer 의 `(-)N` 비표준 금액표기가
+> `parser/common/amount_normalizer.py::parse_amount` 와 `parser/xml/table_extractor.py::
+> _NUMBER_PATTERN` **두 게이트 모두**를 막아 전기값이 당기열로 밀려들어감(연도무관 공용
+> 코드, 2015+ 에도 이론상 영향권 — 둘 다 고쳐야 실제로 값이 바뀜을 재적재로 직접 확인).
+> 위반 45→40건 감소. **잔여 34건(주로 KG케미칼)은 다른 패턴**(부채총계 당기열만 괄호 관례)
+> 이라 R0 원칙상 부호를 추론해 고치지 않고, 대신 `fin2/audit/line_anomaly.py::detect_bs_
+> identity_anomalies` 신설(SCE↔BS 교차대조와 같은 원칙 — 값은 안 고치고 표시만) 로 안전망
+> 확보·검증 완료(파일럿에서 134건 신규 이상치, KG케미칼 케이스 정확히 SIGN/high 로 잡힘).
+> `pytest tests/ fin2/tests/` 전체 통과(471 passed, 무관 기존 실패 1건 제외). 상세 =
+> [`pre2015_phase4_pilot_verify_2026-08-10.md`](../qa/pre2015_phase4_pilot_verify_2026-08-10.md).
+> **Phase5(전량 백필 81,660건) 실행 명령 준비 완료, 사용자가 별도 터미널에서 직접 실행
+> 예정**(`load_report_lines.py --fy-min 1999 --fy-max 2014 --active-only`, 신설된
+> `--active-only` 로 Q2 결정=상장폐지 8개사 제외 반영) — **다음 세션 시작점 = 실행 결과
+> 확인**(체크리스트 [`pre2015_layer2_backfill_todo_2026-08-10.md`](pre2015_layer2_backfill_todo_2026-08-10.md)
+> "Phase 5" 절) → Phase6(파이프라인 편입·문서화) → Phase7(std_v3 백필, 별도 승인).
+> **미커밋 상태**(사용자가 다음 세션과 함께 커밋하기로 결정).
+>
+> **2026-08-11 갱신 — Phase5(전량백필) 결과 확인 + Phase6(파이프라인 편입) 전부 완료.**
+> 사용자가 별도 터미널에서 Phase5 실행 완료(`load_report_lines.py --fy-min 1999 --fy-max
+> 2014 --active-only`, 5.32시간) → 이번 세션에서 DB 직접검증: err0, 대상 82,005건 중
+> 81,660건(99.6%) done · report_lines 22.2M행, 상장폐지 8개사 정상제외(0행), **BS 항등식
+> 전수검사 98.8% 성립**(52,343건). 큰폭 위반 346건 중 179건(51.7%)이 이상치안전망
+> (`bs_identity_confirmed`/`SIGN`/`high`)에 정상 포착됨을 원문 5건 대조로 확인 — KG케미칼
+> 국한이 아니라 63개사(동남합성·HLB파나진·에스엠벡셀 등)에서 재현, 안전망이 스케일에서도
+> 정상 동작. **새 결함 없음, Phase5 완료 판정.**
+>
+> **Phase6(파이프라인 편입) — ★배선 갭 발견+수정**: 6-1 두 call site 확인 중
+> `collector/note_lines_sync.py`(`scripts/collect_new.py`의 두 call site가 공유하는 데일리
+> 진입점)의 `FY_MIN`이 여전히 2015로 남아있어, `extract_report_lines()` 자체는 pre-2015를
+> 처리할 수 있는데도 **데일리 경로가 pre-2015 filing을 영영 못 보는 상태**였음을 발견(전량
+> 백필은 배치 스크립트 수동 실행으로만 커버되고 있었음). 실측 확인: KG케미칼 rcept
+> `20120330001058`의 report_lines를 지우고 옛 기본값(2015)으로 데일리와 같은 진입점
+> (`sync_layer2_lines`)을 호출하니 0행(갭 재현) → `FY_MIN` 을 1999로 낮추자 696행 정상
+> 복원. 향후 corp 재상장·기재정정 등으로 pre-2015 구간이 재수집되는 경우를 대비. 6-2
+> `docs/PARSING_RULES.md` R13 신설(+ T20/T21 함정 카탈로그 추가) · 6-3 `pytest tests/
+> fin2/tests/` 471 passed(무관 기존 실패 1건 그대로, Gate B는 `note_lines_sync.py`/`FY_MIN`을
+> 참조하지 않아 무영향) · 6-4 이 문서 §2/§3/§5 갱신(지금). **Phase6 완료.**
+>
+> **다음 세션 시작점 = Phase7(std_v3 백필, 별도 승인 필요)** — `fin2/layer3/build.py`로
+> pre-2015 corp-year를 std_v3에 반영해야 `standard_financials` 뷰의 std_v2 UNION 폴백
+> 구간을 제거할 수 있다(이 트랙의 완료 조건, §5 5번). **미커밋 상태 유지**(누적 변경분 다수 —
+> `pre2015_layer2_backfill_plan_2026-08-10.md` §7-1~3 참고), 커밋 여부는 다음 세션 판단.
+>
+> **2026-08-11 갱신(같은 날 두 번째) — "Phase7까지 진행하고 한 번에 커밋해줘" 지시로
+> Phase7(std_v3 백필) 완료, 이 트랙 전체 종료. pre-2015 2차 패스 트랙 종료.**
+> 7-1: `scripts/build_std_v3.py --all --year-min 1999` — `build_corp()`가 이미 `year_min`을
+> 일반 파라미터로 지원해 코드 수정 없이 재사용. 백그라운드 101.4분, 2,525corp·297,429행
+> (184,580→+112,849 pre-2015 신규), 오류0.
+> **7-2 — ★뷰에서 실제 버그 발견+수정**: `standard_financials` 뷰의 std_v2 분기가
+> `s.fiscal_year < 2015 OR NOT EXISTS(...)`로 짜여 있어, std_v3가 pre-2015를 채운 뒤에도
+> `fiscal_year<2015`가 무조건 참이라 **std_v2가 계속 UNION ALL 돼 73,574개 corp-period가
+> 뷰에서 중복**되고 있었음(매출/자산 등이 사실상 2배로 잡히는 상태 — 손 놓았으면 앱에
+> 그대로 노출될 뻔함). 마이그레이션 `2026_08_standard_financials_v3_pre2015_dedup`으로
+> OR 조건을 없애고 `NOT EXISTS` 하나로 통일 — 재검증: 뷰 319,135행·중복 0. **G1(무손실)
+> 재확인**: 기존 std_v2 pre-2015 적격 키 88,915건 전부 새 뷰에 여전히 존재. **G2 표본대조**
+> 무작위 15건 중 14건 완전일치, 1건 불일치(EG 00261054)는 원문대조로 v2의 기존 "comparative
+> bleed" 결함(1년 뒤 필링에서 비교연도 값이 잘못 유입, 08-09 세션에 이미 확인된 것과 같은
+> 클래스)임을 확인 — v3가 정답, 새 결함 아님.
+> **7-3(std_v2 폐기)**: 사용자 결정 = **"v2는 지우지 말고 그대로 두자"**. 설계문서 재확인
+> 결과 애초에 이 트랙 하나로는 완전 폐기 조건이 안 됨(뷰의 `gate_b_status`가 여전히 v2
+> 기반 `face_audit` 의존 — §7 항목2 "v3-native 품질게이트"가 별도 필요). 물리적 삭제는
+> 안 함, 이 트랙이 만든 전제조건(뷰 중복 없는 정확한 폴백)까지만 완료 처리.
+> `pytest tests/ fin2/tests/` 471 passed(무관 기존 실패 1건 그대로) 재확인.
+> **이 문서 §2도 갱신(계층3 행)**. 브랜치 생성 후 Phase1~7 누적 전체를 한 번에 커밋 —
+> 상세는 `pre2015_layer2_backfill_todo_2026-08-10.md`(Phase1~7 전부 ☑).
+> **다음 세션 시작점 = 마스터허브 §7 후속 트랙 나머지**(v3-native 품질게이트로 face_audit
+> v2 의존 제거 → 그 후에야 std_v2 완전 폐기 가능 · 3차 PDF-only 패스 · 야간 잡 재설치 등,
+> 우선순위는 다음 세션에 사용자와 결정).
 
 **완료(2026-07-25)**: `--recheck` + `build_std_v3 --all` 재빌드 · 금융섹터 revenue census 종결(보험/은행/
 증권/여신전문 프로파일 + 잔여 KSIC 프로파일 불필요, 원문대조 PASS) · **브리지 swap enrichment steps 1-2**

@@ -65,6 +65,11 @@ _SECTION_META = {
     # 섞여 행마다 다르므로 표 단위로 주장하지 않는다(계층3 이 행에서 판단).
     "SCE_C": ("consolidated", None),
     "SCE_S": ("separate", None),
+    # 이익잉여금처분계산서/결손금처리계산서(K-GAAP 전용) — pre-2015 계층2 2차 패스 전용.
+    # SCE 와 같은 이유로 period_kind=None(미처분 기초잔액=instant, 처분 항목=duration 이 한
+    # 표에 섞임) — 표 단위로 주장하지 않고 계층3 판단에 맡긴다.
+    "APPR_C": ("consolidated", None),
+    "APPR_S": ("separate", None),
 }
 
 # 보고서 기간(fiscal_period) → fact_v2 period_type

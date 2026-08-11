@@ -60,6 +60,11 @@ SECTION_CODE_OF: dict[tuple[str, str], str] = {
     # 자본변동표 — 계층2 report_lines 전용(include_sce=True 로 명시 요청할 때만 생성).
     # fact_v2 경로는 classify_statement_in_body_section() 기본값이 SCE 를 배제하므로 영향 없음.
     ("consolidated", "SCE"): "SCE_C", ("separate", "SCE"): "SCE_S",
+    # K-GAAP 전용(이익잉여금처분계산서/결손금처리계산서) — pre-2015 계층2 2차 패스 전용
+    # (`fin2/extract/legacy_pre2015.py`). 현재 스키마(BS/IS/CF/SCE)에 대응 항목이 없어 신규
+    # 코드로 가산(사용자 결정 Q1=포함, docs/plans/pre2015_layer2_backfill_todo_2026-08-10.md).
+    # `report_lines.statement` 는 CHECK 제약 없는 varchar(10) — DB 마이그레이션 불요(실측 확인).
+    ("consolidated", "APPR"): "APPR_C", ("separate", "APPR"): "APPR_S",
 }
 
 

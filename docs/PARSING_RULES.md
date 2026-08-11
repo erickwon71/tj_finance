@@ -614,6 +614,58 @@ NULL 유지.
 
 ---
 
+## R13. pre-2015(K-GAAP 구서식) 계층2 전사 — 연도 라우팅 신규 모듈, 2015+ 경로 무변경
+
+2015년 이후(현행 서식)와 1999~2014(K-GAAP 구서식)는 XML 골격은 같은 계열(`SECTION-1`/
+`SECTION-2`/`TITLE`)이지만 **섹션 계층(의미 구조)이 다르다** — 연결/별도 구분이 리프
+`TITLE` 텍스트가 아니라 상위 헤딩 계층에 있고, 2011년부터는 `TITLE` 자체가 소멸해
+평문·인라인 `<SPAN>` 텍스트로만 표제가 존재한다(세대가 최소 3종 이상 섞여 있음, 태그
+구조만으론 통일된 규칙을 못 만듦).
+
+**규칙**:
+- 기존 2015+ 소비 경로(`assign_tables_to_dart_sections`/`iter_section_elements`/
+  `_detect_body_statement_tables`/`classify_statement_in_body_section`/
+  `classify_legacy_statement_heading`)는 **한 줄도 안 건드린다** — 신규 모듈
+  `fin2/extract/legacy_pre2015.py`(`iter_section_span_depth_aware`·
+  `classify_pre2015_statement_heading`·`detect_pre2015_body_statement_tables`)로 격리.
+- 라우팅은 `fin2/extract/report_lines.py::extract_report_lines`가
+  `report_fiscal_year<=2010`일 때만 신규 경로를 시도하고, **섹션코드(BS_C/IS_S 등) 단위로
+  병합**한다(문서 단위 all-or-nothing 폴백은 손해로 확인돼 교체 — 신규 경로가 IS/CF는
+  잡는데 BS는 못 잡는 2009~2010 전환기 문서에서, "그룹이 안 비었다"는 이유로 기존 경로의
+  BS 탐지 기회를 통째로 버리는 문제).
+- basis(연결/별도)는 표제 문구의 '연결' 접두가 아니라 **순회 중인 섹션 자체**
+  (`SEC_SEP_FS`/`SEC_CONSOL_FS`)를 권위로 삼는다 — 2015+ 주경로와 같은 원칙(R1과 정합).
+  접두 없는 표제가 실제로 존재하는지 끝내 확인 못 했기 때문에(표제 기반 판정을 신뢰하면
+  별도/연결이 뒤섞일 위험) 더 보수적인 쪽을 택함.
+- K-GAAP 전용 표(이익잉여금처분계산서/결손금처리계산서)는 신규 `statement` 코드
+  `APPR_C`/`APPR_S`로 전사(DB 마이그레이션 불요, `statement` 컬럼 CHECK 제약 없음 실측
+  확인). `table_extractor.py`/`declared_unit` 단위판정은 수정 없이 전량 재사용(프로토타입
+  검증 완료).
+- **데일리 배선(R8)**: `collector/note_lines_sync.py`의 `FY_MIN`(대상 필터 하한)을
+  2015→**1999**로 낮췄다(2026-08-11) — `extract_report_lines()`는 이미 pre-2015를
+  처리하는데 이 모듈이 여전히 `fiscal_year>=2015`로 걸러 데일리 경로(`scripts/
+  collect_new.py`의 두 call site, `_sync_layer2_lines`)가 pre-2015를 영영 못 보는
+  상태였다. 실측 확인: KG케미칼(00101220) rcept `20120330001058`의 `report_lines`를
+  지우고 옛 기본값(2015)으로 `sync_layer2_lines`를 호출하니 0행(갭 재현), 수정 후
+  기본값(1999)으로는 696행 정상 복원. 향후 corp 재상장·기재정정 등으로 pre-2015 구간이
+  재수집되는 경우를 대비.
+
+**소급 백필(R8 2번)**: `scripts/load_report_lines.py`에 `--fy-min`/`--fy-max`/
+`--active-only` 신설, 79,628건 신규 전량백필(오류0, 5.32시간, 2026-08-10~11) — 상세는
+`docs/plans/pre2015_layer2_backfill_todo_2026-08-10.md` Phase5.
+
+**검증(R8 3번)**: 회귀 테스트 12건(`fin2/tests/test_pre2015_legacy_layout.py`) +
+`pytest tests/ fin2/tests/` 전체 통과 + Gate B 무영향(`face_audit.py`는 독립된
+`_TEXT_SECTION_META`를 써서 확장된 `SECTION_CODE_OF`/`_SECTION_META`를 참조 안 함).
+전량 백필 후 BS 항등식(자산=부채+자본) 전수검사 98.8% 성립(52,343건 표본).
+
+**근거**: `docs/plans/pre2015_layer2_backfill_plan_2026-08-10.md`(설계) ·
+`docs/plans/pre2015_layer2_backfill_phase2_design_2026-08-10.md`(Phase2 결정) ·
+`docs/qa/pre2015_phase3_canary_verify_2026-08-10.md`(구현 검증) ·
+`docs/qa/pre2015_phase4_pilot_verify_2026-08-10.md`(파일럿+버그수정) · T20(부록A).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -639,6 +691,8 @@ NULL 유지.
 | T17 | **COLSPAN'd 라벨 행** (예: `<TD COLSPAN=2>구분</TD>`) | 라벨이 여러 칸을 차지하는데 코드는 "라벨 1개 + 나머지"로 가정 → `offset` 오판 | occupied-grid 기반 `L`(=`LV′`) 재계산(R11, **구현·검증 완료 2026-08-08**). 실측 유진증권 `20220316000791`·풍강 `20150429000186` |
 | T18 | **절 경계 정규식이 한글순번(가./나.)만 인식, 아라비아숫자 순번은 못 잡음** — 정작 트리거인 "N. 수주상황" 자신부터 아라비아숫자 표기 | 다음 절이 안 잘려 창이 무관한 표(위험관리/파생상품 등)까지 쓸어담을 수 있음(단, `map_order_table`의 컬럼형태 가드가 최종 방어선이라 실질 피해는 드묾) | **수정 시도했다가 되돌림(2026-08-09)**. `_NUMBERED_HEADING_RE`에 `\d{1,2}\.` 추가해 STX엔진 `20150331003320`("5.수주상황"→"6.시장위험과 위험관리" 경계 누락) 사례는 고쳤지만, 대기업 보고서의 **수주현황 표 안 항목 라벨**("1. 한국전력기술(주)" 같은 회사명 리스트, 한글 포함이라 한글가드로도 못 거름)까지 절 경계로 오인해 진짜 데이터를 대량 삭제하는 훨씬 심한 회귀 발생(실측 KEPCO 등 6개사, 전수 스캔 1,002개사 재계산으로 확인). 원래 버그의 실측 영향(1/150표본, 최종표 무손상)보다 회귀 피해가 커 **원래 규칙(한글순번만) 유지 확정** — 아라비아숫자 확장은 향후 시도 금지 또는 훨씬 정교한 판별(표 내부/외부 구조 신호 등) 필요. 상세: `docs/qa/handoff_biz_content_followup_issues_2026-08-09.md` |
 | T19 | **롤포워드형 수주현황**(행=기초/신규수주/수익인식/기말 수주잔액, 열=당기/전기) | 열-기반 판정(수주총액/기납품/수주잔고 헤더열 필요)에 안 걸려 0행 | `_map_rollforward_table()` 폴백 신설(order_backlog.py, 2026-08-09). 실측 싸이맥스 FY2017 `20180330000166`. 전수 실측(기존 캐시 grid 기준): 244개 표·24개사 회수 |
+| T20 | **K-GAAP 중첩 하위표제**(`가.대차대조표` 같은 한글서수 하위표제가 `3.재무제표` 상위섹션 아래 있음) | `assign_tables_to_dart_sections`/`iter_section_elements`가 "SECTION 태그를 만나면 중첩 깊이 무관하게 즉시 재판정"하는 구조라, 최상위 매치(`3.재무제표`)가 이미 성공했음에도 하위표제를 만나는 순간 섹션 추적이 **즉시 리셋**됨 → 표 전체 미검출. 2015+엔 이런 중첩 하위표제가 없어 안 드러나던 결함 | `fin2/extract/legacy_pre2015.py::iter_section_span_depth_aware`(깊이인식 경계walk) 신규 모듈로 격리(R13). 기존 2015+ 공유 함수는 무변경. 실측 2004~2007 annual 8/8=100% 회복 |
+| T21 | **비표준 금액표기 `(-)N`**(괄호+명시 마이너스 이중접두, 일부 K-GAAP filer) | `parser/xml/table_extractor.py::_NUMBER_PATTERN`(금액 후보 판정 게이트) 먼저 막힘 → `parser/common/amount_normalizer.py::parse_amount`까지 못 감. 파싱실패(None)를 컬럼압축 로직(`_emit_section_lines`)이 "앞쪽 None=과거 미보고"로 오인해 **전기값이 당기 열로 밀려 들어감**(연도무관 공용 코드라 2015+에도 잠재, K-GAAP 서식에서 더 자주 노출됐을 뿐). 결측(0행)보다 나쁨 — 틀린 숫자가 조용히 적재됨 | 두 곳 다 수정 필요(하나만 고치면 무효, 재적재로 직접 확인): `_NUMBER_PATTERN`+`parse_amount` 둘 다 `(-)N`을 음수로 인식하게 확장. 회귀테스트 9건(`fin2/tests/test_amount_normalizer_parse.py`). 잔여 유사패턴(부채총계만 항상 괄호, 결합행은 항상 정확 — KG케미칼류)은 원문만으론 진짜 부호 확정 불가 → R0 원칙상 **의도적 미수정**, 대신 `detect_bs_identity_anomalies`(이상치탐지) 안전망으로 표시만(부록B R13 이하 참고). 전량백필 실측: 큰폭(≥100만원) BS항등식 위반 346건 중 179건(51.7%)이 이 안전망(`bs_identity_confirmed`/`SIGN`/`high`)에 정상 포착됨(원문 5건 무작위대조로 확인), 63개사에서 재현(동남합성·HLB파나진·에스엠벡셀 등) — KG케미칼 한 회사 국한이 아니었음이 스케일에서 드러남. 나머지 167건은 결합행(부채와자본총계)이 없거나 그것도 안 맞아 `low`신뢰도 `OTHER`로만 표시(추측 금지) |
 
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
@@ -658,6 +712,7 @@ NULL 유지.
 | R10 | `docs/plans/xbrl_instance_parser_todo_2026-08-05.md` Phase 6-2/6-5 · `fin2/extract/report_lines_xbrl.py::_value_sign()` |
 | R11 | 사용자 지시 2026-08-07 · `docs/qa/handoff_note_lines_span_misattribution_2026-08-07.md` §8~§11 · `docs/plans/note_span_fix_plan_2026-08-07.md` Phase 1(T1.1)~Phase 3(T3.6, 2026-08-08 완료) |
 | R12 | 사용자 결정 2026-08-09(옵션A, 계층2 신설) · `docs/plans/std_v3_dq_shares_period_backfill_plan_2026-08-09.md` §3.3 · `fin2/extract/shares_transcribe.py`·`fin2/layer3/build.py::_select_shares_out` |
+| R13 | 사용자 결정 2026-08-10(Phase1~5 순차 승인) · `docs/plans/pre2015_layer2_backfill_plan_2026-08-10.md`·`..._todo_2026-08-10.md` · `fin2/extract/legacy_pre2015.py`·`fin2/extract/report_lines.py::extract_report_lines`·`collector/note_lines_sync.py::FY_MIN` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황

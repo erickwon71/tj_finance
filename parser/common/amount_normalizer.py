@@ -330,6 +330,17 @@ def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
     if negative:
         s = s[1:-1]
 
+    # ── "(-)1,234" — 괄호로 감싸지 않고 "(-)" 자체를 부호 마커로 붙이는 이중표기(일부
+    #   K-GAAP filer 실측, 예 KG케미칼 2003~2008 반기/분기). 위 괄호-랩 검사와 안 겹친다
+    #   (끝이 ')'가 아니라 이 검사를 안 탄다). 이걸 못 읽으면 이 셀이 그냥 None 처리돼
+    #   호출측(`_emit_section_lines`)의 "앞쪽 None=과거 미보고" 컬럼압축 로직이 오작동해
+    #   **전기 값이 당기 열로 밀려 들어간다**(2026-08-10, pre-2015 파일럿 백필 항등식 검증
+    #   중 발견 — 부채총계/자본총계 개별행만 오염되고 결합행 '부채와자본총계'는 정상이었던
+    #   패턴으로 원인 확정). 연도 무관 공용 로직이라 수정도 여기 한 곳으로 충분하다.
+    elif s.startswith('(-)'):
+        negative = True
+        s = s[3:]
+
     # 앞에 붙은 음수 부호
     if s.startswith('-') or s.startswith('△') or s.startswith('▲'):
         negative = True

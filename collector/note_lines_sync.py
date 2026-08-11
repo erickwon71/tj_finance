@@ -17,6 +17,14 @@
     → 2.16억 행 전체 스캔이라 데일리엔 부적합. 여기서는 **corp 바운드**로 확인한다.
 
 멱등: store_note_lines 가 rcept 단위 delete-then-insert 라 재실행해도 중복되지 않는다.
+
+★2026-08-11 (pre-2015 2차 패스 Phase 6): `FY_MIN` 을 2015→1999 로 낮췄다. `extract_report_lines()`
+는 이미 `fin2/extract/legacy_pre2015.py` 라우팅으로 1999~2014 도 처리하는데, 이 모듈이 여전히
+`fiscal_year>=2015` 로 대상을 걸러 데일리 경로가 pre-2015 를 영영 못 보는 상태였다(전량 백필은
+`scripts/load_report_lines.py` 수동 실행으로만 커버). 향후 corp 재상장·기재정정 등으로 pre-2015
+구간이 재수집되는 경우를 대비(`docs/plans/pre2015_layer2_backfill_plan_2026-08-10.md` §5 Phase6).
+실측 확인: KG케미칼(00101220) rcept 20120330001058 의 report_lines 를 지우고 옛 기본값(2015)으로
+`sync_layer2_lines` 를 호출하니 0행(갭 재현), `year_min=1999` 로는 696행 정상 복원됨.
 """
 from __future__ import annotations
 
@@ -29,7 +37,7 @@ from collector.db import get_session
 from fin2.extract.report_lines import (extract_report_lines, store_note_lines,
                                        store_report_lines, store_report_tables)
 
-FY_MIN = 2015
+FY_MIN = 1999
 
 # 대상: 이미 XML 다운로드가 끝난 정기보고서.
 _TARGETS_SQL = text(

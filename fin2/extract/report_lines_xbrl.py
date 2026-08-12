@@ -105,6 +105,30 @@ re-walked for this phase, 2026-08-06):
   case — see `_value_sign()`, a `preferredLabel` in the "negated*" family
   means the raw fact must be negated before storage to match what DART's
   viewer actually displays (found via Phase 6-2 manual cross-check).
+
+- **IFRS namespace + older-vintage support** (Phase 2, 2026-08-12 —
+  docs/plans/pdf_only_parser_phase2_design_2026-08-12.md §A): this module
+  originally only recognized the `ifrs-full` prefix (2019-10-01+ vintage);
+  `_resolve_ifrs_namespace()` now also matches the 2010~2013 vintage series
+  (prefix `ifrs`, namespace under `iasb.org` instead of `ifrs.org` — still
+  in active use by a large share of 2015~2019 filings). Getting past that
+  also required two further fixes, both in the shared `role_map.py`/
+  `taxonomy_linkbase.py`/`external_taxonomy.py` plumbing rather than here:
+  the external-taxonomy BFS's fetch budget/priority (older vintages don't
+  bundle role/label definitions locally at all — role_map.py's Phase 5-A
+  path) and `resolve_external_labels()`'s "stop at first file found" logic
+  (broke for a vintage whose entry point declares its own, narrower label
+  file in addition to importing the real comprehensive one elsewhere in its
+  chain). See each function's own docstring for the specifics.
+
+- **fact-level total fallback** (Phase 2 §A-5): `_emit_missing_totals()`
+  fills in BS Assets/Liabilities/Equity and IS ProfitLoss/
+  ComprehensiveIncome directly from the tagged fact when a vintage's
+  `_pre.xml` tree never wires that concept in as a node at all (a real,
+  vintage-specific structural gap — confirmed empirically, not a parser
+  bug) — see its own docstring for the full design and the layer3
+  consumption constraints (`node_role`/`section_path`/`header_hint`) it has
+  to satisfy.
 """
 from __future__ import annotations
 
@@ -136,10 +160,61 @@ _BASIS_MEMBER_LOCAL = {"consolidated": "ConsolidatedMember", "separate": "Separa
 # report_lines.unit_source is varchar(14) (collector/models.py:ReportLine) — fits easily.
 UNIT_SOURCE_XBRL = "xbrl"
 
+# ★ Phase 2 (pdf_only_parser_phase2_design_2026-08-12 §A-3): the newer IFRS
+# taxonomy vintage (2019-10-01+) uses prefix "ifrs-full" -> namespace
+# ".../ifrs.org/taxonomy/{date}/ifrs-full"; older vintages (2010~2013
+# schema series, still in active use by 2015~2019 filings) use prefix
+# "ifrs" -> ".../iasb.org/taxonomy/{date}/ifrs" — a different domain
+# entirely (IASB moved the taxonomy under IFRS Foundation branding and
+# renamed the prefix along with it), not just a version bump. Confirmed
+# empirically (48/48 stratified sample, docs/qa/
+# pdf_only_xbrl_taxonomy_expansion_probe_2026-08-12.md §1): the *local*
+# concept names this module walks (ConsolidatedAndSeparateFinancial
+# StatementsAxis, Assets, ProfitLoss, ...) are identical across both —
+# only the namespace URI (and the prefix DART's own instance authoring
+# tool happened to bind it to) differs, so widening the namespace match is
+# safe and doesn't change any downstream logic (everything past this point
+# already carries the *resolved* URI, never the literal prefix string).
+_IFRS_NS_PATTERN = re.compile(r"(iasb\.org/taxonomy|ifrs\.org/taxonomy)")
+
+
+def _resolve_ifrs_namespace(nsmap: dict[str, str]) -> str | None:
+    """Prefer the `ifrs-full` binding when present (the vast majority of
+    filings, already verified extensively) — fall back to a URI pattern
+    match only when that literal prefix is absent, rather than always
+    pattern-matching, so no existing behaviour for the common case changes."""
+    if "ifrs-full" in nsmap:
+        return nsmap["ifrs-full"]
+    for uri in nsmap.values():
+        if _IFRS_NS_PATTERN.search(uri):
+            return uri
+    return None
+
 # Statements handled by the period-axis path (_emit_statement_lines). SCE has
 # its own emitter (_emit_sce_lines) — see module docstring.
 _SUPPORTED_STATEMENTS = ("BS", "IS", "CF")
 _SUPPORTED_SCE_STATEMENT = "SCE"
+
+# ★ Phase 2 (pdf_only_parser_phase2_design_2026-08-12 §A-5, quantified in
+# §A-8 item 1): for a meaningful share of ②(taxonomy-recoverable) filings,
+# some vintages' `_pre.xml` presentation tree is a flat forest of
+# disconnected root groups (CurrentAssets/NoncurrentAssets/... for BS) with
+# no unifying top-level total wired in as a tree node AT ALL — even though
+# the *fact* for that total concept is tagged completely normally. Measured
+# via direct fact-vs-tree-node presence check (60-sample, 107 basis
+# combos): BS Assets/Liabilities/Equity 89~97% "fact present, no tree node";
+# IS ProfitLoss/ComprehensiveIncome 75.7%/77.6%, same pattern (¬row∧¬fact=0
+# for all 5 — i.e. never a case of "genuinely absent", unlike the
+# AttributableToOwnersOfParent variants tested alongside them, where a
+# majority of cases had no fact at all — those were deliberately NOT added
+# here, since the fallback would rarely fire for them). `_emit_missing_totals`
+# below fills these in directly from the fact, bypassing the tree walk —
+# R0: only when the fact genuinely exists (never fabricates), see its
+# docstring for the full design.
+_REQUIRED_TOTALS_BY_STATEMENT: dict[str, tuple[str, ...]] = {
+    "BS": ("Assets", "Liabilities", "Equity"),
+    "IS": ("ProfitLoss", "ComprehensiveIncome"),
+}
 
 # col_index we attempt to resolve. Only col0 is stored for BS/IS/CF
 # (report_lines.py::_is_loadable) — col1 is best-effort extra context.
@@ -617,6 +692,111 @@ def _emit_statement_lines(
     return out
 
 
+def _emit_missing_totals(
+    *, statement: str, tree: PresentationTree, facts_by_qname: dict[QName, list[XbrlFact]],
+    contexts: dict[str, XbrlContext], units: dict[str, XbrlUnit], labels: dict[QName, list[Label]],
+    basis_axis: QName, basis_member: QName, basis_axis_ns: str, basis: str,
+    corp_code: str, rcept_no: str, report_fiscal_year: int, report_fiscal_period: str,
+    period_end_date: date,
+) -> list[ReportLineRow]:
+    """A-5 (pdf_only_parser_phase2_design_2026-08-12 §A-5): fills in a
+    required total concept (`_REQUIRED_TOTALS_BY_STATEMENT`) directly from
+    its fact when the presentation tree never wired it in as a node at all
+    — some taxonomy vintages' `_pre.xml` is a flat forest of disconnected
+    root groups (e.g. BS: CurrentAssets/NoncurrentAssets/... with no
+    unifying `Assets` parent), even though the filer tagged the total fact
+    completely normally (confirmed by direct `_pre.xml` tree walk + fact
+    lookup, 89~97% of the BS sample and 75.7~77.6% of the IS sample — a
+    genuine structural gap in the filer's tree, not an extraction bug).
+
+    R0 — observes, never fabricates: skipped entirely whenever
+    (a) the tree already has this concept as a node (the normal walk in
+    `_emit_statement_lines` already emitted it, this would just duplicate),
+    or (b) no matching fact exists at all (the 2026-08-06 웰킵스하이텍
+    precedent — some concepts really are untagged for some vintages, and
+    `_basis_candidates` returning empty is exactly how that shows up; this
+    function must never synthesize a value in that case).
+
+    Position fields (docs/plans/pdf_only_parser_phase2_design_2026-08-12.md
+    §A-8 item 3, confirmed against layer3's actual consumption code):
+      - `node_role='P'` — satisfies collector/models.py's documented
+        "집계행 후보 = node_role='P' OR (node_role='S' AND value_won IS NOT
+        NULL)" rule (a NULL node_role would silently drop this row from
+        layer3 candidate selection, defeating the whole point), and is
+        semantically accurate too — if this row existed in the tree, the
+        tree's current disconnected roots would be exactly its children
+        (P = "next row is deeper" = "has children").
+      - `section_path=None` — `fin2/layer3/combine.py::_depth()` derives
+        depth from this string's ">" count, not from the `depth` column;
+        None reads as depth 0 there, which correctly makes this row win
+        combine.py's "shallowest wins" tie-break against any deeper
+        duplicate tagging of the same concept elsewhere in the instance.
+      - `depth=0` — the `depth` column's own comment says hierarchy
+        decisions should use `section_path`, not this int; 0 is simply the
+        literal truth (top of the tree, no ancestors).
+      - `row_order=-1` — sorts before every real tree-derived row for this
+        statement/basis (report_lines.row_order has no uniqueness
+        constraint, verified against collector/models.py — safe to reuse
+        across multiple missing-total rows in the same statement).
+      - ★ deliberately does NOT set `header_hint` — that column has an
+        established, different meaning ("헤더로 의심되는 행", filtered by
+        `fin2/layer3/combine.py`'s `AND header_hint IS NULL` guard at 2
+        call sites). Setting it here would silently exclude this row from
+        the very consumer this fix is for. Provenance is instead recorded
+        losslessly in `source_ref` (a purely diagnostic column, unfiltered
+        anywhere downstream — verified by repo-wide search).
+
+    `label_raw` is resolved through the same `_resolve_label()` (ko-first,
+    en/bare fallback) the tree walk uses — a bare English concept name here
+    would reproduce exactly the A-6 label problem this same Phase 2 pass
+    fixes elsewhere, and layer3's Korean-keyword canonical mapper wouldn't
+    recognize it, silently defeating the point of adding this row at all."""
+    required = _REQUIRED_TOTALS_BY_STATEMENT.get(statement, ())
+    if not required:
+        return []
+    present_locals = {node.element.local for node in tree.nodes.values()
+                       if node.element.ns == basis_axis_ns}
+    source = f"{rcept_no}/{statement}/{basis}/missing_total"
+
+    out: list[ReportLineRow] = []
+    for local in required:
+        if local in present_locals:
+            continue  # tree already has it — _emit_statement_lines already emitted this row
+        element = QName(ns=basis_axis_ns, local=local)
+        candidates = _basis_candidates(element, facts_by_qname, contexts, basis_axis, basis_member)
+        if not candidates:
+            continue  # genuinely untagged for this vintage (2026-08-06 precedent) — do not fabricate
+        for col_idx, fact, ctx in _resolve_columns(candidates, period_end_date, source):
+            value = _numeric_value(fact, units)
+            if value is None:
+                continue
+            out.append(ReportLineRow(
+                corp_code=corp_code,
+                rcept_no=rcept_no,
+                report_fiscal_year=report_fiscal_year,
+                report_fiscal_period=report_fiscal_period,
+                statement=statement,
+                basis=basis,
+                section_path=None,
+                label_raw=_resolve_label(element, None, labels),  # no tree node -> no preferredLabel role hint
+                col_index=col_idx,
+                context_fiscal_year=report_fiscal_year - col_idx,
+                period_kind=ctx.period_kind,
+                is_cumulative=(ctx.period_kind == "duration" and report_fiscal_period != "FY"),
+                value_won=value,  # no preferredLabel available (bare fact) -> no negatedLabel sign flip applies
+                adecimal=0,
+                unit_source=UNIT_SOURCE_XBRL,
+                source_ref=f"{statement}_{basis}/{local}/xbrl_tree_gap_total"[:180],
+                context_raw=fact.context_ref[:255],
+                row_order=-1,
+                depth=0,
+                node_role="P",
+                table_seq=0,
+                table_title=None,
+            ))
+    return out
+
+
 def _emit_sce_lines(
     *, tree: PresentationTree, facts_by_qname: dict[QName, list[XbrlFact]],
     contexts: dict[str, XbrlContext], units: dict[str, XbrlUnit],
@@ -811,9 +991,10 @@ def extract_report_lines_xbrl(
                 build_role_map(members.xsd, needed_role_uris=set(pre_trees.keys()))
             )
 
-            basis_axis_ns = instance.nsmap.get("ifrs-full")
+            basis_axis_ns = _resolve_ifrs_namespace(instance.nsmap)
             if basis_axis_ns is None:
-                logger.warning(f"[report_lines_xbrl] {rcept_no}: 'ifrs-full' 접두 없음, 스킵")
+                logger.warning(f"[report_lines_xbrl] {rcept_no}: IFRS 네임스페이스(ifrs-full/"
+                                f"iasb.org/ifrs.org taxonomy) 못 찾음, 스킵")
                 return []
             basis_axis = QName(ns=basis_axis_ns, local=_BASIS_AXIS_LOCAL)
 
@@ -850,6 +1031,19 @@ def extract_report_lines_xbrl(
                             tree=tree, facts_by_qname=facts_by_qname, contexts=instance.contexts,
                             units=instance.units, labels=labels, basis_axis=basis_axis,
                             basis_member=basis_member, statement=statement, basis=basis,
+                            corp_code=corp_code, rcept_no=rcept_no,
+                            report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
+                            period_end_date=period_end_date,
+                        ))
+                        # A-5: fact-level fallback for required totals the tree never
+                        # wired in as a node (module docstring / _emit_missing_totals
+                        # docstring) — same try/except scope so a bad role still only
+                        # drops this one (statement, basis), not the whole filing.
+                        lines.extend(_emit_missing_totals(
+                            statement=statement, tree=tree, facts_by_qname=facts_by_qname,
+                            contexts=instance.contexts, units=instance.units, labels=labels,
+                            basis_axis=basis_axis, basis_member=basis_member,
+                            basis_axis_ns=basis_axis_ns, basis=basis,
                             corp_code=corp_code, rcept_no=rcept_no,
                             report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
                             period_end_date=period_end_date,

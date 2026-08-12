@@ -666,6 +666,65 @@ NULL 유지.
 
 ---
 
+## R14. XBRL 원문(instance) 구형 IFRS taxonomy(2010~2013 계열) 확장 — namespace/외부BFS/라벨/누락총계
+
+2015~2019년 필링 다수가 신형(`ifrs-full`, 2019-10-01+)이 아니라 **구형 IFRS taxonomy**
+(접두 `ifrs`, `xbrl.iasb.org` 도메인, 2010-04-30~2013-03-31 계열)를 쓰는데, R10이 만든
+`report_lines_xbrl.py`가 `ifrs-full` 리터럴 접두만 인식해 이 필링들이 조용히
+`report_lines` 0행으로 스킵되고 있었다(카테고리② 1,551건, `pdf_only_parser_
+phase2_design_2026-08-12.md` §A). 독립된 버그 여러 개가 겹쳐 있었다:
+
+**규칙**:
+- **네임스페이스**: 리터럴 `nsmap.get("ifrs-full")` 대신 `_resolve_ifrs_namespace()`가
+  URI 패턴(`iasb.org/taxonomy` 또는 `ifrs.org/taxonomy`)으로 접두를 찾는다 — `ifrs-full`
+  이 있으면 그걸 우선(기존 동작 무변경), 없을 때만 패턴 매치로 확장.
+- **외부 taxonomy BFS 우선순위**(`external_taxonomy.py::dart_first()`): dart.fss.or.kr
+  URL 안에서도 `rol_dart_`/`rol_dart-added_`/`dart_`/`dart-gcd_` 파일명 패턴을 최우선
+  정렬 — 구형 vintage는 DART 자체 role/label 정의 파일이 import 순서상 맨 끝(~47개 중
+  46-47번째)이라, 파일명 우선순위 없이는 예산(`_EXTERNAL_FETCH_BUDGET`, 12→20)을 다
+  써도 못 찾는다.
+- **라벨 linkbase 해석**(`taxonomy_linkbase.py::resolve_external_labels()`): "labelLinkbaseRef가
+  하나라도 있는 첫 파일에서 멈춘다"는 옛 가정이 깨지는 vintage가 있다(2013-03-31
+  — entry point 자신이 협소한 보충 라벨파일을 직접 선언하면서 **동시에** 진짜
+  종합 라벨파일(`lab_ifrs-ko_2010-04-30.xml` 등)을 가진 형제 스키마도 import함 —
+  옛 코드는 첫 파일에서 멈춰 형제 스키마까지 못 감). 이제 예산 내에서 도달 가능한
+  전체 import 그래프를 계속 훑어 발견한 labelLinkbaseRef를 전부 병합한다(budget 8→15).
+- **BS/IS 누락 총계 fact-레벨 보조규칙**(`report_lines_xbrl.py::_emit_missing_totals()`):
+  일부 vintage의 `_pre.xml`은 BS Assets/Liabilities/Equity, IS ProfitLoss/
+  ComprehensiveIncome을 tree 노드로 아예 안 싣는다(분리된 root 그룹들의 flat forest —
+  실측: BS 89~97%, IS 75.7~77.6%가 "fact는 있는데 tree에 없음"). 트리에 없을 때만,
+  단일축 basis fact가 존재하면 그대로 옮긴다(존재 안 하면 조용히 skip — 지어내지
+  않음). 위치 컬럼 규약: `node_role='P'`(계층3 "집계행 후보" 규칙 충족 —
+  `node_role='P' OR (node_role='S' AND value_won IS NOT NULL)`, `collector/models.py`
+  참고) / `section_path=NULL`(`combine.py::_depth()`가 depth=0으로 읽어 "얕은 쪽 우선"
+  tie-break에서 정확히 이김) / `depth=0` / `row_order=-1`(모든 실제 행보다 앞, unique
+  제약 없음 확인) / **`header_hint`는 채우지 않는다**(★`fin2/layer3/combine.py`가
+  `header_hint IS NULL` 가드를 이미 걸고 있어— 채우면 이 행들이 계층3에서 조용히
+  전부 제외됨, 이번 구현 중 발견). 출처는 `source_ref`에 `/xbrl_tree_gap_total` 접미사로
+  기록(이 컬럼은 어디서도 필터링 안 됨, 무손실).
+- 지배지분귀속(ProfitLossAttributableToOwnersOfParent 등)은 **포함하지 않음** — 실측
+  결과 과반(56~57%)이 진짜 fact 자체가 없는 케이스(2026-08-06 웰킵스하이텍 선례와 동종)라
+  보조규칙 효과가 제한적.
+
+**검증**: `fin2/tests/test_xbrl_instance.py` 10/10 통과 + 전체
+`pytest tests/ fin2/tests/` 489 passed(무관 기존결함 1건만, `test_biz_section.py`).
+이미 정상 적재된 필링(15건 표본) 재추출 회귀 확인 — value_mismatch 0, 기존 행 소실 0,
+신규 행은 전부 `xbrl_tree_gap_total` fallback만. 백필(744개사, 1,603건, 317,947행,
+오류 0) 후 카테고리② 1,551→31건(98.0% 해소). 잔여 31건은 4가지 독립 원인으로 전부
+이 규칙 범위 밖 확인(원문 직접 대조): K-GAAP 시대(2007 taxonomy, IFRS 이전) 9건 /
+DART 서버가 최초 vintage(2010-04-30) entry point를 404로 반환(원문 확인) 2건 /
+`filings.period_end_date`와 실제 XBRL instance 태깅 기간 불일치 1건(별도 메타데이터
+이슈) / USD 표시통화 1건(기존 정책상 KRW만 지원) / `filings.period_end_date` 전체
+NULL(전사 1,311건 中 일부) 18건. BS 항등식(자산=부채+자본) 전수검사 2,781개 basis
+조합 중 2,771 성립(99.64%) — 잔여 10건 중 4건은 ±1원 반올림, 6건은 원문 직접 대조로
+duplicate-context 등 코드 버그 가능성 배제하고 필러 자신의 XBRL 태깅 내부 불일치로
+확인(우리 추출 로직 문제 아님, R0 "관찰이지 판단 아니다" 원칙대로 그대로 전사).
+
+**근거**: `docs/plans/pdf_only_parser_phase2_design_2026-08-12.md` §A(설계) ·
+`docs/qa/pdf_only_xbrl_taxonomy_expansion_probe_2026-08-12.md`(조사, 버그①②+후속A/B/C).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

@@ -97,7 +97,12 @@ _BASIS_OF_EN = {"consolidated": "consolidated", "separate": "separate"}
 # graph can't turn one filing's extraction into a long hang or a fetch storm.
 # Network/cache/retry plumbing itself lives in external_taxonomy.py (shared
 # with taxonomy_linkbase.py::resolve_external_labels — same fallback shape).
-_EXTERNAL_FETCH_BUDGET = 12
+# ★ Phase 2 (pdf_only_parser_phase2_design_2026-08-12 §A-4): 12 -> 20, modest
+# headroom alongside external_taxonomy.py::dart_first()'s new filename-level
+# priority sort — the sort does the real work (reaches `rol_dart_{vintage}`
+# in 2-3 hops instead of ~46), this bump is just a safety margin for an
+# unseen vintage whose chain is deeper than the 3 vintages checked so far.
+_EXTERNAL_FETCH_BUDGET = 20
 
 
 @dataclass(frozen=True)

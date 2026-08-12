@@ -340,10 +340,15 @@ def merge_label_catalogs(*catalogs: dict[QName, list[Label]]) -> dict[QName, lis
 
 # Phase 5-A: a handful of xsd:import hops to find the shared entry point that
 # declares the shared label linkbases — not a big BFS like role_map.py's
-# (that one hunts for a specific roleURI across many candidate files; this
-# one stops at the first file that declares ANY labelLinkbaseRef, since a
-# taxonomy vintage only has one shared entry point).
-_EXTERNAL_LABEL_FETCH_BUDGET = 8
+# (that one hunts for a specific roleURI across many candidate files).
+# ★ Phase 2 (pdf_only_parser_phase2_design_2026-08-12 §A-6, §A-8 item 2):
+# 8 -> 15. Was 8 back when this stopped at the FIRST file with any
+# labelLinkbaseRef ("a taxonomy vintage only has one shared entry point" —
+# that assumption is what broke, see resolve_external_labels()'s docstring
+# update below); now that it accumulates across the whole reachable chain,
+# a little more headroom keeps the same margin the old code had relative to
+# the graphs actually observed (2-3 hops for the vintages checked so far).
+_EXTERNAL_LABEL_FETCH_BUDGET = 15
 
 
 def resolve_external_labels(xsd_path: Path, nsmap: dict[str, str]) -> dict[QName, list[Label]]:
@@ -362,15 +367,37 @@ def resolve_external_labels(xsd_path: Path, nsmap: dict[str, str]) -> dict[QName
     Standard concepts' labels live in DART's shared taxonomy package,
     reached the same way role_map.py reaches shared roleType definitions:
     follow the local xsd's `xsd:import` chain out to the shared
-    `dart_entry_point_{vintage}.xsd`, then follow **that** file's
-    `<link:linkbaseRef role=".../labelLinkbaseRef">` entries — a different
-    mechanism from `xsd:import`/`xsd:include` (those wire in other *schemas*;
-    a linkbaseRef is how an entry point declares which *linkbase files*
-    belong to it, the same way a filer's own `.xsd` declares its own
+    `dart_entry_point_{vintage}.xsd`, then follow `<link:linkbaseRef
+    role=".../labelLinkbaseRef">` entries — a different mechanism from
+    `xsd:import`/`xsd:include` (those wire in other *schemas*; a
+    linkbaseRef is how a schema declares which *linkbase files* belong to
+    it, the same way a filer's own `.xsd` declares its own
     `_lab-ko.xml`/`_lab-en.xml`). Verified directly against the DART server
     for vintage 2019-10-01: the shared entry point declares 6 label
     linkbases (`lab_ifrs-ko`/`lab_ifrs-en`/`lab_dart-ko`/`lab_dart-en`/
-    `lab_dart-gcd-ko`/`lab_dart-gcd-en`), all fetched and merged here."""
+    `lab_dart-gcd-ko`/`lab_dart-gcd-en`) right there, no further hops needed.
+
+    ★ Phase 2 (pdf_only_parser_phase2_design_2026-08-12 §A-6, root-caused in
+    §A-8 item 2): the original version stopped at the FIRST file that
+    declared ANY labelLinkbaseRef, reasoning "a taxonomy vintage only has
+    one shared entry point" — **that assumption is false for the
+    2013-03-31 vintage** (verified by direct fetch): its shared entry point
+    `dart_entry_point_2013-03-31.xsd` declares its OWN labelLinkbaseRef
+    (`dart_entry_point_2013-03-31-label.xml`) — but that file is a narrow
+    supplemental catalog (18 concepts, IS "총계" labels like CostOfSales/
+    Revenue only, role=totalLabel) that does NOT carry standard concepts
+    like `NoncurrentAssets`/`Assets`/`Liabilities`/`Equity` at all. The real
+    comprehensive catalog (`dart_2013-03-31.xsd`'s declared
+    `lab_ifrs-ko_2010-04-30.xml`/`lab_ifrs-en_2010-04-30.xml`, confirmed by
+    direct fetch to contain all 6 previously-missing concepts) sits one
+    `xsd:import` hop further out, on a *sibling* schema the old code never
+    reached because it had already stopped. So this now keeps walking the
+    whole reachable import graph (within budget) and **merges**
+    labelLinkbaseRef declarations from every file visited, instead of
+    latching onto the first one — this still resolves 2019-10-01 in a
+    single hop (nothing else in its chain declares more), and now also
+    resolves 2013-03-31 correctly by continuing past its entry point's own
+    (real but incomplete) declaration."""
     from parser.xbrl_instance import external_taxonomy as ext
 
     source = str(xsd_path)
@@ -379,7 +406,7 @@ def resolve_external_labels(xsd_path: Path, nsmap: dict[str, str]) -> dict[QName
 
     label_urls: list[str] = []
     fetches = 0
-    while queue and fetches < _EXTERNAL_LABEL_FETCH_BUDGET and not label_urls:
+    while queue and fetches < _EXTERNAL_LABEL_FETCH_BUDGET:
         url = queue.pop(0)
         if url in seen:
             continue
@@ -388,9 +415,9 @@ def resolve_external_labels(xsd_path: Path, nsmap: dict[str, str]) -> dict[QName
         root = ext.parse(url)
         if root is None:
             continue
-        label_urls = ext.linkbase_ref_urls(root, url, "labelLinkbaseRef")
-        if label_urls:
-            break
+        for found_url in ext.linkbase_ref_urls(root, url, "labelLinkbaseRef"):
+            if found_url not in label_urls:
+                label_urls.append(found_url)
         queue = ext.dart_first(queue + [u for u in ext.import_urls(root, url) if u not in seen])
 
     if not label_urls:

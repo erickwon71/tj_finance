@@ -147,5 +147,36 @@ def linkbase_ref_urls(root: etree._Element, base_url: str, role_contains: str) -
 def dart_first(urls: list[str]) -> list[str]:
     """Sort so `dart.fss.or.kr` URLs are tried before generic `xbrl.org`/
     `w3.org` framework schemas — those never carry DART's own role/label
-    definitions, trying them first just burns through the fetch budget."""
-    return sorted(urls, key=lambda u: 0 if "dart.fss.or.kr" in u else 1)
+    definitions, trying them first just burns through the fetch budget.
+
+    ★ Phase 2 (pdf_only_parser_phase2_design_2026-08-12 §A-4): within the
+    dart.fss.or.kr tier, further prioritize by filename pattern —
+    `rol_dart_`/`rol_dart-added_` (DART's own shared roleType definitions,
+    role_map.py) and `dart_`/`dart-gcd_` (DART's own shared labelLinkbaseRef
+    declarations, taxonomy_linkbase.py) are the files both callers are
+    actually hunting for, while the ~40 other dart.fss.or.kr URLs in a
+    typical vintage's import chain are individual IAS/IFRS/IFRIC/SIC
+    standard schemas that are never core-classified and rarely declare any
+    label linkbase of their own (verified directly against a real vintage's
+    cached files, 2013-03-31: `rol_dart_2013-03-31.xsd` sits at position
+    ~46-47 of 47 in raw import order — blowing past the old budget=12 before
+    ever being reached; `dart_2013-03-31.xsd`/`dart-gcd_2013-03-31.xsd` are
+    reached in 2-3 hops but weren't prioritized either). This sub-sort
+    doesn't remove the need for a budget (a vintage's true shared-definition
+    file name isn't knowable in advance for a future, unseen vintage — see
+    role_map.py's caution against hardcoding vintage-specific chains), it
+    just means the existing budget reaches the right file far sooner.
+    ★ Ordering note: `"dart_"` as a prefix does NOT also match
+    `"rol_dart_..."` or `"dart-gcd_..."` (different literal prefixes,
+    underscore vs hyphen) — each pattern is checked independently, so all
+    four sort into the top tier without one accidentally absorbing another."""
+    _DART_OWN_PREFIXES = ("rol_dart_", "rol_dart-added_", "dart_", "dart-gcd_")
+
+    def _priority(u: str) -> tuple[int, int]:
+        if "dart.fss.or.kr" not in u:
+            return (1, 0)  # generic xbrl.org/w3.org framework schema — lowest priority
+        base = u.rsplit("/", 1)[-1]
+        if any(base.startswith(p) for p in _DART_OWN_PREFIXES):
+            return (0, 0)  # DART's own shared role/label definitions — highest priority
+        return (0, 1)      # other dart.fss.or.kr file (individual IAS/IFRS/... schemas)
+    return sorted(urls, key=_priority)

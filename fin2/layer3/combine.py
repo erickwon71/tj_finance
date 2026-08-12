@@ -58,6 +58,20 @@ _CURRENT_STRICT = {"bs.trade_receivables", "bs.trade_payables",
                    "bs.short_term_debt", "bs.current_bonds"}
 _NONCURRENT_RE = re.compile(r"장기|비유동")
 _NARROW_PREFER = {"bs.trade_receivables", "bs.trade_payables"}
+
+
+def _is_noncurrent(row: dict) -> bool:
+    """True if a _CURRENT_STRICT candidate row is a non-current variant.
+
+    Checks BOTH label_raw and section_path against _NONCURRENT_RE. label_raw alone is
+    not enough: some filings place a non-current '매입채무및기타채무' row under
+    section_path='부채>비유동부채' with the exact same label text as its current
+    counterpart (no '장기'/'비유동' wording in the label itself) — e.g. 경남제약/00307028
+    2024FY, docs/qa/gate_b_v3_fail_a_784_triage_2026-08-13.md ③. section_path carries the
+    유동/비유동 classification the label text sometimes omits.
+    """
+    return bool(_NONCURRENT_RE.search(row.get("label_raw") or "")
+                or _NONCURRENT_RE.search(row.get("section_path") or ""))
 _BROAD_RE = re.compile(r"및기타|및 기타|AndOther")
 # a BS grand-total canonical must not be sourced from a fiduciary/trust-account
 # sub-statement embedded in the same filing (banks commonly attach a 신탁계정 balance
@@ -286,7 +300,7 @@ def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
             rows = narrow
     # current-strict: a current canonical must not absorb non-current (장기/비유동) rows
     if canon in _CURRENT_STRICT:
-        cur = [r for r in rows if not _NONCURRENT_RE.search(r.get("label_raw") or "")]
+        cur = [r for r in rows if not _is_noncurrent(r)]
         if cur:
             rows = cur
     # revenue grand-total preference: a grand-total label (매출액/영업수익) outranks a
@@ -363,6 +377,22 @@ def _resolve(cands: dict[str, list[dict]]):
             filtered = [r for r in rows if r.get("table_seq") not in trust_seqs]
             if filtered:
                 rows = filtered
+        # current-strict canonicals (trade_payables 등): drop non-current (장기/비유동)
+        # candidates *before* stage ranking, not only inside _reduce_conflict(). A
+        # non-current row can legitimately land on a higher mapping stage than the
+        # correct current row (e.g. '장기매입채무및기타채무' is a registered exact alias
+        # while '매입채무 및 기타유동채무' only reaches 'normalized' after whitespace
+        # normalization) — when that happens top_vals below collapses to the single
+        # (wrong) non-current value and _reduce_conflict() never runs at all, since it's
+        # only invoked on a genuine top-stage tie. Fixes trade_payables near-zero fail_a
+        # (52 rows/21 corps, 경남제약 00307028 등) — docs/qa/
+        # gate_b_v3_fail_a_784_triage_2026-08-13.md ③. Only fires when a current-labeled
+        # candidate actually exists; if every candidate is non-current (or unlabeled),
+        # rows is left untouched — no current period can end up MISSING because of this.
+        if c in _CURRENT_STRICT:
+            cur_rows = [r for r in rows if not _is_noncurrent(r)]
+            if cur_rows:
+                rows = cur_rows
         # 가산 계열(ADDITIVE_CANON)은 한 canonical 에 여러 행이 정상적으로 대응한다
         # (cf.depreciation ← '감가상각비' + '투자부동산감가상각비'). 단일값 전제로 충돌
         # 판정하면 canonical 이 통째로 폐기되므로, 선언된 계열만 합산한다.

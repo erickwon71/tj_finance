@@ -8,7 +8,7 @@
 > **읽는 법.** 각 규칙은 `규칙 / 근거(파일:줄 or 문서) / 어기면 생기는 일` 3단으로 적는다.
 > 근거 없는 규칙은 규칙이 아니다 — "그렇게 해왔다"는 여기에 쓰지 않는다.
 >
-> 최종 갱신 2026-08-07.
+> 최종 갱신 2026-08-13.
 
 ---
 
@@ -726,6 +726,49 @@ duplicate-context 등 코드 버그 가능성 배제하고 필러 자신의 XBRL
 
 ---
 
+## R15. 계층3 `_CURRENT_STRICT`(bs.trade_payables 등) — 비유동 후보를 stage-rank 숏컷보다 먼저 걸러낼 것
+
+`fin2/layer3/combine.py::_resolve()`는 canonical별 후보를 모은 뒤, 최고 mapping-stage
+(exact > normalized > fuzzy)에서 값이 하나로 모이면 **그 자리에서 즉시 confirm**하고
+`_reduce_conflict()`(current-strict/narrow-prefer 등 의미기반 필터)로는 아예 넘어가지
+않는다. `_CURRENT_STRICT` = `{bs.trade_receivables, bs.trade_payables,
+bs.short_term_debt, bs.current_bonds}`는 "유동 계정이 비유동(장기) 후보를 흡수하면 안
+된다"는 필터가 `_reduce_conflict()` 안에 이미 있었지만, **top-stage 값이 이미 하나로
+collapse된 경우엔 그 필터가 아예 실행되지 못했다** — 유동 라인이 표준 alias 사전에 없어
+whitespace 정규화를 거쳐 `normalized` 단계에 그치고, 그 옆의 비유동 라인이 정확히
+alias 사전에 등재돼 `exact` 단계를 얻으면, `exact` 단독값(비유동 값, 종종 훨씬 작음)이
+그대로 confirm됐다(경남제약 00307028 2024FY: 유동 매입채무 8,206,288,902원 대신
+주석·본문 어디에도 없는 비유동 매입채무 6,000,000원이 적재).
+
+**규칙**:
+- `_CURRENT_STRICT` canonical은 stage-rank 비교를 하기 **전에** 먼저 비유동 후보를
+  제거한다(제거 후 후보가 하나라도 남을 때만 — 전부 비유동이면 원래 rows 유지, 결측을
+  새로 만들지 않음). `_BS_GRAND_TOTAL`(신탁계정 제외) 필터가 이미 이 자리(stage-rank
+  이전)에서 하던 것과 같은 패턴.
+- 비유동 판정(`_is_noncurrent()`)은 **`label_raw`와 `section_path` 둘 다** 검사한다.
+  라벨 텍스트 자체에 "장기"/"비유동"이 없는데 `section_path`가 `부채>비유동부채`인
+  케이스가 있다(경남제약처럼 유동/비유동 두 라인의 라벨 문구가 완전히 동일한 경우)
+  — `label_raw`만 보면 이 케이스를 놓친다.
+- 이 사전필터를 통과하고도 유동 후보끼리 값이 갈리면(진짜 충돌), 그 이후는
+  기존 stage-rank/`_reduce_conflict()`/HOLD 경로가 그대로 처리한다 — 이 필터가
+  유동-유동 판단을 대신 내리지 않는다.
+
+**검증**: `fin2/tests/test_combine_current_strict.py`(단위, DB 비의존) + 실측 회귀:
+`report_lines`에서 같은 (rcept, basis) 안에 유동/비유동 매입채무류 라벨이 공존하는
+후보 43,725쌍 전수 재계산 — 수정 전/후 `bs.trade_payables`가 바뀐 6,838쌍 중
+5,952쌍은 결측(HOLD)→정상값(순수 커버리지 개선), 884쌍은 잘못된 소액값→report_won과
+정확히 일치하는 값으로 교정(fail_a near-zero 52건/21개사가 이 안에 포함, 경남제약·
+01061497·00113997·00121941·00670340 등 실측 combine_full() 재확인 — 전부 report_won과
+0원 diff), 2쌍은 결측(HOLD)으로 전환(2012년 필링 1건, report_lines 자체의 중복행이
+원인 — 이 수정과 무관한 별개 데이터 이슈, HOLD가 안전한 방향이라 미조사 보류). 다른
+3개 canonical(trade_receivables/short_term_debt/current_bonds)은 이번 모집단에서
+변경 0건(영향 없음 확인). pytest 494 passed(무관 기존결함 1건만, `test_biz_section.py`).
+
+**근거**: `docs/qa/gate_b_v3_fail_a_784_triage_2026-08-13.md` ③(경남제약 원문대조) ·
+`docs/plans/gate_b_fail_a_bugfix_2_3_plan_2026-08-13.md` 버그 #3.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -773,6 +816,8 @@ duplicate-context 등 코드 버그 가능성 배제하고 필러 자신의 XBRL
 | R11 | 사용자 지시 2026-08-07 · `docs/qa/handoff_note_lines_span_misattribution_2026-08-07.md` §8~§11 · `docs/plans/note_span_fix_plan_2026-08-07.md` Phase 1(T1.1)~Phase 3(T3.6, 2026-08-08 완료) |
 | R12 | 사용자 결정 2026-08-09(옵션A, 계층2 신설) · `docs/plans/std_v3_dq_shares_period_backfill_plan_2026-08-09.md` §3.3 · `fin2/extract/shares_transcribe.py`·`fin2/layer3/build.py::_select_shares_out` |
 | R13 | 사용자 결정 2026-08-10(Phase1~5 순차 승인) · `docs/plans/pre2015_layer2_backfill_plan_2026-08-10.md`·`..._todo_2026-08-10.md` · `fin2/extract/legacy_pre2015.py`·`fin2/extract/report_lines.py::extract_report_lines`·`collector/note_lines_sync.py::FY_MIN` |
+| R14 | `docs/plans/pdf_only_parser_phase2_design_2026-08-12.md` §A · `docs/qa/pdf_only_xbrl_taxonomy_expansion_probe_2026-08-12.md` · `fin2/extract/report_lines_xbrl.py`·`external_taxonomy.py::dart_first()`·`taxonomy_linkbase.py::resolve_external_labels()` |
+| R15 | `docs/qa/gate_b_v3_fail_a_784_triage_2026-08-13.md` ③ · `docs/plans/gate_b_fail_a_bugfix_2_3_plan_2026-08-13.md` 버그 #3 · `fin2/layer3/combine.py::_resolve()/_is_noncurrent()` · `fin2/tests/test_combine_current_strict.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황

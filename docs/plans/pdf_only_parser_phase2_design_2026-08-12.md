@@ -269,8 +269,9 @@ OCR·이미지스캔 방침/단위판정/설계문서화)가 그대로 남아있
    combine.py`의 `header_hint IS NULL` 가드와 충돌 회피) → A-8-5 회귀 확인(0 mismatch) →
    A-9 백필(744개사·1,603건·317,947행·오류0) → BS 항등식 전수검사(99.64% 성립) →
    `docs/PARSING_RULES.md` R14 등재. 카테고리② 1,551→31건(98.0% 해소), 잔여 31건은
-   4가지 독립·무관 원인으로 원문 확인 완료(R14 참고). 상세 근거 =
-   `docs/qa/pdf_only_xbrl_taxonomy_expansion_probe_2026-08-12.md`.
+   5가지 독립·무관 원인으로 원문 확인 완료 — 전량 목록 =
+   [`xbrl_taxonomy_r14_remaining31_2026-08-12.md`](../qa/xbrl_taxonomy_r14_remaining31_2026-08-12.md).
+   상세 근거 = `docs/qa/pdf_only_xbrl_taxonomy_expansion_probe_2026-08-12.md`.
    **Gate B 무영향 확인 + std_v3 전량재빌드는 사용자가 별도 세션(controlling_ni
    트랙)에서 진행 중이라 이번 스코프에서 제외 — 그 세션 정리 후 이어서 진행 예정.**
 3. §B(새 PDF파서, 1,870건)는 이 완료와 무관하게 별도로 착수 요청 가능(독립 트랙,

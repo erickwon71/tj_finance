@@ -721,7 +721,8 @@ duplicate-context 등 코드 버그 가능성 배제하고 필러 자신의 XBRL
 확인(우리 추출 로직 문제 아님, R0 "관찰이지 판단 아니다" 원칙대로 그대로 전사).
 
 **근거**: `docs/plans/pdf_only_parser_phase2_design_2026-08-12.md` §A(설계) ·
-`docs/qa/pdf_only_xbrl_taxonomy_expansion_probe_2026-08-12.md`(조사, 버그①②+후속A/B/C).
+`docs/qa/pdf_only_xbrl_taxonomy_expansion_probe_2026-08-12.md`(조사, 버그①②+후속A/B/C) ·
+`docs/qa/xbrl_taxonomy_r14_remaining31_2026-08-12.md`(백필 후 잔여 31건 원인 전수 목록).
 
 ---
 

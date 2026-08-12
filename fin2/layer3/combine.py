@@ -77,6 +77,20 @@ _BROAD_RE = re.compile(r"및기타|및 기타|AndOther")
 # std_v3_dq_shares_period_backfill_todo_2026-08-09.md.
 _BS_GRAND_TOTAL = {"bs.total_assets", "bs.total_liabilities", "bs.total_equity"}
 
+# controlling_ni/noncontrolling_ni: the alias catalog has bare labels ('지배기업
+# 소유주지분'·'비지배지분') that legitimately appear in BOTH the '당기순이익의 귀속'
+# section (wanted) and the '총포괄손익의 귀속' section (OCI-inclusive, wrong concept) —
+# both exact-match the same canonical. _resolve()'s normal stage-rank shortcut (below)
+# can pick the wrong one outright when the two candidates' stages differ (e.g. a
+# footnote suffix drops the right one to 'normalized'/'fuzzy' while the wrong one stays
+# 'exact') — its top_vals then collapses to a single (wrong) value and never reaches
+# `conflicts`, so `_resolve_ni_attribution`'s identity check (already proven correct,
+# including on the two known label-swap filings — see that function's docstring) never
+# gets a chance to run. For these two canonicals only, skip the stage-rank shortcut and
+# always route a multi-value split to `conflicts` so the identity check always fires.
+# docs/plans/std_v3_controlling_ni_oci_section_fix_design_2026-08-12.md §2.
+_NI_ATTRIBUTION_CANON = {"is.controlling_ni", "is.noncontrolling_ni"}
+
 
 def _trust_account_table_seqs(cands: dict[str, list[dict]]) -> set:
     """table_seq values whose own total_assets == total_liabilities with no total_equity
@@ -379,6 +393,17 @@ def _resolve(cands: dict[str, list[dict]]):
             if total:
                 confirmed[c] = total
             continue
+        # is.controlling_ni/is.noncontrolling_ni: never let the stage-rank shortcut
+        # confirm a split outright — always hold it as a conflict so
+        # _resolve_ni_attribution (called right after _resolve()) gets a chance to
+        # disambiguate via the net_income identity. See _NI_ATTRIBUTION_CANON above.
+        if c in _NI_ATTRIBUTION_CANON:
+            vals = {r["value"] for r in rows}
+            if len(vals) == 1:
+                confirmed[c] = next(iter(vals))
+            else:
+                conflicts[c] = sorted(rows, key=lambda r: (r["value"] is None, r["value"]))
+            continue
         vals = {r["value"] for r in rows}
         if len(vals) == 1:
             confirmed[c] = next(iter(vals))
@@ -398,10 +423,71 @@ def _resolve(cands: dict[str, list[dict]]):
     return confirmed, conflicts
 
 
+def _top_stage_corroborated(rows: list[dict]):
+    """>=2 raw candidates independently reach the single highest mapping stage AND agree
+    on one value -> trust it. Phase 2 verification (2026-08-12, design doc §4-2-2) swept
+    the full known-bug population (404 fail_a rows) and found this pattern in **zero** of
+    them — the bug there is always the opposite shape (exactly one row at top stage,
+    outranking a differing lower-stage one; see _resolve_ni_attribution docstring). This
+    fires only as the fallback below, after the identity check has already failed or
+    can't run, so it never overrides an identity-confirmed answer.
+
+    Concretely this recovers the case where OCI happens to be ~0 for the period: the
+    '당기순이익의 귀속' and '포괄손익의 귀속' sections then legitimately report the same
+    number at the same (best) stage — two independent extractions agreeing is itself the
+    corroboration, no need to know which section is which."""
+    if len(rows) < 2:
+        return None
+    best = max(_STAGE_RANK.get(r.get("stage"), 0) for r in rows)
+    top = [r for r in rows if _STAGE_RANK.get(r.get("stage"), 0) == best]
+    if len(top) < 2:
+        return None
+    top_vals = {r["value"] for r in top}
+    return next(iter(top_vals)) if len(top_vals) == 1 else None
+
+
+_NI_IDENTITY_EPS = 2   # won tolerance for the identity match below (§C) — real filings
+                       # occasionally carry a 1-won rounding gap between separately
+                       # printed cells (measured, e.g. 01025644 2024Q1); negligible next
+                       # to any realistic net-income magnitude, so it can't manufacture a
+                       # false unique match on its own.
+
+
+def _derive_net_income_from_ebt(cands: dict):
+    """§A fallback anchor: when is.net_income has NO raw candidate at all (the total line
+    is simply absent from this filing's body — measured ~12% of the still-held PASS
+    sample, e.g. 00107987 2022FY), derive it as EBT − tax_expense for the sole purpose of
+    anchoring the identity check below. Only fires when both are single, unambiguous
+    candidates (never guesses among a split). Does NOT write into `confirmed` — net_income
+    confirmation itself is out of this fix's scope, this value is only used locally here."""
+    ebt = cands.get("is.ebt", [])
+    tax = cands.get("is.tax_expense", [])
+    if len(ebt) == 1 and len(tax) == 1:
+        return ebt[0]["value"] - tax[0]["value"]
+    return None
+
+
+def _match_ni_identity(cni_vals: set, nci_vals: set, net_income: int):
+    """cni × nci pair whose sum matches net_income, exact first, else (§C) within
+    _NI_IDENTITY_EPS — but only if the epsilon relaxation still yields a UNIQUE pair.
+    Multiple exact matches (a real ambiguity, e.g. two candidate pairs both landing on
+    net_income by coincidence) short-circuits straight to "no answer" without trying
+    epsilon, since relaxing further can only make that ambiguity worse."""
+    exact = {(c, n) for c in cni_vals for n in nci_vals if c + n == net_income}
+    if len(exact) == 1:
+        return next(iter(exact))
+    if exact:
+        return None
+    near = {(c, n) for c in cni_vals for n in nci_vals if abs(c + n - net_income) <= _NI_IDENTITY_EPS}
+    return next(iter(near)) if len(near) == 1 else None
+
+
 def _resolve_ni_attribution(cands: dict, confirmed: dict, conflicts: dict) -> None:
     """2nd pass (Phase B, docs/plans/std_v3_controlling_ni_gap_fix_plan_2026-08-08.md §3-2):
     re-select a held is.controlling_ni conflict via the accounting identity
-    controlling_ni + noncontrolling_ni = net_income.
+    controlling_ni + noncontrolling_ni = net_income, falling back to same-stage
+    cross-candidate corroboration (_top_stage_corroborated) when that identity can't run
+    or can't disambiguate.
 
     Root cause (§1-B/§1-B-부록): the alias catalog has bare labels ('지배기업
     소유주지분'·'비지배지분') that legitimately appear in BOTH the '당기순이익의 귀속'
@@ -416,33 +502,74 @@ def _resolve_ni_attribution(cands: dict, confirmed: dict, conflicts: dict) -> No
     filter would pick the wrong candidate there, while the identity check still finds
     the right one because it's anchored to the actual net_income value, not a label.
 
-    Only fires when net_income is confirmed and controlling_ni is held. If the
-    identity match isn't unique (ambiguous or none — measured 3.9% of the held
-    population, mostly small-value coincidences or genuine OCI-driven non-matches),
-    stays held (결측 > 오염, no guessing)."""
-    if "is.controlling_ni" not in conflicts or "is.net_income" not in confirmed:
-        return
-    net_income = confirmed["is.net_income"]
-    cni_vals = {r["value"] for r in conflicts["is.controlling_ni"]}
+    Fallback #1 (added 2026-08-12, Phase 2 verification §4-2-2/§4-2-3): the identity check
+    needs both net_income confirmed AND a clean controlling/noncontrolling value pairing
+    — measured ~28% of a 5,000-row PASS-population re-check had a stage-rank-confirmed
+    value (from _resolve()'s pre-fix behavior) get dropped to NULL here purely because
+    net_income was missing or the real noncontrolling_ni candidate had been misclassified
+    into the controlling_ni pool for that filing (unrelated data-quality gaps, not this
+    fix). _top_stage_corroborated recovers those without reintroducing the original bug
+    (verified absent from the 404-row known-bug population — see its docstring).
 
-    if "is.noncontrolling_ni" in confirmed:
-        nci_vals = {confirmed["is.noncontrolling_ni"]}
-    elif "is.noncontrolling_ni" in conflicts:
-        nci_vals = {r["value"] for r in conflicts["is.noncontrolling_ni"]}
-    elif "is.noncontrolling_ni" in cands:
-        nci_vals = {r["value"] for r in cands["is.noncontrolling_ni"]}
-    else:
-        nci_vals = {0}  # wholly-owned consolidation: no NCI line at all (mirrors v2's `nci or 0`)
+    Fallback #2 (added 2026-08-12, same-day follow-up): re-examining what was STILL held
+    after fallback #1 found three more low-risk, independently-gated recovery paths —
+    §A always also tries EBT−tax_expense as a net_income anchor when the direct line is
+    missing (_derive_net_income_from_ebt); §B always also tries nci=0 in addition to
+    whatever noncontrolling_ni candidate(s) exist (small/negligible NCI can still pick up
+    an unrelated noisy candidate for that canonical); §C allows a small rounding-level
+    epsilon (_NI_IDENTITY_EPS) when no exact pair matches. Measured recovery on the same
+    5,000-row sample: A 12% / B 24% / C 3% of the still-NULL bucket, each still requiring
+    a UNIQUE resulting pair to fire — an ambiguous result (e.g. two pairs both landing on
+    net_income) still correctly stays held.
 
-    matches = {(c, n) for c in cni_vals for n in nci_vals if c + n == net_income}
-    if len(matches) != 1:
+    If nothing disambiguates (identity ambiguous/impossible AND no multi-row stage
+    corroboration — the '단독 후보' pattern from §1-A), stays held (결측 > 오염, no
+    guessing)."""
+    if "is.controlling_ni" not in conflicts:
         return
-    c_val, n_val = next(iter(matches))
-    confirmed["is.controlling_ni"] = c_val
-    del conflicts["is.controlling_ni"]
+    matched = False
+    net_income = confirmed.get("is.net_income")
+    if net_income is None:
+        net_income = _derive_net_income_from_ebt(cands)               # §A
+    if net_income is not None:
+        cni_vals = {r["value"] for r in conflicts["is.controlling_ni"]}
+
+        nci_vals = set()
+        if "is.noncontrolling_ni" in confirmed:
+            nci_vals.add(confirmed["is.noncontrolling_ni"])
+        elif "is.noncontrolling_ni" in conflicts:
+            nci_vals |= {r["value"] for r in conflicts["is.noncontrolling_ni"]}
+        elif "is.noncontrolling_ni" in cands:
+            nci_vals |= {r["value"] for r in cands["is.noncontrolling_ni"]}
+        nci_vals.add(0)   # §B: wholly-owned/negligible-NCI is always a candidate pairing,
+                          # even when some other (possibly unrelated/noisy) candidate
+                          # exists for this canonical too — mirrors the old sole-fallback
+                          # (v2's `nci or 0`), just no longer gated on "nothing else found".
+
+        match = _match_ni_identity(cni_vals, nci_vals, net_income)     # §C (eps inside)
+        if match is not None:
+            c_val, n_val = match
+            confirmed["is.controlling_ni"] = c_val
+            del conflicts["is.controlling_ni"]
+            if "is.noncontrolling_ni" in conflicts:
+                confirmed["is.noncontrolling_ni"] = n_val
+                del conflicts["is.noncontrolling_ni"]
+            matched = True
+    if matched:
+        return
+    # identity couldn't run or couldn't disambiguate -> try stage corroboration per
+    # canonical independently (controlling_ni and noncontrolling_ni are unrelated events
+    # here — one may corroborate while the other stays genuinely ambiguous).
+    if "is.controlling_ni" in conflicts:
+        cv = _top_stage_corroborated(conflicts["is.controlling_ni"])
+        if cv is not None:
+            confirmed["is.controlling_ni"] = cv
+            del conflicts["is.controlling_ni"]
     if "is.noncontrolling_ni" in conflicts:
-        confirmed["is.noncontrolling_ni"] = n_val
-        del conflicts["is.noncontrolling_ni"]
+        nv = _top_stage_corroborated(conflicts["is.noncontrolling_ni"])
+        if nv is not None:
+            confirmed["is.noncontrolling_ni"] = nv
+            del conflicts["is.noncontrolling_ni"]
 
 
 # P&L 결과 계정(손실이 될 수 있음). 순'손실' 단독 라벨(이익 없음)에 양수값이면 손실을 양(+)으로

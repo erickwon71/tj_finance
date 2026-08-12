@@ -2,9 +2,12 @@
 
 **상태: 미구현.** `docs/plans/gate_b_fail_a_bugfix_2_3_plan_2026-08-13.md`의 버그 #2 가설을
 코드로 구현하기 전 실측 검증한 결과, 원래 가설(부모-자식 부호상속)은 **너무 넓고 위험함이
-실측으로 확인**됐고, 진짜 원인은 계획 문서가 짐작한 것보다 훨씬 깊은 곳(XBRL CF 추출 자체가
-현금흐름표를 아예 커버 안 함)에 있다. 버그 #3(trade_payables)은 완료(구현+테스트+
-PARSING_RULES R15 등재) — 이 문서는 버그 #2만 다룬다.
+실측으로 확인**됐고, 진짜 원인은 계획 문서가 짐작한 것보다 깊은 곳에 있다 — **production
+CF 추출기(`fin2/extract/report_lines.py`)가, 원본 `document.xml`에 이미 부호까지 정확히
+박혀 있는 인라인 태그(ACODE/ACONTEXT)를 아예 안 읽고 무부호 텍스트표만 읽는 것**이 핵심
+(2026-08-13 후속 재검증으로 §2 갱신 — `xbrl_zip`/R10/R14 트랙과는 별개 현상, §2 참고).
+버그 #3(trade_payables)은 완료(구현+테스트+PARSING_RULES R15 등재) — 이 문서는 버그 #2만
+다룬다.
 
 ## 1. 계획 문서 가설이 기각된 과정
 
@@ -44,7 +47,7 @@ report_won을 여전히 양수로 읽었다(`00126937` 2024FY) — "부모가 �
 "pass"인 행이 새로 fail_a가 될 위험이 실측으로 확인됐다** — 계획 문서가 우려했던
 "43,590건 오염" 시나리오와 정확히 같은 종류의 위험.
 
-## 2. LG 확정 케이스의 진짜 원인 — combine.py가 아니라 XBRL CF 추출 자체의 공백
+## 2. LG 확정 케이스의 진짜 원인 — combine.py가 아니라 CF 추출 자체의 공백
 
 LG(`20260318001025`)를 더 깊이 파보니 `report_lines`에 이 필링의 "배당금의 지급" 관련
 행이 **세 곳**에 따로 존재했다:
@@ -53,21 +56,55 @@ LG(`20260318001025`)를 더 깊이 파보니 `report_lines`에 이 필링의 "�
 |---|---|---|
 | CF 본문표(텍스트 추출, `text:CF:sep:...`) | 632,379,000,000 | **양수(버그)** |
 | SCE(자본변동표) 로그(`sce:separate:...`) | 632,384,000,000 | 음수(정확) |
-| **XBRL instance 원본**(`ifrs-full_DividendsPaidClassifiedAsFinancingActivities`, `face_audit`의 Track A가 직접 읽음) | 632,384,000 (천원단위 표시) | **음수, `(632,384)` — 원본에 이미 정확히 부호가 있음** |
+| **`document.xml` 인라인 ACODE/ACONTEXT 태그**(`ifrs-full_DividendsPaidClassifiedAsFinancingActivities`, `face_audit`의 Track A가 직접 읽음) | 632,384,000 (천원단위 표시) | **음수, `(632,384)` — 원본에 이미 정확히 부호가 있음** |
 
-즉 **XBRL instance 자체엔 이 계정에 대한 부호 있는 fact가 이미 존재한다**(face_audit
-Track A가 이걸 직접 읽어 report_won=-632,384,000,000을 얻는다 — 이게 Gate B가 쓰는
-"정답"이다). 그런데 **DB 전체를 확인한 결과 `report_lines`의 CF statement 행은
-168,911개 필링·13,803,204행 전부가 텍스트 추출(`context_raw LIKE 'text:%'`)이고,
-XBRL instance에서 온 CF 행은 **0건**이다(`fin2/extract/report_lines_xbrl.py`가 BS/IS는
-XBRL에서 뽑지만 CF는 애초에 XBRL 경로를 안 씀 — R10/R14 어디에도 CF 커버리지 언급이
-없는 것과 일치).
+즉 **원본 문서 자체엔 이 계정에 대한 부호 있는 값이 이미 존재한다**(face_audit Track A가
+이걸 직접 읽어 report_won=-632,384,000,000을 얻는다 — 이게 Gate B가 쓰는 "정답"이다).
 
-**결론: 버그 #2의 진짜 원인은 "부호 상속 로직 누락"이 아니라 "CF statement가 XBRL에서
-전혀 추출되지 않아, 이미 원본에 정확히 부호가 있는 XBRL fact를 못 쓰고 텍스트표(무부호
-관행이 있는)로만 폴백하는 것"이다.** 이건 combine.py 안의 작은 패치가 아니라
-`fin2/extract/report_lines_xbrl.py`(R10)에 **CF statement 추출 자체를 새로 얹는** 수준의
-작업 — R14(구형 IFRS taxonomy 확장)에 준하는 별도 트랙.
+### ★정정(2026-08-13 후속) — "CF는 XBRL에서 0건 추출"은 필터 실수였다
+
+처음 이 문서를 쓸 때 "`report_lines`의 CF 행 13,803,204건 전부가 텍스트 추출이고 XBRL
+출처는 0건"이라고 썼는데, `context_raw LIKE 'xbrl%'`라는 필터가 실제 XBRL context_ref
+표기(`CFY2019dTQA_ifrs-full_...` 형태, 리터럴 "xbrl"로 시작하지 않음)와 안 맞아 생긴
+**오탐**이었다. 올바른 필터(`NOT LIKE 'text:%' AND NOT LIKE 'sce:%'`)로 다시 세어보면:
+
+| statement | 진짜 XBRL(`xbrl_zip`) 출처 rcept | 전체 rcept | 비율 |
+|---|---|---|---|
+| BS | 1,613 | 162,712 | 0.99% |
+| IS | 1,613 | 169,188 | 0.95% |
+| CF | 1,613 | 168,911 | 0.95% |
+
+세 statement가 정확히 같은 1,613건이라는 게 핵심 — **CF만 빠지는 게 아니라 필링당
+전부-아니면-전무**다. `fin2/extract/report_lines_xbrl.py`(R10/R14)는 `document.xml`이
+아니라 **별도로 다운로드받는 `xbrl_zip` 파일**(`download_tasks.file_type='xbrl_zip'`)을
+소스로 쓰는데, 이 zip 자체가 **전체 168,911건 중 1,655건에서만 다운로드돼 있다**(DB
+확인). 즉 이건 `report_lines_xbrl.py`의 파싱 로직 결함이 아니라 **원천 다운로드 커버리지
+한계**(1%) — R14가 이미 그 1,655건 안에서의 taxonomy 인식률을 높인 것이지, 애초에 zip
+자체가 없는 나머지 99%엔 적용 대상이 아니다. **LG(`20260318001025`)도 이 1,655건에
+안 들어있음을 재확인**(`download_tasks`에 이 rcept의 `xbrl_zip` 행 자체가 없음) — 즉
+LG 사례는 xbrl_zip 트랙과 무관하다.
+
+### 진짜 유망한 실마리 — `xbrl_zip`과 무관한 제3의 경로(document.xml 인라인 태그)
+
+LG의 정답값은 `xbrl_zip`이 아니라 **`document.xml` 자체에 이미 박혀 있는 인라인
+`ACODE`/`ACONTEXT` 태그**에서 나왔다(추가 다운로드 불필요 — LG도 이미 갖고 있는 파일).
+`fin2/audit/face_audit.py::read_report_face_xbrl`(Track A)가 `<TE ACODE="...">` 태그를
+직접 읽어 `ifrs-full_DividendsPaidClassifiedAsFinancingActivities` fact를
+`(632,384)`(이미 괄호로 음수 표시)로 얻는다. 그런데 **production Layer 2 추출기
+(`fin2/extract/report_lines.py`, 실제로 std_v3에 적재되는 경로)는 이 태그를 전혀 안 쓴다**
+— `parser/xml/table_extractor.py` 자체 docstring에 "TE 태그: ACODE 속성 있는 데이터 셀
+(Track A 전용)"이라고 명시돼 있어, 지금은 감사기(face_audit)만 쓰고 production 추출은
+순수 텍스트/표 구조 스캔(`fin2/extract/text.py`)만 쓴다.
+
+**결론(정정판): 버그 #2의 진짜 원인은 두 갈래다.**
+1. `xbrl_zip`(R10/R14 트랙) — 원천 다운로드가 1%뿐이라 애초에 대부분 필링엔 적용 안 됨.
+   LG는 여기 해당 안 함.
+2. **`document.xml` 인라인 ACODE/ACONTEXT — 추가 다운로드 없이 이미 갖고 있는 필링이
+   많을 것으로 보이는데(정확한 커버리지 미측정), production 추출기가 이걸 아예 안
+   읽는다.** LG 사례가 여기 해당 — combine.py 패치가 아니라 `fin2/extract/report_lines.py`
+   (또는 `parser/xml/table_extractor.py`)가 CF(및 다른 statement) 셀 파싱 시 ACODE/
+   ACONTEXT가 있으면 그 부호를 권위로 삼도록 확장하는 작업. 커버리지 실측이 우선
+   과제(다음 세션 착수 시 1순위).
 
 ## 3. 지금 상태
 
@@ -77,21 +114,36 @@ XBRL에서 뽑지만 CF는 애초에 XBRL 경로를 안 씀 — R10/R14 어디�
   ("부모-자식 부호상속 누락")은 **기각** — 이 문서로 대체.
 - 버그 #2는 **미구현 상태로 남겨둠**. LG의 4건은 여전히 fail_a.
 
-## 4. 다음 선택지 (사용자 결정 필요)
+## 4. 다음 선택지 (사용자 결정 필요, 2026-08-13 후속으로 갱신)
 
-1. **CF statement XBRL 추출 신설**(정공법, R10급 별도 작업) — `report_lines_xbrl.py`가
-   CF도 BS/IS처럼 XBRL instance에서 직접 뽑도록 확장. 근본적으로 맞는 방향이지만
-   범위가 크다(현재 완전히 없는 능력을 새로 만드는 것 — 별도 계획 문서·별도 세션 권장).
-2. **좁은 임시 땜빵**: `cf.dividends_paid` 후보에 SCE(자본변동표) 값을 추가로 포함시키고,
+1. **(★가장 유망, 다음 세션 1순위 후보) `document.xml` 인라인 ACODE/ACONTEXT를 production
+   추출기가 읽도록 확장** — `fin2/extract/report_lines.py`(또는
+   `parser/xml/table_extractor.py`)가 셀 텍스트만 보지 말고, `<TE ACODE=...
+   ACONTEXT=...>` 태그가 있으면(추가 다운로드 불필요, face_audit Track A가 이미 같은
+   파일에서 읽고 있음) 그 값/부호를 권위로 삼는다. 착수 전 **커버리지 실측 필수** —
+   전체 필링 중 몇 %가 ACODE/ACONTEXT를 갖고 있는지, dividends_paid 외 다른 계정에도
+   같은 부호누락 패턴이 있는지 먼저 확인. `xbrl_zip`(1%)보다 커버리지가 넓을 가능성.
+2. **CF statement `xbrl_zip` 추출 확장**(R10/R14급 별도 작업) — 원천 다운로드가 전체의
+   1%(1,655건)뿐이라 이걸 손봐도 LG 같은 대다수 필링엔 적용 안 됨. 우선순위 낮춤.
+3. **좁은 임시 땜빵**: `cf.dividends_paid` 후보에 SCE(자본변동표) 값을 추가로 포함시키고,
    CF-텍스트값과 SCE값이 크기는 비슷한데(예: 5% 이내) 부호만 다를 때만 SCE를 우선 —
    LG류 확정 4건은 고치지만 위 1-3에서 본 위험(감사기도 같은 맹점 공유)이 여전히
    존재해 **face_audit.py 쪽도 함께 손보지 않으면 새로운 fail_a를 만들 수 있음**. 검증
    비용이 여전히 크다.
-3. **보류** — 버그 #2는 이번엔 스킵하고 버그 #3만 반영(백필 포함)한 뒤, 버그 #2는
-   원인이 재정의됐으니 별도 계획 문서를 새로 써서 다음 세션에 착수.
+4. **보류** — 버그 #2는 스킵하고 버그 #3만 반영(완료, 백필 대기 중)한 채로 두고, 별도
+   계획 문서를 새로 써서 다음 세션에 착수(위 1번 실마리부터).
 
 ## 근거
 - `docs/qa/gate_b_v3_fail_a_784_triage_2026-08-13.md` ②(원래 LG 표본 1건 원문대조)
 - 본 세션 실측: SQL JOIN 전수조사(1,219,491행/14,678행), 200건 무작위 표본
-  `read_report_face_tracked()` 재실행, LG 필링 `report_lines` 3-소스 대조,
-  DB 전체 `report_lines` CF `context_raw` 분포(XBRL 0건/13,803,204행 텍스트).
+  `read_report_face_tracked()` 재실행, LG 필링 `report_lines` 3-소스 대조.
+- 2026-08-13 후속(사용자 질문 "pdf-only 세션 XBRL과 관련 있나" 계기로 재검증) —
+  `context_raw LIKE 'xbrl%'` 필터 오류 정정: 올바른 필터로 DB 전체 재확인(BS/IS/CF
+  각 1,613건, `download_tasks.file_type='xbrl_zip'` 완료 1,655건과 정합), LG rcept
+  `xbrl_zip` 다운로드 부재 재확인, `read_report_face_xbrl`/`parser/xml/table_extractor.py`
+  코드 확인으로 ACODE/ACONTEXT가 production 추출기(`report_lines.py`)에서 안 쓰이고
+  있음을 확인. `docs/qa/pdf_only_xbrl_extraction_rate_probe_2026-08-11.md`·
+  `docs/qa/pdf_only_xbrl_recoverable_probe_2026-08-11.md`(pdf-only 세션, `xbrl_zip`
+  회수가능성 조사 — 이 문서의 ②번 항목(`xbrl_zip` 트랙)과 같은 자원을 다루지만
+  대상 모집단이 다름: pdf-only 세션은 "본문 XML 자체가 없는 필링"의 대체소스 조사,
+  본 버그는 "본문 XML은 있는데 부호가 새는" 별개 현상).

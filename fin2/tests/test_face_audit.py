@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from fin2.audit.face_audit import (  # noqa: E402
     parse_displayed, FaceLine, audit_std_row, STATUS_PASS, STATUS_FAIL, STATUS_PENDING,
     RowAudit, gate_status_for_row, GATE_PASS, GATE_FAIL_A, GATE_FAIL_B, GATE_PENDING,
+    read_report_face_xbrl, _adecimal_signals,
 )
 
 
@@ -206,6 +207,117 @@ def test_net_income_label_unmatched_no_alt_stays_pending_not_fail():
                        bs_face=[], is_face=face, cf_face=[], is_comparative=False)
     assert ra.status == STATUS_PENDING
     assert ra.n_fail == 0
+
+
+def _write_xbrl_fixture(*te_specs: tuple[str, str, str, str]) -> str:
+    """(acode, acontext, adecimal_attr_or_None, text) 목록 → 임시 DART XML 파일 경로."""
+    import tempfile
+    tes = []
+    for acode, acontext, adecimal, txt in te_specs:
+        ade_attr = f' ADECIMAL="{adecimal}"' if adecimal is not None else ""
+        tes.append(f'<TE ACODE="{acode}" ACONTEXT="{acontext}"{ade_attr}>{txt}</TE>')
+    xml = ("<DOCUMENT><BODY><TABLE><TR>" + "".join(tes) + "</TR></TABLE></BODY></DOCUMENT>")
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False, encoding="utf-8")
+    f.write(xml)
+    f.close()
+    return f.name
+
+
+# 노루페인트(00583442) 실측 구조(§8-A, 2026-08-12) 축약: 무차원 합계 fact 만 ADECIMAL=0으로
+# 잘못 태깅, 차원분해(카테고리) 형제는 정확히 -3(천원).
+_HOME_CTX = ("CFY2025eFY_ifrs-full_ConsolidatedAndSeparateFinancialStatementsAxis"
+             "_ifrs-full_ConsolidatedMember")
+_DIM_CTX = (_HOME_CTX + "_ifrs-full_CategoriesOfFinancialLiabilitiesAxis"
+            "_ifrs-full_FinancialLiabilitiesAtAmortisedCostCategoryMember")
+_DIM_CTX2 = (_HOME_CTX + "_ifrs-full_CategoriesOfFinancialLiabilitiesAxis"
+             "_ifrs-full_FinancialLiabilitiesAtFairValueThroughProfitOrLossCategoryMember")
+
+
+def test_component_sum_identity_override_fixes_home_fact():
+    """§8-A: 무차원 홈 fact 의 잘못된 ADECIMAL=0 을, 같은 축의 차원분해 멤버 2개를 각자
+    ADECIMAL 로 합산한 값이 실제로 그 합계와 일치할 때만(항등식) override(-3)."""
+    path = _write_xbrl_fixture(
+        ("dart_ShortTermTradePayables", _HOME_CTX, "0", "111,249,978"),
+        ("dart_ShortTermTradePayables", _DIM_CTX, "-3", "111,249,978"),   # amortised cost
+        ("dart_ShortTermTradePayables", _DIM_CTX2, "-3", "0"),            # fair value(0)
+    )
+    lines = read_report_face_xbrl(path)
+    matches = [l for l in lines if l.canonical == "bs.trade_payables"]
+    assert len(matches) == 1, matches
+    assert matches[0].adecimal == -3, matches[0]
+    assert matches[0].amount_won == 111249978000, matches[0]
+
+
+def test_single_dimensional_member_is_insufficient_evidence():
+    """구성요소가 1개뿐이면(합산 항등식으로 검증 불가) override 보류 — 짐작 금지."""
+    path = _write_xbrl_fixture(
+        ("dart_ShortTermTradePayables", _HOME_CTX, "0", "111,249,978"),
+        ("dart_ShortTermTradePayables", _DIM_CTX, "-3", "111,249,978"),
+    )
+    lines = read_report_face_xbrl(path)
+    matches = [l for l in lines if l.canonical == "bs.trade_payables"]
+    assert len(matches) == 1, matches
+    assert matches[0].adecimal == 0, matches[0]   # 증거 부족 → 원래 값 그대로
+
+
+def test_component_sum_mismatch_blocks_override():
+    """구성요소가 2개 있어도 합이 합계와 안 맞으면(=진짜 구성요소가 아님) override 보류."""
+    path = _write_xbrl_fixture(
+        ("dart_ShortTermTradePayables", _HOME_CTX, "0", "111,249,978"),
+        ("dart_ShortTermTradePayables", _DIM_CTX, "-3", "500"),
+        ("dart_ShortTermTradePayables", _DIM_CTX2, "-3", "700"),
+    )
+    lines = read_report_face_xbrl(path)
+    matches = [l for l in lines if l.canonical == "bs.trade_payables"]
+    assert len(matches) == 1, matches
+    assert matches[0].adecimal == 0, matches[0]
+
+
+def test_adecimal_signals_verified_map_requires_component_sum_identity():
+    from lxml import etree
+    xml = (f'<DOCUMENT><BODY><TABLE><TR>'
+           f'<TE ACODE="dart_x" ACONTEXT="{_HOME_CTX}" ADECIMAL="0">1000</TE>'
+           f'<TE ACODE="dart_x" ACONTEXT="{_DIM_CTX}" ADECIMAL="-3">600</TE>'
+           f'<TE ACODE="dart_x" ACONTEXT="{_DIM_CTX2}" ADECIMAL="-3">400</TE>'
+           f'</TR></TABLE></BODY></DOCUMENT>')
+    root = etree.fromstring(xml)
+    verified, ambiguous = _adecimal_signals(root)
+    assert verified == {("dart_x", "consolidated", 0, False): -3}
+    assert ambiguous == set()
+
+
+def test_duplicate_home_fact_with_conflicting_values_blocks_override():
+    """★회귀재현 #1(2026-08-12, 00583442 cash) — 같은 concept 가 본문표(전체정밀도)와 주석표
+    (천원 반올림, ADECIMAL 오태깅)에 무차원으로 중복 등장하면, dedup 이 이미 정답(본문표,
+    ADECIMAL=0·전체정밀도)을 골랐어도 override 를 절대 적용하지 않는다."""
+    path = _write_xbrl_fixture(
+        # 본문 재무상태표 표 — 이미 정답(전체 정밀도, ADECIMAL=0 이 맞음).
+        ("ifrs-full_CashAndCashEquivalents", _HOME_CTX, "0", "111,779,270,286"),
+        # 위험관리 주석표 — 같은 acode+context 로 재등장, 천원 반올림(ADECIMAL 오태깅=0).
+        ("ifrs-full_CashAndCashEquivalents", _HOME_CTX, "0", "111,779,270"),
+        ("ifrs-full_CashAndCashEquivalents", _DIM_CTX, "-3", "111,779,270"),
+        ("ifrs-full_CashAndCashEquivalents", _DIM_CTX2, "-3", "0"),
+    )
+    lines = read_report_face_xbrl(path)
+    matches = [l for l in lines if l.canonical == "bs.cash"]
+    assert len(matches) == 1, matches
+    # dedup 은 문서상 첫 occurrence(본문표, 이미 정답)를 고르고, override 는 적용되지 않는다.
+    assert matches[0].amount_won == 111779270286, matches[0]
+
+
+def test_unrelated_reused_tag_with_conflicting_duplicate_member_blocks_override():
+    """★회귀재현 #2(2026-08-12, 00146861 cash) — 무차원 fact 는 유일(정답)했지만, 같은
+    축·같은 멤버조합이 서로 다른 값으로 중복 등장하는 "형제"는 사실 합계의 구성요소가
+    아니라 무관한 다른 주석의 재태깅이었다 — 그 멤버는 폐기하고 override 하지 않는다."""
+    path = _write_xbrl_fixture(
+        ("ifrs-full_CashAndCashEquivalents", _HOME_CTX, "0", "42,037,894,798"),   # 정답, 유일
+        ("ifrs-full_CashAndCashEquivalents", _DIM_CTX, "-3", "42,037,895"),
+        ("ifrs-full_CashAndCashEquivalents", _DIM_CTX, "-3", "-42,037,895"),   # 같은 멤버조합, 값 충돌
+    )
+    lines = read_report_face_xbrl(path)
+    matches = [l for l in lines if l.canonical == "bs.cash"]
+    assert len(matches) == 1, matches
+    assert matches[0].amount_won == 42037894798, matches[0]
 
 
 def _run():

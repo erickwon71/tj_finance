@@ -1,15 +1,22 @@
 """
-Gate B 생산 감사 러너 — std_v2 행을 원본 보고서 face 표와 대조해 face_audit 대장 적재.
+Gate B 생산 감사 러너 — std_v2/v3 행을 원본 보고서 face 표와 대조해 face_audit 대장 적재.
 
 각 (corp,fy,fp,basis) 행을 audit_std_row 로 판정 → face_audit upsert.
 status: pass(promote 가능) / fail(값불일치, 차단) / pending(범위밖).
 
+--source v2(디폴트)/v3 로 감사 대상 std 체인을 고른다(2026-08-11,
+docs/plans/std_v3_native_gate_b_plan_2026-08-11.md Phase 1). face_audit PK 에 source_version
+이 있어 같은 (corp,fy,fp,basis) 키를 v2/v3 감사결과가 각자 별도 행으로 병행 보관 — 서로
+덮어쓰지 않는다. v3 는 is_stub/is_discrete 개념도 comparative_fallback 개념도 없어(Phase 0
+실측 확인) 그 필터/분기는 v2 전용으로 남긴다.
+
 대량 = XML 파일 다수 open → **장시간**(사용자 실행 권장). 소표본은 --corps/--limit/--sample.
 
 usage:
-  python scripts/gateb_audit.py --corps 00000000:00200000   # corp_code 범위
-  python scripts/gateb_audit.py --sample 50                 # 무작위 50사
-  python scripts/gateb_audit.py --corp 00162416             # 단일
+  python scripts/gateb_audit.py --corps 00000000:00200000   # corp_code 범위(v2)
+  python scripts/gateb_audit.py --sample 50                 # 무작위 50사(v2)
+  python scripts/gateb_audit.py --corp 00162416             # 단일(v2)
+  python scripts/gateb_audit.py --source v3 --sample 50     # std_v3 감사
   옵션: --fy-min 2015 --recheck --no-commit
 """
 from __future__ import annotations
@@ -35,20 +42,35 @@ from fin2.audit.line_audit import reconcile_report_lines, reconcile_report_lines
 READER_VERSION = "trackAB-v2"
 _DETAIL_CAP = 200   # JSONB 상세 라인 상한(대량 보고서 방어)
 
-# 표준필드 → statement 의 source rcept 컬럼(track 조회용)
-_FIELD_RCEPT_COL = {"bs.": "bs_rcept", "is.": "is_rcept", "cf.": "cf_rcept"}
+# 표준필드 → statement('BS'/'IS'/'CF', source-agnostic dict 키. §_row_rcepts 참고)
+_FIELD_STMT = {"bs.": "BS", "is.": "IS", "cf.": "CF"}
 
 
-def _field_track(field: str, db_row: dict, track_of: dict) -> str | None:
-    """실패필드 → canonical 접두 → statement source rcept → 그 rcept 를 읽은 track('A'/'B')."""
+def _field_track(field: str, rc: dict, track_of: dict) -> str | None:
+    """실패필드 → canonical 접두 → statement → 그 rcept 를 읽은 track('A'/'B')."""
     canon = STD_FIELD_CANONICAL.get(field, "")
-    col = _FIELD_RCEPT_COL.get(canon[:3])
-    return track_of.get(db_row.get(col)) if col else None
+    stmt = _FIELD_STMT.get(canon[:3])
+    return track_of.get(rc.get(stmt)) if stmt else None
+
+
+def _row_rcepts(d: dict, source: str) -> dict:
+    """std 행(dict) → {"BS":rcept,"IS":rcept,"CF":rcept}, source(v2/v3) 무관 공통 모양.
+
+    v2 는 평면 컬럼(bs_rcept/is_rcept/cf_rcept), v3 는 source_rcepts JSONB
+    ({"BS":rcept,...}) — Phase 0 실측(2026-08-11) 으로 NULL·3키 동시결측 0건 확인,
+    개별 키 결측은 정상 시나리오(그 statement 가 그 filing 에 없음)이라 .get() 으로 충분.
+    """
+    if source == "v3":
+        return dict(d.get("source_rcepts") or {})
+    return {"BS": d.get("bs_rcept"), "IS": d.get("is_rcept"), "CF": d.get("cf_rcept")}
 
 
 def ensure_table():
-    Base.metadata.create_all(
-        engine, tables=[FaceAudit.__table__, FaceLineAudit.__table__], checkfirst=True)
+    # init_db() = create_all(전 테이블) + 대기 마이그레이션 적용(collector/db.py::_run_migrations).
+    # face_audit 의 source_version 컬럼(2026_08_face_audit_source_version)처럼 스키마 변경이
+    # create_all 만으론 안 걸리는 경우가 있어 이걸로 대체(기존 create_all 단독 호출보다 상위집합).
+    from collector.db import init_db
+    init_db()
 
 
 def file_path_map(session, rcepts):
@@ -74,11 +96,16 @@ def select_corps(session, args):
     if args.corp_file:
         corps = [ln.strip() for ln in Path(args.corp_file).read_text().splitlines() if ln.strip()]
         return sorted(set(corps))
-    q = "SELECT DISTINCT corp_code FROM std_financials_v2 WHERE version=1"
+    if args.source == "v3":
+        q = "SELECT DISTINCT corp_code FROM std_financials_v3"
+        where = " WHERE"
+    else:
+        q = "SELECT DISTINCT corp_code FROM std_financials_v2 WHERE version=1"
+        where = " AND"
     params = {}
     if args.corps:
         lo, hi = args.corps.split(":")
-        q += " AND corp_code >= :lo AND corp_code < :hi"
+        q += f"{where} corp_code >= :lo AND corp_code < :hi"
         params = {"lo": lo, "hi": hi}
     q += " ORDER BY corp_code"
     corps = [r.corp_code for r in session.execute(text(q), params)]
@@ -89,30 +116,40 @@ def select_corps(session, args):
 
 
 def audit_corp(session, corp, args, agg):
-    rows = session.execute(text("""
-        SELECT * FROM std_financials_v2
-        WHERE corp_code=:c AND version=1 AND NOT COALESCE(is_stub,false)
-          AND NOT COALESCE(is_discrete,false)
-          AND fiscal_year >= :fymin AND fiscal_year <= :fymax
-        ORDER BY fiscal_year DESC
-    """), {"c": corp, "fymin": args.fy_min, "fymax": args.fy_max}).fetchall()
+    if args.source == "v3":
+        # v3엔 version/is_stub/is_discrete 컬럼 자체가 없다(Phase 0 확인, fin2/layer3/build.py:41).
+        # is_discrete 는 v2 뷰도 원래 걸러내던 파생행이라 필터 부재가 손실이 아니고,
+        # is_stub 는 v2 기준 0.09%뿐이라 무시 가능 — 별도 필터 없이 std_v3 전체를 감사한다.
+        rows = session.execute(text("""
+            SELECT * FROM std_financials_v3
+            WHERE corp_code=:c AND fiscal_year >= :fymin AND fiscal_year <= :fymax
+            ORDER BY fiscal_year DESC
+        """), {"c": corp, "fymin": args.fy_min, "fymax": args.fy_max}).fetchall()
+    else:
+        rows = session.execute(text("""
+            SELECT * FROM std_financials_v2
+            WHERE corp_code=:c AND version=1 AND NOT COALESCE(is_stub,false)
+              AND NOT COALESCE(is_discrete,false)
+              AND fiscal_year >= :fymin AND fiscal_year <= :fymax
+            ORDER BY fiscal_year DESC
+        """), {"c": corp, "fymin": args.fy_min, "fymax": args.fy_max}).fetchall()
     if not rows:
         return
 
     if not args.recheck:
         done = {(r.fiscal_year, r.fiscal_period, r.statement_type) for r in session.execute(text("""
             SELECT fiscal_year, fiscal_period, statement_type FROM face_audit
-            WHERE corp_code=:c AND NOT COALESCE(is_stub,false)
-        """), {"c": corp})}
+            WHERE corp_code=:c AND NOT COALESCE(is_stub,false) AND source_version=:sv
+        """), {"c": corp, "sv": args.source})}
     else:
         done = set()
 
     # 이 corp 의 모든 source rcept 파일을 1회씩 읽어 캐시
     rcepts = set()
     for r in rows:
-        for k in ("bs_rcept", "is_rcept", "cf_rcept"):
-            if getattr(r, k):
-                rcepts.add(getattr(r, k))
+        for rc in _row_rcepts(dict(r._mapping), args.source).values():
+            if rc:
+                rcepts.add(rc)
     fpmap = file_path_map(session, rcepts)
     face_cache: dict[str, list] = {}
     face_cache_all: dict[str, list] = {}   # all_cols(비교행 검증용)
@@ -141,18 +178,24 @@ def audit_corp(session, corp, args, agg):
         if key in done:
             continue
         basis = d["statement_type"]
-        rules = d.get("applied_rules") or []
-        is_comp = "comparative_fallback" in rules
+        rc = _row_rcepts(d, args.source)
+        if args.source == "v3":
+            # v3(fin2/layer3/combine.py)엔 comparative-column-fallback 개념이 없다(grep 0건,
+            # Phase 0 §2-4 확정) — 값이 있으면 항상 그 filing 자신의 col0. 항상 엄격 대조.
+            is_comp = False
+        else:
+            rules = d.get("applied_rules") or []
+            is_comp = "comparative_fallback" in rules
         # 비교행은 값이 후속보고서 전기/전전기 컬럼 → all_cols face 로 검증.
         ra = audit_std_row(
             d, basis=basis,
-            bs_face=face_of(d.get("bs_rcept"), all_cols=is_comp),
-            is_face=face_of(d.get("is_rcept"), all_cols=is_comp),
-            cf_face=face_of(d.get("cf_rcept"), all_cols=is_comp),
+            bs_face=face_of(rc.get("BS"), all_cols=is_comp),
+            is_face=face_of(rc.get("IS"), all_cols=is_comp),
+            cf_face=face_of(rc.get("CF"), all_cols=is_comp),
             is_comparative=is_comp,
         )
         # promote gate_status: 실패필드 track('A'/'B')으로 fail_a(확정버그)/fail_b(휴리스틱) 분리
-        fail_tracks = {f: _field_track(f, d, track_of) for f in ra.fail_fields}
+        fail_tracks = {f: _field_track(f, rc, track_of) for f in ra.fail_fields}
         gate = gate_status_for_row(ra, fail_tracks)
         agg["status"][ra.status] += 1
         agg["gate"][gate] += 1
@@ -163,7 +206,8 @@ def audit_corp(session, corp, args, agg):
         batch.append({
             "corp_code": corp, "fiscal_year": d["fiscal_year"],
             "fiscal_period": d["fiscal_period"], "statement_type": basis,
-            "is_stub": False, "status": ra.status, "gate_status": gate,
+            "is_stub": False, "source_version": args.source,
+            "status": ra.status, "gate_status": gate,
             "n_pass": ra.n_pass, "n_fail": ra.n_fail, "n_pending": ra.n_pending,
             "fail_fields": ra.fail_fields or None,
             "fail_detail": [
@@ -179,10 +223,10 @@ def audit_corp(session, corp, args, agg):
         stmt = insert(FaceAudit).values(batch)
         upd = {c.name: stmt.excluded[c.name] for c in FaceAudit.__table__.columns
                if c.name not in ("corp_code", "fiscal_year", "fiscal_period",
-                                 "statement_type", "is_stub")}
+                                 "statement_type", "is_stub", "source_version")}
         stmt = stmt.on_conflict_do_update(
             index_elements=["corp_code", "fiscal_year", "fiscal_period",
-                            "statement_type", "is_stub"], set_=upd)
+                            "statement_type", "is_stub", "source_version"], set_=upd)
         session.execute(stmt)
         session.commit()
 
@@ -281,6 +325,8 @@ def audit_lines(session, corp, rcepts, face_of, track_of, args, agg):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--source", choices=["v2", "v3"], default="v2",
+                    help="감사할 std 체인. v3 는 docs/plans/std_v3_native_gate_b_plan_2026-08-11.md")
     ap.add_argument("--corp")
     ap.add_argument("--corp-file", dest="corp_file", help="corp_code 목록 파일(라인당 1개)")
     ap.add_argument("--corps", help="corp_code 범위 LO:HI")
@@ -300,7 +346,7 @@ def main():
            "fail_rows": [], "errors": 0}
     with get_session() as session:
         corps = select_corps(session, args)
-        print(f"대상 corp {len(corps)}사, fy>={args.fy_min}")
+        print(f"대상 corp {len(corps)}사, source={args.source}, fy>={args.fy_min}")
         for i, c in enumerate(corps, 1):
             try:
                 audit_corp(session, c, args, agg)

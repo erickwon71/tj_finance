@@ -5,7 +5,12 @@ Gate B — 보고서 face 표 독립 재추출 + DB(std_v2) 100% 일치 감사.
   - **표준화 파이프라인과 독립**: reconcile(source 선택)·standardize(규칙) 를 거치지 않고
     원본 보고서의 face 표를 직접 다시 읽는다 → 같은 버그를 양쪽이 공유하지 않음.
   - **보고서 표시단위 정확 일치**: round(DB_amount_won × 10^ADECIMAL) == 보고서 표시값.
-    Track A(XBRL) 는 ADECIMAL 권위라 won-공간에서 동치 비교가 정확하다.
+    Track A(XBRL) 는 ADECIMAL 권위라 won-공간에서 동치 비교가 정확하다. 단, 무차원(홈/합계)
+    fact 가 문서에 **유일하게** 등장하고, 그와 어긋나는 ADECIMAL 을 가진 차원분해 fact 들을
+    각자의 ADECIMAL 로 합산한 값이 **실제로 그 합계와 산술적으로 일치할 때만**(항등식,
+    §8-A `_adecimal_signals` 참고) 그 ADECIMAL 로 override 한다 — "권위"는 파일 전체가
+    아니라 **검증된 합산 항등식**이 이긴다("형제 태그가 서로 일치"만으로는 부족했다 — 회귀
+    이력은 `_adecimal_signals` docstring 참고).
   - 감사 대상은 std_v2 의 **최종 소비값**(시각화에 쓰는 표준 계정). 이 값이 그 statement 의
     source 보고서 face 표에 **실제로 그 계정 부류로 등장**하는지 검증한다.
 
@@ -157,6 +162,106 @@ def _cell_text(te) -> str:
     return raw
 
 
+def _parse_adecimal(te) -> int | None:
+    try:
+        return int(te.get("ADECIMAL", ""))
+    except (ValueError, TypeError):
+        return None
+
+
+def _amount_won(displayed: int, adecimal: int | None) -> int:
+    if adecimal is not None and adecimal < 0:
+        return displayed * (10 ** (-adecimal))
+    return displayed
+
+
+def _adecimal_signals(root) -> tuple[dict[tuple, int], set[tuple]]:
+    """(acode, basis, col_index, is_cumulative) 키 단위로 두 신호를 한 번의 순회로 모은다:
+
+      1. verified_adecimal — 차원분해(멤버) fact 들이 **같은 축(axis) 아래 실제로 그 무차원
+         합계에 더해져서 일치하는지(항등식)** 검증된 ADECIMAL 만 담는다.
+      2. ambiguous_home — 무차원(홈) fact 가 **같은 키로 2개 이상, 서로 다른 값으로** 등장한
+         키의 집합(override 를 아예 하지 말아야 할 키 — 아래 참고).
+
+    ★2026-08-12(§8-A, docs/plans/std_v3_native_gate_b_plan_2026-08-11.md Phase3-부록) —
+    노루페인트(00583442) 등 실측(trade_payables·inventory)으로 확정된 DART 렌더러 결함:
+    같은 acode 의 **무차원(홈/합계) fact** 가 ADECIMAL=0(원 단위)으로 잘못 태깅되는 반면,
+    바로 옆 **차원분해**(카테고리 등 멤버) fact 들은 정확한 배율(예: -3=천원)을 갖는다 —
+    표시 리터럴은 둘 다 같고 배율 태그만 다르다.
+
+    ★★2026-08-12 회귀 #1+수정 — "형제가 ADECIMAL 에 만장일치"만으로 신뢰했던 최초 구현은
+    00583442 cash 를 111,779,270,286원(정답)에서 ×1000 으로 **망가뜨렸다**. 원인: 같은
+    acode+context 가 문서 안에서 본문 재무상태표 표(전체정밀도)와 주석표(천원 반올림, 오태깅)
+    에 각각 **무차원**으로 중복 등장 — dedup 은 정답(본문표)을 골랐는데 형제 맵은 acode 만
+    보고 주석표 쪽 형제를 끌어와 덮어썼다. → 무차원 fact 가 같은 키로 서로 다른 값으로
+    2번 이상 나오면(ambiguous_home) override 후보에서 제외.
+
+    ★★★2026-08-12 회귀 #2+재수정 — ambiguous_home 가드를 더해도 00146861 cash 등에서
+    **또** 망가졌다: 이번엔 무차원 fact 는 유일(문서에 1번뿐)했지만, "차원분해 형제"라고
+    믿은 fact 들이 사실은 이 합계의 **구성요소가 아니라** 전혀 무관한 다른 주석(예: 공정가치
+    서열 주석이 우연히 같은 acode+ACONTEXT 접두를 재사용)이었다 — "형제 ADECIMAL 만장일치"
+    는 그 fact 들이 진짜 합계-구성요소 관계인지는 전혀 증명하지 못한다. **그래서 신뢰
+    기준을 "태그 일치"에서 "산술 항등식"으로 바꾼다**: 같은 축(axis) 이름 조합을 공유하는
+    차원분해 fact 들을 모아 **각자 자신의 ADECIMAL 로 원화 환산해 합산**했을 때, 그 합이
+    무차원 합계를 **어떤 후보 ADECIMAL 로 환산한 값과 실제로 일치**할 때만 그 ADECIMAL 을
+    신뢰한다(허용오차: 그 자리수 1단위, 발행사 반올림 관용). 구성요소가 2개 미만이면(=진짜
+    분해가 아니라 단일 재태깅일 수 있음) 증거 부족으로 보류. 같은 (축조합,멤버조합) 이
+    서로 다른 값으로 중복 등장하면(=00146861 cash 처럼 무관한 fact 재사용 신호) 그 멤버는
+    폐기한다 — 짐작 금지, [[feedback-verify-against-source]].
+    """
+    dims_by_key: dict[tuple, dict[tuple, set]] = {}
+    home_groups: dict[tuple, set[tuple]] = {}
+    for te in root.findall(".//TE[@ACODE]"):
+        acode = te.get("ACODE", "")
+        if not acode.startswith(_XBRL_PREFIXES) or len(acode) > 255:
+            continue
+        ctx = parse_acontext(te.get("ACONTEXT", ""))
+        if not ctx.parsed:
+            continue
+        key = (acode, ctx.basis, ctx.col_index, ctx.is_cumulative)
+        displayed = parse_displayed(_cell_text(te))
+        if displayed is None:
+            continue
+        if ctx.is_dimensional:
+            edims = tuple(ctx.extra_dims)
+            dims_by_key.setdefault(key, {}).setdefault(edims, set()).add(
+                (displayed, _parse_adecimal(te)))
+        else:
+            home_groups.setdefault(key, set()).add((displayed, _parse_adecimal(te)))
+
+    ambiguous_home = {k for k, v in home_groups.items() if len(v) > 1}
+
+    verified_adecimal: dict[tuple, int] = {}
+    for key, home_vals in home_groups.items():
+        if key in ambiguous_home:
+            continue
+        (home_disp, home_ade), = home_vals
+        by_axis_sig: dict[tuple, list[tuple[int, int | None]]] = {}
+        for edims, vals in dims_by_key.get(key, {}).items():
+            if len(vals) != 1:
+                continue   # 같은 멤버조합이 서로 다른 값으로 중복 등장 → 이 멤버 자체가 불신
+            axis_sig = tuple(a for a, _m in edims)
+            by_axis_sig.setdefault(axis_sig, []).append(next(iter(vals)))
+        for member_vals in by_axis_sig.values():
+            if len(member_vals) < 2:
+                continue   # 구성요소 2개 미만 = 합산 항등식으로 검증할 증거 부족
+            adecimals = {a for _d, a in member_vals}
+            if any(a is None for a in adecimals):
+                continue
+            total_won = sum(_amount_won(d, a) for d, a in member_vals)
+            for cand in adecimals:
+                if cand == home_ade:
+                    continue
+                cand_won = _amount_won(home_disp, cand)
+                tol = max(1, 10 ** max(0, -cand))
+                if abs(cand_won - total_won) <= tol:
+                    verified_adecimal[key] = cand
+                    break
+            if key in verified_adecimal:
+                break
+    return verified_adecimal, ambiguous_home
+
+
 def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False) -> list[FaceLine]:
     """
     Track A(XBRL) 보고서의 face 라인을 독립 재추출. 기본 col_index=0(당기)·비차원만.
@@ -164,10 +269,27 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False) -> list
     all_cols=True: col_index 0/1/2(당기·전기·전전기) 모두 포함 — 비교컬럼 폴백 행 검증용
     (그 행 값은 후속 보고서의 전기/전전기 컬럼에 있으므로 col0 만으론 대조 불가).
     Track A 가 아니면(=ifrs/dart ACODE+ACONTEXT 셀 없음) 빈 리스트.
+
+    ADECIMAL 은 원칙상 권위(모듈 docstring)지만, **무차원 합계 fact 가 문서에 유일하게(=같은
+    값으로만) 등장하고, 그 값과 어긋나는 ADECIMAL 을 가진 차원분해 fact 들이 실제로 그
+    합계에 산술적으로 더해져 일치할 때만**(항등식 검증, `_adecimal_signals`) 그 ADECIMAL 로
+    override 한다 — 태그가 서로 "일치"하는 것만으론 부족하다(회귀 #2, 함수 docstring 참고).
+    무차원 fact 가 같은 키로 **서로 다른 값**으로 여러 번 나오면(본문표/주석표 중복 재사용
+    신호, 회귀 #1) 그 키는 애초에 후보에서 제외한다. 그래도 남는 빈 ADECIMAL(진짜 미태깅)만
+    문서 전체 기본단위(R4-1, `document_default_unit`)로 최후 보충한다.
     """
     root = _parse_xml_file(Path(file_path))
     if root is None:
         return []
+
+    verified_adecimal, _ambiguous_home = _adecimal_signals(root)
+    _doc_default_cache: list[tuple] = []   # lazy, at most 1 회 계산(못 찾을 파일에서 재스캔 방지)
+
+    def _doc_default() -> tuple:
+        if not _doc_default_cache:
+            from fin2.extract.text import document_default_unit
+            _doc_default_cache.append(document_default_unit(root))
+        return _doc_default_cache[0]
 
     dedup: dict[tuple, FaceLine] = {}
     for te in root.findall(".//TE[@ACODE]"):
@@ -186,10 +308,15 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False) -> list
         displayed = parse_displayed(text)
         if displayed is None:
             continue
-        try:
-            adecimal = int(te.get("ADECIMAL", ""))
-        except (ValueError, TypeError):
-            adecimal = None
+        adecimal = _parse_adecimal(te)
+        key = (acode, ctx.basis, ctx.col_index, ctx.is_cumulative)
+        verified = verified_adecimal.get(key)   # already excludes ambiguous_home keys
+        if verified is not None and verified != adecimal:
+            adecimal = verified
+        elif adecimal is None:
+            unit, _decl = _doc_default()
+            if unit is not None:
+                adecimal = _adecimal_from_unit(unit)
         canonical = map_acode(acode)
         stmt = _statement_of(canonical)
         if stmt is None and ctx.period_kind == "instant":

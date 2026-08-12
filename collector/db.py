@@ -889,6 +889,25 @@ def _run_migrations() -> None:
             END IF;
         END $$
         """),
+
+        ("2026_08_face_audit_source_version",
+         # 2026-08-11: docs/plans/std_v3_native_gate_b_plan_2026-08-11.md Phase 1 — face_audit
+         # 이 std_v2 전용이라 v2/v3 병행 감사를 못 함(PK 에 버전 구분 없음). source_version
+         # 컬럼을 PK 에 추가해 같은 (corp,fy,fp,basis) 키를 v2 감사결과·v3 감사결과가 각자
+         # 별도 행으로 병행 보관하게 한다(나중 실행이 먼저 것을 덮어쓰지 않도록). 기존
+         # 271,695행은 전부 DEFAULT 'v2'로 채워짐(과거 gateb_audit.py 는 std_v2만 감사했으므로
+         # 무손실 백필). standard_financials 뷰의 JOIN 조건 갱신은 별도 Phase(Phase 4).
+         """
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name='face_audit' AND column_name='source_version') THEN
+                ALTER TABLE face_audit ADD COLUMN source_version VARCHAR(2) NOT NULL DEFAULT 'v2';
+                ALTER TABLE face_audit DROP CONSTRAINT face_audit_pkey;
+                ALTER TABLE face_audit ADD CONSTRAINT face_audit_pkey PRIMARY KEY
+                    (corp_code, fiscal_year, fiscal_period, statement_type, is_stub, source_version);
+            END IF;
+        END $$
+        """),
     ]
 
     with engine.begin() as conn:

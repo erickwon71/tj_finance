@@ -1110,6 +1110,10 @@ class FaceAudit(Base):
     fiscal_period  = Column(String(5),    primary_key=True)
     statement_type = Column(String(12),   primary_key=True)   # consolidated/separate (=basis)
     is_stub        = Column(Boolean,      primary_key=True, default=False)
+    source_version = Column(String(2),    primary_key=True, default="v2",
+                             comment="어느 std 체인 값을 감사했는지: v2/v3(2026-08-11, "
+                                     "v3-native Gate B). v2/v3 는 같은 (corp,fy,fp,basis) 키에서 "
+                                     "값이 갈릴 수 있어 병행 보관 — std_v3_native_gate_b_plan 참고.")
 
     status         = Column(String(8),    nullable=False, comment="pass/fail/pending")
     gate_status    = Column(String(8),    nullable=True,  comment="promote 게이트: pass/fail_a/fail_b/pending")

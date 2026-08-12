@@ -97,6 +97,7 @@
 - [★layer2_notes_transcription_2026-07-25](layer2_notes_transcription_2026-07-25.md) — **주석(note) 전반 전사**(D&A·R&D 등 파생계정 소스). `_emit_note_lines` 활성화+백필, 파편 note추출기 흡수. 볼륨(주석=표96%) 관건. **swap 선행**
 - [docs/PARSING_RULES.md](../PARSING_RULES.md) — **파싱 규칙 단일 진입점(2026-08-01 신설)**. R0(지배 원칙: 있으면 파싱·없으면 넘어감, 거짓부재 금지)~R9 + 원문 XML 함정 15종. 계층2 파서 신설·수정 전 필독. 배경 = [handoff_biz_catalog_r0_2026-08-01](../qa/handoff_biz_catalog_r0_2026-08-01.md)(병행 트랙, §0 참고) — 그 세션에서 확립된 원칙이나 R0 자체는 계층2 전반에 적용
 - [★pre2015_layer2_backfill_plan_2026-08-10](pre2015_layer2_backfill_plan_2026-08-10.md) — **pre-2015 2차 패스 — Phase 1~6 전부 완료(2026-08-11)**. XML 79,283건·활성 1,551개사 스코프, 신규 모듈(`docs/PARSING_RULES.md` R13) + 전량백필 81,660건(err0) + 데일리 배선(`FY_MIN` 1999로 하향) + 문서화. 잔여 = Phase7(std_v3 백필, 별도 승인). 실행 체크리스트 = [pre2015_layer2_backfill_todo_2026-08-10](pre2015_layer2_backfill_todo_2026-08-10.md)(Phase1~6 전부 ☑)
+- [★std_v3_native_gate_b_plan_2026-08-11](std_v3_native_gate_b_plan_2026-08-11.md) — **§7 후속 1번, 계획 초안(실행 대기)**. `face_audit`이 std_v2 전용 하드코딩이라 std_v3 행의 `gate_b_status`가 키 조인으로 v2 감사결과를 빌려쓸 뿐 v3 값 자체를 감사하지 않음(pass 표시 v3 행의 9.5%가 실제론 v2와 값이 다름). `source_version` 컬럼 신설 등 결정 지점 정리.
 
 ### 계층3 — 취합 std_v3
 - [★financial_sector_revenue_standards](financial_sector_revenue_standards.md) — **금융섹터 revenue 표준 단일 출처**(증권=순영업수익 NET·보험/은행=gross·한국금융지주=NULL·잔여·회귀). 섹터별 census 결정 누적
@@ -385,6 +386,48 @@
 > **다음 세션 시작점 = 마스터허브 §7 후속 트랙 나머지**(v3-native 품질게이트로 face_audit
 > v2 의존 제거 → 그 후에야 std_v2 완전 폐기 가능 · 3차 PDF-only 패스 · 야간 잡 재설치 등,
 > 우선순위는 다음 세션에 사용자와 결정).
+>
+> **2026-08-11 갱신(같은 날 세 번째) — §7 후속 1번(v3-native 품질게이트) 조사+계획서 작성.**
+> "v2 왜 못 지우나" 질문에서 착수: 원인 확정 — `scripts/gateb_audit.py`(Gate B 감사기, `face_audit`
+> 대장을 채우는 유일한 경로)가 `std_financials_v2` 전용으로 하드코딩돼 있고, `standard_financials`
+> 뷰는 std_v3 행에도 `gate_b_status`를 **키 조인으로 v2 감사결과를 빌려주는 것**뿐임을 코드+DB
+> 실측으로 확정(현재 "pass" 표시 v3 행 243,684건 중 22,935건(9.5%)이 `total_assets` 값 자체는
+> v2와 달라 실제로 대조된 적이 없음). 감사 판정 엔진(`fin2/audit/face_audit.py`)은 dict 기반이라
+> 재사용 가능 — 문제는 러너 배선과 `face_audit` PK에 버전 구분이 없어 v2/v3 병행 감사 시 서로
+> 덮어쓰는 것(신규 `source_version` 컬럼 필요). 설계문서 =
+> [`std_v3_native_gate_b_plan_2026-08-11.md`](std_v3_native_gate_b_plan_2026-08-11.md).
+> **계획 초안만 완료, 실행요청 대기**(정책상 자동 실행 금지) — Phase 0(구조 확인)부터 사용자
+> 승인 필요.
+>
+> **2026-08-11 갱신(같은 날 네 번째, 세션 마무리) — Phase 0~2 전부 완료, Phase 3(전량 실행)은
+> 사용자 터미널에서 진행 중.** Phase 0(구조확인: is_stub/is_discrete·source_rcepts 결측
+> 둘 다 걸리는 것 없음) → Phase 1(`face_audit.source_version` 마이그레이션 적용+
+> `gateb_audit.py --source v3` 구현, git 무회귀 확인) → Phase 2(원문대조: 22,935건 중
+> both_present_differ 11,179건에서 6표본 검증 — **6건 전부 v3가 동등 이상**, 3건은 std_v2
+> "comparative bleed" 결함 재확인, 2건은 v3의 최신정정우선 정본선택이 더 정확, 1건은 v3가
+> 더 정밀; 부수발견으로 v3 자체의 진짜 라벨매핑 버그 1건도 신규 확정 — trade_payables가
+> "장기매입채무및기타채무"에 오매칭). 상세 = [`std_v3_native_gate_b_plan_2026-08-11.md`](std_v3_native_gate_b_plan_2026-08-11.md).
+> Phase 3(std_v3 전체 297,429행 감사)를 이 세션이 백그라운드로 시도했으나 47분·97개사
+> 진행 후 환경에 의해 강제종료(데이터 손상 없음, 멱등 재개 가능 확인) — 이후 사용자가
+> 본인 터미널에서 직접 실행 중(`gateb_audit.py --source v3 --fy-min 1999 --no-line-audit`,
+> 진행속도 기준 완료까지 약 15~20시간 예상). **코드 미커밋**(`collector/db.py`·
+> `collector/models.py`·`scripts/gateb_audit.py`·계획서, DB엔 마이그레이션만 적용됨).
+> **다음 세션 시작점 = 사용자가 전달할 전량 실행 결과 확인 → Phase 4(뷰 JOIN 조건 갱신)**.
+>
+> **2026-08-12 갱신 — Phase 3 완료 확인 + fail 패턴 원문대조 조사(Phase 3-부록) 완료, 신규
+> 제안 §8.** `gateb_v3_full.log`(사용자 터미널, 약 12시간) 확인 — 2,525개사 전량·`err=0`,
+> DB 실측(297,429행)과 정확히 일치. 누적 in-scope 일치율 98.1%(pass 197,635/pending
+> 96,012/fail_b 2,688/fail_a 1,094). fail을 그냥 숫자로 안 두고 대표사례 원문대조로 3가지
+> 서로 다른 버그를 분리: **(A)** revenue fail_b의 93.6%가 증권사·금융지주 집중 — 신영증권
+> 실측으로 "금융업 매출정의 차이" 가설 기각, std_v3 concept/context 선택 결함으로 추정
+> (메커니즘 미확정). **(B, 신규·중요)** trade_payables fail_a에서 정확히 ×1000 배율 클러스터
+> 발견 → 노루페인트 실측으로 **Gate B 감사기 자체가 문서 기본단위(doc_default_unit, R4-1)를
+> 안 읽어 발생하는 오탐**임을 확정, 전체 fail_a/b 재스캔으로 규모 확정(fail_a 53건/23개사·
+> fail_b 8건/5개사, 합계 28개사 — trade_payables 국지적 문제 아니고 reader 전반 결함).
+> **(C)** trade_payables 나머지 ~285건은 00825959류 account_maps 라벨매핑 결함이 반복됨을
+> 3개사 추가 확인(코아스/FSN/솔루스첨단소재), 배율이 기업마다 달라 이질적 버그. **결론: Phase
+> 4보다 (B) 수정이 먼저인 게 나음**(안 그러면 오탐이 fail_a에 계속 섞임) — 옵션 4개(§8-A~D)
+> 정리, **사용자 결정 대기, 코드 미수정**. 상세 = [`std_v3_native_gate_b_plan_2026-08-11.md`](std_v3_native_gate_b_plan_2026-08-11.md) §7 Phase 3-부록 · §8.
 
 **완료(2026-07-25)**: `--recheck` + `build_std_v3 --all` 재빌드 · 금융섹터 revenue census 종결(보험/은행/
 증권/여신전문 프로파일 + 잔여 KSIC 프로파일 불필요, 원문대조 PASS) · **브리지 swap enrichment steps 1-2**
@@ -397,7 +440,12 @@
 2. **계층3 enrichment 완성 + 재빌드**: 주석 반영 후 `build_std_v3 --all`. shares_out 은 계층2 일반현황(별도 테이블) — ✅ 완료(2026-08-09, `report_shares_outstanding`).
 3. **뷰 브리지 교체 + G2(v3=원문 기준) + C-1**(자동): tearsheet 금융블록·스크리너 정규화 revenue.
 4. **SCE 자본변동 상세**(독립): 계층3 추출 → `sce_equity_movements` → 앱 표출. 설계 = [SCE 문서](sce_equity_movement_detail_2026-07-24.md).
-5. **(별도 규모) 계층2 소급 적재**: 2차 pre-2015(브리지 UNION 제거용) · 3차 PDF-only — 신규 파서.
+5. **(별도 규모) 계층2 소급 적재**: 2차 pre-2015(브리지 UNION 제거용, ✅ 완료 2026-08-11) ·
+   3차 PDF-only — 신규 파서. **설계 초안 작성 완료(2026-08-11)**: 실측 스코프 3,509건
+   (pre-2015 1,405+2015+ 2,104, 1,417개사, 기존 적재 0건) + 기존 legacy PDF 코드 2세대
+   (`parser/pdf/*`, `fin2/extract/pdf.py`) 재사용성/아키텍처 정합성 검토 완료. 계획 =
+   [pdf_only_parser_plan_2026-08-11.md](pdf_only_parser_plan_2026-08-11.md), todo =
+   [pdf_only_parser_todo_2026-08-11.md](pdf_only_parser_todo_2026-08-11.md). **실행요청 대기.**
 
 ---
 

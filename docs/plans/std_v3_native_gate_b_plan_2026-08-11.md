@@ -405,3 +405,114 @@ Phase 3-부록 조사로 우선순위가 바뀌었다. **Phase 4(뷰 마이그�
 관련 메모리: `[[std-v3-controlling-ni-fix-complete-2026-08-09]]` `[[std-v3-dq-shares-period-null-2026-08-09]]`
 `[[pre2015-layer2-backfill-plan-2026-08-10]]` `[[std-v3-native-gate-b-plan-2026-08-11]]`
 `[[doc-default-unit-r4-1]]`
+
+---
+
+## 9. §8-A 확장 재검증 — fail_a 전체(362개사)로 recheck 확장 (2026-08-12, 사용자 실행)
+
+§8-A 실행 직후 "recheck을 30개사(65건 후보)로만 좁힌 게 맞나, fail_a 전체로 확장할 필요는
+없나"는 질문에서 착수. **근거**: `_adecimal_signals` 수정은 특정 기업 패치가 아니라
+`read_report_face_xbrl`(전 기업 공유 face reader)의 일반 로직이라, 애초 후보를 뽑았던
+"정확히 ×10ⁿ 배수" 비율 스캔이 좁은 휴리스틱이라 놓친 케이스가 fail_a 잔여 1,062건 안에
+더 있을 수 있다는 가설.
+
+**실행**: 당시 fail_a(v3) 전체 362개사 corp_code를 뽑아(`SELECT DISTINCT corp_code FROM
+face_audit WHERE source_version='v3' AND gate_status='fail_a'`) `--corp-file`로 지정,
+`python -u scripts/gateb_audit.py --source v3 --corp-file <362개사> --fy-min 1999 --recheck
+--no-line-audit`를 사용자 터미널에서 실행(전량재실행 47분/97개사 전례로 하니스 백그라운드
+킬 위험 있어 직접 실행 요청, [[feedback-long-running-commands]]). 44,872행(362개사 전체
+이력, fy≥1999) 재감사 완료, 기업오류 0.
+
+**결과 — 순변화 0건 확정**: 재실행 후 `fail_a` 여전히 정확히 **1,062건·362개사**(recheck
+전과 동일). DB 직접 재조회로 재확인(단순 로그 눈대중 아님, [[feedback-verify-against-source]]).
+즉 **확장 스캔이 추가로 잡아낸 케이스는 0건** — 애초 좁은 "×10ⁿ 배수" 후보스캔이 이미 이
+수정으로 고칠 수 있는 사례를 전부 찾아냈었다는 뜻(과소탐지 우려는 기각). §8-A 수정은
+이걸로 **완결 확인**.
+
+**부수 성과 — 잔여 fail_a 1,062건 필드분포 확정**(이전엔 없던 전체 breakdown):
+`controlling_ni` 404 · `trade_payables` 300 · `revenue` 186 · `tax_expense` 115 ·
+`dividends_paid` 36 · `cfo` 23 · `total_equity` 19 · `net_income`/`cogs` 17 · `cff` 11 ·
+`inventory` 11 · `cfi` 10 · `ebt` 9 · 이하 소수(`operating_income`/`gross_profit`/
+`total_assets`/`total_liabilities`/`cash`/`controlling_equity`/`ppe`/`retained_earnings`/
+`current_liabilities`/`current_assets` 각 10건 미만). **`controlling_ni`(404건, 372개사에
+분산)가 가장 큰 미조사 덩어리로 재확인**(§7 첫 조사 당시엔 원인 미조사로만 남겨뒀던 것,
+[[std-v3-native-gate-b-plan-2026-08-11]] 참고) — trade_payables(300, §8-D 대상)보다도 크다.
+`tax_expense`(115)는 이번에 처음 규모가 드러난 미조사 항목. `revenue`(186)는 fail_a
+쪽인데 §8-C가 다루는 건 fail_b 쪽 증권사 revenue(2,514건)라 같은 원인인지는 미확인 —
+별도 원문대조 필요.
+
+**다음 결정 후보(§8 옵션 갱신, 아직 미착수)**: 크기순으로 `controlling_ni`(404, 원인
+미조사·최대 덩어리) 조사가 §8-C/§8-D보다 우선순위가 높아질 수 있음 — 사용자 결정 대기.
+
+---
+
+## 10. `controlling_ni` fail_a(404건) 원인조사 완료 (2026-08-12, 읽기전용)
+
+사용자 지시("controlling_ni 원인부터 조사해줘")로 착수. `fin2/layer3/combine.py`의
+`build_merged_lines`+`_map_rows`를 직접 호출해 5개사(00112651/00105101/00112165/00110884/
+00109693) 표본의 `is.controlling_ni` 원시 후보(raw candidates, 병합 전)를 뽑아 db_won/
+report_won과 대조 — **5/5 전부 같은 메커니즘으로 재현**.
+
+### 10-1. 주범(88.1%, 356/404건) — "당기순이익 귀속" vs "총포괄손익 귀속" 섹션 혼동이
+`_resolve_ni_attribution` 안전장치를 우회
+
+원문엔 '지배기업의 소유주지분'(또는 표기변형)이라는 거의 동일한 라벨이 **두 섹션**에
+독립적으로 등장한다: `당기순이익(손실)의 귀속`(원하는 값)과 `총포괄손익의 귀속`(OCI
+포함, 다른 개념). alias 카탈로그는 섹션 구분 없이 둘 다 `is.controlling_ni`로 정확매칭
+한다. 이 모호성을 풀기 위한 안전장치(`_resolve_ni_attribution`, `combine.py:401`, 이미
+`docs/plans/std_v3_controlling_ni_gap_fix_plan_2026-08-08.md` §3-2에서 신설돼있음, 순이익
+항등식 `controlling_ni+noncontrolling_ni=net_income`으로 역산 판별)가 이미 존재하지만,
+**`conflicts`에 걸린 경우에만 작동**하도록 설계돼있다.
+
+**커버리지 구멍**: 두 후보(정답=당기순이익 귀속, 오답=총포괄손익 귀속)의 매핑 stage가
+다르면(예: 각주번호 "(주30)" 등 접미사가 붙어 정답 쪽이 `normalized`/`fuzzy`, 오답 쪽이
+`exact`) `_resolve()`(`combine.py:386-390`)의 **stage 우선순위 tiebreak가 곧바로 `exact`
+쪽 값을 확정**해버려서, 애초에 `conflicts`로 넘어가지 않고 `_resolve_ni_attribution`
+안전장치를 건너뛴다. 즉 8/8에 만든 방어가 "같은 stage 동률" 케이스만 잡고 "다른 stage
+그림자충돌" 케이스는 못 잡는 사각지대였음이 이번에 확인됨.
+
+세부 하위유형(404건 전체 자동분류, `_map_rows` 원시후보 스캔):
+- **section_confusion_stage_masked (278건, 68.8%)**: 위 메커니즘 그대로 — 정답/오답 두
+  후보가 다 존재하지만 stage 순위가 오답을 먼저 확정.
+- **section_confusion_single_wrong (38건, 9.4%)**: `is.controlling_ni` 후보 자체가
+  총포괄손익 쪽 하나뿐(정답 후보가 아예 이 canonical로 안 잡힘 — 10-2 참고).
+
+### 10-2. 부차 패턴 — canonical 오매핑 (40건, 9.9%)
+
+정답('지배기업주주 귀속 당기순이익' 등 라벨)이 `is.controlling_ni`가 아니라
+`is.net_income`으로 오매핑되는 경우(00109693 FY2025 원문확인: 정답 -88,007,769,786이
+`is.net_income` fuzzy 후보로 잡힘, 정작 `is.controlling_ni`엔 총포괄손익 쪽만 존재).
+stage tiebreak를 고쳐도 이 40건은 안 풀림 — alias 카탈로그가 이 라벨 패턴을 애초에
+잘못된 canonical로 보내는 별개 결함.
+
+### 10-3. 소수 하위패턴 — `_reduce_conflict` shallow-depth 오작동 (12% 미분류 안에 일부 포함)
+
+00118345(6건 전부)는 다른 메커니즘: 같은 라벨('지배기업소유주지분')이 section_path 없는
+무관한 표(table_seq=1, 아마 별도 주석/부속명세)에도 중복 등장 — 두 후보 다 stage='exact'라
+`_reduce_conflict`의 "얕은 depth(=합계) 우선" 휴리스틱(`combine.py:309-330`, 원래 취지는
+DIRECT_MAP 총계가 하위항목보다 우선하게 하는 것)이 **section_path 없는(depth=0) 무관 표
+쪽을 "총계"로 오인**해 선택. 00120030(다른 값 3종 혼재)·00124504(기재정정 케이스) 등
+잔여 미분류(48건, 11.9%)는 개별성이 강해 이번 자동분류로 안 걸림 — 후속 개별확인 필요.
+
+### 10-4. 요약 — 이 세션의 조사 범위
+
+전부 **읽기전용**(`build_merged_lines`/`_map_rows` 직접 호출, DB/코드 미수정). 404건
+자동분류 스크립트는 스크래치패드에만 존재(세션 종료 시 소실 가능, 필요시 재작성).
+`section_confusion_*`(88.1%)과 `canonical_mismap`(9.9%)을 합치면 **97.9%가 하나의 근본
+원인 계열**("총포괄손익 귀속 섹션의 라벨이 controlling_ni 매핑을 오염시킨다")로 수렴 —
+수정 설계 시 이 계열부터 먼저 다루는 게 임팩트가 가장 큼. **수정 설계·구현은 이번 조사
+범위 밖**(정책상 조사 후 자동실행 금지) — 사용자 결정 대기.
+
+**수정 설계 문서 작성 완료(2026-08-12, 같은 날)**: 사용자 지시("수정 설계 문서부터
+작성해줘")로 착수. `parser/common/account_mapper.py:167-172`에 이미 있는 "포괄손익 귀속"
+가드가 이번 케이스를 못 잡는 이유도 함께 규명 — 그 가드는 **라벨 텍스트 자체**에
+"포괄손익"+"지배"가 함께 있는 스타일을 겨냥한 것인데, 이번 근본원인 표본은 라벨 자체엔
+"포괄손익"이 없고 OCI 구분이 `section_path`(표 상위 섹션)로만 표현돼 account_mapper
+레벨에선 구조적으로 못 봄(`section_path`는 combine.py 후보 dict에만 실림) — **수정은
+account_mapper 가 아니라 `fin2/layer3/combine.py::_resolve()`가 맞는 위치**임을 확정.
+설계 = `docs/plans/std_v3_controlling_ni_oci_section_fix_design_2026-08-12.md`: Phase 1
+(`_resolve()`에 OCI-섹션 구조적 사전필터, 기존 trust-account 필터와 동일 코드 패턴 재사용,
+404건 중 316건=78.2% 대상, 그 중 278건은 완전정정·38건은 오염제거) + Phase 2(canonical_mismap
+40건, account_mapper 가드 별도설계 필요)·Phase 3(00118345류 shallow-depth 오작동)은 범위밖
+분리 + §8-A와 동일한 회귀검증 방법론(유닛테스트+404건 재현+무작위 PASS 광역재검증) 명시.
+**설계만 완료, 코드 전혀 미착수** — 실행은 별도 승인 대기.

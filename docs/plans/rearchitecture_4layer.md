@@ -428,6 +428,22 @@
 > 3개사 추가 확인(코아스/FSN/솔루스첨단소재), 배율이 기업마다 달라 이질적 버그. **결론: Phase
 > 4보다 (B) 수정이 먼저인 게 나음**(안 그러면 오탐이 fail_a에 계속 섞임) — 옵션 4개(§8-A~D)
 > 정리, **사용자 결정 대기, 코드 미수정**. 상세 = [`std_v3_native_gate_b_plan_2026-08-11.md`](std_v3_native_gate_b_plan_2026-08-11.md) §7 Phase 3-부록 · §8.
+>
+> **2026-08-12 갱신(같은 날 두 번째) — §8-A 실행 완료 + fail_a 전체 확장재검증(순변화 0건,
+> §8-A 완결 확인) + `controlling_ni`(404건, 최대 미해결 덩어리) 원인규명 + 수정 설계 문서
+> 작성.** §8-A(ADECIMAL 오탐 수정)는 태그일치→산술항등식으로 신뢰기준을 바꿔 회귀 2건을
+> 해소하고 DB 반영 완료(브랜치 `feat/gateb-v3-native-source-version-and-adecimal-fix` 커밋
+> `e6d0a04`, main 미머지). 이어서 fail_a 전체 362개사로 recheck 확장 실행 — fail_a 그대로
+> 1,062건(과소탐지 없었음 확인) + 잔여 필드분포 최초 확정(controlling_ni 404가 최대). 사용자
+> 지시로 controlling_ni 원인조사 착수 — 5개사 원문(원시후보) 대조로 **근본원인 확정**: "당기
+> 순이익의 귀속" 섹션과 "총포괄손익의 귀속" 섹션에 거의 동일한 라벨('지배기업 소유주지분')이
+> 양쪽에 등장하는데, 이미 있는 안전장치(`_resolve_ni_attribution`, 8/8 신설)가 `conflicts`에
+> 걸린 경우만 처리하도록 설계돼 stage 우선순위가 먼저 확정해버리는 케이스(68.8%)를 못 잡는
+> 커버리지 구멍이 있었음. 404건 자동분류 결과 97.9%가 이 원인계열로 수렴. 수정 설계 문서
+> = [`std_v3_controlling_ni_oci_section_fix_design_2026-08-12.md`](std_v3_controlling_ni_oci_section_fix_design_2026-08-12.md)
+> (Phase 1: `_resolve()`에 OCI-섹션 구조적 사전필터, 기존 trust-account 필터와 동일 패턴
+> 재사용, 78.2% 대상). **설계만 완료, 코드 미착수** — 사용자 승인 대기. 상세 조사내역 =
+> [`std_v3_native_gate_b_plan_2026-08-11.md`](std_v3_native_gate_b_plan_2026-08-11.md) §9·§10.
 
 **완료(2026-07-25)**: `--recheck` + `build_std_v3 --all` 재빌드 · 금융섹터 revenue census 종결(보험/은행/
 증권/여신전문 프로파일 + 잔여 KSIC 프로파일 불필요, 원문대조 PASS) · **브리지 swap enrichment steps 1-2**

@@ -70,6 +70,35 @@ _TRADE_PAYABLES_PARENT_OVERRIDE_CORPS = frozenset({
     "01310269",   # IPARK현대산업개발
 })
 
+# ★trade_payables additive override(2026-08-14, period-scoped): 원문 XBRL 직접대조로
+# 확인(둘 다 report_lines 텍스트추출로는 안 잡히는 위치에 있는 진짜 fact와 정확히
+# 일치 — ifrs-full_TradeAndOtherPayablesUndiscountedCashFlows[MaturityAxis=1년이내]
+# 또는 ifrs-full_TradeAndOtherCurrentPayables). BS 본문엔 매입채무+형제 유동채무
+# 라인이 둘 다 이미 존재하지만 결합 총계(P) 라인 자체가 없는 레이아웃 — 그 두
+# 라인의 합이 report_won. 라벨이 회사마다 전부 달라 일반화 규칙 금지(위 parent
+# override와 같은 위험).
+#
+# ★키를 corp 단독이 아니라 (corp, fy, period)로 좁힌 이유(실측으로 발견한 함정):
+# 최초 구현을 corp 단독 키로 5개사 전체 이력에 적용해 scoped 백필+Gate B recheck
+# 했더니, 목표했던 기간(대부분 FY2025~2026Q1)은 고쳐졌지만 같은 회사의 과거 모든
+# 분기(2010~2024, LG화학만 100건+)가 새로 fail_b로 대규모 회귀했다 — "두 라인 합
+# = report_won"은 원문대조로 확인한 그 특정 필링(들)에서만 성립하고, 같은 회사의
+# 다른 기간엔 성립하지 않는다(예: LG화학 2010 연결 report_won=1.30조인데 두 라인
+# 합=2.12조). 그래서 아래는 원문/report_won 재대조로 개별 확인된 정확한
+# (corp, fiscal_year, fiscal_period) 조합만 등재한다 — corp 하나가 늘 이 관계를
+# 만족한다고 가정하지 않는다. basis(연결/별도)는 _resolve() 호출 자체가 이미
+# basis별로 분리돼 있어 별도 키가 필요 없다.
+# docs/plans/gate_b_faila_trade_payables_additive_design_2026-08-14.md (원설계, corp
+# 단독 키 — 폐기) + 이 세션 재검증(period-scoped로 교체).
+_TRADE_PAYABLES_ADDITIVE_OVERRIDE = {
+    ("00356361", 2025, "FY"): ("매입채무", "기타지급채무"),        # LG화학
+    ("00356361", 2026, "Q1"): ("매입채무", "기타지급채무"),        # LG화학
+    ("00113544", 2025, "FY"): ("매입채무", "기타채무"),             # 대한화섬
+    ("00109310", 2025, "FY"): ("유동매입채무", "단기미지급금"),     # 대동기어
+    ("00138446", 2025, "FY"): ("유동매입채무", "기타유동금융부채"), # 아가방컴퍼니
+    ("01093007", 2025, "FY"): ("매입채무", "기타채무"),             # LS에코에너지
+}
+
 
 @lru_cache(maxsize=200_000)
 def _map_label(label_raw: str, fs: str | None):
@@ -386,7 +415,8 @@ def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
     return _eps_dup(svals)  # shallowest still split → EPS among them, else hold
 
 
-def _resolve(cands: dict[str, list[dict]], corp: str | None = None):
+def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
+             fy: int | None = None, period: str | None = None):
     """{canonical: [candidate]} -> (confirmed {canonical: value}, conflicts {canonical: [candidate]}).
 
     Ported from build._resolve. Conflicts are HELD (not filled) and returned for
@@ -394,6 +424,9 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None):
 
     corp: current corp_code, needed only to gate the curated overrides
     (_REVENUE_TOTAL_OVERRIDE_CORPS / _TRADE_PAYABLES_PARENT_OVERRIDE_CORPS) below.
+    fy/period: current fiscal_year/fiscal_period, needed only to gate
+    _TRADE_PAYABLES_ADDITIVE_OVERRIDE (period-scoped, not corp-blanket — see its
+    comment for why).
     """
     confirmed: dict[str, int] = {}
     conflicts: dict[str, list[dict]] = {}
@@ -439,6 +472,26 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None):
             parents = [r for r in rows if r.get("node_role") == "P" and r["value"]]
             if parents:
                 rows = parents
+        if c == "bs.trade_payables" and (corp, fy, period) in _TRADE_PAYABLES_ADDITIVE_OVERRIDE:
+            want = _TRADE_PAYABLES_ADDITIVE_OVERRIDE[(corp, fy, period)]
+            # ★the second (sibling) label maps to its OWN canonical (e.g. '기타지급채무'
+            # -> bs.other_current_payables), never bs.trade_payables — the AccountMapper
+            # alias table routes it there before _resolve() ever sees it (verified: LG화학
+            # 실측, _map_label('기타지급채무','bs') -> account_code='bs.other_current_payables').
+            # So `rows` (this canonical's own candidates) never contains it; must search
+            # across every canonical's candidate list in `cands`, not just `rows`.
+            all_rows = [r for rs in cands.values() for r in rs]
+            picked = {}
+            for r in all_rows:
+                if _is_noncurrent(r):
+                    continue
+                label = _norm_label(r.get("label_raw"))
+                for w in want:
+                    if w not in picked and label.startswith(w):
+                        picked[w] = r["value"]
+            if len(picked) == len(want) and all(v is not None for v in picked.values()):
+                confirmed[c] = sum(picked.values())
+                continue
         # 가산 계열(ADDITIVE_CANON)은 한 canonical 에 여러 행이 정상적으로 대응한다
         # (cf.depreciation ← '감가상각비' + '투자부동산감가상각비'). 단일값 전제로 충돌
         # 판정하면 canonical 이 통째로 폐기되므로, 선언된 계열만 합산한다.
@@ -797,7 +850,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     else:
         cands = collect_candidates(session, corp, fy, period, basis,
                                    statements=statements)
-    confirmed, conflicts = _resolve(cands, corp)
+    confirmed, conflicts = _resolve(cands, corp, fy, period)
     _resolve_ni_attribution(cands, confirmed, conflicts)
     # net_income fallback (ported from fin2/standardize/rules.py::rule_net_income_fill,
     # missing from the v3 port — 실측 2026-08-09: 삼성증권 FY2025 등 470행/119개사).

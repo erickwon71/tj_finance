@@ -822,6 +822,62 @@ trade_payables 32행 fail_a 존재), DB 전체 `fail_a` 686→646(**-40**, 정�
 
 ---
 
+## R17. `bs.trade_payables` additive override — curated 키는 **corp 단독이 아니라
+(corp, fiscal_year, fiscal_period)** (R16의 함정 재발)
+
+R16(§`_TRADE_PAYABLES_PARENT_OVERRIDE_CORPS`)과 같은 계열의 새 사례 5개사에서,
+BS 본문에 결합 총계(P) 라인 자체가 없고 매입채무+형제 유동채무 라인(F) 두 개만
+있는 레이아웃을 발견했다. 원문 XBRL 직접대조로 확인: 이 두 라인의 합이
+`ifrs-full_TradeAndOtherPayablesUndiscountedCashFlows`[MaturityAxis=1년이내] 또는
+`ifrs-full_TradeAndOtherCurrentPayables` — report_lines 텍스트추출로는 안 잡히는
+위치의 진짜 XBRL fact와 정확히 일치한다.
+
+**함정 #1(구현 단계에서 실측)**: 형제 라벨(예: '기타지급채무')은 AccountMapper
+별칭표를 거쳐 **자기 고유의 canonical**로 매핑된다(`bs.other_current_payables`
+등, `bs.trade_payables`가 아니다). `_resolve()`는 canonical별로 이미 분리된
+`cands[canonical]`만 보므로, override가 자기 canonical(`rows`)만 뒤지면 형제
+라벨을 절대 못 찾아 **한 건도 발동하지 않는다**(최초 구현이 이 상태로 유닛테스트만
+통과하고 실제로는 무효였음 — 목이 두 라벨을 인위적으로 같은 canonical 리스트에
+넣어놨던 게 원인). 수정: `cands.values()` 전체를 뒤진다.
+
+**함정 #2(더 심각, scoped 백필+Gate B recheck로 실측)**: 위 함정을 고쳐서
+override가 실제로 발동하게 만들자, 목표 기간(대부분 FY2025~2026Q1)은 고쳐졌지만
+**같은 회사의 과거 모든 분기(2010~2024, LG화학만 100건+)가 새로 fail_b(REVIEW)로
+대규모 회귀**했다 — "두 라인 합 = report_won"은 원문대조로 확인한 **그 특정
+필링(들)에서만** 성립하고, 같은 회사의 다른 기간엔 성립하지 않는다(실측: LG화학
+연결 2010 report_won=1.30조인데 두 라인 합=2.12조). R16의 corp 단독 키를 그대로
+가져다 쓴 게 원인 — R16(parent override)은 "이 회사는 항상 부모가 정답"이라는
+회사 단위 성격이 실제로 안정적이었지만, 이번 additive 관계는 **회사 단위가 아니라
+특정 필링(주로 결합공시 방식이 바뀐 시점 이후)에서만** 성립한다는 게 다르다.
+
+**규칙**: `_TRADE_PAYABLES_ADDITIVE_OVERRIDE`(`fin2/layer3/combine.py`)는 키를
+`(corp, fiscal_year, fiscal_period)` 3-튜플로 쓴다 — corp 하나가 늘 이 관계를
+만족한다고 가정하지 않는다. `_resolve()`가 `fy`/`period`를 추가로 받아 게이팅한다
+(`corp`만 받던 R16 시그니처를 확장, 하위호환: 기본값 `None`이라 미지정 호출은
+override 전부 비활성). basis(연결/별도)는 `_resolve()` 호출 자체가 이미
+basis별로 분리돼 있어 별도 키가 필요 없다. 신규 등재는 반드시 그 정확한
+(corp, fy, period)에서 원문/report_won 대조로 확인 후 추가 — 인접 기간까지
+자동으로 넓히지 말 것(이 R17 자체가 그 위험의 실측 증거).
+
+등재: (00356361 LG화학, 2025, FY)·(00356361 LG화학, 2026, Q1)·(00113544 대한화섬,
+2025, FY)·(00109310 대동기어, 2025, FY)·(00138446 아가방컴퍼니, 2025, FY)·
+(01093007 LS에코에너지, 2025, FY).
+
+**검증**: `fin2/tests/test_combine_curated_overrides.py`(단위, 등재 튜플 발동 +
+**같은 corp의 다른 기간은 비발동**하는 회귀재현 방지 테스트 포함) + 5개사 scoped
+백필(`build_std_v3.py --corp <5개사> --year-min 1999`, 814행·오류0) + Gate B scoped
+재검증(`gateb_audit.py --corp-file <5개사> --recheck`) — fail_a 12→3(trade_payables
+9건 전부 pass, 남은 3건은 무관한 controlling_ni 버그), **fail_b 0**(다른 기간
+회귀 없음, 함정#2 재발 안 함 확인). DB 전체 `fail_a` 671→662(**-9**, 정확히 일치).
+
+**근거**: `docs/plans/gate_b_faila_trade_payables_additive_design_2026-08-14.md`
+(원설계, corp 단독 키 — 이 R17로 교체) · 이 세션 실측(구현 중 함정#1·#2 발견 →
+DB 원상복구 → 사용자 승인(회사+기간 범위로 재설계) → period-scoped로 재구현·
+재검증) · `fin2/layer3/combine.py::_resolve()`
+(`_TRADE_PAYABLES_ADDITIVE_OVERRIDE`) · `fin2/tests/test_combine_curated_overrides.py`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -872,6 +928,7 @@ trade_payables 32행 fail_a 존재), DB 전체 `fail_a` 686→646(**-40**, 정�
 | R14 | `docs/plans/pdf_only_parser_phase2_design_2026-08-12.md` §A · `docs/qa/pdf_only_xbrl_taxonomy_expansion_probe_2026-08-12.md` · `fin2/extract/report_lines_xbrl.py`·`external_taxonomy.py::dart_first()`·`taxonomy_linkbase.py::resolve_external_labels()` |
 | R15 | `docs/qa/gate_b_v3_fail_a_784_triage_2026-08-13.md` ③ · `docs/plans/gate_b_fail_a_bugfix_2_3_plan_2026-08-13.md` 버그 #3 · `fin2/layer3/combine.py::_resolve()/_is_noncurrent()` · `fin2/tests/test_combine_current_strict.py` |
 | R16 | `docs/qa/gate_b_fail_a_revenue_tradepayables_triage_2026-08-13.md` · `docs/plans/gate_b_faila_combine_stage_rank_shortcut_fix_design_2026-08-13.md` · `fin2/layer3/combine.py::_resolve()` (`_REVENUE_TOTAL_OVERRIDE_CORPS`/`_TRADE_PAYABLES_PARENT_OVERRIDE_CORPS`) · `fin2/tests/test_combine_curated_overrides.py` |
+| R17 | `docs/plans/gate_b_faila_trade_payables_additive_design_2026-08-14.md`(원설계) · 이 세션 실측(구현 중 발견) · `fin2/layer3/combine.py::_resolve()` (`_TRADE_PAYABLES_ADDITIVE_OVERRIDE`) · `fin2/tests/test_combine_curated_overrides.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황

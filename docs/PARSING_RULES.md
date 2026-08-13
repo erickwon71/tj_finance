@@ -769,6 +769,59 @@ alias 사전에 등재돼 `exact` 단계를 얻으면, `exact` 단독값(비유�
 
 ---
 
+## R16. 계층3 `_resolve()` stage-rank 숏컷 — `is.revenue`/`bs.trade_payables` 총계 vs
+구성요소는 **일반 규칙 금지, curated override만** (R15와 같은 취약점 계열, 다른 처방)
+
+R15와 정확히 같은 근본원인(`_resolve()`가 top-stage 후보가 하나로 collapse되면
+`_reduce_conflict()`의 의미기반 필터를 건너뛰고 즉시 confirm)이 `is.revenue`(총계
+vs 구성요소)·`bs.trade_payables`(부모 vs 자식)에도 있다. 자식/구성요소 라벨(예:
+`수수료수익`·`매입채무및기타채무`)이 공백·번호 없는 "깨끗한" 문자열이라 alias 사전과
+글자 그대로 일치해 `exact`를 얻고, 부모/총계 라벨(예: `I. 영업수익`·`매입채무 및
+기타유동채무`)은 로마숫자·공백 때문에 정규화를 거쳐야 `normalized`로만 매칭돼
+top_vals가 자식 하나로 collapse된다.
+
+**R15와 달리 여기선 일반 규칙(블랭킷)을 적용하면 안 된다** — `report_lines` 전수
+실측(계층2, 백필과 무관한 정적 데이터) 결과:
+- `is.revenue`: "총계 라벨 있으면 그것 우선" 규칙 → 현재-PASS 303건 회귀 vs 진짜수정
+  8건(**38:1**). SBI인베스트먼트(00156910) 등은 총계가 평가성 항목까지 섞인 넓은
+  개념이라 **자식이 이미 정답**(report_won과 일치) — 같은 구조(P=총계/F=구성요소)인데
+  회사마다 정답이 반대라 구조적 신호만으로는 구별 불가.
+- `bs.trade_payables`: "node_role='P'(부모) 있으면 우선" 규칙 → 현재-PASS 11,761건
+  회귀 vs 진짜수정 32건(**368:1**). 대다수 회사는 좁은 값(`_NARROW_PREFER` 기존
+  설계의도대로)이 이미 정답, 부모가 정답인 건 원문대조로 확인된 5개사뿐.
+
+**규칙**: 대신 `fin2/layer3/industry_profiles.py`의 `CORP_INDUTY_OVERRIDE`·
+`NO_REVENUE_CORPS`와 같은 선례를 따라, **원문/report_won 대조로 개별 확인된 회사만**
+curated set에 등재하고 stage-rank 이전(R15의 `_CURRENT_STRICT` 사전필터와 같은
+자리)에 적용한다.
+- `_REVENUE_TOTAL_OVERRIDE_CORPS`(`fin2/layer3/combine.py`): 한국전자홀딩스
+  (00159254)·미래에셋벤처투자(00340096) — `is.revenue` 총계가 정답인 회사만.
+- `_TRADE_PAYABLES_PARENT_OVERRIDE_CORPS`(같은 파일): 현대공업(00164502)·
+  국일신동(00203847)·코아스(00210856)·케이엔솔(00304076)·IPARK현대산업개발
+  (01310269) — `bs.trade_payables` 부모가 정답인 회사만.
+- 신규 등재는 반드시 원문/report_won 대조로 확인 후 추가 — 구조가 같아 보인다고
+  블랭킷 규칙으로 일반화하지 말 것(이 문서의 실측 결과가 그 위험을 이미 증명함).
+
+**스코프 밖**(이 override로 못 고침, 별도 트랙): BS에 결합총계 라인 자체가 없어
+매입채무+기타채무가 미합산인 케이스(01412822류, additive 규칙 필요) · Gate B
+Track A concept_map이 노트 안 비-매입채무 항목을 오매핑하는 케이스(01090471류,
+`face_audit.py` 쪽) · 서로 다른 라벨의 형제 후보 충돌(F-vs-F, 149건) ·
+bank/credit_finance 레이어2 커버리지 갭(총계 라인 자체가 `report_lines`에 없음).
+
+**검증**: `fin2/tests/test_combine_curated_overrides.py`(단위, DB 비의존, 등재/
+비등재 대조군 포함) + 7개사 scoped 백필(`build_std_v3.py --corp <7개사>
+--year-min 1999`, 706행·오류0) + Gate B scoped 재검증(`gateb_audit.py --corp-file
+<7개사> --recheck`) — 706행 중 fail_a **0**(수정 전 이 7개사 안에 revenue 8행·
+trade_payables 32행 fail_a 존재), DB 전체 `fail_a` 686→646(**-40**, 정확히
+8+32와 일치, 다른 corp는 이번 recheck 스코프 밖이라 불변).
+
+**근거**: `docs/qa/gate_b_fail_a_revenue_tradepayables_triage_2026-08-13.md`(원문
+대조) · `docs/plans/gate_b_faila_combine_stage_rank_shortcut_fix_design_2026-08-13.md`
+(설계+실측) · `fin2/layer3/combine.py::_resolve()`(`_REVENUE_TOTAL_OVERRIDE_CORPS`/
+`_TRADE_PAYABLES_PARENT_OVERRIDE_CORPS`).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -818,6 +871,7 @@ alias 사전에 등재돼 `exact` 단계를 얻으면, `exact` 단독값(비유�
 | R13 | 사용자 결정 2026-08-10(Phase1~5 순차 승인) · `docs/plans/pre2015_layer2_backfill_plan_2026-08-10.md`·`..._todo_2026-08-10.md` · `fin2/extract/legacy_pre2015.py`·`fin2/extract/report_lines.py::extract_report_lines`·`collector/note_lines_sync.py::FY_MIN` |
 | R14 | `docs/plans/pdf_only_parser_phase2_design_2026-08-12.md` §A · `docs/qa/pdf_only_xbrl_taxonomy_expansion_probe_2026-08-12.md` · `fin2/extract/report_lines_xbrl.py`·`external_taxonomy.py::dart_first()`·`taxonomy_linkbase.py::resolve_external_labels()` |
 | R15 | `docs/qa/gate_b_v3_fail_a_784_triage_2026-08-13.md` ③ · `docs/plans/gate_b_fail_a_bugfix_2_3_plan_2026-08-13.md` 버그 #3 · `fin2/layer3/combine.py::_resolve()/_is_noncurrent()` · `fin2/tests/test_combine_current_strict.py` |
+| R16 | `docs/qa/gate_b_fail_a_revenue_tradepayables_triage_2026-08-13.md` · `docs/plans/gate_b_faila_combine_stage_rank_shortcut_fix_design_2026-08-13.md` · `fin2/layer3/combine.py::_resolve()` (`_REVENUE_TOTAL_OVERRIDE_CORPS`/`_TRADE_PAYABLES_PARENT_OVERRIDE_CORPS`) · `fin2/tests/test_combine_curated_overrides.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황

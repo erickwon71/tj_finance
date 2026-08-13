@@ -42,6 +42,34 @@ from fin2.layer3.industry_profiles import (
 # conflicts (증권/지주: 영업수익 total vs 수수료수익 component).
 _REVENUE_TOTAL_LABELS = frozenset({"매출액", "영업수익", "매출", "순매출액"})
 
+# ★revenue grand-total override(2026-08-13): a blanket "_REVENUE_TOTAL_LABELS wins"
+# rule cannot be generalized — measured against the full report_lines population
+# (report_lines is static, unaffected by backfills) it regresses 303 currently-PASS
+# rows for only 8 genuine fixes (38:1). SBI인베스트먼트(00156910) etc. are the
+# opposite case: their component label ('수수료수익') already matches report_won,
+# the grand total includes valuation items report_won excludes. Only corps where
+# source-XML comparison confirmed the grand total IS the answer go here.
+# docs/plans/gate_b_faila_combine_stage_rank_shortcut_fix_design_2026-08-13.md §2-1/§3-1
+_REVENUE_TOTAL_OVERRIDE_CORPS = frozenset({
+    "00159254",   # 한국전자홀딩스
+    "00340096",   # 미래에셋벤처투자
+})
+
+# ★trade_payables parent(P) override(2026-08-13): a blanket "node_role='P' wins" rule
+# cannot be generalized either — measured regression 11,761 currently-PASS rows for
+# only 32 genuine fixes (368:1). Most corps' narrow child value ('단기매입채무' etc.)
+# already matches report_won (consistent with _NARROW_PREFER's existing design intent).
+# Only corps where report_won/source comparison confirmed the parent total IS the
+# answer go here.
+# docs/plans/gate_b_faila_combine_stage_rank_shortcut_fix_design_2026-08-13.md §2-2/§3-2
+_TRADE_PAYABLES_PARENT_OVERRIDE_CORPS = frozenset({
+    "00164502",   # 현대공업
+    "00203847",   # 국일신동
+    "00210856",   # 코아스
+    "00304076",   # 케이엔솔
+    "01310269",   # IPARK현대산업개발
+})
+
 
 @lru_cache(maxsize=200_000)
 def _map_label(label_raw: str, fs: str | None):
@@ -358,11 +386,14 @@ def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
     return _eps_dup(svals)  # shallowest still split → EPS among them, else hold
 
 
-def _resolve(cands: dict[str, list[dict]]):
+def _resolve(cands: dict[str, list[dict]], corp: str | None = None):
     """{canonical: [candidate]} -> (confirmed {canonical: value}, conflicts {canonical: [candidate]}).
 
     Ported from build._resolve. Conflicts are HELD (not filled) and returned for
     analysis (only for consumed canonicals, to avoid lineage noise).
+
+    corp: current corp_code, needed only to gate the curated overrides
+    (_REVENUE_TOTAL_OVERRIDE_CORPS / _TRADE_PAYABLES_PARENT_OVERRIDE_CORPS) below.
     """
     confirmed: dict[str, int] = {}
     conflicts: dict[str, list[dict]] = {}
@@ -393,6 +424,21 @@ def _resolve(cands: dict[str, list[dict]]):
             cur_rows = [r for r in rows if not _is_noncurrent(r)]
             if cur_rows:
                 rows = cur_rows
+        # curated overrides (2026-08-13, see the two frozenset comments above): apply
+        # BEFORE stage ranking, same reason as the _CURRENT_STRICT filter just above —
+        # a component/child label commonly reaches stage='exact' (clean registered
+        # alias) while the parent/total label only reaches 'normalized' (needs
+        # whitespace/numbering normalization), so top_vals below would otherwise
+        # collapse to the (curated-wrong) child value before _reduce_conflict() ever runs.
+        if c == "is.revenue" and corp in _REVENUE_TOTAL_OVERRIDE_CORPS:
+            grand = [r for r in rows
+                     if _norm_label(r.get("label_raw")) in _REVENUE_TOTAL_LABELS and r["value"]]
+            if grand:
+                rows = grand
+        if c == "bs.trade_payables" and corp in _TRADE_PAYABLES_PARENT_OVERRIDE_CORPS:
+            parents = [r for r in rows if r.get("node_role") == "P" and r["value"]]
+            if parents:
+                rows = parents
         # 가산 계열(ADDITIVE_CANON)은 한 canonical 에 여러 행이 정상적으로 대응한다
         # (cf.depreciation ← '감가상각비' + '투자부동산감가상각비'). 단일값 전제로 충돌
         # 판정하면 canonical 이 통째로 폐기되므로, 선언된 계열만 합산한다.
@@ -751,7 +797,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     else:
         cands = collect_candidates(session, corp, fy, period, basis,
                                    statements=statements)
-    confirmed, conflicts = _resolve(cands)
+    confirmed, conflicts = _resolve(cands, corp)
     _resolve_ni_attribution(cands, confirmed, conflicts)
     # net_income fallback (ported from fin2/standardize/rules.py::rule_net_income_fill,
     # missing from the v3 port — 실측 2026-08-09: 삼성증권 FY2025 등 470행/119개사).

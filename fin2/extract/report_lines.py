@@ -51,6 +51,7 @@ from fin2.extract.text import (
 )
 from fin2.extract.units import ColumnUnits, FX_ONLY, SRC_FX
 from fin2.extract.legacy_pre2015 import detect_pre2015_body_statement_tables
+from fin2.extract.report_lines_inline_xbrl_overlay import overlay_dividends_paid_sign
 
 # report_fiscal_year 가 이 값 이하면 pre-2015 K-GAAP 라우팅을 먼저 시도한다(설계문서
 # `docs/plans/pre2015_layer2_backfill_phase2_design_2026-08-10.md` §2-1·§3-3 잔여항목③
@@ -1081,6 +1082,12 @@ def extract_report_lines(
             root, emit=lines.append, corp_code=corp_code, rcept_no=rcept_no,
             report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
         )
+
+    # 버그#2(dividends_paid 부호) 수정 — 원문에 이미 있는 인라인 XBRL(Track A) 사실로
+    # CF 텍스트추출 부호를 보정. docs/plans/gate_b_bug2_xbrl_inline_overlay_design_2026-08-13.md.
+    n_overlay = overlay_dividends_paid_sign(lines, file_path, report_fiscal_year)
+    if n_overlay:
+        logger.debug(f"[report_lines] inline XBRL overlay 적용: {n_overlay}건 ({rcept_no})")
 
     return lines
 

@@ -889,6 +889,60 @@ DB 원상복구 → 사용자 승인(회사+기간 범위로 재설계) → peri
 
 ---
 
+## R18. 계층2 CF `cf.dividends_paid` 부호 — document.xml 인라인 XBRL(Track A) 사실로 대사(오버레이),
+**모호하면 손대지 않음**(설계 예상치보다 실제 적용률은 낮음, 짐작 아닌 실측)
+
+버그#2. CF 본문표의 "배당금의 지급" 셀은 회사별 확장 개념(`entity{corp}_...`)으로
+태깅돼 있어 부호를 신뢰할 수 없는데, production 텍스트 추출기
+(`fin2/extract/text.py`→`report_lines.py`)가 그 셀 **텍스트**(부호 표시 없는
+맨숫자)만 읽어 항상 양수로 저장한다 — 원본 문서 **다른 위치**(자본변동/배당상세
+표)에는 같은 사실이 표준 IFRS 개념(`ifrs-full_DividendsPaidClassifiedAsFinancingActivities`
+등)+정확한 부호(괄호표시)로 이미 태깅돼 있다. Gate B 감사기(`face_audit.py`)는
+그 표준개념 태그를 문서 전체에서 직접 읽어 정답을 얻지만, production 추출기는
+전혀 안 읽는다. 상세: `docs/qa/gate_b_bug2_dividends_paid_findings_2026-08-13.md`
+(원인 조사) · `docs/plans/gate_b_bug2_xbrl_inline_overlay_design_2026-08-13.md`(설계).
+
+**규칙**: `fin2/extract/report_lines_inline_xbrl_overlay.py::overlay_dividends_paid_sign()`
+— `extract_report_lines()`가 텍스트추출 결과(`lines`)를 다 만든 **직후** 호출한다
+(원문을 새로 열지 않음, `read_report_face_xbrl()`이 자체적으로 파일을 다시 읽음).
+계층2가 canonical 매핑을 하지 않는다는 R0 원칙([[architecture-report-read-layer2-only]])을
+지키기 위해 **AccountMapper(퍼지매칭)를 쓰지 않는다** — 대신:
+1. `read_report_face_xbrl()`(face_audit.py, **그대로 재사용, 한 글자도 수정 안 함**)로
+   canonical(`map_acode()`, 결정적 조회, 짐작 아님)별 사실 테이블을 만든다.
+2. 텍스트 후보행은 `label_raw`에 "배당"+"지급"이 **둘 다** 있는지 **키워드 부분일치**로만
+   좁힌다(canonical 추론이 아니라 `text.py`가 이미 곳곳에서 쓰는 것과 같은 구조적
+   키워드 필터).
+3. `(basis, is_cumulative)` 키에서 텍스트 후보가 **정확히 1개**, 사실도 **정확히
+   1개**, 그리고 둘의 절대값이 **1% 이내로 일치**할 때만 override — 아니면 손대지
+   않는다(★블랭킷 금지, R16/R17과 같은 원칙).
+- `fiscal_year < 2024`는 파일도 안 열고 즉시 no-op(커버리지 절벽 실측,
+  findings 문서 §5 — 1999~2023 ACODE/ACONTEXT 보유율 0.0%).
+- v1 스코프는 `cf.dividends_paid`만(설계 §4-4) — 다른 CF 계정 확장은 각각 회귀
+  diff로 확인 후 별도.
+
+**★설계 예상치(92%)보다 실제 적용률이 훨씬 낮음 — 실측으로 확인, 안전하지만
+저수확**: 설계 문서는 ACODE 커버리지(2024+ 92%)만 보고 낙관했으나, 실제
+fail_a 36건을 전수 재실행하니 **6건만 적용되고 그 6건 전부 report_won과
+정확 일치(오탐 0)** — 나머지 30건은 "모호(후보 2개 이상)" 또는 "애초에 부호가
+아니라 자릿수/누락 문제"(예: 00138729/LG생활건강 — 부호는 이미 맞고 report_won과
+0.005% 차이인 다른 성격의 결함, 이 R18 범위 밖)로 안전하게 스킵됐다. 무작위
+샘플(59건, fy≥2024 CF "배당"+"지급" 후보 전체 모집단 10,554건 중)에서도 오탐
+0건. **결론: 이 오버레이는 안전하지만(회귀 없음) 이 버그의 부분적 해결이다** —
+잔여는 별도 원인규명 필요(예: 다중 배당 라인 명시적 처리, note_lines 폴백 등).
+
+**검증**: `fin2/tests/test_report_lines_inline_xbrl_overlay.py`(단위6건, LG
+`20260318001025` 실측 재현 포함) + pytest 514 passed(무관 기존결함 1건 제외) +
+fail_a 36건 전수 재실행(적용 6건·전부 report_won 일치·오탐 0, 미적용 30건은
+근거 있는 스킵) + 무작위 표본 59건 오탐 0 + 소급 백필
+(`load_report_lines.py --rcept-file <10,554건>`).
+
+**근거**: `docs/qa/gate_b_bug2_dividends_paid_findings_2026-08-13.md` ·
+`docs/plans/gate_b_bug2_xbrl_inline_overlay_design_2026-08-13.md` ·
+`fin2/extract/report_lines_inline_xbrl_overlay.py` ·
+`fin2/extract/report_lines.py::extract_report_lines()`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

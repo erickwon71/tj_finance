@@ -1,13 +1,18 @@
 # 버그 #2 (dividends_paid 부호) — 재조사 결과, 계획 문서 가설 기각 (2026-08-13)
 
-**상태: 미구현.** `docs/plans/gate_b_fail_a_bugfix_2_3_plan_2026-08-13.md`의 버그 #2 가설을
-코드로 구현하기 전 실측 검증한 결과, 원래 가설(부모-자식 부호상속)은 **너무 넓고 위험함이
-실측으로 확인**됐고, 진짜 원인은 계획 문서가 짐작한 것보다 깊은 곳에 있다 — **production
-CF 추출기(`fin2/extract/report_lines.py`)가, 원본 `document.xml`에 이미 부호까지 정확히
-박혀 있는 인라인 태그(ACODE/ACONTEXT)를 아예 안 읽고 무부호 텍스트표만 읽는 것**이 핵심
-(2026-08-13 후속 재검증으로 §2 갱신 — `xbrl_zip`/R10/R14 트랙과는 별개 현상, §2 참고).
-버그 #3(trade_payables)은 완료(구현+테스트+PARSING_RULES R15 등재) — 이 문서는 버그 #2만
-다룬다.
+**상태: 구현 완료(2026-08-14, `docs/PARSING_RULES.md` R18).** 단 실제 적용률은
+아래 §5의 92% 추정치보다 낮음(fail_a 36건 중 6건 적용, 전부 정답 일치·오탐 0 —
+R18 항목 참고). `docs/plans/gate_b_fail_a_bugfix_2_3_plan_2026-08-13.md`의
+버그 #2 가설을 코드로 구현하기 전 실측 검증한 결과, 원래 가설(부모-자식 부호상속)은 **너무
+넓고 위험함이 실측으로 확인**됐고, 진짜 원인은 계획 문서가 짐작한 것보다 깊은 곳에 있다 —
+**production CF 추출기(`fin2/extract/report_lines.py`)가, 원본 `document.xml`에 이미 부호까지
+정확히 박혀 있는 인라인 태그(ACODE/ACONTEXT)를 아예 안 읽고 무부호 텍스트표만 읽는 것**이
+핵심(2026-08-13 후속 재검증으로 §2 갱신 — `xbrl_zip`/R10/R14 트랙과는 별개 현상, §2 참고).
+**§5(같은 날 후속)에서 커버리지를 실측** — ACODE/ACONTEXT는 2024년을 기점으로 급격히
+보편화되고(2023 이전 0.0% → 2024 31.7% → 2025 98.3% → 2026 100.0%), 현재 dividends_paid
+fail_a의 92%(36/39건)가 정확히 그 2024~2026년에 몰려 있어 **수정 방향이 확정됨**(§5) —
+단 실제 코드 구현은 아직 착수 전, 사용자 승인 대기. 버그 #3(trade_payables)은 완료
+(구현+테스트+PARSING_RULES R15 등재) — 이 문서는 버그 #2만 다룬다.
 
 ## 1. 계획 문서 가설이 기각된 과정
 
@@ -133,6 +138,54 @@ LG의 정답값은 `xbrl_zip`이 아니라 **`document.xml` 자체에 이미 박
 4. **보류** — 버그 #2는 스킵하고 버그 #3만 반영(완료, 백필 대기 중)한 채로 두고, 별도
    계획 문서를 새로 써서 다음 세션에 착수(위 1번 실마리부터).
 
+## 5. ACODE/ACONTEXT 커버리지 실측 완료(2026-08-13, 같은 날 후속 — §4 항목1 착수)
+
+`scripts/probe_bug2_acontext_coverage_2026-08-13.py`(읽기전용)로 `fiscal_year × report_type`
+층화 표본 1,649건(셀당 최대 20건, 파싱 실패 0건)을 `parser/xml/dart_xml_parser.py::_parse_xml_file`
+(face_audit.py와 동일한 리더, sanitize 포함) + `fin2/extract/acontext.py::parse_acontext`로
+직접 읽어 `TE[@ACODE]`(`ifrs-full_`/`dart_` 접두, `ACONTEXT` 비어있지 않음) 존재 여부를 확인.
+
+**결론 — 전체 평균(8.3%)은 오해의 소지가 있다. 실제로는 2024년 기점의 급경사(cliff)다:**
+
+| fiscal_year | Track A(ACODE+ACONTEXT) 보유율 |
+|---|---|
+| 1999~2023 (25개 연도, 연 29~60건 표본) | **0.0%** (0/1,439, 전 연도 예외 없음) |
+| 2024 (전환기) | **31.7%** (19/60) |
+| 2025 | **98.3%** (59/60) |
+| 2026 | **100.0%** (55/55) |
+
+`report_type`(annual/half/quarter)별로는 7.3~9.5%로 큰 차이가 없다 — 전체 8.3%라는 평균은
+report_type 차이가 아니라 이 fiscal_year 절벽 하나로 거의 다 설명된다. 이미 코드 곳곳
+(`fin2/extract/expense_nature.py`·`cf_da.py` docstring)이 "2024+ Track A(iXBRL) 전환"이라고
+언급해온 것과 정확히 일치 — 이번 실측은 그 서술을 처음으로 정량화했다(DART의 인라인 XBRL
+의무화 시행 시점과 부합하는 패턴).
+
+**★dividends_paid fail_a 모집단과 직접 대조 — 정확히 같은 절벽에 몰려 있다**: 현재 `face_audit`
+(2026-08-12 12:21 스냅샷, std_v3 세 수정 반영 전이라 재검증 필요하지만 fiscal_year 분포
+자체는 안정적일 것으로 봄)의 `dividends_paid` fail_a 39건 중 **36건(92%)이 2024~2026년**
+(2024: 8 · 2025: 20 · 2026: 8)이고, 나머지는 2011·2013·2021 각 1건뿐(다른 원인일 가능성,
+이 트랙 범위 밖). 대조군으로 `trade_payables` fail_a(버그#3, ACODE/ACONTEXT와 무관한
+원인)를 같이 뽑아보면 2010~2023년에도 고르게 분포(합계 67건) — dividends_paid만 2024년
+이후로 급격히 쏠리는 건 "최근 필링이 원래 더 많다"는 표본 편향이 아니라 **ACODE/ACONTEXT
+가용성과 진짜로 연동된 신호**라는 뜻.
+
+**수정 방향 확정(권고)**: `fin2/extract/report_lines.py`(또는 `parser/xml/table_extractor.py`)
+확장은 **2024년 이후 필링에 좁게, 그러나 정확히 지금 fail_a가 몰려 있는 바로 그 구간에**
+효과적이다. 2023년 이전 필링(3건 잔여, 다른 원인 추정)에는 이 수정이 적용되지 않는다 —
+그 3건은 별도 원인 규명이 필요한 잔여 꼬리로 남긴다. `xbrl_zip`(1% 커버리지, R10/R14)보다
+훨씬 넓고, 앞으로 2024+ 필링이 계속 쌓일수록 커버리지가 계속 늘어나는 구조적 수정이라는
+점도 §4-1 대비 우위.
+
+**아직 안 한 것(구현 착수 전 남은 확인 항목)**:
+- dividends_paid 외 다른 CF/BS/IS 계정에도 같은 무부호 텍스트 vs 부호있는 ACODE 패턴이
+  있는지(이번 프로브는 CF/Dividend 힌트만 좁게 셌음 — `n_cf_track_a`가 `n_has_track_a`와
+  완전히 같게 나온 건 표본상 우연일 수 있어 재확인 필요, 다른 statement 태그 분류 안 함).
+- `report_lines.py`가 텍스트 추출과 ACODE/ACONTEXT 추출을 **병행**할 때 두 값이 다르면
+  어느 쪽을 권위로 삼을지(face_audit처럼 ADECIMAL 항등식 검증까지 갈지, 아니면 단순히
+  ACODE 쪽을 항상 우선할지) — 설계 결정 필요.
+- 회귀 범위: 이미 report_lines에 적재된 2024+ 필링(현재는 텍스트 추출값)에 대한 소급
+  재추출이 필요([[parser-pipeline-integration-runbook]] 소급 백필 체크리스트).
+
 ## 근거
 - `docs/qa/gate_b_v3_fail_a_784_triage_2026-08-13.md` ②(원래 LG 표본 1건 원문대조)
 - 본 세션 실측: SQL JOIN 전수조사(1,219,491행/14,678행), 200건 무작위 표본
@@ -147,3 +200,6 @@ LG의 정답값은 `xbrl_zip`이 아니라 **`document.xml` 자체에 이미 박
   회수가능성 조사 — 이 문서의 ②번 항목(`xbrl_zip` 트랙)과 같은 자원을 다루지만
   대상 모집단이 다름: pdf-only 세션은 "본문 XML 자체가 없는 필링"의 대체소스 조사,
   본 버그는 "본문 XML은 있는데 부호가 새는" 별개 현상).
+- `scripts/probe_bug2_acontext_coverage_2026-08-13.py`(§5, 2026-08-13 후속) — fiscal_year×
+  report_type 층화표본 1,649건 직접 파싱, ACODE/ACONTEXT 2024년 절벽 확정 + dividends_paid
+  fail_a 39건 중 36건(92%)이 2024~2026년에 몰려 있음을 face_audit 조회로 교차확인.

@@ -234,6 +234,12 @@ def extract_rows(
     else:
         trs = table_elem.findall(".//TR")
 
+    # R19: 이 표에 콤마 다중참조 주석 컬럼이 있는지 한 번만 미리 판정 — 콤마 없는 단일 숫자
+    # 후보의 주석 여부는 행 하나로는 못 정하고 이 표 단위 컨텍스트가 있어야 한다(아래
+    # _split_label_amounts 호출에 전달). `_table_has_comma_note_column` docstring 참고.
+    table_has_note_column = _table_has_comma_note_column(
+        [_get_cells(tr) for tr in trs])
+
     for tr in trs:
         cells = _get_cells(tr)
         if not cells:
@@ -258,7 +264,7 @@ def extract_rows(
         if keep_all_amount_cells:
             label, amount_cells = cells[0], list(cells[1:])   # 위치 보존(주석 전용)
         else:
-            label, amount_cells = _split_label_amounts(cells)
+            label, amount_cells = _split_label_amounts(cells, table_has_note_column)
 
         if not label:
             continue
@@ -464,16 +470,52 @@ _NOTE_REF_PATTERN = re.compile(r'^[1-9]\d{0,2}(,[1-9]\d{0,2})*$')
 _AMOUNT_GROUPED_PATTERN = re.compile(r'^\(?\d{1,3}(,\d{3})+\)?$')
 
 
-def _split_label_amounts(cells: list[str]) -> tuple[str, list[str]]:
+def _table_has_comma_note_column(rows_cells: list[list[str]]) -> bool:
+    """표 전체를 한 번 미리 훑어, **콤마로 구분된 다중 주석참조**("2,4,32,34,35,36")가 라벨
+    바로 다음 칸(i==1)에 실제로 있는 행이 하나라도 있는지 판정한다.
+
+    ★왜 필요한가(R19): 콤마 없는 단일 숫자("11", "654")는 행 하나의 셀 내용만 봐서는 "진짜
+    주석번호"인지 "콤마 없는 실제 소액"인지 원리적으로 구별 불가능 — 실측 반례: 한양증권
+    "Ⅷ.무형자산 | 11 | 1,660,475,560 | 1,660,475,560"(같은 표 다른 행에 "10,37","3,4,5,8,39"
+    같은 진짜 다중주석이 있어 "11"도 진짜 주석) vs 진원생명과학 "7.미지급배당금(주석15) | 512 |
+    2,174 | 455,208 | 455,208"(표 전체에 주석 컬럼 자체가 없음 — 주석은 라벨에 인라인 표기,
+    "512"는 진짜 금액). 둘은 셀 모양이 완전히 같아 행 단독으로는 판정 불가 — **같은 표의
+    다른 행에 콤마 다중참조가 하나라도 있는지**가 유일한 신뢰 가능한 신호다. 콤마 다중참조는
+    항상 진짜 주석(0건 오탐, root-cause 문서 §단일 주석번호 추가조사)이므로 이 시그널로
+    "이 표는 주석 컬럼을 쓴다"를 판정한 뒤, 그 표의 콤마 없는 단일 숫자 후보에도 적용한다.
+    """
+    for cells in rows_cells:
+        if len(cells) < 2:
+            continue
+        cell_nospace = _TRAIL_DECOR_RE.sub('', cells[1].replace(' ', ''))
+        if (',' in cell_nospace
+                and _NOTE_REF_PATTERN.match(cell_nospace)
+                and not _AMOUNT_GROUPED_PATTERN.match(cell_nospace)):
+            return True
+    return False
+
+
+def _split_label_amounts(
+    cells: list[str], table_has_note_column: bool = False,
+) -> tuple[str, list[str]]:
     """
     셀 리스트에서 계정과목명(첫 번째 비숫자 셀)과 금액 셀을 분리한다.
 
     DART XML 구조:
       [계정과목명, 당기금액, 전기금액, 전전기금액, (주석)]
 
-    6-column IS 구조 (금융업 보험/증권):
+    6-column IS 구조 (금융업 보험/증권 등, 업종 무관):
       [계정과목명, 주석번호, 당기명세, 당기합계, 전기명세, 전기합계]
-      → 주석번호("34", "4,28" 등 소정수)는 금액 셀로 오인하지 않도록 건너뜀
+      → 주석번호는 금액 셀로 오인하지 않도록 건너뜀. 판정은 두 층:
+        1) 콤마구분 다중 그룹("4,28", "2,4,32,34,35,36")은 **행 하나만 보고도** 항상 주석으로
+           확정(정상 3자리그룹 금액 "2,433"과 패턴이 달라 오탐 없음, 실측 0건).
+        2) 콤마 없는 단일 숫자("34")는 행 하나로는 주석인지 실제 소액금액인지 구별 불가 —
+           R19: `table_has_note_column`(호출측이 같은 표를 한 번 미리 훑어 콤마 다중참조가
+           있는지로 판정, `_table_has_comma_note_column` 참고)이 True 인 표에서만 주석으로
+           본다. 실측 반례(한양증권 vs 진원생명과학, 셀 모양 동일·정답 반대)로 행 단독 판정이
+           불가능함을 확인 — `docs/PARSING_RULES.md` R19.
+      두 경우 모두 **라벨 바로 다음 칸(i==1)에서만** 판정한다 — 아니면 콤마 없는 소액이
+      연달아 나오는 행(예: "992 | 766")에서 둘 다 드롭되는 연쇄 오탐이 생긴다.
     """
     label = ""
     amount_cells: list[str] = []
@@ -487,13 +529,15 @@ def _split_label_amounts(cells: list[str]) -> tuple[str, list[str]]:
             # 합계행 밑줄 장식(숫자 뒤 '====' 등) 제거 — 숫자 셀 인식용(parse_amount 도 동일 처리).
             cell_nospace = _TRAIL_DECOR_RE.sub('', cell_nospace)
             cell_stripped = cell_nospace.replace(',', '')      # 쉼표 제거(금액 판정용)
-            # 첫 번째 숫자-유사 셀이 주석번호 패턴(소정수 나열)이면 건너뜀.
-            # 예: "34", "4,28", "2,4,32,34,35,36"(금융업 다중 주석참조).
+            # 라벨 바로 다음 칸(i==1)이 주석번호 패턴이면 건너뜀 — 콤마 다중참조는 항상,
+            # 콤마 없는 단일 숫자는 이 표에 진짜 주석 컬럼이 있다고 확인됐을 때만(R19).
             # ⚠ 반드시 쉼표 보존 문자열로 판정 — 쉼표 제거 시 "2,4,32,…"→"243234…" 로
             #    금액과 혼동(컬럼 1칸 밀림 버그). 정상 3자리그룹 금액("2,433")은 주석 아님.
-            if (not amount_cells
+            if (i == 1
+                    and not amount_cells
                     and _NOTE_REF_PATTERN.match(cell_nospace)
-                    and not _AMOUNT_GROUPED_PATTERN.match(cell_nospace)):
+                    and not _AMOUNT_GROUPED_PATTERN.match(cell_nospace)
+                    and (',' in cell_nospace or table_has_note_column)):
                 continue
             # 숫자 패턴이거나 공란이면 금액 셀
             if _NUMBER_PATTERN.match(cell_stripped) or cell_stripped in ('-', '—', ''):

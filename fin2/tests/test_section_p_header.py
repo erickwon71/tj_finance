@@ -108,9 +108,91 @@ def test_multi_note_ref_column_not_parsed_as_amount():
     # 정상 3자리그룹 소액("2,433")은 주석 아님 → 금액으로 유지
     _, amt2 = _split_label_amounts(["기타", "2,433", "1,000"])
     assert amt2 and amt2[0].replace(",", "") == "2433"
-    # 단일 주석번호("34")는 여전히 제외
+    # R19(2026-08-14): 콤마 없는 단일 숫자("34")는 더 이상 주석번호로 보지 않는다 — 본문
+    # 표에서는 거의 항상 콤마 없는 실제 금액(1,000 미만)이고, 진짜 단일 주석번호였던 실측
+    # 사례는 0건(root-cause 문서 §단일 주석번호 추가조사, 49건 대조). 이제 "34"는 금액으로 유지.
     _, amt3 = _split_label_amounts(["자산", "34", "1,000,000"])
-    assert amt3 and amt3[0].replace(",", "") == "1000000"
+    assert amt3 == ["34", "1,000,000"], f"기대 [34, 1,000,000](드롭 안 됨), 실제 {amt3}"
+
+
+def test_note_ref_guard_r19_comma_required():
+    """R19: 주석번호 가드는 (a) 콤마 있는 다중 그룹은 행 하나만 보고 항상 스킵,
+    (b) 콤마 없는 단일 숫자는 **같은 표에 진짜 다중참조 행이 있다고 확인됐을 때만** 스킵.
+
+    배경: docs/qa/gate_b_revenue_bugB_note_ref_guard_root_cause_2026-08-14.md §단일 주석번호
+    추가조사. `not amount_cells and _NOTE_REF_PATTERN.match(...)`만으로는 본문(BS/IS/CF/SCE)
+    표에서 콤마 없는 1~3자리 당기 금액(1,000 미만이라 콤마가 안 찍힘)을 주석번호로 오인해
+    통째로 드롭한다(컬럼 전체가 한 칸씩 밀림).
+
+    콤마 없는 단일 숫자는 **행 하나의 셀 내용만으로는 원리적으로 판정 불가능**하다는 것도
+    실측으로 확인됨 — 한양증권 "Ⅷ.무형자산 | 11 | 1,660,475,560 | 1,660,475,560"(진짜 주석,
+    같은 표 다른 행에 "10,37" 같은 콤마 다중참조가 있음) vs 진원생명과학 "7.미지급배당금
+    (주석15) | 512 | 2,174 | 455,208 | 455,208"(진짜 금액, 표 전체에 주석 컬럼 자체가 없고
+    주석은 라벨에 인라인 표기) — 셀 모양이 완전히 같은데 정답이 반대. 그래서 판정은
+    `_split_label_amounts(cells, table_has_note_column)`로 표 단위 컨텍스트를 받는다.
+    """
+    from parser.xml.table_extractor import _split_label_amounts, _table_has_comma_note_column
+
+    # (a) 한진중공업홀딩스 20250814001174.xml "Ⅰ.영업수익" 행(2025 반기) 원문 재현 — 이
+    #     표엔 콤마 다중참조 형제 행이 없음(table_has_note_column=False, 기본값) → 당기3개월
+    #     '654'가 더 이상 드롭되지 않고 4개 금액 전부 살아남아야 함.
+    label, amounts = _split_label_amounts(["Ⅰ.영업수익", "654", "9,097", "629", "9,069"])
+    assert label == "Ⅰ.영업수익"
+    assert amounts == ["654", "9,097", "629", "9,069"], amounts
+
+    # (b) "4.단기미수수익, 총액" 캐스케이드 케이스 — 두 칸(총액/순액)이 연달아 콤마 없는
+    #     소액이어도 둘 다 살아남아야 함(구 코드는 첫 칸 드롭 후 둘째 칸까지 연쇄로 드롭).
+    #     table_has_note_column=True 로 줘도 i==1 만 판정 대상이라 캐스케이드는 안 생김.
+    label, amounts = _split_label_amounts(["4.단기미수수익, 총액", "992", "766"])
+    assert amounts == ["992", "766"], amounts
+    label, amounts = _split_label_amounts(
+        ["4.단기미수수익, 총액", "992", "766"], table_has_note_column=True)
+    assert amounts == ["766"], (
+        f"table_has_note_column=True 면 i==1('992')만 주석으로 스킵, i==2('766')는 "
+        f"캐스케이드 없이 그대로 금액 — 실제 {amounts}")
+
+    # (c) 현대차증권 2017 BS_C "Ⅱ. 단기매매금융부채" 실사례 — 콤마구분 다중 주석참조
+    #     ("17, 25, 45")는 행 하나만 보고도 항상 걸러져야 함(표 컨텍스트 무관, 가드 존재
+    #     이유 자체는 유지).
+    label, amounts = _split_label_amounts([
+        "II. 단기매매금융부채", "17, 25, 45",
+        "429,680,667,000", "292,124,616,000", "315,512,699,000",
+    ])
+    assert amounts == ["429,680,667,000", "292,124,616,000", "315,512,699,000"], amounts
+
+    # (d) 진원생명과학 2002 BS_S "7.미지급배당금(주석15)" 실사례 — 이 표엔 주석 컬럼
+    #     자체가 없다(table_has_note_column=False) → '512'는 콤마 없는 실제 당기 금액 →
+    #     드롭되면 안 됨.
+    label, amounts = _split_label_amounts([
+        "7.미지급배당금(주석15)", "512", "2,174", "455,208", "455,208",
+    ])
+    assert amounts == ["512", "2,174", "455,208", "455,208"], amounts
+
+    # (e) 한양증권 2014 Q1 "Ⅷ.무형자산" 실사례 — 같은 표의 다른 행("3,4,5,8,39" 등)이
+    #     진짜 다중참조라 table_has_note_column=True로 확인된 상태에서는 콤마 없는 단일
+    #     숫자 '11'도 주석으로 스킵돼야 함(드롭 안 하면 컬럼 전체가 밀려 무형자산 값이 깨짐).
+    label, amounts = _split_label_amounts(
+        ["Ⅷ.무형자산", "11", "1,660,475,560", "1,660,475,560"],
+        table_has_note_column=True)
+    assert amounts == ["1,660,475,560", "1,660,475,560"], amounts
+    # 같은 셀이라도 table_has_note_column=False(기본값)면 표에 주석 컬럼이 없다는 뜻이므로
+    # 드롭하면 안 된다 — (a)/(d)와 같은 원리, 여기서 재확인.
+    label, amounts = _split_label_amounts(["Ⅷ.무형자산", "11", "1,660,475,560", "1,660,475,560"])
+    assert amounts == ["11", "1,660,475,560", "1,660,475,560"], amounts
+
+    # (f) _table_has_comma_note_column() 헬퍼 자체 — 표 안 어느 한 행에라도 콤마 다중참조가
+    #     있으면 True, 전혀 없으면 False. 한양증권/부국증권 표 vs 진원생명과학 표 재현.
+    hanyang_rows = [
+        ["Ⅴ.유형자산", "10,37", "16,716,299,399", "16,835,751,120"],
+        ["Ⅷ.무형자산", "11", "1,660,475,560", "1,660,475,560"],
+        ["Ⅸ.이연법인세자산", "12,37", "1,022,281,813", "1,022,281,813"],
+    ]
+    assert _table_has_comma_note_column(hanyang_rows) is True
+    jinwon_rows = [
+        ["6.미지급비용", "136,409", "166,577", "88,897", "131,512"],
+        ["7.미지급배당금(주석15)", "512", "2,174", "455,208", "455,208"],
+    ]
+    assert _table_has_comma_note_column(jinwon_rows) is False
 
 
 def test_interim_is_cumulative_table_wins_over_annual_comparative():
@@ -118,6 +200,13 @@ def test_interim_is_cumulative_table_wins_over_annual_comparative():
     당기누적값이 col0 을 선점해야 함(연간비교표의 전년 FY값 오염 차단).
 
     부국증권 H1 매출이 2017 FY값(566B)으로 오염되던 버그의 합성 회귀.
+
+    ★R19(2026-08-14): 실제 부국증권 원문(`20180814001812.xml`)은 "Ⅰ.영업수익"행의 주석이
+    콤마 없는 단일 숫자("37")지만, 바로 다음 행("1. 수수료수익")은 콤마 다중참조("2,21")를
+    쓴다 — 같은 표에 진짜 주석 컬럼이 있다는 증거가 되는 형제 행이 실제로 존재한다. 이
+    형제 행이 없으면 `_split_label_amounts`가 "37"을 주석인지 실제 소액금액인지 표 단위
+    컨텍스트 없이는 판정할 수 없다(한양증권 vs 진원생명과학 실사례 대립, root-cause 문서
+    §단일 주석번호 추가조사) — 그래서 아래 합성 XML에도 실제 구조와 같은 형제 행을 넣는다.
     """
     from fin2.extract.text import extract_facts
     xml = """<DOCUMENT><SECTION-2>
@@ -127,11 +216,13 @@ def test_interim_is_cumulative_table_wins_over_annual_comparative():
         <TR><TD>과목</TD><TD>주석</TD><TD>제65(당)반기</TD><TD></TD><TD>제64(전)반기</TD><TD></TD></TR>
         <TR><TD></TD><TD></TD><TD>3개월</TD><TD>누적</TD><TD>3개월</TD><TD>누적</TD></TR>
         <TR><TD>Ⅰ. 영업수익</TD><TD>37</TD><TD>144,000,000,000</TD><TD>314,000,000,000</TD><TD>161,000,000,000</TD><TD>324,000,000,000</TD></TR>
+        <TR><TD>1. 수수료수익</TD><TD>2,21</TD><TD>20,000,000,000</TD><TD>38,000,000,000</TD><TD>25,000,000,000</TD><TD>36,000,000,000</TD></TR>
         <TR><TD>Ⅷ. 반기순이익</TD><TD>37</TD><TD>8,000,000,000</TD><TD>20,000,000,000</TD><TD>13,000,000,000</TD><TD>28,000,000,000</TD></TR>
       </TABLE>
       <TABLE>
         <TR><TD>과목</TD><TD>주석</TD><TD>제64(전)기</TD><TD>제63(전전)기</TD></TR>
         <TR><TD>Ⅰ. 영업수익</TD><TD>37</TD><TD>566,000,000,000</TD><TD>753,000,000,000</TD></TR>
+        <TR><TD>1. 수수료수익</TD><TD>2,21</TD><TD>77,000,000,000</TD><TD>72,000,000,000</TD></TR>
         <TR><TD>Ⅷ. 당기순이익</TD><TD>37</TD><TD>37,000,000,000</TD><TD>27,000,000,000</TD></TR>
       </TABLE>
       <P>연 결 현 금 흐 름 표 (단위 : 원)</P>

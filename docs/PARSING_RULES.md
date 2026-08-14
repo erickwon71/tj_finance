@@ -941,6 +941,64 @@ fail_a 36건 전수 재실행(적용 6건·전부 report_won 일치·오탐 0, �
 `fin2/extract/report_lines_inline_xbrl_overlay.py` ·
 `fin2/extract/report_lines.py::extract_report_lines()`.
 
+## R19. `table_extractor.py::_split_label_amounts()` 주석번호 가드 — 콤마 없는 단일 숫자는
+**표 단위 컨텍스트(`table_has_note_column`)로만 주석번호 인정, 행 단독 판정 금지**
+
+Gate B revenue 확정버그 B(한진중공업홀딩스). `_split_label_amounts()`가 재무제표 본문
+(BS/IS/CF/SCE) 표에서, 라벨 바로 다음 칸(`i==1`)의 콤마 없는 1~3자리 당기 금액을
+"주석번호"로 오인해 드롭하는 오탐이 있었다 — 원래 가드는 부국증권형 다중 주석참조
+("2,4,32,…")를 막기 위한 것인데, `not amount_cells`라는 간접 조건만 쓰고 실제 콤마
+유무·표 구조는 전혀 확인하지 않았다.
+
+**핵심 발견(원리적 한계)**: 콤마 없는 단일 숫자 후보는 **행 하나의 셀 내용만으로는
+진짜 주석번호인지 진짜 금액인지 판정 불가능** — 실사례 반증(한양증권 "11"=진짜 주석
+vs 진원생명과학 "512"=진짜 금액, 셀 모양 동일·정답 반대)으로 확정. `len(cells)>=6`,
+콤마 단독 조건 등 v1~v6 전부 실사례로 폐기(근거: `docs/plans/note_ref_guard_body_
+statement_fix_plan_2026-08-14.md`).
+
+**규칙(v7, 최종)**: `parser/xml/table_extractor.py::_split_label_amounts()` +
+`_table_has_comma_note_column()`:
+- 콤마 다중참조("2,4,32,…")는 행 하나만 보고 **항상** 주석으로 확정(오탐 0건 실측,
+  49건 대조).
+- 콤마 없는 단일 숫자("34", "11")는 **같은 표의 다른 행에 콤마 다중참조가 있다고
+  확인됐을 때만**(`table_has_note_column=True`, `extract_rows()`가 표 순회 전 1회
+  선스캔해 전달) 주석으로 인정.
+- `i==1` 제한 유지(캐스케이드 차단 — 첫 칸 이후로는 이 가드 자체가 발동하지 않음).
+- `fin2/extract/report_lines.py`의 다른 두 호출부(`_detect_period_layout`·
+  `_emit_eps_lines`)는 기본값(`table_has_note_column=False`, 콤마 단독 규칙) 유지 —
+  전자는 내부 휴리스틱이라 최종값 무영향, 후자는 구조상 진짜 주석 컬럼이 안 나와
+  더 안전.
+
+**검증**: 회귀 테스트 9건(`fin2/tests/test_section_p_header.py::
+test_note_ref_guard_r19_comma_required` 등, 기존 3건 기대값 갱신 포함) + `extract_facts()`
+원문 XML 3건(한진중공업홀딩스 2025H1·부국증권 2018H1·한양증권 2014Q1) end-to-end
+대조 + `pytest tests/ fin2/tests/` 515 passed(무관 기존 실패 1건 제외).
+
+**소급 백필**: 부분(후보 89,430건)이 아닌 **전체 185,067건 XML 전수 재추출** 결정
+(단순·안전) — `report_lines` 60,534,978행(29GB) 재적재 + `std_financials_v3` 2,537개사·
+299,565행 재빌드, 에러 0건(2026-08-14 17:18~20:50, 약 3시간32분,
+`scripts/run_r19_backfill_parallel_2026-08-14.sh`).
+
+**Gate B 재감사 결과**(2026-08-14~15, `scripts/run_gateb_audit_parallel.sh --recheck`):
+fail_a 686→631(-55, 8.0%↓) / fail_b 2,696→2,704(+8, REVIEW 전용·차단 아님) / pass
+195,212→196,773. 타깃 버그(한진중공업홀딩스 00163673 revenue, 2025 H1·Q3 separate)
+해소 확인(H1→pass, Q3→pending, 둘 다 더 이상 fail_a 아님, 값 report_won과 직접 대조).
+BS 항등식(자산=부채+자본) 전수 재검사(`scripts/probe_bs_identity_post_r19_2026-08-15.py`):
+235,562건 중 위반 869건(0.37%) — R19 이전 기준선은 미보유하나 대다수가 1,000원 단위
+반올림차라 광범위 회귀 신호 없음.
+
+**부수발견(미착수, 이 R19 범위 밖)**: 같은 필링(한진중공업홀딩스 20250814001174)의
+연결 `is.cogs` fail_a — 라벨 "Ⅱ.영업비용/Cost of sales" **총계** 대신 그 아래 하위
+상세줄 "(1) 매출원가"(`source_ref`) 값이 채택돼 655,204백만원 대신 611,638백만원이
+적재됨. `git stash`로 R19 이전 코드에 동일 XML을 재현해도 **동일 값**이 나와 R19와
+무관한 **독립된 선재(pre-existing) 버그**로 확인(R16의 stage-rank 숏컷류와 유사한
+"총계 vs 하위상세" 오귀속 패턴으로 추정, 별도 트랙 필요).
+
+**근거**: `docs/plans/note_ref_guard_body_statement_fix_plan_2026-08-14.md`(v1~v7
+설계 이력·근거 전부) · `docs/qa/gate_b_revenue_bugB_note_ref_guard_root_cause_2026-08-14.md`
+(근본원인+전수스캔) · `scripts/run_r19_backfill_parallel_2026-08-14.sh` ·
+`scripts/probe_bs_identity_post_r19_2026-08-15.py`.
+
 ---
 
 ## 부록 A. 원문(DART XML) 함정 카탈로그

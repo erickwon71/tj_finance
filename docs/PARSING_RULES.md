@@ -1001,6 +1001,60 @@ BS 항등식(자산=부채+자본) 전수 재검사(`scripts/probe_bs_identity_p
 
 ---
 
+## R20. 계층3 `_resolve()` stage-rank 숏컷 — 지주회사형 `is.sga`(영업비용 총계 vs
+판매비와관리비 서브라인), R16과 같은 계열, **새 대상**·**corp+기간 키**로 등재
+
+R19 검증 중 부수발견(한진중공업홀딩스 `is.cogs`)을 조사하다가 R16과 정확히 같은
+근본원인(`_resolve()`가 top-stage 후보 하나로 collapse되면 `_reduce_conflict()`의
+의미기반 필터를 건너뛰고 즉시 confirm)이 `is.sga`에도 있음을 확인. 지주회사형 손익
+계산서가 "Ⅱ.영업비용"(=매출원가류+판매비와관리비 결합 총계, `ACODE=ifrs-full_
+CostOfSales`)을 P라인으로 두고 그 아래 "(n)판매비와관리비" 서브라인을 두는 구조에서,
+총계 라벨은 alias 사전과 그대로 일치해 `stage=exact`, 서브라인은 번호 접두어 제거가
+필요해 `stage=normalized`로만 매칭 — top_vals가 총계(오염값) 하나로 collapse된다.
+
+**R16과 달리 여기선 corp 단독이 아니라 (corp, fy, period) 3-튜플로 등재**(R17
+선례) — 같은 corp도 다른 기간엔 이 패턴이 아닌 구조를 가질 수 있음을 실측으로 확인
+(예: 한진중공업홀딩스 00163673 FY2010: "1.지분법손실+2.임대사업원가+3.판매비와관리비"
+3항목 혼재, §1의 깨끗한 COGS+SGA 2항목 구조가 아님). Phase 0 정밀스캔(exact-normalize
++구조검증, `docs/qa/is_sga_cogs_holdco_phase0_scan_2026-08-15.md`)으로 진짜 대상을
+좁혔다 — substring LIKE 최초추정 "166개사"는 보험사 '기타영업비용' 등 무관 잡음이
+대부분이었다.
+
+**규칙**: `_SGA_SUBLINE_OVERRIDE_KEYS`(`fin2/layer3/combine.py`, corp+fy+period
+3-튜플 685개, 46개사 — `scripts/generate_sga_subline_override_2026-08-15.py`로
+재현 가능, Phase 0 target_rows와 1:1) — is.sga stage-rank 이전(R16/R17과 같은
+자리)에 `_SGA_SUBLINE_LABELS`(`판매비와관리비`/`기타판매비와관리비`) 매치 서브라인
+후보로 rows를 좁힌다. 신규 등재는 반드시 Phase 0와 같은 방식(exact-normalize 후보
+좁히기 + 자식 라벨 COGS/SGA 둘 다 존재 + child_sum==parent 항등식)으로 확인 후
+추가 — 일반화(블랭킷) 금지는 R16/R17과 동일 근거.
+
+**스코프 밖(이 R20으로 못 고침, 후속 트랙 필요)**:
+- `is.cogs` 자체 — 회사마다 증상이 다르다(정확/과소계상/충돌), 서브라인 합산이
+  필요한 회사(두산류)는 R17 additive override 패턴 재사용 후보지만 개별 등재 필요.
+- Gate B `report_won`(cogs) 개념 문제 — 이 corp군의 XBRL은 `ifrs-full_CostOfSales`를
+  총계(COGS+SGA 결합)에 태깅해, `is.cogs`를 아무리 정확히 고쳐도(순수 COGS로) Gate B는
+  report_won(총계)과 다르다며 계속 fail_a를 띄운다. 비교 대상 개념이 애초에 다르다 —
+  `face_audit.py` 로직 조정 여부는 별도 사용자 결정 필요.
+- Phase 0에서 XBRL로 실제 검증 가능한 건 46개사 중 **4개사·15건뿐**(전부
+  2024~2026년 필링) — 나머지 42개사는 XBRL 비교 데이터 자체가 없어 `is.sga`가
+  오염돼 있어도 Gate B가 원래 못 잡았던 "침묵 오염" 케이스(R20 적용으로 조용히
+  해소되지만 Gate B 수치로는 드러나지 않음).
+
+**검증**: `pytest tests/ fin2/tests/` 515 passed(무관 기존 실패 1건 제외,
+`fin2/tests/test_biz_section.py::test_lxintl_facility_table_dropped`, `git stash`로
+main에서도 동일 확인) + 46개사 scoped 백필(`build_std_v3.py --corp <46개사>`) +
+Gate B scoped 재검증(`gateb_audit.py --source v3 --corp-file <46개사> --recheck`) —
+sga 필드 fail(fail_a+fail_b) **전체 46개사·전체기간 0건**(회귀 없음), 3개 알려진
+케이스(한진중공업홀딩스·두산·대성홀딩스) 전부 원문대조 기대값과 정확히 일치 확인.
+잔존 cogs fail_a 10건은 위 "스코프 밖" §3 문제 그대로(예견됨, R20과 무관).
+
+**근거**: `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md`(설계) ·
+`docs/qa/is_sga_cogs_holdco_phase0_scan_2026-08-15.md`(Phase 0 정밀스캔) ·
+`fin2/layer3/combine.py::_resolve()` (`_SGA_SUBLINE_OVERRIDE_KEYS`/
+`_SGA_SUBLINE_LABELS`) · `scripts/generate_sga_subline_override_2026-08-15.py`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -1052,6 +1106,7 @@ BS 항등식(자산=부채+자본) 전수 재검사(`scripts/probe_bs_identity_p
 | R15 | `docs/qa/gate_b_v3_fail_a_784_triage_2026-08-13.md` ③ · `docs/plans/gate_b_fail_a_bugfix_2_3_plan_2026-08-13.md` 버그 #3 · `fin2/layer3/combine.py::_resolve()/_is_noncurrent()` · `fin2/tests/test_combine_current_strict.py` |
 | R16 | `docs/qa/gate_b_fail_a_revenue_tradepayables_triage_2026-08-13.md` · `docs/plans/gate_b_faila_combine_stage_rank_shortcut_fix_design_2026-08-13.md` · `fin2/layer3/combine.py::_resolve()` (`_REVENUE_TOTAL_OVERRIDE_CORPS`/`_TRADE_PAYABLES_PARENT_OVERRIDE_CORPS`) · `fin2/tests/test_combine_curated_overrides.py` |
 | R17 | `docs/plans/gate_b_faila_trade_payables_additive_design_2026-08-14.md`(원설계) · 이 세션 실측(구현 중 발견) · `fin2/layer3/combine.py::_resolve()` (`_TRADE_PAYABLES_ADDITIVE_OVERRIDE`) · `fin2/tests/test_combine_curated_overrides.py` |
+| R20 | `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md` · `docs/qa/is_sga_cogs_holdco_phase0_scan_2026-08-15.md` · `fin2/layer3/combine.py::_resolve()` (`_SGA_SUBLINE_OVERRIDE_KEYS`/`_SGA_SUBLINE_LABELS`) · `scripts/generate_sga_subline_override_2026-08-15.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황

@@ -101,6 +101,24 @@ def test_trade_payables_non_override_corp_keeps_narrow_child_selection():
     assert confirmed["bs.trade_payables"] == 3_200_000_000
 
 
+def test_trade_payables_override_corp_picks_parent_2026_08_14_expansion():
+    # 확장분(2026-08-14, docs/qa/gate_b_faila_residual_triage_2026-08-14.md §2)
+    # KCC건설(00105466) 실제 원문 XBRL 값 재현(20250320001281.xml:7693-7716):
+    # 부모 ACODE=ifrs-full_TradeAndOtherCurrentPayables, 자식
+    # ACODE=ifrs-full_TradeAndOtherCurrentPayablesToTradeSuppliers.
+    cands = {
+        "bs.trade_payables": [
+            _row(232_367_566_122, "normalized", "매입채무 및 기타채무",
+                 "부채>유동부채", node_role="P"),
+            _row(182_916_925_475, "exact", "매입채무",
+                 "부채>유동부채", node_role="F"),
+        ],
+    }
+    confirmed, conflicts = _resolve(cands, "00105466")
+    assert confirmed["bs.trade_payables"] == 232_367_566_122
+    assert "bs.trade_payables" not in conflicts
+
+
 def test_trade_payables_override_corp_no_parent_candidate_falls_through():
     # 등재 회사라도 이번 기간에 P 후보 자체가 없으면 원래 rows 그대로 진행.
     cands = {

@@ -798,9 +798,20 @@ curated set에 등재하고 stage-rank 이전(R15의 `_CURRENT_STRICT` 사전필
   (00159254)·미래에셋벤처투자(00340096) — `is.revenue` 총계가 정답인 회사만.
 - `_TRADE_PAYABLES_PARENT_OVERRIDE_CORPS`(같은 파일): 현대공업(00164502)·
   국일신동(00203847)·코아스(00210856)·케이엔솔(00304076)·IPARK현대산업개발
-  (01310269) — `bs.trade_payables` 부모가 정답인 회사만.
+  (01310269)·**KCC건설(00105466)·조일알미늄(00149239)·다스코(00353878)**(2026-08-14
+  확장, 아래 참고) — `bs.trade_payables` 부모가 정답인 회사만.
 - 신규 등재는 반드시 원문/report_won 대조로 확인 후 추가 — 구조가 같아 보인다고
   블랭킷 규칙으로 일반화하지 말 것(이 문서의 실측 결과가 그 위험을 이미 증명함).
+
+**확장(2026-08-14)**: `docs/qa/gate_b_faila_residual_triage_2026-08-14.md` §2에서
+발견한 3개사를 원문 XBRL 직접대조로 추가 확인 후 등재. 세 회사 모두 **동일한
+ACODE 쌍**(부모=`ifrs-full_TradeAndOtherCurrentPayables`, 자식=
+`ifrs-full_TradeAndOtherCurrentPayablesToTradeSuppliers`, 예: KCC건설
+`20250320001281.xml`:7693-7716)이라 기존 5개사보다 구조적 근거가 더 명확하다.
+검증: 3개사 scoped 백필(`build_std_v3.py --corp <3개사>`, 270행·오류0) + Gate B
+scoped 재검증(`gateb_audit.py --corp-file <3개사> --recheck`) — trade_payables
+fail_a 10→**0**(전부 pass), **fail_b 0**(다른 기간 회귀 없음). 남은 다스코
+(00353878) fail_a 8건은 무관한 `cfo` 필드의 기존 별개 결함.
 
 **스코프 밖**(이 override로 못 고침, 별도 트랙): BS에 결합총계 라인 자체가 없어
 매입채무+기타채무가 미합산인 케이스(01412822류, additive 규칙 필요) · Gate B

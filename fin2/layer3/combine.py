@@ -68,6 +68,14 @@ _TRADE_PAYABLES_PARENT_OVERRIDE_CORPS = frozenset({
     "00210856",   # 코아스
     "00304076",   # 케이엔솔
     "01310269",   # IPARK현대산업개발
+    # ★확장(2026-08-14, docs/qa/gate_b_faila_residual_triage_2026-08-14.md §2): 원문
+    # XBRL 직접대조로 확인(3개사 전부, 여러 기간에 걸쳐) — 부모 라인
+    # ACODE="ifrs-full_TradeAndOtherCurrentPayables"(=report_won), 자식 라인
+    # ACODE="ifrs-full_TradeAndOtherCurrentPayablesToTradeSuppliers"(=db_won, std_v3가
+    # 잘못 채택). 세 회사 모두 동일한 ACODE 쌍 — 위 5개사보다 더 명확한 구조적 근거.
+    "00105466",   # KCC건설 (6개 기간, 2024FY~2026Q1, 원문확인: 20250320001281.xml:7693-7716)
+    "00149239",   # 조일알미늄 (2개 기간, 원문확인: 20260312000761.xml:4577-4584)
+    "00353878",   # 다스코 (연결+별도, 원문확인: 20260515001729.xml:4672-4678)
 })
 
 # ★trade_payables additive override(2026-08-14, period-scoped): 원문 XBRL 직접대조로

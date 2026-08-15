@@ -17,38 +17,52 @@
 > 단독)가 너무 성글어 같은 표 안의 별개 정상 EPS 행까지 잘못 건드릴 뻔한
 > 것**을 발견해 키를 `(rcept_no, statement, basis, table_seq, label_raw)`
 > 5-튜플로 좁혔다. 최종 확정 결과는 §4-D 참고.
+>
+> **★★★2026-08-15 3차 세션(사용자 지시 "문서 확인하고 수정방향 맞는지
+> 확인해")에서 설계 리뷰 실측 → §4-A의 수정 메커니즘 자체가 교체됨.**
+> 세 가지가 실측으로 뒤집혔다(전부 §4-E에 근거·수치 기록):
+> **(A)** "표 단위 폴백"은 R27 값크기 게이트와 충돌해 **2,218건 중
+> 2,207건(99.5%)에서 EPS 행이 emit되지 않고 사라진다** — 문서가 주장하던
+> "EPS 값이 고쳐진다"는 결과가 아니다. 그래서 메커니즘을 **"curated 키는
+> EPS 행이 아니다 → EPS 패스에서 skip, 본류에 위임"**으로 교체했다
+> (`table_unit` 배선 자체가 불필요해짐).
+> **(B)** curated 2,218건에 **정상 EPS 행 13건이 섞여 있었다**(오탐,
+> §4-E-B) → 퇴출 규칙 확정, 최종 **2,205키/286개사**.
+> **(C)** "std_v3 무영향" 주장은 EPS 때문이 아니라 **R27 재추출 부수효과**
+> 때문에 성립하지 않는다(§4-E-C) → 검증계획 교체.
+> 단계별 구현 절차는 **§8 TODO** 참고.
 
 ---
 
 ## ★다음 세션 시작점 (Resume Here)
 
-**현재 상태: 설계 + curated 키 정밀 재확정까지 완료. 구현은 미착수,
-사용자 승인 대기 중.**
+**현재 상태: 설계 + curated 키 정밀 재확정 + 설계 리뷰(메커니즘 교체)까지
+완료. 구현은 미착수, 사용자 승인 대기 중.**
 
 - **확정된 것**: 원인(§1, 원문대조 100% 확정) · 일반규칙 기각 근거(§2,
-  실측) · 제안 설계(§4-A, curated 5-튜플 키 방식) · **curated 키 최종
-  확정값: 2,218개 키/1,871 rcept_no/1,560 filing/288개사/FY 1999~2008**
-  (§4-D, std_v3 교차검증 271건 + 텍스트신호 1,947건 + 원문XML 2건 검증).
+  실측) · **수정 메커니즘 = "curated 키는 EPS 아님 → EPS 패스 skip"**
+  (§4-A, 3차 세션에서 "표 단위 폴백"에서 교체됨 — 근거 §4-E-A) ·
+  curated 키 5-튜플 granularity(§4-B 6번).
+- **curated 키 수치(2단계)**:
+  - 재확정 산출물(2차 세션): **2,218개 키** — `scripts/eps_curated_
+    final_keys_2026-08-15.json`(현재 파일 상태 그대로, 손대지 않음).
+  - **구현에 쓸 최종본(3차 세션 리뷰 반영): 2,218 − 오탐 13 = 2,205개
+    키 / 1,858 rcept_no / 1,549 filing / 286개사 / FY 1999~2008**
+    (§4-D 갱신표, 퇴출 규칙·근거 §4-E-B). **이 퇴출본 JSON은 아직
+    생성 전 — §8 Phase 1이 만든다.**
 - **재현 가능한 산출물** (`scripts/`, repo에 영구 저장, 스크래치패드
   아님 — DB 상태가 안 바뀌면 재실행 시 100% 동일 결과 재현 확인함):
   1. `scripts/build_eps_curated_override_final_2026-08-15.py`
   2. `scripts/check_rcept_key_granularity_risk_2026-08-15.py`
   3. `scripts/finalize_eps_curated_keys_2026-08-15.py` →
-     `scripts/eps_curated_final_keys_2026-08-15.json`(**최종 2,218개 키
-     원본**, 구현 시 이 JSON을 `_EPS_UNIT_FALLBACK_OVERRIDE_KEYS`
-     리터럴로 변환하면 됨)
-- **다음에 할 일(사용자 승인 후)**:
-  1. `_EPS_UNIT_FALLBACK_OVERRIDE_KEYS` frozenset을
-     `fin2/extract/report_lines.py`에 추가(§4-A 코드 스케치 그대로).
-  2. `_emit_eps_lines`에 `table_unit` 파라미터 threading, 단위 결정부
-     수정(§4-A).
-  3. 호출측(`_emit_section_lines`, 446~451줄)에 `table_unit=unit` 전달.
-  4. 288개사 재추출(`scripts/reload_report_lines_corp.py`) →
-     std_v3 재빌드(`scripts/build_std_v3.py`, 단 EPS는 combine.py가
-     소비 안 해 다른 필드엔 영향 없음, §4-C) → `pytest tests/
-     fin2/tests/` 회귀 확인 → 표본 원문대조로 최종 검증(§4-C).
-  5. `docs/PARSING_RULES.md`에 R28로 등재(구현 완료 후).
-- **미해결/범위 밖(승인과 별개로 남아있음)**: Phase 2 — `net_income`
+     `scripts/eps_curated_final_keys_2026-08-15.json`(2,218개 키, 퇴출 전)
+- **다음에 할 일(사용자 승인 후)**: **§8의 Phase 0~6 TODO를 순서대로**.
+  요약하면 ① 오탐 13건 퇴출본 생성(Phase 1) → ② 키를 데이터파일로
+  적재 + `_emit_eps_lines`에 skip 게이트 3줄 추가(Phase 2) → ③ 재추출
+  전 DB 스냅샷(Phase 3) → ④ 286개사 재추출 + std_v3 재빌드(Phase 4)
+  → ⑤ 전후 diff 검증 + 원문대조 + pytest(Phase 5) → ⑥ R28 등재·커밋
+  (Phase 6).
+- **미해결/범위 밖(승인과 별개로 남아있음)**: **후속트랙 N** — `net_income`
   결측 복구 가능성(§3/§6, 표본 15건 중 9건+ NULL 확인됐으나 전수
   미측정, 별도 investigation 필요). REJECTED 티어(7,277건) 전수
   원문대조는 안 함(§6).
@@ -81,13 +95,21 @@
   기각한다. 대신 **이 프로젝트의 기존 선례(R16/R17/R20/R21/R23/R24 등)와
   같은 curated 허용목록 방식**을 제안한다 — 검증된 확정버그 필링만
   정확히 겨냥하고 나머지는 전혀 건드리지 않는다(§4).
+- **★3차 세션(설계 리뷰) 결론**: curated 방향은 유지하되, 그 키에 적용할
+  **동작을 "표 단위 폴백"에서 "EPS 패스 skip(= 이 행은 EPS가 아님)"으로
+  교체**한다 — 폴백은 R27 값크기 게이트와 충돌해 99.5%의 행에서 결국
+  "행 삭제"로 귀결되므로, 의도를 그대로 쓰는 편이 정직하고 단순하다
+  (§4-A/§4-E-A). 아울러 curated 목록에서 **정상 EPS 오탐 13건을 퇴출**해
+  최종 **2,205키/286개사**로 확정하고(§4-E-B), "std_v3 무영향" 가정은
+  **R27 재추출 부수효과** 때문에 성립하지 않으므로 전후 diff 측정으로
+  바꾼다(§4-E-C). 단계별 구현 절차는 **§8**.
 - **부수 발견(★중요, 범위 확장 후보)**: 표본 점검 결과 이 버그가 **EPS
   값만이 아니라 `std_financials_v3.net_income`(그리고 그로부터 파생되는
   `controlling_ni`) 자체의 결측**과도 상당 부분 겹친다 — 헤드라인 라벨이
   통짜라 `account_mapper.map()`이 `unknown.*`로 떨어져 본류 후보가 아예
   안 생기기 때문(§3). 표본 15건 중 최소 6건에서 net_income이 NULL로 확인됐다
   (전수는 아님, 정밀측정 필요). 이 문서의 1차 범위는 EPS 값 자체의 오염
-  방지/제거이고, net_income 결측 복구는 **별도 Phase 2로 분리**한다(§6).
+  방지/제거이고, net_income 결측 복구는 **별도 후속트랙 N으로 분리**한다(§6).
 
 ---
 
@@ -232,77 +254,86 @@ row_order IS NULL AND adecimal=0`, 즉 현재 `unit=1`이 적용된 행) 458,091
 `net_income` 결측을 복구하는 것(라벨 정제 후 mapper 재시도, 또는 R24/R25
 류 구조기반 후보주입)은 **서로 다른 작업**이고, 후자는 전수 규모·기존
 결측과의 중복 여부를 먼저 재확인해야 승인 가능한 설계가 나온다. §6에
-Phase 2로 남겨둔다.
+후속트랙 N으로 남겨둔다.
 
 ---
 
 ## 4. 제안 설계 — curated 허용목록 (미구현, 승인 필요)
 
-### 4-A. 핵심 아이디어
+### 4-A. 핵심 아이디어 (★2026-08-15 3차 세션에서 메커니즘 교체됨)
 
-일반 규칙(라벨에 단위선언 없으면 표 단위로 폴백) 대신, **이전 세션이
-이미 검증한 확정버그 population**(sibling adecimal 최빈값 대조로 확정된
-1,417행/206개사/1,307개 filing, [[gateb-3tracks-investigation-2026-08-15]]
-§3-완결)을 **정확히 겨냥하는 curated 키 집합**을 만들어, 그 안에 속한
-필링에서만 표 단위 폴백을 적용한다. 나머지 전부(정상 EPS 168,579건 포함)는
-**코드 동작이 100% 그대로**다 — 이 프로젝트가 이미 여러 번 써온 패턴
+일반 규칙(라벨에 단위선언 없으면 표 단위로 폴백) 대신 **curated 키 집합**을
+쓴다는 큰 줄기는 그대로다 — 이 프로젝트가 이미 여러 번 써온 패턴
 (R16/R17/R20/R21/R23/R24, `fin2/layer3/combine.py`의
 `_TRADE_PAYABLES_ADDITIVE_OVERRIDE`/`_SGA_SUBLINE_OVERRIDE_KEYS`/
-`_COGS_ADDITIVE_OVERRIDE` 등)과 동일선상이다.
+`_COGS_ADDITIVE_OVERRIDE` 등)과 동일선상이다. 나머지 전부(정상 EPS
+168,579건 포함)는 **코드 동작이 100% 그대로**다.
+
+**바뀐 것 — curated 키에 적용할 동작**:
+
+| | 2차 세션안(폐기) | ★최종안 |
+|---|---|---|
+| 동작 | 표 단위(`table_unit`)로 폴백해 EPS 값을 재계산 | **EPS 행이 아니라고 보고 EPS 패스에서 skip** |
+| 배선 | `_emit_eps_lines`에 `table_unit` 파라미터 신설 + 호출측 전달 | **불필요**(호출측 무수정) |
+| 그 행의 최종 귀결 | (의도) 스케일 교정된 EPS 행 | 본류(`_emit_section_lines`)가 표 단위 적용해 일반 행으로 전사 |
+
+교체 이유는 §4-E-A의 실측이다 — 폴백을 적용하면 값이 1,000~100만 배가
+되어 **그 직후에 있는 R27 값크기 게이트**(`_looks_like_eps_amounts`,
+`report_lines.py:311`, ≤1,000만원)에 걸려 `continue` 되므로, 2,218건 중
+**2,207건(99.5%)은 어차피 EPS로 emit되지 않는다**. 즉 폴백안의 실제
+효과는 "값 교정"이 아니라 "행 삭제"였고, 그렇다면 **의도를 그대로 쓰는
+쪽(= 이 행은 EPS가 아니다)이 정직하고, 배선도 더 단순하며, 잔여 11건의
+가장자리 사례도 안 생긴다**.
+
+이 메커니즘은 R27과 정확히 같은 계열이다 — R27도 "'주당' 부분문자열
+때문에 EPS 경로로 잘못 들어온 행을 EPS emit에서 빼고 본류에 위임"한다.
+차이는 R27이 값크기라는 **전역 신호**로 거르는 반면, 여기는 값크기로는
+원리적으로 못 거르는 클래스(§5-C)라 **curated 키**로 거른다는 점뿐이다.
 
 ```python
-# fin2/extract/report_lines.py (신규, 위치는 _emit_eps_lines 근처)
+# fin2/extract/report_lines.py (신규, 위치는 _emit_eps_lines 바로 위)
 
-# ★K-GAAP 구서식(00269852류) 헤드라인+EPS노트 통짜라벨 폴백 허용목록
-# (2026-08-15, R28 예정, 최종 확정은 §4-D). 키는 rcept_no 단독이 아니라
-# (rcept_no, statement, basis, table_seq, label_raw) 5-튜플이다 — rcept_no
-# 단독 키를 시도했다가 **같은 표 안에 별개의 정상 EPS 행이 같이 있는
-# 필링 2건을 실측으로 발견**(§4-D 표), 그 행까지 잘못 건드릴 뻔했다.
-# 생성 스크립트: scripts/generate_eps_kgaap_unit_fallback_override_2026-08-15.py.
+# ★K-GAAP 구서식(00269852류) "헤드라인 순이익 + 괄호 안 EPS 노트" 통짜라벨
+# 목록(2026-08-15, R28 예정). 이 행들은 '주당' 부분문자열 때문에 EPS 경로로
+# 들어오지만 실제로는 그 표의 헤드라인 당기순이익 행이다 — EPS 로 emit 하지
+# 않고 본류(_emit_section_lines)가 표 단위를 적용해 일반 행으로 전사하게
+# 넘긴다(R27 과 같은 계열, 단 값크기로는 못 걸러 curated 키를 쓴다).
+#
+# 키는 rcept_no 단독이 아니라 (rcept_no, statement, basis, table_seq,
+# label_raw) 5-튜플이다 — rcept_no 단독 키를 시도했다가 **같은 표 안에
+# 별개의 정상 EPS 행이 같이 있는 필링 2건을 실측으로 발견**(§4-B 6번),
+# 그 행까지 잘못 건드릴 뻔했다.
+#
 # ★블랭킷 규칙 아님 — 이 집합 밖의 EPS 행(정상 168,579건 포함, 같은 표
-# 안의 형제 정상 EPS 행 포함)은 기존 동작(단위선언 없으면 unit=1) 그대로
-# 유지한다(§2 실측: 일반규칙은 위험).
-_EPS_UNIT_FALLBACK_OVERRIDE_KEYS: frozenset[tuple[str, str, str, int, str]] = frozenset({
-    ("20041112000679", "IS", "separate", 0,
-     "ⅩⅢ.당기순이익(손실)      (기본주당순손실, 경상손실 당기     3분기 : 원     "
-     "3분기 누계 : 원 전기     3분기 : 119원     3분기 누계 : 47원)"),  # 00349811
-    ("20041112000943", "IS", "separate", 0,
-     "ⅩⅢ.당기순이익(22기 3분기주당순손실 4814원 및 주당경상손실 6813원22기 3분기 "
-     "누적 주당순손실 3497원 및 주당경상손실 4934원당분기주당순이익 및 주당경상이익 "
-     "2190원당3분기주당순이익및 주당경상이익 1187원22기 주당순손실 및 경상손실  "
-     "2923원21기 주당순이익 및 경상이익 256원)"),  # 00161976
-    ...  # 총 2,218건, 생성스크립트 산출물(§4-D)
-})
+# 안의 형제 정상 EPS 행 포함)은 기존 동작 그대로다(§2 실측: 일반규칙은 위험).
+# 생성: scripts/purge_eps_curated_false_positives_2026-08-15.py (§8 Phase 1)
+# 데이터: fin2/extract/data/eps_kgaap_headline_not_eps_keys_2026-08-15.json
+_EPS_KGAAP_HEADLINE_NOT_EPS_KEYS: frozenset[tuple[str, str, str, int, str]] = _load_kgaap_keys()
 ```
 
-`_emit_eps_lines`에 `table_unit`(호출측 `_emit_section_lines`가 이미
-계산해둔 그 표의 실제 선언단위, FX/문서기본값 폴백까지 반영된 최종값)을
-새 파라미터로 추가하고, 단위 결정부만 수정한다:
+`_emit_eps_lines` 본문 수정은 **라벨 확정 직후 3줄**이 전부다(단위 결정부는
+손대지 않는다):
 
 ```python
-def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
-                    report_fiscal_year, report_fiscal_period,
-                    table_seq=None, table_title=None,
-                    table_unit=1) -> None:          # ★신규 파라미터
-    ...
-    eps_cu = ColumnUnits.from_declaration(label)
-    if eps_cu.kind == FX_ONLY:
-        unit, eps_source, eps_currency = eps_cu.fx_mult, SRC_FX, eps_cu.currency
-    else:
-        own_decl = detect_unit_declaration(label)
-        fallback_key = (rcept_no, statement, basis, table_seq, label)
-        if own_decl is not None:
-            unit, eps_source, eps_currency = own_decl, "declared", None
-        elif fallback_key in _EPS_UNIT_FALLBACK_OVERRIDE_KEYS:   # ★신규, 행단위 정밀매치
-            unit, eps_source, eps_currency = table_unit, "table_fallback", None
-        else:
-            unit, eps_source, eps_currency = 1, "declared", None   # 기존 동작
-    ...
+    for tr in table_direct_rows(table):
+        cells = _get_cells(tr)
+        if not cells or "주당" not in cells[0]:
+            continue
+        label = cells[0].strip()
+        # ★R28 — K-GAAP 구서식 헤드라인 순이익 행(EPS 아님) → 본류에 위임.
+        if (rcept_no, statement, basis, table_seq, label) in _EPS_KGAAP_HEADLINE_NOT_EPS_KEYS:
+            continue
+        eps_cu = ColumnUnits.from_declaration(label)   # 이하 기존 코드 그대로
 ```
 
-호출측(`_emit_section_lines`, 446~451줄)에 `table_unit=unit`만 추가로
-넘기면 된다(그 지점에 이미 `unit` 변수가 계산돼 있음, 위치는 §5-C의
-`report_lines.py` 코드 참고).
+**★이 메커니즘이 무손실인 이유(불변식)**: skip 된 행을 본류가 반드시
+줍는다는 보장이 필요하다. 본류의 대응 가드는
+`if "주당" in row.account_name and _looks_like_eps_amounts(row.amounts): continue`
+(`report_lines.py:456`)인데, `row.amounts`는 **표 단위가 적용된 값**이다.
+curated 집합은 §4-E-B의 퇴출 규칙 G에 의해 **`|raw × table_unit| >
+1,000만원`인 행만 남기므로**, 이 가드는 항상 False가 되어 본류가 그 행을
+전사한다. 즉 규칙 G는 단순한 오탐 제거가 아니라 **skip 메커니즘의 무손실
+조건 그 자체**다(이 불변식은 §8 Phase 5-2에서 전수 확인한다).
 
 ### 4-B. curated 키 생성 방법 — ★★2026-08-15 후속 세션에서 실행·확정 완료
 
@@ -346,26 +377,43 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
 브로드닝된 텍스트 OR신호)이 더 완전하고, 원문대조 2건으로 뒷받침돼
 **이 문서의 최종 수치로 채택**한다(이전 추정치는 폐기).
 
-### 4-C. 파이프라인 영향 범위
+### 4-C. 파이프라인 영향 범위 (★2026-08-15 3차 세션 갱신)
 
-- `report_lines.py`는 Layer 2 추출기 — 코드 수정은 **`_EPS_UNIT_FALLBACK_
-  OVERRIDE_KEYS`에 담긴 (rcept_no, statement, basis, table_seq, label)
+- `report_lines.py`는 Layer 2 추출기 — 코드 수정은 **`_EPS_KGAAP_HEADLINE_
+  NOT_EPS_KEYS`에 담긴 (rcept_no, statement, basis, table_seq, label_raw)
   정확일치 행만 동작이 바뀌는 curated 게이트**(코드 자체는 전역이지만
   룩업 테이블이 좁고, 같은 표의 형제 행은 라벨이 달라 자동으로 비껴간다).
 - 재추출은 확정된 rcept 목록의 corp만 대상(`scripts/reload_report_lines_
-  corp.py --corp <corp_code>`, 최대 288개사, §4-D).
-- std_v3 재빌드(`scripts/build_std_v3.py --corp <corp_code>`) — 단, EPS/
-  주당손익 필드는 `combine.py`가 전혀 소비하지 않는 것으로 확인됨(오늘
-  세션 재확인: `combine.py`/`build.py`에 `주당손익` 문자열 매칭 0건,
-  소비처는 audit/verify/test 스크립트뿐) → **이 수정만으로는 std_v3의
-  다른 필드(net_income 등)에 영향 없음**, report_lines 테이블의 EPS 값
-  자체만 고쳐진다.
-- Gate B 재감사는 불필요(controlling_ni/net_income 경로와 무관, §3의
-  net_income 결측은 별도 Phase 2).
-- 검증: (a) curated 목록에 든 필링의 EPS 값이 표 단위 적용 후 원문과
-  일치하는지 표본 원문대조, (b) curated 목록 밖의 EPS population
-  (289,512 + 159,054 + 168,579-9,495=나머지 전부)이 단조성 유지되는지
-  in-memory 재추출 표본 확인, (c) `pytest tests/ fin2/tests/` 회귀 0.
+  corp.py --corp <corp_code>`, 286개사, §4-D).
+- **EPS/주당손익 필드 자체는 `combine.py`가 전혀 소비하지 않는다**(3차
+  세션 재확인: `fin2/layer3/*.py`에 `주당` 문자열 매칭 0건, 소비처는
+  audit/verify/test 스크립트뿐).
+- **★그러나 "std_v3 무영향"은 성립하지 않는다**(2차 세션안의 오판,
+  근거 §4-E-C). 이유는 EPS가 아니라 **재추출 자체의 부수효과**다:
+  이 286개사는 **R27(커밋 `55cea32`, 2026-08-15) 이후 한 번도 재추출된
+  적이 없다**(R27 백필은 KBI메탈 1개사만). R27은 본류 가드를 값크기
+  기준으로 좁혔으므로, 재추출하면 **이 헤드라인 행들이 본류 행으로
+  새로 생긴다**(현재 DB엔 없음 — 표본 200건 전수 확인 0/200). 이 신규
+  본류 행은 `combine.py`의 `AccountMapper`를 통과하므로 std_v3 입력이
+  바뀐다. §3의 예상대로 `unknown.*`로 떨어질 가능성이 높지만 **측정된
+  사실이 아니다**.
+  → 그래서 검증계획을 "무영향 가정"에서 **"전후 diff 측정"**으로 바꾼다
+  (§8 Phase 3/5). 부작용이 아니라 **§3의 net_income 결측이 일부 저절로
+  메워지는 상방**일 수도 있는데, 그 경우에도 **측정해서 기록만 하고 이
+  문서의 범위는 넓히지 않는다**(후속트랙 N은 §6 그대로 유지).
+- Gate B 재감사: controlling_ni/net_income 값이 실제로 바뀌면(Phase 5-4의
+  diff가 비어있지 않으면) **해당 회사만 `gateb_audit.py --recheck`**를
+  돌려 회귀 0을 확인한다(diff가 비면 불필요).
+- 검증(상세 절차는 §8 Phase 5):
+  (a) curated 키 행이 `section_path='주당손익'`에서 **사라졌는지**
+      (※2차 세션안의 "고쳐진 EPS 값을 원문대조"는 폐기 — §4-E-A상
+      그런 행은 애초에 생기지 않는다),
+  (b) 같은 키의 **본류 행이 새로 생겼고 값이 `raw × table_unit`인지**
+      (무손실 불변식, §4-A),
+  (c) curated 목록 **밖**의 EPS population이 완전 불변인지(전후 행수·
+      값 해시 대조),
+  (d) std_v3 전후 diff 측정(위 항목),
+  (e) `pytest tests/ fin2/tests/` 회귀 0.
 
 ### 4-D. 최종 확정 결과 (2026-08-15 후속 세션, 실행 완료)
 
@@ -373,10 +421,13 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
 |---|---|---:|---:|---:|---:|
 | CONFIRMED | `raw×table_unit`이 std_v3 기존 `net_income`/`controlling_ni`와 1% 이내 일치(독립 교차검증, 대부분 완전일치) | 271 | 233 | 270 | 100 |
 | LIKELY | 헤드라인 단어 AND 임베드 "숫자+원" 토큰(§2-B에서 오탐 거의 없음 확인) + 원문 XML 2/2 표본검증 | 1,947 | 1,418 | 1,705 | 266 |
-| **합계(최종 curated 키)** | | **2,218** | **1,560** | **1,871** | **288** |
+| 소계(2차 세션 산출물) | | **2,218** | **1,560** | **1,871** | **288** |
+| ★오탐 퇴출(3차 세션, §4-E-B 규칙 G∪L) | 정상 EPS 행이 섞여 들어온 것 — 제외 | −13 | −11 | −13 | −2 |
+| **★합계(구현에 쓸 최종 curated 키)** | | **2,205** | **1,549** | **1,858** | **286** |
 
 FY 범위 1999~2008(§1의 이전 세션 추정 2003~2010과 대체로 겹치나 양끝이
-조금 더 넓다 — 오늘 방법론이 더 완전하기 때문으로 판단).
+조금 더 넓다 — 오늘 방법론이 더 완전하기 때문으로 판단). 퇴출 후에도
+FY 범위·CONFIRMED 271행은 그대로다(퇴출 13건은 전부 LIKELY 티어).
 
 **CONFIRMED 271행의 부수적 의미**: 이 271행은 교차검증에 성공했다는
 것 자체가 "해당 filing의 net_income은 **이미** std_v3에 다른 경로로
@@ -384,14 +435,105 @@ FY 범위 1999~2008(§1의 이전 세션 추정 2003~2010과 대체로 겹치나
 안 늘어난다(이미 있었음), **EPS 값 자체의 정확성만 개선**된다. 반대로
 LIKELY 1,947행은 std_v3에 대조할 총계가 아예 없었던 행들이라, §3의
 "net_income 결측"과 겹칠 가능성이 이쪽에 더 높다(단, 이 문서의 1차 목표는
-EPS 값 수정이지 net_income 복구가 아니다 — §6 Phase 2 그대로 유지).
+EPS 값 수정이지 net_income 복구가 아니다 — §6 후속트랙 N 그대로 유지).
 
-**검증 산출물**(스크래치패드, 재현 가능한 로직은 본문에 기술):
+**검증 산출물**(전부 `scripts/` 아래 영구 보존):
 `build_eps_curated_override_final_2026-08-15.py`(교차검증+텍스트신호
 분류, `eps_curated_candidates_2026-08-15.json` 저장) →
 `check_rcept_key_granularity_risk_2026-08-15.py`(키 단위 위험 발견) →
-`finalize_eps_curated_keys_2026-08-15.py`(최종 5-튜플 키 집합 산출,
-`eps_curated_final_keys_2026-08-15.json` 저장, **2,218개 키 원본**).
+`finalize_eps_curated_keys_2026-08-15.py`(5-튜플 키 집합 산출,
+`eps_curated_final_keys_2026-08-15.json` 저장, **2,218개 키, 퇴출 전**).
+
+---
+
+## 4-E. ★설계 리뷰 실측 (2026-08-15 3차 세션) — 메커니즘이 교체된 근거
+
+2차 세션까지의 설계안을 구현 착수 전 리뷰하면서 실코드·실DB로 검증했고,
+세 가지가 뒤집혔다. 아래 수치는 전부 `scripts/eps_curated_candidates_
+2026-08-15.json`(2,218행)과 현재 DB로 재현 가능하다.
+
+### 4-E-A. "표 단위 폴백"은 값을 고치는 게 아니라 행을 없앤다 (메커니즘 교체)
+
+`_emit_eps_lines`의 실행 순서는 **단위 확정 → 금액 파싱 → R27 값크기
+게이트**다(`report_lines.py:336~350`). 폴백을 적용하면 파싱값이 1,000~
+100만 배가 되어 게이트(`_EPS_MAX_PLAUSIBLE_WON = 1,000만원`)에 걸리고
+`continue` 된다 — **EPS 행이 emit되지 않는다**.
+
+curated 2,218행에 `raw × table_unit`을 실제로 계산한 결과:
+
+| `abs(raw × table_unit)` | 폴백안의 실제 결과 | 행 |
+|---|---|---:|
+| > 1,000만원 | **EPS emit 자체가 사라짐**(게이트 탈락) | **2,207 (99.5%)** |
+| ≤ 1,000만원 | EPS 행으로 남되 값만 바뀜 | 11 |
+
+→ 2차 세션안이 문서에 적어둔 결과("report_lines의 EPS 값 자체만
+고쳐진다", "고쳐진 EPS 값을 원문대조")는 **99.5%의 행에 대해 성립하지
+않는다**(대조할 행이 존재하지 않음). 결과 자체는 옳은 방향이다 — 이
+행들은 애초에 EPS가 아니므로 사라지는 게 맞다. 그래서 **의도를 그대로
+코드에 쓰는 §4-A의 skip 메커니즘으로 교체**했다. 부수 이득: `table_unit`
+파라미터 threading·호출측 수정이 전부 불필요해지고, 아래 11건 같은
+가장자리 사례가 원천 소멸한다.
+
+### 4-E-B. curated 2,218건에 정상 EPS 행 13건이 섞여 있었다 (오탐 퇴출)
+
+§2-B와 §4-D는 "숫자+원" 텍스트 신호에 오탐이 사실상 없다고 판정했으나,
+위 11건(게이트 생존군)을 눈으로 확인하니 **자기 값을 라벨 안에 적어둔
+진짜 EPS 행**이 다수였다:
+
+```
+00171867 2005FY  raw=144  '(기본주당경상이익:   당기: 144 원 전기: 111원 (기본주당순이익: ...'
+00205003 2004FY  raw=125  '기본주당순이익(주석2)당기:125.0원 전기:107.2원)'
+```
+
+`raw` 값이 라벨에 적힌 원/주 값과 **정확히 일치**한다(144원, 125원) —
+현재 DB 값이 맞고, 폴백을 적용했다면 144,000원·125,000원으로 1,000배
+오염됐을 것이다.
+
+**누수 원인**: 생성 스크립트(`build_eps_curated_override_final_2026-08-15.py:90`)의
+`HEADLINE_RE`에 **맨몸 `순이익|순손실`**이 들어 있다. 이건 `기본주당순이익`의
+부분문자열이므로, "자기 값을 임베드한 정상 EPS 라벨"이 headline 신호와
+"숫자+원" 신호를 **동시에** 만족해 LIKELY 티어로 들어온다. §2-B가 R27에서
+이미 배운 "라벨 텍스트로는 원리적으로 못 가른다"가 **curated 생성 로직
+안에서 그대로 재발**한 것이다.
+
+**퇴출 규칙(확정, 합집합 G∪L = 13행 / 5개사 / 전부 LIKELY 티어)**:
+
+| 규칙 | 정의 | 근거 | 행 |
+|---|---|---|---:|
+| **G** | `abs(raw × table_unit) <= 1,000만원` | 게이트 생존군. skip 메커니즘에선 본류 가드도 이 값을 작다고 보고 걸러내 **행이 통째로 소실**된다 → §4-A 무손실 불변식 위반 | 11 |
+| **L** | 라벨 선두 토큰(번호·괄호 제거 후)이 `주당/기본주당/희석주당/보통주주당`으로 시작 **AND** xref 미검증(LIKELY) | 선두가 주당계열이면 그 행의 주어가 EPS다. CONFIRMED는 std_v3 총계와 독립 교차검증됐으므로 제외하지 않는다(예: `'XII.주당순이익(주석20)'` raw=7,142,371 = net_income 일치 → 진짜 버그행) | 12 |
+| | **합집합(중복 10건)** | | **13** |
+
+퇴출 대상 5개사: `00146861`, `00171867`, `00186559`, `00205003`, `00246620`.
+
+**★기각한 3번째 규칙(N) — 기록해 둠**: "HEADLINE_RE에서 맨몸 `순이익|
+순손실`을 빼고 주당계열을 제거한 뒤 재매칭"이라는 정공법도 시도했으나,
+**진짜 버그행 11건을 같이 날린다**(실측). K-GAAP 구서식이 헤드라인을
+`ⅩⅢ. 당 기  순 이 익`처럼 **글자를 띄어 쓰거나** `분기(당기)순이익`,
+`당(반)기순이익`, `XI. 순이익(주28)`처럼 변형해 적기 때문에, 정규식을
+좁히면 이들이 탈락한다. 공백허용 패턴으로 넓혀도 변형을 다 못 따라간다.
+→ **텍스트 규칙을 더 정교하게 만드는 방향은 여기서도 기각**하고, 값
+기반 규칙 G와 구조 기반 규칙 L로 충분하다고 판단한다(둘 다 라벨 텍스트
+해석에 의존하지 않거나, 의존하되 선두 토큰이라는 명확한 위치만 본다).
+
+### 4-E-C. "std_v3 무영향"은 EPS가 아니라 R27 재추출 부수효과 때문에 깨진다
+
+§4-C에 옮겨 적었다. 요지: 이 286개사는 R27(`55cea32`, 오늘) 이후 재추출된
+적이 없고(백필은 KBI메탈만), R27의 본류 가드 완화로 **재추출만 해도**
+헤드라인 행이 본류 행으로 새로 생긴다(현재 DB엔 없음 — curated 행 표본
+200건 중 본류 쌍둥이 행 **0건** 확인). 이 신규 행은 `AccountMapper`를
+타므로 std_v3 입력이 바뀐다 → "무영향"이 아니라 **전후 diff 측정** 대상.
+
+### 4-E-D. 부수 지적 (구현 편의)
+
+- **키를 소스 리터럴로 박으면 안 된다**: 2,205키의 라벨은 최대 611자·
+  중앙값 128자로, 리터럴 총량이 **약 616KB**다. `report_lines.py`가
+  현재 78KB이므로 파일이 **8배**로 불어난다. → `fin2/extract/data/
+  eps_kgaap_headline_not_eps_keys_2026-08-15.json`에 두고 import 시
+  1회 로드해 frozenset으로 만든다(§8 Phase 2-1).
+- 2차 세션안 §4-A 코드주석이 가리키던 생성 스크립트명
+  (`generate_eps_kgaap_unit_fallback_override_2026-08-15.py`)은 **실재하지
+  않는 파일**이었다(실제는 §4-D의 3종). §4-A 주석에서 교정했다.
 
 ---
 
@@ -408,6 +550,14 @@ allowlist보다 훨씬 큰 회귀 폭.
 1차 필터로만 쓸 수 있고, 최종 판정 기준으로는 못 쓴다**(R27 §4와 동일
 결론이 여기서도 재현).
 
+**5-B-2(3차 세션 추가 기각)**: §4-E-B의 오탐 13건을 발견한 뒤 "정규식을
+더 정교하게 고쳐서(맨몸 `순이익|순손실` 제거 + 주당계열 스트립) 오탐을
+막자"는 정공법을 시도했으나 **진짜 버그행 11건을 같이 날려 기각**했다
+(K-GAAP 구서식의 `당 기  순 이 익`·`분기(당기)순이익`·`XI. 순이익(주28)`
+같은 표기 변형을 정규식이 못 따라간다). 대신 **값 기반 규칙 G + 구조
+기반 규칙 L**을 채택했다(§4-E-B). 즉 이 클래스에서 "라벨 텍스트 규칙
+정교화"는 **세 번째로 기각된 방향**이다.
+
 ### 5-C. 값 크기 게이트(R27 방식 재사용)
 문제의 근원이 "raw 값이 EPS치고 우연히 작아 보인다"는 것이라 값 크기로는
 애초에 못 거른다(§2-A 끝부분). R27 게이트는 KBI메탈류(총액이 이미 커서
@@ -415,7 +565,10 @@ allowlist보다 훨씬 큰 회귀 폭.
 
 ---
 
-## 6. 이번 설계 범위 밖 (Phase 2 후보)
+## 6. 이번 설계 범위 밖 (후속트랙 N 후보)
+
+> ※ 여기서 말하는 **후속트랙 N**은 §8의 구현 Phase 0~6과 **무관한 별개
+> 작업**이다(이전 판에서 둘 다 "Phase 2"로 불려 혼동 소지가 있어 개명).
 
 - **`net_income` 결측 복구**(§3) — 헤드라인 라벨 정제(괄호 안 EPS 노트
   스트립) 후 `account_mapper.map()` 재시도, 또는 R24/R25류 구조기반
@@ -453,7 +606,7 @@ allowlist보다 훨씬 큰 회귀 폭.
   - `probe_eps_length_threshold_2026-08-15.py` — 라벨 길이 임계값
     판별력 검증(기각).
   - `probe_eps_bug_net_income_impact_2026-08-15.py` — net_income 결측
-    표본 점검(§3, Phase 2 후보 근거).
+    표본 점검(§3, 후속트랙 N 근거).
 - **★최종 curated 키 확정 스크립트 3종 + 산출물 — 저장소에 영구 보존**
   (§4-B/§4-D, 재실행 시 DB 상태가 바뀌지 않는 한 동일 결과 재현 확인함,
   repo 경로에서 직접 재실행해 재현성 검증 완료):
@@ -463,11 +616,195 @@ allowlist보다 훨씬 큰 회귀 폭.
     (CONFIRMED 271행 + LIKELY 1,947행 전체 레코드)을 산출.
   - `scripts/check_rcept_key_granularity_risk_2026-08-15.py` — rcept_no
     단독 키의 위험(같은 표 안 형제 정상 EPS 행 오염 가능성) 검출.
-  - `scripts/finalize_eps_curated_keys_2026-08-15.py` — 최종
+  - `scripts/finalize_eps_curated_keys_2026-08-15.py` —
     `(rcept_no, statement, basis, table_seq, label_raw)` 5-튜플 키
     2,218개를 산출, `scripts/eps_curated_final_keys_2026-08-15.json`에
-    저장(구현 단계에서 이 JSON을 `_EPS_UNIT_FALLBACK_OVERRIDE_KEYS`
-    리터럴로 변환해 `report_lines.py`에 반영하면 됨).
+    저장(**퇴출 전 원본**. 구현에 쓸 최종본은 §8 Phase 1이 만드는
+    2,205키 데이터파일이다 — 이 JSON은 감사추적용으로 그대로 둔다).
   - 원문 XML 직접대조 2건(00349811 오션인더블유 2004Q3, 00161976
     한세예스24홀딩스 2004Q3) — 라벨/원시값/표 선언단위("천원") 전부
     DB 저장값과 정확 일치 확인(§4-B 5번).
+- **구현 단계에서 새로 만들 것**(§8, 아직 없음):
+  - `scripts/purge_eps_curated_false_positives_2026-08-15.py`
+    (Phase 1) → `fin2/extract/data/eps_kgaap_headline_not_eps_keys_
+    2026-08-15.json`(2,205키, 코드가 읽는 데이터파일).
+  - `scripts/snapshot_eps_r28_before_after_2026-08-15.py`(Phase 3/5,
+    전후 diff 측정).
+
+---
+
+## 8. ★단계별 구현 TODO (승인 후 이 순서대로)
+
+**전제**: 아래는 전부 **미착수**다. Phase 0부터 순서대로 진행하고,
+각 Phase의 "완료조건"을 만족하지 못하면 다음 Phase로 넘어가지 않는다.
+Phase 4(재추출)부터는 DB를 바꾸므로, Phase 3의 스냅샷 없이는 절대
+시작하지 않는다.
+
+`docs/runbook_new_parser_pipeline_integration.md` 체크리스트 대비:
+이 수정은 **기존 파서의 동작 변경**이지 신규 파싱 항목 추가가 아니므로
+①데일리 배선(두 call site)은 해당 없음(`collect_new.py`가 이미
+`extract_report_lines`를 호출하고 있고 시그니처 변경이 없다 — Phase 2-4에서
+확인만 한다). ②소급 백필은 **해당됨**(Phase 4). ③검증도 **해당됨**(Phase 5).
+
+### Phase 0 — 착수 전 재확인 (DB 무변경, ~10분)
+
+- [ ] **0-1.** `git status`가 깨끗한지, `main` 최신인지 확인. 작업 브랜치를
+      딸지 여부 결정(선례상 main 직접 작업 후 커밋).
+- [ ] **0-2.** `scripts/eps_curated_candidates_2026-08-15.json`과
+      `scripts/eps_curated_final_keys_2026-08-15.json`이 그대로 있는지,
+      키 2,218개인지 확인.
+- [ ] **0-3.** `scripts/build_eps_curated_override_final_2026-08-15.py`를
+      **재실행**해 DB 상태가 2차 세션 이후 안 바뀌었음을 확인
+      (CONFIRMED 271 / LIKELY 1,947 / 동일 JSON 재생성).
+      → **숫자가 다르면 여기서 멈추고 원인부터 규명**한다(그 사이 다른
+      백필이 report_lines를 건드렸다는 뜻이므로 §4-D 수치 전체 재확정 필요).
+- **완료조건**: 271/1,947/2,218 세 숫자가 문서와 일치.
+
+### Phase 1 — 오탐 13건 퇴출본 생성 (DB 무변경, ~30분)
+
+- [ ] **1-1.** `scripts/purge_eps_curated_false_positives_2026-08-15.py`
+      신규 작성. 입력 `scripts/eps_curated_candidates_2026-08-15.json`,
+      규칙은 §4-E-B 표 그대로:
+      - 규칙 G: `abs(value_won * {-3: 1000, -6: 1_000_000}[table_adec])
+        <= 10_000_000` → 퇴출(`value_won`이 None인 행도 퇴출).
+        ※ `table_adec`는 **ASCII 하이픈 음수**(-3/-6)다.
+      - 규칙 L: 라벨 선두에서 `[\s()\[\]0-9ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫIVX.,\-·]+`를
+        제거한 뒤 `주당|기본주당|희석주당|보통주주당`으로 시작 **AND**
+        `xref_match is False` → 퇴출.
+      - 임계값 1,000만원은 하드코딩하지 말고
+        `from fin2.extract.report_lines import _EPS_MAX_PLAUSIBLE_WON`으로
+        가져와 R27과 자동 동기화되게 한다.
+- [ ] **1-2.** 출력 3개:
+      (a) `fin2/extract/data/eps_kgaap_headline_not_eps_keys_2026-08-15.json`
+      — 코드가 읽을 5-튜플 키 배열(정렬된 list of list),
+      (b) `scripts/eps_curated_purged_rows_2026-08-15.json`
+      — 퇴출 13건 전체 레코드(감사추적용, 왜 뺐는지 규칙 플래그 포함),
+      (c) `scripts/eps_r28_target_corps_2026-08-15.txt`
+      — 잔존 286개사 corp_code(한 줄에 하나, Phase 4 명령이 소비).
+- [ ] **1-3.** 콘솔 출력으로 §4-D 갱신표 수치를 그대로 재현하는지 확인.
+- **완료조건(하드 숫자)**: 퇴출 **13행 / 5개사**(`00146861 00171867
+  00186559 00205003 00246620`) · 잔존 **2,205키 / 1,858 rcept_no /
+  1,549 filing / 286개사 / FY 1999~2008** · CONFIRMED **271건 전원 잔존**
+  (퇴출 13건은 전부 LIKELY).
+- **완료조건(불변식)**: 잔존 2,205키 전부가 `|raw × table_unit| >
+  10,000,000` 을 만족(§4-A 무손실 조건). 하나라도 어기면 규칙 G 구현 오류.
+
+### Phase 2 — 코드 수정 (DB 무변경, ~1시간)
+
+- [ ] **2-1.** `fin2/extract/data/` 디렉터리 신설(없으면) +
+      Phase 1-2(a) JSON 배치. 패키지 데이터로 포함되는지 확인
+      (`MANIFEST.in`/`pyproject.toml` 사용 여부 확인 — 안 쓰면 경로 로드로 충분).
+- [ ] **2-2.** `fin2/extract/report_lines.py`에 로더 + frozenset 추가
+      (§4-A 코드블록). 로드는 **모듈 import 시 1회**, 실패 시 조용히
+      빈 집합으로 떨어지지 말고 **예외를 올린다**(데이터파일 유실을
+      침묵 무효화로 넘기면 백필이 조용히 아무것도 안 하게 된다).
+      키 튜플의 `table_seq`는 **int로 캐스팅**(JSON 왕복 시 타입 유지 확인).
+- [ ] **2-3.** `_emit_eps_lines` 루프에 skip 게이트 3줄 추가(§4-A).
+      **단위 결정부·`table_unit` 배선은 건드리지 않는다.**
+- [ ] **2-4.** 배선 확인(코드 안 고침, 읽기만): `_emit_section_lines`가
+      `_emit_eps_lines(..., table_seq=table_seq, ...)`를 넘기고 있는지
+      (키의 4번째 요소가 실제로 채워져야 매칭됨), `collect_new.py`의 두
+      call site가 `extract_report_lines`를 그대로 호출하는지.
+- [ ] **2-5.** 단위 테스트 추가(`fin2/tests/`): (a) curated 키에 든
+      가짜 표 → 주당손익 행 0개 + 본류 행 1개, (b) 키 밖의 정상 EPS
+      라벨 → 기존과 동일하게 EPS 행 emit, (c) 키에 들었지만 `table_seq`가
+      다른 표 → 기존 동작 유지(키 granularity 회귀 가드).
+- [ ] **2-6.** `pytest tests/ fin2/tests/` — 기존 522 통과 유지
+      (무관한 기존 실패 1건은 그대로일 수 있음, [[gateb-controlling-ni-groupbc-kbimetal-eps-trap-2026-08-15]] 참고).
+- **완료조건**: pytest 회귀 0, 신규 테스트 3개 통과.
+
+### Phase 3 — 재추출 전 스냅샷 (DB 무변경, ~30분) ★건너뛰지 말 것
+
+- [ ] **3-1.** `scripts/snapshot_eps_r28_before_after_2026-08-15.py` 작성
+      (`--mode before|after|diff`). 대상 286개사에 대해 저장:
+      - (a) `report_lines` 중 `section_path='주당손익'` 행: 키별 `value_won`,
+      - (b) `report_lines` 본류 행(`row_order IS NOT NULL`) 중 curated
+        키와 같은 `(rcept_no, statement, basis, table_seq, label_raw)`,
+      - (c) 286개사 **전체** report_lines 행수 + `sum(value_won)` 체크섬
+        (의도치 않은 광범위 변동 탐지용),
+      - (d) `std_financials_v3`의 286개사 전 행(`net_income`,
+        `controlling_ni`, `revenue`, `cogs`, `sga` 등 주요 필드).
+- [ ] **3-2.** `--mode before` 실행 → 스냅샷 파일 저장(스크래치패드 아닌
+      `scripts/` 또는 지정 경로).
+- **완료조건**: before 스냅샷 파일 존재 + 행수가 0이 아님.
+
+### Phase 4 — 재추출 + std_v3 재빌드 (★DB 변경, 장시간)
+
+> 장시간 명령이므로 [[feedback-long-running-commands]]에 따라
+> **사용자가 직접 실행**하고 결과를 공유하는 방식으로 진행한다.
+
+- [ ] **4-1.** 286개사 report_lines 재추출.
+      ※ `reload_report_lines_corp.py`는 해당 corp의 **전 연도 전 필링**을
+      재추출한다(FY1999~2008만이 아님). 이건 의도된 것이다 — R27 미적용
+      상태를 함께 해소한다(§4-E-C). 그래서 Phase 3-1(c) 체크섬이 필요하다.
+- [ ] **4-2.** std_v3 재빌드. **`--year-min`을 반드시 낮춰야 한다**
+      (기본값 2015 → 대상이 FY1999~2008이라 기본값으로는 아무것도 안 된다).
+- [ ] **4-3.** 실행 로그 보관(에러/스킵 필링 수 확인).
+- **완료조건**: 재추출·재빌드 에러 0, 처리 필링 수가 예상 범위.
+
+> 키 JSON에는 5-튜플만 담고, **corp 목록은 별도 파일
+> `scripts/eps_r28_target_corps_2026-08-15.txt`(286줄, corp_code 한 줄에
+> 하나)로 Phase 1-2에서 함께 떨어뜨린다** — 아래 명령이 그걸 그대로 쓴다.
+
+```bash
+.venv/bin/python scripts/reload_report_lines_corp.py --corp "$(paste -sd, scripts/eps_r28_target_corps_2026-08-15.txt)"
+```
+
+```bash
+.venv/bin/python scripts/build_std_v3.py --corp "$(paste -sd, scripts/eps_r28_target_corps_2026-08-15.txt)" --year-min 1999
+```
+
+### Phase 5 — 검증 (DB 무변경, ~1시간)
+
+- [ ] **5-1. [의도한 효과]** curated 2,205키의 `section_path='주당손익'`
+      행이 **전부 사라졌는지**. 기대: 잔존 0건.
+- [ ] **5-2. [무손실 불변식]** 같은 2,205키에 대해 **본류 행이 새로
+      생겼고**, 그 `value_won`이 `raw_before × table_unit`과 일치하는지.
+      기대: 생성률 100%(§4-A 불변식). 미달 시 어떤 키가 왜 빠졌는지
+      개별 규명 — **이게 이 수정의 핵심 회귀 지표**다.
+- [ ] **5-3. [비대상 불변]** curated 키 **밖**의 주당손익 행이 286개사
+      안에서 완전 불변인지(행수·값 체크섬 전후 동일). 기대: diff 0.
+      → 여기서 diff가 나오면 키 매칭이 과잉 적용된 것이므로 **즉시 중단·롤백**.
+- [ ] **5-4. [std_v3 diff]** Phase 3-1(d) 대비 std_v3 전후 diff 측정.
+      **"변화 없음"을 기대하지 말고 있는 그대로 기록한다**(§4-E-C).
+      - `net_income`이 NULL→값으로 채워진 건수(§3 후속트랙 N의 실측
+        데이터가 된다 — 범위는 안 넓히고 **수치만 기록**),
+      - 값이 바뀐 건수(있으면 표본 원문대조로 어느 쪽이 맞는지 확인),
+      - `revenue`/`cogs`/`sga` 등 무관 필드가 바뀌었으면 **회귀 의심**.
+- [ ] **5-5. [원문대조]** curated 키 중 **최소 5건**(CONFIRMED 2 +
+      LIKELY 3, 이미 검증한 00349811·00161976 제외한 신규 표본)을 원문
+      XML로 직접 열어 (a) 그 행이 헤드라인 순이익 행이 맞는지, (b) 본류에
+      전사된 값이 원문 표기와 일치하는지 확인.
+- [ ] **5-6. [퇴출건 확인]** Phase 1에서 퇴출한 13건의 EPS 값이
+      **재추출 후에도 그대로 살아있는지**(오탐을 뺀 게 실제로 지켜졌는지).
+      기대: 13건 전부 주당손익 행 잔존 + 값 불변.
+- [ ] **5-7. [Gate B]** 5-4에서 `net_income`/`controlling_ni`가 실제로
+      변한 회사가 있으면 그 회사만 `gateb_audit.py --recheck`. 없으면 생략.
+- [ ] **5-8.** `pytest tests/ fin2/tests/` 재실행.
+- **완료조건**: 5-1(0건) · 5-2(100%) · 5-3(diff 0) · 5-6(13건 불변) ·
+  5-8(회귀 0)이 전부 만족. 5-4는 **수치 기록이 완료조건**(변화 없음이
+  아니라 설명 가능한 상태면 통과).
+
+### Phase 6 — 문서화·커밋 (~30분)
+
+- [ ] **6-1.** `docs/PARSING_RULES.md`에 **R28** 등재 — 규칙명, 근거
+      (파일:줄), curated 키 데이터파일 경로, R27과의 관계(같은 계열,
+      값크기 vs curated), 퇴출 규칙 G/L을 요약.
+- [ ] **6-2.** 이 문서 §8에 실행 결과(실측 수치)를 채워 넣고 상태를
+      "구현 완료"로 갱신.
+- [ ] **6-3.** 커밋 — 코드/데이터파일/스크립트/문서. 메시지 예:
+      `fix(report_lines): K-GAAP legacy headline-NI rows misparsed as EPS (R28)`.
+- [ ] **6-4.** `origin/main` push.
+- [ ] **6-5.** 메모리 갱신([[eps-kgaap-legacy-unit-fallback-design-2026-08-15]])
+      — 구현 완료·실측 결과·남은 후속트랙 N(§6)으로 상태 전환.
+
+### 롤백 절차 (Phase 4 이후 문제 발견 시)
+
+1. `fin2/extract/data/eps_kgaap_headline_not_eps_keys_2026-08-15.json`을
+   빈 배열로 바꾸거나 Phase 2 커밋을 revert.
+2. 286개사 재추출·std_v3 재빌드를 **같은 명령으로 한 번 더** 실행
+   (`reload_report_lines_corp.py`는 rcept 단위 delete-then-insert 멱등).
+3. Phase 3의 before 스냅샷과 대조해 원상복구 확인.
+   → **단, R27 부수효과(신규 본류 행)는 이 롤백으로 되돌아가지 않는다**
+   (R27은 이 수정과 무관한 이미 머지된 규칙이므로 원상복구 대상이
+   아니다). 이 점을 롤백 판단 시 감안할 것.

@@ -13,7 +13,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from fin2.layer3.combine import _resolve, _resolve_ni_attribution  # noqa: E402
+from fin2.layer3.combine import (  # noqa: E402
+    _resolve, _resolve_ni_attribution, _map_rows,
+    _ni_attribution_structural_candidates,
+)
 
 
 def _row(value, stage="exact"):
@@ -197,3 +200,98 @@ def test_two_pairs_both_matching_exactly_stays_ambiguous_not_guessed():
     _resolve_ni_attribution(cands, confirmed, conflicts)
     assert "is.controlling_ni" not in confirmed
     assert "is.controlling_ni" in conflicts
+
+
+# ---------------------------------------------------------------------------
+# _ni_attribution_structural_candidates() — mismap fix (2026-08-15), docs/plans/
+# std_v3_controlling_ni_mismap_structural_fix_design_2026-08-15.md §2.
+# ---------------------------------------------------------------------------
+
+def _merged_row(statement, label, value, section_path=None, table_seq=0,
+                basis="consolidated", is_cumulative=False):
+    """Minimal build_merged_lines()-shaped row (subset _map_rows()/
+    _ni_attribution_structural_candidates() actually read)."""
+    return {"statement": statement, "basis": basis, "label_raw": label,
+            "value_won": value, "node_role": None, "section_path": section_path,
+            "table_seq": table_seq, "is_cumulative": is_cumulative}
+
+
+def test_structural_recovers_relabeled_controlling_line_samsung_shape():
+    # Real regression shape (삼성전자 00126380 2025Q1): the controlling-interest
+    # sub-line under '분기순이익의 귀속' reuses the parent line's own label
+    # ('분기순이익') instead of a distinct '지배기업...' label -- AccountMapper's
+    # label-only matching sends it to is.net_income, never is.controlling_ni.
+    rows = [
+        _merged_row("IS", "분기순이익", 8_222_878, section_path=None),
+        _merged_row("IS", "분기순이익", 8_028_407, section_path="분기순이익의 귀속"),
+        _merged_row("IS", "비지배지분", 194_471, section_path="분기순이익의 귀속"),
+        # OCI-section pair (wrong concept) -- must NOT be picked up.
+        _merged_row("IS", "지배기업 소유주지분", 9_312_323, section_path="포괄손익의 귀속"),
+        _merged_row("IS", "비지배지분", 123_593, section_path="포괄손익의 귀속"),
+    ]
+    extra = _ni_attribution_structural_candidates(rows, period="Q1", basis="consolidated")
+    assert [r["value"] for r in extra["is.controlling_ni"]] == [8_028_407]
+    assert [r["value"] for r in extra["is.noncontrolling_ni"]] == [194_471]
+    assert extra["is.controlling_ni"][0]["stage"] == "structural"
+
+
+def test_structural_skips_ambiguous_section_shape():
+    # Two '비지배' rows in the same NI-attribution section (malformed/unexpected shape)
+    # -- must not guess which one is real, so no candidate is emitted at all.
+    rows = [
+        _merged_row("IS", "비지배지분A", 10, section_path="당기순이익의 귀속"),
+        _merged_row("IS", "비지배지분B", 20, section_path="당기순이익의 귀속"),
+        _merged_row("IS", "지배기업 소유주지분", 100, section_path="당기순이익의 귀속"),
+    ]
+    extra = _ni_attribution_structural_candidates(rows, period="FY", basis="consolidated")
+    assert extra == {}
+
+
+def test_structural_excludes_comprehensive_income_section():
+    # A clean 2-row '귀속' section that is NOT net-income attribution (no '순이익' in
+    # the section name, comprehensive-income wording only) must not fire.
+    rows = [
+        _merged_row("IS", "지배기업 소유주지분", 100, section_path="총포괄손익의 귀속"),
+        _merged_row("IS", "비지배지분", 5, section_path="총포괄손익의 귀속"),
+    ]
+    extra = _ni_attribution_structural_candidates(rows, period="FY", basis="consolidated")
+    assert extra == {}
+
+
+def test_structural_interim_keeps_only_cumulative_duplicates():
+    # H1/Q3: both a quarterly and a cumulative cell exist for the same line (std_v2
+    # convention keeps cumulative only for is./cf.) -- the non-cumulative duplicate
+    # must be dropped before section-grouping, or the section would show 4 members
+    # instead of 2 and correctly be skipped as ambiguous.
+    rows = [
+        _merged_row("IS", "당기순이익", 50, section_path="당기순이익의 귀속", is_cumulative=True),
+        _merged_row("IS", "당기순이익", 30, section_path="당기순이익의 귀속", is_cumulative=False),
+        _merged_row("IS", "비지배지분", 5, section_path="당기순이익의 귀속", is_cumulative=True),
+        _merged_row("IS", "비지배지분", 3, section_path="당기순이익의 귀속", is_cumulative=False),
+    ]
+    extra = _ni_attribution_structural_candidates(rows, period="H1", basis="consolidated")
+    assert [r["value"] for r in extra["is.controlling_ni"]] == [50]
+    assert [r["value"] for r in extra["is.noncontrolling_ni"]] == [5]
+
+
+def test_map_rows_wiring_recovers_mismap_end_to_end():
+    # Full regression, real Samsung-shape labels run through _map_rows() (real
+    # AccountMapper) then _resolve()/_resolve_ni_attribution() (real identity check) --
+    # proves the structural candidates actually flip the final answer, not just that
+    # the helper function returns something in isolation.
+    rows = [
+        _merged_row("IS", "법인세비용차감전순이익", 9_151_576, section_path=None),
+        _merged_row("IS", "분기순이익", 8_222_878, section_path=None),
+        _merged_row("IS", "분기순이익", 8_028_407, section_path="분기순이익의 귀속"),
+        _merged_row("IS", "비지배지분", 194_471, section_path="분기순이익의 귀속"),
+        _merged_row("IS", "지배기업 소유주지분", 9_312_323, section_path="포괄손익의 귀속"),
+        _merged_row("IS", "비지배지분", 123_593, section_path="포괄손익의 귀속"),
+    ]
+    cands = _map_rows(rows, period="Q1", basis="consolidated", statements=("IS",))
+    # Pre-fix behaviour would have left is.controlling_ni with the lone OCI value
+    # (9,312,323) auto-confirmed -- assert the structural candidate is present too.
+    assert 8_028_407 in {r["value"] for r in cands["is.controlling_ni"]}
+    assert 9_312_323 in {r["value"] for r in cands["is.controlling_ni"]}
+    confirmed, conflicts = _resolve(cands)
+    _resolve_ni_attribution(cands, confirmed, conflicts)
+    assert confirmed["is.controlling_ni"] == 8_028_407   # correct, not the OCI value

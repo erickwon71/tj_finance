@@ -1186,7 +1186,13 @@ def _map_label(label_raw: str, fs: str | None):
     return get_mapper().map(label_raw, fs_section=fs)
 
 # mapping-stage provenance rank (exact/normalized beat fuzzy). Mirrors build._STAGE_RANK.
-_STAGE_RANK = {"exact": 3, "normalized": 2, "guard": 2, "fuzzy": 1, None: 0}
+# 'structural' (2026-08-15, is.controlling_ni/is.noncontrolling_ni mismap fix — see
+# _ni_attribution_structural_candidates) ranks with 'fuzzy': it's a label-independent
+# recovery signal, not a label-quality one, so it should never outrank a real label match
+# in _top_stage_corroborated()'s tie-break — it only needs to exist in the pool so the
+# NI-identity check (_resolve_ni_attribution) gets a competing candidate to disambiguate
+# against.
+_STAGE_RANK = {"exact": 3, "normalized": 2, "guard": 2, "fuzzy": 1, "structural": 1, None: 0}
 
 _CONFLICT_EPS = 0.001
 _CURRENT_STRICT = {"bs.trade_receivables", "bs.trade_payables",
@@ -1858,6 +1864,86 @@ def _cogs_additive_labels(merged: list[dict], period: str, basis: str,
     return picked
 
 
+_NI_ATTRIBUTION_SECTION_RE = re.compile(r"귀속")
+
+
+def _ni_attribution_structural_candidates(rows: list[dict], period: str,
+                                          basis: str) -> dict[str, list[dict]]:
+    """Structural recovery for is.controlling_ni/is.noncontrolling_ni — mismap fix,
+    docs/plans/std_v3_controlling_ni_mismap_structural_fix_design_2026-08-15.md §2.
+
+    Root cause (§1): AccountMapper matches report_lines rows to a canonical by label
+    text alone, and the source document sometimes breaks that assumption for the NI
+    attribution lines — either reusing the parent line's own label for the controlling-
+    interest sub-line (Samsung Electronics: label literally '분기순이익', section
+    '분기순이익의 귀속'), or a fuzzy match routing a '지배'-labeled line into
+    is.noncontrolling_ni instead (동성케미컬). Either way the correct candidate never
+    enters is.controlling_ni's pool at all — it lands in is.net_income's or
+    is.noncontrolling_ni's pool instead, leaving is.controlling_ni with a single
+    (wrong, OCI-section) candidate that _resolve()'s NI_ATTRIBUTION_CANON branch
+    auto-confirms outright (len(vals)==1 never reaches `conflicts`, so
+    _resolve_ni_attribution's identity safety net never even gets called).
+
+    This function does NOT pick a value — it only widens the candidate pool. It reads
+    section_path (structure), not label text (which is what's unreliable here): within
+    a NET-INCOME attribution section ('귀속' + '순이익' in the path, '포괄' excluded —
+    the comprehensive-income attribution section must NOT match), if exactly one member
+    row's label contains '비지배' and exactly one doesn't, the '비지배' row is an
+    is.noncontrolling_ni candidate and the other is an is.controlling_ni candidate,
+    regardless of what its own label says. Any other shape (0 or 2+ '비지배' rows, a
+    section with only 1 or 3+ members) is silently skipped — no guessing (결측>오염).
+
+    Measured (read-only probe, full 78-row known-bug population, 2026-08-15): fires on
+    32/51 mismap rows, 0 false positives (recovered value always matched Gate B's
+    independent XBRL-derived report_won). The stage-rank shortcut is already skipped
+    for these two canonicals (_NI_ATTRIBUTION_CANON) — extending the pool here just
+    ensures the multi-value split it now sees is genuinely useful (correct-vs-wrong,
+    not wrong-vs-wrong), and lets the already-verified net_income identity
+    (_resolve_ni_attribution, 5dbecac) pick between them exactly as it does for any
+    other multi-candidate split.
+
+    Mirrors _map_rows()'s IS/basis filter + H1/Q3 cumulative-only convention (same
+    reasoning: an interim filing prints both quarterly and cumulative cells for the
+    same line, and std_v2 convention keeps only the cumulative one for is./cf.)."""
+    interim = period in ("H1", "Q3")
+    is_rows = [r for r in rows if r["statement"] == "IS" and r["basis"] == basis]
+    if interim:
+        cum_rows = [r for r in is_rows if r.get("is_cumulative")]
+        if cum_rows:
+            is_rows = cum_rows
+
+    sections: dict[tuple, list] = defaultdict(list)
+    for r in is_rows:
+        sp = r.get("section_path") or ""
+        if _NI_ATTRIBUTION_SECTION_RE.search(sp) and "순이익" in sp and "포괄" not in sp:
+            sections[(r["table_seq"], sp)].append(r)
+
+    extra: dict[str, list[dict]] = defaultdict(list)
+    for members in sections.values():
+        nci_rows = [m for m in members if "비지배" in (m.get("label_raw") or "")]
+        cni_rows = [m for m in members if "비지배" not in (m.get("label_raw") or "")]
+        if len(nci_rows) != 1 or len(cni_rows) != 1:
+            continue   # ambiguous section shape -> skip, don't guess
+        cni_row, nci_row = cni_rows[0], nci_rows[0]
+        if cni_row.get("value_won") is None or nci_row.get("value_won") is None:
+            continue
+        extra["is.controlling_ni"].append({
+            "value": _loss_signed("is.controlling_ni", cni_row["label_raw"], cni_row["value_won"]),
+            "stage": "structural", "label_raw": cni_row["label_raw"],
+            "node_role": cni_row.get("node_role"), "section_path": cni_row["section_path"],
+            "table_seq": cni_row["table_seq"], "is_cumulative": cni_row.get("is_cumulative", False),
+            "amended": cni_row.get("amended", False), "amended_by": cni_row.get("amended_by"),
+        })
+        extra["is.noncontrolling_ni"].append({
+            "value": nci_row["value_won"],
+            "stage": "structural", "label_raw": nci_row["label_raw"],
+            "node_role": nci_row.get("node_role"), "section_path": nci_row["section_path"],
+            "table_seq": nci_row["table_seq"], "is_cumulative": nci_row.get("is_cumulative", False),
+            "amended": nci_row.get("amended", False), "amended_by": nci_row.get("amended_by"),
+        })
+    return dict(extra)
+
+
 def _map_rows(rows, period: str, basis: str, statements) -> dict[str, list[dict]]:
     """Map merged cell dicts → {canonical: [candidate]}. Shared by both paths.
     Interim (H1/Q3) flow (is./cf.) keeps cumulative cells only (std_v2 convention).
@@ -1890,6 +1976,12 @@ def _map_rows(rows, period: str, basis: str, statements) -> dict[str, list[dict]
             "table_seq": r["table_seq"], "is_cumulative": is_cum,
             "amended": r.get("amended", False), "amended_by": r.get("amended_by"),
         })
+    # is.controlling_ni/is.noncontrolling_ni structural recovery (mismap fix,
+    # 2026-08-15 — see _ni_attribution_structural_candidates docstring). IS-only, so
+    # only relevant when this call's statement scope includes IS.
+    if "IS" in stmt_set:
+        for c, extra_rows in _ni_attribution_structural_candidates(rows, period, basis).items():
+            cands[c].extend(extra_rows)
     return dict(cands)
 
 

@@ -1124,6 +1124,80 @@ labels_2026-08-15.py`·`scripts/probe_cogs_alias_global_risk_2026-08-15.py`(조�
 (`_COGS_ADDITIVE_OVERRIDE`) · `scripts/generate_cogs_additive_override_2026-08-15.py` ·
 `account_maps/is_accounts.py`(2026-07-18 제품/상품매출원가 제거 선례).
 
+### R21 부기 — `_cogs_additive_labels()` 라벨충돌 버그(Phase 3 착수 중 발견·수정, 2026-08-15)
+
+Phase 3(Gate B 비교로직) 착수 전 `00143527 2025 Q1 consolidated` fail_a 1건을 원문대조하다
+발견: `_norm_label()`(`fin2/layer3/industry_profiles.py::norm()`)은 라벨을 첫 `(`에서
+자른다(`"영업이익(손실)"→"영업이익"`처럼 후행괄호를 벗기려는 의도). 그런데 괄호 뒤에
+텍스트가 더 있는 라벨 — `"기타수익(매출액)에 대한 매출원가"`(진짜 COGS 서브라인) — 은
+`"기타수익(매출액)"`(매출액 세부내역, 전혀 다른 계정)·`"기타수익"`(별개 손익항목)과 같은
+정규화 키로 충돌한다. `_cogs_additive_labels()`는 `picked[label]=value`로 마지막 매칭을
+그냥 덮어써서, 어느 쪽이 채택될지 iteration 순서에 좌우되는 취약점이었다.
+
+**전수 스캔**(319개 키): 충돌 노출 31키(00143527 24개·00163673 3개, 3-way 충돌이라
+fy/period로 퍼짐). 실제로 틀린 값이 나온 건 **5건** — `00143527 2025 Q1`(fail_a로
+드러남) + `00163673 2017FY/2018FY/2018H1/2019Q1`(**전부 2024년 이전이라 XBRL Track A
+커버리지가 없어 Gate B가 전혀 못 잡던 침묵오염**, R21 Phase 0가 경고한 "빙산의 일각"이
+실제로 여기서 나타났다).
+
+**수정**: `_cogs_additive_labels()`에 라벨충돌 가드 추가(`_is_cogs_labeled()`) — 같은
+정규화 키에 라벨 2개 이상이 붙으면 원문 라벨텍스트에 `'매출원가'` 부분문자열을 포함하는
+쪽을 신뢰한다(이 override의 want 라벨은 전부 "매출원가류" 개념이라 원칙적으로 항상 성립).
+실측 31건 전부 이 규칙 하나로 모호함 없이(그룹당 후보 정확히 1개) 갈렸다. 그런 후보가
+없거나 여럿이면(미관측) 기존 동작(마지막 매칭 승) 유지 — 방어적으로만 개입.
+
+**검증**: 수정 후 31건 전부 재실행 → 5건 전부 정답으로 전환(오답 0건 잔존). 319키 전체
+`len(picked)==len(want)` 재확인(불일치 0건, 회귀 없음). pytest 515 passed(무관 기존
+실패 1건 제외, 불변). 2개사 scoped 백필(`build_std_v3.py --corp 00143527,00163673`) +
+19개사 scope Gate B 재검증 — cogs fail_a **14/14 전부 `report_won == cogs+sga` 항등식
+정확히 일치**(이전 13/14, 이제 00143527 2025 Q1도 합류) 확인.
+
+**근거**: `scripts/probe_cogs_additive_label_collision_2026-08-15.py`(전수 충돌 스캔) ·
+`scripts/probe_cogs_collision_impact_2026-08-15.py`(수정 전/후 대조) ·
+`scripts/probe_gateb_cogs_concept_mismatch_2026-08-15.py`(Gate B 재검증) ·
+`fin2/layer3/combine.py::_cogs_additive_labels()`/`_is_cogs_labeled()`.
+
+---
+
+## R22. Gate B `face_audit.py` — `is.cogs` vs `report_won` **개념 자체가 다른** 4개사는
+curated pending 예외처리(R21 §3 후속, 사용자 결정 2026-08-15 옵션 a)
+
+R21 §3이 확인한 문제: 19개사 중 4개사(00108940 대성홀딩스·00117212 두산·00143527·00163673
+한진중공업홀딩스)는 XBRL `ifrs-full_CostOfSales`가 순수 COGS가 아니라 **COGS+SGA 결합
+총계**에 태깅돼 있다. `is.cogs`(std)를 아무리 정확히 계산해도(순수 COGS) Gate B의
+`report_won`(결합 총계)과 구조적으로 못 맞는다 — std_v3 데이터 버그가 아니라 **비교
+개념 자체가 다른** 케이스.
+
+**세 옵션 중 (a) 채택**(사용자 결정): (b) `is.cogs`+`is.sga` 합을 report_won과 비교하는
+로직 추가는 4개사 중 두산(00117212) 1개사만 SGA XBRL개념(`dart_TotalSellingGeneral
+AdministrativeExpenses`)이 태깅돼 적용 가능하고 나머지 3개사는 그 개념 자체가 없어
+채택 안 함. (c) 방치는 매 전수재검증마다 14건이 계속 "확인 필요" 신호로 재부상해 반복
+조사 비용이 남음. (a)는 `face_audit.py`에 이미 있는 `_PENDING_REASONS` 패턴
+(`COMPARATIVE_ROW`/`SOURCE_NOT_TRACK_A`/`LABEL_UNMATCHED`/`GAPFILL_UNVERIFIED`)을 그대로
+재사용 — 4개사 전부 균일 적용 가능하며 std_v3 데이터/파이프라인은 전혀 건드리지 않는다
+(Gate B 감사 레이어 국한).
+
+**구현**: `fin2/audit/face_audit.py`에 새 pending 사유 `"COGS_SGA_CONCEPT_MISMATCH"`을
+`_PENDING_REASONS`에 등재 + curated 4-튜플 키집합 `_COGS_CONCEPT_MISMATCH_KEYS`
+(`(corp_code, fiscal_year, fiscal_period, basis)`, 14개 — R16~R21 override와 같은
+원칙, 블랭킷 금지) + `audit_fields()`에서 `canon=="is.cogs"`이고 현재 행 키가 그
+집합에 있으면 정상 대조를 건너뛰고 즉시 pending 처리하는 분기.
+
+**Phase 3 착수 중 부수발견(중요)**: 이 14건을 원문대조로 확정하는 과정에서 R21의
+`_cogs_additive_labels()` 라벨충돌 실버그를 발견·수정했다(위 "R21 부기" 참고) — pending
+예외처리 전에 반드시 먼저 고쳐야 했다(안 그러면 진짜 데이터버그를 "어쩔 수 없는 개념
+불일치"로 위장할 뻔했다).
+
+**검증**: pytest 515 passed(무관 기존 실패 1건 제외) + 4개사 scoped Gate B 재검증
+(`gateb_audit.py --source v3 --corp-file <4개사> --recheck`) — cogs fail_a **14→0**
+(전부 pending 전환, `pending_detail`에 `COGS_SGA_CONCEPT_MISMATCH` 확인) + 이 4개사의
+fail_a(총) 0(비관련 필드 회귀 없음) + fail_b(Track B, 64건 — R21에서 이미 문서화된
+별개 이슈, 불변) 확인.
+
+**근거**: `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md` Phase 3 ·
+`scripts/probe_gateb_cogs_concept_mismatch_2026-08-15.py` · `fin2/audit/face_audit.py`
+(`_COGS_CONCEPT_MISMATCH_KEYS`/`_PENDING_REASONS`/`audit_fields()`).
+
 ---
 
 ## 부록 A. 원문(DART XML) 함정 카탈로그
@@ -1178,7 +1252,8 @@ labels_2026-08-15.py`·`scripts/probe_cogs_alias_global_risk_2026-08-15.py`(조�
 | R16 | `docs/qa/gate_b_fail_a_revenue_tradepayables_triage_2026-08-13.md` · `docs/plans/gate_b_faila_combine_stage_rank_shortcut_fix_design_2026-08-13.md` · `fin2/layer3/combine.py::_resolve()` (`_REVENUE_TOTAL_OVERRIDE_CORPS`/`_TRADE_PAYABLES_PARENT_OVERRIDE_CORPS`) · `fin2/tests/test_combine_curated_overrides.py` |
 | R17 | `docs/plans/gate_b_faila_trade_payables_additive_design_2026-08-14.md`(원설계) · 이 세션 실측(구현 중 발견) · `fin2/layer3/combine.py::_resolve()` (`_TRADE_PAYABLES_ADDITIVE_OVERRIDE`) · `fin2/tests/test_combine_curated_overrides.py` |
 | R20 | `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md` · `docs/qa/is_sga_cogs_holdco_phase0_scan_2026-08-15.md` · `fin2/layer3/combine.py::_resolve()` (`_SGA_SUBLINE_OVERRIDE_KEYS`/`_SGA_SUBLINE_LABELS`) · `scripts/generate_sga_subline_override_2026-08-15.py` |
-| R21 | `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md`(Phase 2) · `scripts/probe_cogs_phase2_2026-08-15.py`·`probe_cogs_unmapped_labels_2026-08-15.py`·`probe_cogs_alias_global_risk_2026-08-15.py` · `fin2/layer3/combine.py::combine_full()`/`_cogs_additive_labels()` (`_COGS_ADDITIVE_OVERRIDE`) · `scripts/generate_cogs_additive_override_2026-08-15.py` |
+| R21 | `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md`(Phase 2) · `scripts/probe_cogs_phase2_2026-08-15.py`·`probe_cogs_unmapped_labels_2026-08-15.py`·`probe_cogs_alias_global_risk_2026-08-15.py` · `fin2/layer3/combine.py::combine_full()`/`_cogs_additive_labels()` (`_COGS_ADDITIVE_OVERRIDE`) · `scripts/generate_cogs_additive_override_2026-08-15.py`. 부기(라벨충돌 버그수정) = `scripts/probe_cogs_additive_label_collision_2026-08-15.py`·`probe_cogs_collision_impact_2026-08-15.py` · `_is_cogs_labeled()` |
+| R22 | `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md`(Phase 3) · `scripts/probe_gateb_cogs_concept_mismatch_2026-08-15.py` · `fin2/audit/face_audit.py`(`_COGS_CONCEPT_MISMATCH_KEYS`/`_PENDING_REASONS`) |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황

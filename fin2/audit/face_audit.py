@@ -587,7 +587,34 @@ STATUS_PENDING = "pending"    # 아직 감사 불가(범위 밖)
 # field reason → 분류
 _FAIL_REASONS = {"VALUE_DIFF"}
 _PENDING_REASONS = {"COMPARATIVE_ROW", "SOURCE_NOT_TRACK_A", "LABEL_UNMATCHED",
-                    "GAPFILL_UNVERIFIED"}
+                    "GAPFILL_UNVERIFIED", "COGS_SGA_CONCEPT_MISMATCH"}
+
+# ★R21 Phase 3(a)(2026-08-15, 사용자 결정) — 이 4개사는 XBRL `ifrs-full_CostOfSales`가
+# 순수 COGS가 아니라 **COGS+SGA 결합 총계**에 태깅돼 있다(`docs/plans/is_sga_cogs_holding_
+# co_label_mismap_plan_2026-08-15.md` §3). `is.cogs`(std)를 아무리 정확히 계산해도(순수
+# COGS) report_won(결합 총계)과 구조적으로 못 맞는다 — std_v3 데이터 버그가 아니라 비교
+# **개념 자체가 다른** 케이스라 pending 처리한다(값 오류 감사가 아니라 감사 범위 밖 표시).
+# (b)(cogs+sga 합을 report_won과 비교)는 4개사 중 두산 1개사만 SGA XBRL개념이 태깅돼
+# 적용 가능하고 나머지 3개사는 그 개념 자체가 없어 채택 안 함(plan Phase 3 결정 근거 참고).
+# 키는 (corp_code, fiscal_year, fiscal_period, basis) 4-튜플 — R16~R21 override와 같은
+# 원칙(curated, 블랭킷 금지). Probe(`scripts/probe_gateb_cogs_concept_mismatch_2026-08-15.py`)
+# 로 확정한 14건 전부 `report_won == is.cogs + is.sga`(±1) 항등식 실측 확인 완료.
+_COGS_CONCEPT_MISMATCH_KEYS: frozenset[tuple[str, int, str, str]] = frozenset({
+    ("00108940", 2025, "FY", "separate"),
+    ("00108940", 2026, "Q1", "separate"),
+    ("00117212", 2024, "FY", "separate"),
+    ("00117212", 2025, "FY", "separate"),
+    ("00117212", 2025, "H1", "separate"),
+    ("00117212", 2025, "Q1", "separate"),
+    ("00117212", 2025, "Q3", "separate"),
+    ("00117212", 2026, "Q1", "separate"),
+    ("00143527", 2024, "FY", "consolidated"),
+    ("00143527", 2025, "H1", "consolidated"),
+    ("00143527", 2025, "Q1", "consolidated"),
+    ("00143527", 2025, "Q3", "consolidated"),
+    ("00163673", 2025, "H1", "consolidated"),
+    ("00163673", 2025, "Q3", "consolidated"),
+})
 
 
 @dataclass
@@ -752,6 +779,14 @@ def audit_fields(
         val = db_row.get(field)
         if val is None:
             continue  # DB 에 값 없음 — 감사 대상 아님(누락은 별도 커버리지 이슈)
+        if canon == "is.cogs" and (db_row.get("corp_code"), db_row.get("fiscal_year"),
+                                    db_row.get("fiscal_period"), basis) in _COGS_CONCEPT_MISMATCH_KEYS:
+            # R21 Phase 3(a, 2026-08-15) — 이 키는 XBRL 총계가 COGS+SGA 결합이라 report_won
+            # 과 비교 개념 자체가 다르다(위 _COGS_CONCEPT_MISMATCH_KEYS 주석 참고). std_v3 값
+            # 오류가 아니므로 정상 대조를 건너뛰고 pending 처리(감사 범위 밖).
+            results.append(FieldAudit(field, canon, val, False,
+                                      "COGS_SGA_CONCEPT_MISMATCH", None))
+            continue
         cands = by_canon.get(canon, [])
         if not cands and canon == "is.revenue":
             # ★ 매출액 단일 라인이 face 에 없고 std 가 매출원가+매출총이익 으로 파생된 경우

@@ -131,16 +131,55 @@ Phase 0에서 검증된 corp만 curated override 등재(R16 `_REVENUE_TOTAL_OVER
 - fuzzy 충돌이 나는 회사(대성홀딩스류): `_resolve()`가 실제로 어떤 값을 뱉는지부터 재현·확인
   후 별도 처방 결정.
 
-### Phase 3 — Gate B 비교 로직 조정 여부 결정 (★사용자 결정 필요)
-§3에서 확인한 "report_won(cogs)=COGS+SGA 결합값" 문제를 어떻게 처리할지:
-- (a) 이 curated corp군은 `face_audit.py`에서 cogs 비교를 `pending`(범위밖)으로 예외처리, 또는
-- (b) `is.cogs`+`is.sga` 합을 report_won과 비교하도록 Gate B 쪽 로직 추가, 또는
-- (c) 그냥 놔두고 "구조적으로 못 맞는 fail_a"로 문서에 기록만.
-Phase 1/2를 구현해도 (a)/(b) 없이는 이 corp들의 cogs fail_a가 안 사라질 수 있음을 미리 인지.
+### Phase 3 — Gate B 비교 로직 조정 여부 결정 — ★사용자 결정 완료(2026-08-15, 옵션 a)
+§3에서 확인한 "report_won(cogs)=COGS+SGA 결합값" 문제를 어떻게 처리할지 세 옵션 중:
+- (a) 이 curated corp군은 `face_audit.py`에서 cogs 비교를 `pending`(범위밖)으로 예외처리 ← **채택**
+- (b) `is.cogs`+`is.sga` 합을 report_won과 비교하도록 Gate B 쪽 로직 추가
+- (c) 그냥 놔두고 "구조적으로 못 맞는 fail_a"로 문서에 기록만
 
-### Phase 4 — 백필 + 검증
-Phase 1/2 확정 corp만 scoped 백필(`build_std_v3.py --corp <확정 목록>`) + Gate B scoped
-재검증(`gateb_audit.py --corp-file <확정 목록> --recheck`), R16/R17과 동일 절차.
+**채택 사유**: (b)는 4개사 중 두산(00117212) 1개사만 적용 가능하다(Phase 0 §2: SGA XBRL개념
+`dart_TotalSellingGeneralAdministrativeExpenses`이 태깅된 건 5개사뿐이고 그중 이 트랙
+대상은 두산 하나 — 한진중공업홀딩스·대성홀딩스는 SGA 개념 자체가 없어 (b)를 적용해도
+fail_a가 안 사라짐). (c)는 코드 변경이 없는 대신 매 전수 재검증마다 같은 14건(+연관
+line-level 196건)이 계속 "확인 필요" 신호로 재부상해 반복 조사 비용이 남는다. (a)는
+`face_audit.py`에 이미 있는 `_PENDING_REASONS` 패턴(`COMPARATIVE_ROW`/`SOURCE_NOT_TRACK_A`/
+`LABEL_UNMATCHED`/`GAPFILL_UNVERIFIED`)을 그대로 재사용 — "비교 개념 자체가 다름"을 표현할
+선례 자리가 이미 있고, 4개사 전부에 균일 적용 가능하며 std_v3 데이터/파이프라인은 전혀
+건드리지 않는다(Gate B 감사 레이어 국한).
+
+#### Phase 3 구현 설계(착수)
+1. **Probe(읽기전용)** — ★완료(2026-08-15): cogs fail_a 정확 14건 확정, 전부 4개사
+   (00108940·00117212·00143527·00163673) 안. **부수발견(중요)**: 항등식 검증 중
+   `00143527 2025 Q1`이 처음엔 항등식 불성립 → 원문대조로 `_cogs_additive_labels()`의
+   라벨충돌 실버그 발견(319키 전수스캔 결과 31키 노출, 5건 실제오답 — 4건은 XBRL
+   커버리지 없어 Gate B도 못 잡던 침묵오염). **Phase 3 착수 전 이 버그부터 근본수정+
+   백필+검증 완료**(`docs/PARSING_RULES.md` R21 부기 참고) — 수정 후 재검증 결과
+   cogs fail_a **14/14 전부** `report_won == cogs+sga` 항등식 정확 성립 확인.
+2. **구현** — ★완료(2026-08-15): `fin2/audit/face_audit.py`에
+   - 새 pending 사유 `"COGS_SGA_CONCEPT_MISMATCH"`을 `_PENDING_REASONS`에 등재,
+   - probe로 확정한 정확 14키를 담은 curated 상수 `_COGS_CONCEPT_MISMATCH_KEYS`
+     (`(corp_code, fiscal_year, fiscal_period, basis)` 4-튜플 집합 — R21의 `_COGS_ADDITIVE_
+     OVERRIDE`와 같은 자리·같은 원칙, 블랭킷 금지),
+   - `audit_fields()`에서 `canon == "is.cogs"`이고 현재 행 키가 그 집합에 있으면 정상 대조를
+     건너뛰고 즉시 `FieldAudit(..., match=False, reason="COGS_SGA_CONCEPT_MISMATCH", ...)`로
+     pending 처리.
+   이 변경은 `fin2/audit/face_audit.py` 한 파일 국한 — `combine.py`/`std_v3`/파싱 파이프라인은
+   무변경. `docs/PARSING_RULES.md` R22로 등재(순수 감사 레이어 규칙, R21과 별도 번호).
+3. **검증** — ★완료: pytest 515 passed(무관 기존 실패 1건 제외, 불변). 4개사 scoped
+   Gate B 재검증(`--no-commit` 프리뷰)에서 cogs fail_a 14→0(전부 pending 전환), 다른 15개사
+   불변(4개사 밖 예상외 corp 없음) 확인.
+4. **백필** — ★완료: `gateb_audit.py --source v3 --corp-file scripts/cogs_r21_phase3_
+   4corps_2026-08-15.txt --recheck --no-line-audit`로 `face_audit` 실제 commit.
+5. **검증** — ★완료: `face_audit` 테이블 직접조회로 14/14 전부 `gate_status='pending'`·
+   `pending_detail`에 `COGS_SGA_CONCEPT_MISMATCH` 확인. 4개사 fail_a(총) 0(비관련 필드
+   회귀 없음), fail_b(Track B) 64건 불변(R21에서 이미 문서화된 별개 이슈).
+
+### Phase 4 — 트랙 종료
+
+Phase 1(is.sga)·Phase 2(is.cogs additive override)·Phase 3(Gate B pending 예외처리) 전부
+구현+백필+검증 완료. 부수발견(R21 `_cogs_additive_labels()` 라벨충돌 버그, 2개사·5건, 4건
+침묵오염)도 Phase 3 도중 근본수정+백필+검증까지 완료(`docs/PARSING_RULES.md` R21 부기).
+남은 것은 커밋/push 여부뿐(사용자 결정 대기) — 상세는 세션 메모리 참고.
 
 ## 7. 리스크 / 열린 질문 (사용자 결정 필요)
 

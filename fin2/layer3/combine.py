@@ -1807,13 +1807,32 @@ def _loss_signed(canon: str, label: str, value):
     return value
 
 
+def _is_cogs_labeled(label_raw: str | None) -> bool:
+    """True if the raw label text itself reads as a cost-of-sales line ('...매출원가').
+    Used only as a label-collision tiebreak in `_cogs_additive_labels()` (see there)."""
+    return bool(label_raw) and "매출원가" in label_raw
+
+
 def _cogs_additive_labels(merged: list[dict], period: str, basis: str,
                           want: tuple[str, ...]) -> dict[str, int]:
     """Recover raw values for `want` (normalized label text) directly from `merged`,
     bypassing _map_rows()/AccountMapper entirely — see _COGS_ADDITIVE_OVERRIDE comment
     for why this must NOT go through the global alias table. Mirrors _map_rows()'s
     statement/basis filter + H1/Q3 cumulative-only dedup (same interim/cum_seen logic),
-    just keyed by normalized label text instead of mapped canonical."""
+    just keyed by normalized label text instead of mapped canonical.
+
+    ★라벨충돌 가드(2026-08-15, 00143527/00163673 실측 버그수정, R21 부기): `_norm_label()`은
+    라벨을 첫 '(' 에서 자른다("영업이익(손실)"→"영업이익" 처럼 후행괄호를 벗기는 게 목적).
+    그런데 "기타수익(매출액)에 대한 매출원가"(진짜 COGS 서브라인)처럼 괄호 뒤에 텍스트가 더
+    있는 라벨은 "기타수익(매출액)"(매출액 세부내역, 전혀 다른 계정)·"기타수익"(별개의 손익
+    항목)과 같은 정규화 키로 충돌한다. 319개 override 키 전수 스캔(2026-08-15) 결과 31개 키가
+    이 충돌에 노출돼 있었고 그중 5개는 실제로 틀린 값이 픽업됐다(4개는 2024년 이전이라 XBRL
+    커버리지가 없어 Gate B도 못 잡던 침묵오염 — 00163673 2017FY/2018FY/2018H1/2019Q1).
+    이 override 의 want 라벨은 전부 "매출원가류" 개념이므로, 같은 정규화 키에 라벨 텍스트가
+    2개 이상 붙으면 원문에 '매출원가' 부분문자열을 포함하는 쪽을 신뢰한다 — 실측 31건 전부
+    이 규칙 하나로 모호함 없이(그룹당 정확히 1개) 갈렸다. 그런 후보가 없거나 여럿이면(관측된
+    바 없음, 미지 케이스) 기존 동작(마지막 매칭 값 승)을 그대로 유지 — 방어적으로만 개입,
+    새로운 오탐을 만들지 않는다."""
     interim = period in ("H1", "Q3")
     picked: dict[str, int] = {}
     cum_seen: set[str] = set()
@@ -1831,8 +1850,11 @@ def _cogs_additive_labels(merged: list[dict], period: str, basis: str,
                     cum_seen.add(label)
             elif label in cum_seen:
                 continue
-        if r.get("value_won") is not None:
-            picked[label] = r["value_won"]
+        if r.get("value_won") is None:
+            continue
+        if label in picked and not _is_cogs_labeled(r.get("label_raw")):
+            continue   # 이미 채택된 값이 있는데 이번 후보가 '매출원가' 라벨이 아니면 덮어쓰지 않음
+        picked[label] = r["value_won"]
     return picked
 
 

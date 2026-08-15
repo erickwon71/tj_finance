@@ -1252,6 +1252,65 @@ concept_gap_2026-08-15.py`(결과 CSV 포함) · `fin2/taxonomy/concept_map.py` 
 
 ---
 
+## R24. 계층3 `combine.py::_map_rows()` — `is.controlling_ni`/`is.noncontrolling_ni`
+구조기반 후보보강(structural candidate injection), mismap 하위메커니즘 Phase 1
+
+Gate B `controlling_ni` fail_a 그룹A(78건)를 원문대조로 재분류하니 단일 원인이 아니라
+최소 3갈래였다(`gateb-controlling-ni-groupa-rootcause-2026-08-15` 메모리): ①라벨오귀속
+(mismap, 51건) ②완전미매핑(~24건) ③5dbecac 항등식 안전망 자체 오류(3건). 이 R24는 ①만
+다룬다.
+
+**근본원인**: `_map_rows()`가 report_lines 라벨을 AccountMapper로 canonical에 매핑할 때
+`section_path`(섹션 구조)를 전혀 안 쓰고 라벨 텍스트만 본다. 원문이 이 가정을 두 방식으로
+깨뜨린다 — (a) 지배지분 귀속 행이 상위 라벨을 그대로 재사용(삼성전자: `분기순이익의 귀속`
+섹션의 지배지분 행 라벨이 그냥 `분기순이익`, ACODE는 정확히
+`ifrs-full_ProfitLossAttributableToOwnersOfParent`) → `is.net_income`으로 오귀속.
+(b) fuzzy 매칭이 `지배`/`비지배` 방향을 헷갈림(동성케미컬: `지배지분 당기순이익`이
+`is.noncontrolling_ni`로 오귀속). 결과: `is.controlling_ni` 후보풀엔 오답(총포괄손익
+섹션 값) 단 1개만 남아 `_resolve()`의 `_NI_ATTRIBUTION_CANON` 분기가 그대로 자동확정 —
+5dbecac(2026-08-12)의 항등식 안전망(`_resolve_ni_attribution`)은 `conflicts`에 걸린
+경우만 호출되므로 **호출 자체가 안 됨**(5dbecac이 고친 다중후보 오선택과는 다른, 더 앞선
+선행조건 실패).
+
+**구현**: 새 선택로직을 만들지 않는다. `_ni_attribution_structural_candidates()`
+(`fin2/layer3/combine.py`)를 신설해 `_map_rows()`가 반환 직전에 호출 — 라벨이 아니라
+섹션 구조로 지배/비지배 귀속 행을 식별한다: `section_path`에 `귀속`+`순이익` 포함,
+`포괄` 미포함(당기순이익 귀속 섹션만, 총포괄손익 귀속 섹션은 명시적으로 배제)인 섹션에서,
+라벨에 `비지배`가 든 행이 정확히 1개·안 든 행이 정확히 1개일 때만 발동. 그 값들을
+`is.controlling_ni`/`is.noncontrolling_ni` 후보풀에 **추가만**(대체 아님) 하고, 나머지는
+이미 검증된(유닛테스트 12개) `_resolve()`→`_resolve_ni_attribution()` 파이프라인이 그대로
+처리 — 새 오답을 낼 수 있는 새 코드경로를 만들지 않는다는 뜻. H1/Q3는 `_map_rows()`와
+동일한 cumulative-only 컨벤션 적용(중복행으로 섹션모양이 깨지는 것 방지).
+`stage="structural"`을 `_STAGE_RANK`에 `fuzzy`와 동률(최하위)로 등록 —
+`_top_stage_corroborated()`의 동점처리에서 실제 라벨매칭을 절대 앞지르지 않게 함.
+
+**측정 커버리지**: 읽기전용 사전검증(mismap 51건)에서 구조규칙 단독 32건(63%) 오탐 0건.
+실제 `combine_full()`→`_resolve()`→`_resolve_ni_attribution()` 전체 경로(기존 EBT유도·
+nci=0·epsilon 폴백까지 함께 작동)로는 그룹A 78건 중 **48건 정답 수정**, 회귀 0(신규NULL
+0·제3의 오답 0). 부수효과(범위 밖, 측정만): 같은 규칙이 완전미매핑 24건 중 11건, 안전망
+자체오류 3건 중 1건도 부수적으로 회복.
+
+**백필**: `scripts/build_std_v3.py --corp <35개사>`(그룹A 소속 corp, 3,054행, 59초) +
+`scripts/gateb_audit.py --source v3 --corp-file <35개사> --recheck`(4,190행 재감사) —
+그룹A 78건 중 48건 해소·30건 잔존(Phase 2 범위, 미해결) 확인. "신규 fail_a 3건"으로 보였던
+것은 전부 db_won 불변(제 fix와 무관한 사전존재 fail_a — KBI메탈 2025H1=그룹B 부호불일치,
+제이스코홀딩스 2건=`AXIS_EXCLUDED_UNMAPPED`, Gate B 리더측 별개 이슈)로 확인, 진짜 회귀
+아님. 전체 pytest 517→522 passed(+5 신규, 무관 1건 기존 실패 `test_lxintl_facility_
+table_dropped` 그대로).
+
+**남은 범위(Phase 2, 미설계)**: mismap 잔여 19건(섹션명에 `순이익` 없이 라벨에 `귀속`
+텍스트만 있는 경우·귀속섹션이 1행뿐인 경우·컴팩트 단일라벨 포맷 등 서로 다른 패턴) ·
+완전미매핑 24건 중 13건 · 안전망자체오류 3건 중 2건 · 그룹B(7건, 부호불일치, 무관 별도
+메커니즘).
+
+**근거**: 메모리 `gateb-controlling-ni-groupa-rootcause-2026-08-15` ·
+`gateb-controlling-ni-mismap-design-2026-08-15` · 설계문서 `docs/plans/
+std_v3_controlling_ni_mismap_structural_fix_design_2026-08-15.md` ·
+`fin2/layer3/combine.py::_ni_attribution_structural_candidates` ·
+`fin2/tests/test_combine_ni.py`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

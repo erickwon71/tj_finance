@@ -1311,6 +1311,52 @@ std_v3_controlling_ni_mismap_structural_fix_design_2026-08-15.md` ·
 
 ---
 
+## R25. Gate B `face_audit.py::_ni_attribution_structural_candidates()` — `is.controlling_ni`/
+`is.noncontrolling_ni` 구조기반 후보보강, raw XML 독립 재구현(R24 의 발상을 Gate B 쪽에 이식)
+
+R24(std_v3 쪽)와 **같은 근본원인**이 원문을 직접 읽는 Gate B 리더에도 독립적으로 있었다
+(`gateb-controlling-ni-new30-rootcause-2026-08-15` 메모리 §1-B): 일부 필터社가 지배/비지배
+귀속 행에 회사고유 확장 ACODE(`entity{corp}_...`)를 쓰고, 표준 `ifrs-full_`/`dart_` ACODE는
+총포괄손익 귀속 절·SCE·EPS 행에 오태깅해놓는다. `read_report_face_xbrl()`의
+`_XBRL_PREFIXES` 필터가 확장 ACODE를 애초에 후보 풀에서 배제하므로 정답 후보 자체가
+없다 — std_v3 데이터(db_won)는 항상 정답이었고, Gate B(report_won)가 오답이었다.
+
+**구현**: `fin2/layer3/combine.py::_ni_attribution_structural_candidates()`(R24)를
+모듈 재사용이 아니라(face_audit 의 파이프라인 독립성 원칙, 모듈 docstring) **raw XML
+TR 시퀀스 위에 독립 재구현**. `read_report_face_xbrl()`이 만든 `FaceLine` 리스트 끝에
+후보만 추가(대체 아님 — `audit_fields()`의 PASS 판정이 "후보 집합에 db_won 있으면 PASS"
+라 넓히기만 해도 충분, 단조 개선). 상태기계:
+1. **앵커(섹션 시작)**: 아직 섹션 밖일 때, TR 라벨이 `^당?(기|분기|반기)순(이익|손익)`로
+   **시작**하면(예: `당기순이익(손실)`·`분기순이익(손실)의귀속`·`반기순손익`·
+   `당분기순손익` — 필터社마다 표현이 갈림, 코렌텍은 분기별로도 다르게 씀) 그 행(헤더든
+   실값행이든)을 앵커로 섹션 진입. `법인세비용차감전순이익(손실)`(세전이익, 뒤에 귀속
+   분해가 안 옴) 같은 상위 소계가 오매칭되지 않도록 접두어 전체일치로 좁힘(느슨한
+   부분일치 `순이익|손익` 는 코아시아씨엠 FY 케이스에서 실측 회귀 — 아래 검증 참고).
+2. **회원 판정**: 섹션 안에서는 앵커 재판정을 하지 않는다(멤버 행 중 일부가 자체
+   서브분해를 가져 `손익` 텍스트만으로는 새 앵커와 구분 안 됨 — 코렌텍의
+   `계속영업분기순손익`/`중단영업분기순손익`이 실측 사례). 라벨에 `지배`가 있는 행만
+   회원 후보(`비지배` 포함 여부로 controlling/noncontrolling 판정), 값이 없는 라벨행도
+   회원으로 카운트(NCI 미태깅 필터社에서 "정확히 1개씩" 판정이 깨지지 않게).
+3. **종료**: `비지배` 회원 1개·비`비지배` 회원 1개가 모이는 즉시 종료·후보추출("가장
+   가까운 매치"가 곧 정답이라 뒤쪽 무관 표를 안 봄). 안전판으로 `_MAX_SECTION_SPAN`(20행)
+   초과 시 강제종료(모양이 안 맞으면 짐작 없이 폐기).
+
+**검증**: 원설계 문서의 24행(7개사: 코아시아씨엠·이노메트리·진영·모비데이즈·유니온·
+코렌텍·판타지오) 전수 fail_a → pass 전환(SQL 재확인 잔여 0건). 구현 도중 3차례
+실측 회귀 발견+수정(코아시아씨엠·이노메트리·코렌텍 세 회사가 서로 다른 레이아웃 — 상세는
+`fin2/audit/face_audit.py::_ni_attribution_structural_candidates` 도크스트링). `pytest
+tests/ fin2/tests/` 522 passed(무관 기존 실패 1건 `test_lxintl_facility_table_dropped`
+불변). 40개사 무작위표본 회귀검증: fail_a 총량 불변(15=15), controlling_ni 관련 회귀 0건
+(내 변경은 이 두 canonical 에만 후보를 추가하는 구조라 다른 필드는 건드릴 수 없음).
+`docs/plans/gate_b_facereader_controlling_ni_fix_design_2026-08-15.md` §2-B.
+
+**이번 범위 밖**: 같은 30건 중 ①FX표시통화(두산밥캣 6행)는 별개 메커니즘 — 규모확인
+결과(문자열매치 5개사 중 4개사는 유니버스 밖 외국기업으로 확인, 실제 대상은 두산밥캣
+1개사) 옵션 B(pending 강등) 권장으로 문서에 정리됐으나 **미구현**(설계문서 §2-A 참고).
+그룹A mismap 잔여19건(Phase2, std_v3 쪽) 도 무관.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

@@ -262,6 +262,139 @@ def _adecimal_signals(root) -> tuple[dict[tuple, int], set[tuple]]:
     return verified_adecimal, ambiguous_home
 
 
+_NI_TOTAL_RE = re.compile(r"^당?(기|분기|반기)순(이익|손익)")
+_MAX_SECTION_SPAN = 20   # rows scanned after an anchor before giving up (real spans: 2-11)
+
+
+def _ni_attribution_structural_candidates(root) -> list[FaceLine]:
+    """Structural candidate widening for is.controlling_ni/is.noncontrolling_ni — mirrors
+    fin2/layer3/combine.py::_ni_attribution_structural_candidates() (R24, 2026-08-15,
+    docs/plans/std_v3_controlling_ni_mismap_structural_fix_design_2026-08-15.md), independently
+    reimplemented here against raw XML (this module is deliberately independent of the
+    standardization pipeline — see module docstring — so the logic is duplicated, not imported).
+
+    Root cause (docs/plans/gate_b_facereader_controlling_ni_fix_design_2026-08-15.md §1-B):
+    some filers tag the NI-attribution ('...의 귀속') section's owner/NCI rows with a
+    company-specific extended ACODE (`entity{corp}_...`), which `_XBRL_PREFIXES` never
+    admits, while the standard `ifrs-full_`/`dart_` ACODE for the same concept is mistagged
+    into the comprehensive-income attribution section instead (or a SCE/EPS row). The
+    correct candidate never enters is.controlling_ni's/is.noncontrolling_ni's pool at all.
+
+    This does NOT pick a value — it only widens the candidate pool (monotonic — can only
+    turn an existing fail into a pass, never break an existing pass, since `audit_fields()`
+    PASS is "db_won found anywhere in the candidate set", not "single best value chosen").
+
+    It reads document structure (TR sequence), not label text on its own (which is what's
+    unreliable here). ★2026-08-15, verified against four distinct real layouts in the
+    original 24-row population (코아시아씨엠·이노메트리·코렌텍·유니온) that a looser
+    anchor rule (earlier cuts of this function, matching any '순이익'|'손익' substring
+    anywhere) misfires on in two different ways:
+      1. Some filers print an explicit no-value header row ('분기순이익(손실)의귀속') before
+         the owner/NCI breakdown; others print **no header row at all** — the breakdown
+         follows directly after the net-income **total** row itself ('분기순이익(손실)' /
+         '반기순손익' / '당분기순손익', which carries a real value/ACODE). `_NI_TOTAL_RE`
+         requires the label to **start with** (optional 당) + 기/분기/반기 immediately
+         followed by 순이익/순손익 — loose enough to cover the several spellings filers use
+         for the same "net income (loss) for the period" concept (당기/분기/반기/당분기 ×
+         순이익/순손익, 코렌텍 한 회사 안에서만도 분기별로 표현이 갈림), tight enough to
+         exclude an upstream subtotal like
+         '법인세비용차감전순이익(손실)' (profit *before* tax — no breakdown ever follows
+         it) from wrongly opening a section (코아시아씨엠 FY 회귀, 2026-08-15 발견 — a
+         looser match opened *there* instead of at the real total two rows later, so the
+         real owner/NCI breakdown fell outside the section entirely). That matched row
+         (header or total, value or not) is the **anchor**; never itself a candidate member.
+      2. The **member** rows themselves can have their own sub-breakdown rows nested under
+         them (코렌텍: '지배기업의 소유주지분' is followed by '계속영업분기순손익'/
+         '중단영업분기순손익' — continuing/discontinued-operations detail of that same
+         owner line — before '비지배지분' finally appears). Those sub-lines also contain
+         '손익' (though not the anchor prefix) and lack '지배', so if anchor-detection ran
+         again mid-section it could still misfire on some other layout and discard the
+         '지배' member already collected. So **anchor detection only runs when not already
+         inside a section** — once inside, only '지배' membership is checked; anything else
+         is silently skipped (not a section-closer), and a bounded row span
+         (`_MAX_SECTION_SPAN`, generous over the ~2-11 rows real sections span) is the sole
+         safety valve against runaway scans.
+      Within a section, membership is closed **as soon as** it has collected exactly one
+      '비지배'-labeled row and one without (checked after every append — "closest match
+      wins", which also naturally avoids picking up unrelated same-shaped tables much
+      further down the document). That '비지배' row is an is.noncontrolling_ni candidate
+      and the other is an is.controlling_ni candidate — regardless of what its own label
+      literally says. Any span that ends without exactly one of each (via the safety valve)
+      is silently discarded — no guessing (결측>오염, [[feedback-verify-against-source]]).
+
+    SCE(자본변동표) 배제가 따로 필요 없는 이유: SCE expresses 지배/비지배 via **column**
+    (TH) headers, not a TE row label containing '지배' (코렌텍 실측 확인, 설계문서 §2-B) —
+    `tr.findall("TE")` returns empty for a TH-only row, so the state machine never even
+    sees it.
+
+    col_index 0(당기)만 수집 — read_report_face_xbrl()의 기본 스코프와 일치."""
+    extra: list[FaceLine] = []
+    in_section = False
+    members: list[tuple[str, list]] = []  # [(label, [value_TE, ...]), ...] in current section
+    span = 0   # rows scanned since the anchor — safety valve, see docstring
+
+    def _flush() -> None:
+        nci = [m for m in members if "비지배" in m[0]]
+        cni = [m for m in members if "비지배" not in m[0]]
+        if len(nci) != 1 or len(cni) != 1:
+            return   # ambiguous section shape -> skip, don't guess
+        for label, tes, canon in (
+            (cni[0][0], cni[0][1], "is.controlling_ni"),
+            (nci[0][0], nci[0][1], "is.noncontrolling_ni"),
+        ):
+            for te in tes:
+                acode = te.get("ACODE", "")
+                if not acode or len(acode) > 255:
+                    continue
+                ctx = parse_acontext(te.get("ACONTEXT", ""))
+                if not ctx.parsed or ctx.is_dimensional or ctx.col_index != 0:
+                    continue
+                displayed = parse_displayed(_cell_text(te))
+                if displayed is None:
+                    continue
+                extra.append(FaceLine(
+                    statement="IS", basis=ctx.basis, acode=acode, canonical=canon,
+                    label=label[:80], displayed_value=displayed, adecimal=_parse_adecimal(te),
+                    is_cumulative=ctx.is_cumulative,
+                ))
+
+    for tr in root.findall(".//TR"):
+        tes = tr.findall("TE")
+        if not tes:
+            continue
+        label = _cell_text(tes[0])
+        value_tes = [te for te in tes[1:] if te.get("ACODE") and te.get("ACONTEXT")]
+
+        if not in_section:
+            if _NI_TOTAL_RE.search(label) and "포괄" not in label and "지배" not in label:
+                in_section = True
+                members = []
+                span = 0
+            continue
+
+        span += 1
+        if "지배" in label:
+            # Append even with value_tes=[] — a NCI/owner row can be labeled but untagged
+            # (e.g. NCI is genuinely 0/not XBRL-tagged for this filer); the section SHAPE
+            # check (exactly 1 of each label) must still see it as occupying its slot, or
+            # a real-valued sibling gets discarded for no reason. _flush() below simply
+            # yields 0 FaceLines for an empty tes list — harmless.
+            members.append((label, value_tes))
+            nci_n = sum(1 for m in members if "비지배" in m[0])
+            if nci_n >= 1 and len(members) - nci_n >= 1:
+                _flush()
+                in_section = False
+                members = []
+                continue
+        if span >= _MAX_SECTION_SPAN:
+            _flush()
+            in_section = False
+            members = []
+    if in_section:
+        _flush()
+    return extra
+
+
 def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False) -> list[FaceLine]:
     """
     Track A(XBRL) 보고서의 face 라인을 독립 재추출. 기본 col_index=0(당기)·비차원만.
@@ -331,7 +464,9 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False) -> list
         key = (acode, ctx.basis, ctx.is_cumulative, ctx.col_index if all_cols else 0)
         if key not in dedup:
             dedup[key] = line
-    return list(dedup.values())
+    lines = list(dedup.values())
+    lines.extend(_ni_attribution_structural_candidates(root))
+    return lines
 
 
 _HANGUL_RE = re.compile(r"[가-힣]")

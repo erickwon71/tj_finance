@@ -1350,10 +1350,46 @@ tests/ fin2/tests/` 522 passed(무관 기존 실패 1건 `test_lxintl_facility_t
 (내 변경은 이 두 canonical 에만 후보를 추가하는 구조라 다른 필드는 건드릴 수 없음).
 `docs/plans/gate_b_facereader_controlling_ni_fix_design_2026-08-15.md` §2-B.
 
-**이번 범위 밖**: 같은 30건 중 ①FX표시통화(두산밥캣 6행)는 별개 메커니즘 — 규모확인
-결과(문자열매치 5개사 중 4개사는 유니버스 밖 외국기업으로 확인, 실제 대상은 두산밥캣
-1개사) 옵션 B(pending 강등) 권장으로 문서에 정리됐으나 **미구현**(설계문서 §2-A 참고).
-그룹A mismap 잔여19건(Phase2, std_v3 쪽) 도 무관.
+**이번 범위 밖**: 같은 30건 중 ①FX표시통화(두산밥캣 6행)는 별개 메커니즘 — R26(아래)으로
+구현 완료. 그룹A mismap 잔여19건(Phase2, std_v3 쪽) 도 무관.
+
+---
+
+## R26. Gate B `face_audit.py` — FX 표시통화(두산밥캣) curated pending 강등, 옵션 B
+(2026-08-15)
+
+R25 와 같은 30건 조사 중 발견된 ①FX 표시통화 메커니즘(설계문서 §1-A). 두산밥캣
+(01032486) **연결**재무제표만 표시통화가 USD 다(원문 각주: "지배기업의 기능통화는
+대한민국 원화이며, 연결재무제표는 달러(USD)로 표시"). Track A(XBRL)는 ADECIMAL 로
+단위만 환산하고 통화는 검사하지 않아 USD 원값을 그대로 원화로 취급 → `report_won` 이
+그 필링의 **전 필드**(22개 전부)에서 구조적으로 어긋난다. `std_v3`(db_won)은 DART 가
+USD 표시 필터社에 요구하는 필수 별첨 "원화기준 재무정보"(서울외국환중개 매매기준율
+환산표, 비XBRL 참고표)를 정확히 읽어와 이미 원문대조로 확인됐다(6/6행 백만원 단위까지
+일치, 설계문서 §1-A).
+
+**전수 스캔**(NAS+SD카드 dart_data 양쪽 독립·교차검증): "원화기준 재무정보" 계열 문자열
+매치 5개사 중 4개사(딥커머스·씨엑스아이·JTC·소마젠)는 `corporations`/`face_audit` 자체에
+행이 없는 유니버스 밖 외국기업([[foreign-corps-excluded]] 대상) — Gate B 영향 0.
+실제 대상은 **두산밥캣 1개사·연결 6행뿐**(2024FY·2025FY·2025H1·2025Q1·2025Q3·2026Q1).
+
+**구현(옵션 B, 저비용 pending 강등)**: 두산밥캣 1개사·6행이라는 규모(옵션 A "Track D
+신설"의 투자 대비 회수가 작다는 판단, 설계문서 §2-A)로 인해 curated key 세트를
+`fin2/audit/face_audit.py::_FX_PRESENTATION_CURRENCY_KEYS`(4-튜플
+`(corp_code, fiscal_year, fiscal_period, basis)`, R21/R23 와 같은 원칙 — 블랭킷 규칙
+금지)로 등록. `audit_std_row()`가 이 키와 일치하는 행을 만나면 정상 face 대조를 아예
+건너뛰고 그 행의 전 필드를 새 pending 사유 `FX_PRESENTATION_CURRENCY`로 표시(값 오류
+감사가 아니라 통화가 달라 비교 자체가 성립하지 않는 케이스, `_PENDING_REASONS`에 등록).
+별도(개별) 재무제표는 원화 그대로라 `basis='consolidated'` 행만 대상 — 별도 재무제표
+행은 이 키에 안 걸려 기존 로직 그대로 감사된다.
+
+**검증**: `python scripts/gateb_audit.py --source v3 --corp 01032486 --recheck` 재감사
+결과 대상 6행 전부 `gate_status=pending`·`pending_detail={'FX_PRESENTATION_CURRENCY': N}`
+로 전환(N=그 행의 in-scope 필드 수), 두산밥캣 전체 fail_a 6→0(`fail 0`). 같은 회사의
+별도(separate) 재무제표 행·다른 기간 연결 행은 영향 없음(기존 pass/pending 그대로 —
+curated key 는 정확히 6개 4-튜플만 매치하므로 다른 corp·행에는 원천적으로 도달 불가).
+`pytest tests/ fin2/tests/` 522 passed(무관 기존 실패 1건 `test_lxintl_facility_table_
+dropped` 불변, R25 와 동일). `docs/plans/gate_b_facereader_controlling_ni_fix_design_
+2026-08-15.md` §2-A.
 
 ---
 
@@ -1412,6 +1448,9 @@ tests/ fin2/tests/` 522 passed(무관 기존 실패 1건 `test_lxintl_facility_t
 | R21 | `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md`(Phase 2) · `scripts/probe_cogs_phase2_2026-08-15.py`·`probe_cogs_unmapped_labels_2026-08-15.py`·`probe_cogs_alias_global_risk_2026-08-15.py` · `fin2/layer3/combine.py::combine_full()`/`_cogs_additive_labels()` (`_COGS_ADDITIVE_OVERRIDE`) · `scripts/generate_cogs_additive_override_2026-08-15.py`. 부기(라벨충돌 버그수정) = `scripts/probe_cogs_additive_label_collision_2026-08-15.py`·`probe_cogs_collision_impact_2026-08-15.py` · `_is_cogs_labeled()` |
 | R22 | `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md`(Phase 3) · `scripts/probe_gateb_cogs_concept_mismatch_2026-08-15.py` · `fin2/audit/face_audit.py`(`_COGS_CONCEPT_MISMATCH_KEYS`/`_PENDING_REASONS`) |
 | R23 | 메모리 `gateb-reader-concept-gap-scan-2026-08-15` · `scripts/probe_gateb_reader_concept_gap_2026-08-15.py` · `fin2/taxonomy/concept_map.py` · `fin2/audit/face_audit.py`(`_TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS`) |
+| R24 | 메모리 `gateb-controlling-ni-mismap-r24-implemented-2026-08-15` · `docs/plans/std_v3_controlling_ni_mismap_structural_fix_design_2026-08-15.md` · `fin2/layer3/combine.py::_ni_attribution_structural_candidates()` |
+| R25 | 메모리 `gateb-facereader-fix-design-2026-08-15` · `docs/plans/gate_b_facereader_controlling_ni_fix_design_2026-08-15.md`(§2-B) · `fin2/audit/face_audit.py::_ni_attribution_structural_candidates()` |
+| R26 | `docs/plans/gate_b_facereader_controlling_ni_fix_design_2026-08-15.md`(§2-A) · `fin2/audit/face_audit.py`(`_FX_PRESENTATION_CURRENCY_KEYS`/`_PENDING_REASONS`) |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황

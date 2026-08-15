@@ -722,7 +722,29 @@ STATUS_PENDING = "pending"    # 아직 감사 불가(범위 밖)
 # field reason → 분류
 _FAIL_REASONS = {"VALUE_DIFF"}
 _PENDING_REASONS = {"COMPARATIVE_ROW", "SOURCE_NOT_TRACK_A", "LABEL_UNMATCHED",
-                    "GAPFILL_UNVERIFIED", "COGS_SGA_CONCEPT_MISMATCH"}
+                    "GAPFILL_UNVERIFIED", "COGS_SGA_CONCEPT_MISMATCH",
+                    "FX_PRESENTATION_CURRENCY"}
+
+# ★R25 §2-A 옵션 B(2026-08-15, 설계문서 `docs/plans/gate_b_facereader_controlling_ni_fix_
+# design_2026-08-15.md`) — 두산밥캣(01032486) 연결재무제표는 표시통화가 원화가 아니라
+# USD(원문 각주: "지배기업의 기능통화는 원화이나 연결재무제표는 달러로 표시"). Track A 는
+# XBRL ADECIMAL 로 단위만 환산하고 통화는 검사하지 않아 USD 원값을 그대로 원화로 취급 →
+# report_won 이 구조적으로 전부 어긋난다(단일 필드 버그가 아니라 그 필링 전체가 스케일이
+# 다름). std_v3(db_won)은 DART 필수 별첨 "원화기준 재무정보"(서울외국환중개 매매기준율
+# 환산표)를 정확히 읽어와 이미 원문대조 완료(설계문서 §1-A, 6/6행 백만원 단위까지 일치) —
+# 값 오류가 아니라 비교 자체가 성립하지 않는 케이스라 정상 대조를 건너뛰고 행 전체를
+# pending 처리한다(fail 아님, 감사 범위 밖). 별도(separate) 재무제표는 원화 그대로라
+# basis='consolidated' 행만 대상. 전수 스캔(NAS+SD카드 교차검증) 결과 이 메커니즘의
+# 유니버스 내 대상은 두산밥캣 1개사·6행뿐(나머지 4개사는 외국기업 제외 정책 대상으로
+# corporations/face_audit 자체에 행이 없음, 설계문서 §2-A 표).
+_FX_PRESENTATION_CURRENCY_KEYS: frozenset[tuple[str, int, str, str]] = frozenset({
+    ("01032486", 2024, "FY", "consolidated"),
+    ("01032486", 2025, "FY", "consolidated"),
+    ("01032486", 2025, "H1", "consolidated"),
+    ("01032486", 2025, "Q1", "consolidated"),
+    ("01032486", 2025, "Q3", "consolidated"),
+    ("01032486", 2026, "Q1", "consolidated"),
+})
 
 # ★R21 Phase 3(a)(2026-08-15, 사용자 결정) — 이 4개사는 XBRL `ifrs-full_CostOfSales`가
 # 순수 COGS가 아니라 **COGS+SGA 결합 총계**에 태깅돼 있다(`docs/plans/is_sga_cogs_holding_
@@ -838,6 +860,26 @@ def audit_std_row(
     fields = fields or DIRECT_FIELDS
     interim = db_row.get("fiscal_period") in ("H1", "Q3")
     out: list[FieldAudit] = []
+    row_key = (db_row.get("corp_code"), db_row.get("fiscal_year"),
+               db_row.get("fiscal_period"), basis)
+    if row_key in _FX_PRESENTATION_CURRENCY_KEYS:
+        # R25 §2-A 옵션 B — 표시통화가 원화가 아닌 필링(위 _FX_PRESENTATION_CURRENCY_KEYS
+        # 주석 참고). Track A 원값이 통화 자체가 달라 대조가 성립하지 않으므로, 정상
+        # face 대조를 건너뛰고 행 전체를 pending 처리한다(fail 아님).
+        for field in fields:
+            canon = STD_FIELD_CANONICAL.get(field)
+            if canon is None:
+                continue
+            if field in _CONSOLIDATED_ONLY and basis != "consolidated":
+                continue
+            val = db_row.get(field)
+            if val is None:
+                continue
+            out.append(FieldAudit(field, canon, val, False, "FX_PRESENTATION_CURRENCY", None))
+        n_pass = 0
+        n_fail = 0
+        n_pending = len(out)
+        return RowAudit(STATUS_PENDING, n_pass, n_fail, n_pending, out, [])
     for field in fields:
         canon = STD_FIELD_CANONICAL.get(field)
         if canon is None:

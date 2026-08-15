@@ -64,6 +64,17 @@ _BS: dict[str, str] = {
     "ifrs-full_NoncurrentLeaseLiabilities": "bs.lease_noncurrent",
     "ifrs-full_TradeAndOtherCurrentPayables": "bs.trade_payables",
     "dart_ShortTermTradePayables": "bs.trade_payables",
+    # ★R23(2026-08-15): Gate B 원문대조로 확정된 concept_map 갭 5종(148/167 trade_payables
+    # fail_a 원인, 카테고리별 표본 원문/맥락 확인 완료 — 우연일치 아님). 비유동 개념 2종
+    # (LongTermTradeAndOtherNonCurrentPayables/NoncurrentPayables)도 포함하지만, std_v3
+    # (fin2/layer3/combine.py)는 이 표를 참조하지 않으므로 R15 `_CURRENT_STRICT` 필터와
+    # 무관 — Gate B 감사(face_audit.py)에서 `val in won_vals`(집합 멤버십) 로 판정하므로
+    # 후보 추가는 단조 개선(기존 PASS 를 FAIL 로 되돌릴 수 없음, audit_fields() 로직 확인).
+    "ifrs-full_TradeAndOtherCurrentPayablesToTradeSuppliers": "bs.trade_payables",
+    "ifrs-full_TradeAndOtherPayablesToTradeSuppliers": "bs.trade_payables",
+    "dart_ShortTermOtherPayables": "bs.trade_payables",
+    "dart_LongTermTradeAndOtherNonCurrentPayables": "bs.trade_payables",
+    "ifrs-full_NoncurrentPayables": "bs.trade_payables",
     "ifrs-full_OtherCurrentLiabilities": "bs.other_current_payables",
     "ifrs-full_OtherNoncurrentLiabilities": "bs.other_noncurrent_liabilities",
     "ifrs-full_DeferredTaxLiabilities": "bs.deferred_tax_liability",

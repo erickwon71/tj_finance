@@ -1200,6 +1200,58 @@ fail_a(총) 0(비관련 필드 회귀 없음) + fail_b(Track B, 64건 — R21에
 
 ---
 
+## R23. `fin2/taxonomy/concept_map.py` — `bs.trade_payables` concept_map 갭 5종 추가
+(Gate B 리더 전용, std_v3 무관) + 우연일치 가드 1건
+
+전수스캔(`gateb-reader-concept-gap-scan-2026-08-15` 메모리, `scripts/probe_gateb_reader_
+concept_gap_2026-08-15.py`)이 확정한 `trade_payables` fail_a 148/167건의 원인: Gate B
+감사기(`fin2/audit/face_audit.py`)가 원문 XML을 재파싱할 때 쓰는 `concept_map.py`에 그
+회사가 실제로 쓰는 ACODE 5종이 아예 등록돼 있지 않아, 후보 자체가 없거나 엉뚱한 값으로
+좁혀졌다(std_v3 데이터 버그 아님).
+
+**범위 확정(구현 전 재조사, 중요)**: 원설계 메모는 이 파일이 "Gate B 리더 전용, std_v3
+무관"이라 적었는데, 세션 시작 시 `fin2/extract/xbrl.py`가 실제 프로덕션 Track A
+추출기(E-레이어)라는 사실을 발견하고 한 차례 "std_v3에도 영향" 으로 재평가했다가,
+`fin2/layer3/combine.py`(std_v3/`std_financials_v3`를 실제로 만드는 코드)를 추적한 결과
+`report_lines`(계층2 텍스트)만 읽고 `fact_v2`/`concept_map.py`는 전혀 참조하지 않음을
+확인 — 원설계의 "저위험" 판단이 맞았다(`fin2.layer3.build.build_corp`도
+`scripts/build_std_v3.py`에서만 호출, 데일리 미배선). `fin2/standardize/build.py`
+(std_financials_v2)는 `fact_v2.canonical_account`를 읽지만 이건 뷰 스왑(2026-08-09) 이후
+아무도 안 읽는 레거시 경로라 무관.
+
+**구현**: `fin2/taxonomy/concept_map.py`의 `_BS`에 5개 ACODE 추가, 전부 `bs.trade_payables`:
+`ifrs-full_TradeAndOtherCurrentPayablesToTradeSuppliers`(66)·
+`ifrs-full_TradeAndOtherPayablesToTradeSuppliers`(51)·`dart_ShortTermOtherPayables`(13)·
+`dart_LongTermTradeAndOtherNonCurrentPayables`(11)·`ifrs-full_NoncurrentPayables`(6).
+비유동 개념 2종도 포함하지만 std_v3의 `_CURRENT_STRICT`(R15)와는 무관한 별도 코드경로라
+문제 없음 — Gate B(`audit_fields()`)는 `val in won_vals`(집합 멤버십) 판정이라 후보 추가는
+원칙적으로 단조 개선(기존 PASS를 FAIL로 되돌릴 수 없음).
+`ifrs-full_CurrentTaxAssets`(1건, 아이텍)는 의미상 매입채무와 무관해 매핑하지 않음.
+
+**부수발견·가드**: 매핑 직후 31개사 scoped 재검증에서 아이텍(00626011) 2025FY separate
+1건이 **가짜 PASS**로 바뀌는 걸 발견 — 이 행은 std_v3 자체에 진짜 버그가 있다
+(`trade_payables=0` 저장, 원문은 5,068,265,299원, `ifrs-full_TradeAndOtherCurrentPayables`
+separate 라인). 새로 매핑한 `ifrs-full_NoncurrentPayables`가 이 필링에서 우연히 값=0(비유동
+매입채무 없음, 정상)이라 `won_vals`에 0이 섞여 `db_won=0`과 우연일치 — 수정 전엔 정확히
+fail_a로 잡히던 진짜 버그가 가려질 뻔했다. `face_audit.py`에 curated 4-튜플 제외집합
+`_TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS`(R16~R22와 같은 원칙, 이 1건만) 추가 —
+`audit_fields()`가 이 행에서만 값=0 후보를 후보집합에서 제거해 기존 fail_a 노출을 보존.
+148행 중 `db_won==0`인 유일 케이스(전수 확인, 나머지 147건 무관).
+
+**검증**: pytest 31 passed(`test_concept_map.py`+`test_face_audit.py`) + 31개사 scoped
+Gate B 재검증(`gateb_audit.py --source v3 --corp-file <31개사> --recheck`, 가드 전/후 2회) —
+trade_payables fail_a 148건 중 147건 해소(가드 대상 1건은 fail_a 유지 확인, DB 직접 조회로
+`fail_detail` 재현), 남은 fail_a 3건은 전부 이 fix와 무관(00149354 separate 2건=원래
+scope 밖, 00349732 FY2024=원래 UNRESOLVED 별개 이슈) — 회귀 없음. `dart_ShortTermOther
+Payables`/`LongTermTradeAndOtherNonCurrentPayables` 표본(딥노이드·지앤비에스에코·
+한국정보인증) pass 전환 개별 확인.
+
+**근거**: 메모리 `gateb-reader-concept-gap-scan-2026-08-15` · `scripts/probe_gateb_reader_
+concept_gap_2026-08-15.py`(결과 CSV 포함) · `fin2/taxonomy/concept_map.py` ·
+`fin2/audit/face_audit.py`(`_TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS`).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -1254,6 +1306,7 @@ fail_a(총) 0(비관련 필드 회귀 없음) + fail_b(Track B, 64건 — R21에
 | R20 | `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md` · `docs/qa/is_sga_cogs_holdco_phase0_scan_2026-08-15.md` · `fin2/layer3/combine.py::_resolve()` (`_SGA_SUBLINE_OVERRIDE_KEYS`/`_SGA_SUBLINE_LABELS`) · `scripts/generate_sga_subline_override_2026-08-15.py` |
 | R21 | `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md`(Phase 2) · `scripts/probe_cogs_phase2_2026-08-15.py`·`probe_cogs_unmapped_labels_2026-08-15.py`·`probe_cogs_alias_global_risk_2026-08-15.py` · `fin2/layer3/combine.py::combine_full()`/`_cogs_additive_labels()` (`_COGS_ADDITIVE_OVERRIDE`) · `scripts/generate_cogs_additive_override_2026-08-15.py`. 부기(라벨충돌 버그수정) = `scripts/probe_cogs_additive_label_collision_2026-08-15.py`·`probe_cogs_collision_impact_2026-08-15.py` · `_is_cogs_labeled()` |
 | R22 | `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md`(Phase 3) · `scripts/probe_gateb_cogs_concept_mismatch_2026-08-15.py` · `fin2/audit/face_audit.py`(`_COGS_CONCEPT_MISMATCH_KEYS`/`_PENDING_REASONS`) |
+| R23 | 메모리 `gateb-reader-concept-gap-scan-2026-08-15` · `scripts/probe_gateb_reader_concept_gap_2026-08-15.py` · `fin2/taxonomy/concept_map.py` · `fin2/audit/face_audit.py`(`_TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS`) |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황

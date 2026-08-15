@@ -320,6 +320,29 @@ def test_unrelated_reused_tag_with_conflicting_duplicate_member_blocks_override(
     assert matches[0].amount_won == 42037894798, matches[0]
 
 
+def test_trade_payables_zero_candidate_excluded_for_curated_key():
+    # R23 — 아이텍(00626011) 2025FY separate: db=0(실제 버그), 후보 중 하나가 우연히 값=0.
+    # curated 키에 걸리면 값=0 후보를 제외해 진짜 VALUE_DIFF(fail)가 가려지지 않아야 한다.
+    db = {"corp_code": "00626011", "fiscal_year": 2025, "fiscal_period": "FY",
+          "trade_payables": 0}
+    bs = [_bs_line("bs.trade_payables", 5_068_265_299, basis="separate"),
+          _bs_line("bs.trade_payables", 0, basis="separate")]
+    ra = audit_std_row(db, basis="separate", bs_face=bs, is_face=[], cf_face=[],
+                       is_comparative=False)
+    assert ra.status == STATUS_FAIL, ra.fields
+    assert ra.fail_fields == ["trade_payables"]
+
+
+def test_trade_payables_zero_candidate_matches_for_non_curated_key():
+    # 다른 회사/기간은 값=0 후보가 그대로 남아(정상 매칭 로직) db=0 이면 PASS.
+    db = {"corp_code": "99999999", "fiscal_year": 2025, "fiscal_period": "FY",
+          "trade_payables": 0}
+    bs = [_bs_line("bs.trade_payables", 0, basis="separate")]
+    ra = audit_std_row(db, basis="separate", bs_face=bs, is_face=[], cf_face=[],
+                       is_comparative=False)
+    assert ra.status == STATUS_PASS, ra.fields
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

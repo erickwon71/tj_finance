@@ -616,6 +616,18 @@ _COGS_CONCEPT_MISMATCH_KEYS: frozenset[tuple[str, int, str, str]] = frozenset({
     ("00163673", 2025, "Q3", "consolidated"),
 })
 
+# ★R23(2026-08-15) — concept_map.py 갭 5종 추가(trade_payables) 부수발견: 아이텍(00626011)
+# 2025FY separate 는 std_v3 자체에 진짜 버그가 있다(trade_payables=0 저장, 원문은
+# 5,068,265,299원 — `ifrs-full_TradeAndOtherCurrentPayables` separate 라인). 새로 매핑한
+# `ifrs-full_NoncurrentPayables`가 이 필링에서 우연히 값=0(정상적인 비유동 매입채무 무)이라,
+# `won_vals`(멤버십 대조)에 0 이 섞여 db_won=0 과 우연히 일치 → **진짜 버그가 가짜 PASS로
+# 가려짐**(수정 전엔 fail_a 로 정확히 잡히고 있었음). curated 키의 그 행에서만 값=0 후보를
+# 제외해 기존 fail_a 노출을 보존한다(148건 중 db_won==0 인 유일 케이스, 전수 확인 완료 —
+# `scripts/probe_gateb_reader_concept_gap_2026-08-15.py` 결과 CSV).
+_TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS: frozenset[tuple[str, int, str, str]] = frozenset({
+    ("00626011", 2025, "FY", "separate"),
+})
+
 
 @dataclass
 class RowAudit:
@@ -788,6 +800,10 @@ def audit_fields(
                                       "COGS_SGA_CONCEPT_MISMATCH", None))
             continue
         cands = by_canon.get(canon, [])
+        if canon == "bs.trade_payables" and (db_row.get("corp_code"), db_row.get("fiscal_year"),
+                                              db_row.get("fiscal_period"), basis) in _TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS:
+            # R23 — 이 행은 값=0 후보와의 우연일치를 배제(위 _TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS 참고).
+            cands = [c for c in cands if c.amount_won != 0]
         if not cands and canon == "is.revenue":
             # ★ 매출액 단일 라인이 face 에 없고 std 가 매출원가+매출총이익 으로 파생된 경우
             # (revenue_from_cogs_gp 규칙). 회계 항등식 매출원가+매출총이익==매출액 → 보고서의

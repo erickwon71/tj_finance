@@ -1055,6 +1055,77 @@ sga 필드 fail(fail_a+fail_b) **전체 46개사·전체기간 0건**(회귀 없
 
 ---
 
+## R21. `is.cogs` additive override — 매출원가류 서브라인 **합산**(stage-rank/충돌
+해소가 아니라 SUM), **raw-label 직접매칭**으로 전역 alias 오염 회피(R16/R20 자매규칙)
+
+R20과 같은 46개사 '영업비용' P라인 구조가 `is.cogs`도 오염시키지만 메커니즘이 다르다.
+COGS 서브라인이 **2개 이상**(상품매출원가/제품매출원가/용역매출원가/공사매출원가 등)
+공존하는데, 이들은 총계의 상호배타적 구성요소라 **합산**이 정답이지 stage-rank나
+`_reduce_conflict()`의 대상이 아니다. 두 실패 양상 확인(`scripts/probe_cogs_
+phase2_2026-08-15.py`, 39개사·883행):
+- **(a) 충돌**: 서브라인들이 이미 기존 fuzzy alias(예: `상품매출원가`)로 `is.cogs`에
+  매핑되지만 서로 다른 값이라 `_resolve()`가 HELD(NULL)로 묻는다(223행/15개사).
+- **(b) 침묵드롭**: 서브라인 라벨(`상품및제품매출원가`/`임대매출원가-임대수익원가`/
+  `제ㆍ상품매출원가`/`제품및상품매출원가`/`천연가스매출원가`)이 alias 사전에 없어
+  `unknown`(conf=0)으로 `_map_rows()`의 신뢰도 게이트(<0.88)에서 `_resolve()`가 보기도
+  전에 드롭된다(95행/3개사).
+
+**★일반 alias 추가로 (b)를 고치면 안 되는 이유(전역 위험 실측 확인)**:
+`scripts/probe_cogs_alias_global_risk_2026-08-15.py`로 5개 미매핑 라벨의 **전역**
+사용처(이 39개사 밖 포함 전체)를 조회한 결과, 2개는 **다른 회사에서 '매출원가'
+총계와 형제로 공존**한다 — `상품및제품매출원가`(8개사, 64/162 콤보가 총계와 공존)·
+`임대매출원가/임대수익원가`(35개사, 514/548 콤보가 총계와 공존). 이는
+`account_maps/is_accounts.py`가 이미 2026-07-18에 `제품매출원가`/`상품매출원가`
+세부 alias를 **바로 이 이유로 제거**한 것과 정확히 같은 충돌 패턴(총계+세부 동시
+alias → conflict-hold 회귀) — 일반 alias로 추가하면 00109286·00787376 등 이 트랙과
+무관한 회사에 새 회귀를 유발한다. (나머지 3개 라벨은 전역 충돌 0건으로 안전하지만,
+단일 메커니즘 유지를 위해 이들도 같은 방식으로 처리한다.)
+
+**규칙**: `_COGS_ADDITIVE_OVERRIDE`(`fin2/layer3/combine.py`, (corp, fy, period,
+basis) 4-튜플 319개, 19개사 — R16/R17/R20과 달리 **basis도 키에 포함**한다. 연결/
+별도가 같은 corp+기간이라도 COGS 서브라인 구성이 다를 수 있어서다(다른 override는
+`_resolve()`가 이미 basis별로 분리 호출돼 불필요했지만, 이 override는 `combine_full()`
+레벨에서 동작해 명시적으로 필요). `scripts/generate_cogs_additive_override_
+2026-08-15.py`로 재현 가능) — `combine_full()`에서 `_resolve()` 이후, raw
+`merged`(`build_merged_lines()` 결과, `_map_rows()`/AccountMapper를 거치지 않음)를
+`_cogs_additive_labels()`로 직접 라벨텍스트 매칭해 합산, `col["cogs"]`를 덮어쓴다.
+전역 alias 테이블은 전혀 건드리지 않아 이 19개사 밖으로 영향이 전혀 없다.
+`_cogs_additive_labels()`는 `_map_rows()`의 H1/Q3 누적셀 dedup 로직을 라벨텍스트
+기준으로 그대로 복제한다(같은 interim/cum_seen 알고리즘).
+
+**신뢰성 검증**(생성 시점 항등식과 별개로, 실제 runtime 파이프라인 재검증): 319개
+키 전부를 `build_merged_lines()` + `_cogs_additive_labels()`로 재실행해 `len(picked)
+== len(want)` 확인 — **불일치 0건**. 70개 다중-rcept(정정) 키의 서브라인 구성도
+전부 확인(rcept 간 라벨셋 불일치 0건) — 대표 1개 rcept로 override를 만들어도 안전함을
+사전 확인.
+
+**Gate B 재검증 결과의 해석(중요 — REVIEW 신호이지 회귀가 아님)**: scoped 재검증
+(19개사) 결과 fail_a(cogs) 14건은 **전부 예견된 것**(R20 §3, Phase 0가 미리 확인한
+XBRL Track A가 `ifrs-full_CostOfSales`를 총계에 태깅한 4개사 — 00108940·00117212·
+00143527·00163673; 이번에 00143527이 NULL(conflict-hold)→실값으로 바뀌면서 처음
+드러남, 새 버그 아님). fail_b(cogs) 196건은 원문 직접대조(2건, 00808022·01412822)로
+근본원인 확인: Gate B Track B(`read_report_face_text`)도 **같은 AccountMapper**를
+써서 서브라인을 **개별 라인으로만** 읽고 합산 개념이 없다 — 표준화값(정확한 합산,
+파이프라인 재실행으로 재검증됨)과 Track B의 개별 서브라인 값이 다른 게 당연하다.
+Track B는 unmapped 라벨(예: `상품및제품매출원가`)도 **똑같이** 드롭해 일부는 완전
+누락 상태로 비교한다. Gate B 감사기 자체의 알려진 한계(비차단 REVIEW)이지 표준화
+데이터 오류가 아니다 — R20 §3와 같은 계열의 "비교대상 개념 불일치" 문제.
+
+**검증**: `pytest tests/ fin2/tests/` 515 passed(무관 기존 실패 1건 제외) + 19개사
+scoped 백필(`build_std_v3.py --corp <19개사>`) + Gate B scoped 재검증 — sga 필드
+회귀 재확인(46개사 전체 fail 0건, 불변) + cogs 값 5개 샘플(한진중공업홀딩스·두산·
+대성홀딩스·00108135 4서브라인 합산·01412822 unknown라벨 포함 합산) 전부 자체 항등식과
+정확히 일치.
+
+**근거**: `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md`(설계
+Phase 2) · `scripts/probe_cogs_phase2_2026-08-15.py`·`scripts/probe_cogs_unmapped_
+labels_2026-08-15.py`·`scripts/probe_cogs_alias_global_risk_2026-08-15.py`(조사) ·
+`fin2/layer3/combine.py::combine_full()`/`_cogs_additive_labels()`
+(`_COGS_ADDITIVE_OVERRIDE`) · `scripts/generate_cogs_additive_override_2026-08-15.py` ·
+`account_maps/is_accounts.py`(2026-07-18 제품/상품매출원가 제거 선례).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -1107,6 +1178,7 @@ sga 필드 fail(fail_a+fail_b) **전체 46개사·전체기간 0건**(회귀 없
 | R16 | `docs/qa/gate_b_fail_a_revenue_tradepayables_triage_2026-08-13.md` · `docs/plans/gate_b_faila_combine_stage_rank_shortcut_fix_design_2026-08-13.md` · `fin2/layer3/combine.py::_resolve()` (`_REVENUE_TOTAL_OVERRIDE_CORPS`/`_TRADE_PAYABLES_PARENT_OVERRIDE_CORPS`) · `fin2/tests/test_combine_curated_overrides.py` |
 | R17 | `docs/plans/gate_b_faila_trade_payables_additive_design_2026-08-14.md`(원설계) · 이 세션 실측(구현 중 발견) · `fin2/layer3/combine.py::_resolve()` (`_TRADE_PAYABLES_ADDITIVE_OVERRIDE`) · `fin2/tests/test_combine_curated_overrides.py` |
 | R20 | `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md` · `docs/qa/is_sga_cogs_holdco_phase0_scan_2026-08-15.md` · `fin2/layer3/combine.py::_resolve()` (`_SGA_SUBLINE_OVERRIDE_KEYS`/`_SGA_SUBLINE_LABELS`) · `scripts/generate_sga_subline_override_2026-08-15.py` |
+| R21 | `docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md`(Phase 2) · `scripts/probe_cogs_phase2_2026-08-15.py`·`probe_cogs_unmapped_labels_2026-08-15.py`·`probe_cogs_alias_global_risk_2026-08-15.py` · `fin2/layer3/combine.py::combine_full()`/`_cogs_additive_labels()` (`_COGS_ADDITIVE_OVERRIDE`) · `scripts/generate_cogs_additive_override_2026-08-15.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황

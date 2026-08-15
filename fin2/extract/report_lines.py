@@ -294,6 +294,29 @@ def _row_to_line(
     )
 
 
+# ★EPS(주당손익) 오판 가드(2026-08-15) — 라벨의 "주당" 부분문자열만으로 EPS 여부를
+# 판정하면 "지배주주당기순이익(손실)"/"비지배주주당기순이익"(=지배+주주+당기순이익,
+# 우연히 "주당" 부분문자열이 생김) 같은 NI귀속(총액, 원 단위) 라벨이 EPS(원/주)로
+# 오판된다 — "보통주주당이익"(=보통주+주당이익, 진짜 EPS) 과 문자열 레벨에서 원리적으로
+# 구분 불가(라벨 텍스트 규칙으로는 못 가른다, 실측 확인). 대신 파싱된 금액의 **크기**로
+# 가른다 — 진짜 EPS(원/주)는 실측 최댓값이 5,890,065원(2015년 이후·깨끗한 라벨·알려진
+# 오판 회사 제외, 약 75,000행 모집단, `docs/plans/gate_b_controlling_ni_groupbc_
+# kbimetal_eps_label_trap_fix_design_2026-08-15.md` §3-A)이라 1,000만원이면 1.7배
+# 여유. NI귀속 오판값은 억~수백억원대라 자릿수가 수십~수천 배 차이 나 안전하게 갈린다.
+# 금액이 상한을 넘으면 EPS 취급을 포기하고 본류(_emit_section_lines)로 흘려보낸다(결측
+# 판단 없이 기존 정상 라벨매칭에 위임 — 새 "선택" 로직 아님, 게이트만 좁힘).
+_EPS_MAX_PLAUSIBLE_WON = 10_000_000
+
+
+def _looks_like_eps_amounts(amounts) -> bool:
+    """파싱된 금액들이 EPS(원/주)치고 비현실적으로 크면 False. 값이 전부 없으면(None)
+    판단 불가 → 보수적으로 True(기존 동작 유지, 결측>오염 — 짐작 말고 기존 경로 유지)."""
+    present = [a for a in amounts if a is not None]
+    if not present:
+        return True
+    return all(abs(a) <= _EPS_MAX_PLAUSIBLE_WON for a in present)
+
+
 def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                     report_fiscal_year, report_fiscal_period,
                     table_seq=None, table_title=None) -> None:
@@ -320,6 +343,10 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                 detect_unit_declaration(label) or 1, "declared", None)
         _, amt_cells = _split_label_amounts(cells)
         present = [a for a in (parse_amount(c, unit) for c in amt_cells) if a is not None]
+        if not _looks_like_eps_amounts(present):
+            # NI귀속류 오판 행 — EPS 로 emit 하지 않고 본류가 처리하도록 남겨둔다(아래
+            # _emit_section_lines 의 대응 가드와 짝, 2026-08-15).
+            continue
         for col_idx, amount in enumerate(present[:3]):
             ctx_fy = report_fiscal_year - col_idx
             emit(ReportLineRow(
@@ -424,8 +451,10 @@ def _emit_section_lines(
                             table_seq=table_seq, table_title=table_title)
 
         for row in table_rows:
-            if not row.account_name or "주당" in row.account_name:
+            if not row.account_name:
                 continue
+            if "주당" in row.account_name and _looks_like_eps_amounts(row.amounts):
+                continue  # 진짜 EPS(원/주)만 본류에서 제외 — NI귀속 오판 가드(위 참고)
             section_path = section_paths.get(id(row))
             if cum_map is not None:
                 pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()

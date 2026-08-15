@@ -1393,6 +1393,64 @@ dropped` 불변, R25 와 동일). `docs/plans/gate_b_facereader_controlling_ni_f
 
 ---
 
+## R27. `fin2/extract/report_lines.py` — EPS(주당손익) 행 판정의 라벨 부분문자열
+오판 수정, 값 크기 게이트(KBI메탈, 2026-08-15)
+
+R24~R26 과 달리 이번엔 Gate B(원문 독립 재추출기)가 아니라 **std_v3 본류(Layer 2
+`report_lines.py`)의 진짜 데이터 버그**였다 — KBI메탈(00158024) 4개 기간에서 std_v3
+(db_won)가 틀리고 Gate B(report_won)가 맞는, 이 population 안에서 유일한 역방향
+사례(그룹B/C 잔존 4건 원문대조 중 발견, 설계문서 `docs/plans/gate_b_controlling_ni_
+groupbc_kbimetal_eps_label_trap_fix_design_2026-08-15.md`).
+
+**근본원인**: EPS 행 판정이 라벨 안 **우연한 부분문자열**(`"주당" in label`)로만
+이뤄져서, "지배주주당기순이익(손실)"/"비지배주주당기순이익"(= "지배"+"주주"(주주들)+
+"당기순이익", 우연히 "주당" 부분문자열이 생김) 같은 NI귀속(총액, 원 단위) 라벨이
+EPS(원/주)로 오판됨. 그 결과 (a) 정상 IS본문 추출 경로(`_emit_section_lines`)에서
+그 행이 통째로 드롭되고 (b) EPS 전용 경로(`_emit_eps_lines`)로 잘못 들어가서는 그
+경로의 "당기/전기 2열" 가정이 실제 4열(3개월/누적×당기/전기, H1·Q3 필링) 구조와
+안 맞아 엉뚱한 열(3개월, 비누적)이 "누적" 딱지 달고 저장됨 → `_is_loadable()`(col_
+index=0만 저장 정책)이 그 잘못된 열만 남김. 결과: 정답 후보가 `report_lines`에
+**아예 없어져서** combine.py 의 어떤 후보선택/안전망(`_resolve_ni_attribution` 항등식
+체크 포함)도 못 구함 — R24/R25 류 "후보를 넓히기만 한다" 전략은 넓힐 후보 자체가
+없어서 안 통하는 케이스.
+
+**왜 라벨 텍스트 규칙으로 못 고치나**(실측 확인, 설계문서 §4): "보통주주당이익"
+(=보통주+주당이익, 진짜 EPS)과 "지배주주당기순이익"(=지배+주주+당기순이익, 버그)은
+**서로 다른 조어구조에서 나온 문자열 레벨 동일 부분열**이라 정규식으로 원리적으로
+구분 불가. "주당기"(주당+기) 뒤 글자로 가르는 것도 기각 — `기본주당기순이익`류
+(DART 관행상 매우 흔한 정상 EPS 표기)가 대량으로 걸림.
+
+**구현**: 값 크기 게이트. `_EPS_MAX_PLAUSIBLE_WON = 10_000_000`(실측 확정 — 2015년
+이후·깨끗한 라벨·알려진 버그회사 제외 시 진짜 EPS 실측 최댓값 5,890,065원, 1.7배
+여유). `_looks_like_eps_amounts()` 헬퍼를 `_emit_section_lines`의 스킵 조건(라벨에
+"주당" 있어도 금액이 비현실적으로 크면 스킵 안 함 → 본류가 처리)과 `_emit_eps_lines`
+의 진입 게이트(금액이 크면 그 TR 자체를 emit 안 함 → 본류로 흘려보냄) 양쪽에 적용.
+코드는 **전역**(회사 curated 아님 — 값 크기라는 독립검증 신호로 좁힌 게이트, 블랭킷
+규칙 아님)이지만 실제 데이터 변경은 재추출한 회사에만 반영된다. `_emit_section_lines`
+(본류)는 4열(3개월/누적) 레이아웃을 이미 올바르게 처리하는 것으로 확인돼(`cum_map`
+메커니즘) 그쪽 로직은 안 건드림 — "게이트만 좁히면" 충분.
+
+**검증**: `scripts/reload_report_lines_corp.py --corp 00158024` 재추출 →
+`scripts/build_std_v3.py --corp 00158024` 재빌드 → `gateb_audit.py --recheck` 재감사.
+대상 4개 기간(2024FY·2025Q1·2025H1·2025Q3) `controlling_ni` 값이 원문(XBRL
+`ifrs-full_ProfitLossAttributableToOwnersOfParent`) 과 정확히 일치하도록 수정 확인,
+fail_a 4→0. `pytest tests/ fin2/tests/` 522 passed(무관 기존 실패 1건 불변). 다른
+회사 표본(00121941) in-memory 추출로 정상 EPS 계속 올바르게 분류되는 것도 확인
+(단조성). **부수 발견**: 같은 재빌드로 KBI메탈의 다른 17개 과거 기간(2019~2024,
+대부분 Track B/비XBRL 구서식)이 `pass`→`fail_b`로 전환됨 — 원문대조(2023Q1·2024H1
+표본)로 db_won 이 전부 **더 정확해졌음**을 확인(예: 2024H1 1,744,628,069 원문 정확
+일치). report_won 쪽이 안 맞는 건 Gate B `face_audit.py` Track B(텍스트 휴리스틱)
+리더의 **별개·기존 결함**으로 추정(이 필링들은 ACODE/ACONTEXT 없는 순수 텍스트
+표라 Track B 경로를 탐) — 이전엔 db_won 도 같이 틀려서 우연히 일치(숨은 false
+PASS)했던 것으로 보임. `fail_b`는 설계상 비차단(REVIEW)이라 메인뷰엔 영향 없음.
+**이 Track B 결함 자체는 이번 수정 범위 밖 — 별도 조사 필요**(다음 세션 후보).
+
+**이번 범위 밖**: 쿠콘(01311055)·피에스케이(01365825) — 같은 라벨패턴 보유하나
+원문 rcept 파일열람 문제로 미착수(현재 fail_a 0, 저긴급). `00269852`류 레거시
+텍스트블럽 패턴(K-GAAP 2003~2007년대) — 이번 4열 XBRL 구조와 무관, 별도 트랙.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -1451,6 +1509,7 @@ dropped` 불변, R25 와 동일). `docs/plans/gate_b_facereader_controlling_ni_f
 | R24 | 메모리 `gateb-controlling-ni-mismap-r24-implemented-2026-08-15` · `docs/plans/std_v3_controlling_ni_mismap_structural_fix_design_2026-08-15.md` · `fin2/layer3/combine.py::_ni_attribution_structural_candidates()` |
 | R25 | 메모리 `gateb-facereader-fix-design-2026-08-15` · `docs/plans/gate_b_facereader_controlling_ni_fix_design_2026-08-15.md`(§2-B) · `fin2/audit/face_audit.py::_ni_attribution_structural_candidates()` |
 | R26 | `docs/plans/gate_b_facereader_controlling_ni_fix_design_2026-08-15.md`(§2-A) · `fin2/audit/face_audit.py`(`_FX_PRESENTATION_CURRENCY_KEYS`/`_PENDING_REASONS`) |
+| R27 | `docs/plans/gate_b_controlling_ni_groupbc_kbimetal_eps_label_trap_fix_design_2026-08-15.md` · `fin2/extract/report_lines.py`(`_EPS_MAX_PLAUSIBLE_WON`/`_looks_like_eps_amounts()`) · `scripts/reload_report_lines_corp.py`/`scripts/build_std_v3.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황

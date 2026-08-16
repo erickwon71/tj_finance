@@ -48,7 +48,7 @@ from fin2.extract.xbrl import ExtractedFact
 from fin2.extract.statement_titles import (
     title_text, title_text_owned, title_text_for_classify,
     classify_statement_in_body_section, SECTION_CODE_OF,
-    _is_metadata_only, _STMT_TITLE, _HEADER_LABEL_RE,
+    _is_metadata_only, _STMT_TITLE, _HEADER_LABEL_RE, _is_bare_structural_marker,
     classify_legacy_statement_heading, is_legacy_note_marker,
     owned_merged_title, titleless_bs_start,
 )
@@ -481,11 +481,16 @@ def declaration_text(tbl) -> str | None:
         if detect_unit_tokens(t):
             return t
     # (3) 요약재무정보: 제목·기간 클러스터의 메타 형제에서 단위 획득(재무제표명 경계에서 정지).
+    # ★range 3→6(T4 M3, 2026-08-16): 아래 `_is_bare_structural_marker` 스킵이 반복(최대
+    # 2단)될 수 있어 원래 한도로는 그 뒤의 진짜 선언에 못 닿는 사례가 있었다(§5-7-1 실측).
     prev = tbl.getprevious()
-    for _ in range(3):
+    for _ in range(6):
         if prev is None:
             break
         t = " ".join("".join(prev.itertext()).split())
+        if _is_bare_structural_marker(t):
+            prev = prev.getprevious()  # 같은 재무제표 표제의 되풀이일 뿐 — 경계 아님(T4 M3)
+            continue
         if any(p.search(t) for p, _ in _STMT_TITLE):
             break                       # 재무제표명(제목) 도달 = 경계 — 남의 표로 안 넘어감
         if detect_unit_tokens(t):
@@ -569,6 +574,9 @@ def inherited_declaration_text(tbl) -> str | None:
                 return txt                  # ★선언 전용 표 — 여기서만 상속한다
             return None                     # 데이터도 선언도 없는 표 → 근거 없음
         if txt:
+            if _is_bare_structural_marker(txt):
+                prev = prev.getprevious()  # 같은 재무제표 표제의 되풀이일 뿐 — 경계 아님(T4 M3,
+                continue                   # 2026-08-16, `_is_bare_structural_marker` docstring)
             # 텍스트가 있는 요소에서 멈춘다. 단 **그 요소 자신이 선언을 가지면** 그것이 이
             # 항목의 선언이다(사용자 결정 D1 보완, 2026-07-31) — 실측 서식:
             #   <P> (2) 담보로 제공된 자산 … 다음과 같습니다. (단위: 천원)

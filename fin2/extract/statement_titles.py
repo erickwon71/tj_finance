@@ -122,6 +122,50 @@ def _is_metadata_only(txt: str) -> bool:
     return bool(detect_unit_tokens(txt))    # 회사명 등이 앞에 붙은 단위줄
 
 
+# ── T4(R28 후속) M3 — 표제/계정구분 중복 마커 스킵 (2026-08-16) ────────────
+# docs/plans/eps_r28_followup_tracks_design_2026-08-16.md §5-6·§5-7-1(T4) 실측 근거.
+# `doc_default` 로 떨어진 667그룹을 전수 재파싱해보니, 30그룹(288행)이 "표제표(단위
+# 선언 보유)"와 "데이터표" 사이에 **내용 없는 중복 캡션**(같은 재무제표 이름만
+# 되풀이하는 형제, 또는 은행업 계정구분 괄호라벨)이 끼어 `declaration_text()`/
+# `inherited_declaration_text()`의 "재무제표명을 만나면 멈춘다"는 안전판(LVMC 회귀
+# 방지용, `text.py` 참고)에 **의도치 않게 걸려** 진짜 선언에 닿지 못하는 패턴이었다.
+# 원문 실측: 위아(00106623) '현 금 흐 름 표' 단독 캡션 · 기업은행(00149646) 대차대조표
+# 앞 '(은행계정)' · 다수사 자본변동표 앞 '연 결 자 본 변 동 표'/'(3) 연결자본변동표
+# (연결잉여금계산서)' · APPR 다수사 '이익잉여금처분계산서'/'결손금처리계산서'.
+# **다른 재무제표로 건너간 게 아니다** — 이름이 정확히 같은 재무제표의 되풀이일
+# 뿐이라 여기서 멈추면 안 된다. 단 기간·단위·계정명 등 **다른 정보가 조금이라도
+# 섞이면** 아래 정규식이 매칭하지 않는다(끝까지 소비 못 함) — 그런 텍스트는 여전히
+# "완전한 문장"으로 보고 멈춘다(LVMC 류 회귀 방지, 안전판은 그대로 유지).
+_BARE_TITLE_NAME = re.compile(
+    r"^(?:연결|별도|개별|반기|분기|중간|당|전)*"
+    r"(?:재무상태표|대차대조표|포괄손익계산서|손익계산서|현금흐름표|자본변동표|"
+    r"이익잉여금처분계산서|결손금처리계산서)"
+    r"(?:[(（][^)）]{0,20}[)）])?$")
+_BARE_TITLE_NUM_PREFIX = re.compile(r"^[(（]?\s*\d+\s*[)）.]?")
+# 은행/보험업 특유 계정구분 라벨(기업은행 실측). [[std-v3-side-findings-trust-account-net-income-2026-08-09]]
+# 가 다룬 "신탁계정 오귀속"과 같은 계열 구조 — 표시 자체는 별개 문제라 여기선 스킵 대상으로만 취급.
+_BARE_ACCOUNT_SUBHEADER = frozenset({"은행계정", "신탁계정", "보험계정", "특별계정"})
+
+
+def _is_bare_structural_marker(txt: str) -> bool:
+    """단위 룩백 도중 만난 형제가 **내용 없는 표제/계정구분 중복 캡션**뿐인가.
+
+    True 면 "재무제표명을 만나면 멈춘다"는 안전판의 **예외**로 취급해 건너뛴다 —
+    재무제표명이 있어도 그게 전부(기간·단위 등 다른 정보가 없음)면 다른 재무제표로
+    넘어간 게 아니라 **같은 재무제표 표제의 되풀이**이기 때문이다. TABLE 형제(제목+
+    단위가 한 표에 묶인 경우)는 이 함수를 거치지 않는다 — LVMC 회귀는 그 경로였고
+    (`text.py` `inherited_declaration_text` 주석 참고), 이 함수는 **텍스트 전용
+    형제**에만 적용된다.
+    """
+    if not txt:
+        return False
+    compact = re.sub(r"\s+", "", txt).strip("()（）")
+    if compact in _BARE_ACCOUNT_SUBHEADER:
+        return True
+    stripped = _BARE_TITLE_NUM_PREFIX.sub("", re.sub(r"\s+", "", txt))
+    return bool(_BARE_TITLE_NAME.match(stripped))
+
+
 def _is_data_boundary(el) -> bool:
     """이 형제가 **다른 재무제표의 몸통**인가(= back-scan 을 여기서 멈춰야 하는가).
 

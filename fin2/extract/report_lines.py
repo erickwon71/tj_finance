@@ -30,6 +30,7 @@ from pathlib import Path
 
 from loguru import logger
 
+import json
 import re
 
 from parser.xml.dart_xml_parser import _parse_xml_file
@@ -317,6 +318,41 @@ def _looks_like_eps_amounts(amounts) -> bool:
     return all(abs(a) <= _EPS_MAX_PLAUSIBLE_WON for a in present)
 
 
+# ★K-GAAP 구서식(00269852류) "헤드라인 순이익 + 괄호 안 EPS 노트" 통짜라벨
+# 목록(2026-08-15, R28). 이 행들은 '주당' 부분문자열 때문에 EPS 경로로
+# 들어오지만 실제로는 그 표의 헤드라인 당기순이익 행이다 — EPS 로 emit 하지
+# 않고 본류(_emit_section_lines)가 표 단위를 적용해 일반 행으로 전사하게
+# 넘긴다(R27 과 같은 계열, 단 값크기로는 못 걸러 curated 키를 쓴다).
+#
+# 키는 rcept_no 단독이 아니라 (rcept_no, statement, basis, table_seq,
+# label_raw) 5-튜플이다 — rcept_no 단독 키를 시도했다가 **같은 표 안에
+# 별개의 정상 EPS 행이 같이 있는 필링 2건을 실측으로 발견**(설계문서 §4-B
+# 6번), 그 행까지 잘못 건드릴 뻔했다.
+#
+# ★블랭킷 규칙 아님 — 이 집합 밖의 EPS 행(정상 168,579건 포함, 같은 표
+# 안의 형제 정상 EPS 행 포함)은 기존 동작 그대로다(설계문서 §2 실측: 일반규칙은 위험).
+# 생성: scripts/purge_eps_curated_false_positives_2026-08-15.py (설계문서 §8 Phase 1)
+# 데이터: fin2/extract/data/eps_kgaap_headline_not_eps_keys_2026-08-15.json
+# 설계문서: docs/plans/report_lines_eps_kgaap_legacy_label_unit_fallback_fix_design_2026-08-15.md
+_EPS_KGAAP_KEYS_PATH = (
+    Path(__file__).resolve().parent / "data" / "eps_kgaap_headline_not_eps_keys_2026-08-15.json"
+)
+
+
+def _load_kgaap_keys() -> frozenset[tuple[str, str, str, int, str]]:
+    # 데이터파일 유실을 침묵 무효화로 넘기면 백필이 조용히 아무것도 안 하게
+    # 된다 — 실패 시 예외를 그대로 올린다(설계문서 §8 Phase 2-2).
+    with open(_EPS_KGAAP_KEYS_PATH, encoding="utf-8") as f:
+        raw_keys = json.load(f)
+    return frozenset(
+        (rcept_no, statement, basis, int(table_seq), label)
+        for rcept_no, statement, basis, table_seq, label in raw_keys
+    )
+
+
+_EPS_KGAAP_HEADLINE_NOT_EPS_KEYS: frozenset[tuple[str, str, str, int, str]] = _load_kgaap_keys()
+
+
 def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                     report_fiscal_year, report_fiscal_period,
                     table_seq=None, table_title=None) -> None:
@@ -332,6 +368,9 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
         if not cells or "주당" not in cells[0]:
             continue
         label = cells[0].strip()
+        # ★R28 — K-GAAP 구서식 헤드라인 순이익 행(EPS 아님) → 본류에 위임.
+        if (rcept_no, statement, basis, table_seq, label) in _EPS_KGAAP_HEADLINE_NOT_EPS_KEYS:
+            continue
         # ★행 인라인 단위가 **외화**일 수 있다 — '계속영업기본주당이익(손실) (단위 : USD)'
         #   (실측 아남전자). 원화 배수가 없다고 1(원)로 가정하면 USD/주 값이 원/주 로 둔갑한다.
         #   표 경로와 같은 규약으로 fx 를 표시한다(2026-08-05).

@@ -31,3 +31,4 @@ docs/qa/results/**/*.json
 download_coverage.txt
 rev.txt
 period_completeness.txt
+scripts/probe_gateb_reader_concept_gap_2026-08-15_results.csv

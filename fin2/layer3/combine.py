@@ -21,9 +21,11 @@ Read-only: this module never writes to the DB.
 """
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
 from functools import lru_cache
+from pathlib import Path
 
 from sqlalchemy import text
 
@@ -1944,10 +1946,83 @@ def _ni_attribution_structural_candidates(rows: list[dict], period: str,
     return dict(extra)
 
 
-def _map_rows(rows, period: str, basis: str, statements) -> dict[str, list[dict]]:
+# ★T3 (R29) — K-GAAP 구서식 헤드라인 NI 결측 복구, docs/plans/eps_r28_followup_tracks_design_2026-08-16.md
+# §4/§6 T3. R28(report_lines.py `_EPS_KGAAP_HEADLINE_NOT_EPS_KEYS`)이 이미 "헤드라인
+# 당기순이익 + 괄호 EPS노트" 통짜라벨을 본류로 정상 전사하게 고쳤지만, 그 라벨은
+# `account_mapper`가 거대 병합 텍스트라 `confidence<0.88`로 탈락시켜 애초에 candidate
+# pool에 못 들어온다(cands["is.net_income"] 자체가 비어 있음) — 재추출이 아니라
+# **여기(계층3 매핑) 한 곳만** 고치면 되는 이유(설계문서 §4-1 D 재키잉 실현성 검증 완료).
+#
+# 원본 curated 키(rcept_no 5-튜플, R28)를 `_map_rows()`가 실제로 쓸 수 있는 형태로
+# 재키잉한 산출물(스크립트 `scripts/build_ni_recovery_keys_2026-08-16.py`, DB 무변경) —
+# `_map_rows()`엔 rcept_no가 없고(정본+델타 패치 설계상 의도적) 셀 병합 키가
+# (statement, basis, col_index, section_path, label_raw)라서 원본 5-튜플을 그대로 못 쓴다
+# (설계문서 §4-3). 재키잉 손실 없음 실측(§4-3): 2,205키→1,840그룹, rcept 미매칭 0,
+# 그룹당 라벨 최대 2.
+#
+# 대상 canonical은 `is.net_income` **하나만**(사용자 결정, 설계문서 §4-4 (b)+(c)) —
+# K-GAAP 구서식엔 지배주주 개념 자체가 없는 경우가 많아 `is.controlling_ni`를 채우면
+# "없는 개념을 만드는" 위험이 있다.
+_KGAAP_NI_RECOVERY_KEYS_PATH = (
+    Path(__file__).resolve().parent.parent / "extract" / "data"
+    / "eps_kgaap_ni_recovery_keys_2026-08-16.json"
+)
+
+
+@lru_cache(maxsize=1)
+def _load_kgaap_ni_recovery_keys() -> dict[tuple[str, int, str, str], frozenset[str]]:
+    # 데이터파일 유실을 침묵 무효화로 넘기면 회수 대상이 조용히 전부 스킵된다 —
+    # report_lines.py `_load_kgaap_keys()`와 같은 이유로 실패 시 예외를 그대로 올린다.
+    with open(_KGAAP_NI_RECOVERY_KEYS_PATH, encoding="utf-8") as f:
+        raw = json.load(f)
+    out: dict[tuple[str, int, str, str], frozenset[str]] = {}
+    for gkey, labels in raw.items():
+        corp_code, fy_str, fiscal_period, basis = gkey.split("|")
+        out[(corp_code, int(fy_str), fiscal_period, basis)] = frozenset(labels)
+    return out
+
+
+def _kgaap_headline_ni_candidates(rows: list[dict], corp: str, fy: int, period: str,
+                                  basis: str) -> dict[str, list[dict]]:
+    """T3(R29) — curated 재키잉 라벨과 정확히 일치하는 IS 행을 `is.net_income`
+    후보로 주입한다. 값을 고르지 않는다(R24/`_ni_attribution_structural_candidates`와
+    같은 원칙) — 후보 풀만 넓힌다. 호출측(`_map_rows()`)이 `cands["is.net_income"]`가
+    이미 있으면 아예 호출하지 않는다(설계문서 §4-4 (e), 보수적 기본값).
+
+    interim(H1/Q3) cum dedup은 `_map_rows()`의 `flow`/`cum_seen` 로직과 같은 이유로
+    필요하다 — 재키잉 그룹 1,840개 중 36개는 라벨이 2개인데(예: 00113207 2003H1
+    consolidated — 3개월 표 + 누적 표가 별개 label로 갈라짐), 누적 컬럼이 있으면
+    그것만 남긴다(std_v2 관례, 3개월 값과 섞으면 스퓨리어스 conflict)."""
+    key = (corp, fy, period, basis)
+    labels = _load_kgaap_ni_recovery_keys().get(key)
+    if not labels:
+        return {}
+    matched = [r for r in rows if r["statement"] == "IS" and r["basis"] == basis
+              and r["label_raw"] in labels]
+    if not matched:
+        return {}
+    if period in ("H1", "Q3"):
+        cum_rows = [r for r in matched if r.get("is_cumulative")]
+        if cum_rows:
+            matched = cum_rows
+    return {"is.net_income": [{
+        "value": _loss_signed("is.net_income", r["label_raw"], r["value_won"]),
+        "stage": "structural", "label_raw": r["label_raw"],
+        "node_role": r.get("node_role"), "section_path": r.get("section_path"),
+        "table_seq": r.get("table_seq"), "is_cumulative": r.get("is_cumulative", False),
+        "amended": r.get("amended", False), "amended_by": r.get("amended_by"),
+    } for r in matched]}
+
+
+def _map_rows(rows, period: str, basis: str, statements,
+             corp: str | None = None, fy: int | None = None) -> dict[str, list[dict]]:
     """Map merged cell dicts → {canonical: [candidate]}. Shared by both paths.
     Interim (H1/Q3) flow (is./cf.) keeps cumulative cells only (std_v2 convention).
-    Carries the amendment marker (amended/amended_by) onto each candidate."""
+    Carries the amendment marker (amended/amended_by) onto each candidate.
+
+    corp/fy: current corp_code/fiscal_year, optional — needed only to gate the T3(R29)
+    K-GAAP headline-NI recovery below (mirrors `_resolve()`'s corp/fy params). Callers
+    that omit them get the old behavior unchanged (no-op)."""
     interim = period in ("H1", "Q3")
     cands: dict[str, list[dict]] = defaultdict(list)
     cum_seen: set[str] = set()
@@ -1982,6 +2057,12 @@ def _map_rows(rows, period: str, basis: str, statements) -> dict[str, list[dict]
     if "IS" in stmt_set:
         for c, extra_rows in _ni_attribution_structural_candidates(rows, period, basis).items():
             cands[c].extend(extra_rows)
+        # T3(R29) — only when the caller identified corp/fy AND is.net_income has no
+        # candidate at all yet (conservative default, §4-4 (e): an existing candidate
+        # from any other path is trusted over this one).
+        if corp is not None and fy is not None and not cands.get("is.net_income"):
+            for c, extra_rows in _kgaap_headline_ni_candidates(rows, corp, fy, period, basis).items():
+                cands[c].extend(extra_rows)
     return dict(cands)
 
 
@@ -2020,7 +2101,7 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
                 "section_path": section_path, "table_seq": table_seq,
                 "is_cumulative": bool(is_cum),
             })
-    return _map_rows(rows, period, basis, statements)
+    return _map_rows(rows, period, basis, statements, corp=corp, fy=fy)
 
 
 def combine(session, corp: str, fy: int, period: str, basis: str,
@@ -2067,7 +2148,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     elif select_filing:
         if merged is None:
             merged = build_merged_lines(session, corp, fy, period)
-        cands = _map_rows(merged, period, basis, statements)
+        cands = _map_rows(merged, period, basis, statements, corp=corp, fy=fy)
         # L3-2 basis fallback: a company with no subsidiaries files only 별도(separate);
         # its 연결(consolidated) figures = separate. When the requested basis is entirely
         # absent but the period has only the other basis, fall back (verified: 45/45 such
@@ -2077,7 +2158,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
             other = "separate" if basis == "consolidated" else "consolidated"
             bases_present = {r["basis"] for r in merged}
             if bases_present == {other}:
-                cands = _map_rows(merged, period, other, statements)
+                cands = _map_rows(merged, period, other, statements, corp=corp, fy=fy)
                 prov["basis_fallback"] = True
     else:
         cands = collect_candidates(session, corp, fy, period, basis,

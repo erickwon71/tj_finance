@@ -1546,6 +1546,70 @@ LIKELY 티어 1,947행 중 상당수가 겹칠 가능성, 표본 조사만 됨).
 
 ---
 
+## R29. `fin2/layer3/combine.py` — K-GAAP 구서식 헤드라인 NI `net_income` 결측 복구
+(재추출 없이 계층3 매핑만, 2026-08-16)
+
+R28 후속트랙 T3(구 "후속트랙 N"). 설계문서
+`docs/plans/eps_r28_followup_tracks_design_2026-08-16.md` §4/§6.
+
+**근본원인**: R28이 K-GAAP 구서식(00269852류) 헤드라인 당기순이익 행("ⅩⅢ.당기순이익
+(주당경상이익:...) (주당순이익:...)")을 EPS 오판에서 구제해 본류로 정상 전사하게
+고쳤지만, 그 라벨은 `account_mapper`가 **거대 병합 텍스트**라 `confidence<0.88`로
+탈락시켜 애초에 candidate pool에 못 들어온다(`cands["is.net_income"]` 자체가 비어
+있음) — 재추출이 아니라 **계층3 매핑 한 곳만** 고치면 되는 이유. 재측정(설계문서
+§4-1): curated 2,205키 population(1,840셀) 중 net_income NULL **1,187셀(64.5%)**,
+그중 **1,142셀(96.2%)**이 이미 `report_lines`에 R28 헤드라인 행을 값째로 갖고 있었다.
+
+**구현 — curated 재키잉 + 후보주입**(R16/R17/R20/R21/R23/R24/R27/R28 계열):
+- R28 curated 5-튜플 키(rcept_no 기반)를 **`(corp_code, fiscal_year, fiscal_period,
+  basis) → [label_raw, ...]`**로 재키잉(1,840그룹, 라벨 최대 2). `_map_rows()`(계층3
+  후보 매핑 지점)엔 `rcept_no`가 없고(정본+델타 패치 설계상 의도적) 셀 병합 키가
+  `(statement, basis, col_index, section_path, label_raw)`라서 원본 5-튜플을 그대로
+  못 쓴다. 재키잉 손실 0(1,840셀과 정확히 일치, rcept 미매칭 0) 실측 확인.
+  생성: `scripts/build_ni_recovery_keys_2026-08-16.py` →
+  `fin2/extract/data/eps_kgaap_ni_recovery_keys_2026-08-16.json`.
+- `_kgaap_headline_ni_candidates(rows, corp, fy, period, basis)` 신설
+  (R24 `_ni_attribution_structural_candidates`와 같은 모양) — 재키잉 라벨과 정확히
+  일치하는 IS 행만 `is.net_income` 후보로 주입(`stage="structural"`). 대상 canonical은
+  **`is.net_income` 하나만** — `is.controlling_ni`는 채우지 않는다(K-GAAP 구서식엔
+  지배주주 개념 자체가 없는 경우가 많아, 채우면 "없는 개념을 만드는" 위험).
+- `_map_rows()`에 선택 인자 `corp=None, fy=None` 추가(기존 호출자는 무변경 no-op).
+  `"IS" in stmt_set` 가드 안에서 **`cands.get("is.net_income")`가 이미 있으면
+  주입하지 않는다**(보수적 기본값 — 이 population은 정상경로가 애초에 후보를 못
+  만드는 경우가 대부분이라, 다른 경로로 이미 후보가 있다면 그쪽을 신뢰).
+- 호출부 3곳(`collect_candidates()`·`combine_full()` 기본경로·basis fallback경로)에
+  `corp=corp, fy=fy` 전달.
+
+**단위테스트 6개**(순수·DB 비의존) — `fin2/tests/test_combine_kgaap_ni_recovery_r29.py`:
+curated 라벨 주입 확인, corp/fy 없으면 no-op, 라벨 텍스트 불일치 시 미주입(블랭킷
+아님), 회사 불일치 시 미주입, 기존 후보 있으면 미주입(보수적 기본값).
+
+**백필**: `build_std_v3.py --corp <286개사> --year-min 1999`(286개사·51,403행·
+1,267초). 재추출 아님 — `report_lines` 완전 불변(체크섬 확인).
+
+**검증**(설계문서 §4-8):
+- curated population net_income NULL **1,187 → 34**(목표 ≤45 초과 달성).
+- `report_lines` 286개사 체크섬 before/after **완전 일치**(계층2 불변, 의도대로).
+- std_v3 대상 필드 diff: `net_income` 1,837행 + **`controlling_ni` 1,145행**(전부
+  separate basis) 변경. controlling_ni는 T3가 직접 주입하지 않았지만, `net_income`이
+  채워지자 `fin2/layer3/build.py:118-126`의 **기존(R29 이전부터 있던) 무조건 규칙**
+  ("별도재무제표는 controlling_ni=net_income" — 회계정의) 이 자연히 따라 채운
+  부수효과. `git diff`로 R29 변경분이 이 규칙과 무관함을 확인, 표본(00428251
+  2003H1 separate) 원문대조로도 확인. 그 외 필드(revenue/total_assets 등) diff 0.
+- Gate B: T3 대상 기간(FY1999~2008) 286개사는 gate_status 전량 `pending`(XBRL·Track B
+  소스 자체가 이 시대엔 없어 감사 불가 — T4 설계문서 §5-3과 동일 사실) →
+  net_income을 몇 건 채우든 fail로 넘어갈 경로가 없어 fail_a 증가 **구조적으로
+  불가능**. 전체기간 fail_a 46건은 전부 FY2024~2026(재키잉 데이터가 애초에
+  FY1999~2008만 있어 도달 불가 — 데일리 파이프라인 신규수집 소관, R29와 무관 확인).
+- `pytest tests/ fin2/tests/` **533 passed**(527 기존 + R29 신규 6, 무관 기존 실패
+  1건 `test_biz_section.py::test_lxintl_facility_table_dropped` 불변).
+
+**후속트랙**(미착수, 범위 밖): 잔여 34셀 NULL(대부분 "2-라벨 그룹" — 같은 기간에
+헤드라인 NI 행이 2개, 값이 달라 conflict로 보류된 케이스. 결측>오염 원칙대로 정상
+동작, 추측하지 않음).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

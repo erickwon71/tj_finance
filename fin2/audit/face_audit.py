@@ -395,9 +395,16 @@ def _ni_attribution_structural_candidates(root) -> list[FaceLine]:
     return extra
 
 
-def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False) -> list[FaceLine]:
+def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
+                          root=None) -> list[FaceLine]:
     """
     Track A(XBRL) 보고서의 face 라인을 독립 재추출. 기본 col_index=0(당기)·비차원만.
+
+    root: 이미 파싱된 트리를 주입하면 재파싱하지 않는다(성능, ③ Fix 2 —
+    docs/plans/gateb_audit_performance_design_2026-08-17.md B2). 이 함수와
+    read_report_face_text() 가 같은 파일을 각자 파싱해 필링당 1.90회 파싱하고 있었고,
+    파싱 비용의 76%가 sanitize_dart_xml 이라 재파싱이 특히 비쌌다. 트리는 읽기 전용으로만
+    쓰이므로(양쪽 모두 변형 없음) 공유가 안전하다. 미주입 시 기존과 동일하게 자체 파싱.
 
     all_cols=True: col_index 0/1/2(당기·전기·전전기) 모두 포함 — 비교컬럼 폴백 행 검증용
     (그 행 값은 후속 보고서의 전기/전전기 컬럼에 있으므로 col0 만으론 대조 불가).
@@ -411,7 +418,8 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False) -> list
     신호, 회귀 #1) 그 키는 애초에 후보에서 제외한다. 그래도 남는 빈 ADECIMAL(진짜 미태깅)만
     문서 전체 기본단위(R4-1, `document_default_unit`)로 최후 보충한다.
     """
-    root = _parse_xml_file(Path(file_path))
+    if root is None:
+        root = _parse_xml_file(Path(file_path))
     if root is None:
         return []
 
@@ -486,9 +494,11 @@ def _adecimal_from_unit(unit: int) -> int:
     return -int(round(math.log10(unit)))
 
 
-def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
+def read_report_face_text(file_path: str | Path, root=None) -> list[FaceLine]:
     """
     Track B(텍스트) 보고서의 **본문 재무제표 face 표** 라인을 독립 재추출.
+
+    root: 이미 파싱된 트리 주입 시 재파싱 생략(③ Fix 2 — read_report_face_xbrl 참고).
 
     표 위치·basis(연결/별도) 식별 = 추출기(`fin2.extract.text._detect_body_statement_tables`)와
     **공유**(2026-08-07 수정). 예전엔 이 함수가 독자적으로 "전체 TABLE 스캔 +
@@ -512,7 +522,8 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
     from parser.common.account_mapper import get_mapper
     from fin2.extract.text import declared_unit, _detect_body_statement_tables, _detect_fin_type
 
-    root = _parse_xml_file(Path(file_path))
+    if root is None:
+        root = _parse_xml_file(Path(file_path))
     if root is None:
         return []
     mapper = get_mapper()
@@ -577,7 +588,8 @@ def read_report_face_text(file_path: str | Path) -> list[FaceLine]:
     return lines
 
 
-def _supplement_with_text(a_lines: list[FaceLine], file_path: str | Path) -> list[FaceLine]:
+def _supplement_with_text(a_lines: list[FaceLine], file_path: str | Path,
+                          root=None) -> list[FaceLine]:
     """Track A 라인에 Track B(텍스트) face 라인을 **보충** 병합한다.
 
     배경: 일부 보고서(지주·하이브리드)는 BS/CF 는 XBRL ACODE 로 태깅하나 **IS(손익) face 는
@@ -597,7 +609,7 @@ def _supplement_with_text(a_lines: list[FaceLine], file_path: str | Path) -> lis
     if {"BS", "IS", "CF"} <= covered:
         return a_lines
     try:
-        b_lines = read_report_face_text(file_path)
+        b_lines = read_report_face_text(file_path, root=root)
     except (FileNotFoundError, OSError):
         return a_lines
     if not b_lines:
@@ -613,10 +625,14 @@ def _supplement_with_text(a_lines: list[FaceLine], file_path: str | Path) -> lis
 
 def read_report_face(file_path: str | Path) -> list[FaceLine]:
     """Track A 우선(+텍스트 보충), 0행이면 Track B(텍스트) 폴백. 감사 러너의 단일 진입점."""
-    lines = read_report_face_xbrl(file_path)
+    # ③ Fix 2 — 파일을 1회만 파싱해 두 reader 가 공유한다(read_report_face_xbrl 참고).
+    root = _parse_xml_file(Path(file_path))
+    if root is None:
+        return []
+    lines = read_report_face_xbrl(file_path, root=root)
     if lines:
-        return _supplement_with_text(lines, file_path)
-    return read_report_face_text(file_path)
+        return _supplement_with_text(lines, file_path, root=root)
+    return read_report_face_text(file_path, root=root)
 
 
 def read_report_face_tracked(file_path: str | Path,
@@ -631,15 +647,21 @@ def read_report_face_tracked(file_path: str | Path,
     if str(file_path).lower().endswith(".pdf"):
         lines = read_report_face_pdf(file_path)
         return (lines, "C") if lines else ([], None)
-    lines = read_report_face_xbrl(file_path, all_cols=all_cols)
+    # ③ Fix 2 — 이 파일을 1회만 파싱해 XBRL/텍스트 reader 가 공유한다. 예전엔 각자 파싱해
+    # 필링당 1.90회(측정 2026-08-17) 파싱했고 그 76%가 sanitize_dart_xml 이었다.
+    # 파싱 실패(None)면 아래 두 reader 모두 [] 를 냈으므로 조기 반환이 기존과 동치.
+    root = _parse_xml_file(Path(file_path))
+    if root is None:
+        return [], None
+    lines = read_report_face_xbrl(file_path, all_cols=all_cols, root=root)
     if lines:
         # 텍스트 보충: Track A 가 못 잡은 계정(IS face 텍스트표 등)을 Track B 라인으로 보충.
         # all_cols(비교행)도 보충 — Track B 는 행 내 전 셀(전기/전전기 포함)을 any-column 으로
         # 읽으므로 비교컬럼 대조에 그대로 부합. 비교행 분기는 불일치를 fail 로 승격하지 않음
         # (COMPARATIVE_ROW pending) → 후보 추가는 매칭만 늘려 단조 개선.
-        lines = _supplement_with_text(lines, file_path)
+        lines = _supplement_with_text(lines, file_path, root=root)
         return lines, "A"
-    lines = read_report_face_text(file_path)
+    lines = read_report_face_text(file_path, root=root)
     if lines:
         return lines, "B"
     return [], None

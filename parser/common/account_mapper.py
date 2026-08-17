@@ -103,6 +103,26 @@ class AccountMapper:
                     if norm:
                         self._normalized[norm] = code
 
+        # Precomputed (alias, normalized_alias) pairs for _fuzzy_match().
+        # _fuzzy_match() used to call normalize_account_name() over the WHOLE alias
+        # dictionary on every map() call: 1,011,495 calls / 15.2M re.sub for just 4,065
+        # fuzzy matches -- 40% of Gate B audit wall time (profiled 2026-08-17, see
+        # docs/plans/gateb_audit_performance_design_2026-08-17.md B1).
+        # normalize_account_name() is pure and the alias set is immutable after
+        # _build_index(), so this is a semantics-preserving memoization.
+        # Order matters: _fuzzy_match() breaks ties with a strict `>` comparison, so the
+        # first match wins. Build from _aliases_by_code (not the raw section maps) to
+        # inherit its exact final content AND iteration order. Aliases whose normalized
+        # form is empty are dropped here -- _fuzzy_match() skipped them anyway.
+        self._aliases_norm_by_code: dict[str, list[tuple[str, str]]] = {}
+        for code, aliases in self._aliases_by_code.items():
+            pairs = []
+            for alias in aliases:
+                alias_norm = normalize_account_name(alias)
+                if alias_norm:
+                    pairs.append((alias, alias_norm))
+            self._aliases_norm_by_code[code] = pairs
+
     # ── 3단계 매핑 ────────────────────────────────────────────────────
 
     def map(self, raw_account_name: str, fs_section: Optional[str] = None) -> MappingResult:
@@ -227,16 +247,15 @@ class AccountMapper:
         best_score: float = 0.0
         best_alias: Optional[str] = None
 
-        for code, aliases in self._aliases_by_code.items():
+        # _aliases_norm_by_code = precomputed (alias, alias_norm) pairs — same content and
+        # order as _aliases_by_code, minus aliases that normalize to "" (which this loop
+        # used to skip). See _build_index().
+        for code, alias_pairs in self._aliases_norm_by_code.items():
             # fs_section 제공 시 동일 섹션 코드만 허용
             if fs_section and not code.startswith(f"{fs_section}."):
                 continue
 
-            for alias in aliases:
-                alias_norm = normalize_account_name(alias)
-                if not alias_norm:
-                    continue
-
+            for alias, alias_norm in alias_pairs:
                 # 포함 관계: alias가 normalized 안에 있으면 높은 점수
                 if alias_norm in normalized or normalized in alias_norm:
                     # 더 긴 쪽 / 짧은 쪽 비율로 점수 조절

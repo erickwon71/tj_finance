@@ -1734,12 +1734,20 @@ macOS 기본 로케일(`LANG=ko_KR.UTF-8`)에서 EUC-KR 인코딩 파일(대부�
   산술적으로 증명됨(집계로 끝내지 않고 delta 자체를 비교).
 - BS 항등식 위반(T21 안전망) 감소: 1라운드 185→172(−13), 2라운드 950→914(−36) — 둘 다
   감소(T21 전례와 일치, 진짜 결함 교정의 신호).
-- Gate B 재감사: 775개사 전수는 `gateb_audit.py`가 이 세션 시간 안에 못 끝낼 만큼 느려
-  (기존 스크립트 성능 특성, R31과 무관 — corp 1개(00101044)가 36분+ 걸림) 대표표본(census
-  검증 8개사, 502행)으로 축소 — **fail 0 / fail_a 0**, in-scope 일치율 100%. 775개사 전수
-  재감사는 후속 과제로 남김(사용자 직접 실행 시 `--source v3 --corp-file
-  scripts/t22_target_corps_2026-08-16.txt --fy-min 1999 --fy-max 2010 --recheck
-  --no-line-audit`).
+- Gate B 재감사(대표표본, 이 세션): 775개사 전수는 `gateb_audit.py`가 이 세션 시간 안에
+  못 끝낼 만큼 느려(기존 스크립트 성능 특성, R31과 무관 — corp 1개(00101044)가 36분+
+  걸림) 대표표본(census 검증 8개사, 502행)으로 축소 — **fail 0 / fail_a 0**, in-scope
+  일치율 100%.
+- **Gate B 재감사(775개사 전수, 사용자 직접 실행, 2026-08-17)**: 43,864행 감사 —
+  pass 3,860 / **fail_a 0**(차단 기준 통과) / fail_b 51(REVIEW) / pending 39,953,
+  in-scope 일치율 98.7%. fail_b 51건 조사(집계로 끝내지 않고 원인 추적) — 전부
+  `revenue`/`cogs`(+파생 `gross_profit`/`operating_income`/`net_income`, BS 결합행 1건)
+  **concept-mapping 불일치**이지 R31이 고치는 값 유실/오emit 패턴이 아님. 22개사 중
+  T22가 실제로 값을 교정한 (corp,fy,period)와 겹치는 건 10/51뿐, 그중 하나(00108940
+  cogs 2009FY)는 **R30 문서에 이미 기록된 기존 미해결 항목과 정확히 일치**(R31 이전부터
+  있던 결함, 위 R30 항목 "fail_b 92건은 전부 cogs(00108940...)" 참고) — R31 신규 회귀
+  아니라 R20~R23 시대의 기존 revenue/cogs 매핑 gap이 전수 재감사로 새로 노출된 것으로
+  판단.
 - T1(R28 후속 잔여 13건) 재확인: 그룹A 6건 중 **5건 col_index=0로 복구**(LOADED).
   나머지 1건(20040619000015)은 `_split_label_amounts`까지는 정상 복구됐으나(하이픈 음수
   셀 보존 확인) **num_cols가 cum_map 헤더폭(4)로 truncate**돼 그 뒤에 온 실제 값이 잘려

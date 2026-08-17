@@ -203,12 +203,14 @@ before/after 동치 비교). 원문은 **SD카드 직접 지정** `/Volumes/dart
   before/after. T21에서 이 안전망이 실제로 오염을 잡아냈으므로(부록 A T21) **감소해야 정상**.
   증가하면 즉시 롤백 검토.
 - ☑ 6-3. **Gate B** — `scripts/gateb_audit.py --recheck`로 대상 corp 재감사.
-  `fail_a` **증가 0**이 통과선. **★부분완료**: 775개사 전수는 `gateb_audit.py` 자체 성능
-  특성(corp당 편차 큼, 1개사가 36분+ 걸린 사례 관측 — R31과 무관한 기존 스크립트 특성)상
-  이 세션 시간 안에 못 끝내 대표표본(census 검증 8개사, 502행)으로 축소 실행 —
-  **fail 0/fail_a 0, 일치율 100%**. 775개사 전수 재감사는 후속(사용자 실행 권장,
-  `--source v3 --corp-file scripts/t22_target_corps_2026-08-16.txt --fy-min 1999 --fy-max 2010
-  --recheck --no-line-audit`).
+  `fail_a` **증가 0**이 통과선. 이 세션에선 대표표본(census 검증 8개사, 502행)으로
+  축소 실행 — fail 0/fail_a 0, 일치율 100%. **★775개사 전수는 사용자가 직접 실행
+  (2026-08-17)**: 43,864행 — pass 3,860 / **fail_a 0**(통과) / fail_b 51 / pending
+  39,953. fail_b 51건 전수 원인추적(집계로 안 끝냄) — 전부 revenue/cogs
+  concept-mapping 불일치(R31이 고치는 값유실/오emit 패턴 아님), 10/51만 T22 교정
+  기간과 겹치고 그중 하나는 R30 문서에 이미 기록된 기존 미해결 항목과 정확히 일치 →
+  **R31 신규 회귀 아님, 기존 R20~R23 시대 revenue/cogs 매핑 gap이 전수감사로 노출된
+  것**으로 판단. `docs/PARSING_RULES.md` R31 본문에 상세 반영.
 - ☑ 6-4. **주석/SCE** — 위 775건 폴백 케이스 표본의 `col_label`·값 귀속이 개선됐는지 원문대조
   (헤더 경계가 바뀌는 유일한 경로라 별도 확인). **★Phase 1 census(1-3)로 대체 확인**:
   n_header 변화 10/87,896표(0.011%)로 극미 — 별도 표본 원문대조는 이 규모에서 실익이 낮아

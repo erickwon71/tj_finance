@@ -1820,6 +1820,12 @@ _PROFILE_VALUE_FALLBACK_KEYS`)해 우회한다. 회귀는
 - R23 교훈검사(우연일치 0값): newly-passed 2,404행 중 revenue=0 인 행 0건, 성분=0 인 행
   1건(유진증권 2017Q1 `operating_income=0`) — 원문에 실제 "Ⅲ.영업이익 0" 라인 존재, 우연
   아닌 진짜 값으로 확인.
+- **전수 재감사**(2026-08-18, 사용자 직접 실행 `run_gateb_audit_parallel.sh` 5-shard, ~1.2h,
+  `--fy-min 1999`): 299,651행 전량. pass 199,113→**201,518**(+2,405) / fail_a **412→239**
+  (신규 0건) / fail_b 3,081→603 / pending 97,045→97,291. **46사 밖 292,765행 산술검산** —
+  pass/fail_a/fail_b/pending 4개 항목 전부 이전 기준선과 **정확히 일치**(뺄셈으로 확인,
+  트랙 밖 영향 0 확정). 46사 안 fail_a 는 여전히 4건, 전부 revenue 무관(dividends_paid×3
+  ·controlling_ni×1, 기존 결함). §2(마스터 문서) 공통게이트 6개 전부 충족, 트랙 완전 종료.
 
 ---
 

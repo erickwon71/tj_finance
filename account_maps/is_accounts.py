@@ -36,6 +36,16 @@ IS_ACCOUNTS: dict[str, list[str]] = {
         "매출과지분법손익(영업수익)", "수익(매출과지분법손익)", "영업수익(매출과지분법손익)",
         # "수익" 단독은 제외: NOTE 섹션의 수익 항목과 충돌 → 오탐 방지
     ],
+    # ★R32(2026-08-17, Gate B ① 업종파생revenue) — "기타영업수익"/"투자영업수익"/"투자서비스
+    # 수익"을 여기 새 canonical(is.other_op_revenue/is.investment_revenue)로 추가하지 말 것.
+    # 실측(동양생명 00117267 2023Q1, 원문대조 완료): "투자영업수익"이 "영업수익"의 부분문자열
+    # 이라 stage 3(fuzzy/포함관계)로 우연히 is.revenue 에 잡히던 회사가 있었다 — 새 exact alias
+    # 를 추가하면 stage 1 이 먼저 가로채 그 회사의 is.revenue 후보에서 빠지고, 이 dict 는 Gate B
+    # 전용이 아니라 layer2/3 표준화 본체(`fin2/layer3/combine.py` 등)가 실제 std_v3 계산에도
+    # 쓰는 공용 사전이라 std_v3 real 값까지 흔들릴 수 있다(concept_map.py 의 XBRL ACODE 사전과
+    # 달리 여기엔 "Gate B 전용" 안전판이 없다). 이 두 성분의 face 검증은
+    # `fin2/audit/face_audit.py::_PROFILE_VALUE_FALLBACK_KEYS`(canonical 무관 raw value 대조)
+    # 로 우회한다 — 이 사전을 건드리지 않는다.
     "is.cogs": [
         "매출원가", "영업비용",  # 금융업은 영업비용
         "판매된제품및서비스원가",

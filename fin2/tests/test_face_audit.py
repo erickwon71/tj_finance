@@ -343,6 +343,111 @@ def test_trade_payables_zero_candidate_matches_for_non_curated_key():
     assert ra.status == STATUS_PASS, ra.fields
 
 
+# ── ★R32(2026-08-17) 업종 프로파일 파생 revenue (Gate B ① Phase 2) ──────────────────
+
+def _is_line(canon, won, basis="consolidated", ade=0):
+    # _bs_line 은 statement 를 "BS" 로 고정해 실제 리더 동작(canonical 접두어로 파생, 위
+    # _statement_of)과 다르다 — _recompute_profile_revenue 의 raw-value 우회 경로가
+    # ln.statement=="IS" 를 요구하므로 여기선 정확히 태깅한다.
+    return FaceLine(statement="IS", basis=basis, acode="x", canonical=canon,
+                    label="x", displayed_value=won, adecimal=ade)
+
+
+def test_securities_profile_derived_revenue_pass():
+    # 증권 순영업수익 = 영업이익+판관비. face 에 원문 성분(operating_income/sga)만 있고
+    # 파생 총계(revenue) 라인 자체는 없어도, 성분 재계산이 std 값과 일치하면 PASS.
+    db = {"revenue": 1_624_073, "industry_lines": {"profile": "securities",
+          "operating_income": 1_375_040, "sga": 249_033}}
+    is_face = [_is_line("is.operating_income", 1_375_040), _is_line("is.sga", 249_033)]
+    ra = audit_std_row(db, basis="consolidated", bs_face=[], is_face=is_face, cf_face=[],
+                       is_comparative=False)
+    assert ra.status == STATUS_PASS, ra.fields
+
+
+def test_securities_profile_derived_revenue_value_diff_stays_fail():
+    # 성분은 face 에서 다 찾았지만 합이 std 값과 다르면(진짜 버그) 여전히 FAIL — 면제로
+    # 퇴화하지 않는다(설계 §6-F 필수 항목).
+    db = {"revenue": 999_999, "industry_lines": {"profile": "securities",
+          "operating_income": 1_375_040, "sga": 249_033}}
+    is_face = [_is_line("is.operating_income", 1_375_040), _is_line("is.sga", 249_033)]
+    ra = audit_std_row(db, basis="consolidated", bs_face=[], is_face=is_face, cf_face=[],
+                       is_comparative=False)
+    assert ra.status == STATUS_FAIL, ra.fields
+    assert ra.fail_fields == ["revenue"]
+
+
+def test_profile_derived_revenue_missing_component_is_pending_not_fail():
+    # 성분(sga) 을 face 에서 못 찾으면 검증 불가 → DERIVED_COMPONENTS_UNVERIFIED(pending),
+    # fail 아님(§3-B).
+    db = {"revenue": 1_624_073, "industry_lines": {"profile": "securities",
+          "operating_income": 1_375_040, "sga": 249_033}}
+    is_face = [_is_line("is.operating_income", 1_375_040)]  # sga 라인 없음
+    ra = audit_std_row(db, basis="consolidated", bs_face=[], is_face=is_face, cf_face=[],
+                       is_comparative=False)
+    assert ra.status == STATUS_PENDING, ra.fields
+    assert ra.n_fail == 0
+    reasons = [f.reason for f in ra.fields if f.field == "revenue"]
+    assert reasons == ["DERIVED_COMPONENTS_UNVERIFIED"], reasons
+
+
+def test_gross_fallback_row_skips_derived_path():
+    # revenue_basis='gross_fallback' 행은 일반경로(공시 총계 그대로)로 이미 통과 대상이라
+    # 파생검증을 타지 않는다(§3-D) — op_revenue_total 라인이 없어도 is.revenue 직접 라인이
+    # 있으면 정상 매칭으로 PASS, 성분 부재로 pending 되지 않아야 한다.
+    db = {"revenue": 5000, "industry_lines": {"profile": "securities",
+          "op_revenue_total": 5000, "revenue_basis": "gross_fallback"}}
+    is_face = [_is_line("is.revenue", 5000)]
+    ra = audit_std_row(db, basis="consolidated", bs_face=[], is_face=is_face, cf_face=[],
+                       is_comparative=False)
+    assert ra.status == STATUS_PASS, ra.fields
+
+
+def test_bank_profile_collision_components_verified_by_raw_value():
+    # fee_revenue/interest_revenue 는 canonical 없이(Track B 라벨 충돌 회피, §Phase1 주석)
+    # face 의 아무 라인에나 값으로 있으면 검증된다 — canonical 태그와 무관.
+    db = {"revenue": 160_923_000_000, "industry_lines": {"profile": "bank",
+          "interest_revenue": 140_216_000_000, "fee_revenue": 20_707_000_000}}
+    is_face = [_is_line("is.finance_income", 140_216_000_000),  # 이자수익, 다른 canonical
+               _is_line("is.revenue", 20_707_000_000)]           # 수수료수익, 다른 canonical
+    ra = audit_std_row(db, basis="consolidated", bs_face=[], is_face=is_face, cf_face=[],
+                       is_comparative=False)
+    assert ra.status == STATUS_PASS, ra.fields
+
+
+def test_insurance_revenue_component_accepts_operating_revenue_ins_alias():
+    # dart_OperatingIncomeInsurance 는 기존에 is.operating_revenue_ins 로 매핑돼 있다
+    # (재매핑하지 않음, concept_map.py 주석) — insurance_revenue 성분은 그 canonical 도 받는다.
+    db = {"revenue": 900, "industry_lines": {"profile": "insurance",
+          "insurance_revenue": 700, "investment_revenue": 200}}
+    is_face = [_is_line("is.operating_revenue_ins", 700), _is_line("is.investment_revenue", 200)]
+    ra = audit_std_row(db, basis="consolidated", bs_face=[], is_face=is_face, cf_face=[],
+                       is_comparative=False)
+    assert ra.status == STATUS_PASS, ra.fields
+
+
+def test_account_mapper_unchanged_for_fuzzy_matched_revenue_labels():
+    # ★회귀고정(2026-08-17, 동양생명 00117267 2023Q1 실사고) — "투자영업수익"/"기타영업수익"에
+    # is.investment_revenue/is.other_op_revenue exact alias 를 account_maps/is_accounts.py 에
+    # 걸었더니, 그 라벨이 "영업수익"의 부분문자열이라 원래 fuzzy 매칭으로 is.revenue 에 잡히던
+    # 회사의 매핑이 뒤바뀌어 pass→fail 회귀가 났다(이 사전은 Gate B 전용이 아니라 layer2/3
+    # 표준화 본체도 쓰는 공용 사전이라 std_v3 실값까지 흔들 수 있음). 두 canonical 은 다시
+    # 추가하지 않기로 했고(§_PROFILE_VALUE_FALLBACK_KEYS 주석), 이 테스트가 그 상태를 고정한다.
+    from parser.common.account_mapper import get_mapper
+    mapper = get_mapper()
+    r1 = mapper.map("1. 투자영업수익", fs_section="is")
+    assert r1.account_code != "is.investment_revenue", r1
+    r2 = mapper.map("1.기타영업수익", fs_section="is")
+    assert r2.account_code != "is.other_op_revenue", r2
+
+
+def test_no_profile_row_unaffected_by_derived_path():
+    # industry_lines 없는 일반 회사는 기존 cogs+gp 파생 경로가 그대로 동작(무영향, 회귀 방지).
+    is_face = [_bs_line("is.cogs", 800), _bs_line("is.gross_profit", 200)]
+    ra = audit_std_row({"revenue": 1000}, basis="consolidated",
+                       bs_face=[], is_face=is_face, cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_PASS, ra.fields
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

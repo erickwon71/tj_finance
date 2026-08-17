@@ -102,6 +102,19 @@ _IS: dict[str, str] = {
     "ifrs-full_RevenueFromInterest": "is.interest_revenue",
     "ifrs-full_InterestRevenueCalculatedUsingEffectiveInterestMethod": "is.interest_revenue",
     "dart_TotalSellingGeneralAdministrativeExpenses": "is.sga",
+    # ★R32(2026-08-17, Gate B ① 업종파생revenue Phase 1) — 증권 순영업수익 검증에 필요한
+    # SGA의 IFRS 표준개념. 기존 dart_ alias 1개뿐이었다(§2-C 실측: 미래에셋증권 판관비
+    # 249,033백만이 이 ACODE로만 잡히고 concept_map 미등재라 후보 누락). K-GAAP dart_ 총계와
+    # 동일 개념(판매관리비 총계), 값 충돌 없음 — R23 과 동일 부류(원문대조로 확정된 갭).
+    "ifrs-full_SellingGeneralAndAdministrativeExpense": "is.sga",
+    # ★R32 — 업종 프로파일 성분 검증용 신규 canonical 3종. 실측(46개사 XBRL-태깅 필링 표본)
+    # 으로 확정한 ACODE만 등록(docs/plans/gateb_industry_derived_revenue_design_2026-08-17.md
+    # Phase 1). 세 canonical 모두 map_acode() 소비자가 face_audit.py/line_audit.py 뿐이라
+    # (R23 주석과 동일 근거) std_v3 표준화 값에는 영향 없음 — Gate B 검증 전용.
+    "ifrs-full_FeeAndCommissionIncome": "is.fee_revenue",       # 은행·여신전문 수수료수익
+    "ifrs-full_InvestmentIncome": "is.investment_revenue",      # 보험 투자영업수익
+    "dart_OtherOperatingIncome": "is.other_op_revenue",         # 은행 기타영업수익
+    "ifrs-full_MiscellaneousOtherOperatingIncome": "is.other_op_revenue",  # 여신전문 기타영업수익(변형)
     # R&D: face IS 에 표준개념으로 태깅한 기업(~327사)만 포착. 대다수는 비용의 성격별
     # 분류 주석에만 있어 별도 note 파서 필요(후속). rd_expense 는 정보컬럼(IS 항등식 무관).
     "ifrs-full_ResearchAndDevelopmentExpense": "is.rd_expense",

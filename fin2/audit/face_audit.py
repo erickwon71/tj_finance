@@ -745,7 +745,7 @@ STATUS_PENDING = "pending"    # 아직 감사 불가(범위 밖)
 _FAIL_REASONS = {"VALUE_DIFF"}
 _PENDING_REASONS = {"COMPARATIVE_ROW", "SOURCE_NOT_TRACK_A", "LABEL_UNMATCHED",
                     "GAPFILL_UNVERIFIED", "COGS_SGA_CONCEPT_MISMATCH",
-                    "FX_PRESENTATION_CURRENCY"}
+                    "FX_PRESENTATION_CURRENCY", "DERIVED_COMPONENTS_UNVERIFIED"}
 
 # ★R25 §2-A 옵션 B(2026-08-15, 설계문서 `docs/plans/gate_b_facereader_controlling_ni_fix_
 # design_2026-08-15.md`) — 두산밥캣(01032486) 연결재무제표는 표시통화가 원화가 아니라
@@ -948,6 +948,70 @@ def audit_std_row(
     return RowAudit(status, n_pass, n_fail, n_pending, out, fail_fields)
 
 
+# ★R32(2026-08-17) — 업종 프로파일 파생 revenue 검증(Gate B ① 설계문서
+# `docs/plans/gateb_industry_derived_revenue_design_2026-08-17.md` Phase 2).
+# std_v3.revenue 가 `fin2/layer3/industry_profiles.py::compose()` 로 합성된 행(연결 col0 에
+# 단일 라인으로 존재하지 않음)은 성분(industry_lines JSONB)을 원문 face 에서 재확인한다 —
+# 감사기가 프로파일 로직을 재구현하는 게 아니라, 계층3이 "이 성분들을 썼다"고 남긴 주장을
+# 원문에서 그대로 확인하는 구조(§3-B). 성분 → canonical 매핑은 Phase 0 census(46개사 실측,
+# `docs/qa/industry_profile_component_census_2026-08-17.md`)로 확정한 것만 쓴다.
+#
+# fee_revenue/interest_revenue/insurance_revenue/other_op_revenue/investment_revenue 는
+# Track B(텍스트) 전용 canonical 을 account_maps/is_accounts.py 에 신설하지 않는다. 실측
+# (동양생명 00117267 2023Q1 원문대조, 아래 회귀테스트로 고정)으로 확정: 그 사전은
+# **Gate B 전용이 아니라 layer2/3 표준화 본체도 쓰는 공용 alias 사전**(concept_map.py 의
+# XBRL ACODE 사전과 달리 "감사 전용" 안전판이 없음)이고, exact-alias 충돌이 없어도 3단계
+# fuzzy/포함관계 매칭 때문에 새 exact alias 가 다른 라벨(예: "투자영업수익"이 "영업수익"의
+# 부분문자열이라 fuzzy 로 is.revenue 에 잡히던 회사)을 가로채 std_v3 실값까지 흔들 수 있다.
+# → 다섯 성분 전부 canonical 무관 raw value 검색(census 와 동일 기법, `_PROFILE_VALUE_
+# FALLBACK_KEYS`)으로 검증한다. Track A(XBRL, concept_map.py)는 R23 로 이미 Gate B 전용임이
+# 확정돼 있어(map_acode() 소비자 = face_audit.py/line_audit.py 뿐) 그쪽 canonical 은 유지.
+_PROFILE_COMPONENT_CANONICALS: dict[str, tuple[str, ...]] = {
+    "operating_income": ("is.operating_income", "is.operating_income_ifrs"),
+    "sga": ("is.sga",),
+    "interest_revenue": ("is.interest_revenue",),
+    "fee_revenue": ("is.fee_revenue",),
+    "other_op_revenue": ("is.other_op_revenue",),
+    # dart_OperatingIncomeInsurance 는 기존에 is.operating_revenue_ins 로 매핑돼 있다
+    # (rule_revenue_fallback 용, concept_map.py:101) — 재매핑하지 않고 여기서 둘 다 받는다.
+    "insurance_revenue": ("is.insurance_revenue", "is.operating_revenue_ins"),
+    "investment_revenue": ("is.investment_revenue",),
+}
+_PROFILE_VALUE_FALLBACK_KEYS: frozenset[str] = frozenset({
+    "fee_revenue", "interest_revenue", "insurance_revenue",
+    "other_op_revenue", "investment_revenue",
+})
+
+
+def _recompute_profile_revenue(industry_lines: dict, by_canon: dict[str, list],
+                               face_lines: list[FaceLine], basis: str) -> tuple[int, dict] | None:
+    """industry_lines 에 기록된 성분(profile/revenue_basis 제외)이 face 에 실재하는지 확인하고
+    합산한다. 성분 하나라도 못 찾으면 None(= pending, fail 아님 — 검증 불가와 값불일치는 다름).
+    """
+    components = {k: v for k, v in industry_lines.items() if k not in ("profile", "revenue_basis")}
+    if not components:
+        return None
+    all_is_won = {ln.amount_won for ln in face_lines
+                  if ln.amount_won is not None and ln.statement in ("IS", None)
+                  and ln.basis in (basis, None)}
+    total = 0
+    matched: dict[str, int] = {}
+    for key, val in components.items():
+        if val is None:
+            return None
+        canons = _PROFILE_COMPONENT_CANONICALS.get(key, ())
+        cand_vals = {ln.amount_won for c in canons for ln in by_canon.get(c, [])
+                     if ln.amount_won is not None}
+        if val in cand_vals or -val in cand_vals:
+            matched[key] = val
+        elif key in _PROFILE_VALUE_FALLBACK_KEYS and (val in all_is_won or -val in all_is_won):
+            matched[key] = val
+        else:
+            return None
+        total += val
+    return total, matched
+
+
 def audit_fields(
     db_row: dict,
     face_lines: list[FaceLine],
@@ -1003,6 +1067,27 @@ def audit_fields(
                                               db_row.get("fiscal_period"), basis) in _TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS:
             # R23 — 이 행은 값=0 후보와의 우연일치를 배제(위 _TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS 참고).
             cands = [c for c in cands if c.amount_won != 0]
+        if canon == "is.revenue":
+            il = db_row.get("industry_lines") or {}
+            # gross_fallback(§3-D) 행은 일반경로(공시 총계 그대로)로 이미 통과하므로 대상 밖.
+            if il.get("profile") and not il.get("revenue_basis"):
+                won_vals_direct = {c.amount_won for c in cands}
+                if val not in won_vals_direct and -val not in won_vals_direct:
+                    # ★R32 — 일반경로가 이미 통과하지 못한 경우에만 파생검증 시도(단조성,
+                    # §3-D). 성분 전부 확인되면 재계산 합으로 대조, 하나라도 못 찾으면 pending.
+                    recomputed = _recompute_profile_revenue(il, by_canon, face_lines, basis)
+                    if recomputed is None:
+                        results.append(FieldAudit(field, canon, val, False,
+                                                  "DERIVED_COMPONENTS_UNVERIFIED", None))
+                        continue
+                    total, _matched = recomputed
+                    if abs(total - val) <= 1:
+                        results.append(FieldAudit(field, canon, val, True, None,
+                                                  report_value_won=total))
+                    else:
+                        results.append(FieldAudit(field, canon, val, False, "VALUE_DIFF",
+                                                  report_value_won=total))
+                    continue
         if not cands and canon == "is.revenue":
             # ★ 매출액 단일 라인이 face 에 없고 std 가 매출원가+매출총이익 으로 파생된 경우
             # (revenue_from_cogs_gp 규칙). 회계 항등식 매출원가+매출총이익==매출액 → 보고서의

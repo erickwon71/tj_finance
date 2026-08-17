@@ -1758,6 +1758,71 @@ macOS 기본 로케일(`LANG=ko_KR.UTF-8`)에서 EUC-KR 인코딩 파일(대부�
 
 ---
 
+## R32. Gate B — 업종 프로파일 파생 `revenue` 검증 (증권/은행/보험/여신전문, 2026-08-17)
+
+설계 `docs/plans/gateb_industry_derived_revenue_design_2026-08-17.md`, census
+`docs/qa/industry_profile_component_census_2026-08-17.md`.
+
+**배경**: `fin2/layer3/industry_profiles.py::compose()`가 증권/은행/보험/여신전문 4개
+업종의 `revenue`를 성분 합성으로 만든다(예: 증권 순영업수익 = 영업이익+판관비). Gate B
+감사기(`face_audit.py`)는 "원문에 그 값이 단일 라인으로 있는가"만 보는데, 파생값은 정의상
+그렇게 존재하지 않아 **전부 fail** 처리되고 있었다 — Gate B 전체 fail 의 81%(2,721/3,348)가
+이 노이즈였다(census §1-A).
+
+**해결**: 면제가 아니라 **파생 검증**. `std_financials_v3.industry_lines`(JSONB)에 계층3이
+남긴 성분(예: `{"profile":"securities","operating_income":..,"sga":..}`)을 읽어, 그 성분들이
+원문 face 에 실재하는지 확인하고 재합산해 std 값과 대조한다. 성분 하나라도 못 찾으면
+`DERIVED_COMPONENTS_UNVERIFIED`(pending, fail 아님) — 재계산이 std 값과 다르면 그대로
+`VALUE_DIFF`(fail 유지, 면제로 퇴화하지 않음).
+
+**성분 → canonical 매핑**(Phase 0 census 46개사 실측으로 확정, 짐작 없음):
+
+| 성분 | Track A(XBRL concept_map) | Track B(텍스트) |
+|---|---|---|
+| `operating_income` | 기존(`dart_OperatingIncomeLoss`) | 기존(`is.operating_income`) |
+| `sga` | **신규** `ifrs-full_SellingGeneralAndAdministrativeExpense` | 기존(`is.sga`) |
+| `interest_revenue` | 기존(`ifrs-full_RevenueFromInterest`) | 없음 → raw value 우회 |
+| `fee_revenue` | **신규** `ifrs-full_FeeAndCommissionIncome` | 없음 → raw value 우회 |
+| `insurance_revenue` | 기존 + `is.operating_revenue_ins`(재매핑 안 함, 둘 다 인정) | 없음 → raw value 우회 |
+| `other_op_revenue` | **신규** `dart_OtherOperatingIncome`/`ifrs-full_MiscellaneousOtherOperatingIncome` | 없음 → raw value 우회 |
+| `investment_revenue` | **신규** `ifrs-full_InvestmentIncome` | 없음 → raw value 우회 |
+
+**★교훈(실제 사고, 구현 도중 발견)**: `fee_revenue`/`interest_revenue`/`insurance_revenue`/
+`other_op_revenue`/`investment_revenue` 5종 전부 Track B 에 **새 canonical 을 신설하지
+않는다.** 처음엔 "기타영업수익"/"투자영업수익"을 `account_maps/is_accounts.py`에 새 exact
+alias 로 추가했는데(정확일치 충돌은 없다고 확인했음), 46개사 표적 재감사에서 실제 회귀가
+났다 — 동양생명(00117267) 2023Q1: "투자영업수익"이 기존 alias "영업수익"의 **부분문자열**
+이라 원래 stage-3(fuzzy/포함관계) 매칭으로 `is.revenue` 에 우연히 잡히고 있었는데, 새 exact
+alias 가 그 매칭을 가로채 버렸다. **`account_maps/*.py`는 Gate B 전용이 아니라 layer2/3
+표준화 본체(`combine.py`/`build.py`)도 쓰는 공용 사전**이라(`concept_map.py`의 XBRL ACODE
+사전과 다름 — 그건 R23 으로 이미 Gate B 전용임이 확정돼 있다), exact-alias 충돌이 없어도
+fuzzy 매칭 부작용으로 std_v3 실값까지 흔들릴 수 있다. → 다섯 성분은 canonical 없이 **그
+행의 face 전체에서 값(won)만 직접 검색**(census 와 동일 기법, `face_audit.py::
+_PROFILE_VALUE_FALLBACK_KEYS`)해 우회한다. 회귀는
+`test_account_mapper_unchanged_for_fuzzy_matched_revenue_labels`로 고정.
+
+**구현**: `fin2/audit/face_audit.py::_recompute_profile_revenue()` — `audit_fields()`의
+`is.revenue` 분기에서 일반경로가 이미 실패한 뒤에만 실행(단조성, 기존 PASS 무영향).
+`gross_fallback`(공시 총계를 그대로 쓴 행)은 일반경로로 이미 통과하므로 이 경로를 타지 않음.
+
+**검증**:
+- 단위테스트 12개(`fin2/tests/test_face_audit.py`) — PASS/VALUE_DIFF 유지/성분결측 pending/
+  gross_fallback 무영향/profile 없는 행 무영향/raw-value 우회/fuzzy 매칭 회귀고정. 전체
+  `pytest tests/ fin2/tests/` 557 passed(무관 기존 실패 1건 불변).
+- **46개사 표적 재감사**(전·후 스냅샷 대조, `scripts/gateb_r32_snapshot_before_2026-08-17.json`):
+  pass 1,580→3,984(+2,404) / fail 2,683→33(fail_a **177→4**, 전부 revenue 무관 기존 결함) /
+  pending 2,623→2,869. **단조성 위반 0**(pass→fail/pending 전이 0건, 첫 실행에서 3건 나왔던
+  건 위 fuzzy 사고를 고치고 재실행해 0건 확정). 신규 fail_a 0건.
+- 원문대조 8개사(profile 4종×2개사, 집계 아닌 손으로 확인): 대신증권·유진증권(securities),
+  미래에셋생명·코리안리(insurance), 케이뱅크·BNK금융지주(bank), 삼성카드·메이슨캐피탈
+  (credit_finance) — 성분 전부 원문 실재 확인. BNK금융지주는 `other_op_revenue` 성분이
+  face 에 없어 정확히 `pending`(허위 PASS 아님, 안전설계 확인).
+- R23 교훈검사(우연일치 0값): newly-passed 2,404행 중 revenue=0 인 행 0건, 성분=0 인 행
+  1건(유진증권 2017Q1 `operating_income=0`) — 원문에 실제 "Ⅲ.영업이익 0" 라인 존재, 우연
+  아닌 진짜 값으로 확인.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

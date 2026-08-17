@@ -213,6 +213,13 @@ R16~R21 은 (corp, fy, period) 키 **5,090개**를 코드에 열거했고, 그 �
 | **3** | 46개사 표적 재감사(`gateb_audit.py --source v3 --corp-file`) + §6 검증 | 재감사 로그 | ③ 없이 수 시간 |
 | **4** | `docs/PARSING_RULES.md` **R32** 등재 + `financial_sector_revenue_standards.md` §5 에 감사 연동 기록 | 문서 | — |
 
+**Phase 0~4 전부 완료(2026-08-17).** fee_revenue/interest_revenue/insurance_revenue/
+other_op_revenue/investment_revenue 는 설계 §3-A 원안(Track B canonical 신설)에서
+방향 전환됨 — 46개사 표적 재감사에서 fuzzy-매칭 회귀(동양생명 00117267)를 실제로 발견해,
+5종 전부 canonical 무관 raw-value 우회로 통일(Track A concept_map 신규 4건만 유지). 상세
+결과·수치는 `docs/PARSING_RULES.md` **R32** 참고. 46개사 재감사: fail_a 177→4(revenue 무관
+기존결함), 단조성 위반 0, 원문대조 8개사 완료.
+
 > Phase 0 을 먼저 두는 이유: securities(3,230행)는 성분 검증 가능이 **실측 확인**됐지만,
 > bank·insurance·credit_finance(1,309행)는 **아직 미확인**이다. 짐작으로 설계하지 않는다
 > ([[feedback-verify-against-source]]).

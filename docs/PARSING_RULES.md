@@ -1677,6 +1677,79 @@ R28 후속트랙 T4 M3(단위 배수 과대적용 22,720행 중 코드로 안전
 
 ---
 
+## R31. `parser/xml/table_extractor.py::_NUMBER_PATTERN` — 괄호 없는 순수
+하이픈 음수("-N")를 "숫자 아님"으로 오판해 셀이 통째로 드롭되던 버그 (2026-08-17)
+
+T21("(-)N" 이중마커)의 자매결함(부록A **T22**) — T21이 고친 건 `(-)N`뿐, 순수 `-N`은
+그때도 지금도 미수정이었다. 설계문서 `docs/plans/t22_hyphen_negative_gate_todo_2026-08-16.md`.
+
+**근본원인**: `_NUMBER_PATTERN`의 첫 대안 `^[\s\-─—―]$`는 대시 **한 글자**(공란 마커)만
+잡는다. `"-466,274"`처럼 뒤에 숫자가 붙은 셀은 어느 대안에도 안 걸려 `_split_label_amounts`가
+"숫자 아님"으로 판정해 **placeholder도 안 남기고 셀 자체를 드롭** → 뒤 컬럼이 배열 안에서
+앞으로 밀린다. interim 2단헤더(3개월/누적) 표는 `cum_map`이 헤더 위치 기준인데 밀린 데이터
+배열과 좌표계가 어긋나 **전기/무관 컬럼값이 당기 자리로 오emit되거나 당기값 자체가 유실**된다
+— 결측(0행)보다 나쁨(틀린 숫자가 조용히 적재됨), T21과 동일한 성격. `parse_amount`는 순수
+`-N`을 이미 정상적으로 음수 처리한다(`amount_normalizer.py`) — T21과 달리 **게이트만의 결함**.
+
+**스코프 census**(Phase 1, 층화표본 259필링, `scripts/census_t22_hyphen_negative_2026-08-16.py`,
+전 구간·모든 report_type 커버): 본문 BS/IS/CF 행식별자의 corrected(조용한 오염 교정) 0.25%·
+new_value(신규값 등장) 0.27% — 표본상 corrected 8필링/259가 **전부 1995~2009 버킷**(2010+ 0건).
+원문대조로 진짜 결함 교정임을 확인(예: 20031114000665 "감가상각누계액" 행 원문 셀이 실제로
+`-765,846,474`, 종전엔 드롭됨). 이 규모가 "13건 복구"가 아니라 "전사 데이터 교정"에 해당해
+⛔게이트 발동 → 사용자 재승인(2026-08-17) 후 Phase 2 진행.
+
+**구현**: `_NUMBER_PATTERN`에 `r'^-[\d,]+\.?\d*$|'` 대안 1줄 추가(`(-)` 대안 **뒤**, 대시
+한글자 대안과 뒤에 숫자를 요구해 충돌 없음). `report_lines.py:573`(`_grid_header_split`,
+콤마 보존 문자열 검사)와 `table_extractor.py`(콤마 제거 문자열 검사) 양쪽 다 같은 `_NUMBER_PATTERN`
+객체를 import해 공유하므로 **한 곳 수정으로 둘 다 반영**(T21 때와 달리 별도 배선 불필요 —
+census 스크립트는 이 사실을 monkeypatch 검증으로 명시적으로 확인했다). `parse_amount`는
+수정 불필요. `_split_label_amounts`의 `cell_stripped in ('-','—','')` 공란 폴백은 그대로 둠
+(공란 마커 의미 보존).
+
+**단위테스트 7개**(`fin2/tests/test_hyphen_negative_gate_r31.py`) — 패턴 매칭·8칸 전부 보존·
+`parse_amount` 부호 왕복·회귀가드(대시 한 글자·"- 유동자산"·괄호음수/`(-)N`/△/▲/양수 불변)·
+실측 원문(20031114000665) 기반 cum_map 밀림 재현(수정 전 패턴 monkeypatch로 오답, 수정 후
+정답을 같은 테스트에서 직접 assert).
+
+**표적 백필 스코프 확정에서 겪은 실수(중요, 재발 방지용 기록)**: Phase 1 census 대상이 전부
+pre-2010이라 그 구간을 `grep -l -E '>-[0-9][0-9,]*(\.[0-9]+)?</T[DE]>'`로 넓게 프리필터한 뒤
+프로덕션 함수(monkeypatch before/after)로 정밀 재확인하는 2단 깔때기를 썼다. **1차 grep이
+macOS 기본 로케일(`LANG=ko_KR.UTF-8`)에서 EUC-KR 인코딩 파일(대부분의 2007년 이전 XML)을
+잘못 스캔**(`-a` 플래그로도 못 고침 — 로케일이 유효하지 않은 멀티바이트 시퀀스를 만나면
+조용히 매칭을 중단)해 116개사만 잡혔다. `LC_ALL=C`(바이트 그대로 매칭)로 재스캔하니
+775개사로 3배 이상 늘었고, 정밀 재확인(전체 XML 파싱 재실행)에서도 775개사가 확정됐다.
+**교훈**: 레거시(pre-2010) 원문을 텍스트 검색으로 스캔할 때는 `grep`에 `LC_ALL=C`를 반드시
+명시할 것 — UTF-8 로케일에서는 `-a`(binary 취급 무시)만으로 부족하다.
+
+**표적 백필**: 2라운드로 나뉨 — 1라운드(잘못된 116개사 프리필터 기반) 완료 후 로케일 버그
+발견, 2라운드(delta 659개사)로 보정. 최종 **775개사**, `reload_report_lines_corp.py --year-max
+2010`(fiscal_year≤2010만 — census가 2010+ 영향 0건임을 확인했으므로 표적 유지) +
+`build_std_v3.py --year-min 1999`. 대량 배치가 백그라운드 실행시간 제한에 반복적으로 걸려
+`reload_report_lines_corp.py`에 corp 경계 커밋을 추가(전엔 루프 끝에 한 번만 커밋 — 죽으면
+전부 롤백)하고 ~100개사 단위로 청크 실행.
+
+**검증**(Phase 6):
+- 스코프 밖 불변(두 라운드 모두 exact match): 1라운드 — global 행 델타 = target 행 델타
+  = 19,288, checksum 델타 정확히 일치. 2라운드 — 63,114행 동일 일치. **다른 회사 영향 0**이
+  산술적으로 증명됨(집계로 끝내지 않고 delta 자체를 비교).
+- BS 항등식 위반(T21 안전망) 감소: 1라운드 185→172(−13), 2라운드 950→914(−36) — 둘 다
+  감소(T21 전례와 일치, 진짜 결함 교정의 신호).
+- Gate B 재감사: 775개사 전수는 `gateb_audit.py`가 이 세션 시간 안에 못 끝낼 만큼 느려
+  (기존 스크립트 성능 특성, R31과 무관 — corp 1개(00101044)가 36분+ 걸림) 대표표본(census
+  검증 8개사, 502행)으로 축소 — **fail 0 / fail_a 0**, in-scope 일치율 100%. 775개사 전수
+  재감사는 후속 과제로 남김(사용자 직접 실행 시 `--source v3 --corp-file
+  scripts/t22_target_corps_2026-08-16.txt --fy-min 1999 --fy-max 2010 --recheck
+  --no-line-audit`).
+- T1(R28 후속 잔여 13건) 재확인: 그룹A 6건 중 **5건 col_index=0로 복구**(LOADED).
+  나머지 1건(20040619000015)은 `_split_label_amounts`까지는 정상 복구됐으나(하이픈 음수
+  셀 보존 확인) **num_cols가 cum_map 헤더폭(4)로 truncate**돼 그 뒤에 온 실제 값이 잘려
+  나가는 **별개 결함**(T22 범위 밖, 신규 후보 — 미착수) 때문에 여전히 미해결. 그룹B 7건은
+  기존대로 T4/M2 범위. **13 → 8**(그룹A 1 + 그룹B 7).
+- `pytest tests/ fin2/tests/` **549 passed**(542 기존 + R31 신규 7, 무관 기존 실패 1건
+  `test_lxintl_facility_table_dropped` 불변).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -1704,6 +1777,7 @@ R28 후속트랙 T4 M3(단위 배수 과대적용 22,720행 중 코드로 안전
 | T19 | **롤포워드형 수주현황**(행=기초/신규수주/수익인식/기말 수주잔액, 열=당기/전기) | 열-기반 판정(수주총액/기납품/수주잔고 헤더열 필요)에 안 걸려 0행 | `_map_rollforward_table()` 폴백 신설(order_backlog.py, 2026-08-09). 실측 싸이맥스 FY2017 `20180330000166`. 전수 실측(기존 캐시 grid 기준): 244개 표·24개사 회수 |
 | T20 | **K-GAAP 중첩 하위표제**(`가.대차대조표` 같은 한글서수 하위표제가 `3.재무제표` 상위섹션 아래 있음) | `assign_tables_to_dart_sections`/`iter_section_elements`가 "SECTION 태그를 만나면 중첩 깊이 무관하게 즉시 재판정"하는 구조라, 최상위 매치(`3.재무제표`)가 이미 성공했음에도 하위표제를 만나는 순간 섹션 추적이 **즉시 리셋**됨 → 표 전체 미검출. 2015+엔 이런 중첩 하위표제가 없어 안 드러나던 결함 | `fin2/extract/legacy_pre2015.py::iter_section_span_depth_aware`(깊이인식 경계walk) 신규 모듈로 격리(R13). 기존 2015+ 공유 함수는 무변경. 실측 2004~2007 annual 8/8=100% 회복 |
 | T21 | **비표준 금액표기 `(-)N`**(괄호+명시 마이너스 이중접두, 일부 K-GAAP filer) | `parser/xml/table_extractor.py::_NUMBER_PATTERN`(금액 후보 판정 게이트) 먼저 막힘 → `parser/common/amount_normalizer.py::parse_amount`까지 못 감. 파싱실패(None)를 컬럼압축 로직(`_emit_section_lines`)이 "앞쪽 None=과거 미보고"로 오인해 **전기값이 당기 열로 밀려 들어감**(연도무관 공용 코드라 2015+에도 잠재, K-GAAP 서식에서 더 자주 노출됐을 뿐). 결측(0행)보다 나쁨 — 틀린 숫자가 조용히 적재됨 | 두 곳 다 수정 필요(하나만 고치면 무효, 재적재로 직접 확인): `_NUMBER_PATTERN`+`parse_amount` 둘 다 `(-)N`을 음수로 인식하게 확장. 회귀테스트 9건(`fin2/tests/test_amount_normalizer_parse.py`). 잔여 유사패턴(부채총계만 항상 괄호, 결합행은 항상 정확 — KG케미칼류)은 원문만으론 진짜 부호 확정 불가 → R0 원칙상 **의도적 미수정**, 대신 `detect_bs_identity_anomalies`(이상치탐지) 안전망으로 표시만(부록B R13 이하 참고). 전량백필 실측: 큰폭(≥100만원) BS항등식 위반 346건 중 179건(51.7%)이 이 안전망(`bs_identity_confirmed`/`SIGN`/`high`)에 정상 포착됨(원문 5건 무작위대조로 확인), 63개사에서 재현(동남합성·HLB파나진·에스엠벡셀 등) — KG케미칼 한 회사 국한이 아니었음이 스케일에서 드러남. 나머지 167건은 결합행(부채와자본총계)이 없거나 그것도 안 맞아 `low`신뢰도 `OTHER`로만 표시(추측 금지) |
+| T22 | **비표준 금액표기 `-N`**(괄호 없는 순수 하이픈 음수, T21과 자매결함) | `_NUMBER_PATTERN`의 6개 대안 중 어디에도 안 걸림(첫 대안 `^[\s\-─—―]$`는 "-" **한 글자만**인 셀만 잡아, "`-466,274`" 같은 다글자 셀은 통과 못 함) → `_split_label_amounts`가 이 셀을 "숫자 아닌 텍스트"로 판정해 **placeholder도 안 남기고 완전히 드롭** → 뒤 컬럼들이 배열 안에서 앞으로 밀림 → interim 2단헤더(3개월/누적) 표는 `_interim_cumulative_cols`의 헤더-위치 기반 `cum_map`이 밀린 배열의 엉뚱한 자리를 가리키게 돼 **전기/비관련 컬럼값이 당기 자리로 오emit**되거나 진짜 당기값이 통째로 유실됨. `parse_amount` 자체는 순수 `-N`을 정상적으로 음수 처리하므로(`amount_normalizer.py:344`) **게이트만의 결함** | **✅ R31로 수정 완료(2026-08-17)**. `_NUMBER_PATTERN`에 대안 1줄 추가. 실측 스코프 = pre-2010(fiscal_year≤2010) 775개사·약 13,700 filing, `report_lines` 82,402행 교정(1라운드 19,288 + 2라운드 63,114). BS항등식 위반 2라운드 합계 −49건 감소. R31 본문 참고 |
 
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
@@ -1736,12 +1810,14 @@ R28 후속트랙 T4 M3(단위 배수 과대적용 22,720행 중 코드로 안전
 | R25 | 메모리 `gateb-facereader-fix-design-2026-08-15` · `docs/plans/gate_b_facereader_controlling_ni_fix_design_2026-08-15.md`(§2-B) · `fin2/audit/face_audit.py::_ni_attribution_structural_candidates()` |
 | R26 | `docs/plans/gate_b_facereader_controlling_ni_fix_design_2026-08-15.md`(§2-A) · `fin2/audit/face_audit.py`(`_FX_PRESENTATION_CURRENCY_KEYS`/`_PENDING_REASONS`) |
 | R27 | `docs/plans/gate_b_controlling_ni_groupbc_kbimetal_eps_label_trap_fix_design_2026-08-15.md` · `fin2/extract/report_lines.py`(`_EPS_MAX_PLAUSIBLE_WON`/`_looks_like_eps_amounts()`) · `scripts/reload_report_lines_corp.py`/`scripts/build_std_v3.py` |
+| R31 | `docs/plans/t22_hyphen_negative_gate_todo_2026-08-16.md` · `parser/xml/table_extractor.py::_NUMBER_PATTERN` · `fin2/tests/test_hyphen_negative_gate_r31.py` · `scripts/census_t22_hyphen_negative_2026-08-16.py`·`scripts/scan_r31_true_targets_2026-08-16.py`·`scripts/reload_report_lines_corp.py`(`--year-max`)/`scripts/build_std_v3.py`/`scripts/snapshot_r31_backfill_2026-08-16.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황
 
 | 항목 | 상태 |
 |---|---|
+| ~~T22 순수 하이픈 음수(`-N`) `_NUMBER_PATTERN` 미인식(T21 자매결함)~~ | **✅ 해소 완료 2026-08-17** — R31. 775개사 표적 백필+검증 완료. 부록A T22·부록B R31 참고 |
 | R2-1 `biz_metrics`·`order_backlog` 가 정본 정책 미적용 | **미조치** — 547건(447개사) 미파싱, 505건 회수 가능. 2026-07-31 백필 완료 후 착수 예정 |
 | ~~R1 '사업의 내용' 이 계층2 를 우회~~ | **✅ 해소 완료 2026-08-09** — `biz_section_tables` 4도메인 공용화+재배선. R1 본문 참조. |
 | **셀 병합 결함(`biz_metrics` 한정)** | **✅ 조치 완료 2026-08-01** — 아래 T14 참조. `biz_section.py`(사업의 내용) 전용, 이상치 2,599행 → **162행**(94% 제거) |

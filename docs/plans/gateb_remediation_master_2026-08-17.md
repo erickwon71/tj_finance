@@ -30,7 +30,7 @@
 | **2** | — | 전수 재감사 1회 = **기준선 확정** | 대기 | — | 이후 모든 변화의 비교 기준 |
 | **3** | ① 업종 파생 revenue | `gateb_industry_derived_revenue_design_2026-08-17.md` | ✅ **완전 종료**(전수 재감사 포함, 아래) | 중간 | fail_a 412→239(신규 0), pass +2,405 |
 | **4** | P0 뷰 조인 + ⑤ 배선 | `gateb_view_source_version_join_fix_design_2026-08-17.md` | ✅ **완료**(2026-08-18) | 낮음 | 뷰 중복 2배 제거, 데일리 게이트 복구 |
-| **5** | ② 증거강도 재정의 | `gateb_evidence_grade_redesign_2026-08-17.md` | Phase 1 ✅ **완료**(2026-08-18) → Phase 2(전수 재감사) 대기 | 낮음(Phase 1) → 높음(Phase 4) | fail_a/fail_b 신뢰 회복 + pass 근거 계측 |
+| **5** | ② 증거강도 재정의 | `gateb_evidence_grade_redesign_2026-08-17.md` | Phase 1+2 ✅ **완료**(2026-08-18) → Phase 3(게이팅 결정) 대기 | 낮음(Phase 1~2) → 높음(Phase 4) | fail_a/fail_b 신뢰 회복 + pass 근거 계측 |
 | **6** | ④ curated 키 재생성기 배선 | 미작성 | ⏸ | 낮음 | 신규 필링 재발 차단 |
 
 ### 순서 근거
@@ -75,8 +75,9 @@
 | 2026-08-17 | 순위2 | **전수 재감사 완료 — 기준선 확정**(아래 §6). 커밋 `8a5347f` |
 | 2026-08-17 | ① | **Phase 1~3 구현 완료**(R32, `docs/PARSING_RULES.md`). 46개사 표적 재감사: fail_a 177→4(전부 revenue 무관 기존결함), 단조성 위반 0, 원문대조 8개사 완료. 커밋 `ae4337c`. 구현 도중 fuzzy-매칭 회귀 1건 실제로 발견+수정(동양생명 00117267 — account_mapper 가 Gate B 전용이 아니라 layer2/3 표준화 본체도 쓰는 공용 사전임을 실측으로 확인, R32 참고). |
 | 2026-08-18 | ① | **전수 재감사 완료 — 트랙 종료**(사용자 직접 실행, `run_gateb_audit_parallel.sh`, 5-shard, ~1.2h). 299,651행 전수: pass 199,113→201,518(+2,405) / fail_a 412→239(**신규 0건**) / fail_b 3,081→603 / pending 97,045→97,291. 46사 밖 292,765행 산술검산 — pass/fail_a/fail_b/pending **4개 항목 전부 이전 기준선과 정확히 일치**(트랙 밖 영향 0 확정, 집계로 끝내지 않고 뺄셈으로 확인). §2 공통게이트 6개 전부 충족. ★첫 확인 시도는 5-shard 가 아직 실행 중인 걸 "완료"로 오판할 뻔했다(`ps aux`로 프로세스 확인 없이 face_audit 스냅샷만 보고 판단 — 사용자 지적으로 정정, 재발방지: 장시간 작업 결과 확인 전 항상 프로세스 생존 여부 먼저 체크). |
-| 2026-08-18 | ② | **Phase 1 완료(계측만, 게이팅 무변경).** `FieldAudit.evidence` + `face_audit.evidence_detail`(JSONB) 신설 — E1_EXACT/E2_SIGN/E3_ROUNDING/E4_IDENTITY/E5_HEURISTIC(match) + M1_STRONG/M2_WEAK(mismatch, 계측만·gate_status_for_row() 는 여전히 트랙 기준). 설계 검토(사용자 요청) 중 코드 대조로 주요 주장 전부 확인, 구현착수 전 gap 3건(dataclass 기본값·E1/E5 우선순위·E2/E3 경계) 식별 후 반영. 회귀 11건 신규(`fin2/tests/test_face_audit.py`), 실측 2개사 no-commit 재감사로 판정 무변경 확인 + 1개사(00117267) 실제 commit 으로 저장 형태 확인. 상세 = `gateb_evidence_grade_redesign_2026-08-17.md` Phase 1 행. |
 | 2026-08-18 | P0+⑤ | **완료.** 마이그레이션 `2026_08_standard_financials_view_source_version`(`collector/db.py`) 적용 — dry-run 사전대조(321,141행/중복0/은닉214행 전부 v3 fail_a로 설명/미설명0) 통과 후 실제 적용, 사후재검증도 동일 일치(§6 B/D/E 통과). `app/data/trust.py`(P0-5) `source_version='v3'` 한정. ⑤ `scripts/collect_new.py`(`run_dq_gate`) 의 `AttributeError`(`gb_args`에 `source` 누락) 수정 — `source="v2"`(v3 아님, 근거는 PARSING_RULES 부록C 참고). **검증 중 회귀테스트가 4번째 미배선 소비자(`scripts/verify_corp_sequential.py`) 실측 발견**(같은 `AttributeError` + `rollup_corp()` source_version 미필터) — 함께 수정. 회귀 `pytest tests/ fin2/tests/` 560 passed + 기존 무관 결함 1(`test_lxintl_facility_table_dropped`) 유지. 신규 회귀 테스트 `fin2/tests/test_standard_financials_view.py`(dedup·등급정합·미배선 소비자 grep 가드 3종). 상세: `docs/qa/view_dup_baseline_2026-08-18.md`, `docs/PARSING_RULES.md` 부록C. |
+| 2026-08-18 | ② | **Phase 1 완료(계측만, 게이팅 무변경).** `FieldAudit.evidence` + `face_audit.evidence_detail`(JSONB) 신설 — E1_EXACT/E2_SIGN/E3_ROUNDING/E4_IDENTITY/E5_HEURISTIC(match) + M1_STRONG/M2_WEAK(mismatch, 계측만·gate_status_for_row() 는 여전히 트랙 기준). 설계 검토(사용자 요청) 중 코드 대조로 주요 주장 전부 확인, 구현착수 전 gap 3건(dataclass 기본값·E1/E5 우선순위·E2/E3 경계) 식별 후 반영. 회귀 11건 신규(`fin2/tests/test_face_audit.py`), 실측 2개사 no-commit 재감사로 판정 무변경 확인 + 1개사(00117267) 실제 commit 으로 저장 형태 확인. 상세 = `gateb_evidence_grade_redesign_2026-08-17.md` Phase 1 행. |
+| 2026-08-18 | ② | **Phase 2 완료(전수 재감사로 증거분포 실측, 사용자 실행 5-shard).** 299,651행: pass/fail_a/fail_b/pending 4개 항목 전부 재감사 전과 정확히 일치(기준선 스냅샷은 실행 안 됨 — 집계 대조로 대체, 정직 기록). **핵심 발견: M2_WEAK 0건, E3+E5만으로 통과한 행 0건** — §1-A/§1-B가 우려한 오염 경로가 이론상 실재(R23)하나 현재 모집단엔 없음 → 현재 fail_a/fail_b 분리가 이 데이터에서는 이미 타당했다는 확인에 가까움. 상세 = `docs/qa/gateb_evidence_census_2026-08-18.md`. 다음 = Phase 3(게이팅 규칙 A/B/C, 사용자 결정). |
 
 ---
 

@@ -247,6 +247,22 @@ no-commit 재감사 vs DB 현재값):
 | 00117212 (fail_b 최다) | pass 65 / fail_a 0 / fail_b 56 / pending 57 | 동일 |
 | 00155258 (fail_a 최다) | pass 102 / fail_a 14 / fail_b 0 / pending 68 | 동일 |
 
+**전수 재감사 검증(2026-08-18, 사용자 실행)** — 이번엔 기준선 스냅샷
+(`face_audit_snap_before_aprime`)을 **실제로 먼저 만들어** 행 단위 전이를 증명했다
+(Phase 2 에서 누락했던 절차). 스냅샷의 `checked_at` 이 재감사보다 앞선 Phase 2 감사분
+(05~06시 UTC vs 재감사 07:26~08:50)임을 확인해 사전 기준선임을 검증했다.
+`scripts/verify_gateb_aprime_no_change.sql` 결과:
+
+| 검증 | 결과 |
+|---|---|
+| 행 수 | 299,651 = 299,651 |
+| `gate_status` 전이 행렬 | **대각선만** — pass 201,518 / pending 97,291 / fail_b 603 / fail_a 239, 비대각 0 |
+| 판정 6개 항목(status·gate_status·n_pass·n_fail·n_pending·fail_fields) 행 단위 대조 | **변화 0행** |
+| 재개 트리거 | `M2_WEAK` 0 · `E5_HEURISTIC` 0 (A′ 예외 미발동) |
+| mismatch 증거 분포 | 1,129건 전부 `M1_STRONG`(census 와 동일) |
+
+**A′ 는 판정을 한 행도 바꾸지 않았다** — 설계 의도(미래 방어 전용) 그대로.
+
 ### 6-3. 재개 트리거 (명문화)
 
 축 재검토(초안 A/B/C 계열)는 **보류**하되 조건부로 재개한다. 계측이 이미 배선돼 있어

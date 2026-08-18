@@ -1873,6 +1873,10 @@ Track A 보고서라도 그 실패 필드의 최근접 후보가 gapfill(`M2_WEA
 (fail_b 다수) pass 65/fail_a 0/fail_b 56/pending 57, 00155258(fail_a 최다) pass 102/
 fail_a 14/fail_b 0/pending 68 — 둘 다 DB 현재값과 완전 일치.
 
+**전수 재감사(299,651행)로 확정**(2026-08-18): 사전 스냅샷 대비 `gate_status` 전이 행렬
+**대각선만**(비대각 0), 판정 6개 항목 행 단위 대조 **변화 0행**, `M2_WEAK`/`E5_HEURISTIC`
+둘 다 0. 검증 SQL = `scripts/verify_gateb_aprime_no_change.sql`(재개 트리거 점검도 포함).
+
 **재개 트리거(명문화)**: 다음 전수 재감사에서 아래 중 하나라도 관측되면 게이팅 축 재검토
 (설계서 Phase 3)를 재개한다. 계측이 이미 배선돼 있어 자동 감지된다.
 

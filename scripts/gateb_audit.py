@@ -203,6 +203,9 @@ def audit_corp(session, corp, args, agg):
         if ra.status == "fail":
             agg["fail_rows"].append((corp, key, gate, ra.fail_fields))
         pend = Counter(f.reason for f in ra.fields if f.reason and f.reason != "VALUE_DIFF")
+        # ★② Gate B 증거강도 재정의 Phase 1(docs/plans/gateb_evidence_grade_redesign_2026-08-17.md
+        # §4) — pass 필드의 증거강도 분포. 계측만, gate_status 산식은 무변경.
+        evid = Counter(f.evidence for f in ra.fields if f.match and f.evidence)
         batch.append({
             "corp_code": corp, "fiscal_year": d["fiscal_year"],
             "fiscal_period": d["fiscal_period"], "statement_type": basis,
@@ -212,10 +215,11 @@ def audit_corp(session, corp, args, agg):
             "fail_fields": ra.fail_fields or None,
             "fail_detail": [
                 {"field": f.field, "canonical": f.canonical, "db_won": f.db_amount_won,
-                 "report_won": f.report_value_won, "reason": f.reason}
+                 "report_won": f.report_value_won, "reason": f.reason, "evidence": f.evidence}
                 for f in ra.fields if f.reason == "VALUE_DIFF"
             ] or None,
             "pending_detail": dict(pend) or None,
+            "evidence_detail": dict(evid) or None,
             "reader_version": READER_VERSION, "checked_at": datetime.utcnow(),
         })
 

@@ -1121,8 +1121,12 @@ class FaceAudit(Base):
     n_fail         = Column(SmallInteger, default=0)
     n_pending      = Column(SmallInteger, default=0)
     fail_fields    = Column(JSONB,        nullable=True, comment="FAIL 필드명 목록")
-    fail_detail    = Column(JSONB,        nullable=True, comment="[{field,canonical,db_won,report_won,reason}]")
+    fail_detail    = Column(JSONB,        nullable=True, comment="[{field,canonical,db_won,report_won,reason,evidence}]")
     pending_detail = Column(JSONB,        nullable=True, comment="범위밖 사유 집계 {reason:count}")
+    evidence_detail = Column(JSONB,       nullable=True,
+                              comment="증거강도 분포 {E1_EXACT: n, E3_ROUNDING: n, ...}. pass 가 근거를 "
+                                      "남기지 않아 '관용·폴백으로 통과' 와 '정확 일치' 를 구분할 수 없던 문제 해소 "
+                                      "(2026-08-18, docs/plans/gateb_evidence_grade_redesign_2026-08-17.md Phase 1)")
     reader_version = Column(String(20),   nullable=True, comment="감사 reader 버전(재현)")
     checked_at     = Column(DateTime,     default=datetime.utcnow)
 

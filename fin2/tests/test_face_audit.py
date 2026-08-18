@@ -13,6 +13,8 @@ from fin2.audit.face_audit import (  # noqa: E402
     parse_displayed, FaceLine, audit_std_row, STATUS_PASS, STATUS_FAIL, STATUS_PENDING,
     RowAudit, gate_status_for_row, GATE_PASS, GATE_FAIL_A, GATE_FAIL_B, GATE_PENDING,
     read_report_face_xbrl, _adecimal_signals,
+    EVIDENCE_E1_EXACT, EVIDENCE_E2_SIGN, EVIDENCE_E3_ROUNDING, EVIDENCE_E4_IDENTITY,
+    EVIDENCE_E5_HEURISTIC, EVIDENCE_M1_STRONG, EVIDENCE_M2_WEAK,
 )
 
 
@@ -446,6 +448,112 @@ def test_no_profile_row_unaffected_by_derived_path():
     ra = audit_std_row({"revenue": 1000}, basis="consolidated",
                        bs_face=[], is_face=is_face, cf_face=[], is_comparative=False)
     assert ra.status == STATUS_PASS, ra.fields
+
+
+# ── ② Gate B 증거강도 재정의 Phase 1 — 축2(evidence) 단위 테스트
+# (docs/plans/gateb_evidence_grade_redesign_2026-08-17.md §7-C: 각 경로가 의도한 등급을
+# 받는지 고정). §1-B 표의 match=True 경로 1~9 를 전부 커버하지는 않지만(항등식 3종은
+# 전부 E4_IDENTITY 로 같은 등급이라 하나만 대표), 각기 다른 *등급*을 만드는 코드 분기는
+# 전부 덮는다: 정확일치/부호반전/반올림관용/항등식/휴리스틱(E1~E5) + 불일치(M1/M2).
+
+def test_evidence_exact_match_is_e1_exact():
+    line = _bs_line("bs.total_assets", 1000)
+    ra = audit_std_row({"total_assets": 1000}, basis="consolidated", bs_face=[line],
+                       is_face=[], cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_PASS
+    assert ra.fields[0].evidence == EVIDENCE_E1_EXACT
+
+
+def test_evidence_sign_flip_is_e2_sign():
+    is_line = FaceLine(statement="IS", basis="separate", acode="매출원가", canonical="is.cogs",
+                       label="매출원가", displayed_value=-27747335376, adecimal=0)
+    ra = audit_std_row({"cogs": 27747335376}, basis="separate", bs_face=[], is_face=[is_line],
+                       cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_PASS
+    assert ra.fields[0].evidence == EVIDENCE_E2_SIGN
+
+
+def test_evidence_rounding_tolerance_is_e3_rounding():
+    ra = audit_std_row({"total_assets": 1_234_000}, basis="consolidated",
+                       bs_face=[_bs_line("bs.total_assets", 1235, ade=-3)],
+                       is_face=[], cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_PASS
+    assert ra.fields[0].evidence == EVIDENCE_E3_ROUNDING
+
+
+def test_evidence_net_income_identity_is_e4_identity():
+    # 지배+비지배 귀속 합으로 복원 대조(±1 관용 경로 안의 항등식 서브분기).
+    is_face = [_bs_line("is.net_income", -502_592_034),
+               _bs_line("is.controlling_ni", -1_903_963_591),
+               _bs_line("is.noncontrolling_ni", -3_177_661)]
+    ra = audit_std_row({"net_income": -1_907_141_252}, basis="consolidated",
+                       bs_face=[], is_face=is_face, cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_PASS, ra.fields
+    ni = next(f for f in ra.fields if f.field == "net_income")
+    assert ni.evidence == EVIDENCE_E4_IDENTITY
+
+
+def test_evidence_revenue_cogs_gp_identity_is_e4_identity():
+    # cands 없음(is.revenue 라인 자체가 face 에 없음) 분기의 항등식 서브분기.
+    is_face = [_bs_line("is.cogs", 800), _bs_line("is.gross_profit", 200)]
+    ra = audit_std_row({"revenue": 1000}, basis="consolidated",
+                       bs_face=[], is_face=is_face, cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_PASS
+    assert ra.fields[0].evidence == EVIDENCE_E4_IDENTITY
+
+
+def test_evidence_gapfill_exact_candidate_is_e5_heuristic():
+    # 유일한 후보가 from_gapfill(텍스트 보충, 휴리스틱)인 채로 정확 일치 → 등급은 E5, PASS는 유지.
+    line = FaceLine(statement="IS", basis="consolidated", acode="x", canonical="is.revenue",
+                    label="x", displayed_value=5000, adecimal=0, from_gapfill=True)
+    ra = audit_std_row({"revenue": 5000}, basis="consolidated",
+                       bs_face=[], is_face=[line], cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_PASS
+    assert ra.fields[0].evidence == EVIDENCE_E5_HEURISTIC
+
+
+def test_evidence_gapfill_rounding_candidate_is_e5_heuristic():
+    # 반올림 관용(±1)으로 매칭됐지만 그 후보가 gapfill → E3(관용)이 아니라 E5(휴리스틱).
+    line = FaceLine(statement="BS", basis="consolidated", acode="x", canonical="bs.total_assets",
+                    label="x", displayed_value=1235, adecimal=-3, from_gapfill=True)
+    ra = audit_std_row({"total_assets": 1_234_000}, basis="consolidated", bs_face=[line],
+                       is_face=[], cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_PASS
+    assert ra.fields[0].evidence == EVIDENCE_E5_HEURISTIC
+
+
+def test_evidence_mismatch_nongapfill_nearest_is_m1_strong():
+    line = _bs_line("bs.total_assets", 1000)  # non-gapfill, |1000-900|=100 > tol
+    ra = audit_std_row({"total_assets": 900}, basis="consolidated", bs_face=[line],
+                       is_face=[], cf_face=[], is_comparative=False)
+    assert ra.status == STATUS_FAIL
+    assert ra.fields[0].evidence == EVIDENCE_M1_STRONG
+
+
+def test_evidence_mismatch_gapfill_nearest_is_m2_weak():
+    # 후보가 gapfill/non-gapfill 섞여 있고(→ GAPFILL_UNVERIFIED 로 안 빠짐), 최근접이 gapfill.
+    far_nongapfill = _bs_line("bs.total_assets", 100_000)
+    near_gapfill = FaceLine(statement="BS", basis="consolidated", acode="x",
+                            canonical="bs.total_assets", label="x", displayed_value=950,
+                            adecimal=0, from_gapfill=True)
+    ra = audit_std_row({"total_assets": 900}, basis="consolidated",
+                       bs_face=[far_nongapfill, near_gapfill], is_face=[], cf_face=[],
+                       is_comparative=False)
+    assert ra.status == STATUS_FAIL
+    assert ra.fields[0].evidence == EVIDENCE_M2_WEAK
+
+
+def test_evidence_grade_exclusivity():
+    # §7-B: pass/fail(VALUE_DIFF) 필드는 정확히 하나의 등급을 받고, pending 필드는 등급이 없다.
+    db = {"total_assets": 1000, "cogs": 900, "cfo": 500}
+    bs = [_bs_line("bs.total_assets", 1000)]      # pass -> E1
+    is_face = [_bs_line("is.cogs", 800)]           # |900-800|=100>tol -> M1
+    ra = audit_std_row(db, basis="consolidated", bs_face=bs, is_face=is_face, cf_face=[],
+                       is_comparative=False)        # cfo: cf_face 비어있음 -> pending
+    graded = {f.field: f.evidence for f in ra.fields if f.evidence is not None}
+    assert graded == {"total_assets": EVIDENCE_E1_EXACT, "cogs": EVIDENCE_M1_STRONG}
+    cfo = next(f for f in ra.fields if f.field == "cfo")
+    assert cfo.evidence is None and cfo.reason == "SOURCE_NOT_TRACK_A"
 
 
 def _run():

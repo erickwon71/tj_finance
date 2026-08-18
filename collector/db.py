@@ -989,6 +989,18 @@ def _run_migrations() -> None:
             END IF;
         END $$
         """),
+
+        ("2026_08_face_audit_evidence_detail",
+         # 2026-08-18: docs/plans/gateb_evidence_grade_redesign_2026-08-17.md Phase 1 —
+         # fail_a/fail_b 는 "그 결함이 얼마나 확실한가" 가 아니라 "어느 리더가 그 보고서를
+         # 읽었는가" 를 반영하고(§1-A), pass 는 근거를 하나도 남기지 않아(§1-B) "정확 일치"와
+         # "관용/폴백/휴리스틱 후보와 일치"가 전부 같은 pass 로 뭉뚱그려졌다. 판정(축1)과
+         # 증거강도(축2)를 분리하는 첫 단계 — 계측만 추가하고 게이팅 산식(gate_status_for_row)
+         # 은 한 줄도 바꾸지 않는다(무해·되돌릴 것 없음). Phase 2(전수 재감사로 분포 실측)~4
+         # (게이팅 규칙 재정의)는 이 컬럼이 채워진 뒤 별도로 진행.
+         """
+        ALTER TABLE face_audit ADD COLUMN IF NOT EXISTS evidence_detail JSONB;
+        """),
     ]
 
     with engine.begin() as conn:

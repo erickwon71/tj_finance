@@ -167,8 +167,8 @@ evidence_detail = Column(JSONB, nullable=True,
 
 | Phase | 내용 | 게이팅 변경 | 산출물 |
 |---|---|---|---|
-| **1** | `FieldAudit.evidence` 기록 + `evidence_detail` 저장 + 마이그레이션 | **없음** | `face_audit.py`, `gateb_audit.py`, `models.py`, `db.py` |
-| **2** | 전수 재감사 → **증거 분포 실측** | 없음 | `docs/qa/gateb_evidence_census_2026-08-1x.md` |
+| **1** | `FieldAudit.evidence` 기록 + `evidence_detail` 저장 + 마이그레이션 | **없음** | ✅ **완료(2026-08-18)** — `face_audit.py`, `gateb_audit.py`, `models.py`, `db.py`, `fin2/tests/test_face_audit.py`(신규 11건). 검증: 구조적 증명(match/reason 을 결정하는 조건문 무변경, `evidence=` kwarg 만 추가 — `git diff` 로 확인) + 실측 2개사 no-commit 재감사(00101044 pass 111/fail 0/pending 19, 00117267 pass 92/fail 4/pending 20 — 기존과 동일) + 00117267 실제 commit 으로 `evidence_detail`/`fail_detail.evidence` 저장 확인. `pytest tests/ fin2/tests/` 570 passed(+기존 무관 결함 1). |
+| **2** | 전수 재감사 → **증거 분포 실측** | 없음 | 대기 — 장시간 작업(5-shard), 사용자 실행 필요 |
 | **3** | 분포를 보고 **게이팅 규칙 결정** | — | §6 선택지 중 사용자 결정 |
 | **4** | `gate_status_for_row()` 재정의 + 뷰 `WHERE` 갱신 | **있음** | 코드·DDL |
 | **5** | `docs/PARSING_RULES.md` 등재 + 마스터 문서 갱신 | — | 문서 |

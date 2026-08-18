@@ -733,6 +733,23 @@ class FieldAudit:
     match: bool
     reason: str | None          # None=match. VALUE_DIFF/LABEL_UNMATCHED/...
     report_value_won: int | None  # 가장 가까운 보고서 라인의 won 값(진단)
+    evidence: str | None = None   # 증거강도(②, 아래 EVIDENCE_* 참고). match=True 에만 채움.
+
+
+# ── 증거강도 등급(② Gate B 증거강도 재정의 Phase 1,
+# docs/plans/gateb_evidence_grade_redesign_2026-08-17.md §3) ────────────────
+# 판정(match/reason)과 증거강도를 분리하는 축 2. E1~E5 는 약해지는 순서 — E4(항등식)를
+# E5(휴리스틱)보다 위에 두는 이유: 항등식은 원문 성분값으로 재계산해 맞춘 것이라 근거가
+# 문서에 있고, 휴리스틱은 표 선택 자체가 불확실하다(from_gapfill, §1-B 경로 8).
+# M1/M2 는 mismatch(VALUE_DIFF)용 — 현재는 순수 계측이고 gate_status_for_row() 는 그대로
+# 보고서 트랙(A/B/C) 기준을 쓴다(Phase 1 은 게이팅 산식 무변경, §2).
+EVIDENCE_E1_EXACT = "E1_EXACT"           # 원문 face 라인 값과 정확 일치
+EVIDENCE_E2_SIGN = "E2_SIGN"             # 절대값 일치, 부호만 다름(표준화 규약)
+EVIDENCE_E3_ROUNDING = "E3_ROUNDING"     # 표시단위 1단위 이내(발행사 반올림)
+EVIDENCE_E4_IDENTITY = "E4_IDENTITY"     # 회계 항등식으로 재구성해 일치
+EVIDENCE_E5_HEURISTIC = "E5_HEURISTIC"   # 저신뢰 리더 후보(from_gapfill)와 일치
+EVIDENCE_M1_STRONG = "M1_STRONG"         # 불일치 — 최근접 후보가 non-gapfill(강한 반증)
+EVIDENCE_M2_WEAK = "M2_WEAK"             # 불일치 — 최근접 후보가 from_gapfill(약한 반증)
 
 
 # 감사 상태(field·row 레벨). PASS/FAIL 만 promote 게이트에 반영,
@@ -1083,8 +1100,10 @@ def audit_fields(
                     total, _matched = recomputed
                     if abs(total - val) <= 1:
                         results.append(FieldAudit(field, canon, val, True, None,
-                                                  report_value_won=total))
+                                                  report_value_won=total, evidence=EVIDENCE_E4_IDENTITY))
                     else:
+                        # 성분 합으로 재구성했는데도 불일치 — 단일 "최근접 후보"가 없어 M1/M2
+                        # 판정이 성립하지 않는다(다중 성분 합산, §1-B 경로 9 는 M1/M2 범위 밖).
                         results.append(FieldAudit(field, canon, val, False, "VALUE_DIFF",
                                                   report_value_won=total))
                     continue
@@ -1095,7 +1114,8 @@ def audit_fields(
             cogs = [ln.amount_won for ln in by_canon.get("is.cogs", []) if ln.amount_won is not None]
             gp = [ln.amount_won for ln in by_canon.get("is.gross_profit", []) if ln.amount_won is not None]
             if any(abs(c) + g == val for c in cogs for g in gp):
-                results.append(FieldAudit(field, canon, val, True, None, report_value_won=val))
+                results.append(FieldAudit(field, canon, val, True, None, report_value_won=val,
+                                          evidence=EVIDENCE_E4_IDENTITY))
                 continue
         if not cands and canon == "is.net_income":
             # ★ 총 당기순이익 라인이 IS face 에 깔끔히 안 잡히는 경우(보고서가 귀속분만 표기·
@@ -1106,27 +1126,37 @@ def audit_fields(
             alt = [ln.amount_won for ln in by_canon.get("cf.net_income_cf", [])
                    if ln.amount_won is not None]
             if val in alt or -val in alt:
-                results.append(FieldAudit(field, canon, val, True, None, report_value_won=val))
+                results.append(FieldAudit(field, canon, val, True, None, report_value_won=val,
+                                          evidence=EVIDENCE_E4_IDENTITY))
                 continue
             ctrl = [ln.amount_won for ln in by_canon.get("is.controlling_ni", [])
                     if ln.amount_won is not None]
             ncl = [ln.amount_won for ln in by_canon.get("is.noncontrolling_ni", [])
                    if ln.amount_won is not None] or [0]
             if any(c + n == val for c in ctrl for n in ncl):
-                results.append(FieldAudit(field, canon, val, True, None, report_value_won=val))
+                results.append(FieldAudit(field, canon, val, True, None, report_value_won=val,
+                                          evidence=EVIDENCE_E4_IDENTITY))
                 continue
         if not cands:
             results.append(FieldAudit(field, canon, val, False, "LABEL_UNMATCHED", None))
             continue
         won_vals = {ln.amount_won for ln in cands}
+        # ★② Phase 1 — 축2(증거강도): cands 는 Track A 라인과 _supplement_with_text() 가
+        # 보충한 from_gapfill(휴리스틱 텍스트) 라인이 섞여 있을 수 있다(§1-B 경로 8). 매칭이
+        # non-gapfill 라인으로 성립하면 그 경로의 정식 등급(E1/E2), gapfill 라인으로만
+        # 성립하면(non-gapfill 후보엔 그 값이 없음) E5_HEURISTIC — 매칭 판정 자체는 무변경,
+        # 표시하는 등급만 나뉜다.
+        won_vals_strict = {ln.amount_won for ln in cands if not ln.from_gapfill}
         if val in won_vals:
+            ev = EVIDENCE_E1_EXACT if val in won_vals_strict else EVIDENCE_E5_HEURISTIC
             results.append(FieldAudit(field, canon, val, True, None,
-                                      report_value_won=val))
+                                      report_value_won=val, evidence=ev))
         elif -val in won_vals:
             # 부호만 반대 — std 의 비용/차감 정규화(매출원가·세금 등 양수화) vs 보고서 괄호표시.
             # 값(절대) 충실 → PASS(부호는 표준화 규약, 데이터 오류 아님).
+            ev = EVIDENCE_E2_SIGN if -val in won_vals_strict else EVIDENCE_E5_HEURISTIC
             results.append(FieldAudit(field, canon, val, True, None,
-                                      report_value_won=-val))
+                                      report_value_won=-val, evidence=ev))
         else:
             nearest = min(cands, key=lambda ln: abs((ln.amount_won or 0) - val))
             # ★ 표시단위 ±1 허용: 보고서 표시단위(10^-adecimal) 1단위 이내 차이는 발행사 자체
@@ -1135,8 +1165,11 @@ def audit_fields(
             nw = nearest.amount_won or 0
             tol = 10 ** (-nearest.adecimal) if (nearest.adecimal or 0) < 0 else 1
             matched_won = None
+            matched_evidence = None
             if abs(nw - val) <= tol or abs(nw + val) <= tol:
                 matched_won = nw
+                # 최근접 후보 자체가 gapfill 이면 반올림 관용이 아니라 휴리스틱 근거.
+                matched_evidence = EVIDENCE_E5_HEURISTIC if nearest.from_gapfill else EVIDENCE_E3_ROUNDING
             elif canon == "is.net_income":
                 # ★ 총 당기순이익 라인이 보고서 본문에 깔끔히 안 나오는 경우(컬럼 깨짐·3개월만 표기)
                 # std 는 지배+비지배 귀속 합으로 복원한다 → 보고서의 귀속 라인 합과 대조해 충실성 검증.
@@ -1145,14 +1178,20 @@ def audit_fields(
                 ncl = ncl or [0]  # 비지배지분 라인 부재(소수주주 없음) → 총NI=지배지분.
                 if any(abs(c + n - val) <= max(tol, 1) for c in ctrl for n in ncl):
                     matched_won = val
+                    matched_evidence = EVIDENCE_E4_IDENTITY
             if matched_won is not None:
-                results.append(FieldAudit(field, canon, val, True, None, report_value_won=matched_won))
+                results.append(FieldAudit(field, canon, val, True, None, report_value_won=matched_won,
+                                          evidence=matched_evidence))
             elif all(ln.from_gapfill for ln in cands):
                 # ★ 갭필(표제기반 실패→detect_sections, 휴리스틱 저신뢰)로만 찾은 표와의 불일치는
                 # reader 표선택 불확실(NAVER류)일 수 있어 **fail 아닌 pending**(GAPFILL_UNVERIFIED).
                 # 커버리지 확장은 단조(매칭=pass, 불일치=미검증 유지) → fail=0 보존. 잠재 std 버그는 별도.
                 results.append(FieldAudit(field, canon, val, False, "GAPFILL_UNVERIFIED", nw))
             else:
+                # ★② Phase 1 — mismatch 도 축2 로 계측한다(M1/M2, §4 "fail_detail 의 각 항목에도
+                # evidence 키를 추가"). 최근접 후보가 non-gapfill 이면 강한 반증(M1), gapfill 이면
+                # 약한 반증(M2) — 계측만, gate_status_for_row() 의 fail_a/fail_b 산식은 무변경.
+                ev = EVIDENCE_M2_WEAK if nearest.from_gapfill else EVIDENCE_M1_STRONG
                 results.append(FieldAudit(field, canon, val, False, "VALUE_DIFF",
-                                          report_value_won=nw))
+                                          report_value_won=nw, evidence=ev))
     return results

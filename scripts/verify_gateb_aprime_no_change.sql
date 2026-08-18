@@ -39,7 +39,14 @@ WHERE (s.status, s.gate_status, s.n_pass, s.n_fail, s.n_pending, s.fail_fields)
 
 \echo ''
 \echo '=== [4] R33 재개 트리거 — M2_WEAK / E5_HEURISTIC (둘 다 0 이면 A- 예외 미발동) ==='
-SELECT (SELECT count(*) FROM face_audit fa, LATERAL jsonb_array_elements(fa.fail_detail) f
-        WHERE fa.source_version = 'v3' AND f->>'evidence' = 'M2_WEAK')          AS m2_weak_fields,
+-- fail_detail 은 불일치 없는 행에서 JSON scalar null(298,809행) 이라 jsonb_array_elements 가
+-- 그대로는 터진다. WHERE 로는 못 막는다(LATERAL 이 먼저 평가됨) → CASE 로 빈 배열 치환.
+SELECT (SELECT count(*)
+        FROM face_audit fa
+        CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(fa.fail_detail) = 'array'
+                 THEN fa.fail_detail ELSE '[]'::jsonb END) f
+        WHERE fa.source_version = 'v3'
+          AND f->>'evidence' = 'M2_WEAK')                                       AS m2_weak_fields,
        (SELECT count(*) FROM face_audit
         WHERE source_version = 'v3' AND evidence_detail ? 'E5_HEURISTIC')       AS e5_rows;

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fin2.audit.face_audit import (  # noqa: E402
     parse_displayed, FaceLine, audit_std_row, STATUS_PASS, STATUS_FAIL, STATUS_PENDING,
-    RowAudit, gate_status_for_row, GATE_PASS, GATE_FAIL_A, GATE_FAIL_B, GATE_PENDING,
+    RowAudit, FieldAudit, gate_status_for_row, GATE_PASS, GATE_FAIL_A, GATE_FAIL_B, GATE_PENDING,
     read_report_face_xbrl, _adecimal_signals,
     EVIDENCE_E1_EXACT, EVIDENCE_E2_SIGN, EVIDENCE_E3_ROUNDING, EVIDENCE_E4_IDENTITY,
     EVIDENCE_E5_HEURISTIC, EVIDENCE_M1_STRONG, EVIDENCE_M2_WEAK,
@@ -168,6 +168,54 @@ def test_gate_unknown_track_is_conservative_fail_a():
     ra = _ra(STATUS_FAIL, ["revenue"])
     assert gate_status_for_row(ra, {"revenue": None}) == GATE_FAIL_A
     assert gate_status_for_row(ra, {}) == GATE_FAIL_A
+
+
+# ── ② Phase 4-A' — Track A 안의 gapfill 후보(M2_WEAK)만 fail_a 승격에서 제외 ──────────
+# 설계: docs/plans/gateb_evidence_grade_redesign_2026-08-17.md §6(2026-08-18 개정).
+# 축 자체는 track 그대로 — evidence 로 교체하지 않는다(교체 시 fail_b 전량이 차단으로 흡수).
+
+def _ra_ev(status, field_evidence: dict):
+    """fail 필드 + 그 필드의 evidence 를 가진 RowAudit(A' 분기 검증용)."""
+    fields = [FieldAudit(f, "", 0, False, "VALUE_DIFF", None, evidence=ev)
+              for f, ev in field_evidence.items()]
+    return RowAudit(status=status, n_pass=0, n_fail=len(fields), n_pending=0,
+                    fields=fields, fail_fields=list(field_evidence))
+
+
+def test_gate_track_a_with_m2_weak_evidence_is_fail_b():
+    # §1-A 부수결함: Track A 보고서인데 최근접 후보가 gapfill(휴리스틱) → 최고신뢰 차단은 모순.
+    ra = _ra_ev(STATUS_FAIL, {"total_assets": EVIDENCE_M2_WEAK})
+    assert gate_status_for_row(ra, {"total_assets": "A"}) == GATE_FAIL_B
+
+
+def test_gate_track_a_with_m1_strong_evidence_still_fail_a():
+    # M1_STRONG(비-gapfill 후보와 불일치)은 기존대로 차단 — A' 는 M2_WEAK 만 예외로 둔다.
+    ra = _ra_ev(STATUS_FAIL, {"total_assets": EVIDENCE_M1_STRONG})
+    assert gate_status_for_row(ra, {"total_assets": "A"}) == GATE_FAIL_A
+
+
+def test_gate_track_a_with_no_evidence_is_conservative_fail_a():
+    # evidence 미부여 불일치(§1-B 경로 9: R32 파생 재구성 후 불일치 — 단일 최근접 후보 부재로
+    # M1/M2 판정 자체가 성립 안 함)는 보수적으로 기존과 동일하게 차단.
+    ra = _ra_ev(STATUS_FAIL, {"revenue": None})
+    assert gate_status_for_row(ra, {"revenue": "A"}) == GATE_FAIL_A
+
+
+def test_gate_mixed_m2_weak_and_m1_strong_still_blocks():
+    # 한 필드라도 Track A + 비-M2_WEAK 면 행 전체 차단(기존 "any" 의미 보존).
+    ra = _ra_ev(STATUS_FAIL, {"cash": EVIDENCE_M2_WEAK, "total_assets": EVIDENCE_M1_STRONG})
+    assert gate_status_for_row(ra, {"cash": "A", "total_assets": "A"}) == GATE_FAIL_A
+
+
+def test_gate_all_track_a_m2_weak_is_fail_b():
+    ra = _ra_ev(STATUS_FAIL, {"cash": EVIDENCE_M2_WEAK, "ppe": EVIDENCE_M2_WEAK})
+    assert gate_status_for_row(ra, {"cash": "A", "ppe": "A"}) == GATE_FAIL_B
+
+
+def test_gate_track_b_unaffected_by_evidence():
+    # Track B 는 evidence 와 무관하게 그대로 fail_b — A' 가 track 축을 대체하지 않음을 고정.
+    ra = _ra_ev(STATUS_FAIL, {"cogs": EVIDENCE_M1_STRONG})
+    assert gate_status_for_row(ra, {"cogs": "B"}) == GATE_FAIL_B
 
 
 def test_revenue_derived_verified_by_cogs_plus_gross_profit():

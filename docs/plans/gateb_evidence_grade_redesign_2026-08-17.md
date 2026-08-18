@@ -169,9 +169,9 @@ evidence_detail = Column(JSONB, nullable=True,
 |---|---|---|---|
 | **1** | `FieldAudit.evidence` 기록 + `evidence_detail` 저장 + 마이그레이션 | **없음** | ✅ **완료(2026-08-18)** — `face_audit.py`, `gateb_audit.py`, `models.py`, `db.py`, `fin2/tests/test_face_audit.py`(신규 11건). 검증: 구조적 증명(match/reason 을 결정하는 조건문 무변경, `evidence=` kwarg 만 추가 — `git diff` 로 확인) + 실측 2개사 no-commit 재감사(00101044 pass 111/fail 0/pending 19, 00117267 pass 92/fail 4/pending 20 — 기존과 동일) + 00117267 실제 commit 으로 `evidence_detail`/`fail_detail.evidence` 저장 확인. `pytest tests/ fin2/tests/` 570 passed(+기존 무관 결함 1). |
 | **2** | 전수 재감사 → **증거 분포 실측** | 없음 | ✅ **완료(2026-08-18)** — `docs/qa/gateb_evidence_census_2026-08-18.md`. 판정 4개 항목(pass/fail_a/fail_b/pending) 전수 재감사 전후 정확히 일치(스냅샷 미실행이라 집계 대조로 대체, 문서에 정직 기록). **핵심 결과: M2_WEAK 0건, E3+E5 만으로 통과한 행 0건** — §1-A/§1-B 가 우려한 오염 경로가 이론상 실재하나 현재 모집단엔 없음 |
-| **3** | 분포를 보고 **게이팅 규칙 결정** | — | 대기 — §6 선택지 중 사용자 결정. Phase 2 실측 근거: 현재 fail_a/fail_b 분리가 이미 타당해 보임(§3 "Phase 3 결정에 주는 함의") |
-| **4** | `gate_status_for_row()` 재정의 + 뷰 `WHERE` 갱신 | **있음** | 코드·DDL |
-| **5** | `docs/PARSING_RULES.md` 등재 + 마스터 문서 갱신 | — | 문서 |
+| **3** | 분포를 보고 **게이팅 규칙 결정** | — | ✅ **완료(2026-08-18)** — 초안 A/B/C 는 M2·E5 가 0 이라 **세 안이 같은 결과**(차단 842/REVIEW 0)임이 드러나 전부 기각, **A′(축 유지 + M2_WEAK 예외 1건) 채택**. 근거·실측 = §6(개정) |
+| **4** | `gate_status_for_row()` 재정의 + 뷰 `WHERE` 갱신 | **없음(A′는 판정 무변화)** | ✅ **완료(2026-08-18)** — `face_audit.py::gate_status_for_row()` 에 M2_WEAK 예외 추가. 뷰 `WHERE gate_status <> 'fail_a'` 는 **무변경**(등급 정의가 안 바뀜). 회귀 `fin2/tests/test_face_audit.py` 6종 신설. 실측 2개사 재감사 = DB 현재값과 완전 일치(§6-2) |
+| **5** | `docs/PARSING_RULES.md` 등재 + 마스터 문서 갱신 | — | ✅ **완료(2026-08-18)** — `PARSING_RULES.md` **R33** + 부록 C 2행(E4 세분화 미결 · 축 재검토 조건부 보류) |
 
 **Phase 2 가 답해야 할 질문(미리 고정 — 실측 후 해석을 바꾸지 않기 위해):**
 
@@ -182,18 +182,91 @@ evidence_detail = Column(JSONB, nullable=True,
 
 ---
 
-## 6. Phase 3 결정 선택지 (미리 제시 — 실측 전 결정 금지)
+## 6. Phase 3 결정 — **A′(좁은 봉합) 채택** (2026-08-18 개정)
 
-게이팅 규칙 후보. **분포를 보기 전에는 고르지 않는다.**
+### 6-0. 개정 사유 — 초안의 A/B/C 표는 실측과 어긋났다
 
-| 안 | 차단(`fail_a` 상당) | 특징 |
+아래가 **초안(2026-08-17)** 의 선택지 표다. Phase 2 census 이후 검토해보니 **세 안이
+현재 데이터에서 결과가 전부 같고**, A 의 특성 서술("차단 최소")은 코드 동작과 정반대였다.
+기록 보존을 위해 남기되 **채택하지 않는다**.
+
+| 안(초안) | 차단(`fail_a` 상당) | 초안이 적은 특징 | 실측 결과 |
+|---|---|---|---|
+| A. 보수 | `M1_STRONG` 만 | "현재와 가장 가까움, 차단 최소" | **차단 842 / REVIEW 0** ← 정반대 |
+| B. 균형 | `M1_STRONG` + `M2_WEAK` | "REVIEW 개념 소멸" | 차단 842 (M2=0 이라 A와 동일) |
+| C. 증거하한 | `M1` + `E5`만으로 통과한 행 제외 | "가장 엄격" | 차단 842 (E5=0 이라 추가절 no-op) |
+
+**왜 A 가 "차단 최소"가 아닌가** — §3-A 는 "M1/M2 가 `fail_a`/`fail_b` 를 **대체**한다"고
+전제했지만, 코드상 두 축은 대체 관계가 아니라 **직교**다:
+
+- `from_gapfill=True` 가 붙는 곳은 `_supplement_with_text()`(`face_audit.py:621`)와
+  PDF 리더(`:721`) **둘뿐**이다.
+- Track B(텍스트) 리더가 보고서를 **원본으로** 읽은 라인은 `from_gapfill=False`
+  → 그 필드는 `M1_STRONG`. 실측: mismatch 1,129건(fail_a 253 + fail_b 876) **전부 M1_STRONG**.
+- 따라서 "M1_STRONG 이면 차단"은 지금의 `fail_b` 603행을 **전부 흡수**한다.
+
+게다가 `:1185` 의 안전판(후보가 **전부** gapfill 이면 `VALUE_DIFF` 가 아니라
+`GAPFILL_UNVERIFIED` pending)이 M2 발생 경로를 구조적으로 막고 있어, **데이터가 늘어도
+A 와 B 의 차이는 앞으로도 거의 생기지 않는다.**
+
+### 6-1. 축 교체의 동기 자체가 약해졌다
+
+Phase 4 를 하자는 근거는 §1-A 의 "같은 회사·같은 결함이 연도에 따라 등급이 뒤집힌다"
+(미래에셋증권 revenue)였다. 트랙①(R32) 이후 그 신호를 재측정하면:
+
+```
+fail 을 가진 (corp, field) 쌍 480개 중, fail_a 와 fail_b 를 동시에 가진 쌍 = 1개
+```
+
+원인 모집단(`fail_b` 3,081→603)이 이미 걷혔다. **§1-A 가 지적한 병리는 실질적으로
+소멸했고, 이를 고치려던 축 교체는 고칠 대상이 없다.**
+
+반면 차단 대상이 될 `fail_b` 603행은 롱테일이다 — cogs 257건/21사, controlling_ni
+137건/23사, trade_payables 75건/34사, retained_earnings 65건/39사. 이 계열은 과거 실제로
+리더 false-fail 이 많았던 부류다(R21 지주사 cogs mismap, R22 개념불일치 pending 14건).
+차단하면 조사 대기열로 가는 게 아니라 **메인 뷰에서 사라진다**.
+
+### 6-2. 채택안 A′ — 축은 그대로, §1-A 부수결함만 봉합
+
+`gate_status_for_row()` 는 리더 트랙(A/B/C) 축을 **유지**한다. 단 한 가지 예외만 둔다:
+
+> Track A 보고서라도 그 실패 필드의 최근접 후보가 gapfill(`M2_WEAK`)이면 `fail_a` 로
+> 세지 않는다 — 증거는 휴리스틱인데 등급만 최고신뢰인 §1-A 부수결함 제거.
+
+- `evidence` 가 `None` 인 불일치(§1-B 경로 9: R32 파생 재구성 후 불일치는 단일 최근접
+  후보가 없어 M1/M2 판정 자체가 성립 안 함, `:1106-1108`)는 **보수적으로 기존과 동일하게
+  차단** 쪽으로 센다. (초안 A/B/C 는 이 경로의 기본값을 정하지 않아 등급 사각지대가 생긴다 —
+  초안대로 구현했다면 놓쳤을 지점.)
+- `E1`~`E5` 는 어떤 게이팅에도 관여하지 않는 **계측 전용**으로 남긴다.
+
+**현재 `M2_WEAK` 가 0건이라 판정 무변화**(미래 방어 전용). 실측 확인(2026-08-18,
+no-commit 재감사 vs DB 현재값):
+
+| corp | 재감사 | DB 현재 |
 |---|---|---|
-| **A. 보수** | `M1_STRONG` 만 | 현재와 가장 가까움. 차단 최소 |
-| **B. 균형** | `M1_STRONG` + `M2_WEAK` | 불일치는 출처 무관 전부 차단. REVIEW 개념 소멸 |
-| **C. 증거하한** | `M1` + **`E5`만으로 통과한 행을 `pass` 에서 제외** | 약한 근거 통과를 `pass` 로 인정하지 않음. 가장 엄격 |
+| 00117212 (fail_b 최다) | pass 65 / fail_a 0 / fail_b 56 / pending 57 | 동일 |
+| 00155258 (fail_a 최다) | pass 102 / fail_a 14 / fail_b 0 / pending 68 | 동일 |
 
-> C 는 "**결측 > 오염**"([[feedback-verify-against-source]]) 원칙에 가장 충실하지만
-> `pass` 모집단을 얼마나 깎는지가 Phase 2 실측에 달려 있다.
+### 6-3. 재개 트리거 (명문화)
+
+축 재검토(초안 A/B/C 계열)는 **보류**하되 조건부로 재개한다. 계측이 이미 배선돼 있어
+다음 전수 재감사에서 자동 감지된다.
+
+```sql
+-- ① M2_WEAK 출현 → A′ 예외가 실제로 발동 시작 = 축 재검토 신호
+SELECT count(*) FROM face_audit fa, LATERAL jsonb_array_elements(fa.fail_detail) f
+WHERE fa.source_version='v3' AND f->>'evidence'='M2_WEAK';
+
+-- ② E5_HEURISTIC 출현 → 휴리스틱 근거만으로 통과한 pass 발생 = C안 재평가 신호
+SELECT count(*) FROM face_audit
+WHERE source_version='v3' AND evidence_detail ? 'E5_HEURISTIC';
+```
+
+**C안을 재평가하려면 선행조건이 하나 더 있다**: C 의 정신("약한 근거 통과를 `pass` 로
+인정하지 않음")이 실제로 겨눠야 할 대상은 `E5`(0건)가 아니라 **`E4_IDENTITY` 3,600건**
+이다 — 여기엔 원문 face 에 값이 아예 없고 성분 합으로 재구성한 R32 업종파생이 섞여 있다.
+그런데 현재 저장 단위가 `E4_IDENTITY` 하나로 뭉뚱그려져 4개 서브경로를 분해할 수 없다
+(census Q3). **E4 세분화가 C안 평가의 선행조건**이다(부록 C 등재).
 
 ---
 

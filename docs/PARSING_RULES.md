@@ -1829,6 +1829,75 @@ _PROFILE_VALUE_FALLBACK_KEYS`)해 우회한다. 회귀는
 
 ---
 
+## R33. Gate B — 증거강도(축2) 계측 + `fail_a` 승격의 gapfill 예외 1건 (2026-08-18)
+
+설계 `docs/plans/gateb_evidence_grade_redesign_2026-08-17.md`(§6 2026-08-18 개정),
+실측 `docs/qa/gateb_evidence_census_2026-08-18.md`.
+
+**축 분리**: Gate B 는 이제 **판정**(`match`/`VALUE_DIFF`/pending)과 **증거강도**(그 판정의
+근거)를 분리해 기록한다. `FieldAudit.evidence` + `face_audit.evidence_detail`(JSONB).
+
+| 등급 | 의미 |
+|---|---|
+| `E1_EXACT` | 원문 face 라인 값과 정확 일치 |
+| `E2_SIGN` | 절대값 일치, 부호만 다름(표준화 규약) |
+| `E3_ROUNDING` | 표시단위 1단위 이내(발행사 반올림) |
+| `E4_IDENTITY` | 회계 항등식으로 재구성해 일치(revenue=cogs+gp / NI=CF대체 / NI=지배+비지배 / R32 업종파생) |
+| `E5_HEURISTIC` | 저신뢰 리더 후보(`from_gapfill`)와 일치 |
+| `M1_STRONG` | 불일치 — 최근접 후보가 non-gapfill |
+| `M2_WEAK` | 불일치 — 최근접 후보가 `from_gapfill` |
+
+**★게이팅은 여전히 리더 트랙(A/B/C) 축이다.** `gate_status_for_row()`가 evidence 축으로
+**교체되지 않은 이유**는 전수 census 실측(299,651행)이다:
+
+```
+mismatch 필드 1,129건(fail_a 253 + fail_b 876)  →  전부 M1_STRONG, M2_WEAK 0건
+pass 필드 4,218,532건  →  E1 99.89% / E4 3,600 / E2 945 / E3 45 / E5 0건
+```
+
+`from_gapfill=True` 가 붙는 곳은 `_supplement_with_text()`(`face_audit.py:621`)와 PDF
+리더(`:721`) **둘뿐**이다. Track B(텍스트) 리더가 보고서를 **원본으로** 읽은 라인은
+`from_gapfill=False` → `M1_STRONG`. 따라서 "M1_STRONG 이면 차단"으로 축을 바꾸면 지금
+`fail_b` 603행이 전부 차단으로 흡수돼 **REVIEW 등급이 소멸**한다(설계서 §6 초안의 A/B/C
+세 안이 M2·E5 가 0 이라 현재 데이터에서 **전부 같은 결과** — 그 표는 2026-08-18 개정됨).
+게다가 §1-A 가 축 교체의 근거로 든 "같은 회사·같은 필드인데 연도에 따라 등급이 뒤집힘"은
+트랙①(R32) 이후 **(corp,field) 480쌍 중 1쌍**만 남아 실질 소멸했다.
+
+**채택(A′) — 좁은 봉합 1건**: 축은 track 그대로 두고, 설계서 §1-A 의 **부수결함만** 막는다.
+Track A 보고서라도 그 실패 필드의 최근접 후보가 gapfill(`M2_WEAK`)이면 `fail_a` 로 세지
+않는다(증거는 휴리스틱인데 등급만 최고신뢰인 모순 제거). `evidence` 가 `None` 인 불일치
+(R32 파생 재구성 후 불일치 — 단일 최근접 후보가 없어 M1/M2 판정 자체가 성립 안 함,
+`face_audit.py:1106-1108`)는 **보수적으로 기존과 동일하게 차단** 쪽으로 센다.
+
+현재 `M2_WEAK` 가 0건이라 **판정 무변화**다(미래 방어 전용). 실측 확인: 00117212
+(fail_b 다수) pass 65/fail_a 0/fail_b 56/pending 57, 00155258(fail_a 최다) pass 102/
+fail_a 14/fail_b 0/pending 68 — 둘 다 DB 현재값과 완전 일치.
+
+**재개 트리거(명문화)**: 다음 전수 재감사에서 아래 중 하나라도 관측되면 게이팅 축 재검토
+(설계서 Phase 3)를 재개한다. 계측이 이미 배선돼 있어 자동 감지된다.
+
+```sql
+-- ① M2_WEAK 출현 → A′ 예외가 실제로 발동하기 시작 = 축 재검토 신호
+SELECT count(*) FROM face_audit fa, LATERAL jsonb_array_elements(fa.fail_detail) f
+WHERE fa.source_version='v3' AND f->>'evidence'='M2_WEAK';
+
+-- ② E5_HEURISTIC 출현 → 휴리스틱 근거만으로 통과한 pass 발생 = 설계서 C안 재평가 신호
+SELECT count(*) FROM face_audit
+WHERE source_version='v3' AND evidence_detail ? 'E5_HEURISTIC';
+```
+
+**미결**: `E4_IDENTITY` 3,600건은 4개 서브경로(revenue=cogs+gp / NI=CF대체 / NI=지배+비지배
+/ R32 업종파생)가 한 등급으로 뭉쳐 있어 저장값만으로 분해할 수 없다. 설계서 C안("약한
+근거 통과를 `pass` 로 인정하지 않음")을 진지하게 평가하려면 E4 세분화가 선행되어야 한다
+(부록 C 등재).
+
+관련 코드: `fin2/audit/face_audit.py`(`EVIDENCE_*`·`gate_status_for_row()`·`audit_fields()`),
+`scripts/gateb_audit.py`(`evidence_detail` 집계), `collector/models.py`·`collector/db.py`
+(마이그레이션 `2026_08_face_audit_evidence_detail`).
+회귀: `fin2/tests/test_face_audit.py`(증거등급 9경로 + A′ 분기 6종).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -1907,3 +1976,5 @@ _PROFILE_VALUE_FALLBACK_KEYS`)해 우회한다. 회귀는
 | pre-2015 구서식 | 카탈로그 미검증 |
 | ~~특수건설 20151116001903 — 제목+데이터 병합 표~~ | **✅ 조치 완료 2026-08-05** — R4-2 참조. 같은 census 로 팬엔터테인먼트 20181114002948(병합표)·포시에스 20171114002836(BS 위치+계정명)도 함께 해결(활성기업 398건 전수 재검사, 오적용 0건) |
 | ~~R8 위반 3연속 — `face_audit` source_version PK 확장(2026-08-11) 이후 소비자 4곳 중 3곳 미배선(`standard_financials` 뷰·`run_dq_gate`·`app/data/trust.py`)~~ | **✅ 해소 완료 2026-08-18** — 뷰는 v2/v3 감사행이 조건 없이 둘 다 매치돼 행 2배 중복(244,585키)+등급 오귀속(50,104행)+`fail_a` 게이트 우회(487행)를 일으켰다. 신규 마이그레이션 `2026_08_standard_financials_view_source_version`(`collector/db.py`)로 각 UNION ALL 분기에 `source_version` 조건 명시 → 321,141행 전량 dedup, `gate_b_status` 불일치 0, 은닉 214행 전부 v3 `fail_a`로 설명(미설명 0). `app/data/trust.py`도 `source_version='v3'` 한정. **검증 중 4번째 소비자(`scripts/verify_corp_sequential.py`)도 같은 결함(같은 `args.source` 미배선 `AttributeError` + `rollup_corp()`의 source_version 미필터)임을 회귀 테스트가 실측으로 발견 — 함께 수정.** `run_dq_gate`/`verify_corp_sequential.py` 둘 다 자신이 직접 만든 `std_financials_v2`를 감사하므로 `source="v2"`(v3 아님 — v3는 별도 수동 배치 `scripts/build_std_v3.py`만 채움, v3로 두면 신규 수집분이 v3에 아직 없어 "이상없음" 위양성 그린이 됨). 회귀: `fin2/tests/test_standard_financials_view.py`(뷰 dedup·등급정합·`face_audit` 미배선 소비자 grep 가드). 설계 `docs/plans/gateb_view_source_version_join_fix_design_2026-08-17.md`, 적용전후 기록 `docs/qa/view_dup_baseline_2026-08-18.md` |
+| Gate B `E4_IDENTITY` 서브경로 미분해 | **미조치** — 3,600건이 4개 경로(revenue=cogs+gp / NI=CF대체 / NI=지배+비지배 / R32 업종파생)로 뭉쳐 있어 저장값만으로 못 나눈다. 설계서 C안(약한 근거 통과를 `pass` 로 불인정) 평가의 선행조건. R33 참고 |
+| Gate B 게이팅 축(track vs evidence) 재검토 | **보류(조건부 재개)** — 2026-08-18 A′ 채택으로 track 축 유지. `M2_WEAK` 또는 `E5_HEURISTIC` 가 전수 재감사에서 1건이라도 관측되면 재개(트리거 SQL = R33). 현재 둘 다 0건 |

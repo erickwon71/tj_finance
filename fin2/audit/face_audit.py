@@ -741,8 +741,9 @@ class FieldAudit:
 # 판정(match/reason)과 증거강도를 분리하는 축 2. E1~E5 는 약해지는 순서 — E4(항등식)를
 # E5(휴리스틱)보다 위에 두는 이유: 항등식은 원문 성분값으로 재계산해 맞춘 것이라 근거가
 # 문서에 있고, 휴리스틱은 표 선택 자체가 불확실하다(from_gapfill, §1-B 경로 8).
-# M1/M2 는 mismatch(VALUE_DIFF)용 — 현재는 순수 계측이고 gate_status_for_row() 는 그대로
-# 보고서 트랙(A/B/C) 기준을 쓴다(Phase 1 은 게이팅 산식 무변경, §2).
+# M1/M2 는 mismatch(VALUE_DIFF)용. 게이팅은 여전히 보고서 트랙(A/B/C) 기준이고, M2_WEAK
+# 만 fail_a 승격을 막는 좁은 예외로 쓰인다(Phase 4-A', gate_status_for_row() 참고).
+# E1~E5 는 전부 계측 전용 — 어떤 게이팅에도 관여하지 않는다.
 EVIDENCE_E1_EXACT = "E1_EXACT"           # 원문 face 라인 값과 정확 일치
 EVIDENCE_E2_SIGN = "E2_SIGN"             # 절대값 일치, 부호만 다름(표준화 규약)
 EVIDENCE_E3_ROUNDING = "E3_ROUNDING"     # 표시단위 1단위 이내(발행사 반올림)
@@ -840,6 +841,7 @@ class RowAudit:
 # 뷰 게이팅용 상태. fail 은 source track 으로 신뢰도 분리:
 #   fail_a = Track A(XBRL ADECIMAL 권위) 값불일치 = **확정 버그** → 메인뷰 차단.
 #   fail_b = Track B(텍스트 reader 휴리스틱) 값불일치 = false-fail 가능 → 메인뷰 노출·REVIEW.
+#   (예외 1건: Track A 라도 최근접 후보가 gapfill(M2_WEAK)이면 fail_a 로 안 센다 — Phase 4-A')
 GATE_PASS = "pass"
 GATE_FAIL_A = "fail_a"
 GATE_FAIL_B = "fail_b"
@@ -851,6 +853,16 @@ def gate_status_for_row(ra: RowAudit, fail_field_tracks: dict[str, str]) -> str:
 
     pass→pass / pending→pending / fail→ 실패필드 track 중 하나라도 'A' 면 fail_a(확정버그),
     아니면 fail_b(Track B 휴리스틱). track 미상(None/누락)은 보수적으로 'A' 취급(차단).
+
+    ★② Phase 4-A'(2026-08-18, docs/plans/gateb_evidence_grade_redesign_2026-08-17.md §6
+    개정) — 위 track 축은 그대로 두되, **§1-A 부수결함 한 가지만** 좁게 봉합한다:
+    Track A 보고서라도 그 필드의 최근접 후보가 gapfill(휴리스틱 텍스트 보충)이면
+    (`EVIDENCE_M2_WEAK`) 증거가 휴리스틱인데 등급만 최고신뢰인 모순이므로 fail_a 로
+    세지 않는다. 축 자체를 evidence 로 **교체하지는 않는다**(교체하면 순수 Track B 로
+    읽힌 fail_b 603행이 전부 M1_STRONG 이라 차단으로 흡수돼 REVIEW 등급이 소멸 —
+    Phase 2 census 실측). `evidence` 가 None 인 불일치(§1-B 경로 9: R32 파생 재구성
+    후 불일치는 단일 최근접 후보가 없어 M1/M2 판정 자체가 성립 안 함)는 보수적으로
+    기존과 동일하게 차단 쪽으로 센다.
     """
     if ra.status == STATUS_PASS:
         return GATE_PASS
@@ -859,7 +871,10 @@ def gate_status_for_row(ra: RowAudit, fail_field_tracks: dict[str, str]) -> str:
     # fail: 실패필드 중 하나라도 Track A(또는 track 미상) → 확정버그로 차단.
     # Track B(텍스트)·C(PDF)는 휴리스틱 → fail_b(REVIEW). (PDF 라인은 from_gapfill 이라 실제론
     # fail 미발생·pending 이지만 방어적으로 분류.)
-    if any(fail_field_tracks.get(f) not in ("B", "C") for f in ra.fail_fields):
+    fail_evidence = {f.field: f.evidence for f in ra.fields if f.reason in _FAIL_REASONS}
+    if any(fail_field_tracks.get(f) not in ("B", "C")
+           and fail_evidence.get(f) != EVIDENCE_M2_WEAK
+           for f in ra.fail_fields):
         return GATE_FAIL_A
     return GATE_FAIL_B
 
@@ -1188,9 +1203,10 @@ def audit_fields(
                 # 커버리지 확장은 단조(매칭=pass, 불일치=미검증 유지) → fail=0 보존. 잠재 std 버그는 별도.
                 results.append(FieldAudit(field, canon, val, False, "GAPFILL_UNVERIFIED", nw))
             else:
-                # ★② Phase 1 — mismatch 도 축2 로 계측한다(M1/M2, §4 "fail_detail 의 각 항목에도
+                # ★② mismatch 도 축2 로 계측한다(M1/M2, §4 "fail_detail 의 각 항목에도
                 # evidence 키를 추가"). 최근접 후보가 non-gapfill 이면 강한 반증(M1), gapfill 이면
-                # 약한 반증(M2) — 계측만, gate_status_for_row() 의 fail_a/fail_b 산식은 무변경.
+                # 약한 반증(M2). M2_WEAK 는 Phase 4-A' 에서 fail_a 승격만 막는다(§1-A 부수결함
+                # 봉합) — 그 외 등급은 계측 전용. 실측(Phase 2 census)상 M2_WEAK 는 현재 0건.
                 ev = EVIDENCE_M2_WEAK if nearest.from_gapfill else EVIDENCE_M1_STRONG
                 results.append(FieldAudit(field, canon, val, False, "VALUE_DIFF",
                                           report_value_won=nw, evidence=ev))

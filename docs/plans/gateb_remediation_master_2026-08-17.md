@@ -30,7 +30,7 @@
 | **2** | — | 전수 재감사 1회 = **기준선 확정** | 대기 | — | 이후 모든 변화의 비교 기준 |
 | **3** | ① 업종 파생 revenue | `gateb_industry_derived_revenue_design_2026-08-17.md` | ✅ **완전 종료**(전수 재감사 포함, 아래) | 중간 | fail_a 412→239(신규 0), pass +2,405 |
 | **4** | P0 뷰 조인 + ⑤ 배선 | `gateb_view_source_version_join_fix_design_2026-08-17.md` | ✅ **완료**(2026-08-18) | 낮음 | 뷰 중복 2배 제거, 데일리 게이트 복구 |
-| **5** | ② 증거강도 재정의 | `gateb_evidence_grade_redesign_2026-08-17.md` | Phase 1+2 ✅ **완료**(2026-08-18) → Phase 3(게이팅 결정) 대기 | 낮음(Phase 1~2) → 높음(Phase 4) | fail_a/fail_b 신뢰 회복 + pass 근거 계측 |
+| **5** | ② 증거강도 재정의 | `gateb_evidence_grade_redesign_2026-08-17.md` | ✅ **트랙 종료**(2026-08-18, Phase 1~5 전부) — 게이팅 축은 track 유지, A′(M2_WEAK 예외) 채택. `PARSING_RULES.md` R33 | 낮음(판정 무변화로 귀결) | pass 근거 계측 확보 + 축 교체가 불필요함을 실측으로 확정 |
 | **6** | ④ curated 키 재생성기 배선 | 미작성 | ⏸ | 낮음 | 신규 필링 재발 차단 |
 
 ### 순서 근거
@@ -78,6 +78,7 @@
 | 2026-08-18 | P0+⑤ | **완료.** 마이그레이션 `2026_08_standard_financials_view_source_version`(`collector/db.py`) 적용 — dry-run 사전대조(321,141행/중복0/은닉214행 전부 v3 fail_a로 설명/미설명0) 통과 후 실제 적용, 사후재검증도 동일 일치(§6 B/D/E 통과). `app/data/trust.py`(P0-5) `source_version='v3'` 한정. ⑤ `scripts/collect_new.py`(`run_dq_gate`) 의 `AttributeError`(`gb_args`에 `source` 누락) 수정 — `source="v2"`(v3 아님, 근거는 PARSING_RULES 부록C 참고). **검증 중 회귀테스트가 4번째 미배선 소비자(`scripts/verify_corp_sequential.py`) 실측 발견**(같은 `AttributeError` + `rollup_corp()` source_version 미필터) — 함께 수정. 회귀 `pytest tests/ fin2/tests/` 560 passed + 기존 무관 결함 1(`test_lxintl_facility_table_dropped`) 유지. 신규 회귀 테스트 `fin2/tests/test_standard_financials_view.py`(dedup·등급정합·미배선 소비자 grep 가드 3종). 상세: `docs/qa/view_dup_baseline_2026-08-18.md`, `docs/PARSING_RULES.md` 부록C. |
 | 2026-08-18 | ② | **Phase 1 완료(계측만, 게이팅 무변경).** `FieldAudit.evidence` + `face_audit.evidence_detail`(JSONB) 신설 — E1_EXACT/E2_SIGN/E3_ROUNDING/E4_IDENTITY/E5_HEURISTIC(match) + M1_STRONG/M2_WEAK(mismatch, 계측만·gate_status_for_row() 는 여전히 트랙 기준). 설계 검토(사용자 요청) 중 코드 대조로 주요 주장 전부 확인, 구현착수 전 gap 3건(dataclass 기본값·E1/E5 우선순위·E2/E3 경계) 식별 후 반영. 회귀 11건 신규(`fin2/tests/test_face_audit.py`), 실측 2개사 no-commit 재감사로 판정 무변경 확인 + 1개사(00117267) 실제 commit 으로 저장 형태 확인. 상세 = `gateb_evidence_grade_redesign_2026-08-17.md` Phase 1 행. |
 | 2026-08-18 | ② | **Phase 2 완료(전수 재감사로 증거분포 실측, 사용자 실행 5-shard).** 299,651행: pass/fail_a/fail_b/pending 4개 항목 전부 재감사 전과 정확히 일치(기준선 스냅샷은 실행 안 됨 — 집계 대조로 대체, 정직 기록). **핵심 발견: M2_WEAK 0건, E3+E5만으로 통과한 행 0건** — §1-A/§1-B가 우려한 오염 경로가 이론상 실재(R23)하나 현재 모집단엔 없음 → 현재 fail_a/fail_b 분리가 이 데이터에서는 이미 타당했다는 확인에 가까움. 상세 = `docs/qa/gateb_evidence_census_2026-08-18.md`. 다음 = Phase 3(게이팅 규칙 A/B/C, 사용자 결정). |
+| 2026-08-18 | ② | **Phase 3~5 완료 — 트랙 종료.** 설계서 §6 초안의 A/B/C 를 census 로 검토한 결과 **세 안이 현재 데이터에서 결과가 동일**(M2_WEAK 0·E5 0 → 셋 다 차단 842/REVIEW 0)하고, A 의 "차단 최소" 서술이 코드와 정반대임을 확인(M1/M2 는 track 축의 대체가 아니라 직교 — `from_gapfill` 은 `_supplement_with_text()`/PDF 리더 두 곳에서만 부여돼, 순수 Track B 로 읽힌 fail_b 603행도 전부 M1_STRONG). 게다가 축 교체의 근거였던 §1-A 병리는 트랙①(R32) 이후 (corp,field) 480쌍 중 1쌍만 남아 실질 소멸. → **A′ 채택**: 축은 track 유지 + Track A 라도 최근접 후보가 gapfill(M2_WEAK)이면 fail_a 로 안 셈(§1-A 부수결함만 봉합), evidence=None 불일치(R32 파생)는 보수적으로 차단 유지. **M2_WEAK 0건이라 판정 무변화**(미래 방어). 검증: `pytest tests/ fin2/tests/` 576 passed(+기존 무관 결함 1건, 신규 회귀 0, A′ 분기 테스트 6종 신설) + 2개사 no-commit 재감사가 DB 현재값과 완전 일치(00117212 / 00155258). 재개 트리거(M2_WEAK 또는 E5 출현 시 축 재검토) 를 R33·부록 C 에 명문화. |
 
 ---
 

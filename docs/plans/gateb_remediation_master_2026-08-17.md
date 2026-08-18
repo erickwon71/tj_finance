@@ -29,7 +29,7 @@
 | **1** | ③ 감사 성능 | `gateb_audit_performance_design_2026-08-17.md` | ✅ 설계완료 → **구현 착수** | 낮음(동치성 증명이 게이트) | 31.4s→12s, 전수감사 상시화 |
 | **2** | — | 전수 재감사 1회 = **기준선 확정** | 대기 | — | 이후 모든 변화의 비교 기준 |
 | **3** | ① 업종 파생 revenue | `gateb_industry_derived_revenue_design_2026-08-17.md` | ✅ **완전 종료**(전수 재감사 포함, 아래) | 중간 | fail_a 412→239(신규 0), pass +2,405 |
-| **4** | P0 뷰 조인 + ⑤ 배선 | `gateb_view_source_version_join_fix_design_2026-08-17.md` | ✅ 설계완료 | 낮음 | 뷰 중복 2배 제거, 데일리 게이트 복구 |
+| **4** | P0 뷰 조인 + ⑤ 배선 | `gateb_view_source_version_join_fix_design_2026-08-17.md` | ✅ **완료**(2026-08-18) | 낮음 | 뷰 중복 2배 제거, 데일리 게이트 복구 |
 | **5** | ② 증거강도 재정의 | `gateb_evidence_grade_redesign_2026-08-17.md` | ✅ 설계완료 | 낮음(Phase 1) → 높음(Phase 4) | fail_a/fail_b 신뢰 회복 + pass 근거 계측 |
 | **6** | ④ curated 키 재생성기 배선 | 미작성 | ⏸ | 낮음 | 신규 필링 재발 차단 |
 
@@ -75,6 +75,7 @@
 | 2026-08-17 | 순위2 | **전수 재감사 완료 — 기준선 확정**(아래 §6). 커밋 `8a5347f` |
 | 2026-08-17 | ① | **Phase 1~3 구현 완료**(R32, `docs/PARSING_RULES.md`). 46개사 표적 재감사: fail_a 177→4(전부 revenue 무관 기존결함), 단조성 위반 0, 원문대조 8개사 완료. 커밋 `ae4337c`. 구현 도중 fuzzy-매칭 회귀 1건 실제로 발견+수정(동양생명 00117267 — account_mapper 가 Gate B 전용이 아니라 layer2/3 표준화 본체도 쓰는 공용 사전임을 실측으로 확인, R32 참고). |
 | 2026-08-18 | ① | **전수 재감사 완료 — 트랙 종료**(사용자 직접 실행, `run_gateb_audit_parallel.sh`, 5-shard, ~1.2h). 299,651행 전수: pass 199,113→201,518(+2,405) / fail_a 412→239(**신규 0건**) / fail_b 3,081→603 / pending 97,045→97,291. 46사 밖 292,765행 산술검산 — pass/fail_a/fail_b/pending **4개 항목 전부 이전 기준선과 정확히 일치**(트랙 밖 영향 0 확정, 집계로 끝내지 않고 뺄셈으로 확인). §2 공통게이트 6개 전부 충족. ★첫 확인 시도는 5-shard 가 아직 실행 중인 걸 "완료"로 오판할 뻔했다(`ps aux`로 프로세스 확인 없이 face_audit 스냅샷만 보고 판단 — 사용자 지적으로 정정, 재발방지: 장시간 작업 결과 확인 전 항상 프로세스 생존 여부 먼저 체크). |
+| 2026-08-18 | P0+⑤ | **완료.** 마이그레이션 `2026_08_standard_financials_view_source_version`(`collector/db.py`) 적용 — dry-run 사전대조(321,141행/중복0/은닉214행 전부 v3 fail_a로 설명/미설명0) 통과 후 실제 적용, 사후재검증도 동일 일치(§6 B/D/E 통과). `app/data/trust.py`(P0-5) `source_version='v3'` 한정. ⑤ `scripts/collect_new.py`(`run_dq_gate`) 의 `AttributeError`(`gb_args`에 `source` 누락) 수정 — `source="v2"`(v3 아님, 근거는 PARSING_RULES 부록C 참고). **검증 중 회귀테스트가 4번째 미배선 소비자(`scripts/verify_corp_sequential.py`) 실측 발견**(같은 `AttributeError` + `rollup_corp()` source_version 미필터) — 함께 수정. 회귀 `pytest tests/ fin2/tests/` 560 passed + 기존 무관 결함 1(`test_lxintl_facility_table_dropped`) 유지. 신규 회귀 테스트 `fin2/tests/test_standard_financials_view.py`(dedup·등급정합·미배선 소비자 grep 가드 3종). 상세: `docs/qa/view_dup_baseline_2026-08-18.md`, `docs/PARSING_RULES.md` 부록C. |
 
 ---
 

@@ -97,7 +97,14 @@ def gate_a_corp(session, corp):
 
 
 def rollup_corp(session, corp, corp_name, stage, error=None):
-    """face_audit/std_v2/download_tasks 집계 → corp_verify_status upsert(전기간 요약·재개 마커)."""
+    """face_audit/std_v2/download_tasks 집계 → corp_verify_status upsert(전기간 요약·재개 마커).
+
+    face_audit 읽기는 전부 source_version='v2' 로 한정한다 — 이 롤업이 요약하는 것은 바로
+    위 5단계(Gate B, `audit_corp(..., source="v2")`)가 이 실행에서 방금 남긴 std_v2 감사결과다.
+    한정하지 않으면 다른 실행이 남긴 v3 감사행까지 같은 (corp,fy,fp,basis) 키에서 합산돼
+    pass/fail 카운트가 이중집계된다(2026-08-18, docs/plans/gateb_view_source_version_join_fix_
+    design_2026-08-17.md §1-C — standard_financials 뷰·run_dq_gate 와 같은 부류의 결함, 이 파일도
+    face_audit PK 확장(2026-08-11) 이후 갱신되지 않은 4번째 소비 지점이었다)."""
     nf = session.execute(text(
         "SELECT count(*) FROM filings WHERE corp_code=:c"), {"c": corp}).scalar() or 0
     nd = session.execute(text("""
@@ -113,15 +120,18 @@ def rollup_corp(session, corp, corp_name, stage, error=None):
         "SELECT count(*) FROM std_financials_v2 WHERE corp_code=:c AND version=1"),
         {"c": corp}).scalar() or 0
     gb = dict(session.execute(text(
-        "SELECT status AS s, count(*) AS n FROM face_audit WHERE corp_code=:c GROUP BY status"),
+        "SELECT status AS s, count(*) AS n FROM face_audit "
+        "WHERE corp_code=:c AND source_version='v2' GROUP BY status"),
         {"c": corp}).fetchall())
     gb_fail_a = session.execute(text(
-        "SELECT count(*) FROM face_audit WHERE corp_code=:c AND gate_status='fail_a'"),
+        "SELECT count(*) FROM face_audit "
+        "WHERE corp_code=:c AND source_version='v2' AND gate_status='fail_a'"),
         {"c": corp}).scalar() or 0
     fail_periods = [[r.fiscal_year, r.fiscal_period, r.statement_type, r.gate_status]
                     for r in session.execute(text("""
         SELECT fiscal_year, fiscal_period, statement_type, gate_status FROM face_audit
-        WHERE corp_code=:c AND status='fail' ORDER BY fiscal_year DESC, fiscal_period LIMIT 200
+        WHERE corp_code=:c AND source_version='v2' AND status='fail'
+        ORDER BY fiscal_year DESC, fiscal_period LIMIT 200
     """), {"c": corp}).fetchall()]
 
     # Phase B 라인 전수대조 롤업(face_line_audit, 전 source rcept)
@@ -169,7 +179,12 @@ def verify_corp(corp, corp_name, args):
     gb_args = SimpleNamespace(
         corp=corp, corp_file=None, corps=None, sample=None, seed=42,
         fy_min=args.fy_min, fy_max=2100, recheck=args.recheck, no_commit=False,
-        line_audit=True)
+        line_audit=True,
+        # gateb_audit.audit_corp() 는 args.source 를 첫 줄부터 참조한다(scripts/gateb_audit.py:119)
+        # — 이 필드가 없어 이 스크립트를 실행하는 즉시 AttributeError 로 죽는 배선 누락이었다
+        # (2026-08-18, 위 rollup_corp() docstring 참고). 위 4단계(fin2 chain)가 만드는 건
+        # std_financials_v2(standardize_corp(version=1), run.py:process_corp) 이므로 v2 로 감사한다.
+        source="v2")
     gb_agg = {"status": Counter(), "gate": Counter(),
               "fld_pass": 0, "fld_fail": 0, "fail_rows": [], "errors": 0}
     with get_session() as s:

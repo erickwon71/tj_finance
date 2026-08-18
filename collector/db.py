@@ -908,6 +908,87 @@ def _run_migrations() -> None:
             END IF;
         END $$
         """),
+
+        ("2026_08_standard_financials_view_source_version",
+         # 2026-08-18: docs/plans/gateb_view_source_version_join_fix_design_2026-08-17.md —
+         # 위 2026_08_face_audit_source_version 이 face_audit PK 에 source_version 을 추가해
+         # 같은 (corp,fy,fp,basis) 키에 v2 감사행·v3 감사행이 **정상적으로 공존**하게 됐는데,
+         # 이 뷰의 JOIN 은 그 컬럼을 지정하지 않아 v2/v3 감사행이 둘 다 매치돼 뷰 행이
+         # 2배로 중복됐다(244,585키 실측 2026-08-18). gate_b_status 도 엉뚱한 체인의 감사결과가
+         # 붙을 수 있고, fail_a 차단 게이트가 v2 결과로 우회되는 부작용도 있었다(설계서 §1-B).
+         # 각 UNION ALL 분기에 `fa.source_version = 'v3'`/`'v2'` 를 추가해 자신이 표시하는
+         # std 체인의 감사결과만 조인하도록 명시화. SELECT 목록·데이터는 무변경, JOIN 조건
+         # 두 줄만 추가. 검증(dry-run view 로 사전 대조): 561→321,141행 dedup 완전(중복 0),
+         # 적용 전 키 집합 ⊇ 적용 후(차집합 214건 전부 v3 fail_a 로 설명됨, 미설명 0),
+         # gate_b_status 100% 일치, 삼성전자 2024FY 연결 2행→1행.
+         """
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_class WHERE relname='standard_financials' AND relkind='v') THEN
+                CREATE OR REPLACE VIEW standard_financials AS
+                SELECT
+                    v3.corp_code, v3.fiscal_year, v3.fiscal_period, v3.statement_type,
+                    1::smallint AS version,
+                    v3.period_end,
+                    TRUE AS is_ifrs,
+                    COALESCE(v3.source_rcepts->>'BS', v3.source_rcepts->>'IS', v3.source_rcepts->>'CF')::varchar(14) AS rcept_no,
+                    v3.total_assets, v3.current_assets, v3.cash, v3.receivables, v3.inventory, v3.ppe, v3.intangibles,
+                    v3.total_liabilities, v3.current_liabilities, v3.short_term_debt, v3.long_term_debt,
+                    v3.total_equity, v3.controlling_equity, v3.retained_earnings, v3.trade_payables,
+                    v3.revenue, v3.cogs, v3.gross_profit, v3.sga, v3.rd_expense, v3.operating_income,
+                    v3.interest_expense, v3.ebt, v3.tax_expense, v3.net_income, v3.controlling_ni,
+                    v3.cfo, v3.cfi, v3.cff, v3.capex, v3.dividends_paid,
+                    v3.depreciation, v3.amortization, v3.da_total, v3.ebitda, v3.fcf, v3.net_debt, v3.shares_out,
+                    v3.data_quality,
+                    NULL::timestamp without time zone AS superseded_at,
+                    v3.built_at AS calculated_at,
+                    COALESCE(fa.gate_status, 'unaudited') AS gate_b_status,
+                    v3.industry_lines
+                FROM std_financials_v3 v3
+                LEFT JOIN face_audit fa
+                  ON  fa.corp_code = v3.corp_code
+                  AND fa.fiscal_year = v3.fiscal_year
+                  AND fa.fiscal_period = v3.fiscal_period
+                  AND fa.statement_type = v3.statement_type
+                  AND NOT COALESCE(fa.is_stub, false)
+                  AND fa.source_version = 'v3'
+                WHERE COALESCE(fa.gate_status, 'unaudited') <> 'fail_a'
+
+                UNION ALL
+
+                SELECT
+                    s.corp_code, s.fiscal_year, s.fiscal_period, s.statement_type, s.version,
+                    s.period_end, s.is_ifrs,
+                    COALESCE(s.bs_rcept, s.is_rcept, s.cf_rcept) AS rcept_no,
+                    s.total_assets, s.current_assets, s.cash, s.receivables, s.inventory, s.ppe, s.intangibles,
+                    s.total_liabilities, s.current_liabilities, s.short_term_debt, s.long_term_debt,
+                    s.total_equity, s.controlling_equity, s.retained_earnings, s.trade_payables,
+                    s.revenue, s.cogs, s.gross_profit, s.sga, s.rd_expense, s.operating_income,
+                    s.interest_expense, s.ebt, s.tax_expense, s.net_income, s.controlling_ni,
+                    s.cfo, s.cfi, s.cff, s.capex, s.dividends_paid,
+                    s.depreciation, s.amortization, s.da_total, s.ebitda, s.fcf, s.net_debt, s.shares_out,
+                    s.data_quality,
+                    NULL::timestamp without time zone AS superseded_at,
+                    s.calculated_at,
+                    COALESCE(fa.gate_status, 'unaudited') AS gate_b_status,
+                    NULL::jsonb AS industry_lines
+                FROM std_financials_v2 s
+                LEFT JOIN face_audit fa
+                  ON  fa.corp_code = s.corp_code
+                  AND fa.fiscal_year = s.fiscal_year
+                  AND fa.fiscal_period = s.fiscal_period
+                  AND fa.statement_type = s.statement_type
+                  AND NOT COALESCE(fa.is_stub, false)
+                  AND fa.source_version = 'v2'
+                WHERE s.version = 1 AND NOT COALESCE(s.is_stub, false) AND NOT COALESCE(s.is_discrete, false)
+                  AND COALESCE(fa.gate_status, 'unaudited') <> 'fail_a'
+                  AND NOT EXISTS (
+                        SELECT 1 FROM std_financials_v3 v3b
+                        WHERE v3b.corp_code = s.corp_code AND v3b.fiscal_year = s.fiscal_year
+                          AND v3b.fiscal_period = s.fiscal_period AND v3b.statement_type = s.statement_type
+                      );
+            END IF;
+        END $$
+        """),
     ]
 
     with engine.begin() as conn:

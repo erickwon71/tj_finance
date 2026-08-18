@@ -118,7 +118,18 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
     for corp in corps:
         gb_args = SimpleNamespace(
             corp=corp, corp_file=None, corps=None, sample=None, seed=42,
-            fy_min=fy_min, fy_max=2100, recheck=True, no_commit=False, line_audit=True)
+            fy_min=fy_min, fy_max=2100, recheck=True, no_commit=False, line_audit=True,
+            # gateb_audit.audit_corp() 는 args.source 를 첫 줄부터 참조한다(scripts/gateb_audit.py:119).
+            # 이 필드가 없어 --download-only 를 벗기는 순간 AttributeError 로 즉사하는 배선
+            # 누락이었다(docs/plans/gateb_view_source_version_join_fix_design_2026-08-17.md §1-C
+            # ⑤). "v3"가 아니라 "v2"인 이유: 이 함수가 감사하는 대상은 바로 위에서 이 파이프라인
+            # 자신이 process_corp()→standardize_corp(version=1) 로 방금 만든 std_financials_v2
+            # 행이다(아래 dq3 쿼리도 std_financials_v2 를 직접 읽음, docstring 도 "표준화가
+            # std_v2 에 이미 반영한 항등식 위반"이라고 명시). std_financials_v3 는 이 파이프라인이
+            # 안 만든다 — 별도 수동 배치(`scripts/build_std_v3.py`)만 채운다. source="v3" 로
+            # 두면 방금 수집한 신규 기간이 std_v3 에 아직 없어 감사 대상 0건인 채로 "이상없음"을
+            # 반환하는 위양성 그린(false-green) 게이트가 된다.
+            source="v2")
         gb_agg = {"status": Counter(), "gate": Counter(),
                   "fld_pass": 0, "fld_fail": 0, "fail_rows": [], "errors": 0}
         try:

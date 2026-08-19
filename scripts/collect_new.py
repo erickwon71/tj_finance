@@ -90,6 +90,39 @@ def _standardize_with_timeout(affected: list[str], timeout: int) -> dict:
     return agg
 
 
+def _run_standardize_batches(affected: list[str], timeout: int, batch_size: int = 50) -> dict:
+    """④ std_v2 표준화 → D&A → 계층2(xml) → 주식수전사를 배치 단위(기본 50개사)로 묶어
+    배치마다 즉시 완결시킨다(P1-2, docs/plans/handoff_next_session_2026-08-19.md §5).
+
+    Why: previously these downstream steps ran once, after the *entire* affected list
+    finished standardizing. If the process was killed mid-run, corps that already got
+    std_v2 committed were left with layer2 permanently missing — `needs_standardize_corps()`
+    treats std_v2 presence as "done", so a rerun never reselects them (actually observed
+    2026-08-18: 374 corps stuck at report_lines=0). Batching bounds the loss to one batch
+    instead of the whole run, and each batch is fully durable once logged.
+
+    batch_size=50 ≈ 37min/batch at the measured 44.4s/corp. Ordinary daily runs (tens of
+    corps) fit in a single batch, so this is a no-op in practice for the common case.
+    """
+    agg = {"e_facts": 0, "s": 0, "q": 0, "c": 0, "errors": 0, "timeout": 0, "ok_corps": []}
+    if not affected:
+        return agg
+    total_batches = -(-len(affected) // batch_size)
+    for i in range(0, len(affected), batch_size):
+        batch = affected[i:i + batch_size]
+        r = _standardize_with_timeout(batch, timeout)
+        for k in ("e_facts", "s", "q", "c", "errors", "timeout"):
+            agg[k] += r.get(k, 0)
+        ok = r.get("ok_corps") or []
+        agg["ok_corps"].extend(ok)
+        _sync_cf_da(ok)
+        _sync_layer2_lines(ok)
+        _sync_shares_transcribe(ok)
+        logger.info(f"[collect]   배치 {i // batch_size + 1}/{total_batches} 완결 — "
+                    f"{len(ok)}개사 std_v2+layer2+주식수 반영")
+    return agg
+
+
 def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
     """I2 · 수집시 DQ 게이트 — 수집된 기업에 Gate B(보고서==DB) 재감사 + 항등식(DQ) 집계.
 
@@ -690,13 +723,15 @@ def main() -> None:
             affected = collect.needs_standardize_corps()
             logger.info(f"[collect] (재개) ④ 파싱·표준화 대상 {len(affected)}개 기업 "
                         f"(타임아웃 {args.timeout}초/기업)")
-        agg = _standardize_with_timeout(affected, args.timeout) if affected else {}
+        agg = _run_standardize_batches(affected, args.timeout)
         logger.success(f"[collect] 재개 완료 — std_v2 {agg.get('s', 0):,} · 이산분기 {agg.get('q', 0):,} · "
                        f"달력 {agg.get('c', 0):,} · 타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
-        _sync_cf_da(affected)
-        _sync_layer2_lines(affected)
-        _sync_xbrl_instance_lines(affected)
-        _sync_shares_transcribe(affected)
+        # ④-4 XBRL instance zip 경로 — own selector (P1-1), independent of the xml-only
+        # `affected` list above since xbrl_zip-only corps never appear in it. Honor an
+        # explicit --corps scope (targeted retry) the same way `affected` above does;
+        # otherwise scan the full pending population.
+        xbrl_affected = collect.needs_xbrl_instance_corps(only=affected if args.corps else None)
+        _sync_xbrl_instance_lines(xbrl_affected)
         _verify_and_log(agg, args)
         _sync_biz_metrics(affected)
         _sync_order_backlog(affected)
@@ -791,23 +826,19 @@ def main() -> None:
     # ④ 파싱·표준화·분기·달력 (신규 기업만, 기업당 타임아웃)
     affected = collect.needs_standardize_corps(only=corps)
     logger.info(f"[collect] ④ 파싱·표준화 대상 {len(affected)}개 기업 (타임아웃 {args.timeout}초/기업)")
-    agg = _standardize_with_timeout(affected, args.timeout) if affected else {}
+
+    # ④~④-5: std_v2 표준화 → D&A → 계층2(xml) → 주식수전사, 배치 단위(기본 50개사)로 즉시 완결
+    # (P1-2 — a mid-run kill used to leave std_v2 committed with layer2 permanently missing).
+    agg = _run_standardize_batches(affected, args.timeout)
 
     logger.success(f"[collect] 완료 — 신규 {len(corps)}개 기업 · fact {agg.get('e_facts', 0):,} · "
                    f"std_v2 {agg.get('s', 0):,} · 이산분기 {agg.get('q', 0):,} · 달력 {agg.get('c', 0):,} · "
                    f"타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
 
-    # ④-2 D&A note 복원(B5) — 신규 기업의 연결 CF D&A 갭을 채워 EBITDA 재퇴행 방지.
-    _sync_cf_da(affected)
-
-    # ④-3 계층2 전사 — 신규 보고서 → report_lines(본문) + note_lines(주석).
-    _sync_layer2_lines(affected)
-
-    # ④-4 계층2 전사(XBRL 원문 zip 경로) — file_type='xbrl_zip' 대상만(document.xml 014 폴백).
-    _sync_xbrl_instance_lines(affected)
-
-    # ④-5 발행주식수 전사(계층2 cross-cutting) — 신규 보고서 → report_shares_outstanding.
-    _sync_shares_transcribe(affected)
+    # ④-4 계층2 전사(XBRL 원문 zip 경로) — own selector (P1-1): xbrl_zip-only corps never
+    # appear in `affected` above (no xml file_type row), so they need their own pending list.
+    xbrl_affected = collect.needs_xbrl_instance_corps(only=corps)
+    _sync_xbrl_instance_lines(xbrl_affected)
 
     # ⑤ 수집 후 DQ 게이트 — 새로 표준화된 기업만 Gate B(보고서==DB)+항등식 재검, corp_verify_status 적재.
     _verify_and_log(agg, args)

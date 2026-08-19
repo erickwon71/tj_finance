@@ -115,3 +115,33 @@ def needs_standardize_corps(only: list[str] | None = None) -> list[str]:
     with get_session() as s:
         rows = s.execute(text(sql), params).fetchall()
     return [r[0] for r in rows]
+
+
+def needs_xbrl_instance_corps(only: list[str] | None = None) -> list[str]:
+    """
+    XBRL instance zip(`download_tasks.file_type='xbrl_zip'`, OpenDART `[014]` 폴백)으로
+    받은 필링은 아직 계층2에 전사되지 않은 기업 = ④-4 대상.
+
+    `needs_standardize_corps()`와 별도 predicate다 — xbrl_zip 필링은 xml 원문이 없어
+    file_type='xml' 조건에 걸리지 않고, 따라서 그 셀렉터가 만드는 std_v2 표준화 대상에도
+    영원히 포함되지 않는다(P1-1, docs/plans/handoff_next_session_2026-08-19.md §4).
+    Mirrors `collector/xbrl_instance_lines_sync.py::_TARGETS_SQL` completion predicate
+    (`report_lines.unit_source='xbrl'`), scoped to "which corps still have pending work"
+    the same way `scripts/backfill_xbrl_instance_lines_2026-08-18.py::_PENDING_CORPS_SQL` is.
+    """
+    clause = "AND f.corp_code = ANY(:only)" if only else ""
+    sql = f"""
+        SELECT DISTINCT f.corp_code
+        FROM download_tasks dt
+        JOIN filings f ON f.rcept_no = dt.rcept_no
+        WHERE dt.status='completed' AND dt.file_type='xbrl_zip' AND dt.file_path IS NOT NULL
+          AND f.fiscal_year >= 2015 {clause}
+          AND NOT EXISTS (
+            SELECT 1 FROM report_lines r
+            WHERE r.rcept_no = dt.rcept_no AND r.unit_source = 'xbrl')
+        ORDER BY f.corp_code
+    """
+    params = {"only": only} if only else {}
+    with get_session() as s:
+        rows = s.execute(text(sql), params).fetchall()
+    return [r[0] for r in rows]

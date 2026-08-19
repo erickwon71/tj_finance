@@ -246,7 +246,7 @@ python scripts/vacuum_db.py --table fact_v2  # 특정 테이블만
 python scripts/refresh_valuation_daily.py
 ```
 
-## 이후 자동 갱신 — 전용 잡 `com.tjfinance.valuation` (매일 19:30)
+## 이후 자동 갱신 — 전용 잡 `com.tjfinance.valuation` (매일 19:00)
 
 ★ **2026-07-16 변경(외부평가 P0-1)**: refresh 를 collect 잡에서 **분리**했다. 예전엔 refresh 가
 `collect_new.py` 마지막 단계(⑥)에만 매달려 있어서, collect 이 단계 ①에서 DART 쿼터초과([020])로

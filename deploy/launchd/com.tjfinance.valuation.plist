@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  밸류에이션 파이프라인 야간 갱신 — 매일 19:30 실행(launchd LaunchAgent).
+  밸류에이션 파이프라인 야간 갱신 — 매일 19:00 실행(launchd LaunchAgent).
   scripts/nightly_valuation_refresh.py 가 ① 주가 증분 top-up(pykrx, 최근 15일) → ② 시가총액
   재계산 → ③ valuation_daily matview refresh 를 순서대로(단계 격리) 수행한다.
 
@@ -25,13 +25,13 @@
     <key>WorkingDirectory</key>
     <string>/Users/taejin/Project/tj_finance</string>
 
-    <!-- 매일 19:30 실행(collect 18:00 이후, gapfill 00:01 이전). 잠자기였다면 wake 후 만회. -->
+    <!-- 매일 19:00 실행(collect 18:00 이후, gapfill 00:01 이전). 잠자기였다면 wake 후 만회. -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
         <integer>19</integer>
         <key>Minute</key>
-        <integer>30</integer>
+        <integer>0</integer>
     </dict>
 
     <key>RunAtLoad</key>

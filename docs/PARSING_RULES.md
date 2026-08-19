@@ -1902,6 +1902,53 @@ WHERE source_version='v3' AND evidence_detail ? 'E5_HEURISTIC';
 
 ---
 
+## R34. `fin2/layer3/combine.py::_resolve()` — R2 델타패치가 정정본의 표 재렌더링에
+무력화되던 결함(depth-우선이 section_path 만 다른 정정본 셀을 통째로 무시)
+
+**증상** — P3-1 전수 재감사(2026-08-19) 스냅샷 대비 비교에서 689건 단조성 위반(기존
+pass → fail/pending) 발견. 원인규명 결과 그중 30건(6개사)이 이 결함으로 확정됐다(나머지는
+무관 — R34 부록C 참고).
+
+**근거(실측, 고려아연 00102858 2023FY 연결)** — `build_merged_lines()` 로 라이브 재실행:
+
+```
+label='자산총계' value=12,046,071,311,650 source_rcept=20240311000892(최초등록) amended=False
+label='자산총계' value=11,768,590,335,824 source_rcept=20260813001690(2026-08-13 정정) amended=True
+```
+
+셀 키(`statement,basis,col_index,section_path,label_raw`)가 R2 가 요구하는 것보다 좁다.
+정정본이 표를 재렌더링하며 `section_path`에 래퍼가 한 겹 추가되면(`'자산'` → `'재무상태표
+[개요]>자산'`) 두 필링의 "자산총계"가 **다른 셀**로 살아남아, `build_merged_lines()`의
+델타패치(R2, "정정이 이긴다")가 발동하지 않는다. 그러면 두 후보가 `_resolve()`에서 같은
+canonical(`bs.total_assets`)로 충돌하고, `_reduce_conflict()`의 "얕은 depth 우선"(원래
+목적 = 한 필링 안에서 합계가 하위상세항목에 안 밀리게 하는 것)이 **section_path 가 얕은
+원본을 정정본보다 이겨버린다** — `_eps_dup()`(0.1% 근사중복→큰 값)는 2.3% 차이라 안
+걸린다.
+
+label_raw 완전일치로도 못 잡는 경우가 흔하다 — 정정본이 각주번호까지 같이 바꾼다
+(`"(5) 이익잉여금 (주27)"` 원본 vs `"(5) 이익잉여금"` 정정본).
+
+**수정(2026-08-20)** — `_resolve()`가 canonical 별 candidate 를 depth 판정에 넘기기
+**전에**, `industry_profiles.norm()`(번호/각주 제거 정규화, 기존 `is.revenue` grand-total
+매칭에 이미 쓰던 함수)으로 정규화한 label 이 같고 값이 다른 후보 그룹 중, `amended=True`
+(=더 나중 필링에서 patch 된 셀)가 하나라도 있으면 그 라벨의 `amended=False`(base) 후보를
+버린다. `amended` 후보가 아예 없으면(=진짜 같은 필링 안의 총계/하위항목 구조 차이) 손대지
+않는다 — 기존 depth-우선의 원래 목적은 그대로 유지.
+
+**검증** — 6개사(00102858·00141608·00145437·00243067·00403793·01303029) `build_std_v3.py`
+재생성 + `gateb_audit.py --recheck`: 이 결함으로 잡힌 43개 (corp,fy,period,statement_type)
+중 31건 pass 전환, fail_a **38→0**. 나머지 12건은 `LABEL_UNMATCHED`/`SOURCE_NOT_TRACK_A`
+pending — 이 결함과 무관한 별개 원인(부록C 참고, 별도 트랙). `pytest tests/ fin2/tests/`
+576 passed(기존 무관 실패 1건 `test_lxintl_facility_table_dropped` 그대로) — 회귀 없음.
+회귀 테스트 = `fin2/tests/test_combine_amended_label_depth.py`(4종).
+
+**미조치 범위** — 이 수정은 코드 전역에 즉시 적용되지만(향후 모든 `build_std_v3` 재생성에
+자동 반영), **std_v3 에 이미 저장된 값**은 재생성한 6개사만 갱신했다. 이 패턴이 P3-1의
+689건 밖에(즉 이번에 처음 fail 로 드러나지 않고 이미 예전부터 fail 이던 회사에) 잠복해
+있을 가능성은 미확인 — 전수 조사 안 함(부록C에 등재).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -1963,12 +2010,15 @@ WHERE source_version='v3' AND evidence_detail ? 'E5_HEURISTIC';
 | R26 | `docs/plans/gate_b_facereader_controlling_ni_fix_design_2026-08-15.md`(§2-A) · `fin2/audit/face_audit.py`(`_FX_PRESENTATION_CURRENCY_KEYS`/`_PENDING_REASONS`) |
 | R27 | `docs/plans/gate_b_controlling_ni_groupbc_kbimetal_eps_label_trap_fix_design_2026-08-15.md` · `fin2/extract/report_lines.py`(`_EPS_MAX_PLAUSIBLE_WON`/`_looks_like_eps_amounts()`) · `scripts/reload_report_lines_corp.py`/`scripts/build_std_v3.py` |
 | R31 | `docs/plans/t22_hyphen_negative_gate_todo_2026-08-16.md` · `parser/xml/table_extractor.py::_NUMBER_PATTERN` · `fin2/tests/test_hyphen_negative_gate_r31.py` · `scripts/census_t22_hyphen_negative_2026-08-16.py`·`scripts/scan_r31_true_targets_2026-08-16.py`·`scripts/reload_report_lines_corp.py`(`--year-max`)/`scripts/build_std_v3.py`/`scripts/snapshot_r31_backfill_2026-08-16.py` |
+| R34 | P3-1 재감사 후속(2026-08-20) · `fin2/layer3/combine.py::_resolve()` · `fin2/tests/test_combine_amended_label_depth.py` · `scripts/investigate_p3_combine_live_check.py`·`scripts/investigate_p3_depth_bug_census.py`·`scripts/verify_p3_depth_bug_fix.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황
 
 | 항목 | 상태 |
 |---|---|
+| **P3-1 "원인 A" — 처음으로 전수 재처리(`fy=all`)된 회사가 R16~R32 등 그동안 표적백필로만 적용되던 규칙변경분을 한꺼번에 맞아 값이 흔들림** | **미조치 — 별도 트랙(사용자 결정 2026-08-20)**. 실측(2026-08-19 재감사): 689건 단조성 위반 중 R34(depth결함) 30건을 뺀 대다수. 트리거 확정 = 8/18 저녁 `build_std_v3.py` 전체이력 재생성(2,128개사, `year_min=2015`) — 위반 75개사 중 73개사(97%)가 이 배치와 겹침. 구조적 재발(신규 규칙수정 표적백필 → 나머지 미백필 회사는 다음 전수재생성 때 노출) — 메모리 `gateb-full-reaudit-is-required-to-close` 그대로. 다음 착수 시 `face_audit_snap_20260819` 를 기준선으로 재사용 가능 |
+| **R34 depth-우선 결함 — 30건(6개사) 밖의 잠복 사례 미조사** | **미조치**. 코드 수정(`_resolve()`)은 전역 적용되나, 이미 저장된 std_v3 값 중 "정정본이 section_path 다르게 재렌더링 + depth 우선으로 원본이 이김" 패턴이 P3-1의 689건 밖(=이미 예전부터 fail 이던 회사)에도 있는지는 전수 조사 안 함. 필요 시 `scripts/investigate_p3_depth_bug_census.py` 를 `face_audit` 필터 없이 std_v3 전체 corp 로 확장해 재실행 |
 | ~~T22 순수 하이픈 음수(`-N`) `_NUMBER_PATTERN` 미인식(T21 자매결함)~~ | **✅ 해소 완료 2026-08-17** — R31. 775개사 표적 백필+검증 완료. 부록A T22·부록B R31 참고 |
 | R2-1 `biz_metrics`·`order_backlog` 가 정본 정책 미적용 | **미조치** — 547건(447개사) 미파싱, 505건 회수 가능. 2026-07-31 백필 완료 후 착수 예정 |
 | ~~R1 '사업의 내용' 이 계층2 를 우회~~ | **✅ 해소 완료 2026-08-09** — `biz_section_tables` 4도메인 공용화+재배선. R1 본문 참조. |

@@ -1518,6 +1518,37 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
     conflicts: dict[str, list[dict]] = {}
     trust_seqs = _trust_account_table_seqs(cands)
     for c, rows in cands.items():
+        # ★R2 델타패치 실질화(2026-08-20, P3-1 재감사 후속): build_merged_lines() 의 셀
+        # 키에 section_path 가 들어있어, 정정본이 표를 재렌더링해 section_path 가 원본과
+        # 달라지면(흔함 — 예: 래퍼 한 겹 추가) 같은 라벨의 두 셀이 "같은 셀의 수정"이
+        # 아니라 "다른 셀"로 살아남는다. 그러면 이 아래의 depth-우선(_reduce_conflict)이
+        # section_path 가 얕은(=대개 원본) 쪽을 이겨버려, R2("정정이 이긴다")가 label
+        # 단위에서는 무력화된다. 실측(고려아연 00102858 등, docs/qa/
+        # gate_b_p3_depth_bug_2026-08-20.md): 원본 자산총계 12.046조가 2026-08-13 정정의
+        # 11.769조를 이겨버린 사례로 확정.
+        # ★label_raw 원문 그대로는 부족하다(2026-08-20 실측) — 정정본이 각주번호까지 같이
+        # 바꾸는 경우가 흔하다("(5) 이익잉여금 (주27)" 원본 vs "(5) 이익잉여금" 정정본).
+        # 그러면 label_raw 완전일치 그룹핑이 애초에 두 후보를 한 그룹으로 못 묶는다. 같은
+        # norm()(번호/각주 제거, industry_profiles.norm — is.revenue grand-total 매칭에
+        # 이미 쓰는 정규화)으로 묶는다.
+        # 여기서 depth 판정 *전에* 정규화 라벨 단위로 정리한다 — 같은 norm(label) 인데
+        # 값이 다르고, 그중 amended=True(=더 나중 필링에서 값이 바뀐 셀)가 있으면, 그
+        # 라벨의 amended=False(base) 후보는 버린다(= build_merged_lines() 가 원래
+        # 하려던 edit을 대신 완성해준다). amended 후보가 없으면(=진짜 같은 필링 안의
+        # 총계/하위항목 구조 차이) 손대지 않는다 — depth-우선은 그 목적에는 여전히
+        # 유효하다.
+        by_label: dict[str, list[dict]] = defaultdict(list)
+        for r in rows:
+            by_label[_norm_label(r.get("label_raw"))].append(r)
+        stale_ids = set()
+        for label, group in by_label.items():
+            if not label or len(group) < 2 or len({g["value"] for g in group}) < 2:
+                continue
+            if not any(g.get("amended") for g in group):
+                continue  # 진짜 총계/하위항목 구조차이 — depth-우선에 맡긴다
+            stale_ids.update(id(g) for g in group if not g.get("amended"))
+        if stale_ids:
+            rows = [r for r in rows if id(r) not in stale_ids]
         # BS grand-total: drop candidates from a confirmed trust-account sub-statement
         # (see _BS_GRAND_TOTAL / _trust_account_table_seqs above) before stage ranking, so
         # its clean-label 'exact' match can never outrank the real statement's

@@ -35,6 +35,18 @@ from collector.config import (
     RAW_REPORT_DIR, TMP_DIR,
     MAX_DOWNLOAD_ATTEMPTS, MIN_DOWNLOAD_INTERVAL,
 )
+
+# ★2026-08-19 정책(사용자 결정, P2-2 8월 반기보고서 마감몰림 조사 후속) — document.xml 만
+# "정상 등록"으로 인정한다. [014](document.xml 아직 없음) 시 더 이상 즉시 xbrl_instance/
+# legacy 폴백을 자동으로 타지 않고, 최장 아래 기간 동안 매일 document.xml 만 계속 재시도한다
+# (DART 가 결국 올린다는 것을 15/15 표본으로 실측 확인함 — docs 메모리 참고). 30일부터는
+# 7일 간격으로 로그에 눈에 띄는 알림을 남겨 사람이 판단할 수 있게 한다. 2개월을 넘겨도
+# 자동으로 다른 형식으로 대체하지 않는다 — 그 시점 판단은 사람의 몫(수동으로
+# `_try_xbrl_instance_fallback`/`_try_legacy_fallback` 을 호출하는 것은 여전히 가능,
+# 자동 배선만 끊었다).
+XML_PENDING_ALERT_START_DAYS    = 30  # 이 날짜부터 알림 시작
+XML_PENDING_ALERT_INTERVAL_DAYS = 7   # 알림 반복 간격
+XML_PENDING_ESCALATE_DAYS       = 60  # 이 날짜부터 알림 표시를 강조(자동 동작 변화는 없음)
 from collector.dart_client import DartClient, DartApiError
 from collector.rate_limiter import DailyQuotaReached
 
@@ -145,6 +157,52 @@ def _mark_skipped(rcept_no: str, reason: str) -> None:
         )
 
 
+def _handle_xml_pending(rcept_no: str, api_err_msg: str) -> None:
+    """[014](document.xml 아직 없음) 처리 — 2026-08-19 정책(모듈 상단 주석 참고).
+
+    자동 폴백을 타지 않고 status='pending' 으로 되돌려 다음 데일리 실행이 document.xml
+    을 다시 시도하게 한다. `attempts` 는 건드리지 않는다 — `run_downloads()`의
+    `attempts < MAX_DOWNLOAD_ATTEMPTS`(=3) 게이트에 걸리면 최장 2개월 재시도가
+    불가능해지므로, 이 게이트는 `xml_pending_since IS NOT NULL` 인 행에 한해
+    별도로 우회한다(쿼리 쪽 처리, 이 함수는 관측 시각/알림만 담당).
+
+    반환: 항상 None(=skipped) — `_download_one` 계약("True=completed, False=failed,
+    None=skipped")과 맞춰 데일리 통계의 '실패' 카운트를 오염시키지 않는다.
+    """
+    now = datetime.utcnow()
+    with get_session() as session:
+        row = session.execute(
+            select(DownloadTask.xml_pending_since, DownloadTask.xml_pending_last_alert_at)
+            .where(DownloadTask.rcept_no == rcept_no)
+        ).one()
+        pending_since = row.xml_pending_since or now
+        last_alert = row.xml_pending_last_alert_at
+
+        days_pending = (now - pending_since).days
+        should_alert = (
+            days_pending >= XML_PENDING_ALERT_START_DAYS
+            and (last_alert is None or (now - last_alert).days >= XML_PENDING_ALERT_INTERVAL_DAYS)
+        )
+
+        values = dict(status="pending", last_error=api_err_msg,
+                      last_attempt_at=now, xml_pending_since=pending_since)
+        if should_alert:
+            values["xml_pending_last_alert_at"] = now
+
+        session.execute(
+            update(DownloadTask).where(DownloadTask.rcept_no == rcept_no).values(**values)
+        )
+
+    if should_alert:
+        tag = ("🚨 XML_PENDING_ALERT(2개월+, 사람 판단 필요)" if days_pending >= XML_PENDING_ESCALATE_DAYS
+               else "🔔 XML_PENDING_ALERT")
+        logger.warning(
+            f"  {tag} {rcept_no}: document.xml {days_pending}일째 미등록([014]) — "
+            f"자동 대체 없이 계속 재시도 중(logs/collect.err.log 검색용 태그)."
+        )
+    return None
+
+
 def _build_file_path(
     corp: Corporation,
     filing: Filing,
@@ -176,6 +234,11 @@ def _try_xbrl_instance_fallback(
     """
     OpenDART 014 오류 시, 웹 뷰어(PDF/HTML) 폴백보다 **먼저** 표준 XBRL 원문(ifrs.do) 시도.
     docs/plans/xbrl_instance_parser_2026-08-05.md — 정형 데이터라 PDF 텍스트 파싱보다 우선.
+
+    ★2026-08-19부터 `_download_one()`은 014 시 이 함수를 자동으로 부르지 않는다(모듈 상단
+    정책 주석 참고, `_handle_xml_pending()` 이 대신 처리) — 이 함수는 이제 **수동 호출
+    전용**이다(예: 2개월 넘긴 필링을 사람이 판단해 직접 폴백시킬 때). 함수 자체는 그대로
+    남겨둔다.
 
     실패(파라미터 추출 실패/XBRL 부재)해도 예외를 던지지 않고 None만 반환 —
     호출부가 그대로 기존 `_try_legacy_fallback()`으로 이어지게 한다(회귀 없음).
@@ -220,6 +283,10 @@ def _try_legacy_fallback(
     """
     OpenDART 014 오류 시 DART 웹에서 직접 수집 시도.
     순서: PDF 우선 → HTML 뷰어 폴백
+
+    ★2026-08-19부터 `_download_one()`은 014 시 이 함수를 자동으로 부르지 않는다
+    (`_try_xbrl_instance_fallback()` 독스트링과 동일한 정책 — 수동 호출 전용).
+
     반환: True=completed, None=skipped
     """
     logger.info(f"  ↷ API 014 → 레거시 폴백 시도 (PDF 우선)...")
@@ -302,6 +369,10 @@ def run_downloads(
                     or_(
                         DownloadTask.attempts == None,
                         DownloadTask.attempts < MAX_DOWNLOAD_ATTEMPTS,
+                        # ★2026-08-19: [014] 대기 중인 행은 attempts 상한과 무관하게 계속
+                        # 재시도한다(최장 2개월, 모듈 상단 정책 주석) — 안 그러면 3일만에
+                        # attempts=3 으로 막혀 매일 재시도가 끊긴다.
+                        DownloadTask.xml_pending_since.isnot(None),
                     ),
                 )
                 .order_by(
@@ -409,10 +480,9 @@ def _download_one(
             err_msg = f"DART 오류 [{status_code}]: {message}"
 
             if status_code == "014":
-                # ── 014: 파일없음 → 먼저 표준 XBRL 원문(ifrs.do) 시도, 없으면 웹 뷰어(레거시) 폴백 ──
-                if _try_xbrl_instance_fallback(scraper, task, filing, corp):
-                    return True
-                return _try_legacy_fallback(scraper, task, filing, corp, err_msg)
+                # ── 014: document.xml 아직 없음 → 2026-08-19 정책(모듈 상단 주석): 자동
+                # 폴백 없이 pending 유지 + 매일 재시도(최장 2개월, 30일부터 로그 알림) ──
+                return _handle_xml_pending(task.rcept_no, err_msg)
 
             elif status_code == "020":
                 # ── 020: API 일일 사용량 소진 → 즉시 종료 ────────
@@ -565,6 +635,10 @@ def _mark_completed(
         file_type=file_type.lstrip("."),
         file_size=file_size,
         completed_at=datetime.utcnow(),
+        # 한동안 [014] 대기(xml_pending_since 설정)했다가 이번에 마침내 성공한 행이면
+        # 정리 — 남아있으면 이후 조회에서 "여전히 대기 중"으로 착시를 준다.
+        xml_pending_since=None,
+        xml_pending_last_alert_at=None,
     )
     if parser_track is not None:
         values["parser_track"] = parser_track

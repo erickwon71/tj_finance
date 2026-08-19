@@ -129,6 +129,12 @@ class DownloadTask(Base):
     # ifrs.do 다운로드에 필요한 DART 문서번호(_get_view_params 로 획득).
     dcm_no           = Column(String(20), nullable=True, comment="DART 문서번호(ifrs.do 다운로드용)")
 
+    # ★2026-08-19 정책(사용자 결정): document.xml [014] 시 더 이상 즉시 xbrl_instance/legacy
+    # 폴백을 자동으로 하지 않는다 — xml 다운로드만 "정상 등록"으로 인정하고, 최장 2개월
+    # 자동 재시도(collector/downloader.py::_handle_xml_pending). 30일부터 7일 간격 로그 알림.
+    xml_pending_since        = Column(DateTime, nullable=True, comment="[014] 최초 관측 시각")
+    xml_pending_last_alert_at = Column(DateTime, nullable=True, comment="마지막 알림 로그 발행 시각")
+
     # PRD 02 Gate A: 다운로드 유효성 검증
     gate_a_status    = Column(String(12), nullable=True, index=True,
                                comment="PASS/FAIL — 다운로드 무결성·재무제표존재 검증 결과")

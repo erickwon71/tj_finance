@@ -434,8 +434,31 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
     docstring 참고)이 이 개념을 **아무 트랙에서도** 못 찾았을 때만 이 함수를 부른다 — 태그가
     있거나 Track B 제네릭 매퍼가 이미 잡는 절대다수 문서에서 `_detect_body_statement_
     tables()`(비교적 비싼 섹션판정) 재파싱 비용을 안 문다.
+
+    ★ R36(2026-08-20, P3-1 '원인 A' 그룹② 후속) — 열(컬럼) 선택 버그 수정: TD 는 ACONTEXT 가
+    없어 `_ni_attribution_structural_candidates()`(TE 판, `ctx.col_index != 0` 로 당기만
+    선택)와 달리 어느 컬럼이 당기인지 구조적으로 알 수 없다. 이전 구현은 이 구분 없이 지배/
+    비지배 행의 **모든 값 컬럼**(당기·전기·전전기, H1/Q3 는 [당기3개월,당기누적,전기3개월,
+    전기누적] 4열)을 전부 후보로 냈다 — 51건/13개사 원문대조 결과(2026-08-20) **전건이
+    std_v3 정상값**이었는데도 fail 로 오탐된 원인이 바로 이것: 같은 행의 전기/전전기(또는
+    당기3개월, H1/Q3 는 누적이 아니라 3개월 단독이라 당기 누적값과도 다름) 컬럼값이 엉뚱하게
+    같은 canonical 의 "값불일치 증거"로 잡혔다(성도이엔지·카카오게임즈 실측, 원문 그대로).
+    FY 표는 [당기,전기,전전기] 순 첫 컬럼이 당기이지만, H1/Q3(interim) 표는 [3개월|누적] 2단
+    헤더가 있어 첫 컬럼(당기3개월)이 아니라 '누적' 토큰이 붙은 컬럼이 당기 누적값이다(실측:
+    성도이엔지 2023H1 지배주주지분 행 [1,451,210,911(당기3개월) / **1,296,834,534(당기누적,
+    std_v3 일치)** / 2,501,296,907(전기3개월) / 8,399,952,262(전기누적)]).
+    `fin2.extract.text._interim_cumulative_cols()`(Track B 추출기가 같은 문제를 헤더의
+    '누적' 토큰 위치로 이미 해결해둔 구조 판정 함수, 값 파싱이 아니라 **표 레이아웃 판정**이라
+    이 파일이 이미 공유 중인 `_detect_body_statement_tables()`류와 같은 성격 — 독립성 원칙은
+    "숫자를 어떻게 읽는가"에 적용되지, "어느 표가 본문인가/어느 열이 당기인가"라는 구조판정에는
+    이미 적용되지 않는다, 위 import 참고)를 재사용해 표 헤더에 [3개월|누적] 2단 구조가 있으면
+    '누적' 토큰이 붙은 첫 컬럼(period_offset=0)만, 없으면(FY 또는 헤더 미검출) 첫 값 컬럼만
+    채택한다 — 결과적으로 라벨당 값 1개(TE 판의 col_index=0 채택과 동형)만 후보로 낸다.
     """
-    from fin2.extract.text import _detect_body_statement_tables, _detect_fin_type, declared_unit
+    from fin2.extract.text import (
+        _detect_body_statement_tables, _detect_fin_type, declared_unit,
+        _interim_cumulative_cols,
+    )
 
     extra: list[FaceLine] = []
     fin_type = _detect_fin_type(root)
@@ -449,6 +472,9 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
             if u is None:
                 continue
             adecimal = _adecimal_from_unit(u)
+            # None ⇒ FY(연간비교, 첫 컬럼=당기) 또는 [3개월|누적] 헤더 미검출.
+            # 값 있음 ⇒ H1/Q3 등 interim: {amount_position: period_offset}, offset 0=당기누적.
+            cum_map = _interim_cumulative_cols(tbl)
             in_section = False
             members: list[tuple[str, list]] = []
             span = 0
@@ -462,7 +488,13 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
                     (cni[0][0], cni[0][1], "is.controlling_ni"),
                     (nci[0][0], nci[0][1], "is.noncontrolling_ni"),
                 ):
-                    for td in tds:
+                    for idx, td in enumerate(tds):
+                        # 당기(누적) 컬럼 하나만 채택 — 위 R36 docstring 참고.
+                        if cum_map is not None:
+                            if cum_map.get(idx) != 0:
+                                continue
+                        elif idx != 0:
+                            continue
                         displayed = parse_displayed(_cell_text(td))
                         if displayed is None:
                             continue

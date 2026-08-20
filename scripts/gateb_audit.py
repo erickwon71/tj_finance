@@ -96,18 +96,29 @@ def select_corps(session, args):
     if args.corp_file:
         corps = [ln.strip() for ln in Path(args.corp_file).read_text().splitlines() if ln.strip()]
         return sorted(set(corps))
+    # ★ P3-1 그룹③-a(2026-08-20) — 상장폐지사를 감사 유니버스에서 제외.
+    # CLAUDE.md 스코프("현재 시점 KOSPI/KOSDAQ 상장된 보통주")상 상장폐지사는 대상 밖인데,
+    # 이 쿼리(전체/범위 감사 기본 진입점)가 그걸 걸러내지 않아 ⓪-4 파이프라인이 raw_report
+    # 를 NAS 아카이브로 정상 이관한(delisting-archive-automated, 의도된 동작) 문서까지 여전히
+    # "감사 대상"으로 붙잡고 SOURCE_NOT_TRACK_A(pending)로 떨어뜨렸다(위지윅스튜디오 01276327,
+    # 58건 실증). std_v3/R35 로직 자체는 버그가 아니었다 — 유니버스 쿼리만 좁힌다.
+    # --corp/--corp-file(위 두 분기, 명시적 단일/목록 지정)은 조사 목적일 수 있어 그대로 둔다
+    # (상장폐지 후 이력도 그 경로로는 여전히 조회 가능).
+    join = "JOIN corporations c ON c.corp_code = t.corp_code"
     if args.source == "v3":
-        q = "SELECT DISTINCT corp_code FROM std_financials_v3"
+        q = f"SELECT DISTINCT t.corp_code FROM std_financials_v3 t {join}"
         where = " WHERE"
     else:
-        q = "SELECT DISTINCT corp_code FROM std_financials_v2 WHERE version=1"
+        q = f"SELECT DISTINCT t.corp_code FROM std_financials_v2 t {join} WHERE t.version=1"
         where = " AND"
+    q += f"{where} c.is_active = true"
+    where = " AND"
     params = {}
     if args.corps:
         lo, hi = args.corps.split(":")
-        q += f"{where} corp_code >= :lo AND corp_code < :hi"
+        q += f"{where} t.corp_code >= :lo AND t.corp_code < :hi"
         params = {"lo": lo, "hi": hi}
-    q += " ORDER BY corp_code"
+    q += " ORDER BY t.corp_code"
     corps = [r.corp_code for r in session.execute(text(q), params)]
     if args.sample:
         random.seed(args.seed)

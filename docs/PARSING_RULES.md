@@ -2217,6 +2217,60 @@ R40(패턴B 문서화)이 전부 안전 검증된 뒤, `scripts/run_gateb_audit_
 
 ---
 
+## R41. `fin2/audit/curated_key_scan.py` 신설 — Gate B curated 키 재생성기(전수 패턴
+스캔 → 신규/재발 후보 탐지, 자동 코드 반영 없음)
+
+**배경** — R15~R33 다수가 특정 (corp, fy, period[, basis]) 를 리터럴로 열거한 override
+로 구현돼 있다(`combine.py`/`face_audit.py`). 이 키 집합은 생성 당시 DB 스냅샷의 1회성
+산출물이라, 새 필링이 들어와도 자동으로 안 늘어난다 — 같은 회사가 같은 구조로 다음
+분기를 공시하면 버그가 조용히 재발하거나(값이 틀림) Gate B 가 pending 을 fail 로
+잘못 잡는다. 설계: `docs/plans/gateb_curated_key_regenerator_design_2026-08-18.md`
+(§6 결정사항 2026-08-19 확정, 구현은 2026-08-21).
+
+**구현 범위(§6 확정 1차 범위)** — 4개 family:
+- **T2**(`report_lines` 직접 전수 스캔, 원 생성 스크립트 corp 조건 없음 재사용):
+  `sga_subline`(`_SGA_SUBLINE_OVERRIDE_KEYS`) · `cogs_additive`(`_COGS_ADDITIVE_OVERRIDE`).
+- **T1**(XML/PDF 재파싱 없이 이미 계산된 `face_audit`(v3) 의 `fail_detail` 재사용,
+  R38 xbrl_zip 전사 반영으로 항상 최신 유지):
+  `trade_payables_additive`(`_TRADE_PAYABLES_ADDITIVE_OVERRIDE`, BS 부채성 라인 2-조합
+  합이 report_won 과 일치하는 후보를 찾는 휴리스틱) ·
+  `cogs_concept_mismatch`(`_COGS_CONCEPT_MISMATCH_KEYS`, `report_won==cogs+sga`±1 재확인).
+
+**T1/T2 비대칭(구현 중 발견, 설계 §5-C 캐비엇의 실제 사례)** — T2 는 모집단(`report_lines`)
+이 override 등록과 무관해 ①일치(=동치성 증명)/④소멸까지 전부 계산 가능하다. 반면 T1 은
+모집단(`face_audit.fail_detail`)이 **구조적으로 이미 등재분을 제외**한다 — 등재 키는
+`cogs_concept_mismatch` 는 face_audit.py 가 pending 재분류, `trade_payables_additive` 는
+combine.py 가 build 시점에 db_won 자체를 고쳐 PASS 로 뜨기 때문에, 애초에 VALUE_DIFF 로
+안 잡힌다. 그래서 T1 은 forward/lateral 후보만 내고 matched/vanished 는 계산하지 않는다
+(계산해도 등재분 100%가 항상 "vanished"로 나와 의미 없음 — `_classify_residual()`).
+
+**동치성 검증(①일치, 최초 실행 2026-08-21)** — T2 두 family 전부 등재 키와 **정확히 일치**:
+`sga_subline` 685/685, `cogs_additive` 319/319(소멸 0, 재구현이 원 생성 스크립트와
+100% 동일 로직임을 실측 확인). 실행 시간 T2 두 family 합산 ~90초, T1 두 family 합산 ~5초
+(report_lines 전수가 아니라 face_audit 재사용이라 빠름) — daily/반기 배치 오버헤드로 무해.
+
+**최초 실행 결과(2026-08-21)** — 신규후보 31건(소멸 0): `sga_subline` forward 14 ·
+`cogs_additive` forward 2(전부 2026 H1, 설계문서가 예견한 "2026 반기 백로그 적재 시
+curated 키 stale" 시나리오가 실제로 재현됨) · `trade_payables_additive` lateral 15
+(원문대조 전 후보, §4 경고대로 자동반영 대상 아님) · `cogs_concept_mismatch` 0.
+`curated_key_candidates` 테이블(신규, `collector/models.py`)에 적재, status='new'로
+사람 리뷰 대기.
+
+**배선** — `scripts/collect_new.py` 두 call site(메인 ④ 이후 · `--standardize-only`
+재개 이후) 모두 `_run_curated_key_scan()` 호출(`docs/runbook_new_parser_pipeline_
+integration.md` 체크리스트 ① 준수). 알림은 기존 `scripts/notify.py::notify_macos()`
+재사용(설계문서가 "알림 코드 전무"라 적었던 2026-08-18 이후 이미 C10 트랙에서 추가돼
+있었음 — 새로 안 만들어도 됐음). 후보 0건이면 로그만, 1건 이상이면 macOS 알림 팝업+로그
+요약(§6 결정사항 1).
+
+**범위 밖(§6 결정사항 2·3, 별도 트랙)**: `_FX_PRESENTATION_CURRENCY_KEYS`(T1-3, 원문
+표시통화 판정 규칙 신설 필요) · T0 축B(신규 회사가 blanket override 대상이 되는 경우,
+수동 작성 부담 큼).
+
+**자동 코드 반영 없음** — 후보는 사람이 원문대조 후 수동 등재(R15~R33 워크플로우와 동일).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

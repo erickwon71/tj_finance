@@ -619,6 +619,29 @@ def _sync_periodic_apis(corps: list[str]) -> None:
         logger.info(f"[collect] ⑤-3 배당/자기주식/직원/출자/임원보수(FY{fy}) 기업 {len(corps)} · 행 {rows:,}")
 
 
+def _run_curated_key_scan() -> None:
+    """④ 후속 — Gate B curated 키 재생성기(§5-B, 2026-08-19 확정 범위 1차 구현,
+    docs/plans/gateb_curated_key_regenerator_design_2026-08-18.md) 전수 패턴 스캔.
+
+    R15~R33 다수가 (corp,fy,period[,basis]) 리터럴 override 로 구현돼 있어, 새 필링이
+    같은 부류로 들어와도 자동으로 안 잡힌다(stale). 여기서 **corp 무관 전수** 재스캔해
+    신규/재발 후보를 `curated_key_candidates` 에 적재하고(자동 코드 반영 없음, §5-A),
+    1건 이상이면 macOS 알림(§6 결정사항 1).
+
+    ★이 함수는 **두 call site** 에서 불려야 한다(메인 · `--standardize-only` 재개) —
+      `docs/runbook_new_parser_pipeline_integration.md` 체크리스트 ①과 동일 원칙.
+      `corps` 인자를 받지 않는다 — 스캔 모집단이 이번에 처리된 기업이 아니라 전체
+      report_lines/face_audit 패턴이라(§5-A, 신규 corp 축까지 잡아야 lateral 후보를
+      놓치지 않음), 매 호출 corp 무관하게 항상 전수로 돈다. 비치명(수집 계속)."""
+    try:
+        from fin2.audit.curated_key_scan import run_all_scans
+        res = run_all_scans(notify=True)
+        logger.info(f"[collect] ④+ curated 키 재생성기 — 신규후보 {res['total_new']}건 · "
+                    f"소멸후보 {res['total_vanished']}건")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ④+ curated 키 재생성기 실패(비치명적): {exc}")
+
+
 def _refresh_valuation_daily() -> None:
     """A4a — 수집 후 valuation_daily matview 갱신(CONCURRENTLY, 읽기 비차단). 비치명적 실패."""
     try:
@@ -737,6 +760,7 @@ def main() -> None:
         _sync_order_backlog(affected)
         _sync_periodic_apis(affected)
         _refresh_valuation_daily()
+        _run_curated_key_scan()
         return
 
     from collector.downloader import run_downloads
@@ -854,6 +878,9 @@ def main() -> None:
 
     # ⑥ valuation_daily matview 갱신(A4a) — 오늘 반영분(신규 재무·주가)까지 밸류에이션 뷰에 즉시 노출.
     _refresh_valuation_daily()
+
+    # ④+ curated 키 재생성기 — 표준화 직후 전수 패턴 재스캔(§5-B, 위 함수 docstring 참고).
+    _run_curated_key_scan()
 
     # ⑦ 미러 + 완전성 감사 (full 모드도 동일하게 수행)
     audit = _run_mirror_and_audit(days)

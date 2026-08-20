@@ -1178,6 +1178,43 @@ class FaceLineAudit(Base):
     )
 
 
+class CuratedKeyCandidate(Base):
+    """
+    Gate B curated 키 재생성기(2026-08-18/19 설계, `docs/plans/gateb_curated_key_regenerator_
+    design_2026-08-18.md`) 산출물 — combine.py/face_audit.py 에 리터럴로 박힌 override 키
+    집합(R16~R33)이 신규 필링에서 stale 해지는 걸 탐지하는 리뷰 큐. **자동 코드 반영 없음**
+    (§5-A) — 여기 쌓인 후보는 사람이 원문대조로 확인 후 수동으로 override 에 등재한다.
+
+    grain = (family, corp_code, fiscal_year, fiscal_period, basis). basis 없는 family
+    (예: sga_subline, trade_payables_additive — override 키 자체가 basis 미포함)는 ''.
+    classification 이 ①일치(로그만, 테이블 미적재)를 뺀 ②forward/③lateral/④vanished 만
+    적재 — §5-A 3분류.
+    """
+    __tablename__ = "curated_key_candidates"
+
+    family         = Column(String(40),   primary_key=True, comment="override family 식별자(§2 카탈로그)")
+    corp_code      = Column(String(8),    primary_key=True)
+    fiscal_year    = Column(SmallInteger, primary_key=True)
+    fiscal_period  = Column(String(5),    primary_key=True)
+    basis          = Column(String(12),   primary_key=True, default="")
+
+    classification = Column(String(20),   nullable=False,
+                             comment="forward_candidate/lateral_candidate/vanished_candidate")
+    identity_holds = Column(Boolean,      nullable=True,
+                             comment="family 고유 검증항등식(예: cogs+sga==report_won) 성립 여부")
+    detail         = Column(JSONB,        nullable=True, comment="후보 라벨/값/항등식 계산 상세")
+
+    status         = Column(String(10),   nullable=False, default="new",
+                             comment="new/reviewed/applied/rejected — 트리아지 상태(사람이 갱신)")
+    first_seen_at  = Column(DateTime,     default=datetime.utcnow)
+    last_seen_at   = Column(DateTime,     default=datetime.utcnow)
+    scan_version   = Column(String(20),   nullable=True)
+
+    __table_args__ = (
+        Index("ix_curated_key_candidates_status", "status", "family"),
+    )
+
+
 class CorpVerifyStatus(Base):
     """
     기업별 순차 검증 오케스트레이터(scripts/verify_corp_sequential.py) 산출물.

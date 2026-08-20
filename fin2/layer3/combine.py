@@ -1531,15 +1531,35 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
         # 그러면 label_raw 완전일치 그룹핑이 애초에 두 후보를 한 그룹으로 못 묶는다. 같은
         # norm()(번호/각주 제거, industry_profiles.norm — is.revenue grand-total 매칭에
         # 이미 쓰는 정규화)으로 묶는다.
+        # BS grand-total: drop candidates from a confirmed trust-account sub-statement
+        # (see _BS_GRAND_TOTAL / _trust_account_table_seqs above) *before* the by_label
+        # grouping just below, not after (2026-08-20, P3-1 Track D fail_b 패턴A 후속 —
+        # docs/plans/p3_1_trackd_failb_pattern_ab_fix_design_2026-08-20.md §1.3). Once the
+        # grouping key below ignores label wording for these 3 canonicals, a trust-account
+        # "자산총계" (legitimately 자산==부채 in its own sub-statement) could otherwise get
+        # pooled into the same group as the real statement's total — filtering the
+        # trust-account rows out first removes that risk. Only fires on the specific
+        # trust-account signature — never a blanket table_seq preference.
+        if c in _BS_GRAND_TOTAL and trust_seqs:
+            filtered = [r for r in rows if r.get("table_seq") not in trust_seqs]
+            if filtered:
+                rows = filtered
         # 여기서 depth 판정 *전에* 정규화 라벨 단위로 정리한다 — 같은 norm(label) 인데
         # 값이 다르고, 그중 amended=True(=더 나중 필링에서 값이 바뀐 셀)가 있으면, 그
         # 라벨의 amended=False(base) 후보는 버린다(= build_merged_lines() 가 원래
         # 하려던 edit을 대신 완성해준다). amended 후보가 없으면(=진짜 같은 필링 안의
         # 총계/하위항목 구조 차이) 손대지 않는다 — depth-우선은 그 목적에는 여전히
         # 유효하다.
+        # ★[2026-08-20, 패턴A] BS 총계 3종(_BS_GRAND_TOTAL)은 라벨 표현이 통째로
+        # 바뀌어도(예: "자산총계"→"자산") 같은 개념이라는 게 구조적으로 보장된다(한
+        # 필링·basis 안에 "진짜" 총계는 하나뿐 — _trust_account_table_seqs와 같은
+        # 전제). norm(label) 그룹핑은 표기 잡음(각주/공백)만 흡수하고 단어 자체가
+        # 바뀌는 드리프트는 못 묶으므로(00103130/플레이그램 2017Q1 실측), 이 3종에
+        # 한해 라벨을 무시하고 canonical 전체를 한 그룹으로 취급한다.
         by_label: dict[str, list[dict]] = defaultdict(list)
         for r in rows:
-            by_label[_norm_label(r.get("label_raw"))].append(r)
+            key = "\0GRAND_TOTAL" if c in _BS_GRAND_TOTAL else _norm_label(r.get("label_raw"))
+            by_label[key].append(r)
         stale_ids = set()
         for label, group in by_label.items():
             if not label or len(group) < 2 or len({g["value"] for g in group}) < 2:
@@ -1549,15 +1569,6 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
             stale_ids.update(id(g) for g in group if not g.get("amended"))
         if stale_ids:
             rows = [r for r in rows if id(r) not in stale_ids]
-        # BS grand-total: drop candidates from a confirmed trust-account sub-statement
-        # (see _BS_GRAND_TOTAL / _trust_account_table_seqs above) before stage ranking, so
-        # its clean-label 'exact' match can never outrank the real statement's
-        # letter-spaced 'normalized' one. Only fires on the specific trust-account
-        # signature — never a blanket table_seq preference.
-        if c in _BS_GRAND_TOTAL and trust_seqs:
-            filtered = [r for r in rows if r.get("table_seq") not in trust_seqs]
-            if filtered:
-                rows = filtered
         # current-strict canonicals (trade_payables 등): drop non-current (장기/비유동)
         # candidates *before* stage ranking, not only inside _reduce_conflict(). A
         # non-current row can legitimately land on a higher mapping stage than the

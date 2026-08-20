@@ -73,6 +73,48 @@ def test_no_amended_candidate_leaves_depth_priority_untouched():
     assert confirmed["bs.total_assets"] == 1_000
 
 
+def test_amended_wording_drift_wins_over_stale_exact_label():
+    # 00103130(플레이그램) 2017 Q1 실측 재현 (docs/plans/
+    # p3_1_trackd_failb_pattern_ab_fix_design_2026-08-20.md §1.3) — 정정본이 총계
+    # 라벨을 "자산총계"(exact)→"자산"(fuzzy)로 통째로 바꿔 씀. norm() 은 이 둘을 같은
+    # 그룹으로 못 묶으므로(단어 자체가 바뀜, 각주/공백 드리프트가 아님), _BS_GRAND_TOTAL
+    # 3종은 라벨을 무시하고 canonical 전체를 한 그룹으로 취급해야 stale-drop 이 걸린다.
+    cands = {
+        "bs.total_assets": [
+            _row(68_523_148_315, "exact", "자산총계", None, amended=False),
+            _row(68_145_914_314, "fuzzy", "자산", None,
+                 amended=True, amended_by="20180322000560"),
+        ],
+    }
+    confirmed, conflicts = _resolve(cands)
+    assert confirmed["bs.total_assets"] == 68_145_914_314
+    assert "bs.total_assets" not in conflicts
+
+
+def test_grand_total_wording_group_excludes_trust_account_rows():
+    # trust_seqs 필터가 by_label(GRAND_TOTAL) 그룹핑보다 먼저 적용돼야 한다 — 안 그러면
+    # 신탁계정의 amended 총계(자산==부채, table_seq 1)가 실제 재무제표의 총계와 같은
+    # "라벨 무시" 그룹에 섞여 들어가 stage-rank 를 오염시킨다. 신탁계정 행이 먼저
+    # 걸러지면 실제 재무제표의 amended 후보(950, fuzzy)가 그대로 채택돼야 한다.
+    def _row2(value, stage, label_raw, table_seq, amended=False, amended_by=None):
+        return {"value": value, "stage": stage, "label_raw": label_raw,
+                "section_path": None, "table_seq": table_seq,
+                "amended": amended, "amended_by": amended_by}
+
+    cands = {
+        "bs.total_assets": [
+            _row2(1_000, "exact", "자산총계", 0, amended=False),
+            _row2(950, "fuzzy", "자산", 0, amended=True, amended_by="X"),
+            _row2(500, "exact", "신탁자산총계", 1, amended=True, amended_by="X"),
+        ],
+        "bs.total_liabilities": [
+            _row2(500, "exact", "신탁부채총계", 1),
+        ],
+    }
+    confirmed, conflicts = _resolve(cands)
+    assert confirmed["bs.total_assets"] == 950
+
+
 def test_two_base_candidates_same_label_still_conflict_normally():
     # 둘 다 amended=False 인데 값이 갈리면(진짜 충돌) 기존 HOLD 동작이 유지돼야 한다 —
     # 이 수정이 "값이 다르면 무조건 하나를 고른다"로 퍼지면 안 된다.

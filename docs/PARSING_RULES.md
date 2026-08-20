@@ -2113,6 +2113,91 @@ fin2/tests/` 회귀 없음.
 
 ---
 
+## R39. `fin2/layer3/combine.py::_resolve()` — BS 총계 3종의 라벨-표현 드리프트가
+정정 전 값을 되살리던 결함(R38 fail_b 52건 후속, P3-1 Track D 패턴A)
+
+**증상** — R38(Track D) 재감사가 새로 드러낸 fail_b 774건을 `fail_tracks[field]=="D"`로
+정밀 필터한 진짜 541행(239개사) 중, BS 총계 3종(`bs.total_assets`/`bs.total_liabilities`/
+`bs.total_equity`) 684개 필드가 db(std_v3)와 Track D 재파싱 값이 서로 다르게 나왔다. db
+쪽이 정정 전(stale) 값을 잔존시키는 패턴이었다.
+
+**근거(실측, 00103130/플레이그램 2017 Q1)**:
+
+| 필링 | 라벨 | 값 |
+|---|---|---|
+| 원본(`20170515004380`) | "자산총계" | 68,523,148,315(=수정 전 db) |
+| [기재정정](`20180322000560`) | "자산" | 68,145,914,314(=원문 검산상 정확한 최신값) |
+
+`account_mapper.map()`은 `"자산총계"→stage=exact`, `"자산"→stage=fuzzy`(둘 다
+`bs.total_assets`)로 매핑한다. R34(위)는 `industry_profiles.norm()`으로 라벨을 정규화해
+묶은 뒤 `amended=True` 후보가 있으면 `amended=False` 후보를 depth 판정 전에 버리는데,
+`norm()`은 번호/각주/공백만 지우고 **단어 자체("총계")는 지우지 않는다** —
+`norm("자산총계")≠norm("자산")`이라 이번 케이스는 R34의 그룹핑을 그냥 통과해버린다.
+그 결과 `_STAGE_RANK`(exact=3>fuzzy=1) 타이브레이크가 정정으로 갱신된 값이 아니라
+정정 전(exact) 값을 채택했다. R34가 고친 건 "표기 잡음(formatting) 드리프트"이고, 이번은
+"단어 자체가 바뀌는(wording) 드리프트"라는 게 차이 — R34 문서의 "미조치 범위"가 정직하게
+남겨둔 잠복 가능성이 이번에 실측으로 확인된 사례다.
+
+**수정** — `bs.total_assets`/`bs.total_liabilities`/`bs.total_equity` 3개 canonical에
+한해, R34의 `by_label` 그룹핑 키를 `norm(label)`이 아니라 **라벨 무시(canonical 전체를
+한 그룹)**로 넓혔다. 이 3종은 한 필링·basis 안에 "진짜" 값이 하나뿐이어야 하는 총계라서
+"라벨이 달라도 같은 canonical이면 같은 개념"이라는 가정이 안전하다(`_trust_account_
+table_seqs` 가드가 이미 같은 전제로 특별취급하는 것과 동일 논리). **순서 안전장치**: 그룹
+범위가 넓어지면서 신탁계정의 amended 총계가(라벨이 달라도 이제 같은 그룹에 섞일 수 있어)
+실제 재무제표 총계를 오염시킬 위험이 R34 때보다 커져, `trust_seqs` 필터를 `by_label`
+그룹핑보다 **먼저** 적용하도록 순서를 바꿨다(원래는 그룹핑 다음이었음).
+
+**검증** — 00103130 2017 Q1 `build_std_v3.py` 재생성 → `total_assets` 68,523,148,315
+(정정 전) → 68,145,914,314(정정 후, 원문 일치)로 전환, `gateb_audit.py --recheck
+--no-commit` pass 114/fail 0/pending 18(fail_a·fail_b 0). 회귀 테스트 2종 추가
+(`fin2/tests/test_combine_amended_label_depth.py`: 라벨-표현 드리프트 재현 + 신탁계정
+비오염). `pytest tests/ fin2/tests/` 588 passed(기존 무관 실패 1건
+`test_lxintl_facility_table_dropped` 그대로) — 회귀 없음.
+
+**전사 영향범위(사전측정, 2026-08-20)** — std_v3 전체 (corp,fy,period) 151,961건을 BS
+전용 경량 스캔(zip 재파싱 없음)한 결과, "BS 총계 3종 candidate 값충돌+amended 후보존재"가
+1,058건(218개사) — 이 중 R34가 이미 처리 중인 302건을 빼면 **이번 수정이 실제로 새로
+고치는 건 156개사/756건**(total_assets 280·total_equity 266·total_liabilities 210).
+**138개사(719건)는 xbrl_zip-only(R38 Track D) 대상과 겹치지만, 18개사(37건)는 완전히
+그 밖**(Track A/B 커버리지, fy 2004~2025 전구간) — 이 결함은 Track D/xbrl_zip과 무관한
+std_v3 전역 결함이며, 백필 시 이 18개사를 xbrl_zip-only 백필과 별도로 반드시 포함해야
+한다.
+
+**미조치 범위** — 코드 수정은 향후 재생성분에 자동 반영되지만, 이미 저장된 std_v3 값은
+영향받은 (corp,fy,period,basis)를 `build_std_v3.py`로 별도 소급 재생성해야 한다(156개사/
+756건, 대상 목록은 재스캔 필요 — 스캔 스크립트는 세션 스크래치라 repo 미포함, 재현 로직은
+[[p3-1-trackd-failb-rootcause-2026-08-20]] 부록A).
+
+---
+
+## R40. Track D(xbrl_zip 재파싱) — 다중필링 narrow-prefer 재현 불가(알려진 감사 커버리지
+공백, 수정 안 함)
+
+**증상** — R38(Track D) 재감사가 새로 드러낸 fail_b 541행 중 232건이 `bs.trade_payables`
+(매입채무)에서 db(std_v3)와 Track D 재파싱 값이 불일치했다.
+
+**근거(실측, 00107987 2018H1·00112651 2017Q1 — 2건 모두 동일 구조)**:
+
+| 필링 | "매입채무" 표기 | 값 |
+|---|---|---|
+| 원본 | "매입채무 및 기타(유동)채무"(광의, 부모) + "단기매입채무/매입채무"(협의, 자식) | 광의 80,992,526,676 / **협의 39,217,873,634(=db)** |
+| [기재정정] | 광의 라벨만 재게재, 협의 세부항목 생략 | 80,992,526,676(=Track D 재파싱) |
+
+`combine.py`의 `_NARROW_PREFER`/`_BROAD_RE`(`_reduce_conflict()`, R23)가 그 기간의 원본+
+정정 **전체를 풀링**한 후보군에서 원본의 협의값을 정확히 우선 채택한다 — **db는 정확**.
+반면 `read_report_face_xbrl_zip()`(R38, Track D)은 감사 대상 rcept **하나(대개 정정본)만
+연다** — 정정본엔 협의 세부항목이 아예 없으니 광의값만 후보로 갖게 되고, db의(정확한)
+협의값과 불일치로 fail_b가 뜬다.
+
+**결론: 데이터 결함이 아니라 Track D 설계 자체의 한계다.** db 값도, 판정 등급(fail_b/
+REVIEW, fail_a 오승격 없음)도 이미 올바르므로 **수정하지 않는다** — Track D는 애초에
+"완전독립 감사가 아님"을 전제로 하는 트랙(R38 자체가 이미 "R10 재사용이라 Track A보다
+독립성이 약함"을 명시)이고, 여기에 다중필링 폴백까지 추가하면 그 존재의미(휴리스틱 REVIEW용
+대조)가 흐려진다. 개선하려면 후보가 db와 안 맞을 때 같은 기간의 다른(원본) 필링도 열어보는
+확장이 필요하지만 우선순위 낮음(별도 요청 시에만 착수) — [[p3-1-trackd-failb-rootcause-2026-08-20]].
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

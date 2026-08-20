@@ -807,6 +807,64 @@ def read_report_face(file_path: str | Path) -> list[FaceLine]:
     return _with_ni_attribution_text_fallback(lines, root)
 
 
+def read_report_face_xbrl_zip(
+    zip_path: str | Path, *, corp_code: str, rcept_no: str,
+    report_fiscal_year: int, report_fiscal_period: str,
+    period_end_date=None,
+) -> list[FaceLine]:
+    """Track D(XBRL_INSTANCE zip) face 재추출 — P3-1 그룹③-b(2026-08-20).
+
+    배경: 일부 filing 은 `download_tasks` 에 `xbrl_zip` 파일타입만 completed 로 등록되고
+    `xml`(document.xml)이 없다(전사 1,639건, 2015~2019 집중 — DART 가 그 시기 이 filing 들에
+    document.xml 자체를 애초에 제공하지 않는 것으로 실측 확인, 재다운로드 30/30 전부 [014]
+    회복 0건). `read_report_face_tracked()`가 `.xml`/`.pdf` 만 열 수 있어 이런 filing 은
+    `SOURCE_NOT_TRACK_A`(pending)로 떨어진다 — 하지만 std_v3 자체는 **데이터 갭이 아니다**:
+    R10(`fin2/extract/report_lines_xbrl.py::extract_report_lines_xbrl()`, XBRL_INSTANCE zip
+    전용 파서)가 daily 파이프라인에서 이미 zip 을 정상 처리해 report_lines/std_v3 에 값이
+    들어가 있다(실측: 오리엔탈정공 2015Q3 매출 131,915,704,465 등, 7개사 29건 전건 확인).
+    즉 이 함수가 메우는 건 std_v3 결함이 아니라 **감사기의 대조 경로 부재**(그룹①/R35 와
+    동류) — face_audit 나머지 트랙(A/B/C)이 전부 "원본을 감사 시점에 독자 재파싱"하는 것과
+    같은 관례로, R10 을 감사 시점에 재호출해 zip 을 다시 연다(저장된 report_lines 를 읽지
+    않음 — 모듈 docstring의 "표준화 파이프라인과 독립" 원칙 유지, 단 R10 자체의 추출 버그는
+    이 경로로는 못 잡는다는 잔여 한계가 있음. 상세 트레이드오프 =
+    `docs/plans/p3_1_cause_a_group23_remediation_design_2026-08-20.md` §3).
+
+    canonical 은 report_lines 에 없다(계층2는 canonical 미보유가 설계) — Track B
+    (`read_report_face_text`)와 동일하게 `account_mapper` 텍스트 매핑을 쓴다. R10 이 이미
+    라벨 카탈로그(`lab_*.xml`)로 해석한 한글 라벨이라 Track B 입력과 동질적.
+
+    col_index=0(당기)·adecimal=None(R10 이 이미 원 단위로 환산 완료, 스케일 재처리 불필요)만
+    채택. period_end_date 없으면 R10 자체가 `[]`(col0 판정 불가, 추측 금지)를 반환한다.
+    """
+    from fin2.extract.report_lines_xbrl import extract_report_lines_xbrl
+    from parser.common.account_mapper import get_mapper
+
+    try:
+        rows = extract_report_lines_xbrl(
+            zip_path, rcept_no=rcept_no, corp_code=corp_code,
+            report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
+            period_end_date=period_end_date,
+        )
+    except (FileNotFoundError, OSError):
+        return []
+    mapper = get_mapper()
+    lines: list[FaceLine] = []
+    for r in rows:
+        if r.col_index != 0 or r.value_won is None:
+            continue
+        mapping = mapper.map(r.label_raw, fs_section=r.statement.lower())
+        canon = mapping.account_code
+        if not canon or canon.startswith("unknown."):
+            continue
+        lines.append(FaceLine(
+            statement=r.statement, basis=r.basis, acode=r.label_raw[:80],
+            canonical=canon, label=r.label_raw[:80],
+            displayed_value=r.value_won, adecimal=None,
+            is_cumulative=r.is_cumulative, from_gapfill=False,
+        ))
+    return lines
+
+
 def read_report_face_tracked(file_path: str | Path,
                              all_cols: bool = False) -> tuple[list[FaceLine], str | None]:
     """read_report_face 와 동일하되 **어느 track 으로 읽었는지** 함께 반환.
@@ -1038,16 +1096,23 @@ def gate_status_for_row(ra: RowAudit, fail_field_tracks: dict[str, str]) -> str:
     Phase 2 census 실측). `evidence` 가 None 인 불일치(§1-B 경로 9: R32 파생 재구성
     후 불일치는 단일 최근접 후보가 없어 M1/M2 판정 자체가 성립 안 함)는 보수적으로
     기존과 동일하게 차단 쪽으로 센다.
+
+    ★③ P3-1 그룹③-b(2026-08-20, `read_report_face_xbrl_zip()` 참고) — Track D(xbrl_zip
+    재파싱)도 이 allowlist 에 추가. Track D 는 R10 파서를 감사 시점에 재호출할 뿐 문서 내
+    별개 XBRL 태그를 직접 스캔하는 Track A 만큼 독립적이지 않다(R10 자체의 추출 버그는
+    못 잡음, 설계문서 §3 트레이드오프 표 참고) — Track A 와 같은 최고신뢰(fail_a)를 주면
+    방향이 거꾸로다. **여기 빠뜨리면 Track D 의 모든 불일치가 조용히 fail_a 로 오승격한다**
+    (배선 필수 지점, 놓치기 가장 쉬움).
     """
     if ra.status == STATUS_PASS:
         return GATE_PASS
     if ra.status == STATUS_PENDING:
         return GATE_PENDING
     # fail: 실패필드 중 하나라도 Track A(또는 track 미상) → 확정버그로 차단.
-    # Track B(텍스트)·C(PDF)는 휴리스틱 → fail_b(REVIEW). (PDF 라인은 from_gapfill 이라 실제론
-    # fail 미발생·pending 이지만 방어적으로 분류.)
+    # Track B(텍스트)·C(PDF)·D(xbrl_zip 재파싱)는 휴리스틱/비완전독립 → fail_b(REVIEW).
+    # (PDF 라인은 from_gapfill 이라 실제론 fail 미발생·pending 이지만 방어적으로 분류.)
     fail_evidence = {f.field: f.evidence for f in ra.fields if f.reason in _FAIL_REASONS}
-    if any(fail_field_tracks.get(f) not in ("B", "C")
+    if any(fail_field_tracks.get(f) not in ("B", "C", "D")
            and fail_evidence.get(f) != EVIDENCE_M2_WEAK
            for f in ra.fail_fields):
         return GATE_FAIL_A

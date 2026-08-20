@@ -35,7 +35,8 @@ from sqlalchemy.dialects.postgresql import insert
 from collector.db import get_session, engine
 from collector.models import FaceAudit, FaceLineAudit, Base
 from fin2.audit.face_audit import (
-    read_report_face_tracked, audit_std_row, gate_status_for_row, STD_FIELD_CANONICAL,
+    read_report_face_tracked, read_report_face_xbrl_zip, audit_std_row, gate_status_for_row,
+    STD_FIELD_CANONICAL,
 )
 from fin2.audit.line_audit import reconcile_report_lines, reconcile_report_lines_text
 
@@ -74,19 +75,24 @@ def ensure_table():
 
 
 def file_path_map(session, rcepts):
-    """rcept_no 집합 → file_path. xml 우선, 없으면 pdf(Track C, PDF-only 보고서 검증)."""
+    """rcept_no 집합 → file_path. xml 우선, 없으면 pdf(Track C)·xbrl_zip(Track D, P3-1
+    그룹③-b, 2026-08-20 — document.xml 자체가 없어 xml/pdf 둘 다 없는 filing 전용,
+    `read_report_face_xbrl_zip()` 참고) 순으로 폴백."""
     if not rcepts:
         return {}
     rows = session.execute(text("""
         SELECT rcept_no, file_path, file_type FROM download_tasks
-        WHERE rcept_no = ANY(:rs) AND file_type IN ('xml','pdf') AND status='completed'
+        WHERE rcept_no = ANY(:rs) AND file_type IN ('xml','pdf','xbrl_zip') AND status='completed'
           AND file_path IS NOT NULL
     """), {"rs": list(rcepts)}).fetchall()
     fmap: dict[str, str] = {}
+    pref = {"xml": 0, "pdf": 1, "xbrl_zip": 2}   # 낮을수록 우선(xml 최우선, zip 최후 폴백)
+    best: dict[str, int] = {}
     for r in rows:
-        # xml 이 이미 있으면 유지(우선). 없을 때만 pdf 채택.
-        if r.file_type == "xml" or r.rcept_no not in fmap:
+        p = pref.get(r.file_type, 99)
+        if r.rcept_no not in best or p < best[r.rcept_no]:
             fmap[r.rcept_no] = r.file_path
+            best[r.rcept_no] = p
     return fmap
 
 
@@ -166,14 +172,27 @@ def audit_corp(session, corp, args, agg):
     face_cache_all: dict[str, list] = {}   # all_cols(비교행 검증용)
     track_of: dict[str, str | None] = {}   # rcept → 'A'/'B'/None (gate_status 분류용)
 
-    def face_of(rc, all_cols=False):
+    def face_of(rc, all_cols=False, row_ctx=None):
+        """row_ctx: 그 rcept 를 낸 std 행(dict, fiscal_year/fiscal_period/period_end 포함) —
+        fp 가 `.zip`(Track D, xbrl_zip-only filing)일 때만 쓴다. `read_report_face_tracked()`
+        는 시그니처상 이 컨텍스트를 받지 않아(`.xml`/`.pdf` 는 파일 자체에 기간 정보가 있어
+        불필요) 이 케이스만 별도 분기한다 — 그 외 트랙(A/B/C)은 기존과 완전히 동일."""
         if not rc:
             return []
         cache = face_cache_all if all_cols else face_cache
         if rc not in cache:
             fp = fpmap.get(rc)
             try:
-                lines, track = read_report_face_tracked(fp, all_cols=all_cols) if fp else ([], None)
+                if fp and fp.endswith(".zip") and row_ctx is not None:
+                    lines = read_report_face_xbrl_zip(
+                        fp, corp_code=corp, rcept_no=rc,
+                        report_fiscal_year=row_ctx["fiscal_year"],
+                        report_fiscal_period=row_ctx["fiscal_period"],
+                        period_end_date=row_ctx.get("period_end"),
+                    )
+                    track = "D"
+                else:
+                    lines, track = read_report_face_tracked(fp, all_cols=all_cols) if fp else ([], None)
             except (FileNotFoundError, OSError):
                 # 소실/손상 파일(Gate A MISSING_FILE 등) → face 없음 → 해당 행 pending(크래시 아님)
                 lines, track = [], None
@@ -200,9 +219,9 @@ def audit_corp(session, corp, args, agg):
         # 비교행은 값이 후속보고서 전기/전전기 컬럼 → all_cols face 로 검증.
         ra = audit_std_row(
             d, basis=basis,
-            bs_face=face_of(rc.get("BS"), all_cols=is_comp),
-            is_face=face_of(rc.get("IS"), all_cols=is_comp),
-            cf_face=face_of(rc.get("CF"), all_cols=is_comp),
+            bs_face=face_of(rc.get("BS"), all_cols=is_comp, row_ctx=d),
+            is_face=face_of(rc.get("IS"), all_cols=is_comp, row_ctx=d),
+            cf_face=face_of(rc.get("CF"), all_cols=is_comp, row_ctx=d),
             is_comparative=is_comp,
         )
         # promote gate_status: 실패필드 track('A'/'B')으로 fail_a(확정버그)/fail_b(휴리스틱) 분리

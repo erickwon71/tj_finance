@@ -2073,6 +2073,46 @@ KOSPI/KOSDAQ 상장된 보통주")에 맞춰 **감사 유니버스에서 아예 
 
 ---
 
+## R38. `fin2/audit/face_audit.py::read_report_face_xbrl_zip()` + `scripts/gateb_audit.py`
+배선 3곳 — Track D(xbrl_zip) 신설, `document.xml` 없는 filing 의 감사 커버리지 공백
+해소(P3-1 '원인 A' 그룹③-b 후속)
+
+**증상** — 일부 filing 은 `download_tasks`에 `xbrl_zip` 파일타입만 `completed`로 등록되고
+`xml`(document.xml)이 없다(전사 1,639건 중 1,627건, 2015~2019 집중 — 표본 30건 재다운로드
+전부 `[014]` 회복 0건으로 "종종 영구적" 확정, `redownload_202608_xbrl_zip_bulk.py`
+docstring 참고). `file_path_map()`이 `file_type IN ('xml','pdf')`만 찾아 이런 filing 을
+통째로 못 읽어 `SOURCE_NOT_TRACK_A`(pending)로 떨어졌다.
+
+**근거(실측)** — 이건 데이터 갭이 아니다. `fin2/extract/report_lines_xbrl.py::
+extract_report_lines_xbrl()`(R10, XBRL_INSTANCE zip 전용 파서)가 daily 파이프라인에서
+이미 zip 을 정상 처리해 report_lines/std_v3 에 값이 들어가 있다(오리엔탈정공 2015Q3
+`[기재정정]분기보고서`, rcept 20151123000202: `revenue` 연결 131,915,704,465/별도
+97,795,299,224, `controlling_ni` -4,000,961,350 — 전부 std_v3 와 zip 재추출 값이 정확히
+일치). 유일한 문제는 face_audit 의 대조 경로 부재(그룹①/R35 와 동류).
+
+**수정** — `read_report_face_xbrl_zip()` 신설: `extract_report_lines_xbrl()`(R10)을 감사
+시점에 재호출(저장된 report_lines 를 읽지 않고 zip 을 다시 열어 Track A/B/C 와 같은
+"항상 원본 재유도" 관례 유지), `col_index=0`(당기)만, `account_mapper` 텍스트 매핑(Track
+B 와 동일 — canonical 은 report_lines 에 없음). 독립성 잔여 한계: R10 파서 자체의 추출
+버그(부호·스케일·개념매핑 오류)는 이 경로로는 못 잡는다 — Track A(문서 내 별개 XBRL 태그
+직접 스캔)만큼 완전독립은 아니다. 배선 3곳(전부 필수, 하나라도 빠지면 조용히 결함):
+① `file_path_map()` — `file_type IN (...)`에 `'xbrl_zip'` 추가(xml>pdf>zip 우선순위).
+② `face_of()` — `fp`가 `.zip`이면 `read_report_face_xbrl_zip()` 호출, `track="D"`.
+③ `gate_status_for_row()` — `("B","C")` 하드코딩 allowlist를 `("B","C","D")`로 확장(★
+가장 잊기 쉬운 지점 — 안 하면 Track D 의 모든 불일치가 조용히 `fail_a`로 오승격한다.
+Track D 는 R10 재사용이라 Track A 보다 독립성이 약해 최고신뢰를 주면 안 됨).
+
+**검증** — 오리엔탈정공 2015Q3(위 실측 필링): 수정 전 `SOURCE_NOT_TRACK_A` 42개 필드
+전량 pending → 수정 후 `pass` 전환(잔여 pending 5개는 R10 자체 추출 갭, 별도). 오리엔탈정공
+전체(2015~2026, 132행): pass 112 / fail 0 / pending 20, 일치율 100.0%. `xbrl_zip`-only
+777개사 중 80개사 표본 `--recheck --no-commit` 재감사 — **fail_a 신규 발생 0건**(9→9,
+§ 게이팅 수정의 핵심 검증 포인트) 확인. pending 1790→1698 이 pass +40·fail_b +52 로
+분해(새로 읽히게 된 값 중 실제 불일치는 fail_b/REVIEW 로 안전하게 분류, fail_a 로 오승격
+안 됨 — 이 fail_b 52건 자체의 개별 원인규명은 범위 밖, 향후 트랙). `pytest tests/
+fin2/tests/` 회귀 없음.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

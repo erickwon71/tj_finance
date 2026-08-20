@@ -2196,6 +2196,25 @@ REVIEW, fail_a 오승격 없음)도 이미 올바르므로 **수정하지 않는
 대조)가 흐려진다. 개선하려면 후보가 db와 안 맞을 때 같은 기간의 다른(원본) 필링도 열어보는
 확장이 필요하지만 우선순위 낮음(별도 요청 시에만 착수) — [[p3-1-trackd-failb-rootcause-2026-08-20]].
 
+**R38 후속 — xbrl_zip 전사 반영 완료(2026-08-21)**: R38(Track D 신설)+R39(패턴A 수정)+
+R40(패턴B 문서화)이 전부 안전 검증된 뒤, `scripts/run_gateb_audit_parallel.sh`
+(5-shard, `--source v3 --recheck`)로 **std_v3 전체 303,859행**(제한된 xbrl_zip-only
+표본이 아니라 전 유니버스)을 실제 commit 재감사했다. 재감사 전 `face_audit_snap_20260820`
+기준선 스냅샷 대비 행단위 gate_status 전이:
+
+| 전이 | 건수 | 해석 |
+|---|---|---|
+| pending → pass | 558 | Track D 커버리지 공백 해소(정상 일치) |
+| pending → fail_b | 300 | Track D로 새로 읽혔으나 값불일치 — REVIEW 등급(R40류, 안전) |
+| fail_b → pass | 7 | R39(패턴A) 수정으로 정정 |
+| fail_a → pass | 2 | R39(패턴A) 수정으로 정정 |
+| fail_b → pending | 1 | 개별 원인 미조사(경미, 저위험 방향 — pending 은 out-of-scope 일 뿐 오탐 아님) |
+
+**pass→fail 전이, X→fail_a 전이는 0건**(전수 확인 — `fail_a` 283건 중 BS 총계 3종
+[`bs.total_assets`/`bs.total_liabilities`/`bs.total_equity`] 포함 행 0건). 사전 --no-commit
+표본 테스트(R38/R39 각 검증절)의 "fail_a 신규 0건" 예측이 전수 commit 규모에서도 정확히
+재현됨 — [[gateb-full-reaudit-is-required-to-close]] 원칙대로 표본이 아닌 전수로 트랙 종료.
+
 ---
 
 ## 부록 A. 원문(DART XML) 함정 카탈로그

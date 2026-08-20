@@ -2271,6 +2271,51 @@ integration.md` 체크리스트 ① 준수). 알림은 기존 `scripts/notify.py
 
 ---
 
+## R42. `bs.trade_payables` 정정본 하위라인 재구성이 남긴 stale 셀 오채택 — R16 계열의
+신규 확인 사례(R41 lateral 스캔 후속)
+
+**배경** — R41(위) 의 `trade_payables_additive` lateral 후보 15건을 원문대조하다 발견.
+"2-라인 합" 이 아니라 **단일 셀 오채택**이었다 — `_NARROW_PREFER`/
+`_TRADE_PAYABLES_PARENT_OVERRIDE_CORPS`(R16) 와 **근본적으로 같은 트레이드오프의 신규
+사례**, 새 버그 메커니즘이 아니다. 설계:
+`docs/plans/gateb_trade_payables_stale_subline_r42_2026-08-21.md`.
+
+**메커니즘** — 원본(최초등록본) BS 는 "매입채무 및 기타유동채무"(부모총계) 아래
+"단기매입채무" 하위라인을 별도로 보여주는데, 정정본이 하위라인 구성을 바꾸면서(삭제하거나
+각주번호만 추가) 같은 라벨의 셀을 다시 쓰지 않는다. **R2 정본 정책대로**(정정이 건드리지
+않은 셀은 원본 유지) 그 stale 한 "단기매입채무" 셀이 후보 풀에 그대로 남고, exact-stage
+alias 라 `_NARROW_PREFER`의 일반정책과 같은 이유로 정정본의 현재 부모총계보다 먼저
+확정돼버린다.
+
+**basis 의존성(신규 발견)** — `_TRADE_PAYABLES_ADDITIVE_OVERRIDE`(R17)는 "basis 는 별도
+키 불필요"라 가정했으나, 쏠리드(00364403) 2015Q3 실측으로 이 가정이 깨진다 — 연결은
+current 라벨이 정답, 별도는 non-current 라벨이 정답이다. 그래서 R42 의
+`_TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE` 는 **(corp, fy, period, basis) 4-튜플**로 키를
+잡는다(`_resolve()` 에 `basis` 파라미터 신규 추가).
+
+**`_CURRENT_STRICT` 우회 필요** — 일신석재(00146296)처럼 정답이 비유동인 경우, current
+라벨(오답)이 후보 풀에 있으면 `_CURRENT_STRICT` 사전필터가 정답(비유동)을 먼저 지워버린다
+→ override 는 `rows`(필터 후)가 아니라 `cands[canonical]`(필터 전 원본)에서 직접 검증된
+라벨을 찾는다.
+
+**0-값 중복 셀 함정(구현 중 실측 발견, 코스나인 00442455 2021Q3)** — 같은 rcept 안에
+목표 라벨이 **두 번**(정상값 1건 + 스퓨리어스 0값 1건) 나타날 수 있다(원인 미상 파서
+중복행, R2/정정과 무관) — `len(vals)==1` 판정 전에 0-값을 제외해야 한다
+(`_reduce_conflict()`의 shallowest-depth 풀과 같은 관례).
+
+**적용 범위 · 검증** — 14건(00626011 아이텍은 이미 알려진 R23 결함과 동일 corp라 제외) 전부
+report_lines 정정 전/후 rcept 비교로 원문 계보 확인(2026-08-21). `build_std_v3.py --corp` +
+`gateb_audit.py --recheck` 재실행으로 14건 전부 fail_detail 에서 `bs.trade_payables`
+VALUE_DIFF 소멸 확인, 같은 corp 의 다른 전체 기간에 새 fail 0(pre-existing 미등재 사례만
+잔존, 회귀 아님). `pytest tests/ fin2/tests/` 597건 통과(기존 무관 실패
+`test_lxintl_facility_table_dropped` 1건 그대로, +5 신규).
+
+근거: `fin2/layer3/combine.py::_resolve()`(`_TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE`) ·
+`fin2/tests/test_combine_curated_overrides.py` · 메모리
+`gateb-trade-payables-stale-subline-r42-2026-08-21`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -2334,6 +2379,7 @@ integration.md` 체크리스트 ① 준수). 알림은 기존 `scripts/notify.py
 | R31 | `docs/plans/t22_hyphen_negative_gate_todo_2026-08-16.md` · `parser/xml/table_extractor.py::_NUMBER_PATTERN` · `fin2/tests/test_hyphen_negative_gate_r31.py` · `scripts/census_t22_hyphen_negative_2026-08-16.py`·`scripts/scan_r31_true_targets_2026-08-16.py`·`scripts/reload_report_lines_corp.py`(`--year-max`)/`scripts/build_std_v3.py`/`scripts/snapshot_r31_backfill_2026-08-16.py` |
 | R34 | P3-1 재감사 후속(2026-08-20) · `fin2/layer3/combine.py::_resolve()` · `fin2/tests/test_combine_amended_label_depth.py` · `scripts/investigate_p3_combine_live_check.py`·`scripts/investigate_p3_depth_bug_census.py`·`scripts/verify_p3_depth_bug_fix.py` |
 | R35 | P3-1 원인 A 후속(2026-08-20) · `fin2/audit/face_audit.py::_ni_attribution_text_candidates()`/`_with_ni_attribution_text_fallback()` · `fin2/tests/test_ni_attribution_text_fallback.py` · `scripts/investigate_p3_cause_a_field_census.py`·`scripts/investigate_p3_cause_a_trackb_probe.py`·`scripts/investigate_p3_cause_a_impact_measure.py` |
+| R42 | `docs/plans/gateb_trade_payables_stale_subline_r42_2026-08-21.md` · 메모리 `gateb-trade-payables-stale-subline-r42-2026-08-21` · `fin2/layer3/combine.py::_resolve()` (`_TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE`) · `fin2/tests/test_combine_curated_overrides.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황

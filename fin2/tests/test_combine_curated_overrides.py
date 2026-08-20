@@ -252,3 +252,86 @@ def test_no_corp_arg_defaults_to_no_override():
     }
     confirmed, conflicts = _resolve(cands)
     assert confirmed["is.revenue"] == 1_614_747_527
+
+
+# --- trade_payables: stale-sub-line override (2026-08-21, R42) ---------------------
+# docs/plans/gateb_trade_payables_stale_subline_r42_2026-08-21.md — R41의
+# trade_payables_additive lateral 스캔이 우연히 잡아낸 신규 사례. "두 라인 합"이 아니라
+# 정정본이 하위라인 구성을 바꾸면서 원본의 '단기매입채무' 셀이 stale 하게 남아 exact-stage
+# 로 먼저 confirm 돼버리는 단일 셀 오채택.
+
+def test_trade_payables_stale_subline_override_picks_current_parent():
+    # 부스타(00124276) 2019H1(별도) 형태 재현: 원본의 '단기매입채무'(exact, stale)가
+    # 정정본의 '매입채무 및 기타유동채무'(normalized, 현재값)보다 먼저 confirm되는 것을
+    # override로 막는다.
+    cands = {
+        "bs.trade_payables": [
+            _row(11_591_743_703, "normalized", "매입채무 및 기타유동채무",
+                 "부채", node_role="P"),
+            _row(6_389_809_398, "exact", "단기매입채무",
+                 "부채>매입채무 및 기타유동채무", node_role="F"),
+        ],
+    }
+    confirmed, conflicts = _resolve(cands, "00124276", 2019, "H1", "separate")
+    assert confirmed["bs.trade_payables"] == 11_591_743_703
+    assert "bs.trade_payables" not in conflicts
+
+
+def test_trade_payables_stale_subline_override_bypasses_current_strict():
+    # 일신석재(00146296) 2015Q3(별도) 형태 재현: 정답이 비유동('장기매입채무 및
+    # 기타비유동채무')인데, 오답인 current 라벨('단기매입채무')이 후보 풀에 있어
+    # _CURRENT_STRICT 사전필터가 정답을 먼저 지워버릴 수 있다 — override 는 `rows`(필터
+    # 후)가 아니라 cands[canonical](필터 전 전체)에서 직접 찾으므로 걸러지지 않는다.
+    cands = {
+        "bs.trade_payables": [
+            _row(728_629_660, "normalized", "장기매입채무 및 기타비유동채무",
+                 "비유동부채", node_role="P"),
+            _row(1_774_009_107, "exact", "단기매입채무",
+                 "부채>유동부채>매입채무 및 기타유동채무", node_role="F"),
+        ],
+    }
+    confirmed, conflicts = _resolve(cands, "00146296", 2015, "Q3", "separate")
+    assert confirmed["bs.trade_payables"] == 728_629_660
+
+
+def test_trade_payables_stale_subline_override_is_basis_scoped():
+    # ★쏠리드(00364403) 2015Q3 실측: 연결은 current 라벨이 정답인데 별도는 non-current
+    # 라벨이 정답이다 — 같은 (corp,fy,period) 라도 basis 가 다르면 정답 라벨이 다를 수
+    # 있으므로, override 키는 반드시 basis 까지 포함해야 한다(_TRADE_PAYABLES_ADDITIVE_
+    # OVERRIDE 처럼 basis 를 생략하면 이 사례에서 한쪽 basis 가 깨진다).
+    cands_separate = {
+        "bs.trade_payables": [
+            _row(32_177_948_972, "normalized", "장기매입채무 및 기타비유동채무",
+                 "부채", node_role="P"),
+            _row(26_132_646_626, "exact", "단기매입채무 (주28)",
+                 "부채>유동부채>매입채무 및 기타유동채무 (주14,28)", node_role="F"),
+        ],
+    }
+    confirmed, _ = _resolve(cands_separate, "00364403", 2015, "Q3", "separate")
+    assert confirmed["bs.trade_payables"] == 32_177_948_972
+
+    cands_consolidated = {
+        "bs.trade_payables": [
+            _row(31_857_983_120, "normalized", "매입채무 및 기타유동채무",
+                 "유동부채", node_role="P"),
+            _row(23_072_651_325, "exact", "단기매입채무 (주28)",
+                 "부채>유동부채>매입채무 및 기타유동채무 (주14,28)", node_role="F"),
+        ],
+    }
+    confirmed, _ = _resolve(cands_consolidated, "00364403", 2015, "Q3", "consolidated")
+    assert confirmed["bs.trade_payables"] == 31_857_983_120
+
+
+def test_trade_payables_stale_subline_non_override_key_unaffected():
+    # 대조군: 등재 안 된 (corp,fy,period,basis) 는 이 override 가 발동하지 않고 기존
+    # 동작(_NARROW_PREFER, 좁은/자식 값)이 그대로 유지돼야 한다.
+    cands = {
+        "bs.trade_payables": [
+            _row(11_591_743_703, "normalized", "매입채무 및 기타유동채무",
+                 "부채", node_role="P"),
+            _row(6_389_809_398, "exact", "단기매입채무",
+                 "부채>매입채무 및 기타유동채무", node_role="F"),
+        ],
+    }
+    confirmed, conflicts = _resolve(cands, "00999999", 2019, "H1", "separate")
+    assert confirmed["bs.trade_payables"] == 6_389_809_398

@@ -109,6 +109,51 @@ _TRADE_PAYABLES_ADDITIVE_OVERRIDE = {
     ("01093007", 2025, "FY"): ("매입채무", "기타채무"),             # LS에코에너지
 }
 
+# ★trade_payables stale-sub-line override (2026-08-21, R42 — docs/plans/
+# gateb_trade_payables_stale_subline_r42_2026-08-21.md): R41 의 trade_payables_additive
+# lateral 스캔이 우연히 잡아낸 새 사례 — "두 라인의 합"이 아니라 단일 셀 오채택이었다.
+# 원문대조로 확정된 메커니즘: 최초등록본 BS엔 '매입채무 및 기타유동채무'(부모총계) 아래
+# '단기매입채무'라는 하위라인이 있는데, 정정본이 그 하위라인 구성을 바꾸면서(삭제하거나
+# 각주번호만 추가) 같은 라벨의 셀을 다시 쓰지 않는다 — R2 정본 정책("정정이 건드리지 않은
+# 셀은 원본 유지")대로 그 stale 한 '단기매입채무' 셀이 후보 풀에 그대로 남는다. 이 라벨이
+# exact-stage alias라 _NARROW_PREFER의 일반정책(narrow 가 대개 맞다, combine.py:75 주석)과
+# 같은 이유로 정정본의 현재 부모총계보다 먼저 확정돼버린다 — _TRADE_PAYABLES_PARENT_
+# OVERRIDE_CORPS 와 근본적으로 같은 트레이드오프의 신규 확인 사례일 뿐, 새로운 버그
+# 메커니즘이 아니다.
+#
+# ★basis 를 키에 포함하는 이유(위 ADDITIVE_OVERRIDE 의 가정이 깨진 사례 실측): 쏠리드
+# (00364403) 2015Q3 는 연결은 current 라벨('매입채무 및 기타유동채무')이 정답인데 별도는
+# non-current 라벨('장기매입채무 및 기타비유동채무')이 정답이다 — 같은 corp·같은 기간이라도
+# basis 마다 다른 concept 이 맞을 수 있다.
+#
+# 14건 전부 report_lines 계보(정정 전/후 rcept 비교) 원문대조로 개별 확인(00626011 아이텍은
+# 이미 알려진 R23 _TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS 버그와 동일 corp라 제외 — 별개 원인).
+_TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE = {
+    ("00124276", 2019, "H1", "separate"): "매입채무 및 기타유동채무",       # 부스타
+    ("00124276", 2015, "Q3", "separate"): "매입채무 및 기타유동채무",       # 부스타
+    ("00131197", 2016, "H1", "consolidated"): "매입채무 및 기타유동채무",   # 서원
+    ("00131197", 2016, "H1", "separate"): "매입채무 및 기타유동채무",       # 서원
+    ("00145473", 2016, "Q3", "separate"): "매입채무 및 기타유동채무",       # 이글벳
+    ("00146296", 2015, "Q3", "consolidated"): "장기매입채무 및 기타비유동채무",  # 일신석재
+    ("00146296", 2015, "Q3", "separate"): "장기매입채무 및 기타비유동채무",      # 일신석재
+    ("00152783", 2019, "H1", "consolidated"): "매입채무 및 기타유동채무",   # 코메론
+    ("00152783", 2019, "H1", "separate"): "매입채무 및 기타유동채무",       # 코메론
+    ("00271501", 2015, "H1", "separate"): "매입채무 및 기타유동채무",       # 코아시아
+    ("00303217", 2017, "Q1", "separate"): "매입채무 및 기타유동채무",       # 우진플라임
+    ("00317210", 2017, "Q3", "consolidated"): "매입채무 및 기타유동채무",   # 성호전자
+    ("00317210", 2017, "Q3", "separate"): "매입채무 및 기타유동채무",       # 성호전자
+    ("00364403", 2015, "Q3", "consolidated"): "매입채무 및 기타유동채무",       # 쏠리드
+    ("00364403", 2015, "Q3", "separate"): "장기매입채무 및 기타비유동채무",     # 쏠리드(별도만 비유동)
+    ("00364403", 2015, "H1", "consolidated"): "매입채무 및 기타유동채무",   # 쏠리드
+    ("00364403", 2015, "H1", "separate"): "매입채무 및 기타유동채무",       # 쏠리드
+    ("00442455", 2021, "Q3", "consolidated"): "매입채무및기타채무",         # 코스나인
+    ("00442455", 2021, "Q3", "separate"): "매입채무및기타채무",             # 코스나인
+    ("00603348", 2015, "H1", "consolidated"): "매입채무 및 기타유동채무",   # 케이아이엔엑스
+    ("00603348", 2015, "H1", "separate"): "매입채무 및 기타유동채무",       # 케이아이엔엑스
+    ("00923826", 2020, "FY", "consolidated"): "매입채무 및 기타채무",       # 일월지엠엘
+    ("00923826", 2020, "FY", "separate"): "매입채무 및 기타채무",           # 일월지엠엘
+}
+
 # ★is.sga stage-rank shortcut override (2026-08-15, Phase 1 — user-approved for the full
 # 46-corp population, docs/plans/is_sga_cogs_holding_co_label_mismap_plan_2026-08-15.md +
 # docs/qa/is_sga_cogs_holdco_phase0_scan_2026-08-15.md): same R16-class bug, new target —
@@ -1502,7 +1547,7 @@ def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
 
 
 def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
-             fy: int | None = None, period: str | None = None):
+             fy: int | None = None, period: str | None = None, basis: str | None = None):
     """{canonical: [candidate]} -> (confirmed {canonical: value}, conflicts {canonical: [candidate]}).
 
     Ported from build._resolve. Conflicts are HELD (not filled) and returned for
@@ -1513,6 +1558,8 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
     fy/period: current fiscal_year/fiscal_period, needed only to gate
     _TRADE_PAYABLES_ADDITIVE_OVERRIDE (period-scoped, not corp-blanket — see its
     comment for why).
+    basis: current basis (연결/별도), needed only to gate
+    _TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE (basis-scoped — see its comment for why).
     """
     confirmed: dict[str, int] = {}
     conflicts: dict[str, list[dict]] = {}
@@ -1619,6 +1666,24 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
                         picked[w] = r["value"]
             if len(picked) == len(want) and all(v is not None for v in picked.values()):
                 confirmed[c] = sum(picked.values())
+                continue
+        # ★trade_payables stale-sub-line override (2026-08-21, R42 — see
+        # _TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE comment above): read from cands[c]
+        # (the FULL pre-filter pool), not `rows` — for some keys (00146296/00364403 별도)
+        # the verified-correct candidate is non-current and _CURRENT_STRICT above has
+        # already dropped it from `rows` before this point ever runs.
+        # ★0-valued duplicate guard (실측 2026-08-21, 코스나인 00442455 2021Q3): the SAME
+        # rcept can carry the target label twice — once with the real value, once as a
+        # spurious 0-valued duplicate row (parser table-dup, unrelated to R2/amendments).
+        # Exclude 0 before checking for a single distinct value, same convention as
+        # _reduce_conflict()'s shallowest-depth pool above.
+        if c == "bs.trade_payables" and (corp, fy, period, basis) in _TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE:
+            want_label = _norm_label(_TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE[(corp, fy, period, basis)])
+            matches = [r for r in cands.get(c, [])
+                       if _norm_label(r.get("label_raw")) == want_label and r["value"] not in (0, None)]
+            vals = {r["value"] for r in matches}
+            if len(vals) == 1:
+                confirmed[c] = vals.pop()
                 continue
         # is.sga stage-rank shortcut override (2026-08-15, Phase 1 — see
         # _SGA_SUBLINE_OVERRIDE_KEYS comment above): prefer the 판매비와관리비 sub-line
@@ -2205,7 +2270,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     else:
         cands = collect_candidates(session, corp, fy, period, basis,
                                    statements=statements)
-    confirmed, conflicts = _resolve(cands, corp, fy, period)
+    confirmed, conflicts = _resolve(cands, corp, fy, period, basis)
     _resolve_ni_attribution(cands, confirmed, conflicts)
     # net_income fallback (ported from fin2/standardize/rules.py::rule_net_income_fill,
     # missing from the v3 port — 실측 2026-08-09: 삼성증권 FY2025 등 470행/119개사).

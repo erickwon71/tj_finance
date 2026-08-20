@@ -395,6 +395,117 @@ def _ni_attribution_structural_candidates(root) -> list[FaceLine]:
     return extra
 
 
+def _ni_attribution_text_candidates(root) -> list[FaceLine]:
+    """Text-table counterpart of `_ni_attribution_structural_candidates()` above — R35
+    (2026-08-20, P3-1 '원인 A' 후속 조사).
+
+    Root cause: some filers render the whole NI-attribution ('...의 귀속') table with
+    **no inline-XBRL tagging at all** — not just this row, the entire table is plain
+    `<TD>`/`<P>` (실측 2026-08-20, 케이씨씨/엘에스일렉트릭 원문 XML: `<TE ACODE=...>`
+    태그 자체가 0개). The TE-based function above requires `tr.findall("TE")` per row
+    and silently skips these documents entirely — the correct value is genuinely in
+    the report (원문 대조 확인) but never enters the candidate pool → LABEL_UNMATCHED
+    (Gate B pending). 실측(2026-08-20 census, `scripts/investigate_p3_cause_a_*`):
+    56개사/527건, 전부 pass→pending 이었던 std_v3 값 자체는 원문과 일치(감사기 커버리지
+    공백이지 std_v3 버그가 아님).
+
+    ★ 왜 `account_mapper`(범용 라벨 매퍼)로 안 고쳤나: 실제로 흔한 축약형 라벨은
+    '지배주주지분'(6자)인데, 이건 '비지배주주지분'(is.noncontrolling_ni)의 **부분문자열**
+    이라 그 퍼지 포함매칭이 비지배를 controlling 으로 오귀속한다(실측 유사도 0.977) —
+    `account_maps/bs_accounts.py:296` 이 2026-07-18 에 이미 같은 함정을 겪고 이 alias 를
+    **의도적으로 빼뒀다**(BS 쪽 controlling_equity). 라벨 텍스트만으로는 이 짧은 형태를
+    안전하게 구분할 수 없다는 뜻 — 그래서 여기서도 라벨 매퍼를 쓰지 않는다.
+
+    대신 위 TE 자매함수와 **완전히 같은 앵커/섹션 상태기계**를 쓴다: 개별 라벨의 사전 의미가
+    아니라 섹션 안에서 '비지배'가 있는 형제와 없는 형제, 정확히 하나씩이라는 **구조적 위치**만
+    본다 — 그 판별은 문서 전체가 아니라 이 섹션 안에서만 상대적이라 '지배주주지분' 짧은 형태를
+    만나도 안전하다(같은 섹션의 '비지배주주지분' 형제와 대조되므로).
+
+    안전장치 두 가지:
+    1. **스코프 제한** — `_detect_body_statement_tables()`(Track B 텍스트리더·R4-2/R11 과 동일
+       근거 공유 컴포넌트)가 반환하는 IS 본문표에만 스캔을 국한한다. TE 판은 ACONTEXT 존재
+       자체가 "진짜 XBRL fact"라는 신호라 문서 전체를 훑어도 안전했지만, 태그 없는 TD 는 그런
+       신호가 없어 스캔을 안 좁히면 주석의 유사표(예: 종속기업별 순이익 내역)를 오매칭할 위험이
+       있다 — 그래서 본문 표로만 제한한다.
+    2. **from_gapfill=True** — 매칭 실패는 GAPFILL_UNVERIFIED(pending)로만 남고 FAIL 로
+       승격되지 않는다(R24/`_supplement_with_text` 와 동일한 단조성 계약, fail=0 보존).
+
+    호출측(`_with_ni_attribution_text_fallback()`, Track A/B 확정 **이후** 지점 — 그 함수의
+    docstring 참고)이 이 개념을 **아무 트랙에서도** 못 찾았을 때만 이 함수를 부른다 — 태그가
+    있거나 Track B 제네릭 매퍼가 이미 잡는 절대다수 문서에서 `_detect_body_statement_
+    tables()`(비교적 비싼 섹션판정) 재파싱 비용을 안 문다.
+    """
+    from fin2.extract.text import _detect_body_statement_tables, _detect_fin_type, declared_unit
+
+    extra: list[FaceLine] = []
+    fin_type = _detect_fin_type(root)
+    groups = _detect_body_statement_tables(root, fin_type)
+    for section_code, tables_with_unit in groups.items():
+        if section_code.split("_")[0] != "IS":
+            continue
+        basis = "consolidated" if section_code.endswith("_C") else "separate"
+        for tbl, unit, _kind in tables_with_unit:
+            u = unit if unit is not None else declared_unit(tbl)
+            if u is None:
+                continue
+            adecimal = _adecimal_from_unit(u)
+            in_section = False
+            members: list[tuple[str, list]] = []
+            span = 0
+
+            def _flush() -> None:
+                nci = [m for m in members if "비지배" in m[0]]
+                cni = [m for m in members if "비지배" not in m[0]]
+                if len(nci) != 1 or len(cni) != 1:
+                    return
+                for label, tds, canon in (
+                    (cni[0][0], cni[0][1], "is.controlling_ni"),
+                    (nci[0][0], nci[0][1], "is.noncontrolling_ni"),
+                ):
+                    for td in tds:
+                        displayed = parse_displayed(_cell_text(td))
+                        if displayed is None:
+                            continue
+                        extra.append(FaceLine(
+                            statement="IS", basis=basis, acode="", canonical=canon,
+                            label=label[:80], displayed_value=displayed, adecimal=adecimal,
+                            is_cumulative=True, from_gapfill=True,
+                        ))
+
+            for tr in tbl.findall(".//TR"):
+                if tr.findall("TE"):
+                    continue   # 이미 TE 자매함수가 처리 — 중복 방지
+                tds = tr.findall("TD")
+                if len(tds) < 2:
+                    continue
+                label = _cell_text(tds[0])
+                if not label:
+                    continue
+                value_tds = tds[1:]
+                if not in_section:
+                    if _NI_TOTAL_RE.search(label) and "포괄" not in label and "지배" not in label:
+                        in_section = True
+                        members = []
+                        span = 0
+                    continue
+                span += 1
+                if "지배" in label:
+                    members.append((label, value_tds))
+                    nci_n = sum(1 for m in members if "비지배" in m[0])
+                    if nci_n >= 1 and len(members) - nci_n >= 1:
+                        _flush()
+                        in_section = False
+                        members = []
+                        continue
+                if span >= _MAX_SECTION_SPAN:
+                    _flush()
+                    in_section = False
+                    members = []
+            if in_section:
+                _flush()
+    return extra
+
+
 def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
                           root=None) -> list[FaceLine]:
     """
@@ -475,6 +586,33 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
     lines = list(dedup.values())
     lines.extend(_ni_attribution_structural_candidates(root))
     return lines
+
+
+def _with_ni_attribution_text_fallback(lines: list[FaceLine], root) -> list[FaceLine]:
+    """R35(2026-08-20) — `lines`(최종 확정된 Track A 또는 Track B 산출물) 에 이 개념이
+    전혀 없을 때만 `_ni_attribution_text_candidates()`(스코프 제한 텍스트 폴백)를 덧붙인다.
+
+    ★ 왜 `read_report_face_xbrl()` 내부가 아니라 여기(트랙 확정 이후)에 있나 — 최초 구현은
+    `read_report_face_xbrl()` 안에서 붙였다가 즉시 회귀를 실측했다: 그 함수의 반환이
+    "비었는가"가 `read_report_face_tracked()`에서 Track A 채택 여부의 신호로도 쓰이는데,
+    완전 미태깅 문서(주 ACODE 루프 0건)에서 이 폴백만으로 반환이 non-empty 가 되면 원래
+    전체가 Track B(`read_report_face_text`, from_gapfill=False, 문서 전체 재추출)로
+    떨어져야 할 문서가 "Track A(자기 자신 포함 사실상 텅 빈)+`_supplement_with_text`
+    (from_gapfill=True 로 격하)"로 오분류됐다 — 그 결과 원래 실증거(M1_STRONG)로 잡히던
+    진짜 값불일치(fail_b, 성도이엔지 등)가 근거강도만 깎여 GAPFILL_UNVERIFIED(pending)나
+    심하면 가짜 PASS 로 가려졌다(실측 51건 중 34건, 2026-08-20 즉시 발견·롤백).
+    여기서는 트랙이 이미 확정된 뒤라 그 신호를 건드리지 않는다 — 순수 가산.
+    """
+    have = {ln.canonical for ln in lines}
+    # ★ 개념별 독립 판정(둘 다 있어야만 스킵) — '지배주주지분'(짧은형) 문서는 Track B 제네릭
+    # 매퍼가 이미 is.noncontrolling_ni **하나만** (account_mapper 의 기존 컨테인먼트 함정,
+    # `_ni_attribution_text_candidates` 함수 docstring 참고) 잘못 채워둔 채로 is.controlling_ni
+    # 는 여전히 0건일 수 있다(실측 엘에스일렉트릭) — "아무 개념이나 하나라도 있으면 스킵"이면
+    # 이 경우를 놓친다. 후보 추가 자체는 단조안전(PASS=존재만으로 성립)이라 두 개념 다 있을
+    # 때만 비싼 스캔을 아낀다.
+    if "is.controlling_ni" in have and "is.noncontrolling_ni" in have:
+        return lines
+    return lines + _ni_attribution_text_candidates(root)
 
 
 _HANGUL_RE = re.compile(r"[가-힣]")
@@ -631,8 +769,10 @@ def read_report_face(file_path: str | Path) -> list[FaceLine]:
         return []
     lines = read_report_face_xbrl(file_path, root=root)
     if lines:
-        return _supplement_with_text(lines, file_path, root=root)
-    return read_report_face_text(file_path, root=root)
+        lines = _supplement_with_text(lines, file_path, root=root)
+    else:
+        lines = read_report_face_text(file_path, root=root)
+    return _with_ni_attribution_text_fallback(lines, root)
 
 
 def read_report_face_tracked(file_path: str | Path,
@@ -660,10 +800,13 @@ def read_report_face_tracked(file_path: str | Path,
         # 읽으므로 비교컬럼 대조에 그대로 부합. 비교행 분기는 불일치를 fail 로 승격하지 않음
         # (COMPARATIVE_ROW pending) → 후보 추가는 매칭만 늘려 단조 개선.
         lines = _supplement_with_text(lines, file_path, root=root)
-        return lines, "A"
+        return _with_ni_attribution_text_fallback(lines, root), "A"
     lines = read_report_face_text(file_path, root=root)
     if lines:
-        return lines, "B"
+        # R35 — Track B 가 이미 전체를 읽었어도(예: '지배주주지분' 짧은 라벨은 account_mapper
+        # 가 의도적으로 안 잡음, 함수 docstring 참고) 이 개념만 빠질 수 있다 → 트랙 자체는
+        # 그대로 "B"(이미 Track B 였으므로 신뢰도 격하 없음), 후보만 가산.
+        return _with_ni_attribution_text_fallback(lines, root), "B"
     return [], None
 
 

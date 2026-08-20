@@ -1949,6 +1949,64 @@ pending — 이 결함과 무관한 별개 원인(부록C 참고, 별도 트랙)
 
 ---
 
+## R35. `fin2/audit/face_audit.py` — NI 귀속표 전체가 XBRL 미태깅인 문서에서
+`is.controlling_ni`가 감사기 후보 풀에 전혀 안 들어오던 결함(P3-1 '원인 A' 후속)
+
+**증상** — P3-1 재감사 잔여 668건(원인 A, R34 제외분) 중 527건(56개사)이 `LABEL_UNMATCHED`
+로 pending. **std_v3 값 자체는 원문과 일치**(케이씨씨 00105271·엘에스일렉트릭 00105855
+원문 XML 직접 대조 확인, 값이 CP949 원문 안에 그대로 존재) — std_v3 버그가 아니라 감사기
+커버리지 공백.
+
+**근거(실측)** — 두 필링 모두 NI 귀속('...의 귀속') 표 전체가 `<TE ACODE>` 태그 없이 순수
+`<TD>`(구형 렌더링)만으로 되어 있다(`root.findall('.//TE[@ACODE]')` 중 `ifrs-full_`/`dart_`
+접두 매칭 0건). `_ni_attribution_structural_candidates()`(R24)는 `tr.findall("TE")`를
+전제하므로 이런 문서를 통째로 못 본다.
+
+**왜 `account_mapper`(범용 텍스트 매퍼)로 안 고쳤나** — Track B(`read_report_face_text`)가
+이미 문서 전체를 제네릭 라벨매퍼로 읽지만, 흔한 축약 라벨 `'지배주주지분'`(6자)이
+`'비지배주주지분'`(`is.noncontrolling_ni`)의 **부분문자열**이라 `AccountMapper._fuzzy_match()`
+의 포함매칭(`normalized in alias_norm`)이 이걸 비지배로 오귀속한다(실측 유사도 0.977,
+`account_maps/bs_accounts.py:296` 이 2026-07-18 에 BS쪽(`bs.controlling_equity`)에서 이미
+같은 함정을 겪고 그 alias 를 **의도적으로 빼뒀다** — IS 쪽엔 그 코멘트가 없었을 뿐 같은
+공백이 있었다). 라벨 텍스트만으로는 이 짧은 형태를 안전하게 못 구분한다.
+
+**수정** — `fin2/audit/face_audit.py::_ni_attribution_text_candidates()` 신설: R24 TE
+자매함수와 **동일한 앵커/섹션 상태기계**(`_NI_TOTAL_RE` 앵커 + 섹션 안 '비지배' 유무로 정확히
+한 쌍만 인정)를 쓰되, 라벨 사전 의미가 아니라 **섹션 내 구조적 위치**만 본다 — 그래서 짧은
+라벨도 안전하다. 두 안전장치: ① `_detect_body_statement_tables()`(Track B 와 공유하는
+본문표 식별)로 IS 본문표에만 스캔 국한(주석 오염 차단, TE 판은 ACONTEXT 존재 자체가
+안전장치라 문서 전체를 훑어도 됐지만 태그 없는 TD 는 그 신호가 없다), ② `from_gapfill=True`
+(불일치는 GAPFILL_UNVERIFIED/pending 유지, FAIL 승격 금지 — R24/`_supplement_with_text`와
+동일한 단조성 계약).
+
+호출 지점 = `read_report_face()`/`read_report_face_tracked()`에서 **Track A/B 확정 이후**
+(`_with_ni_attribution_text_fallback()`), `is.controlling_ni`·`is.noncontrolling_ni` **둘
+다** 이미 있으면 스킵(비용 절감, 대부분 문서는 태그가 있거나 Track B 제네릭 매퍼가 이미
+잡는다). ★ 최초 구현은 이 폴백을 `read_report_face_xbrl()` **내부**에 붙였다가 즉시 회귀를
+실측했다: 그 함수의 반환이 "비었는가"가 Track A/B 채택 신호로도 쓰이는데, 완전 미태깅
+문서에서 이 폴백만으로 반환이 non-empty 가 되면 원래 Track B 전체(`read_report_face_text`,
+from_gapfill=False)로 떨어져야 할 문서가 "Track A(사실상 텅 빈)+`_supplement_with_text`
+(from_gapfill=True 로 격하)"로 오분류됐다 — 그 결과 원래 실증거(M1_STRONG)로 잡히던 진짜
+값불일치(fail_b, 성도이엔지 등)가 근거강도만 깎여 GAPFILL_UNVERIFIED 나 심하면 가짜 PASS
+로 가려졌다(측정 51건 중 34건). 트랙 확정 이후 지점으로 옮겨 해소·재검증(아래).
+
+**검증** — 668건(원인 A 잔여, R34 제외) 재감사(읽기전용 실측, `scripts/
+investigate_p3_cause_a_impact_measure.py`): **382건 pass 회복**, 235건 pending(잔여,
+SOURCE_NOT_TRACK_A 8개사 등 별개 원인), **51건 fail 그대로**(기존 Group B, 이 수정과
+무관 — 정확히 원래의 51건과 일치, 새 fail 0건). `pytest tests/ fin2/tests/` 583 passed
+(기존 무관 실패 1건 `test_lxintl_facility_table_dropped` 그대로) — 회귀 없음. 회귀 테스트
+= `fin2/tests/test_ni_attribution_text_fallback.py`(3종).
+
+**미조치 범위** — DB(`face_audit`)에 대한 실제 재체크·커밋은 영향받은 74개사로 스코프해
+`gateb_audit.py --source v3 --corp-file <74개사> --recheck` 로 반영(전수 재감사는 아직).
+잔여 235건 pending 중 다수는 KCC 처럼 NI 귀속 섹션 자체가 실제로는 총포괄손익 귀속 라벨로
+잘못 렌더링된 필러 특이 케이스이거나(구조상 안전하게 못 넓힘), 8개사(`SOURCE_NOT_TRACK_A`,
+위지윅스튜디오 등)는 필링 전체가 Track A/B 모두 못 읽는 별개 문제(부록C 참고). 51건 fail(Group
+B, 카카오게임즈·폴라리스오피스 등 13개사)은 **손대지 않음** — 실제 값불일치 의심으로
+회사별 개별 원인규명 필요(R24~R27급).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -2011,13 +2069,14 @@ pending — 이 결함과 무관한 별개 원인(부록C 참고, 별도 트랙)
 | R27 | `docs/plans/gate_b_controlling_ni_groupbc_kbimetal_eps_label_trap_fix_design_2026-08-15.md` · `fin2/extract/report_lines.py`(`_EPS_MAX_PLAUSIBLE_WON`/`_looks_like_eps_amounts()`) · `scripts/reload_report_lines_corp.py`/`scripts/build_std_v3.py` |
 | R31 | `docs/plans/t22_hyphen_negative_gate_todo_2026-08-16.md` · `parser/xml/table_extractor.py::_NUMBER_PATTERN` · `fin2/tests/test_hyphen_negative_gate_r31.py` · `scripts/census_t22_hyphen_negative_2026-08-16.py`·`scripts/scan_r31_true_targets_2026-08-16.py`·`scripts/reload_report_lines_corp.py`(`--year-max`)/`scripts/build_std_v3.py`/`scripts/snapshot_r31_backfill_2026-08-16.py` |
 | R34 | P3-1 재감사 후속(2026-08-20) · `fin2/layer3/combine.py::_resolve()` · `fin2/tests/test_combine_amended_label_depth.py` · `scripts/investigate_p3_combine_live_check.py`·`scripts/investigate_p3_depth_bug_census.py`·`scripts/verify_p3_depth_bug_fix.py` |
+| R35 | P3-1 원인 A 후속(2026-08-20) · `fin2/audit/face_audit.py::_ni_attribution_text_candidates()`/`_with_ni_attribution_text_fallback()` · `fin2/tests/test_ni_attribution_text_fallback.py` · `scripts/investigate_p3_cause_a_field_census.py`·`scripts/investigate_p3_cause_a_trackb_probe.py`·`scripts/investigate_p3_cause_a_impact_measure.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황
 
 | 항목 | 상태 |
 |---|---|
-| **P3-1 "원인 A" — 처음으로 전수 재처리(`fy=all`)된 회사가 R16~R32 등 그동안 표적백필로만 적용되던 규칙변경분을 한꺼번에 맞아 값이 흔들림** | **미조치 — 별도 트랙(사용자 결정 2026-08-20)**. 실측(2026-08-19 재감사): 689건 단조성 위반 중 R34(depth결함) 30건을 뺀 대다수. 트리거 확정 = 8/18 저녁 `build_std_v3.py` 전체이력 재생성(2,128개사, `year_min=2015`) — 위반 75개사 중 73개사(97%)가 이 배치와 겹침. 구조적 재발(신규 규칙수정 표적백필 → 나머지 미백필 회사는 다음 전수재생성 때 노출) — 메모리 `gateb-full-reaudit-is-required-to-close` 그대로. 다음 착수 시 `face_audit_snap_20260819` 를 기준선으로 재사용 가능 |
+| **P3-1 "원인 A" — 처음으로 전수 재처리(`fy=all`)된 회사가 R16~R32 등 그동안 표적백필로만 적용되던 규칙변경분을 한꺼번에 맞아 값이 흔들림** | **부분 조치(2026-08-20, R35)**. 실측(2026-08-19 재감사): 689건 단조성 위반 중 R34(depth결함) 30건을 뺀 668건을 field 단위로 재분해하니 실제로는 성격이 다른 3그룹(감사기 커버리지 공백 527건/56개사 · 진짜 값불일치 의심 51건/13개사 · Track A/B 자체가 못 읽는 문서 87건/8개사)이었다. **감사기 커버리지 공백 그룹만 R35 로 해소**(382건 pass 회복, DB 반영 = 74개사 `--recheck`). 나머지(값불일치 51건 + 미판독 87건 + 잔여 pending)는 **여전히 미조치 — 별도 트랙**. 원 트리거(8/18 `build_std_v3.py` 전체이력 재생성 2,128개사)는 여전히 유효한 구조적 재발 경로 — 메모리 `gateb-full-reaudit-is-required-to-close` 그대로. 다음 착수 시 `face_audit_snap_20260819` 를 기준선으로 재사용 가능 |
 | **R34 depth-우선 결함 — 30건(6개사) 밖의 잠복 사례 미조사** | **미조치**. 코드 수정(`_resolve()`)은 전역 적용되나, 이미 저장된 std_v3 값 중 "정정본이 section_path 다르게 재렌더링 + depth 우선으로 원본이 이김" 패턴이 P3-1의 689건 밖(=이미 예전부터 fail 이던 회사)에도 있는지는 전수 조사 안 함. 필요 시 `scripts/investigate_p3_depth_bug_census.py` 를 `face_audit` 필터 없이 std_v3 전체 corp 로 확장해 재실행 |
 | ~~T22 순수 하이픈 음수(`-N`) `_NUMBER_PATTERN` 미인식(T21 자매결함)~~ | **✅ 해소 완료 2026-08-17** — R31. 775개사 표적 백필+검증 완료. 부록A T22·부록B R31 참고 |
 | R2-1 `biz_metrics`·`order_backlog` 가 정본 정책 미적용 | **미조치** — 547건(447개사) 미파싱, 505건 회수 가능. 2026-07-31 백필 완료 후 착수 예정 |

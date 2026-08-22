@@ -9,7 +9,7 @@
 멈춘 경우에만 재생성하므로 정상 기업엔 오버헤드가 거의 없다.
 
 실행:
-  .venv/bin/python scripts/collect_new.py [--days 7] [--timeout 120]
+  .venv/bin/python scripts/collect_new.py [--days 7] [--timeout 300]
 """
 from __future__ import annotations
 
@@ -678,7 +678,7 @@ def main() -> None:
     ap.add_argument("--download-only", action="store_true",
                     help="⓪~③+미러+감사만 — 파싱·표준화·계층2/3 적재는 전부 생략. "
                          "계층3 재설계 중 데일리 운영용(계획 §5.1)")
-    ap.add_argument("--timeout", type=int, default=120, help="기업당 파싱·표준화 타임아웃(초)")
+    ap.add_argument("--timeout", type=int, default=300, help="기업당 파싱·표준화 타임아웃(초)")
     ap.add_argument("--standardize-only", action="store_true",
                     help="①②③ 건너뛰고 ④(파싱·표준화)만 — 다운로드는 됐는데 표준화 남은 전체 기업 대상. 중단 후 재개용")
     # ⓪ 유니버스 갱신 + 상장폐지 판정은 **기본 ON**.

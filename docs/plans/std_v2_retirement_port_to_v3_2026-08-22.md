@@ -386,10 +386,72 @@ canonical들을 대부분 HOLD하고 있고, 컬럼이 없으니 아무도 눈�
 `SELECT count(DISTINCT canonical_account)` = **152종**. 단 이 쿼리 자체가 **114초** 걸렸다
 (`fact_v2` 74M 전수 스캔) — 뷰가 비싸다는 것도 별도 트랙에서 고려할 것.
 
-#### 미측정으로 남은 것
+#### 미측정으로 남은 것 (2026-08-22 P0.6로 전부 해소 — §3.12 참고)
 
-- §3.6 v2-only 키 재분류(비교컬럼/filing없음) 재확인 — 초판 수치 그대로 사용 중
-- `rule_additive_debt`(169,314행)의 카탈로그 이름 불일치 실측 — P4 착수 시
+- ~~§3.6 v2-only 키 재분류(비교컬럼/filing없음) 재확인~~ → §3.12 T6
+- ~~`rule_additive_debt`(169,314행)의 카탈로그 이름 불일치 실측~~ → §3.12 T5
+
+### 3.12 ★P0.6 조사 결과 (2026-08-22, T1~T7 전부 완료)
+
+전체 실행 로그·SQL·재현 스크립트는
+[`std_v2_catalog_split_p0_6_todo_2026-08-22.md`](std_v2_catalog_split_p0_6_todo_2026-08-22.md)에
+있다. 여기는 결론만.
+
+**T0(선결 확인, 재검토로 결론 번복)**: `account_maps`(`AccountMapper`)는 v2/v3 공통 소스인
+`fact_v2` 추출단에서도 쓰이지만, **오염은 없다**. `fin2/extract/text.py::_canonical_of()`가
+fuzzy 매치에 canonical을 아예 안 줘서(NULL 저장) v2는 애초에 collapse된 canonical(`bs.lease_
+liability`·`cf.borrowings_*`)의 fuzzy 후보(예: `비유동리스부채`)를 못 받는다 — v3의
+`combine.py`만 필터 없이 받아서 진짜 충돌을 겪는다(아래 conflict 표). 카탈로그 분해는 v2엔
+**순이득**(지금 못 받던 값을 앞으로 받게 됨), 과거 `fact_v2`(재추출 전까지 불변)도 안 흔들림
+→ **오버레이 설계 불필요, 카탈로그 직접 분해(원안)로 진행.**
+
+**T2/T3(분해 안전성·효과)**: diff 798라벨 중 예상 밖 변경 2건(개선 방향, 위험 아님). 충돌률
+실측 — `bs.lease_liability`(collapse) 14.6%, `cf.borrowings_proceeds` 42.1%,
+`cf.borrowings_repaid` 49.3% vs 이미 분리된 `bs.lease_current`/`_noncurrent`(XBRL) ~0%.
+**분해 자체가 충돌을 없앤다는 걸 직접 증명.**
+
+**T4(괄호 결함, §7-⑤에서 언급했던 가설 기각)**: `normalize_account_name`에 괄호를 `_`로
+바꾸는 규칙은 **존재하지 않는다**(코드 확인, 가설 틀림). 전수 기준 미매핑 63.29%는 CF
+간접법 운전자본조정·EPS 라벨이라는 **리스/차입과 무관한 별개의 기존 공백** — P1A와 분리.
+
+**T5(additive_debt 169,314행)**: lease/borrow와 **반대 방향** — 같은 개념이 추출경로별로
+이미 두 canonical로 갈라져 있다(`bs.current_lt_debt`↔`bs.current_portion_lt_debt` 등).
+**분해가 아니라 통합(alias 정합)**으로 푼다 → P4 범위, 이번 착수와 무관.
+
+**T6(§3.6 재확인)**: `standard_financials` 뷰 정의를 역산해 원 쿼리를 정확히 재현(16,822행
+일치). 재분류 결과 원판과 거의 동일 — report_lines 있음 92→88·XML만 3,986·filing없음
+9,095·PDF만 73. **최종 기준선으로 확정.**
+
+**T7(★신규 발견 — P1C 재정의)**: `combine.py`가 `rules.py`의 `_COL_PRIORITY`(2026-07-17
+v2 버그수정)를 **이식받은 적이 없다** — `DIRECT_MAP`만 import하고 우선순위 로직은 안 가져와,
+`is.interest_expense`/`is.finance_cost` 후보가 둘 다 있으면 dict 순회 순서로 아무거나
+덮어쓴다. 실측(정확 카운트, 위 §3.11-(6)의 400표본 추정치를 대체): 둘 다 후보인 키 2,894 ·
+값이 다른 키 2,198 · **오선택(finance_cost로 과대계상) 182건(8.3%)** · 정선택 1,997건.
+수정은 `_COL_PRIORITY` 패턴을 `combine.py`로 포팅하는 것 — 간단·저위험.
+
+**확정된 alias 목록(P1A 입력, `SPLIT_DRAFT`)**:
+```python
+SPLIT_DRAFT = {
+    "bs.lease_current":    ["유동리스부채", "유동성리스부채", "유동 리스부채"],
+    "bs.lease_noncurrent": ["비유동리스부채", "비유동 리스부채", "비유동성리스부채",
+                            "비유동금융리스부채"],
+    "bs.lease_liability":  ["리스부채", "금융리스부채"],          # 총계는 그대로
+    "cf.borrow_proceeds_st": ["단기차입금의증가", "단기차입금의차입"],
+    "cf.borrow_proceeds_lt": ["장기차입금의증가", "장기차입금의차입"],
+    "cf.borrow_repaid_st":   ["단기차입금의상환", "단기차입금의감소"],
+    "cf.borrow_repaid_lt":   ["장기차입금의상환"],
+    "cf.borrowings_proceeds": ["차입금의증가", "차입금의차입", "차입금차입"],  # 총계는 그대로
+    "cf.borrowings_repaid":   ["차입금의상환", "차입금상환"],                 # 총계는 그대로
+}
+```
+(출처: `scripts/diag_canonical_collapse_scan.py`. T2 labels로 확인된 "분해안에 없는 변형"
+— `기타금융부채의증가/감소`·`유동성장기부채(의)상환`·`유동성장기차입금(의)상환` 등 —
+은 st/lt 귀속이 애매해 이 목록에 **의도적으로 미포함**, P1A 구현 시 사용자 결정 필요.)
+
+**착수 범위 재결정(T9, 권고안 — 사용자 확정 대기)**: ①lease/borrow 카탈로그 분해(P1A)
+②`combine.py` interest_expense 우선순위 포팅(신규, P1C 재정의) — 이 둘은 조사로 안전성·
+근거가 갖춰졌다. T4(괄호)·T5(debt 이름)는 각각 별도 트랙/해당 Phase로 이연 권고. 최종
+착수 범위는 사용자 결정 필요.
 
 ---
 
@@ -651,19 +713,25 @@ P0.5 결과를 보고 사용자가 내린 결정:
    → **P4에서 논의**
 4. **P4 규칙별 "v2가 맞나 v3가 맞나"** — 원문대조 후 각 규칙 착수 시점에 결정
 5. **★리스/CF차입 canonical 경로**(§3.7·P1A) — **✅ 확정: (b) 카탈로그 분해 채택**
-   (사용자 결정 2026-08-22). 실행은 P0.6 조사 후 → §5-1 및
-   [`std_v2_catalog_split_p0_6_todo_2026-08-22.md`](std_v2_catalog_split_p0_6_todo_2026-08-22.md).
-   판단 근거는 아래 그대로 보존:
+   (사용자 결정 2026-08-22). **P0.6 조사(T1~T7) 전부 완료** → §3.12 참고,
+   [`std_v2_catalog_split_p0_6_todo_2026-08-22.md`](std_v2_catalog_split_p0_6_todo_2026-08-22.md)에
+   실행 로그. 판단 근거(P0.5 원판 + P0.6 갱신):
    - (a) 주석 경로 → **기각**. 정확 라벨 커버리지 27%뿐(§3.11-3)
    - (c) `ADDITIVE_CANON` 편입 → **기각 권장**. 총계 라벨(`리스부채`)이 유동/비유동과
      **공존**하므로 무조건 합산하면 이중계상(v2가 `rule_additive_debt`에 총부채 초과 가드를
      둔 것과 같은 이유)
-   - **(b) face BS/CF 카탈로그 분해 → 채택 권장.** 라벨 커버리지 98%, 충돌이 바로 여기서
-     나고 있음(97.4%/81.7%). ★**분해 시 canonical 이름을 v2와 동일하게**
-     (`bs.lease_current`/`bs.lease_noncurrent`, `cf.borrow_proceeds_st`/`_lt`) 두면
-     `rules.py`의 `_LEASE_PARTS`·`_BORROW_*_PARTS`가 **수정 없이 그대로 맞물린다**
+   - **(b) face BS/CF 카탈로그 분해 → 채택, P0.6로 재확인.** 충돌률 실측(T2/T3): collapse
+     canonical 14.6~49.3% vs 이미 분리된 것(XBRL) ~0% — **분해가 충돌을 없앤다는 걸 직접
+     증명**. diff 798라벨 중 예상 밖 변경 2건(위험 아님, 개선 방향). ★**분해 시 canonical
+     이름을 v2와 동일하게**(`bs.lease_current`/`bs.lease_noncurrent`,
+     `cf.borrow_proceeds_st`/`_lt`) 두면 `rules.py`의 `_LEASE_PARTS`·`_BORROW_*_PARTS`가
+     **수정 없이 그대로 맞물린다**. 확정 alias 목록 = §3.12 `SPLIT_DRAFT`.
    - 함께 처리: `비유동리스부채`를 alias에 **명시 등재**(현재 퍼지 0.977로 유동 쪽에
-     끌려감) + `리스부채(유동)`류 **괄호 표기 정규화 결함**(현재 `unknown.*`)
+     끌려감).
+   - ~~괄호 표기 정규화 결함~~ — **T4로 기각**: 그런 정규화 규칙 자체가 코드에 없다.
+     관측된 미매핑은 CF 운전자본조정·EPS라는 별개의 기존 공백(리스/차입과 무관), P1A와 분리.
+   - T0(대조군 오염 우려)도 재검토로 **기각** — v2는 fuzzy 매치에 canonical을 안 주므로
+     collapse 상태를 못 받고 있었고, 분해는 v2에도 순이득. 오버레이 설계 불필요.
 6. **★`extended_financials` v3 등가물을 이 계획에 넣을지**(§3.9) — 규모 실측 완료: **152종**.
    별도 트랙 권장(뷰 자체가 114초 걸릴 만큼 비쌈). 단 **`fact_v2` 폐기의 실질 차단 요인**
    → **해당 시점에 논의**

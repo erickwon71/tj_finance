@@ -264,6 +264,15 @@ def _adecimal_signals(root) -> tuple[dict[tuple, int], set[tuple]]:
 
 _NI_TOTAL_RE = re.compile(r"^당?(기|분기|반기)순(이익|손익)")
 _MAX_SECTION_SPAN = 20   # rows scanned after an anchor before giving up (real spans: 2-11)
+# ★2026-08-22 (P1C 잔여회귀 조사 중 발견, 네오위즈 00628860 등): 총포괄손익 TOTAL 행 마커.
+# 순이익 TOTAL 앵커(위 _NI_TOTAL_RE, "포괄" 없음 요건으로 앵커 자체가 총포괄행이 되는 것은
+# 이미 막고 있었으나, 앵커 이후 아직 '지배'/'비지배' 쌍을 못 찾은 채 span 을 소진하기 전에
+# **총포괄손익 TOTAL 행을 먼저 지나치면**(예: 당기순손익→기타포괄손익 항목들→총포괄손익→
+# 지배기업 소유주지분/비지배지분(=총포괄 귀속, 오답)→...→당기순손익 재등장→지배주주지분손익/
+# 비지배지분손익(=진짜 순이익 귀속, 정답)) 상태기계가 그 구분을 못 하고 총포괄 귀속 쌍을
+# 순이익 귀속으로 오채택한다 — "기타포괄손익"(OCI 구성요소, 총포괄과 무관하게 흔함)은
+# 포함하지 않고 총계 라인만 잡도록 '총포괄' 리터럴로 좁힌다("기타포괄"엔 '총'이 없어 안전).
+_TOTAL_COMPREHENSIVE_RE = re.compile(r"총포괄")
 
 
 def _ni_attribution_structural_candidates(root) -> list[FaceLine]:
@@ -370,6 +379,16 @@ def _ni_attribution_structural_candidates(root) -> list[FaceLine]:
                 in_section = True
                 members = []
                 span = 0
+            continue
+
+        # ★2026-08-22: 아직 '지배'/'비지배' 쌍을 못 찾았는데(현재 섹션에 있는 채로) 총포괄손익
+        # TOTAL 행을 먼저 지나치면, 그 뒤에 오는 지배/비지배 쌍은 총포괄 귀속이지 순이익 귀속이
+        # 아니다 — 이 앵커는 틀렸으니 지금까지 모은 멤버를 버리고(flush 하지 않음) 새 앵커를
+        # 찾는다. flush 로 이미 완결된 섹션은 in_section 이 곧장 False 로 꺼지므로 여기 도달할
+        # 때는 항상 "아직 못 찾은 채" 상태다.
+        if _TOTAL_COMPREHENSIVE_RE.search(label):
+            in_section = False
+            members = []
             continue
 
         span += 1
@@ -519,6 +538,11 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
                         in_section = True
                         members = []
                         span = 0
+                    continue
+                # ★2026-08-22 — see the sister TE-based function's identical comment above.
+                if _TOTAL_COMPREHENSIVE_RE.search(label):
+                    in_section = False
+                    members = []
                     continue
                 span += 1
                 if "지배" in label:
@@ -1335,6 +1359,28 @@ def audit_fields(
                                       "COGS_SGA_CONCEPT_MISMATCH", None))
             continue
         cands = by_canon.get(canon, [])
+        if canon == "is.cogs" and val not in {c.amount_won for c in cands}:
+            # ★R21 additive-override identity check (2026-08-22, P1C 잔여회귀 조사 중 발견 —
+            # 웅진 00143651 등, 지주회사형 K-GAAP). `fin2/standardize/rules.py`(R21,
+            # `c287baf`)는 이런 회사의 std is.cogs 를 단일 '매출원가' 총계 라인이 아니라
+            # '상품매출원가'+'용역매출원가' 두 소계의 **합**으로 저장한다(그 형식엔 결합 총계
+            # 라인 자체가 없어서). face 라인 쪽은 이 정책을 몰라 두 소계(및 그 밑의 세부 라인,
+            # 예: '당기상품매입액')를 전부 개별 is.cogs 후보로만 내놓는다 — 단일후보 대조가
+            # 실패해 값불일치로 오탐한다(실측: db=414,719,025,438 vs 후보 중 아무거나 302~307B
+            # 대로 불일치). 정답 조합(두 소계 합)이 하나라도 val 과 일치하면 그 조합을 채택 —
+            # 세부 라인('당기상품매입액' 등)이 섞여 있어도 우연히 합이 맞을 위험은 조합 수가
+            # 작고(보통 2~4개 후보) exact-won 일치를 요구해 무시 가능한 수준이다.
+            from itertools import combinations
+            vals = [c.amount_won for c in cands if c.amount_won is not None]
+            combo_matched = any(
+                sum(combo) == val
+                for r in (2, 3) if len(vals) >= r
+                for combo in combinations(vals, r)
+            )
+            if combo_matched:
+                results.append(FieldAudit(field, canon, val, True, None,
+                                          report_value_won=val, evidence=EVIDENCE_E4_IDENTITY))
+                continue
         if canon == "bs.trade_payables" and (db_row.get("corp_code"), db_row.get("fiscal_year"),
                                               db_row.get("fiscal_period"), basis) in _TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS:
             # R23 — 이 행은 값=0 후보와의 우연일치를 배제(위 _TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS 참고).

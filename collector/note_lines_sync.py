@@ -57,11 +57,24 @@ _TARGETS_SQL = text(
 # ★두 테이블을 모두 본다(2026-07-31): 주석이 0행인 보고서(비화폐 표만 있는 분기보고서 등)는
 #   note_lines 에 흔적이 없어 매 실행마다 재처리된다. 본문까지 적재하게 된 지금은 그 재처리가
 #   report_lines delete-then-insert 를 매일 반복하는 것이 되므로 본문 쪽도 함께 확인한다.
+# ★2026-08-22 (Track D staleness bug): report_lines 쪽은 `unit_source='xbrl'` 행을 "이미
+#   적재됨"에서 제외한다. `xbrl_instance_lines_sync.py`(OpenDART [014] 폴백, xbrl_zip 전용
+#   경로)가 먼저 이 rcept 를 적재해놓고 그 모듈은 자기 완료판정에서 unit_source='xbrl' 만
+#   보도록 이미 방어돼 있었는데(그 파일 12~15행 주석), 이 쪽(.xml 경로)은 반대 방향 가드가
+#   없어 **비대칭**이었다: xbrl_zip 폴백으로 먼저 채워진 rcept 가 나중에 document.xml 이
+#   실제로 확보돼도(재다운로드·[014] 재시도 성공 등) 여기서 "이미 있음"으로 오판해 영원히
+#   재추출을 안 해 stale 값이 그대로 남았다(2026-08 반기보고서 러시 중 [014] 장애로 다운로더가
+#   xbrl_zip 폴백을 탔던 필링 1,841건·1,767개사가 이후 .xml 을 정상 재확보했는데도 report_lines
+#   는 xbrl_zip 시점의 구값 그대로였던 것으로 실측 확인 — S&K폴리텍 00580667 2025FY 기재정정
+#   사례에서 총자산 등 9개 필드 동시 불일치로 발견). `store_report_lines`가 rcept 단위
+#   delete-then-insert 라 재실행해도 안전(멱등)하므로, 여기서만 "아직 xml 경로로는 안 실림"으로
+#   보고 재추출을 허용하면 된다.
 _LOADED_SQL = text(
     """
     SELECT rcept_no FROM note_lines   WHERE corp_code = ANY(:corps)
     UNION
     SELECT rcept_no FROM report_lines WHERE corp_code = ANY(:corps)
+      AND unit_source IS DISTINCT FROM 'xbrl'
     """
 )
 

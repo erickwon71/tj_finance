@@ -191,6 +191,24 @@ class AccountMapper:
         if "포괄손익" in normalized and "지배" in normalized and fs_section in (None, "is"):
             return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
 
+        # ── 맨몸(bare) 지배지분 라벨 가드(2026-08-22, P1C 잔여회귀 조사 중 발견): '지배기업
+        # 소유주지분'·'지배기업의 소유주'류처럼 "순이익/당기순/손실/귀속" 한정어가 전혀 없는
+        # bare 라벨은 같은 IS 표 안에서 **당기순이익 귀속**(정답, is.controlling_ni)과
+        # **총포괄손익 귀속**(오답)이 똑같은 bare 문구를 나란히 쓰는 문서(네오위즈 00628860 등,
+        # 15개 기간 실측)에서 위 포괄손익 가드로도 못 막는다 — 그 문서엔 라벨 자체에 '포괄'이
+        # 없기 때문. account_maps/is_accounts.py 가 이 bare 변형들을 alias 로 등록 안 해도
+        # 퍼지의 '포함 관계' 매칭이 그 bare 문자열을 "…당기순이익"이 붙은 qualified alias 의
+        # **부분문자열**로 보고 그리로 끌어당긴다(실측: alias 제거 후에도 fuzzy 0.9675 유지) —
+        # 그래서 alias 리스트 정리만으론 못 막고 여기서 직접 차단해야 한다. 무매핑(raw 보존)
+        # 으로 두면 `fin2/layer3/combine.py::_ni_attribution_structural_candidates()` /
+        # `fin2/audit/face_audit.py::_ni_attribution_text_candidates()`(둘 다 section_path/
+        # 앵커-스캔 기반, 라벨 무관) 가 안전하게 대신 분류한다. 'IS' 한정(BS 는 자본 개념이라
+        # bs_accounts.py 가 이미 별도로 이 bare 형을 안 씀).
+        if (fs_section in (None, "is") and "지배" in normalized
+                and (normalized.endswith("지분") or normalized.endswith("소유주"))
+                and not any(k in normalized for k in ("순이익", "순손실", "당기순", "손실", "귀속"))):
+            return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
+
         # ── 지분법 지분 가드: '지분법적용대상…당기순손익에대한지분'(피투자기업 순손익 지분) 은
         # 지분법손익(equity_method_income)이지 당기순이익(net_income)이 아니다. '당기순손익' 부분문자열로
         # is.net_income 오매핑 → fill 우회(net_income 오염)되던 것 차단(is.equity_method_income 로 귀속).

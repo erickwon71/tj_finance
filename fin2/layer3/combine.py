@@ -2289,13 +2289,52 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
                                    statements=statements)
     confirmed, conflicts = _resolve(cands, corp, fy, period, basis)
     _resolve_ni_attribution(cands, confirmed, conflicts)
+    # ★net_income conflict disambiguation via NI identity (2026-08-22, P1C 잔여회귀 조사 중
+    # 발견 — 00120526 2014Q3 / 00139214 2013Q1). is.net_income can end up with 2+ raw
+    # candidates instead of a clean single value: (a) an amendment chain where a later
+    # filing re-labels the same total-NI line with different wording (section_path 불일치
+    # → build_merged_lines 의 cell-identity 키가 서로 다른 셀로 취급, 예: '당기순이익(손실)의
+    # 귀속' vs '분기순이익의 귀속'), or (b) a supplementary/regulatory-adjusted income figure
+    # printed alongside the real statement (보험사의 '대손준비금 반영후 조정이익' 부기 등,
+    # Roman-numeral 헤더가 둘 다 있어 둘 다 본문 후보로 잡힘). `_resolve_ni_attribution` above
+    # already resolved is.controlling_ni via the same identity in the OTHER direction
+    # (cni×nci→net_income); this reuses it symmetrically (net_income candidates→cni+nci) to
+    # pick whichever conflicting net_income value is actually consistent with the resolved
+    # attribution — never guessing among unrelated candidates (0 or 2+ matches → leave the
+    # conflict, don't confirm).
+    if ("is.net_income" not in confirmed and "is.net_income" in conflicts
+            and "is.controlling_ni" in confirmed):
+        cni = confirmed["is.controlling_ni"]
+        # broaden nci to whatever's available, same precedence as _resolve_ni_attribution's
+        # nci_vals above (confirmed > held conflict > raw candidates), plus 0 (wholly-owned).
+        nci_vals = set()
+        if "is.noncontrolling_ni" in confirmed:
+            nci_vals.add(confirmed["is.noncontrolling_ni"])
+        elif "is.noncontrolling_ni" in conflicts:
+            nci_vals |= {r["value"] for r in conflicts["is.noncontrolling_ni"]}
+        elif "is.noncontrolling_ni" in cands:
+            nci_vals |= {r["value"] for r in cands["is.noncontrolling_ni"]}
+        nci_vals.add(0)
+        qualifying = {r["value"] for r in conflicts["is.net_income"]
+                      if any(abs(cni + n - r["value"]) <= _NI_IDENTITY_EPS for n in nci_vals)}
+        if len(qualifying) == 1:
+            confirmed["is.net_income"] = qualifying.pop()
+            del conflicts["is.net_income"]
     # net_income fallback (ported from fin2/standardize/rules.py::rule_net_income_fill,
     # missing from the v3 port — 실측 2026-08-09: 삼성증권 FY2025 등 470행/119개사).
     # A nonstandard total-NI label (e.g. '보통주 당기순이익' instead of '당기순이익') can
     # fail to match is.net_income while the attribution lines (controlling/noncontrolling —
     # distinct labels, reliably matched) still resolve. Recompose the total from those
     # rather than leaving it NULL. Non-controlling defaults to 0 (e.g. 별도, no subsidiaries).
-    if "is.net_income" not in confirmed and "is.controlling_ni" in confirmed:
+    # ★2026-08-22: gate on `"is.net_income" not in cands` (아예 후보가 없을 때만), not just
+    # "not in confirmed" — the old condition also matched an *unresolved conflict* (multiple
+    # candidates exist, none picked) and silently overwrote it with a guess equal to
+    # controlling_ni alone (nci defaults to 0 when noncontrolling_ni is also unconfirmed),
+    # which is exactly the wrong-value bug above when the identity check just above didn't
+    # already resolve it. A genuine conflict should stay a conflict (NULL), not become a
+    # confident-looking wrong number.
+    if ("is.net_income" not in confirmed and "is.net_income" not in cands
+            and "is.controlling_ni" in confirmed):
         nci = confirmed.get("is.noncontrolling_ni", 0)
         confirmed["is.net_income"] = confirmed["is.controlling_ni"] + nci
     col: dict[str, int] = {}

@@ -288,10 +288,15 @@ def test_map_rows_wiring_recovers_mismap_end_to_end():
         _merged_row("IS", "비지배지분", 123_593, section_path="포괄손익의 귀속"),
     ]
     cands = _map_rows(rows, period="Q1", basis="consolidated", statements=("IS",))
-    # Pre-fix behaviour would have left is.controlling_ni with the lone OCI value
-    # (9,312,323) auto-confirmed -- assert the structural candidate is present too.
+    # ★2026-08-22 update: account_mapper no longer maps the bare '지배기업 소유주지분' label
+    # to is.controlling_ni at all (see parser/common/account_mapper.py's bare-지배지분 guard,
+    # P1C 잔여회귀 조사) -- it's structurally excluded here too (section_path says '포괄손익의
+    # 귀속', not a net-income attribution section), so the OCI value (9,312,323) no longer
+    # enters is.controlling_ni's candidate pool at all. Previously it entered via the label
+    # mapper alone and had to be out-voted by the structural candidate below; now it's simply
+    # never a candidate -- assert the structural candidate is present and the OCI value is not.
     assert 8_028_407 in {r["value"] for r in cands["is.controlling_ni"]}
-    assert 9_312_323 in {r["value"] for r in cands["is.controlling_ni"]}
+    assert 9_312_323 not in {r["value"] for r in cands["is.controlling_ni"]}
     confirmed, conflicts = _resolve(cands)
     _resolve_ni_attribution(cands, confirmed, conflicts)
     assert confirmed["is.controlling_ni"] == 8_028_407   # correct, not the OCI value

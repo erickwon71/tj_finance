@@ -66,3 +66,7 @@ daily의 `_sync_layer2_lines`(report_lines 적재, ④-3) **이후**에 붙여�
 ## 참고
 [[phase5-remaining6-resolved-2026-08-22]](메모리), `docs/plans/collection_pipeline_restore_2026-07-31.md` §7,
 `docs/runbook_new_parser_pipeline_integration.md`, `docs/plans/gateb_view_source_version_join_fix_design_2026-08-17.md`.
+
+> **2026-08-22 추가** — v2 전용 기능·데이터의 v3 이식(폐기 준비) 계획은 별도 문서:
+> [`std_v2_retirement_port_to_v3_2026-08-22.md`](std_v2_retirement_port_to_v3_2026-08-22.md).
+> 그 문서가 확정한 배선 위치 = **데일리 내부 ④-6 신설**(④-4 직후 · ⑤ Gate B 직전).

@@ -1339,6 +1339,27 @@ def audit_fields(
                                               db_row.get("fiscal_period"), basis) in _TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS:
             # R23 — 이 행은 값=0 후보와의 우연일치를 배제(위 _TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS 참고).
             cands = [c for c in cands if c.amount_won != 0]
+        if canon == "bs.cash":
+            # ★ P1C-2 cash+deposits identity check (2026-08-22) — rule_cash_with_deposits
+            # (fin2/standardize/rules.py, 2026-07-18 사용자 확정)는 금융사(증권·보험) std
+            # cash 를 현금성자산(bs.cash) + 예치금(bs.deposits) 합으로 저장한다. face 라인은
+            # 원시 개념(현금성자산 단독, 또는 결합 라벨 bs.cash_deposits_combined)만 들고
+            # 있어 아래 일반 대조(cands 직접비교)는 이 합산값을 VALUE_DIFF 로 오판한다
+            # (Gate B 전수재감사 2026-08-22, cash 필드 999건 중 972건이 이 정의 공백).
+            # 예치금 후보가 있을 때만, base(현금성 우선·없으면 결합값 대체) + 예치금 조합이
+            # val 과 일치하는지 먼저 확인 — rule 자신의 base 선택 로직(§rule_cash_with_
+            # deposits docstring)과 동일한 우선순위. 매칭 안 되면 아래 일반 경로로 폴백
+            # (기존 PASS/FAIL 판정에 영향 없음 — 순수 additive).
+            dep_vals = [ln.amount_won for ln in by_canon.get("bs.deposits", [])
+                        if ln.amount_won is not None]
+            if dep_vals:
+                base_vals = ([ln.amount_won for ln in cands if ln.amount_won is not None]
+                             or [ln.amount_won for ln in by_canon.get("bs.cash_deposits_combined", [])
+                                 if ln.amount_won is not None])
+                if any(b + d == val for b in base_vals for d in dep_vals):
+                    results.append(FieldAudit(field, canon, val, True, None,
+                                              report_value_won=val, evidence=EVIDENCE_E4_IDENTITY))
+                    continue
         if canon == "is.revenue":
             il = db_row.get("industry_lines") or {}
             # gross_fallback(§3-D) 행은 일반경로(공시 총계 그대로)로 이미 통과하므로 대상 밖.

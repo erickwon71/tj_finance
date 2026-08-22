@@ -33,7 +33,8 @@ from parser.common.account_mapper import get_mapper
 from fin2.standardize.rules import (DIRECT_MAP, CONSUMED_CANON, StdContext,
                                     rule_additive_capex, rule_derive_fcf,
                                     rule_derive_net_debt, rule_additive_da,
-                                    rule_derive_ebitda, ADDITIVE_CANON)
+                                    rule_derive_ebitda, ADDITIVE_CANON,
+                                    _COL_PRIORITY, rule_cash_with_deposits)
 from fin2.layer3.note_da import note_da_canonicals
 from parser.common.note_labels import classify_da_label
 from fin2.layer3.industry_profiles import (
@@ -2311,6 +2312,38 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
             # dedupe preserving order
             prov["amend_chain"][std_col] = list(dict.fromkeys(amend_rcepts))
 
+    # concept priority override (P1C-1, 2026-08-22 — ported from fin2/standardize/rules.py::
+    # rule_map_direct's _COL_PRIORITY, which v3 never received: the loop above only imports
+    # DIRECT_MAP, so when a std column has more than one candidate canonical (currently just
+    # interest_expense: is.interest_expense vs is.finance_cost), whichever canonical dict
+    # iteration happens to process last silently wins the overwrite above — no concept
+    # preference. is.finance_cost (금융원가) is a superset that includes interest_expense, so
+    # letting it win overstates interest expense whenever a company reports both (confirmed
+    # 182 keys via report_lines reproduction, P0.6 T7 — v2 fixed this 2026-07-17(C7), v3 never
+    # got the port). Run last so it always overrides the loop above: prefer
+    # is.interest_expense, fall back to is.finance_cost only when the former is absent.
+    for std_col, priority in _COL_PRIORITY.items():
+        for canon in priority:
+            if canon in confirmed:
+                value = confirmed[canon]
+                col[std_col] = value
+                # Recompute amendment provenance for the winning canon too — the loop
+                # above may have last recorded provenance for the OTHER candidate
+                # (e.g. is.finance_cost) before this pass overwrote the value with
+                # is.interest_expense's, which would otherwise leave amend_chain
+                # attributed to a value that's no longer in col.
+                amend_rcepts = [r["amended_by"] for r in cands.get(canon, [])
+                                if r["value"] == value and r.get("amended") and r.get("amended_by")]
+                if amend_rcepts:
+                    if std_col not in prov["amended_cols"]:
+                        prov["amended_cols"].append(std_col)
+                    prov["amend_chain"][std_col] = list(dict.fromkeys(amend_rcepts))
+                else:
+                    prov["amend_chain"].pop(std_col, None)
+                    if std_col in prov["amended_cols"]:
+                        prov["amended_cols"].remove(std_col)
+                break
+
     # is.cogs additive override (2026-08-15, Phase 2 — see _COGS_ADDITIVE_OVERRIDE comment
     # above for the full rationale). Overrides whatever DIRECT_MAP/_resolve() produced for
     # 'cogs' on these curated keys — that value is either a HELD conflict (multi_conflict
@@ -2388,12 +2421,19 @@ def _apply_enrichment(session, corp, fy, period, basis, confirmed, col, note_bas
 
     ctx = StdContext(corp_code=corp, fiscal_year=fy, fiscal_period=period,
                      basis=basis, canon=canon, col=dict(col))
+    # cash_with_deposits (P1C-2, 2026-08-22) MUST run before rule_derive_net_debt below —
+    # v2's own RULES list runs it right after map_direct, ahead of every derived rule, for
+    # exactly this reason: net_debt reads ctx.col["cash"], so a financial-company cash figure
+    # left un-enriched here (증권/보험 현금+예치금) would flow into a net_debt computed off
+    # the pre-enrichment cash value. Additive-only elsewhere: writes col["cash"] only when the
+    # 현금및예치금 concept split (bs.cash_deposits_combined/bs.deposits) is actually present.
+    rule_cash_with_deposits(ctx)  # cash = 현금성자산 + 예치금 (금융사만, 2026-07-18 규칙, v2 검증됨)
     rule_additive_capex(ctx)     # capex = -(|유형자산취득| + |무형자산취득|)  [cf.capex canonicals]
     rule_derive_fcf(ctx)         # fcf = cfo - |capex|
     rule_derive_net_debt(ctx)    # net_debt = (short+long debt) - cash  [v3's own values]
     rule_additive_da(ctx)        # depreciation/amortization/da_total  [cf.* 우선, 없으면 note.*]
     rule_derive_ebitda(ctx)      # ebitda = operating_income + da_total
-    for k in ("capex", "fcf", "net_debt",
+    for k in ("cash", "capex", "fcf", "net_debt",
               "depreciation", "amortization", "da_total", "ebitda"):
         v = ctx.col.get(k)
         if v is not None:

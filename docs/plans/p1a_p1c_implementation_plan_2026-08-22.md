@@ -163,7 +163,7 @@ _VALUE_COLS = (
 - `rules.py`의 `CONSUMED_CANON`은 `_LEASE_PARTS`/`_BORROW_PROCEEDS_PARTS`/
   `_BORROW_REPAID_PARTS`를 **이미** 포함(P0.6 조사 중 확인) — 그대로 두면 새 canonical의
   충돌이 `conflicts`에 정상 기록된다.
-- `rules.py`의 `_RULES` 리스트(v2용, `:376-377`)도 `additive_lease`/`additive_borrowings`를
+- `rules.py`의 `RULES` 리스트(v2용, `:376-377`)도 `additive_lease`/`additive_borrowings`를
   이미 포함 — v2쪽은 **아무것도 안 건드려도** 분해 즉시 (지금 못 받던 값을) 받기 시작한다.
 
 ---
@@ -262,3 +262,46 @@ checkout`뿐이고, v2/대조군에 영향 없음이 자명하다(코드만 도�
 - 실제 파일 수정 — **승인 후 별도 요청**으로 실행
 - T4(괄호 결함) — P0.6에서 이미 "결함 없음"으로 결론, 조치 자체가 없음
 - T5(`additive_debt` 이름 통합) — P4 범위, 별도 계획 필요
+
+---
+
+## 10. 실행 결과 (2026-08-22) — ★P1C 완료, P1A는 미착수
+
+**완료**: P1C-1(`interest_expense` 우선순위)·P1C-2(`cash_with_deposits`) 코드 반영 +
+전체 연도(1999+) 재빌드 + Gate B 전수 재감사. P1A(§4, lease/borrow 분해)는 **이 세션에서
+착수 안 함** — §6 순서상 P1C 검증까지만 진행하고 여기서 멈추기로 결정.
+
+**계획서 대비 실장 시 보강한 것 2건** (§4.3/§5.1/§5.2 스니펫엔 없던 것, 구현 중 발견):
+1. §5.1 우선순위 패스가 `col[std_col]` 값만 덮어쓰고 `amend_chain`/`amended_cols`(기재정정
+   감사추적)는 갱신 안 하면 두 후보가 각각 다른 정정이력을 가질 때 값과 출처가 어긋남 →
+   우선순위 패스 안에서 감사추적도 함께 재계산하도록 보강.
+2. §5.2 "순서 무관"은 틀림 — `_apply_enrichment` 안의 기존 `rule_derive_net_debt`가
+   `ctx.col["cash"]`를 읽으므로 `rule_cash_with_deposits`는 그보다 **먼저** 실행해야 함
+   (v2 `RULES` 순서와 동일하게 배치). 또한 `_apply_enrichment` 끝의 결과회수 루프가
+   `"cash"`를 안 챙겨서 계산해도 버려지는 문제도 같이 수정.
+
+**검증 중 발견한 것(★중요, 다음 세션 인계)**:
+- **전수 재빌드(`--all --year-min 1999`)를 한 번에 돌리면 안 된다는 R4 교훈이 재현됨**
+  (`std_v2_retirement_port_to_v3_2026-08-22.md:751`). P1C만 검증하려 했는데 최근 커밋된
+  R29/R34/R39/R41/R42 등 다른 Gate B 수정이 아직 표적백필 안 된 기업들에 한꺼번에 적용돼
+  버림 — `total_assets`/`revenue`/`net_income`/`short_term_debt` 등 P1C가 안 건드리는
+  컬럼까지 값이 바뀜.
+- Gate B 전수 재감사 결과 pass→fail 전이 **999건** 확인, 3차례 독립 재실행(단독 1개사,
+  49개사, 5-shard 병렬 재실행)으로 **131건에 수렴·재현 확인**(999는 최초 1회차만의 예외치 —
+  원인 미상, 그 실행의 상세 로그를 재검사로 덮어써서 재조사 불가. 재발 시 **재검사 전에
+  face_audit 스냅샷부터 뜰 것**).
+- 131건 중 **69건(cash)**: P1C-2 버그 아님. `fin2/audit/face_audit.py`의 `"cash":"bs.cash"`
+  체커가 `rule_cash_with_deposits`(2026-07-18 확정, 금융사 현금+예치금 합산)를 몰라서
+  enrichment된 정답을 오탐 — v2도 같은 이유로 이미 다수 fail_b였음(715/992). 항등식 재구성
+  체크(`bs.cash == bs.cash 후보 + bs.deposits 후보`)를 `audit_fields()`에 추가해 972→69로
+  해소(같은 파일의 `is.revenue`/`is.net_income` 파생검증 패턴과 동일 구조).
+- **남은 62건(controlling_ni 46·cogs 14·net_income 3·기타 7)은 P1C 무관 — 미해결, 다음
+  세션 과제.** P1C 코드는 이 컬럼들을 전혀 안 건드리므로 위 "전수 재빌드 한꺼번에" 부작용으로
+  추정되나 원인 미규명. 특히 `00580667`(2025 FY 연결)은 `total_assets/current_assets/
+  total_liabilities/current_liabilities/total_equity/retained_earnings/tax_expense/
+  net_income/controlling_ni` **9개 필드가 동시에** fail — 개별적으로 더 심각해 보여 우선
+  조사 권장. 대상 corp 목록은 세션 스크래치(`regressed_corps.txt`, 49개사)에 있었으나 세션
+  종료 시 소실 — 재조사 시 `face_audit_snap_20260822` vs 현재 `face_audit` diff로 다시 뽑을 것.
+- DB에 남겨둔 진단용 스냅샷 테이블(정리 안 함): `face_audit_snap_20260822`(P1C 착수 전
+  기준선, 재조사 시 diff 기준으로 재사용 가능), `std_financials_v3_snap_20260822`,
+  `face_audit_recheck1_20260822`(중간 디버그용, 삭제해도 무방).

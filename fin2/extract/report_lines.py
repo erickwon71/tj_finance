@@ -52,7 +52,10 @@ from fin2.extract.text import (
 )
 from fin2.extract.units import ColumnUnits, FX_ONLY, SRC_FX
 from fin2.extract.legacy_pre2015 import detect_pre2015_body_statement_tables
-from fin2.extract.report_lines_inline_xbrl_overlay import overlay_dividends_paid_sign
+from fin2.extract.report_lines_inline_xbrl_overlay import (
+    overlay_dividends_paid_sign,
+    overlay_tax_expense_value,
+)
 
 # report_fiscal_year 가 이 값 이하면 pre-2015 K-GAAP 라우팅을 먼저 시도한다(설계문서
 # `docs/plans/pre2015_layer2_backfill_phase2_design_2026-08-10.md` §2-1·§3-3 잔여항목③
@@ -1156,6 +1159,14 @@ def extract_report_lines(
     n_overlay = overlay_dividends_paid_sign(lines, file_path, report_fiscal_year)
     if n_overlay:
         logger.debug(f"[report_lines] inline XBRL overlay 적용: {n_overlay}건 ({rcept_no})")
+
+    # 버그①(당기 3개월 미공시 시 전기 3개월 컬럼 오채택) 수정 — 같은 원리로 원문
+    # 인라인 XBRL(Track A) 사실로 IS 텍스트추출 tax_expense 값을 보정.
+    # docs/plans/d_category_col_misselect_ni_label_dup_design_2026-08-23.md §1.
+    n_tax_overlay = overlay_tax_expense_value(lines, file_path, report_fiscal_year)
+    if n_tax_overlay:
+        logger.debug(f"[report_lines] tax_expense inline XBRL overlay 적용: "
+                     f"{n_tax_overlay}건 ({rcept_no})")
 
     return lines
 

@@ -20,11 +20,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from fin2.extract.report_lines import extract_report_lines  # noqa: E402
 from fin2.extract.report_lines_inline_xbrl_overlay import (  # noqa: E402
     overlay_dividends_paid_sign,
+    overlay_tax_expense_value,
 )
 
 _LG = (
     Path(__file__).resolve().parents[2]
     / "raw_report/KOSPI/00120021_LG/annual/2025/20260318001025.xml"
+)
+
+_GUKIL_PAPER = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00104573_국일제지/quarter/2025/20251113000801.xml"
 )
 
 
@@ -131,3 +137,107 @@ def test_overlay_already_correct_is_noop(monkeypatch):
     n = overlay_dividends_paid_sign(rows, "dummy.xml", 2025)
     assert n == 0
     assert rows[0].value_won == -632_384
+
+
+# --- §3: overlay_tax_expense_value() — 버그①(컬럼오선택) 수정 ---------------------
+# design docs/plans/d_category_col_misselect_ni_label_dup_design_2026-08-23.md §1
+
+def test_00104573_tax_expense_col_misselect_corrected():
+    """국일제지(00104573) 2025Q3 연결 '법인세비용(수익)'이 텍스트추출로는
+    당기3개월 미공시 → 전기3개월 컬럼 오채택(-138,250,046, 버그)이었다가
+    오버레이 적용 후 당기누적 XBRL 사실(-2,310,052,284)로 교정된다.
+    실측 재현: 설계문서 §1-1 Phase 0."""
+    if not _GUKIL_PAPER.exists():
+        return
+    lines = extract_report_lines(
+        _GUKIL_PAPER, rcept_no="20251113000801", corp_code="00104573",
+        report_fiscal_year=2025, report_fiscal_period="Q3",
+    )
+    row = next(l for l in lines if l.statement == "IS" and l.basis == "consolidated"
+               and (l.col_index or 0) == 0 and l.label_raw == "법인세비용(수익)")
+    assert row.value_won == -2_310_052_284
+    assert row.source_ref.endswith(";xbrl_inline_override")
+
+
+def test_00104573_ebt_row_untouched():
+    """같은 문서의 EBT 행('법인세비용차감전순이익(손실)')은 '법인세비용' 부분문자열을
+    포함하지만 '차감전' 가드로 후보에서 제외돼 오버레이 대상이 아니다(account_mapper
+    EBT 가드와 동일 패턴, fin2/tests/test_account_mapper_ebt.py 참고)."""
+    if not _GUKIL_PAPER.exists():
+        return
+    lines = extract_report_lines(
+        _GUKIL_PAPER, rcept_no="20251113000801", corp_code="00104573",
+        report_fiscal_year=2025, report_fiscal_period="Q3",
+    )
+    row = next(l for l in lines if l.statement == "IS" and l.basis == "consolidated"
+               and (l.col_index or 0) == 0 and l.label_raw == "법인세비용차감전순이익(손실)")
+    assert row.value_won == 24_412_859  # 텍스트추출 그대로(오버레이 미적용)
+    assert row.source_ref is None or not row.source_ref.endswith(";xbrl_inline_override")
+
+
+def test_overlay_tax_expense_ebt_label_excluded(monkeypatch):
+    """순수 목 테스트 — '차감전'을 포함한 라벨은 '법인세비용' 부분문자열을 갖더라도
+    후보에서 제외된다(EBT 오염 재현 방지)."""
+    import fin2.extract.report_lines_inline_xbrl_overlay as mod
+
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+        _FakeFact("is.tax_expense", "IS", "consolidated", True, -2_310_052_284),
+    ])
+    rows = [
+        _FakeRow("IS", "consolidated", 0, True, "법인세비용차감전순이익(손실)", 24_412_859),
+        _FakeRow("IS", "consolidated", 0, True, "법인세비용(수익)", -138_250_046),
+    ]
+    n = overlay_tax_expense_value(rows, "dummy.xml", 2025)
+    assert n == 1
+    assert rows[0].value_won == 24_412_859  # EBT 행 — 손대지 않음
+    assert rows[1].value_won == -2_310_052_284  # 진짜 tax_expense 행만 교정
+
+
+def test_overlay_tax_expense_no_magnitude_gate(monkeypatch):
+    """dividends_paid 오버레이와 달리 크기가 크게 어긋나도(버그의 증상 자체이므로)
+    교정한다 — magnitude tolerance 게이트가 없다."""
+    import fin2.extract.report_lines_inline_xbrl_overlay as mod
+
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+        _FakeFact("is.tax_expense", "IS", "consolidated", True, -2_310_052_284),
+    ])
+    rows = [_FakeRow("IS", "consolidated", 0, True, "법인세비용(수익)", -138_250_046)]
+    n = overlay_tax_expense_value(rows, "dummy.xml", 2025)
+    assert n == 1
+    assert rows[0].value_won == -2_310_052_284
+
+
+def test_overlay_tax_expense_ambiguous_two_candidates_untouched(monkeypatch):
+    """같은 (basis, is_cumulative)에 후보 텍스트행이 2개면(모호) 손대지 않는다."""
+    import fin2.extract.report_lines_inline_xbrl_overlay as mod
+
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+        _FakeFact("is.tax_expense", "IS", "consolidated", True, -2_310_052_284),
+    ])
+    rows = [
+        _FakeRow("IS", "consolidated", 0, True, "법인세비용(수익)", -138_250_046),
+        _FakeRow("IS", "consolidated", 0, True, "법인세비용(이익)", -1),
+    ]
+    n = overlay_tax_expense_value(rows, "dummy.xml", 2025)
+    assert n == 0
+    assert rows[0].value_won == -138_250_046 and rows[1].value_won == -1
+
+
+def test_overlay_tax_expense_already_correct_is_noop(monkeypatch):
+    """이미 값이 일치하면 손대지 않는다(카운트도 0)."""
+    import fin2.extract.report_lines_inline_xbrl_overlay as mod
+
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+        _FakeFact("is.tax_expense", "IS", "consolidated", True, -2_310_052_284),
+    ])
+    rows = [_FakeRow("IS", "consolidated", 0, True, "법인세비용(수익)", -2_310_052_284)]
+    n = overlay_tax_expense_value(rows, "dummy.xml", 2025)
+    assert n == 0
+
+
+def test_overlay_tax_expense_pre2024_is_noop_without_reading_file():
+    """report_fiscal_year < 2024 는 파일을 열지 않고 즉시 0(no-op)."""
+    rows = [_FakeRow("IS", "consolidated", 0, True, "법인세비용(수익)", -138_250_046)]
+    n = overlay_tax_expense_value(rows, "/nonexistent/path.xml", 2023)
+    assert n == 0
+    assert rows[0].value_won == -138_250_046

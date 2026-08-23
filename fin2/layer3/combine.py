@@ -1821,11 +1821,25 @@ def _derive_net_income_from_ebt(cands: dict) -> set:
     caller's uniqueness-gated identity match already exists exactly to arbitrate between
     ambiguous candidates without guessing (결측 > 오염); a single spurious anchor typically
     just fails to find a match (safe), so offering two only helps when exactly one of them
-    lands on a real, unique cni+nci pairing."""
+    lands on a real, unique cni+nci pairing.
+
+    ★2026-08-23(같은 조사 — 이오플로우 01274310): 원래는 tax 후보가 정확히 1개일 때만
+    발동했는데, 일부 문서는 법인세비용 라인 자체가 없다(그 기간 법인세 자체가 없거나 0,
+    'XI.법인세비용차감전순이익' 다음이 바로 귀속 라인). 그 모양(tax 후보 0개)을 '애매해서
+    포기'와 똑같이 취급하면 EBT 자체가 net_income 이라는 뻔한 앵커조차 못 써서, 뒤이은
+    _resolve_ni_attribution 의 identity 대조가 아예 못 돌고 noncontrolling_ni conflict 가
+    안 풀린 채로 남는다(net_income 최종 폴백이 그 nci 를 0 취급 — A 계열과 동일 증상).
+    tax 후보 0개는 '애매'가 아니라 '세금 자체가 없음'으로 보고 EBT 를 그대로 anchor 로
+    쓴다(부호 애매성 없음 — 뺄 것이 없으므로)."""
     ebt = cands.get("is.ebt", [])
+    if len(ebt) != 1:
+        return set()
+    e = ebt[0]["value"]
     tax = cands.get("is.tax_expense", [])
-    if len(ebt) == 1 and len(tax) == 1:
-        e, t = ebt[0]["value"], tax[0]["value"]
+    if not tax:
+        return {e}
+    if len(tax) == 1:
+        t = tax[0]["value"]
         return {e - t, e + t} if t else {e - t}
     return set()
 
@@ -2030,9 +2044,6 @@ def _cogs_additive_labels(merged: list[dict], period: str, basis: str,
     return picked
 
 
-_NI_ATTRIBUTION_SECTION_RE = re.compile(r"귀속")
-
-
 def _ni_attribution_structural_candidates(rows: list[dict], period: str,
                                           basis: str) -> dict[str, list[dict]]:
     """Structural recovery for is.controlling_ni/is.noncontrolling_ni — mismap fix,
@@ -2081,7 +2092,15 @@ def _ni_attribution_structural_candidates(rows: list[dict], period: str,
     sections: dict[tuple, list] = defaultdict(list)
     for r in is_rows:
         sp = r.get("section_path") or ""
-        if _NI_ATTRIBUTION_SECTION_RE.search(sp) and "순이익" in sp and "포괄" not in sp:
+        # ★2026-08-23(fy≥2024 잔여회귀 조사 — 모트렉스 00876908): '귀속' 요구가 너무 좁았다.
+        # 일부 문서는 귀속 섹션을 '…의 귀속'류 별도 문구 대신 **부모 순이익 총계 라인
+        # 자신의 라벨**을 그대로 section_path 로 재사용한다(예: section_path='당기순이익
+        # (손실)', '귀속' 단어 자체가 없음) — 이 모양은 이전엔 스캔에서 통째로 빠져,
+        # bare 지배지분 가드(2026-08-22)가 그 유일한 직접후보를 무매핑시킨 뒤로는 이
+        # 구조적 복구도 못 도와줘서 총포괄귀속(오답)만 유일후보로 남아 그대로 확정됐다.
+        # '귀속' 요건을 버리고 '순이익'(또는 '순손실')+'포괄' 부재만으로 판정 — 아래
+        # 정확히 1개 비지배/1개 비-비지배 라는 형태 제약이 이미 오탐을 걸러준다.
+        if ("순이익" in sp or "순손실" in sp) and "포괄" not in sp:
             sections[(r["table_seq"], sp)].append(r)
 
     extra: dict[str, list[dict]] = defaultdict(list)

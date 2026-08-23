@@ -1803,18 +1803,31 @@ _NI_IDENTITY_EPS = 2   # won tolerance for the identity match below (§C) — re
                        # false unique match on its own.
 
 
-def _derive_net_income_from_ebt(cands: dict):
+def _derive_net_income_from_ebt(cands: dict) -> set:
     """§A fallback anchor: when is.net_income has NO raw candidate at all (the total line
     is simply absent from this filing's body — measured ~12% of the still-held PASS
     sample, e.g. 00107987 2022FY), derive it as EBT − tax_expense for the sole purpose of
     anchoring the identity check below. Only fires when both are single, unambiguous
     candidates (never guesses among a split). Does NOT write into `confirmed` — net_income
-    confirmation itself is out of this fix's scope, this value is only used locally here."""
+    confirmation itself is out of this fix's scope, this value is only used locally here.
+
+    ★2026-08-23(fy≥2024 잔여회귀 조사 — 펌텍코리아 00761059): is.tax_expense is NOT in
+    `_LOSS_CANON`, so its stored sign is whatever the source document displays, and that
+    display convention is NOT uniform across filings — some show it as a plain positive
+    magnitude (EBT − tax = net_income), others show it already signed as a subtraction/
+    benefit (EBT + tax = net_income, verified on a different real filing in this same
+    population). There is no reliable way to tell which convention a given filing uses
+    from the stored sign alone. Rather than guess, return BOTH candidate anchors — the
+    caller's uniqueness-gated identity match already exists exactly to arbitrate between
+    ambiguous candidates without guessing (결측 > 오염); a single spurious anchor typically
+    just fails to find a match (safe), so offering two only helps when exactly one of them
+    lands on a real, unique cni+nci pairing."""
     ebt = cands.get("is.ebt", [])
     tax = cands.get("is.tax_expense", [])
     if len(ebt) == 1 and len(tax) == 1:
-        return ebt[0]["value"] - tax[0]["value"]
-    return None
+        e, t = ebt[0]["value"], tax[0]["value"]
+        return {e - t, e + t} if t else {e - t}
+    return set()
 
 
 def _match_ni_identity(cni_vals: set, nci_vals: set, net_income: int):
@@ -1874,15 +1887,36 @@ def _resolve_ni_attribution(cands: dict, confirmed: dict, conflicts: dict) -> No
 
     If nothing disambiguates (identity ambiguous/impossible AND no multi-row stage
     corroboration — the '단독 후보' pattern from §1-A), stays held (결측 > 오염, no
-    guessing)."""
-    if "is.controlling_ni" not in conflicts:
+    guessing).
+
+    ★Fallback #3 (2026-08-23, fy≥2024 잔여회귀 조사 중 발견 — 펌텍코리아 00761059 등):
+    entry used to require is.controlling_ni ITSELF in conflicts. But the same bare-label
+    NI-attribution-vs-TCI-attribution ambiguity (see module docstring above) can hit
+    is.noncontrolling_ni ALONE while is.controlling_ni already resolved cleanly (a single,
+    unambiguous qualified label like '지배기업의 소유주에게 귀속되는 당기순이익') —
+    common precisely when account_mapper's bare-alias guard (2026-08-22 fix) already
+    stripped the controlling-side bare label but a bare '비지배지분' on the noncontrolling
+    side still collides with its own TCI counterpart. Previously the identity check never
+    even ran for that shape, leaving is.noncontrolling_ni held in conflicts; the net_income
+    blind fallback below then read `confirmed.get("is.noncontrolling_ni", 0)` and silently
+    treated a REAL, merely-unresolved NCI as 0 — net_income == controlling_ni exactly,
+    wrong. Now the entry fires whenever EITHER canonical is in conflicts, and cni_vals is
+    built with the same confirmed>conflicts>cands precedence nci_vals already used (so an
+    already-clean controlling_ni contributes its single confirmed value instead of KeyError
+    on an empty conflicts entry)."""
+    if "is.controlling_ni" not in conflicts and "is.noncontrolling_ni" not in conflicts:
         return
     matched = False
     net_income = confirmed.get("is.net_income")
-    if net_income is None:
-        net_income = _derive_net_income_from_ebt(cands)               # §A
-    if net_income is not None:
-        cni_vals = {r["value"] for r in conflicts["is.controlling_ni"]}
+    net_income_anchors = {net_income} if net_income is not None else _derive_net_income_from_ebt(cands)  # §A
+    if net_income_anchors:
+        cni_vals = set()
+        if "is.controlling_ni" in confirmed:
+            cni_vals.add(confirmed["is.controlling_ni"])
+        elif "is.controlling_ni" in conflicts:
+            cni_vals |= {r["value"] for r in conflicts["is.controlling_ni"]}
+        elif "is.controlling_ni" in cands:
+            cni_vals |= {r["value"] for r in cands["is.controlling_ni"]}
 
         nci_vals = set()
         if "is.noncontrolling_ni" in confirmed:
@@ -1896,11 +1930,17 @@ def _resolve_ni_attribution(cands: dict, confirmed: dict, conflicts: dict) -> No
                           # exists for this canonical too — mirrors the old sole-fallback
                           # (v2's `nci or 0`), just no longer gated on "nothing else found".
 
-        match = _match_ni_identity(cni_vals, nci_vals, net_income)     # §C (eps inside)
+        # §A/tax-sign ambiguity: multiple anchors possible (see _derive_net_income_from_ebt).
+        # Only accept if exactly one anchor yields a match — 2+ distinct matches across
+        # anchors is a real ambiguity (which anchor was even right?), not a resolution.
+        matches = {_match_ni_identity(cni_vals, nci_vals, ni) for ni in net_income_anchors}
+        matches.discard(None)
+        match = matches.pop() if len(matches) == 1 else None
         if match is not None:
             c_val, n_val = match
-            confirmed["is.controlling_ni"] = c_val
-            del conflicts["is.controlling_ni"]
+            if "is.controlling_ni" in conflicts:
+                confirmed["is.controlling_ni"] = c_val
+                del conflicts["is.controlling_ni"]
             if "is.noncontrolling_ni" in conflicts:
                 confirmed["is.noncontrolling_ni"] = n_val
                 del conflicts["is.noncontrolling_ni"]

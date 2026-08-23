@@ -100,6 +100,10 @@ def test_cash_with_deposits_financial():
     c = _ctx({"bs.cash": 500})
     assert c.col["cash"] == 500
     assert "cash_plus_deposits" not in c.applied and "cash_from_combined" not in c.applied
+    # 카카오형(2026-08-23): base+dep 둘 다 독립 라인, 결합 캡션 없음 → 합산 안 함(base 그대로)
+    c = _ctx({"bs.cash": 6145133028198, "bs.deposits": 181464360882})
+    assert c.col["cash"] == 6145133028198, c.col["cash"]
+    assert "cash_plus_deposits" not in c.applied
 
 
 def _run():

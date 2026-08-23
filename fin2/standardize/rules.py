@@ -177,6 +177,17 @@ def rule_cash_with_deposits(ctx: StdContext) -> None:
       · 상상인(현금성 + 현금및예치금, 예치금 라인 없음) → 현금성만(예치금 미포함, 사용자
         '무리없으면' 수준으로 용인). 일반기업(예치금 무관)은 base=현금성, +0 = 불변.
 
+    ★2026-08-23(fy≥2024 잔여회귀 조사 중 발견 — 카카오 00258801·카카오페이 01244601·
+    한패스 01445024): base(현금및현금성자산)와 dep(예치금)가 **둘 다** 독립 라인으로 존재
+    하더라도, 문서 어디에도 결합 캡션(bs.cash_deposits_combined)이 없으면 base+dep 합산을
+    하지 않는다. 이 세 회사는 '예치금'이 위 유안타형처럼 현금성자산의 성분이 아니라 완전히
+    별개의 유동자산 캡션(카카오페이류 이용자예치금 추정)으로, 결합 캡션이 존재해 base+dep가
+    실제로 그 결합총계와 일치함을 검증해 주는 유안타형과 달리 이 조합이 진짜 헤드라인
+    '현금및현금성자산' 총계라는 근거가 전혀 없다(실측: 원문 표시 캡션 자체가 base 단독값,
+    face_audit report_won 과 정확히 일치). 결합 캡션이 있을 때만(base+dep가 그 결합총계를
+    재구성한다는 것이 실제로 확인될 때만) 합산 — 근거 없이 두 독립 계정을 더하지 않는다
+    (결측/보수적 값 > 오염).
+
     map_direct 뒤에 실행(현금성이 이미 ctx.col['cash'] 에 있음). 대용치·합산 시 표시를 남긴다.
     """
     combined = ctx.canon.get("bs.cash_deposits_combined")
@@ -188,6 +199,10 @@ def rule_cash_with_deposits(ctx: StdContext) -> None:
         base = combined
         ctx._mark("cash_from_combined")   # 현금성 라인 없이 결합 라벨로 채움
     if base is None:
+        return
+    if dep and combined is None:
+        # base 도 dep 도 각자 독립 라인인데 그 둘이 결합총계를 이룬다는 근거(결합 캡션)가
+        # 문서 어디에도 없다 — 카카오/카카오페이/한패스형(예치금=별개 캡션). 합산하지 않는다.
         return
     ctx.col["cash"] = base + (dep or 0)
     if dep:

@@ -209,6 +209,22 @@ class AccountMapper:
                 and not any(k in normalized for k in ("순이익", "순손실", "당기순", "손실", "귀속"))):
             return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
 
+        # ── 지배/비지배 귀속 중단영업 성분 가드(2026-08-23, fy≥2024 잔여회귀 조사 중 발견 —
+        # 케이엔더블유 00606664): '지배주주지분순이익(중단)'처럼 귀속(지배/비지배) 라벨에
+        # '중단'(중단영업/중단사업) 한정어가 붙으면 그건 계속+중단 합산 헤드라인 총계가 아니라
+        # 중단영업 성분만의 부분값이다(이 회사는 중단영업분=0, 실제 총 controlling_ni는 별도
+        # 라인 '지배기업지분'에 있음). 그런데도 '순이익' 키워드가 있어 위 bare 지배지분 가드는
+        # 이 라벨을 그대로 통과시키고, 퍼지가 헤드라인 alias('지배주주순이익')와 근접(0.90+)
+        # 하다고 보고 is.controlling_ni 로 오매핑한다. 평소엔 다른 진짜 후보와 충돌(conflicts)
+        # 로 남아 _resolve_ni_attribution 의 identity 로 안전하게 걸러지는데, 위 bare 가드가
+        # 그 진짜 후보들을 전부 무매핑시킨 뒤로는 이 부분값이 **유일한 후보**가 되어 conflict를
+        # 아예 안 거치고(len==1) 곧장 확정돼버린다(단독후보 자동확정, 결측>오염 원칙 위반).
+        # IS 한정, 지배/비지배 귀속 형태(끝이 지분/소유주 이거나 '귀속' 포함)로 범위 좁힘 —
+        # 헤드라인 is.net_income/is.operating_income 의 '중단영업' 처리는 아래 기존 가드가 이미 담당.
+        if (fs_section in (None, "is") and "지배" in normalized and "중단" in normalized
+                and ("지분" in normalized or "소유주" in normalized or "귀속" in normalized)):
+            return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
+
         # ── 지분법 지분 가드: '지분법적용대상…당기순손익에대한지분'(피투자기업 순손익 지분) 은
         # 지분법손익(equity_method_income)이지 당기순이익(net_income)이 아니다. '당기순손익' 부분문자열로
         # is.net_income 오매핑 → fill 우회(net_income 오염)되던 것 차단(is.equity_method_income 로 귀속).

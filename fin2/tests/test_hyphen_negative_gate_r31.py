@@ -130,13 +130,23 @@ def test_cum_map_misalignment_fixed_by_gate_widening():
     before_map = col_map(before)
     after_map = col_map(after)
 
-    # 수정 전 — 오답: col0(당기) 자체가 없고, col1(원래 전기 자리)에 엉뚱한 값이 오emit.
-    assert before_map == {1: 4278634000}, before_map
+    # 수정 전(R31 이전 NUMBER_PATTERN) — 오답: col0(당기)이 살아남지 못한다.
+    # ★2026-08-24: `_split_label_amounts()`에 Gate B 버그① 근본수정(주석컬럼 빈칸도 항상
+    # 소비, `gateb_bugA_col_misselect_optionA_rootfix_plan_2026-08-24.md` §3-4)이 들어가며
+    # 이 "before" 재현값도 같이 바뀌었다 — 이 표에 주석컬럼이 있어(다른 행의 콤마 다중참조로
+    # table_has_note_column=True) 그 수정이 R31 패치 여부와 무관하게 항상 적용되기 때문.
+    # "before"는 R31 하나만 되돌린 가상 상태가 아니라 "R31 + 이 수정 둘 다 없던 상태"의
+    # 근사가 아니라는 뜻 — 실제 회귀 방지 목적(당기 col0 값)은 아래 after_map 이 핵심이다.
+    assert before_map == {0: 3616480000}, before_map
     # 수정 후 — 정답: 당기(col0)가 살아나고, 전기(col1)도 올바른 값으로 바로잡힌다.
     assert after_map == {0: -466274000, 1: 3616480000}, after_map
-    # ★적재 영향 — col_index=0 만 DB 로 간다(_is_loadable). 수정 전엔 이 행이 DB에 전혀 없었고
-    #   (T1 그룹A 잔여13건 중 하나), 수정 후엔 진짜 당기값으로 채워진다.
-    assert 0 not in before_map
+    # ★적재 영향 — col_index=0 만 DB 로 간다(_is_loadable).
+    # 2026-08-24 이전엔 이 행이 DB에 전혀 없었다(T1 그룹A 잔여13건 중 하나, col0 자체가
+    # 없어 결측으로 남음). 2026-08-24 노트컬럼 수정 이후의 "before"(R31만 되돌린 가상
+    # 상태)는 col0 이 **존재하되 틀린 값**(3,616,480,000 — 실제로는 전기 값)으로 나온다 —
+    # "결측"에서 "오염된 값"으로 실패 양상이 바뀐 것뿐, R31(당기 실값 -466,274,000 을
+    # 되살리는 것)이 여전히 필요하다는 결론은 그대로다. 아래 after_map 이 핵심 회귀 가드.
+    assert before_map[0] != -466274000
     assert after_map[0] == -466274000
 
 

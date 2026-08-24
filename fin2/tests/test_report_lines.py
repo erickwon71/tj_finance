@@ -484,6 +484,62 @@ def test_notes_monetary_transcribed_positional():
     assert any(l.value_won == 767_614_120_000 for l in ets), [l.value_won for l in ets]
 
 
+# ── Gate B 버그①(cum_map col-misselect) 근본수정(옵션 A) 회귀 — 2026-08-24 ──
+# `gateb_bugA_col_misselect_optionA_rootfix_plan_2026-08-24.md` §3-4/§3-5 최종설계.
+# 두 실측 사례: (a) 주석컬럼이 있는 표(코리안리) — `_split_label_amounts()`의 빈
+# 주석칸 소비 수정만으로 이미 정답이던 값이 안 깨지는지, (b) 주석컬럼이 없는 표
+# (국일제지 00104573) — `preserve_col_positions=(cum_map is not None)`가 진짜
+# 결측(당기3개월 미공시)을 더 이상 압축으로 지워버리지 않는지.
+
+_KORIANRE_Q3 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00113191_코리안리/quarter/2021/20211115001569.xml"
+)
+_GUKIL_Q3 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00104573_국일제지/quarter/2025/20251113000801.xml"
+)
+
+
+def test_korianre_note_column_table_still_correct_after_rootfix():
+    """코리안리(00113191) 2021Q3 IS — 라벨과 값 사이에 '주석' 컬럼이 구조적으로
+    있는 표(다른 행에 콤마 다중참조 있어 table_has_note_column=True). 근본수정
+    전에도 6-column pop 압축이 우연히 이 표를 올바르게 읽었다 — 근본수정(옵션 A)
+    후에도 같은 정답이 나와야 한다(회귀 없음이 핵심, §3-4-1/3-4-2 반증 재발 방지)."""
+    if not _KORIANRE_Q3.exists():
+        return
+    lines = extract_report_lines(
+        _KORIANRE_Q3, rcept_no="20211115001569", corp_code="00113191",
+        report_fiscal_year=2021, report_fiscal_period="Q3",
+    )
+
+    def _col0_col1(label):
+        rows = [l for l in lines if l.statement == "IS" and l.basis == "consolidated"
+                and l.label_raw == label]
+        return {l.col_index: l.value_won for l in rows}
+
+    assert _col0_col1("Ⅲ. 영업이익") == {0: 200_284_956_061, 1: 171_367_376_772}
+    assert _col0_col1("Ⅵ. 법인세비용차감전순이익") == {0: 199_537_863_402, 1: 171_530_344_675}
+
+
+def test_gukil_paper_no_note_column_table_corrected_by_rootfix():
+    """국일제지(00104573) 2025Q3 IS — 주석 컬럼이 없는 표(table_has_note_column=
+    False)에서 당기3개월 disclosure 미공시로 생긴 진짜 선행 None이, 근본수정
+    (`preserve_col_positions=(cum_map is not None)`) 이후 압축으로 지워지지 않고
+    cum_map 절대위치 인덱싱과 맞아떨어져 정답을 낸다. 값은
+    `test_report_lines_inline_xbrl_overlay.py`의 오버레이 테스트와 동일 — 이쪽은
+    오버레이(옵션 B) 없이 근본수정(옵션 A) 단독으로 같은 정답에 도달함을 확인한다."""
+    if not _GUKIL_Q3.exists():
+        return
+    lines = extract_report_lines(
+        _GUKIL_Q3, rcept_no="20251113000801", corp_code="00104573",
+        report_fiscal_year=2025, report_fiscal_period="Q3",
+    )
+    row = next(l for l in lines if l.statement == "IS" and l.basis == "consolidated"
+               and (l.col_index or 0) == 0 and l.label_raw == "법인세비용(수익)")
+    assert row.value_won == -2_310_052_284
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

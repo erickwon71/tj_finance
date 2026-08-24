@@ -529,7 +529,17 @@ def _split_label_amounts(
            있는지로 판정, `_table_has_comma_note_column` 참고)이 True 인 표에서만 주석으로
            본다. 실측 반례(한양증권 vs 진원생명과학, 셀 모양 동일·정답 반대)로 행 단독 판정이
            불가능함을 확인 — `docs/PARSING_RULES.md` R19.
-      두 경우 모두 **라벨 바로 다음 칸(i==1)에서만** 판정한다 — 아니면 콤마 없는 소액이
+        3) **빈칸**("")도 `table_has_note_column=True`인 표에서는 항상 주석 칸으로 본다
+           (2026-08-24, Gate B 버그① col-misselect 근본원인 재규명). 위 1)/2)는 칸에
+           내용이 있을 때만 걸렸다 — 그런데 "이 행은 주석 없음"이라 그 칸이 비어 있는 경우는
+           `_NOTE_REF_PATTERN`에 안 걸려 그대로 amount_cells 의 첫 칸(빈칸→None)으로 샜다.
+           `table_has_note_column`은 이미 "이 표는 라벨과 금액 사이에 주석 컬럼을 구조적으로
+           둔다"를 표 전체 스캔으로 확정한 값이므로, 그 표에서 i==1 칸은 **내용과 무관하게**
+           항상 주석 칸이다 — 콤마 다중참조든 단일숫자든 빈칸이든 같은 구조적 위치.
+           (코리안리 20211115001569 원문대조로 확정 — 이 칸이 안 걸리면 소비 측이 인터림
+           누적컬럼을 절대위치로 인덱싱할 때 한 칸씩 밀려 읽는다, 계획서
+           `gateb_bugA_col_misselect_optionA_rootfix_plan_2026-08-24.md` §3-4 참고.)
+      세 경우 모두 **라벨 바로 다음 칸(i==1)에서만** 판정한다 — 아니면 콤마 없는 소액이
       연달아 나오는 행(예: "992 | 766")에서 둘 다 드롭되는 연쇄 오탐이 생긴다.
     """
     label = ""
@@ -544,6 +554,13 @@ def _split_label_amounts(
             # 합계행 밑줄 장식(숫자 뒤 '====' 등) 제거 — 숫자 셀 인식용(parse_amount 도 동일 처리).
             cell_nospace = _TRAIL_DECOR_RE.sub('', cell_nospace)
             cell_stripped = cell_nospace.replace(',', '')      # 쉼표 제거(금액 판정용)
+            # ★2026-08-24: 이 표가 주석 컬럼을 쓴다고 이미 확정됐으면(table_has_note_column)
+            # i==1 칸은 빈칸이어도 항상 주석 칸 — "이 행만 주석 없음"이지 칸 자체가 없는 게
+            # 아니다. 위 docstring 3) 참고. 빈칸은 콤마/단일숫자 판정과 달리 모호성이 없다
+            # (빈칸이 "진짜 소액금액"일 수는 없다 — 그냥 없는 값).
+            if (i == 1 and not amount_cells and table_has_note_column
+                    and cell_nospace == ''):
+                continue
             # 라벨 바로 다음 칸(i==1)이 주석번호 패턴이면 건너뜀 — 콤마 다중참조는 항상,
             # 콤마 없는 단일 숫자는 이 표에 진짜 주석 컬럼이 있다고 확인됐을 때만(R19).
             # ⚠ 반드시 쉼표 보존 문자열로 판정 — 쉼표 제거 시 "2,4,32,…"→"243234…" 로

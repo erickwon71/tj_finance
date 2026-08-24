@@ -473,11 +473,25 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
     이미 적용되지 않는다, 위 import 참고)를 재사용해 표 헤더에 [3개월|누적] 2단 구조가 있으면
     '누적' 토큰이 붙은 첫 컬럼(period_offset=0)만, 없으면(FY 또는 헤더 미검출) 첫 값 컬럼만
     채택한다 — 결과적으로 라벨당 값 1개(TE 판의 col_index=0 채택과 동형)만 후보로 낸다.
+
+    ★ 2026-08-24(주석컬럼 보정, `gateb_bugA_col_misselect_optionA_rootfix_plan_2026-08-24.md`
+    §3-4 참고) — 이 함수는 `value_tds = tds[1:]`(라벨만 뗀 **원문 물리 셀**, `report_lines.py`
+    처럼 `_split_label_amounts()`를 거치지 않는다)에 `cum_map`을 그대로 인덱싱해왔다. 라벨과
+    값 컬럼 사이에 '주석' 컬럼이 구조적으로 있는 표(코리안리 20211115001569 원문대조로 확정)
+    에서는 물리 인덱스가 cum_map 이 기대하는 상대위치와 한 칸 어긋나 "당기누적" 대신
+    "당기3개월"을 채택하는 오정렬이 있었다. 이 함수는 `_split_label_amounts()`의 R19 주석판정
+    (`_table_has_comma_note_column`)을 재사용해 **표당 상수** offset을 구한다 — report_lines.py
+    쪽(§3-4-2)과 달리 이 함수는 raw TD를 그대로 읽어(_split_label_amounts 의 행별 비대칭 소비를
+    거치지 않음) 표 전체에서 물리 칸 수가 균일하므로 표당 상수 offset이 여기서는 안전하다
+    (report_lines.py에서 표당 상수가 틀렸던 이유는 그쪽 소비 경로가 이미 부분적으로 주석칸을
+    떼어내는 `_split_label_amounts()`를 거쳐 행마다 폭이 달라졌기 때문 — 이 함수는 그 경로를
+    안 타므로 해당 안 됨).
     """
     from fin2.extract.text import (
         _detect_body_statement_tables, _detect_fin_type, declared_unit,
         _interim_cumulative_cols,
     )
+    from parser.xml.table_extractor import _get_cells, _table_has_comma_note_column
 
     extra: list[FaceLine] = []
     fin_type = _detect_fin_type(root)
@@ -494,6 +508,10 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
             # None ⇒ FY(연간비교, 첫 컬럼=당기) 또는 [3개월|누적] 헤더 미검출.
             # 값 있음 ⇒ H1/Q3 등 interim: {amount_position: period_offset}, offset 0=당기누적.
             cum_map = _interim_cumulative_cols(tbl)
+            # 이 표가 라벨-값 사이에 주석 컬럼을 구조적으로 쓰는지(R19 판정 재사용) — 쓰면
+            # value_tds(=tds[1:])의 idx 0이 실제로는 주석 칸이라 cum_map 위치가 1칸 밀린다.
+            note_col_offset = 1 if _table_has_comma_note_column(
+                [_get_cells(tr) for tr in tbl.findall(".//TR")]) else 0
             in_section = False
             members: list[tuple[str, list]] = []
             span = 0
@@ -509,10 +527,12 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
                 ):
                     for idx, td in enumerate(tds):
                         # 당기(누적) 컬럼 하나만 채택 — 위 R36 docstring 참고.
+                        # note_col_offset: 주석 컬럼이 있는 표는 idx 0이 주석 칸이므로 뺀다
+                        # (2026-08-24, 위 docstring 참고).
                         if cum_map is not None:
-                            if cum_map.get(idx) != 0:
+                            if cum_map.get(idx - note_col_offset) != 0:
                                 continue
-                        elif idx != 0:
+                        elif idx != note_col_offset:
                             continue
                         displayed = parse_displayed(_cell_text(td))
                         if displayed is None:

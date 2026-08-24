@@ -111,6 +111,37 @@ def test_text_fallback_takes_cumulative_column_interim():
     assert ncl == {96_377_136}, ncl
 
 
+def test_text_fallback_note_column_offset_corrected():
+    """★2026-08-24 — 라벨과 값 사이에 '주석' 컬럼이 구조적으로 있는 표(다른 행의 콤마
+    다중참조로 table_has_note_column=True) 에서, 지배/비지배 행의 주석칸이 **비어
+    있어도**(이 행은 주석 없음) 당기누적 컬럼을 정확히 골라야 한다 — 코리안리
+    20211115001569 원문대조로 확정된 오정렬(`gateb_bugA_col_misselect_optionA_
+    rootfix_plan_2026-08-24.md` §3-4)의 합성 재현. 매출액 행의 '1,2'(콤마 다중참조)가
+    이 표에 주석 컬럼이 있음을 확정한다."""
+    xml = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>2. 연결재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>연결 손익계산서 (단위 : 원)</TD></TR></TABLE>
+   <TABLE>
+    <TR><TD></TD><TD>3개월</TD><TD>누적</TD><TD>3개월</TD><TD>누적</TD></TR>
+    <TR><TD>매출액</TD><TD>1,2</TD><TD>1,000,000,000</TD><TD>1,900,000,000</TD><TD>950,000,000</TD><TD>1,800,000,000</TD></TR>
+    <TR><TD>반기순이익(손실)의 귀속</TD><TD></TD><TD>&#12288;</TD><TD>&#12288;</TD><TD>&#12288;</TD><TD>&#12288;</TD></TR>
+    <TR><TD>&#12288;지배주주지분</TD><TD></TD><TD>1,451,210,911</TD><TD>1,296,834,534</TD><TD>2,501,296,907</TD><TD>8,399,952,262</TD></TR>
+    <TR><TD>&#12288;비지배주주지분</TD><TD></TD><TD>-9,988,666</TD><TD>96,377,136</TD><TD>-290,926,975</TD><TD>79,883,313</TD></TR>
+   </TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+    root = etree.fromstring(xml.encode("utf-8"))
+    lines = _ni_attribution_text_candidates(root)
+    ctrl = {l.amount_won for l in lines if l.canonical == "is.controlling_ni"}
+    ncl = {l.amount_won for l in lines if l.canonical == "is.noncontrolling_ni"}
+    assert ctrl == {1_296_834_534}, (
+        f"주석칸 offset 보정 없이 idx 그대로 읽으면 당기3개월(1,451,210,911)을 오채택: {ctrl}")
+    assert ncl == {96_377_136}, ncl
+
+
 def test_text_fallback_skipped_when_no_data_rows():
     # 앵커만 있고 지배/비지배 두 행이 갖춰지지 않으면(형태 불명확) 아무 것도 안 낸다 — 추측 금지.
     xml = """<DOCUMENT>
@@ -136,5 +167,6 @@ if __name__ == "__main__":
     test_call_site_fallback_condition_holds_for_untagged_doc()
     test_text_fallback_takes_only_current_period_column_fy()
     test_text_fallback_takes_cumulative_column_interim()
+    test_text_fallback_note_column_offset_corrected()
     test_text_fallback_skipped_when_no_data_rows()
     print("OK")

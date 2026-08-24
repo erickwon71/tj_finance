@@ -904,7 +904,10 @@ def _emit_section(
         comp_attr = False
         # direct_only=True: 깨진 XML(</TABLE> 누락)에서 wrapper 가 문서 전체를 품는 경우
         # `.//TR` 은 주석·후속 섹션 행까지 재무제표로 읽는다(DB손해보험 51행 → 5,218행).
-        for row in extract_rows(table, multiplier=unit, num_cols=n_cols, direct_only=True):
+        # preserve_col_positions — report_lines.py::_emit_section_lines() 와 동일 근거
+        # (Gate B 버그①, 2026-08-24). cum_map 표만 6-column 압축을 끈다.
+        for row in extract_rows(table, multiplier=unit, num_cols=n_cols, direct_only=True,
+                                 preserve_col_positions=(cum_map is not None)):
             if not row.account_name:
                 continue
             nm = row.account_name

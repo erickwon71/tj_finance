@@ -145,8 +145,14 @@ def test_overlay_already_correct_is_noop(monkeypatch):
 def test_00104573_tax_expense_col_misselect_corrected():
     """국일제지(00104573) 2025Q3 연결 '법인세비용(수익)'이 텍스트추출로는
     당기3개월 미공시 → 전기3개월 컬럼 오채택(-138,250,046, 버그)이었다가
-    오버레이 적용 후 당기누적 XBRL 사실(-2,310,052,284)로 교정된다.
-    실측 재현: 설계문서 §1-1 Phase 0."""
+    당기누적 XBRL 사실(-2,310,052,284)로 교정된다.
+
+    ★2026-08-24: 옵션 A(파서 근본수정, `gateb_bugA_col_misselect_optionA_
+    rootfix_plan_2026-08-24.md`)가 `report_lines.py::_emit_section_lines()`
+    에서 이 값을 **직접** 올바르게 방출하게 되면서, 이 오버레이(옵션 B)는 이
+    사례에서 더 이상 발동하지 않는다(no-op) — §5 Phase1-3에서 예고한 대로.
+    오버레이 함수 자체는 다른 트리거에 대한 안전판으로 존치하되(§8-c),
+    이 테스트는 "근본수정이 오버레이 없이도 정답을 낸다"로 갱신한다."""
     if not _GUKIL_PAPER.exists():
         return
     lines = extract_report_lines(
@@ -156,7 +162,9 @@ def test_00104573_tax_expense_col_misselect_corrected():
     row = next(l for l in lines if l.statement == "IS" and l.basis == "consolidated"
                and (l.col_index or 0) == 0 and l.label_raw == "법인세비용(수익)")
     assert row.value_won == -2_310_052_284
-    assert row.source_ref.endswith(";xbrl_inline_override")
+    # 근본수정(옵션 A)이 이미 정답을 냈으므로 오버레이(옵션 B)는 no-op이어야 한다.
+    assert row.source_ref is None or not row.source_ref.endswith(";xbrl_inline_override"), (
+        f"오버레이가 여전히 발동함 — 근본수정이 no-op을 못 만든 회귀: {row.source_ref}")
 
 
 def test_00104573_ebt_row_untouched():

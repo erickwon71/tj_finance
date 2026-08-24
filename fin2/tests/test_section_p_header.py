@@ -195,6 +195,41 @@ def test_note_ref_guard_r19_comma_required():
     assert _table_has_comma_note_column(jinwon_rows) is False
 
 
+def test_note_ref_guard_empty_note_cell_also_consumed():
+    """★2026-08-24, Gate B 버그①(col-misselect) 근본원인 재규명 — R19 위 (a)~(f)는
+    i==1 칸에 "내용"이 있을 때만 다뤘다. 이 칸이 **비어 있는 행**(주석 없는 행)은
+    `_NOTE_REF_PATTERN`에 안 걸려 그대로 amount_cells 첫 칸(빈칸→None)으로 샜다 —
+    코리안리 20211115001569 원문대조로 확정(계획서
+    `gateb_bugA_col_misselect_optionA_rootfix_plan_2026-08-24.md` §3-4).
+
+    table_has_note_column=True인 표에서는 i==1 이 빈칸이어도 항상 주석 칸으로 소비해야
+    한다(그 표가 주석 컬럼을 구조적으로 쓴다는 게 이미 확정됐으므로 — 이 행만 주석이
+    없을 뿐, 칸 자체는 있다).
+    """
+    from parser.xml.table_extractor import _split_label_amounts
+
+    # 코리안리 IS 'Ⅰ. 영업수익' 행 원문 재현 — 주석칸(i==1) 빈칸, 이 표는 다른 행
+    # ("1. 보험료수익" 등)에 콤마 다중참조가 있어 table_has_note_column=True.
+    label, amounts = _split_label_amounts(
+        ["Ⅰ. 영업수익", "", "2,804,628,178,529", "8,169,287,451,940",
+         "2,647,136,207,806", "8,302,819,414,243"],
+        table_has_note_column=True)
+    assert label == "Ⅰ. 영업수익"
+    assert amounts == ["2,804,628,178,529", "8,169,287,451,940",
+                        "2,647,136,207,806", "8,302,819,414,243"], amounts
+
+    # table_has_note_column=False(주석 컬럼 자체가 없는 표)면 빈칸은 여전히 그대로 amount
+    # 칸으로 남는다(=진짜 결측일 수 있으므로 함부로 못 없앤다) — 회귀 가드.
+    label2, amounts2 = _split_label_amounts(
+        ["Ⅰ. 영업수익", "", "2,804,628,178,529"], table_has_note_column=False)
+    assert amounts2 == ["", "2,804,628,178,529"], amounts2
+
+    # 콤마 다중참조가 있는 행(내용 있음)은 기존 그대로 스킵 — 이번 변경과 무관(회귀 가드).
+    label3, amounts3 = _split_label_amounts(
+        ["1. 보험료수익", "18,26", "2,222,255,962,433"], table_has_note_column=True)
+    assert amounts3 == ["2,222,255,962,433"], amounts3
+
+
 def test_interim_is_cumulative_table_wins_over_annual_comparative():
     """금융업 interim IS: [3개월|누적] 반기표가 [전기|전전기] 연간비교표보다 먼저 처리되어
     당기누적값이 col0 을 선점해야 함(연간비교표의 전년 FY값 오염 차단).

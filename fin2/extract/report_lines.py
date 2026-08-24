@@ -475,8 +475,15 @@ def _emit_section_lines(
         n_cols = max(cum_map) + 1 if cum_map else (8 if multicol else 3)
 
         # 표 전체 행을 먼저 materialize → 들여쓰기 stack 으로 section_path 부여(행 순서 필요).
+        # preserve_col_positions: cum_map 표만 6-column 압축(선행 None pop-loop)을 끈다 —
+        # 그 압축이 "당기3개월 disclosure 없음"(진짜 결측)과 "주석 컬럼이 비어서 생긴 선행
+        # None"(_split_label_amounts 가 이미 위에서 제거 — 2026-08-24)을 구분 못 하고 뭉뚱그려
+        # 당겨서 cum_map(절대위치 인덱싱)을 오정렬시켰다(Gate B 버그①, 코리안리/00104573/
+        # 00172291 원문대조로 확정). 다른 두 소비 경로(multicol/else)는 이미 자체 재압축이라
+        # 이 플래그를 안 보므로 결과가 그대로다(§1 실측).
         table_rows = list(extract_rows(table, multiplier=unit, num_cols=n_cols,
-                                        direct_only=True, skip_junk=False))
+                                        direct_only=True, skip_junk=False,
+                                        preserve_col_positions=(cum_map is not None)))
         section_paths = _assign_section_paths(table_rows, statement)
         node_roles = _classify_positions(table_rows)
         table_seq = doc_seq[id(table)]

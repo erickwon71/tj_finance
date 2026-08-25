@@ -494,6 +494,27 @@ tests/` 전체 607 passed / 1 failed(`test_lxintl_facility_table_dropped`
 - `overlay_tax_expense_value()`(옵션 B) 존치 여부(§8-c) — 이번 실측으로
   "근본수정 후 no-op" 확인까지 끝났으니 존치 결정 그대로 유효.
 
+## 3-6. Gate B 전수 재감사 완료(2026-08-25) — fail_a 회귀 0건, NH투자증권 fail_b 원인미확정
+
+커밋(`d96d78d` 근본수정 4파일 + 소급백필 스크립트 2건) 이후 사용자가 실제로
+①스냅샷(`face_audit_snap_20260824`) ②`find_optionA_affected_filings_2026-08-24.py`
+8-way 스캔(122,949건 중 30,432건 affected) ③`load_report_lines.py --rcept-file`
+④`build_std_v3.py --all --shard`(4-way) ⑤`run_gateb_audit_parallel.sh` 전수 재감사
+까지 전부 실행 완료. `verify_gateb_reaudit_transition_optionA_2026-08-24.py` 결과:
+
+- **★차단등급 전이(pass/fail_b → fail_a): 0건** — §6 핵심 게이트 통과.
+- `fail_a → pass/fail_b` 개선 8건(revenue 4, tax_expense 3, cogs 2, gross_profit 2,
+  controlling_ni 2).
+- `pass/pending → fail_b` 77건 중 **75건이 NH투자증권(00120182) 하나의
+  controlling_ni**(여러 FY/H1/Q1/Q3 기간)에 집중 — 원문대조로 std_v3(db_won)는
+  "지배주주지분순이익" 행과 정확히 일치(정답)인데 face_audit 재추출값(report_won)
+  은 "지배주주지분포괄이익"(총포괄이익 귀속, 다른 개념) 행과 일치 — 오염 의심.
+  이 FY 표는 `table_has_note_column=False`라 이번 수정한 `note_col_offset` 로직
+  자체는 no-op임을 직접 실행으로 확인 — `_ni_attribution_text_candidates()`
+  단독 호출로도 재현 안 돼 이번 근본수정이 직접원인인지 불확실. 상세는 메모리
+  [[gateb-nh-investment-controlling-ni-comprehensive-income-contamination-2026-08-25]]
+  — **다음 세션 과제**(`read_report_face_xbrl()` 전체 경로 트레이스 필요).
+
 ## 4. 수정 범위 결정 — 좁은 근본수정 채택, 그리드 재작성은 기각
 
 > ⚠ **§3-1/3-2로 갱신됨**: "좁은 근본수정"의 정확한 형태가 아래 최초 스케치

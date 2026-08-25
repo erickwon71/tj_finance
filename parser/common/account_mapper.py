@@ -188,7 +188,24 @@ class AccountMapper:
         # 총포괄손익의 지배/비지배 배분이지 **당기순이익 귀속**(controlling/noncontrolling NI)이 아니다.
         # 라벨에 '지배'가 있어 퍼지가 controlling_ni 로 오매핑 → net_income 합산(controlling+noncontrolling)
         # 을 오염시켰다(OCI≠0 일 때 총NI 과 불일치). 무매핑(raw 보존)으로 차단. 'IS' 한정.
-        if "포괄손익" in normalized and "지배" in normalized and fs_section in (None, "is"):
+        #
+        # ★2026-08-25(NH투자증권 Gate B fail_b 근본원인 조사): 원래 이 가드는 '포괄손익'
+        # (붙임표기)만 검사했는데, 상당수 필터社(증권사뿐 아니라 일반 상장사도, 254개사 실측)가
+        # '포괄이익'/'포괄손실'로 **쪼개서** 표기한다('지배주주지분포괄이익'·'비지배지분포괄손실'
+        # 등) — 이 변형은 가드를 못 넘어 fuzzy 로 controlling_ni/noncontrolling_ni 에
+        # 오매핑됐다. 전수검사(283,030개 원문 XML, SD카드 미러 `/Volumes/dart_data/raw_report`,
+        # 실 추출게이트와 동일하게 "라벨+숫자값 모두 있는 행"만 5,242건 확보, 오류 0) 결과:
+        # 오탐 3,273건(is.controlling_ni 768 + is.noncontrolling_ni 2,505, 254개사/2,778
+        # filing) 전부 원래 '포괄' 개념(순이익 아님) — '순이익'/'당기순'이 함께 들어간
+        # 하이브리드 라벨은 **0건**(과차단 위험 없음, 스크립트 로직은
+        # `gateb-nh-investment-controlling-ni-comprehensive-income-contamination-2026-08-25`
+        # 메모리에 보존). NH투자증권(00120182) 실측: 이 가드가 넓어지면 Track B 일반매퍼가
+        # controlling_ni/noncontrolling_ni 를 (틀린 값으로) 선점하지 않게 되어
+        # `_with_ni_attribution_text_fallback()`의 스킵 게이트가 오발동하지 않고
+        # `_ni_attribution_text_candidates()`(정답을 정확히 찾는 스코프제한 폴백)가 정상
+        # 호출된다 — 정답 db_won=215,070백만 정확 복원 확인.
+        if (("포괄손익" in normalized or "포괄이익" in normalized or "포괄손실" in normalized)
+                and "지배" in normalized and fs_section in (None, "is")):
             return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
 
         # ── 맨몸(bare) 지배지분 라벨 가드(2026-08-22, P1C 잔여회귀 조사 중 발견): '지배기업

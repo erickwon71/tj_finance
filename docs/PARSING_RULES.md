@@ -2316,6 +2316,82 @@ VALUE_DIFF 소멸 확인, 같은 corp 의 다른 전체 기간에 새 fail 0(pre
 
 ---
 
+## R43. `account_mapper.py` 포괄손익 귀속 가드 — '포괄이익'/'포괄손실'(쪼개진 표기) 미포착
+(NH투자증권 Gate B controlling_ni fail_b 근본원인, 2026-08-25)
+
+**배경** — 옵션 A(R19/버그①) 전수 재감사 직후 pass/pending→fail_b 77건 중 75건이
+NH투자증권(00120182) `controlling_ni` 하나에 몰려 발견. `read_report_face_xbrl()`
+메인 ACODE 루프·`_ni_attribution_structural_candidates()`(R25) 둘 다 이 회사 표에서
+빈 리스트 — XBRL 태깅 자체가 없는 표라 `read_report_face()` → `_supplement_with_text()`
+(Track B 텍스트) → `account_mapper.map()` 라벨매핑이 최종값을 결정한다.
+
+**근본원인** — 기존 "포괄손익 귀속 가드"(같은 파일, R24/25 인접 코드)는 문자열
+`"포괄손익"`(붙임표기)만 검사했다. NH를 포함한 다수 필터社는 `"지배주주지분포괄이익"`
+`"비지배지분포괄손실"`처럼 **"손익"이 아니라 "이익"/"손실"로 쪼개서** 표기 — 이 변형은
+가드를 못 넘어 fuzzy 매칭(신뢰도 0.89~0.95)으로 `is.controlling_ni`/`is.noncontrolling_ni`
+에 오매핑된다(총포괄이익 귀속 값이 순이익 귀속 자리를 오염 — NH FY2015 실측:
+215,832백만 오답 vs 215,070백만 db_won 정답).
+
+**연쇄 메커니즘** — 이 오탐이 `is.controlling_ni`/`is.noncontrolling_ni` 후보를
+(틀린 값으로) 먼저 채우면, R35(`_with_ni_attribution_text_fallback()`)의 스킵
+게이트("두 개념 다 있으면 스킵")가 오발동해 **정답을 정확히 찾는**
+`_ni_attribution_text_candidates()`가 아예 호출되지 않는다 — 그 함수 자체는 처음부터
+정답(215,070)을 정확히 반환하고 있었지만 정상 파이프라인에서는 도달 못 하는 코드였다.
+
+**전수검사(과차단 위험 확인)** — SD카드 미러(`/Volumes/dart_data/raw_report`)
+283,030개 XML 전체 → 1차 그렙(`"포괄이익"`/`"포괄손실"`) 30,449개 후보 → 실 추출게이트
+(`read_report_face_text()`의 "라벨+숫자값 모두 있는 행"만)와 동일 조건으로 병렬(9워커)
+정밀 파싱, 5,242건/2,778 filing/오류 0. 그중 `"지배"`+(`"포괄이익"`|`"포괄손실"`, 이미
+가드된 `"포괄손익"` 제외)가 현재 `is.controlling_ni`/`is.noncontrolling_ni`로 오매핑된
+건수 = **3,273건(254개사/2,778 filing)** — 증권사(삼성증권·대신증권·미래에셋증권·
+교보증권·DB증권 등)뿐 아니라 일반 상장사(고려아연·LS·금호석유화학·DL·대한제강 등)까지
+광범위. 전체 5,242건 중 `"순이익"`/`"당기순"`이 함께 들어간 하이브리드 라벨은 **0건**
+— 가드 확장이 정답을 잘못 차단할 위험 없음을 확인 후 적용.
+
+**현재 실 DB(Gate B) 영향 범위** — 254개사 중 실제로 `fail_b`로 잡히던 건 73건(대부분
+NH)뿐 — 나머지 대다수는 Track A(XBRL)가 이 개념을 이미 커버해 Track B 텍스트 폴백
+자체가 발동 안 되는 구조라 "잠재적/휴면" 오염이었다(당장 틀린 값은 안 나오지만 XBRL
+태깅이 불완전한 새 filing 이 들어오면 같은 패턴으로 재발 가능).
+
+**구현** — 가드 조건을 `"포괄손익"` 단독에서 `"포괄손익" or "포괄이익" or "포괄손실"`
+(모두 `"지배"` 동반, IS 한정)로 확장. 새 분류 로직을 만들지 않고 기존 가드를 넓히기만
+함(R24/25 계열과 같은 "무매핑으로 차단, 구조기반 후보보강이 대신 처리" 원칙).
+`account_mapper.py` 는 `face_audit.py` 뿐 아니라 `fin2/layer3/combine.py`
+(`_map_rows()`, R24)·`fin2/extract/text.py`·`fin2/extract/report_lines.py` 등
+**실 DB 표준화 파이프라인에서도 공유**되므로, 이 수정은 감사도구뿐 아니라 실 데이터
+경로의 잠재 리스크도 함께 줄인다.
+
+**검증** — NH투자증권 FY2015 실 코드(몽키패치 아님) 재실행으로 `is.controlling_ni`
+215,070백만(=db_won) 정확 복원 확인. `pytest fin2/tests tests/` 610 passed(기존 무관
+실패 `test_lxintl_facility_table_dropped` 1건 제외, +3 신규 —
+`test_account_mapper_comprehensive_income_guard.py`). `gateb_audit.py --corp 00120182
+--recheck`: fail_b 27→0(전부 pass 로 회복), 신규 fail_a 0.
+
+**소급 백필·Gate B 전수 재감사(2026-08-25 완료)** — 254개사 드라이런(트랜잭션
+rollback, `fin2.layer3.build.build_corp`를 직접 호출하되 최종 `session.rollback()`
+으로 프로덕션 무변경 확인)으로 실 영향 범위를 먼저 좁힘: 48개사·265행만 실제로
+값이 바뀜(나머지 206개사는 R24 안전망이 이미 보호 중이었음 — 위 "미확정" 우려가
+실측으로 해소됨). 205행은 NULL→값(결측 해소), 22행은 값→다른값(오염값 교정),
+35행은 값→NULL(오염 제거, 결측>오염). **22건 전수 원문(report_lines) 대조 검증**
+— 항등식 `controlling_ni + noncontrolling_ni = net_income`이 실제 공시값과 정확히
+일치함을 다건 확인(윌비스·NC·KB금융 등, KB금융은 net_income 자체의 연쇄 오염까지
+같이 교정됨). 검증 후 실 커밋(`build_std_v3.py --corp <254개사>`, 27,846행,
+482초) → `gateb_audit.py --source v3 --corp-file <254개사> --recheck`. 전이표:
+**fail_a 회귀 0건**(안전 기준 충족), fail_b→pass 22건·fail_b→pending 17건·
+pending→pass 2건(개선 합계 41건), pass→pending 50건(오염값 제거로 인한 의도된
+결측 전환), **pass→fail_b 1건**(DRB동일 00118266 — 아래 "신규 발견" 항목, R43과는
+무관한 별개의 "계속영업" 라벨 자매가드 갭). 스크립트 =
+`scripts/census_r43_comprehensive_income_labels_2026-08-25.py`(전수검사)·
+`scripts/r43_comprehensive_income_guard_backfill_diff_2026-08-25.py`(드라이런+실커밋
+겸용, `SessionLocal()` 직접 열어 rollback 가능). 스냅샷 테이블
+`std_v3_snap_r43_20260825`·`face_audit_snap_r43_20260825` 존치 중.
+
+근거: `parser/common/account_mapper.py`(라인 191 인접 가드) ·
+`fin2/tests/test_account_mapper_comprehensive_income_guard.py` · 메모리
+`gateb-nh-investment-controlling-ni-comprehensive-income-contamination-2026-08-25`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -2380,6 +2456,7 @@ VALUE_DIFF 소멸 확인, 같은 corp 의 다른 전체 기간에 새 fail 0(pre
 | R34 | P3-1 재감사 후속(2026-08-20) · `fin2/layer3/combine.py::_resolve()` · `fin2/tests/test_combine_amended_label_depth.py` · `scripts/investigate_p3_combine_live_check.py`·`scripts/investigate_p3_depth_bug_census.py`·`scripts/verify_p3_depth_bug_fix.py` |
 | R35 | P3-1 원인 A 후속(2026-08-20) · `fin2/audit/face_audit.py::_ni_attribution_text_candidates()`/`_with_ni_attribution_text_fallback()` · `fin2/tests/test_ni_attribution_text_fallback.py` · `scripts/investigate_p3_cause_a_field_census.py`·`scripts/investigate_p3_cause_a_trackb_probe.py`·`scripts/investigate_p3_cause_a_impact_measure.py` |
 | R42 | `docs/plans/gateb_trade_payables_stale_subline_r42_2026-08-21.md` · 메모리 `gateb-trade-payables-stale-subline-r42-2026-08-21` · `fin2/layer3/combine.py::_resolve()` (`_TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE`) · `fin2/tests/test_combine_curated_overrides.py` |
+| R43 | 메모리 `gateb-nh-investment-controlling-ni-comprehensive-income-contamination-2026-08-25` · `parser/common/account_mapper.py`(포괄손익 귀속 가드) · `fin2/tests/test_account_mapper_comprehensive_income_guard.py` · `scripts/census_r43_comprehensive_income_labels_2026-08-25.py`·`scripts/r43_comprehensive_income_guard_backfill_diff_2026-08-25.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황
@@ -2401,3 +2478,5 @@ VALUE_DIFF 소멸 확인, 같은 corp 의 다른 전체 기간에 새 fail 0(pre
 | ~~R8 위반 3연속 — `face_audit` source_version PK 확장(2026-08-11) 이후 소비자 4곳 중 3곳 미배선(`standard_financials` 뷰·`run_dq_gate`·`app/data/trust.py`)~~ | **✅ 해소 완료 2026-08-18** — 뷰는 v2/v3 감사행이 조건 없이 둘 다 매치돼 행 2배 중복(244,585키)+등급 오귀속(50,104행)+`fail_a` 게이트 우회(487행)를 일으켰다. 신규 마이그레이션 `2026_08_standard_financials_view_source_version`(`collector/db.py`)로 각 UNION ALL 분기에 `source_version` 조건 명시 → 321,141행 전량 dedup, `gate_b_status` 불일치 0, 은닉 214행 전부 v3 `fail_a`로 설명(미설명 0). `app/data/trust.py`도 `source_version='v3'` 한정. **검증 중 4번째 소비자(`scripts/verify_corp_sequential.py`)도 같은 결함(같은 `args.source` 미배선 `AttributeError` + `rollup_corp()`의 source_version 미필터)임을 회귀 테스트가 실측으로 발견 — 함께 수정.** `run_dq_gate`/`verify_corp_sequential.py` 둘 다 자신이 직접 만든 `std_financials_v2`를 감사하므로 `source="v2"`(v3 아님 — v3는 별도 수동 배치 `scripts/build_std_v3.py`만 채움, v3로 두면 신규 수집분이 v3에 아직 없어 "이상없음" 위양성 그린이 됨). 회귀: `fin2/tests/test_standard_financials_view.py`(뷰 dedup·등급정합·`face_audit` 미배선 소비자 grep 가드). 설계 `docs/plans/gateb_view_source_version_join_fix_design_2026-08-17.md`, 적용전후 기록 `docs/qa/view_dup_baseline_2026-08-18.md` |
 | Gate B `E4_IDENTITY` 서브경로 미분해 | **미조치** — 3,600건이 4개 경로(revenue=cogs+gp / NI=CF대체 / NI=지배+비지배 / R32 업종파생)로 뭉쳐 있어 저장값만으로 못 나눈다. 설계서 C안(약한 근거 통과를 `pass` 로 불인정) 평가의 선행조건. R33 참고 |
 | Gate B 게이팅 축(track vs evidence) 재검토 | **보류(조건부 재개)** — 2026-08-18 A′ 채택으로 track 축 유지. `M2_WEAK` 또는 `E5_HEURISTIC` 가 전수 재감사에서 1건이라도 관측되면 재개(트리거 SQL = R33). 현재 둘 다 0건 |
+| R43(포괄이익/포괄손실 가드) — std_v3 소급 백필·Gate B 전수 재감사 | **✅ 완료 2026-08-25** — 254개사 드라이런(트랜잭션 rollback)으로 실 영향 48개사/265행 확인 후 22건(값→다른값) 전수 원문대조 검증(항등식 controlling_ni+noncontrolling_ni=net_income 다건 정확 일치 확인, KB금융 등) → 실 커밋(`build_std_v3.py --corp <254개사>`, 27,846행) → `gateb_audit.py --recheck`. 전이: fail_a 회귀 **0건**, fail_b→pass 22건·fail_b→pending 17건(개선), pass→fail_b 1건(신규, 아래 별도 항목) |
+| **신규 발견(R43 재감사 중) — "계속영업" 귀속 라벨이 "중단영업" 자매가드(2026-08-23)에 안 걸림** | **미조치** — DRB동일(00118266) 2012FY: `"지배기업의 소유주에 귀속될 계속영업당기순이익"`(부분값)이 헤드라인(계속+중단 합산) 대신 controlling_ni로 채택됨. 기존 가드(`account_mapper.py`, "지배"+"중단"+"지분/소유주/귀속")는 "중단"만 걸렀지 "계속영업"은 안 거름 — 대칭 확장 필요. fail_a 아닌 fail_b(REVIEW)로만 노출, 전수 스캔 미실시(1건만 확인) |

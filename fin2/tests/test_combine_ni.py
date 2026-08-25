@@ -258,6 +258,24 @@ def test_structural_excludes_comprehensive_income_section():
     assert extra == {}
 
 
+def test_structural_still_pools_continuing_operations_component_section():
+    # ★2026-08-25(DRB동일 00118266 FY2012 실제 형태 — account_mapper.py '계속영업'
+    # 귀속 가드 확장의 후속 발견 및 되돌림, 기록용 회귀 테스트): section_path=
+    # '계속영업당기순이익'인 성분(부분)값도 이 함수는 여전히 후보 풀에 넣는다
+    # (일부러 배제하지 않음 — 배제 시도가 시알홀딩스 00148984 FY2015 에서 새 회귀를
+    # 유발함을 확인하고 되돌렸다, combine.py 인접 주석 참고). 이 테스트는 그 되돌림
+    # 상태(=현재 의도된 동작)를 고정한다.
+    rows = [
+        _merged_row("IS", "지배기업의 소유주에 귀속될 계속영업당기순이익", 18_327_708_908,
+                    section_path="계속영업당기순이익"),
+        _merged_row("IS", "비지배지분에 귀속될 계속영업당기순이익", -35_414_062,
+                    section_path="계속영업당기순이익"),
+    ]
+    extra = _ni_attribution_structural_candidates(rows, period="FY", basis="consolidated")
+    assert [r["value"] for r in extra["is.controlling_ni"]] == [18_327_708_908]
+    assert [r["value"] for r in extra["is.noncontrolling_ni"]] == [-35_414_062]
+
+
 def test_structural_interim_keeps_only_cumulative_duplicates():
     # H1/Q3: both a quarterly and a cumulative cell exist for the same line (std_v2
     # convention keeps cumulative only for is./cf.) -- the non-cumulative duplicate

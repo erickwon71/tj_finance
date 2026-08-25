@@ -2392,6 +2392,83 @@ pending→pass 2건(개선 합계 41건), pass→pending 50건(오염값 제거�
 
 ---
 
+## R44. '계속영업' 귀속 성분 자매가드 — DRB동일(00118266) 부수발견 후속조사
+(2026-08-25, R43 254개사 Gate B 재감사 중 pass→fail_b 1건에서 시작)
+
+**배경** — `account_mapper.py`의 "지배/비지배 귀속 중단영업 성분 가드"(2026-08-23,
+케이엔더블유 00606664)는 `"중단"` 한정어만 검사해 **대칭 케이스인 `"계속영업"`을
+놓쳤다**: DRB동일 FY2012 연결 IS에서 `"지배기업의 소유주에 귀속될 계속영업당기순이익"`
+(부분값, 18,327,708,908)이 헤드라인 합산(계속+중단, `"지배기업의 소유주에게 귀속되는
+당기순이익(손실)"`=29,912,789,124) 대신 `is.controlling_ni`로 채택됐다.
+
+**1단계 수정(구현·검증·커밋됨)** — `account_mapper.py`의 해당 가드 조건을 `"중단"`
+단독에서 `"중단" or "계속영업"`(모두 `"지배"`+속성 한정어 동반, IS 한정)으로 확장.
+`fin2/tests/test_account_mapper_discontinued_attribution_guard.py`(4건) 신설.
+전수검사(SD카드 미러, `"계속영업"` 포함 20,523개 후보 파일 → 실 추출게이트 동일 정밀
+파싱 10,155건/436개사, 오류 0): 과차단 위험 사실상 0건(유일한 non-unknown 매치는
+병합표 추출결함 1건, 이 가드와 무관 — T2류 기존 함정).
+
+**2단계 조사(구조적 우회 발견, 시도했다 되돌림)** — 위 라벨가드만으로는 DRB동일 값이
+전혀 안 바뀜을 실측으로 확인(old-code/new-code 격리 리빌드 diff, 436개사 전체 0건
+변화). 원인: `fin2/layer3/combine.py::_ni_attribution_structural_candidates()`가
+section_path(구조)만 보고 라벨 텍스트를 무시해 — `"계속영업당기순이익"`이라는
+section_path가 `"순이익"`+`"포괄"`부재 필터를 통과, 라벨가드로 막힌 행을 section_path
+기반으로 **다시 후보 풀에 채워넣어 무력화**했다. 대칭적으로 `"계속영업"`/`"중단"`도
+그 필터에서 배제하는 수정을 시도했으나, **시알홀딩스(00148984) FY2015에서 새 회귀를
+유발함을 실측으로 확인하고 되돌렸다**: 그 회사는 section_path만 성분(`"계속영업
+당기순이익"`)이고 라벨 자체는 이미 깨끗한 헤드라인 문구(`"지배기업의 소유주에게
+귀속되는 당기순이익(손실)"`)라 account_mapper 라벨매칭이 단독으로(성분값임을 못 보고)
+그 값을 채택하는데, 이 section이 구조적 후보 풀에 남아있는 덕분에(다른 section_path
+`"중단영업 당기순이익"`과 값이 달라 conflict 유발) 그동안 NULL(안전)로 held 됐었다 —
+배제하면 유일후보가 되어 오히려 확신에 찬 오값으로 확정된다(NULL→오염, 결측>오염
+원칙 위반). 즉 이 필터 하나로는 "라벨은 깨끗한데 section_path만 성분"인 케이스(시알
+홀딩스, 안전망 필요)와 "라벨도 section_path도 성분"인 케이스(DRB동일, 안전망이 오히려
+헤드라인 후보를 가림)를 구분 못 한다.
+
+**남은 것(다음 세션, 설계 재작업 필요)**:
+1. `_ni_attribution_structural_candidates()`의 section_path 필터 자체가 아니라
+   `_resolve()`의 단일후보 자동확정 분기(또는 `_resolve_ni_attribution`)에서
+   `"계속영업"`/`"중단"` section 유래 후보를 "신뢰 대상에서는 빼되 conflict 유발
+   용도로는 유지"하는 식으로 더 정밀하게 재설계해야 함 — 후보 풀 자체를 건드리는
+   방식은 위 트레이드오프 때문에 위험.
+2. 조사 중 발견한 **별개의 두 결함**(DRB동일 자체를 완전히 못 고치는 잔여 원인,
+   범위 밖으로 분리):
+   - (c) 맨몸(bare) `"...에게 귀속되는 지분"` 라벨이 `"귀속"` 키워드를 포함해
+     bare-지배지분 가드(2026-08-22)의 예외 조건("귀속" 포함 시 가드 미발동)를 타고
+     빠져나가 fuzzy(0.907)로 `is.controlling_ni`에 오매핑됨 — 원래 총포괄이익 귀속
+     서브라인인데 라벨 자체엔 `"포괄"`이 없어(부모 section_path에만 있음) 기존
+     포괄손익 가드(R43)도 못 잡음.
+   - (d) `_derive_net_income_from_ebt()`(EBT−tax 앵커)가 IFRS5식으로 중단영업을
+     세후 단일라인으로 별도 표시하는 회사(=계속영업세전이익만 EBT로 표기)에서
+     "계속영업만의" net_income을 앵커로 써버려 identity 대조 자체가 무의미해짐 —
+     중단영업이 있는 회사 전반에 걸친 구조적 한계, DRB동일 국한 아님.
+3. 위 2건 모두 **아직 미착수**. DRB동일 자체는 이번 세션 수정으로 "확신에 찬 오값"
+   에서 "NULL(REVIEW 필요)"로 후퇴하긴 했으나(1단계 라벨가드 자체는 커밋됐지만
+   std_v3 에는 2단계가 되돌려져 실질 효과 없음 — 여전히 fail_b 상태로 남음), 완전
+   해결은 위 1~2 항목 설계 완료 후로 이연.
+
+**실측 커밋 범위**: `account_mapper.py` 라벨가드(1단계)만 실제 코드 변경 — 436개사
+전체에 대해 old-code/new-code 격리 리빌드 diff **0건**(std_v3 실 영향 없음, 순수
+방어적 하드닝). 단 `fin2/audit/face_audit.py`는 `account_mapper.map()`을 직접
+호출하는 지점이 있어(736·884·960행) Gate B 감사 정확도에는 잠재적으로 도움이 될 수
+있음(미검증) — `face_audit.py`의 구조적 후보 함수(`_ni_attribution_structural_
+candidates`, 265행 `_NI_TOTAL_RE`)는 앵커 정규식이 `"계속영업"` 접두 라벨과 애초에
+매치 안 돼(`^당?(기|분기|반기)순(이익|손익)`) 이 특정 우회로부터는 구조적으로 이미
+안전. `pytest fin2/tests tests/` 615 passed(기존 무관 실패 1건 제외, 순증 +4/-2 =
+net +2 신규, `test_account_mapper_discontinued_attribution_guard.py` 4건 신규 +
+`test_combine_ni.py` 순증 2건).
+
+근거: `parser/common/account_mapper.py`(중단/계속영업 귀속 성분 가드) ·
+`fin2/layer3/combine.py::_ni_attribution_structural_candidates()`(주석만, 로직
+불변) · `fin2/tests/test_account_mapper_discontinued_attribution_guard.py` ·
+`fin2/tests/test_combine_ni.py` · 스크립트
+`scripts/census_continuing_ops_attribution_labels_2026-08-25.py`·
+`scripts/continuing_ops_isolated_diff_2026-08-25.py`·
+`scripts/verify_continuing_ops_val_to_val_2026-08-25.py` · 메모리
+`gateb-continuing-ops-attribution-sibling-guard-2026-08-25`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -2457,12 +2534,14 @@ pending→pass 2건(개선 합계 41건), pass→pending 50건(오염값 제거�
 | R35 | P3-1 원인 A 후속(2026-08-20) · `fin2/audit/face_audit.py::_ni_attribution_text_candidates()`/`_with_ni_attribution_text_fallback()` · `fin2/tests/test_ni_attribution_text_fallback.py` · `scripts/investigate_p3_cause_a_field_census.py`·`scripts/investigate_p3_cause_a_trackb_probe.py`·`scripts/investigate_p3_cause_a_impact_measure.py` |
 | R42 | `docs/plans/gateb_trade_payables_stale_subline_r42_2026-08-21.md` · 메모리 `gateb-trade-payables-stale-subline-r42-2026-08-21` · `fin2/layer3/combine.py::_resolve()` (`_TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE`) · `fin2/tests/test_combine_curated_overrides.py` |
 | R43 | 메모리 `gateb-nh-investment-controlling-ni-comprehensive-income-contamination-2026-08-25` · `parser/common/account_mapper.py`(포괄손익 귀속 가드) · `fin2/tests/test_account_mapper_comprehensive_income_guard.py` · `scripts/census_r43_comprehensive_income_labels_2026-08-25.py`·`scripts/r43_comprehensive_income_guard_backfill_diff_2026-08-25.py` |
+| R44 | 메모리 `gateb-continuing-ops-attribution-sibling-guard-2026-08-25` · `parser/common/account_mapper.py`(중단/계속영업 귀속 성분 가드) · `fin2/tests/test_account_mapper_discontinued_attribution_guard.py`·`fin2/tests/test_combine_ni.py` · `scripts/census_continuing_ops_attribution_labels_2026-08-25.py`·`scripts/continuing_ops_isolated_diff_2026-08-25.py`·`scripts/verify_continuing_ops_val_to_val_2026-08-25.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황
 
 | 항목 | 상태 |
 |---|---|
+| **R44 — DRB동일(00118266) controlling_ni 자체는 여전히 fail_b(미해결)** | **1단계만 완료(라벨가드), 2단계는 되돌림**. `account_mapper.py` 라벨가드는 커밋됐으나 `combine.py::_ni_attribution_structural_candidates()`의 section_path 기반 우회가 그대로 남아있어 std_v3 값에는 실질 변화 없음(격리 diff 436개사 0건). 구조적 후보 함수의 section_path 필터에서 `"계속영업"`/`"중단"`을 직접 배제하는 시도는 시알홀딩스(00148984)에서 NULL→오값 회귀를 유발해 되돌렸다 — 올바른 수정은 `_resolve()`/`_resolve_ni_attribution` 쪽에서 이 section 유래 후보를 "conflict 유발용으로만 남기고 단독확정 신뢰 대상에서는 제외"하는 재설계가 필요(미착수). 부수로 발견된 별개 결함 2건(bare `"...에게 귀속되는 지분"` 라벨이 `"귀속"` 예외로 bare-지배지분 가드를 우회하는 건 · `_derive_net_income_from_ebt()`가 중단영업 있는 회사에서 계속영업만의 세전이익을 앵커로 오사용하는 건)도 미착수. R44 항목 참고 |
 | **P3-1 "원인 A" — 처음으로 전수 재처리(`fy=all`)된 회사가 R16~R32 등 그동안 표적백필로만 적용되던 규칙변경분을 한꺼번에 맞아 값이 흔들림** | **부분 조치(2026-08-20, R35)**. 실측(2026-08-19 재감사): 689건 단조성 위반 중 R34(depth결함) 30건을 뺀 668건을 field 단위로 재분해하니 실제로는 성격이 다른 3그룹(감사기 커버리지 공백 527건/56개사 · 진짜 값불일치 의심 51건/13개사 · Track A/B 자체가 못 읽는 문서 87건/8개사)이었다. **감사기 커버리지 공백 그룹만 R35 로 해소**(382건 pass 회복, DB 반영 = 74개사 `--recheck`). 나머지(값불일치 51건 + 미판독 87건 + 잔여 pending)는 **여전히 미조치 — 별도 트랙**. 원 트리거(8/18 `build_std_v3.py` 전체이력 재생성 2,128개사)는 여전히 유효한 구조적 재발 경로 — 메모리 `gateb-full-reaudit-is-required-to-close` 그대로. 다음 착수 시 `face_audit_snap_20260819` 를 기준선으로 재사용 가능 |
 | **R34 depth-우선 결함 — 30건(6개사) 밖의 잠복 사례 미조사** | **미조치**. 코드 수정(`_resolve()`)은 전역 적용되나, 이미 저장된 std_v3 값 중 "정정본이 section_path 다르게 재렌더링 + depth 우선으로 원본이 이김" 패턴이 P3-1의 689건 밖(=이미 예전부터 fail 이던 회사)에도 있는지는 전수 조사 안 함. 필요 시 `scripts/investigate_p3_depth_bug_census.py` 를 `face_audit` 필터 없이 std_v3 전체 corp 로 확장해 재실행 |
 | ~~T22 순수 하이픈 음수(`-N`) `_NUMBER_PATTERN` 미인식(T21 자매결함)~~ | **✅ 해소 완료 2026-08-17** — R31. 775개사 표적 백필+검증 완료. 부록A T22·부록B R31 참고 |

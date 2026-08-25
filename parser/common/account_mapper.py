@@ -237,8 +237,17 @@ class AccountMapper:
         # 그 진짜 후보들을 전부 무매핑시킨 뒤로는 이 부분값이 **유일한 후보**가 되어 conflict를
         # 아예 안 거치고(len==1) 곧장 확정돼버린다(단독후보 자동확정, 결측>오염 원칙 위반).
         # IS 한정, 지배/비지배 귀속 형태(끝이 지분/소유주 이거나 '귀속' 포함)로 범위 좁힘 —
-        # 헤드라인 is.net_income/is.operating_income 의 '중단영업' 처리는 아래 기존 가드가 이미 담당.
-        if (fs_section in (None, "is") and "지배" in normalized and "중단" in normalized
+        # 헤드라인 is.net_income/is.operating_income 의 '중단영업'/'계속영업' 처리는 아래
+        # 기존 가드가 이미 담당.
+        #
+        # ★2026-08-25(DRB동일 00118266, R43 254개사 재감사 중 부수발견): 위 '중단' 한정어만
+        # 검사하던 원래 가드는 **자매 케이스인 '계속영업'을 대칭적으로 놓쳤다** —
+        # '지배기업의 소유주에 귀속될 계속영업당기순이익'(부분값, 18,327,708,908)이
+        # 헤드라인 합산(계속+중단, 29,912,789,124)을 대신해 controlling_ni 로 채택됐다.
+        # '계속영업' 성분도 '중단영업' 성분과 마찬가지로 계속+중단 합산 헤드라인 총계가
+        # 아닌 부분값이므로 동일하게 차단한다.
+        if (fs_section in (None, "is") and "지배" in normalized
+                and ("중단" in normalized or "계속영업" in normalized)
                 and ("지분" in normalized or "소유주" in normalized or "귀속" in normalized)):
             return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
 

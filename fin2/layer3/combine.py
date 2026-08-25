@@ -1922,7 +1922,32 @@ def _resolve_ni_attribution(cands: dict, confirmed: dict, conflicts: dict) -> No
         return
     matched = False
     net_income = confirmed.get("is.net_income")
-    net_income_anchors = {net_income} if net_income is not None else _derive_net_income_from_ebt(cands)  # §A
+    if net_income is not None:
+        net_income_anchors = {net_income}
+    else:
+        # R44 §B: prefer the continuing+discontinued TOTAL-line sum anchor (see
+        # _derive_net_income_from_continuing_discontinued's docstring) over the
+        # EBT−tax fallback (§A) whenever §B produced one — §B's own function
+        # already self-suppresses (returns None) when a directly-reported plain
+        # headline line exists and disagrees with the continuing+discontinued sum
+        # (measured counter-example: 00401731 2011H1/Q3, where '중단영업이익(손실)'
+        # is a static memo figure genuinely excluded from the real headline — an
+        # earlier undiscriminated "§B always wins" design silently defaulted
+        # noncontrolling_ni to 0 there before this self-check existed). When §B
+        # survives that self-check (agrees with a found headline, or no headline
+        # exists to contradict it — DRB동일 00118266 FY2012's shape: no plain
+        # headline line at all), it is structurally scope-safe in a way §A can
+        # never be (§A's EBT can silently be continuing-only-scoped with no textual
+        # marker at all — that's the original bug), so it is trusted outright here
+        # rather than unioned with §A (unioning would let §A's own, possibly
+        # scope-mismatched, match re-introduce the very ambiguity §B was added to
+        # resolve — measured on DRB동일 itself). docs/plans/
+        # gateb_r44_resolve_redesign_2026-08-25.md §3.1.
+        _b_anchor = cands.get("__ni_total_anchor__")
+        if _b_anchor:
+            net_income_anchors = {_b_anchor[0]["value"]}
+        else:
+            net_income_anchors = _derive_net_income_from_ebt(cands)  # §A
     if net_income_anchors:
         cni_vals = set()
         if "is.controlling_ni" in confirmed:
@@ -2145,6 +2170,93 @@ def _ni_attribution_structural_candidates(rows: list[dict], period: str,
     return dict(extra)
 
 
+# R44 §B (net_income anchor, 2026-08-25) — 관측된 동의어(census, report_lines 전수):
+# 계속영업/계속사업/계속기업 3종, 중단영업/중단사업 2종, 로마숫자 접두("XⅡ.계속영업이익
+# (손실)" 등) 포함 다수 변형. "계속"/"중단" 단일 문자 substring이면 관측된 변형을
+# 전부 포괄한다(사업보고서 원문상 접두어 뒤에 오는 두 글자만 다를 뿐, "계속"/"중단"
+# 자체가 없는 변형은 발견되지 않음) — enumerated list 대신 이 방식을 쓰는 이유.
+_NI_TOTAL_KEYWORDS = ("이익", "손실", "손익")
+
+
+def _derive_net_income_from_continuing_discontinued(rows: list[dict], period: str,
+                                                     basis: str) -> int | None:
+    """R44 §B — net_income 앵커 후보: 귀속 분리 **이전**의 회사 전체 계속영업(류)
+    총계 라인 + 중단영업(류) 총계 라인을 그대로 합산한다(section_path IS None인
+    본문 최상위 라인만 대상 — 귀속 하위섹션의 성분 라인과 겹치지 않는다).
+
+    `_derive_net_income_from_ebt`(EBT−tax)와 달리 부호 추측이 필요 없다 — 두 라인
+    모두 이미 부호가 확정된 채로 보고된 값을 그대로 더할 뿐이다. 원인
+    (DRB동일 00118266 FY2012, docs/plans/gateb_r44_resolve_redesign_2026-08-25.md §1):
+    EBT−tax 앵커는 '법인세비용차감전순이익(손실)' 라인이 계속영업만의 세전이익인 경우
+    (라벨 자체엔 아무 표식도 없음) 회사 전체로 착각해 틀린 값을 앵커로 써버린다.
+    이 함수가 만드는 앵커는 그 스코프 오류가 구조적으로 발생할 수 없다 — 계속+중단을
+    직접 더하므로 두 라인의 스코프가 이미 서로 다른 부분집합임이 라벨 자체로 보장된다.
+
+    각 계열(계속/중단)에서 후보가 정확히 1개일 때만 값을 낸다(0개 또는 2개 이상이면
+    None — 결측>오염, 짐작하지 않는다). H1/Q3 은 다른 구조적 후보 함수와 동일하게
+    누적(cumulative) 셀만 남긴다.
+
+    ★교차검증(2026-08-25, 00401731 2011H1/Q3 실측 반례 발견 후 추가): "헤드라인 =
+    계속+중단 합"이라는 가정 자체가 전 필자(filer) 공통은 아니다 — 일부는 회사 전체
+    보고 순이익 라인이 '중단영업(류)' 라인을 **포함하지 않는** 관례를 쓴다(00401731:
+    '중단영업이익(손실)'이 H1/Q3에 걸쳐 동일값 847,734,000,000 — 누적 발생액이 아니라
+    매각예정자산 재측정 등 1회성 메모 성격으로 추정, 직접 보고된 헤드라인
+    '반기(당기)순이익(손실)'=92,672,000,000이 계속영업 단독과 정확히 일치해 중단 성분을
+    아예 포함하지 않음이 확인됨). section_path IS None에 계속/중단/포괄/주당/법인세
+    수식어 없는 순수 헤드라인 순이익류 라인이 **따로** 존재하고 그 값이 계속+중단 합과
+    다르면, 이 필자는 그 관례를 안 쓴다는 뜻이므로 앵커 자체를 억제(None)한다. 그런
+    직접 헤드라인 라인이 아예 없으면(DRB동일처럼) 억제할 근거가 없으므로 그대로 낸다."""
+    interim = period in ("H1", "Q3")
+    is_rows = [r for r in rows if r["statement"] == "IS" and r["basis"] == basis
+               and r.get("section_path") is None]
+    if interim:
+        cum_rows = [r for r in is_rows if r.get("is_cumulative")]
+        if cum_rows:
+            is_rows = cum_rows
+
+    def _pick(matches: list[dict]) -> int | None:
+        vals = {r["value_won"] for r in matches}
+        return vals.pop() if len(vals) == 1 else None
+
+    def _clean(marker: str | None) -> list[dict]:
+        # marker is None (plain headline check): needs the NARROWER "순이익/순손실/
+        # 순손익" requirement, not the broader _NI_TOTAL_KEYWORDS — the broad set
+        # (이익/손실/손익 alone, no "순") also matches subtotals like '매출총이익'
+        # (gross profit) or '영업이익(손실)' (operating income), which are never the
+        # company-wide net-income headline. Measured (00401731 2011H1): the broad
+        # set falsely treated 매출총이익 as a competing "headline" alongside the real
+        # one, made `_pick` see 3 distinct values, returned None, and — since None
+        # was (bug) treated as "no headline exists" rather than "ambiguous, don't
+        # trust either" — silently skipped the cross-check suppression entirely.
+        keywords = ("순이익", "순손실", "순손익") if marker is None else _NI_TOTAL_KEYWORDS
+        out = []
+        for r in is_rows:
+            label = r.get("label_raw") or ""
+            if r.get("value_won") is None:
+                continue
+            if "주당" in label or "법인세" in label:
+                continue
+            if not any(k in label for k in keywords):
+                continue
+            if marker is not None and marker not in label:
+                continue
+            if marker is None and ("계속" in label or "중단" in label or "포괄" in label):
+                continue
+            out.append(r)
+        return out
+
+    cont = _pick(_clean("계속"))
+    disc = _pick(_clean("중단"))
+    if cont is None or disc is None:
+        return None
+    total = cont + disc
+
+    headline = _pick(_clean(None))
+    if headline is not None and headline != total:
+        return None  # 이 필자는 "헤드라인=계속+중단" 관례를 안 씀 — 앵커 억제
+    return total
+
+
 # ★T3 (R29) — K-GAAP 구서식 헤드라인 NI 결측 복구, docs/plans/eps_r28_followup_tracks_design_2026-08-16.md
 # §4/§6 T3. R28(report_lines.py `_EPS_KGAAP_HEADLINE_NOT_EPS_KEYS`)이 이미 "헤드라인
 # 당기순이익 + 괄호 EPS노트" 통짜라벨을 본류로 정상 전사하게 고쳤지만, 그 라벨은
@@ -2256,6 +2368,14 @@ def _map_rows(rows, period: str, basis: str, statements,
     if "IS" in stmt_set:
         for c, extra_rows in _ni_attribution_structural_candidates(rows, period, basis).items():
             cands[c].extend(extra_rows)
+        # R44 §B — net_income anchor carrier, NOT a real DIRECT_MAP canonical. Read
+        # only by _resolve_ni_attribution() below; harmlessly no-ops through
+        # _resolve()'s generic loop otherwise (DIRECT_MAP.get() on this key is None,
+        # so it never reaches `col`). See _derive_net_income_from_continuing_
+        # discontinued's docstring for why this anchor is preferred over EBT−tax.
+        _ni_total_anchor = _derive_net_income_from_continuing_discontinued(rows, period, basis)
+        if _ni_total_anchor is not None:
+            cands["__ni_total_anchor__"] = [{"value": _ni_total_anchor}]
         # T3(R29) — only when the caller identified corp/fy AND is.net_income has no
         # candidate at all yet (conservative default, §4-4 (e): an existing candidate
         # from any other path is trusted over this one).

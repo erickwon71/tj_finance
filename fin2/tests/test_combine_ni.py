@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from fin2.layer3.combine import (  # noqa: E402
     _resolve, _resolve_ni_attribution, _map_rows,
     _ni_attribution_structural_candidates,
+    _derive_net_income_from_continuing_discontinued,
 )
 
 
@@ -318,3 +319,105 @@ def test_map_rows_wiring_recovers_mismap_end_to_end():
     confirmed, conflicts = _resolve(cands)
     _resolve_ni_attribution(cands, confirmed, conflicts)
     assert confirmed["is.controlling_ni"] == 8_028_407   # correct, not the OCI value
+
+
+# ---------------------------------------------------------------------------
+# _derive_net_income_from_continuing_discontinued() — R44 §B net_income anchor
+# (2026-08-25), docs/plans/gateb_r44_resolve_redesign_2026-08-25.md §3.
+# ---------------------------------------------------------------------------
+
+def test_continuing_discontinued_anchor_sums_when_no_headline_to_check():
+    # DRB동일 00118266 FY2012 shape: no plain (unqualified) headline net-income line
+    # exists at all -- only the continuing-only and discontinued-only company-wide
+    # totals. Nothing to contradict the sum, so it's trusted.
+    rows = [
+        _merged_row("IS", "법인세비용차감전순이익(손실)", 23_739_991_222, section_path=None),
+        _merged_row("IS", "법인세비용", 5_447_696_376, section_path=None),
+        _merged_row("IS", "계속영업당기순이익", 18_292_294_846, section_path=None),
+        _merged_row("IS", "중단영업당기순이익", 11_585_080_216, section_path=None),
+    ]
+    anchor = _derive_net_income_from_continuing_discontinued(rows, period="FY", basis="consolidated")
+    assert anchor == 29_877_375_062
+
+
+def test_continuing_discontinued_anchor_suppressed_when_headline_disagrees():
+    # 00401731 2011H1 shape: a plain headline line ALSO exists, and it does NOT
+    # include the '중단영업' line (a static, non-accumulating figure -- this filer's
+    # convention excludes it from net income). The anchor must self-suppress (None)
+    # rather than confidently sum to the wrong total.
+    rows = [
+        _merged_row("IS", "법인세비용차감전순이익(손실)", 188_185_000_000, section_path=None),
+        _merged_row("IS", "계속영업이익(손실)", 92_672_000_000, section_path=None),
+        _merged_row("IS", "중단영업이익(손실)", 847_734_000_000, section_path=None),
+        _merged_row("IS", "반기(당기)순이익(손실)", 92_672_000_000, section_path=None),
+    ]
+    anchor = _derive_net_income_from_continuing_discontinued(rows, period="H1", basis="consolidated")
+    assert anchor is None
+
+
+def test_continuing_discontinued_anchor_survives_when_headline_agrees():
+    # Headline exists and DOES agree with the continuing+discontinued sum -- not
+    # suppressed (redundant confirmation, not a contradiction).
+    rows = [
+        _merged_row("IS", "계속영업순이익(손실)", 100, section_path=None),
+        _merged_row("IS", "중단영업순이익(손실)", 20, section_path=None),
+        _merged_row("IS", "당기순이익(손실)", 120, section_path=None),
+    ]
+    anchor = _derive_net_income_from_continuing_discontinued(rows, period="FY", basis="consolidated")
+    assert anchor == 120
+
+
+def test_continuing_discontinued_anchor_ignores_subtotals_in_headline_check():
+    # ★2026-08-25 (00401731 실측 반례 발견 중 발견한 별개 결함): the headline
+    # cross-check must require '순이익/순손실/순손익' specifically, not the broader
+    # '이익/손실/손익' set used for the 계속/중단 scan -- otherwise 매출총이익(gross
+    # profit)/영업이익(operating income) subtotals falsely look like competing
+    # "headlines", make the pick ambiguous, and (bug, now fixed) an ambiguous
+    # headline used to be silently treated as "no headline" instead of "don't
+    # trust either" -- letting a wrong sum through uncontested.
+    rows = [
+        _merged_row("IS", "매출총이익", 999_999, section_path=None),
+        _merged_row("IS", "영업이익(손실)", 888_888, section_path=None),
+        _merged_row("IS", "계속영업이익(손실)", 100, section_path=None),
+        _merged_row("IS", "중단영업이익(손실)", 20, section_path=None),
+        _merged_row("IS", "반기(당기)순이익(손실)", 100, section_path=None),  # excludes 중단
+    ]
+    anchor = _derive_net_income_from_continuing_discontinued(rows, period="H1", basis="consolidated")
+    assert anchor is None  # headline(100) != sum(120) -> suppressed, not fooled into passing
+
+
+def test_continuing_discontinued_anchor_none_when_either_side_ambiguous():
+    rows = [
+        _merged_row("IS", "계속영업순이익(손실)", 100, section_path=None),
+        _merged_row("IS", "계속영업순이익(손실)", 101, section_path=None, table_seq=1),  # 2 distinct
+        _merged_row("IS", "중단영업순이익(손실)", 20, section_path=None),
+    ]
+    assert _derive_net_income_from_continuing_discontinued(rows, period="FY", basis="consolidated") is None
+
+
+def test_continuing_discontinued_anchor_takes_priority_over_ebt_tax_end_to_end():
+    # Full regression, DRB동일 00118266 FY2012 real shape: the EBT-tax fallback (§A)
+    # is itself continuing-only-scoped (no textual marker at all -- the original
+    # bug) and would confidently confirm the WRONG (continuing-only) attribution
+    # pair. §B's anchor must win instead, through the real _map_rows()/_resolve()/
+    # _resolve_ni_attribution() pipeline (not just the helper in isolation).
+    rows = [
+        _merged_row("IS", "법인세비용차감전순이익(손실)", 23_739_991_222, section_path=None),
+        _merged_row("IS", "법인세비용", 5_447_696_376, section_path=None),
+        _merged_row("IS", "계속영업당기순이익", 18_292_294_846, section_path=None),
+        _merged_row("IS", "중단영업당기순이익", 11_585_080_216, section_path=None),
+        _merged_row("IS", "지배기업의 소유주에 귀속될 계속영업당기순이익", 18_327_708_908,
+                    section_path="계속영업당기순이익"),
+        _merged_row("IS", "비지배지분에 귀속될 계속영업당기순이익", -35_414_062,
+                    section_path="계속영업당기순이익"),
+        _merged_row("IS", "지배기업의 소유주에게 귀속되는 당기순이익(손실)", 29_912_789_124,
+                    section_path="당기순이익(손실)"),
+        _merged_row("IS", "비지배지분에 귀속되는 당기순이익(손실)", -35_414_062,
+                    section_path="당기순이익(손실)"),
+    ]
+    cands = _map_rows(rows, period="FY", basis="consolidated", statements=("IS",))
+    assert "__ni_total_anchor__" in cands
+    confirmed, conflicts = _resolve(cands)
+    _resolve_ni_attribution(cands, confirmed, conflicts)
+    assert confirmed["is.controlling_ni"] == 29_912_789_124   # headline, not the continuing-only 18.3B
+    assert confirmed["is.noncontrolling_ni"] == -35_414_062

@@ -230,9 +230,8 @@ R47-c로 분류했던 19건("정답 표가 `_detect_body_statement_tables()` 반
    서브라인**이 있어 `cni` 멤버가 2개로 늘어 "정확히 1:1" 형태게이트가 실패 — 01137383
    2024Q3(R47-a 검증 중 발견)와 동일한 기존 한계, 이 트랙 무관.
 
-**미해결 1건(00201432)** — 같은 문서에 "정정 전"/"정정 후" 등 근사하지만 다른 값이 여러 개
-섞여 있어(원래 fail_a 2건 중 하나, Gate B 증거강도 자체가 약함) 개별 조사 필요 — 낮은
-우선순위로 보류.
+**미해결 1건(00201432)** — 처음엔 "정정 전"/"정정 후" 근사값 혼재로 추정했으나, §2-G 재조사
+결과 **face_audit.py 문제가 아님**(std_v3 db_won 자체가 틀림)으로 확정 — §2-G 참고.
 
 **검증**: 19건 전수 production reader 재실행 — 13/19(R47-b 추가보강) + 이미 R47-a/b로
 해소된 12건 = **13건 신규 해소**(누계 관점에서 19건 중 18건이 코드 수정 또는 이미 문서화된
@@ -275,12 +274,54 @@ PASS 300건 결정론적 전수 스모크 회귀 0건(300/300 유지). 회귀 �
 | R47-b | 24건 | 24건 전부 앵커 정규식 접두/순손실 보강으로 해소 |
 | R47-c 재조사 | 19건(최초 "스코프 미스" 오판정 정정) | 13건 앵커 정규식 추가 보강으로 해소, 4건은 R47-d로 재귀속, 1건은 R47-a와 동일한 기존 한계, 1건(00201432) 미해결 |
 | R47-d | 8건(원래 4건 + R47-c 재조사 4건 추가) | 8건 전부 ACONTEXT 게이트 정합으로 해소 |
-| **미해결** | **2건**(00201432·00124504, 둘 다 원래 fail_a 2건) | 00201432: 정정 전/후 근사값 혼재. 00124504: 원래 VALUE_NOT_LOCATED(4단계 스코프 밖) — "지배"-라벨 무관 문서 전체 재스캔에도 db_won 정확일치 셀 0건, 단순 라벨/구조 문제 아님(스케일/원문출처 등 별개 원인 필요). 둘 다 낮은 우선순위 보류 |
+| **R47 스코프 밖으로 재확정** | **2건**(00201432·00124504, 둘 다 원래 fail_a) | **face_audit.py 버그 아님** — §2-G 재조사로 확정. db_won 자체가 std_v3 upstream 오류(포괄손익 값이 controlling_ni 로 잘못 들어감), face_audit.py 는 이미 정답(report_won)을 정확히 찾아 fail_a 로 올바르게 잡아내고 있었음 |
 
 매 단계마다 연결기준 현재 PASS 300건 결정론적(랜덤 아님, corp_code 순 정렬) 전수 스모크로
 회귀 0건 확인. `fin2/tests/test_ni_attribution_text_fallback.py` 15건(신규 11건). 전체
 `pytest fin2/tests tests` 632 passed(무관 기존실패 1건 `test_biz_section.py::
 test_lxintl_facility_table_dropped` 제외, R47 수정 전에도 동일하게 실패 확인).
+
+### 2-G. 미해결 2건(00201432·00124504) 재조사 — face_audit.py 버그가 아니었음 확정 (2026-08-26)
+
+재감사 대기 중 이 2건을 추가로 파본 결과, **R47(face_audit.py) 스코프의 문제가 전혀 아님**을
+확정했다 — `face_audit` 테이블의 `fail_detail`을 직접 열람하면 즉시 드러난다:
+
+```
+00124504 2025 FY: db_won=558,816,927,000  report_won=614,085,020,000  evidence=M1_STRONG
+00201432 2025 Q1: db_won=-16,457,016      report_won=-17,534,856      evidence=M1_STRONG
+```
+
+`report_won`(face_audit.py 독립 리더가 실제로 찾은 값)이 이미 **정확한 정답**이다 — 원문 XML
+을 직접 대조한 결과, 두 문서 모두 XBRL ACODE 로 두 개념이 명확히 구분돼 있었다:
+`ifrs-full_ProfitLossAttributableToOwnersOfParent`(순이익 귀속, 진짜 정답 = report_won)와
+`ifrs-full_ComprehensiveIncomeAttributableToOwnersOfParent`(총포괄손익 귀속, db_won 과
+정확히 일치). 즉 **std_v3 의 db_won 자체가 포괄손익 값을 controlling_ni 로 잘못 채택한
+것** — face_audit.py 는 이미 옳은 값을 찾아 fail_a(`evidence=M1_STRONG`, 강한 확신의
+불일치)로 정확히 잡아내고 있었다. §2-A~F 의 어떤 수정도 이 2건엔 적용 대상이 아니다
+(애초에 결함이 없는 컴포넌트).
+
+**근본원인 후보(std_v3/`parser/common/account_mapper.py`, 미확정)**: `account_mapper.py`
+에 이미 정확히 이 패턴을 막는 "맨몸(bare) 지배지분 라벨 가드"(187~227줄, 2026-08-22 도입,
+네오위즈 00628860 실측 기반)가 있고, **오늘 날짜 코드로 직접 검증한 결과 두 문서의 실제
+라벨 텍스트를 정확히 차단한다**:
+
+```python
+>>> get_mapper().map("지배기업소유주", fs_section="is")       # 00124504 포괄손익 행 라벨
+MappingResult(account_code='unknown.지배기업소유주', confidence=0.0, stage='unknown', ...)
+>>> get_mapper().map("지배지분의 소유주지분", fs_section="is")  # 00201432 포괄손익 행 라벨
+MappingResult(account_code='unknown.지배지분의소유주지분', confidence=0.0, stage='unknown', ...)
+>>> get_mapper().map("지배기업의 소유주에게 귀속되는 당기순이익(손실)", fs_section="is")  # 진짜 정답 라벨
+MappingResult(account_code='is.controlling_ni', confidence=1.0, stage='exact', ...)
+```
+
+즉 **현재 코드는 이미 이 두 문서를 올바르게 처리할 것**으로 보인다. 두 필링 모두 이 가드가
+도입된 2026-08-22보다 먼저 적재됐을 가능성이 높다(00201432 rcept 2025-05-15, 00124504
+rcept 2026-03-18 — 둘 다 2026-08-22 이전) — **재표준화(std_v3 재빌드)를 아직 못 받은 stale
+값일 가능성이 높다는 가설**. 단, DB 행 자체엔 표준화 시각 컬럼이 없어(std_financials_v3에
+timestamp 컬럼 없음 확인) 직접 증명은 못 했다 — **다음 단계로 이 2건만 `scripts/
+build_std_v3.py --corp 00201432,00124504`(또는 동등 재표준화)로 재빌드해 db_won 이
+report_won 과 일치하는지 확인 필요**(DB 쓰기 작업이라 사용자 확인 후 진행 권장). 만약
+재빌드로도 안 고쳐지면 진짜 새 결함(가드가 못 잡는 제3의 경로) — 별도 R번호로 분리.
 
 ---
 

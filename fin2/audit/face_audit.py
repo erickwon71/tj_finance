@@ -535,6 +535,20 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
     tr.findall("TE")`로 넓혀 TD 가 없는 행도 처리한다. `_get_cells`/`_table_has_comma_note_column`
     (parser/xml/table_extractor.py)은 TD/TH/TE/TU 를 이미 동일 취급하므로 note_col_offset
     계산은 그대로 안전.
+
+    ★ R47-d(2026-08-26, R47-a/c 검증 중 발견) — 위 스킵 조건을 "ACODE 있으면 skip"으로만
+    두면 또 다른 사각지대가 생긴다: 일부 필러(01137383 카카오게임즈, 00761059 등)는 컨텍스트/
+    차원/소수점/단위 정보를 별도 `ACONTEXT` 속성이 아니라 **ACODE 문자열 자체에 파이프로
+    이어붙인다**(`{concept}|{context_or_empty}|{decimals}|{unit}|`, 문서 전체 `TE[@ACODE]`
+    전수 확인 결과 별도 ACONTEXT 속성 0개 — R47-d 방언). `parse_acontext()`
+    (`fin2/extract/acontext.py`)는 이 형식을 못 읽으므로, ACODE 만 보고 "TE 자매함수가
+    처리했다"고 skip해버리면 자매함수도 결국 못 찾아 **양쪽 다 침묵**(TE_ACODE_NO_ACONTEXT
+    8건 실측). 스킵 조건을 자매함수(`_ni_attribution_structural_candidates`)의 실제 채택
+    기준과 정확히 동형으로 맞춘다 — ACODE·**ACONTEXT 가 둘 다** 있는 TE 만 "이미 처리됨"으로
+    간주. ACONTEXT 가 없으면(방언이든 진짜 미태깅이든) 이 함수가 물리적 컬럼 위치 기반으로
+    직접 값을 읽는다(TD 와 동일 취급 — 원래 이 방언의 컨텍스트 정보도 파이프 안에 있긴
+    하지만, 그걸 파싱해 XBRL 경로를 태우기보단 이미 검증된 물리 컬럼 폴백을 재사용하는 쪽이
+    안전, R47-a와 동일 논리).
     """
     from fin2.extract.text import (
         _detect_body_statement_tables, _detect_fin_type, declared_unit,
@@ -593,10 +607,12 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
                         ))
 
             for tr in tbl.findall(".//TR"):
-                # R47(2026-08-26): ACODE 있는 TE만 "이미 TE 자매함수가 처리" — ACODE 없는 TE는
-                # 자매함수도 못 잡으므로 skip하지 않고 TD처럼 값을 직접 읽는다(아래 폴백).
+                # R47(2026-08-26): ACODE·ACONTEXT 가 **둘 다** 있는 TE만 "이미 TE 자매함수가
+                # 처리"(자매함수의 admission 기준, `value_tes = [... if ACODE and ACONTEXT]`과
+                # 정확히 동형) — 아래 R47-d 참고. 한쪽만 있거나 둘 다 없는 TE는 자매함수도
+                # 결국 못 잡으므로 skip하지 않고 TD처럼 값을 직접 읽는다(아래 폴백).
                 tes = tr.findall("TE")
-                if any(te.get("ACODE") for te in tes):
+                if any(te.get("ACODE") and te.get("ACONTEXT") for te in tes):
                     continue   # 중복 방지
                 tds = tr.findall("TD") or tes
                 if len(tds) < 2:

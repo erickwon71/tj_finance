@@ -366,6 +366,34 @@ def test_text_fallback_still_skips_acode_bearing_te_row():
     assert lines == [], f"ACODE 있는 TE 행은 TE 자매함수 몫 — text 폴백은 침묵해야 함: {lines}"
 
 
+def test_text_fallback_reads_te_with_acode_but_no_acontext():
+    """★R47-d(2026-08-26, `docs/PARSING_RULES.md`) — 일부 필러(01137383 카카오게임즈 등)는
+    컨텍스트/차원/소수점/단위 정보를 별도 ACONTEXT 속성이 아니라 ACODE 문자열 자체에
+    파이프로 이어붙인다(`parse_acontext()`가 못 읽는 방언). ACODE 만 보고 skip하면 TE
+    자매함수도 결국 못 찾아 양쪽 다 침묵한다 — ACODE·ACONTEXT 가 **둘 다** 있을 때만
+    skip해야 한다."""
+    xml = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>2. 연결재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>연결 손익계산서 (단위 : 원)</TD></TR></TABLE>
+   <TABLE>
+    <TR><TE>매출액</TE><TE>1,000,000,000</TE></TR>
+    <TR><TE>당기순이익의 귀속</TE><TE ACODE="ifrs-full_ProfitLossAttributableToAbstract||||"></TE></TR>
+    <TR><TE>지배주주지분</TE><TE ACODE="ifrs-full_ProfitLossAttributableToOwnersOfParent|CFY2023dTQA_ifrs-full_ConsolidatedAndSeparateFinancialStatementsAxis_ifrs-full_ConsolidatedMember|0|KRW|">700,000,000</TE></TR>
+    <TR><TE>비지배주주지분</TE><TE ACODE="ifrs-full_ProfitLossAttributableToNoncontrollingInterests|CFY2023dTQA_ifrs-full_ConsolidatedAndSeparateFinancialStatementsAxis_ifrs-full_ConsolidatedMember|0|KRW|">50,000,000</TE></TR>
+   </TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+    root = etree.fromstring(xml.encode("utf-8"))
+    lines = _ni_attribution_text_candidates(root)
+    ctrl = {l.amount_won for l in lines if l.canonical == "is.controlling_ni"}
+    ncl = {l.amount_won for l in lines if l.canonical == "is.noncontrolling_ni"}
+    assert ctrl == {700_000_000}, f"ACODE는 있으나 ACONTEXT 없는 TE 행을 못 읽음: {ctrl}"
+    assert ncl == {50_000_000}, ncl
+
+
 def test_text_fallback_skipped_when_no_data_rows():
     # 앵커만 있고 지배/비지배 두 행이 갖춰지지 않으면(형태 불명확) 아무 것도 안 낸다 — 추측 금지.
     xml = """<DOCUMENT>
@@ -400,5 +428,6 @@ if __name__ == "__main__":
     test_text_fallback_anchor_survives_bare_gwisok_without_period_word()
     test_text_fallback_anchor_prefix_strip_does_not_admit_ebt_row()
     test_text_fallback_still_skips_acode_bearing_te_row()
+    test_text_fallback_reads_te_with_acode_but_no_acontext()
     test_text_fallback_skipped_when_no_data_rows()
     print("OK")

@@ -220,6 +220,77 @@ def test_text_fallback_reads_acode_less_te_row():
     assert ncl == {50_000_000}, ncl
 
 
+def test_text_fallback_anchor_survives_numbering_prefix():
+    """★R47-b(2026-08-26, `docs/PARSING_RULES.md`) — 앵커 라벨 앞에 로마숫자 번호("XⅢ." —
+    ASCII 'X'+유니코드 'Ⅲ' 혼용 표기, 하이록코리아 실측)가 붙으면 `_NI_TOTAL_RE`의 `^`-앵커가
+    깨져 섹션이 아예 안 열렸다(70건 중 24건). 접두사를 벗겨낸 뒤 앵커 매칭해야 한다."""
+    xml = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>2. 연결재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>연결 손익계산서 (단위 : 원)</TD></TR></TABLE>
+   <TABLE>
+    <TR><TD>XⅢ.당기순이익(손실)의 귀속</TD><TD>&#12288;</TD></TR>
+    <TR><TD>(1)지배기업소유주지분</TD><TD>700,000,000</TD></TR>
+    <TR><TD>(2)비지배지분</TD><TD>50,000,000</TD></TR>
+   </TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+    root = etree.fromstring(xml.encode("utf-8"))
+    lines = _ni_attribution_text_candidates(root)
+    ctrl = {l.amount_won for l in lines if l.canonical == "is.controlling_ni"}
+    ncl = {l.amount_won for l in lines if l.canonical == "is.noncontrolling_ni"}
+    assert ctrl == {700_000_000}, f"번호 접두사 때문에 앵커가 안 열림: {ctrl}"
+    assert ncl == {50_000_000}, ncl
+
+
+def test_text_fallback_anchor_survives_entity_prefix_and_sonsil():
+    """★R47-b — "연결"류 개체 접두사 + 조사 "의" + "순손실"(원래 정규식은 "순이익"/"순손익"만
+    허용) 조합이 앵커를 놓쳤다(서희건설 00219848 실측: "연결당기의순손실")."""
+    xml = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>2. 연결재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>연결 손익계산서 (단위 : 원)</TD></TR></TABLE>
+   <TABLE>
+    <TR><TD>연결당기의순손실</TD><TD>&#12288;</TD></TR>
+    <TR><TD>지배기업소유주에 귀속될 당기순손실</TD><TD>-700,000,000</TD></TR>
+    <TR><TD>비지배기업소유주에 귀속될 당기순이익(손실)</TD><TD>-50,000,000</TD></TR>
+   </TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+    root = etree.fromstring(xml.encode("utf-8"))
+    lines = _ni_attribution_text_candidates(root)
+    ctrl = {l.amount_won for l in lines if l.canonical == "is.controlling_ni"}
+    ncl = {l.amount_won for l in lines if l.canonical == "is.noncontrolling_ni"}
+    assert ctrl == {-700_000_000}, f"연결 접두사/순손실 조합 때문에 앵커가 안 열림: {ctrl}"
+    assert ncl == {-50_000_000}, ncl
+
+
+def test_text_fallback_anchor_prefix_strip_does_not_admit_ebt_row():
+    """회귀 가드 — 접두사 제거가 "법인세비용차감전순이익"(EBT, 순이익귀속 앞의 상위 소계)을
+    앵커로 잘못 열지 않아야 한다. 원본 `_NI_TOTAL_RE`의 안전장치(코아시아씨엠 회귀, R24)가
+    접두사 스트리핑 뒤에도 유지되는지 확인."""
+    xml = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>2. 연결재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>연결 손익계산서 (단위 : 원)</TD></TR></TABLE>
+   <TABLE>
+    <TR><TD>Ⅹ.법인세비용차감전순이익(손실)</TD><TD>&#12288;</TD></TR>
+    <TR><TD>지배기업소유주지분</TD><TD>999,000,000</TD></TR>
+    <TR><TD>비지배지분</TD><TD>1,000,000</TD></TR>
+   </TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+    root = etree.fromstring(xml.encode("utf-8"))
+    lines = _ni_attribution_text_candidates(root)
+    assert lines == [], f"EBT 소계 행이 앵커로 잘못 열림: {lines}"
+
+
 def test_text_fallback_still_skips_acode_bearing_te_row():
     """R47 도입 후에도 ACODE 가 진짜 있는 TE 행은 여전히 skip 되어야 한다(TE 자매함수가
     처리할 몫 — 중복 방지 계약 유지, 회귀 가드)."""
@@ -270,6 +341,9 @@ if __name__ == "__main__":
     test_text_fallback_note_column_offset_corrected()
     test_skipgate_still_adds_correct_candidate_when_wrong_one_already_present()
     test_text_fallback_reads_acode_less_te_row()
+    test_text_fallback_anchor_survives_numbering_prefix()
+    test_text_fallback_anchor_survives_entity_prefix_and_sonsil()
+    test_text_fallback_anchor_prefix_strip_does_not_admit_ebt_row()
     test_text_fallback_still_skips_acode_bearing_te_row()
     test_text_fallback_skipped_when_no_data_rows()
     print("OK")

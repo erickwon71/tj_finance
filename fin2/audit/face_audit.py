@@ -262,7 +262,31 @@ def _adecimal_signals(root) -> tuple[dict[tuple, int], set[tuple]]:
     return verified_adecimal, ambiguous_home
 
 
-_NI_TOTAL_RE = re.compile(r"^당?(기|분기|반기)순(이익|손익)")
+_NI_TOTAL_RE = re.compile(r"^당?(기|분기|반기)의?순(이익|손익|손실)")
+# R47-b(2026-08-26, docs/PARSING_RULES.md) — 앵커 라벨 앞에 붙는 번호/구분 접두사를 벗겨낸
+# 뒤에 위 _NI_TOTAL_RE 를 적용한다. 원문 표본(70건 중 24건, 하이록코리아·서희건설 등) 실측:
+# 로마숫자("XⅢ." — ASCII 'X'+유니코드 'Ⅲ' 혼용 표기 포함)·괄호번호("(1)")·"연결"/"별도" 등
+# 개체 접두사가 `^`-앵커를 깨서 정답 섹션이 아예 안 열렸다. `^`-앵커 자체는 유지
+# (법인세비용차감전순이익 같은 상위 소계가 앵커를 잘못 여는 걸 막는 안전장치, 위 구조함수
+# docstring §1 참고) — 접두사만 벗기지, 패턴을 느슨하게 풀지 않는다.
+_ANCHOR_NUMBERING_RE = re.compile(r"^[IVXLCMⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫⅬⅭⅮⅯ]{1,6}[.)]\s*")
+_ANCHOR_PAREN_NUM_RE = re.compile(r"^\(\d{1,2}\)\s*")
+_ANCHOR_ENTITY_PREFIX_RE = re.compile(r"^(?:연결|별도|당사|회사)\s*")
+
+
+def _is_ni_total_anchor(label: str) -> bool:
+    """`_NI_TOTAL_RE`를 접두사 제거 후 적용 — R47-b, 위 주석 참고."""
+    stripped = label
+    for _ in range(3):  # 번호+개체접두 이중부착 대비(예: "Ⅹ.연결당기순이익")
+        new = _ANCHOR_NUMBERING_RE.sub("", stripped, count=1)
+        new = _ANCHOR_PAREN_NUM_RE.sub("", new, count=1)
+        new = _ANCHOR_ENTITY_PREFIX_RE.sub("", new, count=1)
+        if new == stripped:
+            break
+        stripped = new
+    return bool(_NI_TOTAL_RE.search(stripped))
+
+
 _MAX_SECTION_SPAN = 20   # rows scanned after an anchor before giving up (real spans: 2-11)
 # ★2026-08-22 (P1C 잔여회귀 조사 중 발견, 네오위즈 00628860 등): 총포괄손익 TOTAL 행 마커.
 # 순이익 TOTAL 앵커(위 _NI_TOTAL_RE, "포괄" 없음 요건으로 앵커 자체가 총포괄행이 되는 것은
@@ -375,7 +399,7 @@ def _ni_attribution_structural_candidates(root) -> list[FaceLine]:
         value_tes = [te for te in tes[1:] if te.get("ACODE") and te.get("ACONTEXT")]
 
         if not in_section:
-            if _NI_TOTAL_RE.search(label) and "포괄" not in label and "지배" not in label:
+            if _is_ni_total_anchor(label) and "포괄" not in label and "지배" not in label:
                 in_section = True
                 members = []
                 span = 0
@@ -571,7 +595,7 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
                     continue
                 value_tds = tds[1:]
                 if not in_section:
-                    if _NI_TOTAL_RE.search(label) and "포괄" not in label and "지배" not in label:
+                    if _is_ni_total_anchor(label) and "포괄" not in label and "지배" not in label:
                         in_section = True
                         members = []
                         span = 0

@@ -486,6 +486,20 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
     (report_lines.py에서 표당 상수가 틀렸던 이유는 그쪽 소비 경로가 이미 부분적으로 주석칸을
     떼어내는 `_split_label_amounts()`를 거쳐 행마다 폭이 달라졌기 때문 — 이 함수는 그 경로를
     안 타므로 해당 안 됨).
+
+    ★ R47(2026-08-26, `docs/plans/faceaudit_ni_attribution_skipgate_design_2026-08-26.md` §2-B) —
+    "TE 있으면 skip" 전제가 너무 넓었다. 일부 필러는 NI귀속 행을 `<TE>` 태그로 렌더링하면서도
+    ACODE 를 전혀 안 붙인다(원문 대조 확인: 값이 원문에 정확히 있는데 이 함수가 무조건
+    건너뛰어 놓친다) — TE 자매함수(`_ni_attribution_structural_candidates`)는 ACODE 있는
+    셀만 후보로 내므로, ACODE 없는 TE 행은 **양쪽 함수 모두에서 침묵**한다. 70건 원문 표본
+    전수 분류(2026-08-26) 결과 이 패턴이 22건(31%) — 나머지 69%는 앵커 정규식 불일치(34%,
+    별도 트랙)·`_detect_body_statement_tables()` 스코프 미스(27%, 별도 트랙)·ACONTEXT 없는
+    XBRL 방언(6%, 별도 트랙)으로 이 함수와 무관. 스킵 조건을 "**ACODE 있는** TE가 있으면
+    skip"으로 좁히고(행 안의 TE 셀 22건 전수 실측 결과 라벨/값 셀 혼재 없이 균일하게
+    ACODE 전무 — 부분적으로만 ACODE 없는 행은 0건, 안전), 셀 추출도 `tr.findall("TD") or
+    tr.findall("TE")`로 넓혀 TD 가 없는 행도 처리한다. `_get_cells`/`_table_has_comma_note_column`
+    (parser/xml/table_extractor.py)은 TD/TH/TE/TU 를 이미 동일 취급하므로 note_col_offset
+    계산은 그대로 안전.
     """
     from fin2.extract.text import (
         _detect_body_statement_tables, _detect_fin_type, declared_unit,
@@ -544,9 +558,12 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
                         ))
 
             for tr in tbl.findall(".//TR"):
-                if tr.findall("TE"):
-                    continue   # 이미 TE 자매함수가 처리 — 중복 방지
-                tds = tr.findall("TD")
+                # R47(2026-08-26): ACODE 있는 TE만 "이미 TE 자매함수가 처리" — ACODE 없는 TE는
+                # 자매함수도 못 잡으므로 skip하지 않고 TD처럼 값을 직접 읽는다(아래 폴백).
+                tes = tr.findall("TE")
+                if any(te.get("ACODE") for te in tes):
+                    continue   # 중복 방지
+                tds = tr.findall("TD") or tes
                 if len(tds) < 2:
                     continue
                 label = _cell_text(tds[0])

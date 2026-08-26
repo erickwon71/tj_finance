@@ -139,6 +139,20 @@ bare, 정상 차단됨)은 구조함수만이 찾을 수 있는데 스킵게이�
 
 ### 2-B. ② TE/TD 사각지대 — TD 함수의 "TE 있으면 skip" 전제 재검토
 
+**✅ 구현·검증 완료(2026-08-26)** — 아래 원안대로 구현. 단, 구현 전 70건 원문 표본을
+db_won 물리 위치 기준으로 전수 재분류한 결과, 이 절이 겨냥한 "TE 있으나 ACODE 없음" 패턴은
+70건 중 **22건(31%)뿐**이었다(나머지 69%는 앵커 정규식 불일치 34%·스코프 미스 27%·
+ACONTEXT 없는 XBRL 방언 6% — 이 함수와 무관한 별개 메커니즘, `docs/PARSING_RULES.md`
+R47-b/c/d로 분리). 적용 결과 **21/22(95%) 해소**(production reader 재실행, db_won 후보
+포함 확인) — 잔여 1건(01137383 2024Q3)은 귀속 섹션 안에 계속/중단영업 세부분해 행이 끼어
+있어 "지배/비지배 정확히 1개씩" 형태게이트가 실패하는, `_ni_attribution_structural_
+candidates()` docstring(코렌텍 사례)에 이미 문서화된 **기존 한계**로 이 수정과 무관.
+회귀 테스트 2건 신설(`test_text_fallback_reads_acode_less_te_row`,
+`test_text_fallback_still_skips_acode_bearing_te_row`), 전체 스위트 626 passed(무관
+기존실패 1건 `test_biz_section.py::test_lxintl_facility_table_dropped` 제외, 수정 전에도
+동일하게 실패 확인).
+
+
 **제안 방향(미확정, 사용자 결정 필요)**: TD 전용 구조함수(`_ni_attribution_text_candidates`)
 의 스킵 조건을 "TE가 있으면 skip"에서 "**ACODE 있는 TE가 있으면** skip"으로
 좁힌다 — ACODE 없는 `<TE>`는 사실상 `<TD>`와 동등(값 파싱 로직도 이미 `_cell_text`

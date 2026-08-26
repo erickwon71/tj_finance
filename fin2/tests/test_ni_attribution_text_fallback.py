@@ -192,6 +192,56 @@ def test_skipgate_still_adds_correct_candidate_when_wrong_one_already_present():
     assert 10_000_000 in ncl_vals
 
 
+def test_text_fallback_reads_acode_less_te_row():
+    """★R47(2026-08-26, `docs/plans/faceaudit_ni_attribution_skipgate_design_2026-08-26.md`
+    §2-B) — 일부 필러는 NI귀속 행을 `<TD>`가 아니라 `<TE>`로 렌더링하면서도 ACODE 를 전혀
+    안 붙인다(원문 실측: 00163691 유수홀딩스 2023FY 등 22건). TE 자매함수는 ACODE 없는 셀을
+    후보로 안 내므로, 스킵게이트가 "TE면 무조건 skip"이던 예전 구현에서는 이 행이 양쪽
+    함수 모두에서 침묵했다 — ACODE 없는 TE는 TD처럼 직접 읽어야 한다."""
+    xml = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>2. 연결재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>연결 손익계산서 (단위 : 원)</TD></TR></TABLE>
+   <TABLE>
+    <TR><TE>매출액</TE><TE>1,000,000,000</TE></TR>
+    <TR><TE>당기순이익의 귀속</TE><TE></TE></TR>
+    <TR><TE>지배기업소유주지분</TE><TE>700,000,000</TE></TR>
+    <TR><TE>비지배지분</TE><TE>50,000,000</TE></TR>
+   </TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+    root = etree.fromstring(xml.encode("utf-8"))
+    lines = _ni_attribution_text_candidates(root)
+    ctrl = {l.amount_won for l in lines if l.canonical == "is.controlling_ni"}
+    ncl = {l.amount_won for l in lines if l.canonical == "is.noncontrolling_ni"}
+    assert ctrl == {700_000_000}, f"ACODE 없는 TE 행을 못 읽음: {ctrl}"
+    assert ncl == {50_000_000}, ncl
+
+
+def test_text_fallback_still_skips_acode_bearing_te_row():
+    """R47 도입 후에도 ACODE 가 진짜 있는 TE 행은 여전히 skip 되어야 한다(TE 자매함수가
+    처리할 몫 — 중복 방지 계약 유지, 회귀 가드)."""
+    xml = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>2. 연결재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>연결 손익계산서 (단위 : 원)</TD></TR></TABLE>
+   <TABLE>
+    <TR><TE>매출액</TE><TE>1,000,000,000</TE></TR>
+    <TR><TE>당기순이익의 귀속</TE><TE></TE></TR>
+    <TR><TE>지배기업소유주지분</TE><TE ACODE="ifrs-full_ProfitLossAttributableToOwnersOfParent" ACONTEXT="CFY0Y">700,000,000</TE></TR>
+    <TR><TE>비지배지분</TE><TE ACODE="ifrs-full_ProfitLossAttributableToNoncontrollingInterests" ACONTEXT="CFY0Y">50,000,000</TE></TR>
+   </TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+    root = etree.fromstring(xml.encode("utf-8"))
+    lines = _ni_attribution_text_candidates(root)
+    assert lines == [], f"ACODE 있는 TE 행은 TE 자매함수 몫 — text 폴백은 침묵해야 함: {lines}"
+
+
 def test_text_fallback_skipped_when_no_data_rows():
     # 앵커만 있고 지배/비지배 두 행이 갖춰지지 않으면(형태 불명확) 아무 것도 안 낸다 — 추측 금지.
     xml = """<DOCUMENT>
@@ -219,5 +269,7 @@ if __name__ == "__main__":
     test_text_fallback_takes_cumulative_column_interim()
     test_text_fallback_note_column_offset_corrected()
     test_skipgate_still_adds_correct_candidate_when_wrong_one_already_present()
+    test_text_fallback_reads_acode_less_te_row()
+    test_text_fallback_still_skips_acode_bearing_te_row()
     test_text_fallback_skipped_when_no_data_rows()
     print("OK")

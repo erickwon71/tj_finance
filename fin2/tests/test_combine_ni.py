@@ -395,6 +395,24 @@ def test_continuing_discontinued_anchor_none_when_either_side_ambiguous():
     assert _derive_net_income_from_continuing_discontinued(rows, period="FY", basis="consolidated") is None
 
 
+def test_continuing_discontinued_anchor_suppressed_when_headline_itself_ambiguous():
+    # ★2026-08-25 (00103547 2020Q1, R45 1,440-corp 전수 백필 검증 중 발견): "헤드라인
+    # 후보 없음"과 "헤드라인 후보가 2개 이상이라 모호함"을 같은 값(None)으로 뭉치면
+    # 안 된다 -- 이 필링은 같은 표 안에 '당기순이익(손실)'=2,248,146,338 과
+    # '분기순이익(손실)'=223,745,179 이 별개 값으로 동시에 존재한다(원문 자체가
+    # 어느 쪽이 "진짜" 헤드라인인지 라벨만으로 모호함). 합(cont+disc)이 우연히 그중
+    # 하나와 같다는 것이 그 후보가 맞다는 증거가 되지 못하므로, 헤드라인 후보가
+    # 2개 이상이면 무조건 억제한다(정확히 0개일 때만 대조할 게 없다고 보고 신뢰).
+    rows = [
+        _merged_row("IS", "계속영업이익(손실)", 466_367_498, section_path=None),
+        _merged_row("IS", "중단영업이익(손실)", -242_622_319, section_path=None),
+        _merged_row("IS", "당기순이익(손실)", 2_248_146_338, section_path=None),
+        _merged_row("IS", "분기순이익(손실)", 223_745_179, section_path=None),  # == sum, coincidence
+    ]
+    anchor = _derive_net_income_from_continuing_discontinued(rows, period="Q1", basis="consolidated")
+    assert anchor is None
+
+
 def test_continuing_discontinued_anchor_takes_priority_over_ebt_tax_end_to_end():
     # Full regression, DRB동일 00118266 FY2012 real shape: the EBT-tax fallback (§A)
     # is itself continuing-only-scoped (no textual marker at all -- the original
@@ -421,3 +439,40 @@ def test_continuing_discontinued_anchor_takes_priority_over_ebt_tax_end_to_end()
     _resolve_ni_attribution(cands, confirmed, conflicts)
     assert confirmed["is.controlling_ni"] == 29_912_789_124   # headline, not the continuing-only 18.3B
     assert confirmed["is.noncontrolling_ni"] == -35_414_062
+
+
+def test_ebt_tax_fallback_recovers_when_b_anchor_matches_nothing_end_to_end():
+    # ★2026-08-25, found in the R45 436->1,440-corp full backfill verification
+    # (00238782 2014Q3, docs/plans/gateb_r44_resolve_redesign_2026-08-25.md §3.6):
+    # this filer has NO plain headline line at all (so §B's self-suppression check
+    # in _derive_net_income_from_continuing_discontinued never triggers), yet its
+    # own controlling/noncontrolling attribution breakdown turns out to be
+    # continuing-only-scoped too (sums to the continuing-only total, not
+    # continuing+discontinued) -- §B's anchor (cont+disc) matches NOTHING in the
+    # actual candidate pool. An earlier "§B replaces §A outright" design left this
+    # noncontrolling_ni held (silently defaulting to 0 downstream) instead of
+    # falling back to try §A (EBT−tax), which DOES match here since EBT is
+    # ALSO continuing-only-scoped for this same filer -- consistently, unlike
+    # DRB동일 where §A's EBT is continuing-only-scoped while the real controlling_ni
+    # candidate pool contains the true (combined) headline separately. §B must be
+    # tried FIRST but fall back to §A when §B matches nothing at all, not stay held.
+    rows = [
+        _merged_row("IS", "XI.법인세비용차감전순이익(손실)", 100_643_704_266, section_path=None),
+        _merged_row("IS", "XⅡ.법인세비용", 25_819_361_707, section_path=None),
+        _merged_row("IS", "XⅢ.계속영업이익(손실)", 74_824_342_559, section_path=None),
+        _merged_row("IS", "XIV.중단영업이익(손실)", -1_173_030_291, section_path=None),
+        _merged_row("IS", "(1)지배기업소유주지분", 17_676_181_488, section_path="XV.당기순이익"),
+        _merged_row("IS", "(2)비지배지분", 57_148_161_071, section_path="XV.당기순이익"),
+        # TCI-section bare '비지배지분' bleeds into the same is.noncontrolling_ni
+        # pool via account_mapper's fuzzy match (no '귀속' qualifier at all on
+        # either section's label -- the disambiguating '포괄' wording lives only
+        # in section_path, which account_mapper's per-row label match never sees).
+        _merged_row("IS", "(1)지배기업소유주지분", 16_653_666_730, section_path="XVII.총포괄이익"),
+        _merged_row("IS", "(2)비지배지분", 55_775_684_007, section_path="XVII.총포괄이익"),
+    ]
+    cands = _map_rows(rows, period="Q3", basis="consolidated", statements=("IS",))
+    assert cands["__ni_total_anchor__"][0]["value"] == 73_651_312_268   # §B anchor exists...
+    confirmed, conflicts = _resolve(cands)
+    _resolve_ni_attribution(cands, confirmed, conflicts)
+    assert confirmed["is.controlling_ni"] == 17_676_181_488
+    assert confirmed["is.noncontrolling_ni"] == 57_148_161_071   # ...but §A recovers the real NCI

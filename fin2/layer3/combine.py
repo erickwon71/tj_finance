@@ -1922,68 +1922,81 @@ def _resolve_ni_attribution(cands: dict, confirmed: dict, conflicts: dict) -> No
         return
     matched = False
     net_income = confirmed.get("is.net_income")
-    if net_income is not None:
-        net_income_anchors = {net_income}
-    else:
-        # R44 §B: prefer the continuing+discontinued TOTAL-line sum anchor (see
-        # _derive_net_income_from_continuing_discontinued's docstring) over the
-        # EBT−tax fallback (§A) whenever §B produced one — §B's own function
-        # already self-suppresses (returns None) when a directly-reported plain
-        # headline line exists and disagrees with the continuing+discontinued sum
-        # (measured counter-example: 00401731 2011H1/Q3, where '중단영업이익(손실)'
-        # is a static memo figure genuinely excluded from the real headline — an
-        # earlier undiscriminated "§B always wins" design silently defaulted
-        # noncontrolling_ni to 0 there before this self-check existed). When §B
-        # survives that self-check (agrees with a found headline, or no headline
-        # exists to contradict it — DRB동일 00118266 FY2012's shape: no plain
-        # headline line at all), it is structurally scope-safe in a way §A can
-        # never be (§A's EBT can silently be continuing-only-scoped with no textual
-        # marker at all — that's the original bug), so it is trusted outright here
-        # rather than unioned with §A (unioning would let §A's own, possibly
-        # scope-mismatched, match re-introduce the very ambiguity §B was added to
-        # resolve — measured on DRB동일 itself). docs/plans/
-        # gateb_r44_resolve_redesign_2026-08-25.md §3.1.
-        _b_anchor = cands.get("__ni_total_anchor__")
-        if _b_anchor:
-            net_income_anchors = {_b_anchor[0]["value"]}
-        else:
-            net_income_anchors = _derive_net_income_from_ebt(cands)  # §A
-    if net_income_anchors:
-        cni_vals = set()
-        if "is.controlling_ni" in confirmed:
-            cni_vals.add(confirmed["is.controlling_ni"])
-        elif "is.controlling_ni" in conflicts:
-            cni_vals |= {r["value"] for r in conflicts["is.controlling_ni"]}
-        elif "is.controlling_ni" in cands:
-            cni_vals |= {r["value"] for r in cands["is.controlling_ni"]}
 
-        nci_vals = set()
-        if "is.noncontrolling_ni" in confirmed:
-            nci_vals.add(confirmed["is.noncontrolling_ni"])
-        elif "is.noncontrolling_ni" in conflicts:
-            nci_vals |= {r["value"] for r in conflicts["is.noncontrolling_ni"]}
-        elif "is.noncontrolling_ni" in cands:
-            nci_vals |= {r["value"] for r in cands["is.noncontrolling_ni"]}
-        nci_vals.add(0)   # §B: wholly-owned/negligible-NCI is always a candidate pairing,
-                          # even when some other (possibly unrelated/noisy) candidate
-                          # exists for this canonical too — mirrors the old sole-fallback
-                          # (v2's `nci or 0`), just no longer gated on "nothing else found".
+    cni_vals = set()
+    if "is.controlling_ni" in confirmed:
+        cni_vals.add(confirmed["is.controlling_ni"])
+    elif "is.controlling_ni" in conflicts:
+        cni_vals |= {r["value"] for r in conflicts["is.controlling_ni"]}
+    elif "is.controlling_ni" in cands:
+        cni_vals |= {r["value"] for r in cands["is.controlling_ni"]}
 
+    nci_vals = set()
+    if "is.noncontrolling_ni" in confirmed:
+        nci_vals.add(confirmed["is.noncontrolling_ni"])
+    elif "is.noncontrolling_ni" in conflicts:
+        nci_vals |= {r["value"] for r in conflicts["is.noncontrolling_ni"]}
+    elif "is.noncontrolling_ni" in cands:
+        nci_vals |= {r["value"] for r in cands["is.noncontrolling_ni"]}
+    nci_vals.add(0)   # §B: wholly-owned/negligible-NCI is always a candidate pairing,
+                      # even when some other (possibly unrelated/noisy) candidate
+                      # exists for this canonical too — mirrors the old sole-fallback
+                      # (v2's `nci or 0`), just no longer gated on "nothing else found".
+
+    def _try_anchors(anchors: set) -> bool:
         # §A/tax-sign ambiguity: multiple anchors possible (see _derive_net_income_from_ebt).
         # Only accept if exactly one anchor yields a match — 2+ distinct matches across
         # anchors is a real ambiguity (which anchor was even right?), not a resolution.
-        matches = {_match_ni_identity(cni_vals, nci_vals, ni) for ni in net_income_anchors}
+        if not anchors:
+            return False
+        matches = {_match_ni_identity(cni_vals, nci_vals, ni) for ni in anchors}
         matches.discard(None)
         match = matches.pop() if len(matches) == 1 else None
-        if match is not None:
-            c_val, n_val = match
-            if "is.controlling_ni" in conflicts:
-                confirmed["is.controlling_ni"] = c_val
-                del conflicts["is.controlling_ni"]
-            if "is.noncontrolling_ni" in conflicts:
-                confirmed["is.noncontrolling_ni"] = n_val
-                del conflicts["is.noncontrolling_ni"]
-            matched = True
+        if match is None:
+            return False
+        c_val, n_val = match
+        if "is.controlling_ni" in conflicts:
+            confirmed["is.controlling_ni"] = c_val
+            del conflicts["is.controlling_ni"]
+        if "is.noncontrolling_ni" in conflicts:
+            confirmed["is.noncontrolling_ni"] = n_val
+            del conflicts["is.noncontrolling_ni"]
+        return True
+
+    if net_income is not None:
+        matched = _try_anchors({net_income})
+    else:
+        # R44 §B: try the continuing+discontinued TOTAL-line sum anchor (see
+        # _derive_net_income_from_continuing_discontinued's docstring) FIRST, on
+        # its own — never unioned with §A (unioning lets §A's own, possibly
+        # scope-mismatched, match compete and re-introduce the very ambiguity §B
+        # exists to resolve — measured on DRB동일 00118266 FY2012, whose EBT is
+        # itself silently continuing-only-scoped with no textual marker at all,
+        # the original bug). §B's own function already self-suppresses (returns
+        # None) when a directly-reported plain headline line exists and disagrees
+        # with the continuing+discontinued sum (00401731 2011H1/Q3: a '중단영업
+        # 이익(손실)' static memo figure genuinely excluded from the real
+        # headline) or when the headline itself is ambiguous (00103547 2020Q1:
+        # two differently-scoped '당기순이익'/'분기순이익' lines coexist, neither
+        # textually distinguishable as "the" headline).
+        #
+        # ★When §B produces an anchor but it does NOT actually match anything
+        # (00238782 2014Q3, found in the R45 436→1,440-corp full backfill
+        # verification, docs/plans/gateb_r44_resolve_redesign_2026-08-25.md §3.6):
+        # no plain headline line exists to trigger §B's self-suppression, yet this
+        # filer's own attribution breakdown (controlling+noncontrolling) turns out
+        # to be continuing-only-scoped too (matches §A's EBT−tax anchor exactly,
+        # NOT the continuing+discontinued sum) — §B alone finds no match at all
+        # and, left there, would wrongly leave noncontrolling_ni held (silently
+        # defaulting to 0 in net_income's own fallback). Falling back to §A here
+        # (sequentially, only once §B has already had its unmatched turn — not
+        # unioned, so DRB동일's competing §A match is still never even attempted
+        # there since §B succeeds on its own first) recovers the correct pairing.
+        _b_anchor = cands.get("__ni_total_anchor__")
+        if _b_anchor:
+            matched = _try_anchors({_b_anchor[0]["value"]})
+        if not matched:
+            matched = _try_anchors(_derive_net_income_from_ebt(cands))  # §A
     if matched:
         return
     # identity couldn't run or couldn't disambiguate -> try stage corroboration per
@@ -2251,9 +2264,22 @@ def _derive_net_income_from_continuing_discontinued(rows: list[dict], period: st
         return None
     total = cont + disc
 
-    headline = _pick(_clean(None))
-    if headline is not None and headline != total:
-        return None  # 이 필자는 "헤드라인=계속+중단" 관례를 안 씀 — 앵커 억제
+    # ★2026-08-25 (00103547 2020Q1, R45 1,440-corp 전수 백필 검증 중 발견): 헤드라인
+    # 후보가 "없음"과 "모호함"(2개 이상 서로 다른 값)을 똑같이 취급하면 안 된다. 이
+    # 필링은 같은 표 안에 '당기순이익(손실)'=2,248,146,338 과 '분기순이익(손실)'=
+    # 223,745,179 이 별개 값으로 동시에 존재한다(어느 쪽이 진짜 헤드라인인지 라벨
+    # 만으로 판단 불가 — 원문 자체가 모호함). "합이 우연히 후보 하나와 같다"는 게
+    # 그 후보가 맞다는 증거가 되지 못한다 — 모호하면 억제(None)해야 결측>오염 원칙에
+    # 맞는다. 헤드라인 후보가 정확히 0개일 때만(대조할 게 아예 없음, DRB동일처럼)
+    # 억제하지 않고 그대로 신뢰한다.
+    headline_rows = _clean(None)
+    headline_vals = {r["value_won"] for r in headline_rows}
+    if len(headline_vals) >= 2:
+        return None  # 헤드라인 후보 자체가 모호함 — 앵커 억제
+    if len(headline_vals) == 1:
+        headline = next(iter(headline_vals))
+        if headline != total:
+            return None  # 이 필자는 "헤드라인=계속+중단" 관례를 안 씀 — 앵커 억제
     return total
 
 

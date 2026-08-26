@@ -269,6 +269,59 @@ def test_text_fallback_anchor_survives_entity_prefix_and_sonsil():
     assert ncl == {-50_000_000}, ncl
 
 
+def test_text_fallback_anchor_survives_period_word_paren_alias():
+    """★R47-c 조사 중 추가 발견(2026-08-26) — 기간어와 순 사이에 괄호 별칭이 끼는 표기
+    ("당기(분기)순이익(손실)의 귀속", 심텍홀딩스 00152127 실측)."""
+    xml = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>2. 연결재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>연결 손익계산서 (단위 : 원)</TD></TR></TABLE>
+   <TABLE>
+    <TR><TD>당기(분기)순이익(손실)의 귀속</TD><TD>&#12288;</TD></TR>
+    <TR><TD>지배주주지분</TD><TD>700,000,000</TD></TR>
+    <TR><TD>비지배지분</TD><TD>50,000,000</TD></TR>
+   </TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+    root = etree.fromstring(xml.encode("utf-8"))
+    lines = _ni_attribution_text_candidates(root)
+    ctrl = {l.amount_won for l in lines if l.canonical == "is.controlling_ni"}
+    ncl = {l.amount_won for l in lines if l.canonical == "is.noncontrolling_ni"}
+    assert ctrl == {700_000_000}, f"괄호 별칭 표기 때문에 앵커가 안 열림: {ctrl}"
+    assert ncl == {50_000_000}, ncl
+
+
+def test_text_fallback_anchor_survives_bare_gwisok_without_period_word():
+    """★R47-c 조사 중 추가 발견(2026-08-26) — 기간어("당기"/"분기"/"반기") 없이 "순이익의
+    귀속"만 쓰는 표기(삼영 00127255 실측). TOTAL 행("당기순이익(순손실)")은 정상 매치하지만
+    OCI 행들을 거쳐 총포괄 CLOSE 로 섹션이 닫힌 뒤, 진짜 귀속 헤더가 별도로 다시
+    "순이익의 귀속"만으로 나와 재오픈이 안 됐다."""
+    xml = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>2. 연결재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>연결 손익계산서 (단위 : 원)</TD></TR></TABLE>
+   <TABLE>
+    <TR><TD>당기순이익(순손실)</TD><TD>1,000,000,000</TD></TR>
+    <TR><TD>해외사업환산손익</TD><TD>10,000,000</TD></TR>
+    <TR><TD>총포괄이익(손실)</TD><TD>1,010,000,000</TD></TR>
+    <TR><TD>순이익의 귀속</TD><TD>&#12288;</TD></TR>
+    <TR><TD>지배기업주주지분</TD><TD>700,000,000</TD></TR>
+    <TR><TD>비지배지분</TD><TD>300,000,000</TD></TR>
+   </TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+    root = etree.fromstring(xml.encode("utf-8"))
+    lines = _ni_attribution_text_candidates(root)
+    ctrl = {l.amount_won for l in lines if l.canonical == "is.controlling_ni"}
+    ncl = {l.amount_won for l in lines if l.canonical == "is.noncontrolling_ni"}
+    assert ctrl == {700_000_000}, f"기간어 없는 '순이익의 귀속' 재오픈 실패: {ctrl}"
+    assert ncl == {300_000_000}, ncl
+
+
 def test_text_fallback_anchor_prefix_strip_does_not_admit_ebt_row():
     """회귀 가드 — 접두사 제거가 "법인세비용차감전순이익"(EBT, 순이익귀속 앞의 상위 소계)을
     앵커로 잘못 열지 않아야 한다. 원본 `_NI_TOTAL_RE`의 안전장치(코아시아씨엠 회귀, R24)가
@@ -343,6 +396,8 @@ if __name__ == "__main__":
     test_text_fallback_reads_acode_less_te_row()
     test_text_fallback_anchor_survives_numbering_prefix()
     test_text_fallback_anchor_survives_entity_prefix_and_sonsil()
+    test_text_fallback_anchor_survives_period_word_paren_alias()
+    test_text_fallback_anchor_survives_bare_gwisok_without_period_word()
     test_text_fallback_anchor_prefix_strip_does_not_admit_ebt_row()
     test_text_fallback_still_skips_acode_bearing_te_row()
     test_text_fallback_skipped_when_no_data_rows()

@@ -2553,6 +2553,61 @@ discontinued()`·`_resolve_ni_attribution()`) · `fin2/tests/test_combine_ni.py`
 `287100e`(§B→§A 순차폴백+헤드라인 모호성 가드)·`87e07c4`/`82fd1cb`/`7719b0a`
 (문서).
 
+## R46. `fin2/audit/face_audit.py::_with_ni_attribution_text_fallback()` —
+NI 귀속 스킵게이트 결함 수정, 171건/26개사(2026-08-26, R45 후속)
+
+**배경** — R45 Gate B 재감사 중 발견된 예외 1건(01137383, 위 R45 항목·
+부록C)을 조사하다 `face_audit.py` is.controlling_ni fail 247건(fail_b 245
++ fail_a 2) 전체로 스코프를 넓혀 원문 XML 직접 실행 대조(추측 없음, 스크립트
+`scripts/probe_faceaudit_ni_oci_mislabel_2026-08-26.py`)로 재분류했다.
+
+**근본원인** — `_with_ni_attribution_text_fallback()`이 `is.controlling_ni`/
+`is.noncontrolling_ni`가 이미 `lines`에 있으면(옳든 그르든) 섹션 헤더 기반
+구조인식 함수(`_ni_attribution_text_candidates()`, R35)를 아예 안 불렀다.
+일반 라벨매퍼(`account_mapper.map()`)가 총포괄손익 귀속 섹션을 순이익
+귀속으로 먼저 오매핑해 두 canonical을 채워버리는 문서에서, 정답을 정확히
+아는 구조인식 함수가 호출 기회 자체를 못 얻었다. 원문실측으로 확인된
+오매핑 경로 2종:
+- **변종A**: `account_mapper.py`의 bare 지배지분 가드(`endswith("지분")`)가
+  트레일링 마침표(`"지배기업 소유주지분."`, EUC-KR 문서 필자 관행)에
+  우회당해 fuzzy로 is.controlling_ni(0.93)에 오매핑(00913689 세경하이테크
+  2021H1 실측).
+- **변종B**: `"…지분순이익(손실)"`류 라벨은 "포괄"/"중단"/"계속영업"
+  리터럴이 없어 기존 가드 어디에도 안 걸리고 정상 alias로 통과 —
+  총포괄손익 귀속 섹션인데도 라벨만으론 구분 불가(01137383 카카오게임즈·
+  00117027 알루코 실측). 부수발견(알루코): `"지배회사지분순이익"`이 fuzzy로
+  **is.noncontrolling_ni**(0.88, 방향까지 틀림)에, `"지배기업소유주지분
+  합계"`(BS 자본총계 개념)가 is.controlling_ni(IS 개념, 0.91)에 오매핑되는
+  제3의 하위패턴도 확인 — 오늘 스코프(controlling_ni) 밖, 미조치.
+
+**수정** — 스킵게이트를 제거하고 구조인식 함수를 항상 추가 실행(선택이
+아니라 순수 가산). `audit_fields()`의 PASS 판정이 "후보 집합 어디든
+일치하면 성립"(`val in won_vals`)이라 이 변경은 기존 후보를 하나도 지우지
+않는 단조 개선 — 새 오탐을 만들 수 없다.
+
+**실측/검증** — 247건 원문실행대조 분류: CONFIRMED_PATTERN(=수정으로
+해소 가능) 171건/26개사, REPRODUCED_BUT_STRUCT_FUNC_ALSO_MISSES(=R47
+사각지대, 아래 별도) 70건(01137383·fail_a 2건 포함), NOT_REPRODUCED 4건
+(이 결함과 무관, 파일변경 의심), NO_XML_FILE 2건(도구 한계). 수정 후
+Gate B 재감사(38개사, source=v3, fy≥2010, 4260행, 드라이런→실커밋 동일
+결과): pass 3113→3272(+159) · fail_b 253→78(−175) · **fail_a 10→10
+(변화 없음, 회귀 0건)** · pending 884→900(+16, 전부 안전한 방향). `pytest
+fin2/tests/ tests/` 624 passed(무관 기존실패 1건 제외, 신규 회귀테스트 1건
+포함).
+
+**미해결(R47로 분리, 부록C)** — 70건(01137383 포함)은 정답 행이 `<TE>`
+태그(ACODE 없음)로 렌더링돼 TE 전용 구조함수(ACODE 필수)와 TD 전용
+구조함수("TE 있는 행은 자매함수가 처리했다"고 가정하고 skip) 양쪽 다에서
+빠지는 별개 사각지대 — 이 수정으로는 안 풀린다. 설계는
+`docs/plans/faceaudit_ni_attribution_skipgate_design_2026-08-26.md` §2-B
+(미확정, 별도 승인 필요).
+
+근거: `fin2/audit/face_audit.py::_with_ni_attribution_text_fallback()` ·
+`fin2/tests/test_ni_attribution_text_fallback.py`(신규 회귀 1건) ·
+`scripts/probe_faceaudit_ni_oci_mislabel_2026-08-26.py` ·
+`docs/plans/faceaudit_ni_attribution_skipgate_design_2026-08-26.md` ·
+메모리 `faceaudit-ni-attribution-skipgate-2026-08-26`. 커밋 `5f07d39`.
+
 ---
 
 ## 부록 A. 원문(DART XML) 함정 카탈로그
@@ -2622,6 +2677,7 @@ discontinued()`·`_resolve_ni_attribution()`) · `fin2/tests/test_combine_ni.py`
 | R43 | 메모리 `gateb-nh-investment-controlling-ni-comprehensive-income-contamination-2026-08-25` · `parser/common/account_mapper.py`(포괄손익 귀속 가드) · `fin2/tests/test_account_mapper_comprehensive_income_guard.py` · `scripts/census_r43_comprehensive_income_labels_2026-08-25.py`·`scripts/r43_comprehensive_income_guard_backfill_diff_2026-08-25.py` |
 | R44 | 메모리 `gateb-continuing-ops-attribution-sibling-guard-2026-08-25` · `parser/common/account_mapper.py`(중단/계속영업 귀속 성분 가드) · `fin2/tests/test_account_mapper_discontinued_attribution_guard.py`·`fin2/tests/test_combine_ni.py` · `scripts/census_continuing_ops_attribution_labels_2026-08-25.py`·`scripts/continuing_ops_isolated_diff_2026-08-25.py`·`scripts/verify_continuing_ops_val_to_val_2026-08-25.py` |
 | R45 | 메모리 `gateb-r44-resolve-redesign-2026-08-25` · `docs/plans/gateb_r44_resolve_redesign_2026-08-25.md` · `fin2/layer3/combine.py`(`_derive_net_income_from_continuing_discontinued()`·`_resolve_ni_attribution()`) · `fin2/tests/test_combine_ni.py` · `scripts/census_continuing_total_labels_2026-08-25.py`·`scripts/census_gyesokgiub_2026-08-25.py` |
+| R46 | 메모리 `faceaudit-ni-attribution-skipgate-2026-08-26` · `docs/plans/faceaudit_ni_attribution_skipgate_design_2026-08-26.md` · `fin2/audit/face_audit.py::_with_ni_attribution_text_fallback()` · `fin2/tests/test_ni_attribution_text_fallback.py` · `scripts/probe_faceaudit_ni_oci_mislabel_2026-08-26.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 
 ## 부록 C. 미결 / 위반 현황
@@ -2646,4 +2702,6 @@ discontinued()`·`_resolve_ni_attribution()`) · `fin2/tests/test_combine_ni.py`
 | Gate B 게이팅 축(track vs evidence) 재검토 | **보류(조건부 재개)** — 2026-08-18 A′ 채택으로 track 축 유지. `M2_WEAK` 또는 `E5_HEURISTIC` 가 전수 재감사에서 1건이라도 관측되면 재개(트리거 SQL = R33). 현재 둘 다 0건 |
 | R43(포괄이익/포괄손실 가드) — std_v3 소급 백필·Gate B 전수 재감사 | **✅ 완료 2026-08-25** — 254개사 드라이런(트랜잭션 rollback)으로 실 영향 48개사/265행 확인 후 22건(값→다른값) 전수 원문대조 검증(항등식 controlling_ni+noncontrolling_ni=net_income 다건 정확 일치 확인, KB금융 등) → 실 커밋(`build_std_v3.py --corp <254개사>`, 27,846행) → `gateb_audit.py --recheck`. 전이: fail_a 회귀 **0건**, fail_b→pass 22건·fail_b→pending 17건(개선), pass→fail_b 1건(신규, 아래 별도 항목) |
 | ~~신규 발견(R43 재감사 중) — "계속영업" 귀속 라벨이 "중단영업" 자매가드(2026-08-23)에 안 걸림~~ | **✅ 해소 완료 2026-08-25 — R44(라벨가드)+R45(근본수정)**. 위 R44 항목 참고 |
-| **신규 발견(R45 Gate B 재감사 중) — `fin2/audit/face_audit.py` 독립 리더가 R45와 같은 계열의 net_income 스코프 오판을 별도로 안고 있을 가능성** | **미조치** — 01137383 2024Q3: R45 std_v3 값(-12,526,674,618, 원문 항등식 2건으로 이중검증됨)과 face_audit 리더 값(-29,040,687,972)이 불일치(fail_b). `face_audit.py::_ni_attribution_structural_candidates()`는 combine.py 동명함수를 "미러링만 하고 독립 재구현"하는 설계라 R45의 §B 수정이 전혀 반영 안 됨. 파급범위 미측정(1건만 확인), face_audit.py 자체 조사·수정은 R45 범위 밖 — 별도 세션 과제. R45 항목의 "Gate B 재감사" 단락 및 `docs/plans/gateb_r44_resolve_redesign_2026-08-25.md` §6 참고 |
+| ~~신규 발견(R45 Gate B 재감사 중) — `fin2/audit/face_audit.py` 독립 리더가 R45와 같은 계열의 net_income 스코프 오판을 별도로 안고 있을 가능성~~ | **부분 해소 완료 2026-08-26 — R46**. 247건 원문실행대조로 파급범위 확정(1건→247건, is.controlling_ni 전용): 171건(26개사)은 `_with_ni_attribution_text_fallback()`의 스킵게이트 결함(근본원인은 R45와 무관, `account_mapper.py` 오매핑 경로 2변종)으로 확정·수정·Gate B 재감사(fail_a 회귀 0건) 완료. R46 항목 참고 |
+| **R47(신규, R46 조사 중 발견) — `face_audit.py` TE/TD 구조인식 함수의 사각지대(01137383 등 70건)** | **미조치** — 정답 NI귀속 행이 `<TE>` 태그(ACODE 없음)로 렌더링된 문서에서, TE 전용 구조함수(ACODE 필수)와 TD 전용 구조함수("TE 있는 행은 자매함수가 처리했다"고 가정하고 skip) 양쪽 다에서 정답이 빠진다. R46의 스킵게이트 수정으로는 안 풀림(구조함수 자체가 못 찾음). 01137383 2024Q3 포함 70건(fail_a 2건: 00201432/00124504 포함) — 설계 `docs/plans/faceaudit_ni_attribution_skipgate_design_2026-08-26.md` §2-B(미확정, 별도 승인 필요) |
+| **R48(신규, R46 조사 중 발견) — `account_mapper.py` 방향성/개념 교차 오매핑 2건(controlling_ni 스코프 밖)** | **미조치** — (a) `"지배회사지분순이익"`이 fuzzy로 **is.noncontrolling_ni**에 오매핑(방향까지 틀림, 알루코 00117027 실측), (b) `"지배기업소유주지분 합계"`(BS 자본총계 개념)가 is.controlling_ni(IS 개념)에 오매핑. 둘 다 R46 조사 중 부수발견, 파급범위 미측정 — 별도 트랙 필요 |

@@ -665,8 +665,9 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
 
 
 def _with_ni_attribution_text_fallback(lines: list[FaceLine], root) -> list[FaceLine]:
-    """R35(2026-08-20) — `lines`(최종 확정된 Track A 또는 Track B 산출물) 에 이 개념이
-    전혀 없을 때만 `_ni_attribution_text_candidates()`(스코프 제한 텍스트 폴백)를 덧붙인다.
+    """R35(2026-08-20) — `lines`(최종 확정된 Track A 또는 Track B 산출물) 에
+    `_ni_attribution_text_candidates()`(섹션 헤더 기반 구조인식, 스코프 제한 텍스트 폴백)를
+    **항상** 덧붙인다.
 
     ★ 왜 `read_report_face_xbrl()` 내부가 아니라 여기(트랙 확정 이후)에 있나 — 최초 구현은
     `read_report_face_xbrl()` 안에서 붙였다가 즉시 회귀를 실측했다: 그 함수의 반환이
@@ -678,16 +679,24 @@ def _with_ni_attribution_text_fallback(lines: list[FaceLine], root) -> list[Face
     진짜 값불일치(fail_b, 성도이엔지 등)가 근거강도만 깎여 GAPFILL_UNVERIFIED(pending)나
     심하면 가짜 PASS 로 가려졌다(실측 51건 중 34건, 2026-08-20 즉시 발견·롤백).
     여기서는 트랙이 이미 확정된 뒤라 그 신호를 건드리지 않는다 — 순수 가산.
+
+    ★2026-08-26(R45 후속, 01137383 예외 조사 — `docs/plans/faceaudit_ni_attribution_
+    skipgate_design_2026-08-26.md` §2-A) — "이미 `have`에 있으면 스킵"하던 이전 판정을
+    제거했다. 일반 라벨매퍼(`account_mapper.map()`, Track A/B 양쪽 다 이 함수 호출 전에
+    이미 실행됨)가 총포괄손익 귀속 섹션의 행을 순이익 귀속으로 오매핑하는 경로가
+    최소 2가지 확인됐다(트레일링 마침표가 `account_mapper.py`의 bare 라벨 가드
+    `endswith("지분")`을 우회하는 변종, "…지분순이익"류 라벨 자체가 애초에 가드에
+    안 걸리는 변종 — 설계문서 §1-A) — 오답이 `have`를 먼저 채워버리면 섹션 헤더로
+    정답을 정확히 아는 이 구조인식 폴백이 호출 기회 자체를 못 얻었다(247건 원문실행대조
+    중 171건/26개사 확인, 회사고유 라벨 관행이라 매우 반복적으로 재발).
+    스킵을 없애고 항상 추가해도 안전한 이유: `_ni_attribution_text_candidates()`는
+    후보를 "고르지" 않고 "넓히기만" 하며(자체 docstring 참고, 섹션 형태가 모호하면
+    침묵), `audit_fields()`의 PASS 판정은 `val in won_vals`(후보 집합 어디든 일치하면
+    성립, 1331줄) — 기존에 이미 채택된(옳든 그르든) 후보 옆에 이 함수의 정답 후보가
+    추가로 들어가도 기존 PASS 를 못 깨뜨리고, 기존 오탐(VALUE_DIFF)만 PASS 로
+    승격시킬 수 있다(단조 개선). 두 canonical 다 이미 채택돼 있던 경우를 건너뛰던
+    이전 최적화는 바로 이 스킵 자체가 결함이었으므로 폐기한다.
     """
-    have = {ln.canonical for ln in lines}
-    # ★ 개념별 독립 판정(둘 다 있어야만 스킵) — '지배주주지분'(짧은형) 문서는 Track B 제네릭
-    # 매퍼가 이미 is.noncontrolling_ni **하나만** (account_mapper 의 기존 컨테인먼트 함정,
-    # `_ni_attribution_text_candidates` 함수 docstring 참고) 잘못 채워둔 채로 is.controlling_ni
-    # 는 여전히 0건일 수 있다(실측 엘에스일렉트릭) — "아무 개념이나 하나라도 있으면 스킵"이면
-    # 이 경우를 놓친다. 후보 추가 자체는 단조안전(PASS=존재만으로 성립)이라 두 개념 다 있을
-    # 때만 비싼 스캔을 아낀다.
-    if "is.controlling_ni" in have and "is.noncontrolling_ni" in have:
-        return lines
     return lines + _ni_attribution_text_candidates(root)
 
 

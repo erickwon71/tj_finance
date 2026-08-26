@@ -15,7 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from lxml import etree  # noqa: E402
 
-from fin2.audit.face_audit import _ni_attribution_text_candidates  # noqa: E402
+from fin2.audit.face_audit import (  # noqa: E402
+    _ni_attribution_text_candidates, _with_ni_attribution_text_fallback, FaceLine,
+)
 
 # 케이씨씨/엘에스일렉트릭 원문 구조를 축약 재현: SECTION-2(연결재무제표) 안에
 # 표제표 + 데이터표(순수 TD, TE 없음), NI 귀속 섹션은 앵커 뒤 지배/비지배 두 행.
@@ -142,6 +144,54 @@ def test_text_fallback_note_column_offset_corrected():
     assert ncl == {96_377_136}, ncl
 
 
+def test_skipgate_still_adds_correct_candidate_when_wrong_one_already_present():
+    """★2026-08-26(R45 후속, `docs/plans/faceaudit_ni_attribution_skipgate_design_
+    2026-08-26.md` §2-A) — 이전 구현은 `is.controlling_ni`/`is.noncontrolling_ni`가
+    이미 `lines`에 있으면(옳든 그르든) 이 폴백을 아예 안 불렀다. 일반 라벨매퍼가 총포괄손익
+    귀속 섹션을 순이익 귀속으로 오매핑해 두 canonical을 먼저 채워버리는 문서(00913689
+    세경하이테크 등, 247건 원문실행대조 중 171건/26개사 확인)에서, 진짜 정답을 아는
+    이 구조인식 폴백이 스킵돼 정답이 후보 풀에 영원히 안 들어갔다.
+
+    이 테스트는 그 상황을 합성 재현한다: `lines`에 이미(총포괄손익 귀속 섹션에서 나온,
+    실제로는 틀린) is.controlling_ni 값이 있는 상태에서 폴백을 호출해도, 문서 안의
+    진짜 '당기순이익(손실)의 귀속' 섹션 값이 후보로 추가돼야 한다."""
+    xml = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>2. 연결재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>연결 손익계산서 제68기 2023년 (단위 : 원)</TD></TR></TABLE>
+   <TABLE>
+    <TR><TD>매출액</TD><TD>1,000,000,000</TD></TR>
+    <TR><TD>당기순이익(손실)의 귀속</TD><TD>&#12288;</TD></TR>
+    <TR><TD>&#12288;지배주주지분</TD><TD>700,000,000</TD></TR>
+    <TR><TD>&#12288;비지배주주지분</TD><TD>50,000,000</TD></TR>
+    <TR><TD>총포괄손익의 귀속</TD><TD>&#12288;</TD></TR>
+    <TR><TD>&#12288;지배주주지분순이익(손실)</TD><TD>999,000,000</TD></TR>
+    <TR><TD>&#12288;비지배주주지분순이익(손실)</TD><TD>10,000,000</TD></TR>
+   </TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+    root = etree.fromstring(xml.encode("utf-8"))
+    # 일반 라벨매퍼가 총포괄손익 귀속 행을 이미 (틀리게) 채워둔 상태를 합성.
+    wrong_already_present = [
+        FaceLine(statement="IS", basis="consolidated", acode="지배주주지분순이익(손실)",
+                 canonical="is.controlling_ni", label="지배주주지분순이익(손실)",
+                 displayed_value=999_000_000, adecimal=0, is_cumulative=True),
+        FaceLine(statement="IS", basis="consolidated", acode="비지배주주지분순이익(손실)",
+                 canonical="is.noncontrolling_ni", label="비지배주주지분순이익(손실)",
+                 displayed_value=10_000_000, adecimal=0, is_cumulative=True),
+    ]
+    result = _with_ni_attribution_text_fallback(wrong_already_present, root)
+    ctrl_vals = {l.amount_won for l in result if l.canonical == "is.controlling_ni"}
+    ncl_vals = {l.amount_won for l in result if l.canonical == "is.noncontrolling_ni"}
+    assert 700_000_000 in ctrl_vals, f"진짜 순이익귀속 정답이 빠짐: {ctrl_vals}"
+    assert 50_000_000 in ncl_vals, f"진짜 순이익귀속 정답이 빠짐: {ncl_vals}"
+    # 기존(틀린) 후보도 그대로 남아있어야 함(넓히기만, 선택 아님 — 단조성 계약).
+    assert 999_000_000 in ctrl_vals
+    assert 10_000_000 in ncl_vals
+
+
 def test_text_fallback_skipped_when_no_data_rows():
     # 앵커만 있고 지배/비지배 두 행이 갖춰지지 않으면(형태 불명확) 아무 것도 안 낸다 — 추측 금지.
     xml = """<DOCUMENT>
@@ -168,5 +218,6 @@ if __name__ == "__main__":
     test_text_fallback_takes_only_current_period_column_fy()
     test_text_fallback_takes_cumulative_column_interim()
     test_text_fallback_note_column_offset_corrected()
+    test_skipgate_still_adds_correct_candidate_when_wrong_one_already_present()
     test_text_fallback_skipped_when_no_data_rows()
     print("OK")

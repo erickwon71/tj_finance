@@ -1422,14 +1422,54 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                 merged[key] = cell
             else:
                 base = merged[key]
-                if not is_base and int(value_won) != base["value_won"]:
-                    # value edit by a later filing → patch + mark
+                # ★2026-08-27(R49 버그B, 포스코인터내셔널 00124504 2025FY): 원래 조건은
+                # `not is_base`(최초 필링이냐 아니냐)만 봤다 — 최초 필링 내부에서 같은 키가
+                # 중복되면 "first occurrence 유지"(아래 no-op)로 안전하게 보호되지만, **정정
+                # 필링 내부의 중복은 `not is_base`가 항상 True라 값이 다르면 무조건 덮어써서
+                # 보호를 못 받았다**. 이 중복은 대개 진짜 정정이 아니라 Layer2 들여쓰기
+                # 파싱이 만든 우연한 cell-identity 충돌(`docs/plans/
+                # r49_controlling_ni_cell_identity_design_2026-08-27.md` §3)이었다 — 문서
+                # 순서상 먼저 나온 행이 정답이고 나중에 나온 행(오답, 예: 총포괄손익 귀속)이
+                # 덮어쓰는 사고가 났다.
+                #
+                # ★ 스코프 한정(중요, 같은 날 실측 2회): 처음엔 이 대칭화를 전 statement 에
+                # 무조건 적용해봤더니 IS 의 NI귀속과 전혀 무관한 구식(pre-XBRL, 대개 2015년
+                # 이전) 문서의 BS/SCE 상세 라인(감가상각누계액·대손충당금·SCE 자본변동 항목
+                # 등)에서 **같은 라벨이 section_path 없이 여러 하위계정에 반복**되는, 훨씬
+                # 흔하고 완전히 다른 종류의 충돌까지 건드렸다(6,958개 기간 영향, 근거 없이
+                # "먼저 값이 정답"이라 볼 수 없는 케이스). `_ni_attribution_structural_
+                # candidates()`(2085줄)와 같은 IS+순이익/순손실+비-포괄 스코프로 좁혀도(1차
+                # 축소, 8건) 여전히 무관한 부수효과가 남았다 — 00126089(DH오토넥스)의
+                # '계속사업손익'/'중단사업손익' 중복(요약표/본표 이중게재로 추정, R44/DRB동일
+                # 계열과 다른 별개 미검증 패턴)이 이 필터를 통과했다. 두 번째 축소로 라벨
+                # 자체에 '지배'/'비지배'가 있는 행(=controlling/noncontrolling 귀속 라인)만
+                # 남긴다 — 검증된 00201432/00124504 케이스는 정확히 이 형태이고, 00126089류는
+                # 라벨에 '지배'/'비지배'가 없어 자동으로 빠진다.
+                in_scope = (
+                    statement == "IS" and section_path is not None
+                    and ("순이익" in section_path or "순손실" in section_path)
+                    and "포괄" not in section_path
+                    and ("지배" in (label_raw or "") or "비지배" in (label_raw or ""))
+                )
+                if in_scope and rcept == base["source_rcept"]:
+                    # same filing as whoever currently owns this cell → a same-rcept
+                    # report_lines duplicate (Layer2 quirk), never a real correction.
+                    # Always keep the first-seen value (symmetric for base & amendment).
+                    pass
+                elif in_scope and int(value_won) == base["value_won"]:
+                    # different filing, same value → no real change, but this filing
+                    # did touch the cell — remember it as the current owner so a later
+                    # same-rcept duplicate (within *this* filing) is recognized as such.
+                    base["source_rcept"] = rcept
+                elif not is_base and int(value_won) != base["value_won"]:
+                    # out-of-scope duplicate, or genuinely later filing with an edited
+                    # value → original behavior: patch + mark.
                     cell["source_rcept"] = rcept
                     cell["amended"] = True
                     cell["amended_by"] = rcept
                     cell["amend_chain"] = base["amend_chain"] + [rcept]
                     merged[key] = cell
-                # equal value, or same base filing duplicate → keep base (no-op)
+                # equal value, or same base-filing duplicate (out-of-scope) → no-op
     return list(merged.values())
 
 

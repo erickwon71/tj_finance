@@ -2465,6 +2465,36 @@ def _map_rows(rows, period: str, basis: str, statements,
         if res.confidence < 0.88 or res.account_code.startswith("unknown."):
             continue
         c = res.account_code
+        # is.revenue fuzzy-containment false positives (R52, 2026-08-27 — see
+        # docs/plans/gateb_r52_revenue_cogs_note_mismap_design_2026-08-27.md).
+        # AccountMapper._fuzzy_match()'s short-alias guard only protects aliases
+        # <=4 chars, so two longer-but-still-short exact aliases slip through via
+        # containment:
+        #  (a) "수익(매출액)"(7자, exact alias for a bare revenue-total line) is a
+        #      substring of IFRS15 매출유형별 disaggregation-note COGS rows like
+        #      "재화의 판매로 인한 수익(매출액)에 대한 매출원가" — a COST line, not
+        #      revenue (실측 291개사/9,698행 원문에 이 문구 존재). Can't fix by
+        #      dropping the alias itself: 1,725개사/71,518행 use it verbatim as their
+        #      real revenue-total label (load-bearing, exact stage elsewhere).
+        #  (b) "보험판매수입수수료"(9자, insurance-agency commission-income alias) has
+        #      a bare "수입수수료"(commission income — any industry, e.g.
+        #      새론오토모티브/00305668 자동차부품) as its suffix substring; matches
+        #      even for non-insurance filers with no "보험" context at all (실측
+        #      279개사/3,303행).
+        # Both only corrupt std_v3 when they end up the SOLE is.revenue candidate for
+        # a period (the real total line, if present, wins via _resolve()'s stage-rank
+        # shortcut regardless) — but that's exactly what happened in the 21-row fail_a
+        # cluster this guard was written for. Scoped to is.revenue+stage='fuzzy' only —
+        # doesn't touch the general matcher (a blanket threshold change was rejected:
+        # 232 catalog-level alias collisions in the same escape zone, many already
+        # hand-guarded by the R44~R49 controlling_ni/noncontrolling_ni series — raising
+        # the threshold globally risks interacting with that tuning unpredictably).
+        if c == "is.revenue" and res.stage == "fuzzy":
+            label = r["label_raw"] or ""
+            if "매출원가" in label:
+                continue
+            if res.matched_alias == "보험판매수입수수료" and "보험" not in label:
+                continue
         is_cum = r["is_cumulative"]
         flow = interim and (c.startswith("is.") or c.startswith("cf."))
         if flow:

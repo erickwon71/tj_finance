@@ -287,6 +287,13 @@ BS_ACCOUNTS: dict[str, list[str]] = {
     "bs.total_equity": [
         "자본총계", "자본 합계", "자본의 합계", "자본 총계",
         "총자본",
+        # ⚠ "총자본" 라벨은 필자마다 다른 XBRL 개념을 가리킨다(2026-08-27 실측,
+        #   R51 조사): 포스코스틸리온은 ifrs-full_EquityAndLiabilities(=자산총계,
+        #   오답)로, 리노공업은 ifrs-full_Equity(진짜 지분, 정답 — 이 라벨이 유일한
+        #   equity 라인인 필링 존재)로 쓴다. **라벨 alias 목록에서 제거하면 리노공업
+        #   회귀**(2026 H1 total_equity NULL)가 나므로 여기서 못 없앤다 — 값 기반
+        #   식별(total_assets 항등 검사)이 downstream(_resolve 등)에 필요.
+        #   docs/PARSING_RULES.md R51(조사 중) 참고.
     ],
     "bs.controlling_equity": [
         "지배기업 소유지분 합계", "지배기업소유지분합계",

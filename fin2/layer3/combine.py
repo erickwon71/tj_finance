@@ -1324,6 +1324,49 @@ def _trust_account_table_seqs(cands: dict[str, list[dict]]) -> set:
     return {seq for seq, v in ta_by_seq.items()
             if tl_by_seq.get(seq) == v and seq not in eq_seqs}
 
+
+def _degenerate_total_equity_row_ids(cands: dict[str, list[dict]]) -> set:
+    """id() of bs.total_equity candidate rows that are actually an
+    EquityAndLiabilities-shaped line (부채와자본총계/총자본) masquerading as equity —
+    see R51 (2026-08-27, docs/PARSING_RULES.md).
+
+    Some filers label their "부채와자본총계" row "총자본" — a Korean idiom for
+    "total capital employed" that means assets, not equity — and `account_maps/
+    bs_accounts.py` must keep "총자본" as a `bs.total_equity` alias regardless: at
+    least one filer (00369657/리노공업, 2026H1) genuinely uses "총자본" as its ONLY
+    equity-line label (ACODE=ifrs-full_Equity), so removing the alias silently drops
+    total_equity to NULL there. The two usages are indistinguishable by label text
+    alone — but the mislabeled one is always numerically identical to the same
+    table_seq's bs.total_assets candidate (both literally read the
+    ifrs-full_EquityAndLiabilities cell), while a genuine equity value essentially
+    never coincides with total assets (that would require zero total liabilities).
+
+    Real 실측 (00155258/포스코스틸리온, FY2024 rcept 20250408001924, consolidated):
+    table_seq=0 candidates — 자산총계(section_path='자산')=556,803,723,173,
+    자본총계(section_path='자본')=385,299,788,248, 총자본(section_path=NULL,
+    ★orphaned outside any section★)=556,803,723,173(==자산총계, exact). Without this
+    guard, `_reduce_conflict()`'s shallowest-`section_path`-depth tiebreak treats the
+    orphaned "총자본" row (depth=0, no '>' to count) as *shallower* than "자본총계"
+    (depth=1, nested under 자본) and wrongly lets it win — total_equity==total_assets.
+
+    Excludes a row only when the same table_seq has >=1 OTHER bs.total_equity
+    candidate surviving the drop (never emptying the pool) — protects the
+    (extremely rare but not impossible) genuinely zero-total-liabilities company
+    whose real equity legitimately equals its assets."""
+    ta_by_seq: dict[int, set] = defaultdict(set)
+    for r in cands.get("bs.total_assets", []):
+        ta_by_seq[r["table_seq"]].add(r["value"])
+    eq_rows = cands.get("bs.total_equity", [])
+    by_seq: dict[int, list[dict]] = defaultdict(list)
+    for r in eq_rows:
+        by_seq[r["table_seq"]].append(r)
+    drop_ids = set()
+    for seq, rows in by_seq.items():
+        degenerate = [r for r in rows if r["value"] in ta_by_seq.get(seq, set())]
+        if degenerate and len(degenerate) < len(rows):
+            drop_ids.update(id(r) for r in degenerate)
+    return drop_ids
+
 # statement -> AccountMapper fs_section hint
 _FS = {"IS": "is", "BS": "bs", "CF": "cf"}
 # canonical prefix -> statement it is read from
@@ -1621,6 +1664,7 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
     confirmed: dict[str, int] = {}
     conflicts: dict[str, list[dict]] = {}
     trust_seqs = _trust_account_table_seqs(cands)
+    degenerate_eq_ids = _degenerate_total_equity_row_ids(cands)
     for c, rows in cands.items():
         # ★R2 델타패치 실질화(2026-08-20, P3-1 재감사 후속): build_merged_lines() 의 셀
         # 키에 section_path 가 들어있어, 정정본이 표를 재렌더링해 section_path 가 원본과
@@ -1646,6 +1690,15 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
         # trust-account signature — never a blanket table_seq preference.
         if c in _BS_GRAND_TOTAL and trust_seqs:
             filtered = [r for r in rows if r.get("table_seq") not in trust_seqs]
+            if filtered:
+                rows = filtered
+        # bs.total_equity: drop EquityAndLiabilities-shaped rows masquerading as equity
+        # (R51, 2026-08-27 — see _degenerate_total_equity_row_ids docstring) *before* the
+        # by_label grouping / depth tiebreak below, same placement reasoning as trust_seqs
+        # just above. Computed against `cands[c]` (pre-filter pool), not the possibly
+        # already-narrowed `rows`, to stay consistent with how the id() set was built.
+        if c == "bs.total_equity" and degenerate_eq_ids:
+            filtered = [r for r in rows if id(r) not in degenerate_eq_ids]
             if filtered:
                 rows = filtered
         # 여기서 depth 판정 *전에* 정규화 라벨 단위로 정리한다 — 같은 norm(label) 인데

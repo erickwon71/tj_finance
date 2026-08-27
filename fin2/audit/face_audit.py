@@ -1138,6 +1138,7 @@ _FX_PRESENTATION_CURRENCY_KEYS: frozenset[tuple[str, int, str, str]] = frozenset
     ("01032486", 2025, "Q1", "consolidated"),
     ("01032486", 2025, "Q3", "consolidated"),
     ("01032486", 2026, "Q1", "consolidated"),
+    ("01032486", 2026, "H1", "consolidated"),  # 2026-08-27, 클러스터B(482건 백로그) 카탈로그 갱신
 })
 
 # ★R21 Phase 3(a)(2026-08-15, 사용자 결정) — 이 4개사는 XBRL `ifrs-full_CostOfSales`가
@@ -1495,14 +1496,24 @@ def audit_fields(
             # (기존 PASS/FAIL 판정에 영향 없음 — 순수 additive).
             dep_vals = [ln.amount_won for ln in by_canon.get("bs.deposits", [])
                         if ln.amount_won is not None]
+            combined_vals = [ln.amount_won for ln in by_canon.get("bs.cash_deposits_combined", [])
+                              if ln.amount_won is not None]
             if dep_vals:
                 base_vals = ([ln.amount_won for ln in cands if ln.amount_won is not None]
-                             or [ln.amount_won for ln in by_canon.get("bs.cash_deposits_combined", [])
-                                 if ln.amount_won is not None])
+                             or combined_vals)
                 if any(b + d == val for b in base_vals for d in dep_vals):
                     results.append(FieldAudit(field, canon, val, True, None,
                                               report_value_won=val, evidence=EVIDENCE_E4_IDENTITY))
                     continue
+            elif combined_vals and val in combined_vals:
+                # ★ 클러스터A 후속(2026-08-27, Gate B fail_a 482건 백로그) — 예치금이 별도
+                # 라인(bs.deposits)으로 태깅되지 않고 결합 캡션(bs.cash_deposits_combined,
+                # 예: dart_CashAndDuefromBanks "현금및예치금") 하나로만 존재하는 필링. rule_
+                # cash_with_deposits 도 이 경우 base=combined 그대로 채택하므로(dep=0 가산),
+                # 결합값이 std 값과 정확히 일치하면 직접 PASS(exact-won 만 허용, 우연일치 배제).
+                results.append(FieldAudit(field, canon, val, True, None,
+                                          report_value_won=val, evidence=EVIDENCE_E4_IDENTITY))
+                continue
         if canon == "is.revenue":
             il = db_row.get("industry_lines") or {}
             # gross_fallback(§3-D) 행은 일반경로(공시 총계 그대로)로 이미 통과하므로 대상 밖.

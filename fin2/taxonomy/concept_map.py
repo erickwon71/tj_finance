@@ -22,6 +22,11 @@ _BS: dict[str, str] = {
     "ifrs-full_CurrentAssets": "bs.current_assets",
     "ifrs-full_NoncurrentAssets": "bs.noncurrent_assets",
     "ifrs-full_CashAndCashEquivalents": "bs.cash",
+    # 금융업(증권/캐피탈/지주) 확장개념 — "현금및예치금"(현금성자산+예치금 결합 캡션).
+    # account_maps/bs_accounts.py 의 동일 라벨 별칭과 같은 canonical(2026-08-27,
+    # Gate B fail_a 482건 백로그 클러스터A). rules.rule_cash_with_deposits 가
+    # 이 canonical 을 base 후보로 소비(라벨경로와 일치).
+    "dart_CashAndDuefromBanks": "bs.cash_deposits_combined",
     "ifrs-full_CurrentFinancialAssets": "bs.short_term_investment",
     "ifrs-full_OtherCurrentFinancialAssets": "bs.short_term_investment",
     "ifrs-full_OtherNoncurrentFinancialAssets": "bs.long_term_investment",

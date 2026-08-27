@@ -1,7 +1,10 @@
 # R49 후속 — controlling_ni cell-identity 버그 2종 설계 (2026-08-27)
 
-상태: **설계만, 구현 미착수**. [[feedback-plan-then-wait]] 원칙 — 이 문서는 사용자
-승인 후에만 구현으로 넘어간다.
+상태: **✅ 구현·검증·전수 재감사까지 완료, R49 트랙 종료(2026-08-27)**. §5 결정에
+따라 A1(alias 등록)+B2(merge 대칭화, 스코프 한정)를 구현·커밋(`ca628c0`).
+6개사 타겟 재빌드+Gate B 재감사(fail_a 0) + 사용자가 직접 실행한 전수(5-shard,
+fy≥1999) Gate B 재감사로 `is.controlling_ni` fail_a 전사 0건·회귀 0건 확인.
+근본해결 트랙(A2/A3/B1)은 §4-1에서 실측 후 기각 — 별도 착수 없음.
 
 관련: `docs/PARSING_RULES.md` R49(가설 반증됨, 이 문서로 대체). 메모리
 `gateb-r49-stale-hypothesis-falsified-two-real-bugs-2026-08-27` §전체.

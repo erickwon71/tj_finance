@@ -2666,6 +2666,65 @@ fail_a 2건이 남았다(`checked_at`이 재감사 시작 이전 — R37(`select
 
 ---
 
+## R55. `account_maps/bs_accounts.py` — `bs.trade_payables` 결합형 alias의
+퍼지 포함관계 오매핑 alias 갭 메움, 39개사/339행 해소(2026-08-29)
+
+**배경** — [[gateb-trade-payables-45-triage-2026-08-28]] 클래스C 3건 중
+종근당홀딩스(00149354, 지주회사) 2건을 원문 대조하다 발견. 클래스C의 나머지
+1건(갤럭시아에스엠)은 원인이 정반대(face_audit acode-라벨 뒤바뀜 오탐, DB는
+정답)라 별도 트랙 — 이 R55는 다루지 않는다.
+
+**근본원인** — 종근당홀딩스 별도 BS엔 "매입채무" 라인 자체가 없다(순수 지주회사).
+있는 건 "미지급금"·"기타유동채무"뿐인데, `parser/common/account_mapper.py::
+_fuzzy_match()`의 Stage3 포함관계 규칙이 `bs.trade_payables`에 등록된 **결합형
+alias** `"매입채무및기타유동채무"`/`"매입채무및기타비유동채무"`(2026-07-18 승급분)의
+**뒷부분이 그대로 원문 라벨과 문자 그대로 일치**하는 것을 이용해 "매입채무" 부분이
+실제로는 없는데도 오매핑한다(포함관계 점수 0.90+len_ratio·0.09 — "매입채무" 토큰
+존재 여부는 검사 안 함). "기타유동채무"/"기타비유동채무"는 형제 라벨("미지급금"·
+"기타채무"·"기타지급채무")과 달리 `bs_accounts.py`에 단독 alias로 등록돼 있지
+않아 Stage1/2를 못 거치고 Stage3까지 흘러갔다.
+
+**파급범위 실측** — `report_lines` 전수 SQL 스캔(같은 필링·basis 안에 진짜
+"매입채무" 라벨이 전혀 없는데 `std_financials_v3.trade_payables`가 이 값과 정확히
+일치): **339행 · 39개사**. 트리아지의 "2건"은 face_audit이 acode로 report_won을
+찾을 수 있어 fail_a로 뜬 것만 잡은 것 — 나머지 337행은 face_audit도 acode를 못
+찾아 **Gate B가 못 잡던 잠복 오염**(표본 00132354=쿠쿠홀딩스도 지주회사로 확인,
+가설과 부합).
+
+**수정** — `account_maps/bs_accounts.py`에 "기타유동채무"→`bs.other_current_payables`,
+"기타비유동채무"→`bs.other_noncurrent_liabilities` exact alias 2줄 추가(둘 다
+`std_financials_v3`에 저장 컬럼 없는 흡수용 버킷 — 신규 canonical 도입 없음). Stage1이
+Stage3보다 먼저 실행되므로 이 두 alias 등록만으로 결합형 alias의 포함관계 매칭에
+영영 도달하지 않는다 — `_fuzzy_match()` 엔진 자체는 불변, 순수 사전 갭 메우기.
+
+**안전성** — 이 두 canonical은 저장 컬럼이 없어 alias 추가가 새로 값을 오염시킬
+위험이 없다. 유일한 효과는 `bs.trade_payables` 후보 풀에서 잘못된 후보가 사라지는
+것 — 39개사 재백필 결과 339행 중 337행이 정확히 NULL(결측, "결측>오염" 원칙대로
+안전한 미확정 처리)로 전환됐고, 나머지 2행(01021949)은 같은 필링의 다른 정당한
+후보(비교기간 컬럼의 진짜 결합라벨 후보)로 값 불변 유지 — 정보 손실 없이 오염만
+제거됨을 확인.
+
+**실측/검증** — 39개사 std_v3 재백필(`build_std_v3.py --corp ...`, 4,228행) →
+스냅샷(`gateb_snap_classc_pre_20260829`) 대비 diff로 위 337/2 결과 확인. 39개사
+Gate B 재감사(`--corp-file`, `--recheck`) → trade_payables fail_a **0건**(종근당홀딩스
+2건 포함 완전 해소), 신규 회귀 없음. `pytest fin2/tests/ tests/` 632/633 pass(기존
+무관 실패 1건, R54와 동일 — `test_lxintl_facility_table_dropped`).
+
+★ **전수 재백필/재감사 필요**([[gateb-full-reaudit-is-required-to-close]]) — 이번
+alias 변경은 `bs_accounts.py` 본체(전사 공용 사전)라 39개사 스코프 확인만으론
+트랙을 닫지 않는다. 39개사 밖의 corp가 영향받을 가능성은 이론상 낮다(exact alias가
+fuzzy보다 항상 우선이라 진짜 "매입채무" 라벨이 있는 회사는 원래도 그 라벨이
+이겼을 것) — 그러나 확정을 위해 `build_std_v3.py --all` 전체 재백필 +
+`gateb_audit.py` 전수 재감사가 별도로 필요(장시간, 사용자 실행
+[[feedback-long-running-commands]]).
+
+근거: `account_maps/bs_accounts.py`(`bs.other_current_payables`/
+`bs.other_noncurrent_liabilities` 항목) ·
+`docs/plans/gateb_trade_payables_classC_accountmapper_containment_alias_gap_design_2026-08-29.md` ·
+메모리 `gateb-trade-payables-classC-rootcause-2026-08-29`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

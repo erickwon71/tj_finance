@@ -219,6 +219,11 @@ BS_ACCOUNTS: dict[str, list[str]] = {
     ],
     "bs.other_current_payables": [
         "기타유동부채", "기타채무", "기타지급채무",
+        # 2026-08-29(gateb_trade_payables_classC_accountmapper_containment_alias_gap_
+        # design_2026-08-29.md): 미등록이라 Stage3 포함관계 퍼지가 "매입채무및기타유동채무"
+        # (bs.trade_payables 결합형 alias)의 부분문자열로 오매핑(종근당홀딩스 등 39개사/
+        # 339행 실측). exact 등록으로 Stage1에서 안전하게 소진 — 원인 문서 참고.
+        "기타유동채무",
         "미지급금", "미지급비용",
         "기타금융부채",  # 유동성 기타 금융부채
         "기타유동금융부채",
@@ -270,6 +275,10 @@ BS_ACCOUNTS: dict[str, list[str]] = {
     ],
     "bs.other_noncurrent_liabilities": [
         "기타비유동부채", "기타장기부채",
+        # 2026-08-29(gateb_trade_payables_classC_accountmapper_containment_alias_gap_
+        # design_2026-08-29.md): "매입채무및기타비유동채무"/"장기매입채무및기타비유동채무"
+        # (bs.trade_payables 결합형 alias)의 부분문자열 오매핑 방지 — 위 기타유동채무와 동일 원인.
+        "기타비유동채무",
         "임대보증금",            # 임대사업자 임차인 보증금
         "유동성임대보증금",      # 1년내 반환 임대보증금 (유동부채에 분류되기도 함)
         "금융보증부채",          # 금융보증 계약 부채

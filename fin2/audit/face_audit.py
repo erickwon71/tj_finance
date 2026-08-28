@@ -650,6 +650,23 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
     return extra
 
 
+# ★2026-08-28(gateb_faceaudit_inventory_ppe_acode_gap_design_2026-08-28.md) — face_audit.py
+# 전용 acode alias 오버레이. concept_map.py::ACODE_TO_CANONICAL(운영 fin2/extract/xbrl.py 의
+# store_facts 도 소비 — R23 시점 주석 "감사 전용"은 stale)는 건드리지 않는다. BS face 본문이
+# 실제로 쓰는 acode 변형(HD현대일렉트릭·NC·오션인더블유·세미파이브 원문 4/4 확인)인데
+# concept_map.py 미등록이라 canonical=None 으로 후보집합에서 탈락 → 유일 후보로 남는 주석
+# 합계행(DART 렌더러 ADECIMAL 오태깅, 이미 알려진 함정 클래스)만으로 대조돼 false VALUE_DIFF.
+_FACE_AUDIT_EXTRA_ACODE: dict[str, str] = {
+    "ifrs-full_InventoriesTotal": "bs.inventory",
+    "ifrs-full_PropertyPlantAndEquipmentIncludingRightofuseAssets": "bs.ppe",
+}
+
+
+def _map_acode_face(acode: str) -> str | None:
+    """map_acode() 폴백 — face_audit 전용 alias 만 추가(운영 concept_map.py 미변경)."""
+    return map_acode(acode) or _FACE_AUDIT_EXTRA_ACODE.get(acode)
+
+
 def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
                           root=None) -> list[FaceLine]:
     """
@@ -713,7 +730,7 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
             unit, _decl = _doc_default()
             if unit is not None:
                 adecimal = _adecimal_from_unit(unit)
-        canonical = map_acode(acode)
+        canonical = _map_acode_face(acode)
         stmt = _statement_of(canonical)
         if stmt is None and ctx.period_kind == "instant":
             stmt = "BS"

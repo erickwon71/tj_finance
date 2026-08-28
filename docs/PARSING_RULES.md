@@ -2610,6 +2610,62 @@ fin2/tests/ tests/` 624 passed(무관 기존실패 1건 제외, 신규 회귀테
 
 ---
 
+## R54. `fin2/audit/face_audit.py::read_report_face_xbrl()` — 회사고유 확장(UDF)
+acode 라벨매칭 폴백, `bs.trade_payables` 25건 해소(2026-08-28~29)
+
+**배경** — [[gateb-trade-payables-45-triage-2026-08-28]] 세션에서 trade_payables
+fail_a 45건을 원문 리터럴 대조(`re.escape(db_won)` + 콤마포맷)로 4클래스 분류한 것 중
+**클래스A(24건, 이후 실측으로 25건 확정)**를 해소.
+
+**근본원인** — BS face 본문의 진짜 매입채무 행이 회사·타임스탬프별 고유 확장(UDF)
+acode(`entity{corp8}_udf_BS_{timestamp}_CurrentLiabilities` 류, 또는
+`entity{corp8}_AccountsPayableOfCurrentLiabilities` 처럼 타임스탬프 없는 변형)를
+쓴다. 이 접미사는 **의미가 없다** — KX(00657987) 원문에서 같은 접미사 패턴
+(`OfCurrentLiabilities`)이 기타의투자자산·매각예정자산·장기차입금 등 전혀 다른
+계정에도 재사용되는 것을 확인 — 그래서 R53(inventory/ppe)처럼 정적 acode alias
+사전으로는 원천적으로 해결 불가. `read_report_face_xbrl()`의 admission gate
+(`acode.startswith(_XBRL_PREFIXES)`, `_XBRL_PREFIXES=("ifrs-full_","dart_")`)가
+`entity...` 접두 acode를 애초에 전부 걸러내 후보 집합에서 탈락 → 유일 후보로 남는
+다른 계정(장기매입채무 등)과 대조돼 VALUE_DIFF(fail_a) 오탐.
+
+**수정** — acode 사전이 아니라 **같은 `<TR>` 행의 라벨 셀(형제 TE, ACODE 없음)
+텍스트**로 정체를 확인하는 좁은 admission-gate 예외를 추가했다. 10개사 원문 확인
+결과 라벨은 공백(일반/전각 `　`) 제거 시 정확히 3종으로 수렴: `매입채무` ·
+`매입채무및기타채무` · `유동매입채무`(폐집합 exact-match — 부분일치는 "장기매입채무"
+같은 무관 계정 오염 위험이 있어 배제). `entity\d{8}_` 접두이면서 라벨이 이 3종
+중 하나일 때만 `canonical="bs.trade_payables"`로 admit — 그 외 entity acode는
+기존과 동일하게 skip(스코프 확대 없음, 다른 필링의 Track A/B 선택에 영향 없음).
+
+★ **설계 초안의 함정** — 최초안은 `_map_acode_face(acode, te)`처럼 acode 매핑
+함수 안에서 라벨을 확인하려 했으나, 이 함수에 도달하기도 전에 admission gate
+(`_XBRL_PREFIXES` 미포함)가 `entity...` acode를 전부 걸러내 실행조차 안 됨을
+표본 재감사(`--no-commit`)에서 fail_a 불변으로 실측 발견 — **admission gate
+자체를 좁게 여는 방식으로 재설계**했다. 짐작으로 "될 것"이라 판단하지 말고
+반드시 실제 코드 경로로 검증할 것([[feedback-verify-against-source]]).
+
+**안전성** — `audit_fields()`의 PASS 판정이 `val in {후보집합}`(소속검사)이라
+후보 추가는 순수 가산 — 기존 PASS를 깨뜨릴 수 없다(R53과 동일 원칙, 코드 주석
+face_audit.py L781 참고).
+
+**실측/검증** — class A 10개사 25건 표본(`--corp-file`, `--no-commit`) fail_a
+25→0, 회귀 0. 400개사 무작위 표본(seed=42, 39,792행) fail_a 15건 — 전부 이번
+수정과 무관한 기존 클래스B/C/기타. 전수 재감사+커밋(2,532개 활성사, 약 6시간)
+결과 DB `fail_a` **113→88**(정확히 25건 해소, trade_payables 45→20).
+
+★ **부수 함정 1건** — 일정실업(00146542)은 전수 재감사 직후에도 DB에 stale
+fail_a 2건이 남았다(`checked_at`이 재감사 시작 이전 — R37(`select_corps()`가
+상장폐지사를 감사 유니버스에서 제외) 때문에 이 회사가 **전수 재감사에 아예
+포함되지 않음**, 코드 버그 아님). `--corp 00146542 --recheck`로 단독 재감사해
+해소(fail_a 90→88). **교훈**: 전수 재감사 후 DB 카운트가 예상과 안 맞으면
+상장폐지사 제외 유니버스부터 의심할 것.
+
+근거: `fin2/audit/face_audit.py::read_report_face_xbrl()`(admission gate +
+`_ENTITY_EXT_ACODE_RE`/`_TRADE_PAYABLES_ROW_LABELS`/`_row_label_text()`) ·
+`docs/plans/gateb_trade_payables_classA_udf_acode_label_fallback_design_2026-08-28.md` ·
+메모리 `gateb-trade-payables-classA-label-fallback-design-2026-08-28`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

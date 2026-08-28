@@ -662,6 +662,38 @@ _FACE_AUDIT_EXTRA_ACODE: dict[str, str] = {
 }
 
 
+# ★2026-08-28(gateb_trade_payables_classA_udf_acode_label_fallback_design_2026-08-28.md)
+# — trade_payables 클래스A(24건, [[gateb-trade-payables-45-triage-2026-08-28]]). 회사고유
+# 확장(UDF) acode(entity{corp8}_udf_BS_{timestamp}_... 류)는 태그명 자체에 의미가 없다
+# (KX 00657987 원문에서 같은 접미사 패턴이 기타의투자자산·매각예정자산·장기차입금 등
+# 전혀 다른 계정에도 재사용됨을 확인) — 위 _FACE_AUDIT_EXTRA_ACODE 같은 정적 사전으로는
+# 등록 불가. 대신 같은 <TR> 행의 라벨 셀(형제 TE, ACODE 없음) 텍스트로만 정체를 확인한다.
+# 10개사 원문 확인 결과 라벨은 공백(일반/전각) 제거 시 정확히 3종으로 수렴 — 폐집합
+# exact-match(부분일치는 "장기매입채무" 같은 무관 계정 오염 위험이 있어 배제).
+_ENTITY_EXT_ACODE_RE = re.compile(r"^entity\d{8}_")
+_TRADE_PAYABLES_ROW_LABELS: frozenset[str] = frozenset({
+    "매입채무",
+    "매입채무및기타채무",
+    "유동매입채무",
+})
+
+
+def _normalize_ws(s: str) -> str:
+    return re.sub(r"\s", "", s)
+
+
+def _row_label_text(te) -> str | None:
+    """te 와 같은 <TR> 의 첫 번째 셀(라벨 셀, ACODE 없음) 텍스트. face 표는 항상
+    라벨 셀이 행의 첫 <TE> — 레이아웃이 다르면(첫 셀도 ACODE 있음) None 반환(안전)."""
+    parent = te.getparent()
+    if parent is None:
+        return None
+    children = list(parent)
+    if not children or children[0].get("ACODE"):
+        return None
+    return _cell_text(children[0])
+
+
 def _map_acode_face(acode: str) -> str | None:
     """map_acode() 폴백 — face_audit 전용 alias 만 추가(운영 concept_map.py 미변경)."""
     return map_acode(acode) or _FACE_AUDIT_EXTRA_ACODE.get(acode)
@@ -707,8 +739,22 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
     dedup: dict[tuple, FaceLine] = {}
     for te in root.findall(".//TE[@ACODE]"):
         acode = te.get("ACODE", "")
-        if not acode.startswith(_XBRL_PREFIXES) or len(acode) > 255:
+        if len(acode) > 255:
             continue
+        udf_trade_payables = False
+        if not acode.startswith(_XBRL_PREFIXES):
+            # ★2026-08-28(gateb_trade_payables_classA_udf_acode_label_fallback_design_
+            # 2026-08-28.md) — entity 확장(UDF) acode 는 태그명 자체에 의미가 없어(KX
+            # 00657987 원문에서 같은 접미사가 기타의투자자산·장기차입금 등 무관 계정에도
+            # 재사용됨을 확인) _XBRL_PREFIXES 로 걸러낼 수 없다. 같은 행 라벨이 매입채무류
+            # 3종(_TRADE_PAYABLES_ROW_LABELS)일 때만 좁게 admit — 그 외 entity acode 는
+            # 기존과 동일하게 skip(스코프 확대 없음, Track A/B 선택에 영향 없음).
+            if not _ENTITY_EXT_ACODE_RE.match(acode):
+                continue
+            label = _row_label_text(te)
+            if label is None or _normalize_ws(label) not in _TRADE_PAYABLES_ROW_LABELS:
+                continue
+            udf_trade_payables = True
         acontext = te.get("ACONTEXT", "")
         if not acontext:
             continue
@@ -730,7 +776,7 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
             unit, _decl = _doc_default()
             if unit is not None:
                 adecimal = _adecimal_from_unit(unit)
-        canonical = _map_acode_face(acode)
+        canonical = "bs.trade_payables" if udf_trade_payables else _map_acode_face(acode)
         stmt = _statement_of(canonical)
         if stmt is None and ctx.period_kind == "instant":
             stmt = "BS"

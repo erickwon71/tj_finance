@@ -2727,6 +2727,54 @@ DB `face_audit` fail_a **88 → 86**(정확히 2건 해소), trade_payables fail
 
 ---
 
+## R56. `fin2/audit/face_audit.py` — 갤럭시아에스엠 라벨-acode 뒤바뀜
+1건 curated 예외로 face_audit 오탐 해소(2026-08-29)
+
+**배경** — [[gateb-trade-payables-45-triage-2026-08-28]] 클래스C 3건 중 마지막
+1건(갤럭시아에스엠 00129554, 2026H1 연결). R55(종근당홀딩스형)와 겉보기 증상은
+같지만(원문 당기 컬럼에 db_won이 리터럴로 존재, acode는 매입채무와 무관) 원인이
+**정반대** — 이번은 std_v3(DB)가 정답이고 face_audit(검증기)이 오탐이다.
+
+**근본원인** — 2026H1 연결 BS 원문(`20260814002461.xml` L3260-3282, 원문대조
+확인)에서 필자(공시대리인)가 라벨과 acode를 서로 바꿔 태깅했다: "단기매입채무"
+라인(매입채무 계열, `bs_accounts.py` exact alias로 정확히 등록됨)에 엉뚱한
+acode(`ifrs-full_OtherCurrentFinancialLiabilities`)를, 매입채무와 무관한
+"기타유동채무" 라인에 표준 매입채무 acode(`ifrs-full_TradeAndOtherCurrentPayables`)를
+붙였다(전기 비교컬럼도 동일 패턴 — 체계적 오태깅). 별도(separate) 기준(L9398)엔
+같은 금액(172,864,613)이 정상 alias(`dart_ShortTermTradePayables`)로 "단기매입채무"에
+태깅돼 있어 교차확인됨. std_v3(AccountMapper)는 acode 를 보지 않고 라벨 텍스트로
+판별해 정답(172,864,613)을 잡았고, face_audit(`read_report_face_xbrl()`)은 acode를
+신뢰해 오태깅된 값(1,483,956,477)을 후보로 채택 → false VALUE_DIFF(fail_a). 별도
+basis는 `dart_ShortTermTradePayables` 정상후보가 함께 있어 membership 대조로 이미
+PASS(영향 없음) — consolidated 1건만 영향.
+
+**수정** — 일반 라벨힌트 가드 대신(설계문서 §2 "대안" 채택) 이 필링 1건만 curated
+예외로 등록. `face_audit.py`에 `_TRADE_PAYABLES_ACODE_LABEL_SWAP_KEYS =
+{("00129554", 2026, "H1", "consolidated")}` 추가, `bs.trade_payables` 후보 비교
+직전(`_TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS`/R23 와 같은 자리) 이 키에 해당하면
+`acode == "ifrs-full_TradeAndOtherCurrentPayables"` 후보를 배제. std_v3 변경 없음 —
+face_audit 코드만 수정, 재백필 불필요.
+
+**안전성** — 4-튜플 키가 정확히 이 1건만 가리켜 다른 회사 acode 신뢰도는 전혀
+건드리지 않는다(R23/R55 후속 부수효과와 무관, 순수 additive). 배제 후 정답
+("단기매입채무")은 정상 acode 가 없어 후보 자체가 없으므로 fail_a 가 아니라
+LABEL_UNMATCHED(pending)로 남는다 — VALUE_DIFF(확정 오류)를 주장하지 않는
+보수적 처리.
+
+**실측/검증** — 원문(raw_report) L3260-3283 재확인으로 XML 값 그대로 일치.
+`--corp 00129554 --recheck --no-commit` 드라이런: 이 필링만 fail_a 1→0, 다른
+131행 무변동. Phase B 라인 전수대조 fail_a 7건은 수정 전/후 동일(무관, 회귀
+아님). `--corp 00129554 --recheck`(커밋) 실행 후 DB 확인: 해당 행 status
+`fail`→`pending`. DB 전체 latest-snapshot 집계: `trade_payables` fail_a
+**18 → 17**, `face_audit` 전체 fail_a **86 → 85**(정확히 1건 해소, 신규 0).
+`pytest fin2/tests/test_face_audit.py` 52/52 pass.
+
+근거: `fin2/audit/face_audit.py`(`_TRADE_PAYABLES_ACODE_LABEL_SWAP_KEYS`) ·
+`docs/plans/gateb_trade_payables_classC_faceaudit_acode_label_swap_design_2026-08-29.md` ·
+메모리 `gateb-trade-payables-classC-rootcause-2026-08-29`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

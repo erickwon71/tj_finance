@@ -1243,6 +1243,24 @@ _TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS: frozenset[tuple[str, int, str, str]] = 
     ("00626011", 2025, "FY", "separate"),
 })
 
+# ★R56(2026-08-29, docs/plans/gateb_trade_payables_classC_faceaudit_acode_label_swap_
+# design_2026-08-29.md) — 갤럭시아에스엠(00129554) 2026H1 연결 BS 원문 필자가 라벨과 acode를
+# 서로 바꿔 태깅했다(원문대조 확인, L3260-3282): "단기매입채무" 라인(정상 alias 등록됨,
+# 매입채무 계열)에 엉뚱한 acode(ifrs-full_OtherCurrentFinancialLiabilities)를, 매입채무와
+# 무관한 "기타유동채무" 라인에 표준 매입채무 acode(ifrs-full_TradeAndOtherCurrentPayables)를
+# 붙였다(전기 비교컬럼도 동일 패턴 — 체계적 오태깅). 별도(separate) 기준(L9398)엔 같은 금액
+# (172,864,613)이 정상 alias(dart_ShortTermTradePayables)로 "단기매입채무"에 태깅돼 있어
+# 교차확인됨 — 172,864,613이 진짜 정답. std_v3(라벨 기준 AccountMapper)는 이를 정확히 잡았고
+# (db_won=172,864,613), face_audit(acode 기준)만 오태깅된 acode 값(1,483,956,477)을 후보로
+# 오채택해 false VALUE_DIFF. 별도(separate) basis 는 dart_ShortTermTradePayables 정상후보가
+# 함께 있어 membership 대조로 이미 PASS(회귀 위험 없음) — consolidated 만 영향.
+# 이 필링 1건만 curated 예외로 그 오태깅 acode 의 후보를 배제한다(일반 라벨힌트 가드 대신
+# 최소범위 — 다른 회사 acode 신뢰도는 전혀 건드리지 않음). 배제 후 정답 라벨("단기매입채무")은
+# 정상 acode 가 없어 후보 자체가 없으므로 LABEL_UNMATCHED(pending)로 남는다 — fail_a 만 해소.
+_TRADE_PAYABLES_ACODE_LABEL_SWAP_KEYS: frozenset[tuple[str, int, str, str]] = frozenset({
+    ("00129554", 2026, "H1", "consolidated"),
+})
+
 
 @dataclass
 class RowAudit:
@@ -1546,6 +1564,12 @@ def audit_fields(
                                               db_row.get("fiscal_period"), basis) in _TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS:
             # R23 — 이 행은 값=0 후보와의 우연일치를 배제(위 _TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS 참고).
             cands = [c for c in cands if c.amount_won != 0]
+        if canon == "bs.trade_payables" and (db_row.get("corp_code"), db_row.get("fiscal_year"),
+                                              db_row.get("fiscal_period"), basis) in _TRADE_PAYABLES_ACODE_LABEL_SWAP_KEYS:
+            # R56 — 라벨-acode 뒤바뀜 필링(위 _TRADE_PAYABLES_ACODE_LABEL_SWAP_KEYS 참고),
+            # 그 오태깅 acode(ifrs-full_TradeAndOtherCurrentPayables, 실제 라벨은 "기타유동채무")
+            # 후보를 배제한다.
+            cands = [c for c in cands if c.acode != "ifrs-full_TradeAndOtherCurrentPayables"]
         if canon == "bs.cash":
             # ★ P1C-2 cash+deposits identity check (2026-08-22) — rule_cash_with_deposits
             # (fin2/standardize/rules.py, 2026-07-18 사용자 확정)는 금융사(증권·보험) std

@@ -2314,6 +2314,20 @@ VALUE_DIFF 소멸 확인, 같은 corp 의 다른 전체 기간에 새 fail 0(pre
 `fin2/tests/test_combine_curated_overrides.py` · 메모리
 `gateb-trade-payables-stale-subline-r42-2026-08-21`.
 
+**★2026-08-29 추가(신규 인스턴스, 새 R번호 아님 — 같은 메커니즘)** — trade_payables
+클래스B 트리아지([[gateb-trade-payables-45-triage-2026-08-28]])에서 이연제약
+(00145598) 2025Q1(연결·별도 둘 다)이 R42 완료(2026-08-21) **이후** 접수된 필링이라
+당시 스캔 대상이 아니었을 뿐, 원문대조 결과 정확히 같은 메커니즘으로 확인됨(원본
+"매입채무" 7,837,235,184 vs 정정본 결합라벨 "매입채무 및 기타유동채무" 당기
+14,467,303,399(연결)/14,421,377,063(별도) — DB 는 원본의 stale 셀을 채택하고
+있었음). `_TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE`에 2줄 추가(레시피 동일, 새 코드
+없음). 표본 재백필(`build_std_v3.py --corp 00145598`, 130행 무손실 확인)+재감사
+(`--recheck`) → fail_a 1→0, 같은 corp 다른 130행 무변동. DB 전체: trade_payables
+fail_a 17→15, face_audit 전체 fail_a 85→83. `pytest tests/ fin2/tests/` 632/633
+pass(기존 무관 실패 1건 그대로). 근거 추가: `docs/plans/
+gateb_trade_payables_classB_stale_column_investigation_2026-08-29.md` §2 · 메모리
+`gateb-trade-payables-classB-two-bugs-2026-08-29`.
+
 ---
 
 ## R43. `account_mapper.py` 포괄손익 귀속 가드 — '포괄이익'/'포괄손실'(쪼개진 표기) 미포착

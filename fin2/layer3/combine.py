@@ -129,6 +129,12 @@ _TRADE_PAYABLES_ADDITIVE_OVERRIDE = {
 #
 # 14건 전부 report_lines 계보(정정 전/후 rcept 비교) 원문대조로 개별 확인(00626011 아이텍은
 # 이미 알려진 R23 _TRADE_PAYABLES_ZERO_MATCH_EXCLUDE_KEYS 버그와 동일 corp라 제외 — 별개 원인).
+#
+# ★2026-08-29 추가(이연제약 00145598, R42 이후 신규 인스턴스) — trade_payables 클래스B
+# 트리아지([[gateb-trade-payables-45-triage-2026-08-28]])에서 발견. R42 완료(2026-08-21)
+# 이후에 접수된 필링이라 당시 스캔엔 없었을 뿐, 메커니즘은 동일(정정본이 '매입채무'를
+# '매입채무 및 기타유동채무' 결합라벨로 재렌더링, 원본의 stale 개별 라인을 DB가 채택).
+# 원문대조: docs/plans/gateb_trade_payables_classB_stale_column_investigation_2026-08-29.md §2.
 _TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE = {
     ("00124276", 2019, "H1", "separate"): "매입채무 및 기타유동채무",       # 부스타
     ("00124276", 2015, "Q3", "separate"): "매입채무 및 기타유동채무",       # 부스타
@@ -153,6 +159,8 @@ _TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE = {
     ("00603348", 2015, "H1", "separate"): "매입채무 및 기타유동채무",       # 케이아이엔엑스
     ("00923826", 2020, "FY", "consolidated"): "매입채무 및 기타채무",       # 일월지엠엘
     ("00923826", 2020, "FY", "separate"): "매입채무 및 기타채무",           # 일월지엠엘
+    ("00145598", 2025, "Q1", "consolidated"): "매입채무 및 기타유동채무",   # 이연제약(R42 이후 신규 인스턴스, 2026-08-29)
+    ("00145598", 2025, "Q1", "separate"): "매입채무 및 기타유동채무",       # 이연제약
 }
 
 # ★is.sga stage-rank shortcut override (2026-08-15, Phase 1 — user-approved for the full

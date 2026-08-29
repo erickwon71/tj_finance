@@ -2704,19 +2704,21 @@ Stage3보다 먼저 실행되므로 이 두 alias 등록만으로 결합형 alia
 후보(비교기간 컬럼의 진짜 결합라벨 후보)로 값 불변 유지 — 정보 손실 없이 오염만
 제거됨을 확인.
 
-**실측/검증** — 39개사 std_v3 재백필(`build_std_v3.py --corp ...`, 4,228행) →
-스냅샷(`gateb_snap_classc_pre_20260829`) 대비 diff로 위 337/2 결과 확인. 39개사
-Gate B 재감사(`--corp-file`, `--recheck`) → trade_payables fail_a **0건**(종근당홀딩스
-2건 포함 완전 해소), 신규 회귀 없음. `pytest fin2/tests/ tests/` 632/633 pass(기존
-무관 실패 1건, R54와 동일 — `test_lxintl_facility_table_dropped`).
+**실측/검증(39개사 표본)** — 39개사 std_v3 재백필(`build_std_v3.py --corp ...`,
+4,228행) → 스냅샷(`gateb_snap_classc_pre_20260829`) 대비 diff로 위 337/2 결과 확인.
+39개사 Gate B 재감사(`--corp-file`, `--recheck`) → trade_payables fail_a **0건**
+(종근당홀딩스 2건 포함 완전 해소), 신규 회귀 없음. `pytest fin2/tests/ tests/`
+632/633 pass(기존 무관 실패 1건, R54와 동일 — `test_lxintl_facility_table_dropped`).
 
-★ **전수 재백필/재감사 필요**([[gateb-full-reaudit-is-required-to-close]]) — 이번
-alias 변경은 `bs_accounts.py` 본체(전사 공용 사전)라 39개사 스코프 확인만으론
-트랙을 닫지 않는다. 39개사 밖의 corp가 영향받을 가능성은 이론상 낮다(exact alias가
-fuzzy보다 항상 우선이라 진짜 "매입채무" 라벨이 있는 회사는 원래도 그 라벨이
-이겼을 것) — 그러나 확정을 위해 `build_std_v3.py --all` 전체 재백필 +
-`gateb_audit.py` 전수 재감사가 별도로 필요(장시간, 사용자 실행
-[[feedback-long-running-commands]]).
+**전수 재백필/재감사(완료, 커밋 `82c501e` 이후)** — `build_std_v3.py --all`
+5-shard 병렬(`scripts/run_build_std_v3_parallel.sh`, 신규) 2,546개사·303,887행,
+에러 0. 전수 오염 스캔 재실행 결과 339행/39개사 → **2행/1개사**(01021949 — 다른
+정당한 후보로 값 유지되는 케이스, §3에서 이미 확인한 무해 잔존)로 감소, 신규
+오염 0. `gateb_audit.py --all --recheck` 5-shard 병렬
+(`scripts/run_gateb_audit_parallel.sh`) 2,546개사·303,887행 감사, 에러 0 —
+DB `face_audit` fail_a **88 → 86**(정확히 2건 해소), trade_payables fail_a
+**20 → 18**(클래스B 14 + 기타 3 + 갤럭시아에스엠형 1, 트리아지 예상과 정확히
+일치, 신규 fail_a 0). 트랙 종료.
 
 근거: `account_maps/bs_accounts.py`(`bs.other_current_payables`/
 `bs.other_noncurrent_liabilities` 항목) ·

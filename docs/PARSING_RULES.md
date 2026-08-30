@@ -3105,12 +3105,42 @@ HELD시키는 경우뿐**이다 — 위 표에서 ★표시한 3건(유동사채
 반의어 혼동 회귀 3건(exact 재확인) + 실측 충돌 위험 케이스의 `_resolve()` 무충돌
 확인. `pytest tests/ fin2/tests/` 658 passed / 1 failed(기존 무관).
 
-★전수재감사는 `scripts/run_step3_alias_verification.sh`로 후속 진행 — 결과는
-이 문서 후속 갱신 또는 메모리 `valuation-daily-blockers-rootcaused-2026-08-30` 참고.
+**★전수재감사 1차 실행 결과 — pass→fail_a 0(안전)이지만 net_debt은 오히려
+악화**(2026-08-31, 106분): FY2024 38.4%→**40.5%**, FY2025 48.8%→**51.2%**.
+both_have 증가분(+21/+40)보다 mismatch 증가분(+76/+95)이 훨씬 커서, **기존에
+이미 v2와 맞던 행 다수가 새로 틀어졌다**는 신호 — 원인 추적 결과 **R57과
+같은 계열의 새 버그**를 발견했다: `bs.convertible_bond`/`bs.bond` 등 4개
+canonical의 "무표기(bare)" alias(`전환사채`/`사채` 등)는 만기 불분명 시
+**비유동 기본값**으로 등록했는데, 일부 필러가 그 무표기 라벨을 정확히
+"유동" 몫 전용으로 쓰면서(`section_path='부채>유동부채'`) **동시에**
+`비유동전환사채` 같은 명시적 비유동 라벨을 별도 줄로 공시한다. 그러면 둘 다
+같은 canonical에 몰려 `_resolve()`가 충돌로 HELD — R57이 고친 "제외만 하고
+회수 안 함"보다 더 나쁘게, **canonical 전체(두 값 다)가 net_debt에서
+소실**된다. 실측 재현(`00172079` FY2024연결): `전환사채` 19,550,499,832
+(section=유동부채) + `비유동전환사채` 1,794,834,765(section=비유동부채) →
+수정 전엔 `bs.convertible_bond` 충돌로 21,345,334,597 전액 소실.
+
+**수정** — `_NONCURRENT_SIBLING`의 정반대 방향 미러: 이번엔 canonical의
+"기본" 등록이 비유동 쪽이므로, section_path가 유동인데 라벨이 안 그런
+행(bare 무표기)을 그 canonical에서 **제거**해 대응 유동 canonical로 재라우팅
+(단순 복사가 아니라 제거+이동 — `_src`가 `_CURRENT_STRICT` 소속이 아니라
+나중에 필터링해줄 단계가 따로 없어서, 복사만 하면 `_src` 쪽 충돌이 그대로
+남는다). 코드: `fin2/layer3/combine.py`
+`_CURRENT_CONTAMINATED_NONCURRENT_SIBLING`/`_is_current_by_section_only()`.
+가드: ①대응 유동 canonical에 이미 후보 있으면 재라우팅 안 함(이중계상
+방지) ②전부 유동-signal뿐이면(진짜 비유동 후보 없음) 재라우팅 안 함
+(00103130류 — 그대로 둬도 net_debt 무해, `_additive_debt_for_net_debt`가
+ST/LT 상관없이 다 더함).
+
+단위테스트 4건 추가(11건으로 확장) — `00172079` 실제 재현 + `bs.bond`
+동형 + "전부 유동" 무재라우팅 + "대응 canonical 이미 있음" 가드. 전체
+`pytest tests/ fin2/tests/` 662 passed/1 failed(기존 무관). **★2차 전수재감사
+필요**(코드 재변경 — 결과는 후속 갱신).
 
 근거: `account_maps/bs_accounts.py`(exchange_bond/warrant_bond 신설 4종 +
 반의어 혼동 수정 alias 다수) · `fin2/layer3/combine.py`(`_V3_ST_DEBT_PARTS`/
-`_V3_LT_DEBT_PARTS` 재확장) · `fin2/tests/test_combine_debt_wiring_step3_aliases.py` ·
+`_V3_LT_DEBT_PARTS` 재확장, `_CURRENT_CONTAMINATED_NONCURRENT_SIBLING`) ·
+`fin2/tests/test_combine_debt_wiring_step3_aliases.py` ·
 `docs/plans/valuation_daily_blockers_da_netdebt_design_2026-08-30.md` §2-7/§2-10.
 
 ---

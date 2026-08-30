@@ -116,3 +116,78 @@ def test_plain_bond_variants_do_not_conflict_with_their_own_family():
     assert confirmed["bs.bond"] == 100
     assert confirmed["bs.current_bond"] == 5
     assert not conflicts
+
+
+# ── R57-mirror bug found while re-auditing step3's own net_debt measurement ────────
+# (net_debt mismatch ratio went UP after step3's rebuild: 38.4%->40.5%/48.8%->51.2% --
+# traced to _CURRENT_CONTAMINATED_NONCURRENT_SIBLING's real trigger case.)
+
+def test_bare_convertible_bond_label_reroutes_when_current_and_noncurrent_both_present():
+    # Real reproduction (00172079 FY2024 cons): bare '전환사채' (no 유동/비유동 marker,
+    # registered as bs.convertible_bond's NONcurrent default) sits under 부채>유동부채
+    # (actually current) while a separately-labeled '비유동전환사채' sits under 부채>
+    # 비유동부채 in the SAME filing. Before the fix both mapped to bs.convertible_bond ->
+    # held -> the full 21,345,334,597 vanished from net_debt. Must now resolve to two
+    # clean, non-conflicting values.
+    cands = {
+        "bs.convertible_bond": [
+            _row(19_550_499_832, "exact", "전환사채", "부채>유동부채"),
+            _row(1_794_834_765, "exact", "비유동전환사채", "부채>비유동부채"),
+        ],
+    }
+    confirmed, conflicts = _resolve(cands)
+    assert confirmed["bs.convertible_bond"] == 1_794_834_765
+    assert confirmed["bs.current_convertible_bond"] == 19_550_499_832
+    assert not conflicts
+
+
+def test_bare_bond_label_reroutes_when_current_and_noncurrent_both_present():
+    # Same class, bs.bond side (8 filings measured for 사채 vs 비유동사채).
+    cands = {
+        "bs.bond": [
+            _row(500, "exact", "사채", "부채>유동부채"),
+            _row(300, "exact", "비유동사채", "부채>비유동부채"),
+        ],
+    }
+    confirmed, conflicts = _resolve(cands)
+    assert confirmed["bs.bond"] == 300
+    assert confirmed["bs.current_bond"] == 500
+    assert not conflicts
+
+
+def test_all_candidates_current_by_section_left_untouched():
+    # 00103130-shaped case (R58 §2-9): the ONLY candidate is the ambiguous bare-label/
+    # current-by-section class, with no genuine noncurrent sibling candidate to protect --
+    # left as bs.convertible_bond's own confirmed value (net_debt-neutral either way,
+    # since both canonicals feed the same additive sum) rather than rerouted.
+    cands = {
+        "bs.convertible_bond": [_row(999, "exact", "전환사채", "부채>유동부채")],
+    }
+    confirmed, conflicts = _resolve(cands)
+    assert confirmed["bs.convertible_bond"] == 999
+    assert "bs.current_convertible_bond" not in confirmed
+    assert not conflicts
+
+
+def test_current_sibling_already_populated_not_overwritten():
+    # guard: if bs.current_convertible_bond already has its own genuine candidate, the
+    # rerouted current-by-section row from bs.convertible_bond must NOT be added on top
+    # (would double-count).
+    cands = {
+        "bs.convertible_bond": [
+            _row(100, "exact", "전환사채", "부채>유동부채"),
+            _row(200, "exact", "비유동전환사채", "부채>비유동부채"),
+        ],
+        "bs.current_convertible_bond": [
+            _row(50, "exact", "유동성전환사채", "부채>유동부채"),
+        ],
+    }
+    confirmed, conflicts = _resolve(cands)
+    assert confirmed["bs.current_convertible_bond"] == 50  # unchanged, not 50+100
+    # bs.convertible_bond still holds two differing candidates (100 vs 200) since the
+    # guard skipped the reroute -- left unconfirmed (not in `confirmed`, and since it
+    # isn't a DIRECT_MAP-consumed canonical it doesn't surface in `conflicts` either --
+    # see combine()'s docstring), which is an unresolved pre-existing conflict, NOT a
+    # regression: the fixup only ever REMOVES a conflict source, never manufactures one,
+    # and critically it's not silently summed into either side (would double-count).
+    assert confirmed.get("bs.convertible_bond") is None

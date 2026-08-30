@@ -1377,6 +1377,45 @@ def _additive_debt_for_net_debt(canon: dict, col: dict) -> tuple[int | None, int
     return new_st, new_lt
 
 
+# step3 fixup (2026-08-31, R58 순서4-③): mirror of _NONCURRENT_SIBLING/_CURRENT_STRICT
+# above, but for the OPPOSITE contamination direction. Each of these 4 canonicals'
+# primary alias is a BARE label with no 유동/비유동 marker at all (전환사채/교환사채/
+# 신주인수권부사채/사채) that was registered as the NONcurrent default (매핑 규칙: 만기
+# 불분명 시 그 개념의 "원래" 표기를 비유동으로 취급) — but some filers use that exact
+# same bare label for the CURRENT portion instead (section_path says 부채>유동부채)
+# while ALSO reporting a separately-labeled noncurrent counterpart (비유동전환사채 등)
+# as its own row. Both then land on the SAME noncurrent canonical -> _resolve() sees 2
+# differing candidates -> HELD -> the WHOLE amount vanishes from net_debt (worse than
+# R57's original bug: there the drop only lost the misrouted piece, here it loses
+# everything on that canonical for the filing). Real case (00172079 FY2024 cons,
+# found while re-auditing step3's own net_debt improvement measurement — mismatch
+# ratio went UP after step3's rebuild, 38.4%->40.5%/48.8%->51.2%, tracing several dozen
+# regressed filings back to this): '전환사채' 19,550,499,832 under 부채>유동부채
+# co-exists with '비유동전환사채' 1,794,834,765 under 부채>비유동부채, both mapping to
+# bs.convertible_bond -> held -> net_debt short by 21,345,334,597. Measured scope
+# (FY2022+ BS, table_seq=0): 36 filings for convertible_bond, 8 for bond; exchange_bond/
+# warrant_bond have no registered bare-noncurrent alias pair yet at this volume so are
+# included defensively (same class, just unmeasured population).
+_CURRENT_CONTAMINATED_NONCURRENT_SIBLING = {
+    "bs.bond": "bs.current_bond",
+    "bs.convertible_bond": "bs.current_convertible_bond",
+    "bs.exchange_bond": "bs.current_exchange_bond",
+    "bs.warrant_bond": "bs.current_warrant_bond",
+}
+
+
+def _is_current_by_section_only(row: dict) -> bool:
+    """Mirror of _is_noncurrent_by_section_only, flipped: True only for a candidate
+    whose section_path says CURRENT (contains 유동, not 비유동) while label_raw does NOT
+    already say 비유동/장기 — the ambiguous bare-label class that a noncurrent-default
+    canonical (_CURRENT_CONTAMINATED_NONCURRENT_SIBLING's keys) should not absorb when a
+    genuine noncurrent candidate also exists for the same canonical."""
+    if _NONCURRENT_RE.search(row.get("label_raw") or ""):
+        return False
+    sp = row.get("section_path") or ""
+    return "유동" in sp and "비유동" not in sp
+
+
 _BROAD_RE = re.compile(r"및기타|및 기타|AndOther")
 # a BS grand-total canonical must not be sourced from a fiduciary/trust-account
 # sub-statement embedded in the same filing (banks commonly attach a 신탁계정 balance
@@ -1802,6 +1841,29 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
         _routed = [r for r in _src_rows if _is_noncurrent_by_section_only(r)]
         if _routed:
             cands[_sib] = list(_routed)
+    # step3 fixup (2026-08-31, R58): the mirror-direction contamination
+    # (_CURRENT_CONTAMINATED_NONCURRENT_SIBLING/_is_current_by_section_only, see their
+    # comments above) — unlike the reroute above, here the ambiguous rows must be REMOVED
+    # from `_src`'s own pool (not just copied to `_sib`), because `_src` is not a member
+    # of _CURRENT_STRICT and has no later per-canonical filter to drop them on its own;
+    # left in place they'd still conflict with the genuine noncurrent candidate that
+    # triggered this branch in the first place.
+    for _src, _sib in _CURRENT_CONTAMINATED_NONCURRENT_SIBLING.items():
+        _src_rows = cands.get(_src)
+        if not _src_rows:
+            continue
+        _current_rows = [r for r in _src_rows if _is_current_by_section_only(r)]
+        if not _current_rows or len(_current_rows) == len(_src_rows):
+            # nothing ambiguous here, or EVERY candidate is the ambiguous-current class —
+            # in the latter case there's no genuine noncurrent candidate to protect, so
+            # leave it as _src's own confirmed value (same MISSING-avoidance reasoning as
+            # guard 2 above; net_debt is unaffected either way since both canonicals feed
+            # the same _V3_ST_DEBT_PARTS/_V3_LT_DEBT_PARTS sum — see 00103130 in R58).
+            continue
+        if cands.get(_sib):
+            continue  # sibling already has its own genuine candidates -> don't dup
+        cands[_sib] = list(_current_rows)
+        cands[_src] = [r for r in _src_rows if r not in _current_rows]
     for c, rows in cands.items():
         # ★R2 델타패치 실질화(2026-08-20, P3-1 재감사 후속): build_merged_lines() 의 셀
         # 키에 section_path 가 들어있어, 정정본이 표를 재렌더링해 section_path 가 원본과

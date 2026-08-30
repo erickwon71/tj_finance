@@ -840,8 +840,27 @@ FY2025 **59.9%→48.8%** — 지금까지 중 최대 개선폭, "몸통 3개 라
 (net_debt 무해).
 
 단위테스트 7건 추가, `pytest tests/ fin2/tests/` 658 passed/1 failed(기존
-무관). ★전수재감사(`scripts/run_step3_alias_verification.sh`)는 이 절
-후속 갱신.
+무관).
+
+**★1차 전수재감사 결과 — pass→fail_a 0이지만 net_debt은 오히려 악화**
+(2026-08-31, 106분): FY2024 38.4%→**40.5%**, FY2025 48.8%→**51.2%**.
+원인: R57과 같은 계열의 새 버그 — `bs.convertible_bond`/`bs.bond` 등의
+"무표기(bare)" alias(`전환사채`/`사채`)가 비유동 기본값으로 등록됐는데,
+일부 필러가 그 라벨을 정확히 유동 몫으로 쓰면서(section_path=유동부채)
+동시에 `비유동전환사채` 같은 명시적 비유동 라벨을 별도 줄로 공시 → 둘 다
+같은 canonical에서 충돌 → HELD → **canonical 전체가 net_debt에서 소실**
+(R57보다 나쁨 — R57은 한쪽만 소실, 이건 둘 다). 실측 재현(`00172079`
+FY2024연결): 21,345,334,597 전액 소실.
+
+**수정**(`fin2/layer3/combine.py` `_CURRENT_CONTAMINATED_NONCURRENT_SIBLING`/
+`_is_current_by_section_only()`): `_NONCURRENT_SIBLING`의 정반대 방향
+미러 — 단순 복사가 아니라 제거+이동(canonical이 `_CURRENT_STRICT` 소속이
+아니라 나중에 걸러줄 단계가 없어서). 가드 2개: 대응 유동 canonical에 이미
+후보 있으면 스킵(이중계상 방지) / 전부 유동-signal뿐이면 스킵(진짜 비유동
+후보 없음, net_debt 무해). 단위테스트 4건 추가(총 11건). `pytest tests/
+fin2/tests/` 662 passed/1 failed(기존 무관). 상세는 `docs/PARSING_RULES.md`
+R58. **★2차 전수재감사 필요**(코드 재변경) — `scripts/
+run_step3_alias_verification.sh`는 이 절 후속 갱신.
 
 ---
 

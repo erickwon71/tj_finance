@@ -2790,8 +2790,9 @@ LABEL_UNMATCHED(pending)로 남는다 — VALUE_DIFF(확정 오류)를 주장하
 ---
 
 ## R57. `fin2/layer3/combine.py::_resolve()` — `_CURRENT_STRICT` 탈락분을
-`_NONCURRENT_SIBLING`으로 재라우팅(B1-D1, `net_debt` 회복) — **구현+단위테스트 완료,
-전수재감사 대기**(2026-08-30)
+`_NONCURRENT_SIBLING`으로 재라우팅(B1-D1, `net_debt` 회복) — **구현+단위테스트+
+전수재감사 완료(회귀 0), 단 net_debt 잔여격차 대부분은 별도 원인(순서4 범위
+재검토 필요)**(2026-08-30~31)
 
 **배경** — [[valuation-daily-blockers-rootcaused-2026-08-30]] §2. `net_debt =
 short_term_debt + long_term_debt − cash`인데, v3의 `bs.short_term_debt`/
@@ -2843,13 +2844,47 @@ canonical이 항상 재라우팅된 후보를 보게 됨).
 각각의 회귀 케이스. `pytest tests/ fin2/tests/` 639 passed / 1 failed(기존 무관,
 `test_lxintl_facility_table_dropped`, biz_section — 이 트랙과 무관).
 
-**★미완료 — 전수재감사 필요**([[gateb-full-reaudit-is-required-to-close]]): 이 항목은
-코드+단위테스트+표본 1건 실측까지만 마쳤다. `std_financials_v3` 재빌드
-(`scripts/build_std_v3.py --all`) 후 Gate B 전수재감사(`scripts/gateb_audit.py`)로
-pass→fail_a 전이 0을 확인해야 종료된다. 착수 전 `face_audit` 스냅샷 필수.
+**★전수재감사 완료(2026-08-30/31)** — `std_financials_v3` 전체 재빌드
+(`scripts/run_r57_verification.sh`) 후 Gate B 전수재감사: **pass→fail_a 전이 0**
+(사실은 전이 자체가 0건 — `s.gate_status <> c.gate_status`인 행이 v3 전체에서
+0건). ★단, 이 결과는 **약한 증거**다 — `face_audit`의 `fail_fields`는
+`short_term_debt`/`long_term_debt`/`net_debt`를 **애초에 검사 항목으로 갖고 있지
+않다**(실측: 해당 3개 필드가 걸린 fail 0건. `_NONCURRENT_SIBLING`도
+`bs.trade_receivables`/`bs.trade_payables`(face_audit가 실제로 감사하는 항목)는
+건드리지 않는다 — 그래서 "0 전이"는 "다른 계정을 오염시키지 않았다"는 안전성
+확인이지, "net_debt이 좋아졌다"는 증거가 아니다.
+
+**net_debt 자체의 개선폭은 v2/v3 직접 비교로 별도 측정**(설계문서 §2-2 재현):
+
+| fy | both_have | mismatch(수정전, 설계문서) | mismatch(수정후) |
+|---:|---:|---:|---:|
+| 2024 | 2,714 | 67.6% | **67.0%**(거의 무변화) |
+| 2025 | 2,677 | 69.6% | **70.9%**(거의 무변화) |
+
+**표본 재현 케이스(`00130763`)는 DB에 정확히 반영**(`net_debt` 138,172,206,622,
+v2와 원 단위 일치, `built_at` 확인됨) — 코드는 의도대로 동작한다. 그런데 FY2024/25
+집계 불일치율은 거의 안 움직였다. 원인: 설계문서 §2-3의 표본 60건 분석에서
+**원인 A(alias 갭/오매핑)가 원인 B(이 트랙의 대상)보다 압도적으로 크다**고 이미
+암시돼 있었고(60건 중 원인 A류 20건+ vs 원인 B류 소수), 이번 실측이 그걸 확정한다
+— `mismatch` 중 롱텀뎁트가 **완전히 비어있는** 행은 43~67건뿐, **값은 있는데 다른**
+행이 1,637~1,665건으로 압도적이다.
+
+**★새 발견(순서4 착수 전 재검토 필요)**: `lt_present_but_wrong` 표본을 직접
+대조하니 alias 매핑 문제만이 아니다 — **v2는 `rule_additive_debt`
+(`fin2/standardize/rules.py:282`)로 단기/장기차입금 세부항목(유동성장기부채·
+유동성사채 등, `_ST_DEBT_PARTS`/`_LT_DEBT_PARTS`)을 합산하는데, v3(combine.py)는
+이 규칙을 아예 호출하지 않고 `bs.short_term_debt`/`bs.long_term_debt`를
+`_resolve()`의 단일값 판정(충돌 시 보류)으로만 다룬다** — 한 회사가 차입금을
+여러 줄(단기차입금+유동성장기부채 등)로 나눠 공시하면 v2는 다 더하는데 v3는
+그중 하나만 취한다. 이건 alias 카탈로그 갭(순서4/B1-D2)과 **별개의 구조적
+차이**이고, 표본(`00126380`/`00117337` 등, 자릿수가 다른 수준으로 벌어짐)이
+이 가설과 부합한다. B1-D2를 alias 보강만으로 진행하면 이 클래스는 그대로 남을
+가능성이 높다 — 착수 전 규모 실측 권고.
 
 근거: `fin2/layer3/combine.py`(`_NONCURRENT_SIBLING`, `_is_noncurrent_by_section_only`,
 `_resolve()` pre-pass) · `fin2/tests/test_combine_noncurrent_sibling_reroute.py` ·
+`scripts/run_r57_verification.sh` · `fin2/standardize/rules.py:282`(`rule_additive_debt`,
+v3 미호출) ·
 `docs/plans/valuation_daily_blockers_da_netdebt_design_2026-08-30.md` §2-4(B1-D1) ·
 메모리 `valuation-daily-blockers-rootcaused-2026-08-30`.
 

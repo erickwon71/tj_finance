@@ -743,15 +743,33 @@ WHERE canonical_account = 'note.da_total' AND source_format = 'note_cf';
 | 1 | 상위 문서 **§D3** — `cf_da_sync`/`expense_nature_sync`에서 3줄 제거 | 오염행 **신규 생산 중단**. B2 코드 수정 없이 출혈을 먼저 막는다 | 낮음(제거만) | ✅ 완료(`bd39d44`) |
 | 2 | **§3 이식** — matview `ni`/`eq`/`revenue`/`cfo`/`dividends_paid`/**`ebitda`** → v3, `net_debt`만 v2 LATERAL | 519개사 `ev_ebitda` **정정**. 파생 matview라 롤백 즉시 가능 | 낮음 | ✅ 완료(2026-08-30 저녁, 마이그레이션 `2026_08_valuation_daily_v3_ebitda_migration` + refresh, 표본 검증·회귀테스트 통과) |
 | 3 | **B1-D1** — `_NONCURRENT_SIBLING` 재라우팅 | `net_debt` 최대 원인, 면적 좁음 | 중간 → 4-4 전수재감사 | ✅ 코드+단위테스트+표본1건(00130763)+**전수재감사 완료**(회귀 0, R57 등재, `9442d8b`/`run_r57_verification.sh`). ★단 FY2024/25 v2/v3 net_debt 집계 불일치율은 67.6%→67.0% / 69.6%→70.9%로 **거의 무변화** — 원인B(이 항목)의 실제 영향 모집단이 작고, 원인A가 예상보다 훨씬 크다(§2-5 신규 측정). |
-| 4 | **B1-D2** — alias 카탈로그 보강 | 잔여 미매핑 | 중간~높음 → 4-4 전수재감사 | 미착수 |
-| 5 | matview `net_debt`도 v3로 → **단일 LATERAL 복귀** | 이식 완료 | 낮음 | 미착수(3~4 선행) |
+| 4 | **B1-D2(순서4)** — 원인C 해소, 하위 3단계로 확정 실행(§2-7): **①wiring**(orphan 3개 canonical을 net_debt 합산에 연결) → **②alias 3종**(신규 canonical 포함) → **③나머지 소수 라벨** | 잔여 미매핑 + 세부항목 미합산(원인C, §2-6) | 단계별 저→중위험 → 매 단계 4-4 전수재감사 | **①wiring 코드+단위테스트 완료(2026-08-31, R58)**, 전수재감사 진행 중(`scripts/run_step1_debt_wiring_verification.sh`). ②③ 미착수 |
+| 5 | matview `net_debt`도 v3로 → **단일 LATERAL 복귀** | 이식 완료 | 낮음 | 미착수(4 전체 선행) |
 | 6 | **B2 수정**(`fin2/extract/notes.py`) | 1이 끝났으면 **불필요할 수 있다**(§B2-D4) — 그때 재판단 | 낮음 | 재판단 대기 — 1번 완료로 신규 오염 생산은 이미 멈춤, fact_v2 기존 합성행 provenance 정리만 남음(§B2-D3, §6 후속) |
 
-★★**다음 세션 시작점 = 순서 3(B1-D1, `net_debt` `_NONCURRENT_SIBLING` 재라우팅)**.
-착수 전 `face_audit` 스냅샷 필수: `CREATE TABLE face_audit_snap_20260830 AS SELECT *
-FROM face_audit;`(또는 classB 트랙에서 이미 뜬 2026-08-30 오전 재감사 결과를 베이스라인으로
-재사용 가능 — 그 사이 순서1·2는 std_v2/valuation_daily만 건드려 face_audit 대상인
-std_v3/report 원문 대조에는 영향 없음, 재사용 시 그 근거를 명시할 것).
+★★**다음 세션 시작점 = 순서4 ②(alias 3종: `유동차입금(사채포함)`→short_term_debt,
+`비유동차입금(사채포함)의유동성대체부분`→current_portion_lt_debt, 전환사채류→신규
+canonical) — ①wiring 전수재감사가 회귀 0으로 끝난 뒤 착수**(§2-8 참고). 착수 전
+매번 새 `face_audit` 스냅샷 필수(단계마다 combine.py 자체가 바뀌므로 재사용 불가,
+R57/①과 달리).
+
+### 2-8. ★★★★★순서4-① wiring 구현 완료(2026-08-31) — 결과는 후속 갱신
+
+`fin2/layer3/combine.py`에 `_V3_ST_DEBT_PARTS`/`_V3_LT_DEBT_PARTS`/
+`_additive_debt_for_net_debt()` 신설 — §2-7이 측정한 3개 orphan canonical
+(`bs.current_portion_lt_debt`/`bs.current_bond`/`bs.bond`, 이미 alias 등록됨,
+새 alias 불필요)을 `_apply_enrichment()`의 `rule_derive_net_debt()` 호출 직전에
+`ctx.col`의 `short_term_debt`/`long_term_debt`에 합산 — **net_debt 계산에만
+쓰이고 영속 `short_term_debt`/`long_term_debt` std 컬럼 자체는 절대 안 바뀐다**
+(copy-back 루프가 그 두 키를 원래부터 안 옮김 — 상세는 `docs/PARSING_RULES.md`
+R58). `rule_additive_debt`(v2)의 `total_liabilities×1.05` 이중계상 가드를 v3
+canonical 이름으로 이식. 단위테스트 6건(`fin2/tests/
+test_combine_debt_wiring_net_debt.py`) 전부 통과, `pytest tests/ fin2/tests/`
+645 passed/1 failed(기존 무관). **전수재감사(`scripts/
+run_step1_debt_wiring_verification.sh`) 진행 중** — face_audit 스냅샷
+`face_audit_snap_20260831_step1`, std_v3 전체 재빌드, Gate B 전수재감사,
+net_debt v2/v3 불일치율 재측정까지 자동화. 결과는 이 절 하단 또는 메모리
+`valuation-daily-blockers-rootcaused-2026-08-30`에 후속 갱신.
 
 ---
 

@@ -1314,6 +1314,47 @@ def _is_noncurrent_by_section_only(row: dict) -> bool:
     return bool(_NONCURRENT_RE.search(row.get("section_path") or ""))
 
 
+# B1-D2 step1 "wiring" (2026-08-31, docs/plans/valuation_daily_blockers_da_netdebt_
+# design_2026-08-30.md §2-7): account_maps/bs_accounts.py already registers aliases for
+# bs.current_portion_lt_debt(유동성장기부채/유동성장기차입금/유동성사채)/
+# bs.current_bond(유동성회사채/단기사채)/bs.bond(사채/장기사채/회사채) — they resolve fine
+# in _resolve() — but nothing downstream ever reads them: DIRECT_MAP (rules.py _BS_MAP)
+# has no destination for any of the three, so the `col` loop above silently drops them
+# (`continue` on std_col is None). v2's rule_additive_debt sums the equivalent
+# XBRL-acode-derived canonicals (bs.current_lt_debt/bs.current_bonds_plain/
+# bs.current_bonds_conv/bs.bonds) into short_term_debt/long_term_debt for exactly this
+# reason, but those v2 canonical names don't exist in v3's `canon` dict (different label
+# mapper, different names) — rule_additive_debt is simply never called on v3's data at
+# all (confirmed: combine.py doesn't import it). Measured (2026-08-31, v3's own
+# collect_candidates+_resolve run directly against FY2024/25 mismatches, not a v2-proxy):
+# wiring just these 3 already-registered orphans into net_debt's own debt sum resolves
+# 823/3,715 (22.2%) exactly and narrows another 736 (19.8%) — before any new alias is
+# added (that's step2, §2-7 순서2).
+_V3_ST_DEBT_PARTS = ("bs.short_term_debt", "bs.current_portion_lt_debt", "bs.current_bond")
+_V3_LT_DEBT_PARTS = ("bs.long_term_debt", "bs.bond")
+
+
+def _additive_debt_for_net_debt(canon: dict, col: dict) -> tuple[int | None, int | None]:
+    """Sum _V3_ST_DEBT_PARTS/_V3_LT_DEBT_PARTS for net_debt ONLY — never used to
+    overwrite the persisted short_term_debt/long_term_debt std columns (see caller,
+    _apply_enrichment: those two keys are deliberately absent from its copy-back loop,
+    so mutating them on the local `ctx.col` here cannot leak into `col`).
+
+    Mirrors rule_additive_debt's double-count guard (fin2/standardize/rules.py:282): if
+    the summed total would exceed total_liabilities*1.05, a rollup-vs-detail double-tag
+    is suspected and the additive sum is distrusted entirely (both None, caller then
+    falls back to whatever DIRECT_MAP already put in ctx.col)."""
+    st_parts = [abs(canon[c]) for c in _V3_ST_DEBT_PARTS if canon.get(c) is not None]
+    lt_parts = [abs(canon[c]) for c in _V3_LT_DEBT_PARTS if canon.get(c) is not None]
+    new_st = sum(st_parts) if st_parts else None
+    new_lt = sum(lt_parts) if lt_parts else None
+    tl = col.get("total_liabilities")
+    cand_total = (new_st or 0) + (new_lt or 0)
+    if tl and tl > 0 and cand_total > tl * 1.05:
+        return None, None
+    return new_st, new_lt
+
+
 _BROAD_RE = re.compile(r"및기타|및 기타|AndOther")
 # a BS grand-total canonical must not be sourced from a fiduciary/trust-account
 # sub-statement embedded in the same filing (banks commonly attach a 신탁계정 balance
@@ -2836,8 +2877,10 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
             prov["industry_lines"] = None
     # enrichment (v3-native, 2026-07-25): capex/fcf/net_debt = report_lines-native, reusing
     # the v2 standardize rules against the confirmed canonicals. Additive-only — writes new
-    # columns without mutating the existing DIRECT_MAP cols (debt/lease additive rules are NOT
-    # run here to avoid perturbing validated columns; net_debt uses v3's own debt/cash).
+    # columns without mutating the existing DIRECT_MAP cols (short_term_debt/long_term_debt
+    # included; net_debt uses v3's own debt/cash, additive-enriched as of 2026-08-31 per
+    # _V3_ST_DEBT_PARTS/_V3_LT_DEBT_PARTS — see that constant's comment — but that overlay
+    # is scoped to net_debt's local computation and never leaks into the persisted columns).
     # D&A·EBITDA are supplied v3-natively from note_lines (2026-07-28) — see _apply_enrichment.
     # shares_out·data_quality still come from separate backfills.
     # ★ note_lines must be read with the *effective* basis: a non-consolidating corp files only
@@ -2853,9 +2896,11 @@ def _apply_enrichment(session, corp, fy, period, basis, confirmed, col, note_bas
                       cands=None):
     """Compute capex/fcf/net_debt/D&A/EBITDA in-place on `col` by reusing the v2 standardize
     rules on the confirmed canonicals. Additive: only sets the new keys, never mutates the
-    existing DIRECT_MAP cols. net_debt derives from v3's own short/long debt + cash (v3 debt
-    diverges from v2 for some firms — a pre-existing base-mapping matter tracked for G2, not
-    fixed here). shares_out·data_quality still come from separate backfills.
+    existing DIRECT_MAP cols (short_term_debt/long_term_debt themselves included — see
+    _additive_debt_for_net_debt's docstring: its overlay lands on a local ctx.col that this
+    function's copy-back loop below never returns). net_debt derives from v3's own short/long
+    debt (as of 2026-08-31, additive-enriched per _V3_ST_DEBT_PARTS/_V3_LT_DEBT_PARTS — see
+    that constant's comment) + cash. shares_out·data_quality still come from separate backfills.
 
     D&A (2026-07-28): the body CF has no D&A for many firms, so notes are the real source.
     note_da_canonicals() runs the layer-3 note interpretation chain (topic→period→label) and
@@ -2887,6 +2932,16 @@ def _apply_enrichment(session, corp, fy, period, basis, confirmed, col, note_bas
     rule_cash_with_deposits(ctx)  # cash = 현금성자산 + 예치금 (금융사만, 2026-07-18 규칙, v2 검증됨)
     rule_additive_capex(ctx)     # capex = -(|유형자산취득| + |무형자산취득|)  [cf.capex canonicals]
     rule_derive_fcf(ctx)         # fcf = cfo - |capex|
+    # B1-D2 step1 wiring (2026-08-31): overlay ctx.col's short/long debt with the
+    # additive sum (_additive_debt_for_net_debt) right before deriving net_debt below.
+    # Scoped to this local ctx only — short_term_debt/long_term_debt are not in the
+    # copy-back loop at the bottom of this function, so `col` (the persisted std
+    # columns) never sees this overlay.
+    add_st, add_lt = _additive_debt_for_net_debt(canon, ctx.col)
+    if add_st is not None:
+        ctx.col["short_term_debt"] = add_st
+    if add_lt is not None:
+        ctx.col["long_term_debt"] = add_lt
     rule_derive_net_debt(ctx)    # net_debt = (short+long debt) - cash  [v3's own values]
     rule_additive_da(ctx)        # depreciation/amortization/da_total  [cf.* 우선, 없으면 note.*]
     rule_derive_ebitda(ctx)      # ebitda = operating_income + da_total

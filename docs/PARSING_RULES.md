@@ -2890,6 +2890,79 @@ v3 미호출) ·
 
 ---
 
+## R58. `fin2/layer3/combine.py::_apply_enrichment()` — 원인 C(v3가 차입금
+세부항목을 합산하지 않는 구조적 결함) 순서4 시리즈, **step1 "wiring"** 구현
+(net_debt-only 합산, DIRECT_MAP 컬럼 자체는 불변) (2026-08-31)
+
+**배경** — [[valuation-daily-blockers-rootcaused-2026-08-30]] §2-6/§2-7,
+`docs/plans/valuation_daily_blockers_da_netdebt_design_2026-08-30.md` §2-6/§2-7.
+R57(원인 B)을 전수재감사까지 마쳤는데도 FY2024/25 `net_debt` v2/v3 불일치율이
+67.0%/70.9%로 거의 안 움직였다 — 지배적 원인은 **원인 C**: v2의
+`rule_additive_debt`(`fin2/standardize/rules.py:282`)는 단기/장기차입금
+세부항목(`bs.current_lt_debt`/`bs.current_bonds_plain`/`bs.current_bonds_conv`/
+`bs.bonds`)을 합산하는데, v3(`combine.py`)는 이 규칙을 아예 호출하지 않고
+`bs.short_term_debt`/`bs.long_term_debt`를 `_resolve()`의 단일값 판정으로만
+다룬다. v3의 라벨 매퍼(`account_maps/bs_accounts.py`)엔 이미 이 개념들의
+동등물이 **등록은 돼 있다**(`bs.current_portion_lt_debt`=유동성장기부채/
+유동성장기차입금/유동성사채, `bs.current_bond`=유동성회사채/단기사채,
+`bs.bond`=사채/장기사채/회사채) — `_resolve()`에서 정상 확정까지 되는데,
+`DIRECT_MAP`(`_BS_MAP`)에 목적지가 없어 `col` 조립 루프(`combine()`의
+`std_col = DIRECT_MAP.get(canon); if std_col is None: continue`)가 **조용히
+버린다**. 순수 배선 누락(orphan canonical) — 새 alias 등록이 전혀 필요 없다.
+
+**측정(2026-08-31, v2 비교가 아니라 v3 자체 `collect_candidates`+`_resolve`를
+직접 재실행한 정밀재측정, 방법론은 설계문서 §2-7)** — 이 3개 orphan canonical을
+`_resolve()`에 그대로 태워 FY2024/25 mismatch 3,715건을 재계산: **wiring만으로
+(alias 추가 없이) 823건(22.2%) 완전 일치 해소 + 736건(19.8%) 개선**. 반례
+발견(삼성전자 00126380, §2-7): 원문 BS엔 `단기차입금` 13.17조 한 줄뿐인데
+`fact_v2`엔 그 acode 자체가 없고 작은 값(`bs.current_lt_debt`)만 있음 — v2가
+XBRL에서 놓친 사례. → **v2=정답 전제는 위험**, 그래서 v2 비교가 아니라 v3
+자체 로직으로 재측정했고, 사후 검증도 v2 비교만으로 끝내지 않는다
+([[feedback-verify-against-source]]).
+
+**구현 — net_debt 전용 스코프, DIRECT_MAP 컬럼 자체는 절대 안 건드림**:
+
+```python
+_V3_ST_DEBT_PARTS = ("bs.short_term_debt", "bs.current_portion_lt_debt", "bs.current_bond")
+_V3_LT_DEBT_PARTS = ("bs.long_term_debt", "bs.bond")
+
+def _additive_debt_for_net_debt(canon, col):
+    # rule_additive_debt(rules.py:282)의 total_liabilities*1.05 이중계상 가드를
+    # v3 canonical 이름으로 그대로 이식. 합이 그 상한을 넘으면 (None, None) —
+    # 롤업+세부 이중태깅 의심, 합산 전체를 불신.
+    ...
+```
+
+`_apply_enrichment()`에서 `rule_derive_net_debt(ctx)` 호출 **직전**에 `ctx.col`의
+`short_term_debt`/`long_term_debt`를 이 합산값으로 덮어쓴 뒤 `rule_derive_net_debt`를
+호출한다. **이게 안전한 이유**: `_apply_enrichment()` 끝의 copy-back 루프가
+`("cash", "capex", "fcf", "net_debt", "depreciation", "amortization", "da_total",
+"ebitda")`만 바깥 `col`(영속화되는 std 컬럼)로 복사하고 `short_term_debt`/
+`long_term_debt`는 그 목록에 원래부터 없다 — `ctx.col`을 이 함수 안에서
+덮어써도 **영속 컬럼엔 절대 전파되지 않는다**. `rule_additive_debt`(v2)를
+직접 호출하지 않은 이유도 이것: v2는 그 두 컬럼 자체를 합산값으로 **덮어쓰는**
+설계라 검증된 컬럼을 건드리는 리스크가 있지만, v3는 net_debt 계산에만 쓰고
+버린다 — 위험이 구조적으로 더 작다.
+
+**단위테스트** 6건 신설(`fin2/tests/test_combine_debt_wiring_net_debt.py`) —
+정상 합산, 결측측 None 유지(0 아님), 이중계상 가드(초과/미초과), total_liabilities
+없을 때 가드 미작동. `pytest tests/ fin2/tests/` 645 passed / 1 failed(기존 무관,
+`test_lxintl_facility_table_dropped`).
+
+**전수재감사**: `scripts/run_step1_debt_wiring_verification.sh` — 결과는 이
+문서의 후속 갱신 또는 메모리 `valuation-daily-blockers-rootcaused-2026-08-30`
+참고(작성 시점엔 진행 중).
+
+근거: `fin2/layer3/combine.py`(`_V3_ST_DEBT_PARTS`/`_V3_LT_DEBT_PARTS`/
+`_additive_debt_for_net_debt`/`_apply_enrichment`) ·
+`fin2/tests/test_combine_debt_wiring_net_debt.py` ·
+`scripts/measure_net_debt_v2_v3_mismatch.py` ·
+`scripts/run_step1_debt_wiring_verification.sh` ·
+`account_maps/bs_accounts.py:213-219,260-262`(기존 등록된 orphan alias) ·
+`docs/plans/valuation_daily_blockers_da_netdebt_design_2026-08-30.md` §2-6/§2-7.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

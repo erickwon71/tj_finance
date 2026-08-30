@@ -530,6 +530,75 @@ fuzzy 차단(`_FUZZY_BLOCK`)이 옳은 조치**로 보이나, 규모 미실측�
 `bs.short_term_debt`/`bs.long_term_debt`를 v3의 `ADDITIVE_CANON` 계열로
 편입하는 방안(D&A가 이미 쓰는 패턴)을 함께 설계할 것 — 다음 세션 결정 필요.
 
+### 2-6. ★원인 C 규모 실측(2026-08-31) — 예상보다 훨씬 크고 지배적, 구조적 결함 확정
+
+**구조 확인** — v2의 `rule_additive_debt`가 합산하는 4개 세부 canonical
+(`bs.current_lt_debt`=유동성장기부채, `bs.current_bonds_plain`=사채유동분,
+`bs.current_bonds_conv`=전환사채유동분, `bs.bonds`=사채(비유동))은 v3 쪽에
+**3중으로 없다**:
+1. `account_maps/bs_accounts.py`(v3 라벨 매퍼)에 이 4개 canonical의 alias 자체가
+   **등록돼 있지 않다**(실측: `grep` 0건 — v2가 쓰는 XBRL acode↔canonical 매핑은
+   `fin2/taxonomy/concept_map.py`에 있지만 이건 v2 전용, v3의 report_lines
+   라벨매퍼는 안 씀).
+2. 설령 등록해도 `DIRECT_MAP`(`fin2/standardize/rules.py`의 `_BS_MAP`)에 이
+   4개의 목적지가 없다 — `bs.short_term_debt`/`bs.long_term_debt` 딱 둘만 있다.
+3. v3(`combine.py`)는 `rule_additive_debt` 자체를 **import하지 않는다**(순서3
+   가드3 확인 때 이미 발견).
+→ **alias 카탈로그만 보강해도(B1-D2 원안) 이 4개는 여전히 v3 std 컬럼에
+도달할 길이 없다.** 구조적 결함이라 alias 문제(원인 A)와 완전히 별개.
+
+**규모 실측 — fact_v2(v2의 원시 XBRL facts) 전사**:
+
+| canonical | 행수 | 0아닌값 |
+|---|---:|---:|
+| `bs.current_lt_debt`(유동성장기부채) | 30,345 | 24,817 |
+| `bs.current_bonds_conv`(전환사채유동분) | 16,025 | 13,091 |
+| `bs.bonds`(사채, 비유동) | 14,051 | 10,612 |
+| `bs.current_bonds_plain`(사채유동분) | 6,206 | 4,331 |
+
+**FY2024/25 `net_debt` 불일치 population과의 교집합**(§2-5의 mismatch 1,818건/
+1,897건 대상):
+
+| fy | mismatch | 4개 canonical 중 하나라도 0아닌값 존재(느슨한 상한) | 보정 시 net_debt이 v2와 원 단위까지 정확 일치(엄격한 하한) |
+|---:|---:|---:|---:|
+| 2024 | 1,818 | 1,495 (**82.2%**) | 596 (**32.8%**) |
+| 2025 | 1,897 | 1,524 (**80.3%**) | 580 (**30.6%**) |
+
+엄격한 하한(v3.short_term_debt+long_term_debt에 fact_v2의 해당 sub-part
+`max(abs(amount_won))`을 그대로 더했을 때 v2.net_debt과 원 단위까지 정확히
+같아지는 비율)만으로도 **최소 1/3**이 이 구조적 결함 하나로 완전히 설명된다.
+느슨한 상한(80%대)과의 차이는 fact_v2의 dimensional/기간비교 중복 등으로
+`max(abs())` 근사가 v2의 실제 resolve 결과와 항상 일치하진 않기 때문 — 실제
+기여도는 이 둘 사이 어딘가이며, 방향성 검증(보정이 v2 쪽으로 gap을 줄이는지)은
+2024 60.1%(1,093/1,818), 2025 49.4%(938/1,897)로 더 높다.
+
+**연도별 추세 — Track A 전환보다 더 일찍부터 확산**: FY2018~2020은 0%, 2021
+1.5%, **2022 36.2%, 2023 46.5%**, 2024 82.2%, 2025 80.3%. 2024+ 표준서식
+전환(Track A) 이전인 2022~2023부터 이미 급증한다 — 기업들이 XBRL에
+유동성장기부채/사채유동분을 태깅하는 관행이 2022년경부터 늘었고, v3는 처음부터
+이걸 받을 길이 없었다는 뜻(alias 정규화 이슈가 아니라 원래부터 없던 목적지).
+
+**표본 확인(`00126380`, FY2024)**: v2의 `short_term_debt`가 **정확히**
+`bs.current_lt_debt` 하나로만 구성된다(연결 2,207,290,000,000 / 별도
+22,264,226,000,000, 둘 다 원 단위까지 일치) — 즉 이 회사는 "단기차입금"이라는
+바른 라벨 자체를 공시하지 않고 전부 "유동성장기부채"로만 표기했는데, v3는 이
+개념을 만들 방법이 아예 없다. 부수 관찰: v3의 `short_term_debt`(13.17조/11.1조)는
+v2와 자릿수가 다른 전혀 별개의 큰 값이다 — 이건 원인 C와 무관한 **별도의
+오매핑(원인 A류)**일 가능성이 있어 후속 조사 대상.
+
+**결론 — 순서4 범위 재정의 필요**: 원인 C가 FY2024/25 잔여 불일치의 최소
+1/3, 상한 4/5를 차지하는 **지배적 원인**이다. 원안(B1-D2, alias 카탈로그
+보강만)으로는 이 population을 건드리지 못한다. 순서4는 다음 두 가지를 함께
+설계해야 한다:
+1. `account_maps/bs_accounts.py`에 4개 canonical(`bs.current_lt_debt`/
+   `bs.bonds`/`bs.current_bonds_plain`/`bs.current_bonds_conv`) alias 신규 등록.
+2. v3에 `rule_additive_debt`에 준하는 합산 로직 도입 —
+   `fin2/standardize/rules.py`의 `ADDITIVE_CANON`(D&A가 이미 쓰는 패턴)처럼
+   `bs.short_term_debt`/`bs.long_term_debt`를 가산 계열로 편입하거나, 또는
+   `combine.py`에 직접 이식.
+2번 없이 1번만 하면(alias만 등록) 해당 canonical들이 `_resolve()`에서 확정돼도
+`DIRECT_MAP`에 목적지가 없어 여전히 버려진다 — **반드시 같이 가야 한다.**
+
 ---
 
 ## 3. 이식 결정 갱신 — 상위 문서 D1-a/D1-b 재정리

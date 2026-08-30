@@ -131,6 +131,52 @@ def test_db_insurance_retained_earnings_canary():
     assert got[0].section_kind == "재무제표"
 
 
+# ── §5.4 classB 유형1 회귀(2026-08-29): 선두 None 절삭에 ACONTEXT 유무 신호 반영 ──
+# 근거: docs/plans/gateb_trade_payables_classB_stale_column_investigation_2026-08-29.md §5~7.
+
+def test_hanwha_insurance_net_income_no_regression():
+    """f4819b8(2026-06-21)의 원 동기 사례 — 이 신호 도입으로 회귀하면 안 된다.
+
+    한화손해보험 2020FY 연결 IS 'VIII.당기순이익(손실)' 행은 `<TD>`(비XBRL) 표라
+    acontext_missing 신호가 전혀 없다(항상 False) — R19(2026-08-24)가 이미 이 표의
+    빈 주석 컬럼을 원천 제거해 선두 None 자체가 안 생긴다. §5.4 변경은 이 분기(TD,
+    신호 없음)를 전혀 건드리지 않으므로 값이 그대로여야 한다.
+    """
+    p = Path(__file__).resolve().parents[2] / (
+        "raw_report/KOSPI/00135917_한화손해보험/annual/2020/20210310000259.xml")
+    if not p.exists():
+        return
+    facts = extract_facts(p, rcept_no="20210310000259", corp_code="00135917",
+                          report_fiscal_year=2020, report_fiscal_period="FY")
+    got = [f for f in facts if f.canonical_account == "is.net_income"
+           and f.basis == "consolidated" and f.col_index == 0]
+    assert got, "연결 당기순이익이 canonical 로 잡히지 않음(회귀?)"
+    assert got[0].amount_won == 48_250_117_187, got[0].amount_won
+
+
+def test_classB_genuine_current_period_gap_not_misattributed():
+    """classB 유형1 실제 수정 확인 — 홈캐스트(00385336) 2026Q1 별도 매입채무.
+
+    원문(TE ACODE=dart_ShortTermTradePayables): 당기 셀은 ACONTEXT 속성 자체가 없다
+    (=DART 원문이 명시한 '이 기간 미공시', 결합라벨 재편 등으로 추정) — 전기 셀만
+    ACONTEXT 있는 정상 값. 수정 전에는 이 선두 None이 무조건 절삭돼 전기값
+    203,341,500이 당기(col0)로 오귀속됐다(§5 원문대조). 수정 후에는 col0 이 아예
+    나오지 않고 col1(전기)에만 정확히 슬롯돼야 한다.
+    """
+    p = Path(__file__).resolve().parents[2] / (
+        "raw_report/KOSDAQ/00385336_홈캐스트/quarter/2026/20260515002885.xml")
+    if not p.exists():
+        return
+    facts = extract_facts(p, rcept_no="20260515002885", corp_code="00385336",
+                          report_fiscal_year=2026, report_fiscal_period="Q1")
+    sep = [f for f in facts if f.canonical_account == "bs.trade_payables"
+           and f.basis == "separate"]
+    assert not any(f.col_index == 0 for f in sep), \
+        f"당기(col0)가 나오면 안 됨(진짜 미공시가 전기값으로 오염) — got {sep}"
+    c1 = [f for f in sep if f.col_index == 1]
+    assert c1 and c1[0].amount_won == 203_341_500, sep
+
+
 def test_fuzzy_mapping_gets_no_canonical():
     """퍼지 매치는 canonical 을 받지 못한다(M1/M2, 추측 금지).
 

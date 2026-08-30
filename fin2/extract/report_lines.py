@@ -516,9 +516,18 @@ def _emit_section_lines(
                 present = [a for a in row.amounts if a is not None]
                 pairs = list(enumerate(present[:n_periods]))
             else:
+                # ★2026-08-29(§5.4, classB 유형1) — text.py::_emit_section 의 동형 분기와
+                # 반드시 같이 고쳐야 하는 쌍둥이 로직. `acontext_missing[i]=True`(TE+ACODE
+                # 있고 ACONTEXT 없음 — DART 원문이 명시한 "이 기간 미공시")인 칸 앞에서는
+                # 절삭을 멈춰 진짜 결측으로 남긴다(원문이 실제로 그 기간을 안 비운 경우를
+                # 전기/전전기 값이 당기로 오귀속되는 것을 막는다). 신호 없는 칸(TD 등)은 기존
+                # 동작 그대로. 근거: docs/plans/gateb_trade_payables_classB_stale_column_
+                # investigation_2026-08-29.md §5~6.
                 amts = row.amounts
+                flags = row.acontext_missing
                 lead = 0
-                while lead < len(amts) and amts[lead] is None:
+                while (lead < len(amts) and amts[lead] is None
+                       and not (lead < len(flags) and flags[lead])):
                     lead += 1
                 pairs = list(enumerate(amts[lead:]))
             for col_idx, amount in pairs:

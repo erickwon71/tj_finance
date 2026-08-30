@@ -947,9 +947,20 @@ def _emit_section(
                 # 당기 값을 전기 연도로 오귀속한다(보험 손익계산서 'VIII.당기순이익' [None,48.25B,…]
                 # → col1=전년 오귀속 → net_income 소실 → net_income_fill 이 총포괄 지배귀속 채택).
                 # 내부 None 은 보존(컬럼 의미 유지), 선두 None 만 절삭해 첫 실값=당기(col0).
+                # ★2026-08-29(§5.4, classB 유형1): 위 phantom-column 동기는 R19(2026-08-24
+                # `_split_label_amounts` 주석컬럼 처리)가 이미 원천에서 해소한다 — 여기 남는
+                # 선두 None은 원문이 실제로 그 기간을 미공시한 경우가 있다(trade_payables
+                # 6개사 12행 원문대조 + corpus census로 확증, ~22,000행 규모, CF 위주).
+                # `acontext_missing[i]=True`(TE+ACODE 있고 ACONTEXT 없음 — DART 원문이 명시한
+                # "이 기간 미공시")인 칸 앞에서는 절삭을 멈춰 그 칸을 진짜 결측(None)으로 남긴다.
+                # 신호가 없는 칸(TD 등)은 기존 동작 그대로 절삭 — R19 사각지대 안전망 유지,
+                # 회귀 불가능. 근거: docs/plans/gateb_trade_payables_classB_stale_column_
+                # investigation_2026-08-29.md §5~6.
                 amts = row.amounts
+                flags = row.acontext_missing
                 lead = 0
-                while lead < len(amts) and amts[lead] is None:
+                while (lead < len(amts) and amts[lead] is None
+                       and not (lead < len(flags) and flags[lead])):
                     lead += 1
                 pairs = list(enumerate(amts[lead:]))
             for col_idx, amount in pairs:

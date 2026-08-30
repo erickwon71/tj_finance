@@ -180,6 +180,13 @@ class RowData:
     # 비우는 열(fin2/extract/units.py)에서 원문을 잃지 않기 위한 것 — F1, 2026-07-31.
     # 재정렬(6열 IS 선행공란 제거)에도 amounts 와 **함께** 이동한다.
     raw_amounts: list[str] = field(default_factory=list)
+    # amounts 와 같은 인덱스: True 면 그 칸의 원본이 `<TE ACODE=...>`인데 `ACONTEXT` 속성이
+    # 없는 셀 — DART 원문이 스스로 "이 기간 미공시"라 밝힌 것(§5.4, `_cell_acontext_missing`
+    # 참고). `<TD>`(비XBRL) 등 신호가 없는 칸은 항상 False. 소비측(text.py/report_lines.py의
+    # 선두 None 절삭)이 "파서 아티팩트로 생긴 선두공백"과 "원문이 실제로 비운 것"을 구분하는 데
+    # 쓴다 — 근거: docs/plans/gateb_trade_payables_classB_stale_column_investigation_
+    # 2026-08-29.md §5~6.
+    acontext_missing: list[bool] = field(default_factory=list)
     # 헤더 판정 규칙 이름(`_header_rule_name`) — `keep_header_rows=True` 로 뽑았을 때만 채워진다.
     # 값이 있으면 "이 행은 헤더 규칙에 걸렸다"는 **관찰**이지 "헤더다"라는 판단이 아니다(F2).
     header_hint: Optional[str] = None
@@ -259,6 +266,7 @@ def extract_rows(
         cells = _get_cells(tr)
         if not cells:
             continue
+        cells_el = _get_cell_elements(tr)
 
         first_text = cells[0].strip() if cells else ""
 
@@ -278,8 +286,10 @@ def extract_rows(
         # 계정과목명 + 금액 분리
         if keep_all_amount_cells:
             label, amount_cells = cells[0], list(cells[1:])   # 위치 보존(주석 전용)
+            cell_flags = [_cell_acontext_missing(el) for el in cells_el[1:]]
         else:
-            label, amount_cells = _split_label_amounts(cells, table_has_note_column)
+            label, amount_cells, cell_flags = _split_label_amounts_ex(
+                cells, table_has_note_column, cells_el)
 
         if not label:
             continue
@@ -303,17 +313,22 @@ def extract_rows(
         # 원문 문자열은 파싱값과 **같은 인덱스**를 유지해야 한다(value_raw 용) — 아래 재정렬에서
         # 함께 이동시킨다. 따로 움직이면 원문이 다른 열의 값으로 붙는다.
         all_raw: list[str] = list(amount_cells)
+        all_flags: list[bool] = list(cell_flags)
         if len(all_parsed) >= 4 and not (preserve_col_positions or keep_all_amount_cells):
             while all_parsed and all_parsed[0] is None:
                 all_parsed.pop(0)
                 if all_raw:
                     all_raw.pop(0)
+                if all_flags:
+                    all_flags.pop(0)
 
         amounts: list[Optional[int]] = []
         raw_amounts: list[str] = []
+        acontext_missing: list[bool] = []
         for i in range(num_cols):
             amounts.append(all_parsed[i] if i < len(all_parsed) else None)
             raw_amounts.append(all_raw[i] if i < len(all_raw) else "")
+            acontext_missing.append(all_flags[i] if i < len(all_flags) else False)
 
         indent = _detect_indent(label)
         label_clean = label.lstrip()  # 들여쓰기 공백 제거
@@ -322,6 +337,7 @@ def extract_rows(
             account_name=label_clean,
             amounts=amounts,
             raw_amounts=raw_amounts,
+            acontext_missing=acontext_missing,
             header_hint=header_hint,
             row_order=row_order,
             is_subtotal=_is_subtotal(label_clean),
@@ -362,6 +378,33 @@ def _get_cells(tr: etree._Element) -> list[str]:
             text = ''.join(child.itertext()).strip()
             cells.append(text)
     return cells
+
+
+def _get_cell_elements(tr: etree._Element) -> list[etree._Element]:
+    """`_get_cells`와 **완전히 같은 태그 필터·순서**로 셀 엘리먼트 자체(텍스트가 아니라)를
+    반환한다 — §5.4(classB 유형1) 근거. `_get_cells`가 버리는 ACODE/ACONTEXT 속성을
+    나중에(`_cell_acontext_missing`) 읽기 위한 것. 반드시 `_get_cells`와 인덱스가
+    1:1로 대응해야 한다 — 태그 필터를 따로 바꾸지 말 것."""
+    return [child for child in tr
+            if (child.tag.upper() if isinstance(child.tag, str) else "") in ("TD", "TH", "TE", "TU")]
+
+
+def _cell_acontext_missing(el: etree._Element) -> bool:
+    """True: `<TE ACODE=...>` 인데 `ACONTEXT` 속성 자체가 없는 셀 — DART 원문이 스스로
+    "이 기간엔 이 계정을 태깅하지 않았다(=미공시)"라고 구조적으로 밝힌 것과 같은 신호다
+    (`fin2/extract/xbrl.py`의 Track A가 `ACONTEXT` 없는 셀을 스킵하는 것과 동일 원리).
+    `<TD>`(ACODE 자체가 없는 구형 비XBRL 셀)는 이 신호가 없으므로 항상 False —
+    그런 셀은 판단을 보류하고 기존 로직(R19 포함)을 그대로 따른다.
+
+    원문대조 근거: `docs/plans/gateb_trade_payables_classB_stale_column_investigation_
+    2026-08-29.md` §5(6개사 12행 전건 확인, 반례 0건) + §6(corpus 파급범위 census,
+    397/33,457행·1.19%가 이 신호로 갈림, 오탐 방향 없음)."""
+    tag = el.tag.upper() if isinstance(el.tag, str) else ""
+    if tag != "TE":
+        return False
+    if not el.get("ACODE"):
+        return False
+    return el.get("ACONTEXT") is None
 
 
 def _is_cell_element(el: etree._Element) -> bool:
@@ -513,8 +556,24 @@ def _table_has_comma_note_column(rows_cells: list[list[str]]) -> bool:
 def _split_label_amounts(
     cells: list[str], table_has_note_column: bool = False,
 ) -> tuple[str, list[str]]:
+    """`_split_label_amounts_ex()`의 (label, amount_cells) 만 쓰는 얇은 래퍼 — 기존
+    호출자(테스트 다수 포함)의 2-tuple 시그니처를 그대로 유지한다. 새 필요(§5.4
+    acontext_missing 플래그)가 있으면 `_split_label_amounts_ex()`를 직접 쓸 것."""
+    label, amount_cells, _flags = _split_label_amounts_ex(cells, table_has_note_column)
+    return label, amount_cells
+
+
+def _split_label_amounts_ex(
+    cells: list[str], table_has_note_column: bool = False,
+    cells_el: Optional[list[etree._Element]] = None,
+) -> tuple[str, list[str], list[bool]]:
     """
     셀 리스트에서 계정과목명(첫 번째 비숫자 셀)과 금액 셀을 분리한다.
+
+    `_split_label_amounts()`의 실제 본체(로직 복제 금지 — 반드시 이 함수 하나만 고칠 것).
+    `cells_el`(옵션, `cells`와 같은 인덱스의 원본 엘리먼트 리스트, `_get_cell_elements`
+    참고)을 주면 살아남은 각 amount_cells 원소마다 `_cell_acontext_missing()` 플래그를
+    **같은 인덱스로** 나란히 반환한다(§5.4). `cells_el=None`이면 세 번째 반환값은 빈 리스트.
 
     DART XML 구조:
       [계정과목명, 당기금액, 전기금액, 전전기금액, (주석)]
@@ -544,6 +603,7 @@ def _split_label_amounts(
     """
     label = ""
     amount_cells: list[str] = []
+    flags: list[bool] = []
 
     for i, cell in enumerate(cells):
         if i == 0:
@@ -574,9 +634,11 @@ def _split_label_amounts(
             # 숫자 패턴이거나 공란이면 금액 셀
             if _NUMBER_PATTERN.match(cell_stripped) or cell_stripped in ('-', '—', ''):
                 amount_cells.append(cell)
+                if cells_el is not None:
+                    flags.append(_cell_acontext_missing(cells_el[i]) if i < len(cells_el) else False)
             # 숫자가 아닌 추가 텍스트 → 무시
 
-    return label, amount_cells
+    return label, amount_cells, flags
 
 
 # 셀 전체가 '기간(개월)' 열 헤더인 경우만: '3개월' '(3개월)' '당분기(3개월)' '3개월 누적' 등.

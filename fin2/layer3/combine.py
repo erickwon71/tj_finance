@@ -1285,6 +1285,35 @@ def _is_noncurrent(row: dict) -> bool:
     """
     return bool(_NONCURRENT_RE.search(row.get("label_raw") or "")
                 or _NONCURRENT_RE.search(row.get("section_path") or ""))
+
+
+# B1-D1 (2026-08-30, docs/plans/valuation_daily_blockers_da_netdebt_design_2026-08-30.md
+# §2-4): _CURRENT_STRICT only PREVENTS a current canonical from absorbing a non-current
+# row - it never recovers the dropped amount anywhere. Measured (00130763 FY2024):
+# '차입금' under section_path='부채>비유동부채' maps exact to bs.short_term_debt, gets
+# dropped by the guard, and the 101,825,482,368 never reaches bs.long_term_debt ->
+# net_debt short by exactly that amount. fact_v2/std_v2 got it right only because the
+# XBRL acode (dart_LongTermBorrowingsGross) carried the maturity that the label text
+# omits; section_path carries the same signal here. Route it to the sibling canonical
+# instead of discarding it.
+_NONCURRENT_SIBLING = {
+    "bs.short_term_debt": "bs.long_term_debt",
+    "bs.current_bonds":   "bs.bonds",
+}
+
+
+def _is_noncurrent_by_section_only(row: dict) -> bool:
+    """True only for the _NONCURRENT_SIBLING reroute target: non-current per
+    section_path but NOT per label_raw wording. A row whose label itself already says
+    장기/비유동 would normally have mapped straight to the sibling canonical already -
+    landing here under the current one means something else is going on (mismapping,
+    stale data, ...), so it is left to the existing drop-only _CURRENT_STRICT behavior
+    instead of being rerouted. This is deliberately narrower than _is_noncurrent()."""
+    if _NONCURRENT_RE.search(row.get("label_raw") or ""):
+        return False
+    return bool(_NONCURRENT_RE.search(row.get("section_path") or ""))
+
+
 _BROAD_RE = re.compile(r"및기타|및 기타|AndOther")
 # a BS grand-total canonical must not be sourced from a fiduciary/trust-account
 # sub-statement embedded in the same filing (banks commonly attach a 신탁계정 balance
@@ -1673,6 +1702,43 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
     conflicts: dict[str, list[dict]] = {}
     trust_seqs = _trust_account_table_seqs(cands)
     degenerate_eq_ids = _degenerate_total_equity_row_ids(cands)
+    # B1-D1 (2026-08-30): reroute _CURRENT_STRICT drops to their non-current sibling
+    # canonical (_NONCURRENT_SIBLING) instead of just discarding them. This MUST run as
+    # a pre-pass over the whole `cands` dict, before the main per-canonical loop below -
+    # canonical iteration order is not guaranteed, and adding a brand-new key to `cands`
+    # mid-`for c, rows in cands.items()` would raise (dict changed size during
+    # iteration); doing it inline per-canonical could also run before or after the
+    # sibling's own turn. A pre-pass makes the reroute visible to the sibling's
+    # resolution regardless of order.
+    for _src, _sib in _NONCURRENT_SIBLING.items():
+        _src_rows = cands.get(_src)
+        if not _src_rows:
+            continue
+        # guard 1: sibling already has its own candidates (company disclosed it as a
+        # separate line) -> don't add, or rule_additive_debt-style summing downstream
+        # would double-count. Checked against cands' pre-reroute state, so the two
+        # _NONCURRENT_SIBLING entries (disjoint src/dst pairs) can't interfere with
+        # each other here.
+        if cands.get(_sib):
+            continue
+        # guard 2 (not in the design doc's numbered list, but required for
+        # correctness): only route rows that would ACTUALLY be dropped from `_src`'s
+        # own resolution. _is_noncurrent() below (used by both _CURRENT_STRICT filter
+        # sites, :1749/:1607) only narrows `rows` when a current-labeled candidate also
+        # exists — "if every candidate is non-current (or unlabeled), rows is left
+        # untouched" (see _is_noncurrent docstring), specifically so a current period
+        # never ends up MISSING. In that all-non-current case the row still gets
+        # confirmed as `_src` itself, so routing a copy to `_sib` too would double the
+        # amount rather than recover it. Only reroute when `_src` actually has a
+        # surviving current candidate.
+        if not any(not _is_noncurrent(r) for r in _src_rows):
+            continue
+        # guard 3: only the section_path-only non-current class (see
+        # _is_noncurrent_by_section_only docstring) - a label that already says
+        # 장기/비유동 would have mapped straight to `_sib` on its own.
+        _routed = [r for r in _src_rows if _is_noncurrent_by_section_only(r)]
+        if _routed:
+            cands[_sib] = list(_routed)
     for c, rows in cands.items():
         # ★R2 델타패치 실질화(2026-08-20, P3-1 재감사 후속): build_merged_lines() 의 셀
         # 키에 section_path 가 들어있어, 정정본이 표를 재렌더링해 section_path 가 원본과

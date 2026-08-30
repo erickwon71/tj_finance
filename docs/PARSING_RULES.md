@@ -2789,6 +2789,72 @@ LABEL_UNMATCHED(pending)로 남는다 — VALUE_DIFF(확정 오류)를 주장하
 
 ---
 
+## R57. `fin2/layer3/combine.py::_resolve()` — `_CURRENT_STRICT` 탈락분을
+`_NONCURRENT_SIBLING`으로 재라우팅(B1-D1, `net_debt` 회복) — **구현+단위테스트 완료,
+전수재감사 대기**(2026-08-30)
+
+**배경** — [[valuation-daily-blockers-rootcaused-2026-08-30]] §2. `net_debt =
+short_term_debt + long_term_debt − cash`인데, v3의 `bs.short_term_debt`/
+`bs.long_term_debt` FY2024/2025 불일치율이 67.6%/69.6%로 절벽을 이룬다(P1A/lease·
+borrowings 분해와는 **무관** — 그 세 컬럼은 이 식에 안 들어감, 실측 확인).
+
+**근본원인** — `_CURRENT_STRICT`(경남제약형 오염 방지 가드, R… 계열)가 `_is_noncurrent()`
+로 `section_path='부채>비유동부채'`를 읽고 `bs.short_term_debt` 후보에서 **제외만
+하고 짝 canonical로 재라우팅하지 않는다** → 금액이 소실된다. 실측(`00130763` FY2024
+연결): 라벨 `차입금`(장기 표기 없음)이 `bs.short_term_debt`에 exact 매핑 → 가드가
+제외 → `bs.long_term_debt` 미도달 → `net_debt`가 정확히 101,825,482,368 부족.
+std_v2는 XBRL acode(`dart_LongTermBorrowingsGross`)로 만기를 알았지만, v3는 라벨
+텍스트만 보고 `section_path`가 가진 같은 신호를 버리고 있었다.
+
+**수정** — `_NONCURRENT_SIBLING = {"bs.short_term_debt": "bs.long_term_debt",
+"bs.current_bonds": "bs.bonds"}`를 신설, `_resolve()` 본문 루프 **앞**에 pre-pass로
+적용(설계문서는 `_CURRENT_STRICT` 필터 두 자리(`:1749`/`:1607`)에서 인라인 처리를
+제안했으나, canonical 순회 순서가 보장되지 않고 `cands`에 없던 키를 순회 도중 추가하면
+`RuntimeError`가 나므로 **pre-pass로 구현 방식을 변경** — 순서 무관하게 짝
+canonical이 항상 재라우팅된 후보를 보게 됨).
+
+**가드 4가지** (설계문서는 3가지, 구현 중 1가지 추가 발견):
+1. 짝 canonical에 이미 후보가 있으면 추가 안 함(이중계상 방지).
+2. **(설계문서에 없던 가드, 필수)** `_src`(예: `bs.short_term_debt`)의 후보가
+   **전부** 비유동이면 재라우팅 안 함 — 기존 `_is_noncurrent()`의 "current 후보가
+   하나도 없으면 그대로 둔다"(MISSING 방지) 안전장치가 이미 있어, 그 경우 그 행은
+   **`_src` 자신의 확정값으로도 쓰인다** — 짝 canonical에 사본을 추가하면 회복이
+   아니라 **2배**가 된다.
+3. `label_raw`에 이미 `장기`/`비유동`이 있으면 추가 안 함(`section_path`만으로
+   비유동인 행, 즉 `00130763`형만 대상 — `_is_noncurrent_by_section_only()`).
+4. `rule_additive_debt`(`fin2/standardize/rules.py:282`)의 `total_liabilities×1.05`
+   이중계상 가드 확인 결과: **v3(combine.py)는 이 규칙을 아예 호출하지 않는다**
+   (import 목록에 없음 — v2 전용). v3는 `bs.short_term_debt`/`bs.long_term_debt`를
+   합산이 아니라 `_resolve()`의 단일값 판정(충돌 시 보류)으로 다루므로, 재라우팅된
+   행은 짝 canonical의 "유일한" 후보가 되어 그대로 확정되거나(단일값) 충돌로 보류될
+   뿐 — 별도 이중계상 방어선이 필요 없다는 것을 코드 추적으로 확인.
+
+**실측/검증** — `00130763` FY2024 연결을 `combine()`으로 직접 재계산(DB write 없음,
+읽기전용 진단 경로):
+
+| | 수정 전(v3) | 수정 후(v3) | v2(정답) |
+|---|---:|---:|---:|
+| `short_term_debt` | 113,802,813,293 | 113,802,813,293(불변) | 113,802,813,293 |
+| `long_term_debt` | (소실) | **101,825,482,368** | 101,825,482,368 |
+| `net_debt` | 36,346,724,254 | **138,172,206,622** | 138,172,206,622 |
+
+수정 후 v3가 v2와 **원 단위까지 정확히 일치**. 단위테스트 5건 신설
+(`fin2/tests/test_combine_noncurrent_sibling_reroute.py`) — 정상 재라우팅, 가드1~3
+각각의 회귀 케이스. `pytest tests/ fin2/tests/` 639 passed / 1 failed(기존 무관,
+`test_lxintl_facility_table_dropped`, biz_section — 이 트랙과 무관).
+
+**★미완료 — 전수재감사 필요**([[gateb-full-reaudit-is-required-to-close]]): 이 항목은
+코드+단위테스트+표본 1건 실측까지만 마쳤다. `std_financials_v3` 재빌드
+(`scripts/build_std_v3.py --all`) 후 Gate B 전수재감사(`scripts/gateb_audit.py`)로
+pass→fail_a 전이 0을 확인해야 종료된다. 착수 전 `face_audit` 스냅샷 필수.
+
+근거: `fin2/layer3/combine.py`(`_NONCURRENT_SIBLING`, `_is_noncurrent_by_section_only`,
+`_resolve()` pre-pass) · `fin2/tests/test_combine_noncurrent_sibling_reroute.py` ·
+`docs/plans/valuation_daily_blockers_da_netdebt_design_2026-08-30.md` §2-4(B1-D1) ·
+메모리 `valuation-daily-blockers-rootcaused-2026-08-30`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

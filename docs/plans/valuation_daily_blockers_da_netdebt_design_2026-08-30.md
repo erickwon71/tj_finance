@@ -431,7 +431,17 @@ _NONCURRENT_SIBLING = {
 `_CURRENT_STRICT` 필터 자리(`:1598`, `:1749` **두 곳 모두**)에서 탈락 행을
 `cands[_NONCURRENT_SIBLING[canon]]`에 **추가**한다.
 
-**필수 가드 3가지** (없으면 이중계상):
+> **★구현 시 변경 — 코드 위치.** 아래 설계는 `_CURRENT_STRICT` 필터 두 자리(`:1598`,
+> `:1749`)에서 인라인 처리를 제안했으나, 실제 구현은 **`_resolve()` 본문 루프 앞
+> pre-pass**로 옮겼다: canonical 순회 순서가 보장되지 않아(짝 canonical이 먼저
+> 처리되면 재라우팅이 이미 늦음) `for c, rows in cands.items()` 도중 `cands`에 없던
+> 키를 추가하면 `RuntimeError`(dict 크기 변경)가 난다. 순서 무관하게 항상 짝
+> canonical이 재라우팅된 후보를 보도록 pre-pass로 재설계했다(순도는 동일, R57 참고).
+> **가드도 3개가 아니라 4개**다 — 구현 중 "`_src`가 전부 비유동이면 재라우팅
+> 안 함"(기존 `_is_noncurrent()`의 MISSING 방지 안전장치와 충돌해 2배가 될 수 있음)
+> 이 추가로 필요함을 발견했다.
+
+**필수 가드 3가지(설계 시점 — 구현 후 4개로 확정, 위 note 참고)**:
 1. **짝 canonical에 이미 후보가 있으면 추가하지 않는다** — 회사가 `장기차입금`을
    별도 행으로 이미 공시했는데 여기에 또 넣으면 `rule_additive_debt`가 이중계상한다.
 2. **`label_raw`에 이미 `장기`/`비유동`이 있으면 추가하지 않는다** — 그런 행은 애초에
@@ -535,7 +545,7 @@ WHERE canonical_account = 'note.da_total' AND source_format = 'note_cf';
 |---|---|---|---|---|
 | 1 | 상위 문서 **§D3** — `cf_da_sync`/`expense_nature_sync`에서 3줄 제거 | 오염행 **신규 생산 중단**. B2 코드 수정 없이 출혈을 먼저 막는다 | 낮음(제거만) | ✅ 완료(`bd39d44`) |
 | 2 | **§3 이식** — matview `ni`/`eq`/`revenue`/`cfo`/`dividends_paid`/**`ebitda`** → v3, `net_debt`만 v2 LATERAL | 519개사 `ev_ebitda` **정정**. 파생 matview라 롤백 즉시 가능 | 낮음 | ✅ 완료(2026-08-30 저녁, 마이그레이션 `2026_08_valuation_daily_v3_ebitda_migration` + refresh, 표본 검증·회귀테스트 통과) |
-| 3 | **B1-D1** — `_NONCURRENT_SIBLING` 재라우팅 | `net_debt` 최대 원인, 면적 좁음 | 중간 → 4-4 전수재감사 | 미착수 |
+| 3 | **B1-D1** — `_NONCURRENT_SIBLING` 재라우팅 | `net_debt` 최대 원인, 면적 좁음 | 중간 → 4-4 전수재감사 | ✅ 코드+단위테스트+표본1건(00130763) 실측 완료(R57 등재) — **전수재감사 대기** |
 | 4 | **B1-D2** — alias 카탈로그 보강 | 잔여 미매핑 | 중간~높음 → 4-4 전수재감사 | 미착수 |
 | 5 | matview `net_debt`도 v3로 → **단일 LATERAL 복귀** | 이식 완료 | 낮음 | 미착수(3~4 선행) |
 | 6 | **B2 수정**(`fin2/extract/notes.py`) | 1이 끝났으면 **불필요할 수 있다**(§B2-D4) — 그때 재판단 | 낮음 | 재판단 대기 — 1번 완료로 신규 오염 생산은 이미 멈춤, fact_v2 기존 합성행 provenance 정리만 남음(§B2-D3, §6 후속) |

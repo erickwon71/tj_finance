@@ -529,19 +529,22 @@ WHERE canonical_account = 'note.da_total' AND source_format = 'note_cf';
 
 ---
 
-## 5. 구현 순서 (권고) — 미착수, 승인 대기
+## 5. 구현 순서 (권고)
 
-| # | 작업 | 근거 | 위험 |
-|---|---|---|---|
-| 1 | 상위 문서 **§D3** — `cf_da_sync`/`expense_nature_sync`에서 3줄 제거 | 오염행 **신규 생산 중단**. B2 코드 수정 없이 출혈을 먼저 막는다 | 낮음(제거만) |
-| 2 | **§3 이식** — matview `ni`/`eq`/`revenue`/`cfo`/`dividends_paid`/**`ebitda`** → v3, `net_debt`만 v2 LATERAL | 519개사 `ev_ebitda` **정정**. 파생 matview라 롤백 즉시 가능 | 낮음 |
-| 3 | **B1-D1** — `_NONCURRENT_SIBLING` 재라우팅 | `net_debt` 최대 원인, 면적 좁음 | 중간 → 4-4 전수재감사 |
-| 4 | **B1-D2** — alias 카탈로그 보강 | 잔여 미매핑 | 중간~높음 → 4-4 전수재감사 |
-| 5 | matview `net_debt`도 v3로 → **단일 LATERAL 복귀** | 이식 완료 | 낮음 |
-| 6 | **B2 수정**(`fin2/extract/notes.py`) | 1이 끝났으면 **불필요할 수 있다**(§B2-D4) — 그때 재판단 | 낮음 |
+| # | 작업 | 근거 | 위험 | 상태 |
+|---|---|---|---|---|
+| 1 | 상위 문서 **§D3** — `cf_da_sync`/`expense_nature_sync`에서 3줄 제거 | 오염행 **신규 생산 중단**. B2 코드 수정 없이 출혈을 먼저 막는다 | 낮음(제거만) | ✅ 완료(`bd39d44`) |
+| 2 | **§3 이식** — matview `ni`/`eq`/`revenue`/`cfo`/`dividends_paid`/**`ebitda`** → v3, `net_debt`만 v2 LATERAL | 519개사 `ev_ebitda` **정정**. 파생 matview라 롤백 즉시 가능 | 낮음 | ✅ 완료(2026-08-30 저녁, 마이그레이션 `2026_08_valuation_daily_v3_ebitda_migration` + refresh, 표본 검증·회귀테스트 통과) |
+| 3 | **B1-D1** — `_NONCURRENT_SIBLING` 재라우팅 | `net_debt` 최대 원인, 면적 좁음 | 중간 → 4-4 전수재감사 | 미착수 |
+| 4 | **B1-D2** — alias 카탈로그 보강 | 잔여 미매핑 | 중간~높음 → 4-4 전수재감사 | 미착수 |
+| 5 | matview `net_debt`도 v3로 → **단일 LATERAL 복귀** | 이식 완료 | 낮음 | 미착수(3~4 선행) |
+| 6 | **B2 수정**(`fin2/extract/notes.py`) | 1이 끝났으면 **불필요할 수 있다**(§B2-D4) — 그때 재판단 | 낮음 | 재판단 대기 — 1번 완료로 신규 오염 생산은 이미 멈춤, fact_v2 기존 합성행 provenance 정리만 남음(§B2-D3, §6 후속) |
 
-★ 1번을 먼저 두는 것이 이 순서의 핵심이다. **코드 수정 없이 출혈이 멈추고**, 그 뒤
-B2 수정이 정말 필요한지 다시 판단할 수 있다.
+★★**다음 세션 시작점 = 순서 3(B1-D1, `net_debt` `_NONCURRENT_SIBLING` 재라우팅)**.
+착수 전 `face_audit` 스냅샷 필수: `CREATE TABLE face_audit_snap_20260830 AS SELECT *
+FROM face_audit;`(또는 classB 트랙에서 이미 뜬 2026-08-30 오전 재감사 결과를 베이스라인으로
+재사용 가능 — 그 사이 순서1·2는 std_v2/valuation_daily만 건드려 face_audit 대상인
+std_v3/report 원문 대조에는 영향 없음, 재사용 시 그 근거를 명시할 것).
 
 ---
 

@@ -248,18 +248,20 @@ v2`/`v3`)은 이 작업으로 전혀 건드리지 않는다.**
   두 자릿수 %의 실질적 차이를 보여, 사용자가 보는 EV/EBITDA 배수가 상당히 달라진다.
   net_debt는 P1A(기존 설계 문서 있음, 미실행) 소관으로 별도.
 
-### Phase 1 — matview 재정의 (한 커밋)
+### Phase 1 — matview 재정의 (한 커밋) — ★완료(2026-08-30 저녁)
 
-- [ ] **1-1.** `collector/db.py`의 마이그레이션 목록에 새 항목 추가 —
-      `DROP MATERIALIZED VIEW IF EXISTS valuation_daily;` → `CREATE MATERIALIZED VIEW
-      valuation_daily AS (D1의 새 SELECT) WITH NO DATA;` → 같은 마이그레이션 안에서
-      unique index(`ux_valuation_daily_corp_date`) 재생성.
-      (matview는 `CREATE OR REPLACE`가 안 된다 — DROP+CREATE 필수, 기존 `standard_financials`
-      의 v2→v3 스왑은 일반 VIEW라 `CREATE OR REPLACE`를 썼지만 이건 다르다.)
-- [ ] **1-2.** 마이그레이션 적용 직후 `REFRESH MATERIALIZED VIEW valuation_daily`(non-concurrent
-      최초 1회 — WITH NO DATA 상태에선 CONCURRENTLY 불가) 1회 수동 실행해 데이터 채움.
-- [ ] **1-3.** `scripts/refresh_valuation_daily.py`/`scripts/nightly_valuation_refresh.py`는
-      코드 변경 불필요(matview 이름 그대로, REFRESH CONCURRENTLY 대상 동일).
+- [x] **1-1.** `collector/db.py`에 마이그레이션 `2026_08_valuation_daily_v3_ebitda_migration`
+      추가 — `DROP MATERIALIZED VIEW IF EXISTS valuation_daily;` → `CREATE MATERIALIZED VIEW
+      valuation_daily AS ... WITH NO DATA;` → 같은 마이그레이션 안에서 unique index
+      (`ux_valuation_daily_corp_date`) 재생성. 적용 완료(`init_db()` 1회 실행, 스키마 확인:
+      DROP+CREATE 정상, `relispopulated=f`).
+      ★블로커문서 §3 정정에 따라 D1-b도 부분 해제 — `ebitda`(→ev_ebitda)까지 v3로 스왑,
+      `net_debt`만 v2 LATERAL(`finnd`)에 잔류(원인 A/B 미해소, §5 순서3~4 대기).
+- [x] **1-2.** 마이그레이션 적용 직후 `scripts/refresh_valuation_daily.py`(non-concurrent,
+      사용자 실행) 1회 수동 실행해 데이터 채움 — 11,196,547행, 2,514개사 정상 적재
+      (`relispopulated=t`, corp 수는 이식 전과 동일 — 커버리지 손실 없음).
+- [x] **1-3.** `scripts/refresh_valuation_daily.py`/`scripts/nightly_valuation_refresh.py`
+      코드 변경 없이 그대로 동작 확인(matview 이름·unique index 동일).
 
 ### Phase 2 — `cf_da_sync`/`expense_nature_sync` 분리 (별도 커밋, D3)
 
@@ -273,16 +275,23 @@ v2`/`v3`)은 이 작업으로 전혀 건드리지 않는다.**
 
 ## 4. 검증 계획
 
-- [ ] **4-1.** Phase 0-1/0-2 diff 결과 — 불일치가 크면(스케일·건수 모두) Phase 1 착수 전
-      원인부터 규명(이 세션의 다른 계획들과 동일한 원칙, [[feedback-verify-against-source]]).
-- [ ] **4-2.** 회귀 테스트 `pytest tests/ fin2/tests/`(회귀 0 기준은 기존 baseline과 동일).
-- [ ] **4-3.** 재정의 직후 표본 corp의 `per`/`pbr`/`ev_ebitda` 시계열을 이식 전후로 비교
-      (그래프 아니라도 값 diff로 충분) — 사용자가 실제로 보는 화면(밸류에이션 밴드 차트)
-      이므로 눈으로 한 번 더 확인 권장(§viz-app-status 참고 — `streamlit run app/main.py`).
-- [ ] **4-4.** `scripts/dq_assertions.py`의 `valuation_daily_stale` 어서션이 계속 통과하는지
-      (trade_date 최신성 — 로직 자체는 안 바뀌므로 회귀 없어야 정상).
+- [x] **4-1.** Phase 0-1/0-2 diff 결과 — 원인규명 완료(블로커문서 §1/§2), 이중계상 정정으로
+      확정. 표본 5건 원문대조까지 끝남(블로커문서 §1-4).
+- [x] **4-2.** 회귀 테스트 `pytest tests/ fin2/tests/` 634 passed / 1 failed(기존 무관
+      실패, biz_section lxintl — classB 트랙에서도 동일 관측, 이번 변경과 무관).
+- [x] **4-3.** 재정의 직후 표본 corp 검증: `00130763`/`00191472`/`00120076`/`00155276`
+      등 이중계상 확정 5건 모두 `v2_ebitda ≈ 2×v3_ebitda`(비율 1.99~2.02) 확인,
+      `valuation_daily.ev_ebitda`가 `ev/v3_ebitda`와 정확히 일치(00191472: 3.348 = 3.348)
+      → 더 이상 doubled 값을 쓰지 않음을 SQL로 직접 확인. 밴드차트(streamlit) 육안확인은
+      사용자 후속 확인 권장(미실행).
+- [x] **4-4.** `scripts/dq_assertions.py::valuation_daily_stale` 통과(위반 0, 최신
+      거래일 2026-08-28, 2일 지연). 전체 스위트 실행 결과 ERROR 1건
+      (`statement_magnitude_impossible`, 134건)은 **`std_financials_v2` 단위오염 검사로
+      이 트랙과 무관**(이번 변경은 std_v2에 아무것도 쓰지 않음 — 매트뷰 재정의 + 재전파
+      호출 제거뿐) — 별도 트랙 소관, 이 문서 범위 밖으로 기록만.
 - [ ] **4-5.** Phase 2(cf_da_sync 분리) 후 — 표본 FY2024+ CF-미태깅 기업 하나를 골라
       `sync_cf_da`가 `fact_v2`엔 여전히 쓰고 std_v2엔 더 이상 안 쓰는지 직접 확인.
+      (Phase 2는 §5 순서1로 먼저 실행됨 — `bd39d44`. 이 항목은 그 검증 후속, 미실행)
 
 ---
 

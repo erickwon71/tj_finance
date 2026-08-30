@@ -1001,6 +1001,77 @@ def _run_migrations() -> None:
          """
         ALTER TABLE face_audit ADD COLUMN IF NOT EXISTS evidence_detail JSONB;
         """),
+
+        ("2026_08_valuation_daily_v3_ebitda_migration",
+         # valuation_daily_v3_migration_plan_2026-08-30.md D1 + 후속
+         # valuation_daily_blockers_da_netdebt_design_2026-08-30.md §3/§5(순서2) — matview
+         # 재정의. `ni`/`eq`/`revenue`/`cfo`/`ebitda`/`operating_income`/`dividends_paid`는
+         # std_financials_v2 → **v3**로 스왑(D1-a 안전 컬럼 + 보류 해제된 ebitda, §0 정정:
+         # "v3에 결합공시 로직 미이식"이 아니라 레거시 note_extractor 의 note.da_total
+         # 합성물이 v2에서 이중계상되던 것 — v3가 애초에 맞았다).
+         # `net_debt`만 v2 LATERAL(`finnd`)에 잔류 — v3 차입금 alias 갭 + `_CURRENT_STRICT`
+         # 탈락분 미회수(원인 A/B, 블로커문서 §2)가 아직 안 고쳐졌다(그 트랙에서 v3로 이관 후
+         # 단일 LATERAL로 복귀 예정, §5 순서5). 두 LATERAL은 독립적으로 "corp 기준 최신 FY"를
+         # 고르므로 fin/finnd 가 서로 다른 (fiscal_year,basis)를 가리킬 수 있음 — net_debt가
+         # v3로 이관되기 전까지의 알려진 과도기 트레이드오프(§3 표).
+         # v3엔 version/is_discrete/is_stub 컬럼이 없다 — 실측(§1-3): v3(FY) 78,213행이
+         # v2(FY,non-stub,version=1) 63,110행보다 넓고, is_stub 비중은 0.064%(gateb_audit.py
+         # 선례 재사용, 별도 필터 없이 무시). matview는 CREATE OR REPLACE 불가 → DROP+CREATE
+         # 필수(D4: 파생 뷰라 기저 테이블 무변경, 이전 SQL 재실행하면 즉시 롤백 가능).
+         # ★ WITH NO DATA 로 생성만 함 — 마이그레이션 직후 `scripts/refresh_valuation_daily.py`
+         # (non-concurrent, 최초 1회 수동 실행) 로 데이터를 채워야 조회가 가능해진다.
+         """
+        DROP MATERIALIZED VIEW IF EXISTS valuation_daily;
+
+        CREATE MATERIALIZED VIEW valuation_daily AS
+        SELECT
+            c.corp_code, c.corp_name, sp.stock_code, sp.trade_date,
+            sp.close_price, sp.market_cap, sp.shares_out,
+            fin.fiscal_year, fin.basis,
+            CASE WHEN fin.ni > 0      THEN sp.market_cap::double precision / fin.ni END      AS per,
+            CASE WHEN fin.eq > 0      THEN sp.market_cap::double precision / fin.eq END      AS pbr,
+            CASE WHEN fin.revenue > 0 THEN sp.market_cap::double precision / fin.revenue END AS psr,
+            CASE WHEN fin.cfo > 0     THEN sp.market_cap::double precision / fin.cfo END     AS pcr,
+            (sp.market_cap + COALESCE(finnd.net_debt, 0))                                    AS ev,
+            CASE WHEN fin.ebitda > 0
+                 THEN (sp.market_cap + COALESCE(finnd.net_debt,0))::double precision / fin.ebitda END           AS ev_ebitda,
+            CASE WHEN fin.operating_income > 0
+                 THEN (sp.market_cap + COALESCE(finnd.net_debt,0))::double precision / fin.operating_income END AS ev_ebit,
+            CASE WHEN sp.shares_out > 0 THEN fin.ni::double precision / sp.shares_out END AS eps,
+            CASE WHEN sp.shares_out > 0 THEN fin.eq::double precision / sp.shares_out END AS bps,
+            CASE WHEN sp.shares_out > 0 AND fin.dividends_paid IS NOT NULL
+                 THEN abs(fin.dividends_paid)::double precision / sp.shares_out END AS dps,
+            CASE WHEN sp.shares_out > 0 AND fin.dividends_paid IS NOT NULL AND sp.close_price > 0
+                 THEN (abs(fin.dividends_paid)::double precision / sp.shares_out) / sp.close_price END AS dividend_yield
+        FROM stock_prices sp
+        JOIN corporations c ON c.stock_code = sp.stock_code AND c.is_active
+        LEFT JOIN LATERAL (
+            SELECT f.fiscal_year, f.statement_type AS basis,
+                   COALESCE(f.controlling_ni, f.net_income)       AS ni,
+                   COALESCE(f.controlling_equity, f.total_equity) AS eq,
+                   f.revenue, f.cfo, f.ebitda, f.operating_income, f.dividends_paid
+            FROM std_financials_v3 f
+            WHERE f.corp_code = c.corp_code AND f.fiscal_period = 'FY'
+              AND f.period_end <= sp.trade_date
+            ORDER BY f.period_end DESC,
+                     CASE f.statement_type WHEN 'consolidated' THEN 0 ELSE 1 END
+            LIMIT 1
+        ) fin ON true
+        LEFT JOIN LATERAL (
+            SELECT f.net_debt
+            FROM std_financials_v2 f
+            WHERE f.corp_code = c.corp_code AND f.fiscal_period = 'FY' AND f.version = 1
+              AND NOT COALESCE(f.is_discrete, false) AND NOT COALESCE(f.is_stub, false)
+              AND f.period_end <= sp.trade_date
+            ORDER BY f.period_end DESC,
+                     CASE f.statement_type WHEN 'consolidated' THEN 0 ELSE 1 END
+            LIMIT 1
+        ) finnd ON true
+        WHERE sp.market_cap IS NOT NULL
+        WITH NO DATA;
+
+        CREATE UNIQUE INDEX ux_valuation_daily_corp_date ON valuation_daily (corp_code, trade_date);
+        """),
     ]
 
     with engine.begin() as conn:

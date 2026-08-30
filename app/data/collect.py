@@ -95,8 +95,14 @@ def discover_recent_corps(days: int = 7) -> dict:
 
 def needs_standardize_corps(only: list[str] | None = None) -> list[str]:
     """
-    다운로드(xml completed)는 됐지만 그 (fy, 기간)이 아직 std_v2 에 없는 기업 = 표준화 대상.
+    다운로드(xml completed)는 됐지만 그 (fy, 기간)이 아직 std_v3 에 없는 기업 = 표준화 대상.
     only 지정 시 그 corp 들로 한정.
+
+    ★2026-08-30(D0, std_v3_daily_wiring_plan_2026-08-30.md) — std_financials_v2 →
+    std_financials_v3 로 전환. 실측(같은 문서 D0): 대상 corp 1,315(v2 기준) → 1,336
+    (v3 기준), 순증 +21개사뿐(대부분 pre-2015 백로그가 v2·v3 양쪽에 이미 있던 것) —
+    "v3 결측이 쏟아진다"는 우려는 반증됐다. 이 전환의 부수 이득은 self-healing: 셀렉터가
+    v3 기준이면 데일리가 건드리는 기업마다 v3 결측을 스스로 메운다.
     """
     clause = "AND f.corp_code = ANY(:only)" if only else ""
     sql = f"""
@@ -106,7 +112,7 @@ def needs_standardize_corps(only: list[str] | None = None) -> list[str]:
          AND dt.status='completed' AND dt.file_type='xml' AND dt.file_path IS NOT NULL
         WHERE f.report_type IN ('annual','half','quarter') {clause}
           AND NOT EXISTS (
-            SELECT 1 FROM std_financials_v2 s
+            SELECT 1 FROM std_financials_v3 s
             WHERE s.corp_code=f.corp_code AND s.fiscal_year=f.fiscal_year
               AND s.fiscal_period=f.fiscal_period)
         ORDER BY f.corp_code

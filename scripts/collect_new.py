@@ -127,8 +127,9 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
     """I2 · 수집시 DQ 게이트 — 수집된 기업에 Gate B(보고서==DB) 재감사 + 항등식(DQ) 집계.
 
     기존 검증 자산 재사용: `gateb_audit.audit_corp`(Phase A 면표 + Phase B 라인, 내부 커밋) +
-    `verify_corp_sequential.rollup_corp`(→ corp_verify_status upsert). 표준화가 std_v2 에 이미 반영한
-    항등식 위반은 data_quality>=3 로 집계. fail_a(확정 불일치)·line value_diff·DQ3 를 반환한다.
+    `verify_corp_sequential.rollup_corp`(→ corp_verify_status upsert). 표준화가 std_v3 에 이미 반영한
+    항등식 위반은 data_quality>=3 로 집계(★2026-08-30 v2→v3 전환, D1). fail_a(확정 불일치)·
+    line value_diff·DQ3 를 반환한다.
     """
     from collections import Counter
     from types import SimpleNamespace
@@ -155,14 +156,16 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
             # gateb_audit.audit_corp() 는 args.source 를 첫 줄부터 참조한다(scripts/gateb_audit.py:119).
             # 이 필드가 없어 --download-only 를 벗기는 순간 AttributeError 로 즉사하는 배선
             # 누락이었다(docs/plans/gateb_view_source_version_join_fix_design_2026-08-17.md §1-C
-            # ⑤). "v3"가 아니라 "v2"인 이유: 이 함수가 감사하는 대상은 바로 위에서 이 파이프라인
-            # 자신이 process_corp()→standardize_corp(version=1) 로 방금 만든 std_financials_v2
-            # 행이다(아래 dq3 쿼리도 std_financials_v2 를 직접 읽음, docstring 도 "표준화가
-            # std_v2 에 이미 반영한 항등식 위반"이라고 명시). std_financials_v3 는 이 파이프라인이
-            # 안 만든다 — 별도 수동 배치(`scripts/build_std_v3.py`)만 채운다. source="v3" 로
-            # 두면 방금 수집한 신규 기간이 std_v3 에 아직 없어 감사 대상 0건인 채로 "이상없음"을
-            # 반환하는 위양성 그린(false-green) 게이트가 된다.
-            source="v2")
+            # ⑤). ★2026-08-30 "v2"→"v3" 전환(std_v3_daily_wiring_plan_2026-08-30.md D1):
+            # 예전엔 이 파이프라인이 std_financials_v3 를 안 만들었다 — 별도 수동 배치
+            # (`scripts/build_std_v3.py`)만 채웠고, source="v3" 로 두면 방금 수집한 신규
+            # 기간이 std_v3 에 아직 없어 감사 대상 0건인 채로 "이상없음"을 반환하는
+            # 위양성 그린(false-green) 게이트가 됐다. 이제 위 ④-6(`_sync_std_v3`)가 이
+            # 함수 호출 **전에** 같은 실행 안에서 std_v3 를 채우므로 그 함정이 없다 —
+            # 남은 방어선은 ④-6 자체가 실패한 corp 을 `_verify_and_log`가 `agg["std_v3_failed"]`
+            # 로 넘겨받아 감사 결과와 무관하게 명시적 실패로 승격시키는 것(아래 dq3 쿼리도
+            # 이제 std_financials_v3 를 직접 읽는다).
+            source="v3")
         gb_agg = {"status": Counter(), "gate": Counter(),
                   "fld_pass": 0, "fld_fail": 0, "fail_rows": [], "errors": 0}
         try:
@@ -171,7 +174,7 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
             with get_session() as s:
                 vals = vcs.rollup_corp(s, corp, names.get(corp, "?"), stage="audited")
                 dq3 = s.execute(text(
-                    "SELECT count(*) FROM std_financials_v2 WHERE corp_code=:c AND version=1 "
+                    "SELECT count(*) FROM std_financials_v3 WHERE corp_code=:c "
                     "AND COALESCE(data_quality,1) >= 3"), {"c": corp}).scalar() or 0
                 s.commit()
         except Exception as exc:  # noqa: BLE001
@@ -519,6 +522,47 @@ def _sync_xbrl_instance_lines(corps: list[str]) -> None:
         logger.warning(f"[collect] ④-4 XBRL 원문 계층2 전사 실패(비치명적): {exc}")
 
 
+def _sync_std_v3(corps: list[str]) -> dict:
+    """④-6 계층3 std_v3 신규 배선 — `report_lines`(+`note_lines`)로부터 `std_financials_v3`
+    를 corp 단위로 재빌드한다(`fin2.layer3.build.build_corp`, 기간·basis 단위
+    delete-then-insert, 멱등 — 재실행해도 무손상, std_v3_daily_wiring_plan_2026-08-30.md §1-2).
+
+    ★ 반드시 `_sync_xbrl_instance_lines`(④-4) **직후** · `_verify_and_log`(⑤) **직전**에서만
+    호출한다. `build_corp`가 `report_lines`를 읽으므로 계층2의 xml 경로(④-3)와 xbrl_zip
+    경로(④-4)가 둘 다 끝난 뒤여야 한다 — ④-4보다 먼저 돌면 xbrl_zip-only 기업이 누락된다
+    (같은 문서 §1-4/§1-5).
+
+    ★이 함수는 **두 call site**에서 불려야 한다(메인 ④-6 · `--standardize-only` 재개) —
+    `docs/runbook_new_parser_pipeline_integration.md` 체크리스트 ①.
+
+    corp 단위 try/except로 격리(하나 실패해도 나머지 corp은 계속) + 함수 전체를 다시
+    비치명적으로 감쌈(런북 A2). 실패 corp은 "failed"에 담아 반환한다 — `_verify_and_log`가
+    이 목록을 명시적 실패로 승격시켜, std_v3 빌드가 실패한 corp이 "감사 대상 0건"으로
+    조용히 통과하는 false-green을 막는다(D1).
+    """
+    out = {"corps": 0, "rows": 0, "failed": []}
+    if not corps:
+        return out
+    try:
+        from collector.db import get_session
+        from fin2.layer3.build import build_corp
+
+        for corp in corps:
+            try:
+                with get_session() as session:
+                    out["rows"] += build_corp(session, corp, year_min=2015)
+                out["corps"] += 1
+            except Exception as exc:  # noqa: BLE001
+                out["failed"].append(corp)
+                logger.warning(f"[collect]   ④-6 std_v3 {corp} 실패: {type(exc).__name__}: {exc}")
+        if out["corps"] or out["failed"]:
+            fail_note = f" (실패 {len(out['failed'])})" if out["failed"] else ""
+            logger.info(f"[collect] ④-6 계층3 std_v3 — 기업 {out['corps']} · 행 {out['rows']:,}{fail_note}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ④-6 계층3 std_v3 전체 실패(비치명적): {type(exc).__name__}: {exc}")
+    return out
+
+
 def _sync_shares_transcribe(corps: list[str]) -> None:
     """④-5 계층2 cross-cutting 전사 — 신규 정기보고서 '주식의 총수 등' 절 →
     `report_shares_outstanding`(std_v3_dq_shares_period_backfill_plan_2026-08-09.md §3.3, Phase 2).
@@ -652,18 +696,30 @@ def _refresh_valuation_daily() -> None:
 
 
 def _verify_and_log(agg: dict, args) -> None:
-    """수집 후 DQ 게이트 실행·로깅. fail_a/value_diff(확정 불일치) 발견 시 loud error."""
+    """수집 후 DQ 게이트 실행·로깅. fail_a/value_diff(확정 불일치) 발견 시 loud error.
+
+    ★2026-08-30(D1, std_v3_daily_wiring_plan_2026-08-30.md) — `agg["std_v3_failed"]`
+    (④-6 `_sync_std_v3`가 반환한 실패 corp 목록)을 감사 결과와 무관하게 명시적 실패로
+    승격한다. ④-6이 런북 A2에 따라 비치명적으로 감싸여 있어, 실패해도 파이프라인은 계속
+    가지만 그 corp은 std_v3에 새 행이 없다 — 그대로 두면 source="v3" 감사가 "대상 0건"
+    으로 조용히 "이상없음"을 반환하는 false-green이 재발한다(위 gb_args 주석의 경고).
+    """
     ok = agg.get("ok_corps") or []
-    if getattr(args, "no_verify", False) or not ok:
+    std_v3_failed = agg.get("std_v3_failed") or []
+    if getattr(args, "no_verify", False) or not (ok or std_v3_failed):
         return
     logger.info(f"[verify] DQ 게이트 — {len(ok)}개 기업 Gate B(보고서==DB)+항등식 재검(fy≥{args.verify_fy_min})")
-    summ = run_dq_gate(ok, args.verify_fy_min)
+    summ = run_dq_gate(ok, args.verify_fy_min) if ok else {
+        "corps": 0, "gb_fail_a": 0, "line_value_diff": 0, "dq3": 0, "fail_corps": []}
     msg = (f"[verify] 완료 — 검사 {summ['corps']} · fail_a {summ['gb_fail_a']} · "
-           f"line_value_diff {summ['line_value_diff']} · DQ3(항등식위반) {summ['dq3']}")
-    if summ["gb_fail_a"] or summ["line_value_diff"]:
-        logger.error(msg + "  ⚠ 보고서≠DB 확정 불일치 발견!")
+           f"line_value_diff {summ['line_value_diff']} · DQ3(항등식위반) {summ['dq3']}"
+           + (f" · std_v3 빌드실패 {len(std_v3_failed)}" if std_v3_failed else ""))
+    if summ["gb_fail_a"] or summ["line_value_diff"] or std_v3_failed:
+        logger.error(msg + "  ⚠ 보고서≠DB 확정 불일치 또는 std_v3 빌드 실패 발견!")
         for corp, fa, vd, dq in summ["fail_corps"]:
             logger.error(f"[verify]   {corp}: fail_a={fa} value_diff={vd} dq3={dq}")
+        for corp in std_v3_failed:
+            logger.error(f"[verify]   {corp}: std_v3 빌드 실패(false-green 방지 위해 명시 승격)")
     elif summ["dq3"]:
         logger.warning(msg + "  (DQ3=항등식 경고, 비차단 — corp_verify_status 기록됨)")
     else:
@@ -755,6 +811,13 @@ def main() -> None:
         # otherwise scan the full pending population.
         xbrl_affected = collect.needs_xbrl_instance_corps(only=affected if args.corps else None)
         _sync_xbrl_instance_lines(xbrl_affected)
+
+        # ④-6 계층3 std_v3 — 메인 경로와 동일 원칙(아래 `_sync_std_v3` docstring 참고).
+        # 재개 경로도 두 call site 규칙(런북 A3)에 따라 반드시 여기 배선한다.
+        v3_corps = sorted(set(agg.get("ok_corps") or []) | set(xbrl_affected))
+        v3_agg = _sync_std_v3(v3_corps)
+        agg["std_v3_failed"] = v3_agg["failed"]
+
         _verify_and_log(agg, args)
         _sync_biz_metrics(affected)
         _sync_order_backlog(affected)
@@ -863,6 +926,14 @@ def main() -> None:
     # appear in `affected` above (no xml file_type row), so they need their own pending list.
     xbrl_affected = collect.needs_xbrl_instance_corps(only=corps)
     _sync_xbrl_instance_lines(xbrl_affected)
+
+    # ④-6 계층3 std_v3 — report_lines 갱신된 corp(xml ④-3 경로의 ok_corps + xbrl_zip ④-4
+    # 경로의 xbrl_affected 합집합) 재빌드. ④-4 **직후** · ⑤ **직전**에 놓는다 — build_corp가
+    # report_lines를 읽으므로 두 계층2 경로가 전부 끝난 뒤여야 xbrl_zip-only 기업이
+    # 누락되지 않는다(std_v3_daily_wiring_plan_2026-08-30.md §1-4/§1-5).
+    v3_corps = sorted(set(agg.get("ok_corps") or []) | set(xbrl_affected))
+    v3_agg = _sync_std_v3(v3_corps)
+    agg["std_v3_failed"] = v3_agg["failed"]
 
     # ⑤ 수집 후 DQ 게이트 — 새로 표준화된 기업만 Gate B(보고서==DB)+항등식 재검, corp_verify_status 적재.
     _verify_and_log(agg, args)

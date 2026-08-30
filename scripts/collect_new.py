@@ -9,8 +9,9 @@ calendar stage는 더 이상 돌지 않는다(④-6 `_sync_std_v3`가 std_financ
 채움). 이산분기·달력정규화는 v3에 대응 개념이 없어 이 시점 이후의 신규 기간에 한해
 중단됐다 — §8 재구현 트랙 전까지의 공백(현재 뷰·스크리너 미사용이라 즉각 영향 없음,
 정보 손실도 아님 — v3는 report_lines 에서 언제든 재생성 가능).
-★ 다만 std_v2 쓰기가 완전히 멈춘 건 아니다 — `_sync_cf_da`(`_run_standardize_batches`
-docstring 참고)가 독자적으로 std_v2를 재계산하는 잔여 경로가 있다(범위 밖, 문서화됨).
+★2026-08-30(valuation_daily_blockers_da_netdebt_design_2026-08-30.md §5 순서1) —
+`_sync_cf_da`가 독자적으로 std_v2를 재계산하던 잔여 경로도 제거했다. std_v2 쓰기는
+이제 전무하다(fact_v2/extended_financials 소관 upsert만 남음).
 
 ④ 파싱·표준화는 **기업당 워커 프로세스 + 타임아웃**으로 처리한다: 대용량/병리 보고서
 (예: 30MB iXBRL)에서 100% CPU 로 정체하는 기업을 `--timeout` 초 초과 시 강제 종료·스킵하고
@@ -496,16 +497,18 @@ def _sync_capital(lookback_days: int = 5) -> None:
 def _sync_cf_da(corps: list[str]) -> None:
     """④-2 D&A note 복원(B5+Phase4) — 신규 표준화 기업의 연결 CF D&A 갭(2024+ Track A 전환으로
     누락)을 ① CF 주석/본문(cf_da) → ② 비용의 성격별 분류 주석(expense_nature) 하이브리드로 채워
-    EBITDA/da_total 재퇴행 방지. S→Q→C 재전파. 비치명(수집 계속). expense_nature 는 cf_da 다음에
-    돌아 **여전히 depreciation NULL** 인 잔여만 타겟(이중 계상 방지)."""
+    fact_v2/extended_financials 의 EBITDA/da_total 갭을 메운다. 비치명(수집 계속). expense_nature
+    는 cf_da 다음에 돌아 **여전히 depreciation NULL** 인 잔여만 타겟(이중 계상 방지).
+
+    ★2026-08-30(valuation_daily_blockers_da_netdebt_design_2026-08-30.md §5 순서1) — std_v2
+    재전파 호출은 두 sync 함수에서 제거됐다(std_v2 소비자 없음). fact_v2 upsert 만 한다."""
     if not corps:
         return
     try:
         from collector.cf_da_sync import sync_cf_da
         res = sync_cf_da(corps=corps, year_min=2024)
         if res["corps"]:
-            logger.info(f"[collect] ④-2 D&A 복원(CF) — 기업 {res['corps']} · note fact {res['facts']:,} · "
-                        f"std_v2 {res['std_recalc']:,} 재전파(실패 {res['fail']})")
+            logger.info(f"[collect] ④-2 D&A 복원(CF) — 기업 {res['corps']} · note fact {res['facts']:,}")
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[collect] ④-2 D&A 복원(CF) 실패(비치명적): {exc}")
     try:
@@ -513,7 +516,7 @@ def _sync_cf_da(corps: list[str]) -> None:
         res2 = sync_expense_nature(corps=corps, year_min=2024)
         if res2["corps"]:
             logger.info(f"[collect] ④-2 D&A 복원(비용성격 주석) — 기업 {res2['corps']} · "
-                        f"note fact {res2['facts']:,} · std_v2 {res2['std_recalc']:,} 재전파(실패 {res2['fail']})")
+                        f"note fact {res2['facts']:,}")
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[collect] ④-2 D&A 복원(비용성격) 실패(비치명적): {exc}")
 

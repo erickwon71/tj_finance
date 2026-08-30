@@ -1,5 +1,14 @@
 # valuation_daily std_v2→v3 이식 + std_v2 잔여 쓰기 제거 — 설계 문서 (2026-08-30)
 
+> **★2026-08-30 정정 — §Phase 0-2가 기록한 블로커 2건의 원인 귀속은 둘 다 틀렸다.**
+> 후속 실측·원문대조로 규명한 결과는
+> [`valuation_daily_blockers_da_netdebt_design_2026-08-30.md`](valuation_daily_blockers_da_netdebt_design_2026-08-30.md) §0에 있다:
+> ① `ebitda`/`da_total` — "v3에 결합공시 로직 미이식"이 아니라 **v2가 합성 `note.da_total`을
+> 이중계상(정확히 2배)** 하는 것. v3가 맞다 → `ev_ebitda` **보류 해제**.
+> ② `net_debt` — **P1A와 무관**(lease/borrow는 net_debt 산식에 없음). 원인은 v3의 차입금
+> alias 갭 + `_CURRENT_STRICT` 탈락분 미회수.
+> 아래 §2 D1의 D1-a/D1-b 구분과 §Phase 0-2의 원인 서술은 그 문서 §3 표로 대체됐다.
+
 > **미구현 — 승인 대기.** 이 문서는 설계까지만 담는다. 구현은 사용자가 별도로 지시한 뒤
 > 착수한다([[feedback-plan-then-wait]]).
 

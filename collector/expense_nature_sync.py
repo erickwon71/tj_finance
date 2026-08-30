@@ -6,8 +6,12 @@ collector/cf_da_sync.py 의 정확한 클론. 차이:
   - cf_da_sync 다음에 돌아 **여전히 depreciation IS NULL** 인 잔여만 타겟 → 이중 계상 방지
     (cf_da 가 CF 경로로 채우지 못한 보고서에서만 비용성격 주석으로 D&A 를 보충).
 
-순서 필수(data-coverage-gaps 교훈): 추출→store_facts→standardize_corp→derive_quarters_corp→
-calendarize_corp. calendar 단독은 stale.
+순서: 추출→store_facts(기업 단위 commit). extended_financials 소관 fact_v2 upsert 만
+수행한다.
+
+★2026-08-30(valuation_daily_blockers_da_netdebt_design_2026-08-30.md §5 순서1) —
+std_v2 재표준화(standardize_corp/derive_quarters_corp/calendarize_corp) 호출을
+제거했다. cf_da_sync.py 와 동일 사유(§모듈 docstring 참고) — std_v2 소비자가 없다.
 """
 from __future__ import annotations
 
@@ -18,9 +22,6 @@ from sqlalchemy import text
 from collector.db import get_session
 from fin2.extract.expense_nature import extract_expense_nature_facts
 from fin2.extract.xbrl import store_facts
-from fin2.standardize.build import standardize_corp
-from fin2.standardize.calendar import calendarize_corp
-from fin2.standardize.quarterly import derive_quarters_corp
 
 _TARGET_SQL = """
     SELECT s.corp_code, s.fiscal_year, s.fiscal_period,
@@ -44,17 +45,18 @@ _TARGET_SQL = """
 
 def sync_expense_nature(corps=None, year_min: int = 2024, basis: str = "consolidated",
                         max_corps: int | None = None) -> dict:
-    """corp 한정 비용성격 주석 D&A 복원 + 재표준화. corps=None 이면 전체(백필용).
+    """corp 한정 비용성격 주석 D&A 복원(fact_v2 upsert 만). corps=None 이면 전체(백필용).
 
-    **기업당 원자적 처리**: 각 corp 의 (추출→store_facts→commit) 다음 (표준화→분기→달력→commit)
-    을 그 corp 단위로 끝낸다 — 중단돼도 이미 처리된 corp 는 da_total 이 채워져(NOT NULL) 다음
-    실행의 타겟에서 자동 제외되므로, DB 자체가 체크포인트가 되어 **처음부터 다시 하지 않는다**.
+    **기업당 원자적 처리**: 각 corp 의 추출→store_facts→commit 을 그 corp 단위로 끝낸다 —
+    중단돼도 이미 처리된 corp 는 da_total 이 채워져(NOT NULL) 다음 실행의 타겟에서 자동
+    제외되므로, DB 자체가 체크포인트가 되어 **처음부터 다시 하지 않는다**.
     (예전엔 전체 추출을 단일 거대 트랜잭션 1회 commit 해, 중단 시 그날 작업 전부 롤백됐다.)
 
     max_corps: 한 실행에서 처리할 최대 기업 수(야간 잡의 실행시간을 유계로 — 나머지는 다음 밤).
                None 이면 대상 전부.
 
-    반환: {targets, corps, facts, std_recalc, fail}."""
+    반환: {targets, corps, facts, std_recalc, fail}. std_recalc/fail 은 std_v2 재전파가
+    제거돼(위 모듈 docstring 참고) 항상 0 — 호출부 호환을 위해 필드는 유지."""
     corp_clause = "AND s.corp_code = ANY(:corps)" if corps else ""
     sql = _TARGET_SQL.format(corp_clause=corp_clause)
     params: dict = {"basis": basis, "ymin": year_min}
@@ -72,10 +74,13 @@ def sync_expense_nature(corps=None, year_min: int = 2024, basis: str = "consolid
     if max_corps is not None:
         corp_list = corp_list[:max_corps]
 
-    stored = n_std = n_fail = affected = 0
+    stored = affected = 0
     for corp in corp_list:
         try:
-            # 1) 이 corp 의 모든 타겟(fy,fp) 추출 → store_facts → commit(기업 단위 원자).
+            # 이 corp 의 모든 타겟(fy,fp) 추출 → store_facts → commit(기업 단위 원자).
+            # ★2026-08-30: 여기서 이어 돌던 std_v2 재표준화(standardize_corp/
+            # derive_quarters_corp/calendarize_corp) 호출을 제거했다 — 소비자 없음
+            # (모듈 docstring 참고).
             corp_facts = 0
             with get_session() as session:
                 for t in by_corp[corp]:
@@ -93,13 +98,7 @@ def sync_expense_nature(corps=None, year_min: int = 2024, basis: str = "consolid
                 continue
             affected += 1
             stored += corp_facts
-            # 2) R 불변 → S→Q→C 재전파(누적 std_v2 + 이산분기 + 달력뷰까지 반영), 기업 단위 commit.
-            with get_session() as session:
-                n_std += standardize_corp(session, corp)
-                derive_quarters_corp(session, corp)
-                calendarize_corp(session, corp)
-                session.commit()
         except Exception:  # noqa: BLE001 — 개별 corp 실패 격리(비치명), 다음 corp 계속
-            n_fail += 1
+            pass
     return {"targets": len(targets), "corps": affected, "facts": stored,
-            "std_recalc": n_std, "fail": n_fail}
+            "std_recalc": 0, "fail": 0}

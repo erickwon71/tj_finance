@@ -3033,8 +3033,25 @@ passed / 1 failed(기존 무관). `AccountMapper.map()` 직접 호출로 대상 
 라벨(alias 3종 + 전환사채 변형 4개 + 유동성교환사채/교환사채/신주인수권부사채
 대조군) 전수 확인 완료.
 
-★전수재감사(`scripts/run_step2_alias_verification.sh`)는 이 문서 후속
-갱신 또는 메모리 `valuation-daily-blockers-rootcaused-2026-08-30` 참고.
+**★전수재감사 완료(2026-08-31, 107분 소요)**: std_v3 전체 재빌드(2,546개사) →
+Gate B 전수재감사 → **pass→fail_a 전이 0**(순서4-①과 정확히 같은 pass/
+fail_a/pending 분포 — face_audit이 애초에 이 필드들을 안 보므로 당연한
+안전성 확인). `net_debt` v2/v3 불일치율: FY2024 56.2%→**38.4%**, FY2025
+59.9%→**48.8%** — 순서4-① 단독 개선폭(11pt대)보다 훨씬 큰 도약, "몸통 3개
+라벨군" 가설(§2-7)이 실측으로 확정됨.
+
+**★원문 대조 2건**: `00100601` FY2024연결 — `유동차입금(사채포함)`
+27,920,346,589 + `비유동차입금(사채포함)의유동성대체부분` 500,000,000이
+합산돼 `net_debt`가 **v2와 원 단위까지 정확히 일치**(42,281,467,274),
+persisted `short_term_debt`는 설계대로 27,920,346,589(단일값)로 안전하게
+남음. `00103130` FY2024연결 — 흥미로운 부수 관찰: `전환사채`가 label엔
+"유동" 표기가 없는데 `section_path='부채>유동부채'`(현재 항목)로 공시됨 —
+`bs.convertible_bond`는 `_CURRENT_STRICT`/`_NONCURRENT_SIBLING` 가드가
+없어 만기 구분 없이 그대로 합산되지만, **net_debt은 ST/LT 배분과 무관하게
+총합만 맞으면 되므로 무해함**을 직접 확인(계산: 원문 5개 부채줄 합계
+62,065,151,232 중 아직 미등록인 `교환사채` 3,562,931,149만 제외한
+58,502,220,083이 정확히 wired net_debt 계산과 일치) — **이 필링이 정확히
+순서4-③이 필요한 이유**(교환사채 아직 미등록)를 실측으로 보여준 사례.
 
 근거: `account_maps/bs_accounts.py`(short_term_debt/current_portion_lt_debt
 alias 추가, `bs.convertible_bond`/`bs.current_convertible_bond` 신설) ·

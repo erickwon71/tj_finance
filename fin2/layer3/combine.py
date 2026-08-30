@@ -1330,8 +1330,20 @@ def _is_noncurrent_by_section_only(row: dict) -> bool:
 # wiring just these 3 already-registered orphans into net_debt's own debt sum resolves
 # 823/3,715 (22.2%) exactly and narrows another 736 (19.8%) — before any new alias is
 # added (that's step2, §2-7 순서2).
-_V3_ST_DEBT_PARTS = ("bs.short_term_debt", "bs.current_portion_lt_debt", "bs.current_bond")
-_V3_LT_DEBT_PARTS = ("bs.long_term_debt", "bs.bond")
+#
+# step2 (2026-08-31, §2-7 순서2): bs.convertible_bond/bs.current_convertible_bond added
+# (account_maps/bs_accounts.py) for the '전환사채' family — kept as their OWN leaf
+# canonicals rather than folded into bs.bond/bs.current_bond, because a company commonly
+# discloses plain 사채/차입금 debt AND 전환사채 as separate BS lines in the SAME filing
+# (measured 2026-08-31: 231 filings have both '사채' and '전환사채' rows, 1,300 have both
+# a 유동성장기부채-family row and a current-전환사채-family row) — folding them into the
+# same canonical would make _resolve() see two conflicting candidates and HOLD the whole
+# canonical (net_debt-visible amount vanishes) instead of summing. Mirrors v2's own
+# current_bonds_conv, which exists as a separate leaf from bonds/current_bonds_plain for
+# exactly this reason.
+_V3_ST_DEBT_PARTS = ("bs.short_term_debt", "bs.current_portion_lt_debt", "bs.current_bond",
+                     "bs.current_convertible_bond")
+_V3_LT_DEBT_PARTS = ("bs.long_term_debt", "bs.bond", "bs.convertible_bond")
 
 
 def _additive_debt_for_net_debt(canon: dict, col: dict) -> tuple[int | None, int | None]:

@@ -209,13 +209,35 @@ BS_ACCOUNTS: dict[str, list[str]] = {
         # 단기차입금(협의)과 값충돌. short_term_debt = 차입금 계열만.
         "차입금등",          # K-GAAP 차입금 등 통합 표현
         "차입금",            # 일반 차입금 (유동/비유동 불분명 시 유동 우선)
+        # 순서4-② 2026-08-31(docs/plans/valuation_daily_blockers_da_netdebt_design_
+        # 2026-08-30.md §2-7): 2024+ DART 표준라벨. 실측 no_orphan 1,389건 중 최다
+        # (355건, unknown 이었음). normalize_account_name()이 한글 사이 공백을
+        # 접어 '유동 차입금(사채 포함)' → '유동차입금(사채포함)'로 들어오므로 접은
+        # 형태로 등록.
+        "유동차입금(사채포함)",
     ],
     "bs.current_portion_lt_debt": [
         "유동성장기부채", "유동성장기차입금",
         "유동성사채",
+        # 순서4-② 2026-08-31(§2-7): '유동성장기부채'의 2024+ 표준라벨 변형(185건,
+        # unknown 이었음) — '비유동차입금(사채포함)'의 유동성 대체(1년 내 만기도래)
+        # 부분이라는 뜻으로 개념은 동일.
+        "비유동차입금(사채포함)의유동성대체부분",
     ],
     "bs.current_bond": [
         "유동성회사채", "단기사채",
+    ],
+    # 순서4-② 2026-08-31(§2-7 no_orphan 라벨 전수집계): 전환사채(CB)는 v2도 사채(bs.bond)
+    # 와 별도 canonical(current_bonds_conv)로 다룬다 — 실측(2026-08-31) 확인: FY2022+
+    # BS에서 '사채'와 '전환사채'가 별도 줄로 함께 등장하는 필링이 231건 있어(둘 다
+    # bs.bond로 합치면 값 충돌), 반드시 별도 canonical이어야 한다. 유동 쪽도 마찬가지
+    # 이유로 bs.current_portion_lt_debt/bs.current_bond와 분리(전환사채(유동) 계열과
+    # 유동성장기부채류가 같은 필링에 동시 등장하는 사례 1,300건 실측).
+    "bs.convertible_bond": [
+        "전환사채",   # 165건, unknown 이었음
+    ],
+    "bs.current_convertible_bond": [
+        "유동성전환사채", "전환사채(유동)", "유동전환사채",
     ],
     "bs.other_current_payables": [
         "기타유동부채", "기타채무", "기타지급채무",

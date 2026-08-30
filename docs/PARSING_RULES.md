@@ -2987,6 +2987,62 @@ measure_net_debt_v2_v3_mismatch.py`): FY2024 67.0%→**56.2%**, FY2025
 `account_maps/bs_accounts.py:213-219,260-262`(기존 등록된 orphan alias) ·
 `docs/plans/valuation_daily_blockers_da_netdebt_design_2026-08-30.md` §2-6/§2-7.
 
+## R58 순서4-② "alias 3종" (2026-08-31) — `account_maps/bs_accounts.py` +
+`fin2/layer3/combine.py`, 구현 완료·전수재감사는 후속 갱신
+
+§2-7의 no_orphan(원인A, 1,389건) 라벨 전수집계가 지목한 몸통 3개 라벨군을
+등록:
+
+1. `유동차입금(사채포함)`(355건, unknown) → `bs.short_term_debt`.
+2. `비유동차입금(사채포함)의유동성대체부분`(185건, unknown) →
+   `bs.current_portion_lt_debt`(개념상 `유동성장기부채`와 동일 — "비유동
+   차입금(사채포함)"의 1년 내 만기도래분).
+3. `전환사채`류(165+건) → **신규 canonical 2개**: `bs.convertible_bond`(비유동,
+   `전환사채`) / `bs.current_convertible_bond`(유동, `전환사채(유동)`/
+   `유동전환사채`/`유동성전환사채`).
+
+**★설계 각주 1개를 넘어 신규 canonical 2개가 필요했던 이유(실측, 2026-08-31)**
+— 메모리/설계문서 초안은 "신규 canonical 1개"로 적었으나, 값 충돌 위험을
+직접 실측하니 **반드시 2개**여야 했다: `사채`와 `전환사채`가 같은 필링에
+별도 줄로 함께 등장하는 사례가 **231건**, 유동성장기부채류와 유동
+전환사채류가 함께 등장하는 사례가 **1,300건**(둘 다 FY2022+ BS, table_seq=0
+실측) — 하나의 canonical에 몰아넣으면 `_resolve()`가 두 값을 충돌로 보고
+그 canonical 전체를 HELD(NULL) 처리해버려 **회수가 아니라 오히려 손실**이
+난다. v2도 같은 이유로 `bonds`/`current_bonds_plain`과 별도로
+`current_bonds_conv`를 갖고 있다 — 그 구조를 그대로 재현.
+
+`유동성전환사채`/`유동성교환사채`는 이미 `bs.current_portion_lt_debt`에
+fuzzy 0.93으로 우연히 걸려 있었다(§2-7 각주) — `전환사채` 계열 3개를 exact
+alias로 등록하면 그 fuzzy 매치를 이기고 새 canonical로 옮겨간다. 이건
+버그 수정 보너스이기도 하다: `유동성전환사채`가 `유동성장기부채`와 같은
+필링에 동시 등장하면(1,300건 겹침 실측) 종전엔 **`bs.current_portion_lt_debt`
+자체가 충돌로 HELD**됐을 것 — 새 canonical로 분리한 뒤로는 그 필링들의
+`bs.current_portion_lt_debt`도 이제 깨끗하게 확정될 가능성이 높다(부수 개선,
+`유동성교환사채`는 이번엔 손대지 않음 — 순서4-③ 소관).
+
+`fin2/layer3/combine.py`의 `_V3_ST_DEBT_PARTS`/`_V3_LT_DEBT_PARTS`에 두
+canonical을 추가해 순서4-①의 net_debt 합산 경로에 그대로 편입(신규 배선
+불필요, 튜플에 추가만).
+
+**검증**: 단위테스트 6건 신설(`fin2/tests/
+test_combine_debt_wiring_step2_aliases.py`) — 3개 alias 매핑(exact stage
+확인) + 신규 canonical 2개 매핑 + `사채`/`전환사채` 동시 등장·
+`유동성장기부채`/`유동성전환사채` 동시 등장 각각 충돌 없이 독립 확정되는지
++ 신규 canonical이 합산에 편입되는지. `pytest tests/ fin2/tests/` 651
+passed / 1 failed(기존 무관). `AccountMapper.map()` 직접 호출로 대상 10개
+라벨(alias 3종 + 전환사채 변형 4개 + 유동성교환사채/교환사채/신주인수권부사채
+대조군) 전수 확인 완료.
+
+★전수재감사(`scripts/run_step2_alias_verification.sh`)는 이 문서 후속
+갱신 또는 메모리 `valuation-daily-blockers-rootcaused-2026-08-30` 참고.
+
+근거: `account_maps/bs_accounts.py`(short_term_debt/current_portion_lt_debt
+alias 추가, `bs.convertible_bond`/`bs.current_convertible_bond` 신설) ·
+`fin2/layer3/combine.py`(`_V3_ST_DEBT_PARTS`/`_V3_LT_DEBT_PARTS` 확장) ·
+`fin2/tests/test_combine_debt_wiring_step2_aliases.py` ·
+`scripts/run_step2_alias_verification.sh` ·
+`docs/plans/valuation_daily_blockers_da_netdebt_design_2026-08-30.md` §2-7.
+
 ---
 
 ## 부록 A. 원문(DART XML) 함정 카탈로그

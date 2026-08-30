@@ -743,7 +743,7 @@ WHERE canonical_account = 'note.da_total' AND source_format = 'note_cf';
 | 1 | 상위 문서 **§D3** — `cf_da_sync`/`expense_nature_sync`에서 3줄 제거 | 오염행 **신규 생산 중단**. B2 코드 수정 없이 출혈을 먼저 막는다 | 낮음(제거만) | ✅ 완료(`bd39d44`) |
 | 2 | **§3 이식** — matview `ni`/`eq`/`revenue`/`cfo`/`dividends_paid`/**`ebitda`** → v3, `net_debt`만 v2 LATERAL | 519개사 `ev_ebitda` **정정**. 파생 matview라 롤백 즉시 가능 | 낮음 | ✅ 완료(2026-08-30 저녁, 마이그레이션 `2026_08_valuation_daily_v3_ebitda_migration` + refresh, 표본 검증·회귀테스트 통과) |
 | 3 | **B1-D1** — `_NONCURRENT_SIBLING` 재라우팅 | `net_debt` 최대 원인, 면적 좁음 | 중간 → 4-4 전수재감사 | ✅ 코드+단위테스트+표본1건(00130763)+**전수재감사 완료**(회귀 0, R57 등재, `9442d8b`/`run_r57_verification.sh`). ★단 FY2024/25 v2/v3 net_debt 집계 불일치율은 67.6%→67.0% / 69.6%→70.9%로 **거의 무변화** — 원인B(이 항목)의 실제 영향 모집단이 작고, 원인A가 예상보다 훨씬 크다(§2-5 신규 측정). |
-| 4 | **B1-D2(순서4)** — 원인C 해소, 하위 3단계로 확정 실행(§2-7): **①wiring**(orphan 3개 canonical을 net_debt 합산에 연결) → **②alias 3종**(신규 canonical 포함) → **③나머지 소수 라벨** | 잔여 미매핑 + 세부항목 미합산(원인C, §2-6) | 단계별 저→중위험 → 매 단계 4-4 전수재감사 | **①②완전 종료** — ①wiring(2026-08-31, R58, 커밋`640f062`): net_debt 67.0%→56.2%/70.9%→59.9%. ②alias 3종(2026-08-31, 커밋`7db4a55`): net_debt **56.2%→38.4%/59.9%→48.8%**(도약폭 최대). 둘 다 전수재감사 pass→fail_a 0 + 원문대조 완료(§2-8/§2-9). **③(신주인수권부사채/교환사채) 진행 중** |
+| 4 | **B1-D2(순서4)** — 원인C 해소, 하위 3단계로 확정 실행(§2-7): **①wiring**(orphan 3개 canonical을 net_debt 합산에 연결) → **②alias 3종**(신규 canonical 포함) → **③나머지 소수 라벨** | 잔여 미매핑 + 세부항목 미합산(원인C, §2-6) | 단계별 저→중위험 → 매 단계 4-4 전수재감사 | **①②코드+전수재감사+원문대조 완료** — ①wiring(R58, 커밋`640f062`): net_debt 67.0%→56.2%/70.9%→59.9%. ②alias 3종(커밋`7db4a55`): net_debt **56.2%→38.4%/59.9%→48.8%**(도약폭 최대). §2-8/§2-9. **③(신주인수권부사채/교환사채 4개 canonical + fuzzy 충돌 연쇄 부작용 수정) 코드+단위테스트 완료(§2-10), 전수재감사 진행 중**(`scripts/run_step3_alias_verification.sh`) |
 | 5 | matview `net_debt`도 v3로 → **단일 LATERAL 복귀** | 이식 완료 | 낮음 | 미착수(4 전체 선행) |
 | 6 | **B2 수정**(`fin2/extract/notes.py`) | 1이 끝났으면 **불필요할 수 있다**(§B2-D4) — 그때 재판단 | 낮음 | 재판단 대기 — 1번 완료로 신규 오염 생산은 이미 멈춤, fact_v2 기존 합성행 provenance 정리만 남음(§B2-D3, §6 후속) |
 
@@ -816,6 +816,32 @@ FY2025 **59.9%→48.8%** — 지금까지 중 최대 개선폭, "몸통 3개 라
 충돌 위험. 부수 발견: `교환사채(유동)`/`유동교환사채`가 순서4-②가 만든
 `bs.current_convertible_bond`에 fuzzy 0.91~0.92로 우연히 걸리기 시작함
 (exact alias 등록 시 해소될 것).
+
+### 2-10. ★★★★★순서4-③ 구현 완료(2026-08-31) — 신주인수권부사채/교환사채
+4개 canonical + 순서4-②가 낸 fuzzy 충돌 연쇄 부작용 일괄 수정
+
+`bs.exchange_bond`/`bs.current_exchange_bond`/`bs.warrant_bond`/
+`bs.current_warrant_bond` 4개 canonical 등록, `_V3_ST_DEBT_PARTS`/
+`_V3_LT_DEBT_PARTS`에 편입. §2-9(순서4-②) 완료 직후 이 작업을 하면서 alias
+카탈로그 전체를 debt/사채 라벨 227종에 대해 스윕(`AccountMapper.map()` 직접
+호출)했더니, 순서4-②·③이 새로 등록한 exact alias들이 서로 **한 글자
+(유동/비유동) 차이인 반의어 라벨을 fuzzy로 잘못 끌어당기는 연쇄 부작용**을
+냈다는 걸 발견했다 — 상세 표는 `docs/PARSING_RULES.md` R58 순서4-③ 절.
+
+**중요 구분(안전성 재확인)**: 이 부작용 대부분은 **net_debt 총액엔 무해**
+했다 — ST/LT 버킷이 틀려도 둘 다 같은 net_debt 합산에 들어가므로 총합은
+안 변한다(`00103130` 사례, §2-9). **진짜 위험한 건 같은 canonical 안에서
+값이 다른 두 후보가 만나 `_resolve()`가 통째로 HELD시키는 경우뿐**이고,
+그 실측 충돌 사례 3건(`유동사채`↔`사채`류 43건, `비유동성사채`↔유동성장기
+부채류 38건, `사채(비유동)`↔전환사채류 4건)은 방치하면 net_debt이 실제로
+줄어들 뻔했다 — 전부 수정 완료. 나머지는 ST/LT 분류 정확도(데이터 품질)
+차원에서 같이 정리했고, `차입금및사채`류 **결합(rollup) 라벨**은 원래부터
+단일 개념이 아니라 정확한 재배분이 불가능해 손대지 않고 그대로 뒀다
+(net_debt 무해).
+
+단위테스트 7건 추가, `pytest tests/ fin2/tests/` 658 passed/1 failed(기존
+무관). ★전수재감사(`scripts/run_step3_alias_verification.sh`)는 이 절
+후속 갱신.
 
 ---
 

@@ -3060,6 +3060,59 @@ alias 추가, `bs.convertible_bond`/`bs.current_convertible_bond` 신설) ·
 `scripts/run_step2_alias_verification.sh` ·
 `docs/plans/valuation_daily_blockers_da_netdebt_design_2026-08-30.md` §2-7.
 
+## R58 순서4-③ "나머지 소수 라벨"(신주인수권부사채/교환사채) + 순서4-②의
+fuzzy 충돌 부작용 일괄 수정 (2026-08-31)
+
+**본편**: `account_maps/bs_accounts.py`에 신규 canonical 4개 등록 — `bs.exchange_bond`
+(교환사채, 비유동)/`bs.current_exchange_bond`(교환사채, 유동)/`bs.warrant_bond`
+(신주인수권부사채, 비유동)/`bs.current_warrant_bond`(신주인수권부사채, 유동). 전환사채와
+같은 이유로 반드시 4개(2쌍) 분리 — 실측 동시등장(FY2022+ BS, table_seq=0): `사채`↔
+`교환사채` 35건, `사채`↔`신주인수권부사채` 30건, `전환사채`↔`교환사채` 139건,
+`전환사채`↔`신주인수권부사채` **434건**, `교환사채`↔`신주인수권부사채` 37건, 각 계열
+자체의 유동/비유동 동시등장 63건/88건. `fin2/layer3/combine.py`의
+`_V3_ST_DEBT_PARTS`/`_V3_LT_DEBT_PARTS`에 편입.
+
+**★부수 발견 — 순서4-②/③이 만든 새 exact alias들이 서로 텍스트 유사도로 간섭하며
+연쇄적 fuzzy 오매핑을 냈다(2026-08-31, alias 카탈로그 전체 스윕으로 발견)**. 새
+canonical/alias를 등록할 때마다 그와 한 글자(`유동`/`비유동`/`(유동)`/`(비유동)`)만
+다른 반의어 라벨이 fuzzy로 잘못 끌려가는 패턴이 반복됐다:
+
+| 문제 라벨(FY2022+ 실측 건수) | 등록 전 오매핑 | 원인 | 수정 후 정답 |
+|---|---|---|---|
+| `비유동전환사채`(118)/`비유동성전환사채`(14)/`전환사채(비유동)`(71)/`장기전환사채`(7+) | `bs.current_convertible_bond`(fuzzy) | 순서4-②가 만든 `유동전환사채`류와 한 글자 차이 | `bs.convertible_bond` |
+| `사채(유동)`(11+) | `bs.current_convertible_bond`(fuzzy 0.968) | `전환사채(유동)`류와 유사 | `bs.current_bond` |
+| `비유동사채`(125)/`비유동성회사채`(8) | `bs.convertible_bond`/`bs.current_bond`(fuzzy) | 등록 전엔 애초에 unknown(0.80 미만), 순서4-② 이후 넘어감 | `bs.bond` |
+| `유동사채`(60) | `bs.bond`(fuzzy 0.972) | ★**실측 충돌위험**: `사채`/`장기사채`/`회사채`와 동시등장 **43건** — 방치 시 그 필링들의 `bs.bond` 전체가 `_resolve()` 충돌로 HELD, net_debt 손실 | `bs.current_bond` |
+| `비유동성사채`(42) | `bs.current_portion_lt_debt`(fuzzy 0.975) | ★**실측 충돌위험**: 유동성장기부채류와 동시등장 **38건** | `bs.bond` |
+| `사채(비유동)`(38) | `bs.convertible_bond`(fuzzy 0.970) | ★실측 충돌위험: 전환사채류와 동시등장 4건 | `bs.bond` |
+| `비유동차입금(사채포함)의비유동성부분`(187)/`비유동차입금의비유동성부분`(14) | `bs.current_portion_lt_debt`(fuzzy) | 순서4-②의 `...의유동성대체부분`(반대 개념: 유동 전환 vs 비유동 잔여)과 유사 | `bs.long_term_debt` |
+| `비유동차입금의유동성대체부분`(**512건**, `(사채포함)` 없는 축약형) | ★위 항목을 고치는 과정에서 **새로 뒤집힘**(0.956 > 0.940로 역전) | 방금 추가한 `...의비유동성부분` alias가 오히려 이 라벨을 더 가깝게 끌어감(휘프-어-몰) | `bs.current_portion_lt_debt`(exact 재등록으로 고정) |
+| `비유동교환사채`/`비유동신주인수권부사채`(순서4-③ 등록 시 선제 차단) | (등록 안 했으면 fuzzy로 반대쪽) | 같은 패턴 선제 인지 | `bs.exchange_bond`/`bs.warrant_bond` |
+
+**중요한 안전성 구분**: 이 표의 "오매핑"은 대부분 **net_debt 총액엔 무해**했다 —
+`_V3_ST_DEBT_PARTS`/`_V3_LT_DEBT_PARTS`는 둘 다 net_debt 하나로 합산되므로 ST/LT
+버킷을 틀려도 총합은 안 변한다(`00103130` 사례, R58 순서4-② 절 참고). **진짜
+위험은 같은 canonical 안에서 값이 다른 두 후보가 만나 `_resolve()`가 통째로
+HELD시키는 경우뿐**이다 — 위 표에서 ★표시한 3건(유동사채/비유동성사채/
+사채(비유동))은 실측으로 그 충돌이 **실제로 발생하는** 필링이 있었기(43/38/4건)
+때문에 우선 수정했고, 나머지는 ST/LT 분류 정확도 개선(데이터 품질) 차원에서
+같이 정리했다. `차입금및사채`/`단기차입금및유동성장기부채` 류의 **결합(rollup)
+라벨**은 원래부터 단일 개념이 아니라 정확한 재배분이 불가능 — 손대지 않고
+그대로 둠(fuzzy가 아무 wired canonical에나 떨어져도 net_debt엔 무해).
+
+**검증**: 단위테스트 7건 추가(`fin2/tests/test_combine_debt_wiring_step3_aliases.py`)
+— 신규 canonical 4개 매핑 + 4개 사채계열 동시존재 무충돌 + 합산 편입 + 위 표의
+반의어 혼동 회귀 3건(exact 재확인) + 실측 충돌 위험 케이스의 `_resolve()` 무충돌
+확인. `pytest tests/ fin2/tests/` 658 passed / 1 failed(기존 무관).
+
+★전수재감사는 `scripts/run_step3_alias_verification.sh`로 후속 진행 — 결과는
+이 문서 후속 갱신 또는 메모리 `valuation-daily-blockers-rootcaused-2026-08-30` 참고.
+
+근거: `account_maps/bs_accounts.py`(exchange_bond/warrant_bond 신설 4종 +
+반의어 혼동 수정 alias 다수) · `fin2/layer3/combine.py`(`_V3_ST_DEBT_PARTS`/
+`_V3_LT_DEBT_PARTS` 재확장) · `fin2/tests/test_combine_debt_wiring_step3_aliases.py` ·
+`docs/plans/valuation_daily_blockers_da_netdebt_design_2026-08-30.md` §2-7/§2-10.
+
 ---
 
 ## 부록 A. 원문(DART XML) 함정 카탈로그

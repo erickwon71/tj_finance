@@ -1341,9 +1341,19 @@ def _is_noncurrent_by_section_only(row: dict) -> bool:
 # canonical (net_debt-visible amount vanishes) instead of summing. Mirrors v2's own
 # current_bonds_conv, which exists as a separate leaf from bonds/current_bonds_plain for
 # exactly this reason.
+#
+# step3 (2026-08-31, §2-7 순서3): bs.exchange_bond/bs.current_exchange_bond(교환사채)
+# and bs.warrant_bond/bs.current_warrant_bond(신주인수권부사채) added — same reasoning
+# as step2's convertible_bond split, confirmed by the same kind of co-occurrence
+# measurement (사채↔교환사채 35, 사채↔신주인수권부사채 30, 전환사채↔교환사채 139,
+# 전환사채↔신주인수권부사채 434(!), 교환사채↔신주인수권부사채 37, plus each family's own
+# current/noncurrent co-occurrence — none of these can share a canonical with each other
+# or with bond/convertible_bond without risking a HELD conflict.
 _V3_ST_DEBT_PARTS = ("bs.short_term_debt", "bs.current_portion_lt_debt", "bs.current_bond",
-                     "bs.current_convertible_bond")
-_V3_LT_DEBT_PARTS = ("bs.long_term_debt", "bs.bond", "bs.convertible_bond")
+                     "bs.current_convertible_bond", "bs.current_exchange_bond",
+                     "bs.current_warrant_bond")
+_V3_LT_DEBT_PARTS = ("bs.long_term_debt", "bs.bond", "bs.convertible_bond",
+                     "bs.exchange_bond", "bs.warrant_bond")
 
 
 def _additive_debt_for_net_debt(canon: dict, col: dict) -> tuple[int | None, int | None]:

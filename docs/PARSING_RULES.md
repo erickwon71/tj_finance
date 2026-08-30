@@ -2949,9 +2949,35 @@ def _additive_debt_for_net_debt(canon, col):
 없을 때 가드 미작동. `pytest tests/ fin2/tests/` 645 passed / 1 failed(기존 무관,
 `test_lxintl_facility_table_dropped`).
 
-**전수재감사**: `scripts/run_step1_debt_wiring_verification.sh` — 결과는 이
-문서의 후속 갱신 또는 메모리 `valuation-daily-blockers-rootcaused-2026-08-30`
-참고(작성 시점엔 진행 중).
+**★전수재감사 완료(2026-08-31, `scripts/run_step1_debt_wiring_verification.sh`,
+109분 소요)**: face_audit 스냅샷(`face_audit_snap_20260831_step1`) → std_v3
+전체 재빌드(5-shard, 2,546개사·303,986행) → Gate B 전수재감사(5-shard) →
+**pass→fail_a 전이 0**(회귀 없음). `net_debt` v2/v3 불일치율(`scripts/
+measure_net_debt_v2_v3_mismatch.py`): FY2024 67.0%→**56.2%**, FY2025
+70.9%→**59.9%**(둘 다 약 11pt 개선, §2-7의 wiring 단독 exact_fix 측정치
+22.2%/19.8%와 방향·규모가 일치).
+
+**★원문 대조(3건, `scripts/inspect_net_debt_case.py`)** — v2 비교만으로 끝내지
+않는다는 원칙([[feedback-verify-against-source]])대로 face BS(`table_seq=0`)와
+직접 대조:
+- `00126380`(삼성전자) FY2024연결 — `단기차입금`/`장기차입금`/`사채` 3줄, `사채`
+  14,530,000,000이 `bs.bond`로 정상 확정돼 `long_term_debt` 합산에 들어감.
+  `net_debt` 재계산이 저장값과 원 단위까지 일치 확인(수식 직접 재현).
+- `00115977` FY2024연결 — LT측(`장기차입금`+`사채`→`bs.bond`)이 **v2와 원
+  단위까지 정확히 일치**(247,831,892,331). 독립적 교차검증.
+- `00102858`/`00115977` 둘 다에서 **새 발견(버그 아님, 안전하게 보수적으로
+  동작)**: `bs.current_portion_lt_debt`(`유동성장기부채`/`유동성장기차입금`/
+  `유동성사채`)가 서로 다른 3개 개념을 **한 canonical에 합쳐놨다** — 한 회사가
+  `유동성장기차입금`과 `유동성사채`를 **별도 줄로 동시에** 공시하면(실측:
+  두 사례 다 해당) `_resolve()`가 값 충돌로 HELD 처리해 그 canonical 전체가
+  `None`이 된다(가드가 막아서가 아니라 `_resolve()`의 기본 단일값 정책).
+  `_additive_debt_for_net_debt`는 `canon.get(c) is not None`만 확인하므로
+  이 경우 **조용히 빠지고 안전하게 보수적으로 동작**(이중계상·오류 없음) —
+  다만 그만큼 wiring의 실제 회수율은 §2-7의 "3개 canonical 전부 확정" 가정보다
+  현실에선 약간 낮다. v2는 XBRL acode로 이 둘을 애초에 별도 canonical
+  (`current_lt_debt`/`current_bonds_plain`)로 갖고 있어 이 충돌이 없다 —
+  **후속 백로그**: `bs.current_portion_lt_debt`를 v2처럼 2개로 쪼개는 안(§6에
+  등재, 지금 범위 아님).
 
 근거: `fin2/layer3/combine.py`(`_V3_ST_DEBT_PARTS`/`_V3_LT_DEBT_PARTS`/
 `_additive_debt_for_net_debt`/`_apply_enrichment`) ·

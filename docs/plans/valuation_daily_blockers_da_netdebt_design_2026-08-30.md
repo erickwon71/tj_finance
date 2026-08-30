@@ -743,7 +743,7 @@ WHERE canonical_account = 'note.da_total' AND source_format = 'note_cf';
 | 1 | 상위 문서 **§D3** — `cf_da_sync`/`expense_nature_sync`에서 3줄 제거 | 오염행 **신규 생산 중단**. B2 코드 수정 없이 출혈을 먼저 막는다 | 낮음(제거만) | ✅ 완료(`bd39d44`) |
 | 2 | **§3 이식** — matview `ni`/`eq`/`revenue`/`cfo`/`dividends_paid`/**`ebitda`** → v3, `net_debt`만 v2 LATERAL | 519개사 `ev_ebitda` **정정**. 파생 matview라 롤백 즉시 가능 | 낮음 | ✅ 완료(2026-08-30 저녁, 마이그레이션 `2026_08_valuation_daily_v3_ebitda_migration` + refresh, 표본 검증·회귀테스트 통과) |
 | 3 | **B1-D1** — `_NONCURRENT_SIBLING` 재라우팅 | `net_debt` 최대 원인, 면적 좁음 | 중간 → 4-4 전수재감사 | ✅ 코드+단위테스트+표본1건(00130763)+**전수재감사 완료**(회귀 0, R57 등재, `9442d8b`/`run_r57_verification.sh`). ★단 FY2024/25 v2/v3 net_debt 집계 불일치율은 67.6%→67.0% / 69.6%→70.9%로 **거의 무변화** — 원인B(이 항목)의 실제 영향 모집단이 작고, 원인A가 예상보다 훨씬 크다(§2-5 신규 측정). |
-| 4 | **B1-D2(순서4)** — 원인C 해소, 하위 3단계로 확정 실행(§2-7): **①wiring**(orphan 3개 canonical을 net_debt 합산에 연결) → **②alias 3종**(신규 canonical 포함) → **③나머지 소수 라벨** | 잔여 미매핑 + 세부항목 미합산(원인C, §2-6) | 단계별 저→중위험 → 매 단계 4-4 전수재감사 | **①wiring 코드+단위테스트 완료(2026-08-31, R58)**, 전수재감사 진행 중(`scripts/run_step1_debt_wiring_verification.sh`). ②③ 미착수 |
+| 4 | **B1-D2(순서4)** — 원인C 해소, 하위 3단계로 확정 실행(§2-7): **①wiring**(orphan 3개 canonical을 net_debt 합산에 연결) → **②alias 3종**(신규 canonical 포함) → **③나머지 소수 라벨** | 잔여 미매핑 + 세부항목 미합산(원인C, §2-6) | 단계별 저→중위험 → 매 단계 4-4 전수재감사 | **①wiring 완전 종료(2026-08-31, R58, 커밋 `640f062`)** — 코드+단위테스트+전수재감사(pass→fail_a 0)+net_debt 개선폭 실측(67.0%→56.2%/70.9%→59.9%)+원문대조 3건까지 전부 완료(§2-8). ②③ 진행 중 |
 | 5 | matview `net_debt`도 v3로 → **단일 LATERAL 복귀** | 이식 완료 | 낮음 | 미착수(4 전체 선행) |
 | 6 | **B2 수정**(`fin2/extract/notes.py`) | 1이 끝났으면 **불필요할 수 있다**(§B2-D4) — 그때 재판단 | 낮음 | 재판단 대기 — 1번 완료로 신규 오염 생산은 이미 멈춤, fact_v2 기존 합성행 provenance 정리만 남음(§B2-D3, §6 후속) |
 
@@ -753,7 +753,7 @@ canonical) — ①wiring 전수재감사가 회귀 0으로 끝난 뒤 착수**(�
 매번 새 `face_audit` 스냅샷 필수(단계마다 combine.py 자체가 바뀌므로 재사용 불가,
 R57/①과 달리).
 
-### 2-8. ★★★★★순서4-① wiring 구현 완료(2026-08-31) — 결과는 후속 갱신
+### 2-8. ★★★★★순서4-① wiring 구현+전수재감사+원문대조 전부 완료(2026-08-31)
 
 `fin2/layer3/combine.py`에 `_V3_ST_DEBT_PARTS`/`_V3_LT_DEBT_PARTS`/
 `_additive_debt_for_net_debt()` 신설 — §2-7이 측정한 3개 orphan canonical
@@ -765,11 +765,22 @@ R57/①과 달리).
 R58). `rule_additive_debt`(v2)의 `total_liabilities×1.05` 이중계상 가드를 v3
 canonical 이름으로 이식. 단위테스트 6건(`fin2/tests/
 test_combine_debt_wiring_net_debt.py`) 전부 통과, `pytest tests/ fin2/tests/`
-645 passed/1 failed(기존 무관). **전수재감사(`scripts/
-run_step1_debt_wiring_verification.sh`) 진행 중** — face_audit 스냅샷
-`face_audit_snap_20260831_step1`, std_v3 전체 재빌드, Gate B 전수재감사,
-net_debt v2/v3 불일치율 재측정까지 자동화. 결과는 이 절 하단 또는 메모리
-`valuation-daily-blockers-rootcaused-2026-08-30`에 후속 갱신.
+645 passed/1 failed(기존 무관). 커밋 `640f062`.
+
+**★전수재감사 완료(`scripts/run_step1_debt_wiring_verification.sh`, 109분)**:
+std_v3 전체 재빌드(2,546개사) → Gate B 전수재감사 → **pass→fail_a 전이 0**.
+`net_debt` v2/v3 불일치율: FY2024 67.0%→**56.2%**, FY2025 70.9%→**59.9%**
+(§2-7의 exact_fix 22.2%/19.8%와 방향·규모 일치).
+
+**★원문 대조 3건 완료**(`scripts/inspect_net_debt_case.py`, v2 비교만으로
+끝내지 않음): `00126380`(삼성전자)·`00115977` 둘 다 산식을 원 단위까지 직접
+재현·검증. 부수 발견(버그 아님, §6 후속 백로그로 등재) — `bs.current_portion_
+lt_debt`가 `유동성장기부채/유동성장기차입금`과 `유동성사채`라는 서로 다른
+개념을 한 canonical에 합쳐놔서, 한 회사가 그 둘을 별도 줄로 동시 공시하면
+`_resolve()` 충돌로 HELD → wiring이 그만큼 회수 못 함(안전하게 보수적으로
+빠짐, 이중계상 없음). 상세는 R58/§6 참고.
+
+★순서4-① 완전 종료. 다음은 순서4-②(alias 3종).
 
 ---
 
@@ -784,6 +795,15 @@ net_debt v2/v3 불일치율 재측정까지 자동화. 결과는 이 절 하단 
   독립 트랙으로 남는다(`lease_liability`/`borrowings_*` 컬럼 자체의 정확도 개선 목적).
 - **pre-1999 249행**·**`is_stub` v3 PK 재도입** — 상위 문서 §6과 동일.
 - **`note_expense` 경로** — 실측상 무해(688건 중 2건만 total==parts). 조치 불필요.
+- **`bs.current_portion_lt_debt` 개념 분리**(순서4-① 검증 중 신규 발견, 2026-08-31,
+  `00102858`/`00115977` 원문대조) — 지금은 `유동성장기부채`/`유동성장기차입금`/
+  `유동성사채` 3개 서로 다른 개념이 한 canonical에 있어, 한 회사가 `유동성장기차입금`과
+  `유동성사채`를 별도 줄로 동시 공시하면 `_resolve()`가 충돌로 HELD 처리 → wiring이
+  그 회사분을 회수 못 한다(버그 아님, 안전하게 보수적으로 빠짐 — 이중계상 없음).
+  v2는 XBRL acode로 `bs.current_lt_debt`/`bs.current_bonds_plain` 2개로 애초에
+  분리돼 있어 이 충돌이 없다. v3도 `유동성사채`를 별도 canonical(가칭
+  `bs.current_bond_plain`)로 분리하고 `_V3_ST_DEBT_PARTS`에 추가하면 회수율이
+  더 올라갈 것으로 보이나, 순서4-①~③ 범위 밖 — 규모 미실측, 별도 트랙으로.
 
 ---
 

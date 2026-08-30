@@ -308,6 +308,17 @@ v3에 등가물이 없다. v3의 `industry_lines`는 **매출 구성요소 전�
 같이 멈춘다(→ §3.9 `extended_financials`가 stale). 순서 의존이 있으므로 **폐기 계획에서
 반드시 §3.9와 함께 다룰 것**.
 
+**★2026-08-30 후속(std_v3_daily_wiring_plan_2026-08-30.md Phase 2)** — 데일리 표준화
+소비계층을 std_v2→v3로 전환하면서(`process_corp`의 `stages`를 `("extract","reconcile")`
+로 축소, `standardize`/`quarterly`/`calendar` 제외) 이 잔여 경로를 실측으로 재확인했다:
+- 브랜드뉴 기간(오늘 처음 생긴 fy/period)은 애초에 std_v2 행이 없어 `_sync_cf_da`의
+  SELECT(`std_financials_v2 WHERE depreciation IS NULL`) 대상이 되지 않는다 →
+  **신규 std_v2 쓰기는 실제로 사라졌다**(표본 corp으로 검증: 실행 전후 행수 무변동).
+- 하지만 Phase 2 이전에 이미 만들어진 std_v2 행 중 depreciation NULL인 것은, 그 corp이
+  이후 다른 이유로 데일리 `ok_corps`에 다시 잡힐 때마다 계속 재표준화된다 — 이 문단이
+  예견한 그대로다. **위 결론("이식할 로직은 없다, 걷어내려면 §3.9와 함께")에 따라 이번엔
+  건드리지 않았다** — `fact_v2`/`extended_financials`를 §8에서 함께 이식할 때 처리.
+
 ### 3.11 ★P0.5 실측 결과 (2026-08-22, DB 복구 후 실행)
 
 > 2차 개정 시점엔 로컬 postgres가 죽어 있어 전부 미측정이었다. 복구 후 실측한 결과다.

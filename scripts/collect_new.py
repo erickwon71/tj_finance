@@ -1,7 +1,16 @@
 """신규 공시 수집·DB화 (헤드리스) — 수집 페이지와 동일 흐름의 CLI 판.
 
-실행일 기준 최근 N일 정기공시 탐지 → sync_filings(force) → 다운로드 → 파싱·표준화·분기·달력.
-수동 실행하거나 cron/launchd 로 매일 예약할 수 있다.
+실행일 기준 최근 N일 정기공시 탐지 → sync_filings(force) → 다운로드 → 파싱(extract/reconcile)
+→ 계층3 표준화(std_financials_v3). 수동 실행하거나 cron/launchd 로 매일 예약할 수 있다.
+
+★2026-08-30(Phase 2, std_v3_daily_wiring_plan_2026-08-30.md D1-b) — 표준화 소비계층을
+std_v2 → std_v3 로 전환했다. `process_corp`가 도는 std_v2의 standardize/quarterly/
+calendar stage는 더 이상 돌지 않는다(④-6 `_sync_std_v3`가 std_financials_v3를 대신
+채움). 이산분기·달력정규화는 v3에 대응 개념이 없어 이 시점 이후의 신규 기간에 한해
+중단됐다 — §8 재구현 트랙 전까지의 공백(현재 뷰·스크리너 미사용이라 즉각 영향 없음,
+정보 손실도 아님 — v3는 report_lines 에서 언제든 재생성 가능).
+★ 다만 std_v2 쓰기가 완전히 멈춘 건 아니다 — `_sync_cf_da`(`_run_standardize_batches`
+docstring 참고)가 독자적으로 std_v2를 재계산하는 잔여 경로가 있다(범위 밖, 문서화됨).
 
 ④ 파싱·표준화는 **기업당 워커 프로세스 + 타임아웃**으로 처리한다: 대용량/병리 보고서
 (예: 30MB iXBRL)에서 100% CPU 로 정체하는 기업을 `--timeout` 초 초과 시 강제 종료·스킵하고
@@ -27,7 +36,19 @@ from loguru import logger
 
 def _worker(in_q, out_q) -> None:
     """워커 프로세스: in_q 에서 corp 받아 process_corp 실행·커밋, 결과를 out_q 로.
-    None 받으면 종료. (spawn 으로 모듈 재임포트되므로 함수는 모듈 레벨이어야 함)"""
+    None 받으면 종료. (spawn 으로 모듈 재임포트되므로 함수는 모듈 레벨이어야 함)
+
+    ★2026-08-30(Phase 2, std_v3_daily_wiring_plan_2026-08-30.md D1-b) — `stages`를
+    `("extract", "reconcile")`만 남기고 `standardize`·`quarterly`·`calendar`(std_v2
+    계열)는 뺐다. ④-6(`_sync_std_v3`)이 report_lines 로부터 std_financials_v3 를
+    별도로 채우므로 std_v2 표준화는 데일리에 더 이상 필요 없다.
+    ★ 잃는 것 — 이산분기(`is_discrete`)·달력정규화(`std_financials_calendar`)는
+    std_v2 전용 개념이라 v3엔 대응 컬럼/테이블이 없다. 이 시점(이 커밋) 이후의
+    **신규** 기간에 대해 두 산출물이 멈춘다. 현재 뷰·스크리너 미사용이라 즉각적
+    영향은 없고(사용자 확인, D1-b), 정보 손실도 아니다 — v3는 report_lines 에서
+    언제든 재생성 가능. §8 소비자 재구현 트랙에서 v3 기반으로 새로 만든 뒤 이
+    공백(이 커밋 이후~재구현 완료 시점)을 소급 생성해야 한다.
+    """
     from collector.db import get_session
     from run import process_corp
 
@@ -37,7 +58,7 @@ def _worker(in_q, out_q) -> None:
             return
         try:
             with get_session() as session:
-                out = process_corp(session, corp)
+                out = process_corp(session, corp, stages=("extract", "reconcile"))
                 session.commit()
             out_q.put(("ok", corp, out))
         except Exception as exc:  # noqa: BLE001
@@ -51,7 +72,10 @@ def _standardize_with_timeout(affected: list[str], timeout: int) -> dict:
     worker = ctx.Process(target=_worker, args=(in_q, out_q), daemon=True)
     worker.start()
 
-    agg = {"e_facts": 0, "s": 0, "q": 0, "c": 0, "errors": 0, "timeout": 0}
+    # ★2026-08-30(Phase 2) — "s"/"q"/"c"(std_v2 표준화/이산분기/달력) 카운터는 `_worker`가
+    # 그 stages를 더 이상 돌지 않아 항상 0으로 고정되므로 뺐다(process_corp은 여전히 그
+    # 키를 반환하지만 값은 0). 대신 extract 단계가 실제로 한 일을 보여주는 "e_facts"만 집계.
+    agg = {"e_facts": 0, "errors": 0, "timeout": 0}
     ok_corps: list[str] = []
     skipped: list[str] = []
     total = len(affected)
@@ -60,8 +84,7 @@ def _standardize_with_timeout(affected: list[str], timeout: int) -> dict:
         try:
             status, c, payload = out_q.get(timeout=timeout)
             if status == "ok":
-                for k in ("e_facts", "s", "q", "c"):
-                    agg[k] += payload[k]
+                agg["e_facts"] += payload["e_facts"]
                 ok_corps.append(c)
             else:
                 agg["errors"] += 1
@@ -78,7 +101,7 @@ def _standardize_with_timeout(affected: list[str], timeout: int) -> dict:
             worker.start()
         if i % 20 == 0 or i == total:
             logger.info(f"[collect]   진행 {i}/{total} "
-                        f"(std_v2 {agg['s']:,}, 스킵 {agg['timeout']}, 오류 {agg['errors']})")
+                        f"(fact {agg['e_facts']:,}, 스킵 {agg['timeout']}, 오류 {agg['errors']})")
 
     in_q.put(None)
     worker.join(timeout=10)
@@ -91,27 +114,49 @@ def _standardize_with_timeout(affected: list[str], timeout: int) -> dict:
 
 
 def _run_standardize_batches(affected: list[str], timeout: int, batch_size: int = 50) -> dict:
-    """④ std_v2 표준화 → D&A → 계층2(xml) → 주식수전사를 배치 단위(기본 50개사)로 묶어
-    배치마다 즉시 완결시킨다(P1-2, docs/plans/handoff_next_session_2026-08-19.md §5).
+    """④ 추출·정합화(extract/reconcile) → D&A → 계층2(xml) → 주식수전사를 배치 단위
+    (기본 50개사)로 묶어 배치마다 즉시 완결시킨다(P1-2,
+    docs/plans/handoff_next_session_2026-08-19.md §5).
 
-    Why: previously these downstream steps ran once, after the *entire* affected list
-    finished standardizing. If the process was killed mid-run, corps that already got
-    std_v2 committed were left with layer2 permanently missing — `needs_standardize_corps()`
-    treats std_v2 presence as "done", so a rerun never reselects them (actually observed
-    2026-08-18: 374 corps stuck at report_lines=0). Batching bounds the loss to one batch
-    instead of the whole run, and each batch is fully durable once logged.
+    ★2026-08-30(Phase 2, std_v3_daily_wiring_plan_2026-08-30.md D1-b) — std_v2
+    표준화 stage 는 `_worker`(`process_corp`)에서 뺐다(④-6 `_sync_std_v3`가 std_v3를
+    대신 채움). 함수명·docstring의 "std_v2 표준화"는 그 이전 관례명일 뿐 지금은
+    extract/reconcile만 돈다.
 
-    batch_size=50 ≈ 37min/batch at the measured 44.4s/corp. Ordinary daily runs (tens of
-    corps) fit in a single batch, so this is a no-op in practice for the common case.
+    ★★ 그런데도 std_v2 쓰기가 완전히 멈추진 않는다 — `_sync_cf_da`(아래)가 부르는
+    `cf_da_sync.sync_cf_da`/`expense_nature_sync.sync_expense_nature`는 **자신의
+    SELECT 대상을 std_financials_v2 에서 직접 골라**(`depreciation IS NULL`인 기존
+    행), 그 corp에 대해 **독자적으로** `standardize_corp`(v2)→`derive_quarters_corp`
+    →`calendarize_corp`를 다시 돌린다(`process_corp`의 stages 축소와 무관한 별도
+    경로). 브랜드뉴 기간(오늘 처음 생긴 fy/period)은 애초에 std_v2 행이 없어 대상이
+    안 되지만, **Phase 2 이전에 이미 만들어진 std_v2 행 중 depreciation NULL인 것은
+    이후에도 계속 재표준화(recompute)된다** — 그 corp이 다른 이유로 오늘 `ok_corps`
+    에 다시 들어올 때마다. `std_v2_retirement_port_to_v3_2026-08-22.md`의 R17이
+    이미 같은 문제를 지적했다("이 단계를 걷어내면 extended_financials가 stale") —
+    그 문서의 결정대로 지금은 **손대지 않고 남겨둔다**(§8 소비자 이식과 함께 처리).
+    "std_v2 쓰기 제거"는 이 Phase 2 범위에서 **완전하지 않다** — 신규 쓰기는 없지만
+    기존 행 재계산은 남는다.
+
+    Why(배치 자체의 이유): previously these downstream steps ran once, after the *entire*
+    affected list finished. If the process was killed mid-run, corps that already
+    committed were left with layer2 permanently missing — `needs_standardize_corps()`
+    treats std_v3 presence as "done"(D0), so a rerun never reselects them (actually
+    observed 2026-08-18 with the old std_v2 셀렉터: 374 corps stuck at report_lines=0).
+    Batching bounds the loss to one batch instead of the whole run, and each batch is
+    fully durable once logged.
+
+    batch_size=50 ≈ 37min/batch at the measured 44.4s/corp(당시 std_v2 표준화 포함 기준 —
+    Phase 2로 그 stage를 뺐으니 실제로는 더 빠르다). Ordinary daily runs (tens of corps)
+    fit in a single batch, so this is a no-op in practice for the common case.
     """
-    agg = {"e_facts": 0, "s": 0, "q": 0, "c": 0, "errors": 0, "timeout": 0, "ok_corps": []}
+    agg = {"e_facts": 0, "errors": 0, "timeout": 0, "ok_corps": []}
     if not affected:
         return agg
     total_batches = -(-len(affected) // batch_size)
     for i in range(0, len(affected), batch_size):
         batch = affected[i:i + batch_size]
         r = _standardize_with_timeout(batch, timeout)
-        for k in ("e_facts", "s", "q", "c", "errors", "timeout"):
+        for k in ("e_facts", "errors", "timeout"):
             agg[k] += r.get(k, 0)
         ok = r.get("ok_corps") or []
         agg["ok_corps"].extend(ok)
@@ -119,7 +164,7 @@ def _run_standardize_batches(affected: list[str], timeout: int, batch_size: int 
         _sync_layer2_lines(ok)
         _sync_shares_transcribe(ok)
         logger.info(f"[collect]   배치 {i // batch_size + 1}/{total_batches} 완결 — "
-                    f"{len(ok)}개사 std_v2+layer2+주식수 반영")
+                    f"{len(ok)}개사 layer2+주식수 반영")
     return agg
 
 
@@ -803,8 +848,8 @@ def main() -> None:
             logger.info(f"[collect] (재개) ④ 파싱·표준화 대상 {len(affected)}개 기업 "
                         f"(타임아웃 {args.timeout}초/기업)")
         agg = _run_standardize_batches(affected, args.timeout)
-        logger.success(f"[collect] 재개 완료 — std_v2 {agg.get('s', 0):,} · 이산분기 {agg.get('q', 0):,} · "
-                       f"달력 {agg.get('c', 0):,} · 타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
+        logger.success(f"[collect] 재개 완료 — fact {agg.get('e_facts', 0):,} · "
+                       f"타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
         # ④-4 XBRL instance zip 경로 — own selector (P1-1), independent of the xml-only
         # `affected` list above since xbrl_zip-only corps never appear in it. Honor an
         # explicit --corps scope (targeted retry) the same way `affected` above does;
@@ -914,12 +959,13 @@ def main() -> None:
     affected = collect.needs_standardize_corps(only=corps)
     logger.info(f"[collect] ④ 파싱·표준화 대상 {len(affected)}개 기업 (타임아웃 {args.timeout}초/기업)")
 
-    # ④~④-5: std_v2 표준화 → D&A → 계층2(xml) → 주식수전사, 배치 단위(기본 50개사)로 즉시 완결
-    # (P1-2 — a mid-run kill used to leave std_v2 committed with layer2 permanently missing).
+    # ④~④-5: 추출·정합화(extract/reconcile) → D&A → 계층2(xml) → 주식수전사, 배치 단위
+    # (기본 50개사)로 즉시 완결(P1-2 — a mid-run kill used to leave a batch committed with
+    # layer2 permanently missing). ★Phase 2로 std_v2 표준화 stage는 뺐다(D1-b) — std_v3는
+    # 아래 ④-6이 채운다.
     agg = _run_standardize_batches(affected, args.timeout)
 
     logger.success(f"[collect] 완료 — 신규 {len(corps)}개 기업 · fact {agg.get('e_facts', 0):,} · "
-                   f"std_v2 {agg.get('s', 0):,} · 이산분기 {agg.get('q', 0):,} · 달력 {agg.get('c', 0):,} · "
                    f"타임아웃스킵 {agg.get('timeout', 0)} · 오류 {agg.get('errors', 0)}")
 
     # ④-4 계층2 전사(XBRL 원문 zip 경로) — own selector (P1-1): xbrl_zip-only corps never

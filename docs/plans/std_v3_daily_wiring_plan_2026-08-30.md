@@ -356,19 +356,47 @@ v2 감사 결과는 뷰의 v2 폴백 브랜치(`fa.source_version='v2'` 조인)�
 `std_v3_failed`가 있으면 게이트를 계속 돈다(`run_dq_gate` 스킵 대신 빈 summ로 대체) —
 표준화 자체는 성공했는데 std_v3 빌드만 실패한 경우도 놓치지 않기 위해서다.
 
-### Phase 2 — std_v2 쓰기 제거 (같은 세션, 별도 커밋)
+### Phase 2 — std_v2 쓰기 제거 (같은 세션, 별도 커밋) — ★ 구현·검증 완료(커밋 대기, 2026-08-30)
 
 Phase 1 검증(§6)이 끝난 뒤. 커밋을 분리해 롤백 단위를 유지한다.
 
-- [ ] **2-1.** 데일리의 `process_corp` 호출에서 `stages`를 축소 —
+- [x] **2-1.** 데일리의 `process_corp` 호출에서 `stages`를 축소 —
       `("extract", "reconcile")`만 남기고 `standardize`·`quarterly`·`calendar` 제외.
       (`run.py:2914` 시그니처가 이미 `stages` 인자를 받는다 — 새 코드 불필요.)
-- [ ] **2-2.** `agg`의 `s`/`q`/`c` 카운터와 로그 문구 정리(0으로 고정될 값 제거).
-- [ ] **2-3. ★ 이산분기·달력 중단을 문서에 남긴다** — D1-b 참고. `docs/plans/`의 이
-      문서와 `std_v2_retirement_port_to_v3_2026-08-22.md`에 "중단 시점"과 "소급 생성이
-      필요한 범위(중단일 이후 신규 기간)"를 기록. **기록 없이 끄면 나중에 원인 불명의
-      데이터 공백으로 남는다.**
-- [ ] **2-4.** `fact_v2`·`statement_source`는 **건드리지 않는다** — 계층2 축 소관(§0-A).
+      **검증**: 표본 corp(00109514)에 직접 호출 — `{'e_files': 131, 'e_facts': 29034,
+      'r': 307, 's': 0, 'q': 0, 'c': 0}`, `std_financials_v2` 행수 실행 전후 250→250
+      (**무변동**) 확인.
+- [x] **2-2.** `agg`의 `s`/`q`/`c` 카운터와 로그 문구 정리(0으로 고정될 값 제거) —
+      "std_v2 N"류 로그를 `fact N`(추출 사실행)으로 교체, 배치 완결 로그도 "layer2+
+      주식수 반영"으로 정리.
+- [x] **2-3. ★ 이산분기·달력 중단 + std_v2 쓰기 잔여 경로를 문서에 남긴다.**
+      ★★ **구현 중 발견 — Phase 2는 std_v2 쓰기를 "완전히" 제거하지 못한다.**
+      `_sync_cf_da`(collect_new.py)가 부르는 `cf_da_sync.sync_cf_da` /
+      `expense_nature_sync.sync_expense_nature`는 대상 SELECT 자체를
+      `std_financials_v2 WHERE depreciation IS NULL`에서 직접 골라, 그 corp에 대해
+      **독자적으로** `standardize_corp`(v2)→`derive_quarters_corp`→`calendarize_corp`
+      를 다시 돌린다 — `process_corp`의 stages 축소와 완전히 별개인 경로다.
+      - **브랜드뉴 기간**(오늘 처음 생긴 fy/period)은 애초에 std_v2 행이 없어 이
+        SELECT의 대상이 되지 않는다 → **신규 std_v2 쓰기는 실제로 없다.**
+      - 그러나 **Phase 2 이전에 이미 만들어진 std_v2 행 중 depreciation NULL인 것**은
+        그 corp이 이후 어느 날 다른 이유로 `ok_corps`에 다시 들어올 때마다 계속
+        재표준화(recompute)된다. 이 경로는 std_v3와 무관하고(std_v3는 `note_da.py`로
+        D&A를 이미 직접 처리) v2 전용 패치 메커니즘이다.
+      - `docs/plans/std_v2_retirement_port_to_v3_2026-08-22.md` R17이 이미 같은
+        문제를 지적했다("이 단계를 걷어내면 extended_financials가 stale — 폐기
+        계획에서 §3.9와 함께 다룰 것"). **그 문서의 결정대로 이번 Phase 2에서는
+        손대지 않고 남겨둔다** — §8 소비자 이식(`extended_financials`) 트랙에서
+        같이 정리한다.
+      - 코드에 이 잔여 경로를 상세히 주석으로 남겼다(`_run_standardize_batches`
+        docstring, `collect_new.py`).
+      - **이산분기·달력**: D1-b대로 이 Phase 2 커밋(2026-08-30, `scripts/collect_new.py`
+        의 `_worker` stages 축소분) 이후 신규 기간에 대해 중단. 소급 생성 필요 범위 =
+        이 커밋 이후 ~ §8 "이산분기·달력을 v3 기반으로 신규 구현" 완료 시점까지 새로
+        생기는 fy/period 전부. `std_v2_retirement_port_to_v3_2026-08-22.md`에도 동일
+        내용 교차기록(§9-1).
+- [x] **2-4.** `fact_v2`·`statement_source`는 **건드리지 않는다** — 계층2 축 소관(§0-A).
+      (`process_corp`의 "extract"/"reconcile" stage가 그대로 남아 이 둘을 계속 채운다 —
+      실측으로 확인: `e_facts`·`r` 카운트가 이전과 동일하게 나옴, 위 2-1 검증 참고.)
 
 ---
 

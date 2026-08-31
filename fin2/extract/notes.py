@@ -35,6 +35,13 @@ _FACTORS = (1.0, 1e3, 1e-3, 1e6, 1e-6)
 
 _DEP_LIKE = ("note.depreciation", "note.amortization", "note.rou_depreciation")
 
+# parser/xml/note_extractor.py::_add_da_total() 이 depreciation+amortization(+rou)
+# 이 있으면 무조건 덧붙이는 합성 rollup 마커. 원문에 이 정확한 문자열이 나올 수 없어
+# (note_extractor.py 의 텍스트/ENG 매핑 테이블엔 note.da_total 로 직접 가는 패턴이
+# 없음 — 오직 이 합성 경로만 이 code 를 만든다) 안전하게 판별 가능하다.
+# docs/plans/factv2_synthetic_da_total_cleanup_2026-08-31.md §1~§2-1.
+_SYNTHETIC_DA_TOTAL_NAME = "D&A 합계 (감가상각비+무형자산상각비)"
+
 
 def _basis_of(is_consolidated: bool) -> str:
     return "consolidated" if is_consolidated else "separate"
@@ -98,6 +105,8 @@ def extract_note_da_facts(
         # 계정코드별로 **합산**해 1행씩 방출한다(uq_fact_v2_cell 충돌 방지 + 총액 정확).
         by_code: dict[str, int] = {}
         for f in fs:
+            if f.account_code == "note.da_total" and f.account_name_raw == _SYNTHETIC_DA_TOTAL_NAME:
+                continue        # 합성 rollup — fact_v2 에 실제 계정처럼 남으면 안 됨
             if f.amount is not None:
                 by_code[f.account_code] = by_code.get(f.account_code, 0) + f.amount
 

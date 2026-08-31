@@ -896,9 +896,11 @@ DIRECT_MAP 핵심 컬럼이라 파급범위가 달라 별도 트랙(가칭 R59)�
   분리돼 있어 이 충돌이 없다. v3도 `유동성사채`를 별도 canonical(가칭
   `bs.current_bond_plain`)로 분리하고 `_V3_ST_DEBT_PARTS`에 추가하면 회수율이
   더 올라갈 것으로 보이나, 순서4-①~③ 범위 밖 — 규모 미실측, 별도 트랙으로.
-  **2026-08-31 후속**: 실측 완료(3,405건/487개사, 기존 `bs.current_bond` 병합안은
-  176건 새 충돌 유발로 기각) + 설계 완료, 승인대기(가칭 R60). 상세:
-  `docs/plans/bs_current_portion_lt_debt_concept_split_design_2026-08-31.md`.
+  **2026-09-01 완전 종료**: 실측(3,405건/487개사, 기존 `bs.current_bond` 병합안은
+  176건 새 충돌 유발로 기각) → 설계 → 구현 → 전사 재빌드+Gate B 전수재감사(회귀
+  0건) → net_debt 350.3조원 순회수 확인까지 전부 완료(R60). 상세:
+  `docs/plans/bs_current_portion_lt_debt_concept_split_design_2026-08-31.md`,
+  `docs/PARSING_RULES.md` R60.
 - **★(가칭 R59) `bs.long_term_debt`/`bs.short_term_debt` 본체의 rollup-라벨
   HELD 버그 — 이번 세션 최대 금액 발견, 순서4-③ 재감사 원인규명 중 신규
   포착(2026-08-31)**. `장기차입금및사채`류("차입금및사채"/"사채및차입금"/

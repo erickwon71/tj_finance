@@ -1349,9 +1349,18 @@ def _is_noncurrent_by_section_only(row: dict) -> bool:
 # 전환사채↔신주인수권부사채 434(!), 교환사채↔신주인수권부사채 37, plus each family's own
 # current/noncurrent co-occurrence — none of these can share a canonical with each other
 # or with bond/convertible_bond without risking a HELD conflict.
+#
+# R60 (2026-08-31): bs.current_bond_plain('유동성사채') split out of
+# bs.current_portion_lt_debt for the same reason — measured 3,405 filings/487 corps
+# where '유동성사채' and '유동성장기부채/차입금' co-occur as separate BS rows, all
+# HELD before this split. Folding it into bs.current_bond instead (its literal
+# aliases look similar) was rejected: 227 filings co-occur with bs.current_bond's own
+# aliases and 176 of those have genuinely different values — would trade one HELD
+# population for another. docs/plans/
+# bs_current_portion_lt_debt_concept_split_design_2026-08-31.md.
 _V3_ST_DEBT_PARTS = ("bs.short_term_debt", "bs.current_portion_lt_debt", "bs.current_bond",
                      "bs.current_convertible_bond", "bs.current_exchange_bond",
-                     "bs.current_warrant_bond")
+                     "bs.current_warrant_bond", "bs.current_bond_plain")
 _V3_LT_DEBT_PARTS = ("bs.long_term_debt", "bs.bond", "bs.convertible_bond",
                      "bs.exchange_bond", "bs.warrant_bond")
 

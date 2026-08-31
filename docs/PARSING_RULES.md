@@ -3263,6 +3263,64 @@ alias 갭**("차입금 및 전환사채" 결합 라벨 미매핑, `00653194` 단
 `scripts/run_r59_verification.sh` ·
 `docs/plans/r59_rollup_debt_label_held_bug_design_2026-08-31.md` §4-1~§4-3.
 
+## R60. `account_maps/bs_accounts.py` — `bs.current_portion_lt_debt` 개념분리
+("유동성사채" → `bs.current_bond_plain` 신설)(★★★★★완전 종료 2026-09-01)
+
+**증상** — `bs.current_portion_lt_debt`에 "유동성장기부채"/"유동성장기차입금"(장기
+부채·차입금의 유동성 대체분)과 "유동성사채"(사채의 유동성 대체분, 개념이 다름)가
+한 canonical에 섞여 있었다. 한 회사가 둘을 같은 필링에 별도 줄로 동시 공시하면
+`_resolve()`가 서로 다른 값을 가진 두 후보로 보고 canonical 전체를 HELD. v2는
+XBRL acode로 애초에 `bs.current_lt_debt`/`bs.current_bonds_plain` 2개로 분리돼
+있어 이 문제가 없다(`fin2/taxonomy/concept_map.py:59`
+`dart_CurrentPortionOfBonds → bs.current_bonds_plain`). 실측 사례(`00102858`
+FY2008 연결): "유동성사채" 75,056,000,000 vs "유동성장기부채" 53,884,912,604 동시
+존재 → HELD. 전수 실측(2026-08-31, `report_lines` 전체 BS): 동시존재 필링
+**3,405건/487개사**.
+
+**"기존 `bs.current_bond`로 병합" 대안 기각** — `bs.current_bond`(유동성회사채/
+단기사채/사채(유동)/유동사채)로 "유동성사채"를 그냥 합치는 손쉬운 안을 실측으로
+검증한 결과 기각: 동시존재 227건 중 176건이 값이 달라 **새 충돌**을 만든다(51건만
+우연히 같은 값). 전환사채/교환사채/신주인수권부사채와 동일한 패턴으로, 완전히
+새로운 leaf canonical(`bs.current_bond_plain`)로 분리하는 것이 유일한 안전한 해법.
+
+**수정** — `account_maps/bs_accounts.py`에 `bs.current_bond_plain: ["유동성사채"]`
+신규 등록(기존 `bs.current_portion_lt_debt`에서 "유동성사채" 제거), `fin2/layer3/
+combine.py`의 `_V3_ST_DEBT_PARTS`에 `bs.current_bond_plain` 편입(net_debt 합산
+전용 leaf — DIRECT_MAP 연결 없음, 기존 `bs.current_portion_lt_debt`/
+`bs.current_bond`와 동일).
+
+★face_audit(Gate B)은 이 두 canonical(`bs.current_portion_lt_debt`/
+`bs.current_bond_plain`)을 애초에 감사하지 않는다(net_debt 전용 파생 집계 leaf라
+`std_financials_v3`에 자체 컬럼조차 없음, R59와 동일 실측) — Gate B 회귀는
+"전체 pass→fail_a 전이"만 보고, 값 복구 자체는 `std_financials_v3.net_debt`
+전/후 스냅샷 비교로 검증(`_additive_debt_for_net_debt`의 결과가 `net_debt`에만
+copy-back되고 `short_term_debt`/`long_term_debt` 영속 컬럼은 건드리지 않음 —
+`_apply_enrichment` 참고).
+
+**상태(2026-09-01) — 완전 종료**: 코드+단위테스트(`fin2/tests/
+test_combine_debt_r60_current_bond_plain_split.py`, 5건) 구현 →
+`scripts/run_r60_verification.sh` 전수재빌드(5-shard, 2,546개사)+Gate B
+전수재감사(5-shard) 실행 결과 **Gate B 회귀 0건**(pass→fail_a 전이 0). net_debt
+값이 실제로 바뀐 필링 **2,241건**(영향 3,158건 중 — report_lines 전체기간 기준
+3,405건이었으나 std_v3 FY period 결합 조건상 3,158건으로 좁혀짐), 회수 총액
+**약 350.3조원**(`sum(net_debt_after - net_debt_before)`). 잔여 24건은 전부
+"still held"인데 원문대조 결과 이번 수정과 **무관**(cash 컬럼 자체가 비어있어
+net_debt 산식이 애초에 계산 불가 — 별개의 기존 이슈). `pytest tests/ fin2/tests/`
+673 passed/1 failed(기존 무관 — `test_biz_section.py`).
+
+★교훈 — 검증 스크립트 설계 시 "canonical이 HELD→net_debt가 NULL"만 복구지표로
+잡으면 안 된다: `_V3_ST_DEBT_PARTS`처럼 여러 canonical을 더하는 additive 합산
+구조에서는 하나가 HELD여도 다른 구성요소 덕에 net_debt가 NULL이 아닌 채로
+"과소계상"되는 경우가 대부분이라(R60 실측: NULL 기준 recovered_after=0였지만
+실제 값변경 2,241건/350.3조원) — **값 자체의 전/후 diff**를 반드시 함께 봐야
+진짜 복구율이 드러난다.
+
+근거: `fin2/layer3/combine.py`(`_V3_ST_DEBT_PARTS`) ·
+`account_maps/bs_accounts.py`(`bs.current_bond_plain`) ·
+`fin2/tests/test_combine_debt_r60_current_bond_plain_split.py` ·
+`scripts/run_r60_verification.sh` ·
+`docs/plans/bs_current_portion_lt_debt_concept_split_design_2026-08-31.md` §4.
+
 ---
 
 ## 부록 A. 원문(DART XML) 함정 카탈로그

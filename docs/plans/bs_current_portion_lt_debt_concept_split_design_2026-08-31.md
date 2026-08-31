@@ -130,25 +130,35 @@ wiring 주석 "DIRECT_MAP has no destination for any of the three" 참고).
       대상에 포함하지 않는다 → Gate B pass→fail_a 전이는 참고용일 뿐, 값 복구
       검증은 **std_financials_v3(경유 net_debt) 전/후 스냅샷 직접비교**가 주된
       방법이다(4-4).
-- [ ] **4-2.** 단위 테스트 — `bs.current_bond_plain` 신규 canonical 매핑 확인
-      + `00102858` FY2008류 합성 케이스로 회귀 테스트 추가(R57/R58/R59 선례처럼
-      `fin2/tests/test_combine_debt_*` 계열에 추가).
-- [ ] **4-3.** 영향 487개사 재표준화 후 Gate B 전수재감사 — pass→fail_a 전이 **0건**
-      확인(4-1에서 audit 대상이면 이 게이트가 핵심, 아니면 참고용).
-- [ ] **4-4.** `std_financials_v3.current_portion_lt_debt`(신설 컬럼 없음 — net_debt
-      합산 중간값이라 별도 컬럼화하지 않음, R58/R59와 동일) 대신 **net_debt** 자체의
-      전/후 스냅샷 비교 — 3,405건 중 표본(00102858 포함 5~10개사)을 원문대조.
-- [ ] **4-5.** `pytest tests/ fin2/tests/` — 루트 범위 없이, 회귀 0건 확인.
-- [ ] **4-6.** net_debt v2/v3 불일치율(§2-10 최종치 40.6%/51.4%) 재측정 — 이번
-      회수분이 그 지표에 미치는 영향 정량화(단, §2-10 교훈대로 "지표 악화/개선"을
-      곧바로 버그 유무 판단에 쓰지 않는다 — 원문대조 우선).
+- [x] **4-2.** 단위 테스트 — `fin2/tests/test_combine_debt_r60_current_bond_plain_
+      split.py` 5건 신설: 신규 canonical 매핑 확인, `00102858` FY2008 실측 케이스
+      합성 재현(충돌 없이 둘 다 확정), `bs.current_bond`와의 비충돌 확인,
+      `_additive_debt_for_net_debt` 편입 확인. 전부 통과.
+- [x] **4-3.** 전사 재표준화(2,546개사, 5-shard, `scripts/run_r60_verification.sh`)
+      후 Gate B 전수재감사 — **pass→fail_a 전이 0건** 확인.
+- [x] **4-4.** `net_debt` 전/후 스냅샷 비교(`std_v3_netdebt_snap_20260831_r60`,
+      영향 3,158건 — report_lines 전체기간 기준 3,405건이었으나 std_v3 FY period
+      결합 조건상 좁혀짐) — **net_debt 값이 실제로 바뀐 필링 2,241건, 회수 총액
+      약 350.3조원**. ★검증 스크립트 최초 설계의 "net_debt NULL→값" 지표
+      (`recovered_after`)는 **0**으로 나와 착시를 일으켰다 — additive 합산
+      구조에서는 한 canonical이 HELD여도 다른 구성요소 덕에 net_debt가 NULL이
+      아닌 채로 "과소계상"되는 게 대부분이라, 값 자체의 전/후 diff를 별도로 봐야
+      진짜 복구율이 드러남(교훈, PARSING_RULES.md R60에 등재). 잔여 24건
+      "still held"는 원문대조 결과 전부 `cash` 컬럼 자체가 비어있어 net_debt
+      산식이 애초에 계산 불가한, 이번 수정과 무관한 기존 이슈.
+- [x] **4-5.** `pytest tests/ fin2/tests/` 673 passed/1 failed(무관 기존 실패
+      `test_biz_section.py::test_lxintl_facility_table_dropped`).
+- [x] **4-6.** net_debt v2/v3 불일치율 재측정(`scripts/measure_net_debt_v2_v3_
+      mismatch.py`) — FY2024 40.6%→**39.8%**, FY2025 51.4%→**51.5%**(사실상
+      무변화) — §2-10 교훈대로 예상된 결과(이 지표는 v2의 구조적 불완전성이
+      대부분이라 v3 쪽 진짜 개선을 잘 반영하지 못함). net_debt 350.3조원 회수
+      자체는 4-4에서 직접 확인됨 — 이 지표 정체를 버그 신호로 보지 않는다.
 
-## 5. 위험도
+## 5. 위험도 — 실측 결과 낮음으로 확정
 
-**낮음~중간** — 코드 변경 자체는 alias 1개 이관 + 신규 canonical 1개 등록(패턴은
-기존 4개 사채계열 분리와 완전히 동일, 이미 검증된 접근). 위험 요소는 영향 규모가
-487개사로 이전 트랙들(수십~수백 개사)보다 크다는 점 — 4-3 전수재감사를 반드시
-거친다([[gateb-full-reaudit-is-required-to-close]]).
+구현 전 예상은 "낮음~중간"(영향 규모가 커서)이었으나, 실측 결과 Gate B 회귀
+0건·net_debt 350.3조원 순회수(신규 충돌 0건)로 **낮음**으로 확정. 코드 변경은
+alias 1개 이관 + 신규 canonical 1개 등록뿐(패턴은 기존 4개 사채계열 분리와 동일).
 
 ---
 

@@ -218,7 +218,7 @@ BS_ACCOUNTS: dict[str, list[str]] = {
     ],
     "bs.current_portion_lt_debt": [
         "유동성장기부채", "유동성장기차입금",
-        "유동성사채",
+        # "유동성사채"는 bs.current_bond_plain으로 이관됨(R60, 아래) — 여기 남기지 않는다.
         # 순서4-② 2026-08-31(§2-7): '유동성장기부채'의 2024+ 표준라벨 변형(185건,
         # unknown 이었음) — '비유동차입금(사채포함)'의 유동성 대체(1년 내 만기도래)
         # 부분이라는 뜻으로 개념은 동일.
@@ -227,6 +227,20 @@ BS_ACCOUNTS: dict[str, list[str]] = {
         # 미등록이라 fuzzy가 방금 등록한 '...의비유동성부분'(반대 개념, bs.long_term_debt)
         # 쪽으로 더 가깝게 계산돼(0.956 > 0.940) 뒤집혔다 — exact 등록으로 고정.
         "비유동차입금의유동성대체부분",
+    ],
+    # R60 (2026-08-31): "유동성사채"(사채의 유동성 대체분)는 "유동성장기부채/차입금"
+    # (장기부채·차입금의 유동성 대체분)과 개념이 다르다 — v2는 XBRL acode로 애초에
+    # bs.current_lt_debt/bs.current_bonds_plain 2개로 분리돼 있다(fin2/taxonomy/
+    # concept_map.py:59 dart_CurrentPortionOfBonds). 같은 필링에 두 라벨이 동시
+    # 공시되는 사례가 3,405건/487개사 실측돼 bs.current_portion_lt_debt에 합쳐두면
+    # `_resolve()` 충돌로 canonical 전체 HELD(00102858 FY2008 연결: 유동성사채
+    # 750.56억 vs 유동성장기부채 538.85억 동시존재 → 전액 소실). 기존 bs.current_bond
+    # (유동성회사채/단기사채/사채(유동)/유동사채)로 병합하는 안은 기각 — 실측 227건 중
+    # 176건이 값 충돌(새 버그 유발). 전환사채/교환사채/신주인수권부사채와 같은 패턴으로
+    # 완전히 새로운 leaf canonical로 분리한다. docs/plans/
+    # bs_current_portion_lt_debt_concept_split_design_2026-08-31.md.
+    "bs.current_bond_plain": [
+        "유동성사채",
     ],
     "bs.current_bond": [
         "유동성회사채", "단기사채",

@@ -1072,6 +1072,62 @@ def _run_migrations() -> None:
 
         CREATE UNIQUE INDEX ux_valuation_daily_corp_date ON valuation_daily (corp_code, trade_date);
         """),
+
+        ("2026_08_valuation_daily_v3_netdebt_migration",
+         # valuation_daily_blockers_da_netdebt_design_2026-08-30.md §5(순서5) +
+         # docs/plans/valuation_daily_order5_netdebt_v3_migration_2026-08-31.md.
+         # 순서4(①wiring/②alias 3종/③나머지 소수 라벨, R58/R59)가 전부 완전 종료돼
+         # `net_debt`의 v2 잔류 사유(원인 A/B)가 해소됨 — `finnd`(v2) LATERAL을 없애고
+         # `net_debt`를 `fin`(v3) LATERAL 안으로 합쳐 **단일 LATERAL로 복귀**.
+         # 실측(2026-08-31): std_financials_v3 FY net_debt 보유 62,634행 > v2 44,540행
+         # (v3가 더 완전). 두 LATERAL이 독립적으로 "corp 기준 최신 FY"를 고르던 구조적
+         # 갭(과도기 트레이드오프, 위 ebitda 마이그레이션 주석 참고)도 이걸로 해소.
+         # matview는 CREATE OR REPLACE 불가 → DROP+CREATE(파생 뷰라 기저 테이블
+         # 무변경, 문제 시 위 ebitda 마이그레이션 SQL 재실행하면 즉시 롤백 가능).
+         # ★ WITH NO DATA — 직후 `scripts/refresh_valuation_daily.py`(non-concurrent,
+         # 최초 1회 수동 실행) 필요.
+         """
+        DROP MATERIALIZED VIEW IF EXISTS valuation_daily;
+
+        CREATE MATERIALIZED VIEW valuation_daily AS
+        SELECT
+            c.corp_code, c.corp_name, sp.stock_code, sp.trade_date,
+            sp.close_price, sp.market_cap, sp.shares_out,
+            fin.fiscal_year, fin.basis,
+            CASE WHEN fin.ni > 0      THEN sp.market_cap::double precision / fin.ni END      AS per,
+            CASE WHEN fin.eq > 0      THEN sp.market_cap::double precision / fin.eq END      AS pbr,
+            CASE WHEN fin.revenue > 0 THEN sp.market_cap::double precision / fin.revenue END AS psr,
+            CASE WHEN fin.cfo > 0     THEN sp.market_cap::double precision / fin.cfo END     AS pcr,
+            (sp.market_cap + COALESCE(fin.net_debt, 0))                                     AS ev,
+            CASE WHEN fin.ebitda > 0
+                 THEN (sp.market_cap + COALESCE(fin.net_debt,0))::double precision / fin.ebitda END           AS ev_ebitda,
+            CASE WHEN fin.operating_income > 0
+                 THEN (sp.market_cap + COALESCE(fin.net_debt,0))::double precision / fin.operating_income END AS ev_ebit,
+            CASE WHEN sp.shares_out > 0 THEN fin.ni::double precision / sp.shares_out END AS eps,
+            CASE WHEN sp.shares_out > 0 THEN fin.eq::double precision / sp.shares_out END AS bps,
+            CASE WHEN sp.shares_out > 0 AND fin.dividends_paid IS NOT NULL
+                 THEN abs(fin.dividends_paid)::double precision / sp.shares_out END AS dps,
+            CASE WHEN sp.shares_out > 0 AND fin.dividends_paid IS NOT NULL AND sp.close_price > 0
+                 THEN (abs(fin.dividends_paid)::double precision / sp.shares_out) / sp.close_price END AS dividend_yield
+        FROM stock_prices sp
+        JOIN corporations c ON c.stock_code = sp.stock_code AND c.is_active
+        LEFT JOIN LATERAL (
+            SELECT f.fiscal_year, f.statement_type AS basis,
+                   COALESCE(f.controlling_ni, f.net_income)       AS ni,
+                   COALESCE(f.controlling_equity, f.total_equity) AS eq,
+                   f.revenue, f.cfo, f.ebitda, f.operating_income, f.dividends_paid, f.net_debt
+            FROM std_financials_v3 f
+            WHERE f.corp_code = c.corp_code AND f.fiscal_period = 'FY'
+              AND f.period_end <= sp.trade_date
+            ORDER BY f.period_end DESC,
+                     CASE f.statement_type WHEN 'consolidated' THEN 0 ELSE 1 END
+            LIMIT 1
+        ) fin ON true
+        WHERE sp.market_cap IS NOT NULL
+        WITH NO DATA;
+
+        CREATE UNIQUE INDEX ux_valuation_daily_corp_date ON valuation_daily (corp_code, trade_date);
+        """),
     ]
 
     with engine.begin() as conn:

@@ -1,0 +1,1577 @@
+<title>tj_finance 8월 작업 궤적</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@300;400;500;600&family=Nanum+Myeongjo:wght@700;800&display=swap">
+
+<style>
+:root{
+  --ground:#F1F3F1;
+  --surface:#FBFCFB;
+  --surface-2:#E7ECE9;
+  --ink:#131A19;
+  --ink-2:#3F4B48;
+  --ink-3:#6B7975;
+  --rule:#D2DAD6;
+  --rule-soft:#E2E8E5;
+  --accent:#0B6157;
+  --accent-ink:#08453D;
+  --accent-soft:#DEEBE7;
+  --ok:#2F6B3A;
+  --ok-soft:#E0EDE1;
+  --warn:#8F5C0C;
+  --warn-soft:#F4E9D4;
+  --risk:#97382B;
+  --risk-soft:#F4E2DE;
+  --idle:#6B7975;
+  --idle-soft:#E5E9E7;
+  --shadow:0 1px 2px rgba(19,26,25,.05), 0 8px 24px -18px rgba(19,26,25,.35);
+  --serif:"Nanum Myeongjo", "Apple SD Gothic Neo", serif;
+  --sans:"IBM Plex Sans KR", "Apple SD Gothic Neo", system-ui, sans-serif;
+  --mono:"IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0E1312;
+    --surface:#161C1B;
+    --surface-2:#1E2624;
+    --ink:#E7ECEA;
+    --ink-2:#B4C0BC;
+    --ink-3:#87958F;
+    --rule:#2A3432;
+    --rule-soft:#222B29;
+    --accent:#5AC7B3;
+    --accent-ink:#8BDCCB;
+    --accent-soft:#15302B;
+    --ok:#79C286;
+    --ok-soft:#172C1C;
+    --warn:#DBA555;
+    --warn-soft:#302516;
+    --risk:#E28873;
+    --risk-soft:#331E19;
+    --idle:#87958F;
+    --idle-soft:#222B29;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -20px rgba(0,0,0,.9);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0E1312;
+  --surface:#161C1B;
+  --surface-2:#1E2624;
+  --ink:#E7ECEA;
+  --ink-2:#B4C0BC;
+  --ink-3:#87958F;
+  --rule:#2A3432;
+  --rule-soft:#222B29;
+  --accent:#5AC7B3;
+  --accent-ink:#8BDCCB;
+  --accent-soft:#15302B;
+  --ok:#79C286;
+  --ok-soft:#172C1C;
+  --warn:#DBA555;
+  --warn-soft:#302516;
+  --risk:#E28873;
+  --risk-soft:#331E19;
+  --idle:#87958F;
+  --idle-soft:#222B29;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -20px rgba(0,0,0,.9);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--ground);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-weight:400;
+  font-size:15px;
+  line-height:1.68;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent);text-decoration-thickness:1px;text-underline-offset:2px}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+
+.shell{
+  max-width:1240px;
+  margin:0 auto;
+  padding:0 24px 96px;
+  display:grid;
+  grid-template-columns:1fr;
+  gap:0;
+}
+@media (min-width:1080px){
+  .shell{grid-template-columns:196px minmax(0,1fr);column-gap:48px}
+  .rail{grid-column:1;grid-row:2}
+  .masthead,.main{grid-column:2}
+  .masthead{grid-row:1}
+  .main{grid-row:2}
+}
+
+/* ── masthead ───────────────────────────────── */
+.masthead{padding:56px 0 30px;border-bottom:1px solid var(--ink);}
+.eyebrow{
+  font-family:var(--mono);font-size:11px;font-weight:500;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--accent);
+  display:flex;gap:14px;flex-wrap:wrap;align-items:baseline;
+}
+.eyebrow .sep{color:var(--rule)}
+h1{
+  font-family:var(--serif);font-weight:800;
+  font-size:clamp(34px,5.4vw,54px);line-height:1.12;
+  letter-spacing:-.015em;margin:14px 0 0;text-wrap:balance;
+}
+.standfirst{
+  margin:16px 0 0;max-width:60ch;color:var(--ink-2);font-weight:300;
+  font-size:16.5px;line-height:1.72;
+}
+.standfirst b{font-weight:500;color:var(--ink)}
+
+/* ── instrument tiles ───────────────────────── */
+.tiles{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));
+  gap:1px;background:var(--rule);border:1px solid var(--rule);
+  margin:34px 0 0;
+}
+.tile{background:var(--surface);padding:16px 18px 18px}
+.tile dt{
+  font-family:var(--mono);font-size:10.5px;font-weight:500;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--ink-3);margin:0 0 8px;
+}
+.tile dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:27px;font-weight:600;line-height:1;letter-spacing:-.02em}
+.tile .unit{font-size:13px;font-weight:500;color:var(--ink-3);margin-left:3px}
+.tile .foot{display:block;font-family:var(--sans);font-size:12px;font-weight:400;
+  color:var(--ink-3);margin-top:9px;line-height:1.45;letter-spacing:0}
+.tile .down{color:var(--ok)}
+
+/* ── rail ───────────────────────────────────── */
+.rail{display:none}
+@media (min-width:1080px){
+  .rail{display:block;align-self:start;position:sticky;top:28px;padding-top:44px}
+  .rail ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+  .rail a{
+    display:flex;gap:9px;align-items:baseline;text-decoration:none;color:var(--ink-3);
+    font-size:12.5px;padding:5px 0;border-bottom:1px solid transparent;
+  }
+  .rail a:hover{color:var(--accent)}
+  .rail .n{font-family:var(--mono);font-size:10.5px;color:var(--rule);flex:none;width:14px}
+  .rail a:hover .n{color:var(--accent)}
+  .rail .legend{margin-top:26px;padding-top:16px;border-top:1px solid var(--rule);
+    display:flex;flex-direction:column;gap:7px}
+  .rail .legend span{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink-3)}
+  .rail .legend .key{display:block;width:9px;height:9px;border-radius:50%;
+    border:1.5px solid transparent;flex:none}
+}
+
+/* ── sections ───────────────────────────────── */
+.main{padding-top:44px;display:flex;flex-direction:column;gap:62px}
+section{scroll-margin-top:24px}
+.sec-head{display:flex;gap:14px;align-items:baseline;
+  border-bottom:1px solid var(--rule);padding-bottom:10px;margin-bottom:26px}
+.sec-head .n{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--accent);flex:none}
+.sec-head h2{font-family:var(--serif);font-weight:700;font-size:24px;margin:0;letter-spacing:-.01em}
+.sec-head .note{margin-left:auto;font-size:12px;color:var(--ink-3);text-align:right;
+  font-family:var(--mono);letter-spacing:.02em}
+.lede{margin:-8px 0 24px;max-width:66ch;color:var(--ink-2);font-size:14.5px}
+
+/* ── status pills ───────────────────────────── */
+.pill{
+  display:inline-flex;align-items:center;gap:6px;flex:none;
+  font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.05em;
+  padding:3px 9px 3px 7px;border-radius:2px;white-space:nowrap;
+}
+.pill::before{content:"";width:7px;height:7px;border-radius:50%;flex:none}
+.pill.done{background:var(--ok-soft);color:var(--ok)}
+.pill.done::before{background:var(--ok)}
+.pill.live{background:var(--warn-soft);color:var(--warn)}
+.pill.live::before{background:var(--warn);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent)}
+.pill.wait{background:var(--risk-soft);color:var(--risk)}
+.pill.wait::before{background:var(--risk)}
+.pill.idle{background:var(--idle-soft);color:var(--idle)}
+.pill.idle::before{background:transparent;border:1.5px solid var(--idle);width:7px;height:7px}
+
+/* ── pipeline flow ──────────────────────────── */
+.flow{
+  display:grid;gap:10px;grid-template-columns:1fr;
+}
+@media (min-width:760px){.flow{grid-template-columns:repeat(5,1fr);gap:0}}
+.stage{
+  background:var(--surface);border:1px solid var(--rule);padding:14px 15px 15px;
+  position:relative;display:flex;flex-direction:column;gap:9px;
+}
+@media (min-width:760px){
+  .stage + .stage{border-left:none}
+  .stage::after{
+    content:"";position:absolute;right:-6px;top:calc(50% - 5px);z-index:2;
+    width:10px;height:10px;border-top:1px solid var(--rule);border-right:1px solid var(--rule);
+    transform:rotate(45deg);background:var(--surface);
+  }
+  .stage:last-child::after{display:none}
+}
+.stage .lbl{font-family:var(--mono);font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-3)}
+.stage h3{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
+.stage p{margin:0;font-size:12.5px;color:var(--ink-3);line-height:1.5}
+.stage .tks{display:flex;flex-wrap:wrap;gap:4px;margin-top:auto;padding-top:4px}
+.tk{
+  font-family:var(--mono);font-size:10px;font-weight:600;padding:2px 5px;
+  background:var(--accent-soft);color:var(--accent-ink);border-radius:2px;
+}
+.stage.hot{border-color:var(--accent);box-shadow:inset 0 2px 0 var(--accent)}
+
+/* ── gates ──────────────────────────────────── */
+.subh{
+  font-family:var(--serif);font-size:18px;font-weight:700;margin:34px 0 10px;
+  letter-spacing:-.01em;
+}
+.subh code{font-family:var(--mono);font-size:14px;font-weight:500}
+.ptext{margin:0 0 14px;max-width:66ch;color:var(--ink-2);font-size:14.5px}
+.ptext b{color:var(--ink);font-weight:500}
+.ptext code,.fig figcaption code{font-family:var(--mono);font-size:12.5px;
+  background:var(--surface-2);padding:1px 4px;border-radius:2px;color:var(--ink)}
+.gatecards{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);margin-bottom:8px}
+@media (min-width:700px){.gatecards{grid-template-columns:1fr 1fr}}
+.gatecard{background:var(--surface);padding:17px 19px 19px;display:flex;flex-direction:column;gap:10px}
+.gatecard.accent{box-shadow:inset 3px 0 0 var(--accent)}
+.gatecard .gt{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.gatecard .gname{font-family:var(--serif);font-size:19px;font-weight:700}
+.gatecard .gq{margin:0;font-size:14px;color:var(--ink);font-weight:500;line-height:1.5}
+.gatecard .gl{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+.gatecard .gl li{font-size:12.5px;color:var(--ink-3);line-height:1.5;
+  padding-left:13px;position:relative}
+.gatecard .gl li::before{content:"";position:absolute;left:0;top:9px;width:5px;height:1px;
+  background:var(--rule)}
+.gatecard .gl b{color:var(--ink-2);font-weight:500}
+.gatecard code{font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
+
+.fig{margin:0 0 20px;padding:0}
+.fig .pathsvg{display:block;width:100%;max-width:100%;height:auto;
+  color:var(--ink-2);background:var(--surface);
+  border:1px solid var(--rule);padding:14px 10px}
+.fig figcaption{margin-top:10px;font-size:12.5px;color:var(--ink-3);line-height:1.6;max-width:70ch}
+@media (max-width:640px){.fig{overflow-x:auto}.fig .pathsvg{min-width:600px}}
+
+/* ── chart ──────────────────────────────────── */
+.chart-wrap{background:var(--surface);border:1px solid var(--rule);padding:20px 18px 12px}
+.chart-title{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;margin-bottom:4px}
+.chart-title h3{margin:0;font-size:14.5px;font-weight:600}
+.chart-title .sub{font-size:12.5px;color:var(--ink-3)}
+.chart-scroll{overflow-x:auto}
+svg.burn{display:block;width:100%;min-width:520px;height:auto}
+svg.burn text{font-family:var(--mono);fill:var(--ink-3);font-size:11px}
+svg.burn .gridline{stroke:var(--rule-soft);stroke-width:1}
+svg.burn .axis{stroke:var(--rule);stroke-width:1}
+svg.burn .lineseries{fill:none;stroke:var(--accent);stroke-width:2;
+  stroke-linejoin:round;stroke-linecap:round}
+svg.burn .dot{fill:var(--surface);stroke:var(--accent);stroke-width:2}
+svg.burn .dot-end{fill:var(--accent);stroke:var(--surface);stroke-width:2}
+svg.burn .vlabel{fill:var(--ink);font-weight:600;font-size:11.5px}
+svg.burn .hit{fill:transparent;cursor:crosshair}
+svg.burn .crosshair{stroke:var(--accent);stroke-width:1;stroke-dasharray:3 3;opacity:0}
+svg.burn .crosshair.on{opacity:.55}
+.tipbox{
+  position:absolute;pointer-events:none;opacity:0;transition:opacity .12s ease;
+  background:var(--ink);color:var(--ground);padding:7px 10px;border-radius:3px;
+  font-family:var(--mono);font-size:11.5px;line-height:1.45;white-space:nowrap;z-index:5;
+  box-shadow:0 6px 18px -8px rgba(0,0,0,.5);
+}
+.tipbox.on{opacity:1}
+.tipbox .t-lab{font-weight:600}
+.tipbox .t-sub{opacity:.72;font-size:10.5px}
+.chart-foot{margin:10px 2px 0;font-size:12px;color:var(--ink-3);line-height:1.55}
+
+/* ── track cards ────────────────────────────── */
+.tracks{display:flex;flex-direction:column;gap:0;border-top:1px solid var(--rule)}
+.track{
+  border-bottom:1px solid var(--rule);padding:20px 0 22px;
+  display:grid;grid-template-columns:1fr;gap:12px;
+}
+@media (min-width:820px){
+  .track{grid-template-columns:132px minmax(0,1fr);column-gap:28px}
+}
+.track .meta{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.track .dates{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
+  font-variant-numeric:tabular-nums}
+.track .body h3{margin:0 0 4px;font-size:17px;font-weight:600;letter-spacing:-.012em}
+.track .body h3 .idx{font-family:var(--mono);font-size:12px;color:var(--ink-3);
+  font-weight:500;margin-right:8px}
+.track .body > p{margin:0 0 12px;color:var(--ink-2);font-size:14px;max-width:64ch}
+.items{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+@media (min-width:640px){.items{grid-template-columns:1fr 1fr;column-gap:26px}}
+.items li{
+  position:relative;padding-left:19px;font-size:13.5px;color:var(--ink-2);line-height:1.55;
+}
+.items li::before{
+  content:"";position:absolute;left:1px;top:8px;width:9px;height:9px;border-radius:50%;
+  background:var(--ok-soft);border:1.5px solid var(--ok);
+}
+.items li.open::before{background:var(--warn-soft);border-color:var(--warn)}
+.items li.none::before{background:transparent;border-color:var(--idle);border-style:dashed}
+.items code{font-family:var(--mono);font-size:11.5px;background:var(--surface-2);
+  padding:1px 4px;border-radius:2px;color:var(--ink)}
+.items .num{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);font-weight:500}
+
+/* ── rules table ────────────────────────────── */
+.table-scroll{overflow-x:auto;border:1px solid var(--rule);background:var(--surface)}
+table.rules{border-collapse:collapse;width:100%;min-width:660px;font-size:13px}
+table.rules th{
+  text-align:left;font-family:var(--mono);font-size:10.5px;font-weight:600;
+  letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);
+  padding:11px 14px;border-bottom:1px solid var(--rule);white-space:nowrap;
+  background:var(--surface-2);position:sticky;top:0;
+}
+table.rules td{padding:10px 14px;border-bottom:1px solid var(--rule-soft);vertical-align:top;
+  color:var(--ink-2);line-height:1.5}
+table.rules tr:last-child td{border-bottom:none}
+table.rules td.r{font-family:var(--mono);font-weight:600;color:var(--ink);white-space:nowrap;
+  font-size:12px;font-variant-numeric:tabular-nums}
+table.rules td.d{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+table.rules td.s{white-space:nowrap}
+table.rules tbody tr:hover td{background:var(--surface-2)}
+
+/* ── callout / now ──────────────────────────── */
+.now{
+  background:var(--surface);border:1px solid var(--warn);
+  border-left-width:3px;padding:22px 24px 24px;
+}
+.now h3{margin:0 0 6px;font-family:var(--serif);font-size:20px;font-weight:700}
+.now .path{font-family:var(--mono);font-size:12px;color:var(--ink-3);margin:0 0 16px}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:0}
+.steps li{
+  display:grid;grid-template-columns:26px minmax(0,1fr) auto;gap:12px;align-items:baseline;
+  padding:10px 0;border-top:1px solid var(--rule-soft);
+}
+.steps li:first-child{border-top:none}
+.steps .sn{font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+.steps .sd{font-size:13.5px;color:var(--ink-2)}
+.steps .sd b{color:var(--ink);font-weight:500}
+.steps li.done .sn{color:var(--ok)}
+
+.riskbox{
+  margin-top:18px;padding:14px 16px;background:var(--risk-soft);
+  border-left:3px solid var(--risk);font-size:13px;color:var(--ink-2);line-height:1.6;
+}
+.riskbox b{color:var(--risk);font-weight:600}
+
+.gainbox{
+  margin-top:20px;padding:15px 17px;background:var(--accent-soft);
+  border-left:3px solid var(--accent);font-size:13px;color:var(--ink-2);line-height:1.65;
+}
+.gainbox b{color:var(--accent-ink);font-weight:600}
+.gainbox code{font-family:var(--mono);font-size:11.5px;color:var(--ink)}
+
+.quote{
+  margin:0 0 16px;padding:14px 18px;background:var(--surface);
+  border-left:3px solid var(--rule);max-width:66ch;
+  font-size:13.5px;color:var(--ink-2);line-height:1.65;
+}
+.quote b{color:var(--ink);font-weight:500}
+.quote code{font-family:var(--mono);font-size:12px;color:var(--ink)}
+.quote cite{display:block;margin-top:8px;font-family:var(--mono);font-size:11px;
+  font-style:normal;color:var(--ink-3)}
+
+/* ── backlog ────────────────────────────────── */
+.backlog{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule)}
+@media (min-width:700px){.backlog{grid-template-columns:1fr 1fr}}
+.bl{background:var(--surface);padding:15px 17px 17px;display:flex;flex-direction:column;gap:7px}
+.bl .top{display:flex;gap:10px;align-items:baseline;justify-content:space-between}
+.bl h4{margin:0;font-size:14.5px;font-weight:600}
+.bl p{margin:0;font-size:12.5px;color:var(--ink-3);line-height:1.55}
+.bl code{font-family:var(--mono);font-size:11px;color:var(--ink-2)}
+
+footer{
+  margin-top:26px;padding-top:18px;border-top:1px solid var(--rule);
+  font-size:12px;color:var(--ink-3);font-family:var(--mono);
+  display:flex;flex-wrap:wrap;gap:8px 20px;
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <div class="eyebrow">
+      <span>2026-07-30 → 08-30</span><span class="sep">/</span>
+      <span>tj_finance</span><span class="sep">/</span>
+      <span>진행 보고</span>
+    </div>
+    <h1>한 달 동안 무엇을 고쳤고<br>무엇이 아직 열려 있나</h1>
+    <p class="standfirst">
+      DART 원문에서 재무 데이터를 뽑아 DB로 굳히는 4계층 파이프라인의 <b>8월 한 달</b> 기록.
+      전반부는 수집·계층2·XBRL 원문 파서를 세우는 <b>구축</b>이었고, 중후반은 감사 게이트가
+      잡아낸 오적재를 원문 대조로 하나씩 닫는 <b>Gate B 정상화</b>가 주력이었다.
+      아래는 목표별 흐름과, 지금 어디까지 왔는지.
+    </p>
+
+    <dl class="tiles">
+      <div class="tile">
+        <dt>커밋</dt>
+        <dd>218</dd>
+        <span class="foot">07-30 ~ 08-29 · 최다일 07-31, 36건</span>
+      </div>
+      <div class="tile">
+        <dt>정본 규칙</dt>
+        <dd>R10<span class="unit">→</span>R56</dd>
+        <span class="foot"><code>docs/PARSING_RULES.md</code>에 이달 추가·확장</span>
+      </div>
+      <div class="tile">
+        <dt>Gate B fail_a</dt>
+        <dd class="down">482 → 83</dd>
+        <span class="foot">08-27 백로그 기준선 대비 −83%</span>
+      </div>
+      <div class="tile">
+        <dt>트랙 완료 / 미완</dt>
+        <dd>7<span class="unit">/</span>2</dd>
+        <span class="foot">미완 = Gate B · std_v2 폐기 · 백로그 6건</span>
+      </div>
+    </dl>
+  </header>
+
+  <nav class="rail" aria-label="목차">
+    <ol>
+      <li><a href="#flow"><span class="n">01</span>파이프라인 흐름</a></li>
+      <li><a href="#gates"><span class="n">02</span>검증 게이트 A·B</a></li>
+      <li><a href="#burn"><span class="n">03</span>fail_a 궤적</a></li>
+      <li><a href="#tracks"><span class="n">04</span>목표별 진행</a></li>
+      <li><a href="#rules"><span class="n">05</span>Gate B 규칙 연대기</a></li>
+      <li><a href="#now"><span class="n">06</span>지금 진행 중</a></li>
+      <li><a href="#stdv2"><span class="n">07</span>구세대 정리 현황</a></li>
+      <li><a href="#nonfin"><span class="n">08</span>비재무 콘텐츠</a></li>
+      <li><a href="#backlog"><span class="n">09</span>열린 백로그</a></li>
+    </ol>
+    <div class="legend" aria-hidden="true">
+      <span><i class="key" style="background:var(--ok);border-color:var(--ok)"></i>완료</span>
+      <span><i class="key" style="background:var(--warn);border-color:var(--warn)"></i>진행 중</span>
+      <span><i class="key" style="background:transparent;border-color:var(--idle);border-style:dashed"></i>미착수</span>
+    </div>
+  </nav>
+
+  <main class="main">
+
+    <!-- 01 ───────────────────────────────────── -->
+    <section id="flow">
+      <div class="sec-head">
+        <span class="n">01</span>
+        <h2>파이프라인 5단계와 트랙 배치</h2>
+        <span class="note">T1–T9 = 목표 트랙</span>
+      </div>
+      <p class="lede">
+        이달의 모든 작업은 이 다섯 단계 중 한 곳에 붙는다. 앞단(수집·계층2)을 먼저 고쳐야
+        뒷단(표준화·감사)의 실패가 진짜 버그인지 판별되기 때문에, 실제 진행 순서도 왼쪽에서
+        오른쪽이었다.
+      </p>
+      <div class="flow">
+        <div class="stage">
+          <span class="lbl">Stage 1</span>
+          <h3>원문 수집</h3>
+          <p>DART 다운로드 · 상장폐지 판정 · 데일리 자동화 · 유니버스 갱신</p>
+          <div class="tks"><span class="tk">T1</span></div>
+        </div>
+        <div class="stage">
+          <span class="lbl">Stage 2</span>
+          <h3>계층2 추출</h3>
+          <p>XML/XBRL → <code>report_lines</code> · 표 파싱 · 단위=열 판정 · 주석 전사</p>
+          <div class="tks"><span class="tk">T2</span><span class="tk">T3</span><span class="tk">T5</span><span class="tk">T6</span><span class="tk">T7</span></div>
+        </div>
+        <div class="stage">
+          <span class="lbl">Stage 3</span>
+          <h3>계층3 표준화</h3>
+          <p><code>std_v3</code> 취합 · 라벨→canonical 매핑 · 정본/델타 패치</p>
+          <div class="tks"><span class="tk">T4</span><span class="tk">T9</span></div>
+        </div>
+        <div class="stage hot">
+          <span class="lbl">Stage 4</span>
+          <h3>Gate B 감사</h3>
+          <p>DB값 ↔ 원문 독립 재판독 대조 · fail_a 원인규명 · 규칙 정본화</p>
+          <div class="tks"><span class="tk">T8</span></div>
+        </div>
+        <div class="stage">
+          <span class="lbl">Stage 5</span>
+          <h3>계층4 앱</h3>
+          <p>뷰 브리지 · Streamlit 시각화 · 스크리너</p>
+          <div class="tks"><span class="tk">T4</span><span class="tk">백로그</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 02 ───────────────────────────────────── -->
+    <section id="gates">
+      <div class="sec-head">
+        <span class="n">02</span>
+        <h2>검증 게이트 — Gate A와 Gate B</h2>
+        <span class="note">무엇을 어떻게 검증하나</span>
+      </div>
+      <p class="lede">
+        파이프라인에는 성격이 전혀 다른 두 개의 관문이 있다. Gate A는 <em>물건이 도착했는지</em>를
+        보고, Gate B는 <em>값이 원문과 같은지</em>를 본다. 아래는 특히 “파서도 원문을 읽는데
+        Gate B도 원문을 읽는다면 그게 어떻게 검증이 되나”에 대한 답이다.
+      </p>
+
+      <div class="gatecards">
+        <div class="gatecard">
+          <div class="gt"><span class="gname">Gate A</span><span class="pill done">배선됨</span></div>
+          <p class="gq">“파일이 실제로 있고, 읽히고, 뭔가 뽑혔나?”</p>
+          <ul class="gl">
+            <li>도구 <code>scripts/validate_downloads.py</code> · <code>verify_corp_sequential.py</code></li>
+            <li>기록 <code>download_tasks.gate_a_status</code> / <code>gate_a_reason</code></li>
+            <li>판정 <code>MISSING_FILE</code> · <code>EXTRACT_EMPTY</code> 등 — <b>완전성</b> 검사</li>
+            <li>값의 정확성은 보지 않는다</li>
+          </ul>
+        </div>
+        <div class="gatecard accent">
+          <div class="gt"><span class="gname">Gate B</span><span class="pill live">주력 트랙</span></div>
+          <p class="gq">“DB에 적힌 이 숫자가 원문 재무제표 표에 정말 그 계정으로 있나?”</p>
+          <ul class="gl">
+            <li>도구 <code>fin2/audit/face_audit.py</code> · <code>scripts/gateb_audit.py</code></li>
+            <li>기록 <code>face_audit.gate_status</code> / <code>fail_detail</code></li>
+            <li>판정 <code>pass</code> · <code>fail_a</code> · <code>fail_b</code> · <code>pending</code></li>
+            <li>뷰 <code>standard_financials</code>가 <code>fail_a</code> 행을 실제로 차단</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3 class="subh">두 번 읽되, 원문의 다른 층을 읽는다</h3>
+      <p class="ptext">
+        핵심은 “두 번 읽는다”가 아니라 <b>서로 다른 신호를 서로 다른 코드로 읽는다</b>는 데 있다.
+        DART 제출 문서 하나에는 사람이 읽는 <b>한국어 라벨 텍스트</b>와, 제출사가 기계용으로 붙인
+        <b>XBRL 태그</b>가 같이 들어 있다. 적재 경로는 앞의 것을, 감사 경로는 뒤의 것을 읽는다.
+      </p>
+
+      <figure class="fig">
+        <svg viewBox="0 0 760 552" role="img" class="pathsvg"
+             aria-label="하나의 원문 XML 파일에서 두 갈래 경로가 갈라진다. 왼쪽 적재 경로는 한국어 라벨 텍스트를 읽어 table_extractor가 당기 컬럼을 고르고 account_mapper의 alias 사전을 거쳐 combine.py의 규칙과 정본 선택을 적용해 std_financials_v3의 db_won을 만든다. 오른쪽 감사 경로는 XBRL 태그 ACODE와 ACONTEXT, ADECIMAL을 읽어 자체 리터럴 숫자 파서와 별개 사전인 concept_map.py를 거쳐 규칙 없이 report_won을 만든다. 두 값을 비교해 같으면 pass, 다르면 VALUE_DIFF로 fail 판정한다.">
+          <defs>
+            <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="currentColor"></path>
+            </marker>
+            <marker id="arwa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--accent)"></path>
+            </marker>
+          </defs>
+
+          <!-- source -->
+          <rect x="245" y="8" width="270" height="48" rx="2" fill="var(--surface-2)" stroke="currentColor" stroke-width="1"></rect>
+          <text x="380" y="29" text-anchor="middle" font-size="12.5" font-weight="600" fill="currentColor">원문 XML — 제출 문서 1개</text>
+          <text x="380" y="45" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".65">같은 파일을 두 번, 다른 층으로 읽는다</text>
+
+          <path d="M380,56 L380,68 L185,68 L185,84" fill="none" stroke="currentColor" stroke-width="1" marker-end="url(#arw)"></path>
+          <path d="M380,56 L380,68 L575,68 L575,84" fill="none" stroke="var(--accent)" stroke-width="1" marker-end="url(#arwa)"></path>
+
+          <text x="175" y="80" text-anchor="end" font-size="10" fill="currentColor" opacity=".75">적재 경로</text>
+          <text x="585" y="80" text-anchor="start" font-size="10" fill="var(--accent)" font-weight="600">감사 경로 · Track A</text>
+
+          <!-- row 1 -->
+          <rect x="50" y="88" width="270" height="50" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1"></rect>
+          <text x="185" y="110" text-anchor="middle" font-size="12" font-weight="500" fill="currentColor">한국어 라벨 텍스트</text>
+          <text x="185" y="127" text-anchor="middle" font-size="10" fill="currentColor" opacity=".65">“매입채무 및 기타유동채무”</text>
+          <rect x="440" y="88" width="270" height="50" rx="2" fill="var(--surface)" stroke="var(--accent)" stroke-width="1"></rect>
+          <text x="575" y="110" text-anchor="middle" font-size="12" font-weight="500" fill="var(--accent)">XBRL 태그</text>
+          <text x="575" y="127" text-anchor="middle" font-size="10" fill="var(--accent)" opacity=".8">ACODE · ACONTEXT · ADECIMAL</text>
+
+          <line x1="185" y1="138" x2="185" y2="174" stroke="currentColor" stroke-width="1" marker-end="url(#arw)"></line>
+          <text x="195" y="160" font-size="10" fill="currentColor" opacity=".7">사람이 읽는 층</text>
+          <line x1="575" y1="138" x2="575" y2="174" stroke="var(--accent)" stroke-width="1" marker-end="url(#arwa)"></line>
+          <text x="565" y="160" text-anchor="end" font-size="10" fill="var(--accent)" opacity=".85">기계가 붙인 층</text>
+
+          <!-- row 2 -->
+          <rect x="50" y="176" width="270" height="50" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1"></rect>
+          <text x="185" y="198" text-anchor="middle" font-size="12" font-weight="500" fill="currentColor">table_extractor</text>
+          <text x="185" y="215" text-anchor="middle" font-size="10" fill="currentColor" opacity=".65">행에서 당기 컬럼 1개를 고른다</text>
+          <rect x="440" y="176" width="270" height="50" rx="2" fill="var(--surface)" stroke="var(--accent)" stroke-width="1"></rect>
+          <text x="575" y="198" text-anchor="middle" font-size="12" font-weight="500" fill="var(--accent)">자체 리터럴 숫자 파서</text>
+          <text x="575" y="215" text-anchor="middle" font-size="10" fill="var(--accent)" opacity=".8">추출기 parse_amount 비재사용</text>
+
+          <line x1="185" y1="226" x2="185" y2="262" stroke="currentColor" stroke-width="1" marker-end="url(#arw)"></line>
+          <text x="195" y="248" font-size="10" fill="currentColor" opacity=".7">라벨 문자열 매칭</text>
+          <line x1="575" y1="226" x2="575" y2="262" stroke="var(--accent)" stroke-width="1" marker-end="url(#arwa)"></line>
+          <text x="565" y="248" text-anchor="end" font-size="10" fill="var(--accent)" opacity=".85">태그 문자열 매칭</text>
+
+          <!-- row 3 -->
+          <rect x="50" y="264" width="270" height="50" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1"></rect>
+          <text x="185" y="286" text-anchor="middle" font-size="12" font-weight="500" fill="currentColor">account_mapper</text>
+          <text x="185" y="303" text-anchor="middle" font-size="10" fill="currentColor" opacity=".65">account_maps/*.py alias 사전</text>
+          <rect x="440" y="264" width="270" height="50" rx="2" fill="var(--surface)" stroke="var(--accent)" stroke-width="1"></rect>
+          <text x="575" y="286" text-anchor="middle" font-size="12" font-weight="500" fill="var(--accent)">concept_map.py</text>
+          <text x="575" y="303" text-anchor="middle" font-size="10" fill="var(--accent)" opacity=".8">ACODE→canonical 별개 사전</text>
+
+          <line x1="185" y1="314" x2="185" y2="350" stroke="currentColor" stroke-width="1" marker-end="url(#arw)"></line>
+          <text x="195" y="336" font-size="10" fill="currentColor" opacity=".7">규칙 적용</text>
+          <line x1="575" y1="314" x2="575" y2="350" stroke="var(--accent)" stroke-width="1" marker-end="url(#arwa)"></line>
+          <text x="565" y="336" text-anchor="end" font-size="10" fill="var(--accent)" opacity=".85">규칙 없음</text>
+
+          <!-- row 4 -->
+          <rect x="50" y="352" width="270" height="50" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1"></rect>
+          <text x="185" y="374" text-anchor="middle" font-size="12" font-weight="500" fill="currentColor">combine.py</text>
+          <text x="185" y="391" text-anchor="middle" font-size="10" fill="currentColor" opacity=".65">정본 선택 + stage-rank · override</text>
+          <rect x="440" y="352" width="270" height="50" rx="2" fill="var(--surface)" stroke="var(--accent)" stroke-width="1"></rect>
+          <text x="575" y="374" text-anchor="middle" font-size="12" font-weight="500" fill="var(--accent)">필링 1개만</text>
+          <text x="575" y="391" text-anchor="middle" font-size="10" fill="var(--accent)" opacity=".8">정본 선택도 규칙도 거치지 않음</text>
+
+          <line x1="185" y1="402" x2="185" y2="438" stroke="currentColor" stroke-width="1" marker-end="url(#arw)"></line>
+          <line x1="575" y1="402" x2="575" y2="438" stroke="var(--accent)" stroke-width="1" marker-end="url(#arwa)"></line>
+
+          <!-- outputs -->
+          <rect x="50" y="440" width="270" height="44" rx="2" fill="var(--surface-2)" stroke="currentColor" stroke-width="1.5"></rect>
+          <text x="185" y="459" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">std_financials_v3</text>
+          <text x="185" y="475" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7">db_won</text>
+          <rect x="440" y="440" width="270" height="44" rx="2" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"></rect>
+          <text x="575" y="459" text-anchor="middle" font-size="12" font-weight="600" fill="var(--accent)">face_audit</text>
+          <text x="575" y="475" text-anchor="middle" font-size="10.5" fill="var(--accent)" opacity=".85">report_won</text>
+
+          <!-- converge -->
+          <path d="M185,484 L185,498 L360,498 L360,506" fill="none" stroke="currentColor" stroke-width="1" marker-end="url(#arw)"></path>
+          <path d="M575,484 L575,498 L400,498 L400,506" fill="none" stroke="var(--accent)" stroke-width="1" marker-end="url(#arwa)"></path>
+
+          <rect x="230" y="508" width="300" height="38" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"></rect>
+          <text x="380" y="532" text-anchor="middle" font-size="12.5" font-weight="600" fill="currentColor">db_won == report_won ?</text>
+          <text x="545" y="527" font-size="10.5" fill="currentColor" opacity=".7">같으면 pass</text>
+          <text x="545" y="541" font-size="10.5" fill="currentColor" opacity=".7">다르면 VALUE_DIFF</text>
+        </svg>
+        <figcaption>
+          같은 파일이지만 도달 경로가 겹치지 않는다 — 신호(라벨 텍스트 ↔ XBRL 태그), 사전
+          (<code>account_maps/*.py</code> ↔ <code>concept_map.py</code>), 숫자 파서, 규칙 적용 여부가
+          모두 별개다. 그래서 한쪽의 버그가 다른 쪽에 그대로 복사되지 않는다.
+        </figcaption>
+      </figure>
+
+      <p class="ptext">
+        <code>face_audit.py</code> 모듈 첫머리가 이 원칙을 그대로 적어두고 있다 — <b>“표준화
+        파이프라인과 독립: reconcile(source 선택)·standardize(규칙)를 거치지 않고 원본 보고서의
+        face 표를 직접 다시 읽는다 → 같은 버그를 양쪽이 공유하지 않음”</b>, 그리고 <b>“숫자 파싱은
+        추출기(parse_amount)를 재사용하지 않고 본 모듈 자체의 리터럴 파서를 쓴다”</b>.
+        검증력은 “원문을 본다”가 아니라 <b>“무엇을 공유하지 않는가”</b>에서 나온다.
+      </p>
+
+      <div class="table-scroll">
+        <table class="rules">
+          <thead><tr><th>공유 여부</th><th>적재 경로(파서·표준화)</th><th>감사 경로(Gate B Track A)</th></tr></thead>
+          <tbody>
+            <tr><td class="r">신호</td><td>한국어 라벨 텍스트</td><td>XBRL ACODE 태그</td></tr>
+            <tr><td class="r">당기 판별</td><td>표의 물리 컬럼 위치로 추론</td><td><code>ACONTEXT</code> 속성이 명시</td></tr>
+            <tr><td class="r">단위</td><td>문서·표 단위 선언을 파싱</td><td><code>ADECIMAL</code> 속성이 명시</td></tr>
+            <tr><td class="r">숫자 파서</td><td><code>parse_amount()</code></td><td>모듈 자체 리터럴 파서</td></tr>
+            <tr><td class="r">사전</td><td><code>account_maps/*.py</code> alias</td><td><code>taxonomy/concept_map.py</code></td></tr>
+            <tr><td class="r">규칙</td><td>stage-rank · additive · curated override</td><td>없음</td></tr>
+            <tr><td class="r">필링 선택</td><td>최초등록본 + 순차 델타 패치(정본 정책)</td><td>그 statement의 source 필링 1개</td></tr>
+            <tr><td class="r">공유하는 것</td><td colspan="2">XML 파일 자체, 그리고 표의 <b>위치·basis 식별</b>(<code>_detect_body_statement_tables</code>) — 감사기가 독자 식별을 쓰다가 479건 오탐을 낸 뒤 2026-08-07에 의도적으로 공유로 바꿨다</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="subh">그래서 <code>fail_a</code>면 파서 버그인가</h3>
+      <p class="ptext">
+        <b>절반만 그렇다.</b> 두 경로가 어긋났다는 것은 “둘 중 하나가 틀렸다”는 뜻이지 “적재
+        경로가 틀렸다”는 뜻이 아니다. 어느 쪽이 틀렸는지는 사람이 원문을 직접 열어봐야 갈린다 —
+        이번 달 작업의 대부분이 실은 그 판별이었고, 결과는 거의 반반이었다.
+      </p>
+      <div class="table-scroll">
+        <table class="rules">
+          <thead><tr><th>불일치의 정체</th><th>고친 곳</th><th>이번 달 사례</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="r">적재 경로가 틀림<br><span style="font-weight:400;color:var(--ink-3)">진짜 파서/표준화 버그</span></td>
+              <td><code>combine.py</code> · <code>account_mapper.py</code> · <code>report_lines.py</code> · <code>text.py</code></td>
+              <td>R42 정정본 stale 셀 · R45 NI 앵커 오귀속 · R49 cell-identity · R51 depth 휴리스틱 · R52 퍼지매칭 오매핑 · R55 alias 누락</td>
+            </tr>
+            <tr>
+              <td class="r">감사 경로가 틀림<br><span style="font-weight:400;color:var(--ink-3)">DB는 처음부터 정답</span></td>
+              <td><code>face_audit.py</code> · <code>concept_map.py</code></td>
+              <td>R50 금융업 cash 개념 갭 · R53 inventory/ppe acode 갭 · R54 UDF acode 미인식 · R56 라벨-acode 뒤바뀜</td>
+            </tr>
+            <tr>
+              <td class="r">둘 다 맞음<br><span style="font-weight:400;color:var(--ink-3)">비교 자체가 성립 안 함</span></td>
+              <td>대조 건너뛰고 <code>pending</code></td>
+              <td>R26 두산밥캣 USD 표시통화 · R22 개념이 다른 COGS 4개사</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="ptext">
+        R50·R53처럼 <em>검증기만 고쳐서</em> fail_a가 482→170, 135→113으로 떨어진 사례가 이 구조를
+        잘 보여준다 — std_v3를 한 줄도 다시 만들지 않았는데 수백 건이 pass로 돌아섰다. 그때
+        틀린 쪽은 파서가 아니라 감사기였다.
+      </p>
+
+      <h3 class="subh">등급이 곧 “얼마나 독립적으로 읽었나”</h3>
+      <p class="ptext">
+        모든 필링에 XBRL 태그가 붙어 있는 건 아니다. 태그가 없으면 감사기도 결국 텍스트를 읽어야
+        하고, 그만큼 독립성이 떨어진다. <code>gate_status_for_row()</code>는 이 독립성 차이를
+        그대로 등급으로 옮긴다.
+      </p>
+      <div class="table-scroll">
+        <table class="rules">
+          <thead><tr><th>Track</th><th>감사기가 읽은 것</th><th>독립성</th><th>불일치 시 등급</th></tr></thead>
+          <tbody>
+            <tr><td class="r">A</td><td>문서 안의 XBRL 태그를 직접 스캔</td><td>완전 독립</td><td class="s"><span class="pill wait">fail_a — 확정 버그, 뷰 차단</span></td></tr>
+            <tr><td class="r">B</td><td>텍스트 표 (태그 없는 필링)</td><td>신호를 공유</td><td class="s"><span class="pill idle">fail_b — REVIEW, 뷰 노출</span></td></tr>
+            <tr><td class="r">C</td><td>PDF 재판독</td><td>휴리스틱</td><td class="s"><span class="pill idle">fail_b</span></td></tr>
+            <tr><td class="r">D</td><td>xbrl_zip을 R10 파서로 재파싱</td><td>파서를 공유 — R10 자체 버그는 못 잡음</td><td class="s"><span class="pill idle">fail_b</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="ptext" style="margin-top:14px">
+        즉 <code>fail_a</code>는 “완전히 독립된 두 경로가 어긋났다”는 뜻이고, 그래서 뷰에서 아예
+        차단할 만큼 신뢰한다. <code>fail_b</code>는 “덜 독립적인 읽기가 어긋났다”라 오탐일 수 있어
+        노출하되 검토 대상으로만 남긴다. 등급 자체가 <b>증거의 강도</b>인 셈이다.
+      </p>
+
+      <div class="riskbox" style="margin-top:22px">
+        <b>구조적 사각지대</b> — Track B 리더는 행 안의 <b>모든</b> 숫자 셀을 후보로 읽는다
+        (<code>read_report_face_text</code>의 any-column 방식). 그래서 “맞는 행에서 <em>틀린
+        컬럼</em>을 골랐다”는 종류의 버그는, 그 틀린 값도 어차피 같은 행 안에 있기 때문에 매칭에
+        성공해 <b>pass로 통과한다</b>. 지금 진행 중인 클래스B 유형1(전기 값이 당기로 둔갑)이 정확히
+        이 형태이고, XBRL이 없는 Track B-only 필링에서는 Gate B가 원천적으로 검출하지 못한다.
+        이번 6개사가 잡힌 것은 그 필링들에 XBRL이 있어 Track A가 <code>ACONTEXT</code>로 “당기 칸은
+        비어 있다”를 알려줬기 때문이다.
+      </div>
+    </section>
+
+    <!-- 03 ───────────────────────────────────── -->
+    <section id="burn">
+      <div class="sec-head">
+        <span class="n">03</span>
+        <h2>Gate B fail_a 번다운</h2>
+        <span class="note">DB 전체 · fy ≥ 1999 · source=v3</span>
+      </div>
+      <p class="lede">
+        <code>fail_a</code> = 감사기가 원문에서 독립 재판독한 값과 DB 값이 어긋나 <em>수정이
+        필요하다</em>고 판정한 건수. 8월 27일 R49 트랙을 닫은 직후 482건의 백로그가 드러났고,
+        그 뒤 사흘 동안 규칙 7건을 순차 적용해 83건까지 내렸다.
+      </p>
+
+      <div class="chart-wrap" style="position:relative">
+        <div class="chart-title">
+          <h3>수정 단계별 잔여 fail_a</h3>
+          <span class="sub">2026-08-27 → 08-30 · 단위: 건</span>
+        </div>
+        <div class="chart-scroll">
+          <svg class="burn" viewBox="0 0 720 268" role="img"
+               aria-label="fail_a 잔여 건수가 기준선 482건에서 R50 적용 후 170건으로 급감한 뒤 R51 156, R52 135, R53 113, R54 88, R55 86, R56 85, 클래스B 유형2 적용 후 83건까지 완만히 감소">
+            <!-- gridlines -->
+            <g>
+              <line class="gridline" x1="56" y1="210" x2="706" y2="210"></line>
+              <line class="gridline" x1="56" y1="172.8" x2="706" y2="172.8"></line>
+              <line class="gridline" x1="56" y1="135.6" x2="706" y2="135.6"></line>
+              <line class="gridline" x1="56" y1="98.4" x2="706" y2="98.4"></line>
+              <line class="gridline" x1="56" y1="61.2" x2="706" y2="61.2"></line>
+              <line class="gridline" x1="56" y1="24" x2="706" y2="24"></line>
+              <text x="46" y="214" text-anchor="end">0</text>
+              <text x="46" y="176.8" text-anchor="end">100</text>
+              <text x="46" y="139.6" text-anchor="end">200</text>
+              <text x="46" y="102.4" text-anchor="end">300</text>
+              <text x="46" y="65.2" text-anchor="end">400</text>
+              <text x="46" y="28" text-anchor="end">500</text>
+            </g>
+            <line class="axis" x1="56" y1="210" x2="706" y2="210"></line>
+            <line class="crosshair" id="xh" x1="0" y1="24" x2="0" y2="210"></line>
+
+            <!-- area -->
+            <path id="area" d="M56,30.7 L136.5,146.8 L217,152 L297.5,159.8 L378,168 L458.5,177.3 L539,178 L619.5,178.4 L700,179.1 L700,210 L56,210 Z"
+                  fill="var(--accent)" opacity=".08"></path>
+            <path class="lineseries" d="M56,30.7 L136.5,146.8 L217,152 L297.5,159.8 L378,168 L458.5,177.3 L539,178 L619.5,178.4 L700,179.1"></path>
+
+            <!-- x labels -->
+            <g>
+              <text x="56"   y="230" text-anchor="middle">기준선</text>
+              <text x="136.5" y="230" text-anchor="middle">R50</text>
+              <text x="217"  y="230" text-anchor="middle">R51</text>
+              <text x="297.5" y="230" text-anchor="middle">R52</text>
+              <text x="378"  y="230" text-anchor="middle">R53</text>
+              <text x="458.5" y="230" text-anchor="middle">R54</text>
+              <text x="539"  y="230" text-anchor="middle">R55</text>
+              <text x="619.5" y="230" text-anchor="middle">R56</text>
+              <text x="700"  y="230" text-anchor="middle">B-2</text>
+              <text x="56"   y="245" text-anchor="middle" font-size="10">08-27</text>
+              <text x="378"  y="245" text-anchor="middle" font-size="10">08-28</text>
+              <text x="700"  y="245" text-anchor="middle" font-size="10">08-30</text>
+            </g>
+
+            <!-- direct labels -->
+            <text class="vlabel" x="66" y="26">482</text>
+            <text class="vlabel" x="694" y="172" text-anchor="end">83</text>
+
+            <!-- dots -->
+            <circle class="dot" cx="56" cy="30.7" r="4.5"></circle>
+            <circle class="dot" cx="136.5" cy="146.8" r="4.5"></circle>
+            <circle class="dot" cx="217" cy="152" r="4.5"></circle>
+            <circle class="dot" cx="297.5" cy="159.8" r="4.5"></circle>
+            <circle class="dot" cx="378" cy="168" r="4.5"></circle>
+            <circle class="dot" cx="458.5" cy="177.3" r="4.5"></circle>
+            <circle class="dot" cx="539" cy="178" r="4.5"></circle>
+            <circle class="dot" cx="619.5" cy="178.4" r="4.5"></circle>
+            <circle class="dot-end" cx="700" cy="179.1" r="5.5"></circle>
+
+            <!-- hit targets -->
+            <g id="hits">
+              <rect class="hit" x="16"    y="16" width="80" height="200" data-i="0"></rect>
+              <rect class="hit" x="96.5"  y="16" width="80" height="200" data-i="1"></rect>
+              <rect class="hit" x="177"   y="16" width="80" height="200" data-i="2"></rect>
+              <rect class="hit" x="257.5" y="16" width="80" height="200" data-i="3"></rect>
+              <rect class="hit" x="338"   y="16" width="80" height="200" data-i="4"></rect>
+              <rect class="hit" x="418.5" y="16" width="80" height="200" data-i="5"></rect>
+              <rect class="hit" x="499"   y="16" width="80" height="200" data-i="6"></rect>
+              <rect class="hit" x="579.5" y="16" width="80" height="200" data-i="7"></rect>
+              <rect class="hit" x="660"   y="16" width="60" height="200" data-i="8"></rect>
+            </g>
+          </svg>
+        </div>
+        <div class="tipbox" id="tip" role="status" aria-live="polite"></div>
+        <p class="chart-foot">
+          8월 중순의 기준선(686 → 631 → 621건)은 여기 실선에 잇지 않았다 — 그 사이 R32·R33·R35·R38이
+          감사 <em>커버리지 자체를 넓혀</em> 모집단이 달라졌기 때문이다. 같은 자로 잰 구간은 482건 이후다.
+        </p>
+      </div>
+    </section>
+
+    <!-- 04 ───────────────────────────────────── -->
+    <section id="tracks">
+      <div class="sec-head">
+        <span class="n">04</span>
+        <h2>목표별 진행</h2>
+        <span class="note">9개 트랙</span>
+      </div>
+
+      <div class="tracks">
+
+        <article class="track">
+          <div class="meta"><span class="pill done">완료</span><span class="dates">07-30 → 08-01</span></div>
+          <div class="body">
+            <h3><span class="idx">T1</span>수집 파이프라인 복구 · 데일리 자동화</h3>
+            <p>7월 말 멈춰 있던 수집 경로를 되살리고, 사람 손 없이 매일 도는 상태로 만들었다.</p>
+            <ul class="items">
+              <li>상장폐지 판정 엔진 — 양성 증거(폐지 명부)와 부재 추론을 분리 <code>8b62965</code></li>
+              <li>데일리 launchd 배선 + 유니버스 갱신 기본 ON <code>c14c1f0</code></li>
+              <li>증분 미러 <span class="num">40분 → 4초</span>, 신선도 검사 TZ 버그 <code>607fc92</code></li>
+              <li>KRX 휴장일 스킵 + 상장폐지 원문 이관 자동화 <code>00e6718</code></li>
+              <li>신규 상장사 전 기간 백필 드라이버 <code>0eefd66</code></li>
+              <li>Phase 4 전량 재적재 + 수용 검증, <code>report_tables</code> 신설</li>
+              <li>후속 Phase 5 백필 <span class="num">1,316개사</span> 완료(08-21), 잔여 6건은 워커 타임아웃 → 300초 상향</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="track">
+          <div class="meta"><span class="pill done">완료</span><span class="dates">08-05 → 08-08</span></div>
+          <div class="body">
+            <h3><span class="idx">T2</span>계층2 “조용한 손실” 색출</h3>
+            <p>에러 없이 통과하면서 데이터만 사라지던 경로들. 6종의 손실 채널을 원문 대조로 특정해 닫았다.</p>
+            <ul class="items">
+              <li>R4-1 문서 전체 기본 단위 — 재무제표 직접작성 서식 4건 복구</li>
+              <li>R4-2 제목+데이터 병합 표 / 제목 없는 표 — 5건 복구</li>
+              <li>본문의 <code>&lt;?</code>가 PI로 해석돼 문서 뒷부분이 통째 유실</li>
+              <li>속성값 따옴표 처리 결함 → 조용한 절단 <span class="num">255건</span></li>
+              <li>이익잉여금처분계산서가 CF로 오적재되던 3종</li>
+              <li>외화(USD) 표시 재무제표 — 환산 없이 표시통화 그대로 적재</li>
+              <li>R11 주석/SCE 표 열 오귀속 — occupied-grid 재정의 (+R11-1/R11-2)</li>
+              <li>Gate B 오탐 <span class="num">856건</span> 해소 — 감사기가 추출기의 표 식별을 재사용</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="track">
+          <div class="meta"><span class="pill done">완료</span><span class="dates">08-05 → 08-12</span></div>
+          <div class="body">
+            <h3><span class="idx">T3</span>XBRL 원문(instance) 파서 신설</h3>
+            <p>HTML 표 파싱과 독립된 두 번째 사실 소스. Phase 0 실측부터 소급 백필까지 6단계로 완주.</p>
+            <ul class="items">
+              <li>Phase 1 DB 스키마 → Phase 2 다운로더 <code>ba2fb61</code></li>
+              <li>Phase 3-1~3-7 파서 본체 + SCE(자본변동표)</li>
+              <li>Phase 4 데일리 파이프라인 배선 <code>16994e7</code></li>
+              <li>Phase 5 소급 백필 + 5-A 구형 taxonomy vintage</li>
+              <li>Phase 6 검증 — R10 부호 규칙(<code>preferredLabel</code>이 결정, <code>calc:weight</code> 미사용)</li>
+              <li>R14 구형 IFRS taxonomy(2010~2013 계열) 확장</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="track">
+          <div class="meta"><span class="pill done">완료</span><span class="dates">08-08 → 08-09</span></div>
+          <div class="body">
+            <h3><span class="idx">T4</span>계층3 std_v3 전환 · 뷰 브리지 swap</h3>
+            <p>앱이 바라보는 <code>standard_financials</code>를 v2에서 v3로 갈아끼우고, 그 과정에서 드러난 결측을 메웠다.</p>
+            <ul class="items">
+              <li>controlling_ni 대량 공백 수정 — separate/consolidated 양쪽</li>
+              <li><code>data_quality</code> / <code>period_end</code> / <code>shares_out</code> 전량 NULL 해소</li>
+              <li>BS 신탁계정 오귀속 + net_income 폴백 누락 — <span class="num">119개사</span></li>
+              <li>뷰 v2 → v3 브리지 교체 <code>ed12b5e</code></li>
+              <li>검증도구 4종 구계약 갱신(F1/D4·R11·FX 폴백 반영)</li>
+              <li>C-1 렌더 확인 + Streamlit 풀 스모크</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="track">
+          <div class="meta"><span class="pill done">완료</span><span class="dates">08-09 → 08-10</span></div>
+          <div class="body">
+            <h3><span class="idx">T5</span>‘사업의 내용’ 계층2 편입</h3>
+            <p>재무제표 밖의 서술 정보(수주·가동률·연구개발 등)를 정본 계층으로 끌어올렸다.</p>
+            <ul class="items">
+              <li>27항목 적재 + R0 파싱 원칙 확립, 거짓부재 10건 수정 <code>6d18c30</code></li>
+              <li><code>biz_metrics</code> / <code>order_backlog</code> 계층2 신설 및 재배선</li>
+              <li>T14 가드 배선 누락 해소 + 롤포워드 인식 추가 <code>29814f1</code></li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="track">
+          <div class="meta"><span class="pill done">완료</span><span class="dates">08-10 → 08-11</span></div>
+          <div class="body">
+            <h3><span class="idx">T6</span>pre-2015 K-GAAP 구서식 2차 패스</h3>
+            <p>2015년 이전 구서식은 레이아웃이 달라 별도 라우팅이 필요했다. 2015+ 경로는 무변경 유지.</p>
+            <ul class="items">
+              <li>R13 연도 라우팅 신규 모듈 — 계층2 전사</li>
+              <li>계층2 <span class="num">81,660건</span> 백필 + 계층3 반영 + 뷰 dedup <code>d78d597</code></li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="track">
+          <div class="meta"><span class="pill done">완료</span><span class="dates">08-11 → 08-12</span></div>
+          <div class="body">
+            <h3><span class="idx">T7</span>PDF-only 필링 트랙</h3>
+            <p>XML이 없어 PDF만 남은 필링. 3차 패스에서 구형 taxonomy를 확장해 대부분을 회수했다.</p>
+            <ul class="items">
+              <li>미적재 <span class="num">1,551건 → 31건</span></li>
+              <li>잔여 31건은 목록으로 문서화 <code>1b7fbb8</code></li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="track">
+          <div class="meta"><span class="pill live">진행 중</span><span class="dates">08-12 → 진행</span></div>
+          <div class="body">
+            <h3><span class="idx">T8</span>Gate B 정상화 — 이달의 주력</h3>
+            <p>
+              DB 값과 원문 독립 재판독이 어긋나는 건을 전수 원문 대조로 규명하고, 규칙을 정본화한 뒤
+              <em>전수 재감사까지</em> 돌려야 트랙을 닫는다(표본으로 닫으면 다음 전수에서 재등장).
+              8월에만 규칙 R15~R56이 이 트랙에서 나왔다.
+            </p>
+            <ul class="items">
+              <li>trade_payables 계열 R15·R16·R17 stage-rank 숏컷 / additive override</li>
+              <li>R19 주석번호 가드 오탐 — fail_a <span class="num">686 → 631</span></li>
+              <li>R20·R21·R22 지주회사형 is.sga / is.cogs</li>
+              <li>R23 concept_map 갭 — trade_payables <span class="num">148 → 1</span></li>
+              <li>R24·R25·R26 controlling_ni 구조 후보 주입 · FX curated</li>
+              <li>R27·R28 EPS 라벨 오판 + R29·R30·R31 후속(775개사 백필)</li>
+              <li>R32 업종 프로파일 파생 revenue · R33 증거강도 축2 도입</li>
+              <li>전수 재감사 기준선 확립 — <span class="num">299,651행</span>, 판정 전이 0</li>
+              <li>P3-1 원인A R34~R40 — Track D(xbrl_zip) 감사 커버리지 신설 포함</li>
+              <li>R41 curated 키 재생성기 · R42 정정본 stale subline</li>
+              <li>D카테고리 버그① tax_expense 컬럼 오선택 — 근본수정 + <span class="num">49,418행</span> 백필</li>
+              <li>R43·R44·R45 NI 앵커 재설계 — <span class="num">1,440개사</span> 재백필, 회귀 0</li>
+              <li>R46·R47 face_audit 스킵게이트 — <span class="num">247건</span>, 4단계 순차 해소</li>
+              <li>R49 controlling_ni cell-identity 2건 — 전사 fail_a 0</li>
+              <li>R50~R53 482건 백로그 클러스터 — <span class="num">482 → 113</span></li>
+              <li>trade_payables 45건 4클래스 트리아지 → A(R54)·C(R55·R56) 종료</li>
+              <li class="open">클래스B 유형1 — 구현·백필 완료, <b>전수 재감사 결과 대기</b> · 아래 06 참조</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="track">
+          <div class="meta"><span class="pill wait">부분 완료</span><span class="dates">08-22</span></div>
+          <div class="body">
+            <h3><span class="idx">T9</span>std_v2 폐기 → v3 이식</h3>
+            <p>
+              v2 카탈로그의 규칙을 v3로 옮기는 트랙. “규칙만 이식”은 canonical 네임스페이스가 분리돼
+              있어 무동작이라는 게 밝혀져, 안전성 재확인(P0.6)을 먼저 돌렸다. <b>코드 이식은
+              절반쯤 왔지만 DB의 v2 체인은 손도 대지 못했다</b> — 아래 07 참조.
+            </p>
+            <ul class="items">
+              <li>P0.6(T1~T7) 조사 완료 — lease/borrow 카탈로그 분해 안전성 실증</li>
+              <li>P1C-1 interest_expense 우선순위 + P1C-2 cash_with_deposits 이식 <code>56731d2</code></li>
+              <li>P1C 잔여 62건 회귀 4종 근본수정 <code>7e97e28</code></li>
+              <li class="none">P1A lease/borrow 분해 — 미착수</li>
+              <li class="open">데일리가 <code>std_v2</code>만 만들고 <code>std_v3</code>는 수동 배치뿐</li>
+              <li class="open">뷰가 v2를 폴백으로 사용 <span class="num">16,866행</span></li>
+            </ul>
+          </div>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- 05 ───────────────────────────────────── -->
+    <section id="rules">
+      <div class="sec-head">
+        <span class="n">05</span>
+        <h2>Gate B 규칙 연대기</h2>
+        <span class="note">R15 → R56</span>
+      </div>
+      <p class="lede">
+        규칙 하나가 곧 “원인이 규명되고 정본화된 결함” 하나다. 번호는
+        <code>docs/PARSING_RULES.md</code>의 등재 순서이고, 상태는 전수 재감사까지 마쳤는지를 가리킨다.
+      </p>
+      <div class="table-scroll">
+        <table class="rules">
+          <thead>
+            <tr><th>규칙</th><th>날짜</th><th>내용</th><th>상태</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="r">R15–R17</td><td class="d">08-13~14</td><td>bs.trade_payables — 유동/비유동 stage-rank 숏컷 우회 + additive override, curated 키를 corp 단독에서 corp+기간+basis로 정정</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R18</td><td class="d">08-14</td><td>cf.dividends_paid 부호 — document.xml 인라인 XBRL 사실로 대사(오버레이)</td><td class="s"><span class="pill wait">부분</span></td></tr>
+            <tr><td class="r">R19</td><td class="d">08-15</td><td>table_extractor 주석번호 가드 오탐 — 콤마 없는 단일 숫자 처리</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R20–R22</td><td class="d">08-15</td><td>지주회사형 is.sga / is.cogs — 영업비용 총계 vs 서브라인 합산, 개념 상이 4개사 pending</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R23</td><td class="d">08-15</td><td>concept_map trade_payables 갭 5종 + 우연일치 가드 (fail_a 148→1)</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R24–R26</td><td class="d">08-15</td><td>controlling_ni 구조 후보 주입, 감사기 리더 동조, 두산밥캣 FX 표시통화 pending 강등</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R27–R28</td><td class="d">08-15~16</td><td>report_lines EPS 판정 — 라벨 부분문자열 오탐, K-GAAP 구서식 헤드라인 NI가 EPS로 오파싱</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R29–R31</td><td class="d">08-16~17</td><td>K-GAAP 헤드라인 NI 복구 · 단위 선언 lookback · 괄호 없는 순수 하이픈 음수 인식(775개사 백필)</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R32–R33</td><td class="d">08-17~18</td><td>업종 프로파일 파생 revenue 검증(증권/은행/보험/여신) · 증거강도 축2 계측 도입</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R34–R40</td><td class="d">08-20~21</td><td>P3-1 원인A — 정정본 표 재렌더링 depth 오판, NI 귀속표 텍스트 폴백과 그 열선택 결함, 상장폐지사 유니버스 제외, Track D(xbrl_zip) 감사 신설, BS 총계 라벨-표현 드리프트</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R41–R42</td><td class="d">08-21</td><td>curated 키 재생성기 신설(전수 패턴 스캔) · 정정본 하위라인 재구성이 남긴 stale 셀 오채택</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R43–R45</td><td class="d">08-25~26</td><td>포괄손익 귀속 가드 확장 · 계속영업 귀속 자매가드 · net_income 앵커 재설계(1,440개사 재백필)</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R46–R47</td><td class="d">08-26~27</td><td>face_audit NI 귀속 스킵게이트 결함 — 4단계(a~d) 순차 해소, 247건</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R48</td><td class="d">08-26</td><td>account_mapper 방향성/개념 교차 오매핑 2건 — 지배지분순이익이 noncontrolling으로, BS 자본 개념이 IS 개념으로</td><td class="s"><span class="pill idle">미조치</span></td></tr>
+            <tr><td class="r">R49</td><td class="d">08-27</td><td>controlling_ni에 총포괄손익이 채택된 2건 — cell-identity 버그 A1+B2</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R50</td><td class="d">08-27</td><td>482건 백로그 클러스터 A(금융업 cash 개념 갭)·B(두산밥캣 FX 카탈로그 누락) — 검증기 수정만으로 482→170</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R51</td><td class="d">08-27</td><td>포스코스틸리온 total_equity — “총자본” 라벨이 회사마다 다른 XBRL 개념을 가리킴, combine.py depth 가드로 해소</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R52</td><td class="d">08-27~28</td><td>account_mapper 퍼지매칭 결함 — COGS 주석행이 is.revenue로 오매핑, canonical-scoped 배제 + 전사 백필</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R53</td><td class="d">08-28</td><td>face_audit inventory/ppe concept_map acode 갭 — 5개로 보이던 클러스터가 실은 하나</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R54</td><td class="d">08-29</td><td>회사고유확장(UDF) acode 라벨 폴백 — trade_payables 클래스A 25건 (113→88)</td><td class="s"><span class="pill done">완료</span></td></tr>
+            <tr><td class="r">R55–R56</td><td class="d">08-29</td><td>bs_accounts 기타유동/비유동채무 alias 추가(39개사) · 갤럭시아에스엠 라벨-acode 뒤바뀜 curated 예외</td><td class="s"><span class="pill done">완료</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 06 ───────────────────────────────────── -->
+    <section id="now">
+      <div class="sec-head">
+        <span class="n">06</span>
+        <h2>지금 진행 중</h2>
+        <span class="note">미커밋 5파일</span>
+      </div>
+
+      <div class="now">
+        <h3>trade_payables 클래스B 유형1 — 선두 None 절삭 과잉적용</h3>
+        <p class="path"><code>fin2/extract/text.py::_emit_section</code> · 6개사 12행 · 설계문서 <code>docs/plans/gateb_trade_payables_classB_stale_column_investigation_2026-08-29.md</code></p>
+        <p style="margin:0 0 16px;font-size:14px;color:var(--ink-2);max-width:64ch">
+          행 앞쪽의 빈 칸을 무조건 잘라내고 남은 값을 당기 컬럼으로 다시 번호 매기던 가드가 문제다.
+          원래는 표 파서가 만들어낸 <em>가짜</em> 빈 칸을 지우려던 것인데, 이번 6개사는 원문 자체가
+          당기 컬럼을 비워둔 경우여서 전기(때로는 전전기) 값이 당기로 둔갑했다.
+          두 상황은 행 하나만 봐서는 구분되지 않아, ACONTEXT 유무를 신호로 쓰는 쪽으로 설계를 확정했다.
+        </p>
+        <ol class="steps">
+          <li class="done"><span class="sn">01</span><span class="sd"><b>원문 대조</b> — 7개사 8개 파일 전건 확인, 2개의 서로 다른 버그로 분리</span><span class="pill done">완료</span></li>
+          <li class="done"><span class="sn">02</span><span class="sd"><b>유형2(이연제약)</b> — R42 레시피로 override 2줄 추가, fail_a 85→83</span><span class="pill done">커밋 7d20911</span></li>
+          <li class="done"><span class="sn">03</span><span class="sd"><b>파급범위 실측</b> — SQL 휴리스틱 26건 검출, 전건 원문 대조 결과 추가 확증 사례 없음</span><span class="pill done">완료</span></li>
+          <li class="done"><span class="sn">04</span><span class="sd"><b>구현</b> — 3개 파일 수정 + 테스트, <code>pytest</code> 634/635 (기존 무관 실패 1건 제외)</span><span class="pill done">완료</span></li>
+          <li class="done"><span class="sn">05</span><span class="sd"><b>백필</b> — report_lines 재추출 + std_v3 재표준화, 08-30 01:30 종료, 에러 0</span><span class="pill done">완료</span></li>
+          <li><span class="sn">06</span><span class="sd"><b>전수 재감사</b> — 08-30 08:00경 시작, 결과 수령 대기</span><span class="pill live">진행 중</span></li>
+          <li><span class="sn">07</span><span class="sd"><b>등급 전이 분석</b> — 스냅샷 <code>face_audit_snap_20260829</code> 대비, 이상 없으면 커밋</span><span class="pill wait">대기</span></li>
+        </ol>
+
+        <div class="riskbox">
+          <b>열린 리스크</b> — 이 코드 경로는 Track B(비XBRL 텍스트)로 읽히는 모든 BS/IS 필드가 지나가는
+          공용 함수다. XBRL이 아예 없는 필링에서는 감사기도 같은 Track B를 폴백으로 쓰기 때문에
+          사실상 자기 자신과 대조하게 되어, <b>Gate B가 원천적으로 못 잡는 잠복 오염</b>이 남아 있을 수 있다.
+          SQL 휴리스틱으로는 측정되지 않아 파급범위는 미상으로 남겨두었다.
+        </div>
+      </div>
+    </section>
+
+    <!-- 07 ───────────────────────────────────── -->
+    <section id="stdv2">
+      <div class="sec-head">
+        <span class="n">07</span>
+        <h2>구세대 정리 현황 — 두 축</h2>
+        <span class="note">DB 실측 2026-08-30</span>
+      </div>
+      <p class="lede">
+        계층3은 8월 9일에 v3로 넘어갔지만 <b>구세대 테이블은 지워진 적이 없다</b>. 그냥 남아
+        있는 게 아니라 <b>아직 현역</b>이다 — 매일 새로 쌓이고, 앱이 읽는 뷰가 아직 참조하고 있다.
+      </p>
+
+      <div class="riskbox" style="margin:0 0 22px;background:var(--surface-2);border-left-color:var(--accent)">
+        <b style="color:var(--accent-ink)">먼저 — “v2”가 두 개다</b><br>
+        <code>fact_v2</code>의 “v2”와 <code>std_financials_v2</code>의 “v2”는 <b>서로 무관한
+        세대 카운터</b>다. 앞의 것은 <code>financial_facts</code>를 대체한 <b>계층2 테이블의
+        2세대</b>이고(구세대는 이미 드롭됨), 뒤의 것은 <b>계층3 산출물의 2세대</b>다.
+        이름이 닮았을 뿐 폐기 축이 다르고, <b>같이 죽지 않는다</b> —
+        <code>std_v2</code>를 지워도 <code>fact_v2</code>에는 별개 소비자가 셋 남는다.
+      </div>
+
+      <div class="table-scroll">
+        <table class="rules">
+          <thead><tr><th>축</th><th>구세대</th><th>신세대</th><th>구세대 크기</th><th>상태</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="r">계층2<br><span style="font-weight:400;color:var(--ink-3)">추출</span></td>
+              <td><code>financial_facts</code> → <code>fact_v2</code></td>
+              <td><code>report_lines</code> · <code>note_lines</code></td>
+              <td class="d">55 GB</td>
+              <td class="s"><span class="pill idle">별도 트랙</span></td>
+            </tr>
+            <tr>
+              <td class="r">계층3<br><span style="font-weight:400;color:var(--ink-3)">표준화</span></td>
+              <td><code>std_financials_v2</code> + <code>std_financials_calendar</code></td>
+              <td><code>std_financials_v3</code></td>
+              <td class="d">633 MB</td>
+              <td class="s"><span class="pill live">이 트랙(T9)</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="gainbox" style="margin:18px 0 22px">
+        <b>방향 확정 (2026-08-30)</b> — “계층2·계층3 <b>모두 신세대로 옮겨가고 부족한 것을
+        채워가는 방향</b>으로 해서 <b>이중으로 채우고 관리하지 않도록</b> 하자.”
+        구세대를 남겨두고 병행 운영하는 선택지는 폐기됐다. 두 축은 작업 내용이 다르므로
+        따로 진행하되, <b>목적지는 하나</b>다 — 각 계층에 살아 있는 테이블은 하나씩.
+      </div>
+
+      <div class="table-scroll">
+        <table class="rules">
+          <thead><tr><th>객체</th><th>축</th><th>크기</th><th>행 수</th><th>마지막 갱신</th><th>상태</th></tr></thead>
+          <tbody>
+            <tr><td class="r">std_financials_v2</td><td class="d">계층3</td><td class="d">386 MB</td><td class="d">505,079</td><td class="d">2026-08-28</td><td class="s"><span class="pill live">계속 적재 중</span></td></tr>
+            <tr><td class="r">std_financials_calendar</td><td class="d">계층3</td><td class="d">247 MB</td><td class="d">319,694</td><td class="d">2026-08-28</td><td class="s"><span class="pill live">계속 적재 중</span></td></tr>
+            <tr><td class="r">std_financials_v3</td><td class="d">계층3</td><td class="d">308 MB</td><td class="d">303,887</td><td class="d">수동 배치만</td><td class="s"><span class="pill done">현행</span></td></tr>
+            <tr><td class="r">fact_v2</td><td class="d">계층2</td><td class="d">55 GB</td><td class="d">74,145,573</td><td class="d">2026-08-28</td><td class="s"><span class="pill idle">별도 트랙</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="subh">왜 “읽기용으로 남겨두기”가 아니라 계속 쌓이나</h3>
+      <p class="ptext">
+        v3가 못 채운 구간을 v2가 메우는 <b>읽기 폴백</b>은 v3가 따라잡을 때까지 남겨두면 그만이다.
+        문제는 v2가 <b>매일 새로 쓰이고 있다</b>는 것이고, 여기엔 관성이 아니라 구조적인 이유가 있다 —
+        <b><code>collect_new.py</code>(데일리)는 v3를 아예 만들지 않는다.</b>
+        v3는 <code>scripts/build_std_v3.py</code>를 사람이 돌릴 때만 채워진다.
+      </p>
+      <p class="ptext">
+        그래서 지금 v2 쓰기를 끄면 <b>새로 수집되는 필링은 어떤 표준화 산출물도 갖지 못한다.</b>
+        더 나쁜 건 품질 게이트다 — 데일리의 <code>run_dq_gate()</code>는
+        <code>gateb_audit(source="v2")</code>로 고정돼 있고, 코드 주석이 그 이유를 못 박아 두었다:
+      </p>
+      <blockquote class="quote">
+        “std_financials_v3 는 이 파이프라인이 안 만든다 — 별도 수동 배치만 채운다.
+        <code>source="v3"</code> 로 두면 방금 수집한 신규 기간이 std_v3 에 아직 없어
+        <b>감사 대상 0건인 채로 “이상없음”을 반환하는 위양성 그린(false-green) 게이트</b>가 된다.”
+        <cite>scripts/collect_new.py:160-165</cite>
+      </blockquote>
+      <p class="ptext">
+        즉 <b>v2 적재는 지금 이 파이프라인에서 유일한 표준화 산출물이자, 매일 돌아가는 Gate B·DQ
+        검사의 감사 대상</b>이다. 이걸 먼저 v3로 옮기지 않고 쓰기만 끄면 데일리 품질 검사가
+        조용히 무력화된다. 조사 메모는
+        <code>docs/plans/std_v3_daily_wiring_scoping_2026-08-22.md</code>에 이미 있고,
+        “Gate B <code>source</code> 전환 방식”과 “두 call site 배선”이 미결정으로 남아 있다.
+      </p>
+
+      <h3 class="subh">두 개의 축, 각자의 소비자</h3>
+      <figure class="fig">
+        <svg viewBox="0 0 760 356" role="img" class="pathsvg"
+             aria-label="계층2 축에서는 fact_v2를 report_lines가 이미 대체했고, 계층3 축에서는 std_financials_v2를 std_financials_v3가 대체하는 중이다. 두 축은 독립이다. fact_v2에는 statement_source, extended_financials, line_audit이라는 std_v2와 무관한 소비자 셋이 붙어 있어서, std_v2를 지워도 fact_v2는 남는다. std_financials_v2와 std_financials_v3는 둘 다 standard_financials 뷰로 흘러가며 v3가 우선이고 v2는 16,866행을 폴백으로 채운다. 구세대 셋은 매일 적재되지만 std_financials_v3만 수동 배치로 채워진다.">
+          <defs>
+            <marker id="arw3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="currentColor"></path>
+            </marker>
+            <marker id="arw3w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--warn)"></path>
+            </marker>
+          </defs>
+
+          <text x="200" y="26" text-anchor="middle" font-size="11" font-weight="600" fill="var(--warn)" letter-spacing="1">구세대</text>
+          <text x="560" y="26" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor" opacity=".75" letter-spacing="1">신세대</text>
+
+          <!-- 계층2 -->
+          <text x="8" y="74" font-size="9.5" fill="currentColor" opacity=".6">계층2</text>
+          <rect x="70" y="44" width="260" height="50" rx="2" fill="var(--surface)" stroke="var(--warn)" stroke-width="1"></rect>
+          <text x="200" y="66" text-anchor="middle" font-size="12" font-weight="600" fill="var(--warn)">fact_v2</text>
+          <text x="200" y="83" text-anchor="middle" font-size="9.5" fill="var(--warn)" opacity=".85">55 GB · 7,414만 행 · 매일 적재</text>
+          <line x1="330" y1="69" x2="426" y2="69" stroke="currentColor" stroke-width="1" marker-end="url(#arw3)"></line>
+          <text x="378" y="62" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">대체 완료</text>
+          <rect x="430" y="44" width="260" height="50" rx="2" fill="var(--surface-2)" stroke="currentColor" stroke-width="1.5"></rect>
+          <text x="560" y="66" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">report_lines · note_lines</text>
+          <text x="560" y="83" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">30 GB + 53 GB · 매일 적재</text>
+
+          <!-- verticals -->
+          <line x1="200" y1="94" x2="200" y2="156" stroke="var(--warn)" stroke-width="1" marker-end="url(#arw3w)"></line>
+          <text x="208" y="129" font-size="9.5" fill="var(--warn)">standardize</text>
+          <line x1="560" y1="94" x2="560" y2="156" stroke="currentColor" stroke-width="1" marker-end="url(#arw3)"></line>
+          <text x="552" y="129" text-anchor="end" font-size="9.5" fill="currentColor" opacity=".7">combine.py</text>
+
+          <!-- 계층3 -->
+          <text x="8" y="190" font-size="9.5" fill="currentColor" opacity=".6">계층3</text>
+          <rect x="70" y="160" width="260" height="50" rx="2" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.5"></rect>
+          <text x="200" y="182" text-anchor="middle" font-size="12" font-weight="600" fill="var(--warn)">std_financials_v2 (+ calendar)</text>
+          <text x="200" y="199" text-anchor="middle" font-size="9.5" fill="var(--warn)" opacity=".85">633 MB · 매일 적재 · T9 대상</text>
+          <line x1="330" y1="185" x2="426" y2="185" stroke="currentColor" stroke-width="1" marker-end="url(#arw3)"></line>
+          <text x="378" y="178" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">대체 진행 중</text>
+          <rect x="430" y="160" width="260" height="50" rx="2" fill="var(--surface-2)" stroke="currentColor" stroke-width="1.5"></rect>
+          <text x="560" y="182" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">std_financials_v3</text>
+          <text x="560" y="199" text-anchor="middle" font-size="9.5" font-weight="600" fill="var(--warn)">308 MB · 수동 배치만 (데일리 미배선)</text>
+
+          <!-- fact_v2 own consumers, routed left -->
+          <path d="M90,94 L38,94 L38,300 L66,300" fill="none" stroke="var(--warn)" stroke-width="1" marker-end="url(#arw3w)"></path>
+          <text x="6" y="196" font-size="9" fill="var(--warn)">std_v2 와</text>
+          <text x="6" y="207" font-size="9" fill="var(--warn)">무관</text>
+          <rect x="70" y="272" width="260" height="60" rx="2" fill="var(--surface)" stroke="var(--warn)" stroke-width="1"></rect>
+          <text x="200" y="292" text-anchor="middle" font-size="11" font-weight="600" fill="var(--warn)">fact_v2 전용 소비자 3</text>
+          <text x="200" y="307" text-anchor="middle" font-size="9.5" fill="var(--warn)" opacity=".85">statement_source · extended_financials</text>
+          <text x="200" y="321" text-anchor="middle" font-size="9.5" fill="var(--warn)" opacity=".85">line_audit (Gate B Phase B)</text>
+
+          <!-- both feed the view -->
+          <path d="M200,210 L200,242 L392,242 L392,296 L426,296" fill="none" stroke="var(--warn)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#arw3w)"></path>
+          <text x="300" y="236" text-anchor="middle" font-size="9.5" fill="var(--warn)">폴백 16,866행</text>
+          <line x1="560" y1="210" x2="560" y2="268" stroke="currentColor" stroke-width="1" marker-end="url(#arw3)"></line>
+          <text x="568" y="243" font-size="9.5" fill="currentColor" opacity=".7">우선</text>
+          <rect x="430" y="272" width="260" height="60" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1"></rect>
+          <text x="560" y="297" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">standard_financials 뷰</text>
+          <text x="560" y="314" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">+ valuation_daily · 앱 직접 조인</text>
+        </svg>
+        <figcaption>
+          두 축은 독립이다. <code>std_v2</code>(계층3)를 지워도 <code>fact_v2</code>(계층2)는
+          자기 소비자 셋 때문에 남는다 — 그래서 <b>T9의 회수분은 55 GB가 아니라 633 MB</b>다.
+          그리고 이 그림의 핵심은 오른쪽 아래 한 줄이다: 구세대 셋은 매일 쌓이는데
+          <b><code>std_financials_v3</code>만 수동 배치로 채워진다.</b>
+        </figcaption>
+      </figure>
+
+      <h3 class="subh">계층3 축 — 아직 끊기지 않은 연결</h3>
+      <figure class="fig">
+        <svg viewBox="0 0 760 344" role="img" class="pathsvg"
+             aria-label="collect_new.py 4단계가 매일 fact_v2와 std_financials_v2에 적재한다. std_financials_v2는 standard_financials 뷰에 v3에 없는 키만 채우는 폴백으로 16,866행(5.3%)을 공급하고, valuation_daily 물리화 뷰가 std_financials_v2를 직접 참조하며, extended_financials 뷰가 fact_v2를 직접 소비한다. std_financials_v3는 같은 뷰에 우선 브랜치로 303,808행을 공급한다.">
+          <defs>
+            <marker id="arw2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="currentColor"></path>
+            </marker>
+            <marker id="arww" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--warn)"></path>
+            </marker>
+          </defs>
+
+          <!-- v2 chain (warn) -->
+          <rect x="20" y="20" width="160" height="46" rx="2" fill="var(--surface)" stroke="var(--warn)" stroke-width="1"></rect>
+          <text x="100" y="41" text-anchor="middle" font-size="11.5" font-weight="500" fill="var(--warn)">collect_new.py ④</text>
+          <text x="100" y="57" text-anchor="middle" font-size="9.5" fill="var(--warn)" opacity=".8">데일리 표준화</text>
+
+          <line x1="180" y1="43" x2="230" y2="43" stroke="var(--warn)" stroke-width="1" marker-end="url(#arww)"></line>
+          <text x="205" y="36" text-anchor="middle" font-size="9.5" fill="var(--warn)">매일 씀</text>
+
+          <rect x="230" y="20" width="150" height="46" rx="2" fill="var(--surface)" stroke="var(--warn)" stroke-width="1"></rect>
+          <text x="305" y="41" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--warn)">fact_v2</text>
+          <text x="305" y="57" text-anchor="middle" font-size="9.5" fill="var(--warn)" opacity=".8">55 GB · 7,414만 행</text>
+
+          <line x1="380" y1="43" x2="430" y2="43" stroke="var(--warn)" stroke-width="1" marker-end="url(#arww)"></line>
+          <text x="405" y="36" text-anchor="middle" font-size="9.5" fill="var(--warn)">version=1</text>
+
+          <rect x="430" y="20" width="200" height="46" rx="2" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.5"></rect>
+          <text x="530" y="41" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--warn)">std_financials_v2</text>
+          <text x="530" y="57" text-anchor="middle" font-size="9.5" fill="var(--warn)" opacity=".85">386 MB · 505,079행</text>
+
+          <!-- v2 → view (fallback) -->
+          <line x1="530" y1="66" x2="530" y2="168" stroke="var(--warn)" stroke-width="1" marker-end="url(#arww)"></line>
+          <text x="542" y="106" font-size="9.5" fill="var(--warn)">v3에 없는 키만 폴백</text>
+          <text x="542" y="120" font-size="9.5" font-weight="600" fill="var(--warn)">16,866행 · 5.3%</text>
+
+          <!-- v2 → valuation_daily -->
+          <path d="M630,50 L690,50 L690,296 L634,296" fill="none" stroke="var(--warn)" stroke-width="1" marker-end="url(#arww)"></path>
+          <text x="698" y="166" font-size="9.5" fill="var(--warn)">직접</text>
+          <text x="698" y="179" font-size="9.5" fill="var(--warn)">참조</text>
+
+          <!-- v3 -->
+          <rect x="60" y="170" width="200" height="46" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"></rect>
+          <text x="160" y="191" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">std_financials_v3</text>
+          <text x="160" y="207" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">308 MB · 303,887행</text>
+
+          <line x1="260" y1="193" x2="426" y2="193" stroke="currentColor" stroke-width="1" marker-end="url(#arw2)"></line>
+          <text x="343" y="186" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".75">우선 · 303,808행</text>
+
+          <!-- view -->
+          <rect x="430" y="170" width="200" height="46" rx="2" fill="var(--surface-2)" stroke="currentColor" stroke-width="1.5"></rect>
+          <text x="530" y="191" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">standard_financials</text>
+          <text x="530" y="207" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">앱이 읽는 단일 창구</text>
+
+          <!-- valuation_daily -->
+          <rect x="430" y="273" width="200" height="46" rx="2" fill="var(--surface)" stroke="currentColor" stroke-width="1"></rect>
+          <text x="530" y="294" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">valuation_daily</text>
+          <text x="530" y="310" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">matview · 3.3 GB</text>
+
+          <!-- fact_v2 → extended_financials → app -->
+          <path d="M305,66 L305,250 L160,250 L160,269" fill="none" stroke="var(--warn)" stroke-width="1" marker-end="url(#arww)"></path>
+          <text x="313" y="244" font-size="9.5" fill="var(--warn)">확장 재무항목</text>
+          <rect x="60" y="273" width="200" height="46" rx="2" fill="var(--surface)" stroke="var(--warn)" stroke-width="1"></rect>
+          <text x="160" y="294" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--warn)">extended_financials 뷰</text>
+          <text x="160" y="310" text-anchor="middle" font-size="9.5" fill="var(--warn)" opacity=".85">앱이 fact_v2 를 직접 소비</text>
+        </svg>
+        <figcaption>
+          같은 그림을 배선 관점에서 본 것. 계층3 축이 끊어야 하는 것은 셋이다 — 쓰기(데일리
+          ④단계), 읽기(뷰 폴백), 파생(<code>valuation_daily</code>가 뷰를 거치지 않고 직접 참조).
+          맨 아래 왼쪽 <code>extended_financials</code>만 계층2 축(<code>fact_v2</code>) 소관이라
+          이 트랙 범위 밖이다.
+        </figcaption>
+      </figure>
+
+      <h3 class="subh">폐기를 막고 있는 것</h3>
+      <p class="ptext">
+        뷰는 v2에서 v3로 “교체”된 게 아니라 <b>v3 우선 + v2 폴백 UNION</b>이다. v3에 없는
+        (corp, 연도, 기간, basis) 키를 v2가 메우고 있어서, 지금 지우면 그만큼 구멍이 난다.
+      </p>
+      <div class="table-scroll">
+        <table class="rules">
+          <thead><tr><th>구간</th><th>행 수</th><th>성격</th><th>필요한 조치</th></tr></thead>
+          <tbody>
+            <tr><td class="r">fy ≥ 1999<br>v3 결측</td><td class="d">16,617</td><td>v3가 만들어야 하는데 못 만든 키 — <b>진짜 선결조건</b></td><td>결측 원인 규명 후 백필</td></tr>
+            <tr><td class="r">fy &lt; 1999</td><td class="d">249</td><td>v3 범위(1999~) 밖이라 애초에 대상이 아님</td><td>정책 결정 — 버릴지, v3 범위를 넓힐지</td></tr>
+            <tr><td class="r">v3 단독</td><td class="d">66,006</td><td>v3에만 있고 v2에 없는 키 — 커버리지는 이미 v3 우위</td><td>없음(참고용)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="subh">끊는 순서 — 계층3 축</h3>
+      <p class="ptext">
+        <b>01은 한 번의 변경으로 끝난다.</b> 셀렉터 전환 규모를 실측했더니 부담이 없었다 —
+        <code>needs_standardize_corps()</code>를 v2 기준에서 v3 기준으로 바꿔도 대상은
+        1,315 → 1,336개사, <b>단 21개사 증가</b>다(<code>fy≥2015</code>로 한정하면 4개사).
+        게다가 셀렉터가 v3 기준이 되면 데일리가 건드리는 기업마다 v3 결측을 스스로 메운다.
+      </p>
+      <div class="table-scroll">
+        <table class="rules">
+          <thead><tr><th>01에서 같이 바꿀 것</th><th>현재</th><th>바꿀 값</th></tr></thead>
+          <tbody>
+            <tr><td class="r">④-6 신설</td><td>없음</td><td><code>build_corp</code> 호출 (④-4 직후 · ⑤ 직전)</td></tr>
+            <tr><td class="r">셀렉터</td><td><code>NOT EXISTS std_financials_v2</code></td><td>v3 기준 — +21개사</td></tr>
+            <tr><td class="r">dq3 체크</td><td><code>std_financials_v2 … data_quality≥3</code></td><td>v3의 같은 컬럼</td></tr>
+            <tr><td class="r">Gate B <code>source</code></td><td><code>"v2"</code></td><td><code>"v3"</code> + ④-6 실패를 명시적 실패로 집계</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ol class="steps" style="margin-top:18px">
+        <li><span class="sn">01</span><span class="sd"><b>v3 데일리 배선 + 셀렉터·dq3·Gate B source 동시 전환</b> — 위 표 4개를 한 변경으로. 여기까지 하면 std_v2 쓰기를 뺄 수 있다</span><span class="pill wait">선결</span></li>
+        <li><span class="sn">02</span><span class="sd"><b>데일리 std_v2 쓰기 제거</b> — <code>process_corp</code>의 <code>standardize</code>·<code>quarterly</code>·<code>calendar</code> 단계 제외. <b>이산분기·달력이 신규 기간에 대해 멈춘다</b>(아래 참고)</span><span class="pill idle">미착수</span></li>
+        <li><span class="sn">03</span><span class="sd"><b>v3 결측 16,617행 백필 + fy&lt;1999 249행 정책 결정</b> — 읽기 폴백을 뗄 수 있는 조건</span><span class="pill idle">미착수</span></li>
+        <li><span class="sn">04</span><span class="sd"><b>소비자 재구현 — 전부 v3 기반으로</b> — 뷰의 v2 UNION 제거, <code>valuation_daily</code>, 앱 직접 조인, 그리고 <b>이산분기·달력</b>. 현재 미사용이므로 재구현 시점에 v3만 쓰도록 만든다</span><span class="pill idle">미착수</span></li>
+        <li><span class="sn">05</span><span class="sd"><b><code>std_financials_v2</code> · <code>std_financials_calendar</code> 드롭</b> — 633 MB 회수</span><span class="pill idle">미착수</span></li>
+      </ol>
+
+      <div class="riskbox" style="margin-top:20px">
+        <b>02에서 잃는 것 — 이산분기와 달력 정규화</b><br>
+        <code>fin2/layer3/</code>에는 <code>quarterly</code>·<code>calendar</code>에 해당하는
+        모듈이 <b>없다</b>. <code>is_discrete</code>도 <code>std_v2</code>의 PK에만 있고 v3엔
+        아예 없으며(<code>models.py:750</code>), <code>std_financials_calendar</code>는 정의상
+        “<code>std_financials_v2</code>의 이산분기를 <code>period_end</code>로 달력분기에”
+        매핑한 것이라(<code>models.py:831</code>) v2가 멈추면 같이 멈춘다.
+        분기별 3개월 실적과 결산월 정규화는 나중에 스크리너에 필요한 것들이다.
+        <b>다만 복구 가능하다</b> — v3는 <code>report_lines</code>에서 언제든 재생성되므로,
+        04에서 v3 기반으로 구현한 뒤 소급 생성하면 공백이 메워진다.
+      </div>
+
+      <h3 class="subh">계층2 축 — <code>fact_v2</code> 정리</h3>
+      <p class="ptext">
+        실측해보니 <code>fact_v2</code>는 <b>문서 포착으로는 이미 잉여</b>다.
+        필링 커버리지에서 <code>fact_v2</code>만 덮는 문서는 <b>0건</b>이고(fy 2015·2020·2025
+        표본), <code>report_lines</code>가 오히려 각각 345·74·76건씩 더 넓다.
+        공통 컬럼 13개에 금액까지 겹쳐 <b>같은 숫자를 두 번 저장</b>한다 —
+        다른 건 그 숫자를 무엇으로 식별하느냐뿐이다.
+      </p>
+      <div class="table-scroll">
+        <table class="rules">
+          <thead><tr><th></th><th>고유 정보</th><th>식별 방식</th></tr></thead>
+          <tbody>
+            <tr><td class="r">fact_v2</td><td><code>acode</code> · <code>acontext_raw</code> · <code>canonical_account</code> · <code>extra_dims</code> — <b>XBRL 태그 층</b></td><td>(acode, acontext)</td></tr>
+            <tr><td class="r">report_lines</td><td><code>label_raw</code> · <code>section_path</code> · <code>table_seq</code>/<code>row_order</code>/<code>depth</code> · <code>col_label</code> · <code>header_hint</code> — <b>표 구조 층</b></td><td>(표, 행, 라벨, 열)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="ptext" style="margin-top:14px">
+        <code>report_lines</code>·<code>note_lines</code>엔 <code>acode</code>가 <b>아예 없다</b>
+        (태그 계열 공통 컬럼은 <code>adecimal</code> 하나뿐). <code>context_raw</code>가
+        ACONTEXT처럼 보이지만 <b>합성 위치 태그</b>다(<code>text:BS:con:e:c0:2025</code> 형태).
+        <b>그럼에도 정보 손실은 없다</b> — <code>acode</code>/ACONTEXT는 원문 XML에 그대로
+        있고, Gate B의 <code>read_report_face_xbrl()</code>이 감사 시점에 <b>파일에서 직접</b>
+        읽는다(<code>fact_v2</code> 미사용). SCE 차원도 <code>col_label</code>에 텍스트 형태로
+        대응이 있다. 즉 <code>fact_v2</code>는 태그 층의 <b>materialized 인덱스</b>이지 원본이
+        아니다.
+      </p>
+      <div class="table-scroll">
+        <table class="rules">
+          <thead><tr><th>이식할 소비자</th><th>fact_v2에서 쓰는 것</th><th>경로</th></tr></thead>
+          <tbody>
+            <tr><td class="r">line_audit<br><span style="font-weight:400;color:var(--ink-3)">Gate B Phase B</span></td><td>acode 정확매칭</td><td><b>선례 있음</b> — <code>face_audit</code>처럼 파일에서 직접 읽으면 된다</td></tr>
+            <tr><td class="r">statement_source</td><td>정본 필링 선택</td><td>v3는 <code>source_rcepts</code>로 이미 자체 해결</td></tr>
+            <tr><td class="r">extended_financials</td><td><code>canonical_account</code> 조회</td><td><b>유일한 설계 질문</b> — report_lines엔 canonical 컬럼이 없고 매핑이 계층3에서 일어나므로 라벨 기반으로 재구성해야 한다</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="gainbox">
+        <b>회수 — 계층3 축 633 MB · 계층2 축 55 GB.</b>
+        T9의 동기는 용량이 아니다(633 MB). 진짜 동기는 <b>규칙을 양쪽에 반영해야 하는 이중
+        유지보수</b>와 <b>데일리 감사가 구세대를 보는 정합성 문제</b>이고, 둘 다 계층3 축의
+        01 한 번으로 해소된다. DB 157 GB의 35%를 차지하는 <code>fact_v2</code>는 계층2 축
+        소관이고, 소비자 셋을 이식하면 닫힌다.
+      </div>
+    </section>
+
+    <!-- 08 ───────────────────────────────────── -->
+    <section id="nonfin">
+      <div class="sec-head">
+        <span class="n">08</span>
+        <h2>비재무 콘텐츠는 어디에 쌓이나</h2>
+        <span class="note">사업의 내용 · 주주 · 임원</span>
+      </div>
+      <p class="lede">
+        재무제표 본문(<code>report_lines</code>)과 주석(<code>note_lines</code>) 바깥의 내용 —
+        사업의 내용, 수주, 가동률, 주주·임원·배당 — 이 들어가는 자리. 여기는 이미
+        <b>신세대 단일</b>이라 구세대 중복이 없다.
+      </p>
+
+      <h3 class="subh">원문 파싱 — 로컬 문서에서</h3>
+      <div class="table-scroll">
+        <table class="rules">
+          <thead><tr><th>테이블</th><th>내용</th><th>규모</th></tr></thead>
+          <tbody>
+            <tr><td class="r">biz_section_tables</td><td><b>‘사업의 내용’ 원본 2D 그리드 — 계층2 landing</b></td><td class="d">590K표 · 1.9 GB</td></tr>
+            <tr><td class="r">biz_metrics</td><td>생산능력 · 생산실적 · 가동률 + 부문/수출입 매출 (long-format)</td><td class="d">7.8M행 · 2.2 GB</td></tr>
+            <tr><td class="r">order_backlog</td><td>수주 상황</td><td class="d">24.8K행</td></tr>
+            <tr><td class="r">report_shares_outstanding</td><td>‘주식의 총수 등’ 절</td><td class="d">97K행</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="ptext" style="margin-top:14px">
+        <code>biz_section_tables</code>의 domain 분포(1999~2026 전 구간) —
+        <b>catalog</b> 331,591표/2,533개사 · <b>production</b> 142,270/1,995 ·
+        <b>order_backlog</b> 58,954/1,914 · <b>sales</b> 57,504/2,411.
+        catalog가 8월 초에 넣은 27항목이고 금융업 전용 지표까지 포함한다 —
+        지급여력(RBC·킥스), 수입보험료, 책임준비금, 점포현황, 자금조달및운용, 위탁매매.
+      </p>
+      <p class="ptext">
+        이쪽에 구세대 중복이 없는 것은 <b>이미 한 번 정리했기 때문</b>이다. 8월 9일
+        <code>b4b63fc</code>가 R1 위반(계층2 우회)을 해소하면서
+        <code>biz_section_tables</code>를 계층2 landing으로 신설하고
+        <code>biz_metrics</code>·<code>order_backlog</code>가 거기서 파생하도록 재배선했다.
+      </p>
+
+      <h3 class="subh">DART API — 원문 파싱이 아님</h3>
+      <div class="table-scroll">
+        <table class="rules">
+          <thead><tr><th>테이블</th><th>출처 API</th></tr></thead>
+          <tbody>
+            <tr><td class="r">executives</td><td><code>exctvSttus</code> + <code>hmvAuditIndvdlBySttus</code></td></tr>
+            <tr><td class="r">major_shareholders · shareholder_changes · retail_ownership</td><td><code>hyslrChgSttus</code> · <code>mrhlSttus</code></td></tr>
+            <tr><td class="r">dividend_facts</td><td><code>alotMatter</code></td></tr>
+            <tr><td class="r">treasury_activity · employee_stats · other_investments · exec_pay_summary · exec_pay_individual</td><td>정기보고서 API 6종</td></tr>
+            <tr><td class="r">regulatory_events · capital_events</td><td>시장조치 · 자본이벤트</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="riskbox" style="margin-top:20px">
+        <b>확인이 필요한 두 가지</b>
+        <ol style="margin:10px 0 0;padding-left:20px">
+          <li style="margin-bottom:8px">API 계열은 <code>CLAUDE.md</code>의
+            <b>“DB화할 정보는 모두 local folder에 저장된 문서로부터 가져올 것”</b> 원칙 밖에 있다.
+            임원·주주·배당은 원문 사업보고서에도 표로 실려 있어서, 의도된 예외인지 확인이 필요하다.</li>
+          <li><b>사업의 내용의 자유 서술(prose)을 담는 테이블이 없다.</b>
+            <code>biz_section_tables</code>는 표(grid)만 저장하고, <code>narrative</code>는
+            표에 딸린 각주 성격 문단이다(100% 채워짐). 사업 개요·시장 상황·경쟁 요소·전략 같은
+            서술은 전체 40개 테이블 어디에도 들어오지 않는다.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- 09 ───────────────────────────────────── -->
+    <section id="backlog">
+      <div class="sec-head">
+        <span class="n">09</span>
+        <h2>열린 백로그</h2>
+        <span class="note">미착수 8건</span>
+      </div>
+      <p class="lede">
+        원인이 규명됐거나 클러스터가 특정됐지만 아직 손대지 않은 것들. 위에서부터 대체로 우선순위 순이다.
+      </p>
+      <div class="backlog">
+        <div class="bl">
+          <div class="top"><h4>fail_a 잔여 83건 클러스터</h4><span class="pill idle">미착수</span></div>
+          <p>최대 잔여 묶음은 <code>dividends_paid</code> 31건과 <code>cfo</code> 14건. 아직 전수 원문 대조를 하지 않았다.</p>
+        </div>
+        <div class="bl">
+          <div class="top"><h4>R48 account_mapper 교차 오매핑</h4><span class="pill idle">미조치</span></div>
+          <p>R46 조사 중 부수 발견된 2건. 방향(지배↔비지배)까지 틀리는 사례가 포함돼 있고 파급범위 미측정.</p>
+        </div>
+        <div class="bl">
+          <div class="top"><h4>Track B-only 잠복 오염</h4><span class="pill wait">측정 불가</span></div>
+          <p>XBRL이 없는 필링은 감사기와 추출기가 같은 소스를 보므로 Gate B로 검출 자체가 안 된다. 별도 검출 수단이 필요하다.</p>
+        </div>
+        <div class="bl">
+          <div class="top"><h4>P1A lease / borrow 카탈로그 분해</h4><span class="pill idle">미착수</span></div>
+          <p>P0.6에서 안전성은 실증됐으나 구현은 시작하지 않았다. std_v2 폐기의 <b>코드 이식</b> 쪽 마지막 조각 — DB 쪽은 07 참조.</p>
+        </div>
+        <div class="bl">
+          <div class="top"><h4>R52 부수 발견 — 복수 각주번호 라벨</h4><span class="pill idle">미조사</span></div>
+          <p>“수익 (주6,22)” 같은 콤마 구분 각주번호를 <code>normalize_account_name()</code>이 처리 못 해 unknown으로 떨어진다.</p>
+        </div>
+        <div class="bl">
+          <div class="top"><h4>계층4 시각화 · 스크리너</h4><span class="pill idle">대기</span></div>
+          <p>뷰 브리지와 Streamlit 스모크까지는 끝났지만, 본격적인 시각화 항목 확충은 Gate B 이후 순번.</p>
+        </div>
+        <div class="bl">
+          <div class="top"><h4>비재무 API 계열의 원문 파싱 전환</h4><span class="pill idle">확인 필요</span></div>
+          <p>임원·주주·배당 등은 DART API 직접 호출이라 “로컬 문서에서 가져올 것” 원칙 밖이다. 의도된 예외인지 결정 필요 — 08 참조.</p>
+        </div>
+        <div class="bl">
+          <div class="top"><h4>사업의 내용 서술 문단 미적재</h4><span class="pill idle">미착수</span></div>
+          <p>표(grid)만 들어오고 사업 개요·시장 상황·경쟁 요소 같은 산문은 어디에도 저장되지 않는다.</p>
+        </div>
+      </div>
+
+      <footer>
+        <span>생성 2026-08-30</span>
+        <span>범위 git log --since=2026-07-30 (218 커밋)</span>
+        <span>근거 docs/PARSING_RULES.md · docs/plans/*</span>
+      </footer>
+    </section>
+
+  </main>
+</div>
+
+<script>
+(function () {
+  var data = [
+    { x: 56,    y: 30.7,  v: 482, lab: "기준선",  sub: "R49 종료 직후 백로그 (08-27)" },
+    { x: 136.5, y: 146.8, v: 170, lab: "R50",     sub: "cash 개념 갭 + 두산밥캣 FX  −312" },
+    { x: 217,   y: 152,   v: 156, lab: "R51",     sub: "포스코스틸리온 total_equity  −14" },
+    { x: 297.5, y: 159.8, v: 135, lab: "R52",     sub: "revenue 퍼지매칭 오매핑  −21" },
+    { x: 378,   y: 168,   v: 113, lab: "R53",     sub: "inventory / ppe acode 갭  −22" },
+    { x: 458.5, y: 177.3, v: 88,  lab: "R54",     sub: "UDF acode 라벨 폴백  −25" },
+    { x: 539,   y: 178,   v: 86,  lab: "R55",     sub: "기타유동/비유동채무 alias  −2" },
+    { x: 619.5, y: 178.4, v: 85,  lab: "R56",     sub: "라벨-acode 뒤바뀜 curated  −1" },
+    { x: 700,   y: 179.1, v: 83,  lab: "클래스B 유형2", sub: "정정본 stale subline  −2" }
+  ];
+
+  var svg = document.querySelector("svg.burn");
+  var wrap = svg.closest(".chart-wrap");
+  var tip = document.getElementById("tip");
+  var xh = document.getElementById("xh");
+  if (!svg || !tip || !wrap) return;
+
+  function show(i, clientX, clientY) {
+    var d = data[i];
+    tip.innerHTML = '<span class="t-lab">' + d.lab + " · 잔여 " + d.v +
+      '건</span><br><span class="t-sub">' + d.sub + "</span>";
+    tip.classList.add("on");
+    var wr = wrap.getBoundingClientRect();
+    var left = clientX - wr.left + 14;
+    var top = clientY - wr.top - 12;
+    if (left + tip.offsetWidth > wr.width - 8) left = clientX - wr.left - tip.offsetWidth - 14;
+    tip.style.left = Math.max(8, left) + "px";
+    tip.style.top = Math.max(8, top) + "px";
+    xh.setAttribute("x1", d.x);
+    xh.setAttribute("x2", d.x);
+    xh.setAttribute("y1", d.y);
+    xh.classList.add("on");
+  }
+  function hide() {
+    tip.classList.remove("on");
+    xh.classList.remove("on");
+  }
+
+  Array.prototype.forEach.call(svg.querySelectorAll(".hit"), function (r) {
+    var i = parseInt(r.getAttribute("data-i"), 10);
+    r.addEventListener("mousemove", function (e) { show(i, e.clientX, e.clientY); });
+    r.addEventListener("mouseenter", function (e) { show(i, e.clientX, e.clientY); });
+    r.addEventListener("mouseleave", hide);
+  });
+  svg.addEventListener("mouseleave", hide);
+})();
+</script>

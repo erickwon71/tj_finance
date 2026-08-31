@@ -1416,6 +1416,37 @@ def _is_current_by_section_only(row: dict) -> bool:
     return "유동" in sp and "비유동" not in sp
 
 
+# R59 (2026-08-31, docs/plans/r59_rollup_debt_label_held_bug_design_2026-08-31.md §3):
+# bs.long_term_debt's own bare/rollup alias ('장기차입금및사채' etc — a combined
+# bond+borrowing concept with no maturity distinction in the wording) has the SAME
+# contamination pathology as _CURRENT_CONTAMINATED_NONCURRENT_SIBLING's 4 bond-family
+# canonicals — a current-section instance of the same combined label lands on the same
+# (noncurrent-default) canonical as a genuine noncurrent instance -> _resolve() HELDs
+# the whole canonical, losing BOTH (worst case measured: 00181712 FY2024 consolidated,
+# 62,861,073,000,000 net_debt short). bs.long_term_debt is not folded into the existing
+# dict/loop above because _is_current_by_section_only's label_raw veto does not hold for
+# it: the combined alias text itself routinely contains '장기' (e.g. '사채 및
+# 장기차입금'), so the veto would refuse to reroute exactly the contaminating instance —
+# measured (2026-08-31, report_lines BS/FY/table_seq=0, same-normalized-label current+
+# noncurrent co-occurrence): 417 current-side instances, only 1 (0.2%) contains
+# 장기/비유동 in label_raw, and that 1 is 00181712 itself. A label-blind, section_path-
+# only classifier is required instead — kept as a SEPARATE dict/loop/function so the
+# existing 4-canonical bond-family behavior (where the label veto IS the correct
+# signal) is not touched at all.
+_CURRENT_CONTAMINATED_NONCURRENT_SIBLING_PURE = {
+    "bs.long_term_debt": "bs.short_term_debt",
+}
+
+
+def _is_current_by_section_only_pure(row: dict) -> bool:
+    """Section-only variant of _is_current_by_section_only, WITHOUT the label_raw veto
+    — see _CURRENT_CONTAMINATED_NONCURRENT_SIBLING_PURE's comment for why the veto is
+    wrong for bs.long_term_debt's rollup alias. Use only for canonicals where
+    section_path is confirmed (not assumed) to be the authoritative maturity signal."""
+    sp = row.get("section_path") or ""
+    return "유동" in sp and "비유동" not in sp
+
+
 _BROAD_RE = re.compile(r"및기타|및 기타|AndOther")
 # a BS grand-total canonical must not be sourced from a fiduciary/trust-account
 # sub-statement embedded in the same filing (banks commonly attach a 신탁계정 balance
@@ -1859,6 +1890,23 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
             # leave it as _src's own confirmed value (same MISSING-avoidance reasoning as
             # guard 2 above; net_debt is unaffected either way since both canonicals feed
             # the same _V3_ST_DEBT_PARTS/_V3_LT_DEBT_PARTS sum — see 00103130 in R58).
+            continue
+        if cands.get(_sib):
+            continue  # sibling already has its own genuine candidates -> don't dup
+        cands[_sib] = list(_current_rows)
+        cands[_src] = [r for r in _src_rows if r not in _current_rows]
+    # R59 (2026-08-31): same shape as the _CURRENT_CONTAMINATED_NONCURRENT_SIBLING loop
+    # just above, but for bs.long_term_debt's rollup alias, using the label-blind
+    # classifier (_is_current_by_section_only_pure) — see
+    # _CURRENT_CONTAMINATED_NONCURRENT_SIBLING_PURE's comment for why the label-based
+    # one above cannot be reused here. Deliberately a separate dict/loop so the 4
+    # already-verified bond-family canonicals above are untouched by this change.
+    for _src, _sib in _CURRENT_CONTAMINATED_NONCURRENT_SIBLING_PURE.items():
+        _src_rows = cands.get(_src)
+        if not _src_rows:
+            continue
+        _current_rows = [r for r in _src_rows if _is_current_by_section_only_pure(r)]
+        if not _current_rows or len(_current_rows) == len(_src_rows):
             continue
         if cands.get(_sib):
             continue  # sibling already has its own genuine candidates -> don't dup

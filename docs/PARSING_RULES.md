@@ -3189,6 +3189,80 @@ net_debt 전용이 아니라 std_financials_v3의 **핵심 DIRECT_MAP 컬럼**(�
 `scripts/inspect_net_debt_case.py`(00103130/00181712 원문대조) ·
 `docs/plans/valuation_daily_blockers_da_netdebt_design_2026-08-30.md` §2-7/§2-10/§6.
 
+## R59. `fin2/layer3/combine.py::_resolve()` — `bs.long_term_debt` 결합(rollup)
+라벨의 유동/비유동 동시존재 시 canonical 전체 HELD(★★★★★완전 종료 2026-08-31)
+
+**증상** — `bs.long_term_debt`는 R58(`_CURRENT_CONTAMINATED_NONCURRENT_SIBLING`)이
+보호하는 4개 사채계열 canonical과 같은 취약점을 안고 있었다: 만기 구분이 라벨 자체에
+없는 **결합 라벨**(`장기차입금및사채`/`사채및장기차입금`/`사채및차입금`/`차입금및사채`
+등, "사채+차입금"을 하나로 합친 개념)이 `bs.long_term_debt`의 비유동 기본 alias로
+등록돼 있는데, 같은 필링 안에서 이 결합 라벨이 유동부채 섹션과 비유동부채 섹션에
+각각 별도 줄로 동시 존재하면 두 인스턴스가 같은 canonical로 몰려 `_resolve()`가
+충돌로 보고 **`bs.long_term_debt` 전체를 HELD**(=None) — 유동분만 버려지는 게 아니라
+비유동분(진짜 장기차입금)까지 통째로 소실된다. 실측(`00181712` FY2024연결): `사채 및
+장기차입금`(14,788,886,000,000, 유동) + `사채및장기차입금`(48,073,129,000,000,
+비유동) 동시존재 → `long_term_debt`=`None` → net_debt 62,861,073,000,000 과소(이
+프로젝트에서 발견된 net_debt 단일 결함 중 금액 최대). 전수 스캔(2011~2025,
+`report_lines` FY BS) 약 500여건 필링이 같은 패턴.
+
+**R58과 재사용할 수 없었던 이유** — R58의 재라우팅 판정 함수
+`_is_current_by_section_only()`는 "label_raw에 `장기`/`비유동` 문자열이 있으면
+재라우팅 안 함"을 전제한다(전환사채/사채/교환사채/신주인수권부사채 계열은 현재분
+라벨이 실제로 비유동 표시가 없어 이 전제가 맞다). 그런데 `bs.long_term_debt`의 결합
+라벨은 그 자체에 이미 "장기"라는 단어가 들어있다(`장기차입금및사채` 등) — 그리고
+실측된 유동측 변형(`사채 및 장기차입금`)에도 "장기"가 그대로 남아있다. 즉 **라벨
+텍스트만으로는 유동/비유동을 구분할 수 없는 canonical**이라 R58의 판정 함수를 그대로
+재사용하면 이 병리를 못 잡는다 — 실측(2026-08-31): 유동측 인스턴스 417건 중
+label_raw에 장기/비유동이 포함된 건 단 1건(0.2%)이고, 그 1건이 바로 대표 사례
+`00181712` 자신이었다(즉 라벨검사를 그대로 썼다면 정작 발견 계기가 된 사례를 놓쳤을
+것).
+
+**수정** — 라벨 검사 없이 `section_path`만 보는 새 판정 함수
+`_is_current_by_section_only_pure()`와 별도 dict
+`_CURRENT_CONTAMINATED_NONCURRENT_SIBLING_PURE = {"bs.long_term_debt":
+"bs.short_term_debt"}`, `_resolve()` 안의 별도 재라우팅 루프. R58의 기존 4개
+canonical 처리 코드는 한 글자도 건드리지 않음(diff 0, 회귀위험 최소화 우선) — 이번
+수정이 그 4개에 영향 없음을 코드만으로 확인 가능. `bs.long_term_debt`는 net_debt
+전용 파생 컬럼이 아니라 `std_financials_v3`의 핵심 DIRECT_MAP 컬럼(다른 소비자도
+있음)이므로, R58의 `_additive_debt_for_net_debt` 같은 net_debt-scoped 우회가 아니라
+canonical 자체(`_resolve()`)를 고쳤다 — 다른 소비자에도 값이 정상적으로 전파된다.
+
+가드는 R58과 동일: sibling(`bs.short_term_debt`)에 이미 자체 후보(예: 진짜
+`단기차입금`)가 있으면 재라우팅된 유동측 rollup 값은 합산되지 않고 버려진다(이중계상
+방지 우선) — 이 경우도 `bs.long_term_debt`는 충돌에서 벗어나 비유동값을 정상
+확정하므로 수정 전(전액 소실)보다는 개선이지만 "완전 복구"는 아니다. 이 guard가
+실제로 몇 %에서 발동하는지는 전수재감사 시 `scripts/run_r59_verification.sh` 5단계
+(`recovered_after` vs `still_held_after`)로 측정한다.
+
+★face_audit(Gate B)은 `long_term_debt`/`short_term_debt`를 애초에 감사하지 않는다
+(실측: `fail_fields`에 등장하는 필드 23종에 두 컬럼 모두 없음) — 그래서 이 수정의
+Gate B 회귀 확인은 R57/R58과 동일하게 "전체 pass→fail_a 전이"만으로 보고, 값 복구
+자체는 `std_financials_v3`의 두 컬럼을 전/후 스냅샷으로 직접 비교해서 본다.
+
+**상태(2026-08-31) — 완전 종료**: 코드+단위테스트(`fin2/tests/test_combine_debt_r59_
+rollup_label_pure_reroute.py`, 6건) 구현 → `scripts/run_r59_verification.sh` 1차
+전수재빌드+Gate B 전수재감사 실행 결과 **Gate B 회귀 0건**, 영향 필링 304건 중 HELD
+287건 → **243건(84.7%) 복구**.
+
+★1차 재검증 중 **R59와 무관한 별개 신규 버그를 하나 더 발견**: 잔여 44건을 원문+
+매퍼로 전수 대조한 결과 42건이 "사채및차입금"(사채가 앞에 오는 어순)이 fuzzy 매칭
+threshold 밑으로 떨어져 아예 `unknown`으로 빠지는 **별도의 alias 갭**이었다(반대
+어순 "차입금및사채"는 이미 정상 매칭됨 — v2도 동일 실패, 이번 세션 이전부터 있던
+것). `account_maps/bs_accounts.py`에 "사채및차입금" exact alias 추가 후 **2차
+전수재빌드+재감사**를 다시 실행: Gate B 회귀 여전히 0건, 복구 **283/287(98.6%)**로
+상승. 잔여 4건은 전부 원문대조로 원인 특정 완료 — sibling guard 트레이드오프(설계상
+의도, `00181712` FY2024) 1건, 3-way 섹션분할(`00160588`) 1건, **또 다른 별개
+alias 갭**("차입금 및 전환사채" 결합 라벨 미매핑, `00653194` 단독 실측 — 스코프가
+좁아 이번 트랙에서는 미수정, 범위 밖으로 기록) 2건. `pytest tests/ fin2/tests/`
+668 passed/1 failed(기존 무관 — `test_biz_section.py`).
+
+근거: `fin2/layer3/combine.py`(`_CURRENT_CONTAMINATED_NONCURRENT_SIBLING_PURE`,
+`_is_current_by_section_only_pure`, `_resolve()` 내 별도 루프) ·
+`account_maps/bs_accounts.py`("사채및차입금" exact alias) ·
+`fin2/tests/test_combine_debt_r59_rollup_label_pure_reroute.py` ·
+`scripts/run_r59_verification.sh` ·
+`docs/plans/r59_rollup_debt_label_held_bug_design_2026-08-31.md` §4-1~§4-3.
+
 ---
 
 ## 부록 A. 원문(DART XML) 함정 카탈로그

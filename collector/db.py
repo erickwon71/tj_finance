@@ -41,7 +41,14 @@ def init_db() -> None:
     # financial_facts: P5 컷오버로 드롭(레거시 parse→aggregate 경로 폐기, std_financials_v2
     # 가 대체). create_all 이 빈 테이블로 재생성하지 않도록 메타데이터에서 제외(드롭 영속).
     # unknown_accounts: 레거시 parse 부산물(미매핑 계정). fin2 파이프라인 미사용 → 함께 드롭.
-    for _dropped in ("financial_facts", "unknown_accounts"):
+    # std_financials_v2: fact_v2/std_v2 GC 트랙(2026-09-01, docs/plans/factv2_stdv2_gc_
+    # scoping_2026-09-01.md §3-5/6) — std_financials_v3 가 완전히 대체(신규 쓰기는 이미
+    # Phase 2, 2026-08-30 에 중단됨). 386MB 회수, 백업 NAS(tj_finance_data)/db_backup/
+    # std_financials_v2_backup_2026-09-01.dump. 같은 GC 후보였던 std_financials_calendar 는 **제외** — calendar_
+    # financials 뷰를 통해 app/data/screen_window.py·series.py·quarter_change.py·
+    # app/views/company_page.py 가 현재도 실제로 읽고 있어(이산분기 CQ1~CQ4 스크리너/시계열
+    # 기능) 소비자 이식 없이 드롭하면 그 화면들이 깨진다 — 별도 결정 대기.
+    for _dropped in ("financial_facts", "unknown_accounts", "std_financials_v2"):
         _t = Base.metadata.tables.get(_dropped)
         if _t is not None:
             Base.metadata.remove(_t)
@@ -1127,6 +1134,56 @@ def _run_migrations() -> None:
         WITH NO DATA;
 
         CREATE UNIQUE INDEX ux_valuation_daily_corp_date ON valuation_daily (corp_code, trade_date);
+        """),
+
+        ("2026_09_std_financials_v2_drop",
+         # fact_v2/std_v2 GC 트랙(docs/plans/factv2_stdv2_gc_scoping_2026-09-01.md §3-5/6).
+         # standard_financials 뷰의 v2 UNION ALL 분기를 제거하고(이제 std_financials_v3
+         # 단일 소스), std_financials_v2 테이블을 DROP한다(386MB 회수, ix_std_v2_corp_period
+         # 인덱스도 테이블과 함께 자동 제거). init_db()의 _dropped 튜플에도 추가해 create_all
+         # 이 빈 테이블로 재생성하지 않도록 함(financial_facts/unknown_accounts 와 동일 패턴).
+         #
+         # ★알려진 영구 손실(사용자 승인, 2026-09-01): std_v2 FY행 16,617건(fy>=1999) 중
+         # 12,149건(73%)은 v3엔 대응 행이 없다 — report_lines의 "당기만 적재" 정책
+         # (2026-07-30 결정)의 의도된 결과라 배치로 못 채움, 대부분 IPO 이전 연도의
+         # 3개년 비교표시열 유래 데이터. 이 드롭으로 그 12,149건이 standard_financials
+         # 통합뷰에서 완전히 사라진다(std_financials_v2 자체가 없어지므로). 백업:
+         # db_backups/std_financials_v2_backup_2026-09-01.dump(pg_dump -Fc, 복원 가능).
+         #
+         # ★std_financials_calendar 는 함께 안 지운다 — calendar_financials 뷰를 통해
+         # app/data/screen_window.py·series.py·quarter_change.py·app/views/company_page.py
+         # 가 현재도 읽는 활성 소비자라(이산분기 CQ1~CQ4), 별도 이식 없이 지우면 깨진다.
+         """
+        CREATE OR REPLACE VIEW standard_financials AS
+        SELECT
+            v3.corp_code, v3.fiscal_year, v3.fiscal_period, v3.statement_type,
+            1::smallint AS version,
+            v3.period_end,
+            TRUE AS is_ifrs,
+            COALESCE(v3.source_rcepts->>'BS', v3.source_rcepts->>'IS', v3.source_rcepts->>'CF')::varchar(14) AS rcept_no,
+            v3.total_assets, v3.current_assets, v3.cash, v3.receivables, v3.inventory, v3.ppe, v3.intangibles,
+            v3.total_liabilities, v3.current_liabilities, v3.short_term_debt, v3.long_term_debt,
+            v3.total_equity, v3.controlling_equity, v3.retained_earnings, v3.trade_payables,
+            v3.revenue, v3.cogs, v3.gross_profit, v3.sga, v3.rd_expense, v3.operating_income,
+            v3.interest_expense, v3.ebt, v3.tax_expense, v3.net_income, v3.controlling_ni,
+            v3.cfo, v3.cfi, v3.cff, v3.capex, v3.dividends_paid,
+            v3.depreciation, v3.amortization, v3.da_total, v3.ebitda, v3.fcf, v3.net_debt, v3.shares_out,
+            v3.data_quality,
+            NULL::timestamp without time zone AS superseded_at,
+            v3.built_at AS calculated_at,
+            COALESCE(fa.gate_status, 'unaudited') AS gate_b_status,
+            v3.industry_lines
+        FROM std_financials_v3 v3
+        LEFT JOIN face_audit fa
+          ON  fa.corp_code = v3.corp_code
+          AND fa.fiscal_year = v3.fiscal_year
+          AND fa.fiscal_period = v3.fiscal_period
+          AND fa.statement_type = v3.statement_type
+          AND NOT COALESCE(fa.is_stub, false)
+          AND fa.source_version = 'v3'
+        WHERE COALESCE(fa.gate_status, 'unaudited') <> 'fail_a';
+
+        DROP TABLE IF EXISTS std_financials_v2;
         """),
     ]
 

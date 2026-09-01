@@ -12,6 +12,15 @@ C11(완전성 매트릭스): `check_completeness()` — 상장일 컬럼이 없�
 usage:
   python scripts/dq_assertions.py            # 전 어서션 실행·요약
   python scripts/dq_assertions.py --sample   # 위반 표본행도 출력
+
+★2026-09-01(fact_v2/std_v2 GC 트랙, `std_financials_v2` DROP) — std_financials_v2 를
+쓰던 어서션 전부를 v3로 이식했다(dq_nightly.py 가 매일 20:30 launchd 로 이 스크립트를
+돌리는 실사용 코드라 미이식 시 그날 밤 깨졌을 것). v3는 PK가 (corp_code,fiscal_year,
+fiscal_period,statement_type) 뿐이라 `version=1`/`is_stub`/`is_discrete` 조건은 전부
+삭제(그런 중복행 자체가 없음). `check_completeness()`는 CHECKS 루프의 try/except
+SKIP 보호가 없어(직접 호출) 실제 크래시 위험이 있었던 지점 — 이것도 이식함.
+`std_financials_calendar`(→`std_v2_controlling_ni_exceeds_net` 이름의 유래가 된 std_v2
+와는 별개 테이블)는 GC 범위 밖이라 그대로 둠.
 """
 from __future__ import annotations
 
@@ -34,10 +43,10 @@ CHECKS: list[dict] = [
         "name": "future_period_std",
         "sev": "ERROR",
         "desc": "미래 period_end 인데 미격리(DQ<3) — 아직 끝나지 않은 기간이 소비계층에 노출",
-        "count": "SELECT count(*) FROM std_financials_v2 "
-                 "WHERE version=1 AND period_end > CURRENT_DATE AND COALESCE(data_quality,1) < 3",
+        "count": "SELECT count(*) FROM std_financials_v3 "
+                 "WHERE period_end > CURRENT_DATE AND COALESCE(data_quality,1) < 3",
         "sample": "SELECT corp_code, fiscal_year, fiscal_period, statement_type, period_end "
-                  "FROM std_financials_v2 WHERE version=1 AND period_end > CURRENT_DATE "
+                  "FROM std_financials_v3 WHERE period_end > CURRENT_DATE "
                   "AND COALESCE(data_quality,1) < 3 ORDER BY period_end DESC LIMIT 10",
     },
     {
@@ -98,10 +107,10 @@ CHECKS: list[dict] = [
         "name": "shares_out_impossible",
         "sev": "ERROR",
         "desc": "발행주식수 > 10^11 (물리적 불가 — shares_out 단위변환 버그 신호)",
-        "count": "SELECT count(*) FROM std_financials_v2 WHERE version=1 "
-                 "AND shares_out IS NOT NULL AND shares_out > 100000000000",
+        "count": "SELECT count(*) FROM std_financials_v3 "
+                 "WHERE shares_out IS NOT NULL AND shares_out > 100000000000",
         "sample": "SELECT corp_code, fiscal_year, fiscal_period, statement_type, shares_out "
-                  "FROM std_financials_v2 WHERE version=1 AND shares_out > 100000000000 "
+                  "FROM std_financials_v3 WHERE shares_out > 100000000000 "
                   "ORDER BY shares_out DESC LIMIT 10",
     },
     {
@@ -120,13 +129,11 @@ CHECKS: list[dict] = [
         "name": "nonpositive_total_assets",
         "sev": "ERROR",
         "desc": "자산총계 <= 0 인데 미격리(DQ<3) — 소비계층에 노출되는 불가값",
-        "count": "SELECT count(*) FROM std_financials_v2 WHERE version=1 "
-                 "AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false) "
-                 "AND total_assets IS NOT NULL AND total_assets <= 0 AND COALESCE(data_quality,1) < 3",
+        "count": "SELECT count(*) FROM std_financials_v3 "
+                 "WHERE total_assets IS NOT NULL AND total_assets <= 0 AND COALESCE(data_quality,1) < 3",
         "sample": "SELECT corp_code, fiscal_year, fiscal_period, statement_type, total_assets "
-                  "FROM std_financials_v2 WHERE version=1 AND NOT COALESCE(is_stub,false) "
-                  "AND NOT COALESCE(is_discrete,false) "
-                  "AND total_assets IS NOT NULL AND total_assets <= 0 "
+                  "FROM std_financials_v3 "
+                  "WHERE total_assets IS NOT NULL AND total_assets <= 0 "
                   "AND COALESCE(data_quality,1) < 3 LIMIT 10",
     },
     {
@@ -159,15 +166,15 @@ CHECKS: list[dict] = [
         "sev": "ERROR",
         "desc": "재무제표 본체 금액이 물리적 불가 크기 (자산>1,000조·자본/이익잉여금>500조·매출>400조) "
                 "인데 미격리(DQ<3) — 단위 ×10³~10⁶ 오염이 소비계층 노출",
-        "count": "SELECT count(*) FROM std_financials_v2 WHERE version=1 "
-                 "AND NOT COALESCE(is_stub,false) AND COALESCE(data_quality,1) < 3 "
+        "count": "SELECT count(*) FROM std_financials_v3 "
+                 "WHERE COALESCE(data_quality,1) < 3 "
                  "AND (abs(total_assets) > 1e15 OR abs(total_equity) > 5e14 "
                  "     OR abs(retained_earnings) > 5e14 OR abs(revenue) > 4e14)",
         "sample": "SELECT corp_code, fiscal_year, fiscal_period, statement_type, "
                   "round(total_assets/1e12) AS assets_jo, round(total_equity/1e12) AS equity_jo, "
                   "round(retained_earnings/1e12) AS re_jo, round(revenue/1e12) AS revenue_jo "
-                  "FROM std_financials_v2 WHERE version=1 "
-                  "AND NOT COALESCE(is_stub,false) AND COALESCE(data_quality,1) < 3 "
+                  "FROM std_financials_v3 "
+                  "WHERE COALESCE(data_quality,1) < 3 "
                   "AND (abs(total_assets) > 1e15 OR abs(total_equity) > 5e14 "
                   "     OR abs(retained_earnings) > 5e14 OR abs(revenue) > 4e14) "
                   "ORDER BY GREATEST(COALESCE(abs(total_assets),0), COALESCE(abs(total_equity),0), "
@@ -187,8 +194,8 @@ CHECKS: list[dict] = [
             WITH fy AS (
               SELECT corp_code, statement_type, fiscal_year,
                      revenue::numeric AS revenue, total_assets::numeric AS total_assets
-              FROM std_financials_v2
-              WHERE version=1 AND fiscal_period='FY' AND NOT COALESCE(is_stub,false)
+              FROM std_financials_v3
+              WHERE fiscal_period='FY'
             ), nb AS (
               SELECT f.*,
                 LAG(total_assets)  OVER w AS pa, LEAD(total_assets) OVER w AS na,
@@ -204,8 +211,8 @@ CHECKS: list[dict] = [
             WITH fy AS (
               SELECT corp_code, statement_type, fiscal_year,
                      revenue::numeric AS revenue, total_assets::numeric AS total_assets
-              FROM std_financials_v2
-              WHERE version=1 AND fiscal_period='FY' AND NOT COALESCE(is_stub,false)
+              FROM std_financials_v3
+              WHERE fiscal_period='FY'
             ), nb AS (
               SELECT f.*,
                 LAG(total_assets)  OVER w AS pa, LEAD(total_assets) OVER w AS na,
@@ -226,21 +233,19 @@ CHECKS: list[dict] = [
         "name": "operating_income_eq_net_income",
         "sev": "WARN",
         "desc": "영업이익 == 순이익 (원단위 정확일치 = Track B 순이익 라인 오매핑 신호)",
-        "count": "SELECT count(*) FROM std_financials_v2 WHERE version=1 "
-                 "AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false) "
-                 "AND fiscal_period IN ('FY','Q1') "
+        "count": "SELECT count(*) FROM std_financials_v3 "
+                 "WHERE fiscal_period IN ('FY','Q1') "
                  "AND operating_income IS NOT NULL AND operating_income = net_income",
         "sample": "SELECT corp_code, fiscal_year, fiscal_period, statement_type, operating_income "
-                  "FROM std_financials_v2 WHERE version=1 AND NOT COALESCE(is_stub,false) "
-                  "AND NOT COALESCE(is_discrete,false) AND fiscal_period IN ('FY','Q1') "
+                  "FROM std_financials_v3 WHERE fiscal_period IN ('FY','Q1') "
                   "AND operating_income IS NOT NULL AND operating_income = net_income LIMIT 10",
     },
     {
         "name": "bs_identity_gt5pct",
         "sev": "WARN",
         "desc": "자산 ≠ 부채+자본 (5% 초과, =DQ3 항등식 위반)",
-        "count": "SELECT count(*) FROM std_financials_v2 WHERE version=1 "
-                 "AND COALESCE(data_quality,1) >= 3",
+        "count": "SELECT count(*) FROM std_financials_v3 "
+                 "WHERE COALESCE(data_quality,1) >= 3",
     },
     {
         # C2(2026-07-05): con<sep 전수는 14,525(대부분 구형 아티팩트) → 노이즈. 유의미 이상만:
@@ -341,22 +346,20 @@ CHECKS: list[dict] = [
         "name": "std_v2_controlling_ni_exceeds_net",
         "sev": "WARN",
         "desc": "controlling_ni 총포괄 오염 (항등식 controlling+nci=net 재구성 실패 — 정당 비지배음수는 제외)",
-        "count": "SELECT count(*) FROM std_financials_v2 s WHERE s.version=1 "
-                 "AND NOT COALESCE(s.is_stub,false) AND NOT COALESCE(s.is_discrete,false) "
-                 "AND s.net_income IS NOT NULL AND s.controlling_ni IS NOT NULL AND s.net_income<>0 "
+        "count": "SELECT count(*) FROM std_financials_v3 s WHERE "
+                 "s.net_income IS NOT NULL AND s.controlling_ni IS NOT NULL AND s.net_income<>0 "
                  "AND ABS(s.controlling_ni) > ABS(s.net_income)*1.02 "
                  "AND ABS(s.net_income - s.controlling_ni) > ABS(s.net_income)*0.02 + 1000000 "
                  "AND NOT EXISTS (SELECT 1 FROM fact_v2 f "
-                 "  WHERE f.rcept_no IN (s.bs_rcept, s.is_rcept, s.cf_rcept) "
+                 "  WHERE f.rcept_no IN (s.source_rcepts->>'BS', s.source_rcepts->>'IS', s.source_rcepts->>'CF') "
                  "  AND f.basis = s.statement_type AND f.col_index=0 AND NOT f.is_dimensional "
                  "  AND f.canonical_account='is.noncontrolling_ni' AND f.amount_won IS NOT NULL "
                  "  AND ABS(f.amount_won - (s.net_income - s.controlling_ni)) "
                  "      <= ABS(s.net_income)*0.02 + 1000000)",
         "sample": "SELECT s.corp_code, s.fiscal_year, s.fiscal_period, s.statement_type, "
                   "s.net_income, s.controlling_ni "
-                  "FROM std_financials_v2 s WHERE s.version=1 "
-                  "AND NOT COALESCE(s.is_stub,false) AND NOT COALESCE(s.is_discrete,false) "
-                  "AND s.net_income IS NOT NULL AND s.controlling_ni IS NOT NULL AND s.net_income<>0 "
+                  "FROM std_financials_v3 s WHERE "
+                  "s.net_income IS NOT NULL AND s.controlling_ni IS NOT NULL AND s.net_income<>0 "
                   "AND ABS(s.controlling_ni) > ABS(s.net_income)*1.02 "
                   "AND ABS(s.net_income - s.controlling_ni) > ABS(s.net_income)*0.02 + 1000000 "
                   "AND NOT EXISTS (SELECT 1 FROM fact_v2 f "
@@ -521,9 +524,10 @@ def check_completeness(session) -> tuple[int, list[tuple]]:
 
     # is_stub 은 제외하지 않는다 — 결산월 변경 전환기간(예: 9월→12월)도 실제 제출·처리된 유효
     # 데이터라 "커버리지 있음"으로 인정해야 함(제외하면 아시아종묘류 오탐 발생, 2026-07-04 확인).
+    # 2026-09-01: std_financials_v2→v3. v3엔 is_stub/is_discrete 컬럼 자체가 없다(PK가
+    # (corp,fy,fp,basis) 뿐이라 그런 중복행이 없음) — 조건 삭제.
     latest = dict(session.execute(text(
-        "SELECT corp_code, max(period_end) FROM std_financials_v2 "
-        "WHERE version = 1 AND NOT COALESCE(is_discrete, false) "
+        "SELECT corp_code, max(period_end) FROM std_financials_v3 "
         "GROUP BY corp_code"
     )).fetchall())
 

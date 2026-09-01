@@ -359,8 +359,11 @@ def audit_lines(session, corp, rcepts, face_of, track_of, args, agg):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", choices=["v2", "v3"], default="v2",
-                    help="감사할 std 체인. v3 는 docs/plans/std_v3_native_gate_b_plan_2026-08-11.md")
+    # 2026-09-01: 기본값 v2→v3. std_financials_v2 는 fact_v2/std_v2 GC 트랙으로 DROP됨 —
+    # --source v2 를 더 넘기면 이제 에러. v3 가 이미 실질 기본(모든 최근 R-트랙 재감사가
+    # --source v3 로 실행돼 왔다, docs/plans/std_v3_native_gate_b_plan_2026-08-11.md).
+    ap.add_argument("--source", choices=["v3"], default="v3",
+                    help="감사할 std 체인. v3 만 지원(std_financials_v2 DROP, 2026-09-01)")
     ap.add_argument("--corp")
     ap.add_argument("--corp-file", dest="corp_file", help="corp_code 목록 파일(라인당 1개)")
     ap.add_argument("--corps", help="corp_code 범위 LO:HI")

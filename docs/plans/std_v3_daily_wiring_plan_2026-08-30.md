@@ -480,7 +480,7 @@ Phase 1 검증(§6)이 끝난 뒤. 커밋을 분리해 롤백 단위를 유지�
 | `app/data/extended.py` · `shareholder_return.py`의 std_v2 직접 조인 정리 | — | 읽기 소비자 이식 |
 | `std_financials_v2` · `std_financials_calendar` 드롭 | **633 MB 회수** | 위가 전부 끝난 뒤 |
 | P1A lease/borrow 카탈로그 분해 | — | v2→v3 코드 이식의 잔여 조각(`net_debt`/`short_term_debt`/`long_term_debt` 영향). 설계 완료·미실행: `docs/plans/p1a_p1c_implementation_plan_2026-08-22.md` |
-| **D&A "결합공시+별도계상분" 합산 로직 이식**(가칭, 신규) | 표본 15건 중 11건이 12.6~70.3% 차이 | v2 `rule_additive_da`(`fin2/standardize/rules.py:220-243`)가 "감가상각비 및 무형자산상각비" 결합공시 라인 + 사용권자산 등 별도계상분을 더하는데, v3 `note_da.py`엔 이 이중 처리가 없는 것으로 추정(미확인). `ebitda`/`da_total`에 영향 — **P1A와 무관한 별개 이슈**, `valuation_daily_v3_migration_plan_2026-08-30.md` §Phase 0-2 참고, 2026-08-30 발견·미착수 |
+| ~~D&A "결합공시+별도계상분" 합산 로직 이식~~(가칭, 신규) | — | ✅ **해소 확인(2026-09-01), 이식 불필요였음** — `valuation_daily_v3_migration_plan_2026-08-30.md` §Phase 0-2(=`valuation_daily_blockers_da_netdebt_design_2026-08-30.md` §1-2(e))의 원문대조로 이 행의 "미확인" 추정이 **기각**됐다: `fin2/layer3/note_da.py`는 결합표기가 있을 때 이미 결합값+별도계상분을 `DA_COMBINED` 하나로 병합해 내보내 이중계상이 없다(v3 5/5 표본 원 단위 일치). 실제로 존재했던 버그는 이것과 다른 것(레거시 `note_extractor.py` 경로가 `note.da_total`을 합성해 `fact_v2`/std_v2에 이중계상을 만든 것, B2)이었고 `32e3ca7`로 완전 종료됨 — [[factv2-synthetic-da-total-cleanup-2026-08-31]]. |
 
 ### 계층2 축 — 병행 트랙 (§0-0의 같은 방향, 별도 작업)
 

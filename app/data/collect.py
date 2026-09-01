@@ -29,7 +29,10 @@ def collection_status() -> dict:
                  WHERE status='completed' AND file_type='xml') AS downloaded,
               (SELECT count(*) FROM download_tasks
                  WHERE status IN ('pending','failed')) AS pending,
-              (SELECT count(DISTINCT corp_code) FROM std_financials_v2) AS std_corps
+              -- 2026-09-01(fact_v2/std_v2 GC 트랙 §6-2): std_v2 는 Phase 2 이후 신규
+              -- 쓰기가 없어(2026-08-30) 이 카운트가 정체됨 — 실제 파이프라인 산출물인
+              -- v3 기준으로 전환.
+              (SELECT count(DISTINCT corp_code) FROM std_financials_v3) AS std_corps
         """)).mappings().fetchone()
     return dict(row)
 

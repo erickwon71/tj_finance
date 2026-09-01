@@ -12,6 +12,10 @@ collector/cf_da_sync.py 의 정확한 클론. 차이:
 ★2026-08-30(valuation_daily_blockers_da_netdebt_design_2026-08-30.md §5 순서1) —
 std_v2 재표준화(standardize_corp/derive_quarters_corp/calendarize_corp) 호출을
 제거했다. cf_da_sync.py 와 동일 사유(§모듈 docstring 참고) — std_v2 소비자가 없다.
+
+★2026-09-01(fact_v2/std_v2 GC 트랙, `std_financials_v2` DROP) — cf_da_sync.py 와 동일
+사유로 `_TARGET_SQL`을 std_financials_v2 → v3 로 전환(이 모듈도 `depreciation IS NULL`
+셀렉터로 std_v2 를 읽고 있었다). `s.version=1` 조건 삭제(v3 엔 없음).
 """
 from __future__ import annotations
 
@@ -26,12 +30,12 @@ from fin2.extract.xbrl import store_facts
 _TARGET_SQL = """
     SELECT s.corp_code, s.fiscal_year, s.fiscal_period,
            ss.source_rcept_no AS is_rcept, dt.file_path
-    FROM std_financials_v2 s
+    FROM std_financials_v3 s
     JOIN statement_source ss
       ON ss.corp_code=s.corp_code AND ss.fiscal_year=s.fiscal_year
      AND ss.fiscal_period=s.fiscal_period AND ss.basis=:basis AND ss.statement='IS'
     JOIN download_tasks dt ON dt.rcept_no = ss.source_rcept_no
-    WHERE s.statement_type=:basis AND s.version=1 AND s.depreciation IS NULL
+    WHERE s.statement_type=:basis AND s.depreciation IS NULL
       AND s.da_total IS NULL
       -- 비용성격 주석은 연간(FY) 총액 → FY 만 타겟. interim(H1/Q1/Q3) da_total 은 표준화의
       -- 분기 이산화(derive_quarters_corp)가 담당한다. FY 만 걸어야 완료판정(FY-only)과 정합하고,

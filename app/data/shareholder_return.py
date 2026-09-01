@@ -26,18 +26,23 @@ def load_dividend_series(corp_code: str, years: int = 15) -> list[dict]:
 
 
 def load_dividend_series_for_chart(corp_code: str, basis: str = "consolidated") -> list[dict]:
-    """차트빌더용 — period_end 를 std_financials_v2 에서 조인(app.data.extended.load_extended_all
-    과 동일 조인 패턴, 동일 (corp,fy,fp,basis) 축 정렬 보장)."""
+    """차트빌더용 — period_end 를 std_financials_v3 에서 조인(app.data.extended.load_extended_all
+    과 동일 조인 패턴, 동일 (corp,fy,fp,basis) 축 정렬 보장).
+
+    ★2026-09-01(fact_v2/std_v2 GC 트랙 §6-2) — std_financials_v2 → v3 로 전환. v3 는
+    PK 가 (corp_code,fiscal_year,fiscal_period,statement_type) 뿐이라 v2 의
+    version=1/NOT is_stub/NOT is_discrete 조건이 불필요. 조인 커버리지 실측(2026-09-01):
+    dividend_facts FY(연결) 키 23,147건 중 v2 매칭 19,340건(83.5%) → v3 매칭 23,139건
+    (99.97%) — v2 시절 조용히 빠지던 배당 차트 데이터 약 3,800건이 이 전환으로 복구된다.
+    """
     with get_session() as s:
         rows = s.execute(text("""
             SELECT d.fiscal_year, s.period_end, d.dps_common, d.payout_ratio,
                    d.dividend_yield_common, d.total_dividend_amount
             FROM dividend_facts d
-            JOIN std_financials_v2 s
+            JOIN std_financials_v3 s
               ON s.corp_code = d.corp_code AND s.fiscal_year = d.fiscal_year
              AND s.fiscal_period = 'FY' AND s.statement_type = :basis
-             AND s.version = 1 AND NOT COALESCE(s.is_stub, false)
-             AND NOT COALESCE(s.is_discrete, false)
             WHERE d.corp_code = :c
             ORDER BY d.fiscal_year DESC
         """), {"c": corp_code, "basis": basis}).mappings().fetchall()

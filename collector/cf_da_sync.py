@@ -18,6 +18,13 @@ std_v2 재표준화(standardize_corp/derive_quarters_corp/calendarize_corp) 호�
 제거했다. std_v2 소비자가 없어져 재전파가 불필요해진 데다, 레거시 note_extractor
 경로의 note.da_total 합성 이중계상(§1)이 std_v2에 새로 쓰이는 것도 이걸로 막힌다.
 fact_v2 upsert(store_facts)는 extended_financials 소관이라 그대로 유지한다.
+
+★2026-09-01(fact_v2/std_v2 GC 트랙, `std_financials_v2` DROP) — 타겟 셀렉터
+(`_TARGET_SQL`)를 std_financials_v2 → v3 로 전환. 위 단락은 std_v2 "재표준화 호출"
+얘기라 이 모듈 자체가 std_v2 소비자가 아니라는 뜻이 아니었다 — `_TARGET_SQL`이
+`depreciation IS NULL` 판정을 위해 std_v2 를 **읽고는** 있었다(이 파일이 collect_new.py
+④ 경로에서 매일 불림). v2 DROP 시점에 뒤늦게 발견해 같이 이식. v3 는 PK 가
+(corp_code,fiscal_year,fiscal_period,statement_type) 뿐이라 `s.version=1` 조건은 삭제.
 """
 from __future__ import annotations
 
@@ -32,12 +39,12 @@ from fin2.extract.xbrl import store_facts
 _TARGET_SQL = """
     SELECT s.corp_code, s.fiscal_year, s.fiscal_period,
            ss.source_rcept_no AS cf_rcept, dt.file_path
-    FROM std_financials_v2 s
+    FROM std_financials_v3 s
     JOIN statement_source ss
       ON ss.corp_code=s.corp_code AND ss.fiscal_year=s.fiscal_year
      AND ss.fiscal_period=s.fiscal_period AND ss.basis=:basis AND ss.statement='CF'
     JOIN download_tasks dt ON dt.rcept_no = ss.source_rcept_no
-    WHERE s.statement_type=:basis AND s.version=1 AND s.depreciation IS NULL
+    WHERE s.statement_type=:basis AND s.depreciation IS NULL
       AND s.fiscal_year >= :ymin AND dt.file_path IS NOT NULL
       {corp_clause}
     ORDER BY s.corp_code, s.fiscal_year, s.fiscal_period

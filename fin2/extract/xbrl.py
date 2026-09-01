@@ -220,6 +220,56 @@ def store_facts(session, facts: list[ExtractedFact]) -> int:
     return len(rows)
 
 
+def store_extended_facts_v3(session, facts: list[ExtractedFact]) -> int:
+    """`ExtractedFact` 목록을 `extended_facts_v3`(라벨 기반 확장 캐노니컬)에 upsert.
+
+    ★2026-09-01(fact_v2 GC 트랙 Track 1, `docs/plans/
+    factv2_sync_scripts_migration_design_2026-09-01.md`) — `store_facts()`(fact_v2)의
+    자매 함수. `collector/expense_nature_sync.py`가 뽑는 `note.employee_benefits`/
+    `note.raw_materials_used`(EXTENDED_CATALOG 등재, `combine.py`의 일반 라벨매핑이
+    만들지 못하는 canonical)를 `fact_v2` 대신 여기로 직접 적재한다 — `extended_financials`
+    뷰가 이제 `extended_facts_v3`만 읽으므로(§4-2, commit `243e9ee`) 이게 유일한
+    유효 목적지다. 그레인이 `std_financials_v3`와 동일(당기 FY, col_index=0)이라
+    `report_fiscal_year`/`report_fiscal_period`/`basis`를 그대로 옮겨 쓸 수 있다.
+    """
+    if not facts:
+        return 0
+    from datetime import datetime
+    from sqlalchemy.dialects.postgresql import insert
+    from collector.models import ExtendedFactV3
+
+    rows = [
+        {
+            "corp_code": f.corp_code,
+            "fiscal_year": f.report_fiscal_year,
+            "fiscal_period": f.report_fiscal_period,
+            "statement_type": f.basis,
+            "canonical_account": f.canonical_account,
+            "amount_won": f.amount_won,
+            "built_at": datetime.utcnow(),
+        }
+        for f in facts
+        if f.canonical_account and f.basis and f.amount_won is not None
+    ]
+    if not rows:
+        return 0
+
+    stmt = insert(ExtendedFactV3).values(rows)
+    update_cols = {
+        c.name: stmt.excluded[c.name]
+        for c in ExtendedFactV3.__table__.columns
+        if c.name not in ("corp_code", "fiscal_year", "fiscal_period",
+                          "statement_type", "canonical_account")
+    }
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["corp_code", "fiscal_year", "fiscal_period",
+                        "statement_type", "canonical_account"],
+        set_=update_cols,
+    )
+    session.execute(stmt)
+    return len(rows)
+
+
 def extract_file(
     session,
     file_path: str | Path,

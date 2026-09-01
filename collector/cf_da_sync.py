@@ -1,4 +1,16 @@
 """
+★★2026-09-01 은퇴(Track 2, `docs/plans/factv2_sync_scripts_migration_design_2026-09-01.md`
+§2/§3, 사용자 결정) — `scripts/collect_new.py`의 `_sync_cf_da`에서 이 모듈 호출을
+제거했다. 이 파일이 매일 쓰던 `fact_v2` 값(note.depreciation/amortization/
+rou_depreciation/da_total)은 실측 결과 std_financials_v2 DROP(2026-09-01, 같은 날)
+이후 아무도 읽지 않는 죽은 쓰기였다 — 유일 소비자 `fin2/standardize/build.py::
+standardize_corp()`가 RuntimeError 가드로 막혀 있고, v3 쪽 D&A
+(`fin2/layer3/note_da.py`)는 `note_lines`만 읽지 `fact_v2`를 안 읽는다. 즉 이 값들은
+DROP 이전부터 이미 앱 어디에도 노출되지 못하고 있었다 — 은퇴는 현상유지이지 신규
+손실이 아니다. 연결 CF D&A 커버리지 개선을 다시 원하면 별도 트랙으로 새로
+설계할 것(위 설계문서 §2 옵션 B/§3 참고, `combine.py`/`note_da.py` 변경 필요).
+아래 코드는 재검토 참고용으로 보존(배선 제거만, 코드는 그대로).
+
 신규/증분 보고서 D&A note 복원 — collect_new 파이프라인 영속화 (B5).
 
 배경: DART 2024+ Track A 전환으로 연결 현금흐름표 감가상각이 개별 XBRL ACODE 로

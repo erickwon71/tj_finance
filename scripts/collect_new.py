@@ -11,7 +11,11 @@ calendar stage는 더 이상 돌지 않는다(④-6 `_sync_std_v3`가 std_financ
 정보 손실도 아님 — v3는 report_lines 에서 언제든 재생성 가능).
 ★2026-08-30(valuation_daily_blockers_da_netdebt_design_2026-08-30.md §5 순서1) —
 `_sync_cf_da`가 독자적으로 std_v2를 재계산하던 잔여 경로도 제거했다. std_v2 쓰기는
-이제 전무하다(fact_v2/extended_financials 소관 upsert만 남음).
+이제 전무하다.
+★2026-09-01(fact_v2 GC 트랙 Track 1/2, factv2_sync_scripts_migration_design_2026-09-01.md) —
+`_sync_cf_da`가 부르던 cf_da_sync(fact_v2 D&A 복원)는 죽은 쓰기였음이 밝혀져 은퇴,
+expense_nature_sync 는 fact_v2 대신 extended_facts_v3 에 적재하도록 전환. fact_v2
+쓰기는 이제 이 파일 경로에 없다(추출 파이프라인 본체의 fact_v2 쓰기는 별개, §4-4 소관).
 
 ④ 파싱·표준화는 **기업당 워커 프로세스 + 타임아웃**으로 처리한다: 대용량/병리 보고서
 (예: 30MB iXBRL)에서 100% CPU 로 정체하는 기업을 `--timeout` 초 초과 시 강제 종료·스킵하고
@@ -124,19 +128,15 @@ def _run_standardize_batches(affected: list[str], timeout: int, batch_size: int 
     대신 채움). 함수명·docstring의 "std_v2 표준화"는 그 이전 관례명일 뿐 지금은
     extract/reconcile만 돈다.
 
-    ★★ 그런데도 std_v2 쓰기가 완전히 멈추진 않는다 — `_sync_cf_da`(아래)가 부르는
-    `cf_da_sync.sync_cf_da`/`expense_nature_sync.sync_expense_nature`는 **자신의
-    SELECT 대상을 std_financials_v2 에서 직접 골라**(`depreciation IS NULL`인 기존
-    행), 그 corp에 대해 **독자적으로** `standardize_corp`(v2)→`derive_quarters_corp`
-    →`calendarize_corp`를 다시 돌린다(`process_corp`의 stages 축소와 무관한 별도
-    경로). 브랜드뉴 기간(오늘 처음 생긴 fy/period)은 애초에 std_v2 행이 없어 대상이
-    안 되지만, **Phase 2 이전에 이미 만들어진 std_v2 행 중 depreciation NULL인 것은
-    이후에도 계속 재표준화(recompute)된다** — 그 corp이 다른 이유로 오늘 `ok_corps`
-    에 다시 들어올 때마다. `std_v2_retirement_port_to_v3_2026-08-22.md`의 R17이
-    이미 같은 문제를 지적했다("이 단계를 걷어내면 extended_financials가 stale") —
-    그 문서의 결정대로 지금은 **손대지 않고 남겨둔다**(§8 소비자 이식과 함께 처리).
-    "std_v2 쓰기 제거"는 이 Phase 2 범위에서 **완전하지 않다** — 신규 쓰기는 없지만
-    기존 행 재계산은 남는다.
+    ★2026-09-01(위 단락 정정, fact_v2 GC 트랙) — 위 std_v2 재표준화 언급은 낡았다.
+    `cf_da_sync.sync_cf_da`/`expense_nature_sync.sync_expense_nature`의 std_v2
+    재표준화 호출은 2026-08-30에 이미 제거됐고(각 모듈 docstring), `_TARGET_SQL`도
+    같은 날 std_financials_v3 SELECT로 전환됐다. 그리고 오늘(factv2_sync_scripts_
+    migration_design_2026-09-01.md, Track 2 은퇴 결정) `_sync_cf_da`가 `cf_da_sync`
+    호출 자체를 그만뒀다 — 이제 `expense_nature_sync.sync_expense_nature`만 남아
+    `std_financials_v3.depreciation IS NULL`인 corp을 타겟으로 note.employee_benefits/
+    note.raw_materials_used를 extended_facts_v3에 적재한다(std_v2/v3 재표준화 없음,
+    단순 부가 데이터 추출).
 
     Why(배치 자체의 이유): previously these downstream steps ran once, after the *entire*
     affected list finished. If the process was killed mid-run, corps that already
@@ -515,30 +515,31 @@ def _sync_capital(lookback_days: int = 5) -> None:
 
 
 def _sync_cf_da(corps: list[str]) -> None:
-    """④-2 D&A note 복원(B5+Phase4) — 신규 표준화 기업의 연결 CF D&A 갭(2024+ Track A 전환으로
-    누락)을 ① CF 주석/본문(cf_da) → ② 비용의 성격별 분류 주석(expense_nature) 하이브리드로 채워
-    fact_v2/extended_financials 의 EBITDA/da_total 갭을 메운다. 비치명(수집 계속). expense_nature
-    는 cf_da 다음에 돌아 **여전히 depreciation NULL** 인 잔여만 타겟(이중 계상 방지).
+    """④-2 비용성격 주석 확장항목 복원 — 신규 표준화 기업의 '비용의 성격별 분류' 주석에서
+    note.employee_benefits/note.raw_materials_used(EXTENDED_CATALOG 등재)를 뽑아
+    extended_facts_v3 에 적재한다. 비치명(수집 계속).
+
+    ★2026-09-01(fact_v2 GC 트랙, `docs/plans/factv2_sync_scripts_migration_design_2026-09-01.md`
+    §2 Track 2, 사용자 결정) — `collector/cf_da_sync.py`(CF 본문/주석에서 D&A 복원 →
+    fact_v2 upsert) 호출을 여기서 제거했다. 실측 결과 그 fact_v2 쓰기는 2026-09-01
+    std_financials_v2 DROP 이후 이미 아무도 읽지 않는 죽은 경로였다(유일 소비자
+    `fin2/standardize/build.py::standardize_corp()`가 RuntimeError 가드, v3 쪽
+    D&A(`fin2/layer3/note_da.py`)는 fact_v2 를 안 읽고 note_lines 만 읽음) — 지금
+    끄는 것은 사용자에게 새로 손실을 주는 게 아니라 죽은 야간 작업을 멈추는 것이다.
+    파일 자체(`collector/cf_da_sync.py`)는 보존(재검토 시 참고용).
 
     ★2026-08-30(valuation_daily_blockers_da_netdebt_design_2026-08-30.md §5 순서1) — std_v2
-    재전파 호출은 두 sync 함수에서 제거됐다(std_v2 소비자 없음). fact_v2 upsert 만 한다."""
+    재전파 호출은 sync 함수에서 제거됐다(std_v2 소비자 없음)."""
     if not corps:
         return
-    try:
-        from collector.cf_da_sync import sync_cf_da
-        res = sync_cf_da(corps=corps, year_min=2024)
-        if res["corps"]:
-            logger.info(f"[collect] ④-2 D&A 복원(CF) — 기업 {res['corps']} · note fact {res['facts']:,}")
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"[collect] ④-2 D&A 복원(CF) 실패(비치명적): {exc}")
     try:
         from collector.expense_nature_sync import sync_expense_nature
         res2 = sync_expense_nature(corps=corps, year_min=2024)
         if res2["corps"]:
-            logger.info(f"[collect] ④-2 D&A 복원(비용성격 주석) — 기업 {res2['corps']} · "
+            logger.info(f"[collect] ④-2 비용성격 주석 확장항목 복원 — 기업 {res2['corps']} · "
                         f"note fact {res2['facts']:,}")
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"[collect] ④-2 D&A 복원(비용성격) 실패(비치명적): {exc}")
+        logger.warning(f"[collect] ④-2 비용성격 주석 확장항목 복원 실패(비치명적): {exc}")
 
 
 def _sync_layer2_lines(corps: list[str]) -> None:

@@ -106,6 +106,20 @@ class FaceLine:
     adecimal: int | None       # 표시단위(원 환산용)
     is_cumulative: bool = False  # 반기/3분기 누적(YTD) 셀 — std_v2 IS/CF 가 저장하는 값
     from_gapfill: bool = False   # 표제기반 실패→detect_sections 갭필로 찾은 표(휴리스틱, 저신뢰)
+    row_label: str | None = None  # 같은 <TR>의 라벨 셀 원문 텍스트(_row_label_text) — Gate B
+    # Phase B(계층2 GC §4-3) report_lines.label_raw 매칭용. 기존 `label`(값 셀 텍스트,
+    # Phase A audit_std_row/evidence 가 사용)과는 용도가 다르므로 별도 필드로 분리 —
+    # `label` 의미를 바꾸면 Phase A 회귀가 된다.
+    in_body_section: bool | None = None  # DART 챕터 섹션(`2.연결재무제표`/`4.재무제표`) 소속
+    # 표 안의 셀인가 — `_detect_body_statement_tables`(read_report_face_text 와 공유하는
+    # 표 위치 판정, `fin2/extract/text.py`)로 계산. Track A(`read_report_face_xbrl`)는
+    # ACONTEXT 의 basis 차원만으로 "본문"을 판정해 온 탓에, basis 태그만 있고 다른 축이
+    # 없는 주석표(재고자산 세부분류·사용권자산 롤포워드 등)까지 본문으로 오인해 왔다
+    # (Phase B 이식 게이트 1 실측, 2026-09-01, matching rate BS 83.95%/NONE 80.03% vs
+    # IS 99.85%/CF 100%). ★기존 필터링을 대체하지 않는 **가산 메타데이터**다 — Phase A
+    # (`audit_std_row`/`audit_fields`)는 이 필드를 보지 않으므로 무영향, `_track_a_face()`
+    # (Phase B 전용)만 추가로 이 값을 본다. None=판정 시도 안 함(구성자가 안 채운 합성
+    # 라인 등, 이때는 배제하지 않음 — 결측>오탐, [[feedback-verify-against-source]]).
 
     @property
     def amount_won(self) -> int | None:
@@ -400,6 +414,7 @@ def _ni_attribution_structural_candidates(root) -> list[FaceLine]:
                     statement="IS", basis=ctx.basis, acode=acode, canonical=canon,
                     label=label[:80], displayed_value=displayed, adecimal=_parse_adecimal(te),
                     is_cumulative=ctx.is_cumulative,
+                    row_label=label,
                 ))
 
     for tr in root.findall(".//TR"):
@@ -736,6 +751,28 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
             _doc_default_cache.append(document_default_unit(root))
         return _doc_default_cache[0]
 
+    _body_te_ids_cache: list[set[int] | None] = []   # lazy, at most 1 회 계산
+
+    def _body_te_ids() -> set[int] | None:
+        """DART 챕터 섹션(2.연결재무제표/4.재무제표) 소속 표들의 TE 원소 id() 집합.
+        None = 판정 자체가 실패(섹션 미검출) → 호출측은 배제하지 말 것(결측>오탐)."""
+        if not _body_te_ids_cache:
+            from fin2.extract.text import _detect_body_statement_tables, _detect_fin_type
+            try:
+                fin_type = _detect_fin_type(root)
+                groups = _detect_body_statement_tables(root, fin_type)
+            except Exception:  # noqa: BLE001 — 판정 실패는 배제(False)가 아니라 미상(None)
+                groups = {}
+            if not groups:
+                _body_te_ids_cache.append(None)
+            else:
+                ids: set[int] = set()
+                for tables_with_unit in groups.values():
+                    for tbl, _unit, _kind in tables_with_unit:
+                        ids.update(id(te) for te in tbl.findall(".//TE[@ACODE]"))
+                _body_te_ids_cache.append(ids)
+        return _body_te_ids_cache[0]
+
     dedup: dict[tuple, FaceLine] = {}
     for te in root.findall(".//TE[@ACODE]"):
         acode = te.get("ACODE", "")
@@ -780,10 +817,13 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
         stmt = _statement_of(canonical)
         if stmt is None and ctx.period_kind == "instant":
             stmt = "BS"
+        body_ids = _body_te_ids()
         line = FaceLine(
             statement=stmt, basis=ctx.basis, acode=acode, canonical=canonical,
             label=text[:80], displayed_value=displayed, adecimal=adecimal,
             is_cumulative=ctx.is_cumulative,
+            row_label=_row_label_text(te),
+            in_body_section=None if body_ids is None else (id(te) in body_ids),
         )
         # 반기/3분기는 같은 (acode,basis)에 누적·3개월 셀이 공존 → is_cumulative 도 키에 포함.
         # all_cols 시 col_index 도 키에 포함(전기/전전기 셀 보존).

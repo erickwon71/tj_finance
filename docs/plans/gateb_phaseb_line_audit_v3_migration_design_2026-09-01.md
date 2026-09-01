@@ -254,18 +254,72 @@ WHERE rcept_no = ANY(:rs) AND col_index = 0 AND NOT COALESCE(is_dimensional, fal
 
 ### Phase 0 — 착수 전 확정 (읽기 전용, 0.5세션)
 
-- [ ] **0-1** `[R]` Phase A의 `fact_v2` 무의존 최종 확인 — `grep -rn "fact_v2" fin2/audit/`
+- [x] **0-1** `[R]` Phase A의 `fact_v2` 무의존 최종 확인 — `grep -rn "fact_v2" fin2/audit/`
       결과가 `line_audit.py` 단독인지 재확인(이 문서 §2-1의 근거를 커밋 시점에 재검증)
-- [ ] **0-2** `[R]` **기준선 스냅샷 생성** — `face_line_audit` 전체를 별도 테이블로 복제
+      → **완료(2026-09-01)**: `fin2/audit/` 6개 파일 중 `line_audit.py`만 `fact_v2` 참조
+      (`face_audit.py`/`curated_key_scan.py`/`line_anomaly.py`/`report_line_audit.py`/
+      `__init__.py`는 0건). §2-1 근거 재확인.
+- [x] **0-2** `[R]` **기준선 스냅샷 생성** — `face_line_audit` 전체를 별도 테이블로 복제
       (`face_line_audit_snapshot_2026_09_01`). 전이 행렬(Phase 4-3)의 기준이 되므로
       **이걸 안 만들면 이식 후 회귀 판정 자체가 불가능하다**. [[gateb-full-reaudit-is-required-to-close]]
-- [ ] **0-3** `[R]` 데일리 알림 실제 발화 이력 확인 — 최근 30일 `collect_new.py` 로그에서
+      → **완료(2026-09-01)**: 155,216행(원본과 일치) 복제. `reader_version` 전량
+      `trackAB-v2`, `line_gate_status` 분포 `fail_a` 14,403 / `pass` 111,361 / `pending` 29,452.
+- [x] **0-3** `[R]` 데일리 알림 실제 발화 이력 확인 — 최근 30일 `collect_new.py` 로그에서
       `line_value_diff` 비0 발화 빈도. **상시 발화 중이면** "기준선 리셋이 회귀가 아니다"의
       근거가 되고, 조용했다면 이식 후 알림 폭주를 방지할 임계 설계가 필요해진다
-- [ ] **0-4** `[R]` 2차 오탐 클러스터 원인 확정 — `DepreciationInvestmentProperty` /
+      → **완료(2026-09-01)**: 실제 launchd 로그는 `logs/collect.err.log`(레포의
+      `deploy/launchd/com.tjfinance.collect.plist`는 `--download-only`가 남은 구버전 문서 —
+      실제 설치본은 2026-08-22 Phase 5에서 이미 제거됨, 별도 문서 드리프트로 기록만).
+      `[verify] 완료` 발화 6회(08-24~08-31, ok corps 있는 날만 발화) 전부
+      `line_value_diff > 0`(168/229/77/77/231/664) — **100% 상시 발화**, 매번 ERROR 레벨
+      "⚠ 보고서≠DB 확정 불일치" 경보. `fail_a`는 항상 0(Phase A 클린). → 기준선 리셋 = 회귀
+      아니라는 근거 확보. 단, 이식 후 Phase 4-6 임계 재설계 시 "현재도 100% 발화 중이라
+      노이즈 억제 자체가 필요하다"는 방향으로 참고할 것.
+- [x] **0-4** `[R]` 2차 오탐 클러스터 원인 확정 — `DepreciationInvestmentProperty` /
       `RightofuseAssets` / `dart_Interest*` 표본 3건 **원문 XML 직접 대조**로
       "주석 다중셀 coarse 키 충돌" 가설 검증. [[feedback-verify-against-source]]
       (결과에 따라 Phase 2-2의 제외 정책 범위가 달라진다)
+      → **완료(2026-09-01), 최초 가설은 부정확 — 실제 메커니즘 재확인 후 정정**:
+      원문 XML 표본 대조 직후 "리더가 잘못된 차원분해 셀을 집는다"고 1차 기술했으나,
+      `read_report_face_xbrl()` 코드(`face_audit.py:702-796`)를 직접 읽고 정정한다.
+      이 함수는 `ctx.is_dimensional` 인 셀을 **명시적으로 skip**(`:762`)하므로 차원분해
+      셀 자체를 읽어 들이는 일은 없다. 실제로 벌어지는 일은 더 정교하다 —
+      `_adecimal_signals()`(`:178-236`, 2026-08-12 노루페인트 사례로 이미 검증된 기존
+      로직)가 **홈(비차원) 셀의 ADECIMAL 을 형제 차원분해 셀들의 산술항등식으로 검증해
+      오버라이드**한다: 차원분해 형제(예: 건물/토지)를 각자의 ADECIMAL 로 원화 환산해
+      합산한 값이 홈 셀을 어떤 후보 ADECIMAL 로 환산한 값과 실제로 일치할 때만 그
+      ADECIMAL 을 "verified"로 채택해 홈 셀에 적용한다(`:772-774`).
+      - `ifrs-full_DepreciationInvestmentProperty`(00122056 미창석유공업, `20260515001902`,
+        basis=separate): 홈 셀(ClassesOfAssetsAxis 없음) 리터럴 `"(30,367)"`,
+        원문 태그 `ADECIMAL="0"`. 형제 — Land `0`(ADECIMAL=-3), Buildings `(30,367)`
+        (ADECIMAL=-3). 형제 합산(ADECIMAL=-3 환산) = -30,367,000 = 홈 셀을 ADECIMAL=-3
+        으로 환산한 값과 **정확히 일치** → verified override 발동, `report_won`=
+        -30,367,000. `db_won`(fact_v2)은 -30,367(원문 태그 그대로, 미보정).
+      - `dart_InterestIncomeFinanceIncome`(00878696 에스케이바이오팜, `20260318000773`,
+        basis=consolidated)도 동일 구조: 홈 셀 `ADECIMAL="0"` 리터럴 `"7,084,610"` vs
+        `FinancialAssetsAtAmortisedCostCategoryMember` 등 형제(ADECIMAL=-3) 합산이
+        일치 → verified override로 `report_won`=7,084,610,000.
+      - `ifrs-full_RightofuseAssets`(00220613 넥스틸, `20260514001207`): 이 표본은 위
+        메커니즘과 다른 변종으로 보인다 — 원문에서 동일 acode+동일 리터럴의 ADECIMAL=-3
+        형제 셀을 찾지 못했고, 대신 **다른 acode**(`ifrs-full_PropertyPlantAndEquipment`
+        + `RightofuseAssetsMember` 차원)가 같은 리터럴을 가짐. 원인 미확정 —
+        `_adecimal_signals`의 키가 acode 를 포함하므로 이 변종이 같은 메커니즘으로
+        설명되지 않는다. Phase 1 착수 시 실제 로그/중간값 찍어서 추적 필요(범위는 유지,
+        지금 더 파지 않음).
+      **핵심 정정 — 어느 쪽이 "정답"인지는 미해결로 남는다**: `_adecimal_signals`는
+      2026-08-12 회귀 #1/#2 로 이미 두 번 다듬어진, 산술항등식으로 검증하는 신뢰도 높은
+      로직이다(모듈 자체 docstring이 "무차원 홈 fact 가 ADECIMAL=0으로 잘못 태깅되는
+      경우가 실제로 있다"는 실측 선례를 남겨둠). 즉 이 2건은 "감사 리더의 버그"가 아니라
+      **fact_v2(db_won)가 DART 필러의 알려진 오태깅을 보정 없이 그대로 저장했을 가능성**
+      쪽에 무게가 실린다 — Phase 0-4가 원래 전제한 "리더 오탐이니 제외 정책 필요"와
+      정반대 결론일 수 있다. `report_lines_xbrl.py`(정식 XBRL instance 소스, `basis`
+      판정 시 "정확히 1개 차원만" 요구해 노트 중복을 원천 배제하는 설계, `:43-51`)로
+      대체되면 이 클러스터가 아예 안 생길 가능성도 있다 — 다만 이건 **미검증 추정**이다.
+      **결론**: 가설 검증 결과 "coarse 키가 못 거르는 주석 다중셀"이라는 원래 진단은
+      틀렸다(리더가 차원분해 셀을 직접 읽지 않음이 코드로 확인됨). 실제 원인은 더
+      복잡하고, **Phase 2-2에서 이 클러스터를 EPS처럼 단순 제외해서는 안 된다** —
+      Phase 1-4 매칭률 실측 + report_lines 쪽 실제 값을 직접 대조해 어느 쪽이 맞는지
+      판정한 뒤에 정책을 정할 것(짐작 금지, [[feedback-verify-against-source]]).
 - [x] **0-5** `[D]` ~~사용자 결정: Option 1(은퇴) / 2(라벨 이식) / 4(Track B만)~~
       → **완료(2026-09-01): Option 2 채택.** 0-2~0-4보다 먼저 결정됐으므로,
       0-3(경보 발화 이력)·0-4(2차 클러스터 원인)는 **방향 판단용이 아니라 Phase 2-2의
@@ -277,24 +331,94 @@ WHERE rcept_no = ANY(:rs) AND col_index = 0 AND NOT COALESCE(is_dimensional, fal
 
 ### Phase 1 — `FaceLine`에 행 라벨 확보 (Track A 이식의 전제)
 
-- [ ] **1-1** `[W]` `FaceLine`에 `row_label: str | None = None` 필드 추가
+- [x] **1-1** `[W]` `FaceLine`에 `row_label: str | None = None` 필드 추가
       (`fin2/audit/face_audit.py:96` 부근). **기존 `label` 필드는 건드리지 않는다** —
       Phase A의 `audit_std_row`/evidence 경로가 그 값을 쓰고 있어 의미를 바꾸면
       **Phase A 회귀**가 된다(§4 리스크 3의 반대 방향 사고)
-- [ ] **1-2** `[W]` `read_report_face_xbrl()`에서 `row_label=_row_label_text(te)` 채우기
+      → **완료(2026-09-01)**: 필드 추가. `label`은 무변경.
+- [x] **1-2** `[W]` `read_report_face_xbrl()`에서 `row_label=_row_label_text(te)` 채우기
       (`face_audit.py:702-796`). `_row_label_text`는 이미 존재(`:685`)하며 UDF acode
       경로에서 실사용 중 — 신규 함수 불요
-- [ ] **1-3** `[W]` 라벨 정규화 함수 확정 — `_normalize_ws`(`:681`) 재사용 + 주석번호
+      → **완료(2026-09-01)**: 채워 넣음. 부수 발견 — `_ni_attribution_structural_candidates()`
+      (`:317-407`)가 만드는 합성 `FaceLine`(is.controlling_ni/is.noncontrolling_ni)은
+      `read_report_face_xbrl()`의 TE 루프를 안 거쳐 `row_label`이 비었었다. 이 함수는
+      이미 라벨 텍스트를 로컬 변수(`label`, `_cell_text(tes[0])`)로 갖고 있어
+      `row_label=label` 한 줄 추가로 해소(`:403-408`) — 1-4 매칭률 게이트 측정 중
+      드러남, 같은 세션에서 수정.
+- [x] **1-3** `[W]` 라벨 정규화 함수 확정 — `_normalize_ws`(`:681`) 재사용 + 주석번호
       꼬리표 제거 필요 여부 판단. ★`report_lines.label_raw`는 **정규화 없는 원문**
       (`"현금및현금성자산 (주4,28)"`)이므로 **양쪽에 같은 정규화를 적용**해야 한다.
       R19(주석번호 가드) 선례 확인 후 결정
-- [ ] **1-4** `[R]` **매칭률 실측(게이트)** — 표본 200 rcept에 대해
+      → **완료(2026-09-01)**: R19는 무관(숫자-분리 가드, 라벨 정규화 아님) 확인. 실측
+      스크립트로 두 변형(공백제거만 / 공백제거+`(주\d[,\d]*)$` 꼬리표 제거) 비교 —
+      매칭률 차이 미미(88.20% vs 88.06%, +0.14pt). **`_normalize_ws`(공백 제거)만으로
+      충분** — 주석번호 꼬리표 제거는 효과가 거의 없어 추가 정규화 불필요(단순성 우선).
+- [x] **1-4** `[R]` **매칭률 실측(게이트)** — 표본 200 rcept에 대해
       `face.row_label(정규화)` ↔ `report_lines.label_raw(정규화)` 조인 성공률 측정.
       Track A 라인 기준 매칭률을 산출하고, 미매칭 사유를 상위 5개 유형으로 분해
+      → **완료(2026-09-01)**: Track A 17,552 rcept 중 무작위 200개, 45,034 face 라인.
+      매칭 키는 실제 리콘실러 설계(Phase 2-1)와 동일하게 `(basis, is_cumulative)`
+      기준(★`statement`는 키에서 제외 — face 쪽 상당수가 canonical 미매핑으로
+      `statement=None`이라 join key에 넣으면 순수 라벨매칭 품질이 안 보임).
+      **전체 88.20%**(39,719/45,034). `statement`별 분해로 원인이 뚜렷:
+      IS 99.85%(9999/10014) · CF 100.00%(5190/5190) · **BS 83.95%(14077/16769)** ·
+      **NONE 80.03%(10453/13061)**. 미스 표본 다수가 재고자산 세부분류
+      (상품/제품/재공품/원재료/저장품)·사용권자산 롤포워드·확정급여채무 변동·
+      충당부채 변동 같은 **주석(note) 표 항목** — 라벨 정규화 문제가 아니라,
+      `read_report_face_xbrl()`의 "basis 태그만 있으면 본문(face)" 휴리스틱이
+      **주석 전용 표까지 Track A로 끌어들이고 있다는 신호**(그 표들도 별도 dim 축 없이
+      basis 만 태깅됨). `fact_v2` 대조 시절엔 양쪽이 같은 잡음을 공유해 안 드러났다가,
+      `report_lines`(presentation-tree 기반, 본문 롤만 저장)로 갈아타면서 노출된
+      것으로 보인다 — **미검증 가설**, 표본 사례로만 뒷받침.
 
-> **게이트 1**: 1-4 매칭률이 **95% 미만**이면 Option 2를 재검토한다(라벨 키가 불안정하다는
-> 뜻 → Option 4 축소 또는 Option 1 은퇴로 후퇴). 95%↑면 Phase 2 진행.
-> ★이 게이트를 건너뛰고 구현부터 들어가지 말 것 — [[feedback-plan-then-wait]]
+> **게이트 1 1차 판정(2026-09-01): 미달** — 88.20% < 95%. IS/CF는 이미 95%를 훨씬
+> 웃돌고(99.85%/100%), 미달의 실체는 라벨 키 자체의 불안정성이 아니라 **Track A
+> 스코프(본문 vs 주석) 판정 휴리스틱의 정밀도 부족**으로 보임 → 사용자 결정: Phase 1.5
+> (본문/주석 판정 로직 보강) 채택.
+
+### Phase 1.5 — 본문(face)/주석 판정 정밀화 (게이트 1 재도전)
+
+- [x] **1.5-1** `[W]` 원인 특정 — `read_report_face_xbrl()`가 "ACONTEXT에 basis 축만
+      있으면 본문"이라는 자체 휴리스틱만 쓰는 반면, Track B(`read_report_face_text`)는
+      이미 **DART 챕터 섹션 기반 본문표 식별기**(`fin2/extract/text.py::
+      _detect_body_statement_tables`, 2026-07-17 재설계 · 무작위 400건 실측 표준섹션
+      검출 399/400)를 추출기와 **공유**하고 있었다(모듈 docstring: "표 위치·basis
+      식별은 추출기와 공유, 셀 읽기 로직만 독립"). Track A만 이 인프라를 안 쓰고
+      있었던 것 — 재고자산 세부분류·사용권자산 롤포워드 등이 basis 축만 갖고
+      본문표로 오인된 원인.
+- [x] **1.5-2** `[W]` `FaceLine`에 `in_body_section: bool | None = None` 필드 추가
+      (`face_audit.py:113` 부근) — **가산 메타데이터**(기존 필터링 대체 아님). Phase A
+      (`audit_std_row`/`audit_fields`)는 이 필드를 안 보므로 무영향(직접 확인:
+      `asdict`/`vars` 로 FaceLine 필드를 순회하는 코드 없음, grep 0건).
+- [x] **1.5-3** `[W]` `read_report_face_xbrl()` 내부에 `_body_te_ids()` lazy 헬퍼 추가
+      — `_detect_body_statement_tables(root, _detect_fin_type(root))` 로 얻은 본문
+      표들의 `TE[@ACODE]` 원소 id() 집합을 1회 계산(같은 함수의 `_doc_default()` 캐싱
+      패턴과 동일). 판정 실패(섹션 미검출) 시 `None` 반환 → 호출측은 배제하지 않음
+      (결측>오탐, [[feedback-verify-against-source]]). 각 `FaceLine` 생성 시
+      `in_body_section=id(te) in body_ids`(또는 판정불가 시 `None`)로 채움.
+      `_ni_attribution_structural_candidates()`의 합성 라인은 미적용(기본값 `None`
+      유지 — 이미 IS 본문 총계 행을 앵커로 하므로 배제 대상 아님).
+      ★`line_audit.py::_track_a_face()`는 **건드리지 않음** — 그 함수는 지금도 매일
+      운영 중인 fact_v2 대상 프로덕션 감사 코드라, Phase 2 착수 전에 바꾸면 오늘의
+      실제 Gate B Track A 결과에 영향을 준다. 필터 시뮬레이션은 측정 스크립트에서만
+      적용(아래 1.5-4).
+- [x] **1.5-4** `[R]` **재측정** — 동일 200-rcept 표본, `_track_a_face()` 결과에
+      `in_body_section is not False` 필터를 스크립트 레벨에서만 추가 적용.
+      → **전체 100.00%**(38,414/38,414). `in_body_section` 분포(필터 전): `True`
+      37,973 · `False` 6,620(제외된 주석표 라인) · `None` 441(판정불가, 배제 안 함).
+      `statement`별로도 전부 100%(BS/IS/CF/NONE). 6,620건이 정확히 §1-4가 지목한
+      노이즈(재고자산 세부분류류)와 겹침 — 원인 진단이 실측으로 확인됨.
+      **성능**: `_detect_body_statement_tables` 추가 호출 비용 실측(2개 표본 ×3회) —
+      13~23ms/rcept, 기존 `_adecimal_signals`(46~56ms)·전체 `read_report_face_xbrl`
+      (112~144ms) 대비 10~20% 증분. 표본 200건 mean=194.9ms/p50=137.4ms/
+      max=1.9s(대형 문서 1건) — 별도 최적화 불요 수준으로 판단.
+      **회귀**: `pytest fin2/tests/test_face_audit.py fin2/tests/test_line_audit.py`
+      65 passed. `pytest tests/ fin2/tests/`(루트 범위, [[feedback-pytest-scope-raw-report-symlink]])
+      673 passed, 무관 사전존재 실패 1건(`test_biz_section.py::
+      test_lxintl_facility_table_dropped`, 제조설비지표 추출 — 이번 작업과 무관함을
+      `git stash` 전후 비교로 확인, 범위 밖이라 미조치).
+
+> **게이트 1 최종 판정(2026-09-01): 통과** — 100.00% ≫ 95%. Phase 2 진행 가능.
 
 ### Phase 2 — 리콘실러 재구현 (`fin2/audit/line_audit.py`)
 

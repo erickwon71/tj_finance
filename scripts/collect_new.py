@@ -9,6 +9,11 @@ calendar stage는 더 이상 돌지 않는다(④-6 `_sync_std_v3`가 std_financ
 채움). 이산분기·달력정규화는 v3에 대응 개념이 없어 이 시점 이후의 신규 기간에 한해
 중단됐다 — §8 재구현 트랙 전까지의 공백(현재 뷰·스크리너 미사용이라 즉각 영향 없음,
 정보 손실도 아님 — v3는 report_lines 에서 언제든 재생성 가능).
+★2026-09-02(calendar_v3_migration_scoping_2026-09-02.md) — 위 공백을 ④-7
+`_sync_calendar_v3`가 메운다. `fin2.standardize.calendar_v3.calendarize_corp_v3`가
+std_financials_v3(그날 ④-6이 갱신한 corp)를 소스로 이산분기를 메모리에서만 계산해
+`std_financials_calendar`에 직접 upsert(중간 DB 저장 없음) — 이산분기 자체는 여전히
+DB에 없다(의도적, §1-1). 데일리 재개(신규 기간)는 이 시점부터 다시 채워진다.
 ★2026-08-30(valuation_daily_blockers_da_netdebt_design_2026-08-30.md §5 순서1) —
 `_sync_cf_da`가 독자적으로 std_v2를 재계산하던 잔여 경로도 제거했다. std_v2 쓰기는
 이제 전무하다.
@@ -53,6 +58,9 @@ def _worker(in_q, out_q) -> None:
     영향은 없고(사용자 확인, D1-b), 정보 손실도 아니다 — v3는 report_lines 에서
     언제든 재생성 가능. §8 소비자 재구현 트랙에서 v3 기반으로 새로 만든 뒤 이
     공백(이 커밋 이후~재구현 완료 시점)을 소급 생성해야 한다.
+    ★2026-09-02 — 달력정규화는 ④-7 `_sync_calendar_v3`(v3 기반, 이 파일 하단)로 복구.
+    이산분기 자체는 여전히 DB에 저장하지 않는다(설계 변경, 메모리 계산으로 대체) —
+    §8이 필요했던 이유(재구현) 자체가 이걸로 해소됨.
     """
     from collector.db import get_session
     from run import process_corp
@@ -632,6 +640,48 @@ def _sync_std_v3(corps: list[str]) -> dict:
     return out
 
 
+def _sync_calendar_v3(corps: list[str]) -> dict:
+    """④-7 Layer 2 달력정규화(calendarize) v3 신규 배선 — `std_financials_v3`(그날 ④-6이
+    갱신한 corp)로부터 이산분기(메모리)→달력분기/연도를 재계산해 `std_financials_calendar`
+    를 채운다(`fin2.standardize.calendar_v3.calendarize_corp_v3`, corp+basis 단위
+    delete-then-insert — 멱등, 재실행해도 무손상).
+
+    docs/plans/calendar_v3_migration_scoping_2026-09-02.md §2/§4-3 — `_sync_std_v3`(④-6)
+    직후에서만 호출한다(달력화는 std_v3 as-filed 행을 소스로 하므로 그게 그날치로 갱신된
+    뒤여야 함). **Gate B 비대상**(calendar.py 모듈독스트링 — "어느 단일 보고서에도 없는
+    계산값", 파생 플래그) — `_verify_and_log`의 Gate B 승격 대상 아님, ④-6과 달리
+    `agg["std_v3_failed"]`에 합류시키지 않고 자체 로그로만 남긴다.
+
+    ★이 함수는 **두 call site**에서 불려야 한다(메인 ④-7 · `--standardize-only` 재개) —
+    `docs/runbook_new_parser_pipeline_integration.md` 체크리스트 ①.
+
+    corp 단위 try/except로 격리(하나 실패해도 나머지 corp은 계속) + 함수 전체를 다시
+    비치명적으로 감쌈(런북 A2).
+    """
+    out = {"corps": 0, "rows": 0, "failed": []}
+    if not corps:
+        return out
+    try:
+        from collector.db import get_session
+        from fin2.standardize.calendar_v3 import calendarize_corp_v3
+
+        for corp in corps:
+            try:
+                with get_session() as session:
+                    out["rows"] += calendarize_corp_v3(session, corp)
+                out["corps"] += 1
+            except Exception as exc:  # noqa: BLE001
+                out["failed"].append(corp)
+                logger.warning(f"[collect]   ④-7 calendar_v3 {corp} 실패: {type(exc).__name__}: {exc}")
+        if out["corps"] or out["failed"]:
+            fail_note = f" (실패 {len(out['failed'])})" if out["failed"] else ""
+            logger.info(f"[collect] ④-7 달력정규화 calendar_v3 — 기업 {out['corps']} · "
+                        f"행 {out['rows']:,}{fail_note}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ④-7 달력정규화 calendar_v3 전체 실패(비치명적): {type(exc).__name__}: {exc}")
+    return out
+
+
 def _sync_shares_transcribe(corps: list[str]) -> None:
     """④-5 계층2 cross-cutting 전사 — 신규 정기보고서 '주식의 총수 등' 절 →
     `report_shares_outstanding`(std_v3_dq_shares_period_backfill_plan_2026-08-09.md §3.3, Phase 2).
@@ -900,6 +950,10 @@ def main() -> None:
         v3_agg = _sync_std_v3(v3_corps)
         agg["std_v3_failed"] = v3_agg["failed"]
 
+        # ④-7 달력정규화 calendar_v3 — 재개 경로도 두 call site 규칙(런북 A3)에 따라
+        # 반드시 여기 배선한다. ④-6이 그날 재빌드한 v3_corps 그대로 재사용.
+        _sync_calendar_v3(v3_corps)
+
         _verify_and_log(agg, args)
         _sync_biz_metrics(affected)
         _sync_order_backlog(affected)
@@ -1017,6 +1071,10 @@ def main() -> None:
     v3_corps = sorted(set(agg.get("ok_corps") or []) | set(xbrl_affected))
     v3_agg = _sync_std_v3(v3_corps)
     agg["std_v3_failed"] = v3_agg["failed"]
+
+    # ④-7 달력정규화 calendar_v3 — std_v3(위 ④-6)가 그날 갱신한 corp만 재계산(비용 자동
+    # 최소화). Gate B 비대상이라 agg에 실패목록을 합류시키지 않음(위 함수 docstring 참고).
+    _sync_calendar_v3(v3_corps)
 
     # ⑤ 수집 후 DQ 게이트 — 새로 표준화된 기업만 Gate B(보고서==DB)+항등식 재검, corp_verify_status 적재.
     _verify_and_log(agg, args)

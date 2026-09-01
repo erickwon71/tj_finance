@@ -194,7 +194,8 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
                 {"cs": corps}).fetchall():
             names[cc] = nm
 
-    summ = {"corps": 0, "gb_fail_a": 0, "line_value_diff": 0, "dq3": 0, "fail_corps": []}
+    summ = {"corps": 0, "gb_fail_a": 0, "line_value_diff": 0, "dq3": 0,
+            "new_gb_fail_a": 0, "new_line_value_diff": 0, "fail_corps": []}
     for corp in corps:
         gb_args = SimpleNamespace(
             corp=corp, corp_file=None, corps=None, sample=None, seed=42,
@@ -216,6 +217,21 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
                   "fld_pass": 0, "fld_fail": 0, "fail_rows": [], "errors": 0}
         try:
             with get_session() as s:
+                # 이 corp의 "어제까지" 누적치 — rollup_corp() 이 곧 덮어쓸 corp_verify_status
+                # 행을 먼저 읽어둔다. Phase B 4-6(2026-09-01): 이 함수의 fail_a/line_value_diff
+                # 는 corp 의 fy_min(2015)~오늘 **전체 이력**을 매번 재집계한 절대치라 R-트랙
+                # 잔존 배경잡음(예: fx_declared 리더 오독 등, docs/plans/
+                # gateb_phaseb_line_audit_v3_migration_design_2026-09-01.md §7)이 있는 corp은
+                # 그 corp이 오늘 새 공시를 낼 때마다 매번 다시 loud error 로 발화했다
+                # ("데일리 알림 100% 상시발화", [[gateb-phaseb-line-audit-migration-phase0-1-
+                # 2026-09-01]]). 절대치는 그대로 두고(가시성 유지), **알림 판단만** "어제
+                # 대비 신규 증가분"으로 바꾼다 — 알려진 잔존 문제는 delta=0 이라 조용해지고,
+                # 오늘 새로 생긴 진짜 문제만 delta>0 로 잡힌다.
+                prev = s.execute(text(
+                    "SELECT gb_fail_a, line_value_diff FROM corp_verify_status "
+                    "WHERE corp_code=:c"), {"c": corp}).one_or_none()
+                prev_fail_a, prev_vd = (prev.gb_fail_a, prev.line_value_diff) if prev else (0, 0)
+            with get_session() as s:
                 gateb_audit.audit_corp(s, corp, gb_args, gb_agg)
             with get_session() as s:
                 vals = vcs.rollup_corp(s, corp, names.get(corp, "?"), stage="audited")
@@ -227,12 +243,16 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
             logger.warning(f"[verify]   {corp} 검사 실패: {type(exc).__name__}: {exc}")
             continue
         vd = vals.get("line_value_diff", 0) or 0
+        new_fail_a = max(0, vals["gb_fail_a"] - (prev_fail_a or 0))
+        new_vd = max(0, vd - (prev_vd or 0))
         summ["corps"] += 1
         summ["gb_fail_a"] += vals["gb_fail_a"]
         summ["line_value_diff"] += vd
         summ["dq3"] += dq3
-        if vals["gb_fail_a"] or vd or dq3:
-            summ["fail_corps"].append((corp, vals["gb_fail_a"], vd, dq3))
+        summ["new_gb_fail_a"] += new_fail_a
+        summ["new_line_value_diff"] += new_vd
+        if new_fail_a or new_vd or dq3:
+            summ["fail_corps"].append((corp, vals["gb_fail_a"], vd, dq3, new_fail_a, new_vd))
     return summ
 
 
@@ -744,13 +764,20 @@ def _refresh_valuation_daily() -> None:
 
 
 def _verify_and_log(agg: dict, args) -> None:
-    """수집 후 DQ 게이트 실행·로깅. fail_a/value_diff(확정 불일치) 발견 시 loud error.
+    """수집 후 DQ 게이트 실행·로깅. **오늘 신규** fail_a/value_diff(확정 불일치) 발견 시 loud error.
 
     ★2026-08-30(D1, std_v3_daily_wiring_plan_2026-08-30.md) — `agg["std_v3_failed"]`
     (④-6 `_sync_std_v3`가 반환한 실패 corp 목록)을 감사 결과와 무관하게 명시적 실패로
     승격한다. ④-6이 런북 A2에 따라 비치명적으로 감싸여 있어, 실패해도 파이프라인은 계속
     가지만 그 corp은 std_v3에 새 행이 없다 — 그대로 두면 source="v3" 감사가 "대상 0건"
     으로 조용히 "이상없음"을 반환하는 false-green이 재발한다(위 gb_args 주석의 경고).
+
+    ★2026-09-01(Phase B 4-6, gateb_phaseb_line_audit_v3_migration_design_2026-09-01.md
+    §Phase4-6) — 알림 판단 기준을 절대치(`gb_fail_a`/`line_value_diff` > 0)에서
+    **어제 대비 신규 증가분**(`new_gb_fail_a`/`new_line_value_diff`, `run_dq_gate()` 산출)
+    으로 바꿨다. 절대치는 계속 집계해 메시지에 표시하지만(가시성 유지), loud error 발화는
+    신규분에만 건다 — Phase 4 전수재감사로 확정된 잔존 배경잡음(fail_a 209건, 원인 R-트랙
+    후보로 등재·§7)이 관련 corp이 신규 공시를 낼 때마다 매번 재발화하던 문제를 없앤다.
     """
     ok = agg.get("ok_corps") or []
     std_v3_failed = agg.get("std_v3_failed") or []
@@ -758,18 +785,24 @@ def _verify_and_log(agg: dict, args) -> None:
         return
     logger.info(f"[verify] DQ 게이트 — {len(ok)}개 기업 Gate B(보고서==DB)+항등식 재검(fy≥{args.verify_fy_min})")
     summ = run_dq_gate(ok, args.verify_fy_min) if ok else {
-        "corps": 0, "gb_fail_a": 0, "line_value_diff": 0, "dq3": 0, "fail_corps": []}
-    msg = (f"[verify] 완료 — 검사 {summ['corps']} · fail_a {summ['gb_fail_a']} · "
-           f"line_value_diff {summ['line_value_diff']} · DQ3(항등식위반) {summ['dq3']}"
+        "corps": 0, "gb_fail_a": 0, "line_value_diff": 0, "dq3": 0,
+        "new_gb_fail_a": 0, "new_line_value_diff": 0, "fail_corps": []}
+    msg = (f"[verify] 완료 — 검사 {summ['corps']} · "
+           f"fail_a {summ['gb_fail_a']}(신규 {summ['new_gb_fail_a']}) · "
+           f"line_value_diff {summ['line_value_diff']}(신규 {summ['new_line_value_diff']}) · "
+           f"DQ3(항등식위반) {summ['dq3']}"
            + (f" · std_v3 빌드실패 {len(std_v3_failed)}" if std_v3_failed else ""))
-    if summ["gb_fail_a"] or summ["line_value_diff"] or std_v3_failed:
-        logger.error(msg + "  ⚠ 보고서≠DB 확정 불일치 또는 std_v3 빌드 실패 발견!")
-        for corp, fa, vd, dq in summ["fail_corps"]:
-            logger.error(f"[verify]   {corp}: fail_a={fa} value_diff={vd} dq3={dq}")
+    if summ["new_gb_fail_a"] or summ["new_line_value_diff"] or std_v3_failed:
+        logger.error(msg + "  ⚠ 오늘 신규 보고서≠DB 확정 불일치 또는 std_v3 빌드 실패 발견!")
+        for corp, fa, vd, dq, new_fa, new_vd in summ["fail_corps"]:
+            logger.error(f"[verify]   {corp}: fail_a={fa}(신규{new_fa}) "
+                         f"value_diff={vd}(신규{new_vd}) dq3={dq}")
         for corp in std_v3_failed:
             logger.error(f"[verify]   {corp}: std_v3 빌드 실패(false-green 방지 위해 명시 승격)")
     elif summ["dq3"]:
         logger.warning(msg + "  (DQ3=항등식 경고, 비차단 — corp_verify_status 기록됨)")
+    elif summ["gb_fail_a"] or summ["line_value_diff"]:
+        logger.warning(msg + "  (기존 잔존 불일치 — 오늘 신규 아님, R-트랙 후보로 별도 추적 중)")
     else:
         logger.success(msg)
 

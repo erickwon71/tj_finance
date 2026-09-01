@@ -209,13 +209,22 @@ def _track_b_face(face_lines: list[FaceLine]) -> list[FaceLine]:
             and ln.amount_won is not None and ln.basis is not None]
 
 
-def _track_b_key(basis: str | None, label: str | None) -> tuple:
-    """Track B 매칭 키 = (basis, 정규화 라벨). ★is_cumulative 를 의도적으로 뺐다 —
-    `read_report_face_text()` 는 이 필드를 실제 축이 아니라 "interim 필터 통과용" 고정값
-    True 로 채운다(구 코드부터 그랬음, `face_audit.py::_read_table` 참고). 키에 넣으면
-    report_lines 쪽 실제 is_cumulative(BS=False 등)와 상시 불일치해 전량 MISSING 이 된다 —
-    구 canonical 키 시절에도 이 필드는 키에 없었다(동작 보존)."""
-    return (basis, _normalize_ws(label) if label else None)
+def _track_b_key(basis: str | None, label: str | None, statement: str | None) -> tuple:
+    """Track B 매칭 키 = (basis, 정규화 라벨, statement). ★2026-09-01 Phase 4 전수재감사
+    실측 중 발견(★진짜 버그, [[feedback-verify-against-source]]) — 최초 구현은 Track A 와
+    맞추려 statement 를 뺐었는데, 그러면 **같은 라벨이 다른 statement 에서 재사용되는
+    케이스**(예: CF 간접법 조정 섹션의 "금융비용"/"유형자산처분이익"은 IS 의 동일 라벨과
+    텍스트가 완전히 같지만 값은 다르다 — 조정액 vs 원 손익, [[feedback-consider-pipeline]])
+    가 서로의 값-집합을 오염시켜 대량 허위 VALUE_DIFF 를 냈다(전수재감사 표본 300건 중
+    43.7%가 이 계열의 statement 충돌을 포함, 개선 4,151 : 악화 74,220 이라는 실측으로 발견).
+    Track A 는 canonical 미매핑 시 statement 가 신뢰불가라 뺀 것(Phase 1-4 게이트 실측
+    근거)과 이유가 다르다 — **Track B 의 `.statement`(read_report_face_text 의 `_read_table`
+    이 항상 채움, BS/IS/CF 중 하나로 확정)와 `report_lines.statement`(NOT NULL) 는 둘 다
+    상시 신뢰 가능**하므로 뺄 이유가 없다. 오히려 이게 **구 canonical 키 시절의 실제 동작을
+    복원**한다 — 구 Track B 리더는 `_read_table()` 내부에서 `_statement_of(canon) != stmt`
+    가드로 애초에 다른 statement 라벨을 스스로 걸러냈으므로(교차 statement 라벨은 리더가
+    아예 안 만듦), canonical 키에 암묵적으로 statement 가 포함돼 있었던 것과 같다."""
+    return (basis, _normalize_ws(label) if label else None, statement)
 
 
 def reconcile_report_lines_text(
@@ -227,18 +236,23 @@ def reconcile_report_lines_text(
     Track B(텍스트) 보고서 face 라인을 `report_lines` 본문 행과 **라벨 기반 값-집합** 대조.
 
     ★2026-09-01 Option 2 §5(b) 채택 — canonical 값-집합 대조(구 fact_v2 방식)를 버리고
-    Track A 와 같은 (basis, 정규화 라벨) 매칭으로 통일했다. `report_lines` 엔 canonical
-    개념이 아예 없어(§3-2 실측) canonical 기반 대조는 애초에 재현 불가능했고, 라벨로
-    통일하면 A/B 두 메커니즘을 하나로 유지보수할 수 있다.
+    Track A 와 비슷한 (basis, 정규화 라벨, statement) 매칭으로 통일했다. `report_lines` 엔
+    canonical 개념이 아예 없어(§3-2 실측) canonical 기반 대조는 애초에 재현 불가능했고,
+    라벨로 통일하면 A/B 두 메커니즘을 하나로 유지보수할 수 있다. ★statement 는 최초
+    구현에서 뺐다가 Phase 4 전수재감사 실측(개선 4,151 : 악화 74,220)으로 대량 허위
+    VALUE_DIFF 를 확인하고 **다시 넣었다** — CF 간접법 조정 섹션이 IS 와 같은 라벨을
+    재사용하는 등, 라벨만으론 서로 다른 statement 의 동명이의(同名異義) 라인이 뒤섞인다
+    (`_track_b_key()` docstring 상세 근거).
 
     ★방향성은 구 Track B 를 그대로 보존한다(라벨만 바뀜) — `read_report_face_text()` 는
     독립 리더로서 본문 표의 **모든 컬럼(당기+비교연도)** 리터럴을 읽으므로, 같은 라벨로
     여러 FaceLine(서로 다른 값)이 나온다. 그래서 위치 대응(1:1)이 아니라 Phase A
     (`audit_std_row`)의 검증된 방향 — **report_lines(당기 col0=권위값)가 보고서 라벨의
     값-집합에 존재하는가** — 로 판정한다(당기+비교 포함 집합이라 정상 당기값은 포함):
-      - MISSING : report_lines 의 (basis,라벨)을 리더가 보고서에서 못 찾음(리더 커버 갭 지표).
-      - VALUE_DIFF: (basis,라벨)은 보고서에 있으나 report_lines 당기값이 **어느 컬럼에도**
-        없음 → 다른 표/단위 오선택 등 추출 손상 후보(차단 후보).
+      - MISSING : report_lines 의 (basis,라벨,statement)을 리더가 보고서에서 못 찾음
+        (리더 커버 갭 지표).
+      - VALUE_DIFF: (basis,라벨,statement)은 보고서에 있으나 report_lines 당기값이
+        **어느 컬럼에도** 없음 → 다른 표/단위 오선택 등 추출 손상 후보(차단 후보).
       - match   : report_lines 당기값이 보고서 값-집합에 존재.
     EXTRA 는 여전히 비대상 — `read_report_face_text()` 는 canonical 매핑에 성공한 라인만
     방출하므로(미매핑 라벨·소계 등은 절대 안 나옴) 역방향(report_lines 쪽 잉여)을 재면
@@ -253,7 +267,7 @@ def reconcile_report_lines_text(
     rep_vals: dict[tuple, list[int]] = {}
     rep_repr: dict[tuple, FaceLine] = {}   # 대표 라인(진단용 canonical/adecimal) — 최초 등장
     for ln in _track_b_face(face_lines):
-        key = _track_b_key(ln.basis, ln.label)
+        key = _track_b_key(ln.basis, ln.label, ln.statement)
         rep_vals.setdefault(key, []).append(ln.amount_won)
         rep_repr.setdefault(key, ln)
 
@@ -262,7 +276,7 @@ def reconcile_report_lines_text(
         if r.get("value_won") is None or not label or r.get("basis") is None:
             continue
         out.n_lines += 1
-        key = _track_b_key(r.get("basis"), label)
+        key = _track_b_key(r.get("basis"), label, r.get("statement"))
         db_won = r["value_won"]
         reps = rep_vals.get(key)
         repr_ln = rep_repr.get(key)

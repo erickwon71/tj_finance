@@ -301,11 +301,19 @@ def audit_lines(session, corp, rcepts, face_of, track_of, args, agg):
 
     # report_lines 본문 col0 행을 rcept 별로 1회 로드. is_dimensional 조건은 삭제 —
     # report_lines 자체에 그 개념이 없다(차원분해 셀을 아예 만들지 않음, §3-2 실측).
+    # ★statement<>'SCE' 필수(Phase 4 전수재감사 실측으로 발견, [[feedback-verify-against-
+    # source]]) — report_lines 의 col_index 는 BS/IS/CF 에선 "기간(당기/전기)"이지만 SCE 는
+    # "자본 구성요소 컬럼"(0=자본금/1=자본잉여금/2=이익잉여금/3=기타자본/4=합계, col_label
+    # 로 실측 확인)이라 col_index=0 은 SCE 행 대부분에서 의미 없는 값(대개 0)을 뽑는다.
+    # 게다가 Track A(`read_report_face_xbrl`)는 SCE 셀을 차원분해로 skip, Track B
+    # (`read_report_face_text`)도 include_sce=False 라 둘 다 SCE 를 애초에 안 읽는다 —
+    # 대응하는 face 라인 자체가 없으므로 포함해봐야 노이즈만 늘어난다(대량 허위 VALUE_DIFF
+    # 로 실측 확인, 개선 4,151 : 악화 74,220 중 상당수의 원인).
     line_by_rcept: dict[str, list[dict]] = {}
     for r in session.execute(text("""
         SELECT rcept_no, label_raw, basis, is_cumulative, value_won, statement
         FROM report_lines
-        WHERE rcept_no = ANY(:rs) AND col_index = 0
+        WHERE rcept_no = ANY(:rs) AND col_index = 0 AND statement <> 'SCE'
     """), {"rs": todo}):
         line_by_rcept.setdefault(r.rcept_no, []).append({
             "label_raw": r.label_raw, "basis": r.basis, "is_cumulative": r.is_cumulative,

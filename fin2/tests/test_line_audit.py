@@ -5,6 +5,12 @@ fixture 는 fact_v2 shape(acode/amount_won)라 전량 report_lines shape(label_r
 갱신. 신규: 라벨 정규화 경계·EPS 제외·in_body_section 배제·라벨 중복행 충돌·Track B
 is_cumulative 비대상 회귀가드.
 
+★2026-09-01 Phase 4(전수재감사) 실측 후속 수정 — Track B 매칭 키에 `statement` 복원
+(최초 구현은 뺐다가 CF/SCE 동명이의 라벨 충돌로 대량 허위 VALUE_DIFF 유발을 실측으로
+발견, `_track_b_key()` docstring 상세 근거). `_tface()` 헬퍼에 `stmt` 파라미터 추가,
+회귀가드 2건(`test_trackb_cross_statement_label_not_confused`,
+`test_trackb_sce_shadow_label_not_confused`) 신규.
+
 실행: python -m fin2.tests.test_line_audit
 """
 from __future__ import annotations
@@ -37,11 +43,13 @@ def _lrow(label, won, basis="consolidated", cum=False, stmt="BS"):
             "value_won": won, "statement": stmt}
 
 
-def _tface(canon, won, basis="consolidated", ade=0, label=None):
+def _tface(canon, won, basis="consolidated", ade=0, label=None, stmt="BS"):
     """Track B(텍스트) face 라인 — acode=라벨(비XBRL), canonical 매핑됨. `.label` 이 곧
-    Track A 의 row_label 에 대응하는 라벨 원문(Track B 는 애초에 라벨 텍스트를 label 에 담음)."""
+    Track A 의 row_label 에 대응하는 라벨 원문(Track B 는 애초에 라벨 텍스트를 label 에 담음).
+    `.statement` 는 `read_report_face_text()` 가 항상 채우는 값이라(BS/IS/CF 중 하나 확정)
+    기본값을 둠 — None 이면 안 됨(매칭 키의 일부, 2026-09-01 Phase 4 실측 이후)."""
     lbl = label if label is not None else canon
-    return FaceLine(statement=None, basis=basis, acode=lbl, canonical=canon,
+    return FaceLine(statement=stmt, basis=basis, acode=lbl, canonical=canon,
                     label=lbl, displayed_value=won, adecimal=ade, is_cumulative=True)
 
 
@@ -184,12 +192,41 @@ def test_trackb_current_value_in_report_set():
 
 def test_trackb_value_diff():
     # DB 당기값이 보고서 어느 컬럼에도 없음 → 손상 후보(차단).
-    face = [_tface("is.revenue", 500, label="매출액"), _tface("is.revenue", 400, label="매출액")]
+    face = [_tface("is.revenue", 500, label="매출액", stmt="IS"),
+            _tface("is.revenue", 400, label="매출액", stmt="IS")]
     lines = [_tlrow("매출액", 777, stmt="IS")]
     r = reconcile_report_lines_text("R1", face, lines)
     assert r.n_value_diff == 1 and r.n_match == 0
     assert r.value_diffs[0].reason == REASON_VALUE_DIFF and r.value_diffs[0].db_won == 777
     assert r.value_diffs[0].canonical == "is.revenue"   # 진단용 필드 보존
+
+
+def test_trackb_cross_statement_label_not_confused():
+    # ★2026-09-01 Phase 4 전수재감사 실측으로 발견한 실버그의 회귀가드 — CF 간접법
+    # 조정 섹션은 IS 와 같은 라벨("금융비용" 등)을 재사용하지만 값은 다르다(조정액 vs
+    # 원 손익). statement 를 매칭 키에서 빼면 IS 쪽 face 값이 CF 쪽 report_lines 값의
+    # "정답 후보"로 잘못 취급돼 허위 VALUE_DIFF 가 났다(개선 4,151 : 악화 74,220 실측).
+    face = [_tface("is.finance_cost", 100, label="금융비용", stmt="IS")]   # IS 원 손익
+    lines = [_tlrow("금융비용", 100, stmt="IS"),      # IS 쪽은 그대로 일치
+             _tlrow("금융비용", 930, stmt="CF")]       # CF 조정액(다른 값) — IS 후보와 무관해야
+    r = reconcile_report_lines_text("R1", face, lines)
+    assert r.n_match == 1                 # IS 라인만 매칭
+    assert r.n_value_diff == 0            # CF 라인이 IS 값과 비교돼 허위 VALUE_DIFF 나면 안 됨
+    assert r.n_missing == 1               # CF 라인은 대응하는 face 가 없어 MISSING(비차단)이 정상
+    assert r.missing[0].statement == "CF"
+
+
+def test_trackb_sce_shadow_label_not_confused():
+    # SCE(자본변동표) 는 report_lines 에 라벨이 같아도 col_index 의미가 다른 별도
+    # statement 다(scripts/gateb_audit.py 가 SQL 에서 SCE 자체를 걸러내지만, line_audit.py
+    # 매칭 로직만으로도 안전해야 한다는 방어선 확인). 같은 라벨의 SCE 행이 섞여 들어와도
+    # IS 매칭에 영향을 주면 안 됨.
+    face = [_tface("is.net_income", 1000, label="당기순이익(손실)", stmt="IS")]
+    lines = [_tlrow("당기순이익(손실)", 1000, stmt="IS"),
+             _tlrow("당기순이익(손실)", 0, stmt="SCE")]   # SCE 자본금 컬럼 등 무관 값(전형 0)
+    r = reconcile_report_lines_text("R1", face, lines)
+    assert r.n_match == 1 and r.n_value_diff == 0
+    assert r.n_missing == 1 and r.missing[0].statement == "SCE"
 
 
 def test_trackb_missing_when_reader_absent():

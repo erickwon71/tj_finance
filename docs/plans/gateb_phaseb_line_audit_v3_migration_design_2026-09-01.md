@@ -422,30 +422,48 @@ WHERE rcept_no = ANY(:rs) AND col_index = 0 AND NOT COALESCE(is_dimensional, fal
 
 ### Phase 2 — 리콘실러 재구현 (`fin2/audit/line_audit.py`)
 
-- [ ] **2-1** `[W]` `reconcile_report_lines()` 재작성 — 입력 `fact_rows` →
-      `line_rows`(= `report_lines` 행 dict). 매칭 키를
-      `(acode, basis, is_cumulative)` → `(statement, basis, norm_label, is_cumulative)`.
-      비교값 `amount_won` → `value_won`.
-      **설계 불변식으로 docstring에 명시**: "감사 리더는 `TE[@ACODE]`/`ACONTEXT` 경로,
-      `report_lines`는 표 렌더링 경로 — 이 독립성이 감사의 전부다. 어느 한쪽이 상대
-      코드를 재사용하기 시작하면 이 감사는 무효가 된다"(§4 리스크 3)
-- [ ] **2-2** `[W]` **주당/주식수 계열 제외 정책** — acode 정규식
-      `PerShare|NumberOfShares` 계열을 `_track_a_face()`에서 제외하고, 제외 사유를
-      상수+주석으로 명시(§3-3 실측 근거 링크). 0-4 결과에 따라 2차 클러스터도 추가
-- [ ] **2-3** `[W]` `reconcile_report_lines_text()`(Track B) 재작성 —
-      현재는 `fact_v2.canonical_account` ↔ face canonical 값집합. `report_lines`엔
-      canonical이 없으므로 **둘 중 택1**:
-      (a) 감사 시점 `account_mapper`를 `label_raw`에 적용해 canonical화
-          (선례: §4-2 `combine.py::combine_full()`이 이미 라벨→캐노니컬 매핑을 완결),
-      (b) canonical을 버리고 라벨 직접 대조로 통일(Track A와 같은 키 → **A/B 통합 가능**).
-      ★(b)를 우선 검토 — A/B가 같은 메커니즘이 되면 코드/트리아지가 모두 단순해진다
-- [ ] **2-4** `[W]` `fin2/tests/test_line_audit.py` 재작성 — 기존 12건의 fixture는
-      `fact_v2` 모양(acode/amount_won)이라 전량 갱신 필요. 신규 케이스 추가:
-      라벨 중복행 충돌, EPS 제외, 정규화 경계
-- [ ] **2-5** `[R]` `pytest tests/ fin2/tests/` — ★루트 범위 없이
-      ([[feedback-pytest-scope-raw-report-symlink]] NAS 심링크 정지 방지)
+- [x] **2-1** `[W]` `reconcile_report_lines()` 재작성 — 입력 `fact_rows` →
+      `line_rows`(= `report_lines` 행 dict). 비교값 `amount_won` → `value_won`.
+      **설계 불변식을 docstring 최상단에 명시**(§4 리스크 3 그대로).
+      → **완료(2026-09-01)**: 매칭 키는 설계 초안의 4성분
+      `(statement, basis, norm_label, is_cumulative)`이 아니라 **3성분
+      `(basis, norm_label, is_cumulative)`**로 구현 — `statement`를 뺀 것은 실측 근거
+      (Phase 1-4 게이트 측정 자체가 이미 같은 이유로 `statement`를 키에서 뺀 채
+      100.00%를 달성했음, §Phase1 1-4 기록) 그대로 적용한 것. `statement`는
+      `LineAudit`의 진단용 필드로만 보존(가능하면 `report_lines` 쪽 값을 권위로).
+- [x] **2-2** `[W]` **주당/주식수 계열 제외 정책** — 완료. `_PER_SHARE_ACODE_RE =
+      re.compile(r"PerShare|NumberOfShares", re.IGNORECASE)`를 `_track_a_face()`에서
+      제외, 상수+주석으로 §3-3 실측 근거(오탐 64%) 링크. **2차 클러스터
+      (`DepreciationInvestmentProperty`/`RightofuseAssets`/`dart_Interest*`)는 제외하지
+      않았다** — 0-4 최종 결론이 "리더 버그가 아니라 fact_v2 쪽이 DART 오태깅을
+      미보정 저장했을 가능성"으로 정정됐고, `report_lines`로 감사 대상을 옮기면 이
+      비교축 자체(fact_v2 대비)가 사라지므로 판단을 미룬다 — Phase 4-5 실측(신규
+      fail_a 클러스터가 실제로 이 acode 들을 포함하는지)으로 다시 볼 것.
+- [x] **2-3** `[W]` `reconcile_report_lines_text()`(Track B) 재작성 — **옵션(b) 채택**
+      (라벨 직접 대조로 A/B 통합). `report_lines`에 canonical이 없어 옵션(a)는 애초에
+      불가하다는 §3-2 실측을 재확인. 방향성(리더가 당기+비교연도 다중 리터럴을 만들므로
+      "DB 당기값 ∈ 보고서 값-집합" 판정)은 구 Track B를 그대로 보존 — 위치 대응(1:1)으로
+      바꾸면 비교연도 컬럼이 허위 VALUE_DIFF를 냈을 것(구현 중 직접 확인). **매칭 키는
+      Track A와 다르게 `(basis, norm_label)`만 사용**(`is_cumulative` 제외) —
+      `read_report_face_text()`가 `is_cumulative`를 실제 축이 아니라 고정 `True`
+      placeholder로 채우는 기존 동작을 그대로 보존하기 위함(구 코드도 키에 안 씀,
+      회귀가드 테스트로 고정: `test_trackb_is_cumulative_not_in_key`).
+- [x] **2-4** `[W]` `fin2/tests/test_line_audit.py` 재작성 완료 — 12건 fixture 전량
+      `report_lines` 모양(`label_raw`/`value_won`)으로 갱신 + 6건 신규(EPS 제외·
+      in_body_section False만 배제/None 통과·라벨 정규화 경계·라벨 중복행 first-wins·
+      Track B is_cumulative 비키 회귀가드 등), 총 18건.
+- [x] **2-5** `[R]` `pytest tests/ fin2/tests/` — **완료**: 신규 단위테스트 18/18
+      통과. 루트범위 전체 678 passed / 1 failed(`test_biz_section.py::
+      test_lxintl_facility_table_dropped`, 이번 작업과 무관한 사전존재 실패,
+      [[gateb-phaseb-line-audit-migration-phase0-1-2026-09-01]] 참고) — 회귀 0건.
 
-> **게이트 2**: 단위테스트 전건 통과 + 기존 pytest 회귀 0건.
+> **게이트 2**: 단위테스트 전건 통과 + 기존 pytest 회귀 0건. **통과(2026-09-01)**.
+> ★`scripts/gateb_audit.py::audit_lines()`는 아직 옛 `fact_v2` SQL과 `LineAudit`의
+> 옛 필드(`l.acode`/`l.label`)를 참조하는 채로 **미배선**이다 — 이 시점에 그 스크립트를
+> 실행하면 즉시 깨진다(예상된 상태, Phase 3 3-1이 SQL을, `value_diff_detail`/
+> `missing_detail` 생성부(`:342-347`)가 새 `LineAudit` 필드(`label`/`acode`/`canonical`)
+> 를 쓰도록 같이 고쳐야 함 — 3-1 범위에 이 소비부 수정도 포함시킬 것, 원 체크리스트
+> 문구엔 명시가 안 돼 있었음).
 
 ### Phase 3 — 배선 (`scripts/gateb_audit.py`)
 

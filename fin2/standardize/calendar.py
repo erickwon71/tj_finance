@@ -103,6 +103,11 @@ def _cy_record(corp_code, basis, cyear, quarters: dict, derivation, version: int
 def calendarize_corp(session, corp_code: str, version: int = 1) -> int:
     """corp 의 이산분기를 달력분기/연도로 정규화·upsert. 반환=레코드 수.
     version: 소비계층 버전(기본 1). Phase C 재구축은 version=2."""
+    raise RuntimeError(
+        "std_financials_v2 was DROPped 2026-09-01 (commit 510095a, fact_v2/std_v2 GC track) — "
+        "_load_discrete() reads FROM std_financials_v2, which no longer exists. This write path "
+        "is retired. See docs/plans/factv2_stdv2_gc_scoping_2026-09-01.md."
+    )
     fiscal_month = _corp_fiscal_month(session, corp_code)
     written = 0
     for basis in ("consolidated", "separate"):

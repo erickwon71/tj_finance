@@ -116,6 +116,10 @@ def derive_quarters_corp(session, corp_code: str, fiscal_year: int | None = None
                          version: int = 1) -> int:
     """corp 의 as-filed 누적행에서 이산분기 Q1~Q4 파생·upsert. 반환=레코드 수.
     version: 소비계층 버전(기본 1). Phase C 재구축은 version=2."""
+    raise RuntimeError(
+        "std_financials_v2 was DROPped 2026-09-01 (commit 510095a, fact_v2/std_v2 GC track) — "
+        "this write path is retired. See docs/plans/factv2_stdv2_gc_scoping_2026-09-01.md."
+    )
     written = 0
     for basis in ("consolidated", "separate"):
         asfiled = _load_asfiled(session, corp_code, basis, fiscal_year, version)

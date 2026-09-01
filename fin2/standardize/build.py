@@ -324,6 +324,11 @@ def standardize_corp(session, corp_code: str, fiscal_year: int | None = None,
                      version: int = 1) -> int:
     """statement_source 를 읽어 std_financials_v2 upsert. 반환=레코드 수.
     version: 소비계층이 읽는 버전(기본 1). Phase C 재구축은 version=2 로 병행 구축(swap 대상)."""
+    raise RuntimeError(
+        "std_financials_v2 was DROPped 2026-09-01 (commit 510095a, fact_v2/std_v2 GC track) — "
+        "this write path is retired, standard_financials now sources from std_financials_v3 only. "
+        "See docs/plans/factv2_stdv2_gc_scoping_2026-09-01.md."
+    )
     fy_clause = "AND fiscal_year = :fy" if fiscal_year is not None else ""
     params: dict = {"corp": corp_code}
     if fiscal_year is not None:

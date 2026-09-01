@@ -101,9 +101,16 @@ AND s.statement_type=:basis` 등치 조인으로 바꾸면 끝(§5-a 상세 참�
 ## 4. `fact_v2` 드롭까지 남은 계층2 축 작업 (§8 원문 재정리)
 
 1. `fin2/reconcile.py` 소비처 확인 — 낮은 리스크
-2. `extended_financials` 뷰 라벨 기반 재설계 — 설계 필요(§2-2 미해결 질문)
-3. `line_audit.py`(Gate B Phase B) 이식 — **가장 크고 리스크 높음**. Gate B 자체가 지난 한 달간 R15~R60의 전수재감사 기준선이었던 만큼, 감사 리더를 잘못 옮기면 "회귀 0건"이라는 판정 자체를 못 믿게 된다 → 별도 세션·별도 설계 문서로 분리 권장
-4. `fact_v2` DROP — 55 GB 회수, 위 전부 끝난 뒤
+2. `extended_financials` 뷰 라벨 기반 재설계 — **완료(2026-09-01, §4-2)**, 커밋 `243e9ee`
+3. `line_audit.py`(Gate B Phase B) 이식 — **완료(2026-09-01, §4-3)**. 별도 설계 문서
+   (`docs/plans/gateb_phaseb_line_audit_v3_migration_design_2026-09-01.md`, Phase 0~5)로
+   분리해 진행 — 게이트1(라벨 매칭률 95% 목표, 실측 100.00%), 전수재감사(개선 14,014 :
+   악화 209 = 67:1), Phase A(`gate_status`) 무영향 확인까지 전부 통과. 과정에서 발견한
+   Track A/B 감사리더 진짜 버그 3종은 `docs/PARSING_RULES.md` R61에 등재. 데일리 알림도
+   절대치→어제 대비 신규증가분(delta) 기준으로 재설계(4-6, `scripts/collect_new.py`) —
+   Phase 4가 확정한 잔존 배경잡음(209건) 재발화 문제 해소. 상세 [[gateb-phaseb-line-audit-migration-phase0-1-2026-09-01]]
+4. `fact_v2` DROP — 55 GB 회수, 위 전부 끝난 뒤. **잔여 블로커**는 마이그레이션 설계문서
+   §7 참고(`cf_da_sync.py`/`expense_nature_sync.py`의 fact_v2 upsert 2건이 핵심 블로커)
 
 ## 5. 실측 갭 — 채움 완료 (2026-09-01)
 
@@ -310,7 +317,11 @@ report_lines/note_lines에 없는 rcept"만 골라(멱등, corp 바운드) 추�
    성격의 "영구 커버리지 한계"로 재분류
 4. §3-3 이산분기·달력 정책 결정(사용자) — 실사용 없음 확인됨(§5-d), 판단은 쉬워짐
 5. §3-5~6 뷰 정리 + `std_financials_v2`/`calendar` DROP(633MB 회수) — **여기서 1차 완결점**
-6. §4-1 reconcile.py 확인 → §4-2 extended_financials 뷰 재설계(§5-b로 뷰 원문·차이점 확인됨) → §4-3 line_audit 이식(별도 세션 권장) → §4-4 `fact_v2` DROP(55GB 회수)
+6. §4-1 reconcile.py 확인 → §4-2 extended_financials 뷰 재설계(**완료**, 커밋 `243e9ee`)
+   → §4-3 line_audit 이식(**완료**, 별도 설계문서로 진행) → §4-4 `fact_v2` DROP(55GB
+   회수) — **잔여 블로커**: `cf_da_sync.py`/`expense_nature_sync.py`의 fact_v2 upsert
+   (마이그레이션 설계문서 §7 참고, note.* 2종이 여전히 fact_v2에 적재 중이라 이 두
+   경로부터 해소해야 DROP 가능)
 
 ★2와 5 사이가 리스크 낮은 "계층3 GC"로 한 트랙, 6이 리스크 높은 "계층2 GC"로 별도 트랙 —
 **두 트랙을 하나로 묶지 말 것**을 권고한다(Gate B 감사 리더가 걸린 6은 특히 신중하게).
@@ -320,3 +331,6 @@ report_lines/note_lines에 없는 rcept"만 골라(멱등, corp 바운드) 추�
 - `docs/plans/std_v3_daily_wiring_plan_2026-08-30.md` §8 — 원 백로그 표(이 문서가 구체화한 원본)
 - [[generation-unification-layer2-layer3-2026-08-30]] — 방향 확정 근거
 - [[valuation-daily-order5-netdebt-v3-migration-2026-08-31]] — `is_stub`/`is_discrete` 없이 정본 FY 행을 뽑은 선례(§5-a에서 재사용 검토)
+- `docs/plans/gateb_phaseb_line_audit_v3_migration_design_2026-09-01.md` — §4-3(line_audit
+  이식) 구체화 설계·실행 기록(Phase 0~5 전부). `docs/PARSING_RULES.md` R61 — 이식 과정에서
+  발견한 Track A/B 감사리더 버그 3종. [[gateb-phaseb-line-audit-migration-phase0-1-2026-09-01]]

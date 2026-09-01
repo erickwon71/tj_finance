@@ -3323,6 +3323,45 @@ net_debt 산식이 애초에 계산 불가 — 별개의 기존 이슈). `pytest
 
 ---
 
+## R61. Gate B Phase B(`fin2/audit/line_audit.py`) DB측 원천 `fact_v2`→`report_lines`
+이식 + 전수재감사로 발견한 Track A/B 감사리더 버그 3종(★완전 종료 2026-09-01)
+
+**배경** — Phase B(본문 전 계정 라인 전수대조, `face_line_audit`)는 계층2 GC(`fact_v2`
+55GB DROP) 트랙의 마지막 살아있는 소비자였다. `fact_v2`는 acode 키인데 계층3이 실제
+소비하는 원천은 라벨 키인 `report_lines`라 이식 없이는 DROP이 막힌다(R23·R35·R46·R47과
+같은 계열 — Gate B 감사리더는 파싱·적재 규칙과 별개 코드경로지만 같은 이유로 이 문서에
+쌓여왔다). 이식 자체는 규칙 변경이 아니라 원천 교체지만, 게이트1(라벨 매칭률 95%
+목표, 실측 100.00% — `FaceLine.in_body_section`으로 Track A도 Track B의 DART
+섹션기반 본문표 식별을 공유해 도달)을 통과시키는 과정과 Phase 4 전수재감사 과정에서
+**Track A/B 감사리더 자체의 진짜 버그 3종**을 발견·수정했다:
+
+1. **Track B dedup 키 누락** — `read_report_face_text()`의 중복제거 키가 `label`을
+   빠뜨려 동명이의 라벨(같은 표기, 다른 계정)이 충돌·서로를 덮어썼다.
+2. **Track A 값-집합 매칭 재설계** — 라벨 단일값 비교 대신 값-집합 매칭으로 바꿔
+   1차 실행의 대량 오탐(악화 74,220건)을 해소.
+3. **지배/비지배·EPS 계열 Track B 확장 제외** — 이 계열은 R27/R45~R47이 이미 다루는
+   별도 함정(라벨 부분문자열·귀속 오매핑)이 Phase B 라인대조에도 새어 들어와 있어
+   감사 대상에서 뺐다(수정이 아니라 제외 — 근본 함정 자체는 R27/R45~R47 관할).
+
+**결과(전수재감사 전이표, PK=`rcept_no`)** — 최초 실행(수정 0건): 개선 4,151 : 악화
+74,220. 위 3개 수정 반영 최종(4차) 실행: **개선 14,014 : 악화 209 = 67:1**.
+
+**잔여 209건(R-트랙 후보, 미해결)** — 트리아지 결과 상위 2개 클러스터는 원인 가설만
+확정, 수정은 이 트랙 범위 밖:
+- Track B, corp `01032486` 등(34/209) — `read_report_face_text()`가 `fx_declared`
+  정책(R? 미등재, 메모리 `fx-declared-statements` 참고 — 환산 없이 표시통화 그대로
+  저장) 대상 문서를 문서 기본단위(원 환산 가정)로 잘못 읽는 것으로 의심(미검증).
+- Track A, `ifrs-full_Inventories` 등 BS/CF 공용 라벨(58개사 분산) — CF 조정항목
+  섹션에서 재사용된 라벨을 BS 값과 오대사하는 것으로 의심(미검증).
+
+근거: `docs/plans/gateb_phaseb_line_audit_v3_migration_design_2026-09-01.md`(Phase
+0~4 전체) · `docs/plans/factv2_stdv2_gc_scoping_2026-09-01.md` §4-3 · 메모리
+`gateb-phaseb-line-audit-migration-phase0-1-2026-09-01` · `fin2/audit/line_audit.py`
+· `scripts/gateb_audit.py::audit_lines()` · 커밋 `bcd8998`/`e3267da`/`e1af6d5`/
+`37c6e81`/`ca6dfa3`/`4e6b767`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

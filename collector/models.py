@@ -1143,14 +1143,19 @@ class FaceAudit(Base):
 
 class FaceLineAudit(Base):
     """
-    PRD 04 Phase B 산출물: 한 보고서(rcept_no)의 **본문 Track A 전 face 라인**을 추출된 전 셀
-    (fact_v2 col0·비차원)과 acode 정확매칭으로 1:1 대조한 결과(롤업).
+    PRD 04 Phase B 산출물: 한 보고서(rcept_no)의 **본문 Track A/B 전 face 라인**을 계층2 원천
+    (`report_lines` col0)과 라벨 정확매칭(Track A)/값-집합 대조(Track B)로 대조한 결과(롤업).
 
-    grain = rcept_no(보고서 1행, fact_v2 키와 일치).
+    ★2026-09-01 계층2 GC §4-3 Phase 3 — DB측 원천이 `fact_v2`(acode 키)에서 `report_lines`
+    (라벨 키)로 바뀌었다(`READER_VERSION` 컬럼으로 구/신 판별 가능, `trackAB-v2`=구/`-v3`=신).
+    매칭 메커니즘 상세는 `fin2/audit/line_audit.py` 모듈 docstring 참고. 아래 컬럼 설명의
+    "report_lines"는 전부 이 이식 이후 기준.
+
+    grain = rcept_no(보고서 1행).
     - line_gate_status: pass(n_value_diff=0) / fail_a(n_value_diff>0, 추출 손상 차단 후보) /
       pending(Track≠A·0라인 → 본 단계 비대상).
     - value_diff_detail: 차단 후보 라인 상세(추출버그 vs 감사reader 트리아지).
-    - missing_detail: 보고서엔 있으나 fact_v2 부재(완전성 지표, 측정 우선이라 비차단).
+    - missing_detail: 보고서엔 있으나 report_lines 부재(완전성 지표, 측정 우선이라 비차단).
     측정 우선 정책상 promote 뷰(standard_financials)는 본 표를 아직 참조하지 않는다(규모 측정 후 결정).
     신규 테이블 → create_all 자동 생성.
     """
@@ -1162,13 +1167,19 @@ class FaceLineAudit(Base):
 
     n_lines         = Column(Integer, default=0, comment="대조한 Track A face 라인 수")
     n_match         = Column(Integer, default=0)
-    n_value_diff    = Column(Integer, default=0, comment="fact_v2 존재·won 불일치(차단 후보)")
-    n_missing       = Column(Integer, default=0, comment="보고서엔 있고 fact_v2 부재(완전성 지표)")
-    n_extra         = Column(Integer, default=0, comment="fact_v2 col0 행이 face 부재(감사 reader 갭)")
+    n_value_diff    = Column(Integer, default=0, comment="report_lines 존재·won 불일치(차단 후보)")
+    n_missing       = Column(Integer, default=0, comment="보고서엔 있고 report_lines 부재(완전성 지표)")
+    n_extra         = Column(Integer, default=0,
+                             comment="report_lines col0 본문 행이 face 부재(감사 reader 갭). "
+                                     "★Phase 3 이후 fact_v2 시절보다 커질 수 있음 — report_lines 는 "
+                                     "ACODE 태깅 여부와 무관하게 본문 표 전 행(소계 등 구조행 포함)을 "
+                                     "담기 때문(신호 성격 변화, 버그 아님)")
     line_gate_status = Column(String(8), nullable=True, comment="pass/fail_a/pending")
 
     value_diff_detail = Column(JSONB, nullable=True,
-                               comment="[{acode,basis,statement,label,report_won,db_won}]")
+                               comment="[{label,basis,statement,report_won,db_won,acode,canonical}] "
+                                       "— acode/canonical 은 트랙별 진단용(Track A=acode만/"
+                                       "Track B=canonical만 채워짐), label 이 실제 매칭 키")
     missing_detail    = Column(JSONB, nullable=True, comment="동(완전성 지표)")
     reader_version    = Column(String(20), nullable=True)
     checked_at        = Column(DateTime, default=datetime.utcnow)
@@ -1252,7 +1263,8 @@ class CorpVerifyStatus(Base):
     # Phase B(라인 전수 대조) 집계 — face_line_audit 롤업(전 source rcept)
     line_total      = Column(Integer, default=0, comment="대조한 Track A 라인 총수")
     line_value_diff = Column(Integer, default=0, comment="라인 값불일치(차단 후보)")
-    line_missing    = Column(Integer, default=0, comment="보고서 라인 fact_v2 부재(완전성 지표)")
+    line_missing    = Column(Integer, default=0, comment="보고서 라인 report_lines 부재(완전성 지표, "
+                                                          "2026-09-01 이전엔 fact_v2 부재)")
 
     error          = Column(String(300), nullable=True, comment="기업 단위 예외 메시지(있으면)")
     verified_at    = Column(DateTime, default=datetime.utcnow)

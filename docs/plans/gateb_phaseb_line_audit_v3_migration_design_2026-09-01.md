@@ -467,21 +467,36 @@ WHERE rcept_no = ANY(:rs) AND col_index = 0 AND NOT COALESCE(is_dimensional, fal
 
 ### Phase 3 — 배선 (`scripts/gateb_audit.py`)
 
-- [ ] **3-1** `[W]` `audit_lines()`의 `fact_v2` 쿼리(`:303-311`)를 `report_lines`
+- [x] **3-1** `[W]` `audit_lines()`의 `fact_v2` 쿼리(`:303-311`)를 `report_lines`
       조회로 교체 — `WHERE rcept_no = ANY(:rs) AND col_index = 0`
       (`is_dimensional` 조건은 `report_lines`에 개념 자체가 없으므로 **삭제**,
       삭제 사유를 주석으로 남길 것)
-- [ ] **3-2** `[W]` `READER_VERSION` bump (`"trackAB-v2"` → 신규) — 기준선이 바뀌었음을
-      데이터에 남긴다. `face_line_audit.reader_version`으로 구/신 판별 가능해짐
-- [ ] **3-3** `[W]` `face_line_audit` 컬럼 주석 갱신 — `n_value_diff`/`n_missing`/
-      `n_extra`의 "fact_v2" 서술을 "report_lines"로(`collector/models.py:1145-1178`).
-      **컬럼 자체는 유지**(스키마 변경 없음 → 마이그레이션 불요)
-- [ ] **3-4** `[W]` `line_audit.py`·`gateb_audit.py`·`models.py` 모듈 docstring의
-      "fact_v2 커버리지 2.4%" 낡은 서술 전량 정정(§3-1 실측으로 대체)
-- [ ] **3-5** `[R]` 단일 기업 스모크 — `--corp <표본> --recheck --no-commit`으로
-      크래시 없음 + 라인 집계가 0이 아님 확인
+      → **완료(2026-09-01)**: 조회 컬럼도 `label_raw/basis/is_cumulative/value_won/
+      statement`로 교체. Phase 2 인계 메모가 지목한 소비부(`value_diff_detail`/
+      `missing_detail` 생성부, `:341-347`)도 새 `LineAudit` 필드(`label`이 매칭 키,
+      `acode`(Track A만)/`canonical`(Track B만)는 진단용)에 맞춰 함께 수정 — 3-1
+      범위에 포함시킴(원 체크리스트 문구엔 없었으나 Phase 2가 미리 지목).
+- [x] **3-2** `[W]` `READER_VERSION` bump (`"trackAB-v2"` → `"trackAB-v3"`) — 완료.
+- [x] **3-3** `[W]` `face_line_audit` 컬럼 주석 갱신 — 완료(`collector/models.py:
+      1144-1181`). `n_extra`가 report_lines 전환 후 커질 수 있다는 신호 성격 변화도
+      컬럼 주석에 명시. **컬럼 자체는 유지**(스키마 변경 없음, 마이그레이션 불요) —
+      부수로 §1 스코프에 있던 `CorpVerifyStatus.line_missing`(`:1266`) 코멘트도
+      "fact_v2 부재" → "report_lines 부재"로 정정(코드/컬럼 변경 없음, 문구만).
+- [x] **3-4** `[W]` `line_audit.py`(Phase 2 기완료)·`gateb_audit.py`·`models.py` 모듈
+      docstring의 "fact_v2 커버리지 2.4%" 낡은 서술 정정 완료 — 잔여 `fact_v2` 언급은
+      전수 grep 확인 결과 전부 정당(테이블 자체 정의·과거 이력 서술·`fact_v2` DROP
+      전 잔여 블로커 문서화 등), 낡은 기술서술 0건.
+- [x] **3-5** `[R]` 단일 기업 스모크 — 완료. `--source v3 --corp 00102858 --recheck
+      --no-commit`(Track A 위주, 132행: pass 128/fail 0/pending 4, Phase B 라인
+      15,589: match 11,564/value_diff 76/missing 3,949, 보고서 gate pass 47/fail_a 19)
+      + `--corp 00125521`(Track B 위주, Phase B 라인 15,303: match 10,327/value_diff
+      341/missing 4,635, 보고서 gate pass 24/fail_a 40) 둘 다 **크래시 없음**, 라인
+      집계 0 아님. `--no-commit`이라 DB 무영향(코드상 `if batch and not args.no_commit`
+      가드 확인). Phase A(`gate_status`) 숫자는 이 두 스모크에서 그대로 — Phase 3 는
+      Phase A 코드를 안 건드렸으므로 구조적으로 보장.
+      `pytest tests/ fin2/tests/` 재확인 678 passed/1 failed(무관 사전존재), 회귀 0건.
 
-> **게이트 3**: 3-5 스모크 통과. `--no-commit`이므로 DB 무영향.
+> **게이트 3**: 3-5 스모크 통과. `--no-commit`이므로 DB 무영향. **통과(2026-09-01)**.
 
 ### Phase 4 — 전수 재감사 + 기준선 재설정 (★가장 오래 걸림)
 

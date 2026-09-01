@@ -40,7 +40,8 @@ from fin2.audit.face_audit import (
 )
 from fin2.audit.line_audit import reconcile_report_lines, reconcile_report_lines_text
 
-READER_VERSION = "trackAB-v2"
+READER_VERSION = "trackAB-v3"   # 2026-09-01 계층2 GC §4-3 Phase 3 — DB측 fact_v2→report_lines,
+                                 # 매칭 키 acode→라벨(line_audit.py 참고). v2 값과 비교 불가.
 _DETAIL_CAP = 200   # JSONB 상세 라인 상한(대량 보고서 방어)
 
 # 표준필드 → statement('BS'/'IS'/'CF', source-agnostic dict 키. §_row_rcepts 참고)
@@ -270,18 +271,18 @@ def audit_corp(session, corp, args, agg):
 
 
 def audit_lines(session, corp, rcepts, face_of, track_of, args, agg):
-    """corp 의 전 source rcept 에 대해 보고서 face 라인을 fact_v2 와 대조 → face_line_audit.
+    """corp 의 전 source rcept 에 대해 보고서 face 라인을 `report_lines` 와 대조 → face_line_audit.
 
     face 는 std-row 패스에서 이미 읽힌 face_cache 재사용(추가 XML 파싱 없음).
-    Track A(XBRL acode 정확대조)·Track B(텍스트, C1: canonical 값-집합) 모두 pass/fail_a
-    등급. PDF(C)·0라인은 pending(본 단계 비대상).
+    Track A(XBRL, 라벨 정확대조)·Track B(텍스트, 라벨 값-집합) 모두 pass/fail_a 등급.
+    PDF(C)·0라인은 pending(본 단계 비대상).
 
-    ★ `fact_v2` 커버리지 참고(2026-08-09) — 상세는 `fin2/audit/line_audit.py` 모듈 docstring.
-      요지: `fact_v2`가 아직 전체 rcept 의 일부에만 있어(≈2.4%, 2026-08-09 시점) 대다수
-      rcept 는 `n_missing` 이 전량으로 나오지만, 등급(`line_gate_status`)은 값불일치만
-      보므로 오탐 차단은 아니다. "구 체인 은퇴로 fact_v2 가 비어 있다"는 2026-07-31 시점
-      서술은 더 이상 정확하지 않다(신규 XBRL 파서가 채우는 중) — 다만 완전성 지표로 쓰기엔
-      아직 이르다.
+    ★2026-09-01 계층2 GC §4-3 Phase 3 — DB측을 `fact_v2`(곧 DROP)에서 `report_lines`(계층3이
+    실제로 읽는 원천)로 교체했다. 매칭 메커니즘 상세(라벨 키, EPS 제외, Track A/B 통합 등)는
+    `fin2/audit/line_audit.py` 모듈 docstring 참고 — 여기선 SQL 로딩만 담당한다.
+    ★`n_extra`(EXTRA_IN_DB) 의미가 바뀌었다 — `report_lines` 는 ACODE 태깅 여부와 무관하게
+    본문 표의 전 행(소계 등 구조행 포함)을 담으므로 `fact_v2` 시절보다 커질 수 있다(신호
+    성격 변화, 버그 아님 — 설계문서 §Phase2-1 line_audit.py 주석 참고).
     """
     if not rcepts:
         return
@@ -298,31 +299,31 @@ def audit_lines(session, corp, rcepts, face_of, track_of, args, agg):
     if not todo:
         return
 
-    # fact_v2 col0 비차원 행을 rcept 별로 1회 로드 (canonical_account = Track B 값-집합 대조용)
-    fact_by_rcept: dict[str, list[dict]] = {}
+    # report_lines 본문 col0 행을 rcept 별로 1회 로드. is_dimensional 조건은 삭제 —
+    # report_lines 자체에 그 개념이 없다(차원분해 셀을 아예 만들지 않음, §3-2 실측).
+    line_by_rcept: dict[str, list[dict]] = {}
     for r in session.execute(text("""
-        SELECT rcept_no, acode, canonical_account, basis, is_cumulative, adecimal, amount_won
-        FROM fact_v2
-        WHERE rcept_no = ANY(:rs) AND col_index = 0 AND NOT COALESCE(is_dimensional, false)
+        SELECT rcept_no, label_raw, basis, is_cumulative, value_won, statement
+        FROM report_lines
+        WHERE rcept_no = ANY(:rs) AND col_index = 0
     """), {"rs": todo}):
-        fact_by_rcept.setdefault(r.rcept_no, []).append({
-            "acode": r.acode, "canonical_account": r.canonical_account,
-            "basis": r.basis, "is_cumulative": r.is_cumulative,
-            "adecimal": r.adecimal, "amount_won": r.amount_won})
+        line_by_rcept.setdefault(r.rcept_no, []).append({
+            "label_raw": r.label_raw, "basis": r.basis, "is_cumulative": r.is_cumulative,
+            "value_won": r.value_won, "statement": r.statement})
 
     batch = []
     for rc in todo:
         face = face_of(rc)                  # 캐시 재사용(col0 라인)
         track = track_of.get(rc)
-        facts = fact_by_rcept.get(rc, [])
+        db_lines = line_by_rcept.get(rc, [])
         if track == "B":
-            # Track B(텍스트, C1): canonical 값-집합 대조. value_diff→fail_a(측정), missing=커버 갭.
-            rla = reconcile_report_lines_text(rc, face, facts)
+            # Track B(텍스트): 라벨 값-집합 대조. value_diff→fail_a(측정), missing=커버 갭.
+            rla = reconcile_report_lines_text(rc, face, db_lines)
             gate = rla.line_gate_status if rla.n_lines > 0 else "pending"
             n_extra = 0                     # 텍스트는 역방향 잉여 무의미(reader=매핑라인만)
         else:
-            # Track A: XBRL acode 정확대조. 그 외(C/None)는 n_lines 0 → pending.
-            rla = reconcile_report_lines(rc, face, facts)
+            # Track A: XBRL 라벨 정확대조. 그 외(C/None)는 n_lines 0 → pending.
+            rla = reconcile_report_lines(rc, face, db_lines)
             is_a = track == "A" and rla.n_lines > 0
             gate = rla.line_gate_status if is_a else "pending"
             # pending 보고서는 신뢰할 face 가 없어 EXTRA 무의미 → Track A 일 때만 기록.
@@ -338,12 +339,16 @@ def audit_lines(session, corp, rcepts, face_of, track_of, args, agg):
             "n_lines": rla.n_lines, "n_match": rla.n_match,
             "n_value_diff": rla.n_value_diff, "n_missing": rla.n_missing,
             "n_extra": n_extra, "line_gate_status": gate,
+            # label = 매칭 키(정규화 라벨). acode/canonical 은 트랙별 진단용 보조필드
+            # (Track A 는 acode 만, Track B 는 canonical 만 채워짐 — line_audit.py 참고).
             "value_diff_detail": [
-                {"acode": l.acode, "basis": l.basis, "statement": l.statement,
-                 "label": l.label, "report_won": l.report_won, "db_won": l.db_won}
+                {"label": l.label, "basis": l.basis, "statement": l.statement,
+                 "report_won": l.report_won, "db_won": l.db_won,
+                 "acode": l.acode, "canonical": l.canonical}
                 for l in rla.value_diffs[:_DETAIL_CAP]] or None,
             "missing_detail": [
-                {"acode": l.acode, "basis": l.basis, "statement": l.statement, "label": l.label}
+                {"label": l.label, "basis": l.basis, "statement": l.statement,
+                 "acode": l.acode, "canonical": l.canonical}
                 for l in rla.missing[:_DETAIL_CAP]] or None,
             "reader_version": READER_VERSION, "checked_at": datetime.utcnow(),
         })

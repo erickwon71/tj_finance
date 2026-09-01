@@ -283,36 +283,14 @@ CHECKS: list[dict] = [
         "sample": "SELECT corp_code, fiscal_year, category, backlog_amt FROM order_backlog "
                   "WHERE backlog_amt < 0 ORDER BY backlog_amt LIMIT 10",
     },
-    {
-        # PRD 12(Phase 1) — extended_financials 뷰는 (corp,fy,fp,basis,canonical) 당 SUM(amount_won)
-        # 이 leaf-additive(리스부채=유동+비유동 등) 가정 위에 있다. n_facts 가 비정상적으로 크면
-        # (일반적으로 2~3개 leaf 인데 5개 초과) 같은 rcept 안에 동일 canonical 로 잘못 매핑된
-        # 무관 라인이 다수 섞여 합산 오염됐을 신호(controlling_ni 총포괄 오염과 같은 클래스의 버그).
-        #
-        # 2026-07-17 트리아지: 원 임계값(>5)으로 149,672건 검출 — 상위 20개 캐노니컬이 99.3%를
-        # 차지했는데, 그중 17개는 이름부터 `_detail`/`other_*`이거나 IFRS 상 원래 다항목인 계정
-        # (oci·cogs·capex·noncash_items_subtotal 등)이라 leaf 6~25개가 정상 동작 — 임계값이
-        # "2~3개 leaf" 가정과 안 맞는 확장 캐노니컬(PRD 12, 51종)군에 오적용된 노이즈였다.
-        # 이 17종은 제외하고, 이름상 단일 라인이어야 정상인 나머지(is.revenue·
-        # bs.short_term_investment·cf.available_for_sale_net 등 미확인 계정)만 계속 감시한다.
-        "name": "extended_financials_n_facts_outlier",
-        "sev": "WARN",
-        "desc": "extended_financials n_facts > 5, 설계상 다항목 계정(_detail/other_*/oci 등) 제외 (동일 캐노니컬에 라인 다수 합산 — 오매핑 의심)",
-        "count": "SELECT count(*) FROM extended_financials "
-                 "WHERE n_facts > 5 AND canonical_account NOT IN ("
-                 "'cf.capex','bs.ppe_detail','is.cogs','is.sga_detail','is.other_expense','is.oci',"
-                 "'is.other_income','bs.other_current_payables','cf.deposits_change','bs.inventory_detail',"
-                 "'cf.noncash_items_subtotal','bs.other_noncurrent_assets','cf.ppe_proceeds_detail',"
-                 "'bs.other_receivables','bs.accumulated_depreciation','cf.short_term_investment_net',"
-                 "'cf.borrowings_repaid')",
-        "sample": "SELECT corp_code, fiscal_year, basis, canonical_account, n_facts, amount_won "
-                  "FROM extended_financials WHERE n_facts > 5 AND canonical_account NOT IN ("
-                  "'cf.capex','bs.ppe_detail','is.cogs','is.sga_detail','is.other_expense','is.oci',"
-                  "'is.other_income','bs.other_current_payables','cf.deposits_change','bs.inventory_detail',"
-                  "'cf.noncash_items_subtotal','bs.other_noncurrent_assets','cf.ppe_proceeds_detail',"
-                  "'bs.other_receivables','bs.accumulated_depreciation','cf.short_term_investment_net',"
-                  "'cf.borrowings_repaid') ORDER BY n_facts DESC LIMIT 10",
-    },
+    # ★"extended_financials_n_facts_outlier" 어서션 폐기(2026-09-01, 계층2 GC 트랙 —
+    # docs/plans/extended_financials_v3_label_based_design_2026-09-01.md §3-4/§4-①).
+    # extended_financials 뷰가 fact_v2(acode, 원시 다중매치 가능) 경유에서 extended_facts_v3
+    # (라벨 기반, combine.py::_resolve() 가 이미 충돌을 해소한 단일값) 경유로 바뀌면서
+    # n_facts 는 뷰 정의에서 상시 1로 고정됨 — 이 어서션이 감시하던 신호(같은 canonical 에
+    # 무관 라인 다수 합산) 자체가 새 경로에선 발생할 수 없는 값이 되어 영구 0건(=무의미)이
+    # 된다. 대체 신호(std_financials_v3.conflicts 기반 재작성)는 설계문서 §4-①에 따라 이
+    # 트랙 범위 밖 별도 소규모 트랙으로 분리 — 미착수.
     {
         "name": "capital_events_unknown_type",
         "sev": "WARN",

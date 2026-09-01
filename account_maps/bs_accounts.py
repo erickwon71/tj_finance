@@ -305,7 +305,15 @@ BS_ACCOUNTS: dict[str, list[str]] = {
         "기타유동채무",
         "미지급금", "미지급비용",
         "기타금융부채",  # 유동성 기타 금융부채
-        "기타유동금융부채",
+        # "기타유동금융부채" alias 유지(제거 시도했으나 되돌림, 2026-09-01) — 아래 설명:
+        # 이 alias 는 "기타 유동부채"(일반)와 exact 충돌해 _resolve() 가 종종 잘못된 쪽을
+        # 고른다(00100601 실측: 5,704,158,628 대신 정답 329,247,089). alias 를 지워
+        # cands 진입 자체를 막으려 했더니 `_TRADE_PAYABLES_ADDITIVE_OVERRIDE`(아가방컴퍼니
+        # 00138446 2025FY, fin2/layer3/combine.py L109)가 이 정확한 라벨 문자열로 cands
+        # 전체를 스캔해 trade_payables 합산 성분을 찾는 로직이라 alias 삭제 시 그 회사가
+        # 회귀한다 — Gate B 감사 대상 로직에 영향. 그래서 alias 는 유지하고, 충돌 해소는
+        # combine.py::_resolve() 쪽에 국소 가드로 옮겼다(설계문서 §검증, "기타유동금융부채"
+        # 검색).
         "예수금",    # K-GAAP: 원천징수세금, 사회보험 등 예수금
         "가수금",    # K-GAAP: 임시 수취금
         "환불부채",  # IFRS 15: 고객 환불 예상 부채
@@ -449,7 +457,14 @@ BS_ACCOUNTS: dict[str, list[str]] = {
         "자기주식", "자사주",
     ],
     "bs.other_equity": [
-        "기타자본구성요소", "기타포괄손익누계액",
+        "기타자본구성요소",
+        # "기타포괄손익누계액"(AOCI) 제거(2026-09-01, docs/plans/extended_financials_v3_
+        # label_based_design_2026-09-01.md 검증 중 발견 — 00100601 실측): 이 canonical
+        # ("기타자본구성요소")과 AOCI는 K-IFRS BS상 별개 자본 항목인데 같은 canonical에
+        # 묶여 있었다 — 두 항목이 같은 필링에 공존하면 exact 충돌로 임의 채택(구
+        # fact_v2/acode 기준과 불일치, -291,782,272 아닌 0이 정답). AOCI 전용 캐노니컬은
+        # 아직 없음(EXTENDED_CATALOG 미등재) — 그냥 미매핑으로 둠, 별도 캐노니컬 신설은
+        # 범위 밖.
         "기타자본항목", "기타자본",
         "자본조정",
     ],

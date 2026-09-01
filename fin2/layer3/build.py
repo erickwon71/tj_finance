@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from sqlalchemy import text, delete
 
-from collector.models import StdFinancialV3
+from collector.models import StdFinancialV3, ExtendedFactV3
 from fin2.layer3.combine import (combine_full, select_canonical_rcepts,
                                  build_merged_lines)
 from fin2.standardize.build import _period_end, _future_guard
@@ -158,4 +158,22 @@ def build_corp(session, corp: str, year_min: int = 2015,
             row.shares_out = _select_shares_out(session, corp, fy, period, src)
             session.add(row)
             n += 1
+
+            # extended_financials v3 (2026-09-01, docs/plans/extended_financials_v3_
+            # label_based_design_2026-09-01.md §3-2/3-3): DIRECT_MAP 밖 확장 캐노니컬
+            # (combine_full()이 이미 계산해 prov["extended"]로 노출) 을 나란히 upsert.
+            # StdFinancialV3 와 같은 (corp,fy,period,basis) delete-then-insert 단위.
+            session.execute(
+                delete(ExtendedFactV3).where(
+                    ExtendedFactV3.corp_code == corp,
+                    ExtendedFactV3.fiscal_year == fy,
+                    ExtendedFactV3.fiscal_period == period,
+                    ExtendedFactV3.statement_type == basis,
+                )
+            )
+            for canon, value in prov.get("extended", {}).items():
+                session.add(ExtendedFactV3(
+                    corp_code=corp, fiscal_year=fy, fiscal_period=period,
+                    statement_type=basis, canonical_account=canon, amount_won=value,
+                ))
     return n

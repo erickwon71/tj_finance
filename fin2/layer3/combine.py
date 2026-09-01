@@ -1982,6 +1982,18 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
             stale_ids.update(id(g) for g in group if not g.get("amended"))
         if stale_ids:
             rows = [r for r in rows if id(r) not in stale_ids]
+        # bs.other_current_payables "기타유동금융부채" vs "기타(유동)부채" 충돌 (2026-09-01,
+        # docs/plans/extended_financials_v3_label_based_design_2026-09-01.md 검증 중 발견 —
+        # 00100601 실측). 두 라벨 다 이 canonical의 exact alias라 같은 필링 안에 둘 다
+        # 존재하면(서로 다른 진짜 계정) _resolve()가 임의로 하나를 고른다 — "일반" 쪽이
+        # 정답(구 fact_v2/acode 기준과 일치, 5,704,158,628 아닌 329,247,089). alias 자체는
+        # 못 지운다(_TRADE_PAYABLES_ADDITIVE_OVERRIDE의 아가방컴퍼니 00138446 케이스가 이
+        # 정확한 라벨 문자열로 cands 전체를 스캔함, L109) — 여기 `rows`(이 canonical 후보만)
+        # 에서만 "금융" 변형을 밀어내 cands[c] 자체는 그대로 둔다.
+        if c == "bs.other_current_payables":
+            plain = [r for r in rows if "금융" not in (r.get("label_raw") or "")]
+            if plain and any("금융" in (r.get("label_raw") or "") for r in rows):
+                rows = plain
         # current-strict canonicals (trade_payables 등): drop non-current (장기/비유동)
         # candidates *before* stage ranking, not only inside _reduce_conflict(). A
         # non-current row can legitimately land on a higher mapping stage than the
@@ -2751,6 +2763,18 @@ def _map_rows(rows, period: str, basis: str, statements,
                 continue
             if res.matched_alias == "보험판매수입수수료" and "보험" not in label:
                 continue
+        # bs.short_term_investment fuzzy 비유동 오매치 (2026-09-01, docs/plans/
+        # extended_financials_v3_label_based_design_2026-09-01.md 검증 중 발견 — 00100601
+        # 실측: "기타포괄손익-공정가치 측정 비유동금융자산"이 alias "기타포괄손익-
+        # 공정가치금융자산"에 0.95 fuzzy로 매치, "단기(short-term)" 캐노니컬에 명백한
+        # 비유동 라인이 들어감). _CURRENT_STRICT 가드는 여기 못 쓴다 — 그 가드는 "경쟁하는
+        # 현재 후보가 있을 때만 비유동을 버리고, 그렇지 않으면 결측 방지를 위해 남겨둔다"는
+        # 설계라 이 corp처럼 유일한 후보가 비유동뿐인 경우엔 그대로 통과시켜 버린다. 여기는
+        # 반대 원칙이 맞다 — short_term 캐노니컬에 비유동 라인은 "그나마 있는 값"보다
+        # NULL(결측)이 낫다. cands 진입 자체를 막아 결측 처리.
+        if c == "bs.short_term_investment" and res.stage == "fuzzy":
+            if re.search(r"비유동|장기", r["label_raw"] or ""):
+                continue
         is_cum = r["is_cumulative"]
         flow = interim and (c.startswith("is.") or c.startswith("cf."))
         if flow:
@@ -3030,6 +3054,14 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     eff_basis = (("separate" if basis == "consolidated" else "consolidated")
                  if prov["basis_fallback"] else basis)
     _apply_enrichment(session, corp, fy, period, basis, confirmed, col, eff_basis, cands)
+    # extended_financials v3 (2026-09-01, docs/plans/extended_financials_v3_label_based_
+    # design_2026-09-01.md §3-1): `confirmed` already holds every canonical _map_rows()
+    # mapped and _resolve() picked a single value for — not just the DIRECT_MAP ~40 that
+    # `col` above keeps. Expose the rest (EXTENDED_CATALOG accounts, e.g. bs.goodwill,
+    # cf.tax_paid) instead of silently dropping them — no new mapping logic, just not
+    # discarding what this function already computed.
+    prov["extended"] = {canon: value for canon, value in confirmed.items()
+                        if canon not in DIRECT_MAP}
     return col, conflicts, prov
 
 

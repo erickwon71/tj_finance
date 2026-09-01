@@ -1185,6 +1185,37 @@ def _run_migrations() -> None:
 
         DROP TABLE IF EXISTS std_financials_v2;
         """),
+
+        ("2026_09_extended_financials_v3_view",
+         # 계층2 GC 트랙(docs/plans/extended_financials_v3_label_based_design_2026-09-01.md
+         # §3-4) — extended_financials 뷰를 fact_v2(acode 기반) 경유에서
+         # extended_facts_v3(라벨 기반, fin2/layer3/combine.py::combine_full()의
+         # confirmed 중 DIRECT_MAP 밖 확장 캐노니컬을 build_corp() 이 상시 upsert) 로
+         # 전환한다. extended_facts_v3 테이블은 create_all 이 생성(위 규칙과 동일 순서).
+         #
+         # n_facts=1 고정: 옛 값(COUNT(DISTINCT amount_won), fact_v2 의 원시 다중매치 개수)은
+         # 더 이상 성립하지 않는다 — confirmed 는 이미 _resolve() 가 충돌을 해소한 단일값이라
+         # "여러 금액이 같은 canonical 에 걸리는" 신호 자체가 없다(설계문서 §3-4/§4-①,
+         # dq_assertions.py::extended_financials_n_facts_outlier 는 이 시점부터 상시 0건 —
+         # 같은 커밋에서 폐기).
+         #
+         # ★note.* 확장 캐노니컬(employee_benefits/raw_materials_used) 은 여기 없다 —
+         # note_lines 전용 별도 경로(collector/expense_nature_sync.py)가 여전히 fact_v2 에
+         # 적재 중(설계문서 §2, fact_v2 DROP 전 잔여 블로커, 별도 트랙).
+         # DROP+CREATE(OR REPLACE 아님): 컬럼 타입이 바뀐다(fact_v2.canonical_account
+         # VARCHAR(120) → extended_facts_v3.canonical_account VARCHAR(40)) — PostgreSQL은
+         # CREATE OR REPLACE VIEW로 기존 컬럼 타입 변경을 거부한다(InvalidTableDefinition).
+         """
+        DROP VIEW IF EXISTS extended_financials;
+        CREATE VIEW extended_financials AS
+        SELECT ef.corp_code, ef.fiscal_year, ef.fiscal_period, ef.statement_type AS basis,
+               ef.canonical_account, ef.amount_won, 1 AS n_facts,
+               COALESCE(s.source_rcepts->>'BS', s.source_rcepts->>'IS', s.source_rcepts->>'CF') AS source_rcept_no
+        FROM extended_facts_v3 ef
+        JOIN std_financials_v3 s
+          ON s.corp_code = ef.corp_code AND s.fiscal_year = ef.fiscal_year
+         AND s.fiscal_period = ef.fiscal_period AND s.statement_type = ef.statement_type;
+        """),
     ]
 
     with engine.begin() as conn:

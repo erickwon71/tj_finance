@@ -14,12 +14,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text
 from collector.db import get_session, engine
-from collector.models import Base, StdFinancialV3
+from collector.models import Base, StdFinancialV3, ExtendedFactV3
 from fin2.layer3.build import build_corp
 
 
 def _ensure_table():
     StdFinancialV3.__table__.create(bind=engine, checkfirst=True)
+    # extended_financials v3 (2026-09-01, docs/plans/extended_financials_v3_label_based_
+    # design_2026-09-01.md) — build_corp() now upserts this table alongside std_v3.
+    ExtendedFactV3.__table__.create(bind=engine, checkfirst=True)
 
 
 def _corps(session, args):

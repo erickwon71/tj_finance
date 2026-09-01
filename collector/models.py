@@ -1844,3 +1844,37 @@ class StdFinancialV3(Base):
 
     def __repr__(self):
         return f"<StdFinancialV3 {self.corp_code} {self.fiscal_year}{self.fiscal_period} {self.statement_type}>"
+
+
+class ExtendedFactV3(Base):
+    """계층3 조립의 부산물 — `fin2.layer3.combine.combine_full()`이 std_v3(DIRECT_MAP
+    ~40종) 조립 중 어차피 계산하는 `confirmed`(라벨매핑+충돌해소 완료) 중 DIRECT_MAP에
+    없는 확장 캐노니컬(`app/registry/extended.py::EXTENDED_CATALOG`, bs./is./cf. 약 80종)을
+    보존한다. 새 매핑 로직 없음 — combine.py 내부에서 버려지던 값을 얹기만 한 것
+    (docs/plans/extended_financials_v3_label_based_design_2026-09-01.md §3-1/3-2).
+
+    `extended_financials` 뷰(collector/db.py)가 이 테이블 위에서 재정의된다 — 옛
+    fact_v2(acode 기반) 경유를 대체. note.* 확장 캐노니컬 2종(비용성격 D&A)은 여기 없다
+    — note_lines 전용 별도 경로(collector/expense_nature_sync.py)가 여전히 fact_v2에
+    적재한다(같은 설계문서 §2, fact_v2 DROP 전 잔여 블로커).
+
+    그레인은 std_financials_v3 와 동일 + canonical_account 축. 신규 테이블 →
+    create_all() 자동 생성(마이그레이션 불요, StdFinancialV3 선례).
+    """
+    __tablename__ = "extended_facts_v3"
+
+    corp_code         = Column(String(8),    primary_key=True)
+    fiscal_year       = Column(SmallInteger, primary_key=True)
+    fiscal_period     = Column(String(5),    primary_key=True)   # FY/H1/Q1/Q3
+    statement_type    = Column(String(12),   primary_key=True)   # consolidated/separate
+    canonical_account = Column(String(40),   primary_key=True)   # 예: "bs.goodwill"
+    amount_won        = Column(BigInteger,   nullable=False)
+    built_at          = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_extfactv3_corp_year", "corp_code", "fiscal_year"),
+    )
+
+    def __repr__(self):
+        return (f"<ExtendedFactV3 {self.corp_code} {self.fiscal_year}{self.fiscal_period} "
+                f"{self.statement_type} {self.canonical_account}>")

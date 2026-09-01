@@ -953,8 +953,19 @@ def read_report_face_text(file_path: str | Path, root=None) -> list[FaceLine]:
             for v in nums:
                 # ★ dedup 키는 표시값(v)이 아니라 won 환산값으로(단위만 다른 중복표가 표시값 같아도
                 # won 다름 → 잘못된 단위표가 올바른 표 가리는 ×10^6 false-fail 방지, 아이티센씨티에스).
+                # ★2026-09-01 Phase 4(계층2 GC §4-3) 전수재감사로 발견 — `label` 을 키에서
+                # 빼면 **서로 다른 라벨이 같은 canonical 로 매핑되고 우연히 같은 값(특히 0,
+                # 이번 분기 미발생 조정항목에서 흔함)** 일 때 나중 라벨의 FaceLine 이 통째로
+                # 스킵된다. 구 Track B(canonical 값-집합 대조, fact_v2)에선 어차피 canonical
+                # 단위로만 비교해서 무해했지만, Phase 2(라벨 기반 대조로 통일, `line_audit.py`)
+                # 이후엔 그 라벨의 정답 후보 자체가 사라져 허위 VALUE_DIFF 를 낸다(전수재감사
+                # 표본 60건 중 48건, 80%가 이 메커니즘으로 확인 — [[feedback-verify-against-
+                # source]]). `label` 을 키에 추가해도 원래 취지(같은 라벨의 진짜 중복 표 억제)
+                # 는 그대로 지켜지고, 서로 다른 라벨 간의 부당한 상호 억제만 없앤다 —
+                # Phase A(`audit_fields`)엔 후보가 늘어나기만 하므로 단조 안전(R35 선례와
+                # 같은 논리, pass→fail 방향 회귀 불가).
                 won = v * (10 ** (-adecimal)) if adecimal < 0 else v
-                key = (canon, basis, won)
+                key = (canon, basis, label, won)
                 if key in seen:
                     continue
                 seen.add(key)

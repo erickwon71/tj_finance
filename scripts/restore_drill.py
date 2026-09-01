@@ -2,8 +2,13 @@
 
 Restores the newest `*.dump` from the backup dir into a throwaway DB
 (`tj_finance_restore_test`), then spot-checks row counts against the live DB
-for the tables that carry data in the backup (fact_v2 data is excluded by
-backup_db.py, so it's expected to be empty — schema-only — after restore).
+for the tables that carry data in the backup.
+
+★2026-09-01(fact_v2 GC 트랙 §4-4) — `fact_v2` DROP 이후 `backup_db.py`는 항상 전체
+덤프라 "schema-only" 예외 테이블 개념 자체가 없어졌다(`SCHEMA_ONLY_TABLES` 제거).
+`DATA_TABLES`의 `std_financials_v2`도 같은 날 DROP돼(`std_financials_v2` GC 트랙,
+commit `510095a`) `std_financials_v3`로 교체 — 이 스크립트가 그 갱신을 놓쳐 이번까지
+방치돼 있었다(수동 실행 전용이라 조용히 stale해짐, 실행 시점에야 발견되는 패턴).
 
 usage:
   python scripts/restore_drill.py                    # use newest dump, keep scratch DB
@@ -26,10 +31,10 @@ LIVE_DB = "tj_finance"
 SCRATCH_DB = "tj_finance_restore_test"
 BACKUP_DIR = Path("/Volumes/tj_finance_data/db_backups")  # NAS(RAID1) — backup_db.py 출력 위치와 일치
 
-# tables expected to carry real data in the (default, non --full) backup.
+# tables expected to carry real data in the (full) backup.
 DATA_TABLES = [
     "corporations",
-    "std_financials_v2",
+    "std_financials_v3",
     "std_financials_calendar",
     "stock_prices",
     "statement_source",
@@ -39,8 +44,6 @@ DATA_TABLES = [
     "face_line_audit",
     "verification_results",
 ]
-# excluded from backup data (schema only) — expected 0 rows after restore.
-SCHEMA_ONLY_TABLES = ["fact_v2"]
 
 
 def _bin(name: str) -> str:
@@ -106,13 +109,6 @@ def main() -> None:
         if status != "OK":
             ok = False
         logger.info(f"  {table:28s} live={live!s:>10} restored={restored!s:>10}  {status}")
-
-    for table in SCHEMA_ONLY_TABLES:
-        restored = _count(SCRATCH_DB, table)
-        status = "OK (schema-only, 0 rows expected)" if restored == 0 else f"UNEXPECTED ({restored} rows)"
-        if restored != 0:
-            ok = False
-        logger.info(f"  {table:28s} restored={restored!s:>10}  {status}")
 
     if args.drop_after:
         logger.info(f"[drill] dropping scratch DB {SCRATCH_DB}")

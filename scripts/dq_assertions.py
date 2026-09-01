@@ -321,6 +321,12 @@ CHECKS: list[dict] = [
         # noncontrolling_ni(fact_v2 col0) 로 controlling+nci=net 이 성립하는(=정상) 행은 제외하고,
         # 항등식이 재구성되지 않는 행만 센다(진짜 총포괄 오염 ~6,950). std_v2 엔 nci 컬럼이 없어
         # source rcept(bs/is/cf)·동일 basis 의 fact_v2 에서 is.noncontrolling_ni 후보를 조회한다.
+        # ★2026-09-01(fact_v2 GC 트랙 §4-4 DROP) — `fact_v2` 테이블이 사라져 이 어서션은
+        # 이제 상시 SKIP 된다(UndefinedTable, 방어적으로 무시됨 — ERROR 아님). controlling_ni
+        # 총포괄오염(R25/R26/R43 계열) 재발 감지 기능 자체가 없어진 것 — line_audit(Phase B)은
+        # 지배/비지배 계열을 Track B 확장에서 의도적으로 제외해(gateb_phaseb_line_audit_v3_
+        # migration_design_2026-09-01.md) 이 공백을 대신 메우지 않는다. 재구현하려면
+        # report_lines/note_lines 기반으로 새로 설계해야 함(fact_v2 재추출 아님) — 별도 트랙.
         "name": "std_v2_controlling_ni_exceeds_net",
         "sev": "WARN",
         "desc": "controlling_ni 총포괄 오염 (항등식 controlling+nci=net 재구성 실패 — 정당 비지배음수는 제외)",
@@ -351,6 +357,10 @@ CHECKS: list[dict] = [
     {
         # DEF-4 재발 감지: Q1 분기보고서 IS/CF 표에서 당분기(col0)와 전기(col1) 3개월 값이
         # 완전 동일하면 전기컬럼 추출 오류 신호(fin2/extract/text.py interim_flow 미적용 등).
+        # ★2026-09-01(fact_v2 GC 트랙 §4-4 DROP) — 같은 사유로 상시 SKIP. DEF-4(Q1
+        # 전기컬럼 중복추출) 재발 감지 공백 — `calendar_adjacent_year_cq1_identical`(아래,
+        # std_financials_calendar 기반)이 소비계층 쪽에서 부분적으로 유사 신호를 잡지만
+        # 이 어서션(원문 col0/col1 직접비교)과 탐지 범위가 동일하지 않다.
         "name": "fact_v2_q1_duration_col0_eq_col1",
         "sev": "WARN",
         "desc": "Q1 IS/CF fact_v2 에서 당분기(col0)==전기(col1) 동일값 — 전기컬럼 추출오류 신호(DEF-4)",

@@ -48,7 +48,14 @@ def init_db() -> None:
     # financials 뷰를 통해 app/data/screen_window.py·series.py·quarter_change.py·
     # app/views/company_page.py 가 현재도 실제로 읽고 있어(이산분기 CQ1~CQ4 스크리너/시계열
     # 기능) 소비자 이식 없이 드롭하면 그 화면들이 깨진다 — 별도 결정 대기.
-    for _dropped in ("financial_facts", "unknown_accounts", "std_financials_v2"):
+    # fact_v2: 같은 GC 트랙 §4-4(`docs/plans/factv2_sync_scripts_migration_design_
+    # 2026-09-01.md`) — extended_financials 는 이미 extended_facts_v3 로 이전(§4-2),
+    # 유일 남은 소비자였던 cf_da_sync.py/expense_nature_sync.py 의 fact_v2 upsert 도
+    # Track1(extended_facts_v3 로 이식)/Track2(D&A 계열 은퇴)로 정리 완료. 55GB 회수,
+    # 백업 NAS(tj_finance_data)/db_backup/fact_v2_backup_2026-09-01.dump. pg_depend
+    # 전수 확인 결과 의존 뷰 0건(std_financials_v2 때와 달리 calendar_financials 류의
+    # 숨은 소비자 없음 — 위 사고 전례 때문에 재확인함).
+    for _dropped in ("financial_facts", "unknown_accounts", "std_financials_v2", "fact_v2"):
         _t = Base.metadata.tables.get(_dropped)
         if _t is not None:
             Base.metadata.remove(_t)
@@ -1199,9 +1206,12 @@ def _run_migrations() -> None:
          # dq_assertions.py::extended_financials_n_facts_outlier 는 이 시점부터 상시 0건 —
          # 같은 커밋에서 폐기).
          #
-         # ★note.* 확장 캐노니컬(employee_benefits/raw_materials_used) 은 여기 없다 —
-         # note_lines 전용 별도 경로(collector/expense_nature_sync.py)가 여전히 fact_v2 에
-         # 적재 중(설계문서 §2, fact_v2 DROP 전 잔여 블로커, 별도 트랙).
+         # ★note.* 확장 캐노니컬(employee_benefits/raw_materials_used)은 이 뷰가 처음
+         # extended_facts_v3 로 전환된 시점(이 마이그레이션)엔 없었다 — combine.py 의
+         # 일반 라벨매핑이 이 두 canonical 을 만들지 못해 당시 조용히 앱 노출이 끊겼다.
+         # 같은 날 후속 트랙(`docs/plans/factv2_sync_scripts_migration_design_2026-09-01.md`
+         # Track 1)이 collector/expense_nature_sync.py 를 extended_facts_v3 직접 upsert로
+         # 전환 + 과거분 소급 이관까지 완료해 복구했다.
          # DROP+CREATE(OR REPLACE 아님): 컬럼 타입이 바뀐다(fact_v2.canonical_account
          # VARCHAR(120) → extended_facts_v3.canonical_account VARCHAR(40)) — PostgreSQL은
          # CREATE OR REPLACE VIEW로 기존 컬럼 타입 변경을 거부한다(InvalidTableDefinition).
@@ -1215,6 +1225,24 @@ def _run_migrations() -> None:
         JOIN std_financials_v3 s
           ON s.corp_code = ef.corp_code AND s.fiscal_year = ef.fiscal_year
          AND s.fiscal_period = ef.fiscal_period AND s.statement_type = ef.statement_type;
+        """),
+
+        ("2026_09_fact_v2_drop",
+         # fact_v2 GC 트랙 §4-4(`docs/plans/factv2_sync_scripts_migration_design_
+         # 2026-09-01.md`) — `fact_v2`(55GB) DROP. 선행조건 전부 충족:
+         #   · extended_financials 뷰: 위 2026_09_extended_financials_v3_view 마이그레이션에서
+         #     이미 extended_facts_v3 단일소스로 전환(fact_v2 참조 0).
+         #   · 유일 남은 소비자(collector/cf_da_sync.py·expense_nature_sync.py 의 fact_v2
+         #     upsert)는 Track1(employee_benefits/raw_materials_used → extended_facts_v3
+         #     이식, 과거분 3,387행 소급 완료)/Track2(D&A 계열 은퇴, cf_da_sync.py 배선
+         #     제거) 로 정리 완료.
+         #   · pg_depend 전수 재확인(2026-09-01) — 의존 뷰/FK 0건.
+         #   · fin2/extract/xbrl.py::store_facts() 에 RuntimeError 가드 추가(유일 쓰기
+         #     경로, standardize_corp() 의 std_financials_v2 가드와 동일 패턴).
+         # 백업: NAS(tj_finance_data)/db_backup/fact_v2_backup_2026-09-01.dump
+         # (pg_dump -Fc -t fact_v2, 복원 가능).
+         """
+        DROP TABLE IF EXISTS fact_v2;
         """),
     ]
 

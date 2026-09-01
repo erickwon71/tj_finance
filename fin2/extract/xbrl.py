@@ -194,7 +194,22 @@ def extract_facts(
 
 
 def store_facts(session, facts: list[ExtractedFact]) -> int:
-    """추출 행들을 fact_v2 에 upsert(ON CONFLICT uq_fact_v2_cell). 반환=처리 행 수."""
+    """추출 행들을 fact_v2 에 upsert(ON CONFLICT uq_fact_v2_cell). 반환=처리 행 수.
+
+    ★2026-09-01(fact_v2 GC 트랙 §4-4 DROP, `docs/plans/
+    factv2_sync_scripts_migration_design_2026-09-01.md`) — `fact_v2`가 DROP됐다. 이
+    함수가 유일한 fact_v2 쓰기 경로라 여기 한 곳만 막으면 모든 호출부(`extract_file()`,
+    `run.py::cmd_extract2`/`cmd_fin2_all`, `scripts/phase_c_rebuild.py`,
+    `collector/cf_da_sync.py`)가 커버된다. `fin2/standardize/build.py::
+    standardize_corp()`의 `std_financials_v2` DROP 가드와 동일 패턴 — 원시
+    "relation does not exist" SQL 에러 대신 원인·참고문서를 알려준다."""
+    raise RuntimeError(
+        "fact_v2 was DROPped 2026-09-01 (fact_v2 GC track §4-4) — this write path is "
+        "retired. extended_financials now sources from extended_facts_v3 (built by "
+        "fin2.layer3.combine.combine_full()); std_financials_v3 D&A columns come from "
+        "fin2.layer3.note_da (note_lines). See docs/plans/"
+        "factv2_sync_scripts_migration_design_2026-09-01.md."
+    )
     if not facts:
         return 0
     from datetime import datetime

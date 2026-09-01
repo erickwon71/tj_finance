@@ -155,9 +155,73 @@ in-memory), "한 번 upsert하고 끝"이 통하지 않는다 — 나중에 그 
      `test_biz_section.py::test_lxintl_facility_table_dropped`, 생산능력표 파싱 —
      이 트랙과 무관, 별도 이슈).
 
-### 잔여 (§4-4 DROP까지)
+### 잔여 (§4-4 DROP까지) — 진행 중 (같은 세션 이어서)
 
 Track 1/2 완료로 `cf_da_sync.py`/`expense_nature_sync.py`의 `fact_v2` upsert가 모두
-사라졌다. §5 체크리스트(원문 §7 블로커 표)의 나머지 — `pg_depend` 전수 재확인,
-`fin2/extract/*.py` 쓰기 경로 비활성화, `backup_db.py` 정리, `DROP TABLE fact_v2`
-실행 — 은 아직 미착수. 다음 세션에서 §5 체크리스트부터 이어갈 것.
+사라졌다. §5 체크리스트 진행 상황:
+
+1. **`pg_depend` 전수 재확인 — 완료.** 의존 뷰/규칙 0건(`extended_financials`가
+   §4-2에서 이미 이탈 확인과 일치), FK는 `fact_v2`가 `filings`로 나가는 것 1개뿐
+   (자기 PK/인덱스/시퀀스 제외).
+2. **`fact_v2` 쓰기 경로 실사용 조사 — 완료.** `store_facts()`(`fin2/extract/xbrl.py`)가
+   유일한 쓰기 함수(전수 grep, `INSERT INTO fact_v2`/`insert(FactV2)` 0건 그 외)임을
+   확인. 호출부는 전부 CLI/배치 전용(`run.py::cmd_extract2`/`cmd_fin2_all`,
+   `scripts/phase_c_rebuild.py`, `collector/cf_da_sync.py`) — 데일리 자동 파이프라인엔
+   없음. `extract_file()` 자체는 어디서도 호출되지 않는 dead code임도 확인.
+   → `store_facts()`에 `standardize_corp()`(std_v2 가드)와 동일 패턴의 RuntimeError
+   가드 추가(단일 지점이라 위 호출부 전부 커버).
+3. **`backup_db.py` 정리 — 완료.** `EXCLUDE_DATA=("fact_v2",)`/`--full` 플래그 제거
+   (이제 항상 전체 덤프). 부수 발견: `scripts/restore_drill.py`가 `std_financials_v2`
+   (오늘 이미 DROP됨)를 여전히 참조하는 별개의 stale 버그를 발견해 같이 수정
+   (`std_financials_v3`로 교체, `SCHEMA_ONLY_TABLES`/`fact_v2` 제거).
+4. **백업 — 진행/완료** (아래 실행 로그 참고).
+5. **`collector/db.py` 마이그레이션 추가 — 완료.** `init_db()`의 `_dropped` 튜플에
+   `"fact_v2"` 추가(std_financials_v2 선례와 동일, create_all 재생성 방지) +
+   `2026_09_fact_v2_drop` 마이그레이션(`DROP TABLE IF EXISTS fact_v2;`) 추가.
+6. **`DROP TABLE fact_v2` 실행** — 아래 실행 로그 참고.
+
+### 실행 로그 — §4-4 `fact_v2` DROP 완료 (2026-09-01, 같은 세션)
+
+- **백업**: `pg_dump -Fc -t fact_v2 --no-owner --no-privileges -d tj_finance -f
+  /Volumes/tj_finance_data/db_backup/fact_v2_backup_2026-09-01.dump` — 1.93GB(원본
+  55GB), `pg_restore -l`로 TOC 무결성 확인. DROP 직전 행수 74,203,366.
+- **DROP 실행**: `collector/db.py`의 `2026_09_fact_v2_drop` 마이그레이션
+  (`init_db()` → `_run_migrations()`, `std_financials_v2` 선례와 동일 절차) —
+  `DROP TABLE IF EXISTS fact_v2;` + `init_db()`의 `_dropped` 튜플에 `"fact_v2"` 추가
+  (create_all 재생성 방지).
+- **회수**: DB 전체 157GB → **102GB**(−55GB).
+- **검증**:
+  - `extended_financials` 뷰(10,706,561행)·`standard_financials`(303,840행)·
+    `face_line_audit`(155,224행) 전부 정상 카운트.
+  - `extended_financials`의 `note.employee_benefits`(1,951)/`note.raw_materials_used`
+    (1,436) — Track 1 이식분 그대로 노출 확인.
+  - `pytest tests/ fin2/tests/` — 684 pass / 1 fail(무관 기존실패
+    `test_lxintl_facility_table_dropped`, 이 트랙과 무관).
+  - `python scripts/dq_assertions.py` — ERROR 1건(`statement_magnitude_impossible`
+    150건, 기존 이슈·std_v2 DROP 세션에서 이미 확인된 것과 동일 수치, 무관) 외
+    크래시 없음. `fact_v2` 참조 어서션 2건(`std_v2_controlling_ni_exceeds_net`/
+    `fact_v2_q1_duration_col0_eq_col1`)이 신규로 SKIP 전환(UndefinedTable, 방어적
+    무시) — **아래 잔여 참고 항목으로 별도 기록**.
+  - fact_v2 전체 grep 재확인 — `collector/db.py`의 매치는 전부 이미 적용된 과거
+    마이그레이션 텍스트(불변, 재실행 안 됨). 나머지는 전부 수동 CLI 진단/백필
+    스크립트(`fin2/reconcile.py`는 §4-1에서 이미 저위험으로 스코핑됨). 데일리
+    파이프라인(`collect_new.py`)·Streamlit 앱(`app/*.py`, 4개 파일 재확인 — 전부
+    주석뿐, 실쿼리 없음) 둘 다 fact_v2 무관 확인.
+- **부수 정리**: `scripts/backup_db.py`(EXCLUDE_DATA/--full 제거, 항상 전체 덤프),
+  `scripts/restore_drill.py`(std_financials_v2→v3 교체, SCHEMA_ONLY_TABLES 제거 —
+  이 파일이 std_v2 DROP 이후로 이미 stale해져 있던 별개 버그도 같이 발견·수정),
+  `scripts/dq_assertions.py`(신규 SKIP 2건에 원인·재구현 시 참고사항 주석 추가).
+
+### 잔여 — 새로 발견된 사이드이펙트 (범위 밖, 별도 트랙 후보)
+
+`dq_assertions.py`의 WARN 어서션 2건이 DROP으로 영구 SKIP됐다 — 단순 dead-code
+정리가 아니라 **실제 회귀탐지 기능 상실**:
+1. `std_v2_controlling_ni_exceeds_net` — controlling_ni 총포괄오염(R25/R26/R43 계열)
+   재발 감지. line_audit(Phase B)은 지배/비지배 계열을 의도적으로 제외해 이 공백을
+   대신 메우지 않는다.
+2. `fact_v2_q1_duration_col0_eq_col1` — Q1 전기컬럼 중복추출(DEF-4) 원문 직접비교
+   감지. `calendar_adjacent_year_cq1_identical`(소비계층 기반)이 부분적으로 유사
+   신호를 잡지만 탐지 범위가 다르다.
+
+재구현하려면 `report_lines`/`note_lines` 기반으로 새로 설계해야 한다(단순 포팅
+아님). 이번 트랙 범위 밖 — 사용자 판단 필요.

@@ -3,16 +3,20 @@
 89GB DB 단일 사본에 백업이 전무해 디스크 사고 시 전손 위험이 있었다. 이 스크립트는 매일
 `pg_dump`(custom format, 압축)로 논리 백업을 **PGDATA(Mac 내장) 와 다른 물리 디스크 — NAS
 (RAID1)** 에 저장한다. 라이브 DB(Mac)와 덤프(NAS)가 서로 독립 장애 도메인이 되어 SPOF 해소.
-기본적으로 **재생성 가능한 fact_v2 데이터(≈86GB)는 제외**(스키마는 보존) → 백업이 ~수백 MB 로 작아
-빠르다. fact_v2 는 필요 시 raw_report 재추출로 복원한다.
+
+★2026-09-01(fact_v2 GC 트랙, §4-4 DROP, `docs/plans/
+factv2_sync_scripts_migration_design_2026-09-01.md`) — 예전엔 재생성 가능한 fact_v2
+데이터(≈86GB)를 `--exclude-table-data`로 뺐지만(스키마만 보존), `fact_v2` 테이블 자체가
+DROP돼 그 로직이 무의미해졌다 — `--full`/`EXCLUDE_DATA` 제거, 이제 매번 전체 덤프.
+남은 대형 테이블(`note_lines`/`report_lines`, 계층2 원문)은 raw_report 재추출로도 복원
+가능하지만 fact_v2처럼 "쓰고 버리는 파생물"이 아니라 그 자체가 파싱 산출물의 정본이라
+제외 대상이 아니다.
 
 복원:
   pg_restore -d tj_finance --clean --if-exists <파일.dump>
-  # fact_v2 재적재가 필요하면 raw_report 로 재추출(run.py fin2-all).
 
 usage:
-  python scripts/backup_db.py                     # 소비계층 백업(fact_v2 데이터 제외)
-  python scripts/backup_db.py --full              # fact_v2 포함 전체(대용량·느림)
+  python scripts/backup_db.py
   python scripts/backup_db.py --out-dir /path --keep 14
 """
 from __future__ import annotations
@@ -30,7 +34,6 @@ from loguru import logger
 
 DEFAULT_DB = "tj_finance"
 DEFAULT_OUT = "/Volumes/tj_finance_data/db_backups"  # NAS(RAID1) — PGDATA(Mac 내장)와 다른 물리 디스크
-EXCLUDE_DATA = ("fact_v2",)                      # 재생성 가능 → 데이터 제외(스키마는 보존)
 
 
 def _pg_dump_bin() -> str:
@@ -59,7 +62,6 @@ def main() -> None:
     ap.add_argument("--db", default=DEFAULT_DB)
     ap.add_argument("--out-dir", default=DEFAULT_OUT, help="백업 저장 폴더(외장 볼륨 권장)")
     ap.add_argument("--keep", type=int, default=7, help="보관할 최근 백업 수(회전)")
-    ap.add_argument("--full", action="store_true", help="fact_v2 데이터까지 포함(대용량)")
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -73,15 +75,11 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M")
-    kind = "full" if args.full else "core"
-    path = out_dir / f"{args.db}_{kind}_{ts}.dump"
+    path = out_dir / f"{args.db}_full_{ts}.dump"
 
     cmd = [_pg_dump_bin(), "-Fc", "--no-owner", "--no-privileges", "-d", args.db, "-f", str(path)]
-    if not args.full:
-        for t in EXCLUDE_DATA:
-            cmd += [f"--exclude-table-data={t}"]
 
-    logger.info(f"[backup] pg_dump 시작 → {path.name} ({'전체' if args.full else 'fact_v2 데이터 제외'})")
+    logger.info(f"[backup] pg_dump 시작 → {path.name} (전체)")
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         err = f"pg_dump 실패(rc={r.returncode}): {r.stderr.strip()[:500]}"

@@ -143,6 +143,25 @@ def test_eps_lines_excluded():
     assert r.n_match == 1 and r.n_value_diff == 0
 
 
+def test_ni_attribution_acode_excluded_track_a():
+    # ★2026-09-01 Phase 4 실측 세 번째 발견(원문 확인 20260514001486) — instant(BS)
+    # 컨텍스트인데 is_cumulative=True 로 파싱되는 필러가 있어 "비지배지분"(BS 잔액)이
+    # IS 귀속 두 후보와 같은 키 버킷에 떨어져 값-집합 매칭도 못 구한다. 관련 acode 전체를
+    # Track A 대조 대상에서 제외해야 함(EPS 와 동일 정책).
+    face = [_face("ifrs-full_Assets", 1000, row_label="자산총계"),
+            _face("ifrs-full_NoncontrollingInterests", 440453062863,
+                  row_label="비지배지분", cum=True),   # instant 인데 cum=True 파싱 재현
+            _face("ifrs-full_ProfitLossAttributableToNoncontrollingInterests", 54538004861,
+                  row_label="비지배지분", cum=True),
+            _face("ifrs-full_ComprehensiveIncomeAttributableToNoncontrollingInterests", 54490790899,
+                  row_label="비지배지분", cum=True)]
+    lines = [_lrow("자산총계", 1000),
+             _lrow("비지배지분", 54538004861, cum=True), _lrow("비지배지분", 54490790899, cum=True)]
+    r = reconcile_report_lines("R1", face, lines)
+    assert r.n_lines == 1   # 지배/비지배 귀속 3줄 전부 제외, 자산총계만 남음
+    assert r.n_match == 1 and r.n_value_diff == 0
+
+
 def test_in_body_section_false_excluded_none_passes():
     # in_body_section=False(주석표 확정) 만 배제, None(판정불가)은 통과(결측>오탐).
     face = [_face("ifrs-full_Assets", 1000, row_label="재고자산", in_body=False),
@@ -172,13 +191,28 @@ def test_label_normalization_whitespace():
     assert r.n_lines == 1 and r.n_match == 1 and r.n_missing == 0
 
 
-def test_label_duplicate_row_collision_first_wins():
-    # report_lines 쪽에 같은 (basis,라벨) 이 중복되면(coarse 키 충돌) 첫 등장이 대표값 —
-    # 구 acode 키 시절의 first-wins 규약을 그대로 보존.
+def test_label_duplicate_row_collision_value_set():
+    # ★2026-09-01 Phase 4 실측 세 번째 발견 후 재설계 — report_lines 쪽에 같은
+    # (basis,라벨,is_cumulative) 이 중복되면(coarse 키 충돌, 예: BS/IS 양쪽에 같은 라벨)
+    # first-wins 이 아니라 **값-집합 판정**: 후보 중 하나라도 값이 맞으면 match.
     face = [_face("ifrs-full_Assets", 1000, row_label="계")]
-    lines = [_lrow("계", 1000), _lrow("계", 9999)]   # 두 번째는 무시돼야 함
+    lines = [_lrow("계", 1000), _lrow("계", 9999)]   # 순서와 무관하게 1000 을 찾아야 함
     r = reconcile_report_lines("R1", face, lines)
     assert r.n_match == 1 and r.n_value_diff == 0
+
+
+def test_cross_statement_label_collision_both_resolved():
+    # ★2026-09-01 Phase 4 실측(원문 확인 20250514000820 류, 실제 사례는 "비지배지분"
+    # 계열이었지만 그건 이제 acode 정규식으로 통째로 제외되므로(위 테스트) 여기서는
+    # **같은 매커니즘을 겪는 무관 acode 쌍**으로 재현 — 같은 라벨이 BS·IS 양쪽에 등장해
+    # report_lines 에 진짜 2행이 생겨도, 값-집합 판정이면 각 face 라인이 자기 값을
+    # 찾아 match 해야 한다(어느 한쪽 값과 뒤섞여 허위 VALUE_DIFF 나면 안 됨).
+    face = [_face("ifrs-full_FooBalance", 6513242276, row_label="공통라벨"),
+            _face("dart_FooFlowAmount", -63569963, row_label="공통라벨")]
+    lines = [_lrow("공통라벨", 6513242276, stmt="BS"),
+             _lrow("공통라벨", -63569963, stmt="IS")]
+    r = reconcile_report_lines("R1", face, lines)
+    assert r.n_lines == 2 and r.n_match == 2 and r.n_value_diff == 0
 
 
 def test_trackb_current_value_in_report_set():
@@ -227,6 +261,32 @@ def test_trackb_sce_shadow_label_not_confused():
     r = reconcile_report_lines_text("R1", face, lines)
     assert r.n_match == 1 and r.n_value_diff == 0
     assert r.n_missing == 1 and r.missing[0].statement == "SCE"
+
+
+def test_trackb_ni_attribution_excluded():
+    # ★2026-09-01 Phase 4 실측 두 번째 발견 — "지배기업소유주지분" 은 같은 IS 표 안에서
+    # 당기순이익 귀속/총포괄손익 귀속 두 구간에 동일 라벨로 반복 등장한다(원문 확인,
+    # 20170811001164). report_lines 는 구간(section)을 안 담아 라벨만으론 구분 불가 —
+    # EPS 와 같은 정책으로 Track B 대조 대상에서 제외(리더는 안 고침).
+    face = [_tface("is.controlling_ni", -3262478096, label="지배기업소유주지분", stmt="IS")]
+    lines = [_tlrow("지배기업소유주지분", -3262478096, stmt="IS"),   # 당기순이익 귀속(원래 매칭됐을 값)
+             _tlrow("지배기업소유주지분", -4083646780, stmt="IS")]   # 총포괄손익 귀속(구분 불가한 값)
+    r = reconcile_report_lines_text("R1", face, lines)
+    # is.controlling_ni 는 face 후보 자체가 없으므로(제외) 두 report_lines 행 모두
+    # MISSING(비차단) — 종전처럼 값이 다른 쪽이 VALUE_DIFF(차단)로 새면 안 됨.
+    assert r.n_lines == 2 and r.n_match == 0
+    assert r.n_value_diff == 0 and r.n_missing == 2
+
+
+def test_trackb_eps_excluded():
+    # ★2026-09-01 Phase 4 실측 — Track B 도 EPS 셀에 문서 기본단위를 그대로 적용하는
+    # 같은 버그를 겪는다(원문 확인 20130228000989 등, db=829 report=829000000 식 배수
+    # 오적용). canonical 기준으로 Track A 와 동일 정책(제외).
+    face = [_tface("is.eps_basic", 829_000_000, label="기본주당이익", stmt="IS")]
+    lines = [_tlrow("기본주당이익", 829, stmt="IS")]
+    r = reconcile_report_lines_text("R1", face, lines)
+    assert r.n_lines == 1 and r.n_match == 0
+    assert r.n_value_diff == 0 and r.n_missing == 1   # 차단 없이 완전성 지표로만
 
 
 def test_trackb_missing_when_reader_absent():

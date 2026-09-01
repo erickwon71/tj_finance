@@ -19,6 +19,16 @@ Phase B 는 그 바깥의 소계·기타 계정을 포함한 **보고서 본문 
   - 주당/EPS·주식수 계열은 감사 리더(`read_report_face_xbrl`)가 문서 기본단위를 셀에
     그대로 적용해 버리는 알려진 버그(원/주인데 배수 환산)로 오탐의 64%를 차지해(§3-3 실측)
     `_track_a_face()` 에서 명시 제외한다(§ EPS_EXCLUDE_RE 근처 주석).
+  - ★2026-09-01 Phase 4(전수재감사) 중 추가 발견 2건, 둘 다 라벨매칭의 구조적 한계라
+    판단해 EPS 와 같은 정책(리더는 안 고치고 감사대상에서 제외)으로 처리했다:
+    (a) `read_report_face_text()::_read_table()` 의 중복제거 키에 라벨이 빠져 있어
+        같은 canonical·같은 값을 가진 **다른 라벨**이 서로를 억제하던 실버그는 **수정**
+        (라벨을 키에 추가, 아래 참고) — 이건 리더의 진짜 결함이라 리더 자체를 고쳤다.
+    (b) "지배기업소유주지분"/"비지배지분"은 같은 IS 표 안에서 당기순이익 귀속/총포괄손익
+        귀속 두 구간에 동일 텍스트로 반복 등장(원문 확인) — `report_lines` 가 구간을
+        안 담아 라벨만으론 원천적으로 구분 불가(R24~R49 계열의 "라벨 못 믿음" 전례와
+        같은 계정). `_track_b_face()` 에서 `is.controlling_ni`/`is.noncontrolling_ni`
+        명시 제외(Track A 는 XBRL acode 가 두 개념을 이미 구분해 태깅하므로 무관).
 
 정책(사용자 확정, 유지):
   - **본문 전수·라벨 정확대조**: `in_body_section is not False`(True 또는 판정불가 통과,
@@ -57,6 +67,36 @@ REASON_EXTRA = "EXTRA_IN_DB"          # report_lines 본문 행이 보고서 fac
 # 즉 **추출은 고쳐졌는데 감사 리더만 안 고쳐진 상태**(리더 쪽 실제 수정은 범위 밖, 설계문서
 # §8). Track A 감사 대상에서만 제외한다(리더 자체는 손대지 않음 — Phase A 회귀 위험 분리).
 _PER_SHARE_ACODE_RE = re.compile(r"PerShare|NumberOfShares", re.IGNORECASE)
+
+# Track B 도 같은 EPS 단위오적용을 겪는다(Phase 4 실측, `read_report_face_text()` 도
+# 문서 기본단위를 그대로 적용) — canonical 기준으로 대칭 제외(acode 가 없어 정규식 대신
+# canonical 폐집합 사용, EPS 는 이 2종뿐).
+_EPS_CANONICALS = frozenset({"is.eps_basic", "is.eps_diluted"})
+
+# ★2026-09-01 Phase 4 실측(계층2 GC §4-3) 두 번째 발견 — Track B 전용 제외(canonical 기준).
+# "지배기업소유주지분"/"비지배지분" 같은 라벨은 **같은 IS 표 안에서 서로 다른 두 구간**
+# (당기순이익 귀속 vs 총포괄손익 귀속)에 동일 텍스트로 반복 등장한다(원문 확인,
+# 20170811001164). `report_lines` 는 라벨만 저장하고 구간(section)을 안 담으므로
+# (basis,라벨,statement) 키로는 원천적으로 구분 불가 — 이건 라벨 매칭의 한계이지 버그가
+# 아니다. 이 개념쌍은 R24/R25/R26/R35/R43/R44/R49(2026-08 다수 세션)에 걸쳐 이미
+# "라벨 텍스트로는 못 믿는다"고 반복 확인된 계정이기도 하다(`face_audit.py::
+# _ni_attribution_structural_candidates` 독스트링 "regardless of what its own label
+# literally says" 참고). EPS 계열(위 정규식)과 같은 정책: 리더를 고치지 않고 감사 대상에서
+# 제외한다.
+_NI_ATTRIBUTION_CANONICALS = frozenset({"is.controlling_ni", "is.noncontrolling_ni"})
+
+# ★2026-09-01 Phase 4 실측 세 번째 발견 — Track A 도 무관하지 않았다(위 코멘트 최초
+# 서술 정정). 값-집합 판정(reconcile_report_lines 참고)으로 대부분 해결됐지만,
+# "비지배지분"(BS 잔액, `ifrs-full_NoncontrollingInterests`)처럼 **instant(BS) 컨텍스트인데
+# `is_cumulative` 가 True 로 파싱되는 필러가 있어**(원문 확인, 20260514001486) BS 값이
+# `_track_a_key` 의 is_cumulative 축으로도 IS 귀속 두 후보(당기순이익/포괄손익 귀속)와
+# 같은 버킷에 떨어지는 잔여 충돌이 남는다. acode 자체가 XBRL 표준 taxonomy 라 정규식으로
+# 정밀 특정 가능 — "NoncontrollingInterests"|"AttributableToOwnersOfParent" 부분문자열
+# 하나로 관련 IFRS 개념 전부(바로 아래 acode 6종 + FromContinuingOperations 변형)를 잡는다.
+# Phase A(`audit_std_row`)의 is.controlling_ni/is.noncontrolling_ni 는 이미 전용 구조인식
+# 폴백(`_ni_attribution_structural_candidates`)이 따로 있으므로 이 제외로 커버리지가
+# 줄지 않는다 — Phase B(라인 전수, 이 모듈)만의 보충 대상에서 빠질 뿐.
+_NI_ATTRIBUTION_ACODE_RE = re.compile(r"NoncontrollingInterests|AttributableToOwnersOfParent")
 
 
 @dataclass
@@ -110,6 +150,7 @@ def _track_a_face(face_lines: list[FaceLine]) -> list[FaceLine]:
         (report_lines 에 acode 개념이 없음), 이 필터 자체는 "read_report_face_xbrl() 이
         실제로 읽은 XBRL 리터럴 셀인가"를 가리는 용도로 그대로 유지한다.
       - EPS/주식수 계열(acode 정규식) 제외 — §3-3 실측 오탐 64% 클러스터(모듈 상단 주석).
+      - 지배/비지배 귀속 계열(acode 정규식) 제외 — Phase 4 세 번째 발견(모듈 상단 주석).
       - basis 명시(consolidated/separate) — basis=None 은 **주석 컨텍스트**(세그먼트·
         특수관계자·담보 등 다중 셀이 동일 표준태그 재사용) → 본문 아님.
       - row_label 확보(Phase 1) — 매칭 키의 필수 성분. 없는 라인(레이아웃 이례로 라벨 셀을
@@ -119,6 +160,7 @@ def _track_a_face(face_lines: list[FaceLine]) -> list[FaceLine]:
         주석표 확정 신호라 배제."""
     return [ln for ln in face_lines
             if ln.acode.startswith(_XBRL_PREFIXES) and not _PER_SHARE_ACODE_RE.search(ln.acode)
+            and not _NI_ATTRIBUTION_ACODE_RE.search(ln.acode)
             and ln.amount_won is not None and ln.basis is not None
             and ln.row_label and ln.in_body_section is not False]
 
@@ -150,28 +192,38 @@ def reconcile_report_lines(
     (statement 포함)는 그 재측정 이전에 쓰인 초안이라, 실측으로 검증된 3성분 키로 대체한다.
     statement 는 LineAudit 의 진단용 필드로만 보존(가능하면 report_lines 쪽 값을 권위로,
     없으면 face 쪽 유도값으로 폴백).
+
+    ★2026-09-01 Phase 4(전수재감사) 세 번째 발견 — 3성분 키만으론 "비지배지분"/
+    "지배기업소유주지분"처럼 **BS 와 IS 양쪽에 같은 라벨(같은 is_cumulative=False)로
+    등장**하는 계정이 `report_lines` 쪽에서 진짜 2행(BS 값·IS 값)으로 충돌한다. 이걸
+    "첫 등장 하나만 대표로 삼는" 구 first-wins 방식으로 처리하면, 그 키를 공유하는
+    **다른 statement** 의 face 라인이 엉뚱한 행과 비교돼 값이 통째로 뒤바뀐 것처럼
+    보이는 허위 VALUE_DIFF 가 난다(원문 확인, 20250514000820 등 — statement 를 다시
+    키에 넣지 않고, Track B 가 이미 쓰는 **값-집합 판정**으로 통일해 해결: 같은 키를
+    가진 report_lines 후보가 여럿이면 그중 **하나라도 값이 맞으면 match** — Phase A
+    `audit_fields`("후보 어디든 있으면 pass")와 R35 구조후보 확장·Track B 값-집합과
+    동일한 monotonic-widening 철학).
     """
     out = ReportLineAudit(rcept_no=rcept_no)
 
-    # report_lines 인덱스: 키당 1행(동률 라벨 충돌 시 첫 등장이 대표 — 구 acode 키 시절
-    # coarse 키 충돌 처리와 동일한 first-wins 규약, §4 리스크 문서화된 잔여 한계).
-    # basis=None(주석 컨텍스트) 행은 본문 대조 대상 아님 → 제외(face 측 _track_a_face 와
-    # 대칭, extra 오집계 방지 — 구 acode 키 시절과 동일 근거).
-    line_idx: dict[tuple, dict] = {}
+    # report_lines 인덱스: 키당 **후보 리스트**(1개가 보통이지만, 같은 coarse 키를 가진
+    # 서로 다른 concept 이 실제로 존재할 수 있음 — 위 참고). basis=None(주석 컨텍스트)
+    # 행은 본문 대조 대상 아님 → 제외(face 측 _track_a_face 와 대칭, extra 오집계 방지).
+    line_idx: dict[tuple, list[dict]] = {}
     for r in line_rows:
         label = r.get("label_raw")
         if r.get("value_won") is None or not label or r.get("basis") is None:
             continue
         key = _track_a_key(r.get("basis"), label, r.get("is_cumulative"))
-        line_idx.setdefault(key, r)
+        line_idx.setdefault(key, []).append(r)
 
     face_keys: set[tuple] = set()   # face 에 등장한 전 키(match·value_diff 무관) → extra 판정용
     for ln in _track_a_face(face_lines):
         out.n_lines += 1
         key = _track_a_key(ln.basis, ln.row_label, ln.is_cumulative)
         face_keys.add(key)
-        lr = line_idx.get(key)
-        if lr is None:
+        candidates = line_idx.get(key)
+        if not candidates:
             stmt = ln.statement or _statement_of(ln.canonical)
             out.n_missing += 1
             out.missing.append(LineAudit(
@@ -179,15 +231,17 @@ def reconcile_report_lines(
                 report_won=ln.amount_won, db_won=None, match=False,
                 reason=REASON_MISSING, acode=ln.acode))
             continue
-        stmt = lr.get("statement") or ln.statement or _statement_of(ln.canonical)
-        db_won = lr["value_won"]
-        if won_match(ln.amount_won, db_won, ln.adecimal):
+        matched = next((c for c in candidates
+                        if won_match(ln.amount_won, c["value_won"], ln.adecimal)), None)
+        if matched is not None:
             out.n_match += 1
         else:
             out.n_value_diff += 1
+            rep = candidates[0]   # 진단 표시용 대표값(전건 불일치라 어느 것도 정답 아님)
+            stmt = rep.get("statement") or ln.statement or _statement_of(ln.canonical)
             out.value_diffs.append(LineAudit(
                 label=key[1], basis=ln.basis, statement=stmt,
-                report_won=ln.amount_won, db_won=db_won, match=False,
+                report_won=ln.amount_won, db_won=rep["value_won"], match=False,
                 reason=REASON_VALUE_DIFF, acode=ln.acode))
 
     # 역방향: report_lines 본문 행 중 보고서 face 에 아예 없던 키 → EXTRA(감사 reader 커버
@@ -205,7 +259,9 @@ def _track_b_face(face_lines: list[FaceLine]) -> list[FaceLine]:
     (`read_report_face_text()` 의 `label=label[:80]`, 라벨 셀 자체를 그대로 담음) — 그래서
     Track B 는 Track A 의 `row_label` 같은 별도 필드가 필요 없다."""
     return [ln for ln in face_lines
-            if ln.canonical and not ln.acode.startswith(_XBRL_PREFIXES)
+            if ln.canonical and ln.canonical not in _NI_ATTRIBUTION_CANONICALS
+            and ln.canonical not in _EPS_CANONICALS
+            and not ln.acode.startswith(_XBRL_PREFIXES)
             and ln.amount_won is not None and ln.basis is not None]
 
 

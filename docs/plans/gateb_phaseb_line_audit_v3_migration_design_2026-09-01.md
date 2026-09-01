@@ -1,0 +1,444 @@
+# Gate B Phase B(`line_audit.py`) fact_v2 이탈 설계 — 계층2 GC §4-3 (2026-09-01)
+
+★이 문서는 **설계 전용**이다. 구현은 포함하지 않는다(`CLAUDE.md` "계획 후 대기" 정책).
+
+★★**방향 결정 완료(2026-09-01, 사용자)**: **Option 2 — 라벨 기반 이식 + 주당/주식수 계열
+명시 제외**(§5 권고안 채택). Phase 0-5는 결정 완료로 소진됐다. 다만 **착수 지시는 아직
+별건**이다 — 실제 실행은 사용자의 명시적 요청을 기다린다.
+
+- 상위 트랙: `docs/plans/factv2_stdv2_gc_scoping_2026-09-01.md` §4-3
+- 선행 완료: §4-1(reconcile 확인) · §4-2(`extended_financials` 뷰 라벨 기반 재설계, 커밋 `243e9ee`)
+- 후속: §4-4 `fact_v2` DROP(55GB 회수)
+
+---
+
+## 0. 결론 선행 (요약)
+
+1. **스코핑 문서의 "가장 고위험" 평가는 실측 결과 과대평가였다.** 근거: 지난 한 달간
+   R15~R60 전수재감사의 "회귀 0건" 판정은 전부 **Phase A(`face_audit.py` →
+   `face_audit` 테이블)** 기준이었고, Phase A는 `fact_v2`를 **단 한 줄도 읽지 않는다**
+   (§2-1 코드 근거). §4-3이 건드리는 Phase B(`line_audit.py` → `face_line_audit`)는
+   **완전히 분리된 측정 전용 축**이다. → **§4-3이 R-트랙 기준선을 깨뜨릴 경로는 구조적으로
+   없다.**
+2. 다만 Phase B는 죽어 있지 않다 — **데일리 알림의 실제 소비자**가 하나 살아 있다
+   (`collect_new.py:765`, `line_value_diff`가 verify 단계 실패 알림을 띄운다). "측정 전용"은
+   promote 뷰 기준이지 배선 기준이 아니다.
+3. **진짜 난점은 위험이 아니라 키 설계다.** `report_lines`에는 `acode`가 없고
+   (§3-2 스키마 실측), 게다가 현재 `FaceLine.label`은 **계정 라벨이 아니라 금액 셀
+   텍스트**다(`face_audit.py:790`, `label=text[:80]`) — 즉 **지금 있는 재료만으로는
+   라벨 조인조차 불가능**하다. 이식하려면 리더에 행 라벨 확보를 먼저 넣어야 한다(Phase 1).
+4. **현재 Phase B 신호의 품질은 이미 심각하게 낮다.** Track A는 감사된 17,552 rcept 중
+   **9,609건(54.7%)이 fail_a**이고, 그 값불일치 89,660줄 중 **57,368줄(64.0%)이
+   EPS·주식수 계열 단일 오탐 클러스터**다(§3-3). 이식 여부와 무관하게 이 축은 이미
+   트리아지되지 않은 채 방치돼 있었다.
+5. **권고 = Option 2(라벨 기반 이식) + EPS/주식수 계열 명시 제외.** 이유는 §5. 단,
+   Option 1(은퇴)도 방어 가능한 선택지였다.
+   → ★**2026-09-01 사용자 결정: Option 2 채택.** 결정 근거로 제시된 것은 "②로 갔다가
+   실패하면 ①로 내려갈 수 있지만 역은 성립하지 않는다"(가역성)와 "감사 대상이 곧 버릴
+   `fact_v2`에서 실제 소스인 `report_lines`로 옮겨간다"(정정 성격)이다.
+
+---
+
+## 1. 이 단계가 하는 일 / 하지 않는 일
+
+| | 대상 |
+|---|---|
+| **범위 안** | `fin2/audit/line_audit.py`(Phase B 리콘실러), `scripts/gateb_audit.py::audit_lines()`의 `fact_v2` 쿼리, `face_line_audit` 테이블 의미, `corp_verify_status.line_*` 롤업, 데일리 알림축 |
+| **범위 밖** | Phase A(`face_audit.py`·`audit_std_row`·`face_audit` 테이블) — `fact_v2` 무관, 손대지 않는다 |
+| **범위 밖** | `fact_v2` DROP 자체와 나머지 잔여 소비자(§7) — §4-4 |
+| **범위 밖** | Track A fail_a 9,609건의 **원인 트리아지**(EPS 오탐 수정 등) — 이식 후 별도 R-트랙 후보(§8) |
+
+---
+
+## 2. 현재 구조 실측
+
+### 2-1. Phase A와 Phase B는 완전히 분리돼 있다 (★핵심 근거)
+
+```
+Gate B (scripts/gateb_audit.py)
+├─ Phase A  audit_corp() → audit_std_row()      [fin2/audit/face_audit.py]
+│    비교: 원문 XML 독립 재추출(FaceLine) ↔ std_financials_v3 의 25개 표준필드
+│    산출: face_audit 테이블 (gate_status: pass/fail_a/fail_b/pending)
+│    ★ fact_v2 참조 0건 — grep 확인(fin2/audit/ 내 "fact_v2" 히트는 line_audit.py 뿐)
+│    ★ R15~R60 전 트랙의 "전수재감사 회귀 0건" 판정 = 전부 이 표의 gate_status 전이
+│
+└─ Phase B  audit_lines()  → reconcile_report_lines{,_text}()  [fin2/audit/line_audit.py]
+     비교: 같은 FaceLine ↔ fact_v2 (col_index=0, NOT is_dimensional)
+     산출: face_line_audit 테이블 (line_gate_status: pass/fail_a/pending)
+     ★ 이번 §4-3의 유일한 대상
+```
+
+`face_audit.py`가 `fact_v2`를 안 읽는다는 사실이 이 트랙 전체의 안전 근거다 — Phase B를
+어떻게 바꾸든(심지어 통째로 지워도) Phase A의 판정은 **비트 단위로 동일**하다.
+
+### 2-2. `fact_v2` 의존 지점 — 정확히 한 곳
+
+`scripts/gateb_audit.py:303-311`
+
+```sql
+SELECT rcept_no, acode, canonical_account, basis, is_cumulative, adecimal, amount_won
+FROM fact_v2
+WHERE rcept_no = ANY(:rs) AND col_index = 0 AND NOT COALESCE(is_dimensional, false)
+```
+
+`line_audit.py` 자체는 **순수 함수**(DB/IO 없음)라 `fact_v2`라는 이름만 docstring에
+등장할 뿐, 실제 의존은 위 쿼리 하나다. → **이식 표면적은 생각보다 작다.**
+
+### 2-3. Phase B 산출물의 소비자 인벤토리 (전수 grep)
+
+| 소비자 | 성격 | 조치 |
+|---|---|---|
+| `scripts/collect_new.py:229-235, 761-767` | **데일리 알림** — `line_value_diff>0`이면 verify 실패 알림 + `fail_corps` 목록에 등재 | ★유일한 살아있는 소비자. 이식/은퇴 어느 쪽이든 배선 조치 필요 |
+| `scripts/verify_corp_sequential.py:137-141, 182` | `corp_verify_status.line_total/line_value_diff/line_missing` 롤업 | 배선 조치 |
+| `collector/models.py::FaceLineAudit` (1157) · `CorpVerifyStatus.line_*` (1252) | 스키마 | 의미 재정의 또는 DROP |
+| promote 뷰(`standard_financials`) | **미참조**(`collector/db.py:151` 주석, models.py:1154) | 조치 불필요 |
+| `scripts/dq_assertions.py` | **미참조**(grep 0건) | 조치 불필요 |
+| `scripts/restore_drill.py:39` · `purge_foreign_corps.py:53` | 테이블 목록 리터럴 | 은퇴 시에만 정리 |
+| `scripts/archive/gateb/line_audit_trackb.py` | 아카이브(1회성 진단) | 무시 |
+| `fin2/tests/test_line_audit.py` | 단위테스트 12건 | 재작성 또는 삭제 |
+
+---
+
+## 3. 실측 데이터 (2026-09-01, psql)
+
+### 3-1. `face_line_audit` 현황 — 155,216 rcept
+
+| line_gate_status | rcept | 라인 | match | value_diff | missing | extra |
+|---|---:|---:|---:|---:|---:|---:|
+| pass | 111,361 | 12,989,310 | 12,950,419 | 0 | 38,891 | 6,233 |
+| fail_a | 14,403 | 3,231,706 | 3,130,580 | 97,476 | 3,650 | 10,565 |
+| pending | 29,452 | 0 | 0 | 0 | 0 | 0 |
+
+트랙별:
+
+| track | rcept | pass | fail_a | pending | value_diff 라인 |
+|---|---:|---:|---:|---:|---:|
+| A (XBRL acode 정확대조) | 17,552 | 7,943 | **9,609 (54.7%)** | 0 | 89,660 |
+| B (텍스트 canonical 값집합) | 108,908 | 103,418 | 4,794 (4.4%) | 696 | 7,816 |
+| C(PDF) / D(xbrl_zip) / NULL | 28,756 | 0 | 0 | 28,756 | 0 |
+
+★2026-08-17 두 설계문서(`gateb_audit_performance_design`·`gateb_evidence_grade_redesign`)의
+**"n_missing 86%로 사실상 미작동"이라는 서술은 이제 낡았다** — 그 사이 XBRL 원문 파서가
+`fact_v2`를 채워(현재 74,189,269행 / 138,254 rcept) missing은 전체 라인 16,221,016줄 중
+42,541줄(0.26%)로 떨어졌다. Phase B는 **지금은 실제로 작동 중**이다. 문제는 커버리지가
+아니라 **신호 품질**로 옮겨갔다(아래).
+
+### 3-2. `report_lines`에 없는 것 (`\d` 실측)
+
+| 컬럼 | `fact_v2` | `report_lines` |
+|---|---|---|
+| `acode` | ✅ (`varchar(255)`, `uq_fact_v2_cell(rcept_no, acode, acontext_raw)`) | ❌ **없음** |
+| `canonical_account` | ✅ | ❌ **없음** |
+| `is_dimensional` | ✅ | ❌ 없음(차원 셀 자체를 안 만듦) |
+| `basis` / `is_cumulative` / `col_index` / `adecimal` | ✅ | ✅ 전부 있음 |
+| 금액 | `amount_won` | `value_won` |
+| 라벨 | (acode가 대신) | `label_raw` ★ **원문 그대로, 정규화 없음**(`report_lines.py:277`) |
+| 기타 | `acontext_raw` | `context_raw`(합성 마커 `text:BS:con:e:c0:2023`), `source_ref`, `node_role`, `section_path`, `depth`, `header_hint` |
+
+원문 표본 확인(`20240312000736` 삼성전자 FY2023 BS): `label_raw="현금및현금성자산 (주4,28)"`,
+`context_raw="text:BS:con:e:c0:2023"` — XBRL ACODE/ACONTEXT는 **저장되지 않는다**.
+`report_lines.py`가 ACODE를 읽기는 하지만(`:520` `acontext_missing` 신호 산출) 그건
+컬럼 절삭 판단용 내부 신호일 뿐 영속화되지 않는다.
+
+**커버리지는 문제없다** — 감사된 Track A rcept 17,552건 중 `report_lines` 보유
+**17,552건(100%)**, Track B 108,908건 중 108,398건(99.5%).
+
+### 3-3. ★Track A fail_a의 64%는 단일 오탐 클러스터다
+
+`value_diff_detail` 전수 분해(89,660줄, 상세 캡 200에 걸린 행 없음 — 합계 정확 일치):
+
+| acode | 라인 | rcept |
+|---|---:|---:|
+| `ifrs-full_BasicEarningsLossPerShare` | 26,442 | 8,604 |
+| `ifrs-full_DilutedEarningsLossPerShare` | 21,010 | 6,933 |
+| `ifrs-full_BasicEarningsLossPerShareFromContinuingOperations` | 2,621 | 1,234 |
+| `ifrs-full_DepreciationInvestmentProperty` | 2,058 | 1,180 |
+| `ifrs-full_DilutedEarningsLossPerShareFromContinuingOperations` | 1,893 | 919 |
+| `ifrs-full_RightofuseAssets` | 1,112 | 600 |
+| `dart_BasicEarningsLossPerSharePreferredStock` | 1,077 | 331 |
+| `dart_InterestIncomeFinanceIncome` | 1,028 | 563 |
+| `dart_InterestExpenseFinanceExpense` | 844 | 469 |
+| `ifrs-full_NumberOfSharesAuthorised` / `NumberOfSharesIssued` | 728 / 649 | 381 / 345 |
+
+**주당·주식수 계열(`~ 'PerShare|NumberOfShares'`) 합계 = 57,368줄 / 89,660줄 = 64.0%.**
+
+표본 원문 확인(3건 무작위):
+
+```
+20250515002122  acode=ifrs-full_BasicEarningsLossPerShare  basis=consolidated
+                report_won=151,000   db_won=151        (셀 리터럴 "151")
+20260323001448  ...                  report_won=407,000,000  db_won=407
+20260814000542  ...                  report_won=237,000,000  db_won=237
+```
+
+메커니즘: 감사 리더(`read_report_face_xbrl`)가 EPS 셀에 **문서 기본단위 ADECIMAL을
+그대로 적용**해 `151 → 151,000`으로 환산하는데, EPS는 원/주라 환산 대상이 아니다.
+`fact_v2` 쪽이 정답(151)이고 **감사 리더가 틀렸다**. 이건 이미 알려진 계열의 함정으로,
+`report_lines.py`는 `_emit_eps_lines()`(R28 트랙)로 이 문제를 **따로 처리**하고 있다 —
+즉 **추출 파이프라인은 고쳐졌는데 감사 리더만 안 고쳐진 상태**다.
+
+두 번째 클러스터(`DepreciationInvestmentProperty`·`RightofuseAssets`·`Interest*` 등)는
+`line_audit.py:82-86` docstring이 스스로 경고한 **coarse 키(acode,basis,is_cumulative)의
+주석 다중셀 충돌**로 보인다 — 본문 basis 태깅으로 한정해도 남는 잔여. 미확정(Phase 0-4).
+
+### 3-4. 규모 참고
+
+| 테이블 | 행수(est) | 크기 |
+|---|---:|---:|
+| `fact_v2` | 73,676,192 | **55 GB** ← §4-4 회수 목표 |
+| `note_lines` | 254,255,184 | 52 GB |
+| `report_lines` | 60,685,464 | 30 GB |
+| `face_line_audit` | 155,216 | 166 MB |
+| `face_audit` | 578,583 | 159 MB |
+
+---
+
+## 4. 위험 재평가 — 스코핑 문서 §2-2/§4-3 서술의 정정
+
+| 스코핑 문서 서술 | 실측 결과 |
+|---|---|
+| "Gate B 신뢰성의 핵심 감사 리더" | **부정확.** 핵심 리더는 Phase A(`face_audit.py`)이고 그건 `fact_v2` 무관. Phase B는 별개 축 |
+| "감사 리더를 잘못 옮기면 '회귀 0건' 판정 자체를 못 믿게 된다" | **해당 없음.** R-트랙 회귀 판정은 `face_audit.gate_status` 전이만 본다. §4-3은 그 표를 안 건드린다 |
+| "가장 크고 리스크 높음" | **작업량은 중간, 리스크는 낮음.** 이식 표면적 = SQL 1개 + 순수함수 1개. 다만 **키 설계 변경 = Phase B 기준선 리셋**이라 트리아지 부담은 실재 |
+| "Track A/B 로직 전체 재설계가 필요" | **맞음.** 단 이유가 다르다 — `report_lines`에 acode가 없어서가 아니라, **`FaceLine`에 행 라벨 자체가 없어서**(§3-2 하단, `label=text[:80]`은 금액 텍스트) |
+
+**남는 진짜 리스크 3가지**
+
+1. **기준선 리셋** — 키가 바뀌면 현재 `face_line_audit` 155,216행은 전부 의미가 달라진다.
+   전수 재감사(`--recheck`) 필요, 사용자 실행 장시간(Phase A 전수가 90분 규모였으므로
+   Phase B 포함 전수는 그 이상). [[feedback-long-running-commands]]
+2. **데일리 알림 오작동** — 이식 직후 `line_value_diff`가 새 값 분포로 바뀌면
+   `collect_new.py`의 알림이 폭주하거나 반대로 조용해질 수 있다. Phase 4-5에서 임계 재설정.
+3. **순환 감사 위험** — DB측을 `report_lines`로 바꾸면 "리더 ↔ 추출기"가 같은
+   `document.xml`을 본다. 같은 코드 경로를 공유하면 감사가 무의미해진다.
+   → **실제로는 공유하지 않는다**: 감사 리더는 `TE[@ACODE]` + `ACONTEXT` 태그에서
+   basis/기간/단위를 직접 얻고(`face_audit.py:702-796`), `report_lines.py`는 표
+   렌더링(열 선택·단위=열 판정·섹션 경계·선두 None 절삭 R-규칙)으로 얻는다. **역사적
+   버그(R28·classB 유형1·R34/R35 등)가 전부 후자에 있었으므로 감사 가치는 오히려 커진다.**
+   단 이 독립성은 **명시적으로 지켜야 할 불변식**이다(Phase 2-1 설계 제약으로 등재).
+
+---
+
+## 5. 선택지 비교
+
+| | Option 1 은퇴 | **Option 2 라벨 기반 이식 (권고)** | Option 3 `report_lines.acode` 추가 | Option 4 Track B만 이식 |
+|---|---|---|---|---|
+| 내용 | `line_audit.py` 삭제, `face_line_audit` DROP, 배선 제거 | DB측을 `fact_v2`→`report_lines`로, 키를 acode→(정규화 라벨) | 스키마에 acode 컬럼 신설 후 충실 이식 | Track A 은퇴 + Track B만 라벨 이식 |
+| 작업량 | 소 (1세션) | 중 (2~3세션) | **대** — 60.7M행 전수 재추출 백필 | 중소 |
+| §4-4 차단 해소 | ✅ 즉시 | ✅ | ✅ (백필 완료 후) | ✅ |
+| 신호 보존 | ❌ 전량 소실 | ✅ + 감사 대상이 **실제 계층3 소스**(`report_lines`)로 바뀌어 오히려 유의미 | ✅ 충실 | 부분(A 소실) |
+| 되돌리기 | 어려움(재구축 비용) | 쉬움(리더/키만) | 쉬움 | 중간 |
+| 결정적 단점 | 데일리 알림축 1개 소실 + 완전성 지표(missing/extra) 영구 소실 | 기준선 리셋 트리아지 부담 | Track B는 어차피 acode가 없어 **절반만 해결**되는데 비용은 최대 → **비추천** | Track A가 감사하던 "XBRL 태그 ↔ 표 렌더링" 교차검증이 사라짐 |
+
+### 권고: Option 2 + 주당/주식수 계열 명시 제외
+
+근거 3가지:
+
+1. **감사 대상이 옳은 곳으로 이동한다.** 지금 Phase B는 곧 없어질 `fact_v2`를 감사하고
+   있다 — 계층3(std_v3)이 실제로 읽는 건 `report_lines`다. 이식은 "기능 보존"이 아니라
+   **감사 대상 정정**이다.
+2. **오탐 64%를 값싸게 걷어낼 수 있다.** 주당/주식수 계열 제외는 필터 한 줄이고, 원인이
+   감사 리더의 단위 오적용임이 표본으로 확인됐다(§3-3).
+3. **은퇴는 언제든 가능하지만 재구축은 비싸다.** Option 2가 실패하면 그때 Option 1로
+   내려가면 된다(역은 성립 안 함).
+
+★단, **Option 1도 정당한 선택**이다 — "1,714개사에 fail_a를 띄우면서 한 달간 아무도
+트리아지하지 않은 지표"라는 사실은 그 자체로 은퇴 논거다. **Phase 0-5에서 사용자가 결정.**
+
+---
+
+## 6. 단계별 TODO (권고안 Option 2 기준)
+
+> 표기: `[R]`=읽기 전용, `[W]`=코드/DB 변경, `[U]`=사용자 실행(장시간), `[D]`=사용자 결정
+> 각 Phase 끝의 **게이트**를 통과하지 못하면 다음 Phase로 넘어가지 않는다.
+
+### Phase 0 — 착수 전 확정 (읽기 전용, 0.5세션)
+
+- [ ] **0-1** `[R]` Phase A의 `fact_v2` 무의존 최종 확인 — `grep -rn "fact_v2" fin2/audit/`
+      결과가 `line_audit.py` 단독인지 재확인(이 문서 §2-1의 근거를 커밋 시점에 재검증)
+- [ ] **0-2** `[R]` **기준선 스냅샷 생성** — `face_line_audit` 전체를 별도 테이블로 복제
+      (`face_line_audit_snapshot_2026_09_01`). 전이 행렬(Phase 4-3)의 기준이 되므로
+      **이걸 안 만들면 이식 후 회귀 판정 자체가 불가능하다**. [[gateb-full-reaudit-is-required-to-close]]
+- [ ] **0-3** `[R]` 데일리 알림 실제 발화 이력 확인 — 최근 30일 `collect_new.py` 로그에서
+      `line_value_diff` 비0 발화 빈도. **상시 발화 중이면** "기준선 리셋이 회귀가 아니다"의
+      근거가 되고, 조용했다면 이식 후 알림 폭주를 방지할 임계 설계가 필요해진다
+- [ ] **0-4** `[R]` 2차 오탐 클러스터 원인 확정 — `DepreciationInvestmentProperty` /
+      `RightofuseAssets` / `dart_Interest*` 표본 3건 **원문 XML 직접 대조**로
+      "주석 다중셀 coarse 키 충돌" 가설 검증. [[feedback-verify-against-source]]
+      (결과에 따라 Phase 2-2의 제외 정책 범위가 달라진다)
+- [x] **0-5** `[D]` ~~사용자 결정: Option 1(은퇴) / 2(라벨 이식) / 4(Track B만)~~
+      → **완료(2026-09-01): Option 2 채택.** 0-2~0-4보다 먼저 결정됐으므로,
+      0-3(경보 발화 이력)·0-4(2차 클러스터 원인)는 **방향 판단용이 아니라 Phase 2-2의
+      제외 정책 범위 확정용**으로 성격이 바뀐다(여전히 필수, 순서만 유지)
+
+> **게이트 0**: 0-2 스냅샷이 존재할 것(절대 조건 — 이게 없으면 Phase 4-3 전이 판정 불가).
+> ~~Option 1 선택 시 → §6-A로 분기~~ — Option 2 확정으로 §6-A는 **미사용**(중도 후퇴
+> 시나리오용으로만 문서에 보존).
+
+### Phase 1 — `FaceLine`에 행 라벨 확보 (Track A 이식의 전제)
+
+- [ ] **1-1** `[W]` `FaceLine`에 `row_label: str | None = None` 필드 추가
+      (`fin2/audit/face_audit.py:96` 부근). **기존 `label` 필드는 건드리지 않는다** —
+      Phase A의 `audit_std_row`/evidence 경로가 그 값을 쓰고 있어 의미를 바꾸면
+      **Phase A 회귀**가 된다(§4 리스크 3의 반대 방향 사고)
+- [ ] **1-2** `[W]` `read_report_face_xbrl()`에서 `row_label=_row_label_text(te)` 채우기
+      (`face_audit.py:702-796`). `_row_label_text`는 이미 존재(`:685`)하며 UDF acode
+      경로에서 실사용 중 — 신규 함수 불요
+- [ ] **1-3** `[W]` 라벨 정규화 함수 확정 — `_normalize_ws`(`:681`) 재사용 + 주석번호
+      꼬리표 제거 필요 여부 판단. ★`report_lines.label_raw`는 **정규화 없는 원문**
+      (`"현금및현금성자산 (주4,28)"`)이므로 **양쪽에 같은 정규화를 적용**해야 한다.
+      R19(주석번호 가드) 선례 확인 후 결정
+- [ ] **1-4** `[R]` **매칭률 실측(게이트)** — 표본 200 rcept에 대해
+      `face.row_label(정규화)` ↔ `report_lines.label_raw(정규화)` 조인 성공률 측정.
+      Track A 라인 기준 매칭률을 산출하고, 미매칭 사유를 상위 5개 유형으로 분해
+
+> **게이트 1**: 1-4 매칭률이 **95% 미만**이면 Option 2를 재검토한다(라벨 키가 불안정하다는
+> 뜻 → Option 4 축소 또는 Option 1 은퇴로 후퇴). 95%↑면 Phase 2 진행.
+> ★이 게이트를 건너뛰고 구현부터 들어가지 말 것 — [[feedback-plan-then-wait]]
+
+### Phase 2 — 리콘실러 재구현 (`fin2/audit/line_audit.py`)
+
+- [ ] **2-1** `[W]` `reconcile_report_lines()` 재작성 — 입력 `fact_rows` →
+      `line_rows`(= `report_lines` 행 dict). 매칭 키를
+      `(acode, basis, is_cumulative)` → `(statement, basis, norm_label, is_cumulative)`.
+      비교값 `amount_won` → `value_won`.
+      **설계 불변식으로 docstring에 명시**: "감사 리더는 `TE[@ACODE]`/`ACONTEXT` 경로,
+      `report_lines`는 표 렌더링 경로 — 이 독립성이 감사의 전부다. 어느 한쪽이 상대
+      코드를 재사용하기 시작하면 이 감사는 무효가 된다"(§4 리스크 3)
+- [ ] **2-2** `[W]` **주당/주식수 계열 제외 정책** — acode 정규식
+      `PerShare|NumberOfShares` 계열을 `_track_a_face()`에서 제외하고, 제외 사유를
+      상수+주석으로 명시(§3-3 실측 근거 링크). 0-4 결과에 따라 2차 클러스터도 추가
+- [ ] **2-3** `[W]` `reconcile_report_lines_text()`(Track B) 재작성 —
+      현재는 `fact_v2.canonical_account` ↔ face canonical 값집합. `report_lines`엔
+      canonical이 없으므로 **둘 중 택1**:
+      (a) 감사 시점 `account_mapper`를 `label_raw`에 적용해 canonical화
+          (선례: §4-2 `combine.py::combine_full()`이 이미 라벨→캐노니컬 매핑을 완결),
+      (b) canonical을 버리고 라벨 직접 대조로 통일(Track A와 같은 키 → **A/B 통합 가능**).
+      ★(b)를 우선 검토 — A/B가 같은 메커니즘이 되면 코드/트리아지가 모두 단순해진다
+- [ ] **2-4** `[W]` `fin2/tests/test_line_audit.py` 재작성 — 기존 12건의 fixture는
+      `fact_v2` 모양(acode/amount_won)이라 전량 갱신 필요. 신규 케이스 추가:
+      라벨 중복행 충돌, EPS 제외, 정규화 경계
+- [ ] **2-5** `[R]` `pytest tests/ fin2/tests/` — ★루트 범위 없이
+      ([[feedback-pytest-scope-raw-report-symlink]] NAS 심링크 정지 방지)
+
+> **게이트 2**: 단위테스트 전건 통과 + 기존 pytest 회귀 0건.
+
+### Phase 3 — 배선 (`scripts/gateb_audit.py`)
+
+- [ ] **3-1** `[W]` `audit_lines()`의 `fact_v2` 쿼리(`:303-311`)를 `report_lines`
+      조회로 교체 — `WHERE rcept_no = ANY(:rs) AND col_index = 0`
+      (`is_dimensional` 조건은 `report_lines`에 개념 자체가 없으므로 **삭제**,
+      삭제 사유를 주석으로 남길 것)
+- [ ] **3-2** `[W]` `READER_VERSION` bump (`"trackAB-v2"` → 신규) — 기준선이 바뀌었음을
+      데이터에 남긴다. `face_line_audit.reader_version`으로 구/신 판별 가능해짐
+- [ ] **3-3** `[W]` `face_line_audit` 컬럼 주석 갱신 — `n_value_diff`/`n_missing`/
+      `n_extra`의 "fact_v2" 서술을 "report_lines"로(`collector/models.py:1145-1178`).
+      **컬럼 자체는 유지**(스키마 변경 없음 → 마이그레이션 불요)
+- [ ] **3-4** `[W]` `line_audit.py`·`gateb_audit.py`·`models.py` 모듈 docstring의
+      "fact_v2 커버리지 2.4%" 낡은 서술 전량 정정(§3-1 실측으로 대체)
+- [ ] **3-5** `[R]` 단일 기업 스모크 — `--corp <표본> --recheck --no-commit`으로
+      크래시 없음 + 라인 집계가 0이 아님 확인
+
+> **게이트 3**: 3-5 스모크 통과. `--no-commit`이므로 DB 무영향.
+
+### Phase 4 — 전수 재감사 + 기준선 재설정 (★가장 오래 걸림)
+
+- [ ] **4-1** `[R]` Phase A 스냅샷도 확보 — `face_audit`의 `gate_status` 현황을
+      복제. **Phase B만 바꿨는데 Phase A가 움직였다면 그건 진짜 사고**이므로 이 대조가
+      §4-3의 안전 증명이다
+- [ ] **4-2** `[U]` **전수 재감사 실행** — `python scripts/gateb_audit.py --source v3
+      --recheck` (사용자 터미널 실행, 장시간). 백그라운드 자동실행 ~40분 상한에 걸리므로
+      **반드시 사용자 실행** [[feedback-long-running-commands]]
+- [ ] **4-3** `[R]` **전이 행렬 작성** — 스냅샷(0-2) × 신규 결과를 `rcept_no` PK 조인해
+      `line_gate_status` 전이표 산출. ★**총량 비교로 판단하지 말 것** —
+      [[gateb-trade-payables-classB-two-bugs-2026-08-29]]의 교훈(총량은 커버리지 변화에
+      오염된다, PK 조인 전이표만이 신호)
+- [ ] **4-4** `[R]` **Phase A 무영향 확인** — 4-1 스냅샷과 대조해 `face_audit.gate_status`
+      전이 **0건**. 1건이라도 움직이면 즉시 중단하고 원인규명
+- [ ] **4-5** `[R]` 신규 fail_a 트리아지 — 상위 클러스터 3개를 acode/라벨별로 분해하고
+      각 클러스터에서 표본 2건씩 **원문 XML 직접 대조**. "감사 리더가 틀렸는가 /
+      `report_lines`가 틀렸는가"를 판정. **후자면 그건 계층2 진짜 버그**이므로 별도
+      R-트랙 후보로 등재(이 트랙에서 고치지 않는다 — 스코프 폭주 방지)
+- [ ] **4-6** `[W]` 데일리 알림 임계 재설정 — `collect_new.py:234, 765`.
+      4-3/4-5 결과로 나온 정상 배경 수준(baseline noise)을 반영. 무조건 `vd>0` 발화가
+      부적절하다고 판명되면 임계 도입 또는 **트랙별 분리 집계**
+
+> **게이트 4**: 4-4가 **전이 0건**일 것(절대 조건). 4-5에서 클러스터가 전부 원인 특정될 것.
+
+### Phase 5 — 정리·문서·인계
+
+- [ ] **5-1** `[W]` `docs/PARSING_RULES.md` 등재 여부 판단 — 파싱 규칙 변경이 아니라
+      **감사 규칙 변경**이므로 R번호 부여는 부적절할 수 있다. 이 문서 링크만 걸지
+      R-엔트리를 만들지 결정
+- [ ] **5-2** `[W]` 스코핑 문서(`factv2_stdv2_gc_scoping_2026-09-01.md`) §4-3 갱신 —
+      완료 표시 + §4 위험평가 정정 반영
+- [ ] **5-3** `[R]` **§4-4 잔여 블로커 목록 갱신**(§7) — `fact_v2` DROP까지 남은 것 재실측
+- [ ] **5-4** `[W]` 커밋 (사용자에게 메시지 복사용으로 제시, `CLAUDE.md` GIT 정책)
+
+### §6-A — Option 1(은퇴) 대체 TODO ★미채택 경로 (중도 후퇴용으로만 보존)
+
+> 2026-09-01 결정으로 Option 2가 채택돼 **이 절은 실행 대상이 아니다.** 게이트 1(라벨
+> 매칭률 95%)에서 후퇴하게 될 경우에만 여기로 분기한다.
+
+- [ ] **A-1** `[R]` 0-2 스냅샷을 `pg_dump -Fc`로 파일 백업(`db_backups/`) —
+      §6-3 `std_financials_v2` DROP 때와 동일 절차(복원 가능성 확보)
+- [ ] **A-2** `[W]` `fin2/audit/line_audit.py` 삭제 + `fin2/tests/test_line_audit.py` 삭제
+- [ ] **A-3** `[W]` `scripts/gateb_audit.py` — `audit_lines()`·`--no-line-audit` 인자·
+      Phase B 요약 출력(`:415-420`)·import 제거
+- [ ] **A-4** `[W]` `scripts/collect_new.py` — `line_audit=True` 인자 제거,
+      `line_value_diff` 알림축 제거(`:197, 229-235, 761-767`)
+- [ ] **A-5** `[W]` `scripts/verify_corp_sequential.py` 롤업 제거(`:137-141, 182`)
+- [ ] **A-6** `[W]` `collector/models.py` — `FaceLineAudit` 클래스 제거 +
+      `CorpVerifyStatus.line_*` 3컬럼 제거(마이그레이션 필요)
+- [ ] **A-7** `[W]` `scripts/restore_drill.py:39` · `purge_foreign_corps.py:53` 목록 정리
+- [ ] **A-8** `[W]` `DROP TABLE face_line_audit` (166MB)
+- [ ] **A-9** `[R]` 데일리 1회 완주 확인(`collect_new.py`가 크래시 없이 끝나는지) —
+      ★§6-3 DROP 때 `cf_da_sync`/`dq_assertions`가 죽은 채 발견된 전례가 있으므로
+      **`pg_depend` 확인 + 실제 1회 실행**을 둘 다 할 것 [[delisting-filepath-nfc-nfd-trap]] 계열 교훈, §5-d 정정 참고
+
+---
+
+## 7. §4-4(`fact_v2` DROP) 잔여 블로커 — 현시점 재실측
+
+§4-3이 끝나도 아직 남는 것:
+
+| 소비자 | 성격 | 상태 |
+|---|---|---|
+| `collector/cf_da_sync.py:56` | `fact_v2` **읽기+upsert**(D&A note 복원) | ★블로커. 매일 18:00 `collect_new.py`가 호출 |
+| `collector/expense_nature_sync.py` | `fact_v2` **upsert**(비용성격 주석 D&A) | ★블로커. §4-2에서 `note.*` 2종 잔여로 이미 문서화됨 |
+| `fin2/reconcile.py` | `statement_source` 선택(`fact_v2` 읽기) | 데일리 경로엔 없음 — `run.py:2877, 2926` CLI와 `scripts/phase_c_rebuild.py`만. §4-1 소관 |
+| `fin2/extract/*.py` (`notes.py`/`report_lines.py`/`xbrl.py`/`text.py`/`pdf.py`/`statement_titles.py`) | `fact_v2` **쓰기**(추출 파이프라인) | DROP 시 쓰기 경로를 끄는 것이 목적 — 이식 대상 아님 |
+| `extended_financials` 뷰 | — | ✅ **해소됨**(§4-2, `243e9ee`) — 현재 뷰 정의는 `extended_facts_v3` JOIN `std_financials_v3`, `fact_v2`/`statement_source` 참조 0건(`pg_get_viewdef` 확인) |
+| `scripts/backup_db.py:33` | `EXCLUDE_DATA=("fact_v2",)` | DROP 후 정리 |
+| 진단/백필 스크립트 다수 | 1회성 | DROP 후 자연 사망(정리 선택) |
+
+★§4-4 착수 전 **반드시 `pg_depend` 전수 확인**을 다시 할 것 — §5-d에서 텍스트 grep만
+믿었다가 `calendar_financials` 뷰를 놓쳐 사고 직전까지 갔던 전례가 있다.
+
+---
+
+## 8. 미결 / 범위 밖
+
+- **Track A fail_a 9,609건의 실제 수정** — EPS 단위 오적용은 **감사 리더 쪽 버그**이며
+  (`read_report_face_xbrl`이 EPS에 문서 기본단위를 적용), `report_lines.py`는 R28
+  트랙으로 이미 해결했다. Phase 2-2는 그걸 **감사 대상에서 제외**할 뿐 고치지 않는다.
+  → 리더를 실제로 고칠지는 별도 판단(고치면 Phase A의 EPS 관련 판정에도 영향 가능 →
+  **Phase A 회귀 위험이 있는 유일한 지점**이라 반드시 분리할 것)
+- **2차 클러스터(주석 다중셀 coarse 키 충돌)** — 0-4에서 원인만 확정하고 수정은 범위 밖
+- **Track C(PDF)·D(xbrl_zip) 28,756 rcept의 영구 pending** — Phase B가 원래 비대상으로
+  둔 영역. 이식과 무관
+- **`face_line_audit`의 promote 게이트 승격** — 측정 우선 정책(models.py:1154) 유지.
+  이식으로 신호 품질이 개선된 뒤에 재론
+- **`note_lines`(254M행 / 52GB)** — `fact_v2`보다 크지만 이번 GC 대상 아님. 별도 백로그
+
+---
+
+## 9. 참고
+
+- `docs/plans/factv2_stdv2_gc_scoping_2026-09-01.md` §2-2·§4-3 — 상위 스코핑(이 문서가 §4-3을 구체화하고 §2-2 위험평가를 정정)
+- `docs/plans/gateb_audit_performance_design_2026-08-17.md` §8 — "Phase B 유용성 자체" 미결 제기(당시 근거였던 "커버리지 2.4%"는 §3-1로 낡음)
+- `docs/plans/gateb_evidence_grade_redesign_2026-08-17.md` §9 — "①`fact_v2`를 채워 살릴 것인가 ②은퇴시킬 것인가" 양자택일 제기 → **이 문서가 ③"감사 대상을 `report_lines`로 옮긴다"는 3안을 추가**
+- `docs/plans/std_v3_native_gate_b_plan_2026-08-11.md` §176, §222 — Phase B를 v3 이식 범위 밖으로 미뤄둔 원 결정
+- [[gateb-full-reaudit-is-required-to-close]] — 규칙 변경은 전수재감사까지 해야 종료
+- [[feedback-verify-against-source]] — 원문대조·짐작 금지
+- [[feedback-long-running-commands]] — 장시간 명령은 사용자 실행

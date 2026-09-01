@@ -21,6 +21,14 @@ fiscal_period,statement_type) 뿐이라 `version=1`/`is_stub`/`is_discrete` 조�
 SKIP 보호가 없어(직접 호출) 실제 크래시 위험이 있었던 지점 — 이것도 이식함.
 `std_financials_calendar`(→`std_v2_controlling_ni_exceeds_net` 이름의 유래가 된 std_v2
 와는 별개 테이블)는 GC 범위 밖이라 그대로 둠.
+
+★2026-09-02(fact_v2 GC §4-4 DROP 후속, docs/plans/factv2_stdv2_gc_backfill_backlog_
+2026-09-01.md 백로그 항목1+4) — `fact_v2` DROP으로 상시 SKIP 되던 WARN 2건 중
+`std_v2_controlling_ni_exceeds_net`은 `extended_facts_v3`로 재소싱해 복구,
+`fact_v2_q1_duration_col0_eq_col1`은 구조적으로 재현 불가로 확인해 폐기(사유는 해당
+항목 주석). `extended_financials_n_facts_outlier`는 `std_v3_conflicts_unresolved`로 교체.
+`calendar_orphan_cq`(→`diag_calendar_orphans.py::_ORPHAN_PRED`)는 여전히 `std_financials_v2`를
+직접 읽어 SKIP 상태 그대로 — 이산분기/달력 계열은 별도 트랙(백로그 항목5).
 """
 from __future__ import annotations
 
@@ -289,8 +297,27 @@ CHECKS: list[dict] = [
     # (라벨 기반, combine.py::_resolve() 가 이미 충돌을 해소한 단일값) 경유로 바뀌면서
     # n_facts 는 뷰 정의에서 상시 1로 고정됨 — 이 어서션이 감시하던 신호(같은 canonical 에
     # 무관 라인 다수 합산) 자체가 새 경로에선 발생할 수 없는 값이 되어 영구 0건(=무의미)이
-    # 된다. 대체 신호(std_financials_v3.conflicts 기반 재작성)는 설계문서 §4-①에 따라 이
-    # 트랙 범위 밖 별도 소규모 트랙으로 분리 — 미착수.
+    # 된다.
+    #
+    # ★대체 어서션 구현(2026-09-02, 백로그 항목4) — 설계문서 §4-①이 제안한 대로
+    # `std_financials_v3.conflicts`(canonical별 combine.py::_resolve() 가 값 충돌로 보류한
+    # 후보 목록) 기반. 옛 신호(같은 canonical 에 무관 라인 다수 합산)와 동일하진 않지만 —
+    # "이 기간·이 canonical 은 후보가 갈려 자동 확정을 못 했다"는, 결측/오선택 원인후보로서
+    # 더 정확한 신호다(코어 DIRECT_MAP 필드뿐 아니라 EXTENDED_CATALOG 확장 캐노니컬도 같은
+    # dict 를 씀 — combine.py:1830 `_resolve()`). 실측(2026-09-02): 35,305행에 실제 충돌
+    # 존재(전체 303,903행 중 11.6%), 최빈 canonical=bs.intangibles/is.cogs/is.sga/
+    # is.noncontrolling_ni. WARN(참고 신호, 신규 휴리스틱이라 정착 전까지 게이트 승격 보류).
+    {
+        "name": "std_v3_conflicts_unresolved",
+        "sev": "WARN",
+        "desc": "조립 중 값 충돌로 보류된 canonical 존재 (결측/오선택 원인후보, extended_financials_n_facts_outlier 대체)",
+        "count": "SELECT count(*) FROM std_financials_v3 "
+                 "WHERE jsonb_typeof(conflicts)='object' AND conflicts <> '{}'::jsonb",
+        "sample": "SELECT corp_code, fiscal_year, fiscal_period, statement_type, conflicts "
+                  "FROM std_financials_v3 "
+                  "WHERE jsonb_typeof(conflicts)='object' AND conflicts <> '{}'::jsonb "
+                  "ORDER BY (SELECT count(*) FROM jsonb_object_keys(conflicts)) DESC LIMIT 10",
+    },
     {
         "name": "capital_events_unknown_type",
         "sev": "WARN",
@@ -318,15 +345,19 @@ CHECKS: list[dict] = [
         # ★ 판별식 정제(2026-07-15, docs/qa/triage_controlling_ni_residual_2026-07-14.md):
         # 단순 프록시 |controlling|>|net|*1.02 는 '정당한 비지배 음수'(controlling 손실>net 이 정상,
         # 양의 NCI 가 상쇄) 9,164 행을 오탐한다. 실제 신호는 회계 항등식 잔차이므로,
-        # noncontrolling_ni(fact_v2 col0) 로 controlling+nci=net 이 성립하는(=정상) 행은 제외하고,
-        # 항등식이 재구성되지 않는 행만 센다(진짜 총포괄 오염 ~6,950). std_v2 엔 nci 컬럼이 없어
-        # source rcept(bs/is/cf)·동일 basis 의 fact_v2 에서 is.noncontrolling_ni 후보를 조회한다.
-        # ★2026-09-01(fact_v2 GC 트랙 §4-4 DROP) — `fact_v2` 테이블이 사라져 이 어서션은
-        # 이제 상시 SKIP 된다(UndefinedTable, 방어적으로 무시됨 — ERROR 아님). controlling_ni
-        # 총포괄오염(R25/R26/R43 계열) 재발 감지 기능 자체가 없어진 것 — line_audit(Phase B)은
-        # 지배/비지배 계열을 Track B 확장에서 의도적으로 제외해(gateb_phaseb_line_audit_v3_
-        # migration_design_2026-09-01.md) 이 공백을 대신 메우지 않는다. 재구현하려면
-        # report_lines/note_lines 기반으로 새로 설계해야 함(fact_v2 재추출 아님) — 별도 트랙.
+        # noncontrolling_ni 로 controlling+nci=net 이 성립하는(=정상) 행은 제외하고,
+        # 항등식이 재구성되지 않는 행만 센다(진짜 총포괄 오염). std_v3 코어 컬럼엔 nci가 없어
+        # is.noncontrolling_ni 후보를 조회한다.
+        # ★2026-09-02(fact_v2 GC 트랙 §4-4 DROP 후속, 백로그 항목1 구현) — `fact_v2` 대신
+        # `extended_facts_v3`(§4-2 재설계, combine.py::_resolve() 가 이미 충돌 해소를 끝낸
+        # 단일값)에서 is.noncontrolling_ni 를 조회하도록 재소싱. 셀 단위 col_index/is_dimensional
+        # 필터가 불필요해져(PK가 corp/fy/period/statement_type 뿐) 쿼리가 오히려 단순해짐 — 판정식
+        # 자체(|controlling|>|net|*1.02 AND 항등식 잔차>임계)는 변경 없음. 재실측(2026-09-02):
+        # 357건/223개사(과거 fact_v2 기준 ~6,950 과는 직접비교 불가 — 제외소스가 원시후보군에서
+        # 단일 확정값으로 바뀌어 모집단이 다름). 표본 확인 결과 상위권 다수가 이 어서션이 원래
+        # 잡던 '총포괄오염'이 아니라 controlling_ni 가 net_income 대비 정확히 ×10³~10⁶ 인
+        # 단위오염(별도 버그류, statement_magnitude_impossible/unit_contamination 계열과 겹침) —
+        # 이 어서션의 판정식 자체가 그 두 신호를 원래도 구분 못 했을 가능성이 있음, 별도 확인 과제.
         "name": "std_v2_controlling_ni_exceeds_net",
         "sev": "WARN",
         "desc": "controlling_ni 총포괄 오염 (항등식 controlling+nci=net 재구성 실패 — 정당 비지배음수는 제외)",
@@ -334,11 +365,11 @@ CHECKS: list[dict] = [
                  "s.net_income IS NOT NULL AND s.controlling_ni IS NOT NULL AND s.net_income<>0 "
                  "AND ABS(s.controlling_ni) > ABS(s.net_income)*1.02 "
                  "AND ABS(s.net_income - s.controlling_ni) > ABS(s.net_income)*0.02 + 1000000 "
-                 "AND NOT EXISTS (SELECT 1 FROM fact_v2 f "
-                 "  WHERE f.rcept_no IN (s.source_rcepts->>'BS', s.source_rcepts->>'IS', s.source_rcepts->>'CF') "
-                 "  AND f.basis = s.statement_type AND f.col_index=0 AND NOT f.is_dimensional "
-                 "  AND f.canonical_account='is.noncontrolling_ni' AND f.amount_won IS NOT NULL "
-                 "  AND ABS(f.amount_won - (s.net_income - s.controlling_ni)) "
+                 "AND NOT EXISTS (SELECT 1 FROM extended_facts_v3 e "
+                 "  WHERE e.corp_code=s.corp_code AND e.fiscal_year=s.fiscal_year "
+                 "  AND e.fiscal_period=s.fiscal_period AND e.statement_type=s.statement_type "
+                 "  AND e.canonical_account='is.noncontrolling_ni' AND e.amount_won IS NOT NULL "
+                 "  AND ABS(e.amount_won - (s.net_income - s.controlling_ni)) "
                  "      <= ABS(s.net_income)*0.02 + 1000000)",
         "sample": "SELECT s.corp_code, s.fiscal_year, s.fiscal_period, s.statement_type, "
                   "s.net_income, s.controlling_ni "
@@ -346,40 +377,27 @@ CHECKS: list[dict] = [
                   "s.net_income IS NOT NULL AND s.controlling_ni IS NOT NULL AND s.net_income<>0 "
                   "AND ABS(s.controlling_ni) > ABS(s.net_income)*1.02 "
                   "AND ABS(s.net_income - s.controlling_ni) > ABS(s.net_income)*0.02 + 1000000 "
-                  "AND NOT EXISTS (SELECT 1 FROM fact_v2 f "
-                  "  WHERE f.rcept_no IN (s.bs_rcept, s.is_rcept, s.cf_rcept) "
-                  "  AND f.basis = s.statement_type AND f.col_index=0 AND NOT f.is_dimensional "
-                  "  AND f.canonical_account='is.noncontrolling_ni' AND f.amount_won IS NOT NULL "
-                  "  AND ABS(f.amount_won - (s.net_income - s.controlling_ni)) "
+                  "AND NOT EXISTS (SELECT 1 FROM extended_facts_v3 e "
+                  "  WHERE e.corp_code=s.corp_code AND e.fiscal_year=s.fiscal_year "
+                  "  AND e.fiscal_period=s.fiscal_period AND e.statement_type=s.statement_type "
+                  "  AND e.canonical_account='is.noncontrolling_ni' AND e.amount_won IS NOT NULL "
+                  "  AND ABS(e.amount_won - (s.net_income - s.controlling_ni)) "
                   "      <= ABS(s.net_income)*0.02 + 1000000) "
                   "ORDER BY ABS(s.controlling_ni)-ABS(s.net_income) DESC LIMIT 10",
     },
-    {
-        # DEF-4 재발 감지: Q1 분기보고서 IS/CF 표에서 당분기(col0)와 전기(col1) 3개월 값이
-        # 완전 동일하면 전기컬럼 추출 오류 신호(fin2/extract/text.py interim_flow 미적용 등).
-        # ★2026-09-01(fact_v2 GC 트랙 §4-4 DROP) — 같은 사유로 상시 SKIP. DEF-4(Q1
-        # 전기컬럼 중복추출) 재발 감지 공백 — `calendar_adjacent_year_cq1_identical`(아래,
-        # std_financials_calendar 기반)이 소비계층 쪽에서 부분적으로 유사 신호를 잡지만
-        # 이 어서션(원문 col0/col1 직접비교)과 탐지 범위가 동일하지 않다.
-        "name": "fact_v2_q1_duration_col0_eq_col1",
-        "sev": "WARN",
-        "desc": "Q1 IS/CF fact_v2 에서 당분기(col0)==전기(col1) 동일값 — 전기컬럼 추출오류 신호(DEF-4)",
-        "count": "SELECT count(*) FROM fact_v2 a JOIN fact_v2 b "
-                 "ON a.rcept_no=b.rcept_no AND a.basis=b.basis "
-                 "AND a.canonical_account=b.canonical_account "
-                 "AND a.col_index=0 AND b.col_index=1 "
-                 "WHERE a.report_fiscal_period='Q1' AND NOT a.is_dimensional "
-                 "AND a.canonical_account IN ('is.revenue','is.operating_income') "
-                 "AND a.amount_won=b.amount_won AND a.amount_won<>0",
-        "sample": "SELECT a.corp_code, a.rcept_no, a.basis, a.canonical_account, a.amount_won "
-                  "FROM fact_v2 a JOIN fact_v2 b "
-                  "ON a.rcept_no=b.rcept_no AND a.basis=b.basis "
-                  "AND a.canonical_account=b.canonical_account "
-                  "AND a.col_index=0 AND b.col_index=1 "
-                  "WHERE a.report_fiscal_period='Q1' AND NOT a.is_dimensional "
-                  "AND a.canonical_account IN ('is.revenue','is.operating_income') "
-                  "AND a.amount_won=b.amount_won AND a.amount_won<>0 LIMIT 10",
-    },
+    # ★"fact_v2_q1_duration_col0_eq_col1" 어서션 폐기(2026-09-02, 계층2 GC 트랙 §4-4 DROP
+    # 후속, 백로그 항목1). DEF-4 재발 감지: Q1 분기보고서 IS/CF 표에서 당분기(col0)와
+    # 전기(col1) 3개월 값이 완전 동일하면 전기컬럼 추출 오류 신호였다(fin2/extract/text.py
+    # interim_flow 미적용 등). `fact_v2` DROP으로 상시 SKIP 됐던 것을, report_lines 기반
+    # 재구현을 시도했으나 **구조적으로 불가능함을 확인**해 폐기로 결론 — `report_lines.py:1199`
+    # `_is_loadable()`가 BS/IS/CF는 당기(col_index=0)만 적재한다(2026-07-30 결정, 전기 col1은
+    # 그 자체가 DB에 없음). 즉 "같은 문서 안의 col0 vs col1 직접비교"라는 이 어서션의 판정
+    # 방식 자체를 재현할 저장 데이터가 없다 — 재도입하려면 ①2026-07-30 정책을 뒤집어 col1도
+    # 적재하거나(대형 재설계, 별도 트랙) ②추출 단계에서 즉시 비교해 별도 플래그 컬럼으로
+    # 남기는(파이프라인 변경, SQL 어서션의 범위를 벗어남) 방법뿐. 대체 신호로 이미 살아있는
+    # `calendar_adjacent_year_cq1_identical`(아래, std_financials_calendar 기반 — 같은 기업
+    # 인접연도 CQ1 비교)을 이 DEF-4 재발 감지의 공식 대체로 삼는다 — 탐지 범위는 다르다(원문
+    # 동일문서 col0/col1 비교가 아니라 소비계층의 연도간 비교)는 한계는 남아 있음.
     {
         # DEF-4 재발 감지(소비계층): 같은 기업·기준에서 인접연도 CQ1 매출·영업이익이 완전
         # 동일값이면 상류 전기컬럼 중복 추출의 결과일 수 있음. 잔여 소수(휴면·구 K-GAAP 우연)는

@@ -3685,6 +3685,96 @@ v3()` 재동기화(178개사, 33,977행, 29초, 실패 0, runbook B5).
 
 ---
 
+## R65. `parser/xml/table_extractor.py` — 헤더 `<TH>주석</TH>` 기반 주석열
+탐지 신설, note-ref multicol 압축 값오염 근본수정 (2026-09-03)
+
+**배경** — [[note-ref-multicol-compaction-value-corruption-2026-09-02]](메모리),
+설계문서 `docs/plans/note_ref_multicol_compaction_value_corruption_design_
+2026-09-02.md`. R64 후속 트리아지(TINY_VALUE_BUG 56건) 표본조사 중 우연발견한
+계층2(layer2) 원천 버그 — R19(2026-08-24)의 안전장치가 발동하지 않는 조건이
+있었다.
+
+**근본원인** — `_table_has_comma_note_column()`(R19)은 표 안 어딘가에 콤마로
+묶인 다중 주석참조("10,37")가 **하나라도 있어야만** 그 표를 "주석열이 있는
+표"로 판정한다. 그런데 매 행이 주석을 하나씩만 인용하는 표(콤마가 표 전체에
+단 한 번도 안 나옴, 드물지 않음)에서는 이 신호가 영원히 False로 남아 안전장치
+자체가 발동하지 않았다. 그러면 라벨 바로 다음 칸의 주석번호("5"/"21"/"22" 등)
+가 진짜 금액 후보로 그대로 살아남고, `report_lines.py`의 multicol(보험/증권
+다열) 압축 경로가 "None 아닌 값을 위치 그대로" 압축하면서 주석번호가
+`col_index=0`("당기" 슬롯)을 차지해버려 **진짜 당기금액이 `col_index=1`
+("전기" 슬롯)로 밀려 오분류**되고, `_is_loadable()`(BS/IS/CF는 `col_index==0`
+만 적재)에 걸려 **진짜 당기금액 자체가 DB에서 소실**됐다(00537337 2011FY
+실측 — "Ⅰ.매출액"=5원, 진짜 458억은 DB에 아예 없었음).
+
+**수정**: `_table_has_note_header()` 신설 — 표 헤더 `<TH>` 셀 텍스트에 "주석"
+문자열이 있으면 콤마 여부와 무관하게 주석열로 판정(값 모양이 아니라 원문
+헤더 선언 그 자체에 기대는 구조적 신호). `table_direct_rows()`가 THEAD 행도
+포함해 순회하므로(TABLE 경계만 자름) 기존 `trs` 순회에 이미 헤더 행이 들어
+있다 — 새 함수만 추가하고 `_table_has_comma_note_column()`과 OR로 병행:
+```python
+table_has_note_column = (
+    _table_has_comma_note_column([_get_cells(tr) for tr in trs])
+    or _table_has_note_header(trs))
+```
+`_table_has_comma_note_column`은 콤마 신호가 있으면 여전히 그대로 True를
+주므로 기존 동작에 무손실(추가만, 제거 없음).
+
+**원문대조 확정 2건**:
+- 00537337(앤씨앤) 2011FY(rcept 20120329000506, K-GAAP→IFRS 전환기): "Ⅰ.매출액"
+  col_index0=5원(오염)→**45,830,369,541원**(원문 XML 직접대조 일치)으로 복원 —
+  수정 전엔 진짜 당기값이 DB에서 아예 소실됐었음.
+- 00132202(선진뷰티사이언스) 2020FY(rcept 20210323001110, K-IFRS 정상표기
+  시대): 연결·별도 양쪽 동시오염(21/22로 오채택)→**연결 46,392,320,333원 /
+  별도 43,725,183,663원**으로 복원. **2020년대까지 재현 확정** — K-GAAP 한정
+  버그가 아니라 현재도 활성인 상시 구조적 갭.
+
+**규모(ground-truth 정밀 스캔, 값-휴리스틱 아님)**: 전 코퍼스(187,413건 완료
+XML filing) 단일패스 스캔 — 기존 콤마신호는 False인데 새 헤더신호가 True로
+바뀌는 테이블 유무를 5-shard 병렬로 직접 재현(86분/shard). **4,475개 필링(rcept)
+/ 882개사**가 실제 영향권(2001~2026 전 기간, IS 1,750·H1 961·Q1 852·Q3 912
+분포). 설계문서 §3.1의 값-충돌 휴리스틱 추정(고신뢰 296개사/1,116필링)은
+과소추정이었음이 이 정밀스캔으로 확인됨(§5.3-2 우려가 실측으로 입증) — R19
+전례(`run_r19_backfill_parallel_2026-08-14.sh`, 같은 클래스의 탐지로직 변경)가
+전수 재추출을 관행으로 삼은 이유와 일치.
+
+**검증**: 회귀 테스트 신설 2개(`fin2/tests/test_report_lines.py`, 00537337·
+00132202 원문대조 실측값 재현). `pytest tests/ fin2/tests/` 712 tests, 711
+pass — 유일한 실패 `test_biz_section.py::test_lxintl_facility_table_dropped`는
+OLD `table_extractor`로도 동일 재현되는 **이 수정과 무관한 사전 존재 결함**임을
+직접 대조로 확인(R63/R64와 동일한 불변 실패). 코드 커밋 `86a560b`.
+
+**백필 완료**(같은 세션, 사용자 승인 하 직접 실행 — "4번까지 쭉 이어서 직접
+실행"): pg_dump 백업(`/Volumes/tj_finance_data/db_backups/
+std_financials_v3_pre_r65_backfill_20260902.dump`, 52.9MB) 후
+1. `load_report_lines.py --fy-min 1999 --rcept-file <4,475건>` — **4,475/4,475
+   완료, 에러 0**, report_lines 1,588,820행, 이상치 277건(26분). ⚠**첫 두 차례
+   시도는 `--fy-min` 기본값(2015)을 빠뜨려 2001~2014 구간 1,066건이 조용히
+   누락됐다가 재실행으로 정정** — 이 클래스 스크립트를 다시 쓸 때 fy-min 기본값
+   함정 재확인 필요.
+2. `build_std_v3.py --corp <882개사> --year-min 1999` — **882/882 corp 성공,
+   123,409행, 3,890초(65분), 에러 0**.
+3. `calendarize_corp_v3()` 재동기화(882개사, 140,269행, 110초, 실패 0).
+
+**검증 완료**:
+- `dq_assertions.py`: 유일한 ERROR 위반 `statement_magnitude_impossible`
+  147건 — pg_dump 백업 대비 **row-key 단위 정확 대조로 147=147, 신규위반
+  0건** 확정(R65와 완전 무관한 R63-era 기존결함). WARN
+  `std_v3_conflicts_unresolved` 32,803→**32,789(−14, 개선)**,
+  `operating_income_eq_net_income` 23=23(불변).
+- Gate B(`gateb_audit.py --recheck`) 전수 재감사(5-shard): `face_audit_
+  snap_20260902_pre_r65`(303,903행) 대비 등급전이 매트릭스 — **fail_a
+  63=63(같은 63건, 신규 fail_a 0건)**, fail_b 525→**477(−48, 개선)**,
+  pass 207,276→207,328(pending 왕복 포함 순증 +52). **pass→pending 3건**
+  (00135917 2022 Q1/H1/Q3 consolidated) 개별 원인규명 완료 — `tax_expense`가
+  수정 전 주석번호 "34"(오염값)로 **거짓으로 항등식을 통과**하고 있었는데,
+  수정 후 진짜 값(226~289억원대)으로 교체되면서 Phase B 라인 대조가 아직
+  확증을 못 찾아 `pending`(정직한 불확실 표시)으로 재분류된 것 — **데이터
+  품질 개선의 정상 부작용**, 회귀 아님(원문대조로 확정).
+
+**R65 트랙 완전 종료**. 코드 `86a560b`, 문서 이 커밋.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

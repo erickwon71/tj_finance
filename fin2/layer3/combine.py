@@ -1576,34 +1576,60 @@ _STALE_REPRINT_MAX_FY = 2012
 
 
 def _stale_annual_reprint_table_seqs(session, corp: str, fy: int, period: str,
-                                      basis: str) -> set:
-    """table_seq 값 집합 — 이 (corp, fy, period, basis)의 IS 후보 중, 같은 corp×fy×
-    basis의 다른 interim period와 (label_raw, value_won)이 임계값 이상 동시일치해
-    "직전연차 재게재"로 판정된 것. 매 period 호출마다 새로 계산(캐시 없음 — combine_
-    full()이 이미 corp당 한 번씩만 부르므로 재계산 비용은 작음)."""
+                                      basis: str, statement: str = "IS") -> set:
+    """table_seq 값 집합 — 이 (corp, fy, period, basis, statement)의 후보 중, 같은
+    corp×fy×basis의 다른 interim period와 (label_raw, value_won)이 임계값 이상
+    동시일치해 "직전연차 재게재"로 판정된 것. 매 period 호출마다 새로 계산(캐시
+    없음 — combine_full()이 이미 corp당 한 번씩만 부르므로 재계산 비용은 작음).
+
+    statement: 'IS'(기본, R63 원안) 또는 'CF'(R63 후속, 2026-09-02 다음 세션 —
+    §8 원문대조로 IS와 동일한 근본원인 확정: "현금흐름표" 본문 표에도 진짜
+    당해분기 표와 직전연차 재게재 표가 라벨 겹친 채 공존). table_seq는 statement별
+    독립 카운터이므로 호출부는 반드시 statement별로 따로 호출해 반환 set을 섞지
+    말 것(IS의 table_seq=N과 CF의 table_seq=N은 서로 무관한 표).
+
+    ★버그수정(2026-09-02, R63 후속 세션 — CF 확장 백필 중 원문대조로 발견,
+    design doc §9): 같은 period 안에 필링이 2개 이상(원본+기재정정) 있으면
+    각 필링이 독립된 report_lines 행이라, cur/other 양쪽 다 "매칭 행 개수"가
+    필링 수만큼 배로 뻥튀기된다 — 실측 사례(현대차 00164742 2004Q1 별도 CF):
+    Q1이 원본(20040515000203)+정정(20040618000205) 2개 필링이고 둘 다 동일한
+    5개 세부계정이 H1과 우연히 일치했는데, 5×2=10으로 임계값을 넘어 табле_seq=0
+    (진짜 당해분기 표 — 분기마다 합계선 값이 다름, 원문대조 확인)이 오탐 배제됨.
+    전사 재계산 결과 IS 13,692→11,892(1,800건/13.1% 오탐), CF 19,659→17,759
+    (1,900건/9.7% 오탐) — 두 statement 다 영향, 이미 커밋된 R63 IS 백필도 포함.
+    고침: cur/other 양쪽을 (label_raw, value_won) 기준으로 먼저 DISTINCT 시켜
+    같은 값을 여러 필링이 중복 보고해도 1건으로만 세도록 함(대체 소스 없는
+    이 시대 특성상 필링이 여러 개라고 "진짜 재게재"라는 증거가 늘어나는 게
+    아니라 그냥 같은 값이 반복 기재된 것뿐 — 카운트는 "몇 개 계정이 겹치는지"를
+    재야지 "몇 번 겹쳤는지"를 재면 안 됨)."""
     if period not in _STALE_REPRINT_PERIODS or fy > _STALE_REPRINT_MAX_FY:
         return set()
     rows = session.execute(text("""
-        SELECT cur.table_seq, count(*) AS n
-        FROM report_lines cur
-        JOIN report_lines other
-          ON other.corp_code = cur.corp_code
-         AND other.report_fiscal_year = cur.report_fiscal_year
-         AND other.basis = cur.basis
-         AND other.statement = cur.statement
-         AND other.label_raw = cur.label_raw
-         AND other.value_won = cur.value_won
-         AND other.report_fiscal_period != cur.report_fiscal_period
-         AND other.report_fiscal_period IN ('Q1', 'H1', 'Q3')
-         AND other.col_index = 0 AND other.value_won IS NOT NULL
-         AND COALESCE(other.is_cumulative, false) = true
-        WHERE cur.corp_code = :c AND cur.report_fiscal_year = :y
-          AND cur.report_fiscal_period = :p AND cur.basis = :b
-          AND cur.statement = 'IS' AND cur.col_index = 0 AND cur.value_won IS NOT NULL
-          AND COALESCE(cur.is_cumulative, false) = true
-        GROUP BY cur.table_seq, other.table_seq, other.report_fiscal_period
+        WITH cur_distinct AS (
+            SELECT DISTINCT table_seq, label_raw, value_won
+            FROM report_lines
+            WHERE corp_code = :c AND report_fiscal_year = :y
+              AND report_fiscal_period = :p AND basis = :b
+              AND statement = :stmt AND col_index = 0 AND value_won IS NOT NULL
+              AND COALESCE(is_cumulative, false) = true
+        ),
+        other_distinct AS (
+            SELECT DISTINCT report_fiscal_period, label_raw, value_won
+            FROM report_lines
+            WHERE corp_code = :c AND report_fiscal_year = :y AND basis = :b
+              AND statement = :stmt AND report_fiscal_period != :p
+              AND report_fiscal_period IN ('Q1', 'H1', 'Q3')
+              AND col_index = 0 AND value_won IS NOT NULL
+              AND COALESCE(is_cumulative, false) = true
+        )
+        SELECT cur_distinct.table_seq, count(*) AS n
+        FROM cur_distinct
+        JOIN other_distinct
+          ON other_distinct.label_raw = cur_distinct.label_raw
+         AND other_distinct.value_won = cur_distinct.value_won
+        GROUP BY cur_distinct.table_seq, other_distinct.report_fiscal_period
         HAVING count(*) >= :thresh
-    """), {"c": corp, "y": fy, "p": period, "b": basis,
+    """), {"c": corp, "y": fy, "p": period, "b": basis, "stmt": statement,
            "thresh": _STALE_REPRINT_THRESHOLD}).fetchall()
     return {r[0] for r in rows}
 
@@ -1903,7 +1929,7 @@ def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
 
 def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
              fy: int | None = None, period: str | None = None, basis: str | None = None,
-             stale_is_table_seqs: set | None = None):
+             stale_reprint_table_seqs: dict[str, set] | None = None):
     """{canonical: [candidate]} -> (confirmed {canonical: value}, conflicts {canonical: [candidate]}).
 
     Ported from build._resolve. Conflicts are HELD (not filled) and returned for
@@ -1916,26 +1942,33 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
     comment for why).
     basis: current basis (연결/별도), needed only to gate
     _TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE (basis-scoped — see its comment for why).
-    stale_is_table_seqs: table_seq set from _stale_annual_reprint_table_seqs() (R63)
-    — precomputed by the caller (needs a DB round-trip _resolve() itself doesn't do)
-    and dropped from every is.* canonical's candidate pool in a pre-pass below (can
-    legitimately empty a canonical entirely, unlike trust_seqs/degenerate_eq_ids).
+    stale_reprint_table_seqs: {canonical-prefix: table_seq set} from
+    _stale_annual_reprint_table_seqs() (R63; CF added in the 2026-09-02 follow-up
+    session, §8 of the design doc) — precomputed by the caller (needs a DB
+    round-trip _resolve() itself doesn't do), one call per statement since
+    table_seq is a per-statement counter (an 'is' table_seq=N and a 'cf'
+    table_seq=N are unrelated tables — never merge the two sets). Each prefix's
+    set is dropped from that prefix's own canonicals' candidate pool in a
+    pre-pass below (can legitimately empty a canonical entirely, unlike
+    trust_seqs/degenerate_eq_ids). Typically {"is": {...}, "cf": {...}}.
     """
     confirmed: dict[str, int] = {}
     conflicts: dict[str, list[dict]] = {}
     trust_seqs = _trust_account_table_seqs(cands)
     degenerate_eq_ids = _degenerate_total_equity_row_ids(cands)
-    # R63 stale-reprint drop (§1 above): unlike trust_seqs/degenerate_eq_ids (both
+    # R63 stale-reprint drop (§1/§8 above): unlike trust_seqs/degenerate_eq_ids (both
     # applied inline further down, *never* emptying a canonical's candidate pool —
     # their signal means "one of several candidates is wrong", so something else
     # always remains), a stale-reprint table_seq can legitimately BE the only
     # candidate — that's the whole point (this era genuinely has no other consolidated
-    # interim IS source). So this must run as a `cands`-level pre-pass, popping any
+    # interim IS/CF source). So this must run as a `cands`-level pre-pass, popping any
     # canonical whose candidates are ALL stale (never leaving an empty list for the
     # main loop below to choke on — nothing downstream expects `rows` to be empty).
-    if stale_is_table_seqs:
-        for c in [k for k in cands if k.startswith("is.")]:
-            kept = [r for r in cands[c] if r.get("table_seq") not in stale_is_table_seqs]
+    for prefix, stale_seqs in (stale_reprint_table_seqs or {}).items():
+        if not stale_seqs:
+            continue
+        for c in [k for k in cands if k.startswith(prefix + ".")]:
+            kept = [r for r in cands[c] if r.get("table_seq") not in stale_seqs]
             if not kept:
                 del cands[c]
             elif len(kept) != len(cands[c]):
@@ -3015,8 +3048,13 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     else:
         cands = collect_candidates(session, corp, fy, period, basis,
                                    statements=statements)
-    stale_is_seqs = _stale_annual_reprint_table_seqs(session, corp, fy, period, basis)
-    confirmed, conflicts = _resolve(cands, corp, fy, period, basis, stale_is_seqs)
+    # R63/§8: table_seq is a per-statement counter, so IS and CF need separate
+    # cross-period detection calls (never share one set — see _resolve() docstring).
+    stale_reprint_seqs = {
+        "is": _stale_annual_reprint_table_seqs(session, corp, fy, period, basis, statement="IS"),
+        "cf": _stale_annual_reprint_table_seqs(session, corp, fy, period, basis, statement="CF"),
+    }
+    confirmed, conflicts = _resolve(cands, corp, fy, period, basis, stale_reprint_seqs)
     _resolve_ni_attribution(cands, confirmed, conflicts)
     # ★net_income conflict disambiguation via NI identity (2026-08-22, P1C 잔여회귀 조사 중
     # 발견 — 00120526 2014Q3 / 00139214 2013Q1). is.net_income can end up with 2+ raw

@@ -55,6 +55,50 @@ def test_kgsteel_2006_fy_not_gated():
     assert seqs == set()
 
 
+def test_kgsteel_2006_cf_separate_q1_reprint_detected():
+    # R63 CF 확장(2026-09-02 후속 세션, design doc §8) — 원문대조로 확정된 재현
+    # 표본: "현금흐름표" table_seq=1이 "영업활동으로 인한 현금흐름"=54,870,597,628원
+    # 으로 Q1/H1/Q3 필링에 완전 동일값 재게재(제24기/제23기, 분기 접미어 없음 —
+    # 직전 확정 연차). table_seq=0은 "제25기 분기"(분기 접미어 있음, 진짜 당해분기 —
+    # Q1=-58,251,047,462원, 필링마다 값이 다름)라 flag되면 안 된다. (이 corp/연도는
+    # basis='consolidated' CF가 report_lines에 없어 separate로 확인 — statement=
+    # 'CF'는 §1의 IS와 달리 basis 무관하게 같은 신호가 적용됨을 보여주는 표본.)
+    with get_session() as s:
+        seqs = _stale_annual_reprint_table_seqs(
+            s, "00115676", 2006, "Q1", "separate", statement="CF")
+    assert 1 in seqs, f"expected CF table_seq=1 flagged stale, got {seqs}"
+    assert 0 not in seqs, f"genuine CF table_seq=0 must not be flagged, got {seqs}"
+
+
+def test_hyundai_2004q1_separate_cf_amendment_duplication_not_flagged():
+    # ★버그수정 회귀(2026-09-02, R63 후속 — CF 확장 백필 중 원문대조로 발견):
+    # 현대차(00164742) 2004 Q1 별도 CF table_seq=0은 원본(20040515000203)+정정
+    # (20040618000205) 2개 필링이 있고, 그 안의 5개 세부계정이 H1과 우연히
+    # 일치(5×2필링=10, 임계값과 정확히 같음) — 진짜 재게재가 아니라 필링 중복
+    # 집계 아티팩트. table_seq=0은 진짜 당해분기 표(합계선 "영업활동으로 인한
+    # 현금흐름"이 Q1=-248,693백만/H1=1,485,674백만/Q3=1,812,881백만으로 분기마다
+    # 전부 다름, 원문대조 확인) — 절대 flag되면 안 된다.
+    with get_session() as s:
+        seqs = _stale_annual_reprint_table_seqs(
+            s, "00164742", 2004, "Q1", "separate", statement="CF")
+    assert 0 not in seqs, f"genuine table_seq=0 wrongly flagged (dup-count artifact), got {seqs}"
+
+
+def test_kgsteel_2006_is_and_cf_stale_seqs_are_independent():
+    # table_seq는 statement별 독립 카운터 — IS의 stale set과 CF의 stale set을
+    # 같은 (corp,fy,period,basis)에서 각각 구해도 서로 다른 statement 쿼리이므로
+    # 섞이지 않음을 확인(§8 안전장치의 실측 재확인).
+    with get_session() as s:
+        is_seqs = _stale_annual_reprint_table_seqs(
+            s, "00115676", 2006, "Q1", "consolidated", statement="IS")
+        cf_seqs = _stale_annual_reprint_table_seqs(
+            s, "00115676", 2006, "Q1", "separate", statement="CF")
+    assert 1 in is_seqs
+    assert 1 in cf_seqs
+    # 두 호출은 서로 다른 basis/statement 스코프라 독립적으로 계산됨 — 우연히 같은
+    # table_seq 번호(1)를 flag했다고 해서 같은 표를 가리키는 게 아님(둘 다 맞는 결과).
+
+
 def test_bracket_label_table_seq_excluded_from_merged_lines():
     # 00171867 rcept 20081114001440(2009H1) — "[유동자산]" 대괄호 라벨이 있는
     # table_seq에 매출액/자산총계/자본총계 등 DIRECT_MAP 라벨이 섞여있던 실측

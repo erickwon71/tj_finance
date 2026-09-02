@@ -1546,6 +1546,68 @@ def _degenerate_total_equity_row_ids(cands: dict[str, list[dict]]) -> set:
             drop_ids.update(id(r) for r in degenerate)
     return drop_ids
 
+
+# R63 (2026-09-02, docs/plans/std_v3_kgaap_interim_consolidated_stale_annual_reprint_
+# design_2026-09-02.md §1~§5). K-GAAP era (~2010 이전) interim(Q1/H1/Q3) 필링의
+# "손익계산서"/"연결손익계산서" 재무제표 본문 표는 당해분기 데이터가 아니라 **직전
+# 확정 연차 재무제표를 그대로 재게재**한 것 — 2011년 K-IFRS 연결의무화 이전엔 연결
+# 인터림 재무제표 작성·공시 자체가 법정의무가 아니었다는 규제상의 사실(별도는 원래도
+# 분기공시 의무 대상이라 진짜 당해분기 데이터, 원문대조로 확정: 현대차 00164742
+# 2004/KG스틸 00115676 2006 — 별도 표는 필링마다 컬럼헤더 기간이 정확히 다른데
+# 연결 표는 "제NN기"로 완전 동일).
+#
+# 원천적으로 데이터가 없으므로(복구할 값 자체가 없음) 탐지된 값은 배제(NULL)만
+# 한다 — "요약재무정보"(진짜 당해분기 값 있음)로 대체하지 않는다(사용자 확인
+# 2026-09-02: 그 표는 단위가 백만원이라 원 단위 std_v3 정밀도 기준 미달, 소스로
+# 채택 안 함).
+#
+# 탐지 신호: 같은 corp×fiscal_year×basis의 **다른 interim period**(Q1/H1/Q3 중 현재
+# period 제외)와 (label_raw, value_won) 쌍이 임계값 이상 동시일치하는 table_seq —
+# 실측(§1 정량화): "값 하나라도 일치"하는 필링쌍 중 "10개+ 동시일치"(=표 전체
+# 재게재) 비율이 연결 97.2% vs 별도 29.6%로 압도적 — 임계값 10이면 우연일치(별도
+# 다수)는 걸러지고 표 전체 재게재(연결 대부분)만 잡힌다.
+_STALE_REPRINT_THRESHOLD = 10
+# FY(사업보고서)는 그 자체가 연차 데이터라 이 패턴과 무관 — Q1/H1/Q3만 대상.
+_STALE_REPRINT_PERIODS = ("Q1", "H1", "Q3")
+# 실측 연도분포(§1): 2002~2008 정점, 2009 급락, 2011까지 잔존(95개사) — 여유를 두고
+# 2012까지. 이보다 최신 기간은 매 combine() 호출마다 불필요한 cross-period 쿼리를
+# 던지지 않도록 여기서 조기 차단(쿼리시간 안정 유지 요구사항, CLAUDE.md).
+_STALE_REPRINT_MAX_FY = 2012
+
+
+def _stale_annual_reprint_table_seqs(session, corp: str, fy: int, period: str,
+                                      basis: str) -> set:
+    """table_seq 값 집합 — 이 (corp, fy, period, basis)의 IS 후보 중, 같은 corp×fy×
+    basis의 다른 interim period와 (label_raw, value_won)이 임계값 이상 동시일치해
+    "직전연차 재게재"로 판정된 것. 매 period 호출마다 새로 계산(캐시 없음 — combine_
+    full()이 이미 corp당 한 번씩만 부르므로 재계산 비용은 작음)."""
+    if period not in _STALE_REPRINT_PERIODS or fy > _STALE_REPRINT_MAX_FY:
+        return set()
+    rows = session.execute(text("""
+        SELECT cur.table_seq, count(*) AS n
+        FROM report_lines cur
+        JOIN report_lines other
+          ON other.corp_code = cur.corp_code
+         AND other.report_fiscal_year = cur.report_fiscal_year
+         AND other.basis = cur.basis
+         AND other.statement = cur.statement
+         AND other.label_raw = cur.label_raw
+         AND other.value_won = cur.value_won
+         AND other.report_fiscal_period != cur.report_fiscal_period
+         AND other.report_fiscal_period IN ('Q1', 'H1', 'Q3')
+         AND other.col_index = 0 AND other.value_won IS NOT NULL
+         AND COALESCE(other.is_cumulative, false) = true
+        WHERE cur.corp_code = :c AND cur.report_fiscal_year = :y
+          AND cur.report_fiscal_period = :p AND cur.basis = :b
+          AND cur.statement = 'IS' AND cur.col_index = 0 AND cur.value_won IS NOT NULL
+          AND COALESCE(cur.is_cumulative, false) = true
+        GROUP BY cur.table_seq, other.table_seq, other.report_fiscal_period
+        HAVING count(*) >= :thresh
+    """), {"c": corp, "y": fy, "p": period, "b": basis,
+           "thresh": _STALE_REPRINT_THRESHOLD}).fetchall()
+    return {r[0] for r in rows}
+
+
 # statement -> AccountMapper fs_section hint
 _FS = {"IS": "is", "BS": "bs", "CF": "cf"}
 # canonical prefix -> statement it is read from
@@ -1612,7 +1674,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
         rows = session.execute(text("""
             SELECT statement, basis, col_index, section_path, label_raw, value_won,
                    node_role, table_seq, COALESCE(is_cumulative, false) AS is_cum
-            FROM report_lines
+            FROM report_lines rl
             WHERE rcept_no=:r AND col_index=0 AND value_won IS NOT NULL
               -- F2 가드(2026-07-31): 헤더 규칙에 걸린 행은 기본 제외(계층2 가 이제 버리지
               -- 않고 header_hint 로 전사한다). 본문 경로는 아직 전사하지 않지만 같은 계약을
@@ -1624,6 +1686,20 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
               -- 외화 재무제표를 소비하려면 report_tables.currency 를 읽어 통화를 인지하는
               -- 별도 경로를 만들어야 한다(환산은 계층3 의 판단이지 계층2 가 할 일이 아니다).
               AND COALESCE(unit_source, '') <> 'fx_declared'
+              -- 요약재무정보 브래킷라벨 가드(R63, 2026-09-02 — docs/plans/
+              -- std_v3_kgaap_interim_consolidated_stale_annual_reprint_design_
+              -- 2026-09-02.md §6). "요약(연결)재무정보" 표는 "[유동자산]" 식 대괄호로
+              -- 섹션을 나누는데, 이 표가 간혹 정식 BS/IS/CF statement+basis로 잘못
+              -- 분류돼 report_lines에 들어간다(전사 712개 table_seq 확인). 대괄호
+              -- 라벨이 같은 table_seq에 하나라도 있으면 그 table_seq 전체가 요약표
+              -- 잔재라는 신호 — table_seq 전체를 제외한다(대괄호 없는 형제 행,
+              -- 예: 매출액·자산총계도 같은 요약표 소속이라 함께 배제해야 함).
+              AND NOT EXISTS (
+                  SELECT 1 FROM report_lines b
+                  WHERE b.rcept_no = rl.rcept_no AND b.statement = rl.statement
+                    AND b.basis = rl.basis AND b.table_seq = rl.table_seq
+                    AND b.label_raw ~ '^\\[.*\\]$'
+              )
         """), {"r": rcept}).fetchall()
         for (statement, basis, col_index, section_path, label_raw, value_won,
              node_role, table_seq, is_cum) in rows:
@@ -1826,7 +1902,8 @@ def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
 
 
 def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
-             fy: int | None = None, period: str | None = None, basis: str | None = None):
+             fy: int | None = None, period: str | None = None, basis: str | None = None,
+             stale_is_table_seqs: set | None = None):
     """{canonical: [candidate]} -> (confirmed {canonical: value}, conflicts {canonical: [candidate]}).
 
     Ported from build._resolve. Conflicts are HELD (not filled) and returned for
@@ -1839,11 +1916,30 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
     comment for why).
     basis: current basis (연결/별도), needed only to gate
     _TRADE_PAYABLES_STALE_SUBLINE_OVERRIDE (basis-scoped — see its comment for why).
+    stale_is_table_seqs: table_seq set from _stale_annual_reprint_table_seqs() (R63)
+    — precomputed by the caller (needs a DB round-trip _resolve() itself doesn't do)
+    and dropped from every is.* canonical's candidate pool in a pre-pass below (can
+    legitimately empty a canonical entirely, unlike trust_seqs/degenerate_eq_ids).
     """
     confirmed: dict[str, int] = {}
     conflicts: dict[str, list[dict]] = {}
     trust_seqs = _trust_account_table_seqs(cands)
     degenerate_eq_ids = _degenerate_total_equity_row_ids(cands)
+    # R63 stale-reprint drop (§1 above): unlike trust_seqs/degenerate_eq_ids (both
+    # applied inline further down, *never* emptying a canonical's candidate pool —
+    # their signal means "one of several candidates is wrong", so something else
+    # always remains), a stale-reprint table_seq can legitimately BE the only
+    # candidate — that's the whole point (this era genuinely has no other consolidated
+    # interim IS source). So this must run as a `cands`-level pre-pass, popping any
+    # canonical whose candidates are ALL stale (never leaving an empty list for the
+    # main loop below to choke on — nothing downstream expects `rows` to be empty).
+    if stale_is_table_seqs:
+        for c in [k for k in cands if k.startswith("is.")]:
+            kept = [r for r in cands[c] if r.get("table_seq") not in stale_is_table_seqs]
+            if not kept:
+                del cands[c]
+            elif len(kept) != len(cands[c]):
+                cands[c] = kept
     # B1-D1 (2026-08-30): reroute _CURRENT_STRICT drops to their non-current sibling
     # canonical (_NONCURRENT_SIBLING) instead of just discarding them. This MUST run as
     # a pre-pass over the whole `cands` dict, before the main per-canonical loop below -
@@ -2836,10 +2932,18 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
         db_rows = session.execute(text(f"""
             SELECT label_raw, value_won, node_role, section_path, table_seq,
                    COALESCE(is_cumulative, false) AS is_cum
-            FROM report_lines
+            FROM report_lines rl
             WHERE corp_code=:c AND report_fiscal_year=:y AND report_fiscal_period=:p
               AND basis=:b AND statement=:s AND col_index=0 AND value_won IS NOT NULL
               AND header_hint IS NULL          -- F2 가드(위와 같은 이유)
+              -- 요약재무정보 브래킷라벨 가드(R63) — build_merged_lines()와 동일, 그
+              -- 함수 안의 주석 참고.
+              AND NOT EXISTS (
+                  SELECT 1 FROM report_lines b
+                  WHERE b.rcept_no = rl.rcept_no AND b.statement = rl.statement
+                    AND b.basis = rl.basis AND b.table_seq = rl.table_seq
+                    AND b.label_raw ~ '^\\[.*\\]$'
+              )
               {rcept_clause}
         """), params).fetchall()
         for label_raw, value_won, node_role, section_path, table_seq, is_cum in db_rows:
@@ -2911,7 +3015,8 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     else:
         cands = collect_candidates(session, corp, fy, period, basis,
                                    statements=statements)
-    confirmed, conflicts = _resolve(cands, corp, fy, period, basis)
+    stale_is_seqs = _stale_annual_reprint_table_seqs(session, corp, fy, period, basis)
+    confirmed, conflicts = _resolve(cands, corp, fy, period, basis, stale_is_seqs)
     _resolve_ni_attribution(cands, confirmed, conflicts)
     # ★net_income conflict disambiguation via NI identity (2026-08-22, P1C 잔여회귀 조사 중
     # 발견 — 00120526 2014Q3 / 00139214 2013Q1). is.net_income can end up with 2+ raw

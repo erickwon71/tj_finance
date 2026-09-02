@@ -3433,6 +3433,120 @@ pg_dump 백업 필수.
 
 ---
 
+## R63. `fin2/layer3/combine.py` + `fin2/layer3/build.py` — K-GAAP시대 연결 인터림
+IS "직전연차 재게재" 배제 + 요약재무정보 브래킷라벨 누출 배제 (2026-09-02, std_v3
+상류결함②)
+
+**배경** — [[gateb-factv2-backlog-1to5-calendar-v3-scoping-2026-09-02]] 후속,
+`docs/plans/std_v3_kgaap_interim_consolidated_stale_annual_reprint_design_
+2026-09-02.md`. revenue 기준 corp×basis×fiscal_year 83,844건 중 3,516건(906개사)
+누적행 단조성 위반(Q1≤H1≤Q3≤FY 깨짐)에서 시작한 조사.
+
+**근본원인 1(원문대조 2건으로 확정)** — K-GAAP 시대(~2010년까지) 인터림(Q1/H1/Q3)
+필링의 "손익계산서"/"연결손익계산서" 재무제표 본문 표는 당해분기 데이터가 아니라
+**직전 확정 연차 재무제표를 그대로 재게재**한 것. 2011년 K-IFRS 연결의무화
+이전엔 연결 인터림 재무제표 작성·공시 자체가 법정의무가 아니었다는 규제상의
+사실(별도는 원래도 분기공시 의무 대상이라 진짜 당해분기 데이터) — 계층2/계층3
+버그가 아니라 원문 자체가 그렇게 작성됐다는 사실. 실측:
+- 현대차(00164742) 2004 연결 — "연결손익계산서" 섹션이 Q1·Q3 필링에 바이트
+  단위로 동일.
+- KG스틸/동부제강(00115676) 2006 — 별도 "손익계산서" 표는 컬럼헤더가 필링마다
+  정확히 다른 기간(Q1: "제25기 분기(2006.1.1~3.31)", Q3: "제25기 3분기
+  (2006.1.1~9.30)")인데, 연결 "연결손익계산서" 표는 Q1·H1·Q3 전부 "제24기/제23기"
+  (2005/2004 연차)로 완전 동일 — 세부계정 15개 이상 동일값(iconv EUC-KR→UTF-8
+  후 grep 원문대조).
+- 전사 정량화(report_lines raw): "필링간 값 하나라도 일치"하는 쌍 중 "10개+
+  동시일치"(=표 전체 재게재) 비율이 **연결 97.2%(10,519/10,818쌍) vs 별도
+  29.6%(8,128/27,470쌍)** — 압도적 비대칭.
+
+**근본원인 2(전사 SQL로 확정)** — "요약(연결)재무정보" 표는 "[유동자산]" 식
+대괄호로 섹션을 나누는데, 이 표가 간혹(전사 712개 (corp,rcept,statement,basis,
+table_seq) 조합) 정식 BS/IS/CF/SCE/APPR statement+basis로 잘못 분류돼
+`report_lines`에 들어가 있다. 결정적 확인(00171867, rcept 20081114001440,
+2009H1): "[유동자산]" 라벨이 있는 **같은 table_seq 안에** `매출액`·`부채총계`·
+`자산총계`·`자본총계`·`영업이익`·`지배회사지분순이익` 등 DIRECT_MAP 캐노니컬
+정확일치 라벨이 그대로 섞여 있었다 — account_mapper가 대괄호 여부를 안 보므로
+이 값들이 진짜 재무제표 본문 대신 요약표에서 채택될 위험이 실재.
+
+**왜 "요약재무정보"로 대체하지 않는가** — 사용자 확인(2026-09-02): 그 표는
+단위가 백만원(재무제표 본문 표는 원 단위)이라 std_v3의 정밀도 기준 미달, 소스로
+채택 안 함. 즉 이 시대·이 basis엔 원천적으로 정밀 당해분기 연결 IS 데이터가
+없다 — 복구가 아니라 **오염된 값을 배제(NULL)**하는 방향으로만 구현.
+
+**구현**:
+1. `combine.py::_stale_annual_reprint_table_seqs(session, corp, fy, period, basis)`
+   신설 — 같은 corp×fiscal_year×basis의 **다른 interim period**(Q1/H1/Q3 중 현재
+   period 제외)와 (label_raw, value_won) 10개 이상 동시일치하는 table_seq를
+   cross-period DB 조회로 탐지(`report_fiscal_year <= 2012`로 조기 게이팅 — 실측
+   연도분포 밖 구간에서 매 period마다 불필요한 쿼리 방지). `_resolve()`에
+   `stale_is_table_seqs` 파라미터로 주입돼 `cands`의 is.* 캐노니컬에서 배제
+   table_seq 후보를 제거하는 **cands-레벨 pre-pass**(main 루프 진입 전) — 남는
+   후보가 없으면 그 캐노니컬은 아예 `cands`에서 삭제(=NULL). 기존 `trust_seqs`/
+   `degenerate_eq_ids` 가드와 달리 "빈 풀 방지" 안전장치를 **의도적으로 안 둠**
+   (그게 이 규칙의 목적 — 대체소스가 없는 시대엔 NULL이 맞는 결과).
+   `combine_full()`이 매 period 호출마다 계산해 `_resolve()`에 전달.
+2. `build_merged_lines()`/`collect_candidates()`의 SQL에 `NOT EXISTS` 서브쿼리
+   추가 — 같은 (rcept_no, statement, basis, table_seq) 안에 `label_raw ~
+   '^\[.*\]$'`(대괄호 라벨)인 행이 하나라도 있으면 그 table_seq 전체를 제외
+   (`_trust_account_table_seqs()`와 같은 "특징적 신호로 table_seq 전체 배제"
+   패턴, 신호가 값항등성 대신 라벨텍스트라 cross-period 조회 불요).
+3. **부수 발견·수정**: `build.py::build_corp()`가 `if not col: continue`로 delete
+   자체를 건너뛰고 있었다 — 위 두 배제 규칙이 새로 만드는 "이 (corp,fy,period,
+   basis)는 이제 후보가 하나도 없다"는 케이스에서, 재빌드해도 **예전(수정 전)의
+   틀린 값이 담긴 행이 영구히 안 지워지는** 버그를 노출시켰다(모듈 자체 독스트링의
+   "delete-then-insert" 계약 위반, R63으로 처음 발현됐을 뿐 잠재적으로 기존에도
+   있었을 수 있는 결함). `delete()`를 `if not col` 체크보다 먼저 실행하도록 이동 —
+   `col`이 비어도 그 키의 기존 행은 항상 지워지고, insert만 조건부로 스킵.
+
+**검증**: 회귀 테스트 신설 2개 — `test_combine_r63_stale_reprint_resolve.py`(pure,
+합성 cands+stale_is_table_seqs로 `_resolve()` pre-pass 동작 검증, 5개), `test_
+combine_r63_stale_reprint_db.py`(DB-backed, KG스틸 00115676/2006 Q1 연결
+table_seq=1 탐지+별도 미탐지+FY 무영향, 00171867 브래킷라벨 table_seq 배제 실측
+재현, 4개). `pytest tests/ fin2/tests/` 703 pass(무관 기존실패 1건
+`test_lxintl_facility_table_dropped` 불변, R62와 동일).
+
+**백필 완료**: 영향 corp 전사 스캔(같은 로직 SQL 재현) — §1 대상 1,112개사, §6 대상
+49개사, 합집합 **1,117개사**. pg_dump 백업(`/Volumes/tj_finance_data/db_backups/
+std_financials_v3_pre_r63_backfill_20260902.dump`, 51MB) 후 `build_std_v3.py
+--corp <1,117개사> --year-min 1999` 백그라운드 실행(corp 목록은 R62 선례와 동일하게
+스크래치패드 산출물, git 비추적 — 세션마다 SQL로 재현 가능). **실행 결과**:
+1,117/1,117 corp 성공(에러 0), 197,861행, 6,290초(105분).
+
+**후속조치 — calendar_v3 재동기화(필수, 놓치기 쉬움)**: std_v3 백필 직후
+`dq_assertions.py`를 돌려보니 `calendar_orphan_cq`(ERROR) 위반이 345건 새로
+잡혔다 — `calendarize_corp_v3()`가 corp+basis 단위 delete-then-insert라서, std_v3
+쪽만 바뀌고 그 corp의 달력테이블(`std_financials_calendar`)을 다시 안 돌리면
+예전 std_v3 행을 가리키던 달력분기가 유령행으로 남는다(`diag_calendar_orphans.py`
+문서화된 기존 패턴, 이번에 실측으로 재확인). 같은 1,117개사에 대해
+`calendarize_corp_v3()`를 재실행(226,319행, 173초)해 완전 해소(`calendar_orphan_cq`
+345→**0**). **교훈**: std_v3 백필 후에는 항상 이 재동기화까지 한 세트 —
+`docs/runbook_new_parser_pipeline_integration.md`에 "std_v3 값을 바꾸는 백필은
+calendar_v3 재동기화까지 포함"으로 명시 필요(다음 세션 후속).
+
+**최종 검증**:
+- `dq_assertions.py` 전체 실행: ERROR 위반 어서션 2→**1**(`calendar_orphan_cq`
+  345→0, `statement_magnitude_impossible`는 이 트랙과 무관한 기존 결함 —
+  150→146으로 오히려 소폭 개선, 이번 백필로 신규 유입된 corp 없음 확인:
+  71개 위반 corp 중 59개가 R63 영향권과 겹치지만 이건 두 결함 모두 "옛 K-GAAP
+  시대 문제 필링"에 몰리는 자연스러운 상관관계일 뿐 — 배제 로직은 NULL/삭제만
+  하므로 구조적으로 새 magnitude-impossible 값을 만들 수 없음).
+  `calendar_adjacent_year_cq1_identical`(WARN)도 부수 개선 73→9.
+- 표본 원문대조 4건 재확인: 현대차 00164742 2004 연결 Q1/H1/Q3 전부 NULL,
+  KG스틸 00115676 2006 연결 Q1/H1/Q3 전부 NULL(별도 Q1은 진짜값 505,829,999,432
+  보존), 00171867 2009H1 연결 행 자체가 삭제(브래킷라벨 오염만 있고 대체소스가
+  없었던 케이스).
+- 단조성 위반(Q1≤H1≤Q3≤FY, revenue 기준, 2002~2011): 3,516→**1,225**(65% 감소).
+  "Q1=H1=Q3 완전동일값" 서명: 824→**82**(90% 감소) — 잔존 82건은 임계값10 미달
+  또는 fy>2012 범위밖 케이스로 추정(미확인, 범위 밖).
+
+**부수 발견(범위 밖, 후속 트랙 후보)**: KG스틸 2006 별도 H1의 "Ⅰ. 매출액(주석13과
+14)"가 account_mapper에 안 걸림(Q1의 "매출액(주석10)"는 걸림) — 복수 주석번호를
+"와/과"로 묶은 표기 정규화 갭으로 추정, R63과 무관한 기존 account_mapper 라벨매칭
+버그. 이 때문에 해당 corp의 별도 H1/Q3 revenue가 R63 이후 (틀린 재게재값 대신)
+NULL로 전환됐지만 진짜 데이터 복구는 못 함 — 별도 트랙 후보로만 기록.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

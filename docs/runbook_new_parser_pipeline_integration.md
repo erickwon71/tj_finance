@@ -89,6 +89,7 @@
   | 주주환원 API | `scripts/collect_periodic_apis.py --api <..> --years 2015-<올해> --skip-existing` |
   | 대주주/지분 | `scripts/collect_shareholders.py --year <..> --skip-existing` |
   | D&A(cf_da/expense_nature) | `python -c "from collector.cf_da_sync import sync_cf_da; sync_cf_da(year_min=..)"` 등 |
+  | 계층3(`combine.py`) 규칙 변경 — std_v3 값 자체가 바뀜 | `build_std_v3.py --corp <대상> --year-min ..` **다음에 반드시** 같은 corp 목록으로 달력 재동기화도(아래 참고) — 둘 중 하나만 하면 `dq_assertions.py::calendar_orphan_cq`(ERROR) 유령행 발생 |
 
 - [ ] **B2. `--skip-existing` 재개 안전성 확인** — 장시간 백필은 중단 후 재개가 가능해야 한다.
       DB만으로 "이미 시도함"을 구분 못 하는 경우(예: 매출표 자체가 없는 기업)는 별도 상태파일로
@@ -101,6 +102,15 @@
 - [ ] **B4. 장시간 잡은 사용자 실행/야간 자동화로** — 에이전트가 백그라운드로 장시간 잡을 넘기지
       않는다(운영 교훈). 반복 백필은 launchd 야간 잡으로(예: `com.tjfinance.gapfill`, 완료 시
       자기해제). 상세: `deploy/launchd/README.md`.
+
+- [ ] **B5. std_v3 값을 바꾸는 백필이면 `calendar_v3` 재동기화도 같은 세트** —
+      `fin2.standardize.calendar_v3.calendarize_corp_v3(session, corp)`가 corp+basis
+      단위 delete-then-insert라서, std_v3만 바꾸고 그 corp의 달력을 다시 안 돌리면
+      예전 std_v3 행을 가리키던 달력분기가 유령행으로 남는다(`dq_assertions.py::
+      calendar_orphan_cq`, ERROR). 실측 사례(R63, `docs/PARSING_RULES.md`): std_v3
+      백필(1,117개사) 직후 orphan 345건 발생 → 같은 corp 목록으로
+      `calendarize_corp_v3()` 재실행해 0건으로 해소. **std_v3 백필 스크립트 자체엔
+      이게 자동 배선돼 있지 않다** — 매번 수동으로 이어서 돌릴 것.
 
 ---
 

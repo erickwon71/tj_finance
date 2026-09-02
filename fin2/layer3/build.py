@@ -113,8 +113,37 @@ def build_corp(session, corp: str, year_min: int = 2015,
         for basis in bases:
             col, conflicts, prov = combine_full(session, corp, fy, period, basis,
                                                 merged=merged)
+            # ★R63 (2026-09-02): delete-then-*maybe*-insert, not delete-only-if-insert.
+            # `col` can now legitimately end up empty not because this basis has
+            # nothing to report (the pre-existing meaning of "if not col: continue"),
+            # but because everything combine_full() found WAS report_lines data —
+            # just all of it flagged as a stale reprint (_stale_annual_reprint_
+            # table_seqs) or a summary-table leak (bracket-label guard) and correctly
+            # dropped. A prior build_corp() run may have already written a row here
+            # from the old (pre-R63) wrong-but-non-null value; leaving the delete
+            # gated behind `if not col: continue` (as before) would leave that stale
+            # row untouched forever on a rebuild — silently defeating the whole point
+            # of the R63 exclusion. The delete must run whenever this (corp, fy,
+            # period, basis) key was considered at all, matching this function's own
+            # documented idempotency contract ("delete-then-insert of the key").
+            session.execute(
+                delete(StdFinancialV3).where(
+                    StdFinancialV3.corp_code == corp,
+                    StdFinancialV3.fiscal_year == fy,
+                    StdFinancialV3.fiscal_period == period,
+                    StdFinancialV3.statement_type == basis,
+                )
+            )
+            session.execute(
+                delete(ExtendedFactV3).where(
+                    ExtendedFactV3.corp_code == corp,
+                    ExtendedFactV3.fiscal_year == fy,
+                    ExtendedFactV3.fiscal_period == period,
+                    ExtendedFactV3.statement_type == basis,
+                )
+            )
             if not col:
-                continue  # nothing assembled for this basis (missing / other-basis only)
+                continue  # nothing left to insert (missing / other-basis only / all-stale)
             if basis == "separate":
                 # Separate financial statements have no non-controlling interest —
                 # controlling_ni is always net_income by accounting definition, so
@@ -124,14 +153,6 @@ def build_corp(session, corp: str, year_min: int = 2015,
                 ni = col.get("net_income")
                 if ni is not None and col.get("controlling_ni") != ni:
                     col["controlling_ni"] = ni
-            session.execute(
-                delete(StdFinancialV3).where(
-                    StdFinancialV3.corp_code == corp,
-                    StdFinancialV3.fiscal_year == fy,
-                    StdFinancialV3.fiscal_period == period,
-                    StdFinancialV3.statement_type == basis,
-                )
-            )
             row = StdFinancialV3(
                 corp_code=corp, fiscal_year=fy, fiscal_period=period,
                 statement_type=basis,
@@ -162,15 +183,8 @@ def build_corp(session, corp: str, year_min: int = 2015,
             # extended_financials v3 (2026-09-01, docs/plans/extended_financials_v3_
             # label_based_design_2026-09-01.md §3-2/3-3): DIRECT_MAP 밖 확장 캐노니컬
             # (combine_full()이 이미 계산해 prov["extended"]로 노출) 을 나란히 upsert.
-            # StdFinancialV3 와 같은 (corp,fy,period,basis) delete-then-insert 단위.
-            session.execute(
-                delete(ExtendedFactV3).where(
-                    ExtendedFactV3.corp_code == corp,
-                    ExtendedFactV3.fiscal_year == fy,
-                    ExtendedFactV3.fiscal_period == period,
-                    ExtendedFactV3.statement_type == basis,
-                )
-            )
+            # StdFinancialV3 와 같은 (corp,fy,period,basis) delete-then-insert 단위
+            # (delete는 위로 이동 — R63 코멘트 참고).
             for canon, value in prov.get("extended", {}).items():
                 session.add(ExtendedFactV3(
                     corp_code=corp, fiscal_year=fy, fiscal_period=period,

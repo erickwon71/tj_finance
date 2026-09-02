@@ -29,6 +29,11 @@ SKIP 보호가 없어(직접 호출) 실제 크래시 위험이 있었던 지점
 항목 주석). `extended_financials_n_facts_outlier`는 `std_v3_conflicts_unresolved`로 교체.
 `calendar_orphan_cq`(→`diag_calendar_orphans.py::_ORPHAN_PRED`)는 여전히 `std_financials_v2`를
 직접 읽어 SKIP 상태 그대로 — 이산분기/달력 계열은 별도 트랙(백로그 항목5).
+
+★2026-09-02(calendar_v3_migration_scoping_2026-09-02.md §3(c)) — 위 백로그 항목5(이산분기/
+달력) 트랙 완료 후, `calendar_orphan_cq`를 `std_financials_v3` 기반(source_lineage 대조)
+으로 재작성해 SKIP 복구(`diag_calendar_orphans.py` 참고, 판정식 자체가 바뀜 — "이산분기
+존재 여부"가 아니라 "그 CQ 를 만든 as-filed 행이 지금도 그 슬롯을 뒷받침하는가").
 """
 from __future__ import annotations
 

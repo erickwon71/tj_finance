@@ -538,3 +538,163 @@ dict(prefix→set)를 그대로 재사용 가능한지, 아니면 이 호출부 
 관련: [[std-v3-upstream-defects-r62-and-monotonicity-2026-09-02]],
 [[note-ref-multicol-compaction-value-corruption-2026-09-02]](R65, 같은 세션
 선행 트랙 — "좁은 증상신호가 실제보다 훨씬 작게 잡는다"는 같은 교훈 반복).
+
+---
+
+## 12. R67(후보) — 계층2 `document_default_unit()` 문서레벨 단위폴백
+오탐 (2026-09-03, §11.3 후속 — 근본원인 확정 + ground-truth 전체스케일
+스캔 완료, **구현 미착수, 설계만·승인 대기**)
+
+§11.3에서 표본 1건(00240857)으로 발견한 신규 버그 후보를 사용자 지시
+("1번 진행해" = §11.4의 후보①)로 착수 — 코드 직접 추적으로 메커니즘 확정,
+2번째 독립 표본(다른 회사·다른 statement)으로 재현 확인, SQL 전체스케일
+스캔까지 완료. **코드 변경 없음 — 이번 세션도 근본원인규명+스케일산정+
+설계까지만, 구현은 다음 세션(승인 후).**
+
+### 12.1 근본원인(확정 — 코드 직접 추적 + 2개사 원문대조)
+
+`fin2/extract/text.py::document_default_unit(root)`은 본문 표에 로컬 단위
+선언이 없을 때 쓰는 "문서 전체 기본 단위"를 찾는 함수다. 로직: `SECTION-2`
+중 TITLE이 `_SUMMARY_SECTION_RE`(`"요약재무정보"`)에 매치하는 섹션 **하나**를
+찾아, 그 섹션 안의 표들을 문서순으로 훑다가 **데이터가 있고 단위가 선언된
+첫 표**를 만나면 그 단위를 즉시 반환한다.
+
+문제: 이 "요약재무정보" 섹션의 첫 데이터표(요약재무정보 표 자체)가 선언한
+단위는 **그 표 자신에게는 정당**(요약표는 흔히 천원/백만원 단위로 압축
+표기)하지만, 이 값이 **문서 전체의 기본값으로 오용**된다. 이후 실제
+재무제표 섹션("4. 재무제표")의 BS/IS/CF 개별 표가 (이 필링에서만) 로컬
+단위 선언이 **공란**(`(단위 : )`, 값 없이 placeholder만 존재 — 흔한 DART
+저작 관행, 보통 같은 섹션 뒷부분 주석/CF표의 선언에서 유추 가능하지만
+현재 코드는 그 경로를 안 씀)인 경우, `report_lines.py`가 이 문서 전체
+기본값(요약재무정보표 단위)으로 잘못 폴백한다.
+
+**표본 1 (00240857/바이오스마트, 2005H1, `20050816000383.xml`)** —
+`document_default_unit()`을 직접 호출해 반환값 추적:
+```
+MATCHED SECTION-2 TITLE: '1. 요약재무정보'
+  table#1 has_data=False unit=None
+  table#2 has_data=True unit=1000 (단위 :천원 )
+  -> RETURN HERE
+document_default_unit() -> (1000, '(단위 :천원 )')
+```
+실제 "나. 손익계산서" 표(위치 359121) 바로 곁의 로컬 선언은 `(단위 : )`
+(공란, 위치 360133) — 반면 같은 "4. 재무제표" 섹션 뒤쪽(주석·CF 등)에는
+`(단위 : 원)` 선언이 15회 이상 정상적으로 존재한다(위치 547357~657256).
+즉 **정답(원)이 같은 섹션 안에 이미 있는데도, 코드는 그걸 안 보고 훨씬
+먼 "요약재무정보" 섹션의 단위(천원)를 가져다 쓴다.** ×1000 제거하면
+H1=10,859,787,838·Q3=14,378,192,970으로 Q1(4.58B)·FY(18.2B) 사이에
+자연스럽게 들어맞아(Q1<H1<Q3<FY) 가설을 뒷받침.
+
+**표본 2 (00101549/경동제약, 2003Q3, CF, `20031114000457.xml`)** — 독립
+회사·독립 statement(CF)로 재현: `document_default_unit()` ->
+`(1000000, '(단위 : 백만원)')`(같은 "요약재무정보" 섹션 오귀속 패턴,
+이번엔 백만원 단위). 서로 다른 회사·다른 statement에서 **같은 코드
+경로(요약재무정보 섹션 단위 오귀속)**가 재현됨 — 우연이 아님을 뒷받침.
+
+### 12.2 전체스케일 ground-truth SQL 스캔
+
+R65/R66과 달리 이번엔 "생산함수 직접호출" 대신, 이미 적재된
+`report_lines`에서 **같은 corp×basis×fiscal_year×statement×label_raw**가
+서로 다른 `report_fiscal_period`에서 `unit_source`(`doc_default` vs
+`declared`) **그리고** `adecimal` 값이 다른 경우를 찾는 SQL 신호로
+정량화(재파싱 없이 기존 적재 데이터만으로 가능, statement∈{BS,IS,CF},
+col_index=0, value_won not null, is_cumulative 참 또는 NULL):
+
+```sql
+WITH candidates AS (
+  SELECT corp_code, basis, report_fiscal_year, statement, label_raw,
+         report_fiscal_period, unit_source, adecimal
+  FROM report_lines
+  WHERE statement IN ('BS','IS','CF') AND col_index=0 AND value_won IS NOT NULL
+    AND COALESCE(is_cumulative, true) = true
+)
+SELECT DISTINCT a.corp_code, a.basis, a.report_fiscal_year, a.statement, a.label_raw
+FROM candidates a JOIN candidates b
+  ON a.corp_code=b.corp_code AND a.basis=b.basis AND a.report_fiscal_year=b.report_fiscal_year
+ AND a.statement=b.statement AND a.label_raw=b.label_raw
+ AND a.report_fiscal_period <> b.report_fiscal_period
+WHERE a.unit_source='doc_default' AND b.unit_source='declared'
+  AND a.adecimal IS DISTINCT FROM b.adecimal;
+```
+
+**결과**: **14,936건**(label×corp×basis×fy×statement 단위) /
+**284개 corp×basis×fiscal_year** / **231개사**. statement별
+IS 6,716건(125개사) / CF 8,220건(154개사) / **BS 0건**(BS는 이 패턴이
+안 걸림 — 재무제표 섹션 첫 표가 보통 BS라 로컬 선언이 더 안정적으로
+붙어있는 것으로 추정, 미확정). 연도분포: **2000~2008에 97%+ 집중**
+(2005~2006 정점, 각 2,935/3,080건), 2015~2023에 미량 잔존(95건,
+0.6% — 별개 원인일 가능성, 미조사).
+
+**★이 SQL 신호는 명확한 하한(lower bound)**: "같은 라벨이 기간별로
+unit_source가 다를 때"만 잡히므로, **한 corp/fy의 모든 인터림 기간이
+전부 같은(틀린) `doc_default` 값을 공유하는 경우는 이 신호로 절대
+안 잡힌다**(비교 대상 자체가 없음 — 내부적으로는 일관되니 단조성
+위반으로도 안 뜨고, 이 SQL 신호로도 안 뜸). R65(4,475필링, 최초표본의
+179배)·R66(312건, 최초표본의 12.5배) 둘 다 "좁은 증상신호가 최종
+스케일의 일부에 불과했다"는 전례를 감안하면, **이 14,936건도 진짜
+스케일의 하한일 뿐 상한이 아닐 가능성이 높다.**
+
+### 12.3 §11의 IRREGULAR(818건)와의 관계
+
+§11.3에서 이미 확인한 좁은 신호(worst_pair 두 기간·라벨 정확히
+"매출액"만, revenue 컬럼·2002~2011 한정)로는 10/818(1.2%)만 겹쳤다.
+이번 §12.2 스캔(전체 라벨·전체 statement·전체 연도)은 그보다 훨씬
+넓지만, **§11의 IRREGULAR 모집단(revenue·2002~2011·인접쌍위반)과
+1:1로 안 겹친다** — 이유: (a) §12.2는 BS/IS/CF 전체 라벨을 보므로
+revenue 아닌 계정(매입채무·현금흐름 세부계정 등)의 오염도 포함,
+(b) §12.2는 어떤 기간쌍이든 상관없이 라벨 단위 mismatch만 보므로
+반드시 "단조성 위반"으로 이어지진 않음(예: 그 라벨의 실제 크기가
+Q1/Q3 둘 다 비슷하면 ×1000 차이가 나도 위반 신호로 안 뜰 수 있음
+— revenue보다 오히려 더 안 뜨기 쉬운 계정도 있을 것). 즉 **R67은
+IRREGULAR의 부분집합이 아니라 겹치는 별도 문제** — IRREGULAR 트리아지
+관점에선 "일부 설명", std_v3 데이터 품질 관점에선 "revenue 단조성
+위반으로 안 드러나는 BS/CF 세부계정까지 포함하는 더 넓은 문제".
+
+### 12.4 제안 수정 방향(설계만, 구현 미착수)
+
+핵심 아이디어: **로컬 선언이 공란인 표를 만나면, "요약재무정보" 섹션까지
+가기 전에 먼저 그 표가 속한 "재무제표"/"연결재무제표" `SECTION-2` 안의
+**다른** 표에 선언된 단위를 우선 참조**(표본 1에서 실증됐듯 정답이 같은
+섹션 안에 이미 있는 경우가 있음). 우선순위 후보(확정 아님, 다음 세션
+코드 조사 필요):
+
+1. 같은 SECTION-2(BS/IS/CF가 속한 "재무제표"/"연결재무제표") 안의
+   **다른 표**에 선언된 단위를 문서순으로 스캔해 가장 가까운 것을 채택
+   (§2/R4-2가 "요약재무정보" 섹션 안에서 이미 쓰는 pending-text 패턴을
+   "재무제표" 섹션에도 일반화하는 방향).
+2. 그래도 못 찾으면 현재처럼 "요약재무정보" 섹션 폴백 유지(완전 제거는
+   §2에서 이미 논증한 "요약재무정보는 basis/기간 판정이 다른 대체
+   불가 소스"라는 이유와 별개로, 최후 수단으로는 여전히 유효할 수
+   있음 — 미결정).
+3. 대안: `unit_source='doc_default'`인 기존 report_lines 행을 사후
+   보정하는 계층3 필터(R63/R66 패턴처럼 combine.py에서 배제)도 가능하나,
+   이 경우 "배제"가 아니라 "올바른 단위로 재계산"이 목표라 계층2
+   재추출이 근본 해법에 더 가까움(계층3 필터는 값을 못 살리고 NULL로만
+   만듦 — R63/R66과 성격이 다름, 이 버그는 정답이 문서 안에 있어 복구
+   가능한 경우가 많을 것으로 추정).
+
+**미결정사항(다음 세션 코드조사+사용자 확인 필요)**:
+- 방향 1을 실제로 구현할 때 "같은 SECTION-2 안 다른 표"를 어떻게
+  안전하게 스캔할지(§2/R4-2의 pending-text 로직을 그대로 일반화 가능한지,
+  아니면 다른 구조가 필요한지) — 코드 조사 필요.
+- BS가 0건인 이유(구조적으로 안전한지, 단순히 이 SQL 신호가 BS를 못
+  잡는 것뿐인지) 확인 필요 — 안전하다면 BS는 그대로, 아니면 별도 확인.
+- 2015~2023 잔존 95건이 같은 원인인지 별개인지(비중 작아 후순위).
+- R63/R65처럼 **계층2 재추출+계층3 재백필+Gate B 전수재감사**가 필요한
+  스코프(231개사)이므로, 구현 승인 시 같은 절차(dry-run→백업→구현→
+  재추출→재백필→검증) 필요.
+
+**다음 세션 착수 순서(승인 시)**:
+1. `document_default_unit()`/`report_lines.py`의 단위 결정 경로 코드
+   재조사 → 방향 1(같은 SECTION-2 우선 참조) 구체 설계.
+2. dry-run: 코드 수정 시뮬레이션으로 231개사 중 실제 변경되는 값 수·
+   방향(old→new) 산정(R63/R65/R66과 동일 절차).
+3. 사용자 승인 후: 구현 → 회귀테스트 → `load_report_lines.py`
+   재추출(231개사 대상 rcept) → `build_std_v3.py` 재표준화 →
+   `calendarize_corp_v3()` 재동기화 → `dq_assertions.py` +
+   Gate B(스코프에 맞게 전체 5-shard 또는 스코프 PK조인 전이표 —
+   R66 선례처럼 스코프가 좁으면 후자) → `docs/PARSING_RULES.md` R67
+   등재 → 메모리 갱신.
+
+**코드 변경 없음 — 이번 세션은 근본원인 확정+스케일산정+설계까지만.**
+관련: [[std-v3-upstream-defects-r62-and-monotonicity-2026-09-02]].

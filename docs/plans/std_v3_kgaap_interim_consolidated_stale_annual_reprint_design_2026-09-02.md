@@ -341,4 +341,89 @@ R63/R64 이후 시점 재스캔(메모리의 이전 "1,225"는 R64 백필 전 �
 **코드 변경 없음 — 이번 세션은 순수 분류·검증만.** 관련:
 [[std-v3-upstream-defects-r62-and-monotonicity-2026-09-02]].
 
-관련: [[std-v3-upstream-defects-r62-and-monotonicity-2026-09-02]].
+## 10. R66(신규, 후보) — EXACT_EQUAL_RESIDUAL 근본원인 확정 + 전체스케일 스캔
+(2026-09-03, R65 종료 직후 세션) — **구현 미착수, 다음 세션 착수 확정**
+
+§9에서 "R63 임계값(10개 계정 동시일치) 미달 — 증권업 특수계정이라 매치가
+안 됨"으로 추정했던 가설을 **직접 SQL 재현으로 반증**했다. 00104856(삼성증권)
+2005 표본에서 R63의 `_stale_annual_reprint_table_seqs()` 매치 개수를 실측한
+결과 **165개**(임계값 10을 압도적으로 초과) — R63의 제외 로직 자체는 정상
+작동 중이었다.
+
+### 10.1 진짜 근본원인(확정)
+
+`fin2/layer3/industry_profiles.py::apply_revenue_profile()` — 증권/보험/은행/
+여신전문 업종 전용 "표준 매출액 = 명명된 소계 조합" 계산기(증권은
+`net_op_formula`: 순영업수익 = 영업이익 + 판매관리비) — 가 `combine.py:3168`
+호출부에서 **`stale_reprint_table_seqs`를 전혀 전달받지 못하고**, 필터링 안 된
+원본 `merged` IS 라인을 그대로 읽는다. R63(2026-09-02)은 `_resolve()`의
+DIRECT_MAP 후보 풀(`cands`)만 정제했을 뿐, 이 별도 계산 경로는 애초에 손대지
+않았다 — **같은 원인(K-GAAP 시대 연결 인터림 재게재)의 두 번째 소비 경로가
+빠진 것**.
+
+**00104856 원문/DB대조로 메커니즘 확정**: FY2004 영업이익(154,594,395,676) +
+판관비(517,609,979,403, `conflicts.is.sga`에 남아있던 후보값과 정확 일치) =
+**672,204,375,079** — Q1/H1/Q3 2005 std_v3 revenue와 정확히 일치. 둘 다 R63이
+이미 "직전연차 재게재"로 확정한 stale table_seq=0 출처.
+
+**표본 규모**: EXACT_EQUAL_RESIDUAL 25건 중 25건 재확인 결과 **23건(92%,
+13개사 중 11개사)이 증권/보험 업종**(KSIC 66121·65121, `SECURITIES`/
+`INSURANCE` 프로파일 적용대상). 나머지 2건(00128661 도매업·00287788
+교육서비스업)은 이 메커니즘과 무관한 별개 원인(미조사).
+
+### 10.2 전체스케일 정밀 스캔(ground-truth, R65식)
+
+실제 프로덕션 함수(`build_merged_lines`·`_stale_annual_reprint_table_seqs`·
+`apply_revenue_profile`)를 직접 호출해 재현 — 증권/보험/은행/여신전문
+induty_prefix 대상 103개사 × 2002~2011 × Q1/H1/Q3 × 연결/별도를 전수 재계산.
+
+```python
+# 스캔 스크립트(세션 scratchpad, git 비추적 — 재현 필요 시 아래 로직으로 재작성):
+# 1. corps = induty_code LIKE '65%'/'66121%'/'64121%'/'64992%'/'64913%'/'64911%'
+#            /'64132%' OR corp_code='00156859'(CORP_INDUTY_OVERRIDE)
+# 2. merged = build_merged_lines(session, corp, fy, period)
+# 3. is_lines = [r for r in merged if statement=='IS' and basis==basis]
+# 4. stale_seqs = _stale_annual_reprint_table_seqs(session, corp, fy, period, basis, 'IS')
+# 5. old = apply_revenue_profile(is_lines, induty, corp)
+# 6. new = apply_revenue_profile([r for r in is_lines if r['table_seq'] not in stale_seqs],
+#                                  induty, corp)
+# 7. old[1] != new[1] 이면 "changed" 기록
+```
+
+**결과: checked=2,885 / profile_applied=651 / changed=312건(18개사)** — 최초
+증상신호(25건, byte-동일 케이스)의 **약 12.5배** — R65와 동일한 "좁은 증상신호
+≪ 실제 영향범위" 패턴 재확인.
+
+- 전부 `securities` 프로파일에서만 발생(보험·은행·여신전문 0건).
+- 연결 206건 / 별도 106건.
+- **312건 전부 old(오염값)→new=None** — 대체 후보가 없어 결과가 항상 NULL로
+  귀결(이 시대 증권사 연결 인터림은 R63이 이미 확정한 대로 "진짜 당해분기
+  데이터 자체가 없음"). **새로 틀린 값을 만드는 케이스 0건** — R63의 기존
+  원칙("복구 아닌 배제")과 완전히 같은 성격이라 회귀 위험 낮음.
+- 별도(separate) 106건도 R63이 이미 검증한 동일 임계값 로직(별도 매치율
+  16.0%, R63 §8.2에서 "안전한 방향"으로 이미 판단됨) 재사용이라 신규 리스크
+  아님.
+
+### 10.3 제안 수정(미착수, 다음 세션)
+
+`combine.py:3168` 근처 `apply_revenue_profile(is_lines, ...)` 호출 앞에서
+현재 basis에 해당하는 `stale_reprint_table_seqs`로 `is_lines`를 필터링한 뒤
+호출하도록 배선. `_resolve()`가 이미 계산해 갖고 있는 `stale_reprint_table_seqs`
+dict(prefix→set)를 그대로 재사용 가능한지, 아니면 이 호출부 스코프에서
+별도로 계산해야 하는지 코드 위치 확인 필요.
+
+### 10.4 다음 세션 착수 순서(사용자 지시: "다음 세션에서 1번으로 진행하자" —
+구현+백필+Gate B 전수재감사까지 이어서 실행)
+
+1. `apply_revenue_profile()` 호출부에 `stale_reprint_table_seqs` 배선(코드 수정).
+2. 회귀 테스트 신설(00104856 2005 Q1/H1/Q3 old→None 확인 등).
+3. `pytest tests/ fin2/tests/` 회귀 확인.
+4. std_v3 재빌드 — 영향 18개사(`build_std_v3.py --corp <18개사> --year-min 1999`).
+5. calendar_v3 재동기화(18개사).
+6. `dq_assertions.py` + Gate B 전수재감사(5-shard, R65와 동일 절차) — 등급전이
+   매트릭스로 회귀 0 확인.
+7. `docs/PARSING_RULES.md`에 R66 섹션 기록, 메모리 갱신.
+
+관련: [[std-v3-upstream-defects-r62-and-monotonicity-2026-09-02]],
+[[note-ref-multicol-compaction-value-corruption-2026-09-02]](R65, 같은 세션
+선행 트랙 — "좁은 증상신호가 실제보다 훨씬 작게 잡는다"는 같은 교훈 반복).

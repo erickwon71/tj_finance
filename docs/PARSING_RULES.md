@@ -3362,6 +3362,77 @@ net_debt 산식이 애초에 계산 불가 — 별개의 기존 이슈). `pytest
 
 ---
 
+## R62. `account_maps/is_accounts.py` + `parser/common/amount_normalizer.py` —
+`is.net_income` '(당기)' 삽입형·'총당기순이익' 계열 alias 누락 + 로마숫자 혼합표기
+정규화 버그 (2026-09-02, std_v3 상류결함① 부분 해소)
+
+**배경** — [[gateb-factv2-backlog-1to5-calendar-v3-scoping-2026-09-02]] Phase2에서
+발견된 "std_v3 상류결함①"(interim 행의 ~4%가 `ebt`/`tax_expense`는 정상인데
+`net_income`만 NULL, 9,468~9,768건) 후속 원인규명 트랙. 재현 표본: 현대차(00164742)
+separate 2012~2016 전 분기 + 2017 Q1/H1.
+
+**근본원인 2건, 같은 원인규명 세션에서 함께 발견**:
+
+1. **alias 누락** — 원문 헤드라인 당기순이익 라벨이 "분기(당기)순이익"(현대차 2012~
+   2016)처럼 duration 접두어와 '(당기)'를 **같이** 쓰는 변형, 또는 K-GAAP 구서식
+   "총당기순이익"(총-접두) 계열인데 `account_maps/is_accounts.py`의 `is.net_income`
+   alias 목록엔 접두어 없는 형태("분기순이익", "당기순이익" 등)만 등록돼 있었다. 퍼지
+   매치도 구제 못 함 — "분기(당기)순이익" vs "분기순이익" SequenceMatcher ratio
+   0.7143, 임계 0.88 미달.
+2. **로마숫자 혼합표기 정규화 버그**(공용 함수, R28 계열) —
+   `amount_normalizer.normalize_account_name()`이 로마숫자 접두어를 "유니코드
+   전용"/"ASCII 전용" 정규식 **둘로 따로** 처리했다. 유니코드 로마숫자 한 글자
+   (`Ⅲ`)는 실제로 여러 자리('III')를 나타내는데, DART 필자가 "XⅢ."(ASCII 'X' +
+   유니코드 'Ⅲ')처럼 섞어 쓰면 유니코드 정규식은 맨 앞이 ASCII라 매치 실패, ASCII
+   정규식은 'X' 한 글자만 로마숫자로 오인식해 지우고 뒤의 'Ⅲ.'을 그대로 남긴다 —
+   "Ⅲ. 총당기순이익" 같은 잔재 형태가 만들어져 위 alias 추가로도 매치 안 됨.
+
+**항등식 대조로 안전성 확인** — 후보 라벨을 alias로 승격하기 전, 같은 문서 안에서
+`ebt − tax_expense`와 정확히 일치하는지, 그리고 bare `당기순이익`과 공존할 때 값이
+갈리지 않는지(발산 0건, 전수) 확인한 것만 등록. **의도적으로 등록 안 한 것**:
+`계속영업이익(손실)`(IFRS 계속영업=중단영업 **제외**분이라 중단영업이 있는 문서에서
+등록하면 net_income 과소 오염 — 실측 00102113 2024FY: 계속영업 −5,678,950,649 ≠
+실제 net_income 1,315,633,234, 중단영업이익 6,994,583,883 별도 존재), `총포괄손익`
+(다른 canonical, `is.total_comprehensive_income`), `법인세비용차감전순이익(손실)`
+(이미 `is.ebt`), `지배기업소유주지분`(bare 라벨 함정, R49/2026-08-22 선례와 동일
+이유로 기존에도 제외됨) — 전부 "ebt−tax와 우연히 값이 같아 보이는" 이웃 개념이었다.
+
+**구현**:
+- `account_maps/is_accounts.py::IS_ACCOUNTS["is.net_income"]`에 8개 alias 추가:
+  `분기(당기)순이익`·`반기(당기)순이익`·`당(분)기순이익(손실)`·`당(반)기순이익(손실)`·
+  `당기(전기)순이익(손실)`·`총당기순이익`·`총당기순이익(손실)`·
+  `총당기순이익(Net Income-Total)`.
+- `amount_normalizer.py`: 선두 로마숫자류 구간(`^[A-Za-zⅠ-Ⅹⅰ-ⅹ]+`)의 유니코드
+  문자만 ASCII 다중문자로 치환(`_ROMAN_UNICODE_TO_ASCII`)한 뒤, 기존 ASCII 로마숫자
+  문법 정규식 **하나로 통일**(과매칭 방지 문법은 그대로 재사용 — 일반 라벨 동작
+  불변). 순수 유니코드/순수 ASCII 접두어는 종전과 동일하게 동작(회귀 없음).
+- 계층2(`report_lines.py`)는 `account_mapper`를 안 씀(파일 상단 독스트링에 명시) —
+  이번 수정은 **계층3(combine.py 매핑)에만 영향**, R29와 동일하게 `report_lines`
+  재추출 불필요.
+
+**검증**:
+- 회귀 테스트 신설 2개: `fin2/tests/test_account_mapper_net_income_paren_variants_
+  r62.py`(alias 8종 exact 매치 + `계속영업이익` 등 4종 미등록 확인)、
+  `fin2/tests/test_amount_normalizer_roman_prefix_r62.py`(혼합/순수 로마숫자 접두어
+  + 비-로마숫자 라벨 무변경). `pytest tests/ fin2/tests/` 694 pass(무관 기존 실패
+  1건 `test_biz_section.py::test_lxintl_facility_table_dropped` 불변).
+- 실측 회수 규모(DB 전수 스캔, `ebt−tax_expense` 항등식 매치 기준): 대상 인구
+  9,768행 중 **1,239행(12.7%)/297개사**가 새 alias+정규화 수정으로 `is.net_income`
+  후보를 얻게 됨. **잔여 8,529행은 다른 원인**(표본 00220969 확인 —
+  `report_lines`에 헤드라인 당기순이익 행 자체가 **아예 없음**, 계층2 추출 결함 또는
+  원문 표 형태 자체가 다른 것으로 추정, 미확정) — 이번 트랙 범위 밖, 별도 트랙
+  후보로 분리.
+
+**백필**: `build_std_v3.py --corp <297개사> --year-min 1999`(대상 corp 목록은 위
+검증 스크립트 산출물, 커밋에는 안 실음 — R29 선례와 동일하게 스크래치패드 산출물).
+**사용자 실행 대기**(장시간 명령 직접실행 금지 정책) — 실행 전 `std_financials_v3`
+pg_dump 백업 필수.
+
+**후속트랙**(미착수, 범위 밖): 잔여 8,529행(계층2 헤드라인 행 결측 의심, 별도
+원인규명 필요) — 이번 alias/정규화 수정 범위 밖.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

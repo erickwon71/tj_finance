@@ -540,6 +540,59 @@ def test_gukil_paper_no_note_column_table_corrected_by_rootfix():
     assert row.value_won == -2_310_052_284
 
 
+# ── R65(2026-09-02): 헤더 `<TH>주석</TH>` 기반 주석열 탐지 신규 회귀 ──
+# `note_ref_multicol_compaction_value_corruption_design_2026-09-02.md` §5.1.
+# 두 실측 사례 모두 "매 행이 주석을 하나씩만 인용"(콤마 다중참조가 표 전체에 0번)이라
+# `_table_has_comma_note_column()`(R19)이 영원히 False로 남아 안전장치가 미발동 —
+# 주석번호가 진짜 금액으로 오채택되고(00537337), col_index≥1 적재제외 규칙에 걸려
+# 진짜 당기금액 자체가 DB에서 소실됐다(원문대조 확정, 메모리
+# note-ref-multicol-compaction-value-corruption-2026-09-02 참고).
+
+_ANCN_FY2011 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00537337_앤씨앤/annual/2011/20120329000506.xml"
+)
+_SJBEAUTY_FY2020 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00132202_선진뷰티사이언스/annual/2020/20210323001110.xml"
+)
+
+
+def test_ancn_2011_revenue_no_longer_lost_to_note_ref():
+    """앤씨앤(00537337) 2011FY(K-GAAP→IFRS 전환기) — 수정 전에는 "Ⅰ. 매출액"
+    col_index0=5원(주석번호 오채택)이고 진짜 당기금액(458억)은 DB에서 아예 소실됐다.
+    헤더기반 탐지(R65) 후에는 col_index0 이 진짜 당기금액, col_index1 이 진짜
+    전기금액이어야 한다(원문 XML 직접대조 확정값)."""
+    if not _ANCN_FY2011.exists():
+        return
+    lines = extract_report_lines(
+        _ANCN_FY2011, rcept_no="20120329000506", corp_code="00537337",
+        report_fiscal_year=2011, report_fiscal_period="FY",
+    )
+    rev = {l.col_index: l.value_won for l in lines
+           if l.statement == "IS" and l.basis == "separate" and l.label_raw == "Ⅰ. 매출액"}
+    assert rev == {0: 45_830_369_541, 1: 50_367_549_269}, rev
+
+
+def test_sjbeauty_2020_revenue_consolidated_and_separate_both_corrected():
+    """선진뷰티사이언스(00132202) 2020FY(K-IFRS 정상표기 시대) — 수정 전에는 연결·별도
+    양쪽 "Ⅰ. 매출액" 모두 주석번호(21/22)로 오채택됐다. R65 후에는 두 basis 모두
+    올바른 당기·전기 금액이어야 한다(원문 XML 직접대조 확정값)."""
+    if not _SJBEAUTY_FY2020.exists():
+        return
+    lines = extract_report_lines(
+        _SJBEAUTY_FY2020, rcept_no="20210323001110", corp_code="00132202",
+        report_fiscal_year=2020, report_fiscal_period="FY",
+    )
+
+    def _rev(basis):
+        return {l.col_index: l.value_won for l in lines
+                if l.statement == "IS" and l.basis == basis and l.label_raw == "Ⅰ. 매출액"}
+
+    assert _rev("consolidated") == {0: 46_392_320_333, 1: 47_402_941_509}
+    assert _rev("separate") == {0: 43_725_183_663, 1: 44_290_163_397}
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

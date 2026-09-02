@@ -259,8 +259,15 @@ def extract_rows(
     # R19: 이 표에 콤마 다중참조 주석 컬럼이 있는지 한 번만 미리 판정 — 콤마 없는 단일 숫자
     # 후보의 주석 여부는 행 하나로는 못 정하고 이 표 단위 컨텍스트가 있어야 한다(아래
     # _split_label_amounts 호출에 전달). `_table_has_comma_note_column` docstring 참고.
-    table_has_note_column = _table_has_comma_note_column(
-        [_get_cells(tr) for tr in trs])
+    # R65(2026-09-02): 콤마 다중참조 신호는 "매 행이 주석을 하나씩만 인용"하는 표에서
+    # 영원히 False로 남는다(콤마가 표 안에 단 한 번도 안 나옴) — 이때 R19 안전장치가 아예
+    # 발동을 안 해 주석번호가 진짜 금액으로 오채택된다. 헤더 `<TH>`에 "주석" 텍스트가 있으면
+    # 콤마 여부와 무관하게 이 표가 구조적으로 주석 컬럼을 둔다는 훨씬 신뢰도 높은 신호이므로
+    # OR로 병행한다(`_table_has_note_header` 참고, 설계
+    # docs/plans/note_ref_multicol_compaction_value_corruption_design_2026-09-02.md §5.1).
+    table_has_note_column = (
+        _table_has_comma_note_column([_get_cells(tr) for tr in trs])
+        or _table_has_note_header(trs))
 
     for tr in trs:
         cells = _get_cells(tr)
@@ -550,6 +557,29 @@ def _table_has_comma_note_column(rows_cells: list[list[str]]) -> bool:
                 and _NOTE_REF_PATTERN.match(cell_nospace)
                 and not _AMOUNT_GROUPED_PATTERN.match(cell_nospace)):
             return True
+    return False
+
+
+def _table_has_note_header(trs: list[etree._Element]) -> bool:
+    """R65(2026-09-02): 표의 어느 `<TH>` 셀이든 텍스트에 "주석"이 있으면 True.
+
+    ★왜 필요한가: `_table_has_comma_note_column()`은 콤마로 묶인 다중 주석참조("10,37")가
+    표 안에 하나라도 있어야만 True를 준다 — 그런데 매 행이 주석을 하나씩만 인용하는 표(드물지
+    않음, 콤마가 표 전체에 단 한 번도 안 나옴)에서는 이 신호가 영원히 False로 남아 R19 안전
+    장치가 발동하지 않는다. 그러면 라벨 바로 다음 칸의 주석번호("5"/"21"/"22" 등)가 금액으로
+    오채택되고, 하류 multicol 압축(`report_lines.py`)이 위치 그대로 압축하면서 진짜 당기금액이
+    한 칸씩 밀리거나(오분류) FY 표의 col_index≥1 적재제외 규칙에 걸려 소실된다(원문대조 확정:
+    00537337 2011FY, 00132202 2020FY — 둘 다 헤더에 `<TH>주석</TH>` 명시).
+
+    헤더 텍스트는 콤마 신호와 달리 데이터 행의 값 모양에 기대지 않는 **구조적** 신호라 훨씬
+    신뢰도가 높다 — 표 헤더가 "주석"이라는 컬럼을 실제로 선언했다는 원문 그 자체다. 설계
+    `docs/plans/note_ref_multicol_compaction_value_corruption_design_2026-09-02.md` §5.1.
+    """
+    for tr in trs:
+        for child in tr:
+            tag = child.tag.upper() if isinstance(child.tag, str) else ""
+            if tag == "TH" and "주석" in ''.join(child.itertext()):
+                return True
     return False
 
 

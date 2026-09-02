@@ -3171,6 +3171,15 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
         if not is_lines and prov["basis_fallback"]:
             other = "separate" if basis == "consolidated" else "consolidated"
             is_lines = [r for r in merged if r["statement"] == "IS" and r["basis"] == other]
+        # R66 (2026-09-03, design doc §10): this is a second consumer of the raw merged
+        # IS lines, separate from _resolve()'s `cands` above — R63/§8 only filtered
+        # `cands`, so a stale-reprint table (K-GAAP era consolidated interim IS that's
+        # actually last year's annual figures re-printed, table_seq-flagged above) could
+        # still feed the named-subtotal revenue formula for securities/insurance/bank/
+        # leasing profiles below. Reuse the same stale set _resolve() already used (mirrors
+        # its basis handling, including the basis_fallback edge case).
+        is_lines = [r for r in is_lines
+                    if r.get("table_seq") not in stale_reprint_seqs["is"]]
         applied = apply_revenue_profile(is_lines, _get_induty(session, corp), corp)
         if applied:
             pname, revenue, components = applied

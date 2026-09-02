@@ -3775,6 +3775,89 @@ std_financials_v3_pre_r65_backfill_20260902.dump`, 52.9MB) 후
 
 ---
 
+## R66. `fin2/layer3/combine.py::combine_full()` — 증권/보험/은행/여신전문
+표준매출액 계산기(`apply_revenue_profile()`)에 R63 stale-reprint 필터 배선
+(2026-09-03)
+
+**배경** — [[std-v3-upstream-defects-r62-and-monotonicity-2026-09-02]](메모리),
+설계문서 `docs/plans/std_v3_kgaap_interim_consolidated_stale_annual_reprint_
+design_2026-09-02.md` §10. R65 종료 직후 세션, 잔존 단조성위반 트리아지(§9)의
+EXACT_EQUAL_RESIDUAL(25건) 후속 조사. 최초 가설("R63 임계값 10개 미달, 증권업
+특수계정이라 매치가 안 됨")을 00104856(삼성증권) 표본 직접 SQL 재현(매치
+165개, 임계값을 압도적으로 초과)으로 반증.
+
+**진짜 근본원인** — `combine_full()`이 `_resolve()` 호출 직전에 R63의
+`_stale_annual_reprint_table_seqs()`로 stale-reprint table_seq를 계산해
+`stale_reprint_seqs` dict(`{"is": ..., "cf": ...}`)를 만들지만, 이 값은
+`_resolve()`(→ DIRECT_MAP `cands` 정제)에만 전달되고, **같은 함수 뒤쪽의
+`apply_revenue_profile(is_lines, ...)` 호출**(증권/보험/은행/여신전문 업종
+전용 "표준 매출액 = 명명된 소계 조합" 계산기, 예: 증권 `net_op_formula` =
+영업이익+판매관리비)은 필터링 안 된 원본 `merged` IS 라인을 그대로 읽는다 —
+같은 원인(K-GAAP 시대 연결 인터림 재게재)의 **두 번째 소비 경로**가 R63
+구현 당시 누락됐던 것.
+
+**00104856 원문/DB대조로 메커니즘 확정**: FY2004 영업이익
+(154,594,395,676)+판관비(517,609,979,403, `conflicts.is.sga`에 남아있던
+후보값과 정확 일치)=**672,204,375,079** — 2005 Q1/H1/Q3 std_v3 revenue와
+정확히 일치. 둘 다 R63이 이미 "직전연차 재게재"로 확정한 stale
+table_seq=0 출처. EXACT_EQUAL_RESIDUAL 25건 중 23건(92%, 13개사 중
+11개사)이 증권/보험 업종(`SECURITIES`/`INSURANCE` 프로파일 적용대상).
+
+**수정**: `combine_full()`의 `apply_revenue_profile()` 호출 앞에서, 이미
+계산돼 있는 `stale_reprint_seqs["is"]`로 `is_lines`를 필터링한 뒤 호출.
+`basis_fallback` 케이스(별도 basis만 있는 회사의 연결 폴백)도 `_resolve()`가
+기존에 하던 것과 같은 처리(요청 basis로 계산된 stale set을 그대로 재사용)로
+일관성 유지.
+```python
+is_lines = [r for r in is_lines
+            if r.get("table_seq") not in stale_reprint_seqs["is"]]
+applied = apply_revenue_profile(is_lines, _get_induty(session, corp), corp)
+```
+
+**전체스케일 정밀 스캔(ground-truth, R65식, 실제 프로덕션 함수 직접호출)**:
+증권/보험/은행/여신전문 induty_prefix 대상 103개사×2002~2011×Q1/H1/Q3×연결/
+별도 전수 재계산 — **checked=2,885 / profile_applied=651 / changed=312건
+(18개사)** — 최초 증상신호(25건)의 12.5배, R65와 동일한 "좁은 증상신호 ≪
+실제 영향범위" 패턴. 전부 `securities` 프로파일에서만 발생(보험/은행/여신전문
+0건), 연결 206/별도 106, **312건 전부 old(오염값)→new=None**(대체 후보
+없음, R63의 "복구 아닌 배제" 원칙과 동일 성격, 새 오염 0건). 구현 세션에서
+production 코드로 재현한 결과도 정확히 동일(changed=312건/18개사) — 값
+확정.
+
+**검증**: 회귀 테스트 신설 `fin2/tests/test_combine_r66_revenue_profile_
+stale_reprint.py`(00104856 FY2005 Q1/H1/Q3 consolidated old→None 확인 +
+separate 비영향 확인). `pytest tests/ fin2/tests/` 717 pass(유일한 무관
+기존실패 `test_biz_section.py::test_lxintl_facility_table_dropped` 불변,
+R63~R65와 동일).
+
+**백필 완료**(같은 세션, 사용자 승인 하 — "1번으로 진행하자"): pg_dump
+백업(`/Volumes/tj_finance_data/db_backups/
+std_financials_v3_pre_r66_backfill_20260903.dump`, 52.8MB) 후
+1. `build_std_v3.py --corp <18개사> --year-min 1999` — 18/18 corp 성공,
+   3,106행, 98초, 에러 0.
+2. `calendarize_corp_v3()` 재동기화(18개사, 3,163행, 실패 0).
+
+**검증 완료**:
+- `dq_assertions.py`: 유일한 ERROR 위반 `statement_magnitude_impossible`
+  147건 — 세션 시작 전 기준값과 **147=147, 신규위반 0건** 확정(R66과 무관한
+  기존결함). WARN `std_v3_conflicts_unresolved` 32,846→**32,789(개선)**.
+- Gate B: 이번 백필이 정확히 18개사에만 스코프돼 다른 회사 std_v3는 전혀
+  변경되지 않았으므로, R63/R65의 전체 5-shard 대신 **이 18개사만 스코프한
+  PK조인 전이표**로 검증(총량비교 아닌 row-key 단위 대조,
+  [[gateb-482-backlog-cluster-ab-rootcause-2026-08-27]] 교훈과 동일 원칙).
+  `face_audit_snap_20260903_pre_r66`(3,145행) 대비 `gateb_audit.py --recheck
+  --corp-file <18개사> --fy-min 1999` 재실행 후 PK(corp_code, fiscal_year,
+  fiscal_period, statement_type, is_stub) 조인 — **pass→pass 1655 /
+  pending→pending 1486 / fail_b→fail_b 4, 전이 0건**(신규 fail_a 0, 등급
+  하락 0). 312건의 revenue가 오염값→NULL로 바뀌었음에도 face_audit 행수준
+  gate_status가 완전히 불변인 것은, 이 시대(2002~2011) 필링엔 대조할 XBRL
+  원천이 없어(Track A 미적용) Track B(텍스트 대조)도 이 필드를 이미
+  pending으로 다루고 있었기 때문으로 추정(원문대조 아님, 정황).
+
+**R66 트랙 완전 종료**. 코드 커밋 대기.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

@@ -3663,12 +3663,25 @@ r64.py`, 3개 — 결합표기 정규화, 기존 콤마전용 무회귀, end-to-
 `pytest tests/ fin2/tests/` 711 pass(무관 기존실패 1건 `test_biz_section.py::
 test_lxintl_facility_table_dropped` 불변).
 
-**백필**: **미착수 — 사용자 승인 대기**(CLAUDE.md 정책, 실행은 별도 명시 요청
-필요). 예상 스코프 178개사(위 회복분 corp 수, `build_std_v3.py --corp <178개사>
---year-min 1999` 형태 예상, R62/R63 선례와 동일 패턴). 영향 corp 목록은 위 실측
-스캔 쿼리(`mapper.map(raw_label)` 실제 호출 경로 기준)로 세션마다 재현 가능
-(스크래치패드 산출물이라 git 비추적). 백필 전 `std_financials_v3` pg_dump
-백업 필수.
+**백필 완료**(같은 세션, 사용자 승인 후 직접 실행): pg_dump 백업(`/Volumes/
+tj_finance_data/db_backups/std_financials_v3_pre_r64_backfill_20260902.dump`,
+52.9MB) 후 `build_std_v3.py --corp <178개사> --year-min 1999` 실행 —
+178/178 corp 성공, 31,036행, 1,010초(17분), 에러 0. 이어서 `calendarize_corp_
+v3()` 재동기화(178개사, 33,977행, 29초, 실패 0, runbook B5).
+
+**검증 완료**:
+- `dq_assertions.py`: `calendar_orphan_cq` 0 유지, `statement_magnitude_
+  impossible` 147(R63 §9 종료 시점 기준선과 동일, R64로 인한 신규 위반 0),
+  `std_v3_conflicts_unresolved` 32,846→**32,803(−43, 개선)** — 기존엔 후보
+  전멸로 NULL이던 canonical이 이번 수정으로 단일 정답 후보를 얻어 HELD 없이
+  깔끔하게 resolve 된 것으로 추정(우려사항 아님).
+- 원문대조(KG스틸 00115676, 2006 separate revenue): Q1=505,829,999,432(기존
+  정상)·**H1=557,076,012,411**(수정 전 NULL → 원문 rcept 20060814001339 값과
+  정확히 일치)·**Q3=563,912,093,240**(수정 전 NULL → 원문 rcept 20061114001258
+  값과 정확히 일치). Q1≤H1≤Q3 단조성도 정상(진짜 누적매출 패턴, R63이 걸러낸
+  "직전연차 재게재" 정적값과 무관한 진짜 당해분기 데이터).
+
+**R64 트랙 완전 종료 — 커밋만 대기**(정책상 사용자 요청 시에만 커밋).
 
 ---
 

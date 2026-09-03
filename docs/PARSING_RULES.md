@@ -3961,8 +3961,8 @@ SQL신호는 BS 0건으로 과소추정했던 부분, dry-run 직접재현으로
 
 ## R68. `account_maps/bs_accounts.py`+`cf_accounts.py`+`fin2/layer3/combine.py` —
 P1A: `lease_liability`/`borrowings_proceeds`/`borrowings_repaid` v2 파리티 3컬럼
-신설 + bare "리스부채" 섹션기반 재분류 (2026-09-03) — **구현+테스트 완료, 전사
-백필은 승인 대기**
+신설 + bare "리스부채" 섹션기반 재분류 (2026-09-03) — **완전 종료(구현+테스트+
+전사백필+검증)**
 
 **배경**: `docs/plans/std_v2_retirement_port_to_v3_2026-08-22.md` §Phase 1(P1A,
 2026-08-22 설계·안전성조사 T0~T7 완료·SPLIT_DRAFT 확정)의 마지막 미착수 항목.
@@ -4011,9 +4011,32 @@ CF 차입 쪽(`cf.borrow_proceeds/repaid`)은 실측 결과 section_path가 전�
 00101549·00101664) 재빌드 후 위 두 원문대조 사례 전부 정확히 일치 확인
 (1,711,332,503·2,003,754,385).
 
-**전사 백필은 미실행**(구현+표본검증까지, `docs/plans/std_v2_retirement_port_to_
-v3_2026-08-22.md` §Phase 1 마지막 3항목 코드 완료). 사용자 승인 후 `build_std_v3.py
---all --year-min 1999` 진행 예정.
+**전사 백필 완료(같은 날, 사용자 승인)**: pg_dump 백업(`std_financials_v3_
+pre_r68_backfill_20260903.dump`, 53MB) 후 `build_std_v3.py --all --year-min
+1999`을 5-shard 병렬(10코어 중 5개)로 실행 — **2,546/2,546 corp 전부 성공,
+에러 0**, 302,436행(총 984초/샤드당 약16분, 5개 동시실행). 위 두 원문대조
+표본값(1,711,332,503·2,003,754,385) 전사 백필 후에도 정확히 유지 확인.
+**채움 규모**: `lease_liability` 91,679행/2,044개사, `borrowings_proceeds`
+210,267행·`borrowings_repaid` 219,659행/합계 2,492개사.
+
+**calendar_v3 재동기화 불요**(런북 B5과 달리 이번엔 스킵 — 근거): `std_financials_
+calendar`/`fin2/standardize/calendar_v3.py`의 `_FLOW_COLS`/`_STOCK_COLS`에 이
+3컬럼 자체가 없어(달력 스키마 미확장, 별도 후속 트랙 필요시) 재동기화해도 이번
+백필 결과가 반영될 곳이 없다 — 이산분기/스크리너 화면에는 아직 안 나타남(알려진
+범위 제한, 필요시 별도 트랙).
+
+**검증**: `dq_assertions.py` ERROR `statement_magnitude_impossible` 32=32(신규
+0, R68과 무관한 기존 이슈 불변). WARN `std_v3_conflicts_unresolved` 32,858→
+33,632(+774, 신설 6개 canonical — `bs.lease_current`(36)·`bs.lease_noncurrent`
+(581)·`cf.borrow_proceeds_st`(191)·`cf.borrow_proceeds_lt`(172)·`cf.borrow_
+repaid_st`(222)·`cf.borrow_repaid_lt`(118) — 가 새로 잡히기 시작한 것으로 정확히
+설명됨, "결측이 오염보다 안전" 원칙대로 해당 행은 NULL 유지). **Gate B 전수/스코프
+재감사는 생략**(위 격리성 확인대로 이 3컬럼은 Gate B가 감사하는 기존 필드
+어디에서도 안 읽혀 gate_status 전이가 원리적으로 불가능 — R66/R67의 "스코프 좁으면
+PK조인 전이표"보다 한 단계 더 강한 케이스, 코드리뷰(grep)만으로 충분).
+
+**R68 트랙 완전 종료**. 코드+백필 커밋 완료(`8b8d3a0` 코드, 문서 커밋은 이어서).
+`v2-drop-remaining-backlog-2026-09-03`(메모리) 체크리스트 3번 완료.
 
 ---
 

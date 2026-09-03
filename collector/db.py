@@ -1244,6 +1244,23 @@ def _run_migrations() -> None:
          """
         DROP TABLE IF EXISTS fact_v2;
         """),
+
+        ("2026_09_std_financials_v3_lease_borrowings",
+         # P1A(2026-09-03, docs/plans/std_v2_retirement_port_to_v3_2026-08-22.md
+         # §Phase 1, 설계 확정 2026-08-22 §3.12 T0~T7) — v2 파리티 마지막 3컬럼.
+         # v2 는 위 484-486행에서 이미 같은 3컬럼을 std_financials_v2 에 추가했다
+         # (2026-07-18 "C 합산"). std_financials_v3 에도 동일 계약으로 신설 —
+         # account_maps/bs_accounts.py(bs.lease_current/_noncurrent 신설)·
+         # account_maps/cf_accounts.py(cf.borrow_proceeds_st/_lt·cf.borrow_repaid_
+         # st/_lt 신설)가 카탈로그를 분해했고, fin2/layer3/combine.py 가
+         # fin2/standardize/rules.py::rule_additive_lease/rule_additive_borrowings
+         # (v2 코드 그대로 재사용, 신규 작성 아님)로 합산해 채운다. ADD COLUMN(nullable,
+         # DEFAULT 없음)이라 PG11+ 에서 카탈로그만 바뀜(위 561행 주석 참고, 즉시 완료).
+         """
+        ALTER TABLE std_financials_v3 ADD COLUMN IF NOT EXISTS lease_liability BIGINT;
+        ALTER TABLE std_financials_v3 ADD COLUMN IF NOT EXISTS borrowings_proceeds BIGINT;
+        ALTER TABLE std_financials_v3 ADD COLUMN IF NOT EXISTS borrowings_repaid BIGINT;
+        """),
     ]
 
     with engine.begin() as conn:

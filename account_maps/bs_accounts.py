@@ -372,10 +372,26 @@ BS_ACCOUNTS: dict[str, list[str]] = {
         # 아님)의 비유동분이라 여기가 맞다.
         "비유동성사채", "사채(비유동)",
     ],
-    "bs.lease_liability": [
-        "리스부채", "금융리스부채",
+    # P1A(2026-09-03, docs/plans/std_v2_retirement_port_to_v3_2026-08-22.md §3.7/§3.12
+    # SPLIT_DRAFT, 안전성 확인 docs/plans/std_v2_catalog_split_p0_6_todo_2026-08-22.md
+    # T2/T3): 유동/비유동 리스부채를 bs.lease_liability(집계) 하나로 collapse해두면
+    # fin2/layer3/combine.py::_apply_enrichment()가 조합해 낼 수 있는 lease_liability
+    # 컬럼(v2 파리티, P1A로 신설)의 입력 자체가 안 갈린다 — 유동/비유동을 별개
+    # canonical로 분리하고, "리스부채"/"금융리스부채" 같은 무수식 총계 라벨만
+    # bs.lease_liability에 남긴다(총계는 그대로). rule_additive_lease
+    # (fin2/standardize/rules.py, v2에서 그대로 재사용)가 유동+비유동을 합산하고,
+    # 없으면 이 집계값으로 폴백한다.
+    "bs.lease_current": [
         "유동성리스부채",    # 유동부채로 분류된 리스부채 (만기 1년 이내)
         "유동리스부채",
+        "유동 리스부채",
+    ],
+    "bs.lease_noncurrent": [
+        "비유동리스부채", "비유동 리스부채", "비유동성리스부채",
+        "비유동금융리스부채",
+    ],
+    "bs.lease_liability": [
+        "리스부채", "금융리스부채",
     ],
     "bs.pension_liability": [
         "확정급여부채", "퇴직급여충당부채",

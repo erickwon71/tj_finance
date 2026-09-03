@@ -226,18 +226,28 @@ CF_ACCOUNTS: dict[str, list[str]] = {
     ],
 
     # ── 재무활동 세부 ─────────────────────────────────────────────────
+    # P1A(2026-09-03, docs/plans/std_v2_retirement_port_to_v3_2026-08-22.md §3.7/§3.12
+    # SPLIT_DRAFT): 단기/장기 차입 유입·상환을 별개 canonical(cf.borrow_proceeds_st/lt,
+    # cf.borrow_repaid_st/lt)로 갈라 fin2/standardize/rules.py::rule_additive_borrowings
+    # (v2에서 그대로 재사용)가 합산해 borrowings_proceeds/borrowings_repaid 컬럼(v2
+    # 파리티, P1A로 신설)을 만든다. 만기 귀속이 애매한 변형("기타금융부채의증가/감소",
+    # "유동성장기부채(의)상환", "유동성장기차입금(의)상환")은 T2 조사(2026-08-22,
+    # std_v2_catalog_split_p0_6_todo_2026-08-22.md)에서 이 분해에 **의도적으로 미포함**
+    # — 아래 두 집계 canonical에 그대로 남겨 rule_additive_borrowings 가 못 보는 대신
+    # DIRECT_MAP 미소비였던 이전과 동일하게 총계 bare 라벨("차입금의증가"/"차입금의상환"
+    # 등)과 나란히 유지한다(원안 그대로, 값 손실 없음 — 이 표 자체가 그대로 남기 때문).
+    "cf.borrow_proceeds_st": ["단기차입금의증가", "단기차입금의차입"],
+    "cf.borrow_proceeds_lt": ["장기차입금의증가", "장기차입금의차입"],
+    "cf.borrow_repaid_st":   ["단기차입금의상환", "단기차입금의감소"],
+    "cf.borrow_repaid_lt":   ["장기차입금의상환"],
     "cf.borrowings_proceeds": [
-        "차입금의증가", "단기차입금의증가",
-        "장기차입금의증가",
+        "차입금의증가",
         "차입금의차입", "차입금의 차입",
         "차입금차입",
-        "단기차입금의차입", "장기차입금의차입",
         "기타금융부채의증가",
     ],
     "cf.borrowings_repaid": [
         "차입금의상환", "차입금의 상환",
-        "단기차입금의상환",
-        "장기차입금의상환",
         "차입금상환",
         "기타금융부채의감소",
         "기타금융부채의상환",

@@ -29,8 +29,11 @@ _VALUE_COLS = (
     #   · depreciation/amortization/da_total/ebitda (2026-07-28, 주석 소스 — fin2/layer3/note_da.py)
     # shares_out 은 여전히 별도 백필 필요(계층2 신설 대상, Phase 2). data_quality/period_end 는
     # _VALUE_COLS 에 안 넣고 build_corp 에서 row 에 직접 대입한다(아래 참고, Phase 1 2026-08-09).
+    #   · lease_liability/borrowings_proceeds/borrowings_repaid (P1A, 2026-09-03, v2 파리티
+    #     마지막 3컬럼) — rule_additive_lease/rule_additive_borrowings 로 산출.
     # ★이 목록에 없는 컬럼은 combine 이 값을 내도 **테이블에 안 들어간다**.
-    "capex fcf net_debt depreciation amortization da_total ebitda"
+    "capex fcf net_debt depreciation amortization da_total ebitda "
+    "lease_liability borrowings_proceeds borrowings_repaid"
 ).split()
 
 

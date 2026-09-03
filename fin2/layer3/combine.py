@@ -34,7 +34,9 @@ from fin2.standardize.rules import (DIRECT_MAP, CONSUMED_CANON, StdContext,
                                     rule_additive_capex, rule_derive_fcf,
                                     rule_derive_net_debt, rule_additive_da,
                                     rule_derive_ebitda, ADDITIVE_CANON,
-                                    _COL_PRIORITY, rule_cash_with_deposits)
+                                    _COL_PRIORITY, rule_cash_with_deposits,
+                                    _LEASE_PARTS, _BORROW_PROCEEDS_PARTS,
+                                    _BORROW_REPAID_PARTS)
 from fin2.layer3.note_da import note_da_canonicals
 from parser.common.note_labels import classify_da_label
 from fin2.layer3.industry_profiles import (
@@ -1386,6 +1388,45 @@ def _additive_debt_for_net_debt(canon: dict, col: dict) -> tuple[int | None, int
     return new_st, new_lt
 
 
+# P1A(2026-09-03, docs/plans/std_v2_retirement_port_to_v3_2026-08-22.md §Phase 1, design
+# confirmed 2026-08-22 §3.12 T0-T7/SPLIT_DRAFT) — v2 parity columns lease_liability/
+# borrowings_proceeds/borrowings_repaid. account_maps/bs_accounts.py and
+# account_maps/cf_accounts.py split the old collapsed canonicals (bs.lease_liability,
+# cf.borrowings_proceeds/_repaid used to catch both current+noncurrent / short+long term
+# labels under one bucket, causing _resolve() HOLD conflicts whenever a filing reported
+# both as separate lines — T2/T3 measured conflict rates 14.6%/42.1%/49.3%) into
+# current/noncurrent and short/long-term leaves (_LEASE_PARTS, _BORROW_PROCEEDS_PARTS,
+# _BORROW_REPAID_PARTS, fin2/standardize/rules.py — same constants v2's own
+# rule_additive_lease/rule_additive_borrowings summed, reused here unchanged) while
+# leaving the original collapsed canonical registered for bare/aggregate labels only
+# ("리스부채"/"금융리스부채", "차입금의증가"/"차입금의상환" — SPLIT_DRAFT's "총계는
+# 그대로 둠"). v2 never needed a fallback to that bare form: its input is XBRL, which
+# always tags current/noncurrent (or short/long) as distinct concepts. v3's input is
+# label text, where a filing reporting a single un-split total line is common — so unlike
+# _additive_debt_for_net_debt (net_debt-only helper, never persisted), these two DO feed
+# the persisted lease_liability/borrowings_proceeds/borrowings_repaid columns directly and
+# need that extra fallback leg to avoid silently dropping filings that only report totals.
+def _lease_liability_value(canon: dict) -> int | None:
+    """lease_liability = 유동+비유동 리스부채 절대값 합(BS stock, rule_additive_lease와
+    동일 로직) — 부품이 없으면 무수식 집계 canonical(bs.lease_liability)로 폴백."""
+    parts = [abs(canon[c]) for c in _LEASE_PARTS if canon.get(c) is not None]
+    if parts:
+        return sum(parts)
+    agg = canon.get("bs.lease_liability")
+    return abs(agg) if agg is not None else None
+
+
+def _borrowings_values(canon: dict) -> tuple[int | None, int | None]:
+    """(borrowings_proceeds, borrowings_repaid) = 단기+장기 부호보존 합(CF flow,
+    rule_additive_borrowings와 동일 로직: 유입 +, 상환 −) — 부품이 없으면 각각 무수식
+    집계 canonical(cf.borrowings_proceeds/cf.borrowings_repaid)로 폴백."""
+    pp = [canon[c] for c in _BORROW_PROCEEDS_PARTS if canon.get(c) is not None]
+    rp = [canon[c] for c in _BORROW_REPAID_PARTS if canon.get(c) is not None]
+    proceeds = sum(pp) if pp else canon.get("cf.borrowings_proceeds")
+    repaid = sum(rp) if rp else canon.get("cf.borrowings_repaid")
+    return proceeds, repaid
+
+
 # step3 fixup (2026-08-31, R58 순서4-③): mirror of _NONCURRENT_SIBLING/_CURRENT_STRICT
 # above, but for the OPPOSITE contamination direction. Each of these 4 canonicals'
 # primary alias is a BARE label with no 유동/비유동 marker at all (전환사채/교환사채/
@@ -1454,6 +1495,69 @@ def _is_current_by_section_only_pure(row: dict) -> bool:
     section_path is confirmed (not assumed) to be the authoritative maturity signal."""
     sp = row.get("section_path") or ""
     return "유동" in sp and "비유동" not in sp
+
+
+# P1A (2026-09-03, docs/plans/std_v2_retirement_port_to_v3_2026-08-22.md §Phase 1
+# 후속 발견, 원문대조: 00101433/00101664): bs.lease_liability(무수식 "리스부채"/
+# "금융리스부채") 는 위 rollup 계열들과 반대 방향 문제다 — 저 계열은 "원래 유동 또는
+# 비유동 중 하나로 기본값이 정해진 canonical 이 섹션 신호로 보면 반대인 소수 사례"를
+# 다루지만, bs.lease_liability 는 라벨 자체가 애초에 유동도 비유동도 아닌 중립이라
+# "진짜 총계"인 것과 "섹션으로만 유동/비유동이 갈리는 것"이 뒤섞여 있다. 실측(DB 전수,
+# 2026-09-03) 결과 무수식 라벨의 대다수가 실제로는 section_path 상 부채>유동부채
+# (13,654행/574개사) 또는 부채>비유동부채(20,085행/779개사) 안에 위치 — 소수만 진짜
+# 집계로 추정된다. 00101433(경농) FY2025: bare "리스부채"(772,424,809,
+# section_path='부채>유동부채')와 "비유동 리스부채"(938,907,694)가 같은 필링에
+# 공존 — 진짜 합계는 두 값의 합(17.1억원)인데, 섹션신호를 안 보면 비유동분만
+# 채택되고 유동분(bare)이 통째로 누락된다. 00101664: 같은 "리스부채" 텍스트가 유동/
+# 비유동 섹션에 각각 다른 값으로 동시 존재해, 분해 후에도 여전히 같은 canonical 로
+# 충돌 → HELD(분해 전과 동일 결함).
+#
+# 수정: 다른 sibling 재라우팅과 같은 자리(cands 전체 순회 전 pre-pass)에서
+# bs.lease_liability 후보를 section_path 로 먼저 판정한다 — 유동/비유동이 명확하면
+# 해당 split canonical 로 옮기고(★사용자 지시 2026-09-03: "위치를 알 수 있으면
+# 위치로 판단, 위치가 명확하지 않으면 이름으로" — 여기 남는 행은 이미 이름만으로는
+# 구분 불가한 bare 라벨이므로 "이름으로 판단"은 그대로 집계(bs.lease_liability)로
+# 남기는 것과 같다), 섹션도 애매한 잔여만 진짜 집계로 남긴다. 여기 도달하는 행은
+# 라벨 자체엔 유동/비유동 wording 이 원천적으로 없다(있었으면 애초에
+# bs.lease_current/_noncurrent 로 직접 매핑됐을 것 — account_maps/bs_accounts.py
+# 참고) — 그래서 _is_current_by_section_only_pure 처럼 label 베토 없는 순수 섹션
+# 판정이면 충분하고 안전하다.
+def _lease_section_target(row: dict) -> str | None:
+    """bs.lease_liability 후보 한 행의 section_path 로 유동/비유동을 판정. 둘 다
+    아니면 None(=진짜 집계로 잔류)."""
+    sp = row.get("section_path") or ""
+    if _NONCURRENT_RE.search(sp):
+        return "bs.lease_noncurrent"
+    if "유동" in sp:
+        return "bs.lease_current"
+    return None
+
+
+def _route_bare_lease_by_section(cands: dict) -> None:
+    """bs.lease_liability 후보 중 section_path 로 유동/비유동이 갈리는 행을 각 split
+    canonical 로 옮긴다(in-place, cands 자체를 수정). sibling 이 이미 자기 라벨(예:
+    "유동리스부채")로 후보를 갖고 있으면 중복합산 위험 — 그 경우엔 옮기지 않고 집계
+    풀에 그대로 남긴다(_NONCURRENT_SIBLING guard 1과 동일 원칙)."""
+    src_rows = cands.get("bs.lease_liability")
+    if not src_rows:
+        return
+    remaining: list = []
+    by_target: dict[str, list] = {}
+    for r in src_rows:
+        target = _lease_section_target(r)
+        if target is None:
+            remaining.append(r)
+        else:
+            by_target.setdefault(target, []).append(r)
+    for target, rows in by_target.items():
+        if cands.get(target):
+            remaining.extend(rows)
+        else:
+            cands[target] = rows
+    if remaining:
+        cands["bs.lease_liability"] = remaining
+    else:
+        del cands["bs.lease_liability"]
 
 
 _BROAD_RE = re.compile(r"및기타|및 기타|AndOther")
@@ -2050,6 +2154,10 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
             continue  # sibling already has its own genuine candidates -> don't dup
         cands[_sib] = list(_current_rows)
         cands[_src] = [r for r in _src_rows if r not in _current_rows]
+    # P1A (2026-09-03): bs.lease_liability 는 위 두 sibling 계열과 달리 고정된 방향이
+    # 없어(라벨 자체가 애초에 유동/비유동 어느 쪽도 아님) 별도 함수로 뺐다 — 자세한
+    # 근거는 _route_bare_lease_by_section 독스트링 참고.
+    _route_bare_lease_by_section(cands)
     for c, rows in cands.items():
         # ★R2 델타패치 실질화(2026-08-20, P3-1 재감사 후속): build_merged_lines() 의 셀
         # 키에 section_path 가 들어있어, 정정본이 표를 재렌더링해 section_path 가 원본과
@@ -3219,8 +3327,9 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
 
 def _apply_enrichment(session, corp, fy, period, basis, confirmed, col, note_basis=None,
                       cands=None):
-    """Compute capex/fcf/net_debt/D&A/EBITDA in-place on `col` by reusing the v2 standardize
-    rules on the confirmed canonicals. Additive: only sets the new keys, never mutates the
+    """Compute capex/fcf/net_debt/D&A/EBITDA/lease_liability/borrowings_proceeds/
+    borrowings_repaid in-place on `col` by reusing the v2 standardize rules on the confirmed
+    canonicals. Additive: only sets the new keys, never mutates the
     existing DIRECT_MAP cols (short_term_debt/long_term_debt themselves included — see
     _additive_debt_for_net_debt's docstring: its overlay lands on a local ctx.col that this
     function's copy-back loop below never returns). net_debt derives from v3's own short/long
@@ -3270,8 +3379,20 @@ def _apply_enrichment(session, corp, fy, period, basis, confirmed, col, note_bas
     rule_derive_net_debt(ctx)    # net_debt = (short+long debt) - cash  [v3's own values]
     rule_additive_da(ctx)        # depreciation/amortization/da_total  [cf.* 우선, 없으면 note.*]
     rule_derive_ebitda(ctx)      # ebitda = operating_income + da_total
+    # P1A(2026-09-03): v2 파리티 마지막 3컬럼 — 유동+비유동 리스부채, 단기+장기 차입
+    # 유입/상환 합산(부품 없으면 무수식 집계 canonical로 폴백, _lease_liability_value/
+    # _borrowings_values 참고).
+    lease_val = _lease_liability_value(canon)
+    if lease_val is not None:
+        ctx.col["lease_liability"] = lease_val
+    proceeds_val, repaid_val = _borrowings_values(canon)
+    if proceeds_val is not None:
+        ctx.col["borrowings_proceeds"] = proceeds_val
+    if repaid_val is not None:
+        ctx.col["borrowings_repaid"] = repaid_val
     for k in ("cash", "capex", "fcf", "net_debt",
-              "depreciation", "amortization", "da_total", "ebitda"):
+              "depreciation", "amortization", "da_total", "ebitda",
+              "lease_liability", "borrowings_proceeds", "borrowings_repaid"):
         v = ctx.col.get(k)
         if v is not None:
             col[k] = v

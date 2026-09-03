@@ -3959,6 +3959,64 @@ SQL신호는 BS 0건으로 과소추정했던 부분, dry-run 직접재현으로
 
 ---
 
+## R68. `account_maps/bs_accounts.py`+`cf_accounts.py`+`fin2/layer3/combine.py` —
+P1A: `lease_liability`/`borrowings_proceeds`/`borrowings_repaid` v2 파리티 3컬럼
+신설 + bare "리스부채" 섹션기반 재분류 (2026-09-03) — **구현+테스트 완료, 전사
+백필은 승인 대기**
+
+**배경**: `docs/plans/std_v2_retirement_port_to_v3_2026-08-22.md` §Phase 1(P1A,
+2026-08-22 설계·안전성조사 T0~T7 완료·SPLIT_DRAFT 확정)의 마지막 미착수 항목.
+`v2-drop-remaining-backlog-2026-09-03`(메모리) 체크리스트 3번.
+
+**구현**: `account_maps/bs_accounts.py`에 `bs.lease_current`/`bs.lease_noncurrent`
+신설(SPLIT_DRAFT 그대로, `bs.lease_liability`는 무수식 총계 라벨만 남김),
+`account_maps/cf_accounts.py`에 `cf.borrow_proceeds_st`/`_lt`·`cf.borrow_repaid_
+st`/`_lt` 신설(단기/장기 명시 라벨만 이동, "기타금융부채"·"유동성장기..." 등
+만기귀속 애매한 변형은 SPLIT_DRAFT 원안대로 집계에 그대로 둠). `std_financials_
+v3`에 3컬럼 추가(마이그레이션 `2026_09_std_financials_v3_lease_borrowings`).
+`combine.py`에 `_lease_liability_value()`/`_borrowings_values()`(부품 합산, 없으면
+집계 라벨로 폴백) 신설, `_apply_enrichment()`에 배선 + `_VALUE_COLS`(build.py) 추가.
+
+**원문대조로 SPLIT_DRAFT 자체의 갭 발견·수정**: 무수식 "리스부채"/"금융리스부채"
+라벨을 "총계, 그대로 둠"으로 가정한 원 설계가 실측과 어긋남 확인 — DB 전수 스캔
+결과 이 무수식 라벨의 대다수가 실제로는 `section_path`상 `부채>유동부채`
+(13,654행/574개사) 또는 `부채>비유동부채`(20,085행/779개사) 섹션 안에 위치(라벨
+자체엔 유동/비유동 wording이 없을 뿐). 원문 2건 직접대조:
+- 경농(00101433) 2025FY 별도: bare "리스부채"(772,424,809, `section_path=
+  '부채>유동부채'`)와 "비유동 리스부채"(938,907,694)가 같은 필링에 공존 — 진짜
+  총계는 두 값의 합(1,711,332,503). 섹션신호 없이 폴백만 쓰면 비유동분만
+  채택되고 유동분(bare)이 통째로 누락됨.
+- 00101664: 완전히 동일한 "리스부채" 텍스트가 같은 필링 안에서 유동/비유동
+  섹션에 각각 다른 값으로 존재(2020H1: 802,546,265/1,201,208,120) — 분해 후에도
+  같은 canonical로 충돌해 HELD(분해 전과 동일 결함).
+
+**수정**: `_route_bare_lease_by_section()` 신설 — 다른 부채계정에 이미 있는
+sibling 재라우팅 패턴(`_NONCURRENT_SIBLING`/`_CURRENT_CONTAMINATED_NONCURRENT_
+SIBLING` 계열)과 같은 자리(cands 전체 순회 전 pre-pass)에서, `bs.lease_liability`
+후보를 `section_path`로 먼저 판정 — 유동/비유동이 명확하면 해당 split canonical로
+옮기고(사용자 지시: "위치를 알 수 있으면 위치로 판단, 위치가 명확하지 않으면
+이름으로"), 섹션도 애매한 잔여만 진짜 집계로 유지. sibling이 이미 자기 라벨로
+후보를 가진 경우엔 중복합산 방지를 위해 옮기지 않음(기존 guard 1과 동일 원칙).
+CF 차입 쪽(`cf.borrow_proceeds/repaid`)은 실측 결과 section_path가 전부
+"재무활동현금흐름"류로 균일해 이 문제 없음(BS 리스부채만의 결함).
+
+**격리성 확인**: `bs.lease_liability`/`bs.lease_current`/`_noncurrent`,
+`cf.borrow_proceeds_*`/`cf.borrow_repaid_*`는 이번 P1A 코드 밖에서 아무도 안 읽음
+(grep 확인) — 기존 검증된 다른 컬럼(net_debt/total_liabilities 등)에 영향 불가,
+신설 3컬럼만 채워지거나 NULL로 남는다.
+
+**검증**: 신규 회귀테스트 18개(`fin2/tests/test_combine_p1a_lease_borrowings.py`,
+순수함수 단위테스트), `pytest tests/ fin2/tests/` 741 pass(무관 기존실패 1건
+`test_lxintl_facility_table_dropped` 불변). 표본 4개사(00100601·00101433·
+00101549·00101664) 재빌드 후 위 두 원문대조 사례 전부 정확히 일치 확인
+(1,711,332,503·2,003,754,385).
+
+**전사 백필은 미실행**(구현+표본검증까지, `docs/plans/std_v2_retirement_port_to_
+v3_2026-08-22.md` §Phase 1 마지막 3항목 코드 완료). 사용자 승인 후 `build_std_v3.py
+--all --year-min 1999` 진행 예정.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

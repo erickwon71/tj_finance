@@ -1836,6 +1836,15 @@ class StdFinancialV3(Base):
     net_debt            = Column(BigInteger, nullable=True)
     shares_out          = Column(BigInteger, nullable=True)
     data_quality        = Column(SmallInteger, nullable=True)
+    # P1A(2026-09-03, docs/plans/std_v2_retirement_port_to_v3_2026-08-22.md §Phase 1):
+    # v2 파리티 마지막 3컬럼. combine 이 rule_additive_lease/rule_additive_borrowings
+    # (fin2/standardize/rules.py, v2에서 그대로 재사용)로 산출 — 유동+비유동 리스부채
+    # 합산(없으면 bs.lease_liability 집계값 폴백), 단기+장기 차입 유입/상환 부호보존 합산.
+    # net_debt 계산에는 반영 안 됨(v2도 lease는 net_debt에 안 넣음, rule_derive_net_debt
+    # 참고) — 독립 표시 지표.
+    lease_liability     = Column(BigInteger, nullable=True)
+    borrowings_proceeds = Column(BigInteger, nullable=True)
+    borrowings_repaid   = Column(BigInteger, nullable=True)
 
     # ── provenance ──
     source_rcepts   = Column(JSONB, nullable=True, comment="{statement: rcept} 정본 filing(statement 단위)")

@@ -49,6 +49,13 @@ _UNIT_RE = re.compile(r"단위\s*[:：]?\s*(백만원|천원|원)")
 # 'label  숫자 숫자 …' 데이터 라인: 선두 한글 라벨 + 1개 이상 숫자 토큰.
 _HANGUL_RE = re.compile(r"[가-힣]")
 _NUM_TOKEN_RE = re.compile(r"\(?-?[△▲]?\s?[0-9][0-9,]*\)?")
+# ★2026-09-03 (Category C fy1999~2003 다운로드 복구 세션, 20000329000397 실측) — 1999~2003년대
+# 인쇄 관행: BS 로마숫자/괄호번호 상위 항목("Ⅰ. 유동자산 (45,700,051)")은 괄호가 "바로 아래
+# 세부항목의 합계 미리보기"일 뿐 음수가 아니다(세부항목이 괄호 없이 그 합으로 풀린다). 이
+# 시대 문서에서 진짜 음수는 "-"/"△"/"▲" 접두로만 나타난다(실측: 자기주식 등 contra 계정,
+# "1. 자기주식 -2,821,943"). 로마숫자/괄호번호로 시작하는 헤더 라인의 단일 괄호값만 음수
+# 판정에서 제외한다 — 그 외 괄호=음수 해석(다른 시대 포맷)은 그대로 유지.
+_SUBTOTAL_HEADER_RE = re.compile(r"^(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]{1,3}\.?\s*|\(\d{1,2}\)\s*)")
 
 _UNIT_FACTOR = {"원": 1, "천원": 1000, "백만원": 1_000_000}
 
@@ -110,7 +117,7 @@ def _read_pdf_text(file_path) -> str | None:
 
 def _find_anchors(text: str) -> list[_Anchor]:
     """제목+직후 '제 N 기' 기간마커를 statement 시작 앵커로 수집(목차·주석 언급 배제)."""
-    anchors: list[_Anchor] = []
+    raw_anchors: list[_Anchor] = []
     for m in _TITLE_RE.finditer(text):
         name = re.sub(r"\s+", "", m.group("name"))   # '손 익 계 산 서' → '손익계산서'
         stmt = _TITLE_TOKENS[name]
@@ -122,7 +129,20 @@ def _find_anchors(text: str) -> list[_Anchor]:
         # 단위: 앵커 직후 ~200자 내 '(단위 : X)'.
         um = _UNIT_RE.search(text, m.end(), m.end() + 200)
         unit = _UNIT_FACTOR.get(um.group(1), 1) if um else 1
-        anchors.append(_Anchor(stmt, basis, m.start(), unit))
+        raw_anchors.append(_Anchor(stmt, basis, m.start(), unit))
+    # ★2026-09-03(PDF 복구 세션, 20000329000397 실측) — 제목이 붙여쓰기+자간띄움 두 표기로
+    # 연달아 인쇄되면("대차대조표\n대 차 대 조 표") 같은 statement 앵커가 몇 글자 간격으로
+    # 중복 매칭된다(`_spaced()`의 '\s*'가 0칸도 허용해 붙여쓰기 표기도 그대로 통과). 두 앵커
+    # 사이 구간이 사실상 비어 하나는 무의미한데, 그 무의미한 앵커가 리전 경계로 쓰이면 바로
+    # 앞 앵커의 리전이 몇 글자로 쪼그라들어 본문을 놓친다. 같은 (statement, basis) 앵커가
+    # 근접(<30자)하면 뒤쪽만 남긴다(실제 헤더/기간마커에 더 가까워 단위탐색창이 더 정확).
+    anchors: list[_Anchor] = []
+    for a in raw_anchors:
+        if (anchors and anchors[-1].statement == a.statement
+                and anchors[-1].basis == a.basis and a.start - anchors[-1].start < 30):
+            anchors[-1] = a
+        else:
+            anchors.append(a)
     return anchors
 
 
@@ -152,7 +172,16 @@ def _iter_data_lines(region: str):
         label = line[:first_num].strip()
         if not label or not _HANGUL_RE.search(label):
             continue
-        nums = [parse_number(mm.group(0)) for mm in nums_iter]
+        # 로마숫자/괄호번호 헤더 + 단일 괄호값 = 소계 미리보기(위 _SUBTOTAL_HEADER_RE 주석
+        # 참고) — 괄호를 벗겨내고 파싱해 음수판정을 우회한다.
+        is_subtotal_preview = (
+            len(nums_iter) == 1 and _SUBTOTAL_HEADER_RE.match(label) is not None)
+        nums = []
+        for mm in nums_iter:
+            tok = mm.group(0)
+            if is_subtotal_preview and tok.startswith("(") and tok.endswith(")"):
+                tok = tok[1:-1]
+            nums.append(parse_number(tok))
         nums = [n for n in nums if n is not None]
         if nums:
             yield label, nums

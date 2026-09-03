@@ -614,6 +614,32 @@ _PRESENTATION_CCY_RE = re.compile(r"표시통화.{0,40}(원화|원\s*[\(（]\s*K
                                   re.IGNORECASE)
 
 
+def _first_declared_unit_in_section(sec2) -> tuple[int | None, str | None]:
+    """이 SECTION-2 하나 안의 TABLE 을 문서순으로 훑어 첫 단위선언을 찾는다(R4-2
+    pending-text 구조 그대로, 제목 필터 없이 임의의 SECTION-2 에 재사용 가능하게
+    일반화 — `document_default_unit()`/`nearest_section_default_unit()` 공용).
+
+    데이터 없는 표(단위 전용·연결범위 등)를 만나면 그 단위 선언을 **기억해두고**
+    (pending), 데이터 표 자신에게 선언이 없을 때 최후 수단으로 그걸 쓴다 — 표별
+    인접성이 아니라 섹션 전체가 근거다(실측 포시에스 20171114002836).
+    """
+    pending_text: str | None = None
+    for tbl in sec2.iter("TABLE"):
+        if not _table_has_data_rows(tbl):
+            txt = " ".join("".join(tbl.itertext()).split())
+            if detect_unit_tokens(txt):
+                pending_text = txt
+            continue
+        unit = declared_unit(tbl)
+        decl_text = declaration_text(tbl)
+        if unit is None and pending_text is not None:
+            unit = detect_unit_declaration(pending_text)
+            decl_text = pending_text
+        if unit is not None:
+            return unit, decl_text
+    return None, None
+
+
 def document_default_unit(root) -> tuple[int | None, str | None]:
     """본문 표에 로컬 단위 선언이 전혀 없을 때 쓰는 **문서 전체 기본 단위**.
 
@@ -626,6 +652,20 @@ def document_default_unit(root) -> tuple[int | None, str | None]:
     표를 못 찾았다). 이 섹션은 R4-1 원칙상 이미 "**문서 전체 단일 단위**"로 취급하므로,
     데이터 없는 표를 만나면 그 단위 선언을 **기억해두고**(pending), 데이터 표 자신에게
     선언이 없을 때 최후 수단으로 그걸 쓴다 — 표별 인접성이 아니라 섹션 전체가 근거다.
+
+    ★R67(2026-09-03, `docs/plans/std_v3_kgaap_interim_consolidated_stale_annual_
+    reprint_design_2026-09-02.md` §12) — 이 문서 전체 기본값은 "요약재무정보" 표
+    자신에게는 정당해도, **그 표가 인쇄하는 숫자 자릿수(이미 배수로 나눈 압축표기)와
+    실제 재무제표 본문 표(원단위 그대로)가 다를 수 있다** — "같은 진짜 값을 가리킨다"는
+    것과 "같은 배수를 곱해야 원래 자릿수가 나온다"는 것은 별개다(실측 00240857:
+    요약재무정보 표는 "매출액 10,859,787"(천원 단위, 사람이 읽는 압축표기)인데, 정작
+    당해 손익계산서 본문 표는 이미 "10,859,787,838"(원 단위, 압축 없는 원 자릿수)을
+    그대로 인쇄해놓고 그 표 자신의 로컬 단위선언만 공란이었다 — 여기 요약재무정보의
+    배수(×1000)를 곱하면 1000배 부풀려진다). 이 함수는 여전히 "어느 표에도 국지적
+    단위가 전혀 없을 때"의 최후 수단으로 남지만, 호출측은 이 함수보다 **먼저**
+    `nearest_section_default_unit()`(그 표 자신이 속한 "재무제표"/"연결재무제표"
+    SECTION-2 안의 다른 표 선언)을 시도해야 한다 — 그쪽이 인쇄 관행을 공유할
+    가능성이 훨씬 높다.
     """
     for sec2 in root.iter("SECTION-2"):
         title_el = sec2.find("TITLE")
@@ -633,21 +673,9 @@ def document_default_unit(root) -> tuple[int | None, str | None]:
             continue
         if not _SUMMARY_SECTION_RE.search("".join(title_el.itertext())):
             continue
-        pending_text: str | None = None
-        for tbl in sec2.iter("TABLE"):
-            if not _table_has_data_rows(tbl):
-                # 데이터 없는 표(단위 전용·연결범위 등) — 단위 선언만 있으면 기억해둔다.
-                txt = " ".join("".join(tbl.itertext()).split())
-                if detect_unit_tokens(txt):
-                    pending_text = txt
-                continue
-            unit = declared_unit(tbl)
-            decl_text = declaration_text(tbl)
-            if unit is None and pending_text is not None:
-                unit = detect_unit_declaration(pending_text)
-                decl_text = pending_text
-            if unit is not None:
-                return unit, decl_text
+        result = _first_declared_unit_in_section(sec2)
+        if result[0] is not None:
+            return result
         break  # 요약재무정보 섹션은 문서에 하나뿐 — 못 찾았으면 ②로 넘어간다
 
     for p in root.iter("P"):
@@ -655,6 +683,32 @@ def document_default_unit(root) -> tuple[int | None, str | None]:
         if _PRESENTATION_CCY_RE.search(txt):
             return 1, txt[:200]
     return None, None
+
+
+def nearest_section_default_unit(tbl, cache: dict) -> tuple[int | None, str | None]:
+    """R67(2026-09-03) — `document_default_unit()`("요약재무정보" 섹션, 구조적으로
+    멀고 다른 인쇄관행일 수 있음, 위 docstring 참고)로 가기 **전에** 먼저 시도할
+    더 안전한 폴백: 이 표 자신이 속한 SECTION-2("재무제표"/"연결재무제표" 등, 임의의
+    제목) 안에 있는 **다른** 표의 단위선언을 문서순으로 찾는다 — 같은 챕터 안이라
+    같은 인쇄 관행(원 vs 천원)을 공유할 가능성이 훨씬 높다(실측 00240857: 로컬선언이
+    공란인 손익계산서 표와 같은 "4. 재무제표" 섹션 뒤쪽에 "(단위 : 원)" 선언이 이미
+    15회+ 존재).
+
+    `cache`: 문서 하나 처리 중 SECTION-2 당 한 번만 스캔하도록 호출측이 들고 있는
+    dict(빈 dict로 시작, 이 함수가 채워나간다) — 여러 표가 같은 섹션에 속하면 재사용된다.
+    ★키는 `id(sec2)`가 **아니라 `sec2` 원소 자체**를 쓴다 — `iterancestors()`가 매 호출마다
+    새 프록시 객체를 만드는데, 그 객체를 dict에 안 붙잡아두면(=값이 아니라 `id()`만 저장)
+    가비지 컬렉션 후 다른 원소가 같은 주소를 재사용해 **다른 SECTION-2인데 캐시 히트되는**
+    조용한 오탐이 날 수 있다(회귀테스트로 발견 — `test_nearest_section_default_unit_cache_
+    reused_per_section`). lxml `_Element`는 밑단 C 노드 기준으로 `__hash__`/`__eq__`가
+    안정적이라 원소 자체를 키로 쓰면 이 문제가 없다.
+    """
+    sec2 = next(tbl.iterancestors("SECTION-2"), None)
+    if sec2 is None:
+        return None, None
+    if sec2 not in cache:
+        cache[sec2] = _first_declared_unit_in_section(sec2)
+    return cache[sec2]
 
 
 _HANGUL_RE = re.compile(r"[가-힣]")

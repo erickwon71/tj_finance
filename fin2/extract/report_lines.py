@@ -48,7 +48,7 @@ from fin2.extract.text import (
     _SECTION_META, _detect_fin_type, _detect_body_statement_tables,
     _interim_cumulative_cols, _adecimal_from_unit, _synth_acontext,
     declared_unit, declaration_text, inherited_declaration_text, _table_has_data_rows,
-    document_default_unit,
+    document_default_unit, nearest_section_default_unit,
 )
 from fin2.extract.units import ColumnUnits, FX_ONLY, SRC_FX
 from fin2.extract.legacy_pre2015 import detect_pre2015_body_statement_tables
@@ -84,6 +84,42 @@ def _detect_pre2015_body_statement_tables_merged(root, fin_type: str) -> dict[st
 # `fin2/extract/text.py::document_default_unit` 참고.
 # ★ report_lines.unit_source 는 varchar(14) — "document_default"(16자)는 INSERT 를 터뜨린다.
 SRC_DOC_DEFAULT = "doc_default"
+# R67(2026-09-03) — 로컬 선언은 없지만 같은 SECTION-2(재무제표/연결재무제표) 안의 다른
+# 표에서 단위를 찾은 경우. `fin2/extract/text.py::nearest_section_default_unit` 참고.
+# "section_default"(15자)는 varchar(14)를 터뜨리므로 축약.
+SRC_SECTION_DEFAULT = "section_def"
+
+
+def _pick_fallback_unit(table, section_unit_cache: dict, doc_default_unit: tuple):
+    """R67(2026-09-03) — 로컬 선언도 FX 도 아닐 때, 같은 SECTION-2 폴백
+    (`nearest_section_default_unit`)과 문서 전체 폴백(`doc_default_unit`) 중 **배수가
+    더 작은 쪽**을 고른다.
+
+    ★왜 "같은 섹션이 항상 우선"이 아니라 "더 작은 배수"인가(00171867 2006Q3 실측 반례로
+    발견) — 같은 "4. 재무제표" SECTION-2 **안에서도** 인쇄 관행이 섞일 수 있다: 이 필링은
+    본문 대차대조표/손익계산서가 "(단위 :천원)"으로 정상 선언돼 있는데, 그 뒤쪽 같은 섹션에
+    로컬선언이 공란인 별도 "3개월/누적" 상세표가 있고, 이 상세표는 이미 **압축 없는 원 단위
+    숫자**("18,805,337,508")를 그대로 인쇄해놨다. 단순히 "같은 섹션 첫 선언"만 썼다면 이
+    상세표에 ×1000(천원)이 잘못 적용돼 18.8억이 아니라 18.8조가 됐을 것 — 인접 분기값들
+    (7~38억원대, 전부 `declared`)과 3~4자리수 어긋나는 명백한 회귀. 반면 `doc_default_unit`
+    (이 필링은 "요약재무정보"에 선언이 없어 회계정책 주석의 "…원(KRW)…" 문구로 unit=1)이
+    이미 정답을 갖고 있었다.
+
+    실측 전수(dry-run, 976개 필링·48,500건 교정) 결과 **97.98%가 "더 작은 배수가 정답"**
+    방향(과다배수 오적용이 압도적 다수 실패모드)이라, 두 후보 중 작은 쪽을 taking 하는
+    것이 가장 보수적이고 안전한 선택이다 — section_def 가 doc_default 보다 사실상 항상
+    "더 국지적이라 더 신뢰할 만하다"는 가정을 버리고, 대신 "덜 부풀리는 쪽"을 신뢰한다.
+    두 후보 배수가 같으면 section_def 를 우선(더 국지적인 게 여전히 근거로는 낫다).
+    반환: (unit, decl_raw, unit_source) — 후보가 하나도 없으면 (None, None, None).
+    """
+    section_unit, section_decl = nearest_section_default_unit(table, section_unit_cache)
+    candidates = [(u, d, src) for u, d, src in (
+        (section_unit, section_decl, SRC_SECTION_DEFAULT),
+        (doc_default_unit[0], doc_default_unit[1], SRC_DOC_DEFAULT),
+    ) if u is not None]
+    if not candidates:
+        return None, None, None
+    return min(candidates, key=lambda c: c[0])
 
 # 주석 표 한 행에서 캡처할 최대 컬럼 수(위치 기준). 주석 표는 컬럼 의미가 제각각(5개년·
 # 만기구간·공정가치수준 등)이라 넉넉히 잡아 위치 그대로 전사한다. 값 판단 아님.
@@ -417,6 +453,7 @@ def _emit_section_lines(
     report_fiscal_year: int,
     report_fiscal_period: str,
     doc_default_unit: tuple = (None, None),
+    section_unit_cache: dict | None = None,
 ) -> None:
     """한 섹션(BS_C 등)의 데이터 TABLE 들을 컬럼기반으로 읽어 report_lines 행 방출.
 
@@ -424,8 +461,13 @@ def _emit_section_lines(
     canonical 매핑·귀속행 라우팅만 제거. 상세 판단 근거는 text.py 쪽 주석 참고(그대로 재사용).
 
     `doc_default_unit` — `text.py::document_default_unit()` 이 문서 전체에서 미리 찾아둔
-    (multiplier, 근거원문). 그 표에 로컬 선언이 전혀 없을 때만 최후 수단으로 쓴다.
+    (multiplier, 근거원문). 그 표에 로컬 선언이 전혀 없을 때 최후 수단으로 쓴다.
+    `section_unit_cache` — R67(2026-09-03): `doc_default_unit` 보다 **먼저** 시도하는
+    `text.py::nearest_section_default_unit()` 용 문서-수명 캐시(dict, 호출측이 파일 하나당
+    한 번 만들어 여러 섹션 호출에 공유). None 이면 이 호출 안에서만 쓰는 빈 dict로 대체.
     """
+    if section_unit_cache is None:
+        section_unit_cache = {}
     basis, period_kind = _SECTION_META[section_code]
     statement = section_code.split("_")[0]
     tables = [t for t, _, _ in tables_with_unit]
@@ -461,14 +503,15 @@ def _emit_section_lines(
             if cu.kind == FX_ONLY:
                 unit = cu.fx_mult
                 unit_source, currency, decl_raw = SRC_FX, cu.currency, cu.raw_decl
-            elif doc_default_unit[0] is not None:
-                # 이 표엔 로컬 선언이 아예 없다(cu.kind != FX_ONLY 는 통화 충돌 표가 아니라는
-                # 뜻이기도 하다) → 문서 전체 기본 단위로 채운다(2026-08-05, 텍스트 근거만).
-                unit = doc_default_unit[0]
-                unit_source, decl_raw = SRC_DOC_DEFAULT, doc_default_unit[1]
             else:
-                logger.debug(f"[report_lines] 단위 미선언 → 스킵(보류): {rcept_no} {section_code}")
-                continue
+                # R67(2026-09-03) — 같은 SECTION-2 폴백과 문서 전체 폴백("요약재무정보")
+                # 둘 다 시도해, 배수가 더 작은(=덜 부풀리는) 쪽을 쓴다. "같은 섹션이라 더
+                # 안전하다"는 가정이 항상 성립하지 않는다 — `_pick_fallback_unit` 참고.
+                unit, decl_raw, unit_source = _pick_fallback_unit(
+                    table, section_unit_cache, doc_default_unit)
+                if unit is None:
+                    logger.debug(f"[report_lines] 단위 미선언 → 스킵(보류): {rcept_no} {section_code}")
+                    continue
 
         # 보험/증권 기간당 다열 포맷 감지(2단 누적표는 별도 경로라 제외).
         n_periods, multicol = (3, False) if cum_map is not None else _detect_period_layout(table)
@@ -999,6 +1042,7 @@ def _emit_sce_lines(
     report_fiscal_year: int,
     report_fiscal_period: str,
     doc_default_unit: tuple = (None, None),
+    section_unit_cache: dict | None = None,
 ) -> None:
     """자본변동표(SCE)를 전사한다 — **본문/주석과 컬럼 규약이 다르다**.
 
@@ -1030,6 +1074,8 @@ def _emit_sce_lines(
       SCE 는 주석과 달리 열별 단위 판정을 안 한다)·`allow_date_label=True`·
       `keep_header_rows=False`(옛 SCE 기본 — 헤더 패턴 행은 버림, 주석과 다른 점)로 호출.
     """
+    if section_unit_cache is None:
+        section_unit_cache = {}
     basis, _ = _SECTION_META[section_code]
     tables = [t for t, _, _ in tables_with_unit]
     # ★같은 표 객체가 tables 에 두 번 담기는 경우가 있다(섹션 감지가 같은 TABLE 중복 수집).
@@ -1051,12 +1097,14 @@ def _emit_sce_lines(
             if cu.kind == FX_ONLY:
                 unit, fx_source, fx_currency, fx_decl = (
                     cu.fx_mult, SRC_FX, cu.currency, cu.raw_decl)
-            elif doc_default_unit[0] is not None:
-                unit, fx_source, fx_decl = (
-                    doc_default_unit[0], SRC_DOC_DEFAULT, doc_default_unit[1])
             else:
-                logger.debug(f"[report_lines/SCE] 단위 미선언 → 스킵(보류): {rcept_no} {section_code}")
-                continue
+                # R67(2026-09-03) — 위 _emit_section_lines 의 같은 분기와 동일한 근거
+                # (`_pick_fallback_unit`: 배수가 더 작은 쪽을 신뢰).
+                unit, fx_decl, fx_source = _pick_fallback_unit(
+                    table, section_unit_cache, doc_default_unit)
+                if unit is None:
+                    logger.debug(f"[report_lines/SCE] 단위 미선언 → 스킵(보류): {rcept_no} {section_code}")
+                    continue
         table_seq = doc_seq[id(table)]
         table_title = _note_heading(table)
         # ★2026-08-08(R11/T2.5): `_grid_header_split`을 **여기서 한 번만** 호출해 헤더 라벨
@@ -1150,6 +1198,9 @@ def extract_report_lines(
     needs_doc_default = any(
         u is None for tws in groups.values() for _, u, _ in tws)
     doc_default_unit = document_default_unit(root) if needs_doc_default else (None, None)
+    # R67(2026-09-03) — 파일(=문서) 하나 수명의 캐시. `nearest_section_default_unit()`이
+    # SECTION-2(id) 당 한 번만 스캔하도록 여러 statement 그룹 호출에 공유한다.
+    section_unit_cache: dict = {}
     for code, tables_with_unit in groups.items():
         emitter = _emit_sce_lines if code.startswith("SCE") else _emit_section_lines
         emitter(
@@ -1158,6 +1209,7 @@ def extract_report_lines(
             report_fiscal_year=report_fiscal_year,
             report_fiscal_period=report_fiscal_period,
             doc_default_unit=doc_default_unit,
+            section_unit_cache=section_unit_cache,
         )
 
     if not groups:

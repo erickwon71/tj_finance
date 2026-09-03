@@ -212,15 +212,106 @@ def test_doc_default_unit_absent_returns_none():
     assert document_default_unit(root) == (None, None)
 
 
+# ── R67(2026-09-03): nearest_section_default_unit — 합성 XML(파일 비의존) ──────
+# docs/plans/std_v3_kgaap_interim_consolidated_stale_annual_reprint_design_2026-09-02.md §12.
+
+# 데이터표 판정(`table_has_amount_rows`)은 콤마금액 행이 **2개 이상** 있어야 한다
+# (실측 사고 방지 — text.py `_table_has_data_rows` docstring 참고) — 아래 합성표는
+# 전부 행 2개·콤마 3자리(예: "1,000")로 이 조건을 만족시킨다.
+
+def test_nearest_section_default_unit_finds_other_table_same_section():
+    """로컬선언 공란인 표라도, 같은 SECTION-2 안 **다른** 표에 선언이 있으면 그걸 쓴다
+    (요약재무정보 문서전체 폴백보다 우선) — 00240857 실측의 최소 재현."""
+    from lxml import etree
+    from fin2.extract.text import nearest_section_default_unit
+    xml = (
+        "<DOCUMENT><BODY>"
+        "<SECTION-2><TITLE>1. 요약재무정보</TITLE>"
+        "<TABLE><TBODY><TR><TD>매출액</TD><TD>10,859,787</TD></TR>"
+        "<TR><TD>영업이익</TD><TD>1,234,567</TD></TR></TBODY></TABLE>"
+        "<P>(단위 :천원 )</P>"
+        "</SECTION-2>"
+        "<SECTION-2><TITLE>4. 재무제표</TITLE>"
+        "<TABLE ID='target'><TBODY><TR><TD>매출액</TD><TD>10,859,787,838</TD></TR>"
+        "<TR><TD>영업이익</TD><TD>1,234,567,890</TD></TR></TBODY></TABLE>"
+        "<P>(단위 : 원)</P>"
+        "<TABLE><TBODY><TR><TD>현금및현금성자산</TD><TD>1,000</TD></TR>"
+        "<TR><TD>재고자산</TD><TD>2,000</TD></TR></TBODY></TABLE>"
+        "</SECTION-2>"
+        "</BODY></DOCUMENT>"
+    )
+    root = etree.fromstring(xml)
+    target = root.find(".//TABLE[@ID='target']")
+    unit, decl = nearest_section_default_unit(target, {})
+    assert unit == 1, (unit, decl)
+    assert "원" in (decl or "")
+
+
+def test_nearest_section_default_unit_ignores_other_sections():
+    """다른 SECTION-2(예: 요약재무정보)의 선언은 안 쓴다 — 반드시 자기 섹션만."""
+    from lxml import etree
+    from fin2.extract.text import nearest_section_default_unit
+    xml = (
+        "<DOCUMENT><BODY>"
+        "<SECTION-2><TITLE>1. 요약재무정보</TITLE>"
+        "<TABLE><TBODY><TR><TD>매출액</TD><TD>10,859,787</TD></TR>"
+        "<TR><TD>영업이익</TD><TD>1,234,567</TD></TR></TBODY></TABLE>"
+        "<P>(단위 :천원 )</P>"
+        "</SECTION-2>"
+        "<SECTION-2><TITLE>4. 재무제표</TITLE>"
+        "<TABLE ID='target'><TBODY><TR><TD>매출액</TD><TD>10,859,787,838</TD></TR>"
+        "<TR><TD>영업이익</TD><TD>1,234,567,890</TD></TR></TBODY></TABLE>"
+        "</SECTION-2>"
+        "</BODY></DOCUMENT>"
+    )
+    root = etree.fromstring(xml)
+    target = root.find(".//TABLE[@ID='target']")
+    assert nearest_section_default_unit(target, {}) == (None, None)
+
+
+def test_nearest_section_default_unit_cache_reused_per_section():
+    """같은 SECTION-2 안 여러 표가 캐시(dict)를 공유 — 두 번째 호출은 재스캔 없이 캐시 히트."""
+    from lxml import etree
+    from fin2.extract.text import nearest_section_default_unit
+    xml = (
+        "<DOCUMENT><BODY>"
+        "<SECTION-2><TITLE>4. 재무제표</TITLE>"
+        "<TABLE ID='a'><TBODY><TR><TD>매출액</TD><TD>1,000</TD></TR>"
+        "<TR><TD>영업이익</TD><TD>2,000</TD></TR></TBODY></TABLE>"
+        "<P>(단위 : 원)</P>"
+        "<TABLE ID='b'><TBODY><TR><TD>영업이익</TD><TD>3,000</TD></TR>"
+        "<TR><TD>당기순이익</TD><TD>4,000</TD></TR></TBODY></TABLE>"
+        "</SECTION-2>"
+        "</BODY></DOCUMENT>"
+    )
+    root = etree.fromstring(xml)
+    cache: dict = {}
+    a, b = root.find(".//TABLE[@ID='a']"), root.find(".//TABLE[@ID='b']")
+    r1 = nearest_section_default_unit(a, cache)
+    assert len(cache) == 1
+    r2 = nearest_section_default_unit(b, cache)
+    assert len(cache) == 1  # 같은 섹션 → 재사용, 새 항목 안 늘어남
+    assert r1 == r2 == (1, "(단위 : 원)")
+
+
 def test_previously_gap_filings_now_load_with_doc_default_source():
-    """08-05 재로드에서 0행이던 4건이 이제 unit_source='doc_default'로 채워진다."""
+    """08-05 재로드에서 0행이던 4건이 이제 문서레벨 폴백 소스로 채워진다.
+
+    ★R67(2026-09-03, design doc §12) — 인카금융서비스만 `unit_source`가
+    'doc_default'→**'section_def'**로 바뀐다(값은 무변경, 둘 다 unit=1/원).
+    원인: 이 문서는 "4. 재무제표" SECTION-2 **자신 안에** 다른 표의 로컬
+    "(단위: 원)" 선언이 이미 있다(`nearest_section_default_unit()`이 이제
+    `document_default_unit()`의 "요약재무정보" 문서전체 폴백보다 먼저 찾음) —
+    이엘피×2·윙스풋은 그런 표가 자기 섹션 안에 없어 그대로 'doc_default' 유지
+    (회귀 아님, 표본 4건 전부 원문대조로 확인됨).
+    """
     targets = [
-        (_ELP_A, "20160330001530", "00374020", 2015, "FY"),
-        (_ELP_B, "20160513002038", "00374020", 2015, "FY"),
-        (_WINGSFOOT, "20210517000207", "01405585", 2021, "Q1"),
-        (_INCA, "20170516000038", "01013694", 2017, "Q1"),
+        (_ELP_A, "20160330001530", "00374020", 2015, "FY", "doc_default"),
+        (_ELP_B, "20160513002038", "00374020", 2015, "FY", "doc_default"),
+        (_WINGSFOOT, "20210517000207", "01405585", 2021, "Q1", "doc_default"),
+        (_INCA, "20170516000038", "01013694", 2017, "Q1", "section_def"),
     ]
-    for path, rcept, corp, fy, period in targets:
+    for path, rcept, corp, fy, period, expected_source in targets:
         if not path.exists():
             continue
         lines = extract_report_lines(
@@ -232,9 +323,91 @@ def test_previously_gap_filings_now_load_with_doc_default_source():
         body = [l for l in lines if l.statement in ("BS", "IS", "SCE", "CF")
                 and l.section_path != "주당손익"]
         assert body, f"{rcept} 본문 행 없음"
-        assert all(l.unit_source == "doc_default" for l in body), (
+        assert all(l.unit_source == expected_source for l in body), (
             rcept, {l.unit_source for l in body})
         assert all(l.value_won is not None for l in body)
+
+
+# ── R67(2026-09-03): 같은 SECTION-2 내 다른 표 단위선언 우선 참조 ──────────────
+# docs/plans/std_v3_kgaap_interim_consolidated_stale_annual_reprint_design_2026-09-02.md §12.
+# `document_default_unit()`("요약재무정보" 표 — 압축표기라 배수는 그 표 자신에게만 정당,
+# 다른 표의 원자릿수 인쇄와 같은 배수를 공유한다는 보장이 없음)로 가기 **전에**, 로컬선언이
+# 공란인 표 자신이 속한 SECTION-2("재무제표" 등) 안의 **다른** 표 선언을 먼저 찾는다
+# (`nearest_section_default_unit`) — 원자릿수 인쇄 관행을 공유할 가능성이 훨씬 높다.
+_BIOSMART_H1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00240857_바이오스마트/half/2005/20050816000383.xml"
+)
+_BIOSMART_Q3 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00240857_바이오스마트/quarter/2005/20051115000359.xml"
+)
+_KYUNGDONG_Q3 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00101549_경동제약/quarter/2003/20031114000457.xml"
+)
+
+
+def test_r67_section_default_fixes_1000x_inflation():
+    """00240857(바이오스마트) 2005H1/Q3 손익계산서 — 로컬선언 공란인 "매출액"이
+    예전엔 "요약재무정보"(천원, 그 표 자신에겐 정당) 배수를 잘못 물려받아 ×1000
+    부풀려졌다. 같은 "4. 재무제표" 섹션 뒤쪽엔 "(단위 : 원)" 선언이 이미 15회+
+    있다 — 이제 그쪽을 먼저 찾아 원문과 정확히 일치하는 값을 낸다(원문/DB
+    직접대조로 확정된 값, design doc §12.1).
+    """
+    if not _BIOSMART_H1.exists() or not _BIOSMART_Q3.exists():
+        return
+    h1_lines = extract_report_lines(
+        _BIOSMART_H1, rcept_no="20050816000383", corp_code="00240857",
+        report_fiscal_year=2005, report_fiscal_period="H1",
+    )
+    q3_lines = extract_report_lines(
+        _BIOSMART_Q3, rcept_no="20051115000359", corp_code="00240857",
+        report_fiscal_year=2005, report_fiscal_period="Q3",
+    )
+    h1_rev = next(l for l in h1_lines if l.statement == "IS" and l.basis == "separate"
+                  and l.label_raw == "매출액" and l.col_index == 0)
+    q3_rev = next(l for l in q3_lines if l.statement == "IS" and l.basis == "separate"
+                  and l.label_raw == "매출액" and l.col_index == 0)
+    assert h1_rev.value_won == 10_859_787_838, h1_rev.value_won
+    assert h1_rev.unit_source == "section_def"
+    assert h1_rev.adecimal == 0
+    assert q3_rev.value_won == 14_378_192_970, q3_rev.value_won
+    assert q3_rev.unit_source == "section_def"
+
+
+def test_r67_section_default_fixes_1e6x_inflation_cf():
+    """00101549(경동제약) 2003Q3 현금흐름표 — 로컬선언 공란인 CF 세부계정이
+    예전엔 "요약재무정보"(백만원) 배수를 잘못 물려받아 ×1,000,000 부풀려졌다.
+    다른 회사·다른 statement(CF)로 같은 메커니즘 재현(design doc §12.1 표본2).
+    """
+    if not _KYUNGDONG_Q3.exists():
+        return
+    lines = extract_report_lines(
+        _KYUNGDONG_Q3, rcept_no="20031114000457", corp_code="00101549",
+        report_fiscal_year=2003, report_fiscal_period="Q3",
+    )
+    ni = next(l for l in lines if l.statement == "CF" and l.basis == "separate"
+              and "당" in l.label_raw and "순" in l.label_raw and "이" in l.label_raw
+              and l.col_index == 0)
+    assert ni.unit_source == "section_def"
+    assert ni.adecimal == 0
+    # 원 단위 그대로(수백억 아님) — 부풀려졌다면 10^6배 커졌을 것.
+    assert abs(ni.value_won) < 100_000_000_000
+
+
+def test_r67_no_local_declaration_anywhere_falls_through_to_doc_default():
+    """R67 폴백은 **추가만** — 같은 SECTION-2 안에 정말 아무 선언도 없으면(이엘피·
+    윙스풋처럼) 예전 그대로 `document_default_unit()`까지 간다(회귀 없음)."""
+    if not _ELP_A.exists():
+        return
+    lines = extract_report_lines(
+        _ELP_A, rcept_no="20160330001530", corp_code="00374020",
+        report_fiscal_year=2015, report_fiscal_period="FY",
+    )
+    body = [l for l in lines if l.statement in ("BS", "IS", "SCE", "CF")
+            and l.section_path != "주당손익"]
+    assert body and all(l.unit_source == "doc_default" for l in body)
 
 
 # ── R4-2: 제목+데이터 병합 표 / 제목 자체 없는 표 (2026-08-05) ──────────────

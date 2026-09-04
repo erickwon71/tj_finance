@@ -258,6 +258,17 @@ def facts_from_text(
             # 코스피 상장사 중 가장 큰 개별 계정도 수백조원(10^14~10^15) 대이므로 여유있게 잡음.
             if abs(amount_won) > 10 ** 16:
                 continue
+            # ★2026-09-04 — 위 절대상한(10^16)보다 작아도(예: 9,000조원대) 여전히 물리적으로
+            # 불가능한 자릿수 튐이 소수 있음(실측: 전수 복구 6,592건 중 6건이
+            # `scripts/dq_assertions.py::statement_magnitude_impossible` ERROR 로 잡힘).
+            # 그 어서션과 같은 임계값을 핵심 4개 concept 에 그대로 재사용해 std_v3 도달 전에
+            # 미리 버린다(같은 원칙 — 결측이 오염보다 낫다).
+            magnitude_cap = {
+                "bs.total_assets": 1e15, "bs.total_equity": 5e14,
+                "bs.retained_earnings": 5e14, "is.revenue": 4e14,
+            }.get(canon)
+            if magnitude_cap is not None and abs(amount_won) > magnitude_cap:
+                continue
             is_cumulative = period_kind == "duration" and report_fiscal_period != "FY"
             acode = (normalize_account_name(label) or label)[:120]
             # dedup 키 = DB uq_fact_v2_cell(rcept, acode, acontext_raw) 와 동일 grain.

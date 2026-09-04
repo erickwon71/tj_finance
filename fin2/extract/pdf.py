@@ -250,6 +250,14 @@ def facts_from_text(
             if canon == "is.tax_expense" and "차감전" in label:
                 continue  # 세전이익 오매핑 가드(Track B 와 동일)
             amount_won = amount * anc.unit
+            # ★2026-09-03(PDF 복구 세션, 20010515000606 실측) — pdfplumber 가 인접 컬럼 숫자를
+            # 섞어 붙이는 렌더링 결함으로 자릿수가 튀는 값이 드물게 나온다(실측: 별도기준
+            # 995억원인 항목이 연결기준에서 "14조원"으로 나온 사례 — bigint 범위(약 922경)를
+            # 넘겨 그 필링 전체 insert 를 실패시킨 바 있음). 복구 불가능한 노이즈라 아예
+            # 버린다 — 결측이 낫다(위 PACKED_CELL 등과 같은 원칙, 이 시대 파서 전반의 설계).
+            # 코스피 상장사 중 가장 큰 개별 계정도 수백조원(10^14~10^15) 대이므로 여유있게 잡음.
+            if abs(amount_won) > 10 ** 16:
+                continue
             is_cumulative = period_kind == "duration" and report_fiscal_period != "FY"
             acode = (normalize_account_name(label) or label)[:120]
             # dedup 키 = DB uq_fact_v2_cell(rcept, acode, acontext_raw) 와 동일 grain.

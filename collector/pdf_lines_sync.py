@@ -137,27 +137,37 @@ def sync_pdf_recovery(corps: list[str], limit: int | None = None) -> dict:
     try:
         with get_session() as session:
             for i, t in enumerate(targets, 1):
+                # ★2026-09-03(밤샘 실행 중 발견) — 이 try 는 원래 recover_one() 만 감쌌다.
+                # store_report_lines() 의 DB 오류(예: bigint 오버플로 — 아래 fin2/extract/
+                # pdf.py 방어값 이전 데이터, 미래에도 다른 형태로 재발 가능)는 감싸지 않아서
+                # 그 예외가 세션을 "실패" 상태로 만들고 스크립트 전체를 죽였다(6,592건 중
+                # 2,978건만 처리하고 밤새 조용히 중단됨, 실사례). store_report_lines 까지
+                # 통째로 감싸고, 실패 시 반드시 rollback 해서 다음 rcept 부터 세션을 계속
+                # 쓸 수 있게 한다(한 건 실패가 전체를 막으면 안 된다는 이 코드베이스 전체
+                # 관례를 여기도 지킴).
                 try:
                     lines, raw_bytes, fmt = recover_one(
                         scraper, t.rcept_no, t.corp_code, t.fiscal_year, t.fiscal_period)
+
+                    if raw_bytes is None:
+                        out["no_content"] += 1
+                        continue
+                    if fmt != "pdf":
+                        out["recovered_html_only"] += 1
+                        continue
+
+                    out["recovered_pdf"] += 1
+                    if lines:
+                        # report_tables 는 건너뛴다 — table_seq NOT NULL 제약(PDF 추출엔 표
+                        # 순번 개념이 없음)과 충돌하고, build_corp() 은 report_tables 없이도
+                        # 동작함을 검증했다(2026-09-03 표본 2건, report_lines 만으로 std_v3
+                        # 정상 생성).
+                        out["rows"] += store_report_lines(session, t.rcept_no, lines)
                 except Exception as exc:  # noqa: BLE001 — 한 건 실패가 전체를 막으면 안 됨
                     out["errors"] += 1
+                    session.rollback()
                     logger.warning(f"[pdf_recovery] {t.rcept_no} 실패: {type(exc).__name__}: {exc}")
                     continue
-
-                if raw_bytes is None:
-                    out["no_content"] += 1
-                    continue
-                if fmt != "pdf":
-                    out["recovered_html_only"] += 1
-                    continue
-
-                out["recovered_pdf"] += 1
-                if lines:
-                    # report_tables 는 건너뛴다 — table_seq NOT NULL 제약(PDF 추출엔 표 순번
-                    # 개념이 없음)과 충돌하고, build_corp() 은 report_tables 없이도 동작함을
-                    # 검증했다(2026-09-03 표본 2건, report_lines 만으로 std_v3 정상 생성).
-                    out["rows"] += store_report_lines(session, t.rcept_no, lines)
 
                 if i % 200 == 0:
                     session.commit()

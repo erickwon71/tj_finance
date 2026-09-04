@@ -219,6 +219,34 @@ std_v2 DROP 시 사용자가 감수하기로 결정한 트레이드오프. `repo
 > 영구 결측이나 낮은 우선순위. 전량 완료 후 dq_assertions(특히 `std_v3_conflicts_
 > unresolved` 증가폭 — `is.cogs` 계열 충돌이 얼마나 흔한지)와 Gate B 격리성 확인 필요.
 
+> **2026-09-05 — 전량 실행 완료 + 검증 완료.** 사용자가 이틀에 걸쳐 터미널에서 직접
+> 실행(1차 2026-09-03 밤: 2,978건 처리 후 정수오버플로 미처리 예외로 중단 — `_download_
+> one` 밖 `store_report_lines` 예외가 try/except 범위 밖이라 세션 전체가 죽음, 커밋
+> `275274a`로 수정: ①`fin2/extract/pdf.py`에 값 상한 가드(|amount_won|>10^16 드롭)
+> ②`pdf_lines_sync.py` try/except 범위를 store_report_lines까지 확장+실패시 rollback.
+> 2차 2026-09-04~05: 나머지 5,490건 처리, **에러 0건**으로 완주).
+>
+> **최종 결과**: 후보 8,514건(922개사, fy1999~2003) 중 **5,830건(68%) 복구 성공**
+> (report_lines 474,912행, `unit_source='pdf'`). **2,608건(31%)은 DART 웹뷰어에 PDF
+> 자체가 없어 HTML만 확보**(원문 보존만, 파싱은 애초 스코프 밖 — 사용자 결정
+> "PDF 경로만"). 4건은 원문 자체를 못 구함(no_content).
+>
+> **dq_assertions 전수 검증**: `statement_magnitude_impossible`(ERROR) 32건 중
+> 오늘 신규 6건만(나머지 26건은 무관한 기존 이슈, 항목2) — 같은 부류의 PDF 자릿수
+> 뭉개짐이 값 상한가드(10^16)보다 작게(9,000조원대) 새어나온 것. 재발방지 코드
+> 커밋(`8c3d8fb`, dq_assertions와 동일 임계값을 concept별로 재사용해 추출 시점에
+> 차단)했으나, **기존 6건의 DB 정리(재수집)는 DART PDF 엔드포인트가 그 시점에 503을
+> 내서 미완료 — 나중에 재시도 필요**(무리한 재시도 자제, `docs 항목 검색용 corp_code`:
+> 00122825/00124799/00125488/00133618). `bs_identity_gt5pct`(WARN) 947건 중 277건,
+> `std_v3_conflicts_unresolved`(WARN) 오늘범위 10,532행 중 4,054행(38.5%)이 오늘
+> 신규분 — 전부 "이전엔 아예 없었던 자리가 불완전하게라도 채워짐" 패턴이지 기존 데이터
+> 손상이 아님(격리성 확인: 새 report_lines는 전부 이전에 완전히 비어있던 (corp,fy,fp)
+> 자리만 채움, `unit_source='pdf'`를 특별취급하는 코드는 fx_declared 가드 외 없음 확인).
+>
+> **이 항목 사실상 종료** — 남은 서브이슈 2개만 낮은 우선순위로 백로그: (a) 6건
+> 재수집(DART 503 풀리면), (b) 2,608건 HTML-only 파싱(신규 파서 필요, 별도 결정
+> 필요 사안).
+
 ## 4. `extended_financials_n_facts_outlier` 어서션 폐기, 대체 설계 미착수
 
 §4-2 `extended_financials` 뷰를 fact_v2(acode) 경유 → `extended_facts_v3`(라벨) 경유로

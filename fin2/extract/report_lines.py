@@ -51,7 +51,9 @@ from fin2.extract.text import (
     document_default_unit, nearest_section_default_unit,
 )
 from fin2.extract.units import ColumnUnits, FX_ONLY, SRC_FX
-from fin2.extract.legacy_pre2015 import detect_pre2015_body_statement_tables
+from fin2.extract.legacy_pre2015 import (
+    detect_pre2015_body_statement_tables, detect_squished_bs_total_assets,
+)
 from fin2.extract.report_lines_inline_xbrl_overlay import (
     overlay_dividends_paid_sign,
     overlay_tax_expense_value,
@@ -88,6 +90,11 @@ SRC_DOC_DEFAULT = "doc_default"
 # 표에서 단위를 찾은 경우. `fin2/extract/text.py::nearest_section_default_unit` 참고.
 # "section_default"(15자)는 varchar(14)를 터뜨리므로 축약.
 SRC_SECTION_DEFAULT = "section_def"
+# (A-3, 2026-09-05) 통짜-셀 레거시 BS 표에서 `detect_squished_bs_total_assets()`가
+# 복구한 total_assets 단일값 provenance. 단위 자체가 declared/section_def/doc_default
+# 어느 경로로 잡혔는지와 무관하게(§design doc §3-4) **이 값이 통짜-셀 복구 경로 산물임을
+# 우선 기록** — PDF복구(unit_source='pdf', 항목1)와 같은 관례. 정확히 14자.
+SRC_SQUISHED_TOTAL = "squished_total"
 
 
 def _pick_fallback_unit(table, section_unit_cache: dict, doc_default_unit: tuple):
@@ -1188,15 +1195,23 @@ def extract_report_lines(
     # include_sce=True — 계층2 는 자본변동표도 전사한다(fact_v2 는 기본값 False 로 계속 배제).
     # pre-2015(≤2010) 라우팅 — 섹션 코드 단위 병합(위 헬퍼 docstring). 2015+ 소비 경로
     # (`_detect_body_statement_tables`)는 이 분기 밖에서 무변경으로 그대로 쓴다.
+    squished_bs: dict[str, tuple[int, "object"]] = {}
     if report_fiscal_year <= _PRE2015_ROUTING_MAX_FY:
         groups = _detect_pre2015_body_statement_tables_merged(root, fin_type)
+        # (A-3, 2026-09-05) 통짜-셀 BS 표 — 정상 경로(위 groups)가 못 채운 BS_S/BS_C 만
+        # total_assets 단일값으로 보충 시도(완전히 추가적, 정상 표가 있으면 아예 안 씀).
+        # 설계: docs/plans/category_c_a3_squished_cell_bs_total_assets_design_2026-09-05.md
+        squished_bs = {
+            code: v for code, v in detect_squished_bs_total_assets(root, fin_type).items()
+            if code not in groups
+        }
     else:
         groups = _detect_body_statement_tables(root, fin_type, include_sce=True)
     # 문서 전체 기본 단위는 **로컬 선언이 없는 표가 실제로 있을 때만** 찾는다(비용 절감 —
     # 대다수 문서는 표마다 선언이 있어 이 스캔이 불필요하다). `_detect_body_statement_tables`
-    # 가 이미 붙여준 표 단위 unit 이 하나라도 None 이면 후보.
-    needs_doc_default = any(
-        u is None for tws in groups.values() for _, u, _ in tws)
+    # 가 이미 붙여준 표 단위 unit 이 하나라도 None 이면 후보. squished_bs 는 로컬 선언이
+    # 없으면 폴백 없이 스킵하므로(위 §A-3 안전장치) 여기 후보에 안 넣는다.
+    needs_doc_default = any(u is None for tws in groups.values() for _, u, _ in tws)
     doc_default_unit = document_default_unit(root) if needs_doc_default else (None, None)
     # R67(2026-09-03) — 파일(=문서) 하나 수명의 캐시. `nearest_section_default_unit()`이
     # SECTION-2(id) 당 한 번만 스캔하도록 여러 statement 그룹 호출에 공유한다.
@@ -1212,7 +1227,34 @@ def extract_report_lines(
             section_unit_cache=section_unit_cache,
         )
 
-    if not groups:
+    for code, (raw_value, unit_hint_table) in squished_bs.items():
+        # ★2026-09-05(실측 발견, 손오공 20050331001512·코데즈컴바인 20060814001461·
+        # KTcs 20060515002002) — 이 표들의 로컬 단위선언이 "(단위 : )"처럼 원문 자체가
+        # 비어있어 declared_unit 이 None 이 되고, section_def/doc_default 폴백이 이
+        # 문서의 **다른 곳**(요약재무정보 등)에서 찾은 단위(예 백만원)를 잘못 물려받아
+        # 값이 10³~10⁶배 뻥튀기됐다(실측 확정 — 인접기간 대비 이상값). 정상 표(§_pick_
+        # fallback_unit)는 "같은 SECTION-2 안 다른 표"를 신뢰할 근거(적어도 국지성)가
+        # 있지만, 이 통짜-셀 폴백은 검증 표본이 좁아 그 신뢰를 아직 못 준다 — **로컬
+        # 선언이 없으면 폴백을 시도하지 않고 조용히 포기한다**(드라이런 실측: 656건 중
+        # 7건만 로컬 선언이 없었음 — 손실은 작고, 이 위험군 전체를 원천 차단).
+        unit = declared_unit(unit_hint_table)
+        if unit is None:
+            logger.debug(f"[report_lines] 통짜-셀 total_assets 로컬 단위 미선언 → "
+                         f"폴백 없이 스킵(안전 우선): {rcept_no} {code}")
+            continue
+        basis, period_kind = _SECTION_META[code]
+        lines.append(ReportLineRow(
+            corp_code=corp_code, rcept_no=rcept_no,
+            report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
+            statement="BS", basis=basis,
+            label_raw="자산총계", col_index=0, context_fiscal_year=report_fiscal_year,
+            period_kind=period_kind, is_cumulative=False,
+            value_won=raw_value * unit, adecimal=_adecimal_from_unit(unit),
+            unit_source=SRC_SQUISHED_TOTAL, source_ref=None, context_raw=None,
+            table_seq=0, node_role="F",
+        ))
+
+    if not groups and not squished_bs:
         logger.debug(f"[report_lines] 본문 섹션 없음 → 빈 결과(보류): {rcept_no} "
                      f"fy{report_fiscal_year} {report_fiscal_period}")
 

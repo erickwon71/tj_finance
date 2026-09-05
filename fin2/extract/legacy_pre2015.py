@@ -28,7 +28,7 @@ import re
 from lxml import etree
 
 from parser.xml.section_detector import (
-    SEC_CONSOL_FS, SEC_SEP_FS, normalize_dart_section_title,
+    SEC_CONSOL_FS, SEC_SEP_FS, normalize_dart_section_title, table_direct_rows,
 )
 from fin2.extract.statement_titles import (
     SECTION_CODE_OF, _LEGACY_ENUM_PREFIX, _LEGACY_EXCLUDE, is_legacy_note_marker,
@@ -242,3 +242,199 @@ def detect_pre2015_body_statement_tables(
                 pending_unit = declared_unit(el) if tag == "TABLE" else None
 
     return groups
+
+
+# ── (A-3, 2026-09-05) 통짜-셀 레거시 BS 표 — total_assets 한정 안전 복구 ──────────
+# 설계문서: docs/plans/category_c_a3_squished_cell_bs_total_assets_design_2026-09-05.md
+#
+# 위 `detect_pre2015_body_statement_tables()`가 BS 데이터표를 못 찾는 문서의 96.7%가
+# "표 하나가 물리적으로 TR 1개뿐이고 계정과목·금액이 각각 줄바꿈 없이 셀 하나에 통짜로
+# 이어붙은" 옛 포맷이다(무작위 60건 실측). 개별 라인아이템 재구성은 라벨 셀의 항목 간
+# 공백 폭이 불규칙(실측: "미착자재 Ⅱ.고정자산"이 한 항목으로 오분리)해 안전하지 않지만,
+# **"부채와자본총계"가 DART 서식상 항상 BS의 마지막 줄**이라는 관행 + 회계항등식
+# (자산=부채+자본)을 쓰면 total_assets 하나만은 위치 무관하게 안전하게 복구된다 —
+# 몇 번째 항목인지 셀 필요 없이 그냥 각 컬럼의 마지막 숫자 토큰을 취하면 된다.
+#
+# 실측검증: 3개사(호텔신라 20050915000066·한국팩키지 20040528000335·삼표시멘트
+# 20051214000337) 라벨 꼬리 전부 "...총계부채와자본총계"로 끝남 확인. 한국팩키지
+# fy2004 Q1 복구값(35,292,944,214)이 인접기간 실측값(H1 36,908,500,244·Q3
+# 37,700,319,350)의 성장궤적과 정확히 일치. 무작위 80건 재확인 — 라벨꼬리 게이트
+# 재현율 75/75(100%).
+_SQUISHED_TOTAL_TAIL_RE = re.compile(r"(부채와자본총계|자산총계)$")
+# 콤마 3자리 그룹(최소 1개조=4자리 이상)만 인정 — 표제표의 날짜 숫자('2005')나 기수
+# ('제33기')를 금액으로 오인하지 않기 위함(콤마 없는 순수 1~3자리 숫자는 절대 안 잡음,
+# `_table_has_data_rows`/`_AMOUNT_CELL_RE`와 같은 "콤마 그룹" 요건). 음수는 원문 자체에
+# 이미 부호가 박혀있다(실측: ASCII '-'·'△'·'▲' 3종 — 결측/오염 방지를 위해 앞에 부호가
+# 있어도 그대로 살린다).
+_SQUISHED_AMOUNT_TOKEN_RE = re.compile(r"[△▲\-]?\d{1,3}(?:,\d{3})+")
+
+
+def _extract_squished_bs_total(tables: list) -> int | None:
+    """통짜-셀 BS 표 묶음에서 total_assets(=total_liabilities_and_equity)만 위치
+    무관하게 복구한다. 실패 시(안전장치 불통과) None — 절대 추측하지 않는다. 값은
+    아직 단위(천원/백만원 등) 배수를 안 곱한 원문 그대로의 정수다(호출측이 기존
+    단위판정 경로를 적용한다).
+
+    호출측(`detect_squished_bs_total_assets`)이 라벨이 "총계"로 끝나는 순간 즉시
+    이 함수를 불러 확정하므로(더 안 기다림), `tables`는 **정확히 한 기간 분량**만
+    담겨 있다고 가정할 수 있다 — 서로 다른 기간이 섞여 들어올 걱정은 호출측이
+    이미 해소했다(아래 함수 docstring 참고).
+
+    ★2026-09-05(구현 중 실측 발견, 빙그레 20050429000950) — 검증한 3개사(호텔신라·
+    한국팩키지·삼표시멘트)는 표마다 값열이 **딱 하나**(당기 한 열)였는데, 일부
+    문서는 **한 표 안에 같은 기간의 값열이 여러 개**다(실측: 제17기 하나에 열
+    2개 — 항목수 15개짜리[부분/차감 세부로 추정]와 60개짜리[완전한 값]가 나란히).
+    무조건 "첫 값열"을 취하면 항목수 적은 부분열을 총계로 오인한다(실측 확정 —
+    그 열의 마지막 값이 참조기간 대비 1000배 이상 벗어남). **항목수(토큰 개수)가
+    가장 많은 열 쪽을 신뢰**한다 — 완전한 값열은 거의 모든 계정과목에 값이 있어
+    토큰이 많고, 부분/차감 열은 일부 항목에만 값이 있어 토큰이 적다.
+    """
+    if not tables:
+        return None
+
+    label_parts: list[str] = []
+    # 표마다 "그 표의 값열 리스트"를 따로 모은다 — 표 사이에 열 개수가 다르면
+    # (구조 불일치 신호) 안전하게 포기한다(아래).
+    per_table_value_cols: list[list[str]] = []
+    for tbl in tables:
+        rows = table_direct_rows(tbl)
+        if len(rows) < 2:
+            continue  # 헤더뿐인 표(기간·단위 정보표, TD 1개) — 스킵
+        tds = list(rows[1].iter("TD"))
+        if len(tds) < 2:
+            continue  # 실데이터 없는 행
+        label_parts.append(tds[0].text or "")
+        per_table_value_cols.append([td.text or "" for td in tds[1:]])
+
+    label_nows = re.sub(r"\s+", "", "".join(label_parts))
+    if not _SQUISHED_TOTAL_TAIL_RE.search(label_nows):
+        return None
+    if not per_table_value_cols:
+        return None
+
+    n_cols_set = {len(v) for v in per_table_value_cols}
+    if len(n_cols_set) != 1:
+        return None  # 표들 사이 값열 개수가 안 맞음 — 이어붙이면 안 되는 구조
+    n_cols = n_cols_set.pop()
+    if n_cols == 0:
+        return None
+
+    # 각 열의 토큰을 표 순서(='계속' 연속 페이지 순서)대로 이어붙여 개수를 센다.
+    col_tokens: list[list[str]] = [[] for _ in range(n_cols)]
+    for cols in per_table_value_cols:
+        for k in range(n_cols):
+            col_tokens[k].extend(_SQUISHED_AMOUNT_TOKEN_RE.findall(cols[k]))
+
+    counts = [len(t) for t in col_tokens]
+    max_count = max(counts)
+    if max_count == 0:
+        return None
+    # 당기(맨 왼쪽) 후보를 찾되, 항목수가 최댓값의 75% 에 못 미치는(부분/차감열로
+    # 추정) 열은 건너뛴다 — 검증된 3개사는 열마다 항목수가 거의 같아(83~84·73~75·
+    # 66~77, 최저비율 66/77=0.857) 그냥 col0(첫 열)이 뽑히고, 부분열이 섞인 문서
+    # (실측: 15~18개짜리 부분열 vs 56~76개짜리 완전열, 비율 0.24~0.27)만 다음 열로
+    # 넘어간다. ★2026-09-05(구현 중 실측 발견, 프로텍 20050506000182) — 임계 0.5는
+    # 부분열(34)이 완전열(68)의 정확히 절반이라 경계에서 오탐(부분열을 그대로 채택)
+    # 하는 반례가 나와 0.75로 올림 — 위 3개사 최저비율(0.857)과 위 반례 최고비율
+    # (0.5) 사이에 안전여유를 두고 잡은 값.
+    target = next((k for k, c in enumerate(counts) if c >= max_count * 0.75), None)
+    if target is None:
+        return None
+    tokens = col_tokens[target]
+    if not tokens:
+        return None
+    raw = tokens[-1].replace(",", "").replace("△", "-").replace("▲", "-")
+    value = int(raw)
+    if value <= 0:
+        return None
+    return value
+
+
+def detect_squished_bs_total_assets(
+    root: "etree._Element", fin_type: str,
+) -> dict[str, tuple[int, "etree._Element | None"]]:
+    """`detect_pre2015_body_statement_tables()`가 BS 를 못 채운 문서에서만(호출측이
+    이미 확인) 시도하는 **완전히 추가적인** 폴백 — 정상표가 있으면 이 함수 자체를
+    호출할 필요가 없다(호출측 게이트, `report_lines.py::extract_report_lines`).
+
+    위 `detect_pre2015_body_statement_tables()`와 같은 워커(`iter_section_span_
+    depth_aware`+`classify_pre2015_statement_heading`)로 BS 헤딩을 찾은 뒤, 그
+    구간에 나온 TABLE 을(정상표 판정 여부와 무관하게) 모은다.
+
+    ★2026-09-05(구현 중 실측 발견, 롯데에너지머티리얼즈 20040802000167) — 표를
+    다음 헤딩/주석마커/구간 끝까지 무조건 다 모으면 안 된다. 검증된 3개사(호텔
+    신라 등)는 표 여러 개가 **'계속'(P 텍스트)+PGBRK 명시 마커로 이어진 같은
+    기간의 연속 페이지**였지만, 이 문서는 그런 마커가 **전혀 없이** 서로 다른
+    기간(제18기1분기/제17기/제16기)의 **완결된** BS 가 바로 이어 나온다(실측:
+    `iter_section_span_depth_aware` 출력에 '계속'/PGBRK 없이 표3개가 연달아
+    나옴). 이어붙이면 다른 기간의 값이 섞인다.
+
+    구분 마커('계속' 유무)를 직접 찾는 대신 **더 단순하고 안전한 불변식**을
+    쓴다 — "부채와자본총계"는 BS 의 정의상 항상 통계의 진짜 끝이다. 그래서 표를
+    하나씩 추가할 때마다 **그 자리에서** 지금까지 모은 라벨이 이미 총계로
+    끝나는지 확인하고, 끝나면 **즉시 확정하고 더 이상 모으지 않는다** — 계속
+    페이지든(누적된 라벨이 마지막 페이지에서만 총계로 끝남) 별개 기간이든
+    (표 하나만으로 이미 총계로 끝남) 둘 다 이 규칙 하나로 안전하게 처리된다.
+
+    반환: {section_code: (raw_value_unscaled, unit_hint_table)} — `unit_hint_table`은
+    로컬 단위선언 탐색용 대표 표(모은 표 중 `declared_unit()`이 있는 첫 표, 없으면
+    None) — 호출측이 기존 `declared_unit`/`nearest_section_default_unit`/
+    `document_default_unit` 3단 폴백(R67, `_pick_fallback_unit`)을 그대로 적용한다
+    (새 단위판정 로직을 만들지 않는다, 설계문서 §3-4).
+    """
+    out: dict[str, tuple[int, "etree._Element | None"]] = {}
+
+    for sec_title, basis in ((SEC_SEP_FS, "separate"), (SEC_CONSOL_FS, "consolidated")):
+        if basis == "consolidated" and fin_type == "B":
+            continue
+        norm_title = normalize_dart_section_title(sec_title)
+        elements = iter_section_span_depth_aware(root, norm_title)
+        in_bs = False
+        accum: list = []
+
+        def _reset():
+            nonlocal in_bs, accum
+            in_bs = False
+            accum = []
+
+        def _try_finalize(basis=basis):
+            """지금까지 모은 것으로 확정을 시도한다. 성공하면(총계까지 다 모임)
+            결과를 저장하고 True — 호출측이 더 이상 표를 안 모으게 한다."""
+            nonlocal accum
+            section_code = SECTION_CODE_OF[(basis, "BS")]
+            if section_code in out:
+                return True  # 이미 확정됨(이 섹션 재진입 등) — 더 볼 필요 없음
+            value = _extract_squished_bs_total(accum)
+            if value is None:
+                return False
+            # 로컬 선언 있는 표를 우선하되, 없으면 마지막(실데이터) 표라도 대표로
+            # 남긴다 — 호출측 `nearest_section_default_unit` 폴백이 섹션 위치를
+            # 찾으려면 표 객체 자체(트리 안 위치)가 필요하다.
+            unit_hint = next((t for t in accum if declared_unit(t) is not None), accum[-1])
+            out[section_code] = (value, unit_hint)
+            return True
+
+        for tag, el in elements:
+            text_ = " ".join("".join(el.itertext()).split())
+            if is_legacy_note_marker(text_):
+                _reset()
+                continue
+            head = classify_pre2015_statement_heading(text_, include_sce=True)
+            if head is not None:
+                _reset()
+                _, stmt = head
+                in_bs = (stmt == "BS")
+                continue
+            if in_bs and tag == "TABLE":
+                if _table_has_data_rows(el):
+                    # 방어적 안전장치 — 이 구간에 **정상 다행 데이터표**가 섞여
+                    # 있으면 통짜-셀 케이스가 아니라고 보고 조용히 포기한다(호출측이
+                    # 이미 `code not in groups`로 걸러주지만, 이 함수 자신도 독립적으로
+                    # 안전해야 한다).
+                    _reset()
+                    continue
+                accum.append(el)
+                if _try_finalize():
+                    _reset()  # 확정 완료 — 이 뒤에 또 나오는 표는 다른 기간이다
+
+    return out

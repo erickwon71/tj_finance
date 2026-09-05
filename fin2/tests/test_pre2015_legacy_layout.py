@@ -26,7 +26,7 @@ from lxml import etree  # noqa: E402
 
 from fin2.extract.legacy_pre2015 import (  # noqa: E402
     classify_pre2015_statement_heading, detect_pre2015_body_statement_tables,
-    iter_section_span_depth_aware,
+    detect_squished_bs_total_assets, iter_section_span_depth_aware,
 )
 
 
@@ -203,3 +203,102 @@ def test_no_body_section_returns_empty():
            + "</SECTION-2></DOCUMENT>")
     root = etree.fromstring(doc.encode())
     assert detect_pre2015_body_statement_tables(root, fin_type="A", include_sce=True) == {}
+
+
+# ── 3) (A-3, 2026-09-05) 통짜-셀 BS 표 — total_assets 한정 안전 복구 ──────────────
+# 설계문서: docs/plans/category_c_a3_squished_cell_bs_total_assets_design_2026-09-05.md
+# 실측 원문(호텔신라 20050915000066·한국팩키지 20040528000335·삼표시멘트
+# 20051214000337) 구조를 재현 — 표 하나가 물리적으로 TR 1개(헤더 TH행 + 데이터
+# TD행 1개)뿐이고, 라벨/금액이 각각 줄바꿈 없이 셀 하나에 통짜로 이어붙는다.
+
+def _squished_table(label_blob: str, *value_blobs: str) -> str:
+    """실측 구조 재현 — TR0(TH 헤더, TD 아님)+TR1(TD 라벨열+TD 값열들)."""
+    header_cells = "".join("<TH>제N기</TH>" for _ in value_blobs)
+    value_cells = "".join(f"<TD>{v}</TD>" for v in value_blobs)
+    return (f"<TABLE><TR><TH>과목</TH>{header_cells}</TR>"
+            f"<TR><TD>{label_blob}</TD>{value_cells}</TR></TABLE>")
+
+
+SQUISHED_BS_DOC = f"""<DOCUMENT>
+ <SECTION-2><TITLE>4. 재무제표</TITLE>
+   <SECTION-3><TITLE>가. 대차대조표</TITLE>
+     <TABLE-GROUP>대 차 대 조 표</TABLE-GROUP>
+     <TABLE><TR><TD>제 30 기 2010.12.31 현재</TD></TR>
+            <TR><TD>제 29 기 2009.12.31 현재</TD></TR>
+            <TR><TD>(단위 : 원)</TD></TR></TABLE>
+     {_squished_table(
+         "자      산  Ⅰ. 유동자산   1. 현금  2. 매출채권자산총계   부      채  Ⅰ.유동부채"
+         "   1.매입채무부채총계   자      본  Ⅰ.자본금자본총계부채와자본총계",
+         "500,000,000300,000,000200,000,0001,000,000,000600,000,000600,000,000"
+         "400,000,000400,000,0001,000,000,000",
+         "450,000,000280,000,000170,000,000900,000,000550,000,000550,000,000"
+         "350,000,000350,000,000900,000,000",
+     )}
+   </SECTION-3>
+   <SECTION-3><TITLE>나. 손익계산서</TITLE>{_PERIOD_MARK}
+     {_data_table(('매출액', '9,999,999'))}
+   </SECTION-3>
+ </SECTION-2>
+</DOCUMENT>"""
+
+
+def test_squished_bs_recovers_total_assets_from_last_token():
+    """핵심 회귀 — 개별 항목 정렬 없이 '부채와자본총계=자산총계' 항등식으로 마지막
+    숫자 토큰만 취해도 정확한 값을 복구한다(§design doc §1-4)."""
+    root = etree.fromstring(SQUISHED_BS_DOC.encode())
+    out = detect_squished_bs_total_assets(root, fin_type="B")
+    assert "BS_S" in out
+    value, unit_hint = out["BS_S"]
+    assert value == 1_000_000_000  # 당기(컬럼0) 마지막 토큰
+
+
+def test_squished_bs_rejects_label_tail_not_total():
+    """라벨 꼬리가 '총계'로 안 끝나면(구조 확신 없음) 조용히 거부 — 추측하지 않는다."""
+    doc = f"""<DOCUMENT>
+     <SECTION-2><TITLE>4. 재무제표</TITLE>
+       <SECTION-3><TITLE>가. 대차대조표</TITLE>
+         <TABLE-GROUP>대 차 대 조 표</TABLE-GROUP>
+         {_squished_table("자산  1.현금   2.매출채권미확정항목", "500,000,000300,000,000")}
+       </SECTION-3>
+     </SECTION-2>
+     </DOCUMENT>"""
+    root = etree.fromstring(doc.encode())
+    out = detect_squished_bs_total_assets(root, fin_type="B")
+    assert "BS_S" not in out
+
+
+def test_squished_bs_rejects_nonpositive_last_token():
+    """총계는 항상 양수 — 마지막 토큰이 0 이하면 뭔가 잘못 걸린 것으로 보고 거부."""
+    doc = f"""<DOCUMENT>
+     <SECTION-2><TITLE>4. 재무제표</TITLE>
+       <SECTION-3><TITLE>가. 대차대조표</TITLE>
+         <TABLE-GROUP>대 차 대 조 표</TABLE-GROUP>
+         {_squished_table("자산총계부채와자본총계", "500,000,000-500,000,000")}
+       </SECTION-3>
+     </SECTION-2>
+     </DOCUMENT>"""
+    root = etree.fromstring(doc.encode())
+    out = detect_squished_bs_total_assets(root, fin_type="B")
+    assert "BS_S" not in out
+
+
+def test_squished_bs_skipped_when_normal_table_present():
+    """구간 안에 정상 다행 데이터표가 섞여 있으면(진짜 통짜-셀이 아님) 조용히 포기한다
+    (방어적 이중 안전장치 — 호출측 필터와 별개로 이 함수 자신도 안전해야 함)."""
+    doc = f"""<DOCUMENT>
+     <SECTION-2><TITLE>4. 재무제표</TITLE>
+       <SECTION-3><TITLE>가. 대차대조표</TITLE>{_PERIOD_MARK}
+         {_data_table(('자산총계', '1,111,111,111'), ('부채총계', '222,222,222'))}
+       </SECTION-3>
+     </SECTION-2>
+     </DOCUMENT>"""
+    root = etree.fromstring(doc.encode())
+    out = detect_squished_bs_total_assets(root, fin_type="B")
+    assert "BS_S" not in out
+
+
+def test_squished_bs_skips_consolidated_for_fin_type_b():
+    """연결을 안 만드는 기업은 연결 섹션 자체를 안 본다(정상 경로와 동일 규약)."""
+    root = etree.fromstring(SQUISHED_BS_DOC.encode())
+    out = detect_squished_bs_total_assets(root, fin_type="B")
+    assert "BS_C" not in out

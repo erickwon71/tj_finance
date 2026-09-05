@@ -67,10 +67,25 @@ def test_rejects_sentence_mentions():
 
 
 def test_rejects_summary_and_note_titles():
-    assert classify_legacy_statement_heading("요약연결재무상태표") is None
     assert classify_legacy_statement_heading("연결재무제표에 대한 주석") is None
     assert classify_legacy_statement_heading("분할재무상태표 제30기 기말") is None
     assert classify_legacy_statement_heading("연결재무상태표 명세서 제30기 기말") is None
+    # ★C(2026-09-05, 설계문서 category_c_fy2004_2006_section3_and_summary_prefix_
+    # design_2026-09-05.md §1) — "요약"이 재무제표명 뒤/독립으로 오면 여전히 배제한다.
+    # 재무제표명 바로 **앞** 수식어인 경우만 예외(아래 test_accepts_summary_prefix_heading).
+    assert classify_legacy_statement_heading("연결재무제표 요약") is None
+    assert classify_legacy_statement_heading("요약재무정보") is None
+
+
+def test_accepts_summary_prefix_heading():
+    """C — "요약"이 재무제표명 바로 앞 수식어면 완전한 본문표(축약표 아님).
+
+    실측: 삼성증권 20140515001582(2014 Q1) "요 약 분 기 연 결 재 무 상 태 표"
+    뒤에 완전한 계정과목·금액이 이어짐(과목당 자산총계까지 정상 라인업).
+    """
+    assert classify_legacy_statement_heading("요약분기연결재무상태표") == ("consolidated", "BS")
+    assert classify_legacy_statement_heading("요약연결재무상태표") == ("consolidated", "BS")
+    assert classify_legacy_statement_heading("요약재무상태표") == ("separate", "BS")
 
 
 def test_sce_is_opt_in():

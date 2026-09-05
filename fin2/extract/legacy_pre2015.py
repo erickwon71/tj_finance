@@ -36,6 +36,13 @@ from fin2.extract.statement_titles import (
 from fin2.extract.text import _LEGACY_PENDING_SPAN, _table_has_data_rows, declared_unit
 
 
+# 한글서수 하위표제 접두("가." "나." "다." … "하.") — K-GAAP 특유. 숫자/로마숫자 접두
+# (`_LEGACY_ENUM_PREFIX`, 주석 번호)와는 별개 패턴이라 따로 벗긴다.
+# ★2026-09-05(설계, 아래 §A-2 참고) — `iter_section_span_depth_aware()`의 진입판정에서도
+# 재사용하므로 `classify_pre2015_statement_heading()`보다 앞에 선언한다.
+_PRE2015_ORDINAL_PREFIX = re.compile(r"^[가-힣]\s*[.．)）]\s*")
+
+
 def iter_section_span_depth_aware(
     root: "etree._Element", normalized_title: str,
 ) -> list[tuple[str, "etree._Element"]]:
@@ -50,6 +57,22 @@ def iter_section_span_depth_aware(
     구간을 종료한다.
 
     2015+ 소비 경로는 이 함수를 쓰지 않는다(pre-2015 라우팅 전용, 회귀 위험 없음).
+
+    ★A-1(2026-09-05, 실측 재현 — 호텔신라 20050915000066) — 하위표제 통과 시 **SECTION
+    컨테이너 자신**을 append하면 `el.itertext()`가 그 서브트리 전체(자기 TITLE + 데이터표
+    전부)를 통짜 문자열로 합쳐, 뒤이은 헤딩 판정(`classify_pre2015_statement_heading`)이
+    "명칭 뒤에 다른 한글이 이어지면 거부"에 걸려 실패한다. 이 함수 자신의 docstring(위
+    문단)은 원래 "TITLE 텍스트만 낸다"고 약속했는데 실제 코드엔 그 필터가 없었던 것 —
+    새 설계가 아니라 버그 수정이다. SECTION 컨테이너 자신은 **절대 append하지 않고**
+    (항상 continue), 통과되는 하위표제의 TITLE 텍스트만 별도로 낸다.
+
+    ★A-2(2026-09-05, 실측 재현 — SK네트웍스 20080331001324) — `normalize_dart_section_title`
+    은 숫자·로마숫자 접두만 벗기고 한글 가나다 접두는 안 벗긴다. `SEC_SEP_FS`/`SEC_CONSOL_FS`
+    와 **정확일치하는 제목이 SECTION-3에 "라. 재무제표"처럼 가나다 접두를 달고 있는 문서**는
+    진입판정(`norm == normalized_title`)이 영원히 실패해 이 함수가 통째로 빈 결과를 낸다.
+    진입판정에서만 가나다 접두를 추가로 벗겨 재비교한다(`normalize_dart_section_title` 자체는
+    2015+ 주경로와 공유되므로 안 건드린다 — 설계문서
+    `category_c_fy2004_2006_section3_and_summary_prefix_design_2026-09-05.md` §2-3 옵션1).
     """
     out: list[tuple[str, "etree._Element"]] = []
     inside = False
@@ -68,13 +91,18 @@ def iter_section_span_depth_aware(
             title_elem = el.find("TITLE")
             norm = (normalize_dart_section_title("".join(title_elem.itertext()))
                     if title_elem is not None else None)
+            # A-2 — 진입판정 전용: 가나다 접두를 추가로 벗겨 한 번 더 비교.
+            norm_stripped = _PRE2015_ORDINAL_PREFIX.sub("", norm) if norm else norm
             if inside and norm is not None and depth <= entry_depth and norm != normalized_title:
                 inside = False
                 entry_depth = None
-            elif not inside and norm == normalized_title:
+            elif not inside and (norm == normalized_title or norm_stripped == normalized_title):
                 inside = True
                 entry_depth = depth
-                continue
+            elif inside and title_elem is not None:
+                # A-1 — 하위표제 통과: 컨테이너 자신이 아니라 TITLE 텍스트만 헤딩 후보로 낸다.
+                out.append(("TITLE", title_elem))
+            continue
         if inside and tag != "TITLE":
             anc = el.getparent()
             in_table = False
@@ -86,11 +114,6 @@ def iter_section_span_depth_aware(
             if not in_table:
                 out.append((tag, el))
     return out
-
-
-# 한글서수 하위표제 접두("가." "나." "다." … "하.") — K-GAAP 특유. 숫자/로마숫자 접두
-# (`_LEGACY_ENUM_PREFIX`, 주석 번호)와는 별개 패턴이라 따로 벗긴다.
-_PRE2015_ORDINAL_PREFIX = re.compile(r"^[가-힣]\s*[.．)）]\s*")
 _PRE2015_HEAD = re.compile(
     r"^(?:연결|별도|개별|반기|분기|중간|당|전)*"
     r"(재무상태표|대차대조표|포괄손익계산서|손익계산서|현금흐름표|자본변동표|"

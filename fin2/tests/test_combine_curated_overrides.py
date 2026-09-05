@@ -19,10 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from fin2.layer3.combine import _resolve  # noqa: E402
 
 
-def _row(value, stage, label_raw, section_path="", node_role=None, table_seq=0):
+def _row(value, stage, label_raw, section_path="", node_role=None, table_seq=0,
+         amended=False):
     return {"value": value, "stage": stage, "label_raw": label_raw,
             "section_path": section_path, "node_role": node_role,
-            "table_seq": table_seq}
+            "table_seq": table_seq, "amended": amended}
 
 
 # --- revenue: is.revenue grand-total override -------------------------------------
@@ -53,6 +54,68 @@ def test_revenue_non_override_corp_keeps_child_selection():
     }
     confirmed, conflicts = _resolve(cands, "00156910")
     assert confirmed["is.revenue"] == 1_614_747_527
+
+
+def test_revenue_paren_amended_label_overrides_stale_bare_grand():
+    # ★(2026-09-06, 카테고리(사)) 키네마스터(00535375) 2018H1 실측 재현: 원본 필링의
+    # "영업수익"(bare grand-total 라벨, amended=False)이 단위오류로 ×10^6 오염됐는데,
+    # 같은 날 정정본이 다른 라벨("수익(매출액)", amended=True)로 정확한 값을 재보고했다.
+    # norm()이 "(매출액)"을 각주로 오인해 지워버려("수익"만 남음) 정정 후보가 grand
+    # 풀에 원래 못 들어갔었다 — 이 테스트는 그 갭이 막혔는지 검증한다.
+    cands = {
+        "is.revenue": [
+            _row(5_042_936_384_000_000, "exact", "영업수익", amended=False),
+            _row(5_042_936_384, "exact", "수익(매출액)", amended=True),
+        ],
+    }
+    confirmed, conflicts = _resolve(cands, "00535375", 2018, "H1", "consolidated")
+    assert confirmed["is.revenue"] == 5_042_936_384
+    assert "is.revenue" not in conflicts
+
+
+def test_revenue_paren_amended_label_overrides_stale_bare_grand_nice_dnb():
+    # 나이스디앤비(00606293) 2019Q3 실측 재현: 원본 "영업수익"이 ×10^3 오염, 익일
+    # XBRL 재보고가 "수익(매출액)"으로 정확히 고침.
+    cands = {
+        "is.revenue": [
+            _row(59_247_429_676_000, "exact", "영업수익", amended=False),
+            _row(59_247_429_676, "exact", "수익(매출액)", amended=True),
+        ],
+    }
+    confirmed, conflicts = _resolve(cands, "00606293", 2019, "Q3", "consolidated")
+    assert confirmed["is.revenue"] == 59_247_429_676
+    assert "is.revenue" not in conflicts
+
+
+def test_revenue_paren_label_without_amendment_unaffected():
+    # 대조군: "수익(매출액)"이 있어도 amended 관계가 없으면(둘 다 원본 안의 정상적인
+    # 서로 다른 값 — 개입 근거가 없음) 기존 grand-total 로직이 그대로 동작해야 한다.
+    # bare 라벨만 grand 풀에 들어가므로 그 값이 그대로 confirm된다(회귀 없음 확인).
+    cands = {
+        "is.revenue": [
+            _row(4_637_783_457, "exact", "영업수익", amended=False),
+            _row(1_614_747_527, "exact", "수익(매출액)", amended=False),
+        ],
+    }
+    confirmed, conflicts = _resolve(cands, "00999999", 2020, "FY", "consolidated")
+    assert confirmed["is.revenue"] == 4_637_783_457
+
+
+def test_revenue_paren_amended_label_does_not_fire_when_bare_grand_already_amended():
+    # 가드: bare grand 풀 자체에 이미 amended 멤버가 있으면(="원본이 안 고쳐진 채
+    # 남아있다"는 전제가 깨짐) 새 override는 개입하지 않고, 기존 다중-grand 소거
+    # 로직(_eps_dup, 근소한 재작성 차이 -> max-abs)이 그대로 동작해야 한다 — paren
+    # 후보("수익(매출액)")가 끼어들어 이 로직을 가로채면 안 된다.
+    cands = {
+        "is.revenue": [
+            _row(4_637_780_000, "exact", "매출액", amended=True),   # 근소 재작성
+            _row(4_637_783_457, "exact", "영업수익", amended=False),  # 근소 재작성 전 원값
+            _row(1_614_747_527, "exact", "수익(매출액)", amended=True),  # 무관한 딴 표의 값
+        ],
+    }
+    confirmed, conflicts = _resolve(cands, "00999999", 2020, "FY", "consolidated")
+    assert confirmed["is.revenue"] == 4_637_783_457  # max-abs of the two close bare values
+    assert "is.revenue" not in conflicts
 
 
 def test_revenue_override_corp_no_grand_total_candidate_falls_through():

@@ -47,6 +47,20 @@ from fin2.layer3.industry_profiles import (
 # conflicts (증권/지주: 영업수익 total vs 수수료수익 component).
 _REVENUE_TOTAL_LABELS = frozenset({"매출액", "영업수익", "매출", "순매출액"})
 
+# ★"수익(매출액)"류 라벨(전사 최다빈도 매출 라벨 — 1,725개사/71,520행, R52) 인식용
+# (2026-09-06, (사)카테고리 — 키네마스터 00535375/나이스디앤비 00606293 실측).
+# norm()(fin2/layer3/industry_profiles.py)이 라벨을 첫 '(' 앞까지만 남기고 자르는데
+# (각주참조 "이익잉여금(주27)"→"이익잉여금" 제거 목적), "수익(매출액)"에 적용하면
+# 의미있는 "(매출액)"까지 날아가 bare "수익"만 남는다 — 이건 _REVENUE_TOTAL_LABELS에
+# 넣기엔 너무 일반적(기타수익/금융수익 등과 충돌). 그렇다고 _REVENUE_TOTAL_LABELS에
+# "수익"을 추가하는 식의 블랭킷 확장은 하지 않는다 — 바로 위 2026-08-13 주석대로 그런
+# 일반화는 이미 반증됐다(303:8 회귀비). 대신 원문 그대로("(" 이전에서 자르지 않고)
+# "수익(" + _REVENUE_TOTAL_LABELS 멤버 + ")"로 시작하는 라벨만 좁게 인식한다 — 이
+# 정규식은 _reduce_conflict()의 "정정이 다른 라벨로 같은 셀을 고쳤을 때만" 좁은
+# 용도로만 쓰인다(아래 참고), _REVENUE_TOTAL_LABELS 자체를 대체하지 않는다.
+_REVENUE_TOTAL_PAREN_RE = re.compile(
+    r"^수익\((" + "|".join(re.escape(x) for x in _REVENUE_TOTAL_LABELS) + r")\)")
+
 # ★revenue grand-total override(2026-08-13): a blanket "_REVENUE_TOTAL_LABELS wins"
 # rule cannot be generalized — measured against the full report_lines population
 # (report_lines is static, unaffected by backfills) it regresses 303 currently-PASS
@@ -1983,6 +1997,27 @@ def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
     if canon == "is.revenue":
         grand = [r for r in rows
                  if _norm_label(r.get("label_raw")) in _REVENUE_TOTAL_LABELS and r["value"]]
+        # ★(2026-09-06, 카테고리(사)) — 같은 기간의 나중 필링(기재정정/재제출)이 grand-total
+        # 셀을 "수익(매출액)"류 다른 라벨로 고쳐 쓴 경우, build_merged_lines()의 cell-identity
+        # (라벨 포함)가 이를 원본과 "다른 셀"로 보고 amended=True를 붙이지만, 그 라벨은
+        # _REVENUE_TOTAL_LABELS에 없어(위 _REVENUE_TOTAL_PAREN_RE 주석 참고) 바로 위 `grand`
+        # 후보에 아예 안 들어간다 — 그러면 원본의 (틀렸을 수도 있는) bare-label 후보가 정정을
+        # 못 이기고 이긴다(R2 위반). 실측: 키네마스터(00535375 2018H1)/나이스디앤비(00606293
+        # 2019Q3) — 원본 "영업수익"이 단위오류(×10³~10⁶)로 오염됐는데 같은날/익일 정정이
+        # "수익(매출액)"으로 값을 바로잡았지만 이 라벨이 grand 후보에서 빠져 정정이 못 이겼다.
+        # ★블랭킷 확장 아님 — _REVENUE_TOTAL_LABELS 자체는 그대로 두고(2026-08-13 반증
+        # 사례처럼 라벨셋을 넓히면 회귀 위험), amended 관계가 **실제로 존재할 때만** 개입한다:
+        # ① 이 라벨의 amended 후보가 정확히 하나의 값으로 수렴하고, ② 기존 bare `grand` 풀에
+        # amended 멤버가 하나도 없을 때만(=원본이 여태 안 고쳐진 채 남아있다는 신호) 그 값을
+        # 바로 확정한다. 그 외(정정 관계가 불명확·양쪽 다 amended·값이 안 갈리는 정상 케이스)는
+        # 기존 로직을 그대로 통과한다 — 아래 `grand`/`gvals` 판정에 전혀 영향 없음.
+        paren_amended = [r for r in rows
+                         if r.get("amended") and r["value"]
+                         and _REVENUE_TOTAL_PAREN_RE.match((r.get("label_raw") or "").strip())]
+        if paren_amended and grand and not any(r.get("amended") for r in grand):
+            amended_vals = {r["value"] for r in paren_amended}
+            if len(amended_vals) == 1:
+                return next(iter(amended_vals))
         if grand:
             gvals = {r["value"] for r in grand}
             if len(gvals) == 1:

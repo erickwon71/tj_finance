@@ -411,12 +411,27 @@ def classify_statement_in_body_section(title: str, include_sce: bool = False) ->
 
 # 번호 접두('29.', 'Ⅲ.', '1)') = 주석·세부항목 표지. 본문 재무제표 표제에는 없다.
 _LEGACY_ENUM_PREFIX = re.compile(r"^[\dⅠ-Ⅻ]+\s*[.．)）]")
+# ★R69(2026-09-05) — 위 숫자/로마숫자 접두와 의미가 다르다: 이 레이아웃에서 숫자 접두는
+# 여전히 주석 항목번호(그대로 거부)지만, 한글 가나다 접두("가.대차대조표")는 "XI.부속명세서"
+# 컨테이너의 재무제표 목록 전용 열거기호다(실측 근거: docs/plans/category_c_legacy_
+# appendix_variant_design_2026-09-05.md §1). 한 글자만 벗기고(중첩 없음) 재판정 —
+# 벗긴 뒤에도 재무제표명이 안 걸리면(예 "가.대손충당금설정내역") 그대로 거부되므로 새
+# 오탐 경로가 생기지 않는다.
+_LEGACY_KO_ENUM_PREFIX = re.compile(r"^[가나다라마바사아자차카타파하]\s*[.．)）]")
 # 본문 face 가 아닌 것(첫 45자 기준). '주석' 은 여기서도 배제한다.
 _LEGACY_EXCLUDE = re.compile(r"분할|합병|요약|명세|부속|주석|검토보고서|감사보고서")
 # 재무제표명 앞에 붙을 수 있는 수식어. 공백 제거 후 판정하므로 '반 기 연 결' 도 흡수된다.
 _LEGACY_HEAD = re.compile(
     r"^(?:연결|별도|개별|반기|분기|중간|당|전)*"
     r"(재무상태표|대차대조표|포괄손익계산서|손익계산서|현금흐름표|자본변동표)"
+)
+# ★R69(2026-09-05) — IFRS 전환기 신·구 명칭 병기("재무상태표(대차대조표)"). 실측
+# (부속명세서 버킷 40건): BS 헤딩의 92.5%가 이 형태. 괄호 안이 6종 재무제표명 중
+# 하나면 통째로 표제의 일부로 보고 소비한다 — 사람이 참고용으로 구명칭을 덧붙인
+# 표기 관행일 뿐 새 정보가 아니다(짐작이 아니라 관행 그 자체).
+_LEGACY_ALT_NAME_PAREN = re.compile(
+    r"^[（(](?:연결|별도|개별)?"
+    r"(?:재무상태표|대차대조표|포괄손익계산서|손익계산서|현금흐름표|자본변동표)[)）]"
 )
 # 재무제표명 **직후**에 와야 하는 기간/단위 마커(공백 제거 기준). 이게 있어야 표제로 확정한다.
 # 없으면(=명칭만 있는 단독 헤딩) 별도 규칙으로 받는다 — 아래 docstring 참조.
@@ -468,6 +483,9 @@ def classify_legacy_statement_heading(
     t = re.sub(r"\s+", "", text)
     if not t or _LEGACY_ENUM_PREFIX.match(t):
         return None
+    # R69(2026-09-05) — 한글 가나다 열거접두 제거(위 상수 docstring 참고). 벗긴 뒤에도
+    # 재무제표명이 안 걸리면 아래 _LEGACY_HEAD.match 에서 그대로 거부된다.
+    t = _LEGACY_KO_ENUM_PREFIX.sub("", t, count=1)
     if _LEGACY_EXCLUDE.search(t[:45]):
         return None
     m = _LEGACY_HEAD.match(t)
@@ -478,6 +496,11 @@ def classify_legacy_statement_heading(
         return None
 
     rest = t[m.end():].lstrip("：:·-—")
+    if rest:
+        # R69(2026-09-05) — 괄호 병기("(대차대조표)") 소비, 나머지로 재판정.
+        alt = _LEGACY_ALT_NAME_PAREN.match(rest)
+        if alt:
+            rest = rest[alt.end():]
     if rest:
         # A형: 기간/단위 마커가 곧바로 따라와야 한다. 그 외 문자가 이어지면 표제가 아니다.
         if not _LEGACY_PERIOD_AFTER.match(rest):

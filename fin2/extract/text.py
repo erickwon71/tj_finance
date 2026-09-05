@@ -40,8 +40,8 @@ from parser.common.amount_normalizer import (normalize_account_name, detect_unit
 from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.section_detector import (
     assign_tables_to_dart_sections, table_direct_rows,
-    SEC_CONSOL_FS, SEC_SEP_FS, SEC_LEGACY_FS, iter_section_elements,
-    table_has_amount_rows,
+    SEC_CONSOL_FS, SEC_SEP_FS, SEC_LEGACY_FS, SEC_LEGACY_APPENDIX,
+    iter_section_elements, table_has_amount_rows,
 )
 from parser.xml.table_extractor import extract_rows, _get_cells
 from fin2.extract.xbrl import ExtractedFact
@@ -383,11 +383,18 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
 
     반환 계약은 `_detect_body_statement_tables` 와 동일:
     {section_code: [(table_elem, unit, section_kind), ...]}.
-    section_kind 는 실제 귀속 섹션이어야 감사에 쓸 수 있으므로 `SEC_LEGACY_FS` 를 그대로 쓴다.
+    section_kind 는 **실제 귀속 섹션**이어야 감사에 쓸 수 있으므로, 아래 두 컨테이너 중
+    실제로 매칭된 쪽의 표제를 그대로 쓴다(`SEC_LEGACY_FS`로 못 찾으면 폴백한 쪽).
     """
     elements = iter_section_elements(root, SEC_LEGACY_FS)
+    section_kind = SEC_LEGACY_FS
     if not elements:
-        return {}
+        # R69(2026-09-05) — `SEC_LEGACY_APPENDIX` 주석 참고. "재무제표등"이 있으면 그걸
+        # 그대로 쓰고(이 분기 자체가 안 타 기존 동작 100% 무변경), 없을 때만 시도한다.
+        elements = iter_section_elements(root, SEC_LEGACY_APPENDIX)
+        section_kind = SEC_LEGACY_APPENDIX
+        if not elements:
+            return {}
 
     groups: dict[str, list[tuple]] = {}
     pending: tuple[str, str] | None = None   # (basis, stmt) — 데이터표를 기다리는 헤딩
@@ -412,7 +419,7 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
                 continue
             unit = pending_unit if pending_unit is not None else declared_unit(el)
             groups.setdefault(SECTION_CODE_OF[(basis, stmt)], []).append(
-                (el, unit, SEC_LEGACY_FS))
+                (el, unit, section_kind))
             pending = None
             pending_unit = None
             continue

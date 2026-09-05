@@ -268,6 +268,14 @@ def table_has_amount_rows(tbl: etree._Element, minimum: int = 2) -> bool:
 #   아래 전용 워커로 **표제 헤딩을 보며** 본문 구간만 잘라 쓴다.
 SEC_LEGACY_FS = "재무제표등"
 
+# ★R69(2026-09-05) — `SEC_LEGACY_FS`("XI.재무제표 등")의 동의어 컨테이너. fy2007~2010
+# (특히 2009) 분기/반기보고서 다수는 같은 내용을 "XI.부속명세서" SECTION-1 아래 나열한다
+# — 헤딩→표 인접구조는 SEC_LEGACY_FS와 완전히 동일하고 컨테이너 표제 문자열만 다르다
+# (실측 무작위 300건: 부속명세서 249 · 재무제표등 14 — 이 시대엔 오히려 이쪽이 다수).
+# `_DART_SECTION_EXACT`엔 SEC_LEGACY_FS와 같은 이유로 일부러 안 넣는다(주석표 유입 차단).
+# `_detect_legacy_body_statement_tables`가 SEC_LEGACY_FS로 못 찾을 때만 폴백으로 쓴다.
+SEC_LEGACY_APPENDIX = "부속명세서"
+
 
 def iter_section_elements(
     root: etree._Element, normalized_title: str,

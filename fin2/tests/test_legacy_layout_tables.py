@@ -182,3 +182,84 @@ def test_no_legacy_section_returns_empty():
            + "</SECTION-2></DOCUMENT>")
     root = etree.fromstring(doc.encode())
     assert _detect_body_statement_tables(root, fin_type="A", include_sce=True) == {}
+
+
+# ── 3) R69(2026-09-05) — (E) 레거시 컨테이너 동의어 "XI.부속명세서" ────────────
+# 배경: fy2007~2010(특히 2009) 분기/반기보고서는 "XI.재무제표 등"이 아예 없고 재무제표를
+# "XI.부속명세서" 아래 나열한다(실측 무작위 300건: 부속명세서 249 · 재무제표등 14).
+# 내부 헤딩→표 인접구조는 동일 — 컨테이너 표제만 다르다.
+# docs/plans/category_c_legacy_appendix_variant_design_2026-09-05.md 참고.
+
+APPENDIX_DOC = f"""<DOCUMENT>
+ <SECTION-1><TITLE>III. 재무에 관한 사항</TITLE></SECTION-1>
+ <SECTION-1><TITLE>XI. 부속명세서</TITLE>
+   <TABLE><TR><TD><P>재무상태표(대차대조표)</P></TD></TR></TABLE>
+   {_data_table(('자산총계', '1,111,111,111'), ('부채총계', '222,222,222'))}
+   <P>손익계산서</P>
+   {_data_table(('매출액', '3,333,333,333'), ('영업이익', '444,444,444'))}
+   <P>현금흐름표</P>
+   {_data_table(('영업활동현금흐름', '999,999,999'), ('재무활동현금흐름', '888,111,222'))}
+ </SECTION-1>
+ <SECTION-1><TITLE>【 전문가의 확인 】</TITLE>
+   {_data_table(('무관표행', '666,666,666'))}
+ </SECTION-1>
+</DOCUMENT>"""
+
+
+def test_legacy_appendix_container_recognized_when_fs_section_absent():
+    """(E) — "XI.재무제표 등"이 없으면 "XI.부속명세서"를 폴백 컨테이너로 인식한다."""
+    root = etree.fromstring(APPENDIX_DOC.encode())
+    groups = _detect_body_statement_tables(root, fin_type="B", include_sce=True)
+    assert "1,111,111,111" in _amounts(groups, "BS_S")
+    assert "3,333,333,333" in _amounts(groups, "IS_S")
+    assert "999,999,999" in _amounts(groups, "CF_S")
+    # 다음 섹션(무관 컨텐츠)으로 안 넘어간다.
+    picked = {a for code in groups for a in _amounts(groups, code)}
+    assert "666,666,666" not in picked
+    # section_kind 는 실제 귀속 컨테이너("부속명세서")를 그대로 반영해야 한다(provenance).
+    _tbl, _unit, kind = groups["BS_S"][0]
+    assert kind == "부속명세서", f"section_kind 가 실제 컨테이너를 반영 못 함: {kind}"
+
+
+def test_legacy_fs_section_still_preferred_when_present():
+    """기존 "재무제표등" 케이스는 이 변경으로 한 글자도 안 바뀐다 — 폴백 분기 자체가 안 탄다."""
+    root = etree.fromstring(LEGACY_DOC.encode())
+    groups = _detect_body_statement_tables(root, fin_type="A", include_sce=True)
+    _tbl, _unit, kind = groups["BS_C"][0]
+    assert kind == "재무제표등"
+
+
+# ── 4) R69 — (D) 괄호 병기 표제 + (B) 한글 가나다 열거접두 ──────────────────────
+
+def test_accepts_paren_alt_name_heading():
+    """(D) — IFRS 전환기 신·구 명칭 병기. 실측(부속명세서 버킷 40건): BS 헤딩의
+    92.5%가 이 형태(에너토크 20090814000347 등)."""
+    assert classify_legacy_statement_heading("재무상태표(대차대조표)") == ("separate", "BS")
+    assert classify_legacy_statement_heading(
+        "연결재무상태표(연결대차대조표)") == ("consolidated", "BS")
+    # 괄호 뒤에 기간마커가 더 있어도(A형) 정상 처리.
+    assert classify_legacy_statement_heading(
+        "재무상태표(대차대조표) 제 23 기 반기말 2009.06.30 현재") == ("separate", "BS")
+
+
+def test_accepts_korean_enum_prefix_heading():
+    """(B) — "가./나./다..." 는 이 레이아웃의 재무제표 목록 전용 열거기호(카페24
+    20111115000196 등). 숫자·로마숫자 접두(주석 항목번호)와는 의미가 다르다."""
+    assert classify_legacy_statement_heading("가. 대차대조표") == ("separate", "BS")
+    assert classify_legacy_statement_heading("나. 손익계산서") == ("separate", "IS")
+    assert classify_legacy_statement_heading("라. 현금흐름표") == ("separate", "CF")
+    assert classify_legacy_statement_heading(
+        "마. 자본변동표", include_sce=True) == ("separate", "SCE")
+
+
+def test_korean_enum_prefix_does_not_create_false_positive():
+    """★핵심 회귀 — 가나다 접두를 벗겨도 재무제표명이 안 걸리면 여전히 거부돼야
+    한다(대손충당금 명세 같은 무관 항목이 새 오탐 경로로 통과하면 안 됨)."""
+    assert classify_legacy_statement_heading("가. 대손충당금 설정내역") is None
+    assert classify_legacy_statement_heading("나. 대손충당금 변동현황") is None
+
+
+def test_numeric_note_prefix_still_rejected_alongside_korean_enum():
+    """숫자 접두(주석 항목번호)는 이번 변경과 무관하게 계속 거부된다."""
+    assert classify_legacy_statement_heading("29. 현금흐름표") is None
+    assert classify_legacy_statement_heading("18. 포괄손익계산서") is None

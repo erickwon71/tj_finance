@@ -1261,6 +1261,17 @@ def _run_migrations() -> None:
         ALTER TABLE std_financials_v3 ADD COLUMN IF NOT EXISTS borrowings_proceeds BIGINT;
         ALTER TABLE std_financials_v3 ADD COLUMN IF NOT EXISTS borrowings_repaid BIGINT;
         """),
+
+        ("2026_09_std_financials_v3_unit_overrides",
+         # 원문 자기모순 필링 수동 단위교정(2026-09-06, docs/plans/unit_override_self_
+         # contradictory_filings_design_2026-09-06.md) — v2-drop-remaining-backlog
+         # (가+라) 그룹: 표 자신이 인쇄한 단위 라벨이 실제 자릿수와 안 맞는 케이스(코드
+         # 버그 아님, 원문 표기 오류). report_lines는 원문 그대로 두고, combine.py 집계
+         # 단계에서 fin2/layer3/unit_overrides.py 의 curated 배수로 교정한 뒤 이 컬럼에
+         # 근거를 남긴다. ADD COLUMN(nullable, DEFAULT 없음)이라 PG11+ 에서 즉시 완료.
+         """
+        ALTER TABLE std_financials_v3 ADD COLUMN IF NOT EXISTS unit_overrides JSONB;
+        """),
     ]
 
     with engine.begin() as conn:

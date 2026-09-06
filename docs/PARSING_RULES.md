@@ -4383,6 +4383,104 @@ R69~R71가 스코프 한정 백필 스크립트로만 실행) 이 두 회사의 
 없음(해소 유지). 신규 발견 2개사는 (가+라) 원문자기모순 그룹에 합류(별도
 트랙, 항목②).
 
+## R73. `fin2/layer3/unit_overrides.py` — 원문 자기모순 필링 수동 단위교정
+메커니즘 신설 + 1호 사례(00138516 아남전자 FY2006) 적용 (2026-09-06)
+
+**배경**: `statement_magnitude_impossible` 항목②의 (가+라) 그룹 — 표 자신이
+인쇄한 단위 라벨이 실제 자릿수 규모와 안 맞는 케이스(코드 버그 아님, 원문
+필링 자체의 표기 오류, R71/R72와 달리 자동 판정 규칙으로 일반화 불가). 지금까지
+이런 건은 방치되거나(잘못된 값 노출) DQ<3 격리(값 자체를 숨김) 둘 뿐이었다 —
+사용자 요청으로 **세 번째 선택지**: 사람이 원문을 직접 확인해 올바른 배수를
+판정하면 그 판정을 DB에 반영해 정확한 값을 적재하고, 수동 교정임을 별도로
+표시하는 메커니즘을 신설.
+
+**설계**: `docs/plans/unit_override_self_contradictory_filings_design_2026-09-06.md`.
+`report_lines`(원문 그대로 추출)는 손대지 않고, 기존 curated override들
+(R16/R20/R21/R72)이 사는 `fin2/layer3/combine.py::combine_full()` 집계
+단계의 마지막 순서에서 적용 — `(corp_code, fiscal_year, fiscal_period,
+statement_type, concept)`(concept=DIRECT_MAP canonical, std 컬럼명 아님 —
+한 필링 안에서도 개념별로 원인이 다를 수 있음, 나이스디앤비 revenue[하류
+버그]/total_assets[원문모순] 분리 사례 참고) 키로 `col[std_col]`에 curated
+배수(`multiplier`)를 곱한다. 각 항목은 근거(rcept_no·인쇄된 값·원문대조
+일자)를 주석으로 필수 기재(★원본대조검증 원칙). 신규 컬럼
+`std_financials_v3.unit_overrides`(jsonb, nullable)에 `{std_col: {concept,
+declared_value, corrected_value, multiplier, note}}` 형태로 실제 적용된
+셀만 기록 — SQL로 바로 조회 가능, 향후 시각화 화면 배지/각주 노출 가능.
+`data_quality`(자동 항등식검증 점수)와는 별개 컬럼(의미 혼용 방지).
+
+**마이그레이션**: `collector/db.py` MIGRATIONS
+`"2026_09_std_financials_v3_unit_overrides"` — `ALTER TABLE
+std_financials_v3 ADD COLUMN IF NOT EXISTS unit_overrides JSONB;`
+(nullable, DEFAULT 없음 — PG11+ 즉시 완료). `collector/models.py`에
+`StdFinancialV3.unit_overrides` 컬럼 추가.
+
+**1호 사례 검증(00138516 아남전자 FY2006, bs.retained_earnings)**:
+BS "1.처분전이익잉여금(결손금)" 행 **라벨 자체가** 괄호 안에 "당기순이익(손실):
+제34기: 2,146,172,472원"이라고 원 단위로 명시하는데, 같은 표의 단위선언
+"(단위:백만원)"을 따라 `adecimal=-6`이 적용돼 report_lines.value_won이
+2,146,172,472,000,000(×10⁶ 과대)으로 저장됨. 같은 rcept(`20070330000181`)
+안의 이익잉여금처분계산서(APPR)가 독립적으로 2,146,172,472(원 단위,
+adecimal=0)를 재확인 — 두 표가 교차검증되는 명백한 원문 표기 오류.
+`multiplier=1e-6`으로 등재(consolidated+separate 둘 다, 이 회사는
+basis_fallback으로 별도=연결).
+
+**구현/검증**: 신규 회귀테스트 5개(`fin2/tests/test_unit_overrides.py`,
+순수 함수 — 매칭/비매칭/None가드/프로덕션 항목 검증). `pytest tests/
+fin2/tests/` 762 passed(신규 5개 포함, 무관 기존실패 1건
+`test_lxintl_facility_table_dropped` 제외, 회귀 0). 스코프 재빌드
+(`build_std_v3.py --corp 00138516 --year-min 1999` — 기본 `--year-min
+2015`로는 2006년이 안 걸린다는 점 확인 필요) + `calendarize_corp_v3`
+동기화. **DB 반영 확인**: FY consolidated/separate 둘 다
+`retained_earnings` 2,146,172,472,000,000→**2,146,172,472**로 교정,
+`unit_overrides` 컬럼에 근거 기록됨. `dq_assertions.py` 전수:
+`statement_magnitude_impossible` 41→**39**(00138516 2행 해소, 전수
+재조회로 신규 위반 0건 확인, 나머지 39건 목록 불변).
+
+**같은 세션 이어서 — (가+라) 그룹 나머지 원문대조 진행(2026-09-06)**:
+9건+신규 2개사(00198697·00260958) 전수를 원문(SD카드 raw_report XML, EUC-KR
+필요시 iconv/encoding='euc-kr')·PDF복구 트랙 산출물(unit_source='pdf')
+내부정합성으로 대조. **10개사 등재 완료**(00102858 고려아연·00113207
+대한전선·00117601·00138701 아세아·00143226 엠투엔·00163673·00260958
+케이티알파·00366942 미코·00400121 유아이디·00487546 웰크론한텍) —
+각 항목 BS 항등식(자산=부채+자본) 재성립 확인 또는 원문 라벨 자체에 실제값이
+박힌 교차검증(00366942는 APPR 전기이월+반기순이익 합=BS raw÷10⁶ 정확 일치,
+00400121은 각주 "(단위:원)" 명시 표+요약표 반올림 일치)으로 검증. 신규
+회귀테스트 8개 추가(총 13개, `fin2/tests/test_unit_overrides.py`), `pytest
+tests/ fin2/tests/` 770 passed(신규 8개 포함, 무관 기존실패 1건 제외, 회귀
+0). 10개사 스코프 재빌드(`build_std_v3.py --corp ... --year-min 1999`)
++ `calendarize_corp_v3` 동기화. `dq_assertions.py` 전수:
+`statement_magnitude_impossible` 39→**20**(19건 해소, 전수 재조회로 신규
+위반 0건 확인).
+
+★**등재 중 원문대조로 발견한 함정 — 00204226(소프트센 FY2022)은 (가+라)가
+아니라 별개의 코드버그로 재분류**: raw XML 직접대조 결과, BS "이익잉여금
+(결손금)" 행이 있는 3개년 비교표에서 report_lines가 뽑은 값(6,570,137,526)은
+사실 **전기(FY2021) comparative 컬럼**이고, 진짜 당기(FY2022) 값은
+**17,293,933,213**(전혀 다른 숫자, 단순 배수 관계 아님)임을 확인 — declared
+unit이 실제 자릿수와 안 맞는 게 아니라 **애초에 컬럼을 잘못 골랐다**. 이
+경우 unit_override로 "교정"하면 그럴듯해 보이는 오답(6,570,137,526)을
+확정시켜버리므로 **등록하지 않음** — 별도의 컬럼선택 버그 트랙으로 이관
+(원인: 이 표의 다년비교 레이아웃에서 col_index=0 판정 로직이 아직 안 맞는
+것으로 추정, 코드 위치 미탐색). `fin2/tests/test_unit_overrides.py::
+test_softcen_2022fy_is_not_registered`로 이 결론을 회귀 고정(향후 실수로
+등록되는 것 방지). **같은 이유로 00378363(3S)도 미등록 유지** — raw XML에서
+IS 매출액 행 후보가 여러 개(요약표·본문표) 나왔는데 그 중 어느 것이
+report_lines가 실제로 뽑은 값과 일치하는지 이번 세션 내 확정 못 함(모호,
+다음 세션 재조사 필요). **00163691·00198697도 미등록 유지** — PDF
+추출 자체에 부호반전·계정쌍 뒤바뀜 등 단순 배수교정으로 설명 안 되는 노이즈가
+있어(예: 00198697 연결 BS "자본금"↔"보통주자본금"이 부호만 반대인 동일크기
+쌍으로 나타남) 원문 재조사 없이 배수만 곱하면 위험 — 원문 PDF 직접 재수집
+(LegacyDartScraper) 후 재판단 필요.
+
+**남은 (가+라) 그룹 잔여**: 위 4건(00204226·00378363·00163691·00198697,
+성격이 서로 다름 — 앞 2건은 컬럼선택/모호성 버그 후보, 뒤 2건은 PDF노이즈)
++ 이번 세션 범위 밖이던 (나)`section_def`폴백 3건(00108746·00140168·
+00258421)·(다)declared 경계오판정 계열 2건(00133751 세명전기·01344363
+다원넥스뷰) + 재수집 트랙 4건(00122825·00124799·00125488·00133618, DART
+503) + (마)임계값 오탐 후보 1건(00126380 삼성전자, 실제 초대형사라 버그
+아닐 가능성 높음, 미확정) — 전부 unit_override 스코프 밖, 각자 다른
+트랙(코드버그 수정·원문 재수집·정책결정)에서 별도 처리.
+
 ---
 
 ## 부록 A. 원문(DART XML) 함정 카탈로그

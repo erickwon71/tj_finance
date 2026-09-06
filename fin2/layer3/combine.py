@@ -38,6 +38,7 @@ from fin2.standardize.rules import (DIRECT_MAP, CONSUMED_CANON, StdContext,
                                     _LEASE_PARTS, _BORROW_PROCEEDS_PARTS,
                                     _BORROW_REPAID_PARTS)
 from fin2.layer3.note_da import note_da_canonicals
+from fin2.layer3.unit_overrides import apply_unit_overrides
 from parser.common.note_labels import classify_da_label
 from fin2.layer3.industry_profiles import (
     apply_revenue_profile, norm as _norm_label, NO_REVENUE_CORPS,
@@ -3357,6 +3358,15 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     # discarding what this function already computed.
     prov["extended"] = {canon: value for canon, value in confirmed.items()
                         if canon not in DIRECT_MAP}
+    # unit override (manual correction for self-contradictory filings, 2026-09-06 —
+    # docs/plans/unit_override_self_contradictory_filings_design_2026-09-06.md). Run
+    # last so it always wins over whatever DIRECT_MAP/_resolve()/every additive
+    # override above produced — these are filings where the table itself printed a
+    # unit label that doesn't match the actual digit count (source document error,
+    # not a parsing bug), confirmed by a human checking the original filing.
+    unit_overrides_applied = apply_unit_overrides(corp, fy, period, basis, DIRECT_MAP, col)
+    if unit_overrides_applied:
+        prov["unit_overrides"] = unit_overrides_applied
     return col, conflicts, prov
 
 

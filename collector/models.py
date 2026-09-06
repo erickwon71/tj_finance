@@ -1856,6 +1856,12 @@ class StdFinancialV3(Base):
     # 소계 합산으로 조립하고 그 성분을 보존. {"profile":"insurance","insurance_revenue":…,
     # "investment_revenue":…}. general 기업=NULL. tearsheet 업종별 표시·조립 revenue 표식용.
     industry_lines  = Column(JSONB, nullable=True, comment="업종별 매출 성분(보험 등 조립 revenue)")
+    # 원문 자기모순 필링 수동 단위교정(2026-09-06, docs/plans/unit_override_self_
+    # contradictory_filings_design_2026-09-06.md) — 표 자신이 인쇄한 단위 라벨이 실제
+    # 자릿수와 안 맞는 케이스(코드 버그 아님, 원문 표기 오류)를 사람이 원문 대조 후
+    # fin2/layer3/unit_overrides.py 에 등록하면 combine_full() 이 이 컬럼에 근거를 남긴다.
+    # {std_col: {concept, declared_value, corrected_value, multiplier, note}}. NULL=미적용.
+    unit_overrides  = Column(JSONB, nullable=True, comment="원문 자기모순 필링 수동 단위교정 근거")
     built_at        = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (

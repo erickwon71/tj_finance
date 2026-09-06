@@ -912,6 +912,13 @@ def _split_headed_multi_statement_table(tbl) -> list[tuple[str, "etree._Element"
     return results
 
 
+# 원문에서 "이 칸은 진짜로 비었다"고 볼 수 있는 표기 — report_lines.py::
+# _LABEL_REGION_PLACEHOLDERS 와 같은 집합(2026-09-06, R73 후속 트랙①). `_emit_section`의
+# 선두-None 절삭 가드가 "raw_amounts[i]가 이 집합에 속하는지"로 진짜 공백과 `parse_amount()`
+# 값-거부(숫자 텍스트인데 결과가 None)를 가른다 — 아래 `_emit_section` 본문 참고.
+_TEXT_BLANK_AMOUNT_PLACEHOLDERS = frozenset(["", "-", "‐", "―", "–", "—", "ㅡ"])
+
+
 def _emit_section(
     section_code: str,
     tables_with_unit: list[tuple],
@@ -1000,8 +1007,20 @@ def _emit_section(
                     # 요약행(당기순이익·지배/비지배 귀속)은 누적값 2개만 가져 누적컬럼(1,3) 위치가 비고
                     # 값이 0·2 등에 실린다 → 누적컬럼이 전부 비면 존재 값을 순서대로 col0,col1.. 로 채택.
                     # (상세행은 누적셀 존재 → 폴백 미발동. interim net_income/controlling 소실 해결.)
-                    present = [a for a in row.amounts if a is not None]
-                    pairs = list(enumerate(present))
+                    # ★2026-09-06(R74 후속, 트랙①) — report_lines.py::_emit_section_lines 의
+                    # 동형 분기와 함께 고친다. 이 폴백은 "cum_map 목표 칸이 진짜 비었다"는
+                    # 전제인데, `raw_amounts`가 숫자 텍스트인데 `amounts`만 None이면(=
+                    # `_AMOUNT_SANE_MAX` 값-거부) 그 전제가 깨진다(실측 00378363 3S FY2023
+                    # Q3 — 자기모순 단위로 당기·전기 누적값이 둘 다 거부되자, 이 폴백이 전기
+                    # **3개월**값을 당기누적으로 둔갑시켰다). 거부의 증거가 있으면 이 폴백을
+                    # 쓰지 않고 결측으로 남긴다.
+                    raws = row.raw_amounts
+                    targets_rejected = any(
+                        pos < len(raws) and raws[pos].strip() not in _TEXT_BLANK_AMOUNT_PLACEHOLDERS
+                        for pos in cum_map)
+                    if not targets_rejected:
+                        present = [a for a in row.amounts if a is not None]
+                        pairs = list(enumerate(present))
             else:
                 # ★ 선두 None(주석/빈 컬럼) 제거 후 열거: 보고서 금액 컬럼은 항상 당기(col0)부터
                 # 시작하므로, 표 파서가 끼워넣은 phantom 선두 빈칸은 col_index 를 한 칸씩 밀어
@@ -1017,11 +1036,20 @@ def _emit_section(
                 # 신호가 없는 칸(TD 등)은 기존 동작 그대로 절삭 — R19 사각지대 안전망 유지,
                 # 회귀 불가능. 근거: docs/plans/gateb_trade_payables_classB_stale_column_
                 # investigation_2026-08-29.md §5~6.
+                # ★2026-09-06(R73 후속, 트랙①) — report_lines.py::_emit_section_lines 의
+                # 동형 분기와 함께 고친다(위 쌍둥이 로직 원칙). `raw_amounts[i]`가 진짜
+                # 숫자 텍스트인데 `amounts[i]`가 None이면 원문이 비운 게 아니라
+                # `parse_amount()`의 `_AMOUNT_SANE_MAX`(R3, 1경원 상한) 가드가 값을 거부한
+                # 것이다(단위선언 자기모순 필링에서 발생 — 실측 00204226 소프트센 FY2022).
+                # 이 칸에서도 절삭을 멈춰 결측으로 남긴다. 근거:
+                # docs/plans/report_lines_sanemax_reject_compaction_shift_design_2026-09-06.md
                 amts = row.amounts
                 flags = row.acontext_missing
+                raws = row.raw_amounts
                 lead = 0
                 while (lead < len(amts) and amts[lead] is None
-                       and not (lead < len(flags) and flags[lead])):
+                       and not (lead < len(flags) and flags[lead])
+                       and (lead >= len(raws) or raws[lead].strip() in _TEXT_BLANK_AMOUNT_PLACEHOLDERS)):
                     lead += 1
                 pairs = list(enumerate(amts[lead:]))
             for col_idx, amount in pairs:

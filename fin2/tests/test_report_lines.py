@@ -766,6 +766,76 @@ def test_sjbeauty_2020_revenue_consolidated_and_separate_both_corrected():
     assert _rev("separate") == {0: 43_725_183_663, 1: 44_290_163_397}
 
 
+_SOFTCEN_FY2022 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00204226_소프트센/annual/2022/20230323001157.xml"
+)
+
+
+def test_softcen_2022_sanemax_reject_no_longer_shifts_columns():
+    """소프트센(00204226) 2022FY 연결BS — 원문이 "(단위 : 백만원)" 선언인데 실제로는
+    이미 원 단위 숫자를 찍은 자기모순 필링(원문대조 확정, R73 (가+라) 그룹). 수정 전에는
+    당기(제36기) "이익잉여금(결손금)" 17,293,933,213원이 ×10⁶ 스케일에서
+    `_AMOUNT_SANE_MAX`(1경원) 가드에 걸려 None 이 됐고, 그 선두 None 을 (진짜 미공시로
+    오인해) 절삭하는 바람에 전기(제35기) 값이 당기 열로, 전전기(제34기) 값이 전기 열로
+    한 칸씩 밀려 들어갔다 — 원문에 없는 값이 특정 회계연도 것으로 둔갑하는 조용한
+    오염(R3 자신의 "오염보다 결측을 택한다" 원칙 위반). 수정 후에는 거부된 당기 셀이
+    그대로 결측(행 자체가 없음)으로 남고, 전기·전전기는 원래 자리(col_index 1·2)를
+    지켜야 한다. (단위선언 자체의 교정은 별도 unit_override 트랙 — 여기서는 컬럼 밀림만
+    검증한다.) 근거: docs/plans/report_lines_sanemax_reject_compaction_shift_design_2026-09-06.md
+    """
+    if not _SOFTCEN_FY2022.exists():
+        return
+    lines = extract_report_lines(
+        _SOFTCEN_FY2022, rcept_no="20230323001157", corp_code="00204226",
+        report_fiscal_year=2022, report_fiscal_period="FY",
+    )
+
+    def _by_col(label, basis="consolidated"):
+        return {l.col_index: (l.context_fiscal_year, l.value_won) for l in lines
+                if l.statement == "BS" and l.basis == basis and l.label_raw == label}
+
+    re_col = _by_col("이익잉여금(결손금)")
+    assert 0 not in re_col, f"거부된 당기 셀이 결측 대신 값으로 남음: {re_col}"
+    assert re_col[1] == (2021, 6_570_137_526_000_000), re_col
+    assert re_col[2] == (2020, -8_460_317_110_000_000), re_col
+
+    nci_col = _by_col("비지배지분")
+    assert 0 not in nci_col, f"거부된 당기 셀이 결측 대신 값으로 남음: {nci_col}"
+    assert nci_col[1] == (2021, 8_058_575_267_000_000), nci_col
+    assert nci_col[2] == (2020, 5_571_400_065_000_000), nci_col
+
+
+_3S_FY2023Q3 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00378363_3S/quarter/2023/20230209000202.xml"
+)
+
+
+def test_3s_2023q3_sanemax_reject_cum_map_no_longer_wrong_column():
+    """3S(00378363) 2023 Q3(FYE 3월, 회계상 2022.10~12 3분기) 연결IS — 원문
+    "(단위:백만원)" 선언이 실제 자릿수와 안 맞는 자기모순 필링(원문 위 comment
+    `fin2/extract/text.py::_emit_section` 근처에 이미 "3S(원문 (단위:백만원) 오기)"로
+    기록돼 있던 바로 그 회사). 표는 [당기3개월|당기누적|전기3개월|전기누적] 2단
+    헤더라 cum_map={1:0, 3:1}(누적컬럼만)이어야 정상인데, 당기누적·전기누적 둘 다
+    ×10⁶ 스케일에서 `_AMOUNT_SANE_MAX` 에 걸려 거부되자, 수정 전에는 "누적컬럼이
+    비면 존재값 아무거나 순서대로 채택"하는 폴백이 **전기 3개월**값(6,642,030,087)을
+    주워 당기누적으로 둔갑시켰다(컬럼 밀림이 아니라 3개월값과 누적값이 뒤바뀌는 더
+    위험한 변종). 수정 후에는 매출액 자체가 결측(행 없음)이어야 한다 — 엉뚱한 값보다
+    결측이 안전하다는 R3/R74 원칙. 근거:
+    docs/plans/report_lines_sanemax_reject_compaction_shift_design_2026-09-06.md
+    """
+    if not _3S_FY2023Q3.exists():
+        return
+    lines = extract_report_lines(
+        _3S_FY2023Q3, rcept_no="20230209000202", corp_code="00378363",
+        report_fiscal_year=2023, report_fiscal_period="Q3",
+    )
+    rev = [l for l in lines if l.statement == "IS" and l.basis == "consolidated"
+           and l.label_raw == "매출액"]
+    assert rev == [], f"거부된 누적값 대신 엉뚱한 값(전기 3개월)이 남음: {rev}"
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

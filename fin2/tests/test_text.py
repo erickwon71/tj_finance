@@ -199,6 +199,54 @@ def test_unknown_gets_no_canonical_but_row_survives():
     assert _canonical_of(MappingResult("unknown.무언가", 0.0, "unknown")) is None
 
 
+_SOFTCEN_FY2022 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00204226_소프트센/annual/2022/20230323001157.xml"
+)
+
+
+def test_softcen_2022_sanemax_reject_no_longer_shifts_columns():
+    """`report_lines.py::_emit_section_lines`의 쌍둥이 분기(fin2/extract/report_lines.py::
+    test_softcen_2022_sanemax_reject_no_longer_shifts_columns 참고) — `_emit_section`도
+    같은 `_AMOUNT_SANE_MAX` 값-거부 선두칸을 진짜 결측과 구분해야 한다(2026-09-06,
+    R73 후속 트랙①). 소프트센(00204226) 2022FY 연결BS "이익잉여금(결손금)": 수정 전에는
+    당기(제36기, 17,293,933,213원 ×10⁶ 스케일)가 1경원 상한에 걸려 None → 선두절삭으로
+    전기값이 당기 열로 밀렸다. 수정 후에는 col_index 0 자체가 없고(결측), 전기·전전기가
+    원래 자리를 지킨다."""
+    if not _SOFTCEN_FY2022.exists():
+        return
+    facts = extract_facts(
+        _SOFTCEN_FY2022, rcept_no="20230323001157", corp_code="00204226",
+        report_fiscal_year=2022, report_fiscal_period="FY",
+    )
+    by_col = {f.col_index: (f.context_fiscal_year, f.amount_won) for f in facts
+              if f.basis == "consolidated" and f.acode == "이익잉여금(결손금)"}
+    assert 0 not in by_col, f"거부된 당기 셀이 결측 대신 값으로 남음: {by_col}"
+    assert by_col[1] == (2021, 6_570_137_526_000_000), by_col
+    assert by_col[2] == (2020, -8_460_317_110_000_000), by_col
+
+
+_3S_FY2023Q3 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00378363_3S/quarter/2023/20230209000202.xml"
+)
+
+
+def test_3s_2023q3_sanemax_reject_cum_map_no_longer_wrong_column():
+    """`report_lines.py`의 쌍둥이 분기(fin2/extract/report_lines.py::
+    test_3s_2023q3_sanemax_reject_cum_map_no_longer_wrong_column 참고) — `_emit_section`도
+    cum_map 목표 칸이 값-거부됐을 때 엉뚱한 칸(전기 3개월)을 당기누적으로 잘못
+    채택하면 안 된다(2026-09-06, R74 후속 트랙①)."""
+    if not _3S_FY2023Q3.exists():
+        return
+    facts = extract_facts(
+        _3S_FY2023Q3, rcept_no="20230209000202", corp_code="00378363",
+        report_fiscal_year=2023, report_fiscal_period="Q3",
+    )
+    rev = [f for f in facts if f.basis == "consolidated" and f.acode == "매출액"]
+    assert rev == [], f"거부된 누적값 대신 엉뚱한 값(전기 3개월)이 남음: {rev}"
+
+
 def _run():
     if not _SAMPLE.exists():
         print(f"  - SKIP: 실측 파일 없음 {_SAMPLE}")

@@ -559,8 +559,25 @@ def _emit_section_lines(
                 pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()
                          if pos < len(row.amounts) and row.amounts[pos] is not None]
                 if not pairs:
-                    present = [a for a in row.amounts if a is not None]
-                    pairs = list(enumerate(present))
+                    # ★2026-09-06(R74 후속, 트랙①) — 이 폴백은 "총계/귀속 요약행은 누적값
+                    # 2개만 가져 누적컬럼(1,3) 위치가 비고 값이 0·2 등에 실린다"는 **진짜
+                    # 결측** 전제로 설계됐다(위 §5.4류 사례). 그런데 cum_map 목표 칸의
+                    # `raw_amounts`가 실제 숫자 텍스트인데 `amounts`만 None이면(=
+                    # `_AMOUNT_SANE_MAX` 값-거부, R74와 같은 원인) 그 전제가 깨진다 — 실측
+                    # 확정(00378363 3S FY2023 Q3 연결IS "매출액"): 당기누적(position1)·
+                    # 전기누적(position3) 둘 다 자기모순 단위(×10⁶)로 거부됐는데, 이 폴백이
+                    # "값이 있는 아무 칸"(전기 **3개월**, position2)을 주워 당기누적으로
+                    # 둔갑시켰다 — 컬럼 밀림이 아니라 **완전히 다른 성격의 값**(3개월 vs
+                    # 누적)이 뒤바뀌는, R74의 "else" 분기보다 위험한 변종. cum_map 목표 칸에
+                    # 거부의 증거(진짜 숫자 텍스트)가 있으면 이 폴백 자체를 쓰지 않는다 —
+                    # 결측으로 남기는 편이 엉뚱한 값보다 안전하다(R3 원칙).
+                    raws = row.raw_amounts
+                    targets_rejected = any(
+                        pos < len(raws) and raws[pos].strip() not in _LABEL_REGION_PLACEHOLDERS
+                        for pos in cum_map)
+                    if not targets_rejected:
+                        present = [a for a in row.amounts if a is not None]
+                        pairs = list(enumerate(present))
             elif multicol:
                 # 기간당 다열: 비어있지 않은 금액을 압축 → [당기, 전기, 전전기] 로 매핑.
                 present = [a for a in row.amounts if a is not None]
@@ -573,11 +590,25 @@ def _emit_section_lines(
                 # 전기/전전기 값이 당기로 오귀속되는 것을 막는다). 신호 없는 칸(TD 등)은 기존
                 # 동작 그대로. 근거: docs/plans/gateb_trade_payables_classB_stale_column_
                 # investigation_2026-08-29.md §5~6.
+                # ★2026-09-06(R73 후속, 트랙①) — 두 번째 정지 신호 추가: `raw_amounts[i]`가
+                # 진짜 숫자 텍스트인데 `amounts[i]`가 None이면, 그 칸은 "원문이 비웠다"가
+                # 아니라 `parse_amount()`의 `_AMOUNT_SANE_MAX`(R3, 1경원 상한) 가드가 **값을
+                # 신뢰 못 해 거부**한 것이다(원문 단위선언이 실제 자릿수와 안 맞는 자기모순
+                # 필링 — declared "백만원"인데 본문이 이미 원 단위인 경우 등). 그런 칸을 진짜
+                # 공백과 똑같이 절삭하면, 거부된 값 뒤의 진짜 전기/전전기 값이 당기 열로
+                # 밀려 들어간다(실측 확정: 00204226 소프트센 FY2022 연결BS `이익잉여금(결손금)`
+                # — 당기 17,293,933,213원이 ×10⁶ 스케일에서 1경원 상한에 걸려 거부되고, 전기
+                # 6,570,137,526원이 그 자리로 밀려 당기 값으로 둔갑). 이 칸에서도 절삭을
+                # 멈춰 결측으로 남긴다 — "오염보다 결측을 택한다"는 R3 자신의 원칙을 이
+                # 압축 단계에도 그대로 잇는다. 근거:
+                # docs/plans/report_lines_sanemax_reject_compaction_shift_design_2026-09-06.md
                 amts = row.amounts
                 flags = row.acontext_missing
+                raws = row.raw_amounts
                 lead = 0
                 while (lead < len(amts) and amts[lead] is None
-                       and not (lead < len(flags) and flags[lead])):
+                       and not (lead < len(flags) and flags[lead])
+                       and (lead >= len(raws) or raws[lead].strip() in _LABEL_REGION_PLACEHOLDERS)):
                     lead += 1
                 pairs = list(enumerate(amts[lead:]))
             for col_idx, amount in pairs:

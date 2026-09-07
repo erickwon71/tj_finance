@@ -199,6 +199,47 @@ def _iter_declarations(text: str):
             yield toks
 
 
+def has_blank_unit_declaration(text: str) -> bool:
+    """텍스트 안에 '단위 : ' 선언 **자리**가 있는데 내용이 비어있는지("(단위 : )" 류).
+
+    R73/R74 트랙② 재조사(2026-09-06, 00108746·00140168·00258421 원문대조) — 표가 자기
+    몫의 단위선언 자리를 갖고 있고 필자가 그 자리를 채웠지만 내용이 공란인 경우가 있다.
+    `_iter_declarations`는 이런 빈 본문을 조용히 건너뛴다(toks=[] → yield 안 함)
+    — 호출부(`detect_unit_tokens` 등)에서는 "선언 자체가 아예 없음"과 구분이 안 된다.
+    그래서 `fin2/extract/text.py::declaration_text()`가 이 표 몫 선언을 그냥 지나쳐
+    SECTION-2 안의 **무관한 다른 표**(요약재무정보 등)의 단위를 대신 물려받는 사고가
+    난다. 이 함수는 호출부(`fin2/extract/text.py::own_declaration_is_blank`)가 "표
+    자신의 선언 자리가 명시적으로 비어있다"를 알아채 그 경우엔 폴백 자체를 걸지 않고
+    결측으로 남기게(안전판) 하기 위한 전용 탐지기 — `_iter_declarations`는 건드리지
+    않는다(전사에 쓰이는 공용 함수라 블라스트 반경을 넓히지 않기 위함).
+
+    본문이 공백/구두점만이면(예: "(단위 : )") True. 본문에 실제 단어가 있는데 단위로
+    안 읽히는 경우("단위으로 환산" 같은 서술문)는 False — 그건 "선언 아님"이지 "선언했는데
+    비움"이 아니다.
+    """
+    if not text or "단위" not in text:
+        return False
+    s = text.replace('：', ':').replace('　', ' ')
+    pos = 0
+    for _ in range(_DECL_SCAN_MAX):
+        i = s.find('단위', pos)
+        if i < 0:
+            return False
+        m = _DECL_HEAD_RE.match(s, i)
+        pos = m.end()
+        rest = s[pos: pos + _DECL_BODY_MAX + 1]
+        end = _DECL_END_RE.search(rest)
+        if end:
+            body = rest[: end.start()]
+        elif len(s) - pos <= _DECL_TAIL_MAX:
+            body = rest
+        else:
+            continue
+        if not body.strip(' .:'):
+            return True
+    return False
+
+
 def _body_tokens(body: str) -> list[str]:
     """선언 본문 → 토큰. 단위 목록으로 보이지 않으면 [](=선언 아님).
 

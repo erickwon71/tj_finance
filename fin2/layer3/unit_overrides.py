@@ -220,6 +220,199 @@ UNIT_OVERRIDES: dict[tuple[str, int, str, str, str], UnitOverride] = {
     ("00487546", 2010, "H1", "consolidated", "is.revenue"): UnitOverride(
         multiplier=1e-6, note="위 separate 항목과 동일 근거(이 회사는 basis_fallback으로 "
         "연결=별도)."),
+
+    # ── R74 트랙③④⑤ 재분류 후속(2026-09-06) — v2-drop-remaining-backlog-2026-09-03.md
+    # (가+라) 그룹 후속 편입분. 원문대조: PARSING_RULES.md R74 절 참고.
+
+    # 00133751 세명전기 2004H1(rcept 20040814000049) — 원래 "declared 경계오판정"(다)
+    # 그룹이었으나 R74 사전조사로 (가+라)와 같은 자기모순 단위로 재분류(§(다) 카테고리
+    # 소멸). BS는 declared '(단위:원)'·adecimal=0으로 정상(자산총계 26,270,052,307원 등
+    # 상식적 규모)인데, IS·CF만 declared '(단위:백만원)'·adecimal=-6가 붙어 자기모순 —
+    # 별도재무제표만 존재(연결 없음, basis_fallback). 교차검증 다중: ① IS 자체에 "주당순이익"
+    # 두 행이 있는데 하나(처분계산서류, adecimal=0)=27원, 다른 하나(IS 본문,
+    # adecimal=-6 raw=26,000,000)를 ×10^-6하면 26원 — 거의 일치. ② CF "Ⅵ.기말의 현금"
+    # raw=1,265,326,806,000,000을 ×10^-6하면 1,265,326,806원인데, 이는 BS(정상 원단위)
+    # "1.현금및현금등가물"=1,265,326,806원과 숫자가 정확히 일치(같은 날짜 잔액이므로
+    # 당연히 같아야 함) — 배수 오류를 자릿수 단위까지 확정. 이 표들이 소비하는 DIRECT_MAP
+    # 개념 전부(revenue~dividends_paid)를 함께 보정한다 — 하나만 고치면 다른 개념이
+    # 그대로 ×10^6 오염 상태로 남아 std_v3 안에서 서로 스케일이 안 맞는 상태가 된다.
+    ("00133751", 2004, "H1", "separate", "is.revenue"): UnitOverride(
+        multiplier=1e-6, note="IS·CF declared '(단위:백만원)' 자기모순(BS는 원단위로 정상) "
+        "— CF 기말현금(÷10^6)이 BS 현금잔액과 숫자까지 정확 일치해 확정."),
+    ("00133751", 2004, "H1", "separate", "is.cogs"): UnitOverride(
+        multiplier=1e-6, note="위 is.revenue와 동일 표·동일 근거."),
+    ("00133751", 2004, "H1", "separate", "is.gross_profit"): UnitOverride(
+        multiplier=1e-6, note="위 is.revenue와 동일 표·동일 근거."),
+    ("00133751", 2004, "H1", "separate", "is.sga"): UnitOverride(
+        multiplier=1e-6, note="위 is.revenue와 동일 표·동일 근거."),
+    ("00133751", 2004, "H1", "separate", "is.operating_income"): UnitOverride(
+        multiplier=1e-6, note="위 is.revenue와 동일 표·동일 근거."),
+    ("00133751", 2004, "H1", "separate", "is.interest_expense"): UnitOverride(
+        multiplier=1e-6, note="위 is.revenue와 동일 표·동일 근거."),
+    ("00133751", 2004, "H1", "separate", "is.ebt"): UnitOverride(
+        multiplier=1e-6, note="위 is.revenue와 동일 표·동일 근거."),
+    ("00133751", 2004, "H1", "separate", "is.tax_expense"): UnitOverride(
+        multiplier=1e-6, note="위 is.revenue와 동일 표·동일 근거."),
+    ("00133751", 2004, "H1", "separate", "is.net_income"): UnitOverride(
+        multiplier=1e-6, note="위 is.revenue와 동일 표·동일 근거 — 주당순이익 교차검증(26원)도 "
+        "이 값과 정합."),
+    ("00133751", 2004, "H1", "separate", "is.controlling_ni"): UnitOverride(
+        multiplier=1e-6, note="위 is.revenue와 동일 표·동일 근거."),
+    ("00133751", 2004, "H1", "separate", "cf.operating"): UnitOverride(
+        multiplier=1e-6, note="CF declared '(단위:백만원)' 자기모순 — 기말현금(÷10^6)이 BS "
+        "현금잔액과 정확 일치해 확정."),
+    ("00133751", 2004, "H1", "separate", "cf.investing"): UnitOverride(
+        multiplier=1e-6, note="위 cf.operating과 동일 표·동일 근거."),
+    ("00133751", 2004, "H1", "separate", "cf.financing"): UnitOverride(
+        multiplier=1e-6, note="위 cf.operating과 동일 표·동일 근거."),
+    ("00133751", 2004, "H1", "separate", "cf.dividends_paid"): UnitOverride(
+        multiplier=1e-6, note="위 cf.operating과 동일 표·동일 근거."),
+    # consolidated는 이 회사에 연결재무제표가 없어 basis_fallback으로 separate를 그대로
+    # 복사한다 — 같은 근거로 전부 반복 등록(00138516 등 기존 관례).
+    ("00133751", 2004, "H1", "consolidated", "is.revenue"): UnitOverride(
+        multiplier=1e-6, note="위 separate 항목과 동일 근거(이 회사는 basis_fallback으로 "
+        "연결=별도)."),
+    ("00133751", 2004, "H1", "consolidated", "is.cogs"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("00133751", 2004, "H1", "consolidated", "is.gross_profit"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("00133751", 2004, "H1", "consolidated", "is.sga"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("00133751", 2004, "H1", "consolidated", "is.operating_income"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("00133751", 2004, "H1", "consolidated", "is.interest_expense"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("00133751", 2004, "H1", "consolidated", "is.ebt"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("00133751", 2004, "H1", "consolidated", "is.tax_expense"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("00133751", 2004, "H1", "consolidated", "is.net_income"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("00133751", 2004, "H1", "consolidated", "is.controlling_ni"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback) — 이 회사 consolidated는 controlling_ni "
+        "가 NULL이라 실제 적용은 무동작."),
+    ("00133751", 2004, "H1", "consolidated", "cf.operating"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("00133751", 2004, "H1", "consolidated", "cf.investing"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("00133751", 2004, "H1", "consolidated", "cf.financing"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("00133751", 2004, "H1", "consolidated", "cf.dividends_paid"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+
+    # 01344363 다원넥스뷰 2024H1(rcept 20240813000596) — 원래 "declared 경계오판정"(다)
+    # 그룹. R74(else 분기, 00204226와 같은 컬럼압축 메커니즘)로 컬럼밀림 증상은 이미
+    # 해소됐지만, 근본원인인 자기모순 단위(선언 백만원·인쇄 원) 자체는 그대로 남아 있어
+    # 별도 unit_overrides 등록이 필요(§(다) 카테고리 소멸 시 확정한 재분류). 별도재무제표만
+    # 존재(연결 없음). BS·IS·CF 전 표가 같은 자기모순(declared '(단위:백만원)', adecimal=-6,
+    # 실제 인쇄값은 이미 원단위) — BS "자본총계" raw=3,783,475,775,000,000를 ×10^-6하면
+    # 3,783,475,775원(38억원)으로 소형 상장사 규모에 부합.
+    ("01344363", 2024, "H1", "separate", "bs.total_equity"): UnitOverride(
+        multiplier=1e-6, note="BS declared '(단위:백만원)' 자기모순(실제 인쇄값 이미 원단위) — "
+        "÷10^6하면 소형 상장사 규모(38억원)에 부합."),
+    ("01344363", 2024, "H1", "separate", "is.revenue"): UnitOverride(
+        multiplier=1e-6, note="위 bs.total_equity와 동일 표군·동일 근거."),
+    ("01344363", 2024, "H1", "separate", "is.cogs"): UnitOverride(
+        multiplier=1e-6, note="위와 동일 근거."),
+    ("01344363", 2024, "H1", "separate", "is.operating_income"): UnitOverride(
+        multiplier=1e-6, note="위와 동일 근거."),
+    ("01344363", 2024, "H1", "separate", "is.ebt"): UnitOverride(
+        multiplier=1e-6, note="위와 동일 근거."),
+    ("01344363", 2024, "H1", "separate", "is.tax_expense"): UnitOverride(
+        multiplier=1e-6, note="위와 동일 근거."),
+    ("01344363", 2024, "H1", "separate", "is.net_income"): UnitOverride(
+        multiplier=1e-6, note="위와 동일 근거."),
+    ("01344363", 2024, "H1", "separate", "cf.operating"): UnitOverride(
+        multiplier=1e-6, note="위와 동일 근거."),
+    ("01344363", 2024, "H1", "separate", "cf.investing"): UnitOverride(
+        multiplier=1e-6, note="위와 동일 근거."),
+    ("01344363", 2024, "H1", "separate", "cf.financing"): UnitOverride(
+        multiplier=1e-6, note="위와 동일 근거."),
+    ("01344363", 2024, "H1", "consolidated", "bs.total_equity"): UnitOverride(
+        multiplier=1e-6, note="위 separate 항목과 동일 근거(이 회사는 basis_fallback으로 "
+        "연결=별도)."),
+    ("01344363", 2024, "H1", "consolidated", "is.revenue"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("01344363", 2024, "H1", "consolidated", "is.cogs"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("01344363", 2024, "H1", "consolidated", "is.operating_income"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("01344363", 2024, "H1", "consolidated", "is.ebt"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("01344363", 2024, "H1", "consolidated", "is.tax_expense"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("01344363", 2024, "H1", "consolidated", "is.net_income"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("01344363", 2024, "H1", "consolidated", "cf.operating"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("01344363", 2024, "H1", "consolidated", "cf.investing"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("01344363", 2024, "H1", "consolidated", "cf.financing"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+
+    # 00122825 (2003 Q3, is_final rcept 20031203000256) — 원래 "DART 503 재수집" 분류였으나
+    # R74 재조사로 파일 자체는 온전(에러 아님) 확인 — 연결 BS만 자기모순 단위((가+라)
+    # 그룹으로 재편입, 별도는 정상). "Ⅲ.연결이익잉여금(주석17)" 라벨 자체에 실측 순손실
+    # "당기: -8,129,513,066원"이 원단위로 명시돼 있어 이 표가 원단위임을 뒷받침.
+    ("00122825", 2003, "Q3", "consolidated", "bs.retained_earnings"): UnitOverride(
+        multiplier=1e-6, note="연결BS declared '(단위:백만원)' 자기모순(별도는 정상 원단위 "
+        "선언) — 라벨 자체에 실측 순손실 -8,129,513,066원이 원단위로 명시돼 뒷받침."),
+
+    # 00125488 (2003 H1, rcept 20030814000591) — 원래 "DART 503 재수집" 분류였으나 R74
+    # 재조사로 파일 온전 확인, (가+라) 그룹으로 재편입. BS는 declared 원단위로 정상
+    # (자본총계 19,049,109,619원)인데 IS만 declared '(단위:백만원)' 자기모순(별도=연결
+    # basis_fallback). 매출액÷10^6=5,929,790,300원 — 자본총계(19B) 대비 매출 비율이
+    # 상식적 규모로 회복됨.
+    ("00125488", 2003, "H1", "separate", "is.revenue"): UnitOverride(
+        multiplier=1e-6, note="IS declared '(단위:백만원)' 자기모순(BS는 원단위로 정상) — "
+        "÷10^6하면 BS 자본총계(19B원) 대비 상식적 매출 규모로 회복."),
+    ("00125488", 2003, "H1", "separate", "is.operating_income"): UnitOverride(
+        multiplier=1e-6, note="위 is.revenue와 동일 표·동일 근거."),
+    ("00125488", 2003, "H1", "separate", "is.net_income"): UnitOverride(
+        multiplier=1e-6, note="위 is.revenue와 동일 표·동일 근거."),
+    ("00125488", 2003, "H1", "consolidated", "is.revenue"): UnitOverride(
+        multiplier=1e-6, note="위 separate 항목과 동일 근거(이 회사는 basis_fallback으로 "
+        "연결=별도)."),
+    ("00125488", 2003, "H1", "consolidated", "is.operating_income"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    ("00125488", 2003, "H1", "consolidated", "is.net_income"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+
+    # 00133618 (2003 H1, rcept 20030814001940) — 원래 "DART 503 재수집" 분류였으나 R74
+    # 재조사로 파일 온전 확인, (가+라) 그룹으로 재편입. 이 필링은 00125488과 반대 패턴 —
+    # BS declared '(단위:백만원)' 전체가 자기모순(IS·매출액·영업이익 등은 이미 원단위로
+    # 정상, dq_assertions에도 안 걸림). "자본총계" raw=9,199,455,550,000,000 ÷10^6=
+    # 9,199,455,550원.
+    ("00133618", 2003, "H1", "separate", "bs.total_equity"): UnitOverride(
+        multiplier=1e-6, note="BS declared '(단위:백만원)' 전체가 자기모순(IS는 이미 원단위로 "
+        "정상이라 손대지 않음) — ÷10^6하면 상식적 자본총계 규모(92억원)."),
+    ("00133618", 2003, "H1", "separate", "bs.retained_earnings"): UnitOverride(
+        multiplier=1e-6, note="위 bs.total_equity와 동일 표·동일 근거."),
+    ("00133618", 2003, "H1", "consolidated", "bs.total_equity"): UnitOverride(
+        multiplier=1e-6, note="위 separate 항목과 동일 근거(이 회사는 basis_fallback으로 "
+        "연결=별도)."),
+    ("00133618", 2003, "H1", "consolidated", "bs.retained_earnings"): UnitOverride(
+        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+
+    # 00124799 사조산업 FY2001(rcept 20020401000221, 연결만 — 별도는 정상이라 미등록) —
+    # 원래 "DART 503 재수집" 분류였으나 R74 재조사로 파일 온전 확인. 이 필링의 연결
+    # IS/BS는 개념매핑 자체가 틀린 라인(주석. is.revenue가 실제로는 "3.수수료수익"을,
+    # is.cogs가 "7.기타매출원가" 한 줄만 잘못 집은 것으로 보임 — 별개의 계정매퍼 버그
+    # 후보, 이번 세션 범위 밖이라 그 두 개념은 등록하지 않는다)와 순수 자기모순 단위
+    # 라인이 섞여 있어, **원문대조로 매핑이 맞다고 확인된 것만** 등록한다. 당기순이익
+    # 계열은 라벨 안에 박힌 "주당 순이익: 당기 3,967원"과 ÷10^6 후 주식수 역산(≈106만주,
+    # 소형 상장사 규모에 부합)으로 교차검증.
+    ("00124799", 2001, "FY", "consolidated", "bs.retained_earnings"): UnitOverride(
+        multiplier=1e-6, note="연결BS declared '(단위:백만원)' 자기모순(별도는 정상) — 같은 "
+        "규모대의 다른 항목들과 일관된 ÷10^6."),
+    ("00124799", 2001, "FY", "consolidated", "is.ebt"): UnitOverride(
+        multiplier=1e-6, note="연결IS 같은 표·동일 자기모순."),
+    ("00124799", 2001, "FY", "consolidated", "is.tax_expense"): UnitOverride(
+        multiplier=1e-6, note="연결IS 같은 표·동일 자기모순."),
+    ("00124799", 2001, "FY", "consolidated", "is.net_income"): UnitOverride(
+        multiplier=1e-6, note="라벨에 박힌 '주당 순이익: 당기 3,967원'으로 ÷10^6 후 주식수 "
+        "역산(≈106만주, 소형 상장사 규모)해 교차검증. is.revenue/is.cogs는 개념매핑 자체가 "
+        "틀린 것으로 보여(주석. 별도 계정매퍼 버그 후보) 이번엔 등록하지 않음."),
 }
 
 

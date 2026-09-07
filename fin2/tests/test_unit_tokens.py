@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from fin2.extract.units import (ColumnUnits, FX_ONLY, MIXED, MONEY_ONLY, NON_MONEY_ONLY,  # noqa: E402
                                 UNDECLARED, classify_tokens)
 from parser.common.amount_normalizer import (detect_unit_declaration,  # noqa: E402
-                                             detect_unit_tokens)
+                                             detect_unit_tokens, has_blank_unit_declaration)
 
 
 # ── ① 금액 토큰의 위치 ──────────────────────────────────────────────────
@@ -269,6 +269,25 @@ def test_inherit_from_declaration_bearing_paragraph():
     assert "천원" in (inherited_declaration_text(root[3]) or "")
 
 
+# ── R74 트랙② (2026-09-06): "선언했는데 비움" 탐지 ─────────────────────────
+def test_has_blank_unit_declaration_true_for_empty_parens():
+    # 00108746·00140168·00258421 원문대조 실측 패턴 — 필자가 선언 자리를 만들었지만
+    # 내용을 비웠다.
+    assert has_blank_unit_declaration("(단위 : )") is True
+    assert has_blank_unit_declaration("(단위:  )") is True
+    assert has_blank_unit_declaration("과 목 (단위 : ) 제 6 기") is True
+
+
+def test_has_blank_unit_declaration_false_for_real_declaration():
+    assert has_blank_unit_declaration("(단위 : 백만원)") is False
+    assert has_blank_unit_declaration("(단위 : 원)") is False
+
+
+def test_has_blank_unit_declaration_false_when_no_unit_word():
+    assert has_blank_unit_declaration("자산총계 100") is False
+    assert has_blank_unit_declaration("") is False
+
+
 def test_no_inherit_across_statement_title():
     """재무제표명은 예외 — 남의 statement 경계다.
 
@@ -279,3 +298,10 @@ def test_no_inherit_across_statement_title():
     title = "<P>연결 현금흐름표 제 33 기 (단위: 백만원)</P>"
     root = _tbl(f"<BODY>{title}{_DATA}<P></P>{_DATA}</BODY>")
     assert inherited_declaration_text(root[3]) is None
+
+
+# ★2026-09-06 후속 — own_declaration_is_blank()로 안 B(공란 선언 시 폴백 금지)를 시도했으나
+# 00240857 바이오스마트 반례(test_r67_section_default_fixes_1000x_inflation)로 반증돼
+# 되돌렸다(설계 문서 section_def_fallback_wrong_sibling_unit_design_2026-09-06.md 참고).
+# 위 has_blank_unit_declaration() 탐지기 자체는 정확해 유지하지만, 이를 어디에 어떻게
+# 적용해야 안전한지는 재설계가 필요 — 그래서 이 탐지기를 쓰는 상위 함수 테스트는 없다.

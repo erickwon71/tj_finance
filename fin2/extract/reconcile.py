@@ -13,9 +13,15 @@ HTML↔PDF 결과 신뢰도 조정(T1/T2/T3) — Track C 잔여 93건 스코프.
               다수가 "기존에 이미 맞던 값은 그대로 보존한 채 나머지만
               정확히 채움" — 우연이 아니라는 근거, §8-6). → HTML 채택,
               PDF는 아예 시도 안 함(계산 절약).
-  T2(완전공백)  그랜드토탈 3개(자산/부채/자본 총계)가 하나도 없음. →
-              PDF로 폴백 — HTML이 못 찾았으니 PDF가 이미 갖고 있던 값이
-              더 나을 수 있다(원인B 두 필링이 실제로 이 경로).
+  T2(완전공백)  그랜드토탈 3개(자산/부채/자본 총계)가 하나도 없음. → PDF도
+              마저 시도해 PDF가 T1(항등식 성립)이면 PDF 채택 — HTML이 못
+              찾았으니 PDF가 스스로 항등식을 증명한 값은 믿을 수 있다(원인B
+              두 필링이 실제로 이 경로). PDF도 T1이 아니면(공백 또는 항등식
+              불성립) **자동 채택 안 함**(2026-09-07 후속 §8-16/R83 — 원래는
+              "PDF가 T1이 아니어도 완전공백만 아니면" 채택했는데, 93건 실백필
+              직후 독립 재검증으로 일성건설·일진디스플이 항등식 불성립인 채
+              조용히 채택됐던 걸 발각 — HTML이 아무것도 못 찾은 이상 교차검증
+              상대가 없어 PDF의 "확신 없음"을 봐줄 근거가 없었다).
   T3(애매함)   값은 일부 나왔으나 항등식 불성립, 또는 연결(consolidated —
               외부주주지분 등 3자분할이 가능해 이 항등식 검증 자체가
               원리적으로 약함, 제일기획 연결 3건이 실증). → PDF도 마저
@@ -144,18 +150,28 @@ def reconcile_basis(
     pdf_conf = classify_confidence(pdf_facts, basis)
 
     if html_conf == Confidence.T2_EMPTY:
-        if pdf_conf != Confidence.T2_EMPTY:
+        # ★2026-09-07(93건 실백필+독립 재검증으로 발견, §8-16/R83) — 원래 여기
+        # "pdf_conf != T2"(T1 이든 T3 이든 "완전공백만 아니면" 채택)였다.
+        # HTML 이 아무것도 못 찾은 이상(T2) 교차검증할 상대가 없으니, PDF 도
+        # T3(항등식 불성립·부분값)이면 그대로 믿을 근거가 없다 — 원래 "원인B
+        # 안전망"의 취지는 "PDF 가 스스로 항등식을 증명했을 때"였지 "PDF 가
+        # 뭐라도 찾았을 때"가 아니었다. 실측: 일성건설(00146232) 연결·
+        # 일진디스플(00198697) 별도+연결이 전부 이 경로로 항등식 불성립인 채
+        # report_lines 에 조용히 실렸다(93건 백필 직후 독립 재검증으로 발각).
+        # T1(엄격)만 채택 — T3 는 unresolved 로 강등(결측이 오염보다 낫다).
+        if pdf_conf == Confidence.T1_CONFIDENT:
             return ReconcileResult(
                 corp_code=corp_code, rcept_no=rcept_no, basis=basis,
                 decision="pdf", html_confidence=html_conf, pdf_confidence=pdf_conf,
                 html_facts=html_facts, pdf_facts=pdf_facts,
-                reason="HTML T2(완전공백) — PDF 채택",
+                reason="HTML T2(완전공백), PDF T1(항등식 성립) — PDF 채택",
             )
         return ReconcileResult(
             corp_code=corp_code, rcept_no=rcept_no, basis=basis,
             decision="unresolved", html_confidence=html_conf, pdf_confidence=pdf_conf,
             html_facts=html_facts, pdf_facts=pdf_facts,
-            reason="HTML·PDF 둘 다 완전공백 — 결측 유지",
+            reason="HTML T2(완전공백), PDF도 T1 아님(공백 또는 항등식 불성립) — "
+                   "자동 채택 안 함, 사람 확인 대기",
         )
 
     # html_conf == T3_AMBIGUOUS

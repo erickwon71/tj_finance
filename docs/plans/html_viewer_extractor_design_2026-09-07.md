@@ -999,7 +999,62 @@ DB증권·일성건설=T2/T2 — 연결재무제표 자체가 없는 정상 케�
 일치). `dq_assertions.py` WARN 카운트 2→5(신규 3건 정확히 반영), ERROR
 그대로 0.
 
-**남은 것**: 이번 3건은 실제 배치 실행(스모크 겸용)이라 DB에 남겨둠. 나머지
-Category C 후보(93건 잔여 포함) 전체를 이 경로로 실제 돌리는 **소급 백필은
-별도 단계**(런북 원칙 그대로) — 아직 미실행, 별도 지시 대기. 커밋 안 함
-(브랜치는 위와 동일).
+**남은 것(당시)**: 이번 3건은 실제 배치 실행(스모크 겸용)이라 DB에 남겨둠.
+93건 잔여 전체 소급 백필은 별도 단계로 다음 지시 대기.
+
+## 8-16. Track C 93건 전체 소급 백필 실행 + 검증 중 발견한 T2 분기 버그 수정(2026-09-07, 같은날 후속 — 사용자 지시 "93건 전체 소급 백필 진행하고 검증 해봐")
+
+`scripts/backfill_track_c_93_reconcile_2026-09-07.py` 신설(`sync_pdf_recovery()`
+의 `NOT EXISTS report_lines` 후보 SQL은 이 93건 대부분을 못 잡는다 — 이미
+report_lines 가 존재하기 때문에, `backfill_pdf_multiline_195_2026-09-06.py`류와
+동일하게 `recover_one()`을 rcept 리스트로 직접 호출). 93건 전체(중복제거)
+1차 실행: `{'bases_html': 56, 'bases_pdf': 7, 'bases_unresolved': 123,
+'rows': 7939, 'dq_rows': 123, 'errors': 0}`.
+
+**검증 — report_lines 재저장분에서 그랜드토탈을 독립적으로 재계산**(별도
+스크립트, `account_mapper.map()`을 report_lines.label_raw 에 직접 다시 돌려
+`reconcile()`의 판정과 무관하게 자체 검산)해 3건에서 모순 발견: "DQ 큐에
+없는데(=자동채택됨) 항등식은 실제로 불성립"하는 경우가 있었다 — 일성건설
+(00146232) 연결, 일진디스플(00198697) 별도+연결, 씨아이테크(00127158) 연결.
+
+**근본원인**: `reconcile_basis()`의 T2(HTML 완전공백) 분기가 원래
+`pdf_conf != T2_EMPTY`(즉 T1 이든 T3 이든 "완전공백만 아니면") 조건으로
+PDF 를 채택했다 — "원인B 안전망"의 원래 취지는 "PDF 가 스스로 항등식을
+증명했을 때"였는데 실제 조건은 "PDF 가 뭐라도 찾기만 하면"이었다. HTML 이
+아무것도 못 찾은 이상(T2) 교차검증할 상대가 없어, PDF 의 T3(항등식
+불성립·부분값)를 봐줄 근거가 없었다. §8-11(R81)에서 T3(html)+T1(pdf) 분기엔
+교차검증을 넣었는데, 이 T2 분기는 그보다도 느슨한 기준(T1 조차 요구 안 함)
+이 그대로 남아있었던 것 — 발견 못 했던 이유는 §8-9 최초 스모크 4건이
+우연히 전부 pdf_conf=T1 인 케이스였기 때문(§8-9 표 재확인 결과 일성건설·
+일진디스플 스모크 당시 PDF 값 자체가 그때 마침 항등식을 만족했음).
+
+**수정**: `fin2/extract/reconcile.py` T2 분기 조건을 `pdf_conf != T2_EMPTY`
+→ `pdf_conf == T1_CONFIDENT`로 강화(§8-8 T3 분기와 동일 엄격도로 통일).
+회귀테스트 `test_t2_html_and_t3_pdf_stays_unresolved_not_auto_adopted` 추가.
+`pytest fin2/tests/ tests/` 835 passed(무관 기존실패 1건 그대로, 회귀 0).
+
+**93건 재백필(수정 반영, delete-then-insert 라 안전하게 덮어씀)**:
+`{'bases_html': 56, 'bases_pdf': 3, 'bases_unresolved': 127, 'rows': 7745,
+'dq_rows': 127, 'errors': 0}` — `bases_pdf` 7→3(오염됐던 4건이 정확히
+unresolved 로 강등), `rows` 7939→7745(오염 행 194개 제거). **독립 재검증
+재실행 결과 "자동채택됐는데 항등식 불성립"인 경우 0건**(3건→0건, 완전 해소).
+
+**최종 결과 요약(93건, 186 basis)**:
+
+| 항목 | 결과 |
+|---|---|
+| 별도(separate) 항등식 성립·확실 개선 | 59/93 (63%) |
+| 별도 unresolved(사람 확인 대기) | 34/93 |
+| 연결(consolidated) 확실 개선 | 0/93(설계상 항상 그럼 — 3자분할 위험) |
+| 연결 unresolved | 93/93(전부 사람 확인 대기 — 수정 후 100%) |
+| report_lines 신규 저장 | 7,745행 |
+| DQ 리뷰 큐 적재(track_c_backfill 누적) | 130행(이전 스모크 3 + 이번 127) |
+| 에러 | 0 |
+
+상세: `docs/PARSING_RULES.md` R83. 신규 스크립트
+`scripts/backfill_track_c_93_reconcile_2026-09-07.py`(커밋 대상 아님 —
+스크립트는 사용자 지시로 커밋 제외 관례).
+
+**남은 것**: std_financials_v3 재빌드(계층3)는 아직 안 함 — report_lines
+레벨까지만. 34건(별도)+93건(연결) unresolved 는 사람 원문대조 대기. 커밋
+안 함(브랜치는 위와 동일, 마지막 커밋 이후 신규 diff).

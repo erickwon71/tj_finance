@@ -99,6 +99,19 @@ def test_t2_html_falls_back_to_pdf_when_pdf_has_data():
     assert result.pdf_confidence == Confidence.T1_CONFIDENT
 
 
+def test_t2_html_and_t3_pdf_stays_unresolved_not_auto_adopted():
+    """실측 발견(2026-09-07, 93건 백필 직후 독립 재검증 — 일성건설·일진디스플)
+    — HTML 이 완전공백(T2)이어도 PDF 가 항등식을 스스로 증명 못 하면(T3, 부분
+    값 또는 불일치) 자동 채택 안 함. HTML 이 아무것도 못 찾은 이상 교차검증
+    상대가 없어 PDF 의 "확신 없음"을 봐줄 근거가 없다(원래 버그: "완전공백만
+    아니면" 채택하던 걸 "T1 이어야만" 채택으로 강화)."""
+    pdf_facts = _bs_facts("separate", 300, 100, 150)  # 항등식 불성립(T3)
+    result = reconcile_basis("separate", [], lambda: pdf_facts,
+                              corp_code="00000000", rcept_no="r1")
+    assert result.decision == "unresolved"
+    assert result.pdf_confidence == Confidence.T3_AMBIGUOUS
+
+
 def test_t2_html_and_t2_pdf_stays_unresolved():
     result = reconcile_basis("separate", [], lambda: [],
                               corp_code="00000000", rcept_no="r1")

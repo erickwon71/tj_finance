@@ -5143,6 +5143,39 @@ R80 이 방어(`_FUZZY_BLOCK`)만 하고 미룬 "전용 처분 canonical 신설"
 기대→정확매핑 기대로 5개 테스트 재작성). `pytest fin2/tests/ tests/`
 829 passed(무관 기존실패 1건 그대로, 회귀 0).
 
+## R82. Category C(fy1999~2003 절단 복구) 배치 경로 — HTML→PDF T1/T2/T3
+조정 배선 완료
+
+`collector/pdf_lines_sync.py::recover_one()`가 PDF만 파싱하던 옛 방식 대신
+`fin2/extract/reconcile.py::reconcile()`(HTML→PDF T1/T2/T3 조정, §8-8~§8-11)
+을 쓰도록 바뀌었다. ★이건 `scripts/collect_new.py` 데일리 두 call site 배선이
+아니다(그건 XBRL 원문이 있는 현재 필링용, 무관) — `sync_pdf_recovery()`는
+Category C(fy1999~2003 절단 복구, 6,598건 population) 전용 독립 배치 경로고,
+Track C 93건은 이 population 의 부분집합이다.
+
+basis별 decision 이 "html"/"pdf"(자동채택)인 facts 만 report_lines 로 변환,
+"unresolved"는 제외하고 `report_recon_candidates` 리뷰 큐에 적재(`persist_
+unresolved()`). `facts_to_report_lines()`의 `unit_source`도 하드코딩 "pdf"
+대신 `source_format`("html"/"pdf")을 그대로 써서 값의 출처를 report_lines
+에 남긴다. `sync_pdf_recovery()` 카운터도 basis별(`bases_html`/`bases_pdf`/
+`bases_unresolved`)로 재정의. ★`store_report_lines()`가 rcept 단위 무조건
+delete-then-insert라 `lines`가 빈 리스트일 때 호출하면 delete 만 되고 이전
+데이터가 지워질 위험 — 옛 코드에 있던 `if lines:` 가드 유지 확인.
+
+테스트: `fin2/tests/test_pdf_lines_sync.py` 5개 신설(순수 로직, `reconcile()`
+mock). `pytest fin2/tests/ tests/` 834 passed(무관 기존실패 1건 그대로, 회귀0).
+
+라이브 스모크(실제 미복구 후보 3건, 진짜 DB write): DB증권·일성건설·제일기획
+각 1건 — `{'candidates': 3, 'bases_html': 3, 'bases_pdf': 0, 'bases_
+unresolved': 3, 'rows': 329, 'dq_rows': 3, 'errors': 0}`. 별도(separate) 3건
+전부 `unit_source='html'`로 BS/IS/CF 정상저장, 연결(consolidated) 3건 전부
+report_lines 미저장(의도) 대신 `report_recon_candidates` 정확 적재(제일기획
+T3/T3, DB증권·일성건설 T2/T2 — 연결재무제표 자체가 없는 정상케이스).
+`dq_assertions.py` WARN 2→5(신규 3건 정확 반영), ERROR 그대로 0.
+
+**남은 것**: 나머지 Category C 후보(93건 잔여 포함) 전체를 이 경로로 실제
+돌리는 소급 백필은 별도 단계(런북 원칙) — 미착수, 별도 지시 대기.
+
 ---
 
 ## 부록 A. 원문(DART XML) 함정 카탈로그

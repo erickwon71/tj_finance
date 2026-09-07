@@ -955,5 +955,51 @@ CANON`(FCF 계산)에 포함할지는 미결정으로 남김(FCF 정의 확장 �
 신규 `cf.treasury_stock_proceeds`를 차감하도록 넷팅하는 것도 별도 후속.
 `cf.available_for_sale_net`의 `_resolve()` 데이터손실 의심도 미조사.
 
-**커밋 안 한 것**: 이 세션의 마지막 상태 기준 전부 커밋 완료(3개 커밋,
+**커밋 안 한 것(당시)**: 이 세션의 마지막 상태 기준 전부 커밋 완료(4개 커밋,
 브랜치 위 참고) — origin push는 안 함, 사용자 확인 대기.
+
+## 8-15. §5 파이프라인 배선 완료(2026-09-07, 같은날 후속 — 사용자 지시 "파이프라인 배선부터 진행해")
+
+§5에서 미착수로 남겨뒀던 배선 지점을 실제로 연결했다. **주의**: 이건 §5가
+말하던 `scripts/collect_new.py` 데일리 두 call site 배선이 아니다 — 그건
+XBRL 원문이 있는 현재 필링용(무관, 손 안 댐). 실제 통합 지점은
+`collector/pdf_lines_sync.py::recover_one()`/`sync_pdf_recovery()` —
+Category C(fy1999~2003 절단 복구, `docs/plans/factv2_stdv2_gc_backfill_
+backlog_2026-09-01.md` §3에서 신설) 전용 독립 배치 경로이자, Track C 93건이
+바로 이 population 의 부분집합이다.
+
+**변경**: `recover_one()`이 `scraper.fetch()`(PDF 우선, HTML 폴백은 미파싱)로
+PDF만 파싱하던 옛 방식 대신 `reconcile()`(HTML→PDF T1/T2/T3)을 호출 — basis
+별로 decision 이 "html"/"pdf"(자동채택)인 facts 만 report_lines 로 변환,
+"unresolved"는 제외(호출자가 리뷰 큐 적재). `facts_to_report_lines()`의
+`unit_source`도 하드코딩 "pdf" 대신 `f.source_format`("html"/"pdf")을 그대로
+써서 값의 출처가 report_lines 에도 남게 했다.
+
+`sync_pdf_recovery()`는 basis별 decision 카운터로 재정의(`bases_html`/
+`bases_pdf`/`bases_unresolved`, 옛 `recovered_pdf`/`recovered_html_only`/
+`no_content` 대체)하고, 매 rcept 마다 `persist_unresolved()`를 호출해
+unresolved basis 를 `report_recon_candidates`에 적재하도록 했다. ★
+`store_report_lines()`가 rcept 단위 무조건 delete-then-insert라서, `lines`가
+빈 리스트일 때 호출하면 delete 만 되고 insert 가 없어 이전 실행 데이터를
+지워버릴 위험이 있다 — 옛 코드에 이미 있던 `if lines:` 가드를 그대로 유지.
+
+**테스트**: `fin2/tests/test_pdf_lines_sync.py` 5개 신설(순수 로직, `reconcile()`
+mock — `sync_pdf_recovery()`는 curated_key_scan/reconcile_store 관례대로
+DB write-path 라 pytest 미대상, 수동 스모크로 검증). `pytest fin2/tests/
+tests/` 834 passed(무관 기존실패 1건 그대로, 회귀 0).
+
+**라이브 스모크 검증(실제 미복구 후보 3건, 진짜 DB write)**: DB증권·일성건설·
+제일기획 각 1건씩(전부 Category C 절단 후보, report_lines 없던 것 확인 후
+실행) — 결과: `{'candidates': 3, 'bases_html': 3, 'bases_pdf': 0,
+'bases_unresolved': 3, 'rows': 329, 'dq_rows': 3, 'errors': 0}`. 실제 저장
+확인: 별도(separate) basis 3건 전부 `unit_source='html'`로 BS/IS/CF 정상
+저장(329행), 연결(consolidated) basis 3건 전부 report_lines 에 **저장 안 됨**
+(의도한 대로) 대신 `report_recon_candidates`에 정확히 적재(제일기획=T3/T3,
+DB증권·일성건설=T2/T2 — 연결재무제표 자체가 없는 정상 케이스, §4-보강 정책과
+일치). `dq_assertions.py` WARN 카운트 2→5(신규 3건 정확히 반영), ERROR
+그대로 0.
+
+**남은 것**: 이번 3건은 실제 배치 실행(스모크 겸용)이라 DB에 남겨둠. 나머지
+Category C 후보(93건 잔여 포함) 전체를 이 경로로 실제 돌리는 **소급 백필은
+별도 단계**(런북 원칙 그대로) — 아직 미실행, 별도 지시 대기. 커밋 안 함
+(브랜치는 위와 동일).

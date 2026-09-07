@@ -63,6 +63,12 @@ NOTE_ACCOUNTS: dict[str, list[str]] = {
     "note.treasury_stock_purchase": [
         "자기주식취득금액",
     ],
+    # 2026-09-07(R81, R80 발견분): 취득쪽(위)만 있던 갭 — "자기주식처분금액"이 부호
+    # 반대인 취득 계정으로 오매핑되던 것 신규 canonical 로 해결(cf 쪽 cf.treasury_
+    # stock_proceeds 와 동일 패턴).
+    "note.treasury_stock_proceeds": [
+        "자기주식처분금액",
+    ],
 
     # ── 주석 테이블 구조 레이블 (고빈도 미매핑 → unknown_accounts 오염 방지) ──
     # 이 항목들은 실제 금융 데이터가 아닌 테이블 헤더/레이블

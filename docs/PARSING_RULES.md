@@ -5095,6 +5095,54 @@ alias 추가로는 못 고침(정확한 반대쪽 코드가 없으니까) — �
 (4개, 그룹1·그룹2 양쪽 + 원래 취득쪽/기존 처분쪽 매핑 안 깨졌는지도 확인).
 `pytest fin2/tests/ tests/` 820 passed(무관 기존실패 1건 그대로, 회귀 0).
 
+## R81. R80 "처분(inflow) 전용 canonical 미신설" 후속 — 사용자 지시 "처분
+부분 추가하는것 진행해"로 실제 신설
+
+R80 이 방어(`_FUZZY_BLOCK`)만 하고 미룬 "전용 처분 canonical 신설"을 진행.
+먼저 하류 영향범위부터 확인: `cf.capex`/`cf.capex_intangible`만 FCF 계산
+(`_CAPEX_CANON`, fin2/standardize/rules.py)에 쓰이고, M&A류(취득/처분 전부)는
+원래 FCF 계산에 안 잡힘(대칭 유지 가능 확인). `app/registry/extended.py`
+(확장재무 UI 표시)·`app/data/shareholder_return.py`(자사주 순취득 계산, 지금은
+취득쪽만 읽음)도 확인.
+
+**신규 canonical 4개**(account_maps/cf_accounts.py + note_accounts.py):
+- `cf.disposal_of_subsidiaries`("종속기업의처분") — 대응 `cf.acquisition_of_
+  subsidiaries`와 짝. M&A 현금흐름이라 `_CAPEX_CANON`엔 안 넣음(취득쪽도 원래
+  안 잡힘, 대칭 유지).
+- `cf.disposal_of_associates`("관계기업의처분"·"공동기업투자의처분"·"공동기업
+  의처분") — 대응 `cf.acquisition_of_associates`와 짝.
+- `cf.investment_property_acquisition`("투자부동산의취득") — 대응 `cf.
+  investment_property_proceeds`와 짝. ★`_CAPEX_CANON`엔 **의도적으로 미포함**
+  — FCF 정의를 조용히 넓히는 셈이라 별도 확인 필요, 미결정으로 남김.
+- `cf.treasury_stock_proceeds`/`note.treasury_stock_proceeds`("자기주식의
+  처분"/"자기주식처분금액") — 대응 `cf.treasury_stock_purchase`/`note.
+  treasury_stock_purchase`와 짝. ★`app/data/shareholder_return.py`는 아직
+  이 신규 canonical 을 안 읽음(순취득금액 넷팅은 별도 후속).
+
+**신규 canonical 없이 기존 코드로 해결한 것**: "산업재산권의처분"은
+`cf.ppe_proceeds`(일반 유형/무형자산 처분 버킷)에 등록 — 같은 문서의
+"무형자산의처분"이 이미 그렇게 매핑되는 것과 동일 패턴(선례 확인 후 재사용,
+새 코드 안 만듦).
+
+**끝까지 무매핑으로 남긴 것**: "기계장치의취득"/"차량운반구의취득" 2개만
+`_FUZZY_BLOCK`에 계속 유지 — 대응 처분쪽(`cf.ppe_proceeds_detail`)은 있지만
+취득쪽은 보통 총계 라인(유형자산의취득→`cf.capex`)과 같이 찍혀 세부항목까지
+별도 canonical 로 잡으면 총계와 중복계상 위험. 임시방편이 아니라 영구 방어.
+
+**부수 발견(수정 안 함, 기록만)**: 이 조사 중 `cf.available_for_sale_net`가
+취득·처분 양쪽을 **같은 canonical 하나로** 등록해둔 기존 패턴을 발견 —
+실제 report_lines 에 "유동성매도가능증권의취득"(14억)과 "…의처분"(1억)이
+같은 필링에 별도 행으로 동시에 존재하는 사례 실측 확인(00100601). 계층3에서
+같은 canonical·같은 기간에 값이 둘 이상이면 `_resolve()`가 하나만 선택하는
+구조라, 이 "순증감 공유코드" 패턴이 실제로는 둘 중 하나를 조용히 버리고
+있을 가능성이 있음(진짜 net 합산이 아님) — 이번 스코프 밖이라 손 안 댐,
+후속 조사 후보로만 기록.
+
+`app/registry/extended.py`에 신규 canonical 4개 표시 라벨 등록.
+`fin2/tests/test_account_mapper_full_vocab_scan_2026-09-07.py` 갱신(방어
+기대→정확매핑 기대로 5개 테스트 재작성). `pytest fin2/tests/ tests/`
+829 passed(무관 기존실패 1건 그대로, 회귀 0).
+
 ---
 
 ## 부록 A. 원문(DART XML) 함정 카탈로그

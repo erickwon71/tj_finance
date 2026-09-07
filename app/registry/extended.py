@@ -91,6 +91,10 @@ EXTENDED_CATALOG: list[ExtSpec] = [
     _spec("cf.borrowings_repaid", "차입금 상환"),
     _spec("cf.deposits_change", "예적금 증감"),
     _spec("cf.derivative_adjustments", "파생상품 조정"),
+    # 2026-09-07(R81): 대응하는 취득쪽(cf.acquisition_of_subsidiaries/associates)만
+    # 있고 처분쪽 canonical 이 없던 갭 신설분.
+    _spec("cf.disposal_of_associates", "관계기업투자주식 처분"),
+    _spec("cf.disposal_of_subsidiaries", "종속기업 처분"),
     _spec("cf.dividends_received", "배당금 수취"),
     _spec("cf.ending_cash", "기말현금"),
     _spec("cf.equity_issuance", "유상증자"),
@@ -98,6 +102,9 @@ EXTENDED_CATALOG: list[ExtSpec] = [
     _spec("cf.govt_grant", "정부보조금"),
     _spec("cf.interest_paid", "이자지급"),
     _spec("cf.interest_received", "이자수취"),
+    # 2026-09-07(R81): 처분쪽(cf.investment_property_proceeds)만 있고 취득쪽이
+    # 없던 갭 신설분.
+    _spec("cf.investment_property_acquisition", "투자부동산 취득"),
     _spec("cf.investment_property_proceeds", "투자부동산 처분"),
     _spec("cf.lease_receivable_proceeds", "리스채권 회수"),
     _spec("cf.lease_repaid", "리스부채 상환"),
@@ -113,6 +120,9 @@ EXTENDED_CATALOG: list[ExtSpec] = [
     _spec("cf.short_term_investment_net", "단기금융상품 순증감"),
     _spec("cf.short_term_loans_change", "단기대여금 증감"),
     _spec("cf.tax_paid", "법인세 납부"),
+    # 2026-09-07(R81): 취득쪽(cf.treasury_stock_purchase)만 있고 처분쪽 canonical
+    # 이 없던 갭 신설분.
+    _spec("cf.treasury_stock_proceeds", "자기주식 처분"),
     _spec("cf.treasury_stock_purchase", "자기주식 취득"),
 
     # ── 손익계산서(IS) ──

@@ -915,6 +915,45 @@ fin2/tests/ tests/` 816 passed(무관 기존실패 1건 그대로, 회귀 0). �
 테스트 4개 신설, `pytest fin2/tests/ tests/` 820 passed(회귀 0). 상세는
 `docs/PARSING_RULES.md` R80.
 
-**남은 것**: CF 처분(inflow) 전용 canonical 코드 신설 여부 — 미결정, 스키마
-확장이라 별도 검토 필요(하류에서 cf.* 코드를 소비하는 로직 영향범위 확인부터).
-커밋 안 함.
+**남은 것(당시)**: CF 처분(inflow) 전용 canonical 코드 신설 여부 — 미결정.
+
+## 8-14. CF 처분(inflow) 전용 canonical 신설 완료(2026-09-07, 같은날 후속 — 사용자 지시 "커밋하고 처분 부분 추가하는것 진행해")
+
+커밋 3개로 나눠 완료(R75~78/HTML뷰어+reconcile+DQ/R79+R80 각각) — 브랜치
+`track-c-html-viewer-account-mapper-2026-09-07`. 커밋 과정에서 **중대한
+실수 발견·복구**: 신설 테스트 `fin2/tests/test_reconcile.py`가 이미 존재하던
+완전히 다른 모듈(`fin2/reconcile.py`, 기재정정 select_source 테스트)의
+기존 파일과 basename 이 겹쳐 Write 로 덮어썼던 것 — 커밋 전 `git status`로
+"M"(기존 추적 파일)인 걸 보고 발견, `git checkout HEAD --`로 원본 복구 +
+내 내용은 `test_extract_reconcile.py`로 분리. 두 파일 다 정상 통과 확인 후
+커밋.
+
+이어서 R80의 "미결정"(CF 처분 canonical 신설)을 진행. 하류 영향범위 먼저
+확인(`_CAPEX_CANON`은 capex/capex_intangible만 사용, M&A 류는 원래 FCF
+계산 밖 — 대칭 유지 가능) 후 신규 canonical 4개 신설:
+`cf.disposal_of_subsidiaries`/`cf.disposal_of_associates`/`cf.investment_
+property_acquisition`/`cf.treasury_stock_proceeds`(+`note.treasury_stock_
+proceeds`). "산업재산권의처분"은 새 코드 없이 기존 `cf.ppe_proceeds`(무형
+자산의처분과 동일 패턴)로 해결. "기계장치의취득"/"차량운반구의취득" 2개는
+총계행과 중복계상 위험 때문에 `_FUZZY_BLOCK`에 영구 방어로 유지(임시방편
+아님).
+
+**부수 발견(수정 안 함)**: `cf.available_for_sale_net`가 취득/처분 양쪽을
+같은 canonical 로 등록해둔 기존 패턴이, 실측(00100601, 같은 필링에 취득
+14억+처분 1억 별도 행 동시존재)으로 봤을 때 `_resolve()`가 하나만 골라
+다른 하나를 조용히 버리고 있을 가능성 발견 — 진짜 "net"이 아닐 수 있음.
+이번 스코프 밖, 후속 조사 후보로만 기록.
+
+`app/registry/extended.py`에 신규 canonical 표시 라벨 등록.
+`fin2/tests/test_account_mapper_full_vocab_scan_2026-09-07.py` 갱신(방어
+기대→정확매핑 기대로 재작성). `pytest fin2/tests/ tests/` 829 passed(무관
+기존실패 1건 그대로, 회귀 0). 상세는 `docs/PARSING_RULES.md` R81.
+
+**의도적으로 안 한 것**: `cf.investment_property_acquisition`을 `_CAPEX_
+CANON`(FCF 계산)에 포함할지는 미결정으로 남김(FCF 정의 확장 여부는 별도
+확인 필요). `app/data/shareholder_return.py`의 "자사주 순취득금액" 계산이
+신규 `cf.treasury_stock_proceeds`를 차감하도록 넷팅하는 것도 별도 후속.
+`cf.available_for_sale_net`의 `_resolve()` 데이터손실 의심도 미조사.
+
+**커밋 안 한 것**: 이 세션의 마지막 상태 기준 전부 커밋 완료(3개 커밋,
+브랜치 위 참고) — origin push는 안 함, 사용자 확인 대기.

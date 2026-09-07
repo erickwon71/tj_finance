@@ -120,10 +120,22 @@ CF_ACCOUNTS: dict[str, list[str]] = {
     # ── 투자활동 세부 ─────────────────────────────────────────────────
     "cf.ppe_proceeds": [
         "유형자산의처분", "유형자산처분수입",
+        # 2026-09-07(account_mapper 전체어휘 스캔 R80 후속, R81): "무형자산의처분"이
+        # 이미 이 일반 처분버킷으로 잡히는 것과 동일 패턴 — 무형자산 세부항목(산업
+        # 재산권) 처분도 별도 canonical 없이 같은 일반 처분버킷으로. 대응 취득쪽은
+        # cf.capex_intangible 의 "산업재산권의취득"(기존 등록).
+        "산업재산권의처분",
     ],
     "cf.acquisition_of_subsidiaries": [
         "종속기업의취득", "사업결합으로인한현금유출",
         "종속기업 취득", "종속기업취득에따른현금유출",
+    ],
+    # 2026-09-07(R81): 취득쪽(위)만 있고 처분쪽 canonical 이 아예 없어 "종속기업의
+    # 처분"이 부호반대인 취득 계정으로 fuzzy 오매핑되던 갭(R80 발견) — 신규
+    # canonical 신설. M&A 현금흐름이라 _CAPEX_CANON(FCF 계산)엔 포함 안 함(취득쪽도
+    # 원래 capex 에 안 잡힘 — 대칭 유지).
+    "cf.disposal_of_subsidiaries": [
+        "종속기업의처분", "종속기업 처분", "종속기업처분에따른현금유입",
     ],
     # (cf.acquisition_of_associates: 아래 투자활동 세부 섹션 참조)
     "cf.short_term_investment_net": [
@@ -182,10 +194,22 @@ CF_ACCOUNTS: dict[str, list[str]] = {
         "지분법적용투자주식의취득",
         "관계기업투자주식의취득",
     ],
-    # ── 투자부동산 처분 (투자활동) ─────────────────────────────────────
+    # 2026-09-07(R81, R80 발견분): 취득쪽(위)만 있던 갭 — "관계기업/공동기업의
+    # 처분"이 부호반대인 취득 계정으로 오매핑되던 것 신규 canonical 로 해결.
+    "cf.disposal_of_associates": [
+        "관계기업의처분", "공동기업투자의처분", "공동기업의처분", "관계기업 처분",
+    ],
+    # ── 투자부동산 취득·처분 (투자활동) ─────────────────────────────────
     "cf.investment_property_proceeds": [
         "투자부동산의처분",
         "투자부동산처분수입",
+    ],
+    # 2026-09-07(R81, R80 발견분): 처분쪽(위)만 있고 취득쪽 canonical 이 없어
+    # "투자부동산의취득"이 부호반대인 처분 계정(cf.investment_property_proceeds)
+    # 으로 오매핑되던 갭. ★_CAPEX_CANON(FCF 계산, fin2/standardize/rules.py)에는
+    # 아직 안 넣음 — FCF 정의를 조용히 넓히는 셈이라 별도 확인 필요, 미결정으로 남김.
+    "cf.investment_property_acquisition": [
+        "투자부동산의취득", "투자부동산 취득",
     ],
     # ── 보증금 증감 (투자활동 또는 영업활동) ────────────────────────────
     "cf.deposits_change": [
@@ -268,6 +292,14 @@ CF_ACCOUNTS: dict[str, list[str]] = {
     ],
     "cf.treasury_stock_purchase": [
         "자기주식의취득", "자기주식취득",
+    ],
+    # 2026-09-07(R81, R80 발견분): 취득쪽(위)만 있던 갭 — "자기주식의처분"이 부호
+    # 반대인 취득 계정으로 오매핑되던 것 신규 canonical 로 해결. ★app/data/
+    # shareholder_return.py 는 아직 treasury_stock_purchase 만 읽어 "순취득금액"을
+    # 계산한다(처분을 차감 안 함) — 이 신규 canonical 을 거기서 소비하도록 넷팅하는
+    # 건 별도 후속 작업(이번엔 canonical 신설·정확매핑까지만).
+    "cf.treasury_stock_proceeds": [
+        "자기주식의처분", "자기주식처분",
     ],
     "cf.lease_repaid": [
         "리스부채상환", "금융리스부채의상환",

@@ -485,6 +485,32 @@ CHECKS: list[dict] = [
             LIMIT 10
         """,
     },
+    {
+        # HTML↔PDF 조정(T1/T2/T3, fin2/extract/reconcile.py) 리뷰 큐 —
+        # `docs/plans/html_viewer_extractor_design_2026-09-07.md` §8-10.
+        # Track C 잔여 93건(1999~2003 PDF-only 시대) 스코프에서 정상적으로 쌓일
+        # 수 있는 백로그라 WARN(참고 지표, 게이트 제외) — 사람이 원문대조로
+        # status 를 reviewed/applied/rejected 로 옮기기 전까진 여기 남아있는 게 정상.
+        "name": "recon_candidates_open_backlog",
+        "sev": "WARN",
+        "desc": "HTML↔PDF 조정 unresolved 리뷰 큐 미확인 건수(Track C 잔여 93건 스코프, 정상적으로 존재 가능)",
+        "count": "SELECT count(*) FROM report_recon_candidates WHERE status='new'",
+        "sample": "SELECT corp_code, rcept_no, basis, html_confidence, pdf_confidence, reason "
+                  "FROM report_recon_candidates WHERE status='new' ORDER BY first_seen_at DESC LIMIT 10",
+    },
+    {
+        # 데일리(현재) 파이프라인은 XBRL 우선이라 이 조정 경로를 사실상 안 탄다 —
+        # 여기 뭔가 쌓이면 "그 필링이 XBRL 표준화에 실패해 PDF/HTML 폴백까지
+        # 떨어졌다"는 이례 신호다. 위 WARN(Track C 백로그, 정상)과 달리 평소엔
+        # 0이어야 정상이라 ERROR.
+        "name": "recon_candidates_daily_unresolved",
+        "sev": "ERROR",
+        "desc": "데일리(XBRL 우선) 필링이 HTML/PDF 조정까지 떨어져 unresolved — 평소 0이어야 함(XBRL 표준화 실패 신호)",
+        "count": "SELECT count(*) FROM report_recon_candidates "
+                 "WHERE source_pipeline='daily' AND status='new'",
+        "sample": "SELECT corp_code, rcept_no, basis, reason FROM report_recon_candidates "
+                  "WHERE source_pipeline='daily' AND status='new' ORDER BY first_seen_at DESC LIMIT 10",
+    },
 ]
 
 

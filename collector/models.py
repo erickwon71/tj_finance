@@ -1226,6 +1226,64 @@ class CuratedKeyCandidate(Base):
     )
 
 
+class ReconCandidate(Base):
+    """
+    HTML↔PDF 신뢰도 조정(T1/T2/T3, `fin2/extract/reconcile.py`) 산출물 중 자동
+    채택이 안 된("unresolved") 항목의 리뷰 큐. 설계: `docs/plans/html_viewer_
+    extractor_design_2026-09-07.md` §8-10.
+
+    Track C 잔여 93건 스코프(1999~2003 PDF-only 시대)에서만 실질적으로 생겨난다 —
+    데일리(현재) 파이프라인은 XBRL 우선이라 이 경로를 사실상 타지 않는다.
+    `source_pipeline='daily'` 행이 나타나면 그 자체가 "이 필링은 XBRL 표준화가
+    실패해 PDF/HTML로 폴백했다"는 이례 신호다(루틴한 백로그가 아님) — dq_assertions
+    의 `recon_candidates_daily_unresolved`(ERROR)가 이걸 감시한다.
+
+    grain = (corp_code, rcept_no, basis, check_kind). check_kind 는 확장용(지금은
+    BS 그랜드토탈 3종 항등식 하나 뿐 — 향후 IS/CF 항등식류 추가 가능).
+
+    `reconcile()`은 순수 함수로 유지(DB 미의존) — 여기 쓰는 건 별도 write-path
+    (`fin2/extract/reconcile_store.py::persist_unresolved()`)가 담당한다. `decision
+    == "unresolved"`인 것만 적재한다(CuratedKeyCandidate가 "①일치는 로그만" 하는
+    것과 동일 원칙 — html/pdf로 자동 채택된 건 이미 값이 확정돼 하류로 흐르니 리뷰
+    큐에 넣을 이유가 없다). 재스캔은 upsert 로 html_confidence/pdf_confidence/
+    html_values/pdf_values/reason/last_seen_at 만 갱신하고, 사람이 갱신하는
+    status/resolution/resolution_note/resolved_at 은 절대 덮어쓰지 않는다.
+    신규 테이블 → create_all 자동 생성.
+    """
+    __tablename__ = "report_recon_candidates"
+
+    corp_code      = Column(String(8),  primary_key=True)
+    rcept_no       = Column(String(14), ForeignKey("filings.rcept_no"), primary_key=True)
+    basis          = Column(String(12), primary_key=True, comment="consolidated/separate")
+    check_kind     = Column(String(40), primary_key=True, default="bs_grand_total_identity")
+
+    report_fiscal_year   = Column(SmallInteger, nullable=False)
+    report_fiscal_period = Column(String(5),    nullable=False)
+
+    html_confidence = Column(String(2), nullable=False, comment="T1/T2/T3")
+    pdf_confidence  = Column(String(2), nullable=True,  comment="T1/T2/T3, NULL=PDF 미시도")
+    html_values     = Column(JSONB, nullable=True, comment="{canonical_account: amount_won}")
+    pdf_values      = Column(JSONB, nullable=True)
+    decision        = Column(String(12), nullable=False, comment="적재분은 항상 'unresolved'(위 write 정책)")
+    reason          = Column(Text, nullable=False)
+
+    source_pipeline = Column(String(20), nullable=False, default="track_c_backfill",
+                              comment="track_c_backfill/daily — 'daily' 는 이상신호(위 클래스독스트링)")
+
+    status          = Column(String(10), nullable=False, default="new",
+                              comment="new/reviewed/applied/rejected — CuratedKeyCandidate와 동일 어휘")
+    resolution      = Column(String(12), nullable=True, comment="사람의 원문대조 최종판정: html/pdf/manual/neither")
+    resolution_note = Column(Text, nullable=True, comment="원문대조 근거+날짜 (unit_overrides.py 관례)")
+
+    first_seen_at   = Column(DateTime, default=datetime.utcnow)
+    last_seen_at    = Column(DateTime, default=datetime.utcnow)
+    resolved_at     = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_recon_candidates_status", "status", "source_pipeline"),
+    )
+
+
 class CorpVerifyStatus(Base):
     """
     기업별 순차 검증 오케스트레이터(scripts/verify_corp_sequential.py) 산출물.

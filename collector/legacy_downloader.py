@@ -126,6 +126,48 @@ class LegacyDartScraper:
         logger.debug(f"    [legacy] XBRL zip 없음/실패 (dcm_no={dcm_no})")
         return None, None
 
+    def fetch_toc_page(self, rcept_no: str) -> Optional[str]:
+        """`dsaf001/main.do` 원문 HTML(TOC 트리 포함) 텍스트 그대로 반환.
+
+        `fin2/extract/html_viewer.py`(2026-09-07, Track C 잔여 93건 대상 HTML뷰어
+        추출기)가 이 메서드로 받은 텍스트에서 자체적으로 목차 트리(node1/node2 JS
+        객체)를 파싱해 "재무제표"/"연결재무제표" 섹션의 eleId/offset/length/dtd를
+        찾는다 — `_get_view_params()`(첫 viewDoc() 호출=표지만 반환)와는 다른
+        용도라 이 얕은 래퍼를 별도로 둔다(기존 PDF 폴백 흐름은 그대로 무변경).
+        """
+        resp = self._get(f"{DART_WEB_BASE}/dsaf001/main.do", {"rcpNo": rcept_no})
+        return resp.text if resp is not None else None
+
+    def fetch_viewer_section(
+        self, rcept_no: str, *, dcm_no: str, ele_id: str,
+        offset: str, length: str, dtd: str,
+    ) -> Optional[bytes]:
+        """`report/viewer.do` 로 TOC 트리의 특정 노드(섹션) 하나만 HTML로 받는다.
+
+        `_fetch_html()`(내부용, 표지 페이지 파라미터 전용으로 쓰이던 기존 호출부와
+        결합돼 있음)과 동일한 요청이지만, 임의의 노드 파라미터를 그대로 받는
+        공개 진입점 — html_viewer.py가 TOC에서 찾은 재무제표 섹션 노드를 그대로
+        넘기면 된다.
+        """
+        return self._fetch_html(rcept_no, {
+            "dcmNo": dcm_no, "eleId": ele_id, "offset": offset, "length": length, "dtd": dtd,
+        })
+
+    def fetch_pdf_bytes(self, rcept_no: str) -> Optional[bytes]:
+        """PDF만 받는 공개 진입점(HTML 폴백 없음).
+
+        `fetch()`(기존, "PDF 우선 → HTML 폴백")와 달리 PDF 하나만 필요할 때
+        쓴다 — `fin2/extract/reconcile.py`(2026-09-07, HTML↔PDF T1/T2/T3
+        신뢰도 조정)가 T2/T3 판정 시 PDF 쪽도 마저 돌려봐야 하는데, 이미
+        HTML을 갖고 있는 상태에서 `fetch()`를 다시 부르면 그 안의 HTML
+        폴백 분기가 불필요하게 한 번 더 실행될 수 있어 이 얕은 래퍼로
+        PDF 단계만 재사용한다.
+        """
+        params = self._get_view_params(rcept_no)
+        if not params:
+            return None
+        return self._fetch_pdf(rcept_no, params["dcmNo"])
+
     # ── 내부 메서드 ─────────────────────────────────────────────
 
     def _throttle(self) -> None:

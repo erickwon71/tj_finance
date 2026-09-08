@@ -172,24 +172,30 @@ CHECKS: list[dict] = [
         # 임계로는 중간대역 오염을 못 잡는다. 이 어서션은 극단값 하한선이지 완전 검출이 아니다
         # (완전 분리는 provenance 기록 + 재추출 = 계획서 Phase 2~5).
         #
+        # ★ 2026-09-08 재보정: 삼성전자 2026H1 연결 자본 579조·이익잉여금 509조가 실적
+        # 성장으로 원래 임계(500조)를 자연 초과(뉴스 대조로 실측 확인, 버그 아님) →
+        # 자본/이익잉여금 임계를 500조→800조로 상향(사용자 결정, v2-drop 백로그 항목2(마)).
+        # ⚠ 고정 임계는 시간이 지나면 다시 낡는다(삼성전자 계속 성장) — 재발 시 이 블록을
+        # 다시 재보정할 것, 근본 해결(상대적/급변 감지)은 statement_magnitude_spike 참고.
+        #
         # is_discrete 포함: 파생분기(Q2=H1−Q1, Q4=FY−Q3)에 오염이 몰려 있고(196행) 앱 분기
         # 차트가 이를 실제로 소비한다. 기존 nonpositive_total_assets 는 discrete 를 제외하나,
         # 여기선 노출 실태를 그대로 드러내는 것이 목적이라 포함한다.
         "name": "statement_magnitude_impossible",
         "sev": "ERROR",
-        "desc": "재무제표 본체 금액이 물리적 불가 크기 (자산>1,000조·자본/이익잉여금>500조·매출>400조) "
+        "desc": "재무제표 본체 금액이 물리적 불가 크기 (자산>1,000조·자본/이익잉여금>800조·매출>400조) "
                 "인데 미격리(DQ<3) — 단위 ×10³~10⁶ 오염이 소비계층 노출",
         "count": "SELECT count(*) FROM std_financials_v3 "
                  "WHERE COALESCE(data_quality,1) < 3 "
-                 "AND (abs(total_assets) > 1e15 OR abs(total_equity) > 5e14 "
-                 "     OR abs(retained_earnings) > 5e14 OR abs(revenue) > 4e14)",
+                 "AND (abs(total_assets) > 1e15 OR abs(total_equity) > 8e14 "
+                 "     OR abs(retained_earnings) > 8e14 OR abs(revenue) > 4e14)",
         "sample": "SELECT corp_code, fiscal_year, fiscal_period, statement_type, "
                   "round(total_assets/1e12) AS assets_jo, round(total_equity/1e12) AS equity_jo, "
                   "round(retained_earnings/1e12) AS re_jo, round(revenue/1e12) AS revenue_jo "
                   "FROM std_financials_v3 "
                   "WHERE COALESCE(data_quality,1) < 3 "
-                  "AND (abs(total_assets) > 1e15 OR abs(total_equity) > 5e14 "
-                  "     OR abs(retained_earnings) > 5e14 OR abs(revenue) > 4e14) "
+                  "AND (abs(total_assets) > 1e15 OR abs(total_equity) > 8e14 "
+                  "     OR abs(retained_earnings) > 8e14 OR abs(revenue) > 4e14) "
                   "ORDER BY GREATEST(COALESCE(abs(total_assets),0), COALESCE(abs(total_equity),0), "
                   "COALESCE(abs(retained_earnings),0), COALESCE(abs(revenue),0)) DESC LIMIT 10",
     },

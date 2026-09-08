@@ -12,7 +12,7 @@
 ## 사용법
     python scripts/layer2_review.py init --top 50      # 시총 상위 50사 큐 생성
     python scripts/layer2_review.py next               # 1건 재적재 + 검산 + CSV
-    python scripts/layer2_review.py pass               # 통과 → 자동으로 다음 1건
+    python scripts/layer2_review.py pass               # 통과 → CSV 삭제 + 자동으로 다음 1건
     python scripts/layer2_review.py fail --note "..."  # 불일치 → 루프 정지 + 트리아지
     python scripts/layer2_review.py redo               # 파서 수정 후 같은 건 재실행
     python scripts/layer2_review.py skip --note "..."  # 검토 제외
@@ -266,6 +266,21 @@ def _mark(session, rcept_no: str, **fields) -> None:
         .values(**fields))
 
 
+def _delete_review_csv(csv_path: str | None) -> None:
+    """PASS 확정된 건의 검토 CSV 는 로컬 작업 파일일 뿐이라 더 볼 일이 없다(DB 판정이
+    영구 기록이고, `layer2_review/` 는 `.gitignore` 대상). 쌓아두면 2,500개사 규모에서
+    디스크만 채운다. 파일이 이미 없어도(재실행·수동 정리 등) 조용히 넘어간다."""
+    if not csv_path:
+        return
+    path = Path(csv_path)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        print(f"  ⚠ CSV 삭제 실패({path}): {exc}")
+    else:
+        print(f"  🗑 CSV 삭제: {path}")
+
+
 def _run_target(session, item, *, root: Path | None = None) -> dict:
     """1건 재적재 → 검산 → CSV. 큐 상태까지 갱신하고 요약 dict 를 돌려준다."""
     now = datetime.now()
@@ -400,6 +415,7 @@ def cmd_pass(args) -> None:
         session.commit()
         print(f"✅ PASS  r{item['rcept_no']}  {item['corp_name']} "
               f"{item['fiscal_year']}{item['fiscal_period']}")
+        _delete_review_csv(item["csv_path"])
         remaining = session.execute(
             text("""SELECT count(*) FROM layer2_review_queue
                     WHERE corp_code = :c AND status IN ('pending','reloaded')"""),

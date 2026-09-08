@@ -34,6 +34,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from collector.db import get_session
+from fin2.extract.ifrs_evidence import store_filing_ifrs_evidence
 from fin2.extract.report_lines import (extract_report_lines, store_note_lines,
                                        store_report_lines, store_report_tables)
 
@@ -130,6 +131,16 @@ def sync_layer2_lines(
                 )
                 out["rows"] += store_note_lines(session, t.rcept_no, lines)
                 store_report_tables(session, t.rcept_no, lines)   # 표 메타(F3)
+                # is_ifrs 판정 근거(2026-09-08, docs/plans/is_ifrs_v3_design_2026-09-08.md)
+                # — document.xml 을 다시 열어(추출과 별도 파싱, 이 코드베이스에서 이미
+                # 용인되는 패턴 — face_audit.py 도 같은 파일을 독립 재파싱한다) Track A/
+                # 기준서번호 증거를 filings.ifrs_evidence 에 캐싱. 실패해도 이 rcept의
+                # 본문/주석 적재는 막지 않는다(비치명).
+                try:
+                    store_filing_ifrs_evidence(session, t.rcept_no, file_path=t.file_path)
+                except Exception as ev_exc:  # noqa: BLE001
+                    logger.warning(f"[note_lines] {t.rcept_no} ifrs_evidence 판정 실패(비치명): "
+                                   f"{type(ev_exc).__name__}: {ev_exc}")
                 if include_body:
                     # 같은 추출 결과에서 본문(BS/IS/CF/SCE)을 적재한다. store_report_lines 가
                     # rcept 단위 delete-then-insert + col_index=0 필터를 이미 한다.

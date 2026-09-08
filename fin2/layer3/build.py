@@ -13,6 +13,7 @@ from __future__ import annotations
 from sqlalchemy import text, delete
 
 from collector.models import StdFinancialV3, ExtendedFactV3
+from fin2.extract.ifrs_evidence import resolve_std_v3_is_ifrs
 from fin2.layer3.combine import (combine_full, select_canonical_rcepts,
                                  build_merged_lines)
 from fin2.standardize.build import _period_end, _future_guard
@@ -181,6 +182,11 @@ def build_corp(session, corp: str, year_min: int = 2015,
             row.data_quality = dq
             row.period_end = period_end
             row.shares_out = _select_shares_out(session, corp, fy, period, src)
+            # is_ifrs(2026-09-08, docs/plans/is_ifrs_v3_design_2026-09-08.md) — source_rcepts
+            # 의 filings.ifrs_evidence(Layer2 적재 시 fin2/extract/ifrs_evidence.py 가 캐싱)를
+            # 모아 판정. 연도 추측 없음(증거 없으면 NULL, 이전엔 컬럼 자체가 없어
+            # standard_financials 뷰가 TRUE 상수로 채웠었다).
+            row.is_ifrs = resolve_std_v3_is_ifrs(session, src)
             session.add(row)
             n += 1
 

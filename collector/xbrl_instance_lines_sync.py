@@ -25,6 +25,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from collector.db import get_session
+from fin2.extract.ifrs_evidence import store_filing_ifrs_evidence
 from fin2.extract.report_lines import store_report_lines, store_report_tables
 from fin2.extract.report_lines_xbrl import extract_report_lines_xbrl
 
@@ -103,6 +104,15 @@ def sync_xbrl_instance_lines(
                     report_fiscal_period=t.fiscal_period,
                     period_end_date=t.period_end_date,
                 )
+                # is_ifrs 판정 근거(2026-09-08) — 이 rcept는 소스 자체가 XBRL instance zip
+                # 이라(IFRS 택소노미 전용 포맷) DB의 parser_track 확인만으로 즉시 확정된다
+                # (파일 재오픈 없음, Track D). extract_report_lines_xbrl() 결과가 비어도
+                # (아래 lines 빈 경우) 소스 트랙 자체는 안 바뀌므로 항상 기록한다.
+                try:
+                    store_filing_ifrs_evidence(session, t.rcept_no)
+                except Exception as ev_exc:  # noqa: BLE001
+                    logger.warning(f"[xbrl_instance_lines] {t.rcept_no} ifrs_evidence 판정 "
+                                   f"실패(비치명): {type(ev_exc).__name__}: {ev_exc}")
                 if not lines:
                     # extract_report_lines_xbrl 은 실패해도 절대 raise 하지 않고 [] 를 반환한다
                     # (모듈 docstring). 빈 결과는 실패가 아니라 "이 필링에서 뽑을 게 없었다" —

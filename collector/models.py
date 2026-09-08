@@ -84,6 +84,12 @@ class Filing(Base):
     created_at    = Column(DateTime,    default=datetime.utcnow)
     updated_at    = Column(DateTime,    default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # is_ifrs 판정용 원문 증거 캐시(2026-09-08, docs/plans/is_ifrs_v3_design_2026-09-08.md,
+    # fin2/extract/ifrs_evidence.py 가 채움). 'track_a'/'track_d'/'std_no_kgaap'/
+    # 'std_no_kifrs'/'std_no_mixed'/NULL(증거없음 또는 미판정).
+    ifrs_evidence        = Column(String(20), nullable=True, comment="is_ifrs 판정 근거 코드")
+    ifrs_evidence_detail = Column(JSONB,      nullable=True, comment="판정 근거 원문 스니펫(감사가능성)")
+
     corporation   = relationship("Corporation", back_populates="filings")
     download_task = relationship("DownloadTask", back_populates="filing", uselist=False)
 
@@ -1844,6 +1850,11 @@ class StdFinancialV3(Base):
     fiscal_period  = Column(String(5),    primary_key=True)   # FY/H1/Q1/Q3
     statement_type = Column(String(12),   primary_key=True)   # consolidated/separate
     period_end     = Column(Date,         nullable=True)
+    # is_ifrs(2026-09-08, docs/plans/is_ifrs_v3_design_2026-09-08.md): source_rcepts(BS/IS/CF)
+    # 의 filings.ifrs_evidence 를 combine.py 가 모아 채움 — True=원문 증거로 IFRS 확정,
+    # False=원문 증거로 K-GAAP 확정, NULL=증거 없음(연도로 추측하지 않음, v2 _derive_is_ifrs
+    # 원칙 재사용). 이전엔 컬럼 자체가 없어 standard_financials 뷰가 TRUE 상수로 채웠었다.
+    is_ifrs        = Column(Boolean,      nullable=True)
 
     # ── BS ──
     total_assets        = Column(BigInteger, nullable=True)

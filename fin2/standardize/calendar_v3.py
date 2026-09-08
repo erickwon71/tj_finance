@@ -38,9 +38,11 @@ def _load_asfiled_v3(session, corp_code: str, basis: str) -> dict[tuple[int, str
 
     v3 는 PK 하나뿐(corp_code, fiscal_year, fiscal_period, statement_type) — 저장된 행이
     곧 as-filed 누적행이라 v2 의 `NOT is_stub AND NOT is_discrete` 필터 불요.
-    `is_ifrs` 는 v3 소스에 컬럼 자체가 없다 — `collector/db.py::standard_financials` 뷰가
-    이미 쓰는 관례(2015+ 전량 K-IFRS 의무화 이후, "TRUE AS is_ifrs")를 그대로 따라 상수를
-    채운다. `_build_discrete()` 가 참조하는 `bs_rcept`/`is_rcept`/`cf_rcept`/`applied_rules`
+    `is_ifrs`(2026-09-08, docs/plans/is_ifrs_v3_design_2026-09-08.md)는 이제 v3에 실제
+    컬럼이 있다(`SELECT *`로 이미 딸려온다) — 예전엔 컬럼 자체가 없어 `collector/db.py::
+    standard_financials` 뷰가 쓰던 "TRUE 상수" 관례를 여기서도 강제로 흉내냈었지만, 그
+    근거(2015+만 있고 전량 IFRS 의무화 이후)가 소급백필로 깨져 폐기됐다. `_build_discrete()`
+    가 참조하는 `bs_rcept`/`is_rcept`/`cf_rcept`/`applied_rules`
     는 v3 에 없어 `dict.get()` 이 조용히 None 을 반환 — crash 없음(quarterly.py 쪽에서
     이 값들은 opinc_kifrs provenance 마킹에만 쓰이고 그 마킹은 `std_financials_calendar`
     에 컬럼 자체가 없어 소비되지 않는다).
@@ -53,7 +55,6 @@ def _load_asfiled_v3(session, corp_code: str, basis: str) -> dict[tuple[int, str
     out: dict[tuple[int, str], dict] = {}
     for r in rows:
         d = dict(r._mapping)
-        d["is_ifrs"] = True
         out[(d["fiscal_year"], d["fiscal_period"])] = d
     return out
 

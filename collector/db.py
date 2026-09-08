@@ -1272,6 +1272,59 @@ def _run_migrations() -> None:
          """
         ALTER TABLE std_financials_v3 ADD COLUMN IF NOT EXISTS unit_overrides JSONB;
         """),
+
+        ("2026_09_is_ifrs_v3",
+         # is_ifrs 컬럼 신설(2026-09-08, docs/plans/is_ifrs_v3_design_2026-09-08.md) —
+         # v2-drop-remaining-backlog 항목4. standard_financials 뷰가 지금까지 `TRUE AS
+         # is_ifrs` 로 상수화한 근거("v3는 2015+만 있고 전량 IFRS 의무화 이후")가 그동안의
+         # Category C 소급백필(1999~)로 깨져, pre-2015 132,026행(41%)이 오답 가능성을 안은
+         # 채 TRUE로 노출 중이었다. fin2/extract/ifrs_evidence.py 가 원문 증거(Track A
+         # ACODE, Track D XBRL zip 출처, "기업회계기준서 제N호" 번호자릿수)로만 판정해
+         # filings.ifrs_evidence 에 캐시하고, combine.py 가 그 rcept들을 모아
+         # std_financials_v3.is_ifrs 를 채운다. 둘 다 nullable, DEFAULT 없음 — PG11+ 에서
+         # 즉시 완료(테이블 재작성 없음).
+         """
+        ALTER TABLE filings ADD COLUMN IF NOT EXISTS ifrs_evidence VARCHAR(20);
+        ALTER TABLE filings ADD COLUMN IF NOT EXISTS ifrs_evidence_detail JSONB;
+        ALTER TABLE std_financials_v3 ADD COLUMN IF NOT EXISTS is_ifrs BOOLEAN;
+        """),
+
+        ("2026_09_is_ifrs_v3_view",
+         # 위 컬럼신설 직후 뷰 갱신 — `2026_09_std_financials_v2_drop`(:1164)가 마지막으로
+         # 정의한 `standard_financials` 뷰를 그대로 복사하되 `TRUE AS is_ifrs,` 한 줄만
+         # `v3.is_ifrs AS is_ifrs,`로 교체(그 외 SELECT 목록·JOIN·WHERE 전부 무변경). 백필
+         # 전에는 아직 NULL(미상)로 보이는 게 하드코딩 TRUE보다 정직한 상태 — CREATE OR
+         # REPLACE는 데이터 백필과 무관하게 즉시 적용 가능.
+         """
+        CREATE OR REPLACE VIEW standard_financials AS
+        SELECT
+            v3.corp_code, v3.fiscal_year, v3.fiscal_period, v3.statement_type,
+            1::smallint AS version,
+            v3.period_end,
+            v3.is_ifrs,
+            COALESCE(v3.source_rcepts->>'BS', v3.source_rcepts->>'IS', v3.source_rcepts->>'CF')::varchar(14) AS rcept_no,
+            v3.total_assets, v3.current_assets, v3.cash, v3.receivables, v3.inventory, v3.ppe, v3.intangibles,
+            v3.total_liabilities, v3.current_liabilities, v3.short_term_debt, v3.long_term_debt,
+            v3.total_equity, v3.controlling_equity, v3.retained_earnings, v3.trade_payables,
+            v3.revenue, v3.cogs, v3.gross_profit, v3.sga, v3.rd_expense, v3.operating_income,
+            v3.interest_expense, v3.ebt, v3.tax_expense, v3.net_income, v3.controlling_ni,
+            v3.cfo, v3.cfi, v3.cff, v3.capex, v3.dividends_paid,
+            v3.depreciation, v3.amortization, v3.da_total, v3.ebitda, v3.fcf, v3.net_debt, v3.shares_out,
+            v3.data_quality,
+            NULL::timestamp without time zone AS superseded_at,
+            v3.built_at AS calculated_at,
+            COALESCE(fa.gate_status, 'unaudited') AS gate_b_status,
+            v3.industry_lines
+        FROM std_financials_v3 v3
+        LEFT JOIN face_audit fa
+          ON  fa.corp_code = v3.corp_code
+          AND fa.fiscal_year = v3.fiscal_year
+          AND fa.fiscal_period = v3.fiscal_period
+          AND fa.statement_type = v3.statement_type
+          AND NOT COALESCE(fa.is_stub, false)
+          AND fa.source_version = 'v3'
+        WHERE COALESCE(fa.gate_status, 'unaudited') <> 'fail_a';
+        """),
     ]
 
     with engine.begin() as conn:

@@ -1,5 +1,5 @@
 """calendar_v3.py 단위 테스트 — std_financials_v3 소스 로더(_load_asfiled_v3)가 새로
-추가한 배선(basis 필터, is_ifrs 상수화)을 실DB 없이 스텁 세션으로 검증한다.
+추가한 배선(basis 필터, is_ifrs 실컬럼 통과)을 실DB 없이 스텁 세션으로 검증한다.
 
 이산분기 조립(_build_discrete)·달력 레코드 조립(_cq_record/_cy_record) 자체는 이 모듈이
 그대로 재사용하는 기존 순수 함수라 test_quarterly.py/test_calendar.py 가 이미 커버 —
@@ -39,6 +39,7 @@ def _v3_row(fy, fp, pe_month, pe_year, basis="consolidated", **vals):
         "statement_type": basis, "period_end": date(pe_year, pe_month, 31),
         "revenue": None, "net_income": None, "cfo": None,
         "total_assets": None, "total_equity": None,
+        "is_ifrs": None,   # 실컬럼(2026-09-08) — 기본값은 증거없음(NULL), 개별 테스트가 override
     }
     base.update(vals)
     return base
@@ -58,12 +59,22 @@ class _FakeSession:
         return _Result(rows)
 
 
-def test_keys_by_fy_fp_and_forces_is_ifrs_true():
-    rows = [_v3_row(2024, "Q1", 3, 2024, revenue=100)]
+def test_keys_by_fy_fp_and_passes_through_is_ifrs():
+    """2026-09-08 이전엔 v3에 is_ifrs 컬럼 자체가 없어 이 함수가 강제로 True를 채웠다
+    (docs/plans/is_ifrs_v3_design_2026-09-08.md) — 이제 실컬럼이 생겨 그 값을 그대로
+    통과시킨다(짐작 금지, combine.py/build_corp가 이미 채워온 값을 신뢰)."""
+    rows = [_v3_row(2024, "Q1", 3, 2024, revenue=100, is_ifrs=True)]
     out = _load_asfiled_v3(_FakeSession(rows), "00000000", "consolidated")
     assert (2024, "Q1") in out
-    assert out[(2024, "Q1")]["is_ifrs"] is True   # v3 엔 컬럼이 없어 상수로 채움(관례)
+    assert out[(2024, "Q1")]["is_ifrs"] is True
     assert out[(2024, "Q1")]["revenue"] == 100
+
+
+def test_is_ifrs_null_passes_through_unmodified():
+    """증거 없는 행(NULL)을 True로 승격시키지 않는다 — 강제상수 관례 폐기 회귀 고정."""
+    rows = [_v3_row(2005, "FY", 12, 2005, revenue=50, is_ifrs=None)]
+    out = _load_asfiled_v3(_FakeSession(rows), "00000000", "consolidated")
+    assert out[(2005, "FY")]["is_ifrs"] is None
 
 
 def test_filters_by_basis():

@@ -1337,7 +1337,8 @@ def _is_loadable(line: ReportLineRow) -> bool:
     return True
 
 
-def store_report_lines(session, rcept_no: str, lines: list[ReportLineRow]) -> int:
+def store_report_lines(session, rcept_no: str, lines: list[ReportLineRow], *,
+                       overwrite_manual: bool = False) -> int:
     """rcept_no 단위 delete-then-insert(재추출 재현성). fact_v2 처럼 셀 단위 upsert 가 아님 —
     report_lines 는 값판단이 없어 충돌 개념 자체가 없고, 재추출은 그 보고서의 이전 tree 를
     통째로 교체하는 게 자연스럽다.
@@ -1346,9 +1347,32 @@ def store_report_lines(session, rcept_no: str, lines: list[ReportLineRow]) -> in
     (`store_note_lines`) — 주석 볼륨(본문의 ~4.7배)을 본문 조회에서 격리(2026-07-25).
 
     ★★당기(col_index=0)만 적재한다 — 사용자 결정 2026-07-30(`_PERIOD_AXIS_STATEMENTS`).
-    상세는 `_is_loadable` 참고."""
-    from sqlalchemy import delete, insert
+    상세는 `_is_loadable` 참고.
+
+    ★수동입력 보호(2026-09-08, 사용자 지시): 이 함수는 rcept_no 전체를 지우므로, 사람이
+    직접 원문을 읽고 타이핑한 `unit_source='manual'` 행(`fin2/extract/manual_report_lines.py`
+    ::store_manual_report_lines — 그쪽은 반대로 (rcept,statement,basis) 스코프라 자동추출
+    산출물을 지우려면 `overwrite=True` 를 요구한다)이 이 rcept에 하나라도 있으면 **기본적으로
+    거부**한다. 없으면 이 안전장치가 자동 재추출(백필 스크립트·`recheck=True` 데일리 재검사
+    등, 이 함수를 직접 부르는 15개+ 호출부 전부)이 사람이 검증한 값을 조용히 덮어쓸 수
+    있었다 — 반대 방향(수동이 자동을 덮어쓸 때)만 막혀 있던 비대칭을 해소. 호출부는 대부분
+    이미 한 건 실패를 로그+스킵으로 흡수하는 try/except라(예: note_lines_sync.py)
+    `ValueError`가 파이프라인을 막지 않고 그 rcept만 안전하게 건너뛴다. 의도적으로
+    덮어써야 하면(예: 수동입력 자체가 틀렸다고 재판정) `overwrite_manual=True`를 명시."""
+    from sqlalchemy import delete, insert, select
     from collector.models import ReportLine
+
+    if not overwrite_manual:
+        has_manual = session.execute(
+            select(ReportLine.id).where(
+                ReportLine.rcept_no == rcept_no, ReportLine.unit_source == "manual",
+            ).limit(1)
+        ).first()
+        if has_manual is not None:
+            raise ValueError(
+                f"{rcept_no} has manually-reviewed report_lines (unit_source='manual') — "
+                f"refusing to auto-overwrite. Pass overwrite_manual=True if this is intentional."
+            )
 
     body = [l for l in lines if l.statement != "note" and _is_loadable(l)]
     session.execute(delete(ReportLine).where(ReportLine.rcept_no == rcept_no))

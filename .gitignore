@@ -7,6 +7,7 @@ __pycache__/
 # --- Local data & runtime ---
 raw_report/
 raw_report
+manual_review/
 tmp/
 taxonomy_cache/
 scratchpad/

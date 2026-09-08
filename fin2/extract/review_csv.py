@@ -150,8 +150,19 @@ def build_rows(db_rows: list[dict]) -> list[tuple]:
                 raw = ""
             out.append((label, _unit_label(r), i,
                         r["depth"] if r["depth"] is not None else "",
-                        r["label_raw"], amount, raw, _note(r)))
+                        _indent_label(r), amount, raw, _note(r)))
     return out
+
+
+def _indent_label(row: dict) -> str:
+    """항목명 앞에 depth × 2칸 공백 — 트리 구조를 눈으로 바로 보이게 한다(사용자 요청
+    2026-09-09). '깊이' 칸의 숫자를 항목명에도 시각적으로 반영할 뿐, depth NULL(EPS 등
+    위치를 주장하지 않는 행)은 들여쓰지 않는다."""
+    depth = row.get("depth")
+    label = row["label_raw"]
+    if depth is None or depth <= 0:
+        return label
+    return "  " * depth + label
 
 
 def build_preamble(*, corp_name: str, corp_code: str, market: str | None,

@@ -66,6 +66,18 @@ def test_null_value_falls_back_to_value_raw_and_leaves_amount_blank():
     assert out[0][1] == "", "단위를 모르면 단위 칸도 비운다"
 
 
+def test_label_indented_by_depth_for_visual_tree():
+    """항목명 앞에 depth × 2칸 공백 — 트리 구조를 눈으로 바로 보이게 한다(사용자 요청
+    2026-09-09). depth=0 은 들여쓰지 않고, NULL(EPS 등 위치 미주장 행)도 그대로 둔다."""
+    out = rc.build_rows([
+        row("BS", "separate", "자산", 1, order=0, depth=0),
+        row("BS", "separate", "유동자산", 1, order=1, depth=1),
+        row("BS", "separate", "현금및현금성자산", 1, order=2, depth=2),
+        row("IS", "separate", "기본주당이익", 1, order=None, depth=None)])
+    assert [r[4] for r in out] == [
+        "자산", "  유동자산", "    현금및현금성자산", "기본주당이익"]
+
+
 def test_fx_declared_is_not_converted_and_shows_currency():
     out = rc.build_rows([row("BS", "separate", "Cash", 1_500, adecimal=0,
                              unit_source="fx_declared", currency="USD")])

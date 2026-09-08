@@ -19,9 +19,9 @@ from fin2.extract import review_csv as rc  # noqa: E402
 
 def row(stmt, basis, label, won, *, seq=0, order=0, depth=0, adecimal=-6,
         unit_source="declared", value_raw=None, currency=None, header_hint=None,
-        declared_unit=None):
+        declared_unit=None, node_role=None, section_path=None):
     return {"statement": stmt, "basis": basis, "table_seq": seq, "row_order": order,
-            "depth": depth, "node_role": None, "section_path": None,
+            "depth": depth, "node_role": node_role, "section_path": section_path,
             "label_raw": label, "value_won": won, "value_raw": value_raw,
             "adecimal": adecimal, "unit_source": unit_source, "header_hint": header_hint,
             "unit_decl_raw": None, "declared_unit": declared_unit, "currency": currency,
@@ -66,16 +66,48 @@ def test_null_value_falls_back_to_value_raw_and_leaves_amount_blank():
     assert out[0][1] == "", "단위를 모르면 단위 칸도 비운다"
 
 
-def test_label_indented_by_depth_for_visual_tree():
-    """항목명 앞에 depth × 2칸 공백 — 트리 구조를 눈으로 바로 보이게 한다(사용자 요청
-    2026-09-09). depth=0 은 들여쓰지 않고, NULL(EPS 등 위치 미주장 행)도 그대로 둔다."""
-    out = rc.build_rows([
-        row("BS", "separate", "자산", 1, order=0, depth=0),
-        row("BS", "separate", "유동자산", 1, order=1, depth=1),
-        row("BS", "separate", "현금및현금성자산", 1, order=2, depth=2),
-        row("IS", "separate", "기본주당이익", 1, order=None, depth=None)])
+def test_missing_group_header_synthesized_from_section_path():
+    """'자산'·'부채'·'자본' 같은 원문 헤더는 금액이 없어 report_lines 자기 행으로는
+    적재되지 않고 자식 행의 `section_path` 로만 보존된다(`ReportLine.section_path`
+    docstring). 사용자 요청(2026-09-09, 원문 캡처 제시) — 이 헤더를 가상 행으로
+    복원해 원문과 같은 모양(헤더 → 들여쓴 자식)으로 보여준다."""
+    rows = [
+        row("BS", "separate", "유동자산", 100, order=0, adecimal=0,
+            node_role="P", section_path="자산"),
+        row("BS", "separate", "현금및현금성자산", 40, order=1, adecimal=0,
+            node_role="F", section_path="자산>유동자산"),
+    ]
+    out = rc.build_rows(rows)
+    assert [(r[4], r[5], r[7]) for r in out] == [
+        ("자산", "", "원문 헤더(금액 없음)"),
+        ("  유동자산", "100", ""),
+        ("    현금및현금성자산", "40", ""),
+    ]
+
+
+def test_group_header_closes_and_reopens_for_sibling_section():
+    """'자산' 그룹이 끝나고 '부채' 그룹이 시작하면 헤더를 다시 연다 — 같은 그룹
+    안(자산총계)에서는 중복해서 열지 않는다."""
+    rows = [
+        row("BS", "separate", "유동자산", 100, order=0, adecimal=0,
+            node_role="P", section_path="자산"),
+        row("BS", "separate", "자산총계", 100, order=1, adecimal=0,
+            node_role="F", section_path="자산"),
+        row("BS", "separate", "유동부채", 50, order=2, adecimal=0,
+            node_role="P", section_path="부채"),
+    ]
+    out = rc.build_rows(rows)
     assert [r[4] for r in out] == [
-        "자산", "  유동자산", "    현금및현금성자산", "기본주당이익"]
+        "자산", "  유동자산", "  자산총계", "부채", "  유동부채"]
+
+
+def test_eps_indented_under_virtual_section_header():
+    """EPS 는 `depth`/`row_order` 가 NULL(표 본류 밖 별도 패스)이지만 `section_path`
+    는 채워지므로(예 '주당손익'), 그걸로 깊이를 정확히 복원한다."""
+    out = rc.build_rows([
+        row("IS", "separate", "기본주당이익", 1, order=None, depth=None, adecimal=0,
+            section_path="주당손익")])
+    assert [r[4] for r in out] == ["주당손익", "  기본주당이익"]
 
 
 def test_fx_declared_is_not_converted_and_shows_currency():

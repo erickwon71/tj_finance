@@ -140,7 +140,29 @@ def build_rows(db_rows: list[dict]) -> list[tuple]:
         scope_rows.sort(key=lambda r: (r["table_seq"] if r["table_seq"] is not None else -1,
                                        r["row_order"] if r["row_order"] is not None else math.inf))
         label = f"[{BASIS_KO[basis]}] {STMT_KO[stmt]}"
-        for i, r in enumerate(scope_rows, start=1):
+        i = 0
+        stack: list[str] = []   # 현재 "열려 있는" 조상 라벨 스택(가상 헤더 + P행 자기 라벨)
+        for r in scope_rows:
+            ancestors = _ancestors(r)
+            # 이번 행의 조상 경로와 스택의 공통 접두를 구해, 안 맞는 부분부터 닫는다
+            # (다른 그룹으로 넘어갔다는 뜻 — 예: 유동자산 그룹 끝나고 비유동자산 시작).
+            common = 0
+            while common < len(ancestors) and common < len(stack) and stack[common] == ancestors[common]:
+                common += 1
+            stack = stack[:common]
+            # 아직 안 열린 조상은 **가상 헤더 행**으로 연다. 원문에는 인쇄돼 있지만
+            # 금액이 없어(예: '자산'·'부채'·'자본'·'포괄손익의 귀속') report_lines 에
+            # 자기 행으로 적재되지 않은 헤더 텍스트다(section_path 로만 보존됨,
+            # `collector/models.py:ReportLine.section_path` 참고) — 사용자 요청
+            # 2026-09-09: "section_path 가 보이고 그 아래에 각 group 에 맞게 보이면
+            # 눈으로 확인하기 쉽겠다"(원문 캡처 예시: '자산' 헤더 밑에 '유동자산' 들여쓰기).
+            for depth, seg in enumerate(ancestors[common:], start=common):
+                i += 1
+                out.append((label, "", i, depth, _indent(seg, depth), "", "",
+                           "원문 헤더(금액 없음)"))
+                stack.append(seg)
+            depth = len(ancestors)
+            i += 1
             if r["value_won"] is None:
                 amount, raw = "", (r.get("value_raw") or "")
             else:
@@ -148,21 +170,30 @@ def build_rows(db_rows: list[dict]) -> list[tuple]:
                 # (magnitude, sign) are unchanged, so source comparison still holds.
                 amount = f"{_rl_displayed(r['value_won'], r.get('adecimal')):,}"
                 raw = ""
-            out.append((label, _unit_label(r), i,
-                        r["depth"] if r["depth"] is not None else "",
-                        _indent_label(r), amount, raw, _note(r)))
+            out.append((label, _unit_label(r), i, depth,
+                        _indent(r["label_raw"], depth), amount, raw, _note(r)))
+            if r.get("node_role") == "P":
+                # 이 행 자체가 다음 행들의 조상이 된다(자식을 거느린 부모 — 원문에서
+                # 다음 행이 한 단계 더 들여써진다는 사실, `node_role` 컬럼 정의 참고).
+                stack.append(r["label_raw"])
     return out
 
 
-def _indent_label(row: dict) -> str:
-    """항목명 앞에 depth × 2칸 공백 — 트리 구조를 눈으로 바로 보이게 한다(사용자 요청
-    2026-09-09). '깊이' 칸의 숫자를 항목명에도 시각적으로 반영할 뿐, depth NULL(EPS 등
-    위치를 주장하지 않는 행)은 들여쓰지 않는다."""
-    depth = row.get("depth")
-    label = row["label_raw"]
-    if depth is None or depth <= 0:
-        return label
-    return "  " * depth + label
+def _ancestors(row: dict) -> list[str]:
+    """`section_path`('자산>유동자산')를 조상 라벨 리스트로. 없으면 최상위(빈 리스트).
+
+    ★저장된 `depth` 대신 **이 리스트의 길이**를 그 행의 표시 깊이로 쓴다 — 실측상
+    항상 일치하고(조상 하나당 들여쓰기 한 단계), EPS 처럼 `depth` 가 NULL(표 본류
+    순회 밖이라 위치를 주장하지 않는 행, `report_lines.py::_emit_eps_lines`)이어도
+    `section_path='주당손익'`은 채워져 있어 깊이 1로 정확히 들여써진다."""
+    path = row.get("section_path")
+    return path.split(">") if path else []
+
+
+def _indent(text: str, depth: int) -> str:
+    """텍스트 앞에 depth × 2칸 공백 — 트리 구조를 눈으로 바로 보이게 한다(사용자 요청
+    2026-09-09)."""
+    return "  " * depth + text if depth > 0 else text
 
 
 def build_preamble(*, corp_name: str, corp_code: str, market: str | None,

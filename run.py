@@ -2823,7 +2823,7 @@ def cmd_extract_lines(args):
         params["year"] = year
     sql += "ORDER BY f.fiscal_year DESC, f.fiscal_period, dt.rcept_no ASC"
 
-    total_files = total_lines = 0
+    total_files = total_lines = total_errors = 0
     with get_session() as session:
         rows = session.execute(text(sql), params).fetchall()
         if not rows:
@@ -2845,20 +2845,31 @@ def cmd_extract_lines(args):
             if not lines:
                 logger.info(f"  [{tag}] r{r.rcept_no} — 추출 0행(보류)")
                 continue
-            total_lines += len(lines)
             if dry_run:
+                total_lines += len(lines)
                 logger.info(f"  [{tag}] r{r.rcept_no} — {len(lines)}행 (dry-run, 미저장)")
                 for l in lines[:5]:
                     logger.info(f"      {l.statement:3s} {l.basis or '-':12s} "
                                 f"{l.label_raw:30s} col={l.col_index} won={l.value_won:,}")
-            else:
+                continue
+            # 한 rcept 저장 실패(예: manual 보호가드 ValueError)가 배치 전체를 막으면 안 된다
+            # — collector/note_lines_sync.py::sync_layer2_lines 와 같은 per-item try/except
+            # 패턴(핸드오프 2026-09-08 §2 "알려진 예외" 참고, 이 CLI만 이 가드가 빠져 있었음).
+            try:
                 n = store_report_lines(session, r.rcept_no, lines)
+                total_lines += n
                 logger.success(f"  [{tag}] r{r.rcept_no} — {n}행 저장")
+            except Exception as exc:  # noqa: BLE001 — 한 건 실패가 전체를 막으면 안 됨
+                total_errors += 1
+                logger.warning(f"  [{tag}] r{r.rcept_no} — 저장 실패, 스킵: "
+                               f"{type(exc).__name__}: {exc}")
+                session.rollback()
         if not dry_run:
             session.commit()
 
     logger.success(
         f"[extract-lines] corp={corp} 파일 {total_files}개, report_lines {total_lines:,}행"
+        + (f", 실패 {total_errors}건" if total_errors else "")
         + (" (dry-run, 미저장)" if dry_run else " 저장")
     )
 

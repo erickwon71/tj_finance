@@ -1974,3 +1974,74 @@ class ExtendedFactV3(Base):
     def __repr__(self):
         return (f"<ExtendedFactV3 {self.corp_code} {self.fiscal_year}{self.fiscal_period} "
                 f"{self.statement_type} {self.canonical_account}>")
+
+
+class Layer2ReviewQueue(Base):
+    """계층2 재적재 + 원문대조 검토 캠페인의 대상 큐이자 재개 마커
+    (docs/plans/layer2_reload_review_campaign_design_2026-09-08.md, 사용자 결정 2026-09-08).
+
+    grain = **rcept_no 1건**. 정정본도 원본과 동등한 별개 검토 대상이다 — 계층2는 R3 대로
+    모든 버전을 rcept 단위로 전사하고 덮어쓰지 않으므로, "정정본을 반영한 최종 상태" 같은
+    합성 대상은 여기 없다(그 병합은 계층3 R2 델타패치의 일이다).
+
+    진행 순서 = `(corp_rank, seq_in_corp)`:
+      · corp_rank   : init 시점 시가총액 순위 스냅샷(큰 순). 사용자 결정 2026-09-08.
+      · seq_in_corp : 회사 안에서 (fiscal_year DESC, period_rank DESC, filed_at ASC, rcept_no ASC).
+                      기간은 최신→과거, 같은 기간 안에서는 최초등록본→정정본.
+
+    ★ReconCandidate(:1235) 관례를 그대로 따른다 — 기계가 다시 채우는 컬럼(재적재 결과·
+      자동검산)과 **사람이 남긴 판단**(`status`/`note`/`reviewed_at`)을 분리하고, `init`
+      재실행이 사람 판단을 덮어쓰지 않는다.
+
+    신규 테이블 → create_all() 자동 생성(마이그레이션 불요).
+    """
+    __tablename__ = "layer2_review_queue"
+
+    rcept_no      = Column(String(14), ForeignKey("filings.rcept_no"), primary_key=True)
+    corp_code     = Column(String(8),  nullable=False)
+    corp_name     = Column(String(200), nullable=True)
+    market        = Column(String(10), nullable=True, comment="KOSPI/KOSDAQ")
+
+    # ── 진행 순서 (init 시점 스냅샷) ────────────────────────────────────────
+    corp_rank     = Column(Integer, nullable=True, comment="시가총액 순위(1=최대). NULL=시총 미상,맨 뒤")
+    market_cap    = Column(BigInteger, nullable=True, comment="init 시점 시가총액(원)")
+    seq_in_corp   = Column(Integer, nullable=True, comment="회사 내 검토 순번(1=최신 보고서)")
+
+    # ── 보고서 식별 (filings 스냅샷 — 조인 없이 목록을 뽑기 위해) ──────────
+    fiscal_year   = Column(SmallInteger, nullable=True)
+    fiscal_period = Column(String(5),  nullable=True, comment="FY/H1/Q1/Q3")
+    report_type   = Column(String(10), nullable=True, comment="annual/half/quarter")
+    filed_at      = Column(Date,       nullable=True)
+    report_nm     = Column(String(500), nullable=True)
+    is_amendment            = Column(Boolean, default=False)
+    is_attachment_amendment = Column(Boolean, default=False)
+
+    # ── 재적재 결과 (기계, 매 실행 갱신) ───────────────────────────────────
+    source_kind   = Column(String(10), nullable=True, comment="xml/pdf/html/none — 재파싱에 실제로 쓴 경로")
+    reloaded_at   = Column(DateTime,   nullable=True)
+    n_lines       = Column(Integer,    nullable=True, comment="적재된 report_lines 행수(BS/IS/CF/SCE 전부)")
+    n_lines_by_scope = Column(JSONB,   nullable=True, comment='{"separate":{"BS":62,...},"consolidated":{...}}')
+
+    # ── 자동검산 (기계, 매 실행 갱신) ──────────────────────────────────────
+    check_status  = Column(String(8),  nullable=True, comment="ok/suspect/na — 차단검산 FAIL 유무")
+    checks        = Column(JSONB,      nullable=True, comment="CheckResult 리스트(코드/범위/판정/메시지)")
+
+    csv_path      = Column(Text,       nullable=True, comment="생성된 검토 CSV 경로(프로젝트 상대)")
+
+    # ── 사람 판단 (init/재적재가 절대 덮어쓰지 않는다) ─────────────────────
+    status        = Column(String(12), nullable=False, default="pending",
+                           comment="pending=미착수 / reloaded=적재+CSV 생성, 사람 검토 대기 / "
+                                   "pass=원문대조 통과 / fail=불일치(루프 정지) / "
+                                   "blocked=재적재 불가(원문부재·manual 보호) / skipped=검토 제외")
+    reviewed_at   = Column(DateTime,   nullable=True)
+    note          = Column(Text,       nullable=True, comment="FAIL 사유·skip 사유 등 사람이 남긴 메모")
+
+    __table_args__ = (
+        Index("ix_l2rq_order", "corp_rank", "seq_in_corp"),
+        Index("ix_l2rq_status", "status"),
+        Index("ix_l2rq_corp", "corp_code"),
+    )
+
+    def __repr__(self):
+        return (f"<Layer2ReviewQueue r{self.rcept_no} {self.corp_name} "
+                f"{self.fiscal_year}{self.fiscal_period} {self.status}>")

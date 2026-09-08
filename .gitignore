@@ -37,3 +37,6 @@ scripts/probe_gateb_reader_concept_gap_2026-08-15_results.csv
 
 # --- DB backup dumps (large binary, local-only safety net) ---
 db_backups/
+
+# 계층2 재적재 검토 CSV (사람이 원문과 대조하는 작업 파일 — 로컬 전용)
+layer2_review/

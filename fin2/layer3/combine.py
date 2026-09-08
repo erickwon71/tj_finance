@@ -3171,6 +3171,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     the full build.
     """
     prov = {"basis_fallback": False, "amended_cols": [], "amend_chain": {}}
+    stale_basis = basis  # ★2026-09-08 — 재게재 배제 조회는 실제 데이터 출처 basis로
     if rcept_by_stmt is not None:
         cands = collect_candidates(session, corp, fy, period, basis,
                                    statements=statements, rcept_by_stmt=rcept_by_stmt)
@@ -3189,14 +3190,24 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
             if bases_present == {other}:
                 cands = _map_rows(merged, period, other, statements, corp=corp, fy=fy)
                 prov["basis_fallback"] = True
+                stale_basis = other  # ★2026-09-08 — 아래 참고
     else:
         cands = collect_candidates(session, corp, fy, period, basis,
                                    statements=statements)
     # R63/§8: table_seq is a per-statement counter, so IS and CF need separate
     # cross-period detection calls (never share one set — see _resolve() docstring).
+    # ★2026-09-08(v2-drop 항목2 표본검증 발견) — basis_fallback 이 발동했을 때 이 조회를
+    # 원래 요청받은 `basis`로 그대로 걸면, cands 는 `other`(실제 데이터 출처)에서 왔는데
+    # 배제 대상 table_seq 는 `basis`(예: consolidated, report_lines 행이 애초에 0개)로
+    # 찾아 **항상 빈 set()** 이 된다 — R63 의 "직전연차 재게재 배제"가 통째로 무력화되어
+    # separate 라면 정상적으로 NULL 처리됐을 재게재 값이 basis_fallback 을 거쳐 consolidated
+    # 로 그대로 샌다(비비안 00107677·삼목에스폼 00125646·원풍 00144012·우리엔터프라이즈
+    # 00155692 등 원문대조로 확인, 111행/43개사). `stale_basis`(=basis_fallback 이면
+    # `other`, 아니면 기존 `basis`)로 고쳐 cands 의 실제 출처와 일치시킨다. 설계:
+    # docs/plans/basis_fallback_stale_reprint_exclusion_design_2026-09-08.md
     stale_reprint_seqs = {
-        "is": _stale_annual_reprint_table_seqs(session, corp, fy, period, basis, statement="IS"),
-        "cf": _stale_annual_reprint_table_seqs(session, corp, fy, period, basis, statement="CF"),
+        "is": _stale_annual_reprint_table_seqs(session, corp, fy, period, stale_basis, statement="IS"),
+        "cf": _stale_annual_reprint_table_seqs(session, corp, fy, period, stale_basis, statement="CF"),
     }
     confirmed, conflicts = _resolve(cands, corp, fy, period, basis, stale_reprint_seqs)
     _resolve_ni_attribution(cands, confirmed, conflicts)

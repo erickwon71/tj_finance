@@ -39,6 +39,7 @@
 from __future__ import annotations
 
 import csv
+import math
 import re
 from datetime import datetime
 from pathlib import Path
@@ -131,8 +132,13 @@ def build_rows(db_rows: list[dict]) -> list[tuple]:
         if not scope_rows:
             continue
         # 원문 순서. table_seq 가 NULL 인 경로(수동입력 등)는 맨 앞으로.
+        # ★row_order 가 NULL 인 유일한 경로는 EPS(`_emit_eps_lines`, 표 본류 순회 밖의
+        #   별도 패스라 "행 위치를 주장하지 않는다") — 원문에서는 항상 그 표의 맨 마지막에
+        #   인쇄된다(주당이익은 관례상 손익계산서 하단). math.inf 로 그 표(같은 table_seq)
+        #   맨 뒤로 보낸다. -1 로 두면 반대로 맨 앞(예: 매출액보다 위)에 찍혀 원문과
+        #   어긋난다 — 2026-09-09 실측(삼성전자 20260814003699, 사용자가 원문대조로 발견).
         scope_rows.sort(key=lambda r: (r["table_seq"] if r["table_seq"] is not None else -1,
-                                       r["row_order"] if r["row_order"] is not None else -1))
+                                       r["row_order"] if r["row_order"] is not None else math.inf))
         label = f"[{BASIS_KO[basis]}] {STMT_KO[stmt]}"
         for i, r in enumerate(scope_rows, start=1):
             if r["value_won"] is None:

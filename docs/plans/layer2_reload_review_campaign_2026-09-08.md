@@ -92,6 +92,26 @@ python scripts/layer2_review.py finish-corp
   adecimal 로 유도돼 **IS 백만원 표가 `declared_unit=1`(원)** 로 적힌다(EPS 행이 먼저
   방출되기 때문). 읽는 프로덕션 소비자가 없어 실피해 0. `docs/PARSING_RULES.md` 부록 C에
   기록. 이 캠페인의 CSV·검산은 이 컬럼 대신 **행의 `adecimal`** 을 쓴다.
+- **2026-09-09 CSV 개선 + 원문대조 1호 이상점 처리** — 사용자 요청으로 금액에 1,000단위
+  콤마 추가, `pass` 판정 시 CSV 자동삭제(디스크 관리) 를 CLI 에 반영. 이어서 사용자가
+  삼성전자 20260814003699 [별도] 손익계산서를 원문대조하며 이상점 3개 보고:
+  ① EPS(기본/희석주당이익)가 매출액보다 앞(1~2번)에 찍힘 ② 반기순이익이 2번 나옴
+  ③ 16~21번(기타포괄손익~반기총포괄손익)이 원문 웹화면엔 안 보임.
+  **원인 규명**: `report_lines` 데이터 자체는 정상 — DB 는 table_seq=0(손익계산서,
+  반기순이익으로 끝남)과 table_seq=1(포괄손익계산서, 반기순이익을 다시 적고 시작해
+  OCI→총포괄손익)이 **원문 그대로 별개 2표**로 정확히 적재돼 있었다(②③은 버그
+  아님 — 사용자가 웹에서 손익계산서 표만 보고 뒤이어 나오는 포괄손익계산서 표는
+  스크롤하지 않아 "안 보인다"고 느낀 것; K-IFRS 관행상 CI표가 NI 를 재진술하고
+  시작하는 게 정상). **①만 진짜 버그** — `review_csv.py::build_rows()` 정렬키가
+  `row_order IS NULL`(EPS 전용 경로, `report_lines.py::_emit_eps_lines` 가 "표 본류
+  순회 밖이라 행 위치를 주장하지 않는다"며 의도적으로 NULL 로 적재)을 `table_seq
+  NULL`(수동입력행 맨 앞 규칙)과 같은 폴백(-1)으로 처리해 EPS 가 그 표의 맨 앞으로
+  솟아올랐다. **DB/파서는 무죄, CSV 렌더링만 유죄** — `report_lines` 적재 규칙
+  변경이 아니므로 R85 부여 대상 아님(PARSING_RULES.md 는 파싱·적재 전용). 수정:
+  row_order NULL 폴백을 `-1`→`math.inf`(그 table_seq 맨 뒤)로 변경. 회귀 테스트
+  `test_eps_rows_with_null_row_order_sort_last_in_their_table` 추가, 삼성전자
+  20260814003699 재검증(EPS 가 반기순이익 바로 뒤 13~14번으로 이동, 나머지 순서
+  불변) — 리뷰 큐 상태는 그대로 `reloaded`(원문대조 계속 진행).
 
 ## 다음 세션에서
 

@@ -95,11 +95,33 @@ def test_consolidated_absent_yields_separate_only():
 
 
 def test_row_order_follows_table_seq_then_row_order():
-    """2표식(손익계산서+포괄손익계산서)에서 row_order 가 표마다 0 부터 다시 시작한다."""
+    """2표식(손익계산서+포괄손익계산서)에서 row_order 가 표마다 0 부터 다시 시작한다.
+
+    ★손익계산서 뒤에 포괄손익계산서가 원문에서 '반기순이익' 을 다시 적고 시작하는 건
+    K-IFRS 관행이라 정상이다(2026-09-09, 삼성전자 20260814003699 원문대조로 재확인) —
+    CSV 는 statement='IS' 하나로 두 표를 합쳐 보여줄 뿐 값을 중복 생성하지 않는다."""
     rows = [row("IS", "separate", "포괄-1", 1, seq=1, order=1),
             row("IS", "separate", "손익-2", 1, seq=0, order=2),
             row("IS", "separate", "손익-1", 1, seq=0, order=1)]
     assert [r[4] for r in rc.build_rows(rows)] == ["손익-1", "손익-2", "포괄-1"]
+
+
+def test_eps_rows_with_null_row_order_sort_last_in_their_table():
+    """EPS(`_emit_eps_lines`)는 표 본류 순회 밖 별도 패스라 row_order=NULL 로 적재된다
+    (`report_lines.py::_emit_eps_lines` 주석 — "행 위치를 주장하지 않는다"). 원문에서는
+    항상 그 표의 맨 마지막(주당이익은 관례상 손익계산서 하단)에 인쇄되므로, NULL 을
+    맨 앞(-1)이 아니라 맨 뒤(math.inf)로 보내야 한다. 반대로 하면 EPS 가 매출액보다
+    위에 찍혀 원문과 어긋난다 — 2026-09-09 삼성전자 20260814003699 사용자 원문대조로
+    실측 발견."""
+    rows = [
+        row("IS", "separate", "매출액", 1, seq=0, order=0),
+        row("IS", "separate", "반기순이익", 1, seq=0, order=1),
+        row("IS", "separate", "기본주당이익", 1, seq=0, order=None, depth=None),
+        row("IS", "separate", "희석주당이익", 1, seq=0, order=None, depth=None),
+        row("IS", "separate", "반기순이익(CI)", 1, seq=1, order=0),
+    ]
+    assert [r[4] for r in rc.build_rows(rows)] == [
+        "매출액", "반기순이익", "기본주당이익", "희석주당이익", "반기순이익(CI)"]
 
 
 def test_sequence_column_restarts_per_scope():

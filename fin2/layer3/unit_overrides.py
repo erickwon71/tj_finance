@@ -413,6 +413,60 @@ UNIT_OVERRIDES: dict[tuple[str, int, str, str, str], UnitOverride] = {
         multiplier=1e-6, note="라벨에 박힌 '주당 순이익: 당기 3,967원'으로 ÷10^6 후 주식수 "
         "역산(≈106만주, 소형 상장사 규모)해 교차검증. is.revenue/is.cogs는 개념매핑 자체가 "
         "틀린 것으로 보여(주석. 별도 계정매퍼 버그 후보) 이번엔 등록하지 않음."),
+
+    # 00258421 기산텔레콤 2006Q3(rcept 20061114000692) — v2-drop-remaining-backlog-
+    # 2026-09-03.md §2(나) 그룹, DKME(00108746)와 같은 section_def 폴백 구조: SECTION-2
+    # "5.연결재무제표" 안 "가.요약연결재무정보"(단위:백만원)가 앞에 있고, 바로 뒤
+    # 실제 연결BS·IS 본표는 트레일러 단위선언이 공란이라 nearest_section_default_unit이
+    # 앞쪽 요약표의 백만원을 잘못 물려받음. DKME(열선택버그)·HS애드(개념불일치, R84로
+    # 별도 해결)와 달리 이 건은 컬럼선택·개념매핑 둘 다 정상 — 순수 단위(배수) 문제뿐.
+    # 3중 교차검증(원문대조 2026-09-08): ①BS "III.연결이익잉여금" 라벨 자체에 원단위
+    # 순이익 실측값 "당기(8,101,839,101)원" 명시 ②IS "XV.연결당기순이익"(÷10^6 후
+    # -8,101,839,101)이 ①과 정확일치, "XIII.총당기순이익"(÷10^6 후 -9,509,165,267)=
+    # "XIV.외부주주지분순이익"(÷10^6 후 -1,407,326,166)+"XV.연결당기순이익" 항등식도
+    # 정확 성립 ③"가.요약연결재무정보"(단위:백만원)의 유동자산65,047·당좌자산49,184·
+    # 자본금7,059·연결이익잉여금3,493 전부와 본표÷10^6 값이 정확 일치. 이 rcept의
+    # BS/consolidated 74행+IS/consolidated 79행 전부가 동일하게 section_def/adecimal=-6
+    # 오염이라 이 필링에서 도출되는 모든 canonical이 똑같이 ÷10^6 대상(참고:
+    # bs.total_assets/total_liabilities/total_equity/controlling_ni 등은 원문 자체에
+    # "자   산   총   계" 류 글자간격 헤더를 파서가 못 걸러 report_lines에 아예 없어
+    # NULL — 이건 별개의 추출 갭이라 이번 unit_override 스코프 밖, 등록 안 함). 상세:
+    # docs/plans/section_def_fallback_wrong_sibling_unit_design_2026-09-06.md
+    # "2026-09-08 이어서 — 00258421 기산텔레콤 원문대조 완료" 절.
+    ("00258421", 2006, "Q3", "consolidated", "bs.cash"): UnitOverride(
+        multiplier=1e-6, note="rcept 20061114000692 연결BS·IS 전체 section_def '백만원' "
+        "오적용(원문대조 2026-09-08, 3중 교차검증) — 위 코멘트 블록 참고."),
+    ("00258421", 2006, "Q3", "consolidated", "bs.ppe"): UnitOverride(
+        multiplier=1e-6, note="위 bs.cash와 동일 표·동일 근거."),
+    ("00258421", 2006, "Q3", "consolidated", "bs.intangibles"): UnitOverride(
+        multiplier=1e-6, note="위 bs.cash와 동일 표·동일 근거."),
+    ("00258421", 2006, "Q3", "consolidated", "bs.short_term_debt"): UnitOverride(
+        multiplier=1e-6, note="위 bs.cash와 동일 표·동일 근거."),
+    ("00258421", 2006, "Q3", "consolidated", "bs.long_term_debt"): UnitOverride(
+        multiplier=1e-6, note="위 bs.cash와 동일 표·동일 근거."),
+    ("00258421", 2006, "Q3", "consolidated", "bs.retained_earnings"): UnitOverride(
+        multiplier=1e-6, note="BS 'III.연결이익잉여금' 라벨 자체에 원단위 순이익 실측값 "
+        "'당기(8,101,839,101)원' 명시 + 요약연결재무정보(단위:백만원) 3,493과 정확일치."),
+    ("00258421", 2006, "Q3", "consolidated", "bs.trade_payables"): UnitOverride(
+        multiplier=1e-6, note="위 bs.cash와 동일 표·동일 근거."),
+    ("00258421", 2006, "Q3", "consolidated", "is.cogs"): UnitOverride(
+        multiplier=1e-6, note="같은 rcept 연결IS 전체 동일 오염 — 위 코멘트 블록 참고."),
+    ("00258421", 2006, "Q3", "consolidated", "is.sga"): UnitOverride(
+        multiplier=1e-6, note="위 is.cogs와 동일 표·동일 근거."),
+    ("00258421", 2006, "Q3", "consolidated", "is.rd_expense"): UnitOverride(
+        multiplier=1e-6, note="위 is.cogs와 동일 표·동일 근거."),
+    ("00258421", 2006, "Q3", "consolidated", "is.operating_income"): UnitOverride(
+        multiplier=1e-6, note="위 is.cogs와 동일 표·동일 근거."),
+    ("00258421", 2006, "Q3", "consolidated", "is.interest_expense"): UnitOverride(
+        multiplier=1e-6, note="위 is.cogs와 동일 표·동일 근거."),
+    ("00258421", 2006, "Q3", "consolidated", "is.ebt"): UnitOverride(
+        multiplier=1e-6, note="위 is.cogs와 동일 표·동일 근거."),
+    ("00258421", 2006, "Q3", "consolidated", "is.tax_expense"): UnitOverride(
+        multiplier=1e-6, note="위 is.cogs와 동일 표·동일 근거."),
+    ("00258421", 2006, "Q3", "consolidated", "is.net_income"): UnitOverride(
+        multiplier=1e-6, note="IS 'XIII.총당기순이익'(÷10^6 후 -9,509,165,267)이 "
+        "'XIV.외부주주지분순이익'+'XV.연결당기순이익'(÷10^6 후 각각 -1,407,326,166/"
+        "-8,101,839,101) 합과 정확 일치해 항등식으로 교차검증."),
 }
 
 

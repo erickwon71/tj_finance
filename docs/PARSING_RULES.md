@@ -4515,6 +4515,41 @@ total_equity 579조원, 임계 500조원) 실측상 진짜 초대형사 정상�
 ③ PDF추출 자체 손상(00163691·00198697·00124799(FY2000), 재수집 필요). (주1)
 01344363은 근본원인은 자기모순 단위지만 증상(컬럼밀림)은 R74로 이미 해소.
 
+★**00258421 기산텔레콤 2006Q3 등재(2026-09-08, R84 이후 세션)** —
+item2(나) 그룹(`docs/plans/section_def_fallback_wrong_sibling_unit_design_
+2026-09-06.md`) 마지막 잔여. DKME(00108746)와 같은 구조: SECTION-2
+"5.연결재무제표" 안 "가.요약연결재무정보"(단위:백만원)가 앞에 있고, 바로 뒤
+실제 연결BS·IS 본표는 트레일러 단위선언이 공란이라 `nearest_section_
+default_unit`이 앞쪽 요약표의 백만원을 잘못 물려받음. DKME(열선택버그)·
+HS애드(R84로 별도 해결된 개념매핑버그)와 달리 이 건은 컬럼선택·개념매핑
+둘 다 정상 — 순수 단위 문제뿐. **3중 교차검증**(원문대조 2026-09-08):
+①BS "III.연결이익잉여금" 라벨 자체에 원단위 순이익 실측값 "당기
+(8,101,839,101)원" 명시 ②IS "XV.연결당기순이익"(÷10⁶ 후 -8,101,839,101)이
+①과 정확일치, "XIII.총당기순이익"=`"XIV.외부주주지분순이익"+"XV.연결당기
+순이익"` 항등식도 ÷10⁶ 후 정확 성립 ③"가.요약연결재무정보"의 유동자산
+65,047·당좌자산49,184·자본금7,059·연결이익잉여금3,493 전부와 본표÷10⁶
+값이 정확 일치. rcept `20061114000692`의 BS/consolidated 74행+
+IS/consolidated 79행 전부가 동일 오염이라 이 필링에서 도출되는 std_
+financials_v3 canonical 15개(bs.cash/ppe/intangibles/short_term_debt/
+long_term_debt/retained_earnings/trade_payables, is.cogs/sga/rd_expense/
+operating_income/interest_expense/ebt/tax_expense/net_income) 전부
+`multiplier=1e-6`으로 등재(참고: bs.total_assets/total_liabilities/
+total_equity는 원문 "자 산 총 계" 류 글자간격 헤더를 파서가 못 걸러
+report_lines에 아예 없어 NULL — 별개의 추출 갭, 이번 스코프 밖). 신규
+회귀테스트 1개(`fin2/tests/test_unit_overrides.py::
+test_kisan_telecom_2006q3_full_table_correction`), `pytest tests/
+fin2/tests/` 859 passed(신규 1개 포함, 무관 기존실패 1건
+`test_lxintl_facility_table_dropped` 제외, 회귀 0). 스코프 재빌드
+(`build_std_v3.py --corp 00258421 --year-min 1999`, 205행, 에러 0) +
+`calendarize_corp_v3`(212행, 에러 0). DB 반영 확인: 15개 컬럼 전부
+×10⁻⁶ 교정, `unit_overrides`에 근거 기록됨. `dq_assertions.py` 전수:
+`statement_magnitude_impossible` 3→**2**(기산텔레콤 소거, 잔존 2건은
+이번 수정과 무관한 DKME[00108746, "결측 유지" 정책 결정된 채 값 자체는
+아직 미정리]·삼성전자[00126380, 임계값 캘리브레이션 문제] — 전수
+재확인으로 신규 위반 0건). 이걸로 item2(나) 3건(DKME/HS애드/기산텔레콤)
+전수 원문대조·처리 완료(DKME=결측 유지, HS애드=R84 계정매퍼 수정,
+기산텔레콤=본 unit_override 등재). 커밋은 사용자 확인 대기.
+
 ## R74. `_AMOUNT_SANE_MAX` 값-거부 셀이 선두절삭 컬럼압축과 충돌해
 컬럼이 밀리는 버그 수정 (2026-09-06)
 
@@ -5212,6 +5247,78 @@ report_lines 신규 7,745행, DQ 리뷰 큐 누적 130행, 에러 0.
 
 **남은 것**: std_financials_v3 재빌드(계층3)는 아직 안 함(report_lines
 레벨까지만). unresolved(별도34+연결93) 는 사람 원문대조 대기.
+
+---
+
+## R84. `parser/common/account_mapper.py` — Stage 3 fuzzy containment 가
+2026-07-18 에 의도적으로 제외한 "미처분이익잉여금" 을 되살려 `bs.retained_
+earnings` 오매핑 (item2(나) 트랙, HS애드 등 247개사/656행 실측 오염)
+
+배경: 항목2(나)(`docs/plans/section_def_fallback_wrong_sibling_unit_design_
+2026-09-06.md`) 재조사 중 00140168(HS애드) "미처분연결이익잉여금"이
+`bs.retained_earnings`로 매핑되는 걸 확인, "개념 불일치 의심" → 계정매퍼
+코드로 원인 추적.
+
+**근본원인**: "미처분이익잉여금"은 2026-07-18(D4 2R)에 `account_maps/
+bs_accounts.py`의 `bs.retained_earnings` exact alias 목록에서 **의도적으로
+제거**됐다(총계='이익잉여금'의 sub-line 이라 총계 자리에 오면 과소·값충돌).
+그런데 `AccountMapper._fuzzy_match()`의 "포함관계"(containment) 매칭이 alias
+'이익잉여금'이 '미처분이익잉여금'의 부분문자열이라는 이유만으로(`len_ratio
+=0.5`, `score=0.90+0.5*0.09=0.945 ≥ threshold 0.88`) 그대로 되살려 다시
+`bs.retained_earnings`에 오매핑했다 — '미처분연결이익잉여금'·'미처분전이익
+잉여금'·'당기말/분기말/반기말미처분이익잉여금'·'미처분이익잉여금(미처리
+결손금)' 등 접두/접미 변형까지 전부 같은 경로로 새어나왔다. 같은 필링에
+진짜 총계 라인('이익잉여금'/'이익잉여금(결손금)')이 있으면 `_resolve()`가
+값 다른 후보 2개로 보고 conflict 로 안전하게 보류하지만, 없으면(흔함 —
+인터림 BS 가 적립금 세부내역 없이 미처분 잔액만 보여주는 서식) 유일한
+후보로 그대로 확정됐다.
+
+**실측 규모**(DB 전수 SQL + `AccountMapper.map()` 직접 실행, 2026-09-08):
+BS 통계표에 "이익잉여금" 계열 라벨이 있는 274,659개 (corp,rcept,basis)
+조합 중, "미처분" 계열 라벨만 있고 비-미처분 총계 라벨이 없는 위험군
+1,101행/247개사를 실제 `AccountMapper.map()`에 통과시킨 결과 **100%
+(1,093/1,093)**가 `bs.retained_earnings`에 fuzzy 매핑됨을 확인(허위양성
+없음). `std_financials_v3`와 교차대조 결과 **656행이 이미 라이브 DB에
+이 오염값 그대로 저장돼 있었음**(26행 NULL, 419행 다른값=미조사). 표본
+(00152437, 위험군 내 최다 108행) 자체 시계열로 "진짜 다른 값"임을 확인
+(2007~2008년 매 기간 총계≠미처분, 적립금 차이 5~6억원+, 2011년부터
+적립금 공시 자체가 빠지며 위험군 진입).
+
+**수정**: `AccountMapper.map()`에 Stage 3 진입 전 가드 추가 — 정규화된
+라벨에 "미처분"과 ("이익잉여금" 또는 "결손금")이 함께 있으면(`fs_section
+in (None, "bs")` 한정) 무매핑(`unknown.*`)으로 차단. "결손금" 단독(음수
+총계 표현, 기존 exact alias)은 "미처분"이 없으면 안 건드림 — Stage 1/2가
+먼저 처리하므로 영향 없음. 코드 위치: `parser/common/account_mapper.py::
+map()`, Stage 3(`_fuzzy_match()`) 호출 직전.
+
+**회귀테스트**: `fin2/tests/test_account_mapper_undistributed_retained_
+earnings_guard_r84.py`(8개 — 차단 대상 5종 변형 + 정상 매핑 3종 유지
+확인). `pytest tests/ fin2/tests/` 857 passed(무관 기존실패 1건
+`test_biz_section.py::test_lxintl_facility_table_dropped` 그대로, 회귀 0
+— 코드 수정 전 동일 실패 재현으로 무관함 확인). 위험군 1,093행 재스캔
+결과 사후 100%(1,093/1,093) `unknown`으로 차단 확인.
+
+**백필(247개사, `--year-min 1999` 스코프 재빌드)**: `build_std_v3.py
+--corp <247개사> --year-min 1999`(44,679행, 에러 0) + `calendarize_corp_v3`
+247/247 성공(에러 0). 전/후 diff(`std_financials_v3.retained_earnings`,
+같은 corp/fy/fp/statement_type): **786행 변경** — 627행 NULL로 전환(오염값
+제거), **159행은 오히려 NULL→정답값으로 신규 확정**(진짜 총계 라인이 sub-
+line 과 conflict 로 묶여 보류돼 있다가, sub-line 이 배제되며 단독후보로
+승격된 경우 — 00427483 2009FY 연결 실측: `Ⅴ. 연결이익잉여금(주20)`=
+154,120,712,864원이 이제 정확히 확정, 이전엔 `미처분연결이익잉여금`=
+61,157,599,700원과 conflict 로 NULL 이었음).
+
+**dq_assertions 전수 검증**: `statement_magnitude_impossible` 4→**3**
+(00140168 HS애드 소거, 나머지 00258421 기산텔레콤·00108746 DKME·00126380
+삼성전자는 이 수정과 무관한 별개 트랙 — DKME 는 "결측 유지" 정책 결정
+완료, 기산텔레콤은 원문대조 미착수, 둘 다 이번 수정 대상 아님). 247개사
+스코프 내 절대값 5×10¹⁵원 초과 잔존 0건. 다른 ERROR/WARN 어서션에 247개사
+관련 신규 위반 없음(전수 재확인).
+
+DKME(00108746)·기산텔레콤(00258421)은 이번 수정과 무관(라벨에 "미처분"이
+없음 — "연결이익잉여금"/BS 전체 오염, 원인은 section_def 단위폴백이지
+account_mapper 개념매핑이 아님, item2(나) 문서 참고). 커밋은 사용자 확인
+대기.
 
 ---
 

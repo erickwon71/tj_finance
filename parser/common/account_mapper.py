@@ -292,6 +292,26 @@ class AccountMapper:
             if "영업외" in normalized and ("이익" in normalized or "손익" in normalized):
                 return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
 
+        # ── 미처분이익잉여금 가드(2026-09-08, item2(나) 트랙 — HS애드 00140168 등에서
+        # 발견, DB 전수 확인 656행 실측 오염): '미처분이익잉여금'은 2026-07-18(D4 2R)에
+        # bs_accounts.py exact alias 에서 **의도적으로 제거**됐다(총계='이익잉여금'의
+        # sub-line 이라 총계 자리에 오면 과소·값충돌 — bs_accounts.py:485-486 주석 참고).
+        # 그런데 Stage 3 fuzzy 의 "포함관계"(containment) 매칭이 alias '이익잉여금'이
+        # '미처분이익잉여금'의 부분문자열이라는 이유만으로 그대로 되살려 bs.retained_
+        # earnings 에 오매핑한다 — '미처분연결이익잉여금'·'미처분전이익잉여금'·
+        # '당기말/분기말/반기말미처분이익잉여금'·'이익잉여금(미처리결손금)' 병기 변형까지
+        # 전부 같은 경로로 새어나온다. 같은 필링에 진짜 총계 라인이 있으면 conflict 로
+        # 안전하게 보류되지만, 없으면(흔함 — 인터림 BS 가 적립금 세부내역 없이 미처분
+        # 잔액만 보여주는 서식) 유일한 후보로 그대로 확정된다. DB 전수 스캔(247개사/
+        # 1,101행 위험군, 656행 이미 라이브 DB 에 오염값 저장 확인,
+        # docs/plans/section_def_fallback_wrong_sibling_unit_design_2026-09-06.md
+        # "2026-09-08 재개" 절)로 실측 확정. 무매핑(raw 보존)으로 차단 — 결측이
+        # 오염보다 낫다는 원칙 재적용. '결손금' 단독(음수 총계, exact alias 로 이미
+        # Stage 1/2 가 처리)은 안 건드림 — '미처분'이 같이 있을 때만 차단.
+        if "미처분" in normalized and ("이익잉여금" in normalized or "결손금" in normalized) \
+                and fs_section in (None, "bs"):
+            return MappingResult(f"unknown.{normalized[:80]}", 0.0, "unknown")
+
         # ── Stage 3: 퍼지 매핑 ────────────────────────────────────────
         # fs_section 제공 시 섹션-한정 퍼지 먼저 시도, 없으면 전체 퍼지 (단, 섹션 접두사가
         # 불일치하는 코드는 최종 후보에서 제외 — 예: BS 컨텍스트에서 IS 코드 반환 방지)

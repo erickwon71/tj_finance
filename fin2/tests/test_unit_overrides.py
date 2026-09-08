@@ -144,6 +144,42 @@ def test_wellcron_hantech_2010h1_revenue():
         assert applied["revenue"]["multiplier"] == 1e-6
 
 
+# --- 2026-09-08 세션 추가분 (나) 그룹 원문대조 등록 회귀 확인 -------------------------
+
+_KISAN_DIRECT_MAP = {
+    "bs.cash": "cash", "bs.ppe": "ppe", "bs.intangibles": "intangibles",
+    "bs.short_term_debt": "short_term_debt", "bs.long_term_debt": "long_term_debt",
+    "bs.retained_earnings": "retained_earnings", "bs.trade_payables": "trade_payables",
+    "is.cogs": "cogs", "is.sga": "sga", "is.rd_expense": "rd_expense",
+    "is.operating_income": "operating_income", "is.interest_expense": "interest_expense",
+    "is.ebt": "ebt", "is.tax_expense": "tax_expense", "is.net_income": "net_income",
+}
+
+
+def test_kisan_telecom_2006q3_full_table_correction():
+    # 00258421 기산텔레콤 2006Q3(rcept 20061114000692) — DKME와 같은 section_def
+    # 구조로 연결BS·IS 전체(153행)가 오염돼 이 필링에서 도출된 모든 canonical이
+    # 함께 ÷10^6 대상(원문대조 2026-09-08). 실측 report_lines 값 그대로 사용.
+    col = {
+        "cash": 9_436_822_509_000_000, "ppe": 7_110_600_029_000_000,
+        "intangibles": 6_225_454_042_000_000, "short_term_debt": 5_969_650_752_000_000,
+        "long_term_debt": 8_841_015_000_000_000, "retained_earnings": 3_493_074_408_000_000,
+        "trade_payables": 8_423_291_766_000_000, "cogs": 2_907_964_928_000_000,
+        "sga": 217_520_934_000_000, "rd_expense": 6_326_781_983_000_000,
+        "operating_income": -6_789_918_091_000_000, "interest_expense": 808_895_826_000_000,
+        "ebt": -8_837_997_991_000_000, "tax_expense": 671_167_276_000_000,
+        "net_income": -9_509_165_267_000_000,
+    }
+    applied = apply_unit_overrides("00258421", 2006, "Q3", "consolidated",
+                                   _KISAN_DIRECT_MAP, col)
+    assert set(applied) == set(col)
+    assert col["retained_earnings"] == 3_493_074_408
+    assert col["net_income"] == -9_509_165_267
+    assert col["cash"] == 9_436_822_509
+    for std_col, meta in applied.items():
+        assert meta["multiplier"] == 1e-6
+
+
 def test_softcen_2022fy_is_not_registered():
     # 00204226 소프트센 FY2022 — 원문대조 결과 "declared unit 오류"가 아니라 3개년
     # 비교표에서 잘못된 컬럼(전기 comparative)을 뽑은 별개의 코드버그로 확인됨

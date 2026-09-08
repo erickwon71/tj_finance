@@ -32,8 +32,14 @@ def row(stmt, basis, label, won, *, seq=0, order=0, depth=0, adecimal=-6,
 def test_amount_is_printed_as_in_the_report():
     """원문이 백만원으로 인쇄됐으면 CSV 도 백만원 숫자여야 한다(= value_won × 10^adecimal)."""
     out = rc.build_rows([row("BS", "separate", "유동자산", 207_955_077_000_000, adecimal=-6)])
-    assert out[0][5] == 207_955_077
+    assert out[0][5] == "207,955,077"
     assert out[0][1] == "백만원"
+
+
+def test_amount_gets_thousands_separator_including_negative():
+    """가독성을 위한 1,000 단위 콤마 — 음수 부호는 앞에 그대로 유지된다."""
+    out = rc.build_rows([row("IS", "separate", "당기순손실", -12_345_678_000_000, adecimal=-6)])
+    assert out[0][5] == "-12,345,678"
 
 
 def test_unit_label_comes_from_row_adecimal_not_table_declared_unit():
@@ -42,14 +48,14 @@ def test_unit_label_comes_from_row_adecimal_not_table_declared_unit():
     단위는 원'이라고 적혀 사용자를 정확히 틀리게 안내한다."""
     out = rc.build_rows([row("IS", "separate", "매출액", 258_550_894_000_000,
                              adecimal=-6, declared_unit=1)])
-    assert out[0][1] == "백만원" and out[0][5] == 258_550_894
+    assert out[0][1] == "백만원" and out[0][5] == "258,550,894"
 
 
 def test_eps_row_keeps_won_unit_in_the_same_statement():
     out = rc.build_rows([
         row("IS", "separate", "매출액", 258_550_894_000_000, order=1, adecimal=-6),
         row("IS", "separate", "기본주당이익(손실)", 10_211, order=2, adecimal=0)])
-    assert [(r[1], r[5]) for r in out] == [("백만원", 258_550_894), ("원", 10_211)]
+    assert [(r[1], r[5]) for r in out] == [("백만원", "258,550,894"), ("원", "10,211")]
 
 
 def test_null_value_falls_back_to_value_raw_and_leaves_amount_blank():
@@ -63,7 +69,7 @@ def test_null_value_falls_back_to_value_raw_and_leaves_amount_blank():
 def test_fx_declared_is_not_converted_and_shows_currency():
     out = rc.build_rows([row("BS", "separate", "Cash", 1_500, adecimal=0,
                              unit_source="fx_declared", currency="USD")])
-    assert out[0][1] == "USD" and out[0][5] == 1_500
+    assert out[0][1] == "USD" and out[0][5] == "1,500"
     assert "표시통화" in out[0][7]
 
 

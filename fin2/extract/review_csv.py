@@ -14,6 +14,7 @@
 - **금액은 보고서에 인쇄된 그대로** — `value_won × 10^adecimal`
   (`fin2/audit/report_line_audit.py::_rl_displayed` 재사용). 원문이 천원 단위로 찍혔으면
   천원 단위 숫자가 나온다. 사람이 원문과 자릿수까지 그대로 비교할 수 있어야 하기 때문.
+  가독성을 위해 1,000 단위 콤마만 넣는다(`f"{n:,}"`) — 자릿수·부호는 그대로라 대조에 영향 없다.
 
 ## 전사 규약 (계층2 원칙을 CSV 에서도 지킨다)
 - `value_won IS NULL` → 금액 칸은 비우고 `원문값`에 `value_raw` 를 넣는다. R4 의 NULL 규약
@@ -137,7 +138,10 @@ def build_rows(db_rows: list[dict]) -> list[tuple]:
             if r["value_won"] is None:
                 amount, raw = "", (r.get("value_raw") or "")
             else:
-                amount, raw = _rl_displayed(r["value_won"], r.get("adecimal")), ""
+                # Thousands separator for readability — the underlying digits
+                # (magnitude, sign) are unchanged, so source comparison still holds.
+                amount = f"{_rl_displayed(r['value_won'], r.get('adecimal')):,}"
+                raw = ""
             out.append((label, _unit_label(r), i,
                         r["depth"] if r["depth"] is not None else "",
                         r["label_raw"], amount, raw, _note(r)))

@@ -112,6 +112,17 @@ python scripts/layer2_review.py finish-corp
   `test_eps_rows_with_null_row_order_sort_last_in_their_table` 추가, 삼성전자
   20260814003699 재검증(EPS 가 반기순이익 바로 뒤 13~14번으로 이동, 나머지 순서
   불변) — 리뷰 큐 상태는 그대로 `reloaded`(원문대조 계속 진행).
+- **2026-09-09 EPS 형제순서 뒤집힘(②의 후속 발견)** — 위 수정 직후 사용자가 [연결]
+  손익계산서에서 **희석주당이익(16번)이 기본주당이익(17번)보다 먼저** 나옴을
+  재보고. 원인: `_emit_eps_lines()`(원문 등장순 = 기본→희석) 는 두 행 다
+  `row_order=NULL` 로 emit 하는데, `layer2_selfcheck.py::_ROWS_SQL` 의 `ORDER BY`가
+  `(statement,basis,table_seq,row_order)` 까지만 있어 이 둘이 완전 동률 — Postgres 가
+  동률 행의 순서를 보장하지 않아 스캔마다 뒤집힐 수 있다(별도 IS 는 우연히 원문순,
+  연결 IS 는 우연히 역순으로 나왔을 뿐). **수정**: `_ROWS_SQL` ORDER BY 끝에 `rl.id`
+  추가(단일 multi-row INSERT 는 파이썬 리스트 순서대로 넣으므로 id 증가순 = emit 순 =
+  원문 등장순 — `store_report_lines()` 확인). `build_rows()` 의 파이썬 `sort()`는
+  stable 이라 이 SQL 순서를 그대로 보존한다. 20260814003699 재검증(연결 IS: 기본→
+  희석 정상화, 별도 IS 불변) — `pytest` 914 pass(무관 기존 실패 2건 그대로).
 
 ## 다음 세션에서
 

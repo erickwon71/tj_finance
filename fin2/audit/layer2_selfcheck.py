@@ -134,8 +134,8 @@ def _norm(label: str) -> str:
 # ── 데이터 로딩 ───────────────────────────────────────────────────────────────
 _ROWS_SQL = text(
     """
-    SELECT rl.statement, rl.basis, rl.table_seq, rl.row_order, rl.depth, rl.node_role,
-           rl.section_path,
+    SELECT rl.id, rl.statement, rl.basis, rl.table_seq, rl.row_order, rl.depth,
+           rl.node_role, rl.section_path,
            rl.label_raw, rl.value_won, rl.value_raw, rl.adecimal, rl.unit_source,
            rl.header_hint,
            rt.unit_decl_raw, rt.declared_unit, rt.currency, rt.table_title
@@ -146,8 +146,16 @@ _ROWS_SQL = text(
           AND rt.basis     = rl.basis
           AND rt.table_seq IS NOT DISTINCT FROM rl.table_seq
     WHERE rl.rcept_no = :r
-    ORDER BY rl.statement, rl.basis, rl.table_seq NULLS FIRST, rl.row_order
+    ORDER BY rl.statement, rl.basis, rl.table_seq NULLS FIRST, rl.row_order, rl.id
     """
+    # ★rl.id 를 마지막 타이브레이커로 둔다 — row_order 가 여럿 NULL 인 행(EPS,
+    # `_emit_eps_lines`)들 사이에서는 (statement,basis,table_seq,row_order) 가 전부
+    # 동률이라 Postgres 가 순서를 보장하지 않는다(2026-09-09 실측: 삼성전자
+    # 20260814003699 [연결] 손익계산서에서 기본/희석주당이익이 이 동률 때문에
+    # 뒤바뀌어 나옴 — 사용자 원문대조로 발견). `store_report_lines()` 는 단일
+    # multi-row INSERT 를 파이썬 리스트 순서 그대로 넣으므로(1340줄 부근) id 증가
+    # 순서 = 추출기가 emit() 한 순서 = 원문 등장 순서. build_rows() 의 파이썬
+    # sort() 는 stable 이라 이 SQL 순서를 그대로 보존한다.
 )
 
 # 같은 회사의 **다른 보고서** 행수 분포 — 이상치/범위 판정의 모집단.

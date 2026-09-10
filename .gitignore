@@ -35,6 +35,9 @@ rev.txt
 period_completeness.txt
 scripts/probe_gateb_reader_concept_gap_2026-08-15_results.csv
 
+# --- scratch_* 세션 작업파일(census/조사 원시 덤프, 재생성 가능·용량 큼) ---
+scratch_*
+
 # --- DB backup dumps (large binary, local-only safety net) ---
 db_backups/
 

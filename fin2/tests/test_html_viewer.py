@@ -298,16 +298,86 @@ def test_bilingual_inline_label_gloss_is_stripped_before_mapping():
     assert a == l + e
 
 
-def test_dash_placeholder_columns_are_skipped_to_reach_real_value():
-    """원인A(제일기획 연결류) — 앞 두 컬럼이 전부 진짜 대시("-")여도 그
-    오른쪽의 실제 값을 찾아내야 한다(대시에서 멈추면 안 됨)."""
+def test_dash_columns_genuinely_missing_are_not_backfilled_from_older_period():
+    """★2026-09-10 정정(header_first_parsing_expansion_design_2026-09-10.md §1) —
+    이 테스트는 원래 "대시에서 멈추면 안 되고 오른쪽의 실제 값을 찾아야 한다"고
+    주장하며 259,653,479,057을 **당기** 값으로 기대했다. DART 실 페이지를 직접
+    재확인(rcpNo=20010814000859, 연결재무제표, 실제 연결대차대조표 THEAD="과목/
+    제28기/제27기/제 26 기") 결과, 그 값은 "부채·외부주주지분 및 자본총계" 행의
+    **제 26 기(전전기) 칸**에 있고 제28기(당기)·제27기(전기)는 그 표의 **모든
+    행에서 진짜로 대시(미공시)** 였다 — 2001년 당시 연결재무제표를 당기/전기는
+    작성하지 않고 참고용 과거 2개년만 실은 것으로 보인다. 즉 옛 "숫자로 파싱되는
+    첫 셀=당기" 휴리스틱은 **전전기 값을 당기로 둔갑**시키고 있었다(R86/R87과
+    같은 클래스의 결함, 이번 세션에 새로 발견·수정). 헤더그리드 경로는 이제
+    이걸 정직하게 결측으로 남긴다(R3 원칙) — 아래 값-위치 폴백(THEAD를 못 읽는
+    표에서만 여전히 남는 경로)과 달리, 진짜 당기가 없으면 없다고 말해야 한다."""
     facts = facts_from_sections(
         {"consolidated": _JEILGIHOEK_STYLE_BS.encode("utf-8")},
         corp_code="00148276", rcept_no="20010814000859",
         report_fiscal_year=2001, report_fiscal_period="H1",
     )
     a, l, e = _totals(facts)
-    assert (a, l, e) == (259_653_479_057, 217_161_013_022, 42_049_237_175)
+    assert (a, l, e) == (None, None, None)  # 당기 진짜 결측 — 전전기 값으로 대체 안 함
+
+
+def test_header_first_path_selects_true_current_column_not_first_parseable():
+    """헤더그리드 경로가 실제로 작동함을 증명 — "숫자로 파싱되는 첫 셀"이 아니라
+    헤더가 선언한 진짜 당기(제28기) 열을 고른다. 위 테스트와 짝을 이룬다:
+    거기서는 당기가 진짜 결측이라 결측으로 남겨야 하고, 여기서는 당기에 값이
+    있으면(설령 물리적으로 더 나중 열에 값이 하나 더 있어도) 헤더가 가리키는
+    "제28기"(당기) 값을 정확히 골라야 한다."""
+    xml = """
+<P class='section-3'>가. 대차대조표</P>
+<TABLE class='nb' width='600'>
+<TBODY><TR><TD align='RIGHT'>(단위 : 원)</TD></TR></TBODY>
+</TABLE>
+<TABLE border='1' width='700'>
+<THEAD>
+<TR><TH>과목</TH><TH>제28기</TH><TH>제27기</TH><TH>제 26 기</TH></TR>
+</THEAD>
+<TBODY>
+<TR><TD>자산총계</TD><TD align='RIGHT'>111,000,000</TD><TD align='RIGHT'>90,000,000</TD><TD align='RIGHT'>80,000,000</TD></TR>
+<TR><TD>부채총계</TD><TD align='RIGHT'>61,000,000</TD><TD align='RIGHT'>50,000,000</TD><TD align='RIGHT'>40,000,000</TD></TR>
+<TR><TD>자본총계</TD><TD align='RIGHT'>50,000,000</TD><TD align='RIGHT'>40,000,000</TD><TD align='RIGHT'>40,000,000</TD></TR>
+</TBODY>
+</TABLE>
+"""
+    facts = facts_from_sections(
+        {"separate": xml.encode("utf-8")},
+        corp_code="00148276", rcept_no="synthetic-current-column",
+        report_fiscal_year=2001, report_fiscal_period="H1",
+    )
+    a, l, e = _totals(facts)
+    assert (a, l, e) == (111_000_000, 61_000_000, 50_000_000)
+    assert a == l + e
+
+
+def test_header_first_path_prefers_cumulative_over_three_month():
+    """모듈이 자인하던 갭(2026-09-10 이전 docstring: "interim IS/CF의 3개월 vs 누적
+    구분을 이 모듈은 아직 안 한다") 해소 확인 — 2단 헤더(기간 + 3개월/누적)에서
+    누적 값을 채택해야 한다(R85 원칙, XML과 동일)."""
+    xml = """
+<P class='section-3'>나. 손익계산서</P>
+<TABLE class='nb' width='600'>
+<TBODY><TR><TD align='RIGHT'>(단위 : 원)</TD></TR></TBODY>
+</TABLE>
+<TABLE border='1' width='700'>
+<THEAD>
+<TR><TH rowspan='2'>과목</TH><TH colspan='2'>제 28 기</TH></TR>
+<TR><TH>3개월</TH><TH>누적</TH></TR>
+</THEAD>
+<TBODY>
+<TR><TD>매출액</TD><TD align='RIGHT'>30,000,000</TD><TD align='RIGHT'>90,000,000</TD></TR>
+</TBODY>
+</TABLE>
+"""
+    facts = facts_from_sections(
+        {"separate": xml.encode("utf-8")},
+        corp_code="00148276", rcept_no="synthetic-cumulative",
+        report_fiscal_year=2001, report_fiscal_period="Q3",
+    )
+    rev = [f.amount_won for f in facts if f.canonical_account == "is.revenue"]
+    assert rev == [90_000_000]  # 누적(90,000,000) 채택 — 3개월(30,000,000) 아님
 
 
 def test_row_offset_is_judged_per_row_not_per_table():

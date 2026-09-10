@@ -34,27 +34,43 @@ B 55%/미분류 0%):
 **col_index는 항상 0(당기)만** — `fin2/extract/pdf.py::facts_from_text()`와
 동일한 계약(다른 컬럼은 뽑지 않음, calendarize 단계가 별도로 처리).
 
+**헤더 먼저 읽기(2026-09-10 확장)** — 레이아웃 B는 이제 값-위치 휴리스틱 전에
+`<THEAD>`(없으면 `<TBODY>` 선두의 헤더행류)를 먼저 읽어 위치→회계기간 맵을
+만든다(`parser/xml/table_extractor.py`의 R88/§7과 동일 원리 재사용, 설계:
+`docs/plans/header_first_parsing_expansion_design_2026-09-10.md`). 이걸로 아래
+"3개월 vs 누적" 갭이 해소됐고, **실 필링 재확인 중 잠복 버그도 발견했다** — 제일
+기획(00148276) 연결 2001H1(rcpNo=20010814000859) 같은 사례는 당기·전기 열이
+연결재무제표 전체에서 진짜로 대시(미공시)인데, 옛 "숫자로 파싱되는 첫 셀=당기"
+휴리스틱이 그 오른쪽의 **전전기** 값을 당기로 잘못 채택하고 있었다(R86/R87과 같은
+클래스). 헤더그리드 경로는 이제 이런 행을 정직하게 결측으로 남긴다(R3). THEAD도
+없고 TBODY 선두 헤더행 판정도 실패하는 표에서만 옛 값-위치 휴리스틱이 그대로
+남는다(회귀 위험 최소화 — 실패시 완전 폴백).
+
 **미해결/의도적 범위 밖(§7 리스크, 구현 시 재확인 필요)**:
   - 연결(consolidated) 섹션 중 "다. 연결재무제표"류 통짜 소제목 아래
     개별 표제(`<P class='table-group'>연결대차대조표</P>` 등)로만 표가
     구분되는 네 번째 관례 — `_iter_statement_tables()`가 table-group 표제도
     보므로 처리는 되나, 93건 census(§8-3)만큼 폭넓게 검증되진 않았다.
-  - interim(H1/Q1/Q3) IS/CF의 "3개월 vs 누적" 2단 헤더 컬럼 구분
-    (`fin2/extract/pdf.py`의 `_is_interim_cumulative()`/`cum_idx` 로직) —
-    이 모듈은 아직 그 구분을 하지 않고 항상 col0(첫 비어있지 않은 값)을
-    취한다. BS(period_kind='instant')는 애초에 이 문제가 없어 영향 없지만,
-    IS/CF 값은 이 갭 때문에 틀릴 수 있다 — 값까지 원문대조로 확정하기 전엔
-    IS/CF 결과를 신뢰하지 말 것(BS 우선 검증 대상).
+  - 위 헤더그리드 확장은 이번 세션 실측 1건(제일기획, 라이브 재확인) + 합성
+    fixture 단위테스트로만 검증됐다 — Track C 잔여 93건 census 전체 재실행은
+    아직 안 함(다음 세션 확장 지점, R88과 동일 스코프 정책).
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Optional
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 from parser.common.account_mapper import get_mapper
 from parser.common.amount_normalizer import normalize_account_name
+from parser.xml.table_extractor import (
+    HeaderColumn,
+    select_by_header_columns,
+    _looks_like_header_row,
+    _columns_from_grid,
+)
 from fin2.extract.pdf import (
     parse_number,
     _strip_inline_english_gloss,
@@ -216,6 +232,93 @@ def _iter_statement_tables(soup: BeautifulSoup):
 _MAX_REASONABLE_LABEL_LEN = 80
 
 
+# ── 헤더 먼저 읽기(2026-09-10, docs/plans/header_first_parsing_expansion_design_
+# 2026-09-10.md §1) — 레이아웃 B(행별-TR형) 전용. `<THEAD>`가 있으면(실측 대다수 —
+# 이 파일의 기존 테스트 fixture 전부가 이미 `<THEAD>`를 씀) 그걸 최우선으로 읽는다,
+# XML의 R88과 동일. 드물게 `<THEAD>`가 없는 구서식은 헤더행이 `<TBODY>` 선두 `<TR>`
+# (들)로 섞여 오는데(pre-2015 XML과 같은 문제, `table_extractor.py`의 §7 확장과
+# 동일 정책) 그때만 내용판정(`_looks_like_header_row`)으로 THEAD 대용을 모은다.
+# 그리드→HeaderColumn 해석(`_columns_from_grid`)은 어느 경로든 공유한다(중복 방지).
+# COLSPAN/ROWSPAN 그리드 해석 자체는 BeautifulSoup Tag API가 lxml과 달라 독자 사본을
+# 둔다(이 파일이 `fin2/extract/pdf.py`의 `_TITLE_TOKENS`를 독자 사본으로 두는 것과
+# 같은 이유 — 서로 다른 트리 API를 억지로 공용화하기보다 각자 진화 가능하게 둔다).
+
+
+def _resolve_bs4_header_grid(header_trs: list[Tag]) -> Optional[list[list[str]]]:
+    """`table_extractor.py::_resolve_header_grid()`와 동일한 표준 HTML COLSPAN/ROWSPAN
+    해석을 BeautifulSoup Tag에 맞게 재구현."""
+    if not header_trs:
+        return None
+    n_rows = len(header_trs)
+    cells_by_row: list[dict[int, str]] = [dict() for _ in range(n_rows)]
+    for r, tr in enumerate(header_trs):
+        col = 0
+        for cell in tr.find_all(["td", "th"], recursive=False):
+            while col in cells_by_row[r]:
+                col += 1
+            try:
+                colspan = int(cell.get("colspan", "1") or "1")
+            except ValueError:
+                colspan = 1
+            try:
+                rowspan = int(cell.get("rowspan", "1") or "1")
+            except ValueError:
+                rowspan = 1
+            text = cell.get_text().strip()
+            for rr in range(r, min(r + rowspan, n_rows)):
+                for cc in range(col, col + max(colspan, 1)):
+                    cells_by_row[rr][cc] = text
+            col += max(colspan, 1)
+    n_cols = max((max(d.keys()) + 1 for d in cells_by_row if d), default=0)
+    if n_cols == 0:
+        return None
+    return [[cells_by_row[r].get(c, "") for c in range(n_cols)] for r in range(n_rows)]
+
+
+def _detect_header_trs_bs4(trs: list[Tag]) -> list[Tag]:
+    """선두 TR들 중 `_looks_like_header_row`에 걸리는 것만 모은다(THEAD 대용) — 처음
+    으로 안 걸리는(=진짜 데이터) TR을 만나면 멈춘다(`table_extractor.py::
+    _headerless_header_trs`와 같은 정책, XML lxml 트리 대신 BS4 Tag 버전)."""
+    header_trs: list[Tag] = []
+    for tr in trs:
+        cell_texts = [td.get_text().strip() for td in tr.find_all("td", recursive=False)]
+        if not cell_texts or not _looks_like_header_row(cell_texts):
+            break
+        header_trs.append(tr)
+    return header_trs
+
+
+def _parse_header_columns_bs4(
+    table: Tag, tbody_trs: list[Tag],
+) -> tuple[Optional[list[HeaderColumn]], int]:
+    """레이아웃 B 표 → (HeaderColumn 리스트 또는 None, `<TBODY>` 선두에서 헤더로 소비한
+    TR 개수). 실측(2026-09-10, rcpNo=20010814000859 제일기획 연결 라이브 재확인)
+    — 실제 DART 웹뷰어 표는 XML과 마찬가지로 `<THEAD>`를 갖는 경우가 대다수다
+    (이 파일의 기존 테스트 fixture 전부가 `<THEAD>`를 포함하는 것도 같은 이유).
+    ★그래서 THEAD가 있으면 그걸 최우선으로 쓴다(구조적 신호가 있는데 무시하고
+    TBODY 선두 내용판정으로 갈 이유가 없다) — `<TBODY>`의 TR은 전부 데이터 행이라
+    2번째 반환값은 0. THEAD가 없을 때만(§7과 같은 예외적 구서식) `_detect_header_
+    trs_bs4`로 TBODY 선두를 훑는다. 실패(헤더행 후보 없음·그리드 해석 실패·기간
+    패턴 인식 실패)하면 (None, 0) — 호출측이 기존 값-위치 휴리스틱으로 완전히
+    폴백한다."""
+    thead = table.find("thead")
+    if thead is not None:
+        header_trs = thead.find_all("tr", recursive=False)
+        n_consumed_from_tbody = 0
+    else:
+        header_trs = _detect_header_trs_bs4(tbody_trs)
+        n_consumed_from_tbody = len(header_trs)
+    if not header_trs:
+        return None, 0
+    grid = _resolve_bs4_header_grid(header_trs)
+    if grid is None:
+        return None, 0
+    columns = _columns_from_grid(grid)
+    if columns is None:
+        return None, 0
+    return columns, n_consumed_from_tbody
+
+
 def _iter_label_value0(table: Tag):
     """표 하나 → (label, value_text, is_giant_cell) 스트림, col0(당기)만.
 
@@ -265,20 +368,56 @@ def _iter_label_value0(table: Tag):
                 yield lab, val.strip(), True
         return
 
-    # ── 레이아웃 B: 라벨 다음 TD들 중 **실제로 숫자로 파싱되는 첫 셀**을
-    # col0 값으로 취한다. 처음엔 "표 전체에서 첫 비어있지 않은 셀"(행별 판정)
-    # 이었는데, 제일기획(00148276) 연결 실측(2026-09-07)에서 헤더가 "제28기/
-    # 제27기/제26기"인데 앞 두 컬럼이 전부 진짜 대시("-")고 실제 값은 가장
-    # 오른쪽에만 있는 경우를 발견 — 대시에서 멈춰 값을 놓쳤다(원인A).
-    # "표 전체에서 데이터 있는 첫 컬럼을 고정"하는 방식으로 한 번 고쳐봤으나
-    # DB증권(00115694) 실측으로 반증됨 — **같은 표 안에서도 행마다 빈칸의
-    # 물리적 위치가 다르다**(일반 항목행은 [값1,빈칸,값2,빈칸], 합계행은
-    # [빈칸,값1,빈칸,값2] 처럼 합계행에만 앞에 빈칸 하나가 더 낌, 아마
-    # 서식상 합계 들여쓰기 때문으로 추정). 그래서 컬럼 인덱스를 표 단위로
-    # 고정하면 안 되고, 여전히 **행마다** 판정해야 한다 — 다만 "비어있지
-    # 않으면 멈춤"이 아니라 "**숫자로 파싱되면** 멈춤"으로 바꿔 완전 빈칸과
-    # 대시(둘 다 그 칸엔 값이 없다는 뜻)를 똑같이 건너뛰고 진짜 첫 숫자에서
-    # 멈춘다 — DB증권류(빈칸)·제일기획류(대시) 모두 이 규칙 하나로 커버됨.
+    # ── 레이아웃 B: 헤더를 먼저 읽어 위치→기간 맵을 만들고, 그 맵으로 "당기(rank0)"
+    # 열을 직접 인덱싱한다(2026-09-10 확장, 위 §1 주석 참고) — 성공하면 아래 값-위치
+    # 휴리스틱을 완전히 우회한다. 이러면 3개월/누적 2단헤더 구분(모듈 docstring이
+    # 자인하던 갭)도 R85와 같은 원칙(cumulative 우선, 없어도 3개월로 대체 안 함)으로
+    # 같이 해소된다. THEAD가 아예 없는 표라 실패(헤더행 후보를 못 찾음·기간패턴 인식
+    # 실패)하는 경우가 XML보다 흔할 수 있다 — 그때만 기존 값-위치 휴리스틱으로 완전히
+    # 폴백한다(회귀 위험 최소화, R88과 동일 안전원칙).
+    columns, n_header_trs = _parse_header_columns_bs4(table, trs)
+    if columns is not None:
+        for tr in trs[n_header_trs:]:
+            tds = tr.find_all("td", recursive=False)
+            if len(tds) < 2:
+                continue
+            label = tds[0].get_text().strip()
+            if not label:
+                continue
+            value_tds = tds[1:]
+            amounts = [parse_number(td.get_text().strip()) for td in value_tds]
+            picked = select_by_header_columns(columns, amounts)
+            if 0 not in picked:
+                continue  # 당기(rank0) 값 없음 — 진짜 결측 또는 판정 불가(R6) → 스킵
+            # `select_by_header_columns`는 이미 파싱된 int(picked[0])만 돌려준다 —
+            # 어느 물리 위치에서 왔는지 값만으로 역추적하면 동값 충돌에 취약하니
+            # (0/0 등) 텍스트로 되짚지 않는다. 호출측(`facts_from_sections`)은 이
+            # value_text 를 다시 `parse_number()`로 재파싱만 하므로, 이미 확정된
+            # 정수를 문자열로 그대로 넘겨도 동치(부호 포함 — `parse_number("-123")`
+            # 은 음수로 정상 인식).
+            yield label, str(picked[0]), False
+        return
+
+    # ── 값-위치 휴리스틱(폴백, THEAD 없는 XML의 R85~R87 이전과 같은 계열) — 라벨
+    # 다음 TD들 중 **실제로 숫자로 파싱되는 첫 셀**을 col0 값으로 취한다. 처음엔
+    # "표 전체에서 첫 비어있지 않은 셀"(행별 판정)이었는데, 제일기획(00148276) 연결
+    # 실측(2026-09-07)에서 헤더가 "제28기/제27기/제26기"인데 앞 두 컬럼이 전부 진짜
+    # 대시("-")고 실제 값은 가장 오른쪽에만 있는 경우를 발견 — 대시에서 멈춰 값을
+    # 놓쳤다(원인A). "표 전체에서 데이터 있는 첫 컬럼을 고정"하는 방식으로 한 번
+    # 고쳐봤으나 DB증권(00115694) 실측으로 반증됨 — **같은 표 안에서도 행마다 빈칸의
+    # 물리적 위치가 다르다**(일반 항목행은 [값1,빈칸,값2,빈칸], 합계행은 [빈칸,값1,
+    # 빈칸,값2] 처럼 합계행에만 앞에 빈칸 하나가 더 낌, 아마 서식상 합계 들여쓰기
+    # 때문으로 추정). 그래서 컬럼 인덱스를 표 단위로 고정하면 안 되고, 여전히
+    # **행마다** 판정해야 한다 — 다만 "비어있지 않으면 멈춤"이 아니라 "**숫자로
+    # 파싱되면** 멈춤"으로 바꿔 완전 빈칸과 대시(둘 다 그 칸엔 값이 없다는 뜻)를
+    # 똑같이 건너뛰고 진짜 첫 숫자에서 멈춘다 — DB증권류(빈칸)·제일기획류(대시) 모두
+    # 이 규칙 하나로 커버됨.
+    # ★주의(2026-09-10) — 위 헤더그리드 경로가 성공하는 표에서는 이 폴백이 더 이상
+    # 돌지 않는다(위 `return`). 제일기획류(당기가 진짜 대시고 값은 전전기에만 있는
+    # 행)에서 이 휴리스틱이 "첫 숫자"로 전전기 값을 주워 당기로 둔갑시키던 것이
+    # 바로 R86/R87과 같은 클래스의 결함이었다 — 헤더그리드 경로는 그런 행을 (전전기
+    # 값을 당기로 둔갑시키지 않고) 정직하게 결측으로 남긴다. 이 폴백은 헤더행 자체를
+    # 못 찾는 표(THEAD도 없고 TBODY 선두도 헤더 패턴이 아님)에서만 남는다.
     for tr in trs:
         tds = tr.find_all("td", recursive=False)
         if len(tds) < 2:

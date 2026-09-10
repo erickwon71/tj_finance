@@ -317,11 +317,24 @@ def extract_rows(
         #   축(자본금/이익잉여금/…)**인 표에서는 선행 공란이 구조적 잡음이 아니라 "이 변동은
         #   그 자본 항목에 영향이 없었다"는 **의미 있는 값**이다. 여기서 당기면 열이 통째로
         #   밀려 이익잉여금 값이 자본금 열로 들어간다(실측: SCE 행 내부정합 95.3% 의 주원인).
+        # ★R86 후속(2026-09-09) — `table_has_note_column`도 요구한다. report_lines.py::
+        #   _emit_section_lines()의 else 분기(선두 None 절삭)와 **동형 결함**이 여기 하나 더
+        #   있었다: 4열 이상인 표(예 삼성전자 2017Q1 [당기1분기,전기1분기,전기,전전기] 4열 CF —
+        #   `_interim_cumulative_cols()`가 3개월/누적 2단 헤더를 못 찾아 cum_map=None →
+        #   preserve_col_positions=False)에서, 원문이 당기(또는 당기+전기) 컬럼을 진짜로
+        #   비워둔 행이 이 절삭에 걸려 전기/전전기 값이 당기 열로 둔갑한다(실측: rcpNo=
+        #   20170515003806 별도·연결 현금흐름표 "단기매도가능금융자산의 처분"·"자기주식의
+        #   처분" 등 — 사용자가 원문대조로 발견). else 분기와 **같은 근거**(주석참조 컬럼이
+        #   있는 표에서만 이 절삭의 원 동기 사례가 성립, classB §5.1)로 같은 신호를 적용 —
+        #   주석 컬럼이 없는 표는 절삭하지 않고 결측으로 남긴다. `table_has_note_column`은
+        #   바로 위에서 표 하나당 한 번 이미 계산해둔 값이라 추가 비용 없음. 근거:
+        #   docs/PARSING_RULES.md R86.
         # 원문 문자열은 파싱값과 **같은 인덱스**를 유지해야 한다(value_raw 용) — 아래 재정렬에서
         # 함께 이동시킨다. 따로 움직이면 원문이 다른 열의 값으로 붙는다.
         all_raw: list[str] = list(amount_cells)
         all_flags: list[bool] = list(cell_flags)
-        if len(all_parsed) >= 4 and not (preserve_col_positions or keep_all_amount_cells):
+        if (len(all_parsed) >= 4 and not (preserve_col_positions or keep_all_amount_cells)
+                and table_has_note_column):
             while all_parsed and all_parsed[0] is None:
                 all_parsed.pop(0)
                 if all_raw:
@@ -581,6 +594,250 @@ def _table_has_note_header(trs: list[etree._Element]) -> bool:
             if tag == "TH" and "주석" in ''.join(child.itertext()):
                 return True
     return False
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# THEAD COLSPAN/ROWSPAN 그리드 기반 컬럼판정 (2026-09-09)
+#
+# 배경·설계: docs/plans/report_lines_header_grid_column_map_design_2026-09-09.md
+# R85(EPS 컬럼선택)·R86(else 분기 선두절삭)·R87(extract_rows 동형결함) 전부 "표가
+# 몇 열이고 각 열이 어느 회계기간인지를 데이터 행의 공란 패턴으로 사후 추측"해온
+# 결함이었다 — 원문 THEAD 가 COLSPAN/ROWSPAN(+ 종종 ENG 속성)으로 이미 그 구조를
+# 명시적으로 선언하고 있는데도 안 읽고 있었다. 이 블록은 그 헤더를 **먼저** 읽어
+# 위치→회계기간 맵을 만든다 — 실패(THEAD 없음·기간패턴 인식 실패)하면 `None`을
+# 반환해 호출측(`report_lines.py::_emit_section_lines`)이 기존 cum_map/multicol/
+# else 경로(R85~R87 가드 포함)로 안전하게 폴백한다.
+# ────────────────────────────────────────────────────────────────────────────
+
+_PERIOD_KEY_RE = re.compile(r"제\s*\d+\s*(?:\([^)]{0,4}\))?\s*기(?:\s*[1-4]\s*분기|\s*반기)?"
+                            r"|당\s*기|전\s*기|전\s*전\s*기|전\s*전\s*전\s*기")
+_SUBTYPE_CUM_RE = re.compile(r"누적|누계")
+_SUBTYPE_3M_RE = re.compile(r"3\s*개월|삼개월")
+
+
+@dataclass
+class HeaderColumn:
+    """THEAD 그리드에서 읽어낸 데이터 열 하나의 신원.
+
+    `position`은 라벨열을 제외한 **원시** 금액셀 위치 — `extract_rows(...,
+    keep_all_amount_cells=True)`가 돌려주는 `RowData.amounts`와 같은 인덱스라야
+    한다(호출측이 그 모드로 뽑아야 정합이 맞음)."""
+    position: int
+    period_key: str
+    period_rank: int
+    subtype: Optional[str] = None   # "cumulative" | "three_month" | None(구분 텍스트 없음)
+    is_note: bool = False
+
+
+def _resolve_header_grid(header_trs: list[etree._Element]) -> Optional[list[list[str]]]:
+    """THEAD 의 TR 들을 표준 HTML 표 COLSPAN/ROWSPAN 규칙으로 해석해
+    `grid[row][col] -> 셀 텍스트`(스팬 영역은 같은 텍스트 반복)로 돌려준다.
+    TR 이 없으면 None."""
+    if not header_trs:
+        return None
+    n_rows = len(header_trs)
+    cells_by_row: list[dict[int, str]] = [dict() for _ in range(n_rows)]
+    for r, tr in enumerate(header_trs):
+        col = 0
+        for cell in tr:
+            tag = cell.tag.upper() if isinstance(cell.tag, str) else ""
+            if tag not in ("TH", "TD"):
+                continue
+            while col in cells_by_row[r]:
+                col += 1
+            try:
+                colspan = int(cell.get("COLSPAN", "1") or "1")
+            except ValueError:
+                colspan = 1
+            try:
+                rowspan = int(cell.get("ROWSPAN", "1") or "1")
+            except ValueError:
+                rowspan = 1
+            text = " ".join("".join(cell.itertext()).split())
+            for rr in range(r, min(r + rowspan, n_rows)):
+                for cc in range(col, col + max(colspan, 1)):
+                    cells_by_row[rr][cc] = text
+            col += max(colspan, 1)
+    n_cols = max((max(d.keys()) + 1 for d in cells_by_row if d), default=0)
+    if n_cols == 0:
+        return None
+    return [[cells_by_row[r].get(c, "") for c in range(n_cols)] for r in range(n_rows)]
+
+
+def _header_column_stack(grid: list[list[str]], col: int) -> list[str]:
+    """그리드의 한 열을 위→아래로 읽어, 빈 문자열을 빼고 ROWSPAN 으로 생긴 연속중복만
+    지운 텍스트 스택을 만든다(예: ['제 57 기 반기', '3개월'])."""
+    stack: list[str] = []
+    for row in grid:
+        text = row[col] if col < len(row) else ""
+        if not text:
+            continue
+        if stack and stack[-1] == text:
+            continue
+        stack.append(text)
+    return stack
+
+
+def _looks_like_header_row(cell_texts: list[str]) -> bool:
+    """THEAD 가 없는 표에서, TBODY 선두 TR 하나가 헤더행인지 **내용으로** 판정한다
+    (모양/위치가 아니라 R6 원칙과 같은 맥락 — 확정 못 하면 추측하지 않는다).
+
+    라벨열(cell_texts[0])을 제외한 나머지 셀 중: ①하나라도 진짜 금액처럼 보이면
+    (`_NUMBER_PATTERN` 매치, "제28기" 류는 숫자만 있는 게 아니라 안 걸림) 즉시
+    본문 데이터 행으로 판정(False) — 헤더행에 진짜 금액이 있을 리 없다. ②그 외의
+    경우, 기간패턴(`_PERIOD_KEY_RE`)이나 서브타입 토큰(3개월/누적)이 하나라도 있으면
+    헤더행(True). 전부 공란이거나 아무 마커도 없으면(예: "자산"류 섹션 헤더행)
+    False — 이런 행까지 헤더로 흡수하면 안 된다(R5, header_hint 는 별도 개념)."""
+    rest = cell_texts[1:]
+    has_marker = False
+    for text in rest:
+        t = text.strip()
+        if not t:
+            continue
+        if _NUMBER_PATTERN.match(t):
+            return False
+        if (_PERIOD_KEY_RE.search(t) or _SUBTYPE_CUM_RE.search(t)
+                or _SUBTYPE_3M_RE.search(t)):
+            has_marker = True
+    return has_marker
+
+
+def _headerless_header_trs(table: etree._Element) -> list[etree._Element]:
+    """R88 §7 확장(2026-09-10) — THEAD 없이 헤더행이 TBODY 선두에 섞여 오는 구서식
+    (pre-2015 K-GAAP 등)에서, 선두 TR들 중 `_looks_like_header_row`에 걸리는 것만
+    THEAD 대용으로 모은다. 처음으로 안 걸리는(=진짜 데이터) TR을 만나면 즉시 멈춘다
+    — 그 뒤도 계속 훑으면 우연히 패턴이 맞는 데이터 행을 헤더로 오인할 위험이 있다."""
+    tbody = table.find("TBODY")
+    candidate_trs = list(tbody.findall("TR")) if tbody is not None else list(table.findall("TR"))
+    header_trs: list[etree._Element] = []
+    for tr in candidate_trs:
+        if not _looks_like_header_row(_get_cells(tr)):
+            break
+        header_trs.append(tr)
+    return header_trs
+
+
+def _columns_from_grid(grid: list[list[str]]) -> Optional[list[HeaderColumn]]:
+    """해석된 헤더 그리드(`_resolve_header_grid`/BS4 어댑터 등 출처 무관) → 위치→
+    회계기간 맵. `parse_header_columns()`의 THEAD 경로와 §7 확장(TBODY-선두) 경로가
+    공유한다 — 어느 쪽에서 만든 grid든 이 함수 하나로 해석한다(중복 구현 방지).
+
+    실패 조건: 라벨열 뒤에 기간패턴을 못 찾은 열이 있음(=아직 모르는 헤더 모양 — §5
+    정책대로 여기서 확장하지 말고 폴백시켜 다음에 발견한 사례로 넓힌다)."""
+    n_cols = len(grid[0])
+    if n_cols < 2:
+        return None
+
+    # ★라벨열은 항상 딱 1개(첫 칸)로 고정 — `extract_rows(..., keep_all_amount_cells=
+    # True)`가 라벨로 취급하는 것도 정확히 `cells[0]` 하나뿐이다(parser/xml/table_
+    # extractor.py 위쪽 keep_all_amount_cells 분기 참고). 예전엔 "기간패턴이 없으면
+    # 라벨"로 보고 계속 늘렸는데, 그러면 라벨 바로 다음의 **주석참조 열**(흔히 헤더가
+    # "주석"이라고만 쓰고 기간패턴은 없음, R19)까지 라벨로 흡수해버려 `position` 이
+    # 실제 데이터 배열과 한 칸씩 어긋났다(실측 회귀: 한화손해보험/코리안리 등 주석열
+    # 있는 표에서 값이 전부 한 칸씩 밀림, 2026-09-09). 라벨을 1개로 고정하면 주석열은
+    # 아래에서 `is_note=True`인 채 자기 위치를 그대로 갖고, `select_by_header_columns`
+    # 가 안전하게 건너뛴다.
+    label_cols = 1
+
+    columns: list[HeaderColumn] = []
+    period_rank_of: dict[str, int] = {}
+    for col in range(label_cols, n_cols):
+        stack = _header_column_stack(grid, col)
+        period_key = None
+        subtype_text = ""
+        for i, text in enumerate(stack):
+            m = _PERIOD_KEY_RE.search(text)
+            if m:
+                period_key = m.group(0)
+                subtype_text = " ".join(stack[i + 1:])
+                break
+        position = col - label_cols
+        if period_key is None:
+            if any("주석" in s for s in stack):
+                columns.append(HeaderColumn(position=position, period_key="", period_rank=-1,
+                                            is_note=True))
+                continue
+            return None  # 라벨열 뒤인데 기간패턴도 주석표시도 없는 열 — 모르는 모양, 폴백
+        if period_key not in period_rank_of:
+            period_rank_of[period_key] = len(period_rank_of)
+        subtype = None
+        if _SUBTYPE_CUM_RE.search(subtype_text):
+            subtype = "cumulative"
+        elif _SUBTYPE_3M_RE.search(subtype_text):
+            subtype = "three_month"
+        columns.append(HeaderColumn(position=position, period_key=period_key,
+                                    period_rank=period_rank_of[period_key], subtype=subtype))
+
+    # ★애매한(period_rank, subtype) 중복 — 안전하게 폴백. 예: K-GAAP 구서식 IS(2003년대)는
+    # "3개월"/"누적" 아래 다시 COLSPAN=2 하위열(둘 다 텍스트가 "금액"으로 동일)이 있어 헤더
+    # 텍스트만으론 어느 쪽이 진짜 금액칸인지 구분이 안 된다(실측: 00132725 SB성보 2003Q3
+    # IS, rank0 에 subtype="three_month" 열이 2개·"cumulative" 열이 2개 나옴). 이런 표에서
+    # 아무거나 첫 번째를 고르면 조용히 틀린 값을 낼 위험이 있다 — 대신 표 전체를 인식
+    # 실패로 보고 기존 cum_map/multicol/else 경로로 폴백한다(§5 정책, 회귀 0 우선).
+    # subtype=None 중복은 정상(병합군, 삼성생명류 — select_by_header_columns 가 "값 있는
+    # 열 하나" 로직으로 처리) — subtype 이 **있는데** 중복인 경우만 애매하다고 본다.
+    seen: dict[tuple, int] = {}
+    for hc in columns:
+        if hc.is_note or hc.subtype is None:
+            continue
+        key = (hc.period_rank, hc.subtype)
+        seen[key] = seen.get(key, 0) + 1
+        if seen[key] > 1:
+            return None
+    return columns
+
+
+def parse_header_columns(table: etree._Element) -> Optional[list[HeaderColumn]]:
+    """표의 THEAD(또는 THEAD 가 없으면 TBODY 선두의 헤더행류, §7)를 읽어 위치→회계기간
+    맵을 만든다. 실패하면 None(호출측 폴백) — §5 정책 그대로, 여기서 억지로 확장하지
+    않는다."""
+    thead = table.find("THEAD")
+    if thead is not None:
+        header_trs = list(thead.findall("TR"))
+    else:
+        header_trs = _headerless_header_trs(table)
+        if not header_trs:
+            return None
+    grid = _resolve_header_grid(header_trs)
+    if grid is None:
+        return None
+    return _columns_from_grid(grid)
+
+
+def select_by_header_columns(
+    columns: list[HeaderColumn], amounts: list,
+) -> dict[int, object]:
+    """`HeaderColumn` 맵 + 위치보존 원시 `amounts`(`keep_all_amount_cells=True` 출력)
+    → {period_rank: 값}. `_emit_section_lines`가 이 결과를 `col_index=period_rank`로
+    그대로 emit 한다.
+
+    규칙(설계문서 §3-4): 같은 period_rank 그룹에 subtype 있는 열이 하나라도 있으면
+    "cumulative" 열만 채택(없는 값도 다른 서브타입으로 대체하지 않음 — R3/R85 원칙).
+    전부 subtype=None(구분 텍스트 없는 병합군, 예 삼성생명 명세/소계)이면 값이 있는
+    열 하나를 채택 — 2개 이상 값이 있으면(판정 불가) 그 rank 는 건너뛴다(R6 원칙)."""
+    by_rank: dict[int, list[HeaderColumn]] = {}
+    for hc in columns:
+        if hc.is_note:
+            continue
+        by_rank.setdefault(hc.period_rank, []).append(hc)
+
+    result: dict[int, object] = {}
+    for rank, cols in by_rank.items():
+        has_subtype = any(c.subtype is not None for c in cols)
+        if has_subtype:
+            cum = [c for c in cols if c.subtype == "cumulative"]
+            chosen = cum if cum else [c for c in cols if c.subtype == "three_month"]
+            if not chosen:
+                chosen = cols
+            pos = chosen[0].position
+            if pos < len(amounts) and amounts[pos] is not None:
+                result[rank] = amounts[pos]
+        else:
+            present = [c for c in cols if c.position < len(amounts) and amounts[c.position] is not None]
+            if len(present) == 1:
+                result[rank] = amounts[present[0].position]
+            # 0개(진짜 결측) 또는 2개 이상(판정 불가, R6) 이면 이 rank 는 건너뜀.
+    return result
 
 
 def _split_label_amounts(

@@ -10,9 +10,18 @@
   current_shares = 해당 corp 최신 FY 의 shares_out (DART 백필)
 
 shares_out 컬럼에는 이 current_shares(현재 기준 주식수, 상수)를 적재 → market_cap=close×shares_out
-항등 유지. 실제 연도별 actual 주식수는 std_financials_v2.shares_out 에 보존.
+항등 유지. 실제 연도별 actual 주식수는 std_financials_v3.shares_out 에 보존.
 
-선행: fin2_backfill_shares.py (최신 FY shares 확보). 멱등·순수 SQL.
+★2026-09-09: std_financials_v2 → v3 로 소스 전환(2026-09-01 v2 DROP 이후 이 스크립트가
+`UndefinedTable` 로 매일 크래시하고 있었다 — `nightly_valuation_refresh.py`가 단계별
+try/except 로 이 실패를 삼켜서 8일 넘게 아무도 몰랐다. `stock_prices.market_cap`/
+`shares_out` 전종목이 2026-08-31 이후 정체됐던 사고, 삼성전자 20260814003699 계층2
+검토 캠페인 진행 중 사용자가 "시총 오류 확인해봐"로 발견 지시). v3 엔 `version`/
+`is_discrete`/`is_stub` 컬럼이 없다(PK 중복 자체가 없어 그 필터가 애초에 불필요,
+`dq_assertions.py::check_completeness` 주석 참고) — 조건 삭제. `basis` 역할은
+`statement_type`(separate/consolidated) 컬럼이 대신한다.
+
+선행: 없음(v3 는 표준화 파이프라인이 매일 갱신). 멱등·순수 SQL.
 
 usage:
   python scripts/fin2_market_cap_daily.py              # 전수
@@ -36,15 +45,14 @@ from collector.db import get_session
 _SQL = """
 WITH cur AS (
     SELECT f.corp_code, max(f.shares_out) AS shares
-    FROM std_financials_v2 f
+    FROM std_financials_v3 f
     JOIN (
         SELECT corp_code, max(fiscal_year) AS myr
-        FROM std_financials_v2
-        WHERE fiscal_period = 'FY' AND version = 1 AND shares_out > 0
-          AND NOT COALESCE(is_discrete, false) AND NOT COALESCE(is_stub, false)
+        FROM std_financials_v3
+        WHERE fiscal_period = 'FY' AND shares_out > 0
         GROUP BY corp_code
     ) m ON m.corp_code = f.corp_code AND m.myr = f.fiscal_year
-    WHERE f.fiscal_period = 'FY' AND f.version = 1 AND f.shares_out > 0
+    WHERE f.fiscal_period = 'FY' AND f.shares_out > 0
     GROUP BY f.corp_code
 )
 UPDATE stock_prices sp

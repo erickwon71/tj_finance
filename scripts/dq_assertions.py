@@ -139,6 +139,47 @@ CHECKS: list[dict] = [
                   "ORDER BY max_mc DESC LIMIT 10",
     },
     {
+        # 2026-09-09: std_financials_v2 DROP(2026-09-01) 이후 fin2_market_cap_daily.py 가
+        # 그 테이블을 계속 조회해 UndefinedTable 로 매일 크래시했는데, nightly_valuation_
+        # refresh.py 가 단계별 try/except 로 이 실패를 삼켜(파이프라인 전체를 막지 않으려는
+        # 의도적 설계) 8일 넘게 stock_prices.market_cap/shares_out 이 전종목 정체됐다 —
+        # 그때는 이 staleness 검사가 없어서 아무 어서션도 못 잡았다(계층2 검토 캠페인
+        # 진행 중 사용자가 "시총 오류 확인해봐"로 발견 지시). 최신 시세일과 최신
+        # market_cap 갱신일의 격차로 재발을 잡는다(공휴일 하드코딩 없이 상대 비교).
+        "name": "market_cap_stale",
+        "sev": "WARN",
+        "desc": "market_cap 이 그 종목의 최신 시세일보다 2일 넘게 뒤처진 활성 종목 수 "
+                "(nightly_valuation_refresh 시총 재계산 단계가 조용히 실패 중일 가능성 — "
+                "★종목별로 봐야 한다: 전체 max(trade_date) 만 보면 단 1종목만 갱신돼도 "
+                "'정상'으로 오판된다, 2026-09-09 이 체크 만들 때 실측)",
+        "count": """
+            WITH latest_overall AS (SELECT max(trade_date) AS d FROM stock_prices),
+                 per_stock AS (
+                     SELECT stock_code, max(trade_date) AS latest_mc
+                     FROM stock_prices WHERE market_cap IS NOT NULL
+                     GROUP BY stock_code)
+            SELECT count(*) FROM corporations c
+            CROSS JOIN latest_overall lo
+            LEFT JOIN per_stock p ON p.stock_code = c.stock_code
+            WHERE c.is_active AND c.stock_code IS NOT NULL AND c.stock_code <> ''
+              AND (p.latest_mc IS NULL OR lo.d - p.latest_mc > 2)
+        """,
+        "sample": """
+            WITH latest_overall AS (SELECT max(trade_date) AS d FROM stock_prices),
+                 per_stock AS (
+                     SELECT stock_code, max(trade_date) AS latest_mc
+                     FROM stock_prices WHERE market_cap IS NOT NULL
+                     GROUP BY stock_code)
+            SELECT c.stock_code, c.corp_name, p.latest_mc, lo.d AS latest_price_date
+            FROM corporations c
+            CROSS JOIN latest_overall lo
+            LEFT JOIN per_stock p ON p.stock_code = c.stock_code
+            WHERE c.is_active AND c.stock_code IS NOT NULL AND c.stock_code <> ''
+              AND (p.latest_mc IS NULL OR lo.d - p.latest_mc > 2)
+            ORDER BY p.latest_mc NULLS FIRST LIMIT 10
+        """,
+    },
+    {
         "name": "nonpositive_total_assets",
         "sev": "ERROR",
         "desc": "자산총계 <= 0 인데 미격리(DQ<3) — 소비계층에 노출되는 불가값",

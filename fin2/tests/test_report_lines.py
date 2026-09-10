@@ -836,6 +836,139 @@ def test_3s_2023q3_sanemax_reject_cum_map_no_longer_wrong_column():
     assert rev == [], f"거부된 누적값 대신 엉뚱한 값(전기 3개월)이 남음: {rev}"
 
 
+_SAMSUNG_2019FY = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00126380_삼성전자/annual/2019/20200330003851.xml"
+)
+_HANWHA_2020FY = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00135917_한화손해보험/annual/2020/20210310000259.xml"
+)
+_SAMSUNG_2017Q1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00126380_삼성전자/quarter/2017/20170515003806.xml"
+)
+_SAMSUNGLIFE_2016FY = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00126256_삼성생명/annual/2016/20170331005566.xml"
+)
+
+
+def test_samsung_2019fy_leading_blank_no_longer_shifted_to_current_period():
+    """R86 — 삼성전자(00126380) 2019FY 별도 현금흐름표. IFRS9 전환으로 "장기매도가능
+    금융자산의 처분/취득" 등은 전전기(2017, K-GAAP)에만 존재하고 당기/전기(2019/2018)는
+    원문 자체가 진짜 공백([공란,공란,전전기값] 3열) — 수정 전에는 선두절삭이 이 공백을
+    "파서 아티팩트"로 오인해 전전기값을 당기 열로 밀어 넣었다. 이 표는 주석참조 컬럼이
+    없는(table_has_note_column=False) 순수 3열 비교표라, 수정 후에는 절삭 자체가 멈추고
+    전전기값은 원래 자리(col_index=2)에 남아야 한다. docs/PARSING_RULES.md R86.
+    """
+    if not _SAMSUNG_2019FY.exists():
+        return
+    lines = extract_report_lines(
+        _SAMSUNG_2019FY, rcept_no="20200330003851", corp_code="00126380",
+        report_fiscal_year=2019, report_fiscal_period="FY")
+
+    def _by_col(label):
+        return {l.col_index: l.value_won for l in lines
+                if l.statement == "CF" and l.basis == "separate" and l.label_raw == label}
+
+    disposal = _by_col("장기매도가능금융자산의 처분")
+    assert 0 not in disposal, f"당기 열에 전전기값이 밀려들어옴: {disposal}"
+    assert disposal == {2: 98_265_000_000}, disposal
+
+    acquisition = _by_col("장기매도가능금융자산의 취득")
+    assert 0 not in acquisition, f"당기 열에 전전기값이 밀려들어옴: {acquisition}"
+    assert acquisition == {2: -163_765_000_000}, acquisition
+
+    # 선두 1칸만 공백인 행(전기값이 당기로 밀리던 사례)도 같이 확인.
+    lt_acquire = _by_col("장기금융상품의 취득")
+    assert 0 not in lt_acquire, f"당기 열에 전기값이 밀려들어옴: {lt_acquire}"
+    assert lt_acquire == {1: -1_860_000_000_000, 2: -500_000_000_000}, lt_acquire
+
+    # 선두가 공백이 아닌 행(당기값이 실제로 있는 행)은 무변경이어야 한다.
+    lt_dispose = _by_col("장기금융상품의 처분")
+    assert lt_dispose == {0: 1_400_000_000_000, 2: 1_700_000_000_000}, lt_dispose
+
+
+def test_hanwha_2020fy_note_column_table_unchanged():
+    """R86 회귀가드 — 한화손해보험(00135917) 2020FY 연결 IS 'VIII.당기순이익(손실)'.
+    이 표는 주석참조 컬럼이 있는(table_has_note_column=True) 표라 R86 신규 조건이
+    적용되지 않아야 한다 — classB(§5.1, 2026-08-29) 조사가 이미 이 표를 원 동기
+    사례로 확인했고 R19 가 근본 해소했음을 검증한 값(수정 전/후 동일)."""
+    if not _HANWHA_2020FY.exists():
+        return
+    lines = extract_report_lines(
+        _HANWHA_2020FY, rcept_no="20210310000259", corp_code="00135917",
+        report_fiscal_year=2020, report_fiscal_period="FY")
+
+    ni = {l.col_index: l.value_won for l in lines
+          if l.statement == "IS" and l.basis == "consolidated"
+          and l.label_raw == "VIII. 당기순이익(손실)"}
+    assert ni == {0: 48_250_117_187, 1: -69_073_849_554}, ni
+
+
+def test_samsung_2017q1_four_column_cf_leading_blank_not_shifted():
+    """R87(R86 후속) — 삼성전자(00126380) 2017Q1 별도·연결 현금흐름표.
+
+    이 필링의 CF는 [당기1분기,전기1분기,전기(FY),전전기(FY)] 4열 구조(주석 X: `_interim_
+    cumulative_cols()`가 3개월/누적 2단 헤더를 못 찾아 cum_map=None)라, R86이 고친
+    `_emit_section_lines()`의 else 분기 이전에 `parser/xml/table_extractor.py::
+    extract_rows()` 자신의 "6-column IS 형식 대응"(amount_cells≥4개 선두 None 절삭,
+    R86과 별개 위치)이 먼저 작동해 R86의 가드가 보기도 전에 배열을 이미 밀어놨다 —
+    "단기매도가능금융자산의 처분"(원문 [공란,전기1분기650,743,전기(FY)3,010,003,
+    전전기(FY)2,143,384])의 전기1분기 값이 당기 열로 둔갑, "자기주식의 처분"(원문
+    [공란,공란,공란,3,034]) 은 전전기(FY) 값이 당기 열로 3칸 밀려 둔갑했었다(사용자가
+    원문대조로 발견). 이 표도 주석참조 컬럼이 없는(table_has_note_column=False) 순수
+    기간열 표라, R86과 같은 근거로 `extract_rows()`의 이 절삭에도 같은 가드를 적용—
+    수정 후에는 두 라벨 다 당기 열(col_index=0)이 없어야 한다(결측 유지)."""
+    if not _SAMSUNG_2017Q1.exists():
+        return
+    lines = extract_report_lines(
+        _SAMSUNG_2017Q1, rcept_no="20170515003806", corp_code="00126380",
+        report_fiscal_year=2017, report_fiscal_period="Q1")
+
+    def _by_col(label, basis):
+        return {l.col_index: l.value_won for l in lines
+                if l.statement == "CF" and l.basis == basis and l.label_raw == label}
+
+    for basis in ("separate", "consolidated"):
+        disposal = _by_col("단기매도가능금융자산의 처분", basis)
+        assert 0 not in disposal, f"{basis}: 당기 열에 전기1분기값이 밀려들어옴: {disposal}"
+
+        treasury = _by_col("자기주식의 처분", basis)
+        assert 0 not in treasury, f"{basis}: 당기 열에 전전기(FY)값이 밀려들어옴: {treasury}"
+
+    # 선두가 안 비어있는 행(연결, 당기값이 실제로 있음)은 무변경이어야 한다.
+    lt_acquire_c = _by_col("단기매도가능금융자산의 취득", "consolidated")
+    assert lt_acquire_c.get(0) == -544_463_000_000, lt_acquire_c
+
+
+def test_samsunglife_multicol_paired_columns_unaffected_by_r86_r87():
+    """R86/R87 후속 확인(2026-09-09, 코드 변경 없음) — 삼성생명(00126256) 2016
+    사업보고서 연결 현금흐름표는 원문 금액셀 6개(2×n_periods)로 `multicol=True`
+    분기를 탄다. 이 표는 기(期)마다 열이 2개(명세/소계 쌍)인 **정당한 구조적
+    패딩**이라(소계행은 짝수쪽만·명세행은 홀수쪽만 채워짐), R86/R87의 `table_has_
+    note_column` 가드를 여기 적용하면 오히려 정상값이 결측으로 사라진다 — 그래서
+    의도적으로 적용하지 않는다. 이 테스트는 그 결론을 값으로 고정한다: 소계행
+    ("Ⅰ.영업활동으로부터의 현금흐름")과 명세행("가.당기순이익") 둘 다 당기 열에
+    원문 그대로의 실값이 있어야 한다(하나라도 결측이면 가드가 실수로 적용된 회귀)."""
+    if not _SAMSUNGLIFE_2016FY.exists():
+        return
+    lines = extract_report_lines(
+        _SAMSUNGLIFE_2016FY, rcept_no="20170331005566", corp_code="00126256",
+        report_fiscal_year=2016, report_fiscal_period="FY")
+
+    def _by_col(label):
+        return {l.col_index: l.value_won for l in lines
+                if l.statement == "CF" and l.basis == "consolidated" and l.label_raw == label}
+
+    subtotal = _by_col("Ⅰ.영업활동으로부터의 현금흐름")
+    assert subtotal.get(0) == 4_834_400_000_000, subtotal
+
+    detail = _by_col("가. 당기순이익")
+    assert detail.get(0) == 2_149_956_000_000, detail
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

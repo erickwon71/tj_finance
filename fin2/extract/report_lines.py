@@ -37,6 +37,8 @@ from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.table_extractor import (
     extract_rows, _split_label_amounts, _get_cells, _NUMBER_PATTERN, expand_table_grid,
     RowData, _header_rule_name, _is_fs_title_row, _detect_indent, _first_cell_indent,
+    _table_has_comma_note_column, _table_has_note_header,
+    parse_header_columns, select_by_header_columns,
 )
 from parser.common.amount_normalizer import detect_unit_declaration, parse_amount, normalize_account_name
 
@@ -401,14 +403,25 @@ _EPS_KGAAP_HEADLINE_NOT_EPS_KEYS: frozenset[tuple[str, str, str, int, str]] = _l
 
 def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                     report_fiscal_year, report_fiscal_period,
-                    table_seq=None, table_title=None) -> None:
+                    table_seq=None, table_title=None,
+                    cum_map: dict[int, int] | None = None) -> None:
     """주당손익(EPS) 행을 **per-row 단위**로 전사한다(IS 표 전용).
 
     ★ 왜 별도 처리인가: 주당이익 라벨은 '계속영업기본주당이익 (단위 : 원)' 처럼 **행 자체에 단위**를
     달고 있어 (a) `_is_header_cell` 이 '단위:' 로 헤더 오인해 드롭하고, (b) 표 단위(천원/백만원)를
     적용하면 원(₩)/주 값이 배로 오염된다. 그래서 표 본류에서 '주당' 행은 건너뛰고(_emit_section_lines),
     여기서 **라벨 인라인 단위(없으면 원=1)**로 직접 파싱해 담는다. context_fiscal_year 는 당기/전기로
-    매핑(재무제표 컬럼과 동일)하되, 값은 원(₩)/주 그대로."""
+    매핑(재무제표 컬럼과 동일)하되, 값은 원(₩)/주 그대로.
+
+    ★R85(2026-09-09) — `cum_map`: 호출측(`_emit_section_lines`)이 같은 표에서 이미 계산해둔
+    `_interim_cumulative_cols()` 결과. H1/Q3 IS 표는 헤더가 [당기3개월,당기누적,전기3개월,전기누적]
+    2단 구조인데, 이 함수는 그동안 그 구조를 모르고 **파싱 순서 앞 3개**를 그냥 [당기,전기,전전기]로
+    라벨링했다 — 결과적으로 "당기"라는 이름으로 진짜 누적(반기·3분기 EPS)이 아니라 3개월(당분기 단독)
+    값이 저장됐다(원문대조로 확정: 삼성전자 20250814003156 별도 기본주당이익 — 원문 411(3개월)/1,360
+    (누적) 중 411이 "당기"로 저장, 반면 같은 필링 반기순이익은 cum_map 경로를 타 9,139,217(누적)로
+    정확히 저장됨 — 두 라인의 컬럼선택 로직이 서로 달라 생긴 불일치). `cum_map`이 있으면(2단 헤더
+    검출) 표 본류와 동일하게 '누적' 토큰이 붙은 컬럼만 위치 기준으로 골라 담는다 — FY/2단 미검출
+    표는 기존 동작(앞 3개 위치순) 그대로."""
     for tr in table_direct_rows(table):
         cells = _get_cells(tr)
         if not cells or "주당" not in cells[0]:
@@ -427,12 +440,21 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
             unit, eps_source, eps_currency = (
                 detect_unit_declaration(label) or 1, "declared", None)
         _, amt_cells = _split_label_amounts(cells)
-        present = [a for a in (parse_amount(c, unit) for c in amt_cells) if a is not None]
+        # 위치보존(라벨/주석컬럼 제외, 그 외 자리는 그대로) — cum_map 은 이 위치 기준.
+        amounts_by_pos = [parse_amount(c, unit) for c in amt_cells]
+        present = [a for a in amounts_by_pos if a is not None]
         if not _looks_like_eps_amounts(present):
             # NI귀속류 오판 행 — EPS 로 emit 하지 않고 본류가 처리하도록 남겨둔다(아래
             # _emit_section_lines 의 대응 가드와 짝, 2026-08-15).
             continue
-        for col_idx, amount in enumerate(present[:3]):
+        if cum_map is not None:
+            # 2단[3개월|누적] 헤더 검출 표 — '누적' 토큰이 붙은 컬럼만 위치로 선택.
+            pairs = [(off, amounts_by_pos[pos]) for pos, off in cum_map.items()
+                     if pos < len(amounts_by_pos) and amounts_by_pos[pos] is not None]
+        else:
+            # FY 또는 2단 헤더 미검출 — 기존 동작(파싱 순서 앞 3개 = 당기/전기/전전기).
+            pairs = list(enumerate(present[:3]))
+        for col_idx, amount in pairs:
             ctx_fy = report_fiscal_year - col_idx
             emit(ReportLineRow(
                 corp_code=corp_code, rcept_no=rcept_no,
@@ -497,6 +519,13 @@ def _emit_section_lines(
         cum_map = cum_maps[id(table)]
         if has_2tier and cum_map is None:
             continue  # 2단(3개월/누적) 표 존재 시 연간비교(비2단) 표는 스킵(중복 데이터원 배제)
+        # R86(2026-09-09) — else 분기(선두 None 절삭)의 유일한 근거표 신호. extract_rows()가
+        # 내부적으로 계산하는 것과 동일한 판정을 여기서도 한 번 더 구해둔다(RowData 는 이
+        # 값을 외부로 안 돌려준다 — 아래 else 분기 참고).
+        table_trs = table_direct_rows(table)
+        table_has_note_column = (
+            _table_has_comma_note_column([_get_cells(tr) for tr in table_trs])
+            or _table_has_note_header(table_trs))
         unit = unit_of[id(table)]
         unit_source, currency, decl_raw = "declared", None, None
         if unit is None:
@@ -520,20 +549,34 @@ def _emit_section_lines(
                     logger.debug(f"[report_lines] 단위 미선언 → 스킵(보류): {rcept_no} {section_code}")
                     continue
 
-        # 보험/증권 기간당 다열 포맷 감지(2단 누적표는 별도 경로라 제외).
-        n_periods, multicol = (3, False) if cum_map is not None else _detect_period_layout(table)
-        n_cols = max(cum_map) + 1 if cum_map else (8 if multicol else 3)
+        # R88(2026-09-09) — THEAD COLSPAN/ROWSPAN 그리드로 표 구조를 **먼저** 읽는다
+        # (사용자 제안, 설계: docs/plans/report_lines_header_grid_column_map_design_
+        # 2026-09-09.md). 성공하면 아래 cum_map/multicol/else 3갈래 추측(R85~R87이
+        # 각자 다른 안전장치로 패치해온 바로 그 추측)을 전부 우회한다 — 실패(THEAD
+        # 없음, 모르는 헤더 모양)하면 그 3갈래로 그대로 폴백(무변경, 회귀 위험 0).
+        # SCE 는 열이 기간이 아니라 자본 구성요소 축이라 대상 아님(기존과 동일 제외).
+        header_cols = parse_header_columns(table) if statement in ("BS", "IS", "CF") else None
 
-        # 표 전체 행을 먼저 materialize → 들여쓰기 stack 으로 section_path 부여(행 순서 필요).
-        # preserve_col_positions: cum_map 표만 6-column 압축(선행 None pop-loop)을 끈다 —
-        # 그 압축이 "당기3개월 disclosure 없음"(진짜 결측)과 "주석 컬럼이 비어서 생긴 선행
-        # None"(_split_label_amounts 가 이미 위에서 제거 — 2026-08-24)을 구분 못 하고 뭉뚱그려
-        # 당겨서 cum_map(절대위치 인덱싱)을 오정렬시켰다(Gate B 버그①, 코리안리/00104573/
-        # 00172291 원문대조로 확정). 다른 두 소비 경로(multicol/else)는 이미 자체 재압축이라
-        # 이 플래그를 안 보므로 결과가 그대로다(§1 실측).
-        table_rows = list(extract_rows(table, multiplier=unit, num_cols=n_cols,
-                                        direct_only=True, skip_junk=False,
-                                        preserve_col_positions=(cum_map is not None)))
+        if header_cols is not None:
+            n_cols = max(c.position for c in header_cols) + 1
+            table_rows = list(extract_rows(table, multiplier=unit, num_cols=n_cols,
+                                            direct_only=True, skip_junk=False,
+                                            keep_all_amount_cells=True))
+        else:
+            # 보험/증권 기간당 다열 포맷 감지(2단 누적표는 별도 경로라 제외).
+            n_periods, multicol = (3, False) if cum_map is not None else _detect_period_layout(table)
+            n_cols = max(cum_map) + 1 if cum_map else (8 if multicol else 3)
+
+            # 표 전체 행을 먼저 materialize → 들여쓰기 stack 으로 section_path 부여(행 순서 필요).
+            # preserve_col_positions: cum_map 표만 6-column 압축(선행 None pop-loop)을 끈다 —
+            # 그 압축이 "당기3개월 disclosure 없음"(진짜 결측)과 "주석 컬럼이 비어서 생긴 선행
+            # None"(_split_label_amounts 가 이미 위에서 제거 — 2026-08-24)을 구분 못 하고 뭉뚱그려
+            # 당겨서 cum_map(절대위치 인덱싱)을 오정렬시켰다(Gate B 버그①, 코리안리/00104573/
+            # 00172291 원문대조로 확정). 다른 두 소비 경로(multicol/else)는 이미 자체 재압축이라
+            # 이 플래그를 안 보므로 결과가 그대로다(§1 실측).
+            table_rows = list(extract_rows(table, multiplier=unit, num_cols=n_cols,
+                                            direct_only=True, skip_junk=False,
+                                            preserve_col_positions=(cum_map is not None)))
         section_paths = _assign_section_paths(table_rows, statement)
         node_roles = _classify_positions(table_rows)
         table_seq = doc_seq[id(table)]
@@ -547,7 +590,8 @@ def _emit_section_lines(
                             corp_code=corp_code, rcept_no=rcept_no,
                             report_fiscal_year=report_fiscal_year,
                             report_fiscal_period=report_fiscal_period,
-                            table_seq=table_seq, table_title=table_title)
+                            table_seq=table_seq, table_title=table_title,
+                            cum_map=cum_map)
 
         for row in table_rows:
             if not row.account_name:
@@ -555,7 +599,10 @@ def _emit_section_lines(
             if "주당" in row.account_name and _looks_like_eps_amounts(row.amounts):
                 continue  # 진짜 EPS(원/주)만 본류에서 제외 — NI귀속 오판 가드(위 참고)
             section_path = section_paths.get(id(row))
-            if cum_map is not None:
+            if header_cols is not None:
+                # R88 — 헤더 그리드로 확정된 위치→회계기간 맵으로 직접 선택(설계문서 §3-4).
+                pairs = list(select_by_header_columns(header_cols, row.amounts).items())
+            elif cum_map is not None:
                 pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()
                          if pos < len(row.amounts) and row.amounts[pos] is not None]
                 if not pairs:
@@ -602,13 +649,30 @@ def _emit_section_lines(
                 # 멈춰 결측으로 남긴다 — "오염보다 결측을 택한다"는 R3 자신의 원칙을 이
                 # 압축 단계에도 그대로 잇는다. 근거:
                 # docs/plans/report_lines_sanemax_reject_compaction_shift_design_2026-09-06.md
+                # ★R86(2026-09-09) — 세 번째 정지 신호 추가: `table_has_note_column`(이 표에
+                # 주석참조 컬럼이 있다는 구조적 증거, R19/R65). classB(§5.1) 조사가 이미 밝힌
+                # 대로, 이 절삭 루프의 **유일한 정당한 존재 이유**는 "라벨 바로 다음 주석참조
+                # 칸이 빈 값으로 amount_cells 에 섞여 들어와 생기는 phantom 선두 None"(한화손해
+                # 보험류)이었고, 그 근본원인은 R19(2026-08-24)가 `_split_label_amounts_ex()`
+                # 단계에서 이미 제거했다 — 주석 컬럼이 있는 표에서만 여전히 필요할 수 있는
+                # 잔여 케이스에 대비해 그 표들(`table_has_note_column=True`)에서는 기존 동작을
+                # 그대로 둔다. 주석 컬럼이 **없는** 순수 기간열 표(`table_has_note_column=
+                # False`)에서 선두가 진짜 공백류(`raws[lead]`가 placeholder)라면, 그건 phantom
+                # 이 아니라 **원문이 실제로 그 기간을 비운 것**(K-GAAP→IFRS9 전환 등으로 특정
+                # 계정이 최근 기간엔 없고 오래된 기간에만 존재하는 경우 등) — 절삭하면 전기/
+                # 전전기 값이 당기 열로 둔갑한다(실측 확정: 삼성전자 20200330003851 2019FY 별도
+                # 현금흐름표 "장기매도가능금융자산의 처분/취득" 등 — 원문 [공란,공란,전전기값]
+                # 인데 절삭 후 전전기값이 당기로 저장됨). 이 표들에서도 절삭을 멈춰 결측으로
+                # 남긴다. 근거: docs/PARSING_RULES.md R86,
+                # docs/plans/gateb_trade_payables_classB_stale_column_investigation_2026-08-29.md §5.1.
                 amts = row.amounts
                 flags = row.acontext_missing
                 raws = row.raw_amounts
                 lead = 0
                 while (lead < len(amts) and amts[lead] is None
                        and not (lead < len(flags) and flags[lead])
-                       and (lead >= len(raws) or raws[lead].strip() in _LABEL_REGION_PLACEHOLDERS)):
+                       and (lead >= len(raws) or raws[lead].strip() in _LABEL_REGION_PLACEHOLDERS)
+                       and table_has_note_column):
                     lead += 1
                 pairs = list(enumerate(amts[lead:]))
             for col_idx, amount in pairs:

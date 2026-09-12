@@ -558,6 +558,36 @@ CHECKS: list[dict] = [
         "sample": "SELECT corp_code, rcept_no, basis, reason FROM report_recon_candidates "
                   "WHERE source_pipeline='daily' AND status='new' ORDER BY first_seen_at DESC LIMIT 10",
     },
+    {
+        # 2026-09-12 설계(docs/plans/era_routing_fallback_and_fiscal_year_correction_
+        # parsing_design_2026-09-12.md §4) — 진원생명과학 20220908000421 실측에서
+        # 회계연도 오판정이 이 그레인 충돌로 이어지는 걸 발견.
+        # ★naive (corp,report_type,fy,fp) 4개 필드만으로 그룹핑하면 **380건**이 걸린다 —
+        #   그런데 실측해보니 그중 342건은 결산월 변경으로 인한 **정상 stub 연도 공존**
+        #   (`relabel_corp_filings()` 자신의 그레인키 docstring: "같은 달력연도 충돌
+        #   (정상연도 vs stub) 공존" — period_end_date 가 서로 달라 진짜 다른 기간인데
+        #   fiscal_year 라벨만 우연히 같다, 둘 다 is_final=True 가 맞는 설계된 동작).
+        #   그래서 **period_end_date 가 NULL 인 행이 관련된 경우만** 걸러야 진짜 신호가
+        #   남는다(실측 38건 — 태그 없는 정정/첨부정정이 태그 있는 형제와 그레인이
+        #   갈라진 경우. `_update_is_final_flags()`(레거시)·`relabel_corp_filings()`
+        #   둘 다 이 필드 조합을 정상 케이스의 그레인으로 취급하는 코드가 실존하므로,
+        #   ped 가 아예 없는 행이 낀 충돌은 예외를 허용할 이유가 없어 ERROR).
+        "name": "filings_isfinal_grain_duplicate",
+        "sev": "ERROR",
+        "desc": "같은 (corp_code, report_type, fiscal_year, fiscal_period)에 is_final=True 2개 이상"
+                "이고 그중 period_end_date NULL 인 행이 있음 — 제목 태그 없는 정정/첨부정정이 "
+                "태그 있는 형제와 그레인이 갈라진 신호(정상 stub 연도 공존은 이 조건으로 걸러짐)",
+        "count": "SELECT count(*) FROM ("
+                 "  SELECT corp_code, report_type, fiscal_year, fiscal_period, "
+                 "         bool_or(period_end_date IS NULL) has_null_ped"
+                 "  FROM filings WHERE is_final AND report_type IS NOT NULL AND fiscal_year IS NOT NULL"
+                 "  GROUP BY 1,2,3,4 HAVING count(*) > 1"
+                 ") dup WHERE has_null_ped",
+        "sample": "SELECT corp_code, report_type, fiscal_year, fiscal_period, "
+                  "array_agg(rcept_no ORDER BY rcept_no) rcepts "
+                  "FROM filings WHERE is_final AND report_type IS NOT NULL AND fiscal_year IS NOT NULL "
+                  "GROUP BY 1,2,3,4 HAVING count(*) > 1 AND bool_or(period_end_date IS NULL) LIMIT 10",
+    },
 ]
 
 

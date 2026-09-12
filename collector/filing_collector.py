@@ -237,6 +237,73 @@ def _governing_annual(pe_date: date, timeline: list[tuple[date, int]]) -> Option
     return timeline[-1] if timeline else None
 
 
+# ── 제목 태그 없는 정정본의 회계기간 재확인 (설계 2026-09-12) ────────────────
+#
+# ★배경: `report_nm`에 "(YYYY.MM)" 없는 정정본은 `_period_end_from_nm()`이 None을
+#   반환해 relabel 이 기존 라벨(접수일 기반 추정, `_parse_fiscal_info` 2차 폴백)을
+#   그대로 유지한다. 그 추정은 "접수 시점 ≈ 대상 기간"을 전제하는데, 정정이 원본보다
+#   몇 년~수십 년 뒤에 이뤄지면(진원생명과학 20220908000421 실측 — 원본 2006년 제출,
+#   정정 2022년, 대상은 2005 회계연도) 전제가 깨져 완전히 틀린 회계연도가 나온다.
+#   원문 CORRECTION 라이브러리 섹션엔 "정정대상 공시서류의 최초제출일"이 그대로 적혀
+#   있으므로, 정정본에 한해 이걸 읽어 재확인한다.
+#   상세: `docs/plans/era_routing_fallback_and_fiscal_year_correction_parsing_design_
+#   2026-09-12.md` §1.
+_CORRECTION_ORIG_DATE_RE = re.compile(r"최초제출일\s*[:：]\s*(\d{4})[.\-년]\s*(\d{1,2})")
+
+
+def _fiscal_period_from_correction_section(
+    session, rcept_no: str, report_type: str, fiscal_month: int,
+) -> Optional[tuple[int, str]]:
+    """정정본 XML의 CORRECTION 섹션 "최초제출일"에서 (fiscal_year, fiscal_period) 복구.
+
+    ★"최초제출일"은 **원본의 접수일**이지 결산기말이 아니다(예: "2006.03.31" =
+    2005 회계연도 사업보고서가 2006년 3월에 접수됐다는 뜻, 기말 자체는 아님). 그래서
+    이 날짜를 결산기말로 바로 `compute_fiscal_year_period`에 넣으면 또 틀린다 — 대신
+    **`_parse_fiscal_info()`의 기존 "접수일 기반 추정" 폴백을 원본 접수일에 대해
+    다시 태운다.** 원본은 정상적으로 대상 기간 직후(연례 신고 기한 이내)에 접수됐을
+    것이므로, 그 폴백의 전제("접수 시점 ≈ 대상 기간")가 원본 접수일 기준으로는 성립한다
+    — 정정본 자신의 접수일(수십 년 뒤일 수 있음) 기준으로는 성립하지 않았을 뿐이다.
+
+    실패(원문 미다운로드·섹션 없음·형식 불일치)는 전부 조용히 None — 호출부가 기존
+    접수일 추정을 그대로 쓴다(R6, 확신 없는 형식은 지어내지 않는다). XML 이 나중에
+    다운로드돼도 `relabel_corp_filings()`가 매 sync 마다 재호출되므로 자연히 재시도된다.
+    """
+    row = session.execute(text("""
+        SELECT file_path FROM download_tasks
+        WHERE rcept_no = :r AND status = 'completed' AND file_type = 'xml'
+          AND file_path IS NOT NULL
+    """), {"r": rcept_no}).first()
+    if row is None:
+        return None
+
+    from pathlib import Path
+
+    from parser.xml.dart_xml_parser import _parse_xml_file
+
+    path = Path(row.file_path)
+    if not path.exists():
+        return None
+    root = _parse_xml_file(path)
+    if root is None:
+        return None
+
+    correction = root.find(".//CORRECTION")
+    if correction is None:
+        return None
+    txt = " ".join("".join(correction.itertext()).split())
+    m = _CORRECTION_ORIG_DATE_RE.search(txt)
+    if not m:
+        return None
+    year, month = int(m.group(1)), int(m.group(2))
+    if not (1 <= month <= 12):
+        return None
+    try:
+        original_filed_at = date(year, month, 1)
+    except ValueError:
+        return None
+    return _parse_fiscal_info(report_type, original_filed_at, "", fiscal_month)
+
+
 def relabel_corp_filings(session, corp_code: str) -> dict:
     """
     한 기업의 filings 를 '그 시점 결산월(FYE)' 기준으로 재라벨(PRD 01a).
@@ -259,6 +326,7 @@ def relabel_corp_filings(session, corp_code: str) -> dict:
             "report_type": r.report_type, "pe": pe,
             "fy": r.fiscal_year, "fp": r.fiscal_period,
             "att": _is_attachment_amendment(r.report_nm),
+            "amendment": _is_amendment(r.report_nm),
         }
         if r.report_type == "annual" and pe:
             annual_ends.append((pe[2], pe[1]))
@@ -272,8 +340,16 @@ def relabel_corp_filings(session, corp_code: str) -> dict:
         rt, pe = info["report_type"], info["pe"]
         att = info["att"]
         if pe is None:
-            # 구형(YYYY.MM 없음): 기존 라벨 유지
-            upd.append({"rcept": rcept, "fy": info["fy"], "fp": info["fp"],
+            # 구형(YYYY.MM 없음): 기존 라벨 유지가 기본.
+            # ★신규(2026-09-12 설계) — 정정본이면 원문 CORRECTION 섹션의 "최초제출일"로
+            #   재확인 시도(설계문서 §1). 실패하면 조용히 기존 라벨 유지(R6).
+            fy, fp = info["fy"], info["fp"]
+            if info["amendment"]:
+                recovered = _fiscal_period_from_correction_section(
+                    session, rcept, rt, fiscal_month=12)  # 이 경로의 2차 폴백은 fiscal_month 미사용
+                if recovered is not None:
+                    fy, fp = recovered
+            upd.append({"rcept": rcept, "fy": fy, "fp": fp,
                         "ped": None, "pem": None, "fye": None, "stub": False, "att": att})
             continue
         py, pmo, pdate = pe

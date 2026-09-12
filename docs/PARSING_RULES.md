@@ -5745,6 +5745,73 @@ try/except(파이프라인 전체를 막지 않으려는 의도적 설계, R8/�
 
 ---
 
+## R91. `collector/filing_collector.py` — 제목 태그 없는 정정본 회계연도 오판정 +
+`fin2/extract/report_lines.py` era 라우팅 편방향 무재시도 (2026-09-12)
+
+**배경**: 계층2 2015+ 전수 재적재 배치(`reload_report_lines_2015plus_2026-09-12.py`)
+중 "0행(보류)" 표본 원문대조에서 발견. 진원생명과학(00118521) `[기재정정]사업보고서`
+r20220908000421 — 사용자가 원문에 별도재무제표가 정상적으로 들어있음을 확인했는데
+계층2가 0행을 냈다. 설계문서: `docs/plans/era_routing_fallback_and_fiscal_year_
+correction_parsing_design_2026-09-12.md`.
+
+**근본원인 체인**: `report_nm = "[기재정정]사업보고서"`(★"(YYYY.MM)" 꼬리표 없음) →
+`_parse_fiscal_info()` 1차(제목 태그) 실패 → 2차(유일한 폴백, 접수일 기반 추정) →
+접수일(2022-09-08)로 fiscal_year=2022 확정. 실제로는 원문 CORRECTION 섹션에
+"정정대상 공시서류의 최초제출일: 2006.03.31" = 제30기(2005 회계연도) 대상이라고
+명시돼 있었다(안 읽었을 뿐). `filings.fiscal_year=2022`가 저장되자
+`extract_report_lines()`가 `report_fiscal_year(2022) > _PRE2015_ROUTING_MAX_FY(2010)`
+로 2015+ 전용 파서로만 라우팅했고, 실제 원문은 2005년식 구K-GAAP 서식이라 표를
+하나도 못 찾아 0행 → **다른 시대 파서로 재시도하는 코드가 없어 그대로 종료**.
+
+**두 군데 모두 "1차 실패해도 검증·재시도 없이 그대로 확정"하는 같은 패턴의 갭**이었다:
+
+1. **입력측** — `relabel_corp_filings()`의 `pe is None`(제목 태그 없음) 분기에,
+   정정본(`_is_amendment`)이면 원문 CORRECTION 섹션의 "최초제출일"을 파싱해 재확인하는
+   3차 방법 추가(`_fiscal_period_from_correction_section()`, `_CORRECTION_ORIG_DATE_RE`).
+   ★"최초제출일"은 결산기말이 아니라 **원본의 접수일**이다 — 그 날짜를 그대로
+   `compute_fiscal_year_period()`에 넣으면 또 틀린다(원본도 결산기말 후 ~3개월 뒤에
+   접수되므로). 대신 `_parse_fiscal_info()`의 기존 "접수일 기반 추정" 폴백을 **원본
+   접수일**에 대해 다시 태운다 — 원본은 정상적으로 대상 기간 직후에 접수됐을 것이므로
+   그 폴백의 전제가 원본 접수일 기준으로는 성립한다(정정본 자신의 접수일 기준으로는
+   수십 년 차이가 나 성립하지 않았을 뿐).
+2. **추출측** — `_detect_pre2015_body_statement_tables_merged()`(pre-2015→2015+
+   방향, R70/2026-08-10 기존 구현)는 이미 섹션코드 단위 병합-폴백이 있었으나, **반대
+   방향**(2011+ 라우팅, `else` 분기)엔 폴백 자체가 없었다. `_merge_missing_codes()`
+   헬퍼로 그 병합 로직을 범용화해 재사용하고, `else` 분기에 "완전히 0행일 때만" 반대
+   방향(pre-2015 탐지기) 폴백 추가 — pre-2015→2015+ 방향과 달리 이 방향은 전수 실측이
+   없어 섹션코드 단위 상시 병합까지는 가지 않고 보수적으로 시작(폴백 성공 시
+   `logger.warning`으로 fiscal_year 오판정 의심 신호를 남김, 조용히 성공 처리 안 함).
+
+**부수 안전망**: `scripts/dq_assertions.py`에 `filings_isfinal_grain_duplicate`(ERROR)
+신설 — 같은 (corp_code, report_type, fiscal_year, fiscal_period)에 `is_final=True`
+2개 이상 있으면 걸린다. ★naive 4필드 그룹핑은 **380건**이 걸리는데, 그중 342건은
+결산월 변경으로 인한 **정상 stub 연도 공존**(`relabel_corp_filings()` 자신의
+그레인키 설계가 이미 이걸 정상으로 취급 — period_end_date 가 다르면 fiscal_year
+라벨이 같아도 둘 다 final 이 맞다)이라 `period_end_date IS NULL 인 행이 낀 경우만`
+으로 조건을 좁혀 진짜 신호 **38건**만 남겼다. 이 38건은 전부 "태그 없는 정정/첨부정정
+(대부분 `[첨부정정]`, 원본과 며칠 차)이 태그 있는 형제와 그레인이 갈라짐" — 같은
+근본 메커니즘의 더 흔한 하위유형이나, §1 트리거(`_is_amendment`)가 첨부정정
+(`_is_attachment_amendment`)까지는 안 잡아 이번 수정으로 안 고쳐진다. **후속
+백로그로 이월**(부록 C 참고).
+
+**검증**: `pytest tests/ fin2/tests/` 943 passed(무회귀 — 나머지 2건 실패는 기존
+무관 실패, `git stash`로 사전 확인). `fin2/tests/test_report_lines.py`에 진원생명과학
+실제 파일로 §2 폴백 단독 검증 회귀 테스트(§1 없이 **일부러 틀린** fiscal_year=2022를
+넘겨도 폴백만으로 617행 복구) + `_merge_missing_codes` 단위 테스트.
+`tests/test_filing_collector_correction_recheck.py`(신규)에 정규식 단위 테스트 3개 +
+실제 DB 연동 테스트. 원본 사고 건은 이 세션에서 `relabel_corp_filings(s, "00118521")`
+직접 실행으로 DB 즉시 정정(fiscal_year 2022→2005, is_final 충돌 해소,
+`layer2_review_queue` 스테일 행 삭제) — `extract_report_lines()`를 정정된 fiscal_year
+로 재호출해 617행 정상 추출 확인.
+
+**미조치**: 38건 백로그의 명시적 백필(해당 corp 들에 `relabel_corp_filings()` 직접
+호출) — `relabel_corp_filings()`는 그 corp가 **오늘 새 필링을 실제로 냈을 때만**
+데일리 사이클에서 재호출되므로(`scripts/collect_new.py`→`sync_filings(force=True)`,
+휴면 기업은 자연 재실행 안 됨) 후속 세션에서 별도 스크립트 필요. 주석(`_emit_note_
+lines`) 쪽 era 라우팅은 애초에 분기 자체가 없음(이번 조사로 확인만, 범위 밖).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -5820,6 +5887,7 @@ try/except(파이프라인 전체를 막지 않으려는 의도적 설계, R8/�
 
 | 항목 | 상태 |
 |---|---|
+| **R91 부수발견 — `filings_isfinal_grain_duplicate` 38건(태그 없는 첨부정정 그레인 미병합)** | **미조치** — 대부분 `[첨부정정]`(원본과 며칠 차)이 제목에 "(YYYY.MM)" 없어 `period_end_date=NULL`로 남고, 태그 있는 형제(원본)와 그레인이 영영 갈라져 둘 다 `is_final=True`. R91의 §1 수정(정정본 CORRECTION 섹션 재확인)은 `_is_amendment`(기재정정)만 트리거해 이 38건 대부분(`_is_attachment_amendment`)엔 안 걸림 — 별도 트리거 확장 또는 그레인키 자체 재설계 필요. 휴면 기업이면 데일리 사이클로 자연 재실행 안 됨(`relabel_corp_filings()`는 그 corp가 그날 새 필링을 냈을 때만 재호출) — 백필 스크립트 별도 필요. `scripts/dq_assertions.py::filings_isfinal_grain_duplicate`로 상시 감시 중 |
 | **`report_tables.declared_unit` 이 표의 첫 행 adecimal 로 유도돼 IS 에서 오염** | **미조치(잠복)** — `store_report_tables()`(`fin2/extract/report_lines.py:1408`)는 그 표에서 **처음 만난 행의 `adecimal`** 로 `declared_unit` 을 정하는데, IS 는 EPS 행(`_emit_eps_lines`, `adecimal=0`)이 먼저 방출돼 **백만원 표가 `declared_unit=1`(원)** 으로 적힌다(2026-09-09 실측: 삼성전자 `20260814003699` IS 별도·연결 둘 다. 행의 `adecimal` 은 정상 `-6`). 현재 이 컬럼을 **읽는 프로덕션 소비자가 없어**(전수 grep 확인) 실피해는 0 이지만, 앞으로 누가 '표의 단위' 를 여기서 읽으면 조용히 틀린다. 계층2 검토 CSV(`fin2/extract/review_csv.py`)와 검산(`fin2/audit/layer2_selfcheck.py::row_unit`)은 이 컬럼 대신 **행의 `adecimal`** 을 쓴다 — `value_won` 을 만든 바로 그 값이라 표시금액과 어긋날 수 없기 때문. 고치려면 `store_report_tables` 를 최빈 adecimal 기준으로 바꾸고 R8 대로 전수 백필 필요 |
 | ~~R44 — DRB동일(00118266) controlling_ni 자체는 여전히 fail_b(미해결)~~ | **✅ 해소 완료 2026-08-25 — R45**. `_resolve_ni_attribution()`에 net_income 앵커(계속+중단 총계 합산, 자체 교차검증 내장, EBT−tax보다 먼저 시도)를 신설해 근본수정. 18,327,708,908(오답)→29,912,789,124(정답), 원문 항등식+face_audit 독립 리더로 이중 검증. 1,440개사 소급 백필+Gate B 재감사까지 완료. R45 항목 참고. 부수 발견 (c)(bare `"...에게 귀속되는 지분"` 라벨의 bare-지배지분 가드 우회)는 R45 범위 밖 — 여전히 미착수(아래 신규 항목과 별개) |
 | **P3-1 "원인 A" — 처음으로 전수 재처리(`fy=all`)된 회사가 R16~R32 등 그동안 표적백필로만 적용되던 규칙변경분을 한꺼번에 맞아 값이 흔들림** | **부분 조치(2026-08-20, R35)**. 실측(2026-08-19 재감사): 689건 단조성 위반 중 R34(depth결함) 30건을 뺀 668건을 field 단위로 재분해하니 실제로는 성격이 다른 3그룹(감사기 커버리지 공백 527건/56개사 · 진짜 값불일치 의심 51건/13개사 · Track A/B 자체가 못 읽는 문서 87건/8개사)이었다. **감사기 커버리지 공백 그룹만 R35 로 해소**(382건 pass 회복, DB 반영 = 74개사 `--recheck`). 나머지(값불일치 51건 + 미판독 87건 + 잔여 pending)는 **여전히 미조치 — 별도 트랙**. 원 트리거(8/18 `build_std_v3.py` 전체이력 재생성 2,128개사)는 여전히 유효한 구조적 재발 경로 — 메모리 `gateb-full-reaudit-is-required-to-close` 그대로. 다음 착수 시 `face_audit_snap_20260819` 를 기준선으로 재사용 가능 |

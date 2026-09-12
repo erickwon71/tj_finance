@@ -969,6 +969,52 @@ def test_samsunglife_multicol_paired_columns_unaffected_by_r86_r87():
     assert detail.get(0) == 2_149_956_000_000, detail
 
 
+# ── era 라우팅 역방향 폴백 (2026-09-12 설계) ────────────────────────────────
+# docs/plans/era_routing_fallback_and_fiscal_year_correction_parsing_design_2026-09-12.md
+
+def test_merge_missing_codes_fills_gaps_without_overwriting():
+    """`_merge_missing_codes()` 순수 로직 — primary 가 채운 키는 그대로, 못 채운 키만 보충."""
+    from fin2.extract.report_lines import _merge_missing_codes
+
+    primary = {"BS_S": ["primary-bs"]}
+    calls = []
+
+    def fallback():
+        calls.append(1)
+        return {"BS_S": ["fallback-bs-should-be-ignored"], "IS_S": ["fallback-is"]}
+
+    merged = _merge_missing_codes(primary, fallback)
+    assert merged == {"BS_S": ["primary-bs"], "IS_S": ["fallback-is"]}
+    assert calls == [1], "fallback_fn 은 정확히 한 번만 불려야 한다"
+
+
+_JINWON_2022_CORRECTION_OF_2005FY = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00118521_진원생명과학/annual/2022/20220908000421.xml"
+)
+
+
+def test_misrouted_2011plus_falls_back_to_pre2015_detector():
+    """★거짓양성 회귀 — 진원생명과학(00118521) 20220908000421(2026-09-12 실측).
+
+    이 필링은 2022년에 접수된 [기재정정]이지만 실제 대상은 2005 회계연도(제30기, K-GAAP
+    구서식)다. `report_nm`에 "(YYYY.MM)" 태그가 없어 수집 단계에서 fiscal_year 가 접수
+    연도(2022)로 잘못 계산됐던 사고(입력측 수정은 `collector/filing_collector.py`
+    `_fiscal_period_from_correction_section`, 이 테스트는 그 수정이 없어도 추출측
+    폴백만으로 데이터가 살아나는지 확인 — 두 수정이 독립적으로 방어선이 되는지 검증).
+    fiscal_year=2022(틀린 값)를 **그대로** 넘겨도, 2015+ 경로가 0행이면 pre-2015
+    탐지기로 재시도해 실제 본문(별도 재무제표)을 복구해야 한다.
+    """
+    if not _JINWON_2022_CORRECTION_OF_2005FY.exists():
+        return
+    lines = extract_report_lines(
+        _JINWON_2022_CORRECTION_OF_2005FY, rcept_no="20220908000421", corp_code="00118521",
+        report_fiscal_year=2022, report_fiscal_period="FY")   # ★일부러 틀린 값
+    assert len(lines) > 0, "역방향 폴백이 없으면 0행(보류)으로 끝난다 — 이게 실제 사고였다"
+    bs_rows = [l for l in lines if l.statement == "BS" and l.basis == "separate"]
+    assert bs_rows, "별도 대차대조표(구K-GAAP 명칭)가 폴백으로 복구돼야 한다"
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

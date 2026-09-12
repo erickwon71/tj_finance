@@ -69,6 +69,22 @@ from fin2.extract.report_lines_inline_xbrl_overlay import (
 # 새 경로는 1999~2010 표본에서만 검증됐다(회귀 방지 원칙, 설계문서 §4).
 _PRE2015_ROUTING_MAX_FY = 2010
 
+def _merge_missing_codes(primary: dict, fallback_fn) -> dict:
+    """`primary` 가 못 채운 섹션코드만 `fallback_fn()` 결과로 보충. 덮어쓰지 않는다.
+
+    본문 탐지기 전용이 아니다 — 딕셔너리 {섹션코드: [(표, 단위, ...)]} in/out 계약만
+    지키면 어떤 탐지기 쌍이든 재사용 가능(설계문서 `docs/plans/era_routing_fallback_
+    and_fiscal_year_correction_parsing_design_2026-09-12.md` §2 — 언젠가 주석에도
+    시대별 탐지기가 생기면 같은 헬퍼를 그대로 얹을 수 있다). 호출측이 "언제
+    fallback_fn 을 부를지"(항상/primary 가 비었을 때만)를 정한다 — 이 헬퍼 자체는
+    "채우는 방법"만 담당(단일 책임).
+    """
+    groups = dict(primary)
+    for code, tables in fallback_fn().items():
+        groups.setdefault(code, tables)
+    return groups
+
+
 # ★2026-08-10(Phase3 구현, canary 실측으로 발견) — 문서 전체 단위 "신규경로 빈 결과 시에만
 # 폴백"은 전환기(2009~2010)에서 손해다: 신규경로가 IS/CF 는 잡지만 BS 는 못 잡는 문서에서
 # "그룹이 비지 않았다"는 이유로 기존 2015+ 경로가 그 문서에서 BS 를 잡을 기회(설계문서 §1-1
@@ -78,11 +94,9 @@ _PRE2015_ROUTING_MAX_FY = 2010
 # 안 됨, 극히 드묾) 완전 누락보다 낫고, 같은 키에 두 번 담기는 중복은 애초에 발생하지 않는다
 # (덮어쓰지 않고 setdefault 로만 채움).
 def _detect_pre2015_body_statement_tables_merged(root, fin_type: str) -> dict[str, list[tuple]]:
-    groups = detect_pre2015_body_statement_tables(root, fin_type, include_sce=True)
-    fallback = _detect_body_statement_tables(root, fin_type, include_sce=True)
-    for code, tables in fallback.items():
-        groups.setdefault(code, tables)
-    return groups
+    return _merge_missing_codes(
+        detect_pre2015_body_statement_tables(root, fin_type, include_sce=True),
+        lambda: _detect_body_statement_tables(root, fin_type, include_sce=True))
 
 # 로컬 선언이 전혀 없을 때 문서 전체 기본 단위를 썼다는 provenance(2026-08-05).
 # `fin2/extract/text.py::document_default_unit` 참고.
@@ -1302,6 +1316,23 @@ def extract_report_lines(
         }
     else:
         groups = _detect_body_statement_tables(root, fin_type, include_sce=True)
+        if not groups:
+            # ★신규(2026-09-12 설계 §2) — report_fiscal_year 오판정으로 실제론 pre-2015
+            #   서식인 문서가 여기로 잘못 라우팅되면 신경로가 표를 하나도 못 찾는다(실측:
+            #   진원생명과학 20220908000421 — 정정본이 원본 접수 16년 뒤라 fiscal_year가
+            #   2022로 잘못 계산됨, `docs/plans/era_routing_fallback_and_fiscal_year_
+            #   correction_parsing_design_2026-09-12.md` §1 로 근본 원인은 별도 수정).
+            #   **완전히 빈 경우에만** 반대 방향(pre-2015 탐지기)으로 재시도한다 — pre-2015→
+            #   2015+ 방향과 달리 이 방향은 아직 전수 실측이 없어 부분 병합(섹션코드 단위
+            #   상시 setdefault)까지는 가지 않는다(보수적 시작, 위 설계문서 §2).
+            groups = _merge_missing_codes(
+                groups, lambda: detect_pre2015_body_statement_tables(
+                    root, fin_type, include_sce=True))
+            if groups:
+                logger.warning(
+                    f"[report_lines] {rcept_no}: fiscal_year={report_fiscal_year} 로 2015+ "
+                    f"라우팅했으나 0행 — pre-2015 폴백으로 {len(groups)}개 섹션 복구. "
+                    f"fiscal_year 메타데이터 오판정 의심, 확인 필요.")
     # 문서 전체 기본 단위는 **로컬 선언이 없는 표가 실제로 있을 때만** 찾는다(비용 절감 —
     # 대다수 문서는 표마다 선언이 있어 이 스캔이 불필요하다). `_detect_body_statement_tables`
     # 가 이미 붙여준 표 단위 unit 이 하나라도 None 이면 후보. squished_bs 는 로컬 선언이

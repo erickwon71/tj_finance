@@ -184,6 +184,21 @@ def test_cf_na_when_opening_or_closing_missing():
     assert [r.verdict for r in res] == ["NA"]
 
 
+def test_cf_net_change_identity_adds_held_for_sale_reclass_after_subtotal():
+    """★거짓양성 회귀 — SK스퀘어 20260514001477(연결, 2026-09-12 발견).
+
+    순증감 소계와 기말 사이에 환율효과 **와** IFRS5 매각예정(처분자산군) 현금
+    재분류행이 나란히 인쇄되는 서식. 재분류행을 안 더하면 정확히 그 금액만큼
+    어긋난 거짓 FAIL 이 난다.
+    """
+    rows = _cf(("현금및현금성자산의 순증감", -160_570),
+               ("기초현금및현금성자산", 1_310_718),
+               ("외화표시 현금및현금성자산의 환율변동효과", 13_003),
+               ("매각예정자산에 포함된 현금및현금성자산", 50_934),
+               ("분기말의 현금및현금성자산", 1_214_085))
+    assert verdicts(sc.check_cf_closing_cash(rows), "cf_closing_cash") == ["PASS"]
+
+
 def test_cf_closing_label_variants_are_recognised():
     """'반기말의'·'분기말의' 접두가 붙어도 기말 잔액이다(초기 구현이 여기서 판정불가를 냈다)."""
     for closing in ("반기말의 현금및현금성자산", "분기말의 현금및현금성자산",

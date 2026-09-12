@@ -21,7 +21,7 @@
 | code | 등급 | 내용 |
 |---|---|---|
 | `bs_balance`        | 차단 | 자산총계 = 부채총계 + 자본총계 (또는 부채와자본총계) |
-| `cf_closing_cash`   | 차단 | 기초현금 + 영업 + 투자 + 재무 (+환율효과) = 기말현금 |
+| `cf_closing_cash`   | 차단 | 기초현금 + 영업 + 투자 + 재무 (+환율효과·매각예정재분류) = 기말현금 |
 | `scope_presence`    | 차단 | 별도/연결 × BS/IS/CF 중 0행인 칸(형제 기간과 비교해 정상 결측과 구분) |
 | `unit_sanity`       | 차단 | 단위를 확정 못해 금액이 공란으로 적재된 행 (단위 혼재는 정상이라 안 잡음) |
 | `row_count_outlier` | 의심 | 같은 corp·basis·statement 의 다른 기간 행수 중앙값 대비 ±50% 이탈 |
@@ -109,6 +109,12 @@ _RE_CF_CLOSING = re.compile(r"기말.*현금|현금.*기말|期末")
 #   **순증감 행**이다. 이걸 환율효과로 주우면 항등식이 그 금액만큼 어긋나 거짓 FAIL 이 난다
 #   (2026-09-09 삼성전자 20260814003699 에서 실제로 재현). 증가/감소/순증감 토큰이 있으면 뺀다.
 _RE_CF_FX_EFFECT = re.compile(r"환율변동|외화환산|외화표시|환율차이|환산효과|환율효과")
+# 매각예정자산(처분자산군) 재분류 조정행 — IFRS5 로 매각예정 분류된 자회사/사업의 현금이
+#   순증감 소계와 기말잔액 사이에 환율효과와 나란히 별도 인쇄된다(2026-09-12 SK스퀘어
+#   20260514001477 실측: '매각예정자산에 포함된 현금및현금성자산' 50,934백만원 — 원문
+#   ACODE=entity01596425_CashAndCashEquivalentsIncludedInDisposalGroupHeldForSaleOf…
+#   확인. 이걸 안 더하면 정확히 그 금액만큼 어긋난 거짓 FAIL 이 난다).
+_RE_CF_HFS_RECLASS = re.compile(r"매각예정.*현금|현금.*매각예정|처분자산군.*현금|현금.*처분자산군")
 _RE_CF_NET_CHANGE_TOKEN = re.compile(r"증가|감소|순증감|증감")
 # 활동별 소계 — K-GAAP 구서식은 '영업활동으로 인한 현금의 증가' 처럼 쓰기도 해서,
 # 순증감 소계를 고를 때 이걸 배제하지 않으면 활동 소계를 총증감으로 오인한다.
@@ -233,7 +239,7 @@ def _slack(rows: list[dict], stmt: str, basis: str) -> int:
 
 
 def _find_fx_effect(rows: list[dict], basis: str) -> tuple[dict | None, bool]:
-    """CF 환율효과 항 1개. 반환 (행 or None, 후보가 모호한가).
+    """CF 환율효과(또는 매각예정 재분류) 항 1개. 반환 (행 or None, 후보가 모호한가).
 
     '환율변동 효과 적용 후 … 증가(감소)' 같은 **순증감 행**을 배제한다 — 그건 환율효과가
     아니라 소계라, 더하면 항등식이 그 금액만큼 틀어져 거짓 FAIL 이 난다.
@@ -241,7 +247,8 @@ def _find_fx_effect(rows: list[dict], basis: str) -> tuple[dict | None, bool]:
     """
     hits = [r for r in rows
             if r["statement"] == "CF" and r["basis"] == basis and r["value_won"] is not None
-            and _RE_CF_FX_EFFECT.search(_norm(r["label_raw"]))
+            and (_RE_CF_FX_EFFECT.search(_norm(r["label_raw"]))
+                 or _RE_CF_HFS_RECLASS.search(_norm(r["label_raw"])))
             and not _RE_CF_NET_CHANGE_TOKEN.search(_norm(r["label_raw"]))]
     if not hits:
         return None, False
@@ -316,7 +323,7 @@ def _find_net_change(rows: list[dict], basis: str, closing: dict) -> dict | None
 
 
 def _fx_after(rows: list[dict], basis: str, net: dict, closing: dict) -> list[dict]:
-    """순증감 소계 **뒤**, 기말 잔액 **앞**에 따로 인쇄된 환율효과 행들.
+    """순증감 소계 **뒤**, 기말 잔액 **앞**에 따로 인쇄된 조정행들(환율효과·매각예정 재분류).
 
     기초 행이 그 사이에 끼는 서식도 있어(20201116002012: 순증감 → 기초 → 환율효과 → 기말)
     상한은 기말 위치로 잡는다. 기초/기말 행 자체는 제외한다.
@@ -325,7 +332,8 @@ def _fx_after(rows: list[dict], basis: str, net: dict, closing: dict) -> list[di
     return [r for r in rows
             if r["statement"] == "CF" and r["basis"] == basis and r["value_won"] is not None
             and lo < _doc_pos(r) < hi
-            and _RE_CF_FX_EFFECT.search(_norm(r["label_raw"]))
+            and (_RE_CF_FX_EFFECT.search(_norm(r["label_raw"]))
+                 or _RE_CF_HFS_RECLASS.search(_norm(r["label_raw"])))
             and not _RE_CF_OPENING.search(_norm(r["label_raw"]))
             and not _RE_CF_CLOSING.search(_norm(r["label_raw"]))]
 
@@ -343,6 +351,11 @@ def check_cf_closing_cash(rows: list[dict]) -> list[CheckResult]:
        사업양수도로 인한 현금 증감 같은 별도 조정행을 세지 않아 거짓 FAIL 이 난다
        (2026-09-09 표본 실측: 20120629000739 은 이 폴백에서 34억 어긋났지만
        'V. 현금의 증가' 소계로 보면 정확히 일치했다).
+
+    ★순증감 소계와 기말 사이의 조정행은 환율효과만 있는 게 아니다 — IFRS5 매각예정
+    분류(처분자산군)로 인한 현금 재분류행도 같은 자리에 별도로 찍힌다(2026-09-12
+    SK스퀘어 20260514001477: '매각예정자산에 포함된 현금및현금성자산' 50,934백만원).
+    `_fx_after()` 가 `_RE_CF_HFS_RECLASS` 로 이것도 같이 줍는다.
     """
     out = []
     for basis in BASES:
@@ -363,7 +376,9 @@ def check_cf_closing_cash(rows: list[dict]) -> list[CheckResult]:
             #   사이에 '외화표시 현금의 환율변동 효과'/'보유현금및현금성자산환산효과' 가
             #   따로 인쇄된다. 그 행을 안 더하면 정확히 그 금액만큼 어긋난 거짓 FAIL 이
             #   난다(2026-09-09 표본 실측: 이 한 가지로 FAIL 이 15→138 로 폭증했다).
-            #   소계 **뒤에** 오는 환율효과만 더한다 — 앞에 있으면 이미 소계에 포함됐다.
+            #   같은 자리에 IFRS5 매각예정(처분자산군) 현금 재분류행도 따로 찍히는
+            #   서식이 있다(2026-09-12 SK스퀘어 20260514001477 실측).
+            #   소계 **뒤에** 오는 조정행만 더한다 — 앞에 있으면 이미 소계에 포함됐다.
             tail_fx = _fx_after(rows, basis, net, closing)
             expected = net["value_won"] + sum(f["value_won"] for f in tail_fx)
             diff = (closing["value_won"] - opening["value_won"]) - expected
@@ -371,7 +386,7 @@ def check_cf_closing_cash(rows: list[dict]) -> list[CheckResult]:
             msg = (f"기말 {_fmt(closing['value_won'])} − 기초 {_fmt(opening['value_won'])} "
                    f"{'=' if verdict == PASS else '≠'} "
                    f"'{net['label_raw']}' {_fmt(net['value_won'])}"
-                   + (f" + 환율효과 {len(tail_fx)}행" if tail_fx else ""))
+                   + (f" + 조정행 {len(tail_fx)}행(환율효과/매각예정재분류)" if tail_fx else ""))
             if verdict == FAIL:
                 msg += f" (차 {_fmt(diff)}원)"
             out.append(CheckResult("cf_closing_cash", scope, GRADE_BLOCKING, verdict, msg))

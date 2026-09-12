@@ -1325,6 +1325,16 @@ def _run_migrations() -> None:
           AND fa.source_version = 'v3'
         WHERE COALESCE(fa.gate_status, 'unaudited') <> 'fail_a';
         """),
+
+        ("2026_09_11_l2rq_screen_columns",
+         # 2026-09-11: docs/plans/layer2_review_staged_screening_design_2026-09-11.md —
+         # 재적재 *전* 사전 스크리닝 결과(우선순위 재편용). 검토 절차 자체는 무변경.
+         """
+        ALTER TABLE layer2_review_queue ADD COLUMN IF NOT EXISTS screen_severity INTEGER;
+        ALTER TABLE layer2_review_queue ADD COLUMN IF NOT EXISTS screen_flags JSONB;
+        ALTER TABLE layer2_review_queue ADD COLUMN IF NOT EXISTS screened_at TIMESTAMP;
+        CREATE INDEX IF NOT EXISTS ix_l2rq_screen ON layer2_review_queue (status, screen_severity);
+        """),
     ]
 
     with engine.begin() as conn:

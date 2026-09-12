@@ -2026,6 +2026,14 @@ class Layer2ReviewQueue(Base):
     check_status  = Column(String(8),  nullable=True, comment="ok/suspect/na — 차단검산 FAIL 유무")
     checks        = Column(JSONB,      nullable=True, comment="CheckResult 리스트(코드/범위/판정/메시지)")
 
+    # ── 사전 스크리닝 (기계, 재적재 *전* 계산 — `layer2_screen.py`, 2026-09-11 설계) ─────
+    # 순서 재편(§우선순위)에만 쓴다 — 검토 절차 자체(next/pass/fail/redo)는 안 바꾼다.
+    screen_severity = Column(Integer,  nullable=True,
+                             comment="스크리닝 심각도(클수록 우선). NULL=미스크리닝")
+    screen_flags    = Column(JSONB,    nullable=True,
+                             comment='[{"code":..,"message":..}] — 걸린 신호 목록')
+    screened_at     = Column(DateTime, nullable=True)
+
     csv_path      = Column(Text,       nullable=True, comment="생성된 검토 CSV 경로(프로젝트 상대)")
 
     # ── 사람 판단 (init/재적재가 절대 덮어쓰지 않는다) ─────────────────────
@@ -2040,6 +2048,7 @@ class Layer2ReviewQueue(Base):
         Index("ix_l2rq_order", "corp_rank", "seq_in_corp"),
         Index("ix_l2rq_status", "status"),
         Index("ix_l2rq_corp", "corp_code"),
+        Index("ix_l2rq_screen", "status", "screen_severity"),
     )
 
     def __repr__(self):

@@ -92,6 +92,8 @@ _UNIVERSE_SQL = text(
 )
 
 # ★is_final 로 거르지 않는다 — R3/`collector/filing_select.py`. 정정본도 대상이다.
+# ★fiscal_year_min — 시대 4단계 분할(docs/plans/layer2_review_staged_screening_design_
+#   2026-09-11.md §1) 지원. NULL 이면 전체 기간(기존 동작 무변경).
 _FILINGS_SQL = text(
     """
     SELECT f.rcept_no, f.fiscal_year, f.fiscal_period, f.report_type, f.filed_at,
@@ -99,6 +101,7 @@ _FILINGS_SQL = text(
     FROM filings f
     WHERE f.corp_code = :c
       AND f.report_type IN ('annual', 'half', 'quarter')
+      AND (CAST(:fy_min AS smallint) IS NULL OR f.fiscal_year >= :fy_min)
     """
 )
 
@@ -125,7 +128,8 @@ def cmd_init(args) -> None:
         corps = [c for _, c in ranked]
 
         for rank, corp in ranked:
-            filings = session.execute(_FILINGS_SQL, {"c": corp.corp_code}).fetchall()
+            filings = session.execute(
+                _FILINGS_SQL, {"c": corp.corp_code, "fy_min": args.fiscal_year_min}).fetchall()
             if not filings:
                 continue
             ordered = sorted(
@@ -172,8 +176,34 @@ def cmd_init(args) -> None:
 # ────────────────────────────────────────────────────────────────────────────
 # 대상 선택
 # ────────────────────────────────────────────────────────────────────────────
+# ★2026-09-11(사용자 결정, 시대 게이트 도입) — docs/plans/layer2_review_staged_
+#   screening_design_2026-09-11.md §1의 4단계를 **전역 우선순위**로 쓴다: 회사
+#   진행순서(corp_rank)보다 시대(era_rank)가 먼저다 — "모든 회사의 2015+ 를 전부
+#   끝낸 뒤에야 2011~2014 로, 그 다음 2007~2010, 그 다음 1999~2006" 로 넘어간다.
+#   (같은 날 앞선 결정 — "삼성전자는 끝까지 계속" — 을 뒤집음. 회사 하나를
+#   끝까지 보는 옛 방식 대신 기간 중요도 우선으로 확정.)
+#   구현은 ORDER BY 맨 앞에 CASE 식 하나만 추가하면 된다 — "그 시대에 pending 이
+#   하나라도 남아있으면 그 시대에서만 고른다"는 로 별도 상태 없이 이 정렬만으로
+#   자동 성립(그 시대가 다 떨어지면 다음 시대 행이 자연히 최소값이 된다).
+_ERA_RANK_SQL = """
+    CASE
+        WHEN fiscal_year >= 2015 THEN 1
+        WHEN fiscal_year >= 2011 THEN 2
+        WHEN fiscal_year >= 2007 THEN 3
+        WHEN fiscal_year IS NOT NULL THEN 4
+        ELSE 5
+    END
+"""
+
+
 def _pick(session, rcept_no: str | None, *, statuses: tuple[str, ...]):
-    """진행 순서 `(corp_rank, seq_in_corp)` 로 다음 대상 1건. `rcept_no` 지정 시 그것만.
+    """진행 순서 `(era_rank, corp_rank, screen_severity, seq_in_corp)` 로 다음 대상 1건.
+    `rcept_no` 지정 시 그것만.
+
+    ★era_rank(시대 게이트)가 최우선 — 2015+ 전체 회사를 다 끝내야 2011~2014 로
+      넘어간다(위 상수 참고). 그 안에서는 시총순(corp_rank), 그 안에서는 사전
+      스크리닝(`layer2_screen.py`) 심각도 큰 순, 마지막에 회사 내 순번(seq_in_corp).
+      screen_severity 가 NULL(미스크리닝)이면 0과 동급으로 취급.
 
     ★어느 경로든 **RowMapping(dict 처럼 쓰는 것)** 으로 통일한다 — 한때 rcept 지정 경로만
       ORM 객체를 돌려줘 호출부에서 `item["..."]` 가 TypeError 로 터졌다.
@@ -183,9 +213,12 @@ def _pick(session, rcept_no: str | None, *, statuses: tuple[str, ...]):
             text("SELECT * FROM layer2_review_queue WHERE rcept_no = :r"),
             {"r": rcept_no}).mappings().first()
     return session.execute(
-        text("""SELECT * FROM layer2_review_queue
+        text(f"""SELECT * FROM layer2_review_queue
                 WHERE status = ANY(:st)
-                ORDER BY corp_rank NULLS LAST, seq_in_corp, rcept_no
+                ORDER BY {_ERA_RANK_SQL},
+                         corp_rank NULLS LAST,
+                         COALESCE(screen_severity, 0) DESC,
+                         seq_in_corp, rcept_no
                 LIMIT 1"""),
         {"st": list(statuses)}).mappings().first()
 
@@ -570,8 +603,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("init", help="시총순으로 검토 큐 생성/갱신")
-    p.add_argument("--top", type=int, default=50, help="시총 상위 N사 (기본 50)")
+    p.add_argument("--top", type=int, default=50, help="시총 상위 N사 (기본 50, 0=전체)")
     p.add_argument("--corp", help="쉼표구분 corp_code — 지정 시 그 회사만")
+    p.add_argument("--fiscal-year-min", type=int, default=None,
+                   help="이 연도 이상 필링만 큐에 넣음(시대 구분 1단계=2015)")
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("next", help="다음 1건 재적재 + 검산 + CSV 생성")

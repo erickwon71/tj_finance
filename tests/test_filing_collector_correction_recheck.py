@@ -17,8 +17,38 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from collector.filing_collector import (  # noqa: E402
-    _CORRECTION_ORIG_DATE_RE, _fiscal_period_from_correction_section,
+    _CORRECTION_ORIG_DATE_RE, _detect_report_type, _fiscal_period_from_correction_section,
 )
+
+
+# ── _detect_report_type() — 제출기한연장신고서 오분류 회귀(2026-09-12) ──────────
+# 배경: "사업보고서제출기한연장신고서"가 REPORT_TYPE_MAP 키워드("사업보고서")를
+# 부분문자열로 포함해 annual 로 오분류되고 있었다(전사 221건 실측 — 재무제표가
+# 전혀 없는 행정신고인데 report_type/fiscal_year 계산까지 실제 보고서처럼 타서
+# 계층2 reload 대상에 노이즈로 낀다).
+
+def test_deadline_extension_notice_not_classified_as_annual():
+    assert _detect_report_type("사업보고서제출기한연장신고서") is None
+    assert _detect_report_type("사업보고서제출기한연장신고서 (2022.12)") is None
+
+
+def test_deadline_extension_notice_with_amendment_prefix_not_classified():
+    """정정+연장신고 조합("[기재정정]사업보고서제출기한연장신고서")도 제외."""
+    assert _detect_report_type("[기재정정]사업보고서제출기한연장신고서 (2021.12)") is None
+
+
+def test_deadline_extension_notice_variants_for_half_and_quarter():
+    assert _detect_report_type("반기보고서제출기한연장신고서") is None
+    assert _detect_report_type("분기보고서제출기한연장신고서") is None
+
+
+def test_normal_reports_still_classified():
+    """회귀 방지 — 정상 보고서까지 같이 걸러지면 안 된다."""
+    assert _detect_report_type("사업보고서 (2022.12)") == "annual"
+    assert _detect_report_type("[기재정정]사업보고서 (2022.12)") == "annual"
+    assert _detect_report_type("반기보고서 (2022.06)") == "half"
+    assert _detect_report_type("분기보고서 (2022.09)") == "quarter"
+    assert _detect_report_type("주요사항보고서") is None
 
 
 # ── 정규식 단위(DB 비의존) ───────────────────────────────────────────────────

@@ -368,6 +368,102 @@ def test_table_fallback_recovers_wrapped_grand_totals_end_to_end():
     assert won("bs.total_assets") == won("bs.total_liabilities") + won("bs.total_equity")
 
 
+# ── 헤더 구조 우선 파싱 (2026-09-12, `docs/plans/pdf_header_aware_table_parsing_
+#   redesign_2026-09-12.md`) — 솔트웨어 20220802000208 실측 회귀 ────────────────
+
+from fin2.extract.pdf import (  # noqa: E402
+    _looks_like_real_amount, _parse_pdf_table_header, _lines_disagree_with_header,
+    extract_pdf_facts,
+)
+
+
+def test_looks_like_real_amount_accepts_proper_thousands_grouping():
+    assert _looks_like_real_amount("2,351,294,869")
+    assert _looks_like_real_amount("148")          # 콤마 없음 — 그대로 금액
+    assert _looks_like_real_amount("(2,351,294,869)")
+    assert _looks_like_real_amount("-2,351,294,869")
+
+
+def test_looks_like_real_amount_rejects_note_ref_lists():
+    """★거짓양성 회귀 — 솔트웨어 실측: "4,5,6"/"4,5,7,18" 같은 주석번호 나열은
+    콤마 있는 숫자토큰 형태가 금액과 같아 보이지만, 자릿수 그룹이 불규칙(1~2자리)
+    하다는 점으로 구분된다."""
+    assert not _looks_like_real_amount("4,5,6")
+    assert not _looks_like_real_amount("4,5,7,18")
+
+
+def test_parse_pdf_table_header_reads_period_columns():
+    region = ("재 무 상 태 표\n제 4(당)반기말: 2022년 06월 30일 현재\n"
+              "제 3(전)기말 : 2021년 12월 31일 현재\n미래에셋대우 (단위:원)\n"
+              "과 목 주석 제 4(당)반기말 제 3(전)기말\n자 산\n")
+    header = _parse_pdf_table_header(region)
+    assert header is not None
+    assert header.n_period_cols == 2
+    assert header.has_note_col is True
+
+
+def test_parse_pdf_table_header_none_when_no_multi_period_line():
+    """단일 기간마커줄(제목 앵커 확인용)만 있고 진짜 컬럼헤더가 없으면 None —
+    지어내지 않는다(R6)."""
+    region = "손익계산서\n제 28 기 2020.01.01 ~ 2020.12.31\n(단위 : 원)\n매출 100\n"
+    assert _parse_pdf_table_header(region) is None
+
+
+def test_lines_disagree_with_header_flags_note_ref_contamination():
+    from fin2.extract.pdf import PdfTableHeader
+    header = PdfTableHeader(has_note_col=True, n_period_cols=2, period_labels=["a", "b"])
+    ok_lines = [("유동자산", [100, 90])]
+    bad_lines = [("현금및현금성자산", [456, 100, 90])]  # 주석번호가 안 걸러진 경우 흉내
+    assert not _lines_disagree_with_header(ok_lines, header)
+    assert _lines_disagree_with_header(bad_lines, header)
+
+
+def test_half_year_report_title_now_anchors_correctly():
+    """★거짓양성 회귀 — 솔트웨어 실측: "제4(당)반기"("반"이 "기" 앞에 낌)는 예전
+    `_PERIOD_MARK_RE`로 앵커 확정을 못 받았다. 이 갭 때문에 포괄손익계산서·현금흐름표
+    앵커가 아예 안 잡혀, BS 리전이 다음 anchor 없이 문서 끝까지 뻗어나가 다른 표까지
+    섞였다. 반기보고서 title 뒤에 오는 "제N(당)반기" 형태가 이제 정상 앵커로 잡히는지
+    직접 확인."""
+    text = (
+        "재무상태표\n제 4(당)반기말: 2022년 06월 30일 현재\n제 3(전)기말 : 2021년"
+        " 12월 31일 현재\n(단위:원)\n"
+        "과 목 제 4(당)반기말 제 3(전)기말\n"
+        "자산총계 14,954,294,161 14,939,210,092\n"
+        "부채총계 2,363,475,864 2,324,210,908\n"
+        "자본총계 12,590,818,297 12,614,999,184\n"
+        "현금흐름표\n제4(당)반기 : 2022년 01월 01일부터 2022년 06월 30일까지\n(단위:원)\n"
+        "영업활동으로인한현금흐름 52,636,847 40,000,000\n"
+        "투자활동으로인한현금흐름 1 1\n재무활동으로인한현금흐름 1 1\n"
+    )
+    facts = facts_from_text(
+        text, corp_code="01390399", rcept_no="r2022h1",
+        report_fiscal_year=2022, report_fiscal_period="H1")
+    stmts = {f.canonical_account.split(".")[0] for f in facts}
+    assert "cf" in stmts, "현금흐름표 앵커가 안 잡혀 CF 사실이 하나도 없음(회귀)"
+    bs_labels = {f.acode for f in facts if f.canonical_account.startswith("bs.")}
+    assert "영업활동으로인한현금흐름" not in bs_labels, (
+        "CF 앵커 부재로 BS 리전이 CF 까지 삼켜 오염됐다(회귀)")
+
+
+def test_saltware_real_pdf_end_to_end():
+    """실제 사고 파일 종단 확인(파일 없으면 스킵). 별도 BS 17행이 내부 정합
+    (자산총계=부채총계+자본총계)하고, CF 항목이 더는 BS 로 안 새는지 확인."""
+    path = Path("/private/tmp/claude-501/-Users-taejin-Project-tj-finance/"
+                "1077c697-af9a-4a13-ba1c-ef1de6f6e281/scratchpad/"
+                "saltware_20220802000208.pdf")
+    if not path.exists():
+        return
+    facts = extract_pdf_facts(
+        path, corp_code="01390399", rcept_no="20220802000208",
+        report_fiscal_year=2022, report_fiscal_period="H1")
+    bs = {f.canonical_account: f.amount_won for f in facts
+          if f.canonical_account.startswith("bs.") and f.basis == "separate"}
+    assert bs.get("bs.total_assets") == bs.get("bs.total_liabilities", 0) + bs.get(
+        "bs.total_equity", 0)
+    cf_labels = {f.acode for f in facts if f.canonical_account.startswith("cf.")}
+    assert "기초의현금및현금성자산" in cf_labels, "CF 앵커가 잡혀 별도 basis 로 나와야 함"
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

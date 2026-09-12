@@ -26,7 +26,17 @@ from collector.models import Corporation, Filing, DownloadTask, CollectionRun
 # ── 보고서명 파싱 헬퍼 ────────────────────────────────────────────────
 
 def _detect_report_type(report_nm: str) -> Optional[str]:
-    """report_nm에서 보고서 유형 식별. 해당 없으면 None."""
+    """report_nm에서 보고서 유형 식별. 해당 없으면 None.
+
+    ★2026-09-12 실측 발견 — "사업보고서제출기한연장신고서"처럼 재무제표가 전혀 없는
+    행정신고(제출기한 연장 요청)의 제목이 REPORT_TYPE_MAP 키워드("사업보고서")를
+    **부분문자열로 포함**해 annual/half/quarter 로 오분류되고 있었다(전사 221건,
+    2015+ 만 200건 — `docs/plans/era_routing_fallback_and_fiscal_year_correction_
+    parsing_design_2026-09-12.md` §9 원문대조로 확인, 전부 본문 자체가 없어 계층2가
+    항상 0행을 내는 "정상 결측"이지만 report_type/fiscal_year/is_final 계산까지
+    실제 보고서인 것처럼 타서 노이즈가 된다). 제목 검사보다 먼저 걸러 제외한다."""
+    if "제출기한연장" in report_nm:
+        return None
     for keyword, rtype in REPORT_TYPE_MAP.items():
         if keyword in report_nm:
             return rtype

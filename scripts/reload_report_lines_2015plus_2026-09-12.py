@@ -78,23 +78,38 @@ _TARGETS_SQL_TMPL = """
       AND dt.file_type = 'xml'
       AND dt.file_path IS NOT NULL
       AND (lrq.status IS NULL OR lrq.status <> 'pass')
+      -- ★2026-09-12 — "사업보고서제출기한연장신고서" 류(재무제표 없는 행정신고)가
+      --   REPORT_TYPE_MAP 부분문자열 매치로 annual/half/quarter 오분류돼 있다(전사 221건,
+      --   collector/filing_collector.py::_detect_report_type 에 근본수정 적용됨 — 이건
+      --   그 수정 이전에 이미 DB에 들어간 기존 행 필터, 소급 report_type 백필은 별건).
+      AND f.report_nm NOT LIKE '%제출기한연장%'
       {corp_clause}
       {exclude_corp_clause}
+      {rcept_clause}
     ORDER BY f.corp_code, f.fiscal_year, dt.rcept_no
 """
 
 
 def _load_targets(fy_min: int, corps: list[str] | None,
-                   exclude_corps: list[str] | None) -> list[dict]:
+                   exclude_corps: list[str] | None,
+                   rcepts: list[str] | None = None) -> list[dict]:
     corp_clause = "AND f.corp_code = ANY(:corps)" if corps else ""
     exclude_clause = "AND f.corp_code <> ALL(:exclude_corps)" if exclude_corps else ""
+    # ★재실행 정밀화(2026-09-12) — 배치 완료 후 "0행(보류)"로 남은 것만 다시 돌릴 때
+    #   --corp 로는 그 corp의 나머지 정상 필링까지 전부 재처리해 낭비가 크다(실측:
+    #   held 387건이 290개사에 흩어져 있어 --corp 로 돌리면 14,414건 재처리 — 37배
+    #   낭비). rcept_no 를 직접 지정하면 딱 그만큼만 돈다.
+    rcept_clause = "AND f.rcept_no = ANY(:rcepts)" if rcepts else ""
     sql = text(_TARGETS_SQL_TMPL.format(corp_clause=corp_clause,
-                                        exclude_corp_clause=exclude_clause))
+                                        exclude_corp_clause=exclude_clause,
+                                        rcept_clause=rcept_clause))
     params: dict = {"fy_min": fy_min}
     if corps:
         params["corps"] = corps
     if exclude_corps:
         params["exclude_corps"] = exclude_corps
+    if rcepts:
+        params["rcepts"] = rcepts
     with get_session() as s:
         return [dict(r) for r in s.execute(sql, params).mappings()]
 
@@ -208,6 +223,10 @@ def main() -> None:
     ap.add_argument("--corp", help="쉼표구분 corp_code — 지정 시 그 회사만(시험용)")
     ap.add_argument("--exclude-corp-file",
                     help="줄바꿈/콤마구분 corp_code 목록 파일 — 이미 처리한 회사 재개 시 제외용")
+    ap.add_argument("--rcept-file",
+                    help="줄바꿈/콤마구분 rcept_no 목록 파일 — 지정 시 딱 그 필링들만"
+                         "(예: 직전 실행의 '0행(보류)' 재실행 — --corp 는 그 회사 전체를 "
+                         "다시 돌아 낭비가 크다)")
     ap.add_argument("--limit", type=int, default=None,
                     help="대상 filing 수 상한(정렬된 앞부분부터, 시험용)")
     ap.add_argument("--workers", type=int, default=4,
@@ -217,8 +236,9 @@ def main() -> None:
 
     corps = [c.strip() for c in args.corp.split(",") if c.strip()] if args.corp else None
     exclude_corps = _read_corp_list(args.exclude_corp_file) if args.exclude_corp_file else None
+    rcepts = _read_corp_list(args.rcept_file) if args.rcept_file else None
 
-    rows = _load_targets(args.fiscal_year_min, corps, exclude_corps)
+    rows = _load_targets(args.fiscal_year_min, corps, exclude_corps, rcepts)
     if args.limit:
         rows = rows[: args.limit]
 

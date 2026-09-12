@@ -268,6 +268,26 @@ def sanitize_dart_xml(raw: bytes) -> bytes:
     return _BAD_LT.sub(b"&lt;", out)
 
 
+# ★2026-09-12 설계(`docs/plans/parser_source_fallback_cascade_design_2026-09-12.md`
+#   §3 "[0] 원문 손상 감지") — 솔트웨어 20220802000208 실측 발견: DART OpenDART
+#   `document.xml` API의 **archive 원본 자체**가 한글을 리터럴 '?'(0x3F)로 치환한
+#   채 손상돼 있었다(재다운로드해도 바이트까지 완전 동일함을 직접 확인 — 저희 다운로드/
+#   인코딩 처리 문제가 아니라 DART 서버 측 archive 손상, R76 "2001년 접수분 인코딩
+#   손상"과 같은 계열이 2022년 필링에서도 재현). 이런 파일은 인코딩을 아무리 잘 감지해도
+#   복구가 안 되므로(한글이 이미 파괴됨), 파싱을 시도하기 전에 걸러 다른 소스(PDF/HTML)로
+#   넘어갈 신호를 남긴다.
+#   임계치 검증(2026-09-12, 연도별 샘플 200건, `raw_report` DB 무작위 표본): 정상 파일
+#   비율 최대 0.0001(0.01%, 진짜 물음표 몇 개), 손상 파일(솔트웨어) 0.1098(11%) — 1000배
+#   격차. 1%(0.01)를 임계치로 잡아도 오탐 여지가 사실상 없다.
+_CORRUPTION_QMARK_THRESHOLD = 0.01
+
+
+def _corruption_ratio(raw: bytes) -> float:
+    """원문 바이트에서 리터럴 '?'(0x3F) 비율. 인코딩 감지·디코딩과 무관하게 바이트
+    레벨에서 바로 잴 수 있다(손상이 이미 원본 바이트에 있으므로)."""
+    return raw.count(b"?") / len(raw) if raw else 0.0
+
+
 def _parse_xml_file(file_path: Path) -> Optional[etree._Element]:
     """
     DART XML 파일 파싱. 인코딩 자동 감지 (UTF-8 → EUC-KR 폴백).
@@ -277,9 +297,24 @@ def _parse_xml_file(file_path: Path) -> Optional[etree._Element]:
     바이트 분포로 실제 인코딩을 감지 후 파싱.
 
     파싱 전 sanitize_dart_xml() 로 원문 이스케이프를 복구한다(위 주석 참조).
+
+    ★원문 손상(위 `_corruption_ratio` 참고) 감지 시 파싱을 시도하지 않고 `None`을
+    반환한다 — 인코딩 문제가 아니라 원본 텍스트 자체가 파괴된 것이라, 여기서
+    이것저것 시도해봐야 복구되지 않는다. 호출부는 기존 "XML 루트 없음"과 동일하게
+    처리하되(대부분 이미 `if root is None` 가드가 있음), 이 케이스는 별도 소스
+    (PDF/HTML) 전환을 검토해야 한다(설계문서 §3 [B]).
     """
     with open(file_path, "rb") as f:
         raw = f.read()
+
+    ratio = _corruption_ratio(raw)
+    if ratio > _CORRUPTION_QMARK_THRESHOLD:
+        logger.warning(
+            f"[dart_xml_parser] 원문 손상 의심: {file_path} — "
+            f"'?' 치환비율 {ratio:.1%} > 임계치 {_CORRUPTION_QMARK_THRESHOLD:.0%}. "
+            f"DART archive 자체 손상 가능성(재다운로드 무효) — PDF/HTML 소스 전환 검토 필요."
+        )
+        return None
 
     actual_enc = _detect_xml_encoding(raw)
     raw = sanitize_dart_xml(raw)

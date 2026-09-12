@@ -98,6 +98,28 @@ _NOTE_REF_STRIP_RE = re.compile(r'\(주석?\s*\d[\d,\s와과및]*\)')
 # 기간 열이 결측일 때 원문이 남기는 대시 placeholder(열 위치 보존용 — 왼쪽으로 채우지 않음).
 _DASH_TOKEN_RE = re.compile(r"^[-－―–—]+$")
 
+
+# ★2026-09-12(헤더 우선 파싱 재설계) — 표에 "주석" 열이 따로 있으면(예: "현금및현금성자산
+#   4,5,6  2,351,294,869  2,403,931,716" — "4,5,6"이 별도 주석번호 열) `_NUM_TOKEN_RE`가
+#   그 주석번호 나열도 그대로 숫자 토큰으로 집어(콤마+숫자 조합이라 형태는 금액과 같다)
+#   금액 컬럼이 한 칸씩 밀린다(솔트웨어 20220802000208 실측 — "현금및현금성자산"이
+#   456원으로, "단기금융상품"이 45,718원으로 나온 원인 = "4,5,6"/"4,5,7,18" 을 금액으로
+#   오인식). 진짜 금액은 **천단위 콤마 그룹**(첫 그룹 1~3자리, 나머지 전부 정확히 3자리)
+#   인데, 주석번호 나열은 자릿수가 불규칙(각 자리가 1~2자리인 번호 목록)하다 — 이 차이로
+#   구분한다. 콤마가 아예 없으면(예 "45", "9") 그대로 금액으로 본다(1~2자리 순수 금액도
+#   흔함, 오탐 방지).
+def _looks_like_real_amount(tok: str) -> bool:
+    core = tok.strip()
+    if core.startswith("(") and core.endswith(")"):
+        core = core[1:-1]
+    core = core.lstrip("△▲-−").strip()
+    if "," not in core:
+        return True
+    groups = core.split(",")
+    if not (1 <= len(groups[0]) <= 3):
+        return False
+    return all(len(g) == 3 for g in groups[1:])
+
 # 라벨 선두의 항목번호("Ⅰ.", "(1)", "1." 등)에 들어있는 숫자도 "진짜 데이터 숫자"가
 # 아니다 — _SUBTOTAL_HEADER_RE(로마숫자/괄호번호)에 평범한 "N." 아라비아 접두어까지
 # 더한 버전(amount_normalizer.normalize_account_name() 의 동일 접두어 제거 규칙과 정합).
@@ -187,6 +209,14 @@ def _parse_single_line(line: str) -> tuple[str, list[int]] | None:
         tok = mm.group(0)
         if is_subtotal_preview and tok.startswith("(") and tok.endswith(")"):
             tok = tok[1:-1]
+            nums.append(parse_number(tok))
+            continue
+        # ★2026-09-12 — 주석번호 열("4,5,6")을 금액으로 오인식하지 않는다(위
+        #   _looks_like_real_amount 주석 참고). is_subtotal_preview 경로는 위에서
+        #   이미 처리했으니 이 필터를 안 거친다(그 경로는 원래도 콤마 없는 단일값이라
+        #   서로 안 겹침).
+        if not _looks_like_real_amount(tok):
+            continue
         nums.append(parse_number(tok))
     nums = [n for n in nums if n is not None]
     return (label, nums) if nums else None
@@ -216,6 +246,13 @@ def _parse_numline_tokens(label: str, tokens: list[str]) -> list[int | None]:
             continue  # 잡음(줄바꿈된 영문 조각 등) — 열 자리를 만들지 않고 버림
         if is_header and tok.startswith("(") and tok.endswith(")"):
             tok = tok[1:-1]
+        # ★2026-09-12 — 주석번호 열("4,5,6") 셀이 그대로 토큰으로 들어오면(격자 폴백
+        #   경로에서 특히 흔함 — extract_tables() 가 주석열을 별도 셀로 주지만 이
+        #   함수는 셀 내용이 뭔지 모르고 그냥 숫자로 본다) 금액으로 오인식하지 않는다
+        #   (위 _looks_like_real_amount 주석 참고). 대시와 달리 자리를 만들지 않고
+        #   버린다 — 주석열은 애초에 "기간" 위치가 아니었으므로 열 보존 대상이 아니다.
+        if not _looks_like_real_amount(tok):
+            continue
         out.append(parse_number(tok))
     return out
 
@@ -356,6 +393,68 @@ class _Anchor:
     unit: int             # 원 환산 배수
 
 
+# ── 헤더 구조 우선 파싱 (2026-09-12, `docs/plans/pdf_header_aware_table_parsing_
+#   redesign_2026-09-12.md`) ───────────────────────────────────────────────
+# 배경: 솔트웨어 20220802000208 실측 — `extract_text()`가 인접 두 행("Ⅰ.유동자산"과
+# "현금및현금성자산") 사이 줄바꿈을 잃어버려 한 줄로 합쳐졌다. 기존 `_parse_single_line()`
+# 은 "그 줄에 있는 숫자를 순서대로 컬럼"으로 간주해(모듈 docstring "any-column 비재사용")
+# 이걸 못 잡는다. 표 헤더("과목 [주석] 제N(당/전)기…")를 먼저 읽어 "이 표는 기간 컬럼이
+# 몇 개여야 하는가"를 진실로 삼고, 데이터 줄의 숫자 개수가 그와 다르면(=행 병합 등으로
+# 텍스트 스트림이 깨졌다는 신호) 격자 폴백(`extract_tables()`)으로 승격한다.
+# `parser/xml/table_extractor.py::parse_header_columns()`와 같은 철학(R88/89) — 헤더를
+# 못 읽거나 애매하면 `None`으로 돌려 기존 동작을 완전히 그대로 둔다(R6, 추측 안 함).
+@dataclass
+class PdfTableHeader:
+    has_note_col: bool
+    n_period_cols: int
+    period_labels: list[str]
+
+
+# ★`_PERIOD_MARK_RE`(위)는 "제 N 기"/"제 N 분기"만 잡는다 — "반기"(半期) 복합어는
+#   "반"이 "기" 앞에 끼어들어(예 "제 4(당)반기말"/"제4(당)반기") 못 잡는다. 실측
+#   (솔트웨어 20220802000208, 반기보고서): 이 갭이 **두 군데**에서 동시에 문제였다 —
+#   ①앵커 탐지(`_find_anchors`)에서 포괄손익계산서·자본변동표·현금흐름표 제목 뒤의
+#   "제4(당)반기"가 전혀 안 걸려 앵커 자체가 안 잡히고, 그 결과 BS 리전이 다음 앵커
+#   없이 문서 끝까지 뻗어나가 엉뚱한 표까지 섞였다(더 심각한 쪽). ②헤더 컬럼 수를
+#   세는 `_parse_pdf_table_header`에서 "제4(당)반기말"이 안 걸려 헤더가 1개 컬럼으로
+#   보이는 거짓음성. 두 용도 다 커버하는 정규식으로 통합(긴 것부터: 반기말>분기말>
+#   반기>분기>기말>기 — 짧은 대안이 먼저면 "반기말"을 "기"로 조기 매치해버림).
+#   `_PERIOD_MARK_RE`의 상위집합이라 교체해도 기존에 잡던 건 그대로 잡는다.
+_HEADER_PERIOD_MARK_RE = re.compile(
+    r"제\s*\d+(?:-\d+)?\s*(?:\([^)]{1,4}\)\s*)?(?:반기말|분기말|반기|분기|기말|기)")
+
+
+def _parse_pdf_table_header(region: str) -> "PdfTableHeader | None":
+    """리전 선두(~600자, 제목+단위선언 다음에 오는 실제 컬럼헤더 줄)에서 '과목 [주석]
+    제N(당/전)기…' 구조를 읽는다.
+
+    ★"제 N 기" 마커가 **한 줄에 2번 이상** 나오는 첫 줄만 헤더로 인정한다 — 앵커
+    탐지에 쓰는 statement 제목 직후의 단일 기간마커줄("제 28 기 2020.12.31 현재")은
+    보통 마커가 1개뿐이라 자연히 걸러진다(진짜 다기간 헤더만 2개 이상). 못 찾으면
+    `None`(호출측이 기존 동작 그대로 유지 — 지어내지 않는다)."""
+    head_region = region[:600]
+    for raw in head_region.split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        period_labels = _HEADER_PERIOD_MARK_RE.findall(line)
+        if len(period_labels) >= 2:
+            has_note = bool(re.search(r"주석|Note", line))
+            return PdfTableHeader(has_note_col=has_note, n_period_cols=len(period_labels),
+                                  period_labels=period_labels)
+    return None
+
+
+def _lines_disagree_with_header(
+    lines: list[tuple[str, list[int]]], header: "PdfTableHeader",
+) -> bool:
+    """데이터 줄 중 하나라도 숫자 개수가 헤더 선언 기간 수를 **초과**하면 True.
+    (부족한 경우는 원래도 흔하다 — 소계행이 일부 기간만 채우는 정상 서식이 있어
+    "부족"은 신호로 안 쓴다. "초과"만 병합/오염의 강한 신호다 — 정상 데이터 줄은
+    헤더가 선언한 기간 수보다 숫자가 많을 이유가 없다.)"""
+    return any(len(nums) > header.n_period_cols for _, nums in lines)
+
+
 def _adecimal_from_unit(unit: int) -> int:
     import math
     if unit <= 1:
@@ -404,7 +503,16 @@ def _find_anchors(text: str) -> list[_Anchor]:
         stmt = _TITLE_TOKENS[name]
         # 제목 직후(공백/개행 포함 ~50자) 에 '제 N 기' 기간마커가 와야 본문 statement
         # (목차 점선·주석 속 언급은 기간마커 부재 → 배제).
-        if not _PERIOD_MARK_RE.search(text[m.end():m.end() + 50]):
+        # ★2026-09-12(솔트웨어 20220802000208 실측) — 예전엔 `_PERIOD_MARK_RE`("제 N
+        #   기"/"제 N 분기"만 인식)를 썼는데, 반기보고서 제목 뒤엔 "제4(당)반기"("반"이
+        #   "기" 앞에 끼어듦)가 오는 경우가 흔해 이 표현을 못 잡았다. 그 결과 이
+        #   필링에서 포괄손익계산서·자본변동표·현금흐름표 앵커가 전부 안 잡혀, BS
+        #   리전이 다음 앵커 없이 문서 끝까지(다른 statement·주석 전부) 뻗어나가
+        #   엉뚱한 표의 합계(현금흐름표 기초/기말현금, 주석 소계 등)까지 "재무상태표"
+        #   값으로 섞여 들어갔다. `_HEADER_PERIOD_MARK_RE`(아래, "반기"/"반기말"/
+        #   "분기말"까지 인식)로 교체 — 기존 패턴의 상위집합이라 이미 잡던 건 그대로
+        #   잡고 놓치던 것만 추가로 잡는다(회귀 위험 없음).
+        if not _HEADER_PERIOD_MARK_RE.search(text[m.end():m.end() + 50]):
             continue
         basis = "consolidated" if m.group("conso") else "separate"
         # 단위: 앵커 직후 ~200자 내 '(단위 : X)'.
@@ -538,8 +646,30 @@ def facts_from_text(
             # 실측 사례가 아직 없어 미검증 — cum_idx 는 열위치를 그대로 쓰므로 동작은
             # 하나, 실제로 그런 필링이 나오면 원문대조로 재확인할 것(문서 "구현 방향" §3).
             use_multiline = anc.statement in ("BS", "IS") and _looks_multiline_bilingual(region)
-            lines_iter = (_iter_data_lines_multiline(region) if use_multiline
-                          else _iter_data_lines(region))
+            text_lines = list(_iter_data_lines_multiline(region) if use_multiline
+                              else _iter_data_lines(region))
+            # ★2026-09-12(헤더 우선 파싱, 위 PdfTableHeader 참고) — 헤더가 선언한 기간
+            #   수보다 숫자가 많은 줄이 하나라도 있으면(행 병합 등으로 텍스트 스트림이
+            #   깨졌다는 신호) 격자 폴백을 시도한다. 앵커 라벨 자체는 안 깨져(위
+            #   `_region_has_anchor_labels`를 통과했으므로) 이 분기 전엔 폴백 계기가
+            #   없었다 — 솔트웨어 20220802000208 실측(라벨은 멀쩡, 숫자만 인접행과
+            #   병합)이 정확히 이 경우.
+            header = _parse_pdf_table_header(region)
+            if header is not None and _lines_disagree_with_header(text_lines, header):
+                table_rows = _table_rows_for_span(pdf, page_bounds, anc.start, end)
+                if table_rows and _table_has_anchor_labels(table_rows, anc.statement):
+                    lines_iter = list(_iter_data_lines_from_table_rows(table_rows))
+                else:
+                    lines_iter = text_lines
+            else:
+                lines_iter = text_lines
+            # ★격자로 승격했든 안 했든, 헤더 기간수를 넘는 줄은 마지막에 한 번 더
+            #   걸러낸다(설계문서 §2-2 — 격자 결과도 무조건 믿지 않는다). 콤마 없는
+            #   단독 주석번호("14")처럼 `_looks_like_real_amount`로도 못 잡는 잔여
+            #   케이스의 최종 안전망 — 결측이 오염보다 낫다(R6).
+            if header is not None:
+                lines_iter = [(lab, nums) for lab, nums in lines_iter
+                             if len(nums) <= header.n_period_cols]
         adecimal = _adecimal_from_unit(anc.unit)
         fs_section = anc.statement.lower()
         period_kind = "instant" if anc.statement == "BS" else "duration"

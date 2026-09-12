@@ -222,11 +222,19 @@ def _parse_single_line(line: str) -> tuple[str, list[int]] | None:
     return (label, nums) if nums else None
 
 
-def _parse_numline_tokens(label: str, tokens: list[str]) -> list[int | None]:
+def _parse_numline_tokens(label: str, tokens: list[str], statement: str = "BS") -> list[int | None]:
     """숫자단독줄 토큰(공백 split, 열위치 보존) → [값 또는 None].
 
     - 헤더(로마숫자/괄호번호) 행은 그 줄의 **모든** 토큰에서 괄호를 벗겨 파싱한다(단일값
       가정을 버림 — 설계문서 실측: 같은 헤더 행 안에서도 괄호 유무가 값마다 들쭉날쭉하다).
+      ★2026-09-12(솔트웨어 20220802000208 IS 실측) — 이 "괄호=미리보기(양수)" 관례는
+      **BS 전용**이다(원조 사례: pre-2015 K-GAAP "Ⅰ.유동자산 (45,700,051)" = 아래 세부
+      항목 합의 미리보기, 음수 아님). IS/CF의 로마숫자 라벨("Ⅲ.영업손실"/"Ⅷ.당기순손실")은
+      전혀 다른 의미 — 그 자체가 최종 계산된 소계이고 괄호는 **진짜 음수**다. `statement`
+      구분 없이 라벨 패턴만으로 적용하면 격자 폴백 경로에서 IS 손실 계정의 부호가 통째로
+      사라진다(실측: 영업손실 -68,052,797 → 68,052,797 양수로 저장). 호출측이 반드시
+      실제 statement를 넘기게 하고(기본값 BS는 하위호환용 — 격자 헤더재구성 등 기존
+      BS-only 경로), BS가 아니면 이 관례를 아예 적용하지 않는다.
     - 순수 대시는 결측(None)으로 **그 열 위치를 그대로 유지**한다(절대 왼쪽으로 채우지
       않는다 — 오늘 R74 컬럼압축 함정과 동일 원칙). 호출측이 idx로 원하는 열을 그대로
       골라 쓰므로, 리스트 길이·순서가 실제 원문 열과 일치해야 한다.
@@ -236,7 +244,7 @@ def _parse_numline_tokens(label: str, tokens: list[str]) -> list[int | None]:
       대시와 달리 **자리를 만들지 않고 통째로 버린다**(대시=열 보존 / 잡음=열 없음,
       둘을 같은 None 취급하면 뒤 실측값이 왼쪽으로 밀려 컬럼 인덱스가 틀어진다).
     """
-    is_header = _SUBTOTAL_HEADER_RE.match(label) is not None
+    is_header = statement == "BS" and _SUBTOTAL_HEADER_RE.match(label) is not None
     out: list[int | None] = []
     for tok in tokens:
         if _DASH_TOKEN_RE.fullmatch(tok):
@@ -257,7 +265,7 @@ def _parse_numline_tokens(label: str, tokens: list[str]) -> list[int | None]:
     return out
 
 
-def _iter_data_lines_multiline(region: str):
+def _iter_data_lines_multiline(region: str, statement: str = "BS"):
     """'한글라벨 / 숫자단독(열위치 보존) / 영문' 3줄 레이아웃 → (label, [nums]) 산출.
 
     - 순수 섹션 헤더(라벨 다음이 숫자줄이 아니라 바로 영문줄, 예 "자산\\n(Assets)")는
@@ -265,6 +273,11 @@ def _iter_data_lines_multiline(region: str):
     - 영문 번역줄은 한글이 없어 별도 처리 불요(자동으로 건너뜀).
     - 라벨+숫자가 한 줄에 온 경계행(순수 3줄 패턴을 안 따르는 소수 예외)은 기존
       _parse_single_line() 로 그대로 처리.
+    `statement`: `_parse_numline_tokens()`로 그대로 전달 — 이 모드는 BS 뿐 아니라 IS도
+    탄다(호출측 게이트: `anc.statement in ("BS", "IS")`)이므로, IS의 로마숫자 손실
+    라벨(예: pre-2015 K-GAAP 시대에도 이론상 나올 수 있는 "Ⅲ.영업손실")까지 BS 전용
+    "괄호=미리보기(양수)" 관례로 잘못 처리하지 않도록 명시적으로 넘긴다(2026-09-12,
+    `_parse_numline_tokens` docstring 참고).
     """
     raw = [ln.strip() for ln in region.split("\n")]
     lines = [ln for ln in raw if ln and not _FOOTER_NOISE_RE.search(ln)]
@@ -286,7 +299,7 @@ def _iter_data_lines_multiline(region: str):
         label = _strip_inline_english_gloss(line)
         nxt = lines[i + 1] if i + 1 < n else ""
         if nxt and not _HANGUL_RE.search(nxt) and _has_real_number(nxt):
-            nums = _parse_numline_tokens(label, nxt.split())
+            nums = _parse_numline_tokens(label, nxt.split(), statement)
             i += 2
             # ★2026-09-06(00101488 실측) — 순수 섹션 헤더("부채")가 드물게 밑줄/구분선을
             # pdfplumber 가 "0 0" 처럼 숫자로 오독한 가짜 숫자줄을 달고 나온다("부 채\n0
@@ -352,14 +365,17 @@ def _table_has_anchor_labels(rows: list[list], stmt: str) -> bool:
     return hits >= 2
 
 
-def _iter_data_lines_from_table_rows(rows: list[list]):
+def _iter_data_lines_from_table_rows(rows: list[list], statement: str = "BS"):
     """표 행(1열=라벨, 나머지=기간별 금액) → (label, [nums]) 산출.
 
     라벨 셀은 줄바꿈을 공백으로 접어 하나로 합친다(`_strip_inline_english_gloss`
     까지 재사용 — 표 경로에서도 영문 대역어가 라벨과 같은 셀에 올 수 있음). 금액
     셀은 빈 문자열(표 격자가 열을 실제보다 잘게 쪼갠 잡음 — 실측: 값/빈칸 교대로
     나옴)만 걷어내고, 나머지는 `_parse_numline_tokens()`(대시=열 보존 결측, 헤더행
-    괄호벗김)로 그대로 재사용한다 — 순수 섹션 헤더(금액 셀이 전부 빈칸)는 스킵.
+    괄호벗김은 BS만)로 그대로 재사용한다 — 순수 섹션 헤더(금액 셀이 전부 빈칸)는 스킵.
+    `statement`: 호출측(facts_from_text)의 `anc.statement`를 그대로 전달 — BS가
+    아니면 로마숫자 헤더행 괄호도 진짜 음수로 파싱한다(위 `_parse_numline_tokens`
+    docstring 2026-09-12 항목 참고).
     """
     for row in rows:
         if not row:
@@ -370,7 +386,7 @@ def _iter_data_lines_from_table_rows(rows: list[list]):
         cells = [c for c in row[1:] if c is not None and c.strip() != ""]
         if not cells:
             continue
-        nums = _parse_numline_tokens(label, cells)
+        nums = _parse_numline_tokens(label, cells, statement)
         # 순수 섹션 헤더가 가짜 0으로 오독되는 경우도 있음(_iter_data_lines_multiline
         # 과 동일한 방어 — 모든 기간이 문자 그대로 0이면 결측과 동일 취급).
         if any(v not in (None, 0) for v in nums):
@@ -378,9 +394,19 @@ def _iter_data_lines_from_table_rows(rows: list[list]):
 
 
 # 본문표 식별용 앵커 계정(요약표·주석표 배제). 각 statement 가 반드시 포함하는 합계 라벨.
+# ★2026-09-12(솔트웨어 20220802000208 IS 실측, 사용자 지시 "BS/IS/CF 무조건 3개 다
+#   있어야 하는데 없는 경우 조사" 로 발견) — 이 리스트가 흑자("영업이익"/"당기순이익"류)
+#   표현만 갖고 있어 적자 회사(영업손실/당기순손실)는 "영업수익" 1개만 걸려 2개 미만이라
+#   `_region_has_anchor_labels`/`_table_has_anchor_labels` 게이트를 통과 못 했다 → IS
+#   본문표가 통째로(텍스트 경로도 격자 폴백도 둘 다) 스킵돼 IS 행이 0개였다(R93 헤더
+#   서브컬럼 수정과는 별개의, 더 앞단 게이트 버그 — 적자 회사는 이 게이트 자체를 애초에
+#   못 넘었으므로 헤더 파싱까지 가지도 않았다). 매출 유무·흑자/적자와 무관하게 항상
+#   포함되는 계정만 쓰면 이상적이나(예: "법인세비용"/"주당손익") 그런 라벨은 표마다
+#   생략되기도 해 신뢰 못 함 — 대신 기존 흑자 라벨 각각의 적자 대응어를 대칭으로 추가.
 _ANCHOR_LABELS = {
     "BS": ("자산총계", "부채총계", "자본총계"),
-    "IS": ("매출", "영업이익", "당기순이익", "분기순이익", "반기순이익", "영업수익"),
+    "IS": ("매출", "영업이익", "영업손실", "당기순이익", "당기순손실",
+           "분기순이익", "분기순손실", "반기순이익", "반기순손실", "영업수익"),
     "CF": ("영업활동", "투자활동", "재무활동"),
 }
 
@@ -440,7 +466,19 @@ def _parse_pdf_table_header(region: str) -> "PdfTableHeader | None":
         period_labels = _HEADER_PERIOD_MARK_RE.findall(line)
         if len(period_labels) >= 2:
             has_note = bool(re.search(r"주석|Note", line))
-            return PdfTableHeader(has_note_col=has_note, n_period_cols=len(period_labels),
+            n_period_cols = len(period_labels)
+            # ★2026-09-12(솔트웨어 20220802000208 IS 실측, R93 후속) — interim IS/CF는
+            #   기간마커줄엔 기간당 1개("제4(당)반기")만 찍히지만, 바로 아래 서브헤더
+            #   줄에서 각 기간이 다시 3개월(당분기)/누적(YTD) 두 컬럼으로 갈라진다
+            #   ("과 목 주 석\n3개월 누적 3개월 누적"). 이걸 못 세면 실제 데이터줄
+            #   (진짜 4컬럼)이 헤더선언(2컬럼)보다 많다고 오판 → 아래 R93 최종필터
+            #   (len(nums) <= n_period_cols)가 정상 IS 데이터를 통째로 버린다(실측:
+            #   28개 중 IS 0행 — 원문엔 존재하는데 전부 결측 처리됨). `_is_interim_
+            #   cumulative`(기존, cum_idx 선택용)와 같은 신호를 재사용 — 새 정규식 없이
+            #   기존에 검증된 탐지 로직 그대로.
+            if _is_interim_cumulative(region):
+                n_period_cols *= 2
+            return PdfTableHeader(has_note_col=has_note, n_period_cols=n_period_cols,
                                   period_labels=period_labels)
     return None
 
@@ -637,7 +675,7 @@ def facts_from_text(
             table_rows = _table_rows_for_span(pdf, page_bounds, anc.start, end)
             if not table_rows or not _table_has_anchor_labels(table_rows, anc.statement):
                 continue
-            lines_iter = list(_iter_data_lines_from_table_rows(table_rows))
+            lines_iter = list(_iter_data_lines_from_table_rows(table_rows, anc.statement))
         else:
             # ★2026-09-06 — "3줄 이중언어" 레이아웃(1999~2002년대, 설계문서
             # docs/plans/pdf_multiline_bilingual_layout_2026-09-06.md) 지원. CF는 이번
@@ -646,7 +684,7 @@ def facts_from_text(
             # 실측 사례가 아직 없어 미검증 — cum_idx 는 열위치를 그대로 쓰므로 동작은
             # 하나, 실제로 그런 필링이 나오면 원문대조로 재확인할 것(문서 "구현 방향" §3).
             use_multiline = anc.statement in ("BS", "IS") and _looks_multiline_bilingual(region)
-            text_lines = list(_iter_data_lines_multiline(region) if use_multiline
+            text_lines = list(_iter_data_lines_multiline(region, anc.statement) if use_multiline
                               else _iter_data_lines(region))
             # ★2026-09-12(헤더 우선 파싱, 위 PdfTableHeader 참고) — 헤더가 선언한 기간
             #   수보다 숫자가 많은 줄이 하나라도 있으면(행 병합 등으로 텍스트 스트림이
@@ -658,7 +696,7 @@ def facts_from_text(
             if header is not None and _lines_disagree_with_header(text_lines, header):
                 table_rows = _table_rows_for_span(pdf, page_bounds, anc.start, end)
                 if table_rows and _table_has_anchor_labels(table_rows, anc.statement):
-                    lines_iter = list(_iter_data_lines_from_table_rows(table_rows))
+                    lines_iter = list(_iter_data_lines_from_table_rows(table_rows, anc.statement))
                 else:
                     lines_iter = text_lines
             else:

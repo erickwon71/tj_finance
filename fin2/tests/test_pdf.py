@@ -445,9 +445,72 @@ def test_half_year_report_title_now_anchors_correctly():
         "CF 앵커 부재로 BS 리전이 CF 까지 삼켜 오염됐다(회귀)")
 
 
+def test_parse_pdf_table_header_doubles_for_3month_cumulative_subheader():
+    """★2026-09-12(솔트웨어 IS 실측, 사용자 질문 "손익계산서는 왜 누락되었나?"로 발견) —
+    기간마커줄엔 기간당 1번("제4(당) 반기")만 찍히지만 바로 아래 서브헤더줄에서
+    "3개월/누적" 둘로 갈라진다. 이걸 배로 세지 않으면 실제 4컬럼 데이터줄이 헤더선언
+    (2컬럼)보다 많다고 오판돼 R93 최종필터가 정상 IS 데이터를 통째로 버린다."""
+    region = (
+        "포 괄 손 익 계 산 서\n제4(당)반기 : ...\n제3(전)반기 : ...\n(단위:원)\n"
+        "제4(당) 반기 제3(전) 반기\n과 목 주 석\n3개월 누적 3개월 누적\n"
+        "I. 영업수익 - - - -\n"
+    )
+    header = _parse_pdf_table_header(region)
+    assert header is not None
+    assert header.n_period_cols == 4, "3개월/누적 서브헤더로 실제 컬럼수가 배가돼야 함"
+
+
+def test_parse_pdf_table_header_no_doubling_without_subheader():
+    """3개월/누적 서브헤더가 없는 보통 CF 헤더는 그대로 2컬럼 — 위 배가 로직이
+    무관한 표에 오발동하지 않는지 회귀."""
+    region = (
+        "현 금 흐 름 표\n제4(당)반기 : ...\n제3(전)반기 : ...\n(단위:원)\n"
+        "과 목 주 석 제4(당)반기 제3(전)반기\n"
+        "I. 영업활동으로 인한 현금흐름 (52,636,847) (8,122,944)\n"
+    )
+    header = _parse_pdf_table_header(region)
+    assert header is not None
+    assert header.n_period_cols == 2
+
+
+def test_anchor_labels_accept_loss_wording_for_is():
+    """★2026-09-12(사용자 지시 "BS/IS/CF 무조건 3개 다 있어야 하는데 없는 경우
+    조사해봐"로 발견) — 적자 회사(영업손실/당기순손실 워딩)의 진짜 IS 본문표가
+    흑자전용 화이트리스트 때문에 게이트를 못 넘어 통째로 스킵되던 회귀."""
+    from fin2.extract.pdf import _region_has_anchor_labels
+    loss_region = (
+        "I. 영업수익 - - - -\n"
+        "III. 영업손실 (17,022,570) (68,052,797)\n"
+        "VIII. 당기순손실 18,178,691 (24,180,887)\n"
+    )
+    assert _region_has_anchor_labels(loss_region, "IS"), (
+        "영업손실/당기순손실만 있어도 IS 앵커 라벨 게이트를 통과해야 함")
+
+
+def test_parse_numline_tokens_strips_parens_only_for_bs():
+    """★2026-09-12(솔트웨어 IS/CF 실측) — 로마숫자 헤더행 "괄호=미리보기(양수)" 관례는
+    pre-2015 K-GAAP BS 전용이다. IS/CF 의 로마숫자 라벨(Ⅲ.영업손실, Ⅰ.영업활동으로
+    인한 현금흐름)에 같은 관례를 적용하면 진짜 음수(적자/현금유출)의 부호가 사라진다
+    — statement 를 명시하지 않으면(기존 BS 전용 호출부 하위호환) 계속 벗기고,
+    IS/CF 로 명시하면 괄호를 진짜 음수로 파싱해야 한다."""
+    from fin2.extract.pdf import _parse_numline_tokens
+    assert _parse_numline_tokens("III. 영업손실", ["(68,052,797)"], "BS") == [68052797]
+    assert _parse_numline_tokens("III. 영업손실", ["(68,052,797)"], "IS") == [-68052797]
+    assert _parse_numline_tokens("I. 영업활동으로 인한 현금흐름", ["(52,636,847)"], "CF") == [-52636847]
+    # 기존 BS 전용 호출부(기본값)는 그대로 벗겨야 함(하위호환, 회귀 없음).
+    assert _parse_numline_tokens("I. 유동자산", ["(45,700,051)"]) == [45700051]
+
+
 def test_saltware_real_pdf_end_to_end():
     """실제 사고 파일 종단 확인(파일 없으면 스킵). 별도 BS 17행이 내부 정합
-    (자산총계=부채총계+자본총계)하고, CF 항목이 더는 BS 로 안 새는지 확인."""
+    (자산총계=부채총계+자본총계)하고, CF 항목이 더는 BS 로 안 새는지 확인.
+
+    ★2026-09-12 후속(사용자 "손익계산서는 왜 누락되었나?" 질문으로 발견) — 이 회사는
+    적자(영업손실/당기순손실)라 IS 는 원래 완전히 0행이었다(3개 원인: ①헤더 서브컬럼
+    "3개월/누적" 미인식으로 헤더선언 컬럼수 과소산정, ②`_ANCHOR_LABELS["IS"]`가 흑자
+    워딩만 있어 게이트 미통과, ③격자폴백에서 BS 전용 "로마숫자헤더=괄호는 미리보기(양수)"
+    관례가 IS 로마숫자 손실계정에도 적용돼 부호소실). 세 개 다 고친 뒤 IS 7행 + 올바른
+    부호(적자는 음수)까지 확인 — 그냥 "행이 있다"만 보면 부호소실 회귀를 못 잡는다."""
     path = Path("/private/tmp/claude-501/-Users-taejin-Project-tj-finance/"
                 "1077c697-af9a-4a13-ba1c-ef1de6f6e281/scratchpad/"
                 "saltware_20220802000208.pdf")
@@ -462,6 +525,24 @@ def test_saltware_real_pdf_end_to_end():
         "bs.total_equity", 0)
     cf_labels = {f.acode for f in facts if f.canonical_account.startswith("cf.")}
     assert "기초의현금및현금성자산" in cf_labels, "CF 앵커가 잡혀 별도 basis 로 나와야 함"
+
+    is_sep = {f.canonical_account: f.amount_won for f in facts
+              if f.canonical_account and f.canonical_account.startswith("is.")
+              and f.basis == "separate"}
+    assert is_sep.get("is.operating_income") == -68_052_797, "적자 영업손실이 음수로 저장돼야 함"
+    assert is_sep.get("is.net_income") == -24_180_887, "당기순손실이 음수로 저장돼야 함"
+    # EBT 항등식(누적 6개월): 영업손실 + 금융수익 - 금융원가 = 세전손실
+    assert is_sep["is.operating_income"] + is_sep["is.finance_income"] - \
+        is_sep["is.finance_cost"] == is_sep["is.ebt"]
+
+    cf_sep = {f.acode: f.amount_won for f in facts
+              if f.canonical_account and f.canonical_account.startswith("cf.")
+              and f.basis == "separate"}
+    # ★같은 부호소실 버그가 CF 의 로마숫자 라벨("Ⅰ.영업활동으로 인한 현금흐름")에도 걸려
+    # 있었다 — IS 를 고치며 같이 드러난 latent 버그, CF 항등식으로 회귀 고정.
+    assert cf_sep.get("영업활동으로인한현금흐름") == -52_636_847
+    assert cf_sep["기초의현금및현금성자산"] + cf_sep["현금의증가"] == \
+        cf_sep["반기말의현금및현금성자산"]
 
 
 def _run():

@@ -97,11 +97,29 @@ def _pick_best_pdf(candidates: list) -> "zipfile.ZipInfo":
     return max(candidates, key=lambda i: i.file_size)
 
 
-def _pick_best_file_by_size(zf: zipfile.ZipFile) -> Optional[zipfile.ZipInfo]:
+def _pick_body_by_filename(candidates: list, rcept_no: str) -> Optional["zipfile.ZipInfo"]:
+    """R96(2026-09-12) — DART `document.xml` ZIP의 파일명 규칙: **본문**(사업/분기/
+    반기보고서)은 접미사 없이 `{접수번호}.xml`, **첨부**(감사보고서 등)는 `_{ACODE}`
+    접미사가 붙는다(실측: `20150930000130.xml`=본문 vs `20150930000130_00760.xml`
+    =감사보고서). 이름으로 확정 가능하면 크기 비교보다 이걸 우선한다 — 실측 확정:
+    양지사(00139685)/티로보틱스(00867098) 2건은 첨부(감사보고서)가 본문보다 바이트가
+    더 커서(각각 354,948>342,379 / 503,797>313,936) `max(file_size)` 폴백이 본문
+    대신 첨부를 골랐다(`assign_tables_to_dart_sections`가 "2.연결재무제표"/"4.재무
+    제표" 섹션을 못 찾아 report_lines 0행 → `docs/PARSING_RULES.md` R96)."""
+    exact = f"{rcept_no}.xml"
+    for info in candidates:
+        # ZipInfo.filename 은 종종 선행 "/" 가 붙는다(실측: "/20150930000130.xml").
+        if info.filename.lstrip("/") == exact:
+            return info
+    return None
+
+
+def _pick_best_file_by_size(zf: zipfile.ZipFile, rcept_no: str) -> Optional[zipfile.ZipInfo]:
     """
     ZIP 내에서 우선순위에 따라 최적 파일 선택.
 
-    - xml / xbrl: 여러 개면 가장 큰 파일
+    - xml / xbrl: **파일명이 `{접수번호}.xml`(첨부 접미사 없음)이면 그것을 본문으로
+      우선 채택**(R96) — 없으면(구형/미확인 명명) 기존대로 가장 큰 파일로 폴백.
     - pdf: 여러 개면 재무제표 키워드 우선, 없으면 가장 큰 파일
     - html / hwp / zip: 첫 번째 매칭
     ZIP에 아무것도 없으면 None 반환 → 호출부에서 'skipped' 처리.
@@ -122,6 +140,10 @@ def _pick_best_file_by_size(zf: zipfile.ZipFile) -> Optional[zipfile.ZipInfo]:
                     )
                 return _pick_best_pdf(candidates)
             if ext in _PICK_LARGEST_EXTS:
+                if ext in (".xml", ".xbrl") and len(candidates) > 1:
+                    by_name = _pick_body_by_filename(candidates, rcept_no)
+                    if by_name is not None:
+                        return by_name
                 return max(candidates, key=lambda i: i.file_size)
             return candidates[0]
     return None
@@ -201,6 +223,63 @@ def _handle_xml_pending(rcept_no: str, api_err_msg: str) -> None:
             f"자동 대체 없이 계속 재시도 중(logs/collect.err.log 검색용 태그)."
         )
     return None
+
+
+# ★2026-09-13 정책(사용자 결정, R96 후속 — 2026H1 반기보고서 5건 실측) — document.xml
+# ZIP 자체는 정상 응답인데 그 안에 XML/XBRL이 아직 없고 PDF만 있는 경우(=회사가 사람이
+# 읽는 서식을 먼저 내고 표준파일은 며칠~몇 주 뒤에 뒤늦게 올리는 관행, 위 [014] 정책과
+# 같은 근본원인의 다른 얼굴). 실측: 2026-08-14 접수 반기보고서 5건이 접수 당시엔 PDF만
+# 있었는데 한 달 뒤 재조회하니 XML이 올라와 있었다 — 그런데 그때는 "완료"로 이미 마감
+# 처리돼 재조회 자체가 없었다. 이제는 이 경우도 [014]와 같은 정책으로 다룬다: 완료
+# 처리하지 않고 PDF는 잠정 저장한 채 `status='pending'`+`xml_pending_since`로 남겨
+# 데일리가 계속 document.xml을 재시도하게 한다 — 표준파일(XML/XBRL)이 실제로 올라오면
+# 그때 `_mark_completed()`로 정식 완료(및 report_lines 재적재 대상 진입).
+_XML_EXPECTED_REPORT_TYPES = frozenset({"annual", "half", "quarter"})
+
+
+def _handle_standard_file_pending(
+    rcept_no: str, dest_path: Path, file_type: str, file_size: int, api_note: str,
+) -> None:
+    """ZIP은 받았지만 표준파일(XML/XBRL)이 아직 없는 경우 — PDF 등은 잠정 저장하고
+    `_handle_xml_pending()`과 같은 정책(무기한 재시도 + 30일부터 알림)으로 대기시킨다.
+
+    `_handle_xml_pending()`과 달리 이미 받은 파일이 있으므로 `file_path`/`file_type`/
+    `file_size`를 채워둔다 — 이 시점에 다른 소비자(PDF 복구 경로 등)가 참고할 수 있게.
+    단 `status`는 `completed`가 아니라 `pending`이라 report_lines 재적재 유니버스
+    (`dt.status='completed'` 필터)엔 안 걸린다 — 표준파일이 와서 진짜 완료돼야 들어간다.
+    """
+    now = datetime.utcnow()
+    with get_session() as session:
+        row = session.execute(
+            select(DownloadTask.xml_pending_since, DownloadTask.xml_pending_last_alert_at)
+            .where(DownloadTask.rcept_no == rcept_no)
+        ).one()
+        pending_since = row.xml_pending_since or now
+        last_alert = row.xml_pending_last_alert_at
+
+        days_pending = (now - pending_since).days
+        should_alert = (
+            days_pending >= XML_PENDING_ALERT_START_DAYS
+            and (last_alert is None or (now - last_alert).days >= XML_PENDING_ALERT_INTERVAL_DAYS)
+        )
+
+        values = dict(status="pending", file_path=str(dest_path), file_type=file_type,
+                      file_size=file_size, last_error=api_note,
+                      last_attempt_at=now, xml_pending_since=pending_since)
+        if should_alert:
+            values["xml_pending_last_alert_at"] = now
+
+        session.execute(
+            update(DownloadTask).where(DownloadTask.rcept_no == rcept_no).values(**values)
+        )
+
+    if should_alert:
+        tag = ("🚨 XML_PENDING_ALERT(2개월+, 사람 판단 필요)" if days_pending >= XML_PENDING_ESCALATE_DAYS
+               else "🔔 XML_PENDING_ALERT")
+        logger.warning(
+            f"  {tag} {rcept_no}: 표준파일(XML/XBRL) {days_pending}일째 미등록"
+            f"(현재 {file_type} 로 잠정 저장) — 계속 재시도 중."
+        )
 
 
 def _build_file_path(
@@ -501,7 +580,7 @@ def _download_one(
 
         # ── ZIP 파싱 → 파일 선택 및 저장 ─────────────────────
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-            best = _pick_best_file_by_size(zf)
+            best = _pick_best_file_by_size(zf, task.rcept_no)
             if best is None:
                 # 인식 가능한 형식 없음 — 재시도 무의미하므로 skipped 처리
                 all_exts = [Path(i.filename).suffix for i in zf.infolist()]
@@ -555,6 +634,12 @@ def _download_one(
             # 이미 완전히 다운로드된 파일이면 스킵
             if dest_path.exists() and dest_path.stat().st_size == best.file_size:
                 logger.debug(f"  이미 존재 (동일 크기) → 스킵: {dest_path.name}")
+                if ext not in (".xml", ".xbrl") and filing.report_type in _XML_EXPECTED_REPORT_TYPES:
+                    logger.info(f"  ⏳ 표준파일 미등록(현재 {ext})→ 대기 상태 유지: {task.rcept_no}")
+                    _handle_standard_file_pending(
+                        task.rcept_no, dest_path, ext.lstrip("."), best.file_size,
+                        f"표준파일(XML/XBRL) 미등록 — {ext} 로 잠정 저장(동일크기 재확인)")
+                    return None
                 _mark_completed(task.rcept_no, dest_path, ext, best.file_size)
                 return True
 
@@ -591,6 +676,17 @@ def _download_one(
             f"  ✓ 저장 완료{fmt_note}: {dest_path.relative_to(RAW_REPORT_DIR)} "
             f"({file_size / 1024 / 1024:.1f} MB)"
         )
+        if ext not in (".xml", ".xbrl") and filing.report_type in _XML_EXPECTED_REPORT_TYPES:
+            # R103(2026-09-13) — 표준파일(XML/XBRL) 대신 PDF 등만 있는 최근 정기보고서.
+            # 완료 처리하지 않고 대기시켜 데일리가 document.xml 을 계속 재시도하게 한다
+            # (모듈 상단 [014] 정책과 같은 근본원인 — 표준파일이 뒤늦게 올라오는 관행).
+            logger.info(
+                f"  ⏳ 표준파일(XML/XBRL) 미등록(현재 {ext.lstrip('.')}) — "
+                f"완료 처리 보류, 데일리 재시도 대상으로 남김: {task.rcept_no}")
+            _handle_standard_file_pending(
+                task.rcept_no, dest_path, ext.lstrip("."), file_size,
+                f"표준파일(XML/XBRL) 미등록 — {ext.lstrip('.')} 로 잠정 저장")
+            return None
         _mark_completed(task.rcept_no, dest_path, ext.lstrip("."), file_size)
 
         # 다운로드 완료 후 짧은 대기 (서버 부하 경감)

@@ -136,6 +136,100 @@ def test_headerless_no_marker_row_not_absorbed_as_header():
     assert parse_header_columns(t) is None
 
 
+def test_headerless_banner_rows_skipped_before_real_header():
+    """R95(2026-09-12) — THEAD 없는 구서식 표에 표제목("재무상태표")·기준일 캡션·
+    "회사명 : (주)OOO / (단위 : 원)" 같은 COLSPAN 병합 배너행이 실제 헤더행 앞에
+    여러 줄 끼어 있어도, `<COLGROUP>`이 선언한 총 열수(6) 대비 물리 셀 수가 적은
+    행(=배너/캡션)은 건너뛰고 진짜 헤더행("계정명｜주석｜당기(2열)｜전기(2열)")까지
+    도달해야 한다. 실측: 00186939 특수건설 20151116001903 재무상태표(미착품 등
+    당기값이 원문에 없는데 전기값이 당기로 오적재되던 원인)."""
+    xml = (
+        "<TABLE><COLGROUP><COL/><COL/><COL/><COL/><COL/><COL/></COLGROUP><TBODY>"
+        '<TR><TD COLSPAN="6">재무상태표</TD></TR>'
+        '<TR><TD COLSPAN="6"></TD></TR>'
+        '<TR><TD COLSPAN="6">제 45기 2015년 09월 30일 현재</TD></TR>'
+        '<TR><TD COLSPAN="6">제 44기 2014년 12월 31일 현재</TD></TR>'
+        '<TR><TD>회사명 : (주)특수건설</TD><TD COLSPAN="4"></TD><TD>(단위 : 원)</TD></TR>'
+        '<TR><TD>계정명</TD><TD>주석</TD><TD COLSPAN="2">제 45(당)기</TD>'
+        '<TD COLSPAN="2">제 44(전)기</TD></TR>'
+        "<TR><TD>자산</TD><TD></TD><TD></TD><TD></TD><TD></TD><TD></TD></TR>"
+        "<TR><TD>유동자산</TD><TD></TD><TD></TD><TD>100</TD><TD></TD><TD>90</TD></TR>"
+        # 미착품류 — 당기(2열) 완전 공백, 전기 2열째만 값 존재.
+        "<TR><TD>미착품</TD><TD></TD><TD></TD><TD></TD><TD></TD><TD>5</TD></TR>"
+        "</TBODY></TABLE>"
+    )
+    t = etree.fromstring(xml)
+    cols = parse_header_columns(t)
+    assert cols is not None
+    ranks = {(c.position, c.period_rank, c.is_note) for c in cols}
+    assert ranks == {(0, -1, True), (1, 0, False), (2, 0, False), (3, 1, False), (4, 1, False)}
+    # 유동자산: 당기(position1|2)=100, 전기(position3|4)=90.
+    assert select_by_header_columns(cols, [None, None, 100, None, 90]) == {0: 100, 1: 90}
+    # 미착품: 당기 2열 전부 공백 → 당기는 결측(전기 5가 당기로 둔갑하면 안 됨).
+    assert select_by_header_columns(cols, [None, None, None, None, 5]) == {1: 5}
+
+
+def test_headerless_banner_rows_without_colgroup_still_falls_back():
+    """`<COLGROUP>`이 없으면 배너/캡션행 판정 근거가 없어 R95 확장을 켜지 않는다
+    (R6 원칙 — 모르면 기존 동작 그대로, 새 오탐 위험을 만들지 않는다)."""
+    xml = (
+        "<TABLE><TBODY>"
+        '<TR><TD COLSPAN="6">재무상태표</TD></TR>'
+        '<TR><TD>계정명</TD><TD>주석</TD><TD COLSPAN="2">제 45(당)기</TD>'
+        '<TD COLSPAN="2">제 44(전)기</TD></TR>'
+        "<TR><TD>유동자산</TD><TD></TD><TD></TD><TD>100</TD><TD></TD><TD>90</TD></TR>"
+        "</TBODY></TABLE>"
+    )
+    t = etree.fromstring(xml)
+    assert parse_header_columns(t) is None
+
+
+def test_headerless_full_width_blank_section_row_still_stops_scan():
+    """`<COLGROUP>`이 있어도, 배너가 아니라 표 전체 폭을 채우는 진짜 섹션행("자산"
+    류 — 물리 셀 수가 선언 열수와 같음)은 여전히 스캔을 멈추는 신호다(기존 R89
+    안전장치 유지 — 배너행 건너뛰기가 이 판정을 무디게 만들면 안 됨)."""
+    xml = (
+        "<TABLE><COLGROUP><COL/><COL/><COL/></COLGROUP><TBODY>"
+        "<TR><TD>자산</TD><TD></TD><TD></TD></TR>"
+        "<TR><TD>매출액</TD><TD>100</TD><TD>90</TD></TR>"
+        "</TBODY></TABLE>"
+    )
+    t = etree.fromstring(xml)
+    assert parse_header_columns(t) is None
+
+
+def test_headerless_fully_blank_row_skipped_even_at_full_width():
+    """R95 후속(2026-09-12, 손익계산서 표 재확인) — COLSPAN 병합이 아니라 개별 빈
+    `<TD>`를 표 전체 폭만큼 나열한 **완전공백행**(라벨칸까지 빔)은 물리 셀 수가
+    선언 열수와 같아 `is_banner` 판정을 피해가지만, 라벨 자체가 없어 "자산"류
+    섹션행이 될 수 없다 — 무조건 건너뛰어야 진짜 헤더행에 도달한다. 실측: 00186939
+    특수건설 20151116001903 포괄손익계산서(표제목 바로 다음 줄이 이 형태라 대손
+    상각비/연구개발비 등 당기 결측 항목이 전기값으로 오적재되고 있었다)."""
+    xml = (
+        "<TABLE><COLGROUP><COL/><COL/><COL/><COL/><COL/></COLGROUP><TBODY>"
+        '<TR><TD COLSPAN="5">포괄손익계산서</TD></TR>'
+        "<TR><TD></TD><TD></TD><TD></TD><TD></TD><TD></TD></TR>"  # 완전공백행(5셀, 병합 없음)
+        '<TR><TD COLSPAN="5">제45기2015년01월01일부터2015년09월30일까지</TD></TR>'
+        '<TR><TD COLSPAN="5">제44기2014년01월01일부터2014년12월31일까지</TD></TR>'
+        '<TR><TD>회사명 : (주)특수건설</TD><TD COLSPAN="3"></TD><TD>(단위 : 원)</TD></TR>'
+        '<TR><TD>계정명</TD><TD COLSPAN="2">제 45(당)기 원화</TD>'
+        '<TD COLSPAN="2">제 44(전)기 원화</TD></TR>'
+        "<TR><TD>매출액</TD><TD></TD><TD>100</TD><TD></TD><TD>90</TD></TR>"
+        # 대손상각비류 — 당기(2열) 완전 공백, 전기 2열째만 값 존재.
+        "<TR><TD>대손상각비</TD><TD></TD><TD></TD><TD>5</TD><TD></TD></TR>"
+        "</TBODY></TABLE>"
+    )
+    t = etree.fromstring(xml)
+    cols = parse_header_columns(t)
+    assert cols is not None
+    ranks = {(c.position, c.period_rank) for c in cols}
+    assert ranks == {(0, 0), (1, 0), (2, 1), (3, 1)}
+    # 매출액: 당기(position1)=100, 전기(position3)=90.
+    assert select_by_header_columns(cols, [None, 100, None, 90]) == {0: 100, 1: 90}
+    # 대손상각비: 당기 2열 전부 공백 → 당기는 결측(전기 5가 당기로 둔갑하면 안 됨).
+    assert select_by_header_columns(cols, [None, None, 5, None]) == {1: 5}
+
+
 def test_ambiguous_duplicate_subtype_falls_back():
     """K-GAAP 구서식(2003년대) — "3개월"/"누적" 아래 다시 COLSPAN=2 하위열이 있는데
     텍스트가 둘 다 "금액"으로 동일해 헤더만으론 구분 불가(실측: 00132725 SB성보 2003Q3

@@ -678,6 +678,11 @@ def _header_column_stack(grid: list[list[str]], col: int) -> list[str]:
     return stack
 
 
+def _row_has_amount(cell_texts: list[str]) -> bool:
+    """`cell_texts` 중 하나라도 진짜 금액처럼 보이면(`_NUMBER_PATTERN` 매치) True."""
+    return any(_NUMBER_PATTERN.match(t.strip()) for t in cell_texts if t.strip())
+
+
 def _looks_like_header_row(cell_texts: list[str]) -> bool:
     """THEAD 가 없는 표에서, TBODY 선두 TR 하나가 헤더행인지 **내용으로** 판정한다
     (모양/위치가 아니라 R6 원칙과 같은 맥락 — 확정 못 하면 추측하지 않는다).
@@ -689,29 +694,67 @@ def _looks_like_header_row(cell_texts: list[str]) -> bool:
     헤더행(True). 전부 공란이거나 아무 마커도 없으면(예: "자산"류 섹션 헤더행)
     False — 이런 행까지 헤더로 흡수하면 안 된다(R5, header_hint 는 별도 개념)."""
     rest = cell_texts[1:]
-    has_marker = False
-    for text in rest:
-        t = text.strip()
-        if not t:
-            continue
-        if _NUMBER_PATTERN.match(t):
-            return False
-        if (_PERIOD_KEY_RE.search(t) or _SUBTYPE_CUM_RE.search(t)
-                or _SUBTYPE_3M_RE.search(t)):
-            has_marker = True
-    return has_marker
+    if _row_has_amount(rest):
+        return False
+    return any(_PERIOD_KEY_RE.search(t.strip()) or _SUBTYPE_CUM_RE.search(t.strip())
+               or _SUBTYPE_3M_RE.search(t.strip()) for t in rest if t.strip())
+
+
+def _table_colgroup_ncols(table: etree._Element) -> Optional[int]:
+    """`<COLGROUP><COL/>...</COLGROUP>`가 선언한 표의 총 물리 열 수. 없으면 None
+    (호출측이 판정 불가로 보고 완전 폴백)."""
+    colgroup = table.find("COLGROUP")
+    if colgroup is None:
+        return None
+    n = len(colgroup.findall("COL"))
+    return n or None
 
 
 def _headerless_header_trs(table: etree._Element) -> list[etree._Element]:
     """R88 §7 확장(2026-09-10) — THEAD 없이 헤더행이 TBODY 선두에 섞여 오는 구서식
     (pre-2015 K-GAAP 등)에서, 선두 TR들 중 `_looks_like_header_row`에 걸리는 것만
     THEAD 대용으로 모은다. 처음으로 안 걸리는(=진짜 데이터) TR을 만나면 즉시 멈춘다
-    — 그 뒤도 계속 훑으면 우연히 패턴이 맞는 데이터 행을 헤더로 오인할 위험이 있다."""
+    — 그 뒤도 계속 훑으면 우연히 패턴이 맞는 데이터 행을 헤더로 오인할 위험이 있다.
+
+    ★R95(2026-09-12) — **배너/캡션행 건너뛰기.** 원문 표는 실제 헤더행("계정명｜
+    주석｜제N(당)기｜제N(전)기") 앞에 표제목("재무상태표")·기준일("제 45기 2015년
+    09월 30일 현재")·"회사명 : (주)OOO / (단위 : 원)" 같은 COLSPAN 병합 행을 여러 줄
+    둔다. 이 행들은 `_looks_like_header_row`가 진짜 데이터 행과 구분 못 해(금액도
+    마커도 없음 — "자산"류 섹션행과 신호가 동일) 첫 줄에서 바로 멈춰버렸다(실측:
+    00186939 특수건설 20151116001903, 미착품/장기차입금 등 **당기 값이 원문에
+    아예 없는데 전기값이 당기로 오적재** — `_detect_period_layout` multicol 폴백의
+    위치기반 압축이 원인. `docs/plans/table_header_banner_row_skip_design_
+    2026-09-12.md`).
+    구분 기준은 **모양**(COLSPAN)이 아니라 `<COLGROUP>`이 선언한 총 물리 열 수 대비
+    "이 행의 실제 TD 개수가 더 적은가" — 배너/캡션행은 병합 때문에 항상 물리 셀이
+    적고, "자산"류 섹션행은 다른 데이터행과 똑같이 표 전체 폭(물리 셀 수 = 총 열수)
+    을 채운다(값이 전부 공란이어도 칸 자체는 살아있다). `<COLGROUP>`이 없으면
+    판정 근거가 없으므로 전부 원래 동작(변경 없음) — R6 원칙대로 모르면 확장 않음.
+    배너/캡션행이라도 진짜 금액이 있으면(드묾, 안전장치) 데이터 행으로 보고 멈춘다.
+
+    ★R95 후속(같은 날, 손익계산서 표 재확인) — **완전공백행**(라벨칸까지 포함해
+    모든 물리 셀이 빈 문자열)은 COLSPAN 병합 없이 개별 빈 `<TD>`를 표 전체 폭만큼
+    나열해두는 경우가 있어(실측: 위 특수건설 표의 포괄손익계산서 — 표제목 바로
+    다음 줄이 물리 셀 5개짜리 빈 행) 물리 셀 수가 선언 열수와 **같아**
+    `is_banner` 판정을 피해간다. 그런데 이런 행은 라벨조차 없어 애초에 "자산"류
+    섹션행(라벨은 반드시 있음)이 될 수 없다 — 라벨 유무로 완전히 갈리므로 폭
+    비교보다 먼저, 무조건 건너뛴다."""
     tbody = table.find("TBODY")
     candidate_trs = list(tbody.findall("TR")) if tbody is not None else list(table.findall("TR"))
+    n_cols_declared = _table_colgroup_ncols(table)
     header_trs: list[etree._Element] = []
     for tr in candidate_trs:
-        if not _looks_like_header_row(_get_cells(tr)):
+        cells = _get_cells(tr)
+        if cells and not any(c.strip() for c in cells):
+            continue  # 완전공백행(라벨도 없음) — 무조건 건너뜀
+        is_banner = n_cols_declared is not None and 0 < len(cells) < n_cols_declared
+        if is_banner:
+            if _row_has_amount(cells[1:]):
+                break
+            if _looks_like_header_row(cells):
+                header_trs.append(tr)
+            continue  # 마커 없는 배너/캡션행 — 건너뛰고 계속 스캔
+        if not _looks_like_header_row(cells):
             break
         header_trs.append(tr)
     return header_trs

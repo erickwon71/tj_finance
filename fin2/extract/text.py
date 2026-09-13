@@ -116,11 +116,94 @@ def _interim_cumulative_cols(table) -> dict[int, int] | None:
     return None
 
 
-def _detect_fin_type(root) -> str:
-    """SUMMARY EXTRACTION 의 FIN_TYPE (A=연결있음/B=별도만). 없으면 'A' 가정."""
+_FIN_TYPE_TAG_RE = re.compile(rb'FIN_TYPE"[^>]*>([A-Za-z]+)')
+_FIN_TYPE_CORP_CACHE: dict[str, str] = {}   # corp_dir(str) → 다른 필링에서 빌려온 FIN_TYPE
+
+
+def _fin_type_tag_in_root(root) -> str | None:
+    """이 문서 자체의 SUMMARY EXTRACTION FIN_TYPE 태그 원문값. 없으면 None."""
     for ex in root.findall(".//EXTRACTION"):
         if ex.get("ACODE", "") == "FIN_TYPE":
-            return (ex.text or "A").strip() or "A"
+            return (ex.text or "").strip() or None
+    return None
+
+
+def _fin_type_tag_in_file(path: Path) -> str | None:
+    """XML 파일 **바이트**에서 FIN_TYPE 태그값만 빠르게 찾는다 — 전체 lxml 파싱 없이,
+    인코딩 변환도 없이. 값 자체가 순수 ASCII 코드(A/B/그 외)라 바이트 정규식으로 충분하고,
+    한글 인코딩(CP949/EUC-KR/UTF-8 혼재) 문제를 원천적으로 피한다."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    m = _FIN_TYPE_TAG_RE.search(data)
+    return m.group(1).decode("ascii") if m else None
+
+
+def _lookup_fin_type_from_sibling_filing(file_path) -> str | None:
+    """R98(2026-09-12) — 분기/반기 보고서는 FIN_TYPE 태그가 원래 없다(실측: 자비스
+    01174038 분기 원문 18건 전수 태그 없음, 연간 원문은 전부 있음). 이 값은 회사 단위
+    속성(종속회사 유무)이라 보고서마다 거의 안 바뀌므로, 태그가 없을 때 무조건 'A'로
+    가정하는 대신 **같은 회사의 다른 필링(annual/half, 태그를 가진 것)에서 빌려온다.**
+
+    실측 발견 계기: 자비스는 연결재무제표가 없는 회사(사용자 확인)인데 분기 필링에
+    태그가 없어 기본값 'A'로 잘못 판정됐다 — PDF/HTML 복구 경로(`reconcile()`)가
+    존재하지도 않는 연결 수치를 찾다가 "판정불가"로 `report_recon_candidates` 에
+    헛되이 등록됨(20181114002329, 사용자 확인 후 삭제).
+
+    `raw_report/<시장>/<corp_code>_<회사명>/<report_type>/<연도>/<rcept>.xml` 트리
+    규약에 의존 — 그 규약과 다르면(다른 프로젝트/테스트 픽스처 등) 조용히 실패해 호출측
+    폴백('A')으로 넘어간다(R6 원칙, 모르면 확장 않음). 대상 연도와 **가장 가까운** 연간/
+    반기 필링을 우선한다(오래된 회사가 나중에 종속회사를 갖게 되는 등 실제로 fin_type이
+    바뀔 수 있어 "아무거나 최신"보다 "이 시점에 가장 가까운 것"이 더 정확하다).
+
+    `corp_code` 를 인자로 받지 않는다 — `file_path` 하나로 회사 폴더까지 그대로
+    유도되므로(캐시 키도 그 폴더 경로), 이 함수를 쓰는 모든 호출측이 이미 갖고 있는
+    `file_path` 만 추가로 넘기면 되게 해 배선을 최소화했다."""
+    try:
+        fp = Path(file_path)
+        target_year = int(fp.parent.name)
+        corp_dir = fp.parents[2]
+    except (IndexError, TypeError, ValueError):
+        return None
+    cache_key = str(corp_dir)
+    if cache_key in _FIN_TYPE_CORP_CACHE:
+        return _FIN_TYPE_CORP_CACHE[cache_key]
+    candidates: list[tuple[int, Path]] = []
+    for report_type in ("annual", "half"):
+        rt_dir = corp_dir / report_type
+        if not rt_dir.is_dir():
+            continue
+        for year_dir in rt_dir.iterdir():
+            if not year_dir.name.isdigit():
+                continue
+            year = int(year_dir.name)
+            candidates.extend((year, p) for p in year_dir.glob("*.xml"))
+    candidates.sort(key=lambda t: (abs(t[0] - target_year), -t[0]))
+    for _, cand in candidates:
+        ft = _fin_type_tag_in_file(cand)
+        if ft:
+            _FIN_TYPE_CORP_CACHE[cache_key] = ft
+            return ft
+    return None
+
+
+def _detect_fin_type(root, *, file_path: "str | Path | None" = None) -> str:
+    """SUMMARY EXTRACTION 의 FIN_TYPE (A=연결있음/B=별도만; 그 외 값도 실측됨 — 예 'Z',
+    의미 DART 비공개/미문서화, 호출측은 `== 'B'` 처럼 "연결 없음이 확실한 값"만 좁게
+    비교하므로 새 코드값이 섞여도 안전). 이 문서 자체에 태그가 있으면 그대로 쓴다.
+
+    ★R98(2026-09-12) — 없을 때(분기/반기는 원래 이 태그가 없다) 무조건 'A' 로 가정하던
+    것을, `file_path` 가 주어지면 **같은 회사의 annual/half 필링에서 빌려오도록** 확장
+    (`_lookup_fin_type_from_sibling_filing`). 회귀 없음 — `file_path` 를 안 넘기는 기존
+    호출(및 규약 밖 경로)은 그대로 완전 폴백."""
+    tag = _fin_type_tag_in_root(root)
+    if tag:
+        return tag
+    if file_path:
+        borrowed = _lookup_fin_type_from_sibling_filing(file_path)
+        if borrowed:
+            return borrowed
     return "A"
 
 
@@ -404,7 +487,14 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
     for tag, el in elements:
         text_ = " ".join("".join(el.itertext()).split())
 
-        if pending is not None:
+        # R101(2026-09-13) — 내용 없는 요소(순수 장식용 빈 SPAN 등)는 나이를 안 먹인다.
+        # SBI인베스트먼트(20120329001048) 실측: 헤딩과 데이터표 사이에 빈 SPAN 5개가
+        # 끼어있어(문서 작성툴의 장식용 잔재로 보임) 원래 거리(3~4)가 8로 부풀려져
+        # `_LEGACY_PENDING_SPAN` 을 초과, 진짜 데이터표를 놓쳤다. 빈 요소는 정보가
+        # 없으므로 "헤딩에서 멀어졌다"는 신호가 아니다 — 내용 있는 형제(TABLE 포함)만
+        # 센다. 기존 실측 분포("1칸 571건·2칸 48건")는 대부분 빈 형제가 거의 없는
+        # 문서라 이 변경으로 달라지지 않는다(전수 회귀 테스트로 확인).
+        if pending is not None and (text_ or tag == "TABLE"):
             pending_age += 1
             if pending_age > _LEGACY_PENDING_SPAN:
                 pending = None                # 데이터표 없이 끝난 헤딩 — 멀리서 끌어오지 않는다
@@ -424,17 +514,28 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
             pending_unit = None
             continue
 
-        if is_legacy_note_marker(text_):
-            pending = None                    # 주석 구간 진입 — 대기 중 헤딩도 버린다
-            pending_unit = None
-            continue
-
+        # R102(2026-09-13) — 헤딩판정을 주석마커판정보다 **먼저** 본다. SBI인베스트먼트
+        # (20120329001048) 실측: 별도 BS 표제가 "(5) 연결재무제표에 대한 주석-...(다른
+        # 주석 참조 안내)..." 로 시작하는 같은 요소 끝에 이어붙어 있어, 예전 순서
+        # (주석마커 먼저)로는 `is_legacy_note_marker`가 맨 앞 문구만 보고 곧장 걸려
+        # 뒤쪽 진짜 헤딩을 검사조차 못 했다. `classify_legacy_statement_heading`은
+        # R101 꼬리표제 폴백도 **B형(명칭 단독)만** 인정하는 엄격한 판정이라(오탐
+        # 위험 낮음), 먼저 시도해서 성공하면 그걸 우선한다 — 실패하면(=진짜 순수
+        # 주석전환 문구뿐이면) 기존대로 주석마커 검사로 넘어간다(회귀 없음, 순서만
+        # 바뀜 — 두 판정이 동시에 참일 수 없는 상호배타적 문자열 집합은 아니지만
+        # `classify_legacy_statement_heading`의 엄격함이 안전판 역할).
         head = classify_legacy_statement_heading(text_, include_sce=include_sce)
         if head is not None:
             pending = head
             pending_age = 0
             # 헤딩이 표(제목표)면 그 표가 단위를 들고 있을 수 있다(A형 '… (단위 : 원)').
             pending_unit = declared_unit(el) if tag == "TABLE" else None
+            continue
+
+        if is_legacy_note_marker(text_):
+            pending = None                    # 주석 구간 진입 — 대기 중 헤딩도 버린다
+            pending_unit = None
+            continue
 
     return groups
 
@@ -1084,7 +1185,7 @@ def extract_facts(
         logger.warning(f"[extract2/text] XML 루트 없음: {file_path}")
         return []
 
-    fin_type = _detect_fin_type(root)
+    fin_type = _detect_fin_type(root, file_path=file_path)
     mapper = get_mapper()
     dedup: dict[tuple[str, str], ExtractedFact] = {}
 

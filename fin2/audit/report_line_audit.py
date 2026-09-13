@@ -64,7 +64,7 @@ def read_face_amounts(file_path: str | Path) -> FaceAmounts:
     root = _parse_xml_file(Path(file_path))
     if root is None:
         return out
-    fin_type = _detect_fin_type(root)
+    fin_type = _detect_fin_type(root, file_path=file_path)
     groups = _detect_body_statement_tables(root, fin_type)  # {section_code: [(tbl, unit, kind)]}
     for section_code, tw in groups.items():
         stmt = section_code.split("_")[0]

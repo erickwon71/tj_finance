@@ -216,7 +216,7 @@ var node1 = {};
 node1['text'] = "4. 연결재무제표";
 node1['eleId'] = "7317";
 node1['offset'] = "850522";
-node1['length'] = "520";
+node1['length'] = "25936";
 node1['dtd'] = "dart2.dtd";
 node1['dcmNo'] = "234750";
 var node1 = {};
@@ -249,6 +249,61 @@ def test_find_statement_nodes_excludes_유의점_and_감사의견():
     fs = find_statement_nodes(nodes)
     texts = [n.text for n in fs]
     assert texts == ["3. 재무제표", "4. 연결재무제표"]
+
+
+_TOC_NO_CONSOLIDATED = """
+var node1 = {};
+node1['text'] = "2. 연결재무제표";
+node1['eleId'] = "1001";
+node1['offset'] = "129317";
+node1['length'] = "138";
+node1['dtd'] = "dart3.dtd";
+node1['dcmNo'] = "6383879";
+var node1 = {};
+node1['text'] = "3. 연결재무제표 주석";
+node1['eleId'] = "1002";
+node1['offset'] = "129459";
+node1['length'] = "141";
+node1['dtd'] = "dart3.dtd";
+node1['dcmNo'] = "6383879";
+var node1 = {};
+node1['text'] = "4. 재무제표";
+node1['eleId'] = "1003";
+node1['offset'] = "129604";
+node1['length'] = "29908";
+node1['dtd'] = "dart3.dtd";
+node1['dcmNo'] = "6383879";
+var node1 = {};
+node1['text'] = "5. 재무제표 주석";
+node1['eleId'] = "1004";
+node1['offset'] = "159516";
+node1['length'] = "94998";
+node1['dtd'] = "dart3.dtd";
+node1['dcmNo'] = "6383879";
+"""
+
+
+def test_find_statement_nodes_excludes_placeholder_only_consolidated_section():
+    """R98(2026-09-12) — TOC 는 연결이 없는 회사에도 "2.연결재무제표" 골격을 항상
+    나열하지만, 실제 내용은 "해당사항이 없습니다" 류 한 줄뿐이라 length 가 극히 작다
+    (실측: 자비스 01174038 정정본 20181114002329, "2.연결재무제표"=138B/"3.연결재무제표
+    주석"=141B vs 실제 내용 있는 "4.재무제표"=29,908B — 3자리 vs 5자리 격차). 텍스트만
+    보면 "연결재무제표" 노드가 있다고 착각해(`reconcile()`이 실제로 이렇게 오판) 존재하지도
+    않는 연결 수치를 찾으려 든다 — length 로 placeholder 를 걸러야 한다."""
+    nodes = parse_toc_tree(_TOC_NO_CONSOLIDATED)
+    fs = find_statement_nodes(nodes)
+    texts = [n.text for n in fs]
+    assert texts == ["4. 재무제표", "5. 재무제표 주석"]
+
+
+def test_find_statement_nodes_length_unparseable_falls_back_to_included():
+    """length 필드가 파싱 불가면(빈 문자열 등) 판정 근거가 없으므로 기존대로 포함한다
+    (R6 원칙 — 모르면 걸러내지 않는다)."""
+    xml = _TOC_NO_CONSOLIDATED.replace('node1[\'length\'] = "138";', 'node1[\'length\'] = "";', 1)
+    nodes = parse_toc_tree(xml)
+    fs = find_statement_nodes(nodes)
+    texts = [n.text for n in fs]
+    assert "2. 연결재무제표" in texts
 
 
 def test_giant_cell_layout_reconstructs_kd_grand_totals():

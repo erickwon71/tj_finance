@@ -607,7 +607,17 @@ def _sync_one_corp(
                     .values(market=market, updated_at=datetime.utcnow())
                 )
 
-        # download_task 생성: is_final=True + 기재정정 그룹의 원본도 포함
+        # download_task 생성: is_final=True + 기재정정/첨부정정 그룹의 원본도 포함
+        # ★R104(2026-09-13) — 원래 `f2.is_amendment=TRUE`(="[기재정정]"만)로만 그룹을
+        #   판별했다. "[첨부정정]"은 `_is_amendment()`가 의도적으로 amendment로 안 침
+        #   ("본문은 동일, 첨부만 정정"이라는 가정, 위 `_is_attachment_amendment()`
+        #   docstring 참고) — 그런데 최초본과 첨부정정이 **같은 날** 접수되면 그룹의
+        #   `is_final`이 곧장 첨부정정 쪽으로 넘어가고, `is_amendment` 신호가 없으니
+        #   최초본이 이 EXISTS에 안 걸려 **영영 download_tasks에 안 들어가는** 사고가
+        #   난다(실측: 부국증권 20260814002623·멤레이비티 20260814002334 — 최초본에
+        #   진짜 본문 XML이 있는데 큐에 전혀 안 잡혔음, "첨부만 정정, 본문 동일"이라는
+        #   가정이 "본문 자체를 안 받는다"는 결과로 이어짐). `is_attachment_amendment`도
+        #   같이 봐서 이 그룹의 최초본도 포함시킨다.
         from sqlalchemy import text as _text
         target_rcept_nos = [
             r[0] for r in session.execute(_text("""
@@ -622,7 +632,7 @@ def _sync_one_corp(
                         AND f2.report_type   = f.report_type
                         AND f2.fiscal_year   = f.fiscal_year
                         AND f2.fiscal_period = f.fiscal_period
-                        AND f2.is_amendment  = TRUE
+                        AND (f2.is_amendment = TRUE OR f2.is_attachment_amendment = TRUE)
                     )
                   )
             """), {"corp": corp.corp_code}).fetchall()

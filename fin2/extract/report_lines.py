@@ -1298,7 +1298,7 @@ def extract_report_lines(
         logger.warning(f"[report_lines] XML 루트 없음: {file_path}")
         return []
 
-    fin_type = _detect_fin_type(root)
+    fin_type = _detect_fin_type(root, file_path=file_path)
     lines: list[ReportLineRow] = []
 
     # include_sce=True — 계층2 는 자본변동표도 전사한다(fact_v2 는 기본값 False 로 계속 배제).

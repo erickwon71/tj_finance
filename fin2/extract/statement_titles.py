@@ -418,6 +418,15 @@ _LEGACY_ENUM_PREFIX = re.compile(r"^[\dⅠ-Ⅻ]+\s*[.．)）]")
 # 벗긴 뒤에도 재무제표명이 안 걸리면(예 "가.대손충당금설정내역") 그대로 거부되므로 새
 # 오탐 경로가 생기지 않는다.
 _LEGACY_KO_ENUM_PREFIX = re.compile(r"^[가나다라마바사아자차카타파하]\s*[.．)）]")
+# ★R100(2026-09-13) — SBI인베스트먼트(20120329001048, fy2011) 실측: 이 회사는 "XI.
+# 재무제표 등" 안에서 4대 재무제표를 여닫는 괄호숫자로 순번매김한다("(1)연결재무상태표"
+# "(2)연결포괄손익계산서" … "(4)연결현금흐름표", 별도 쪽도 동일하게 (1)(2)(4)). 위
+# `_LEGACY_ENUM_PREFIX`("29.", "1)")는 **여는 괄호 없이** 숫자로 시작하는 것만 걸러
+# 노트 항목번호를 떨구는 규칙이라 이 형태("(1)"처럼 양쪽 괄호)는 애초에 그 필터에
+# 걸리지 않는다 — 별도 처리 없이 그냥 미인식이었을 뿐. 한 겹만 벗기고(중첩 없음)
+# 재무제표명이 안 걸리면 그대로 거부되므로(위 KO 접두와 같은 안전판) 새 오탐 경로가
+# 생기지 않는다 — "(1)유동자산" 같은 주석 항목은 벗긴 뒤 재무제표명이 없어 계속 거부됨.
+_LEGACY_PAREN_NUM_PREFIX = re.compile(r"^[(（]\d{1,2}[)）]")
 # 본문 face 가 아닌 것(첫 45자 기준). '주석' 은 여기서도 배제한다.
 # ★C-1(2026-09-05, 실측 — 삼성증권 20140515001582) — "요약"이 재무제표명 바로 앞
 # 수식어로만 쓰이면(증권/보험 분기보고서 관행: "요약분기연결재무상태표"가 완전한 본문표,
@@ -467,6 +476,60 @@ def is_legacy_note_marker(text: str) -> bool:
     return bool(_LEGACY_NOTE_MARK.search(re.sub(r"\s+", "", text)[:40]))
 
 
+def _classify_legacy_heading_core(
+    t: str, include_sce: bool, *, bare_only: bool = False,
+) -> tuple[str, str] | None:
+    """`classify_legacy_statement_heading` 의 판정 본체 — **이미 공백이 제거된**
+    문자열 `t`에 대해서만 동작한다(호출측이 whitespace-strip 을 책임진다).
+
+    bare_only=True 면 B형(명칭 단독 헤딩, `rest==""`)만 인정한다 — R101 꼬리표제
+    폴백 전용(아래 `classify_legacy_statement_heading` 참고), 문장 중간에서 잘라낸
+    조각이라 그 뒤에 다른 문자가 더 있어도 되는 A형까지 인정하면 오탐 위험이 커진다.
+    """
+    if not t or _LEGACY_ENUM_PREFIX.match(t):
+        return None
+    # R69(2026-09-05) — 한글 가나다 열거접두 제거(위 상수 docstring 참고). 벗긴 뒤에도
+    # 재무제표명이 안 걸리면 아래 _LEGACY_HEAD.match 에서 그대로 거부된다.
+    t = _LEGACY_KO_ENUM_PREFIX.sub("", t, count=1)
+    # R100(2026-09-13) — 괄호숫자 순번접두 제거(위 상수 docstring 참고). 같은 안전판.
+    t = _LEGACY_PAREN_NUM_PREFIX.sub("", t, count=1)
+    if _LEGACY_EXCLUDE.search(t[:45]):
+        return None
+    m = _LEGACY_HEAD.match(t)
+    if m is None:
+        return None
+    stmt = _LEGACY_NAME_TO_CODE[m.group(1)]
+    if stmt == "SCE" and not include_sce:
+        return None
+
+    rest = t[m.end():].lstrip("：:·-—")
+    if rest:
+        # R69(2026-09-05) — 괄호 병기("(대차대조표)") 소비, 나머지로 재판정.
+        alt = _LEGACY_ALT_NAME_PAREN.match(rest)
+        if alt:
+            rest = rest[alt.end():]
+    if rest:
+        if bare_only:
+            return None
+        # A형: 기간/단위 마커가 곧바로 따라와야 한다. 그 외 문자가 이어지면 표제가 아니다.
+        if not _LEGACY_PERIOD_AFTER.match(rest):
+            return None
+    # rest == "" 이면 B형(명칭 단독 헤딩) — 조건 1~3 을 이미 통과했다.
+
+    basis = "consolidated" if "연결" in t[:m.start(1)] else "separate"
+    return (basis, stmt)
+
+
+# R101(2026-09-13) — 문장 종결 뒤 꼬리표제 폴백 전용 분리자. ★단순 "." 전체가 아니라
+# **"다." (한글 종결어미 '-다' + 마침표)** 로 좁힌다 — 실측 회귀(`test_rejects_
+# numbered_note_heading`): 단순 "."로 자르면 "29. 현금흐름표" 의 "29." 도 분리돼
+# 뒷부분 "현금흐름표"만 남아 오탐(주석 헤딩이 본문으로 오인식)이 재현됐다. "-습니다.
+# "/"-되었다." 류 서술어 종결과 "29."/"(1)." 류 열거번호는 마침표 앞 글자로 구분된다
+# (전자는 항상 '다', 후자는 숫자) — 이 안전판이 없으면 R101 자체가 R69/R100 이
+# 막아온 걸 그대로 뚫는다.
+_LEGACY_SENTENCE_SPLIT = re.compile(r"다\.")
+
+
 def classify_legacy_statement_heading(
     text: str, include_sce: bool = False,
 ) -> tuple[str, str] | None:
@@ -489,38 +552,30 @@ def classify_legacy_statement_heading(
 
     include_sce: 계층2(report_lines) 전용 opt-in. 기본 False 는 자본변동표를 배제한다
         (fact_v2/std_v2 구 체인이 SCE 의 '연결당기순이익' 행을 IS 로 흡수하면 순이익 오염).
+
+    ── R101(2026-09-13) 꼬리표제 폴백 ──────────────────────────────────────
+    SBI인베스트먼트(20120329001048) 실측: BS 표제("(1)연결재무상태표")가 독립
+    요소가 아니라 K-IFRS 재작성 공시문구("※당사의…재작성되었으며,…감사를받지
+    않았습니다.") **뒤에 같은 요소 안에 이어붙어** 있다(IS/CF 표제는 독립 요소라
+    이 문제가 없음). 전체 텍스트로 판정해 실패하면, **마지막 문장부호 뒤 조각만**
+    다시 판정한다 — 단, 오탐 방지를 위해 그 조각은 **B형(명칭 단독, `rest==""`)
+    만** 인정한다(문장 중간을 잘라낸 조각이라 A형까지 허용하면 위험이 커짐). 이
+    조각도 같은 안전판(번호접두 거부·배제어·괄호숫자 벗기기)을 전부 통과해야
+    한다 — 그냥 "포함"이 아니라 **그 조각 전체가 정확히** 헤딩이어야 한다.
     """
     if not text:
         return None
     t = re.sub(r"\s+", "", text)
-    if not t or _LEGACY_ENUM_PREFIX.match(t):
-        return None
-    # R69(2026-09-05) — 한글 가나다 열거접두 제거(위 상수 docstring 참고). 벗긴 뒤에도
-    # 재무제표명이 안 걸리면 아래 _LEGACY_HEAD.match 에서 그대로 거부된다.
-    t = _LEGACY_KO_ENUM_PREFIX.sub("", t, count=1)
-    if _LEGACY_EXCLUDE.search(t[:45]):
-        return None
-    m = _LEGACY_HEAD.match(t)
-    if m is None:
-        return None
-    stmt = _LEGACY_NAME_TO_CODE[m.group(1)]
-    if stmt == "SCE" and not include_sce:
-        return None
+    result = _classify_legacy_heading_core(t, include_sce)
+    if result is not None:
+        return result
 
-    rest = t[m.end():].lstrip("：:·-—")
-    if rest:
-        # R69(2026-09-05) — 괄호 병기("(대차대조표)") 소비, 나머지로 재판정.
-        alt = _LEGACY_ALT_NAME_PAREN.match(rest)
-        if alt:
-            rest = rest[alt.end():]
-    if rest:
-        # A형: 기간/단위 마커가 곧바로 따라와야 한다. 그 외 문자가 이어지면 표제가 아니다.
-        if not _LEGACY_PERIOD_AFTER.match(rest):
-            return None
-    # rest == "" 이면 B형(명칭 단독 헤딩) — 조건 1~3 을 이미 통과했다.
-
-    basis = "consolidated" if "연결" in t[:m.start(1)] else "separate"
-    return (basis, stmt)
+    parts = _LEGACY_SENTENCE_SPLIT.split(t)
+    if len(parts) > 1:
+        tail = parts[-1]
+        if tail and tail != t:
+            return _classify_legacy_heading_core(tail, include_sce, bare_only=True)
+    return None
 
 
 def classify_statement_title(title: str) -> tuple[str, str] | None:

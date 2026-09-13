@@ -615,7 +615,10 @@ def _emit_section_lines(
             section_path = section_paths.get(id(row))
             if header_cols is not None:
                 # R88 — 헤더 그리드로 확정된 위치→회계기간 맵으로 직접 선택(설계문서 §3-4).
-                pairs = list(select_by_header_columns(header_cols, row.amounts).items())
+                # R113 — raw_amounts 를 같이 넘겨 순수 대시("-") 칸을 0으로 채택(원문
+                # 정책상 "-"=0, 결측 아님 — 위 select_by_header_columns 주석 참고).
+                pairs = list(select_by_header_columns(
+                    header_cols, row.amounts, raw_amounts=row.raw_amounts).items())
             elif cum_map is not None:
                 pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()
                          if pos < len(row.amounts) and row.amounts[pos] is not None]

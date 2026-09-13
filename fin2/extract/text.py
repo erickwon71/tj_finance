@@ -83,8 +83,17 @@ def _adecimal_from_unit(unit: int) -> int:
     return -int(round(math.log10(unit)))
 
 
-_CUM_RE = re.compile(r"누적|누계")
-_THREE_M_RE = re.compile(r"3개월|3 개월|삼개월")
+# ★R111(2026-09-13, 2015+ IS_separate 항목수 분포 이상치 조사 중 발견) — 파워넷
+# (00231354) 20150515001597 실측: 2단 헤더 셀이 글자당 공백을 넣는 옛 강조체
+# ("3 개 월", "누  적")를 쓰는데 옛 정규식(`3 개월` 한 칸만 허용, `누적` 공백 자체를
+# 불허)이 매칭 못 함 → `_interim_cumulative_cols()`가 None을 반환해 반기·분기 IS
+# 본문 전체가 유실됨(당기 재무제표 관련 report_lines가 EPS 각주 1~4줄만 남고 나머지
+# 전부 소실 — 90건/40개사 실측 확인, 대부분 2015~2016년 K-GAAP 잔존 서식).
+# `consolidation_evidence.py`의 "해\s*당\s*사?\s*항?..." 패턴과 동일한 함정
+# ([[feedback-grep-euckr-locale-trap]]과는 별개, 글자당 공백 강조체 카테고리) — `\s*`로
+# 글자 사이 공백을 전부 허용해 해결.
+_CUM_RE = re.compile(r"누\s*적|누\s*계")
+_THREE_M_RE = re.compile(r"3\s*개\s*월|삼\s*개\s*월")
 
 
 def _interim_cumulative_cols(table) -> dict[int, int] | None:

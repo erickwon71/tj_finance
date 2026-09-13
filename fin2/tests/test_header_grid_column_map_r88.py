@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lxml import etree  # noqa: E402
 
 from parser.xml.table_extractor import (  # noqa: E402
-    parse_header_columns, select_by_header_columns, extract_rows,
+    parse_header_columns, select_by_header_columns, extract_rows, HeaderColumn,
 )
 
 
@@ -59,6 +59,84 @@ def test_two_tier_three_month_cumulative():
     got = [(c.position, c.period_rank, c.subtype) for c in cols]
     assert got == [(0, 0, "three_month"), (1, 0, "cumulative"),
                    (2, 1, "three_month"), (3, 1, "cumulative")]
+
+
+def test_two_tier_three_month_cumulative_letter_spaced_emphasis():
+    """R111(2026-09-13, 2015+ IS_separate 항목수 분포 이상치 조사 중 발견) — 파워넷
+    (00231354) 20150515001597 실측: 서브타입 헤더가 글자당 공백을 넣는 옛 강조체
+    ("3 개 월", "누  적")를 쓴다. 옛 정규식(`3\\s*개월`은 "3"-"개월" 사이만 허용)이
+    매칭 못 해 subtype=None으로 남고, 결국 당기 인터림 값(당기누적) 대신 엉뚱한
+    비교연도(FY) 열이 "당기"로 잘못 채택됨(83.6억 대신 25.8억이 진짜 당기값). "3 개
+    월"/"누  적"도 "3개월"/"누적"과 동일하게 subtype이 잡혀야 한다."""
+    thead = """
+    <TR>
+      <TH ROWSPAN="2">　</TH>
+      <TH COLSPAN="2">제 23 기 1분기</TH>
+      <TH COLSPAN="2">제 22 기 1분기</TH>
+      <TH>제 22 기</TH>
+      <TH>제 21 기</TH>
+    </TR>
+    <TR><TH>3 개 월</TH><TH>누  적</TH><TH>3 개 월</TH><TH>누  적</TH></TR>
+    """
+    t = _table(thead, "<TR><TD>매출액</TD></TR>")
+    cols = parse_header_columns(t)
+    assert cols is not None
+    got = [(c.position, c.period_rank, c.subtype) for c in cols]
+    assert got[0] == (0, 0, "three_month")
+    assert got[1] == (1, 0, "cumulative")
+    assert got[2] == (2, 1, "three_month")
+    assert got[3] == (3, 1, "cumulative")
+    # 당기(period_rank=0)는 누적(position1)이 채택돼야 한다 — FY 비교열(position4/5)이
+    # 아니라.
+    assert select_by_header_columns(cols, [25_781_758_600, 25_781_758_600,
+                                            15_775_073_821, 15_775_073_821,
+                                            82_662_901_775, 71_058_982_667]) == {
+        0: 25_781_758_600, 1: 15_775_073_821, 2: 82_662_901_775, 3: 71_058_982_667,
+    }
+
+
+def test_note_column_header_letter_spaced_emphasis_still_recognized():
+    """R112(2026-09-13, CF_separate 항목수 분포 이상치 조사 중 발견) — 한양증권
+    (00162416) 20160329000677 실측: 주석 컬럼 헤더가 글자당 공백을 넣는 옛 강조체
+    ("주  석")를 써서 옛 정확매치("주석" in text)가 실패 → 주석번호("35")가 진짜
+    금액 열처럼 취급돼 "나.당기순이익에 대한 조정" 등에 엉뚱한 "35" 행이 추가로
+    끼어들었다. "주  석"도 "주석"과 동일하게 is_note=True 여야 한다."""
+    thead = """
+    <TR><TH>과목</TH><TH>주  석</TH><TH>제 61(당) 기</TH><TH>제 60(전) 기</TH></TR>
+    """
+    t = _table(thead, "<TR><TD>나.당기순이익에 대한 조정</TD></TR>")
+    cols = parse_header_columns(t)
+    assert cols is not None
+    assert cols[0].is_note is True and cols[0].position == 0
+    assert [(c.position, c.period_rank) for c in cols[1:]] == [(1, 0), (2, 1)]
+    # 주석번호("35")가 당기금액으로 오채택되면 안 된다.
+    assert select_by_header_columns(cols, ["35", -4_501_035_344, -3_553_499_276]) == {
+        0: -4_501_035_344, 1: -3_553_499_276,
+    }
+
+
+def test_dash_only_cell_treated_as_zero_not_missing():
+    """R113(2026-09-13, 사용자 원문대조로 발견) — 자비스(전 아이비케이에스제5호기업
+    인수목적) 01174038 20170811000259 CF 별도 실측: "Ⅱ.투자활동"/"Ⅲ.재무활동" 원문이
+    둘 다 "-"(대시)인데(=이 카테고리 활동 없음, 결측 아님 — 사용자 확인: "-를 0으로
+    표현하는 것이 맞는 구조") `parse_amount("-")→None`이라 두 행이 통째로 유실됐다
+    (전수확인: CF에서 "투자활동" 라벨 자체가 없는 rcept×basis 2,127건/전체 285,861건).
+    순수 대시 칸은 raw_amounts로 구분해 0으로 채택해야 한다."""
+    cols = [HeaderColumn(position=0, period_key="제2(당)기 반기", period_rank=0, subtype=None),
+            HeaderColumn(position=1, period_key="제2(당)기 반기", period_rank=0, subtype=None)]
+    # 실측 그대로: position0="　"(공란, 진짜 결측) / position1="-"(대시, =0).
+    assert select_by_header_columns(cols, [None, None], raw_amounts=["", "-"]) == {0: 0}
+    # raw_amounts 안 넘기면(기존 호출자) 회귀 없이 그대로 결측 유지.
+    assert select_by_header_columns(cols, [None, None]) == {}
+    # 진짜 값이 있으면 대시 판정보다 우선(정상 케이스, 회귀 없음).
+    assert select_by_header_columns(cols, [None, 5], raw_amounts=["", "5"]) == {0: 5}
+
+
+def test_dash_only_cell_zero_with_subtype_columns():
+    """R113 — 3개월/누적 서브타입 헤더에서도 순수 대시는 0으로 채택돼야 한다."""
+    cols = [HeaderColumn(position=0, period_key="제57기 반기", period_rank=0, subtype="three_month"),
+            HeaderColumn(position=1, period_key="제57기 반기", period_rank=0, subtype="cumulative")]
+    assert select_by_header_columns(cols, [100, None], raw_amounts=["100", "-"]) == {0: 0}
 
 
 def test_merge_group_no_subtype_text():
@@ -269,6 +347,34 @@ def test_select_by_header_columns_merge_group_takes_single_nonnull():
     assert select_by_header_columns(cols, [500, None]) == {0: 500}
     assert select_by_header_columns(cols, [None, None]) == {}       # 진짜 결측
     assert select_by_header_columns(cols, [500, 700]) == {}         # 판정 불가(R6) — 둘 다 값
+
+
+def test_merge_group_no_subtype_dash_placeholder_column_not_ambiguous():
+    """R114(2026-09-14, 케이엠제약 20160516000811 IS/CF 별도 원문대조로 발견) — R113
+    직후 회귀. SPAC 합병 첫 사업연도 표는 "제1(당)기" 하나가 COLSPAN=2 로 물리열 2개를
+    덮는데(subtype 구분 텍스트 없음), 그중 **한 열 전체가 구조적으로 순수 대시**고
+    실제 값은 나머지 한 열에만 있다("영업비용" 열1="-" 열2="(21,402,210)"). R113 이
+    대시 열도 0으로 채택해버리면 두 열 다 "값 있음"이 돼 R6 판정불가로 행 전체가
+    유실됐다(실측: IS 별도 11행 중 9행, CF 별도도 동형 붕괴). 대시 열은 "값 있음"
+    판정에서 제외하고 진짜 값 하나만 골라야 한다."""
+    thead = """
+    <TR><TH>과목</TH><TH COLSPAN="2">제 1(당) 기</TH></TR>
+    """
+    t = _table(thead, "<TR><TD>영업비용</TD></TR>")
+    cols = parse_header_columns(t)
+    # position0=대시(구조적 placeholder) / position1=진짜 당기금액.
+    assert select_by_header_columns(
+        cols, [None, -21_402_210], raw_amounts=["-", "(21,402,210)"]
+    ) == {0: -21_402_210}
+    # 두 열 다 대시뿐(예: "영업수익")이면 구조적 0 — R113 취지 그대로 유지.
+    assert select_by_header_columns(cols, [None, None], raw_amounts=["-", "-"]) == {0: 0}
+    # 한 열은 대시, 한 열은 완전공란(넥슨게임즈 "기초 현금및현금성자산" 실측 패턴)
+    # — 대시 증거가 하나라도 있고 나머지가 공란뿐이면 마찬가지로 구조적 0.
+    assert select_by_header_columns(cols, [None, None], raw_amounts=["", "-"]) == {0: 0}
+    # 진짜 값이 2개면(대시 아닌 값 2개) 여전히 판정불가(R6) — 회귀 없음.
+    assert select_by_header_columns(
+        cols, [500, 700], raw_amounts=["500", "700"]
+    ) == {}
 
 
 if __name__ == "__main__":

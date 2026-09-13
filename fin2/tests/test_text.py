@@ -96,6 +96,25 @@ def test_interim_cumulative_columns():
     assert rev.get((0, 2024)) != 17_044_235_442  # 3개월이 col0 으로 새면 안 됨
 
 
+def test_interim_cumulative_cols_matches_letter_spaced_emphasis():
+    """R111(2026-09-13) — `_interim_cumulative_cols()`도 `parser/xml/table_extractor.py`
+    의 동형 정규식과 함께 고쳐야 하는 사본. 글자당 공백을 넣는 옛 강조체("3 개 월",
+    "누  적")를 못 잡으면 None을 반환해 H1/Q3 IS 본문 전체가 유실된다(파워넷 00231354
+    20150515001597 실측, 회귀는 test_header_grid_column_map_r88.py 쪽이 실제 사용
+    경로를 담당 — 이 테스트는 text.py 사본 자체를 고정)."""
+    from lxml import etree
+    from fin2.extract.text import _interim_cumulative_cols
+
+    table = etree.fromstring(
+        "<TABLE><TBODY>"
+        "<TR><TH>과목</TH><TH>제 23 기 1분기</TH><TH>제 22 기 1분기</TH></TR>"
+        "<TR><TH>3 개 월</TH><TH>누  적</TH><TH>3 개 월</TH><TH>누  적</TH></TR>"
+        "<TR><TD>매출액</TD><TD>1</TD><TD>2</TD><TD>3</TD><TD>4</TD></TR>"
+        "</TBODY></TABLE>"
+    )
+    assert _interim_cumulative_cols(table) == {1: 0, 3: 1}
+
+
 def test_note_ref_residue_stripped_to_exact_match():
     """<주석N/> 잔재를 뗀 뒤 **정확일치**로 매핑된다(퍼지에 기대지 않는다).
 

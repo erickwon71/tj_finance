@@ -573,6 +573,15 @@ def _table_has_comma_note_column(rows_cells: list[list[str]]) -> bool:
     return False
 
 
+# ★R112(2026-09-13, CF_separate 항목수 분포 이상치 조사 중 발견) — 한양증권(00162416)
+# 20160329000677 실측: 주석 컬럼 헤더가 글자당 공백을 넣는 옛 강조체("주  석")를 써서
+# 옛 `"주석" in text` 정확매치가 실패 → 이 컬럼이 주석열로 인식 안 돼 주석번호("35")가
+# 진짜 금액 열처럼 취급되면서 "나.당기순이익에 대한 조정" 등에 엉뚱한 값 "35" 행이
+# 추가로 끼어듦(원래 값 -4,501,035,344는 정상 적재됐지만 "35" 중복행이 같이 들어감).
+# 아래(`_columns_from_grid`)의 동형 검사도 함께 고친다.
+_NOTE_HEADER_RE = re.compile(r"주\s*석")
+
+
 def _table_has_note_header(trs: list[etree._Element]) -> bool:
     """R65(2026-09-02): 표의 어느 `<TH>` 셀이든 텍스트에 "주석"이 있으면 True.
 
@@ -591,7 +600,7 @@ def _table_has_note_header(trs: list[etree._Element]) -> bool:
     for tr in trs:
         for child in tr:
             tag = child.tag.upper() if isinstance(child.tag, str) else ""
-            if tag == "TH" and "주석" in ''.join(child.itertext()):
+            if tag == "TH" and _NOTE_HEADER_RE.search(''.join(child.itertext())):
                 return True
     return False
 
@@ -611,8 +620,15 @@ def _table_has_note_header(trs: list[etree._Element]) -> bool:
 
 _PERIOD_KEY_RE = re.compile(r"제\s*\d+\s*(?:\([^)]{0,4}\))?\s*기(?:\s*[1-4]\s*분기|\s*반기)?"
                             r"|당\s*기|전\s*기|전\s*전\s*기|전\s*전\s*전\s*기")
-_SUBTYPE_CUM_RE = re.compile(r"누적|누계")
-_SUBTYPE_3M_RE = re.compile(r"3\s*개월|삼개월")
+# ★R111(2026-09-13, IS_separate 항목수 분포 이상치 조사 중 발견) — 파워넷(00231354)
+# 20150515001597 실측: 서브타입 헤더 셀이 글자당 공백을 넣는 옛 강조체("3 개 월",
+# "누  적")를 쓰는데 옛 정규식(`3\s*개월` 은 "3"-"개월" 사이만, `누적` 은 공백 전혀
+# 불허)이 매칭 못 해 subtype=None으로 남음 → `select_by_header_columns()`가 3개월/
+# 누적 구분 안 된 컬럼을 당기로 잘못 선택(당기누적 25,781,758,600 대신 무관한 제22기
+# 열 82,662,901,775 채택). `fin2/extract/text.py::_interim_cumulative_cols()`의 동형
+# 정규식과 함께 고친다(같은 문서에 두 벌 존재 — R88 헤더그리드 경로 전용 사본).
+_SUBTYPE_CUM_RE = re.compile(r"누\s*적|누\s*계")
+_SUBTYPE_3M_RE = re.compile(r"3\s*개\s*월|삼\s*개\s*월")
 
 
 @dataclass
@@ -796,7 +812,7 @@ def _columns_from_grid(grid: list[list[str]]) -> Optional[list[HeaderColumn]]:
                 break
         position = col - label_cols
         if period_key is None:
-            if any("주석" in s for s in stack):
+            if any(_NOTE_HEADER_RE.search(s) for s in stack):
                 columns.append(HeaderColumn(position=position, period_key="", period_rank=-1,
                                             is_note=True))
                 continue
@@ -847,8 +863,23 @@ def parse_header_columns(table: etree._Element) -> Optional[list[HeaderColumn]]:
     return _columns_from_grid(grid)
 
 
+# ★R113(2026-09-13, 사용자 원문대조로 발견 — 넥슨게임즈[전 엔에이치기업인수목적9호]
+# 00231354 20160513004375 CF 별도, 자비스[전 아이비케이에스제5호기업인수목적] 01174038
+# 20170811000259 CF 별도) — "-"(대시)는 한국 재무제표 표기 관행상 "이 항목 금액은
+# 0"을 뜻하는데(결측/미공시가 아님 — 사용자 확인: "처음 보고서여서 기초가 없고... -를
+# 0으로 표현하는 것이 맞는 구조"), `parse_amount("-")→None`(의도된 전사 정책, `test_
+# blank_and_unparseable_still_none` 회귀로 고정돼 있어 그 함수 자체는 안 건드림)이라
+# 그 칸이 amounts 에서 None으로 와서 "값이 아예 없는 행"과 구분이 안 돼 행 전체가
+# 유실됐다(실측: 넥슨게임즈 "기초 현금및현금성자산"[원문 "-"], 자비스 "Ⅱ.투자활동"/
+# "Ⅲ.재무활동"[원문 둘 다 "-"] — 전수확인: CF에서 "투자활동" 라벨 자체가 통째로 없는
+# rcept×basis 2,127건, "재무활동" 없는 것 5,244건/전체 285,861건). `parse_amount()`는
+# 그대로 두고 이 함수(구조화된 표 본문 셀만 다루는, note열은 이미 제외된 안전한 지점)
+# 에서만 원시 텍스트가 순수 대시 하나뿐일 때 0으로 채워 넣는다.
+_DASH_ONLY_PATTERNS = frozenset(["-", "─", "—", "―"])
+
+
 def select_by_header_columns(
-    columns: list[HeaderColumn], amounts: list,
+    columns: list[HeaderColumn], amounts: list, raw_amounts: Optional[list[str]] = None,
 ) -> dict[int, object]:
     """`HeaderColumn` 맵 + 위치보존 원시 `amounts`(`keep_all_amount_cells=True` 출력)
     → {period_rank: 값}. `_emit_section_lines`가 이 결과를 `col_index=period_rank`로
@@ -857,7 +888,40 @@ def select_by_header_columns(
     규칙(설계문서 §3-4): 같은 period_rank 그룹에 subtype 있는 열이 하나라도 있으면
     "cumulative" 열만 채택(없는 값도 다른 서브타입으로 대체하지 않음 — R3/R85 원칙).
     전부 subtype=None(구분 텍스트 없는 병합군, 예 삼성생명 명세/소계)이면 값이 있는
-    열 하나를 채택 — 2개 이상 값이 있으면(판정 불가) 그 rank 는 건너뛴다(R6 원칙)."""
+    열 하나를 채택 — 2개 이상 값이 있으면(판정 불가) 그 rank 는 건너뛴다(R6 원칙).
+
+    `raw_amounts`(R113) — amounts[pos]가 None인 칸의 원시 텍스트가 순수 대시뿐이면
+    (공란·주석문자 등 다른 결측과 구분) 0으로 채택한다. 넘기지 않으면(기존 호출자)
+    이 판정 자체를 건너뛰어 회귀 위험이 없다.
+
+    ★R114(2026-09-14, 케이엠제약 20160516000811 IS/CF 별도 원문대조로 발견) — R113 직후
+    회귀. SPAC 합병 첫 사업연도 표는 "제1(당)기" 하나의 라벨이 COLSPAN=2 로 물리열 2개를
+    덮으면서(subtype 구분 텍스트 없음, 위 no-subtype 병합군 분기) 그중 **한 열 전체가
+    구조적으로 순수 대시**고 실제 값은 나머지 한 열에만 있다("영업비용" 열1="-" 열2=
+    "(21,402,210)"). R113 이 열1의 대시도 0 으로 채택해버리면 두 열 다 "값 있음"이 돼
+    R6 판정불가 분기로 떨어져 **행 전체가 유실**됐다(실측: 케이엠제약 IS 별도 11행 중
+    9행, CF 별도도 동형 붕괴). 그래서 이 분기에서는 먼저 **진짜 파싱값**(대시 아님)만으로
+    후보를 추리고, 그 후보가 정확히 1개면 그 값을 채택한다(대시 열은 셈에서 제외). 진짜
+    값이 하나도 없을 때만 — 즉 그룹 **전체**가 대시뿐일 때만 — 구조적 0(R113 취지)으로
+    채택한다. 진짜 값이 2개 이상이면 기존대로 판정불가(R6)로 건너뛴다."""
+    def _amount_or_dash_zero(pos: int):
+        if pos < len(amounts) and amounts[pos] is not None:
+            return amounts[pos]
+        if (raw_amounts is not None and pos < len(raw_amounts)
+                and raw_amounts[pos].strip() in _DASH_ONLY_PATTERNS):
+            return 0
+        return None
+
+    def _is_dash_only(pos: int) -> bool:
+        return (raw_amounts is not None and pos < len(raw_amounts)
+                and raw_amounts[pos].strip() in _DASH_ONLY_PATTERNS)
+
+    def _is_dash_or_blank(pos: int) -> bool:
+        if raw_amounts is None or pos >= len(raw_amounts):
+            return False
+        txt = raw_amounts[pos].strip()
+        return txt == "" or txt in _DASH_ONLY_PATTERNS
+
     by_rank: dict[int, list[HeaderColumn]] = {}
     for hc in columns:
         if hc.is_note:
@@ -873,13 +937,25 @@ def select_by_header_columns(
             if not chosen:
                 chosen = cols
             pos = chosen[0].position
-            if pos < len(amounts) and amounts[pos] is not None:
-                result[rank] = amounts[pos]
+            value = _amount_or_dash_zero(pos)
+            if value is not None:
+                result[rank] = value
         else:
-            present = [c for c in cols if c.position < len(amounts) and amounts[c.position] is not None]
-            if len(present) == 1:
-                result[rank] = amounts[present[0].position]
-            # 0개(진짜 결측) 또는 2개 이상(판정 불가, R6) 이면 이 rank 는 건너뜀.
+            # R114: 진짜 파싱값(대시 아님)이 있는 열만으로 먼저 판정 — 구조적 대시 열은
+            # "값 있음" 판정에서 제외해 R113 도입 전과 동일하게 유일값을 골라낸다.
+            real_present = [c for c in cols if amounts[c.position] is not None]
+            if len(real_present) == 1:
+                result[rank] = amounts[real_present[0].position]
+            elif (not real_present and cols
+                  and any(_is_dash_only(c.position) for c in cols)
+                  and all(_is_dash_or_blank(c.position) for c in cols)):
+                # 진짜값 없음 + 최소 한 열은 순수대시(0 의 증거) + 나머지도 대시거나 완전공란
+                # (다른 물리열 수를 가진 행이 이 열에서 그냥 빈 것뿐 — 이물질 텍스트 아님)
+                # → 구조적 0(R113 취지 유지, 넥슨게임즈 "기초 현금및현금성자산" 실측:
+                #   note 열 옆 병합군 2열 중 한쪽만 대시고 한쪽은 아예 빈칸).
+                result[rank] = 0
+            # 진짜값 0개+대시/공란 아닌 결측(진짜 결측) 또는 진짜값 2개 이상(판정불가, R6)
+            # 이면 이 rank 는 건너뜀.
     return result
 
 

@@ -114,6 +114,24 @@ def test_r106_ifrs_transition_non_restatement_note_is_not_confused_with_no_conso
     assert not detect_no_consolidated_fs(_wrap(body))
 
 
+def test_r107_ifrs_transition_restatement_note_adjacent_to_financial_statements_word():
+    """R107(2026-09-13, R106 잔여 41건 원문대조 중 발견) — 인텍플러스(00479787)
+    20190401003585 실측: "전기 및 전전기 재무제표를 재작성하지 않았습니다"(같은
+    IFRS1109/1115 각주지만 "재무제표"가 "재작성" 바로 앞이라 R106의 ≤15자 조건을 그대로
+    통과해 28건 오탐, report_lines에 당기 연결 BS 실측 존재). "작성" 바로 앞 1글자가
+    "재"(=고정 복합어 "재작성")인 경우만 배제하도록 `(?<!재)` 추가."""
+    body = ('<TABLE><TBODY><TR><TD>본 연결재무제표는 한국채택국제회계기준(K-IFRS)에 따라 '
+            '작성되었습니다. 제24기, 제23기, 제22기 연결재무제표는 외부감사인의 감사(검토)를 '
+            '받은 재무제표입니다.※당사는 2018년 1월 1일 최초적용일로 하여 기업회계기준서 '
+            '제1115호 "고객과의 계약에서 생기는 수익" 과 제1109호 "금융상품"을 최초 '
+            '적용하였고, 경과규정에 따라 전기 및 전전기 재무제표를 재작성하지 않았습니다. '
+            '제23기(전기)는 종전 기준서인 K-IFRS 제1018호 및 K-IFRS 제1039호에 따라 '
+            '작성되었습니다.</TD></TR></TBODY></TABLE>'
+            '<TABLE-GROUP ACLASS="{XBRL}BS"><TABLE><TBODY><TR><TE>연결 재무상태표</TE>'
+            '<TE>자산총계</TE><TE>1,000</TE></TR></TBODY></TABLE></TABLE-GROUP>')
+    assert not detect_no_consolidated_fs(_wrap(body))
+
+
 def test_unrelated_na_phrase_elsewhere_in_document_is_ignored():
     """문서 다른 부분(예: 소송/후발사건)의 흔한 "해당사항 없음"은 이 섹션과 무관하면
     잡히면 안 된다(§2-1-B에서 확인된 함정 — 앵커 없이 문서 전체를 grep하면 오탐)."""

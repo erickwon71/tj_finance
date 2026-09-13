@@ -34,6 +34,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from collector.db import get_session
+from fin2.extract.consolidation_evidence import store_filing_consolidation_evidence
 from fin2.extract.ifrs_evidence import store_filing_ifrs_evidence
 from fin2.extract.report_lines import (extract_report_lines, store_note_lines,
                                        store_report_lines, store_report_tables)
@@ -141,6 +142,16 @@ def sync_layer2_lines(
                 except Exception as ev_exc:  # noqa: BLE001
                     logger.warning(f"[note_lines] {t.rcept_no} ifrs_evidence 판정 실패(비치명): "
                                    f"{type(ev_exc).__name__}: {ev_exc}")
+                # 연결비대상 확정 근거(Track 1, 2026-09-13, docs/plans/
+                # consolidation_scope_confirmation_design_2026-09-13.md) — 같은 이유로
+                # document.xml 을 다시 열어(is_ifrs_evidence 와 동일 패턴) "2. 연결재무제표"
+                # 섹션의 "해당사항없음" 계열 문구를 filings.consolidation_evidence 에 캐싱.
+                # 실패해도 이 rcept의 본문/주석 적재는 막지 않는다(비치명).
+                try:
+                    store_filing_consolidation_evidence(session, t.rcept_no, file_path=t.file_path)
+                except Exception as ev_exc:  # noqa: BLE001
+                    logger.warning(f"[note_lines] {t.rcept_no} consolidation_evidence 판정 "
+                                   f"실패(비치명): {type(ev_exc).__name__}: {ev_exc}")
                 if include_body:
                     # 같은 추출 결과에서 본문(BS/IS/CF/SCE)을 적재한다. store_report_lines 가
                     # rcept 단위 delete-then-insert + col_index=0 필터를 이미 한다.

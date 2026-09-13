@@ -1335,6 +1335,113 @@ def _run_migrations() -> None:
         ALTER TABLE layer2_review_queue ADD COLUMN IF NOT EXISTS screened_at TIMESTAMP;
         CREATE INDEX IF NOT EXISTS ix_l2rq_screen ON layer2_review_queue (status, screen_severity);
         """),
+
+        ("2026_09_13_consolidation_scope_confirmation",
+         # 연결비대상 확정(2026-09-13, docs/plans/consolidation_scope_confirmation_
+         # design_2026-09-13.md) — Track 1(2015+ 전용). `basis_fallback`은 "요청 basis의
+         # report_lines 행이 0건이고 반대 basis만 있다"는 기계적 폴백일 뿐, (a) 진짜
+         # 연결비대상과 (b) 파서가 못 잡은 결함을 구분 못 한다. fin2/extract/
+         # consolidation_evidence.py 가 원문(DART 정형 서식 "2. 연결재무제표" 섹션의
+         # "해당사항없음" 계열 문구/공백섹션)에서 (a)만 확정해 filings.consolidation_
+         # evidence 에 캐시하고, combine.py 가 그 rcept들을 모아 std_financials_v3.
+         # consolidation_status 를 채운다. 둘 다 nullable, DEFAULT 없음 — PG11+ 에서
+         # 즉시 완료(테이블 재작성 없음).
+         """
+        ALTER TABLE filings ADD COLUMN IF NOT EXISTS consolidation_evidence VARCHAR(30);
+        ALTER TABLE filings ADD COLUMN IF NOT EXISTS consolidation_evidence_detail JSONB;
+        ALTER TABLE std_financials_v3 ADD COLUMN IF NOT EXISTS consolidation_status VARCHAR(20);
+        """),
+
+        ("2026_09_13_consolidation_scope_confirmation_view",
+         # 위 컬럼신설 직후 뷰 갱신 — `2026_09_is_ifrs_v3_view`(:1292)가 마지막으로 정의한
+         # `standard_financials` 뷰를 그대로 복사하되 `v3.consolidation_status` 한 컬럼만
+         # 추가(그 외 SELECT 목록·JOIN·WHERE 전부 무변경). basis_fallback 은 이 뷰에
+         # 그동안 아예 노출되지 않았다 — app 레이어가 "연결" 수치가 실제 연결인지 별도를
+         # 대신 채운 것인지 구분할 방법이 없었던 근본 원인(설계문서 §1 문제②). 백필 전에는
+         # NULL(basis_fallback=False, 해당없음) 또는 'fallback_unconfirmed'(원문 미확인)로
+         # 보이는 게 정직한 상태.
+         """
+        CREATE OR REPLACE VIEW standard_financials AS
+        SELECT
+            v3.corp_code, v3.fiscal_year, v3.fiscal_period, v3.statement_type,
+            1::smallint AS version,
+            v3.period_end,
+            v3.is_ifrs,
+            COALESCE(v3.source_rcepts->>'BS', v3.source_rcepts->>'IS', v3.source_rcepts->>'CF')::varchar(14) AS rcept_no,
+            v3.total_assets, v3.current_assets, v3.cash, v3.receivables, v3.inventory, v3.ppe, v3.intangibles,
+            v3.total_liabilities, v3.current_liabilities, v3.short_term_debt, v3.long_term_debt,
+            v3.total_equity, v3.controlling_equity, v3.retained_earnings, v3.trade_payables,
+            v3.revenue, v3.cogs, v3.gross_profit, v3.sga, v3.rd_expense, v3.operating_income,
+            v3.interest_expense, v3.ebt, v3.tax_expense, v3.net_income, v3.controlling_ni,
+            v3.cfo, v3.cfi, v3.cff, v3.capex, v3.dividends_paid,
+            v3.depreciation, v3.amortization, v3.da_total, v3.ebitda, v3.fcf, v3.net_debt, v3.shares_out,
+            v3.data_quality,
+            NULL::timestamp without time zone AS superseded_at,
+            v3.built_at AS calculated_at,
+            COALESCE(fa.gate_status, 'unaudited') AS gate_b_status,
+            v3.industry_lines,
+            v3.consolidation_status
+        FROM std_financials_v3 v3
+        LEFT JOIN face_audit fa
+          ON  fa.corp_code = v3.corp_code
+          AND fa.fiscal_year = v3.fiscal_year
+          AND fa.fiscal_period = v3.fiscal_period
+          AND fa.statement_type = v3.statement_type
+          AND NOT COALESCE(fa.is_stub, false)
+          AND fa.source_version = 'v3'
+        WHERE COALESCE(fa.gate_status, 'unaudited') <> 'fail_a';
+        """),
+
+        ("2026_09_13_consolidation_status_widen",
+         # R105(자기발견, 사용자 실행 중 실측) — 위 2026_09_13_consolidation_scope_
+         # confirmation 이 VARCHAR(20)으로 만들었는데 실제 값 'no_subsidiary_confirmed'가
+         # 24자라 std_v3 재빌드 5-shard 전체가 첫 행에서 StringDataRightTruncation 으로
+         # 즉시 크래시. 30자로 확장(현재 최장 값 24자 + 여유). 기존 컬럼은 이 크래시
+         # 때문에 전부 NULL이었으므로 데이터 손실 없음. `standard_financials` 뷰가 이
+         # 컬럼에 의존해서 ALTER COLUMN TYPE 이 그냥은 거부됨(Postgres) — 뷰를 지웠다가
+         # 똑같은 정의로 재생성(바로 위 2026_09_13_consolidation_scope_confirmation_view
+         # 의 CREATE OR REPLACE VIEW 와 완전히 동일한 SELECT, DROP/CREATE 만 다름).
+         # standard_financials_verified 가 이 뷰에 의존해 CASCADE 로 같이 지우고, 기존
+         # 정의(`SELECT ... WHERE gate_b_status='pass'`, 명시적 컬럼나열이라 새 컬럼
+         # 2종은 원래 노출 안 하던 뷰 — 그대로 유지) 그대로 재생성한다.
+         """
+        DROP VIEW standard_financials CASCADE;
+
+        ALTER TABLE std_financials_v3 ALTER COLUMN consolidation_status TYPE VARCHAR(30);
+
+        CREATE VIEW standard_financials AS
+        SELECT
+            v3.corp_code, v3.fiscal_year, v3.fiscal_period, v3.statement_type,
+            1::smallint AS version,
+            v3.period_end,
+            v3.is_ifrs,
+            COALESCE(v3.source_rcepts->>'BS', v3.source_rcepts->>'IS', v3.source_rcepts->>'CF')::varchar(14) AS rcept_no,
+            v3.total_assets, v3.current_assets, v3.cash, v3.receivables, v3.inventory, v3.ppe, v3.intangibles,
+            v3.total_liabilities, v3.current_liabilities, v3.short_term_debt, v3.long_term_debt,
+            v3.total_equity, v3.controlling_equity, v3.retained_earnings, v3.trade_payables,
+            v3.revenue, v3.cogs, v3.gross_profit, v3.sga, v3.rd_expense, v3.operating_income,
+            v3.interest_expense, v3.ebt, v3.tax_expense, v3.net_income, v3.controlling_ni,
+            v3.cfo, v3.cfi, v3.cff, v3.capex, v3.dividends_paid,
+            v3.depreciation, v3.amortization, v3.da_total, v3.ebitda, v3.fcf, v3.net_debt, v3.shares_out,
+            v3.data_quality,
+            NULL::timestamp without time zone AS superseded_at,
+            v3.built_at AS calculated_at,
+            COALESCE(fa.gate_status, 'unaudited') AS gate_b_status,
+            v3.industry_lines,
+            v3.consolidation_status
+        FROM std_financials_v3 v3
+        LEFT JOIN face_audit fa
+          ON  fa.corp_code = v3.corp_code
+          AND fa.fiscal_year = v3.fiscal_year
+          AND fa.fiscal_period = v3.fiscal_period
+          AND fa.statement_type = v3.statement_type
+          AND NOT COALESCE(fa.is_stub, false)
+          AND fa.source_version = 'v3'
+        WHERE COALESCE(fa.gate_status, 'unaudited') <> 'fail_a';
+
+        CREATE VIEW standard_financials_verified AS
+        SELECT * FROM standard_financials WHERE gate_b_status = 'pass';
+        """),
     ]
 
     with engine.begin() as conn:

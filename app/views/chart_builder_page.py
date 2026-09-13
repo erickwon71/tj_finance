@@ -32,7 +32,7 @@ from app.registry.dividend import DIVIDEND_BY_ID, DIVIDEND_CATALOG
 from app.registry.extended import EXTENDED_BY_ID, EXTENDED_CATALOG
 from app.registry.metrics import METRIC_REGISTRY, REGISTRY_BY_ID
 from app.registry.units import AMOUNT_SCALES, AMOUNT_UNITS, Category, UnitType, format_value
-from app.format import fmt_corp_identity
+from app.format import fmt_corp_identity, series_has_consolidation_status
 from app.views.chart_panel import (
     render_metric_chart, render_metric_chart_compare, render_price_financial_combined)
 
@@ -393,6 +393,10 @@ def render() -> None:
     if used_stmt != requested_stmt:
         st.caption(f"※ {'연결' if requested_stmt=='consolidated' else '별도'} 데이터 없음 "
                    f"→ {'연결' if used_stmt=='consolidated' else '별도'} 표시")
+    elif series_has_consolidation_status(series, "no_subsidiary_confirmed"):
+        # 2026-09-13(Track1, docs/plans/consolidation_scope_confirmation_design_
+        # 2026-09-13.md) — company_page.py 의 주4 캡션과 동일 판정.
+        st.caption("※ 일부 기간은 연결대상 종속회사 없음(원문 확인) → 별도 기준값 표시")
 
     _preset_bar()
 

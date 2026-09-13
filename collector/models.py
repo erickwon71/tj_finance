@@ -90,6 +90,14 @@ class Filing(Base):
     ifrs_evidence        = Column(String(20), nullable=True, comment="is_ifrs 판정 근거 코드")
     ifrs_evidence_detail = Column(JSONB,      nullable=True, comment="판정 근거 원문 스니펫(감사가능성)")
 
+    # 연결비대상 확정용 원문 증거 캐시(2026-09-13, docs/plans/
+    # consolidation_scope_confirmation_design_2026-09-13.md, fin2/extract/
+    # consolidation_evidence.py 가 채움). Track 1(2015+ 전용, "2. 연결재무제표" 섹션의
+    # "해당사항없음" 계열 문구/공백섹션) — 'no_consolidated_fs_track1' 또는 NULL(증거없음/
+    # 미판정/pre-2015라 이 섹션 자체가 없음).
+    consolidation_evidence        = Column(String(30), nullable=True, comment="연결비대상 확정 근거 코드")
+    consolidation_evidence_detail = Column(JSONB,      nullable=True, comment="판정 근거 원문 스니펫(감사가능성)")
+
     corporation   = relationship("Corporation", back_populates="filings")
     download_task = relationship("DownloadTask", back_populates="filing", uselist=False)
 
@@ -1920,6 +1928,13 @@ class StdFinancialV3(Base):
     amended_cols    = Column(JSONB, nullable=True, comment="기재정정 반영으로 값이 온 std 컬럼 목록")
     amend_chain     = Column(JSONB, nullable=True, comment="{std_col: [rcept,...]} 정정본 순서")
     basis_fallback  = Column(Boolean, default=False, comment="단일 basis 기업 반대 basis 폴백")
+    # 연결비대상 확정(2026-09-13, docs/plans/consolidation_scope_confirmation_design_
+    # 2026-09-13.md) — basis_fallback=True 인 행에서만 의미가 있다: 'no_subsidiary_
+    # confirmed'(원문 증거로 "이 기간 연결재무제표 없음" 확정, Track1/2 중 하나라도
+    # 확인됨) / 'fallback_unconfirmed'(폴백은 했지만 원문 확인은 안 됨 — 파서결함일
+    # 가능성이 남아있는 결측 큐 후보) / NULL(basis_fallback=False, 폴백 자체가 없어
+    # 해당없음). combine_full() 이 basis_fallback 세팅과 같은 지점에서 채운다.
+    consolidation_status = Column(String(30), nullable=True, comment="연결비대상 확정 상태(폴백행 한정)")
     conflicts       = Column(JSONB, nullable=True, comment="값 충돌로 보류한 canonical")
     # 업종별 매출 성분(P1) — K-IFRS 표준이 일반기업과 다른 업종(보험 등)에서 revenue 를
     # 소계 합산으로 조립하고 그 성분을 보존. {"profile":"insurance","insurance_revenue":…,

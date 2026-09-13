@@ -15,6 +15,7 @@ import streamlit as st
 from app import cache, state
 from app.components.export import download_button
 from app.format import (corp_notes, fmt_amount, fmt_corp_identity, fmt_notes, fmt_pct,
+                        series_has_consolidation_status,
                         fmt_ratio, render_dataframe)
 from app.views import metric_panel
 from app.views.chart_panel import (
@@ -882,7 +883,9 @@ def render(corp_code: str | None = None) -> None:
     reg_status = cache.regulatory_status(corp_code)
     notes = corp_notes(fiscal_month=meta.get("fiscal_month"),
                        used_stmt=used_stmt, requested_stmt=requested_stmt,
-                       has_regulatory_flag=bool(reg_status["active"]))
+                       has_regulatory_flag=bool(reg_status["active"]),
+                       has_confirmed_no_subsidiary=series_has_consolidation_status(
+                           series, "no_subsidiary_confirmed"))
     hcol, scol = st.columns([5, 1])
     hcol.subheader(fmt_corp_identity(
         meta["corp_name"], meta["corp_code"], meta.get("stock_code"),
@@ -901,6 +904,12 @@ def render(corp_code: str | None = None) -> None:
     if used_stmt != requested_stmt:
         st.caption(f"※ {'연결' if requested_stmt=='consolidated' else '별도'} 데이터 없음 "
                    f"→ {'연결' if used_stmt=='consolidated' else '별도'} 표시")
+    elif series_has_consolidation_status(series, "no_subsidiary_confirmed"):
+        # 2026-09-13(Track1) — used_stmt==requested_stmt 라 위 분기(주2)는 안 뜨지만,
+        # 계층3 빌드가 이미 연결 자리에 별도값을 채워 넣은(basis_fallback) 기간이 있다는
+        # 뜻이라 별도 안내가 필요하다(design §1 문제②의 핵심 — 이 안내가 없으면 화면상
+        # "연결" 수치가 사실 별도값 대체라는 걸 알 방법이 없었다).
+        st.caption("※ 일부 기간은 연결대상 종속회사 없음(원문 확인) → 별도 기준값 표시 (주4)")
 
     _dq_banner(series, grain)
 

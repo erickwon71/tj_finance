@@ -1,0 +1,93 @@
+"""연결비대상 확정 근거(Track 1, 2026-09-13) 소급 백필 — CLAUDE.md 필수 절차 ② (자동 아님,
+별도 실행).
+
+docs/plans/consolidation_scope_confirmation_design_2026-09-13.md 확정 설계(§2-1 era 분산
+표본 원문대조): Track 1은 "2. 연결재무제표" 섹션의 "해당사항없음" 계열 문구/공백섹션으로
+확정하며, 이 섹션 자체가 2015+ 서식에만 있다(§2-1-B — 2011~2014 전환기엔 없음). 스코프 —
+std_financials_v3 rows with fiscal_year>=2015 이 참조하는 source_rcepts 전체.
+
+★NAS(raw_report 심링크) 대신 SD 카드(dart_data) 경로로 치환해서 읽는다
+([[feedback-bulk-read-use-sdcard]] — 대량 read 시 NAS SMB 는 느림).
+
+멱등: filings.consolidation_evidence 가 이미 있는 행(NULL 아닌)은 기본적으로 건너뛴다
+(--recheck 로 재판정). XBRL instance zip 전용 필링(document.xml 없음)은 애초에
+텍스트 판정이 불가능해(§6-2 스코프 밖, resolve_filing_evidence 가 None 반환) 굳이
+스킵 처리하지 않고 그냥 호출한다 — file_path 없이 부르면 자연히 None 이 된다.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from sqlalchemy import text
+from collector.db import get_session
+from fin2.extract.consolidation_evidence import store_filing_consolidation_evidence
+
+_NAS_PREFIX = "/Users/taejin/Project/tj_finance/raw_report"
+_SD_PREFIX = "/Volumes/dart_data/raw_report"
+
+_TARGETS_SQL = text(
+    """
+    WITH rc AS (
+        SELECT DISTINCT (jsonb_each_text(source_rcepts)).value AS rcept_no
+        FROM std_financials_v3
+        WHERE fiscal_year >= :year_min AND source_rcepts IS NOT NULL
+    )
+    SELECT f.rcept_no, dt.file_path, dt.file_type, dt.parser_track
+    FROM rc
+    JOIN filings f ON f.rcept_no = rc.rcept_no
+    LEFT JOIN download_tasks dt ON dt.rcept_no = rc.rcept_no
+    WHERE (:recheck OR f.consolidation_evidence IS NULL)
+    ORDER BY f.rcept_no
+    """
+)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--year-min", type=int, default=2015,
+                     help="이 회계연도 이상 std_v3 행이 참조하는 rcept만 대상(기본 2015, Track1 스코프)")
+    ap.add_argument("--recheck", action="store_true", help="이미 판정된 rcept도 재판정")
+    ap.add_argument("--limit", type=int)
+    args = ap.parse_args()
+
+    t0 = time.time()
+    with get_session() as session:
+        targets = session.execute(_TARGETS_SQL, {"year_min": args.year_min, "recheck": args.recheck}).fetchall()
+    if args.limit:
+        targets = targets[: args.limit]
+    print(f"[backfill-consolidation-evidence] 대상 rcept {len(targets):,}")
+
+    tally: dict[str | None, int] = {}
+    no_file = 0
+    with get_session() as session:
+        for i, t in enumerate(targets, 1):
+            file_path = None
+            if t.parser_track != "XBRL_INSTANCE" and t.file_type == "xml" and t.file_path:
+                p = t.file_path.replace(_NAS_PREFIX, _SD_PREFIX) if t.file_path.startswith(_NAS_PREFIX) else t.file_path
+                if Path(p).exists():
+                    file_path = p
+                else:
+                    no_file += 1
+            try:
+                evidence = store_filing_consolidation_evidence(session, t.rcept_no, file_path=file_path)
+            except Exception as exc:  # noqa: BLE001 — 한 건 실패가 전체를 막으면 안 됨
+                print(f"  ! {t.rcept_no}: {type(exc).__name__}: {exc}")
+                session.rollback()
+                continue
+            tally[evidence] = tally.get(evidence, 0) + 1
+            if i % 2000 == 0:
+                session.commit()
+                print(f"  … {i}/{len(targets)} · {time.time()-t0:.0f}s · {tally}")
+        session.commit()
+
+    print(f"[backfill-consolidation-evidence] 완료 — {len(targets):,}건 · 파일없음 {no_file:,} · {time.time()-t0:.0f}s")
+    print(f"  최종 분포: {tally}")
+
+
+if __name__ == "__main__":
+    main()

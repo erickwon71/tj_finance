@@ -14,7 +14,8 @@ import streamlit as st
 from analyzer.ratio_engine import _growth_rate
 from app import cache, state
 from app.components.export import to_csv_bytes
-from app.format import corp_notes, fmt_corp_identity, fmt_notes, render_dataframe
+from app.format import (corp_notes, fmt_corp_identity, fmt_notes, render_dataframe,
+                        series_has_consolidation_status)
 from app.views import company_page
 
 _MODAL_QUARTERS = 16  # 모달 분기 추이에 표시할 최근 달력분기 수
@@ -167,6 +168,9 @@ def _viz_dialog(corp_code: str) -> None:
     used_ko = "연결" if used == "consolidated" else "별도"
     if used != stmt:
         st.caption(f"※ {'연결' if stmt=='consolidated' else '별도'} 분기 데이터 없음 → {used_ko} 표시")
+    elif series_has_consolidation_status(series, "no_subsidiary_confirmed"):
+        # 2026-09-13(Track1) — company_page.py 의 주4 캡션과 동일 판정.
+        st.caption("※ 일부 분기는 연결대상 종속회사 없음(원문 확인) → 별도 기준값 표시")
     st.caption(f"최근 {len(series)}개 달력분기 · 매출·영업이익 · {used_ko} 기준")
 
     view = st.radio("보기", ["표", "그래프"], horizontal=True,

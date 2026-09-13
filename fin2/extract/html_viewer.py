@@ -147,9 +147,36 @@ def parse_toc_tree(main_do_text: str) -> list[TocNode]:
     return nodes
 
 
+# R98(2026-09-12) — TOC 는 "2.연결재무제표"/"4.재무제표" 5종 표준 골격을 **회사가 실제로
+# 연결재무제표를 작성하는지와 무관하게** 항상 나열한다. 연결이 없는 회사는 그 자리에 "해당
+# 사항이 없습니다" 류 한 줄짜리 placeholder만 들어있다 — 실측: 자비스(01174038) 정정본
+# `20181114002329` "2.연결재무제표" length=**138**, "3.연결재무제표 주석" length=**141**
+# (반면 실제 내용이 있는 "4.재무제표"=29,908 / "5.재무제표 주석"=94,998, 3자리 vs 5자리
+# 격차). 대조군(대한방직, 연결 실재): "2.연결재무제표" length=94,857 — 자비스의 **687배**.
+# 텍스트("해당사항 없습니다" 등, 필자마다 문구가 다를 수 있음)를 찾는 대신 **길이**로
+# 가른다 — 실제 재무제표 표는 HTML 마크업만으로도 최소 수천 바이트인데, "해당없음" 한 줄은
+# 아무리 길어도 수백 바이트를 넘기 어렵다. 계기: `reconcile()`이 자비스의 이 placeholder를
+# "연결 basis 존재"로 오인해 존재하지도 않는 연결 수치를 찾다가 `report_recon_candidates`
+# 에 헛되이 "판정불가" 등록(사용자 확인 후 삭제) — `_detect_fin_type()`(text.py) 쪽 수정과
+# 별개로, TOC 기반 basis 판정 자체에 있던 원인.
+_TOC_PLACEHOLDER_MAX_LENGTH = 1000
+
+
 def find_statement_nodes(nodes: list[TocNode]) -> list[TocNode]:
-    """'재무제표'/'연결재무제표' 노드만(유의점·합병전후·감사의견 등 제외)."""
-    return [n for n in nodes if "재무제표" in n.text and not _TOC_EXCLUDE_RE.search(n.text)]
+    """'재무제표'/'연결재무제표' 노드만(유의점·합병전후·감사의견 등 제외) — 그 중에서도
+    내용 길이가 placeholder 수준(`_TOC_PLACEHOLDER_MAX_LENGTH` 이하)인 것은 "해당 없음"
+    으로 보고 제외한다(R98)."""
+    out = []
+    for n in nodes:
+        if "재무제표" not in n.text or _TOC_EXCLUDE_RE.search(n.text):
+            continue
+        try:
+            if int(n.length) <= _TOC_PLACEHOLDER_MAX_LENGTH:
+                continue
+        except (TypeError, ValueError):
+            pass  # length 파싱 불가 — 판정 근거 없으므로 기존대로 포함(R6 원칙)
+        out.append(n)
+    return out
 
 
 def _match_statement(text_normalized: str) -> str | None:

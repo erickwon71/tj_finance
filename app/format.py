@@ -122,18 +122,29 @@ CORP_NOTES: dict[str, str] = {
             "불성실공시법인 지정·회생절차 개시 등 투자위험 관련 조치를 취한 이력이 있는 기업입니다. "
             "현재도 해제되지 않은 조치가 있습니다. 상세 사유·시점은 기업 화면의 **⚠ 시장조치 이력** "
             "패널을 참고하세요."),
+    "주4": ("**연결비대상 확정(원문 확인)** — 공시 원문에 \"이 기간 연결재무제표 해당사항 없음\"이 "
+            "직접 명시돼 있어(연결대상 종속회사가 없는 등의 이유), 표시된 값은 **별도(개별) "
+            "재무제표**입니다. **주2**와 달리 데이터가 빠진 게 아니라 이 기업·기간이 애초에 연결"
+            "작성 대상이 아님을 원문으로 확정한 경우입니다."),
 }
 
 
 def corp_notes(fiscal_month: Optional[int] = None,
                used_stmt: Optional[str] = None,
                requested_stmt: Optional[str] = None,
-               has_regulatory_flag: bool = False) -> list[str]:
+               has_regulatory_flag: bool = False,
+               has_confirmed_no_subsidiary: bool = False) -> list[str]:
     """기업에 적용된 특별 조치 각주 키 목록(예: ['주1','주2']).
 
     - 주1: 비-12월 결산(fiscal_month != 12) → 달력분기 재구성.
-    - 주2: 연결 요청인데 별도로 대체된 경우(used_stmt != requested_stmt).
+    - 주2: 연결 요청인데 별도로 대체된 경우(used_stmt != requested_stmt) — 요청 basis가
+      조회 범위 전체에서 아예 비어 app 레이어가 반대 basis로 통째로 대체한, 원문 확인은
+      안 된 상태(드묾 — 계층3 빌드가 이미 basis별 폴백을 해 둬서 이 경로는 거의 안 탄다).
     - 주3: 활성(미해제) 시장조치/규제 지정 이력이 있는 경우.
+    - 주4(2026-09-13, docs/plans/consolidation_scope_confirmation_design_2026-09-13.md):
+      시계열 중 한 기간이라도 `std_financials_v3.consolidation_status ==
+      'no_subsidiary_confirmed'`이면(원문에서 "연결재무제표 해당사항없음" 확정) — 주2와
+      달리 **결측이 아니라 확정된 정상 상태**임을 알린다.
     """
     notes: list[str] = []
     if fiscal_month is not None and fiscal_month != 12:
@@ -142,7 +153,15 @@ def corp_notes(fiscal_month: Optional[int] = None,
         notes.append("주2")
     if has_regulatory_flag:
         notes.append("주3")
+    if has_confirmed_no_subsidiary:
+        notes.append("주4")
     return notes
+
+
+def series_has_consolidation_status(series: list[dict], status: str) -> bool:
+    """시계열(연간/분기 dict 리스트) 중 한 행이라도 `consolidation_status`가 주어진 값이면
+    True. company_page/chart_builder_page/quarter_change_page 가 공통으로 쓰는 판정."""
+    return any(r.get("consolidation_status") == status for r in series)
 
 
 def fmt_notes(notes: list[str]) -> str:

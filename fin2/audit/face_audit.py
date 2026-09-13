@@ -976,7 +976,7 @@ def read_report_face_text(file_path: str | Path, root=None) -> list[FaceLine]:
                 ))
 
     # ── DART 섹션 기반 본문표 식별 (추출기와 공유, 단일 진실원) ──
-    fin_type = _detect_fin_type(root)
+    fin_type = _detect_fin_type(root, file_path=file_path)
     groups = _detect_body_statement_tables(root, fin_type)
     for section_code, tables_with_unit in groups.items():
         stmt = section_code.split("_")[0]

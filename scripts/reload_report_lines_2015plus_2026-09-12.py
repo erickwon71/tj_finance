@@ -54,6 +54,7 @@ from sqlalchemy import text
 
 from collector.db import get_session
 from collector.models import ReportLineLoadProgress
+from collector.storage_guard import BACKUP_ROOT, SYMLINK as _RAW_REPORT_SYMLINK
 from fin2.extract.report_lines import extract_report_lines, store_report_lines, store_report_tables
 
 # 캠페인의 _UNIVERSE_SQL(scripts/layer2_review.py)과 같은 유니버스 정의(코드 중복 —
@@ -83,11 +84,24 @@ _TARGETS_SQL_TMPL = """
       --   collector/filing_collector.py::_detect_report_type 에 근본수정 적용됨 — 이건
       --   그 수정 이전에 이미 DB에 들어간 기존 행 필터, 소급 report_type 백필은 별건).
       AND f.report_nm NOT LIKE '%제출기한연장%'
+      AND f.rcept_no <> ALL(:confirmed_non_xml_rcepts)
       {corp_clause}
       {exclude_corp_clause}
       {rcept_clause}
     ORDER BY f.corp_code, f.fiscal_year, dt.rcept_no
 """
+
+# ★2026-09-12 — 개별 확인된 "XML 원본이 DART archive 자체에서 영구 손상, PDF로 복구
+#   완료" 필링 제외 목록. 재다운로드해도 바이트까지 동일하게 재현되는 손상이라 XML
+#   경로로는 영원히 0행(보류)만 남는다 — 매번 같은 경고가 반복되는 걸 막되, **개별
+#   확인된 건만** 하나씩 추가한다(회사/문서 단위 확정 없이 `unit_source='pdf'` 전체를
+#   일괄 제외하지 않는다 — 사용자 지시 2026-09-12). 추가할 때 근거를 주석에 남길 것.
+_CONFIRMED_NON_XML_RCEPTS = [
+    # 솔트웨어(01390399) half 2022 — NAS/SD 재다운로드(2026-09-12 10:01)도 바이트
+    # 동일하게 재현되는 손상('?' 치환 11.0%, XML 루트 없음). unit_source='pdf'로
+    # BS 17·IS 7·CF 11행 이미 정상 적재 완료(R94, docs/PARSING_RULES.md).
+    "20220802000208",
+]
 
 
 def _load_targets(fy_min: int, corps: list[str] | None,
@@ -103,7 +117,7 @@ def _load_targets(fy_min: int, corps: list[str] | None,
     sql = text(_TARGETS_SQL_TMPL.format(corp_clause=corp_clause,
                                         exclude_corp_clause=exclude_clause,
                                         rcept_clause=rcept_clause))
-    params: dict = {"fy_min": fy_min}
+    params: dict = {"fy_min": fy_min, "confirmed_non_xml_rcepts": _CONFIRMED_NON_XML_RCEPTS}
     if corps:
         params["corps"] = corps
     if exclude_corps:
@@ -129,7 +143,7 @@ def _partition_by_corp(rows: list[dict], n_workers: int) -> list[list[dict]]:
     return shards
 
 
-def _worker(shard_id: int, targets: list[dict]) -> dict:
+def _worker(shard_id: int, targets: list[dict], use_sd_mirror: bool = False) -> dict:
     """워커 1개 = corp 여러 개, 자기 자신의 DB 세션·회사 경계 커밋으로 순차 처리."""
     n_done = n_skip_manual = n_error = n_empty = 0
     t0 = time.time()
@@ -144,6 +158,11 @@ def _worker(shard_id: int, targets: list[dict]) -> dict:
             prev_corp = r["corp_code"]
 
             path = Path(r["file_path"])
+            if use_sd_mirror:
+                # ★2026-09-12 — 대량 read는 NAS 대신 SD카드 미러로([[feedback-bulk-read-use-sdcard]]).
+                #   raw_report 심링크 자체는 절대 건드리지 않는다(과거 4회 drift 사고,
+                #   storage_guard.py I1) — 이 워커 안에서만 경로를 치환해서 읽는다(읽기 전용).
+                path = BACKUP_ROOT / path.relative_to(_RAW_REPORT_SYMLINK)
             if not path.exists():
                 n_error += 1
                 logger.warning(f"[w{shard_id}] 파일 없음 {r['rcept_no']} ({path})")
@@ -230,7 +249,13 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None,
                     help="대상 filing 수 상한(정렬된 앞부분부터, 시험용)")
     ap.add_argument("--workers", type=int, default=4,
-                    help="병렬 워커 수(기본 4 — NAS raw_report I/O 고려해 과도하게 올리지 말 것)")
+                    help="병렬 워커 수(기본 4 — NAS raw_report I/O 고려해 과도하게 올리지 말 것. "
+                         "--sd-mirror 사용 시 로컬 SD라 더 올려도 됨)")
+    ap.add_argument("--sd-mirror", action="store_true",
+                    help="원문을 NAS 대신 SD카드 미러(/Volumes/dart_data/raw_report)에서 읽는다"
+                         "([[feedback-bulk-read-use-sdcard]] — 대량 read 전용, raw_report 심링크는"
+                         " 안 건드림, 쓰기 없는 순수 읽기 작업이라 안전). 미러가 NAS 대비 stale할 수"
+                         " 있으니 최근 storage_sync_log 시각 이후 신규 다운로드가 없는지 먼저 확인할 것.")
     ap.add_argument("--dry-run", action="store_true", help="대상 개수만 세고 종료(적재 안 함)")
     args = ap.parse_args()
 
@@ -252,13 +277,34 @@ def main() -> None:
         logger.info("--dry-run — 재적재하지 않고 종료")
         return
 
+    if args.sd_mirror:
+        # 프리플라이트 — 미러 완결성 표본확인([[feedback-bulk-read-use-sdcard]]:
+        # "존재/개수 파악처럼 대략적 스캔엔 문제없지만... 표본 교차확인"). 대상 앞부분
+        # 200건만 SD 미러 경로 존재를 확인 — 너무 많이 빠지면 stale 미러로 판단해 중단.
+        sample = rows[:200]
+        missing = [r["rcept_no"] for r in sample
+                   if not (BACKUP_ROOT / Path(r["file_path"]).relative_to(
+                       _RAW_REPORT_SYMLINK)).exists()]
+        if missing:
+            miss_rate = len(missing) / len(sample)
+            logger.warning(f"[sd-mirror 프리플라이트] 표본 {len(sample)}건 중 "
+                            f"{len(missing)}건({miss_rate:.0%}) SD 미러에 없음: "
+                            f"{missing[:5]}{'...' if len(missing) > 5 else ''}")
+            if miss_rate > 0.02:
+                raise SystemExit(
+                    "SD 미러 결측률이 2%를 넘어 중단 — 미러가 stale일 가능성. "
+                    "scripts/sync_storage_mirror.py 로 먼저 갱신하거나 --sd-mirror 없이 실행할 것.")
+        logger.info(f"[sd-mirror 프리플라이트] 표본 {len(sample)}건 전부 확인됨 — SD 미러로 읽는다.")
+
     n_workers = max(1, min(args.workers, n_corps))
     shards = _partition_by_corp(rows, n_workers)
-    logger.info(f"워커 {n_workers}개 분배: " + ", ".join(f"{len(sh):,}건" for sh in shards))
+    logger.info(f"워커 {n_workers}개 분배: " + ", ".join(f"{len(sh):,}건" for sh in shards)
+                + (" (SD 미러 read)" if args.sd_mirror else " (NAS read)"))
 
     t0 = time.time()
     with Pool(processes=n_workers) as pool:
-        results = pool.starmap(_worker, [(i, sh) for i, sh in enumerate(shards, start=1)])
+        results = pool.starmap(
+            _worker, [(i, sh, args.sd_mirror) for i, sh in enumerate(shards, start=1)])
 
     agg = {"done": 0, "skip_manual": 0, "error": 0, "empty": 0, "total": 0}
     for r in results:

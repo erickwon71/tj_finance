@@ -88,6 +88,53 @@ _NA_PATTERNS = [
 _TAG_RE = re.compile(r'<[^>]+>')
 _EMPTY_THRESHOLD = 3
 
+# ★R108(2026-09-13, R106/R107 잔여 13건 원문대조 중 발견) — SPAC 합병보고서 구조.
+# "2. 연결재무제표" 섹션 하나에 SPAC 껍데기 법인("[OO기업인수목적 주식회사]" +
+# "해당사항 없습니다")과 실제 합병대상 법인이 나란히 서술되는 경우, SPAC 쪽 결측선언이
+# 필링 전체(=합병대상 법인)에 잘못 적용됨(실측 3건: 밸로프 01398151, 애니플러스
+# 01335578, SFA넥셀 01090471[당시 씨아이에스] — 전부 report_lines에 합병대상 법인의
+# 진짜 연결데이터 존재, basis_fallback 아님). "기업인수목적"은 SPAC 법인명에만 붙는
+# 고정 법정 용어(자본시장법상 기업인수목적회사)라 안전하게 앵커 가능 — 그 브래킷 뒤
+# 다음 "[...]" 브래킷(합병대상 법인명)부터 다시 스캔한다(SPAC 자신의 결측선언은
+# 건너뜀). 두 번째 브래킷을 못 찾으면(SPAC 단독 필링 등) 원본 그대로 둔다.
+_SPAC_BRACKET_RE = re.compile(r'\[[^\[\]]*기업인수목적[^\[\]]*\]')
+_NEXT_BRACKET_RE = re.compile(r'\[[^\[\]]*\]')
+
+# ★R109(2026-09-13, 같은 조사) — 비교연도(전기)만 지칭하는 결측선언 배제(실측:
+# YBM넷 00307222 20220323000611 — "1. 당사의 제22(당)기...연결재무제표는...작성되었으며
+# ... 2. 비교표시되는 제21(전)기 재무제표는 연결대상 종속기업이 없는 회사의
+# 재무제표입니다"에서 당기[제22기]는 진짜 연결재무제표가 있는데 "종속기업이 없는"
+# 매칭이 전기[제21기] 서술에 걸려 오탐). 매칭 직전 지역문맥(≤_LOCAL_WINDOW자)에
+# "비교표시"/"제N(전)기"(명시적 표지)만 있고 "당기"류 표지가 없으면 그 매칭은
+# 비교연도 전용 서술로 보고 기각한다. ★바레 "전기"만으론 판정하지 않는다 — 구현 중
+# 회귀 발견(기존 확정 케이스 "당사는 당분기말과 전기말 현재...해당하지 않습니다"가
+# "전기말"의 "전기"에 걸려 오히려 새로 기각될 뻔함, 그 문장은 당기[당분기]도 같이
+# 지칭하므로 원래 확정이 맞음) — "제N(전)기"처럼 명시적 순번 표지가 있는 경우만
+# 신뢰. 유진로봇류 진짜 케이스("당기말 현재 회사는...보유하고 있지 않으며", "당기
+# 부터 연결재무제표를 작성하지 않습니다")는 매칭 직전에 "당기"가 있어 기각되지
+# 않는다(회귀 확인됨).
+_COMPARATIVE_ONLY_RE = re.compile(r'비교표시|제\s*\d+\s*\(?\s*전\s*\)?\s*기')
+_CURRENT_YEAR_RE = re.compile(r'당\s*(?:기|분기|반기|사업연도|사업년도)|제\s*\d+\s*\(?\s*당\s*\)?\s*기')
+_LOCAL_WINDOW = 40
+
+
+def _skip_spac_shell_block(body: str) -> str:
+    """R108 — SPAC 껍데기 법인의 "[...]" 브래킷 이후 첫 다음 브래킷(합병대상 법인명)부터
+    다시 시작하도록 body를 자른다. SPAC 브래킷이 없거나 그 뒤 브래킷이 없으면 원본 그대로."""
+    m = _SPAC_BRACKET_RE.search(body)
+    if m is None:
+        return body
+    nxt = _NEXT_BRACKET_RE.search(body, m.end())
+    if nxt is None:
+        return body
+    return body[nxt.start():]
+
+
+def _is_comparative_year_only(body: str, match_start: int) -> bool:
+    """R109 — match_start 직전 지역문맥이 "전기만" 지칭하는지(당기 표지가 없는지)."""
+    local = body[max(0, match_start - _LOCAL_WINDOW):match_start]
+    return bool(_COMPARATIVE_ONLY_RE.search(local)) and not _CURRENT_YEAR_RE.search(local)
+
 
 def _section_body(text: str) -> str | None:
     """"2. 연결재무제표" TITLE 뒤 본문 텍스트(다음 섹션/타이틀 경계까지, 없으면 _WINDOW
@@ -111,12 +158,18 @@ def detect_no_consolidated_fs(text: str) -> bool:
     아니면 False — "표가 있다"고 긍정 판정하지 않는다(이 함수는 부재 확정 전용, 짐작
     금지). 대조군 60건(basis_fallback=False, 실제 연결데이터 있는 필링) 실측 결과
     오탐 0건.
+
+    R108(SPAC 껍데기 블록 건너뛰기)을 먼저 적용한 뒤 R109(비교연도 전용 매칭 기각)
+    가드를 통과하는 매칭이 하나라도 있으면 True.
     """
     body = _section_body(text)
     if body is None:
         return False
-    if any(p.search(body) for p in _NA_PATTERNS):
-        return True
+    body = _skip_spac_shell_block(body)
+    for p in _NA_PATTERNS:
+        for m in p.finditer(body):
+            if not _is_comparative_year_only(body, m.start()):
+                return True
     stripped = _TAG_RE.sub('', body).strip()
     return len(stripped) < _EMPTY_THRESHOLD
 
@@ -130,6 +183,23 @@ def compute_text_evidence(text: str) -> tuple[str | None, dict]:
     return None, {}
 
 
+# ★R110(2026-09-13, 잔여 13건 중 C유형 — SGA솔루션즈 00988364 사용자 원문대조 확정)
+# — "제3기,제2기 연결재무제표는...감사를 받은 재무제표이고 제1기 연결재무제표는...
+# 작성하지 않았습니다"류 문장은 "제1기"가 당기 대비 몇 년 전인지 텍스트만으론 알 수
+# 없어(순번↔실제 회계연도 매핑 로직이 없음, C유형) 일반 규칙화를 보류했다(§11). 대신
+# 사용자가 DART 원문을 직접 열어 당기 자산총계를 확인 — 당기(제3기)에 연결·별도 값이
+# 서로 다른 진짜 데이터로 존재함을 확정(연결 56,830,698,939/50,478,362,721 vs 별도
+# 43,972,197,950/43,943,160,486, report_lines 그대로 유지가 맞음). Track1 재백필
+# (`--recheck`)이 다시 돌아도 본문 텍스트는 그대로라 매번 같은 자리에서 재오탐되므로,
+# 이 2건은 텍스트판정을 아예 건너뛰는 영구 예외로 남긴다(코드에 남겨 감사 가능하게
+# — 표 하나 늘리는 대신 기존 스코프가드 관례[`_STALE_REPRINT_MAX_FY` 등]와 동일 패턴).
+# 대상 목록이 늘어나면(현재 2건) DB 테이블로 옮기는 걸 고려.
+_MANUAL_HAS_CONSOLIDATED_OVERRIDE = {
+    "20151113001023",  # SGA솔루션즈 2015 Q1 — 당기(제3기) 연결 실데이터 확정
+    "20160329000826",  # SGA솔루션즈 2015 FY — 당기(제3기) 연결 실데이터 확정
+}
+
+
 def resolve_filing_evidence(session, rcept_no: str, file_path=None, file_text: str | None = None) -> tuple[str | None, dict]:
     """rcept 하나의 (evidence_code, detail). Track 1은 순수 텍스트 판정이라 XBRL instance
     zip 전용(`file_type='xbrl_zip'`) 필링처럼 document.xml 자체가 없는 경우는 판정
@@ -139,6 +209,8 @@ def resolve_filing_evidence(session, rcept_no: str, file_path=None, file_text: s
     file_text를 이미 갖고 있으면(추출 파이프라인이 document.xml을 이미 읽은 경우) 재사용해
     파일 재오픈을 피한다 — file_path만 주어지면 이 함수가 직접 연다.
     """
+    if rcept_no in _MANUAL_HAS_CONSOLIDATED_OVERRIDE:
+        return None, {"reason": "R110 manual override — 사용자 원문대조 확정(당기 연결 실데이터 존재)"}
     if file_text is None:
         if file_path is None:
             return None, {}

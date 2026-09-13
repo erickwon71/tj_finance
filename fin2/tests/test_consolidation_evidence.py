@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fin2.extract.consolidation_evidence import (  # noqa: E402
     EVIDENCE_NO_CONSOLIDATED_FS, compute_text_evidence, detect_no_consolidated_fs,
+    resolve_filing_evidence,
 )
 
 
@@ -130,6 +131,47 @@ def test_r107_ifrs_transition_restatement_note_adjacent_to_financial_statements_
             '<TABLE-GROUP ACLASS="{XBRL}BS"><TABLE><TBODY><TR><TE>연결 재무상태표</TE>'
             '<TE>자산총계</TE><TE>1,000</TE></TR></TBODY></TABLE></TABLE-GROUP>')
     assert not detect_no_consolidated_fs(_wrap(body))
+
+
+def test_r108_spac_merger_shell_company_na_declaration_is_not_applied_to_target_company():
+    """R108(2026-09-13, 잔여 13건 원문대조 중 발견) — 밸로프(01398151) 20221114002664
+    실측: SPAC 껍데기 법인("[교보9호기업인수목적 주식회사]" + "해당사항 없습니다")과
+    실제 합병대상 법인("[주식회사 밸로프]")이 같은 섹션에 나란히 서술됨. 밸로프는
+    report_lines에 진짜 연결 BS(237.6억, 별도 87.0억과 다른 값) 보유 — SPAC 쪽 결측
+    선언이 밸로프에 잘못 적용되면 안 된다."""
+    body = ('<P></P><P><SPAN>[교보9호기업인수목적 주식회사]</SPAN></P>'
+            '<P>해당사항 없습니다.<SPAN>[주식회사 밸로프]</SPAN></P><P></P>'
+            '<TABLE-GROUP ACLASS="{XBRL}BS"><TABLE><TBODY><TR><TE>연 결 재 무 상 태 표</TE>'
+            '<TE>자산총계</TE><TE>23,760,531,108</TE></TR></TBODY></TABLE></TABLE-GROUP>')
+    assert not detect_no_consolidated_fs(_wrap(body))
+
+
+def test_r109_na_declaration_scoped_to_comparative_year_only_is_not_confused_with_current_year():
+    """R109(2026-09-13, 같은 조사) — YBM넷(00307222) 20220323000611 실측: "1. 당사의
+    제22(당)기...연결재무제표는...작성되었으며...2. 비교표시되는 제21(전)기 재무제표는
+    연결대상 종속기업이 없는 회사의 재무제표입니다"에서 당기(제22기)는 진짜 연결
+    재무제표가 있는데(실측: 연결 831.5억 vs 별도 832.3억, 서로 다른 값) "종속기업이
+    없는" 매칭이 전기(제21기) 서술에 걸려 오탐."""
+    body = ('<P>1. 당사의 제22(당)기, 제21(전)기 및 제20(전전)기 연결재무제표는 한국채택'
+            '국제회계기준(K-IFRS)에따라 작성되었으며, 외부감사인의 감사를 받았습니다. '
+            '2. 비교표시되는 제21(전)기 재무제표는 연결대상 종속기업이 없는 회사의 '
+            '재무제표입니다.</P>'
+            '<TABLE-GROUP ACLASS="{XBRL}BS"><TABLE><TBODY><TR><TE>연결 재무상태표</TE>'
+            '<TE>자산총계</TE><TE>8,315,143,3507</TE></TR></TBODY></TABLE></TABLE-GROUP>')
+    assert not detect_no_consolidated_fs(_wrap(body))
+
+
+def test_r110_manual_override_rcepts_skip_text_classification_entirely():
+    """R110(2026-09-13, C유형 SGA솔루션즈 00988364 사용자 원문대조 확정) — "제1기만
+    연결없음" 패턴은 순번↔실제 회계연도 매핑이 없어 일반 규칙화가 불가능해서, 사용자가
+    직접 DART 원문의 당기 자산총계를 확인해 "당기에 연결·별도 실데이터가 둘 다 존재"를
+    확정했다. 이 2건은 본문 텍스트와 무관하게(재현해도 다시 오탐될 것이므로) 영구
+    예외로 evidence=None을 강제해야 한다 — file_path 없이 호출해도(텍스트 판정 자체를
+    건너뛰므로) 결과가 바뀌면 안 된다."""
+    for rcept_no in ("20151113001023", "20160329000826"):
+        code, detail = resolve_filing_evidence(None, rcept_no)
+        assert code is None, (rcept_no, code)
+        assert "R110" in detail["reason"]
 
 
 def test_unrelated_na_phrase_elsewhere_in_document_is_ignored():

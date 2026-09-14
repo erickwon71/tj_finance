@@ -490,6 +490,31 @@ def test_r117_blank_note_header_column_does_not_abort_whole_table():
     assert [(c.position, c.period_rank) for c in cols[1:]] == [(1, 0), (2, 0), (3, 1), (4, 1)]
 
 
+def test_r119_subtype_suffix_in_same_cell_as_period_recognized():
+    """R119(2026-09-14, 푸른저축은행 20150213000097 IS 별도 실측) — THEAD 없는 구서식은
+    헤더가 한 줄뿐이라 서브타입 표시가 별도 스택행이 아니라 같은 셀 안에서 기간 텍스트
+    바로 뒤 괄호로 붙는다("제 45기 반기(3개월)"/"제 45기 반기(누적)"). 매치된 셀
+    자신의 잔여 텍스트도 subtype 판정에 포함시켜야 한다 — 안 그러면 두 물리열 다
+    subtype=None 이 돼(둘 다 "값 있음") R6 판정불가로 행 전체가 유실된다."""
+    thead = """
+    <TR><TH>계정과목</TH>
+        <TH>제 45기 반기(3개월)</TH><TH>제 45기 반기(누적)</TH>
+        <TH>제 44기 반기(3개월)</TH><TH>제 44기 반기(누적)</TH></TR>
+    """
+    t = _table(thead, "<TR><TD>영업수익</TD></TR>")
+    cols = parse_header_columns(t)
+    assert cols is not None
+    assert [(c.position, c.period_rank, c.subtype) for c in cols] == [
+        (0, 0, "three_month"), (1, 0, "cumulative"),
+        (2, 1, "three_month"), (3, 1, "cumulative"),
+    ]
+    # 누적이 우선 채택되고, 두 값이 서로 달라도(3개월≠누적, H1의 정상 형태) 판정불가로
+    # 떨어지지 않는다.
+    assert select_by_header_columns(cols, [12_154_137_521, 43_070_181_646, None, None]) == {
+        0: 43_070_181_646,
+    }
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

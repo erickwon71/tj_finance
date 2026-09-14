@@ -808,7 +808,16 @@ def _columns_from_grid(grid: list[list[str]]) -> Optional[list[HeaderColumn]]:
             m = _PERIOD_KEY_RE.search(text)
             if m:
                 period_key = m.group(0)
-                subtype_text = " ".join(stack[i + 1:])
+                # ★R119(2026-09-14, 푸른저축은행 20150213000097 IS 별도 실측) — THEAD가
+                # 없는 구서식은 헤더가 한 줄뿐이라("계정과목|제45기반기(3개월)|제45기반기
+                # (누적)|…") 서브타입 표시가 별도 스택행이 아니라 **같은 셀 안에서 기간
+                # 텍스트 바로 뒤 괄호**로 붙는다("(3개월)"/"(누적)"). 기존엔 매치된 셀
+                # 이후의 다른 스택행만 subtype_text 로 모아, 이 서식에서 매치된 셀
+                # 자신의 나머지 텍스트(괄호 부분)가 통째로 버려져 subtype=None으로
+                # 남았다 — 결과: 3개월/누적 구분이 안 돼 두 물리열 다 "값 있음"이 돼
+                # R6 판정불가로 행 전체 유실(IS 24행 중 23행). 매치된 셀 자신의 잔여
+                # 텍스트(m.end() 이후)도 subtype_text 에 포함시킨다.
+                subtype_text = text[m.end():] + " " + " ".join(stack[i + 1:])
                 break
         position = col - label_cols
         if period_key is None:

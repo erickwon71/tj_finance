@@ -1065,6 +1065,32 @@ def test_r118_jeju_bank_2022fy_triple_duplicate_period_label_typo_corrected():
     assert by_rank == {0: 114_388_000_000, 1: 137_050_000_000, 2: -120_627_000_000}, by_rank
 
 
+_INNOSIMULATION_2019_FY = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00965318_이노시뮬레이션/annual/2019/20200330004128.xml"
+)
+
+
+def test_r118_innosimulation_2019fy_duplicate_period_label_typo_corrected():
+    """R118 후속(2026-09-14, 사용자 확인 — "이노시뮬레이션은 단순 오타로 보여") —
+    20200330004128 IS 별도 표 헤더가 "제19기(2018.01.01~2018.12.31)"를 완전히 동일
+    하게 2번 반복한다. 같은 필링의 BS 별도는 정상(제20기/제19기/제18기, 중복 없음)
+    이라, IS 만 position0을 "제20기"라고 썼어야 할 걸 "제19기"로 잘못 복사한 원문
+    오타로 확정. 예외교정 없으면 rank 충돌로 3개 기간 전부 R6 판정불가에 걸려
+    (기본주당이익 등 극소수 행만 남고) 본체가 유실된다."""
+    if not _INNOSIMULATION_2019_FY.exists():
+        return
+    lines = extract_report_lines(
+        _INNOSIMULATION_2019_FY, rcept_no="20200330004128", corp_code="00965318",
+        report_fiscal_year=2019, report_fiscal_period="FY")
+    is_sep = [l for l in lines if l.statement == "IS" and l.basis == "separate"]
+    by_col = {}
+    for l in is_sep:
+        if l.label_raw == "매출액":
+            by_col[l.col_index] = l.value_won
+    assert by_col == {0: 14_779_266_111, 1: 14_512_073_752, 2: 29_076_802_160}, by_col
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

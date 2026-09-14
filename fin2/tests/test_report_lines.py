@@ -1091,6 +1091,30 @@ def test_r118_innosimulation_2019fy_duplicate_period_label_typo_corrected():
     assert by_col == {0: 14_779_266_111, 1: 14_512_073_752, 2: 29_076_802_160}, by_col
 
 
+_DOUBLE_U_GAMES_2015_FY = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/01010110_더블유게임즈/annual/2015/20160520000534.xml"
+)
+
+
+def test_r121_double_u_games_2015fy_consolidated_excluded():
+    """R121(2026-09-14, 사용자 확인 — "더블유게임즈 해당 기간 3,4기는 연결대상이
+    아니야... 삭제하고 연결비대상으로 표시해") — 20160520000534 문서의 "2. 연결
+    재무제표" 섹션에 물리적으로 표가 있지만(유진로봇류 "완전공백 섹션"과 다름) 그
+    값은 이 필링 당기(제4기)·전기(제3기)의 것이 아니라 제2기(2013) 시절 옛 자본변동
+    표/EPS 수치뿐이다. 재배정할 근거가 없어(짐작 금지) 연결(_C) 섹션 자체를 배제한다
+    — 별도(_S)는 무영향."""
+    if not _DOUBLE_U_GAMES_2015_FY.exists():
+        return
+    lines = extract_report_lines(
+        _DOUBLE_U_GAMES_2015_FY, rcept_no="20160520000534", corp_code="01010110",
+        report_fiscal_year=2015, report_fiscal_period="FY")
+    assert not any(l.basis == "consolidated" for l in lines), \
+        "R121 배제 실패 시 제2기 시절 옛 데이터가 연결 basis 로 다시 새어든다"
+    assert any(l.basis == "separate" and l.statement == "IS" for l in lines), \
+        "별도는 무영향으로 정상 적재돼야 한다"
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

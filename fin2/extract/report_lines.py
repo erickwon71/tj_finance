@@ -139,6 +139,20 @@ from fin2.extract.report_lines_inline_xbrl_overlay import (
 # 새 경로는 1999~2010 표본에서만 검증됐다(회귀 방지 원칙, 설계문서 §4).
 _PRE2015_ROUTING_MAX_FY = 2010
 
+# ★R121(2026-09-14, 사용자 확인 — "더블유게임즈 해당 기간 3,4기는 연결대상이 아니야")
+# 더블유게임즈 20160520000534(2015FY): 문서의 "2. 연결재무제표" 섹션에 물리적으로 표가
+# 있어(유진로봇류 "완전공백 섹션"과 다름) 정상 추출 경로를 그대로 타지만, 그 표들이
+# 담은 값은 이 필링 자신의 당기(제4기)·전기(제3기) 것이 아니라 **제2기(2013) 시점의
+# 옛 자본변동표/EPS 수치**뿐이다(SCE 전 col_index 가 "2013.01.01"/"2013.12.31" 날짜
+# 라벨, IS 는 EPS 2줄만) — 지주사 전환 이전 시절 데이터가 남아있는 것으로, 사용자가
+# 원문 확인 후 "3,4기는 연결대상 아니다"로 확정. 이런 표는 "빈 섹션"이 아니라서
+# `_detect_body_statement_tables`가 정상적으로 찾아버리고, 값 자체도 억지로 재계산할
+# 근거가 없어(제2기 수치를 당기/전기로 재배정할 방법이 없음) 아예 배제한다.
+# 연결(_C) 섹션 코드를 통째로 스킵 — 별도(_S)는 무영향.
+_MANUAL_NO_CONSOLIDATED_FS_RCEPTS = frozenset({
+    "20160520000534",  # 더블유게임즈 2015FY — 제3·4기 연결비대상(사용자 확인)
+})
+
 def _merge_missing_codes(primary: dict, fallback_fn) -> dict:
     """`primary` 가 못 채운 섹션코드만 `fallback_fn()` 결과로 보충. 덮어쓰지 않는다.
 
@@ -1422,6 +1436,11 @@ def extract_report_lines(
                     f"[report_lines] {rcept_no}: fiscal_year={report_fiscal_year} 로 2015+ "
                     f"라우팅했으나 0행 — pre-2015 폴백으로 {len(groups)}개 섹션 복구. "
                     f"fiscal_year 메타데이터 오판정 의심, 확인 필요.")
+        if rcept_no in _MANUAL_NO_CONSOLIDATED_FS_RCEPTS:
+            # R121 — 연결(_C) 섹션 코드를 통째로 배제(위 상수 docstring 근거). 물리적
+            # 표는 있지만 그 값이 이 필링 자신의 당기/전기 것이 아니라 옛 시절 데이터라
+            # 재배정할 근거가 없다(사용자 확인, 짐작 금지).
+            groups = {code: v for code, v in groups.items() if not code.endswith("_C")}
     # 문서 전체 기본 단위는 **로컬 선언이 없는 표가 실제로 있을 때만** 찾는다(비용 절감 —
     # 대다수 문서는 표마다 선언이 있어 이 스캔이 불필요하다). `_detect_body_statement_tables`
     # 가 이미 붙여준 표 단위 unit 이 하나라도 None 이면 후보. squished_bs 는 로컬 선언이

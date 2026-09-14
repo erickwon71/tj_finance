@@ -962,6 +962,7 @@ _DASH_ONLY_PATTERNS = frozenset(["-", "─", "—", "―"])
 def select_by_header_columns(
     columns: list[HeaderColumn], amounts: list, raw_amounts: Optional[list[str]] = None,
     allow_three_month_as_cumulative: bool = False,
+    prefer_last_of_two_as_cumulative: bool = False,
 ) -> dict[int, object]:
     """`HeaderColumn` 맵 + 위치보존 원시 `amounts`(`keep_all_amount_cells=True` 출력)
     → {period_rank: 값}. `_emit_section_lines`가 이 결과를 `col_index=period_rank`로
@@ -996,7 +997,20 @@ def select_by_header_columns(
     원칙(누적 공란 → 3개월로 대체 안 함)을 전사 정책으로 뒤집지 않고 `allow_three_
     month_as_cumulative=True`일 때만(호출측이 예외 rcept 목록으로 좁혀서 넘김,
     `fin2/extract/report_lines.py::_Q1_CUM_BLANK_USE_3M_RCEPTS`) 누적 공란 시 3개월
-    값으로 대체한다. 기본값 False — 넘기지 않는 기존 호출자는 회귀 없음."""
+    값으로 대체한다. 기본값 False — 넘기지 않는 기존 호출자는 회귀 없음.
+
+    ★R120(2026-09-14, 사용자 확정 — "예외목록으로만 좁힐") — 웹케시 20180814001946,
+    우리기술투자 20200813000621: H1 보고서 IS 표가 같은 라벨("제20기 반기" 등)을
+    구분 텍스트 전혀 없이 물리적으로 다른 2열에 반복하는데, 두 열 다 실제 값이고
+    서로 **다르다**(H1이라 3개월≠누적, 그룹 자체가 진짜 2개 기간을 담고 있음).
+    DART 관행상 이런 무표지 2열 병합군은 항상 [3개월 먼저, 누적 나중] 순서인데,
+    산수로 직접 검증했다(사용자 확인) — 웹케시: Q1 당기순이익(1,201,200,355) +
+    이 표 1번째 열(2,965,233,784, 3개월=Q2단독) = 4,166,434,139 = 2번째 열(누적)과
+    정확히 일치. 우리기술투자도 동형 검증. 값 2개가 서로 다른 "진짜 판정불가"
+    상황이라 R116(값이 같을 때만 통과)과는 다른 분기 — 사용자가 일반 규칙화 대신
+    예외목록으로 좁히기로 결정해(R6 정책 유지), `prefer_last_of_two_as_cumulative=
+    True`일 때만(호출측 예외 rcept 목록, `fin2/extract/report_lines.py::
+    _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS`) 위치상 마지막 열을 채택한다."""
     def _amount_or_dash_zero(pos: int):
         if pos < len(amounts) and amounts[pos] is not None:
             return amounts[pos]
@@ -1061,6 +1075,13 @@ def select_by_header_columns(
                 # 막으려는 "서로 다른 값 중 하나를 임의로 고르는" 판정불가 상황이
                 # 아니라 이미 확정된 값이므로 채택한다.
                 result[rank] = amounts[real_present[0].position]
+            elif (prefer_last_of_two_as_cumulative and len(cols) == 2
+                  and len(real_present) == 2):
+                # R120 — 예외목록 필링: 서브타입 구분 텍스트가 아예 없는 병합군인데
+                # 두 열 다 실제 값이고 서로 다르다(H1 등, 진짜 두 기간을 담은 표).
+                # DART 관행상 무표지 2열은 항상 [3개월 먼저, 누적 나중] 순서 — 위치상
+                # 마지막 열(누적)을 채택한다(호출측이 산수로 직접 검증한 예외목록에서만).
+                result[rank] = amounts[max(real_present, key=lambda c: c.position).position]
             # 진짜값 0개+대시/공란 아닌 결측(진짜 결측) 또는 진짜값 2개 이상(서로 다른
             # 값, 판정불가, R6) 이면 이 rank 는 건너뜀.
     return result

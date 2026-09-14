@@ -515,6 +515,29 @@ def test_r119_subtype_suffix_in_same_cell_as_period_recognized():
     }
 
 
+def test_r120_headerless_merge_group_prefers_last_position_when_allowed():
+    """R120(2026-09-14, 사용자 확정 — "예외목록으로만 좁힐") — 웹케시 20180814001946,
+    우리기술투자 20200813000621 실측: H1 보고서 IS 표가 같은 라벨을 구분 텍스트 없이
+    물리적으로 다른 2열에 반복하는데 두 열 다 실제 값이고 서로 다르다(3개월≠누적).
+    산수 검증(Q1값 + 1번째열 = 2번째열)으로 확정된 DART 관행([3개월,누적] 순서)을
+    예외목록 필링에서만 적용 — 위치상 마지막 열(누적)을 채택한다."""
+    cols = [HeaderColumn(position=0, period_key="제 20 기 반기", period_rank=0, subtype=None),
+            HeaderColumn(position=1, period_key="제 20 기 반기", period_rank=0, subtype=None)]
+    # 허용 안 하면(기본값) 서로 다른 값 2개는 여전히 판정불가(R6) — 회귀 없음.
+    assert select_by_header_columns(cols, [100, 200]) == {}
+    # 허용하면 마지막 열(누적) 채택.
+    assert select_by_header_columns(
+        cols, [100, 200], prefer_last_of_two_as_cumulative=True,
+    ) == {0: 200}
+    # 열이 3개 이상인 병합군에는 적용 안 함(2열 한정).
+    cols3 = [HeaderColumn(position=0, period_key="제 20 기", period_rank=0, subtype=None),
+             HeaderColumn(position=1, period_key="제 20 기", period_rank=0, subtype=None),
+             HeaderColumn(position=2, period_key="제 20 기", period_rank=0, subtype=None)]
+    assert select_by_header_columns(
+        cols3, [100, 200, 300], prefer_last_of_two_as_cumulative=True,
+    ) == {}
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

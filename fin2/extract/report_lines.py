@@ -56,6 +56,17 @@ _Q1_CUM_BLANK_USE_3M_RCEPTS = frozenset({
     "20190527000008",  # 자이글 2019 Q1(2026-09-14 후속 실측, 동일 패턴)
 })
 
+# ★R120(2026-09-14, 사용자 확정 — "예외목록으로만 좁힐") — 웹케시 20180814001946,
+# 우리기술투자 20200813000621: H1 보고서 IS 표가 같은 라벨을 구분 텍스트 없이 물리적
+# 으로 다른 2열에 반복하는데 두 열 다 실제 값이고 서로 다르다(3개월≠누적). DART
+# 관행상 무표지 2열은 [3개월,누적] 순서 — Q1 당기순이익 + 이 표 1번째 열 = 이 표
+# 2번째 열임을 산수로 직접 검증(사용자 확인). 일반 규칙화 대신 예외목록으로만 좁힌다
+# (R6 정책 유지). 상세 근거는 `table_extractor.py::select_by_header_columns` R120.
+_HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS = frozenset({
+    "20180814001946",  # 웹케시 2018 H1
+    "20200813000621",  # 우리기술투자 2020 H1
+})
+
 # ★R118(2026-09-14, 사용자 원문대조로 확정 — "별도는 정상인데 연결이 원문 오타") —
 # 제주은행 20160516002967 CF 연결 표 헤더가 "제57기 1분기"를 물리적으로 다른 두 열에
 # **완전히 동일한 텍스트**로 중복 기재했다(구분 텍스트 전혀 없어 일반 규칙으로 판별
@@ -679,11 +690,14 @@ def _emit_section_lines(
                 # R113 — raw_amounts 를 같이 넘겨 순수 대시("-") 칸을 0으로 채택(원문
                 # 정책상 "-"=0, 결측 아님 — 위 select_by_header_columns 주석 참고).
                 # R116 — 예외목록에 있는 Q1 필링만 누적 공란 시 3개월 값을 대체 채택.
+                # R120 — 예외목록에 있는 필링만 무표지 2열 병합군에서 마지막 열(누적) 채택.
                 pairs = list(select_by_header_columns(
                     header_cols, row.amounts, raw_amounts=row.raw_amounts,
                     allow_three_month_as_cumulative=(
                         report_fiscal_period == "Q1"
                         and rcept_no in _Q1_CUM_BLANK_USE_3M_RCEPTS),
+                    prefer_last_of_two_as_cumulative=(
+                        rcept_no in _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS),
                 ).items())
             elif cum_map is not None:
                 pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()

@@ -603,6 +603,35 @@ def test_r123_securities_firm_accounting_year_and_relative_quarter_labels():
     assert [c.period_rank for c in cols5] == [0, 1]
 
 
+def test_r125_duplicate_subtype_columns_gated_off_by_default():
+    """R125(2026-09-15, 현대해상·다올투자증권·대신증권 등 2015+ 폴백 스캔 후속) — "3개월"/
+    "누적" 아래 COLSPAN=2 하위열이 명세행(1열)/소계행(2열)로 고정된 2015+ 보험/증권사
+    서식(실측: 현대해상 20150817001369 IS 별도). 기본값(allow_duplicate_subtype=False,
+    기존 호출자)은 여전히 표 전체 폴백 — SB성보(2003, pre-2015 K-GAAP)가 이 규칙에
+    안 맞아 조용히 틀린 값을 냈던 실측 회귀(R124 최초 시도, `test_hyphen_negative_gate_
+    r31.py::test_cum_map_misalignment_fixed_by_gate_widening`) 때문에 report_lines.py
+    가 report_fiscal_year>=2015 일 때만 True 로 넘기도록 스코프를 좁힌다."""
+    thead = """
+    <TR><TH ROWSPAN="3">구분</TH>
+        <TH COLSPAN="4">제 62 기 (당) 반기</TH></TR>
+    <TR><TH COLSPAN="2">3개월</TH><TH COLSPAN="2">누적</TH></TR>
+    <TR><TH>명세</TH><TH>소계</TH><TH>명세</TH><TH>소계</TH></TR>
+    """
+    t = _table(thead, "<TR><TD>가.보험영업수익</TD></TR>")
+    # 기본값(False, 기존 회귀 없음) — 표 전체 폴백.
+    assert parse_header_columns(t) is None
+    # allow_duplicate_subtype=True(2015+ 전용 게이트) — 헤더 파싱 성공.
+    cols = parse_header_columns(t, allow_duplicate_subtype=True)
+    assert cols is not None
+    assert [c.subtype for c in cols] == ["three_month", "three_month",
+                                          "cumulative", "cumulative"]
+    # 명세행: 3개월 1열(명세)에만 실값 → 채택. 소계행: 3개월 2열(소계)에만 실값 → 채택.
+    assert select_by_header_columns(cols, [100, None, 300, None]) == {0: 300}
+    assert select_by_header_columns(cols, [None, 200, None, 400]) == {0: 400}
+    # 두 열 다 실값이면(진짜 판정불가) 여전히 건너뜀 — 짐작 금지 원칙 유지.
+    assert select_by_header_columns(cols, [None, None, 300, 350]) == {}
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

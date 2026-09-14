@@ -653,7 +653,13 @@ def _emit_section_lines(
         # 각자 다른 안전장치로 패치해온 바로 그 추측)을 전부 우회한다 — 실패(THEAD
         # 없음, 모르는 헤더 모양)하면 그 3갈래로 그대로 폴백(무변경, 회귀 위험 0).
         # SCE 는 열이 기간이 아니라 자본 구성요소 축이라 대상 아님(기존과 동일 제외).
-        header_cols = parse_header_columns(table) if statement in ("BS", "IS", "CF") else None
+        # R125 — 명세/소계 COLSPAN=2 중복 서브타입 열의 행별 유일값 해석은
+        # report_fiscal_year>=2015 필링에만 연다(SB성보류 pre-2015 K-GAAP은 이 규칙이
+        # 안 맞아 조용히 틀린 값을 냈던 실측 회귀 때문 — table_extractor.py
+        # ::_columns_from_grid R125 docstring 참고).
+        header_cols = parse_header_columns(
+            table, allow_duplicate_subtype=(report_fiscal_year >= 2015),
+        ) if statement in ("BS", "IS", "CF") else None
         # R118 — 예외목록(rcept×statement×basis)에 있는 필링만 중복 라벨 열의 rank를
         # 교정한다(원문 자체의 헤더 오타, 위 함수 docstring 근거). R115 필터보다 먼저
         # 적용해야 그 필터가 교정된 rank 기준으로 안전하게 동작한다.

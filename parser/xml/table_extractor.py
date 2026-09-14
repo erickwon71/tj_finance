@@ -807,13 +807,18 @@ def _headerless_header_trs(table: etree._Element) -> list[etree._Element]:
     return header_trs
 
 
-def _columns_from_grid(grid: list[list[str]]) -> Optional[list[HeaderColumn]]:
+def _columns_from_grid(
+    grid: list[list[str]], allow_duplicate_subtype: bool = False,
+) -> Optional[list[HeaderColumn]]:
     """해석된 헤더 그리드(`_resolve_header_grid`/BS4 어댑터 등 출처 무관) → 위치→
     회계기간 맵. `parse_header_columns()`의 THEAD 경로와 §7 확장(TBODY-선두) 경로가
     공유한다 — 어느 쪽에서 만든 grid든 이 함수 하나로 해석한다(중복 구현 방지).
 
     실패 조건: 라벨열 뒤에 기간패턴을 못 찾은 열이 있음(=아직 모르는 헤더 모양 — §5
-    정책대로 여기서 확장하지 말고 폴백시켜 다음에 발견한 사례로 넓힌다)."""
+    정책대로 여기서 확장하지 말고 폴백시켜 다음에 발견한 사례로 넓힌다).
+
+    `allow_duplicate_subtype` — R125(2026-09-15) 참고. 기본값 False 는 아래 "애매한
+    중복" 가드를 그대로 유지(회귀 0)."""
     n_cols = len(grid[0])
     if n_cols < 2:
         return None
@@ -877,14 +882,29 @@ def _columns_from_grid(grid: list[list[str]]) -> Optional[list[HeaderColumn]]:
         columns.append(HeaderColumn(position=position, period_key=period_key,
                                     period_rank=period_rank_of[period_key], subtype=subtype))
 
-    # ★애매한(period_rank, subtype) 중복 — 안전하게 폴백. 예: K-GAAP 구서식 IS(2003년대)는
-    # "3개월"/"누적" 아래 다시 COLSPAN=2 하위열(둘 다 텍스트가 "금액"으로 동일)이 있어 헤더
-    # 텍스트만으론 어느 쪽이 진짜 금액칸인지 구분이 안 된다(실측: 00132725 SB성보 2003Q3
-    # IS, rank0 에 subtype="three_month" 열이 2개·"cumulative" 열이 2개 나옴). 이런 표에서
-    # 아무거나 첫 번째를 고르면 조용히 틀린 값을 낼 위험이 있다 — 대신 표 전체를 인식
-    # 실패로 보고 기존 cum_map/multicol/else 경로로 폴백한다(§5 정책, 회귀 0 우선).
-    # subtype=None 중복은 정상(병합군, 삼성생명류 — select_by_header_columns 가 "값 있는
-    # 열 하나" 로직으로 처리) — subtype 이 **있는데** 중복인 경우만 애매하다고 본다.
+    # ★애매한(period_rank, subtype) 중복 — 기본은 안전하게 폴백. 예: K-GAAP 구서식
+    # IS(2003년대)는 "3개월"/"누적" 아래 다시 COLSPAN=2 하위열(둘 다 텍스트가 "금액"
+    # 으로 동일)이 있어 헤더 텍스트만으론 어느 쪽이 진짜 금액칸인지 구분이 안 된다
+    # (실측: 00132725 SB성보 2003Q3 IS, rank0 에 subtype="three_month" 열이 2개·
+    # "cumulative" 열이 2개). 아무거나 첫 번째를 고르면 조용히 틀린 값을 낼 위험이
+    # 있다 — 대신 표 전체를 인식 실패로 보고 기존 cum_map/multicol/else 경로로
+    # 폴백한다(§5 정책, 회귀 0 우선). subtype=None 중복은 정상(병합군, 삼성생명류 —
+    # select_by_header_columns 가 "값 있는 열 하나" 로직으로 처리) — subtype 이
+    # **있는데** 중복인 경우만 애매하다고 본다.
+    #
+    # ★R125(2026-09-15, 현대해상·다올투자증권·대신증권 등 2015+ 폴백 스캔 후속, 사용자
+    # 확인) — 2015+ 보험/증권사 서식을 실측하니 이 COLSPAN=2 하위열이 "명세행(1열)/
+    # 소계행(2열)"로 역할이 고정돼 같은 행에서 둘 다 채워지는 일이 없다(사용자: "3개월
+    # 아래에 2열로 되어서 1열에 세부항목 2열에 subtotal... 연결 별도 동일한 형태").
+    # 그런데 SB성보(2003, pre-2015 K-GAAP)로 직접 검증해보니 그 회사는 이 규칙이 안
+    # 맞아 행별 유일값 채택이 조용히 틀린 값을 냈다(R124 최초 시도 회귀, 되돌림) — 두
+    # 서식이 헤더 모양만으론 구분이 안 돼, 여기서 일반 규칙으로 확장하지 않는다. 대신
+    # 호출측(`report_lines.py`)이 **report_fiscal_year>=2015 일 때만**
+    # `allow_duplicate_subtype=True` 를 넘기도록 좁힌다 — SB성보류(pre-2015)는 절대
+    # 이 분기를 안 타므로 안전, 2015+ 만 새 규칙 적용(사용자 지시: "지금은 2015+ 보고서에
+    # 집중, SB성보는 이후 별도 정리").
+    if allow_duplicate_subtype:
+        return columns
     seen: dict[tuple, int] = {}
     for hc in columns:
         if hc.is_note or hc.subtype is None:
@@ -896,10 +916,16 @@ def _columns_from_grid(grid: list[list[str]]) -> Optional[list[HeaderColumn]]:
     return columns
 
 
-def parse_header_columns(table: etree._Element) -> Optional[list[HeaderColumn]]:
+def parse_header_columns(
+    table: etree._Element, allow_duplicate_subtype: bool = False,
+) -> Optional[list[HeaderColumn]]:
     """표의 THEAD(또는 THEAD 가 없으면 TBODY 선두의 헤더행류, §7)를 읽어 위치→회계기간
     맵을 만든다. 실패하면 None(호출측 폴백) — §5 정책 그대로, 여기서 억지로 확장하지
-    않는다."""
+    않는다.
+
+    `allow_duplicate_subtype` — R125(2026-09-15): 명세/소계 COLSPAN=2 병합군을
+    표 전체 폴백 대신 행별 유일값으로 푼다(호출측이 report_fiscal_year>=2015 일 때만
+    True 로 넘기도록 스코프를 좁힌다 — `_columns_from_grid` R125 docstring 참고)."""
     thead = table.find("THEAD")
     if thead is not None:
         header_trs = list(thead.findall("TR"))
@@ -910,7 +936,7 @@ def parse_header_columns(table: etree._Element) -> Optional[list[HeaderColumn]]:
     grid = _resolve_header_grid(header_trs)
     if grid is None:
         return None
-    return _columns_from_grid(grid)
+    return _columns_from_grid(grid, allow_duplicate_subtype=allow_duplicate_subtype)
 
 
 # ★R115(2026-09-14, 형지I&C 20160516001490·드림시큐리티 20160511001294 실측, 표 헤더
@@ -1060,6 +1086,23 @@ def select_by_header_columns(
         txt = raw_amounts[pos].strip()
         return txt == "" or txt in _DASH_ONLY_PATTERNS
 
+    def _pick_from_group(group: list) -> object:
+        """R125 — chosen 그룹에 물리열이 여러 개(2015+ 보험/증권사 명세/소계 분리
+        서식, `allow_duplicate_subtype=True`로 통과된 경우만 여기 도달)일 때도,
+        subtype=None 병합군(R113/R114)과 동일한 규칙으로 행별 유일값을 고른다: 실값이
+        정확히 1개면 채택, 전부 대시/공란(대시 증거 최소 1개)이면 구조적 0, 그 외
+        (진짜 결측 또는 2개 이상 실값=판정불가)는 None. 그룹이 1개뿐이면(기존 대다수
+        호출) 그냥 그 열 값(회귀 없음)."""
+        if len(group) == 1:
+            return _amount_or_dash_zero(group[0].position)
+        real_present = [c for c in group if amounts[c.position] is not None]
+        if len(real_present) == 1:
+            return amounts[real_present[0].position]
+        if (not real_present and any(_is_dash_only(c.position) for c in group)
+                and all(_is_dash_or_blank(c.position) for c in group)):
+            return 0
+        return None
+
     by_rank: dict[int, list[HeaderColumn]] = {}
     for hc in columns:
         if hc.is_note:
@@ -1074,14 +1117,16 @@ def select_by_header_columns(
             chosen = cum if cum else [c for c in cols if c.subtype == "three_month"]
             if not chosen:
                 chosen = cols
-            pos = chosen[0].position
-            value = _amount_or_dash_zero(pos)
+            # R125 — chosen 이 2개 이상(2015+ 명세/소계 분리 서식, allow_duplicate_
+            # subtype=True 로 통과된 경우만)이어도 행별 유일값 규칙으로 고른다. 1개면
+            # 기존과 동일한 결과(회귀 없음).
+            value = _pick_from_group(chosen)
             if value is None and allow_three_month_as_cumulative and cum:
                 # R116 — 누적 열이 공란이고(cum 열은 존재하나 값이 없음) 예외목록으로
                 # 허용된 필링이면, 3개월 값을 그대로 누적 값으로 채택한다(Q1 한정 등식).
                 three_month = [c for c in cols if c.subtype == "three_month"]
                 if three_month:
-                    value = _amount_or_dash_zero(three_month[0].position)
+                    value = _pick_from_group(three_month)
             if value is not None:
                 result[rank] = value
         else:

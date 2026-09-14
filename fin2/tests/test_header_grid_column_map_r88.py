@@ -564,6 +564,45 @@ def test_r122_missing_gi_after_parenthetical_still_recognized():
     assert cols3 is not None and cols3[0].period_rank == 0
 
 
+def test_r123_securities_firm_accounting_year_and_relative_quarter_labels():
+    """R123(2026-09-15, 2015+ 전수 폴백 스캔으로 발견) — 증권사류가 흔히 쓰는 4가지
+    변형 헤더가 전부 인식돼야 한다."""
+    # ① "2015회계연도 1분 기"(제 접두 없음, 연도+회계연도, 글자당 공백).
+    t1 = _table("<TR><TH>과목</TH><TH>2015회계연도 1분 기</TH><TH>2014회계연도</TH></TR>",
+                "<TR><TD>자산총계</TD></TR>")
+    cols1 = parse_header_columns(t1)
+    assert cols1 is not None
+    assert [c.period_rank for c in cols1] == [0, 1]
+
+    # ② 제 접두 누락("11기 1분기" — 첫 열은 정상 "제 12기 1분기").
+    t2 = _table("<TR><TH>과목</TH><TH>제 12기 1분기</TH><TH>11기 1분기</TH></TR>",
+                "<TR><TD>영업활동현금흐름</TD></TR>")
+    cols2 = parse_header_columns(t2)
+    assert cols2 is not None
+    assert [c.period_rank for c in cols2] == [0, 1]
+
+    # ③ 서수 없는 "분기"("제 16(당) 분기말" — "N분기"가 아니라 "분기"만).
+    t3 = _table("<TR><TH>과목</TH><TH>제 16(당) 분기말</TH><TH>제 15(전) 기말</TH></TR>",
+                "<TR><TD>자산총계</TD></TR>")
+    cols3 = parse_header_columns(t3)
+    assert cols3 is not None
+    assert [c.period_rank for c in cols3] == [0, 1]
+
+    # ④ 서수 자체가 없는 상대어 합성("당분기말"/"전기말" — NH투자증권류).
+    t4 = _table("<TR><TH>과목</TH><TH>당분기말</TH><TH>전기말</TH></TR>",
+                "<TR><TD>자산총계</TD></TR>")
+    cols4 = parse_header_columns(t4)
+    assert cols4 is not None
+    assert [c.period_rank for c in cols4] == [0, 1]
+
+    # 회귀 없음 — 기존 "당기"/"전기" 단독 표기도 여전히 인식.
+    t5 = _table("<TR><TH>과목</TH><TH>당기</TH><TH>전기</TH></TR>",
+                "<TR><TD>당기순이익</TD></TR>")
+    cols5 = parse_header_columns(t5)
+    assert cols5 is not None
+    assert [c.period_rank for c in cols5] == [0, 1]
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

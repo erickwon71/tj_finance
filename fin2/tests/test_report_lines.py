@@ -1039,6 +1039,32 @@ def test_r118_jeju_bank_duplicate_period_label_typo_corrected():
     assert ni.value_won == -48_817_000_000
 
 
+_JEJU_BANK_2022_FY = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00148832_제주은행/annual/2022/20230314001271.xml"
+)
+
+
+def test_r118_jeju_bank_2022fy_triple_duplicate_period_label_typo_corrected():
+    """R118 후속(2026-09-14, 사용자 확인 — "제주은행 보고서 단순 오타야") — 20230314001271
+    CF 연결 표 헤더가 "제62기"(당기,정상)/"제62기"(전기, 원문에 제61기라고 썼어야 함)/
+    "제61기"(전전기, 제60기라고 썼어야 함) 순으로 한 기수씩 밀려 중복·오기재됐다.
+    회계항등식(기초=전기말) 역산으로 확정: 2번째 그룹 기초현금(302,547)이 3번째
+    그룹 기말현금과 정확히 일치. 예외교정 없으면 rank 충돌로 3개 기간 전부
+    R6 판정불가에 걸려 유실된다."""
+    if not _JEJU_BANK_2022_FY.exists():
+        return
+    lines = extract_report_lines(
+        _JEJU_BANK_2022_FY, rcept_no="20230314001271", corp_code="00148832",
+        report_fiscal_year=2022, report_fiscal_period="FY")
+    cf_c = [l for l in lines if l.statement == "CF" and l.basis == "consolidated"]
+    by_rank = {}
+    for l in cf_c:
+        if l.label_raw == "Ⅰ. 영업활동으로 인한 현금흐름":
+            by_rank[l.col_index] = l.value_won
+    assert by_rank == {0: 114_388_000_000, 1: 137_050_000_000, 2: -120_627_000_000}, by_rank
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

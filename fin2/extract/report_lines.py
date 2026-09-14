@@ -66,6 +66,13 @@ _Q1_CUM_BLANK_USE_3M_RCEPTS = frozenset({
 _R118_DUPLICATE_PERIOD_LABEL_FIX: dict[tuple[str, str, str], dict[int, int]] = {
     # (rcept_no, statement, basis) -> {position(라벨열 제외 0-based): 교정된 period_rank}
     ("20160516002967", "CF", "consolidated"): {1: 1},  # 제주은행 2016 Q1
+    # 제주은행 2022FY CF 연결(사용자 확인, "제주은행 보고서 단순 오타야") — 헤더가
+    # "제62기"(당기,정상) / "제62기"(전기, 원문에 제61기라고 썼어야 함) / "제61기"
+    # (전전기, 원문에 제60기라고 썼어야 함) 순으로 전부 한 기수씩 밀려 중복·오기재
+    # 됐다. 회계항등식(기초=전기말) 역산 확인: position2/3(2번째 "제62기" 그룹)의
+    # 기초현금(302,547)이 position4/5(3번째 그룹, "제61기")의 기말현금과 정확히
+    # 일치 → 2번째 그룹은 전기(rank1), 3번째 그룹은 전전기(rank2)로 교정.
+    ("20230314001271", "CF", "consolidated"): {2: 1, 3: 1, 4: 2, 5: 2},
 }
 
 

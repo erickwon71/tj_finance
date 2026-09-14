@@ -538,6 +538,32 @@ def test_r120_headerless_merge_group_prefers_last_position_when_allowed():
     ) == {}
 
 
+def test_r122_missing_gi_after_parenthetical_still_recognized():
+    """R122(2026-09-14, 레이크머티리얼즈 20180813000607·케이엠제약 20170814000310·
+    자비스 20180515000191 등 CF 별도 저조 이상치 스크리닝 중 발견) — "제N(당)기 반기"
+    류 표기에서 괄호 바로 뒤 "기"를 빠뜨리고 "제N(당) 반기"로 적는 오타가 서로 무관한
+    최소 3개 회사에 걸쳐 반복 확인됐다(같은 회계 소프트웨어/템플릿을 쓰는 소형사 군의
+    공통 결함으로 추정). "기"가 빠져도 뒤따르는 "반기"/"N분기" 자체가 이미 기간을
+    명확히 하므로 인정해야 한다."""
+    thead = "<TR><TH>과목</TH><TH>제2(당) 반기</TH><TH>제2(당) 반기</TH></TR>"
+    t = _table(thead, "<TR><TD>영업활동현금흐름</TD></TR>")
+    cols = parse_header_columns(t)
+    assert cols is not None
+    assert [(c.position, c.period_rank) for c in cols] == [(0, 0), (1, 0)]
+
+    thead_q = "<TR><TH>과목</TH><TH>제3(당) 1분기</TH><TH>제2(전) 1분기</TH></TR>"
+    t2 = _table(thead_q, "<TR><TD>영업활동현금흐름</TD></TR>")
+    cols2 = parse_header_columns(t2)
+    assert cols2 is not None
+    assert [(c.position, c.period_rank) for c in cols2] == [(0, 0), (1, 1)]
+
+    # 정상 표기("기" 있음)도 여전히 인식(회귀 없음).
+    thead_ok = "<TR><TH>과목</TH><TH>제2(당)기 반기</TH></TR>"
+    t3 = _table(thead_ok, "<TR><TD>영업활동현금흐름</TD></TR>")
+    cols3 = parse_header_columns(t3)
+    assert cols3 is not None and cols3[0].period_rank == 0
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

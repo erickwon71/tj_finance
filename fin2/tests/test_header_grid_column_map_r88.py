@@ -471,6 +471,25 @@ def test_r116_merge_group_duplicate_equal_values_accepted_when_allowed():
     ) == {}
 
 
+def test_r117_blank_note_header_column_does_not_abort_whole_table():
+    """R117(2026-09-14, 아주IB투자 20150817001086 CF 연결 실측) — 주석번호 참조열인데
+    헤더 셀 자체가 완전공란(`<TH/>` 자기닫힘, "주석"이라는 글자조차 없음)인 서식.
+    기존엔 "기간패턴도 주석표시도 없는 열"로 보고 표 전체를 폴백시켜(구버전 cum_map/
+    multicol/else 경로), CF 본체(영업/투자/재무활동현금흐름 등)가 통째로 유실됐다
+    (실측: 32행 중 30행). 헤더 스택이 완전공란이면 주석열과 동일하게 is_note=True 로
+    건너뛰어야 한다."""
+    thead = """
+    <TR><TH>과목</TH><TH></TH>
+        <TH COLSPAN="2">제 42 기 반기</TH>
+        <TH COLSPAN="2">제 41 기 반기</TH></TR>
+    """
+    t = _table(thead, "<TR><TD>영업활동으로인한현금흐름</TD></TR>")
+    cols = parse_header_columns(t)
+    assert cols is not None
+    assert cols[0].is_note is True and cols[0].position == 0   # 완전공란 열
+    assert [(c.position, c.period_rank) for c in cols[1:]] == [(1, 0), (2, 0), (3, 1), (4, 1)]
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

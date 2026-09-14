@@ -812,11 +812,21 @@ def _columns_from_grid(grid: list[list[str]]) -> Optional[list[HeaderColumn]]:
                 break
         position = col - label_cols
         if period_key is None:
-            if any(_NOTE_HEADER_RE.search(s) for s in stack):
+            # ★R117(2026-09-14, 아주IB투자 20150817001086 CF 연결 실측) — 주석번호
+            # 참조열인데 헤더 셀 자체가 완전공란(`<TH/>` 자기닫힘, "주석"이라는 글자조차
+            # 없음)인 서식이 있다. 기존엔 "기간패턴도 주석표시도 없는 열"로 보고 표 전체를
+            # 폴백(구버전 cum_map/multicol/else 경로로 떨어짐)시켰는데, 그 폴백이 이
+            # 표에서는 부정확해 "조정"/"순운전자본의변동" 단 2행만 건지고 나머지(영업/투자/
+            # 재무활동현금흐름 등 실제 CF 본체)는 전부 유실됐다. 헤더 스택이 **전부 빈
+            # 문자열**이면 애초에 기간패턴이 나올 수 없는 열이므로(주석열이든 진짜 빈
+            # 열이든, 어느 쪽이든 period 값을 못 낸다는 결론은 같다) 주석열과 동일하게
+            # is_note=True 로 건너뛴다 — `select_by_header_columns`가 이미 is_note 열을
+            # 무조건 skip 하므로 안전(값 판정에 영향 없음), 표 전체 유실을 막는다.
+            if any(_NOTE_HEADER_RE.search(s) for s in stack) or not any(s.strip() for s in stack):
                 columns.append(HeaderColumn(position=position, period_key="", period_rank=-1,
                                             is_note=True))
                 continue
-            return None  # 라벨열 뒤인데 기간패턴도 주석표시도 없는 열 — 모르는 모양, 폴백
+            return None  # 라벨열 뒤인데 기간패턴도 주석표시도 없는 열(내용 있음) — 모르는 모양, 폴백
         if period_key not in period_rank_of:
             period_rank_of[period_key] = len(period_rank_of)
         subtype = None

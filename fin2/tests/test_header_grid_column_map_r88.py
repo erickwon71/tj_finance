@@ -23,6 +23,7 @@ from lxml import etree  # noqa: E402
 
 from parser.xml.table_extractor import (  # noqa: E402
     parse_header_columns, select_by_header_columns, extract_rows, HeaderColumn,
+    drop_mismatched_granularity_columns,
 )
 
 
@@ -375,6 +376,61 @@ def test_merge_group_no_subtype_dash_placeholder_column_not_ambiguous():
     assert select_by_header_columns(
         cols, [500, 700], raw_amounts=["500", "700"]
     ) == {}
+
+
+def test_r115_drop_annual_reference_columns_from_interim_report():
+    """R115(2026-09-14, 형지I&C 20160516001490·드림시큐리티 20160511001294 실측) —
+    분기보고서 IS 표가 자사 분기 열("제41기 1분기" 3개월/누적) 뒤에 분기/반기 접미사
+    없는 순수 연도서수 참고열("제40기"·"제39기")을 추가로 붙이는 서식. "제40기 1분기"
+    (rank1)와 "제40기"(rank2)는 같은 회계연도인데 물리적으로 다른 rank 를 받아,
+    위치기반 `context_fiscal_year = report_fiscal_year - col_index` 공식이 rank2 를
+    엉뚱한 연도로 계산해버린다(실측: 2016년 보고서에서 rank2 가 2015 대신 2014로
+    계산됨) — 진짜 실적행이 전부 이 rank 로 밀려나 소실됐다. 분기·반기 보고서에서는
+    이 참고열을 통째로 배제하고 남은 rank 를 0부터 재부여해야 한다."""
+    thead = """
+    <TR><TH ROWSPAN="2">과목</TH>
+        <TH COLSPAN="2">제 41 기 1분기</TH>
+        <TH COLSPAN="2">제 40 기 1분기</TH>
+        <TH ROWSPAN="2">제 40 기</TH>
+        <TH ROWSPAN="2">제 39 기</TH></TR>
+    <TR><TH>3개월</TH><TH>누적</TH><TH>3개월</TH><TH>누적</TH></TR>
+    """
+    t = _table(thead, "<TR><TD>매출액</TD></TR>")
+    cols = parse_header_columns(t)
+    assert [(c.period_key, c.period_rank) for c in cols] == [
+        ("제 41 기 1분기", 0), ("제 41 기 1분기", 0),
+        ("제 40 기 1분기", 1), ("제 40 기 1분기", 1),
+        ("제 40 기", 2), ("제 39 기", 3),
+    ]
+    filtered = drop_mismatched_granularity_columns(cols, "Q1")
+    assert [(c.period_key, c.period_rank) for c in filtered] == [
+        ("제 41 기 1분기", 0), ("제 41 기 1분기", 0),
+        ("제 40 기 1분기", 1), ("제 40 기 1분기", 1),
+    ]   # 순수 연도서수 열("제 40 기"·"제 39 기") 배제, 남은 rank 0/1 은 gap 없이 유지
+    # 누적 열(포지션1/3)에 실적값이 있으면 이제 정확히 rank0/1 로 채택된다(예전엔
+    # 배제 전인 rank2/3 자리의 "제 40 기"/"제 39 기" 값이 엉뚱한 연도로 함께 살아
+    # 있었다 — 필터 후에는 그 두 열 자체가 애초에 없다).
+    assert select_by_header_columns(filtered, [None, 100, None, 200, 999, 888]) == {
+        0: 100, 1: 200,
+    }
+
+
+def test_r115_fy_report_untouched():
+    """FY 보고서는 애초에 전부 순수 연도서수 열이라 R115 필터가 아무것도 지우지
+    않아야 한다(조기반환)."""
+    thead = '<TR><TH>과목</TH><TH>제 41 기</TH><TH>제 40 기</TH></TR>'
+    t = _table(thead, "<TR><TD>매출액</TD></TR>")
+    cols = parse_header_columns(t)
+    assert drop_mismatched_granularity_columns(cols, "FY") == cols
+
+
+def test_r115_all_bare_annual_falls_back_to_original():
+    """분기 보고서인데도 표 전체가 순수 연도서수 열뿐이면(예: 구형 K-GAAP 서식) 다
+    지워 표 전체가 유실되면 안 된다 — 원본 그대로 폴백(R6, 모르면 확장하지 않는다)."""
+    thead = '<TR><TH>과목</TH><TH>제 43 기</TH><TH>제 42 기</TH></TR>'
+    t = _table(thead, "<TR><TD>매출액</TD></TR>")
+    cols = parse_header_columns(t)
+    assert drop_mismatched_granularity_columns(cols, "Q3") == cols
 
 
 if __name__ == "__main__":

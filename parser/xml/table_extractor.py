@@ -863,6 +863,68 @@ def parse_header_columns(table: etree._Element) -> Optional[list[HeaderColumn]]:
     return _columns_from_grid(grid)
 
 
+# ★R115(2026-09-14, 형지I&C 20160516001490·드림시큐리티 20160511001294 실측, 표 헤더
+# 정교화 지시로 발견) — 분기/반기 보고서의 IS 표가 자사 분기 열("제41기 1분기" 3개월/누적)
+# 뒤에 **참고용 연간 총액 열**("제40기"·"제39기", 분기/반기 접미사 없는 순수 연도서수)을
+# 추가로 붙이는 서식이 있다:
+#   [제41기 1분기(3개월|누적)] [제40기 1분기(3개월|누적)] [제40기] [제39기]
+#     rank0(당기 Q1)          rank1(전기 Q1)             rank2    rank3
+# "제40기 1분기"(rank1)와 "제40기"(rank2)는 **같은 회계연도**(2015)인데 물리적으로 다른
+# rank 를 받는다 — `_columns_from_grid`의 rank 부여가 "몇 번째로 처음 나온 고유 문구인가"
+# 순서일 뿐 실제 연도 간격을 모르기 때문이다. 그 상태로 `report_lines.py::_row_to_line`의
+# `context_fiscal_year = report_fiscal_year - col_index`(위치 기반 공식, "col_index 는
+# 몇 기 전"이라는 설계 전제)를 그대로 적용하면 rank2 가 2015 대신 2014로 계산된다(실측
+# 확정) — 진짜 실적행(매출액·영업이익·당기순이익 등)이 전부 이 잘못된 rank 로 밀려나고,
+# 우연히 값이 0/동일해 걸리지 않는 사소한 행(EPS·영업수익=0 등)만 rank0/1 에 남아 DB에
+# 껍데기만 남는다(그 필링들이 IS 항목수 이상치 저조구간에 잡힌 이유).
+#
+# 값을 억지로 재계산해 끼워맞추면(예: 텍스트의 "제N기" 서수를 파싱해 진짜 연도간격을
+# 추정) 짐작 금지 원칙에 걸리고, "제40기 1분기"와 "제40기"를 같은 rank 로 합치면 분기
+# 누적값과 연간 총액이 같은 col_index 에서 충돌한다(서로 다른 period_kind 인데 같은
+# 슬롯에 두 값이 들어가는 판정불가 상태). 그래서 이 열 자체를 **배제**한다 — 분기/반기
+# 보고서 본문(BS/IS/CF)에서 col_index 축은 "이 보고서와 같은 기간단위(분기/반기)"만
+# 다루는 것으로 스코프를 좁히고, 순수 연도서수(분기/반기 접미사 없는 "제N기") 참고열은
+# 통째로 제외한다. FY 보고서는 애초에 전부 순수 연도서수 열이라 이 필터가 아무것도
+# 지우지 않는다(조기 반환).
+_BARE_FY_ORDINAL_RE = re.compile(r"^제\s*\d+\s*(?:\([^)]{0,4}\))?\s*기$")
+
+
+def drop_mismatched_granularity_columns(
+    columns: Optional[list[HeaderColumn]], report_fiscal_period: str,
+) -> Optional[list[HeaderColumn]]:
+    """R115 — 분기/반기 보고서에서 분기·반기 접미사 없는 순수 연도서수 참고열을 배제하고,
+    남은 열의 period_rank 를 0부터 gap 없이 재부여한다(원래 rank 순서는 유지).
+
+    `columns`가 None 이면 그대로 None(호출측이 `parse_header_columns` 실패를 그대로
+    전파할 수 있도록 — 이 함수는 성공한 맵을 다듬을 뿐, 실패를 성공으로 바꾸지 않는다).
+    FY 보고서(`report_fiscal_period == "FY"`)는 전부 순수 연도서수 열이라 그대로 반환."""
+    if columns is None or report_fiscal_period == "FY":
+        return columns
+    keep_ranks: dict[int, int] = {}
+    result: list[HeaderColumn] = []
+    for hc in columns:
+        if hc.is_note:
+            result.append(hc)
+            continue
+        if _BARE_FY_ORDINAL_RE.match(hc.period_key.strip()):
+            continue   # 분기/반기 보고서 속 연간 참고열 — 배제(R115)
+        if hc.period_rank not in keep_ranks:
+            keep_ranks[hc.period_rank] = len(keep_ranks)
+        result.append(HeaderColumn(
+            position=hc.position, period_key=hc.period_key,
+            period_rank=keep_ranks[hc.period_rank], subtype=hc.subtype,
+            is_note=hc.is_note,
+        ))
+    if not keep_ranks:
+        # 배제하고 나니 기간열이 하나도 안 남았다 — 이 표의 전체 열이 순수 연도서수라는
+        # 뜻이라(예: 구형 K-GAAP 표가 분기 보고서에서도 "제43기"만 쓰는 서식), 이때는
+        # 애초의 R115 전제(이 보고서 자체 기간단위 열이 별도로 있다)가 안 맞는 것이다.
+        # 억지로 다 지우면 표 전체가 유실되므로(R6, 모르면 확장하지 않는다) 원본을
+        # 그대로 돌려준다 — 무필터 상태(기존 동작)로 안전 폴백.
+        return columns
+    return result
+
+
 # ★R113(2026-09-13, 사용자 원문대조로 발견 — 넥슨게임즈[전 엔에이치기업인수목적9호]
 # 00231354 20160513004375 CF 별도, 자비스[전 아이비케이에스제5호기업인수목적] 01174038
 # 20170811000259 CF 별도) — "-"(대시)는 한국 재무제표 표기 관행상 "이 항목 금액은

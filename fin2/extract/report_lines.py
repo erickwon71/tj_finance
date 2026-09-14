@@ -38,7 +38,7 @@ from parser.xml.table_extractor import (
     extract_rows, _split_label_amounts, _get_cells, _NUMBER_PATTERN, expand_table_grid,
     RowData, _header_rule_name, _is_fs_title_row, _detect_indent, _first_cell_indent,
     _table_has_comma_note_column, _table_has_note_header,
-    parse_header_columns, select_by_header_columns,
+    parse_header_columns, select_by_header_columns, drop_mismatched_granularity_columns,
 )
 from parser.common.amount_normalizer import detect_unit_declaration, parse_amount, normalize_account_name
 
@@ -570,6 +570,10 @@ def _emit_section_lines(
         # 없음, 모르는 헤더 모양)하면 그 3갈래로 그대로 폴백(무변경, 회귀 위험 0).
         # SCE 는 열이 기간이 아니라 자본 구성요소 축이라 대상 아님(기존과 동일 제외).
         header_cols = parse_header_columns(table) if statement in ("BS", "IS", "CF") else None
+        # R115 — 분기/반기 보고서 표에 붙은 순수 연도서수(분기/반기 접미사 없는 "제N기")
+        # 참고열은 이 보고서의 period_kind 와 다른 기간단위라 col_index 축에서 배제한다
+        # (위 함수 docstring 근거). FY 보고서는 조기반환이라 무영향.
+        header_cols = drop_mismatched_granularity_columns(header_cols, report_fiscal_period)
 
         if header_cols is not None:
             n_cols = max(c.position for c in header_cols) + 1

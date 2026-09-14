@@ -39,6 +39,7 @@ from parser.xml.table_extractor import (
     RowData, _header_rule_name, _is_fs_title_row, _detect_indent, _first_cell_indent,
     _table_has_comma_note_column, _table_has_note_header,
     parse_header_columns, select_by_header_columns, drop_mismatched_granularity_columns,
+    HeaderColumn,
 )
 
 # ★R116(2026-09-14, 사용자 원문대조로 확정) — 형지I&C 20160516001490·드림시큐리티
@@ -52,6 +53,37 @@ _Q1_CUM_BLANK_USE_3M_RCEPTS = frozenset({
     "20160516001490",  # 형지I&C 2016 Q1
     "20160511001294",  # 드림시큐리티 2016 Q1
 })
+
+# ★R118(2026-09-14, 사용자 원문대조로 확정 — "별도는 정상인데 연결이 원문 오타") —
+# 제주은행 20160516002967 CF 연결 표 헤더가 "제57기 1분기"를 물리적으로 다른 두 열에
+# **완전히 동일한 텍스트**로 중복 기재했다(구분 텍스트 전혀 없어 일반 규칙으로 판별
+# 불가). 회계항등식(기초=전기말) 역산으로 확인: 두 번째 열(position1)은 실제로는
+# "제56기 1분기"(전기, 2015 Q1)인데 원문 필자가 라벨을 잘못 복사했다 — 첫 열의
+# 기초현금이 3번째 열("제56기" 연간표)의 기말현금과 일치하고, 두 번째 열의 기초/기말
+# 현금은 "제56기"/"제55기" 연간표의 기초·기말과 정확히 이어진다(사용자 확인).
+# 텍스트만으로는 절대 구분 불가능해 일반 규칙으로 확장하지 않고, 이 rcept 의 이
+# statement×basis 조합 하나에만 한정한 예외 교정으로 처리한다.
+_R118_DUPLICATE_PERIOD_LABEL_FIX: dict[tuple[str, str, str], dict[int, int]] = {
+    # (rcept_no, statement, basis) -> {position(라벨열 제외 0-based): 교정된 period_rank}
+    ("20160516002967", "CF", "consolidated"): {1: 1},  # 제주은행 2016 Q1
+}
+
+
+def _apply_duplicate_period_label_fix(header_cols, rcept_no, statement, basis):
+    """R118 — 위 예외목록에 있는 (rcept, statement, basis)에서만 특정 position 의
+    period_rank 를 교정한다. 목록에 없으면 무변경(회귀 없음)."""
+    fix = _R118_DUPLICATE_PERIOD_LABEL_FIX.get((rcept_no, statement, basis))
+    if not fix or header_cols is None:
+        return header_cols
+    return [
+        hc if hc.position not in fix else HeaderColumn(
+            position=hc.position, period_key=hc.period_key,
+            period_rank=fix[hc.position], subtype=hc.subtype, is_note=hc.is_note,
+        )
+        for hc in header_cols
+    ]
+
+
 from parser.common.amount_normalizer import detect_unit_declaration, parse_amount, normalize_account_name
 
 from parser.xml.section_detector import (
@@ -582,6 +614,10 @@ def _emit_section_lines(
         # 없음, 모르는 헤더 모양)하면 그 3갈래로 그대로 폴백(무변경, 회귀 위험 0).
         # SCE 는 열이 기간이 아니라 자본 구성요소 축이라 대상 아님(기존과 동일 제외).
         header_cols = parse_header_columns(table) if statement in ("BS", "IS", "CF") else None
+        # R118 — 예외목록(rcept×statement×basis)에 있는 필링만 중복 라벨 열의 rank를
+        # 교정한다(원문 자체의 헤더 오타, 위 함수 docstring 근거). R115 필터보다 먼저
+        # 적용해야 그 필터가 교정된 rank 기준으로 안전하게 동작한다.
+        header_cols = _apply_duplicate_period_label_fix(header_cols, rcept_no, statement, basis)
         # R115 — 분기/반기 보고서 표에 붙은 순수 연도서수(분기/반기 접미사 없는 "제N기")
         # 참고열은 이 보고서의 period_kind 와 다른 기간단위라 col_index 축에서 배제한다
         # (위 함수 docstring 근거). FY 보고서는 조기반환이라 무영향.

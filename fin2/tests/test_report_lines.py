@@ -1015,6 +1015,30 @@ def test_misrouted_2011plus_falls_back_to_pre2015_detector():
     assert bs_rows, "별도 대차대조표(구K-GAAP 명칭)가 폴백으로 복구돼야 한다"
 
 
+_JEJU_BANK_2016_Q1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00148832_제주은행/quarter/2016/20160516002967.xml"
+)
+
+
+def test_r118_jeju_bank_duplicate_period_label_typo_corrected():
+    """R118(2026-09-14, 사용자 원문대조로 확정 — "별도는 정상인데 연결이 원문 오타") —
+    제주은행 20160516002967 CF 연결 표 헤더가 "제57기 1분기"를 물리적으로 다른 두
+    열에 완전히 동일한 텍스트로 중복 기재했다. 회계항등식(기초=전기말) 역산으로
+    두 번째 열이 실제로는 "제56기 1분기"(전기)임을 확인, 이 rcept×CF×연결 조합에만
+    한정한 예외 교정. 수정 전엔 두 값이 서로 달라 R6 판정불가로 행 전체 유실됐다."""
+    if not _JEJU_BANK_2016_Q1.exists():
+        return
+    lines = extract_report_lines(
+        _JEJU_BANK_2016_Q1, rcept_no="20160516002967", corp_code="00148832",
+        report_fiscal_year=2016, report_fiscal_period="Q1")
+    cf_c0 = [l for l in lines if l.statement == "CF" and l.basis == "consolidated"
+             and (l.col_index or 0) == 0]
+    ni = next((l for l in cf_c0 if l.label_raw == "Ⅰ. 영업활동으로 인한 현금흐름"), None)
+    assert ni is not None, "R118 교정 실패 시 판정불가로 행 전체가 유실된다"
+    assert ni.value_won == -48_817_000_000
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

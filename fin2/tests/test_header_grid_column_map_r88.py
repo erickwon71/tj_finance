@@ -433,6 +433,44 @@ def test_r115_all_bare_annual_falls_back_to_original():
     assert drop_mismatched_granularity_columns(cols, "Q3") == cols
 
 
+def test_r116_q1_cumulative_blank_uses_three_month_when_allowed():
+    """R116(2026-09-14, 사용자 원문대조로 확정) — 형지I&C 20160516001490 실측: Q1
+    보고서인데 "누적" 칸이 통째로 공란이고 "3개월" 칸만 채워져 있다("당기순이익"
+    행만 예외적으로 둘 다 채워 두 값이 동일함을 필자 스스로 증명). 예외목록으로
+    허용된 필링에서만 누적 공란 시 3개월 값을 대체 채택한다."""
+    cols = [HeaderColumn(position=0, period_key="제 41 기 1분기", period_rank=0, subtype="three_month"),
+            HeaderColumn(position=1, period_key="제 41 기 1분기", period_rank=0, subtype="cumulative")]
+    # 허용 안 하면(기존 호출자, 기본값) 여전히 대체 안 함 — 회귀 없음.
+    assert select_by_header_columns(cols, [100, None]) == {}
+    # 허용하면 누적 공란 시 3개월 값을 채택.
+    assert select_by_header_columns(
+        cols, [100, None], allow_three_month_as_cumulative=True,
+    ) == {0: 100}
+    # 누적 값이 실제로 있으면 여전히 누적이 우선(대체 발동 안 함).
+    assert select_by_header_columns(
+        cols, [100, 200], allow_three_month_as_cumulative=True,
+    ) == {0: 200}
+
+
+def test_r116_merge_group_duplicate_equal_values_accepted_when_allowed():
+    """R116 — 드림시큐리티 20160511001294 실측: 서브타입 구분 텍스트가 없는 병합군
+    (R114 else 분기)인데 두 물리열이 **완전히 같은 값**을 중복 기재했다(3개월=누적
+    등식을 필자가 그대로 두 칸에 반복). 예외목록 필링에서만 이 경우를 판정불가(R6)
+    대신 확정값으로 채택한다. 값이 서로 다르면(진짜 판정불가) 여전히 건너뛴다."""
+    cols = [HeaderColumn(position=0, period_key="제 3 기 1분기", period_rank=0, subtype=None),
+            HeaderColumn(position=1, period_key="제 3 기 1분기", period_rank=0, subtype=None)]
+    # 허용 안 하면(기본값) 기존 R6 판정불가 그대로 — 회귀 없음.
+    assert select_by_header_columns(cols, [100, 100]) == {}
+    # 허용 + 값이 같으면 채택.
+    assert select_by_header_columns(
+        cols, [100, 100], allow_three_month_as_cumulative=True,
+    ) == {0: 100}
+    # 허용해도 값이 서로 다르면(진짜 판정불가) 여전히 건너뜀.
+    assert select_by_header_columns(
+        cols, [100, 200], allow_three_month_as_cumulative=True,
+    ) == {}
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

@@ -40,6 +40,18 @@ from parser.xml.table_extractor import (
     _table_has_comma_note_column, _table_has_note_header,
     parse_header_columns, select_by_header_columns, drop_mismatched_granularity_columns,
 )
+
+# ★R116(2026-09-14, 사용자 원문대조로 확정) — 형지I&C 20160516001490·드림시큐리티
+# 20160511001294: Q1 보고서인데 IS 표 전체가 "3개월" 칸만 채우고 "누적" 칸은 통째로
+# 공란이다("당기순이익" 행만 예외적으로 둘 다 채워 두 값이 동일함을 필자 스스로 증명).
+# 1분기는 정의상 3개월=누적이라 원문 자체의 기재누락으로 판단되지만, 이 등식이 Q1
+# 에서만 성립하고(H1/Q3 는 다름) 실측도 이 두 필링에서만 확인됐으므로 R3/R85 원칙(누적
+# 공란 → 3개월로 대체 안 함)을 전사 정책으로 뒤집지 않고 이 예외목록으로만 좁힌다.
+# 상세 근거는 `parser/xml/table_extractor.py::select_by_header_columns` R116 docstring.
+_Q1_CUM_BLANK_USE_3M_RCEPTS = frozenset({
+    "20160516001490",  # 형지I&C 2016 Q1
+    "20160511001294",  # 드림시큐리티 2016 Q1
+})
 from parser.common.amount_normalizer import detect_unit_declaration, parse_amount, normalize_account_name
 
 from parser.xml.section_detector import (
@@ -621,8 +633,13 @@ def _emit_section_lines(
                 # R88 — 헤더 그리드로 확정된 위치→회계기간 맵으로 직접 선택(설계문서 §3-4).
                 # R113 — raw_amounts 를 같이 넘겨 순수 대시("-") 칸을 0으로 채택(원문
                 # 정책상 "-"=0, 결측 아님 — 위 select_by_header_columns 주석 참고).
+                # R116 — 예외목록에 있는 Q1 필링만 누적 공란 시 3개월 값을 대체 채택.
                 pairs = list(select_by_header_columns(
-                    header_cols, row.amounts, raw_amounts=row.raw_amounts).items())
+                    header_cols, row.amounts, raw_amounts=row.raw_amounts,
+                    allow_three_month_as_cumulative=(
+                        report_fiscal_period == "Q1"
+                        and rcept_no in _Q1_CUM_BLANK_USE_3M_RCEPTS),
+                ).items())
             elif cum_map is not None:
                 pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()
                          if pos < len(row.amounts) and row.amounts[pos] is not None]

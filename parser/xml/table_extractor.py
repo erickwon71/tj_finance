@@ -942,6 +942,7 @@ _DASH_ONLY_PATTERNS = frozenset(["-", "─", "—", "―"])
 
 def select_by_header_columns(
     columns: list[HeaderColumn], amounts: list, raw_amounts: Optional[list[str]] = None,
+    allow_three_month_as_cumulative: bool = False,
 ) -> dict[int, object]:
     """`HeaderColumn` 맵 + 위치보존 원시 `amounts`(`keep_all_amount_cells=True` 출력)
     → {period_rank: 값}. `_emit_section_lines`가 이 결과를 `col_index=period_rank`로
@@ -965,7 +966,18 @@ def select_by_header_columns(
     9행, CF 별도도 동형 붕괴). 그래서 이 분기에서는 먼저 **진짜 파싱값**(대시 아님)만으로
     후보를 추리고, 그 후보가 정확히 1개면 그 값을 채택한다(대시 열은 셈에서 제외). 진짜
     값이 하나도 없을 때만 — 즉 그룹 **전체**가 대시뿐일 때만 — 구조적 0(R113 취지)으로
-    채택한다. 진짜 값이 2개 이상이면 기존대로 판정불가(R6)로 건너뛴다."""
+    채택한다. 진짜 값이 2개 이상이면 기존대로 판정불가(R6)로 건너뛴다.
+
+    ★R116(2026-09-14, 사용자 원문대조로 확정 — 형지I&C 20160516001490, 드림시큐리티
+    20160511001294) — 위 두 Q1 보고서는 IS 표 전체가 "3개월" 칸만 채우고 "누적" 칸은
+    통째로 공란인데("당기순이익" 행만 예외적으로 둘 다 채워, 두 값이 완전히 동일함을
+    필자 스스로 보여준다), 1분기는 정의상 3개월=누적(연초부터 1분기 말까지 누적 =
+    1분기 3개월 그 자체)이라 원문 자체의 기재누락으로 판단된다. 이 등식은 Q1 에서만
+    항상 성립하고(H1/Q3 는 3개월≠누적) 이 두 필링에서만 실측 확인됐으므로, R3/R85
+    원칙(누적 공란 → 3개월로 대체 안 함)을 전사 정책으로 뒤집지 않고 `allow_three_
+    month_as_cumulative=True`일 때만(호출측이 예외 rcept 목록으로 좁혀서 넘김,
+    `fin2/extract/report_lines.py::_Q1_CUM_BLANK_USE_3M_RCEPTS`) 누적 공란 시 3개월
+    값으로 대체한다. 기본값 False — 넘기지 않는 기존 호출자는 회귀 없음."""
     def _amount_or_dash_zero(pos: int):
         if pos < len(amounts) and amounts[pos] is not None:
             return amounts[pos]
@@ -1000,6 +1012,12 @@ def select_by_header_columns(
                 chosen = cols
             pos = chosen[0].position
             value = _amount_or_dash_zero(pos)
+            if value is None and allow_three_month_as_cumulative and cum:
+                # R116 — 누적 열이 공란이고(cum 열은 존재하나 값이 없음) 예외목록으로
+                # 허용된 필링이면, 3개월 값을 그대로 누적 값으로 채택한다(Q1 한정 등식).
+                three_month = [c for c in cols if c.subtype == "three_month"]
+                if three_month:
+                    value = _amount_or_dash_zero(three_month[0].position)
             if value is not None:
                 result[rank] = value
         else:
@@ -1016,8 +1034,16 @@ def select_by_header_columns(
                 # → 구조적 0(R113 취지 유지, 넥슨게임즈 "기초 현금및현금성자산" 실측:
                 #   note 열 옆 병합군 2열 중 한쪽만 대시고 한쪽은 아예 빈칸).
                 result[rank] = 0
-            # 진짜값 0개+대시/공란 아닌 결측(진짜 결측) 또는 진짜값 2개 이상(판정불가, R6)
-            # 이면 이 rank 는 건너뜀.
+            elif (allow_three_month_as_cumulative and len(real_present) >= 2
+                  and len({amounts[c.position] for c in real_present}) == 1):
+                # R116 — 예외목록 필링: 서브타입 구분 텍스트가 아예 없는 병합군(드림
+                # 시큐리티류)인데 물리열들이 전부 **완전히 같은 값**을 중복 기재했다
+                # (3개월=누적 등식을 필자가 그대로 두 칸에 반복). 값이 같으면 R6 이
+                # 막으려는 "서로 다른 값 중 하나를 임의로 고르는" 판정불가 상황이
+                # 아니라 이미 확정된 값이므로 채택한다.
+                result[rank] = amounts[real_present[0].position]
+            # 진짜값 0개+대시/공란 아닌 결측(진짜 결측) 또는 진짜값 2개 이상(서로 다른
+            # 값, 판정불가, R6) 이면 이 rank 는 건너뜀.
     return result
 
 

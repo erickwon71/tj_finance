@@ -1338,6 +1338,40 @@ def test_r120_samsunglife_six_column_header_two_headerless_pairs_uses_last_as_cu
     assert rev == {14_198_956_000_000}, rev
 
 
+_SHINYOUNG_2022_FY = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00136721_신영증권/annual/2022/20220615000399.xml"
+)
+
+
+def test_r118_shinyoung_securities_duplicate_period_label_typo_corrected():
+    """R118 후속(2026-09-15, CF_separate 이상치 재검증 중 발견) — 신영증권
+    20220615000399: 별도 현금흐름표 헤더가 "제68기"(당기)/"제67기"(전기)/
+    "제66기"(전전기) 순이어야 할 걸 "제67기"를 2번 반복해 첫 그룹(당기)까지
+    전기와 같은 텍스트로 오기재했다(연결 현금흐름표는 68/67/66으로 정상 —
+    별도 표만의 오타). 수정 전엔 4개 물리열이 한 rank로 잘못 병합돼 "실값
+    2개"(당기+전기 혼재)로 R6 판정불가 → col0 43행 중 9행만 생존. 수정 후
+    회계항등식 두 개(영업+투자+재무+환율=순증감, 기초+순증감=기말) 모두
+    정확히 성립함을 확인."""
+    if not _SHINYOUNG_2022_FY.exists():
+        return
+    lines = extract_report_lines(
+        _SHINYOUNG_2022_FY, rcept_no="20220615000399", corp_code="00136721",
+        report_fiscal_year=2022, report_fiscal_period="FY")
+    cf_s = {l.label_raw: l.value_won for l in lines
+            if l.statement == "CF" and l.basis == "separate" and (l.col_index or 0) == 0}
+    assert len(cf_s) > 30, f"R118 예외목록 누락 시 9행 근처로 유실된다: {len(cf_s)}"
+    op = cf_s["I. 영업활동으로 인한 현금흐름"]
+    inv = cf_s["II. 투자활동으로 인한 현금흐름"]
+    fin = cf_s["III. 재무활동으로 인한 현금흐름"]
+    fx = cf_s["IV. 외화표시 현금및현금성자산의 환율변동효과"]
+    net = cf_s["V.현금및현금성자산의순증감(Ⅰ＋Ⅱ＋Ⅲ+Ⅳ)"]
+    begin = cf_s["VI. 기초 현금및현금성자산"]
+    end = cf_s["VII. 기말 현금및현금성자산"]
+    assert op + inv + fin + fx == net, (op, inv, fin, fx, net)
+    assert begin + net == end, (begin, net, end)
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

@@ -1197,6 +1197,29 @@ def test_r127b_hyundaicar_securities_footnote_misclassified_sce_no_longer_stored
     assert rev.value_won == 144_777_899_038
 
 
+_BIOSOLUTION_2016_Q3 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00560982_바이오솔루션/quarter/2016/20161114001893.xml"
+)
+
+
+def test_r128_biosolution_relative_term_digit_quarter_columns_separated():
+    """R128(2026-09-15, 4개 이상치 카테고리 재검증 중 발견) — 바이오솔루션
+    20161114001893 IS 별도. "당3분기"/"전3분기" 헤더에서 "당"/"전" 접두어가 무시된
+    채 둘 다 "3분기"로 병합돼(서수 브랜치가 "제" 없이 숫자부터 매치, R123 부작용)
+    R6 판정불가로 매출액 등 본체 행 대부분이 유실됐다(수정 전 3행만 남음: 법인세비용
+    0원·EPS 2개). table_extractor.py::_PERIOD_KEY_RE 수정으로 회복 확인."""
+    if not _BIOSOLUTION_2016_Q3.exists():
+        return
+    lines = extract_report_lines(
+        _BIOSOLUTION_2016_Q3, rcept_no="20161114001893", corp_code="00560982",
+        report_fiscal_year=2016, report_fiscal_period="Q3")
+    is_s = [l for l in lines if l.statement == "IS" and l.basis == "separate"]
+    assert len(is_s) > 10, f"R128 교정 실패 시 3행 근처로 유실된다: {len(is_s)}"
+    rev = {l.col_index: l.value_won for l in is_s if l.label_raw == "매출액"}
+    assert rev == {0: 2_103_893_158, 1: 1_510_914_353}, rev
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

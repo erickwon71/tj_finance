@@ -719,6 +719,36 @@ def test_r126_missing_opening_paren_typo_recognized():
     assert [c.period_rank for c in cols3] == [0, 1]
 
 
+def test_r128_relative_term_with_digit_quarter_not_merged_into_bare_ordinal():
+    """R128(2026-09-15, 4개 이상치 카테고리 재검증 중 발견) — "당N분기"/"전N분기"
+    (상대어+숫자+분기, 바이오솔루션 20161114001893 IS 별도 실측: "당3분기"/"전3분기")
+    가 서수 브랜치("제" 접두 옵션 허용, R123)에 "당"/"전" 접두어를 무시당하고 그냥
+    "3분기"만 매치돼 두 물리적으로 다른 기간이 같은 rank 로 병합되던 결함. 수정 전엔
+    당3분기·전3분기 둘 다 period_key="3분기" 로 같은 rank(0)에 겹쳐 R6 판정불가로
+    행 대부분(28개 중 25개)이 유실됐다."""
+    t = _table(
+        "<TR><TH>과목</TH><TH>주석</TH>"
+        "<TH COLSPAN=\"2\">당3분기</TH><TH COLSPAN=\"2\">전3분기(검토받지 않은 재무제표)</TH></TR>"
+        "<TR><TH>3개월</TH><TH>누 적</TH><TH>3개월</TH><TH>누 적</TH></TR>",
+        "<TR><TD>매출액</TD></TR>",
+    )
+    cols = parse_header_columns(t)
+    assert cols is not None
+    # 라벨열(과목) + 주석열(is_note) 다음 4개 실데이터 열 — 당3분기 2개(rank0), 전3분기
+    # 2개(rank1)로 반드시 분리돼야 한다(수정 전엔 전부 rank0 하나로 뭉개졌다).
+    real_cols = [c for c in cols if not c.is_note]
+    assert [c.period_rank for c in real_cols] == [0, 0, 1, 1], cols
+    assert real_cols[0].period_key != real_cols[2].period_key, \
+        "당3분기/전3분기가 같은 period_key 로 뭉개지면 안 됨"
+
+    # 회귀 없음 — 서수 없는 "당분기"/"전분기"(R123)와 "제N(당)기"류(R111~)는 그대로 인식.
+    t2 = _table("<TR><TH>과목</TH><TH>당분기말</TH><TH>전기말</TH></TR>",
+                "<TR><TD>자산총계</TD></TR>")
+    cols2 = parse_header_columns(t2)
+    assert cols2 is not None
+    assert [c.period_rank for c in cols2] == [0, 1]
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

@@ -1169,6 +1169,34 @@ def test_r127_vqai_sce_data_no_longer_stored_as_cf():
     assert ni.value_won == -458_649_411
 
 
+_HYUNDAICAR_SEC_2018_Q1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00137997_현대차증권/quarter/2018/20180515002185.xml"
+)
+
+
+def test_r127b_hyundaicar_securities_footnote_misclassified_sce_no_longer_stored_as_is():
+    """R127b(2026-09-15, R127 사각지대 후속발견) — 현대차증권 20180515002185 IS 연결.
+    R127은 "제목+데이터 한 표"만 가드했는데, 여기는 "제목표/데이터표 분리 서식"의
+    forward-scan 경로다: 각주 문장("...연결포괄손익계산서는...")이 title_text_owned
+    에 의해 본문 제목처럼 오분류돼(단순 텍스트 포함 매칭) title-only 취급되면, 그
+    다음 데이터표(SCE 자본변동표 요약, "지배주주지분/비지배지분/자본총계")가
+    IS 데이터로 잘못 연결된다. 수정 전엔 "2017.01.01(전기초)(주1)" 같은 자본
+    롤포워드 라벨이 statement='IS' 로 오염됐다(DB 직접대조로 확인)."""
+    if not _HYUNDAICAR_SEC_2018_Q1.exists():
+        return
+    lines = extract_report_lines(
+        _HYUNDAICAR_SEC_2018_Q1, rcept_no="20180515002185", corp_code="00137997",
+        report_fiscal_year=2018, report_fiscal_period="Q1")
+    is_c = [l for l in lines if l.statement == "IS" and l.basis == "consolidated"]
+    assert is_c, "R127b 교정 실패 시 IS_C 전체가 유실될 수 있다"
+    assert not any(l.label_raw.startswith("2017.01.01") for l in is_c), \
+        "SCE 자본 롤포워드 라벨(전기초)이 IS 에 새면 안 됨"
+    rev = next((l for l in is_c if l.label_raw == "I.영업수익" and l.col_index == 0), None)
+    assert rev is not None, "진짜 포괄손익계산서 데이터가 채택돼야 한다"
+    assert rev.value_won == 144_777_899_038
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

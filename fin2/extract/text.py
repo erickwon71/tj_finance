@@ -435,6 +435,16 @@ def _detect_body_statement_tables(root, fin_type: str,
                 if _table_has_data_rows(nxt):
                     if _looks_like_appropriation(nxt):
                         break              # 처분계산서 — 이 재무제표의 데이터가 아니다
+                    # ★R127b(2026-09-15, 현대차증권 20180515002185 IS_C 실측) — R127 은
+                    # "제목+데이터 한 표"만 가드했는데, 여기(제목표/데이터표 분리 서식)에도
+                    # 같은 오염 경로가 있다: 각주 문장("...연결포괄손익계산서는...")이 본문
+                    # 제목처럼 오분류돼(`classify_statement_in_body_section`은 텍스트 포함만
+                    # 봄) title-only 취급되면, 이 forward-scan 이 그 다음 데이터표를 "이
+                    # 재무제표의 데이터"로 잘못 연결한다 — 그 다음 표가 SCE(자본변동표
+                    # 요약, "지배주주지분/비지배지분/자본총계")면 SCE 데이터가 IS 로 샌다.
+                    # stmt=="SCE" 자신을 찾는 스캔은 건드리지 않는다(정상 목적).
+                    if stmt != "SCE" and _looks_like_equity_changes_header(nxt):
+                        continue           # 이 표는 SCE 데이터 — 계속 뒤에서 진짜 데이터를 찾는다
                     unit = title_unit if title_unit is not None else declared_unit(nxt)
                     groups.setdefault(section_code, []).append((nxt, unit, sec_kind))
                     break   # 첫 데이터표만 연결(재무제표 하나당 데이터표 하나)

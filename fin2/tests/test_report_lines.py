@@ -1118,6 +1118,57 @@ def test_r121_double_u_games_2015fy_consolidated_excluded():
         "별도는 무영향으로 정상 적재돼야 한다"
 
 
+_HANWHA_INVESTMENT_2020_Q1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00148610_한화투자증권/quarter/2020/20200515000970.xml"
+)
+_VQAI_2020_FY = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00980043_비큐AI/annual/2020/20210323000745.xml"
+)
+
+
+def test_r127_hanwha_investment_sce_data_no_longer_stored_as_cf():
+    """R127(2026-09-15, header-fallback 잔여 14건 재조사로 발견) — 한화투자증권
+    20200515000970 원문 자체가 "라. 연결현금흐름표"/"라. 현금흐름표" 캡션을 자본
+    변동표(SCE) 데이터 표 바로 앞에 잘못 붙여놨다(진짜 CF 데이터는 그 뒤 별도
+    무제목 표에 orphan 으로 남음). 표제만 보고 그대로 받아들이면 "2018.1.1(전전
+    기초)" 같은 자본 롤포워드 행이 statement='CF' 로 오염된다(수정 전 실측 확인).
+    표 내용(자본금/자본잉여금/이익잉여금 등 열이름)으로 걸러내 뒤에 있는 진짜
+    현금흐름표 데이터를 대신 채택해야 한다."""
+    if not _HANWHA_INVESTMENT_2020_Q1.exists():
+        return
+    lines = extract_report_lines(
+        _HANWHA_INVESTMENT_2020_Q1, rcept_no="20200515000970", corp_code="00148610",
+        report_fiscal_year=2020, report_fiscal_period="Q1")
+    cf = [l for l in lines if l.statement == "CF"]
+    assert cf, "R127 교정 실패 시 CF 전체가 유실될 수 있다"
+    assert not any("기초" in l.label_raw and "자본" not in l.label_raw and l.label_raw.startswith("20")
+                   for l in cf), "SCE 자본 롤포워드 라벨(예: 2018.1.1(전전기초))이 CF 에 새면 안 됨"
+    ni = next((l for l in cf if l.basis == "consolidated"
+               and l.label_raw == "I. 영업활동으로 인한 현금흐름" and l.col_index == 0), None)
+    assert ni is not None, "진짜 현금흐름표 데이터가 채택돼야 한다"
+    assert ni.value_won == 82_793_327_678
+
+
+def test_r127_vqai_sce_data_no_longer_stored_as_cf():
+    """R127(2026-09-15) — 비큐AI 20210323000745 도 동일 원문결함(별도 CF). 수정 전엔
+    "2019.01.01(전기초)" 같은 자본변동표 행이 CF_separate 로 오염됐다."""
+    if not _VQAI_2020_FY.exists():
+        return
+    lines = extract_report_lines(
+        _VQAI_2020_FY, rcept_no="20210323000745", corp_code="00980043",
+        report_fiscal_year=2020, report_fiscal_period="FY")
+    cf_s = [l for l in lines if l.statement == "CF" and l.basis == "separate"]
+    assert cf_s, "R127 교정 실패 시 CF_S 전체가 유실될 수 있다"
+    assert not any("전기초" in l.label_raw or "전기말" in l.label_raw for l in cf_s), \
+        "SCE 자본 롤포워드 라벨이 CF_S 에 새면 안 됨"
+    ni = next((l for l in cf_s if "영업활동으로인한현금흐름" in l.label_raw.replace(" ", "")
+               and l.col_index == 0), None)
+    assert ni is not None, "진짜 현금흐름표 데이터가 채택돼야 한다"
+    assert ni.value_won == -458_649_411
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

@@ -401,9 +401,18 @@ def _detect_body_statement_tables(root, fin_type: str,
             if _table_has_data_rows(tbl) and _looks_like_appropriation(tbl):
                 continue
             section_code = SECTION_CODE_OF[(basis, stmt)]
+            # ★R127(2026-09-15) — 표제(CF/IS/BS)와 표 내용(SCE 자본항목 열)이 어긋나면
+            # 표제를 믿지 않는다(원문 자체의 캡션 위치 오류, 위 `_looks_like_equity_
+            # changes_header` docstring 참고). "데이터 없음"으로 간주해 아래 제목표/
+            # 데이터표 분리 서식 분기로 넘겨, 뒤에 orphan 으로 남은 진짜 데이터표를
+            # 계속 찾게 한다 — 그 표에서마저 못 찾으면 보류(짐작보다 낫다, R6).
+            misattached_sce = (
+                stmt != "SCE" and _table_has_data_rows(tbl) and _looks_like_equity_changes_header(tbl)
+                and not (_looks_like_balance_sheet(tbl) or _looks_like_income_statement(tbl)
+                         or _looks_like_cashflow(tbl)))
             # sec_kind 를 그대로 들고 간다(basis 에서 되유도하지 않음) — 적재된 행의
             # section_kind 는 **실제로 귀속된 섹션**이어야 감사에 쓸 수 있다.
-            if _table_has_data_rows(tbl):
+            if _table_has_data_rows(tbl) and not misattached_sce:
                 # 정상 서식: 제목+데이터가 한 표(단위는 그 표가 명시 선언한 것만 신뢰).
                 unit = declared_unit(tbl)
                 # R4-2: 병합표(owned_merged_title 로 확정된 표)만 표 **내부** 메타행에서
@@ -942,6 +951,36 @@ def _looks_like_cashflow(tbl) -> bool:
         if _CF_ROW_RE.search(label):
             return True
     return False
+
+
+# ★R127(2026-09-15, 잔여 header-fallback 14건 재조사로 발견) — 자본변동표(SCE) 데이터
+# 열이름(자본금/자본잉여금/이익잉여금 등)이 **첫 데이터행**에 3개 이상 동시 등장하면
+# SCE 로 본다. THEAD 가 없는 서식은 이 첫 행이 사실상의 헤더 역할을 한다.
+_SCE_COLUMN_LABELS_RE = re.compile(
+    r"자본금|자본잉여금|이익잉여금|자본조정|기타포괄손익누계액|비지배지분|주식발행초과금")
+
+
+def _looks_like_equity_changes_header(tbl) -> bool:
+    """표의 첫 데이터행이 자본변동표(SCE) 특유의 자본항목 열이름 3개 이상을 동시에
+    담고 있으면 True.
+
+    실측(한화투자증권 20200515000970 CF_C, 비큐AI 20210323000745 CF_S) — 원문 자체가
+    "라. 연결현금흐름표"/"라. 현금흐름표" 캡션을 **엉뚱하게 SCE 데이터 표 바로 앞에**
+    붙여놓아(진짜 CF 데이터는 그 뒤 별도 무제목 표에 orphan 으로 남음), 표제만 보는
+    분류기가 SCE 데이터를 CF 로 그대로 적재했다 — table_seq=0 에 "2018.1.1(전전기초)"
+    같은 자본 롤포워드 행이 CF statement 로 오염된 것을 report_lines 직접 대조로 확인.
+    표제가 아니라 **표 자신의 내용**으로 SCE 를 가려낸다(R6 판정불가 방지 정신과 동일).
+
+    ★첫 두 행을 합쳐서 본다 — 비큐AI 20210323000745 CF_S 실측: 열이름이 한 행이
+    아니라 두 행에 걸쳐 나뉘어 있다("자본금/기타불입자본/이익잉여금(결손금)/합계"
+    1행 + "주식발행초과금/감자차(손)익/자본조정" 2행, THEAD/COLSPAN 없는 순수 TR
+    나열이라 한 행만 보면 2개만 걸려 임계값(3) 미달이었다)."""
+    rows = table_direct_rows(tbl)
+    if not rows:
+        return False
+    cells = _get_cells(rows[0]) + (_get_cells(rows[1]) if len(rows) > 1 else [])
+    joined = "".join(cells)
+    return len(_SCE_COLUMN_LABELS_RE.findall(joined)) >= 3
 
 
 def _build_synthetic_table(rows: list) -> etree._Element:

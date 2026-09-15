@@ -6430,6 +6430,510 @@ AND report_type IN (annual,half,quarter)`로 후보를 뽑아 DART에 XML이 지
 
 ---
 
+## R105. `standard_financials.consolidation_status` VARCHAR(20) 길이초과로 std_v3
+재빌드 5-shard 전체 즉시 크래시 (2026-09-13)
+
+**배경**: Track1(2015+) 연결비대상 확정 컬럼(`consolidation_status`)을 std_v3
+재빌드에 반영하려는데, 사용자가 실행한 5-shard가 **전부 첫 행에서 즉시 실패**했다.
+
+**원인**: 컬럼을 `VARCHAR(20)`으로 선언했는데 실제 값 `'no_subsidiary_confirmed'`가
+24자라 모든 INSERT가 `StringDataRightTruncation`으로 실패(partial write 없음).
+
+**수정**: `VARCHAR(30)`으로 확장(마이그레이션 2건 — `standard_financials`가 이
+컬럼에 의존하는 뷰 `standard_financials_verified`를 CASCADE로 지웠다가 재생성).
+
+**검증**: pytest 재확인(무관 기존 실패 3건 그대로, 회귀 0). 재빌드는 이 수정
+이후 재실행해서 완료.
+
+---
+
+## R106. `fin2/extract/consolidation_evidence.py` — IFRS1109/1115 소급재작성
+각주가 "연결비대상" 선언으로 오매칭 (2026-09-13)
+
+**배경**: 사용자 질문("report_lines에 연결이 없는데 데이터가 들어있는 케이스가
+있을 수 있어?")으로 발견 — `consolidation_evidence='no_consolidated_fs_track1'`
+확정 18,230건 중 52건이 실제로는 `report_lines`에 연결 BS/IS/CF 데이터를 갖고
+있었다.
+
+**원인**: `작성\s*(?:하지|치)\s*않` 패턴이 너무 느슨해 "전기 실적은 이를
+소급적용하여 재작성하지 않았습니다"(IFRS1109/1115 도입 시 소급재작성 안 함을
+알리는 흔한 각주, 연결 존재여부와 무관 — 웅진씽크빅 00628189 실측)에 걸렸다.
+
+**수정**: `재무제표[^.<]{0,15}작성\s*(?:하지|치)\s*않`로 좁혀 "재무제표"가
+바로 앞(≤15자)에 붙어야만 매칭하도록 함.
+
+**검증**: 회귀테스트 9건 추가·전체 pass. 재검증 결과 52건 중 41건은 여전히
+확정 유지(별개 원인, R107 이하 참고), 11건은 미확정으로 정정.
+
+---
+
+## R107. 같은 파일 — "OO재무제표를 재작성하지 않았습니다" 문장구조 잔여
+오탐 28건 (2026-09-13, R106 잔여 재검증)
+
+**원인**: R106 수정 후에도 "재무제표"가 "재작성" **바로 앞**에 오는 문장구조
+("OO재무제표를 재작성하지 않았습니다")는 R106의 15자 근접조건을 그대로 통과해
+여전히 오매칭됐다(28건/11개사: 세동·에스피지·현대에버다임·파워로직스 등).
+
+**수정**: 문장구조 자체를 배제하는 조건 추가.
+
+**검증**: 41건 재검증에서 이 유형 28건 해소.
+
+---
+
+## R108. 같은 파일 — SPAC 합병보고서에서 SPAC 껍데기 법인의 "해당사항 없음"
+선언이 실제 합병대상 법인 전체에 오적용 (2026-09-13)
+
+**배경**: R107 이후 잔여 13건 원문대조 중 발견(애니플러스·밸로프·SFA넥셀).
+
+**원인**: SPAC 합병보고서는 문서 안에 SPAC 껍데기 법인 자신의 "연결재무제표
+해당사항 없음" 선언이 있는데, 이게 실제 합병대상 법인(실사업 보유, 연결
+작성 대상)에까지 잘못 적용됐다.
+
+**수정**: "[기업인수목적]" 브래킷 뒤 다음 브래킷부터 재스캔하도록 스코프 조정.
+
+---
+
+## R109. 같은 파일 — 비교연도(전기)만 지칭하는 결측선언이 당기 확정
+근거로 오매칭 (2026-09-13)
+
+**배경**: YBM넷(00307222) 20220323000611 실측 — "비교표시되는 제N(전)기는
+연결없음"이라는, **전기만** 지칭하는 서술이 **당기** 연결비대상 확정 근거로
+잘못 채택됐다.
+
+**수정**: `_looks_like_prior_year_only()`(가칭) — 매칭 직전 지역문맥에 당기/전기
+표지가 있는지로 가려내는 가드 추가. R108(SPAC 껍데기 블록 건너뛰기)을 먼저
+적용한 뒤 이 가드를 적용하는 순서.
+
+---
+
+## R110. 같은 파일 — 순번↔회계연도 매핑이 불가능한 케이스(SGA솔루션즈)를
+영구 예외로 기록 (2026-09-13)
+
+**배경**: "제1기[2년전]만 없음"류 서술은 순번과 실제 회계연도의 매핑 정보가
+문서에 없어 일반 규칙화가 불가능했다.
+
+**처리**: 사용자가 DART 원문의 당기 자산총계를 직접 확인해 "당기 연결·별도
+둘 다 실데이터 존재"를 확정 → 텍스트판정을 건너뛰는 영구 예외로 코드에
+하드코딩(rcept 2건).
+
+**같은 세션 후속**: D유형(유진로봇 4건·디어유 1건·CSA코스믹 1건) —
+한 표 안에서 열마다 basis가 다른데 파서가 표 전체를 'consolidated'로만
+태깅해 당기(실제로는 연결재무제표 없음) 데이터가 중복 적재된 별개 결함.
+사용자가 DART 원문 직접 확인 후 "연결 불필요, 삭제 확정"으로 report_lines
+1,519행 삭제(`scripts/delete_consolidation_r_fixes_2026-09-13.py`). 아이퀘스트
+1건은 원문이 "개별재무제표를 연결란에도 그대로 기재"라고 명시 — 버그 아님.
+
+**검증(R105~R110 종합)**: 회귀테스트 4건 추가, pytest 992 passed. 재백필+
+std_v3 재빌드 후 41건 재현쿼리 → 1건(아이퀘스트, 의도된 예외)만 남아 완전
+종결. 상세: `docs/plans/consolidation_scope_confirmation_design_2026-09-13.md`.
+
+---
+
+## R111. `parser/xml/table_extractor.py`/`fin2/extract/text.py` — 글자당
+공백("3 개 월", "누  적") 서브헤더 정규식 미매칭 (2026-09-13)
+
+**원인**: `_SUBTYPE_CUM_RE`/`_SUBTYPE_3M_RE`(및 `text.py`의 동형 사본
+`_CUM_RE`/`_THREE_M_RE`)가 "3개월" 한 칸만, "누적" 공백 자체를 불허해
+장식체 서브헤더("3 개 월", "누  적")를 인식하지 못했다 — 파워넷(00231354)
+20150515001597 실측: 당기누적 25,781,758,600 대신 무관한 제22기 열
+82,662,901,775을 엉뚱하게 채택.
+
+**수정**: 두 파일 양쪽 정규식에 글자당 공백(`\s*`) 허용 추가(같은 문서에 두
+벌 존재 — 동시 수정 필요).
+
+---
+
+## R112. 같은 파일 — 글자당 공백 주석헤더("주  석") 인식 실패로 헤더그리드
+전체 폴백 (2026-09-13)
+
+**배경**: 한양증권(00162416) CF_separate 항목수 분포 이상치 조사 중 발견.
+
+**원인**: `_NOTE_HEADER_RE`가 없어(또는 공백 미허용) "주  석" 헤더열을 못
+알아채 `parse_header_columns()`가 None을 반환, 구버전 cum_map/multicol/else
+폴백으로 떨어졌다.
+
+**수정**: `_NOTE_HEADER_RE` 도입/확장.
+
+---
+
+## R113. 같은 파일 `select_by_header_columns()` — 순수 대시("-") 셀을 구조적
+0으로 채택하는 `raw_amounts` 파라미터 도입 (2026-09-13)
+
+**배경**: 넥슨게임즈(전 엔에이치기업인수목적9호) 사용자 원문대조로 발견.
+
+**원인**: `amounts[pos]`가 None인 칸이 "진짜 결측"인지 "원문이 명시적으로
+'-'(공란 아님, 0의 의미)라고 쓴 것"인지 구분이 안 됐다 — DART 관행상 순수
+대시는 결측이 아니라 0을 의미.
+
+**수정**: `raw_amounts`(원시 텍스트)를 같이 넘겨, `amounts[pos]`가 None인 칸의
+원시 텍스트가 순수 대시뿐이면 0으로 채택. `parse_amount()` 자체는 불변(게이트
+계층에서만 처리).
+
+---
+
+## R114. 같은 함수 — R113 직후 회귀: 무표지 병합군(COLSPAN 다중열)에서
+구조적 대시 채택이 실제 값을 삼킴 (2026-09-14)
+
+**배경**: 케이엠제약(20160516000811) IS/CF 별도 원문대조로 발견. SPAC 합병
+첫 사업연도 표는 "제1(당)기" 하나의 라벨이 COLSPAN=2로 물리열 2개를 덮으면서
+(subtype 구분 텍스트 없음) 그중 **한 열 전체가 구조적으로 순수 대시**고 실제
+값은 나머지 한 열에만 있었다("영업비용" 열1="-" 열2="(21,402,210)"). R113이
+열1의 대시도 0으로 채택해버리면 두 열 다 "값 있음"이 돼 R6 판정불가로 행
+전체가 유실됐다(IS 별도 11행 중 9행, CF 별도도 동형 붕괴).
+
+**수정**: 먼저 **진짜 파싱값**(대시 아님)만으로 후보를 추리고, 정확히 1개면
+그 값을 채택. 진짜 값이 하나도 없을 때만(그룹 **전체**가 대시뿐일 때만) 구조적
+0(R113 취지)으로 채택. 진짜 값이 2개 이상이면 기존대로 판정불가(R6).
+
+---
+
+## R115. `parser/xml/table_extractor.py::drop_mismatched_granularity_columns()`
+(신규) — 분기/반기 표의 연간참고열이 엉뚱한 회계연도로 오매핑 (2026-09-14)
+
+**원인**: 분기/반기 보고서 IS/BS/CF 표가 자사 분기열(제N기 1분기 3개월/누적)
+뒤에 분기/반기 접미사 없는 순수 연도서수 참고열(제(N-1)기/제(N-2)기)을
+붙이는 서식에서, 위치기반 `context_fiscal_year` 공식이 그 참고열을 엉뚱한
+연도로 계산해 진짜 실적행이 잘못된 `col_index`로 밀려났다.
+
+**수정**: `drop_mismatched_granularity_columns()` 신설 — 분기/반기 보고서에서
+순수 연도서수 열을 배제하고 남은 rank를 재부여.
+
+---
+
+## R116. `fin2/extract/report_lines.py::_Q1_CUM_BLANK_USE_3M_RCEPTS` — Q1
+보고서 "3개월=누적" 등식을 이용한 누적란 공백 대체 (예외목록, 2026-09-14~15)
+
+**배경**: 형지I&C(20160516001490)·드림시큐리티(20160511001294) 2016 Q1
+보고서는 IS 표 전체가 "3개월" 칸만 채우고 "누적" 칸은 공란이거나(형지) 서브타입
+구분 없이 두 물리열에 완전히 같은 값을 중복 기재(드림)한다 — 두 필링 모두
+"당기순이익" 행이 두 칸에 동일값을 채워 **1분기는 정의상 3개월=누적**이라는
+등식을 필자 스스로 증명한다.
+
+**설계 결정(R6 유지)**: 이 등식이 Q1에서만 성립하고(H1/Q3는 다름) 실측도
+소수 필링에서만 확인되므로, "누적 공란 → 3개월로 대체 안 함"이라는 전사
+원칙을 뒤집지 않고 **예외목록으로만 좁힌다**. `select_by_header_columns()`에
+`allow_three_month_as_cumulative` 옵션 추가, `report_lines.py`가
+`report_fiscal_period=="Q1" and rcept_no in _Q1_CUM_BLANK_USE_3M_RCEPTS`일 때만
+전달.
+
+**예외목록 누적 이력**: 형지I&C·드림시큐리티(원조) → 조광페인트
+(20170512001930)·자이글(20190527000008, 2026-09-14 후속 실측, 동일 패턴) →
+평화산업(20180515002398, 2026-09-15, IS_separate 이상치 재검증 중 발견 — 별도
+손익계산서만 이 패턴, 연결은 정상이라 필링 하나만의 기재누락).
+
+---
+
+## R117. `parser/xml/table_extractor.py::_columns_from_grid()` — 완전공란
+주석헤더열이 헤더그리드 전체를 폴백시키던 결함 (2026-09-14)
+
+**배경**: 아주IB투자(20150817001086) CF 연결 실측.
+
+**원인**: 주석번호 참조열의 `<TH/>`가 "주석"이라는 글자조차 없이 완전공란
+(자기닫힘)인 서식에서, 기존엔 "기간패턴도 주석표시도 없는 열"로 판정해
+`parse_header_columns()` 전체가 None을 반환 → 구버전 cum_map/multicol/else
+폴백으로 떨어져 CF 본체(영업/투자/재무활동현금흐름 등)가 32행 중 30행
+유실됐다.
+
+**수정**: 헤더 스택이 전부 빈 문자열이면(주석열이든 진짜 빈 열이든 "period
+값을 못 낸다"는 결론은 같음) 주석열과 동일하게 `is_note=True`로 건너뛴다
+— `select_by_header_columns`가 이미 is_note 열을 무조건 skip하므로 안전.
+
+---
+
+## R118. `fin2/extract/report_lines.py::_R118_DUPLICATE_PERIOD_LABEL_FIX` —
+원문 헤더 자체가 기간라벨을 중복 오기재한 필링들의 개별 교정 (예외목록,
+2026-09-14~15)
+
+**공통 패턴**: 표 헤더가 서로 다른 두(또는 세) 물리열에 **완전히 동일한
+기간라벨 텍스트**를 중복 기재(원문 자체의 오타). 구분 텍스트가 전혀 없어
+일반 규칙으로는 판별 불가 — 매번 **회계항등식 역산**(기초현금=전기말현금 등)
+또는 사용자 원문대조로 올바른 rank를 확정하고, `(rcept_no, statement, basis)
+→ {position: 교정된 rank}` 형태로 그 필링 하나에만 한정한 예외 교정을
+`_apply_duplicate_period_label_fix()`가 적용한다.
+
+**목록**:
+- 제주은행(20160516002967) CF 연결, 2016 Q1 — "제57기 1분기" 2번 반복. 첫
+  열의 기초현금이 3번째 열("제56기" 연간표)의 기말현금과 일치.
+- 제주은행(20230314001271) CF 연결, 2022FY 후속(3중 중복) — "제62기"×2/
+  "제61기" 순으로 한 기수씩 밀려 중복.
+- 이노시뮬레이션(20200330004128) IS 별도, 2019FY — "제19기" 2번 반복(같은
+  필링 BS 별도는 정상이라 IS만의 오타로 확정).
+- DSC인베스트먼트(20230515002273) IS 별도, 2023 Q1 — "제11(당)기 1분기"
+  COLSPAN=2 그룹째로 2번 반복. 두 그룹 값이 서로 다름(영업수익 두 값)으로
+  확정.
+- 이랜시스(20190401000391) CF 별도, 2018FY — "제1(당)기" 2번 반복(설립
+  첫해 신설법인). 2번째 열 기말현금이 1번째 열 기초현금과 일치 → 전기로 교정.
+- 신영증권(20220615000399) CF 별도, 2022FY(2026-09-15) — "제68기"(당기)/
+  "제67기"(전기)/"제66기"(전전기) 순이어야 할 걸 "제67기" 2번 반복해 첫
+  그룹(당기)까지 전기와 같은 텍스트로 오기재. 연결 현금흐름표는 68/67/66으로
+  정상(별도 표만의 오타). 회계항등식 2개(영업+투자+재무+환율=순증감,
+  기초+순증감=기말) 검증.
+
+---
+
+## R119. `parser/xml/table_extractor.py::_columns_from_grid()` — 같은 셀 안
+괄호 서브타입 접미사("(3개월)"/"(누적)") 미인식 (2026-09-14)
+
+**배경**: 푸른저축은행(20150213000097) IS 별도 실측.
+
+**원인**: THEAD 없는 구서식은 헤더가 한 줄뿐이라 서브타입 표시가 별도
+스택행이 아니라 **같은 셀 안에서 기간 텍스트 바로 뒤 괄호**로 붙는다
+("제 45기 반기(3개월)"/"제 45기 반기(누적)"). 기존 로직은 매치된 셀 이후의
+다른 스택행만 subtype_text로 모아, 매치된 셀 자신의 잔여 텍스트(괄호 부분)가
+버려져 두 물리열 다 subtype=None으로 남았다 — 결과: 두 열 다 "값 있음"이 돼
+R6 판정불가로 IS 24행 중 23행 유실.
+
+**수정**: 매치된 셀 자신의 잔여 텍스트(정규식 매치 끝 이후)도 subtype_text에
+포함.
+
+---
+
+## R120. `parser/xml/table_extractor.py::select_by_header_columns()`
+`prefer_last_of_two_as_cumulative` — 무표지 2열 병합군, 두 열 다 실값이고
+서로 다른 경우 (예외목록, 2026-09-14~15)
+
+**배경**: 웹케시(20180814001946)·우리기술투자(20200813000621) H1 IS 표 —
+같은 라벨("제20기 반기" 등)을 구분 텍스트 전혀 없이 물리적으로 다른 2열에
+반복하는데, 두 열 다 실제 값이고 서로 다르다(H1이라 3개월≠누적, R116과
+달리 "값이 같을 때만 통과"가 안 통하는 진짜 판정불가 상황).
+
+**설계 결정(R6 유지)**: DART 관행상 무표지 2열은 항상 [3개월 먼저, 누적
+나중] 순서 — 산수로 직접 검증(Q1 당기순이익 + 이 표 1번째 열 = 이 표 2번째
+열, 웹케시·우리기술투자 둘 다 확인)했지만 일반 규칙화 대신 예외목록으로만
+좁힌다.
+
+**예외목록 누적 이력**: 웹케시·우리기술투자(원조) → 삼성생명(20150817000794,
+2015 H1, 2026-09-15 후속) — 연결 포괄손익계산서가 "제N(당)반기"/"제N(전)반기"
+무표지 COLSPAN=2 병합군 2개 + 단일 FY열 2개, 총 6열인 이례적 헤더. 당반기
+병합군 뒷열(14,198,956백만원)이 "요약연결재무정보" 표의 같은 기간 값과
+정확히 일치함을 대조 확인. 같은 회사 앞뒤 20여 개 필링(2013~2017)은 전부
+정상이라 이 필링 하나만의 이례적 서식.
+
+---
+
+## R121. `fin2/extract/report_lines.py::_MANUAL_NO_CONSOLIDATED_FS_RCEPTS` —
+문서에 물리적으로 표는 있으나 그 값이 이 필링의 당기/전기 것이 아닌 케이스
+(예외목록, 2026-09-14~15)
+
+**배경**: 더블유게임즈(20160520000534, 2015FY) — 사용자 확인("해당 기간
+3,4기는 연결대상이 아니야... 삭제하고 연결비대상으로 표시해"). 문서의
+"2. 연결재무제표" 섹션에 물리적으로 표가 있어(유진로봇류 "완전공백 섹션"과
+다름) 정상 추출 경로를 그대로 타지만, 그 값은 이 필링 당기(제4기)·전기
+(제3기) 것이 아니라 지주사 전환 이전 시절인 **제2기(2013) 시점의 옛 자본
+변동표/EPS 수치**뿐이다(SCE 전 col_index가 "2013.01.01"/"2013.12.31" 날짜
+라벨, IS는 EPS 2줄만).
+
+**처리**: "빈 섹션"이 아니라서 `_detect_body_statement_tables`가 정상적으로
+찾아버리고, 값 자체도 억지로 재계산할 근거가 없어(제2기 수치를 당기/전기로
+재배정할 방법이 없음) 연결(_C) 섹션 코드를 통째로 스킵 — 별도(_S)는 무영향.
+
+**목록**: 정정본(20160520000534) + 같은 회사·같은 기간의 원본(정정 전,
+2026-09-15 후속 — 4개 이상치 카테고리 재검증 중 원본도 report_lines에
+적재돼 IS_consolidated=2건으로 걸림을 발견, 동일 처리).
+
+---
+
+## R122. `parser/xml/table_extractor.py::_PERIOD_KEY_RE` — 괄호 뒤 "기"
+탈락 오타("제N(당) 반기"류) (2026-09-14)
+
+**배경**: CF_separate 저조 이상치 스크리닝 중 발견 — "제N(당)기 반기"/
+"제N(당)기 1분기"류 표기에서 괄호 바로 뒤 "기"를 빠뜨리고 "제N(당) 반기"/
+"제N(당) 1분기"로 적는 오타가 서로 무관한 최소 3개 회사(레이크머티리얼즈·
+케이엠제약·자비스)에 걸쳐 반복 확인 — 같은 회계 SW/템플릿을 쓰는 소형사
+군의 공통 결함으로 추정, 일반 규칙로 확장.
+
+**수정**: "기" 뒤 "분기"/"반기" 접미사만 옵션이던 것을, "기" 자체도 옵션화.
+
+---
+
+## R123. 같은 파일 — 증권사류 헤더 4가지 미인식 변형 (2015+ 전수 폴백
+스캔 후속, 2026-09-14)
+
+**배경**: `scripts/scan_header_fallback_2015plus_2026-09-14.py`로 2015+ 전수
+스캔(표 559,701건 중 폴백 1,333건, 0.24%) — 상위 다수가 증권사(유안타증권·
+NH투자증권·다올투자증권·대신증권 등)에 몰려있었다.
+
+**수정**: `_PERIOD_KEY_RE`에 4가지 대안 추가 — ① "2015회계연도 1분 기"(제
+접두 없음, 연도+회계연도, 글자당 공백) 등 증권업 특유 표기 변형.
+
+---
+
+## R124. (시도했다가 되돌림) 명세/소계 COLSPAN=2 중복 서브타입 열의 전사
+일반 규칙화 — SB성보 회귀로 폐기, R125로 대체 (2026-09-14~15)
+
+**배경**: 명세/소계(1열=세부항목, 2열=subtotal) COLSPAN=2 구조를 전사 규칙로
+일반화하려는 첫 시도.
+
+**폐기 사유**: SB성보(2003Q3, pre-2015 K-GAAP)에서 이 규칙을 적용하면
+조용히 틀린 값을 내는 회귀가 발생함을 `test_hyphen_negative_gate_r31.py`로
+발견 — 이 명세/소계 서식과 pre-2015 K-GAAP의 비슷한 모양 서식이 **헤더
+텍스트만으론 구분 불가**. **되돌림.** R125로 스코프를 좁혀 재도입.
+
+---
+
+## R125. `parser/xml/table_extractor.py`/`fin2/extract/report_lines.py` —
+명세/소계 중복 서브타입 열 해석을 **2015+ 전용**으로 스코프 좁혀 재도입
+(2026-09-15)
+
+**배경**: 현대해상·다올투자증권·대신증권 등 2015+ 폴백 스캔 후속 실측 —
+2015+ 보험/증권사 서식은 COLSPAN=2 하위열이 "명세행(1열)/소계행(2열)"로
+역할이 고정돼 같은 행에서 둘 다 채워지는 일이 없음을 확인(사용자: "3개월
+아래에 2열로 되어서 1열에 세부항목 2열에 subtotal... 연결 별도 동일한
+형태").
+
+**수정**: `_columns_from_grid()`/`parse_header_columns()`에
+`allow_duplicate_subtype` 파라미터 추가, `select_by_header_columns()`에
+`_pick_from_group()`(실값 정확히 1개면 채택, 전부 대시/공란이면 구조적 0,
+그 외는 판정불가) 도입. 호출측(`report_lines.py`)이
+**`report_fiscal_year>=2015`일 때만** `allow_duplicate_subtype=True`를
+넘기도록 좁혀 SB성보류(pre-2015)는 이 분기를 절대 안 탐(R124 회귀 방지).
+
+---
+
+## R126. `parser/xml/table_extractor.py::_PERIOD_KEY_RE` — 달력날짜
+기간라벨·전환일/설립일 참조열·괄호오타 3종 추가 인식 (2015+ 폴백 스캔 잔여
+72건, 2026-09-15)
+
+**배경**: R123+R125 적용 후에도 남아있던 잔여 72건 실측 재조사.
+
+**3종**:
+1. "제N기" 서수 체계 대신 달력 날짜/연도로만 기간을 표기하는 회사들
+   ("2015.03.31", "2015-03-31", "2015년 1Q", "2018년 12월" 등) — 신라젠·
+   FSN·우리금융지주·티로보틱스·토박스코리아 실측.
+2. 전환일/설립일 자체를 가리키는 참조열(분할·전환 신설법인).
+3. "제N당)기"/"제N전)기"류 여는 괄호 누락 오타.
+
+**수정**: `_PERIOD_KEY_RE`에 각각 대안 추가.
+
+---
+
+## R127. `fin2/extract/text.py::_looks_like_equity_changes_header()`(신규) —
+원문 캡션 오류로 자본변동표(SCE) 데이터가 CF/IS/BS로 오적재 (2026-09-15)
+
+**배경**: header-fallback 잔여 14건 재조사 중 발견 — 단순 미인식이 아니라
+**실제 데이터 오염**.
+
+**원인**: 한화투자증권(00148610) 20200515000970·비큐AI(00980043)
+20210323000745 — 원문 자체가 "라. 연결현금흐름표"/"라. 현금흐름표" 캡션을
+자본변동표(SCE) 데이터 표 바로 앞에 잘못 붙여놓고(문서 작성 오류), 진짜 CF
+데이터는 그 뒤 별도 무제목 표에 있었다. 표제만 믿고 검증 없이 붙이는 기존
+로직이 SCE 데이터를 CF/IS/BS로 오적재.
+
+**수정**: `_looks_like_equity_changes_header()` 신설(SCE 특유의 자본항목
+열이름 3개 이상 동시 검출) — `_detect_body_statement_tables()`의 "정상
+서식"(제목+데이터 한 표) 분기에 `misattached_sce` 가드로 배선.
+
+---
+
+## R127b. 같은 함수 — SCE 오염 가드를 "제목표/데이터표 분리 서식" forward-scan
+경로에도 확장 (같은 날 후속, 2026-09-15)
+
+**배경**: "2015+ BS/IS/CF layer2 오적재 청소" 요청으로 전수 스캔하다 R127
+사각지대 발견 — R127은 "제목+데이터가 한 표"(정상 서식)만 가드했다.
+
+**원인**: 현대차증권(00137997) 20180515002185 IS_C는 다른 경로(제목표/
+데이터표 분리 서식의 forward-scan)를 탄다 — 각주 문장("...연결포괄손익
+계산서는...")이 `title_text_owned`에 의해 본문 제목처럼 오분류돼(단순
+텍스트 포함 매칭이라 각주 속 재무제표명에도 반응) forward-scan이 SCE 요약
+표를 IS 데이터로 잘못 연결.
+
+**수정**: forward-scan 루프에도 `stmt != "SCE" and _looks_like_equity_
+changes_header(nxt)` 가드 확장.
+
+**전수 재검증**: 전수 스캔+개별 재처리 결과 현대차증권 1건만 잔존 →
+`--corp` 개별 재적재로 해소, 재검증 0건 잔존 확인.
+
+---
+
+## R128. 같은 파일 `_PERIOD_KEY_RE` — "당N분기"/"전N분기" 표기가 서수
+브랜치에 접두어 무시되고 병합 (2026-09-15)
+
+**배경**: 4개 이상치 카테고리(IS_separate/IS_consolidated/CF_consolidated/
+CF_separate) 재검증 중 발견(바이오솔루션 20161114001893 IS 별도 실측).
+
+**원인**: "당3분기"/"전3분기"(상대어+숫자+분기, 서수 없는 관행) 헤더에서
+`_PERIOD_KEY_RE`의 서수 브랜치가 R123("제" 접두 옵션화)의 부작용으로 "당"/
+"전" 글자를 그냥 건너뛰고 "3분기"부터 매치해버렸다 — "당3분기"와 "전3분기"
+둘 다 `period_key="3분기"`로 병합돼 당기/전기가 같은 rank로 합쳐졌다.
+
+**수정**: `당\s*[1-4]\s*분\s*기|전\s*전\s*[1-4]\s*분\s*기|전\s*[1-4]\s*분\s*기`
+전용 브랜치를 서수 브랜치보다 먼저 배치.
+
+---
+
+## R128b. 같은 파일 — 2자리 연도 축약형+N분기("19년 3분기") 미인식 (2026-09-15,
+CF_separate 이상치 재검증)
+
+**배경**: 4개 이상치 카테고리 재검증 후 CF_separate ≤10 97건을 최신 코드로
+자동 재추출·비교(65건은 이미 R123~R128 수정으로 해소), 값이 그대로인 25건을
+개별 대조하다 발견 — 이노시뮬레이션(20191129001722) CF 연결(THEAD 없음),
+"19년 3분기"/"18년 3분기"(연도 2자리 축약형+N분기) 미인식으로 당기/전기
+병합, 73행 중 다수 유실.
+
+**수정**: `_PERIOD_KEY_RE`에 `\d{2}\s*년\s*[1-4]\s*분\s*기` 등 2자리 연도
+대안 추가(4자리 연도 브랜치와 매치 순서 충돌 없음 확인).
+
+**같은 커밋에 포함된 R118 후속 2건**: DSC인베스트먼트(20230515002273)
+IS 별도, 이랜시스(20190401000391) CF 별도 — 위 R118 항목 참고.
+
+---
+
+## R129. `parser/xbrl_instance/taxonomy_linkbase.py::_drop_prohibited_only_locs()`
+(신규) — `presentationArc`/`calculationArc`의 `use="prohibited"` 무시로 인한
+값 중복 (2026-09-15)
+
+**배경**: CF_separate 이상치 재검증 중 XBRL 소스 필링(코아스템켐온
+20151126000316)에서 "단기금융상품의 처분"/"유형자산의 취득"/"무형자산의
+취득" 3개 계정이 `report_lines`에 정확히 2번씩 중복 저장됨을 발견.
+
+**원인**: DART 표준 taxonomy는 회사가 실제로 안 쓰는 표준 계정과목도 전부
+`<link:loc>`+arc로 나열해두고, 그 arc를 `use="prohibited"`로 명시한다(실측:
+`dart_ProceedsFromSalesOfShortTermFinancialInstruments` arc는
+`order=50 use="prohibited"`, 회사 확장 태그의 arc는 `order=4 use="optional"`
+— 회사는 표준 계정 대신 자기 확장 태그를 쓴다는 뜻). 수정 전엔 `use` 속성을
+안 읽어 prohibited 표시된 표준 계정 loc도 트리에 남았고, 우연히 fact가 있어
+3개 계정이 정확히 2번씩 중복 방출됐다.
+
+**수정**: `_drop_prohibited_only_locs()` 신설 — `presentationArc`/
+`calculationArc` 양쪽 파싱 루프에서 `use="prohibited"`인 arc의 대상 loc을
+추적, `optional`로도 안 걸린 loc만 최종 제거.
+
+---
+
+## R130. `fin2/extract/report_lines_xbrl.py::_emit_missing_cf_lines()`(신규) —
+CF 통계에 BS/IS와 같은 "트리-미연결 시 fact 직접조회 백업" 경로 부재
+(2026-09-15)
+
+**배경**: "XBRL-only 필링 7건"(본문 XML 없이 XBRL zip만 존재)을 "XBRL 태그
+자체가 최소한만 달린 원문 한계"로 분류했던 판단이 틀렸음을 사용자가 DART
+웹 화면(현대에이치티 20150518000061 현금흐름표 스크린샷)으로 반박, 재조사해서
+발견.
+
+**원인**: 인스턴스에 4개 기간 × 별도/연결 기준의 완전한 현금흐름표 값이
+전부 태깅돼 있었다(당기순이익/영업·투자·재무활동현금흐름/이자지급·수취/
+배당금수취/법인세납부/환율변동효과/기초·기말현금). 문제는 이 필링들의
+표시(presentation) 링크베이스가 낡은 taxonomy 버전이라 이 개념들 중 상당수를
+트리 노드로 연결해두지 않았다는 것 — R129에서 고친 BS/IS의 "flat forest"
+(총계 트리 연결 누락)와 본질적으로 같은 유형. BS/IS는 이미
+`_emit_missing_totals()`(트리-미연결 시 fact 직접조회 백업, `_REQUIRED_
+TOTALS_BY_STATEMENT`)로 우회됐지만, CF에는 이 경로가 없어 트리에 안 걸린
+값은 통째로 누락됐다.
+
+**수정**: `_emit_missing_cf_lines()` 신설 — CF는 BS/IS와 달리 단일 "Assets"류
+총계가 없어 개별 라인아이템 목록(`_REQUIRED_CF_LINES`)을 쓰고, 여러 개념이
+`dart:` 확장 네임스페이스(버전마다 URI가 바뀜)라 로컬명 기준 전 네임스페이스
+검색(`_find_qnames_by_local`)으로 조회.
+
+**잔여 갭(이번 수정 범위 밖, 테스트로 명시 고정)**: 트리엔 이미 노드로 있지만
+당기(col0) 값이 원문에도 없는 개념(예: 이자지급/재무활동현금흐름 — 그
+분기엔 실제 공란)은 `_resolve_columns`의 별개 설계(col0 없으면 그 개념
+전체를 버림)로 인해 전기(col1) 값이 있어도 여전히 못 건짐.
+
+**검증**: 현대에이치티 CF_separate 8→20행. XBRL-only 7건 전체 같은 패턴
+확인(코아스템켐온·경남제약·플레이그램×2·아스타·썸에이지).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -6499,7 +7003,27 @@ AND report_type IN (annual,half,quarter)`로 후보를 뽑아 DART에 XML이 지
 | R44 | 메모리 `gateb-continuing-ops-attribution-sibling-guard-2026-08-25` · `parser/common/account_mapper.py`(중단/계속영업 귀속 성분 가드) · `fin2/tests/test_account_mapper_discontinued_attribution_guard.py`·`fin2/tests/test_combine_ni.py` · `scripts/census_continuing_ops_attribution_labels_2026-08-25.py`·`scripts/continuing_ops_isolated_diff_2026-08-25.py`·`scripts/verify_continuing_ops_val_to_val_2026-08-25.py` |
 | R45 | 메모리 `gateb-r44-resolve-redesign-2026-08-25` · `docs/plans/gateb_r44_resolve_redesign_2026-08-25.md` · `fin2/layer3/combine.py`(`_derive_net_income_from_continuing_discontinued()`·`_resolve_ni_attribution()`) · `fin2/tests/test_combine_ni.py` · `scripts/census_continuing_total_labels_2026-08-25.py`·`scripts/census_gyesokgiub_2026-08-25.py` |
 | R46 | 메모리 `faceaudit-ni-attribution-skipgate-2026-08-26` · `docs/plans/faceaudit_ni_attribution_skipgate_design_2026-08-26.md` · `fin2/audit/face_audit.py::_with_ni_attribution_text_fallback()` · `fin2/tests/test_ni_attribution_text_fallback.py` · `scripts/probe_faceaudit_ni_oci_mislabel_2026-08-26.py` |
+| R105/R106/R107 | `docs/plans/consolidation_scope_confirmation_design_2026-09-13.md` §8 · `fin2/extract/consolidation_evidence.py` · `fin2/tests/test_consolidation_evidence.py` · 마이그레이션(consolidation_status VARCHAR 확장) |
+| R108/R109/R110 | `docs/plans/consolidation_scope_confirmation_design_2026-09-13.md` §11-12 · `fin2/extract/consolidation_evidence.py` · `scripts/delete_consolidation_r_fixes_2026-09-13.py` |
+| R111~R114 | 커밋 `c6c115f` · `parser/xml/table_extractor.py`(`_SUBTYPE_CUM_RE`/`_SUBTYPE_3M_RE`/`_NOTE_HEADER_RE`/`select_by_header_columns()`) · `fin2/extract/text.py`(`_CUM_RE`/`_THREE_M_RE` 동형 사본) · `fin2/tests/test_header_grid_column_map_r88.py` |
+| R115 | 커밋 `77eb4bd` · `parser/xml/table_extractor.py::drop_mismatched_granularity_columns()` |
+| R116 | 커밋 `0fd3915`·`0454d86`·`3b3a716` · `fin2/extract/report_lines.py::_Q1_CUM_BLANK_USE_3M_RCEPTS` · 부록 D |
+| R117 | 커밋 `a047036` · `parser/xml/table_extractor.py::_columns_from_grid()` |
+| R118 | 커밋 `6d36f49`·`2a2c1ac`·`eaaaacc`·`43b09c3`·`cf7de2f` · `fin2/extract/report_lines.py::_R118_DUPLICATE_PERIOD_LABEL_FIX` · 부록 D |
+| R119 | 커밋 `fe16c14` · `parser/xml/table_extractor.py::_columns_from_grid()` |
+| R120 | 커밋 `ea289cb`·`3b3a716` · `parser/xml/table_extractor.py::select_by_header_columns()`(`prefer_last_of_two_as_cumulative`) · `fin2/extract/report_lines.py::_HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS` · 부록 D |
+| R121 | 커밋 `ebd817d` · `fin2/extract/report_lines.py::_MANUAL_NO_CONSOLIDATED_FS_RCEPTS` · 부록 D |
+| R122 | 커밋 `40bf13c` · `parser/xml/table_extractor.py::_PERIOD_KEY_RE` |
+| R123 | 커밋 `b02acf1` · `scripts/scan_header_fallback_2015plus_2026-09-14.py` · `parser/xml/table_extractor.py::_PERIOD_KEY_RE` |
+| R124 | 커밋 `461bec9`(되돌림 기록) — 되돌려짐, R125로 대체 |
+| R125 | 커밋 `461bec9` · `parser/xml/table_extractor.py::_columns_from_grid()`(`allow_duplicate_subtype`) · `fin2/extract/report_lines.py` |
+| R126 | 커밋 `4afe938` · `parser/xml/table_extractor.py::_PERIOD_KEY_RE` |
+| R127/R127b | 커밋 `82522df`·`3420b9a` · `fin2/extract/text.py::_looks_like_equity_changes_header()`/`_detect_body_statement_tables()` |
+| R128/R128b | 커밋 `7799788`·`43b09c3` · `parser/xml/table_extractor.py::_PERIOD_KEY_RE` |
+| R129 | 커밋 `ac80d52` · `parser/xbrl_instance/taxonomy_linkbase.py::_drop_prohibited_only_locs()` · `fin2/tests/test_xbrl_instance.py` |
+| R130 | 커밋 `5a1bdac` · `fin2/extract/report_lines_xbrl.py::_emit_missing_cf_lines()`(`_REQUIRED_CF_LINES`) · `fin2/tests/test_xbrl_instance.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
+| 부록 D | rcept 단위 예외목록 카탈로그(`fin2/extract/report_lines.py`에 흩어진 4개 딕셔너리 — R116/R118/R120/R121) |
 
 ## 부록 C. 미결 / 위반 현황
 
@@ -6537,3 +7061,72 @@ AND report_type IN (annual,half,quarter)`로 후보를 뽑아 DART에 XML이 지
 | **R51(R50 후속, 클러스터C 착수) — 포스코스틸리온(00155258) `bs.total_equity` 14건 — `_reduce_conflict()` shallow-depth 휴리스틱이 EquityAndLiabilities-shaped 라인을 지분으로 오채택** | **✅ 해소 완료 2026-08-27** — 최초 설계(`account_maps/bs_accounts.py`에서 `"총자본"` alias 통째 제거)는 **구현 직후 회귀로 반증**: 00369657(리노공업) 2026H1은 "총자본"이 **유일한** equity 라인(ACODE=`ifrs-full_Equity`, section_path='자본')이라 alias 제거 즉시 total_equity가 NULL로 깨짐(즉시 원상복구, DB diff로 원상태 확인). 같은 한국어 라벨 "총자본"이 필자마다 다른 XBRL 개념을 가리킨다는 게 실측으로 확정됨: 포스코스틸리온은 `ifrs-full_EquityAndLiabilities`(=자산총계, 오답)로, 리노공업은 `ifrs-full_Equity`(정답)로 쓴다 — 라벨 텍스트만으로는 두 용법을 구분 불가. **진짜 근본원인**은 alias 등록이 아니라 `fin2/layer3/combine.py::_reduce_conflict()`의 "얕은 section_path-depth 우선" 휴리스틱: 포스코스틸리온 원문(rcept 20250408001924) table_seq=0 안에 자본총계(section_path='자본', depth=1, 385,299,788,248, 정답)와 총자본(section_path=**빈 문자열**, depth=**0**, 556,803,723,173=자산총계와 정확히 동일값)이 공존하는데, "총자본"이 어느 섹션에도 안 속해 depth가 인위적으로 0(=가장 얕음)이 돼 진짜 자본 섹션 값을 이겨버림. **수정**: `account_maps/bs_accounts.py`의 "총자본" alias는 그대로 두고(리노공업 보존 필수), `fin2/layer3/combine.py`에 `_degenerate_total_equity_row_ids()` 신설 — 기존 `_trust_account_table_seqs()`와 동일 패턴(값 항등성 교차대조)으로, 같은 table_seq에서 `bs.total_equity` 후보값이 `bs.total_assets` 후보값과 **정확히 일치**하면(=EquityAndLiabilities를 지분으로 착각) 그 행을 제외 — 단 그 table_seq에 다른 total_equity 후보가 남아있을 때만(무차입 등 진짜 자산=자본인 회사를 MISSING으로 만들지 않도록 안전장치). `_resolve()`의 trust_seqs 필터와 같은 자리(by_label 그룹핑 전)에 배선. **검증**: 원문 대조로 회사별 라벨 의미 차이 확정(포스코스틸리온 FY2024 report_lines 직접 조회 — 자본총계 depth=1/총자본 depth=0 실측), `pytest fin2/tests/ tests/` 632 passed(무관 기존실패 1건 제외, 회귀 0), 영향 3개사(00155258·00369657·01150515) `build_std_v3.py` 재빌드 후 DB diff로 00155258 14건만 정확히 바뀌고 나머지 2개사 무변경 확인, `gateb_audit.py --recheck` 3개사 전부 `is.total_equity` fail_a 0(00155258 face_audit.gate_status 184행 전부 pass/pending, Phase B 라인감사 잔존 fail_a 7건은 EPS단위스케일/RightofuseAssets 등 전부 total_equity 무관 기존 이슈로 확인). DB 전체(fy≥1999, v3) fail_a **170→156(−14)**. 설계문서 `docs/plans/gateb_r51_posco_steelion_total_equity_alias_design_2026-08-27.md`(최초안, 구현 중 반증돼 본문에 pivot 기록 필요 — 다음 세션 갱신) |
 | **R52(R51 후속) — `account_mapper.py` 퍼지매칭 결함으로 IFRS15 매출유형별 주석의 COGS/수수료행이 `is.revenue`로 오매핑(revenue H1 2026 21건, 전수영향 최소 47개사/140행)** | **✅ 완전 해소 2026-08-27~28** — 원인 2종: **(a)** exact alias `"수익(매출액)"`(7자)이 IFRS15 매출유형별 주석의 COGS행("재화의 판매로 인한 수익(매출액)에 대한 매출원가" 등)에 부분문자열로 포함돼 `account_mapper.py::_fuzzy_match()`의 짧은-alias 가드(4자 이하만 보호)를 통과, confidence 0.92~0.94로 오매치(실측 291개사/9,698행에 이 라벨 존재). alias 자체는 제거 불가(1,725개사/71,518행이 정확한 매출총액으로 씀, load-bearing). **(b)** "수입수수료"(일반기업 기타수익, 값0인 경우 多)가 보험대리점 전용 alias `"보험판매수입수수료"`(9자)의 부분문자열이라 반대방향 오매치(실측 279개사/3,303행). **범용 가드 임계값 변경은 기각** — 카탈로그 전수스캔 결과 같은 escape-zone(len_ratio<0.65, 4<min_len≤12)에 232개 alias 충돌쌍이 있고, 상당수가 R44~R49(controlling_ni/noncontrolling_ni 귀속 시리즈)에서 이미 세밀히 튜닝해둔 지대와 겹쳐 범용 변경 시 예측 어려운 회귀 위험. **수정**: `fin2/layer3/combine.py::_map_rows()`에 `is.revenue`+`stage='fuzzy'` 후보에만 canonical-scoped 배제 추가 — 라벨에 "매출원가" 포함 시 제외, `matched_alias=="보험판매수입수수료"`인데 라벨에 "보험" 없으면 제외(기존 `_REVENUE_TOTAL_OVERRIDE_CORPS` 등 curated override와 같은 패턴). **검증**: `pytest tests/ fin2/tests/` 632 passed(무관 기존실패 1건 제외, 회귀 0). 원 fail_a 21건의 14개사 재빌드 후 `gateb_audit.py --recheck` 전부 `is.revenue` fail_a 0(회귀 0), 21건 전부 오염값(revenue=cogs 등 오매치값)→NULL로 전환(값 없음이 오염값보다 안전, "결측>오염" 원칙). DB 전체 fail_a 156→135(−21). **미해결 발견(§3-1, 범위 밖)**: 이 수정은 오매핑을 막을 뿐 — 진짜 매출총액 라벨이 콤마구분 복수 각주번호("수익 (주6,22)" 등) 형태라 `normalize_account_name()`이 처리 못 해 그 자체가 unknown 처리되는 별개 갭이 있음(고치면 이 21건이 NULL 대신 정답으로 채워질 가능성, 미조사). **DB 전체 백필 완료 2026-08-28**(사용자 실행, `build_std_v3.py --all --year-min 1999`) — `revenue=cogs` 잔존 시그니처 140행/47개사→**8행/6개사**(잔여는 R52 무관, 2009~2012년 18~34원대 초소액 우연일치). 이어서 `run_gateb_audit_parallel.sh`(5-shard 전수 재감사, 사용자 실행)로 face_audit 갱신 — **DB 전체 fail_a 필드분포에서 `revenue` 완전 소멸(0건)**, fail_a 총건수 135(pass/pending 사이 재배분만, fail_a 순증감 없음, 회귀 0). **R52 트랙 완전 종료.** 설계문서 `docs/plans/gateb_r52_revenue_cogs_note_mismap_design_2026-08-27.md` |
 | **R53(R52 후속) — `face_audit.py` inventory/ppe concept_map acode 갭(`ifrs-full_InventoriesTotal`/`ifrs-full_PropertyPlantAndEquipmentIncludingRightofuseAssets` 미등록) — 5개 클러스터로 보였던 fail_a 25건이 사실은 전부 같은 원인** | **✅ 완전 해소 2026-08-28** — [[gateb-session-handoff-2026-08-28]] 인계 시점 fail_a 135건 중 inventory(16)+ppe(9)=25건을 db/report 비율로 재분류하면 스케일 x1,000,000(5)·x1,000(5)·근소한 차이<1%(5)·비율 불규칙 2~6배(8)·report_value=0(2) 5개 클러스터로 갈라져, 처음엔 서로 다른 버그로 보였다. **원문+코드 대조 결과 25건 중 22건이 단일 원인**임이 드러남: BS face 본문의 정답 XBRL fact 가 `ifrs-full_InventoriesTotal`(inventory)/`ifrs-full_PropertyPlantAndEquipmentIncludingRightofuseAssets`(ppe) acode 를 쓰는데(HD현대일렉트릭 01205851·NC 00261443·오션인더블유 00349811·세미파이브 01627363 원문 4/4 확인), `fin2/taxonomy/concept_map.py::ACODE_TO_CANONICAL` 에는 `ifrs-full_Inventories`/`ifrs-full_PropertyPlantAndEquipment`(변형 없는 짧은 acode)만 등록돼 있어 정답 fact 의 `canonical`이 `None`이 되고, `audit_fields()`의 `by_canon["bs.inventory"/"bs.ppe"]` 후보집합에서 아예 탈락한다. 남는 유일한 후보가 그 회사의 주석 상세표 합계행인데, 이 행은 **DART 원문 자체의 렌더러 결함**으로 ADECIMAL 이 잘못 태깅돼 있어(형제 세부 라인은 정확, 노루페인트 00583442 계열과 동일한 함정 클래스) `val in won_vals`가 항상 실패 → VALUE_DIFF 오탐. 정답 후보가 아예 없다 보니 그 회사·필드의 유일한 비교대상인 그 오태깅 행과의 거리(=report_value 와 db 의 비율)만 관측되는데, 이 거리가 우연히 스케일 배수에 가까우면 "ADECIMAL 스케일오독"으로, 우연히 db 에 가까우면 "근소한 차이"로, 전혀 안 가까우면 "비율 불규칙"으로 **보였을 뿐** — 5클러스터 분류 자체가 진단 오류였다(원인 진단에 report_value 근접도를 쓰면 안 된다는 교훈). **std_v3(DB)는 처음부터 정확**(라벨 기반 파서라 이 acode 갭 영향 없음) — 검증기(face_audit.py)만 고치면 되는 문제였다(R50 계열과 동일 패턴). **중요 부수발견**: `face_audit.py`의 기존 주석("`concept_map.py` 소비자=face_audit.py/line_audit.py 뿐, R23")은 **stale** — `fin2/extract/xbrl.py`(운영 `store_facts`, `run.py` 라이브 파이프라인에서 호출)도 이 사전을 쓴다. 그래서 `concept_map.py` 자체는 건드리지 않고, **`face_audit.py` 전용 로컬 alias 오버레이**(`_FACE_AUDIT_EXTRA_ACODE`/`_map_acode_face()`, `map_acode()`가 `None`일 때만 폴백)로 스코프를 감사 모듈 안에 한정했다 — 운영 XBRL 추출 경로 영향 0. **검증**: `pytest tests/ fin2/tests/` 632 passed(무관 기존실패 1건 `test_biz_section.py::test_lxintl_facility_table_dropped` 제외 — face_audit.py/concept_map.py 를 아예 안 쓰는 모듈이라 무관 확인, 회귀 0). `gateb_audit.py --source v3 --recheck` 전수 재감사(5-shard) — DB 전체 fail_a **135→113(−22)**. inventory/ppe 25건 중 22건 pass 전환(스케일 10건 + "근소한 차이" 5건 전부 + "비율 불규칙" 8건 중 7건, 스타코링크 00373571 6건 포함 — alias 하나 추가로 5클러스터 중 4클러스터가 동시에 해소된 셈, acode 기반 오버레이라 애초 표본 4개사를 넘어 일반화). **잔존 3건은 진짜 별개 원인**(이 alias 갭과 무관, 확인됨): 랩지노믹스(00545114) 2025FY consolidated ppe 1건(report_value 가 db 의 약 1/1139, 다른 후보 오염 — 미조사), 광무(00186452) inventory 2건(report_value=0, 후보 완전 누락 — 미조사). 설계문서 `docs/plans/gateb_faceaudit_inventory_ppe_acode_gap_design_2026-08-28.md` |
+
+---
+
+## 부록 D. rcept 단위 예외목록 카탈로그 (2026-09-15 취합)
+
+**배경**: `fin2/extract/report_lines.py`에 "이 필링 하나(또는 이 statement×basis
+조합)에만" 적용되는 특정 rcept_no 하드코딩 딕셔너리/frozenset이 늘어났다.
+전부 R6 원칙("판정불가면 짐작 금지")을 지키기 위해 **일반 규칙화 대신 예외목록으로
+좁힌** 결과물 — 매번 회계항등식 역산 또는 사용자 원문대조로 개별 확정한 값이다.
+report_lines DB 자체에는 "이 행이 예외목록을 거쳤다"는 tagging이 없으므로(2026-09-15
+확인 — `source_ref`/`unit_source`가 일반 경로와 동일 형식), 이 카탈로그가 유일한
+색인이다. 새 항목을 추가할 때마다 여기도 같이 갱신할 것.
+
+### `_Q1_CUM_BLANK_USE_3M_RCEPTS` (R116) — Q1 필링, "누적" 칸 공백 시 "3개월" 값을
+누적으로 채택(1분기=3개월=누적 등식 이용)
+
+| rcept_no | 회사 | 기간 | statement |
+|---|---|---|---|
+| 20160516001490 | 형지I&C | 2016 Q1 | IS |
+| 20160511001294 | 드림시큐리티 | 2016 Q1 | IS |
+| 20170512001930 | 조광페인트 | 2017 Q1 | IS 별도 |
+| 20190527000008 | 자이글 | 2019 Q1 | IS 연결 |
+| 20180515002398 | 평화산업 | 2018 Q1 | IS 별도 |
+
+### `_HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS` (R120) — 무표지 2열 병합군에서
+물리적 마지막 열을 "누적"으로 채택(DART 관행: [3개월 먼저, 누적 나중])
+
+| rcept_no | 회사 | 기간 | statement |
+|---|---|---|---|
+| 20180814001946 | 웹케시 | 2018 H1 | IS |
+| 20200813000621 | 우리기술투자 | 2020 H1 | IS |
+| 20150817000794 | 삼성생명 | 2015 H1 | IS 연결(6열 헤더, 무표지 쌍 2개+단일FY열 2개) |
+
+### `_R118_DUPLICATE_PERIOD_LABEL_FIX` (R118) — 헤더가 기간라벨을 중복 오기재,
+회계항등식 역산으로 올바른 position→rank 매핑을 개별 확정
+
+| (rcept_no, statement, basis) | 회사 | 교정 내용 |
+|---|---|---|
+| (20160516002967, CF, consolidated) | 제주은행 2016 Q1 | "제57기1분기" 2회 중복 → position1을 전기(rank1)로 |
+| (20230314001271, CF, consolidated) | 제주은행 2022FY | 3중 중복(제62기×2/제61기) → position2,3→rank1 / 4,5→rank2 |
+| (20200330004128, IS, separate) | 이노시뮬레이션 2019FY | "제19기" 2회 중복 → position1→rank1 / 2→rank2 |
+| (20230515002273, IS, separate) | DSC인베스트먼트 2023 Q1 | "제11(당)기1분기" COLSPAN=2 그룹째 2회 중복 → position2,3→rank1 |
+| (20190401000391, CF, separate) | 이랜시스 2018FY | "제1(당)기" 2회 중복(신설법인) → position2→rank1 |
+| (20220615000399, CF, separate) | 신영증권 2022FY | "제67기" 2회 중복(첫 그룹이 실제론 제68기) → position2,3→rank1 / 4,5→rank2 |
+
+### `_MANUAL_NO_CONSOLIDATED_FS_RCEPTS` (R121) — 문서에 표는 있으나 그 값이 이
+필링의 당기/전기 것이 아님(지주사 전환 이전 시절 데이터 잔존) — 연결 섹션 전체 스킵
+
+| rcept_no | 회사 | 비고 |
+|---|---|---|
+| 20160520000534 | 더블유게임즈 2015FY | [기재정정]사업보고서 — 제3·4기 연결비대상(사용자 확인) |
+| 20160329000657 | 더블유게임즈 2015FY | 정정 전 원본, 동일 이슈 |
+
+### 기타 개별 하드코딩 (참고, 위 4개 딕셔너리와 별개 위치)
+
+- `fin2/extract/consolidation_evidence.py::_MANUAL_HAS_CONSOLIDATED_OVERRIDE`
+  (R110) — SGA솔루션즈 2건(20151113001023·20160329000826), 순번↔회계연도 매핑
+  불가로 텍스트판정을 건너뛰는 영구 예외(사용자가 원문 자산총계 직접 확인).
+- `scripts/reload_report_lines_2015plus_2026-09-12.py::_CONFIRMED_NON_XML_RCEPTS` —
+  솔트웨어 20220802000208(DART archive 자체 손상 확정, 재다운로드해도 바이트 동일 재현)
+  1건. 재적재 스크립트가 이 필링만 XML 재시도 대상에서 제외.
+- `fin2/audit/face_audit.py::_FX_PRESENTATION_CURRENCY_KEYS`(R50 클러스터B) — 두산밥캣
+  등 연결재무제표를 USD로 표시하는 회사·기간 카탈로그. 매 분기 수동 갱신 필요(2026 Q3부터
+  재발 예정 — 다음 분기 확인 필요).
+
+**주의**: 이 카탈로그는 R116/R118/R120/R121·기타 참고 항목까지만 다룬다. R43/R44
+(`_REVENUE_TOTAL_OVERRIDE_CORPS` 등 corp 단위 override), R52(`is.revenue` fuzzy
+배제) 같은 **corp 단위**(rcept 아님) override는 부록 B의 해당 R번호를 볼 것 —
+성격이 다르다(회사 전체에 적용 vs 특정 필링 하나에만 적용).

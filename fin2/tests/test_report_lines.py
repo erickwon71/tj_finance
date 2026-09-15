@@ -1286,6 +1286,58 @@ def test_r118_elansys_duplicate_period_label_typo_corrected():
     assert end_cash == {0: 251_087_445, 1: 322_115_040}, end_cash
 
 
+_PYEONGHWA_2018_Q1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00573579_평화산업/quarter/2018/20180515002398.xml"
+)
+
+
+def test_r116_pyeonghwa_industry_separate_is_cumulative_blank_uses_three_month():
+    """R116 후속(2026-09-15, IS_separate 이상치 재검증 중 발견) — 평화산업
+    20180515002398: Q1 별도 손익계산서가 "3개월" 칸만 채우고 "누적" 칸은 통째로
+    공란(당기순이익 행만 예외로 둘 다 채워 3개월=누적 등식을 필자 스스로 증명 —
+    형지I&C/드림시큐리티와 같은 패턴). 예외목록에 없을 때는 R6 판정불가로 본체
+    행 대부분이 유실됐다(수정 전 2행만 남음: 당기순이익뿐). 연결 손익계산서는
+    이 필링에서 3개월/누적 둘 다 정상 채워 영향 없음(45행 그대로)."""
+    if not _PYEONGHWA_2018_Q1.exists():
+        return
+    lines = extract_report_lines(
+        _PYEONGHWA_2018_Q1, rcept_no="20180515002398", corp_code="00573579",
+        report_fiscal_year=2018, report_fiscal_period="Q1")
+    is_s = [l for l in lines if l.statement == "IS" and l.basis == "separate"]
+    assert len(is_s) > 15, f"R116 예외목록 누락 시 2행 근처로 유실된다: {len(is_s)}"
+    rev = {l.col_index: l.value_won for l in is_s if l.label_raw == "수익(매출액)"}
+    assert rev == {0: 76_653_813_180, 1: 82_474_347_260}, rev
+    is_c = [l for l in lines if l.statement == "IS" and l.basis == "consolidated"]
+    assert len(is_c) == 45, f"연결은 원래 정상 채워져 있어 이번 수정과 무관해야 함: {len(is_c)}"
+
+
+_SAMSUNG_LIFE_2015_H1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00126256_삼성생명/half/2015/20150817000794.xml"
+)
+
+
+def test_r120_samsunglife_six_column_header_two_headerless_pairs_uses_last_as_cumulative():
+    """R120 후속(2026-09-15, IS_consolidated 이상치 재검증 중 발견) — 삼성생명
+    20150817000794: 연결 포괄손익계산서가 "제N(당)반기"/"제N(전)반기" 무표지
+    COLSPAN=2 병합군 2개(3개월/누적 구분 텍스트 없음) + 단일 FY 열 2개(전기/전전기),
+    총 6개 물리열 헤더. 당반기 병합군의 뒷열(14,198,956백만원)이 "요약연결
+    재무정보" 표의 같은 기간 값과 정확히 일치함을 대조 확인해 예외목록에 추가.
+    수정 전엔 R6 판정불가로 본체 행 대부분이 유실됐다(4행만 남음: EPS 2개 +
+    무관한 주석 조각 2개)."""
+    if not _SAMSUNG_LIFE_2015_H1.exists():
+        return
+    lines = extract_report_lines(
+        _SAMSUNG_LIFE_2015_H1, rcept_no="20150817000794", corp_code="00126256",
+        report_fiscal_year=2015, report_fiscal_period="H1")
+    is_c = [l for l in lines if l.statement == "IS" and l.basis == "consolidated"
+            and (l.col_index or 0) == 0]
+    assert len(is_c) > 40, f"R120 예외목록 누락 시 4행 근처로 유실된다: {len(is_c)}"
+    rev = {l.value_won for l in is_c if l.label_raw == "Ⅰ.영업수익"}
+    assert rev == {14_198_956_000_000}, rev
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

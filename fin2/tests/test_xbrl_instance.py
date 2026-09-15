@@ -266,6 +266,55 @@ def test_r129_prohibited_presentation_arc_target_dropped_not_duplicated():
     assert val == 9_199_955_000, val
 
 
+# ★R130(2026-09-15, "XBRL-only 필링 7건" 재검증 중 사용자 지적으로 재조사해 발견)
+# — 현대에이치티 실측. DART 웹 화면엔 4개 기간짜리 완전한 현금흐름표가 나오는데
+# (당기순이익/영업·투자·재무활동현금흐름/이자지급·수취/배당금수취/법인세납부/
+# 환율변동효과/기초·기말현금), 이 필링의 표시링크베이스는 그중 상당수를 트리
+# 노드로 연결해두지 않았다 — 사실(fact)은 인스턴스에 그대로 있는데도 트리를
+# 따라가는 `_emit_statement_lines`만으로는 못 찾는다. 처음엔 "XBRL 태그 자체가
+# 최소한만 달린 원문의 한계"로 오판했다가, 사용자가 웹 화면 스크린샷으로
+# 반박해 재조사한 사례.
+_HYUNDAI_HT_SAMPLE = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00255044_현대에이치티/quarter/2015/20150518000061.zip"
+)
+_HYUNDAI_HT_RCEPT = "20150518000061"
+_HYUNDAI_HT_CORP = "00255044"
+_HYUNDAI_HT_PERIOD_END = date(2015, 3, 31)
+
+
+def test_r130_cf_tree_gap_backfill_recovers_lines_the_tree_never_wired_in():
+    """수정 전엔 CF_separate 가 col0/col1 합쳐 8행(당기순이익조정/영업CF/이자수취/
+    투자CF 4개 개념 × 2열)뿐이었다 — 트리에 노드로 안 걸린 당기순이익, 법인세납부,
+    환율변동효과, 순증감액, 기초·기말현금은 전부 누락됐었다(BS/IS는 이미
+    `_emit_missing_totals`로 같은 유형의 갭이 메워져 있었는데 CF만 없었다).
+    수정 후엔 이 6개 개념이 `_emit_missing_cf_lines`(R130)로 복구되어야 한다."""
+    if not _HYUNDAI_HT_SAMPLE.exists():
+        return
+    lines = extract_report_lines_xbrl(
+        _HYUNDAI_HT_SAMPLE, rcept_no=_HYUNDAI_HT_RCEPT, corp_code=_HYUNDAI_HT_CORP,
+        report_fiscal_year=2015, report_fiscal_period="Q1",
+        period_end_date=_HYUNDAI_HT_PERIOD_END,
+    )
+    cf_s = {(l.label_raw, l.col_index): l.value_won
+            for l in lines if l.statement == "CF" and l.basis == "separate"}
+
+    assert cf_s[("당기순이익(손실)", 0)] == 2_003_975_720
+    assert cf_s[("당기순이익(손실)", 1)] == 5_561_769_646
+    assert cf_s[("영업활동으로 분류된 법인세납부(환급)", 0)] == 5_582_220
+    assert cf_s[("현금및현금성자산에 대한 환율변동효과", 0)] == -4_666_912
+    assert cf_s[("기초현금및현금성자산", 0)] == 12_061_706_274
+    assert cf_s[("기말현금및현금성자산", 0)] == 9_100_975_564
+
+    # 트리에 이미 노드로 존재하지만 당기(col0) 값이 원문에도 진짜 없는 개념
+    # (이자지급/재무활동현금흐름 — 18기1분기엔 공란)은 이 백업의 대상이 아니다.
+    # `_resolve_columns`의 별개 설계(col0 없으면 그 개념 전체를 버림) 때문에
+    # col1(전기, 실제로 값 있음)도 여전히 못 건진다 — 이건 R130이 고치는 종류의
+    # 결함이 아니라는 것을 명시적으로 고정해 둔다(향후 회귀 시 혼동 방지).
+    assert ("이자지급", 1) not in cf_s
+    assert ("재무활동현금흐름", 1) not in cf_s
+
+
 def _run():
     if not _SAMPLE.exists():
         print(f"  - SKIP: 실측 파일 없음 {_SAMPLE}")

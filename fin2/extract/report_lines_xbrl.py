@@ -216,6 +216,31 @@ _REQUIRED_TOTALS_BY_STATEMENT: dict[str, tuple[str, ...]] = {
     "IS": ("ProfitLoss", "ComprehensiveIncome"),
 }
 
+# R130 (2026-09-15): CF's version of the same gap — a filing's presentation
+# tree for the statement of cash flows can genuinely omit several individual
+# line items as nodes even though the underlying fact is tagged (confirmed
+# against 7 filings previously misdiagnosed as "XBRL-only, minimal tagging"
+# — 현대에이치티 20150518000061 is the clearest case: its instance carries
+# net income, financing CF, interest paid/received, dividends received,
+# income taxes paid, FX effect, and cash at beginning/end of period across
+# all 4 periods, but the tree only wires in 7 of the ~13 concepts). CF has
+# no single "Assets"-style rollup to key off of, so this is a list of
+# individual leaf items instead of one total per statement — see
+# `_emit_missing_cf_lines`.
+_REQUIRED_CF_LINES: tuple[str, ...] = (
+    "ProfitLossForStatementOfCashFlows",
+    "CashFlowsFromUsedInFinancingActivities",
+    "InterestPaidClassifiedAsOperatingActivities",
+    "InterestReceivedClassifiedAsOperatingActivities",
+    "DividendsReceivedClassifiedAsOperatingActivities",
+    "IncomeTaxesPaidRefundClassifiedAsOperatingActivities",
+    "EffectOfExchangeRateChangesOnCashAndCashEquivalents",
+    "IncreaseDecreaseInCashAndCashEquivalents",
+    "IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges",
+    "CashAndCashEquivalentsAtBeginningOfPeriodCf",
+    "CashAndCashEquivalentsAtEndOfPeriodCf",
+)
+
 # col_index we attempt to resolve. Only col0 is stored for BS/IS/CF
 # (report_lines.py::_is_loadable) — col1 is best-effort extra context.
 _MAX_COL_INDEX = 1
@@ -797,6 +822,90 @@ def _emit_missing_totals(
     return out
 
 
+def _find_qnames_by_local(facts_by_qname: dict[QName, list[XbrlFact]], local: str) -> list[QName]:
+    """Every QName tagged anywhere in this instance whose local part matches,
+    regardless of namespace (R130) — DART's `dart:` extension concepts keep
+    the same local name across taxonomy vintages, but their namespace URI is
+    dated and changes release to release, so a fixed-namespace QName (as
+    `_emit_missing_totals` uses for ifrs-full-only BS/IS totals) would miss
+    most of them."""
+    return [q for q in facts_by_qname if q.local == local]
+
+
+def _emit_missing_cf_lines(
+    *, tree: PresentationTree, facts_by_qname: dict[QName, list[XbrlFact]],
+    contexts: dict[str, XbrlContext], units: dict[str, XbrlUnit], labels: dict[QName, list[Label]],
+    basis_axis: QName, basis_member: QName, basis: str,
+    corp_code: str, rcept_no: str, report_fiscal_year: int, report_fiscal_period: str,
+    period_end_date: date,
+) -> list[ReportLineRow]:
+    """CF's version of `_emit_missing_totals` (R130 — see `_REQUIRED_CF_LINES`
+    docstring for the discovery). Backfills individual CF line items (net
+    income for CF, financing activities, interest paid/received, dividends
+    received, income taxes paid, FX effect, net change in cash, cash at
+    beginning/end of period) directly from their fact whenever the
+    presentation tree never wired that concept in as a node at all.
+
+    Unlike `_emit_missing_totals` (one ifrs-full-namespace total per
+    statement), CF has no single rollup to fall back to, and several of
+    these concepts are `dart:` extensions whose namespace URI is not stable
+    across taxonomy vintages — lookup is therefore by local name across
+    every namespace this instance actually uses (`_find_qnames_by_local`),
+    not one fixed QName.
+
+    R0 — observes, never fabricates: skipped whenever (a) the tree already
+    has this local name as a node under ANY namespace (the normal
+    `_emit_statement_lines` walk already emitted it — note this does *not*
+    rescue a concept that IS a tree node but whose col0/current-period fact
+    is genuinely absent, e.g. no financing activity this quarter; that's
+    `_resolve_columns`'s deliberate col0-or-nothing rule, a separate design
+    point, not this function's job), or (b) no matching fact exists at all
+    for this basis (genuinely untagged — do not fabricate)."""
+    present_locals = {node.element.local for node in tree.nodes.values()}
+    source = f"{rcept_no}/CF/{basis}/missing_lines"
+
+    out: list[ReportLineRow] = []
+    for local in _REQUIRED_CF_LINES:
+        if local in present_locals:
+            continue  # tree already has it — _emit_statement_lines already emitted this row
+        candidates: list[tuple[XbrlFact, XbrlContext]] = []
+        for qname in _find_qnames_by_local(facts_by_qname, local):
+            candidates = _basis_candidates(qname, facts_by_qname, contexts, basis_axis, basis_member)
+            if candidates:
+                break  # first namespace variant that actually has basis-tagged facts wins
+        if not candidates:
+            continue  # genuinely untagged for this filing/basis (2026-08-06 웰킵스하이텍 precedent)
+        for col_idx, fact, ctx in _resolve_columns(candidates, period_end_date, source):
+            value = _numeric_value(fact, units)
+            if value is None:
+                continue
+            out.append(ReportLineRow(
+                corp_code=corp_code,
+                rcept_no=rcept_no,
+                report_fiscal_year=report_fiscal_year,
+                report_fiscal_period=report_fiscal_period,
+                statement="CF",
+                basis=basis,
+                section_path=None,
+                label_raw=_resolve_label(fact.qname, None, labels),  # no tree node -> no preferredLabel role hint
+                col_index=col_idx,
+                context_fiscal_year=report_fiscal_year - col_idx,
+                period_kind=ctx.period_kind,
+                is_cumulative=(ctx.period_kind == "duration" and report_fiscal_period != "FY"),
+                value_won=value,  # no preferredLabel available (bare fact) -> no negatedLabel sign flip applies
+                adecimal=0,
+                unit_source=UNIT_SOURCE_XBRL,
+                source_ref=f"CF_{basis}/{local}/xbrl_tree_gap_cf_line"[:180],
+                context_raw=fact.context_ref[:255],
+                row_order=-1,
+                depth=0,
+                node_role="S",  # leaf fact, not a rollup — unlike _emit_missing_totals's "P"
+                table_seq=0,
+                table_title=None,
+            ))
+    return out
+
+
 def _emit_sce_lines(
     *, tree: PresentationTree, facts_by_qname: dict[QName, list[XbrlFact]],
     contexts: dict[str, XbrlContext], units: dict[str, XbrlUnit],
@@ -1048,6 +1157,18 @@ def extract_report_lines_xbrl(
                             report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
                             period_end_date=period_end_date,
                         ))
+                        # R130: CF's own version of the same tree-gap backfill
+                        # (_REQUIRED_TOTALS_BY_STATEMENT has no CF entry — CF
+                        # has no single rollup, see _emit_missing_cf_lines).
+                        if statement == "CF":
+                            lines.extend(_emit_missing_cf_lines(
+                                tree=tree, facts_by_qname=facts_by_qname,
+                                contexts=instance.contexts, units=instance.units, labels=labels,
+                                basis_axis=basis_axis, basis_member=basis_member, basis=basis,
+                                corp_code=corp_code, rcept_no=rcept_no,
+                                report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
+                                period_end_date=period_end_date,
+                            ))
                 except Exception as e:
                     logger.warning(f"[report_lines_xbrl] {rcept_no}: {statement}/{basis} 추출 실패 "
                                     f"({type(e).__name__}: {e}), 이 role 만 스킵")

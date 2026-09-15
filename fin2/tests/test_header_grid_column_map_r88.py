@@ -632,6 +632,93 @@ def test_r125_duplicate_subtype_columns_gated_off_by_default():
     assert select_by_header_columns(cols, [None, None, 300, 350]) == {}
 
 
+def test_r126_bare_calendar_date_recognized_as_period_key():
+    """R126(2026-09-15, R123+R125 적용 후 잔여 72건 재조사) — "제N기" 서수 체계를
+    아예 안 쓰고 달력 날짜로만 기간을 표기하는 회사들(신라젠 등) 실측."""
+    # ① "YYYY.MM.DD"(점 구분, 서수 없음) — 신라젠 20150601000841 BS 별도.
+    t1 = _table("<TR><TH>과목</TH><TH>2015.03.31</TH><TH>2014.12.31</TH></TR>",
+                "<TR><TD>유동자산</TD></TR>")
+    cols1 = parse_header_columns(t1)
+    assert cols1 is not None
+    assert [c.period_rank for c in cols1] == [0, 1]
+
+    # ② "YYYY-MM-DD"(하이픈 구분) — FSN 20150515000348 BS 별도.
+    t2 = _table("<TR><TH>과목</TH><TH>2015-03-31</TH></TR>", "<TR><TD>유동자산</TD></TR>")
+    cols2 = parse_header_columns(t2)
+    assert cols2 is not None and cols2[0].period_rank == 0
+
+    # ③ "YYYY년 NQ"(연도+영문분기) — FSN 20150515000348 IS/CF 별도.
+    t3 = _table("<TR><TH>과목</TH><TH>2015년 1Q</TH></TR>", "<TR><TD>영업수익</TD></TR>")
+    cols3 = parse_header_columns(t3)
+    assert cols3 is not None and cols3[0].period_key == "2015년 1Q"
+
+    # ④ "YYYY년[...]"(월/말/반기 접미 옵션) — 우리금융지주 20190515002466 BS 연결.
+    for text in ("2018년", "2018년 12월", "2018년말", "2018년 반기"):
+        t = _table(f"<TR><TH>과목</TH><TH>제1(당)기 1분기</TH><TH>{text}</TH></TR>",
+                   "<TR><TD>자산총계</TD></TR>")
+        cols = parse_header_columns(t)
+        assert cols is not None, text
+        assert [c.period_rank for c in cols] == [0, 1], text
+
+    # ⑤ "YYYY년"(서수 없는 3개년 비교) — 티로보틱스 20180402000209 BS/IS 별도.
+    t5 = _table("<TR><TH>과목</TH><TH>2017년</TH><TH>2016년</TH><TH>2015년</TH></TR>",
+                "<TR><TD>자산총계</TD></TR>")
+    cols5 = parse_header_columns(t5)
+    assert cols5 is not None
+    assert [c.period_rank for c in cols5] == [0, 1, 2]
+
+
+def test_r126_transition_or_establishment_date_column_treated_as_note():
+    """R126(2026-09-15) — "전환일"(IFRS 최초채택 3번째 비교재무상태표 기준일)·"설립일
+    현재"(신규상장사가 전기 대신 넣는 기준일) 열은 회계기간이 아니라 참고용 고정
+    기준일이다. 진짜 "제N(당)기"/"제N(전)기" 열은 그대로 인식되고, 이 열만 is_note
+    로 건너뛴다(실측: 롤링스톤 20160330002986 BS 별도 등 8개사)."""
+    t = _table(
+        "<TR><TH>과목</TH><TH>제 7(당) 기</TH><TH>제 6(전) 기</TH>"
+        "<TH>전 환 일(감사받지 않은 재무제표)</TH></TR>",
+        "<TR><TD>자산총계</TD></TR>",
+    )
+    cols = parse_header_columns(t)
+    assert cols is not None
+    assert [(c.period_rank, c.is_note) for c in cols] == [(0, False), (1, False), (-1, True)]
+
+    # "설립일 현재(...)" 변형도 동일하게 처리(패션플랫폼류).
+    t2 = _table("<TR><TH>과목</TH><TH>제1(당)기 3분기말</TH><TH>설립일 현재</TH></TR>",
+                "<TR><TD>자산총계</TD></TR>")
+    cols2 = parse_header_columns(t2)
+    assert cols2 is not None
+    assert [(c.period_rank, c.is_note) for c in cols2] == [(0, False), (-1, True)]
+
+
+def test_r126_missing_opening_paren_typo_recognized():
+    """R126(2026-09-15) — "제N(당)기"류 표기에서 여는 괄호만 빠뜨리는 오타("제20전)기"
+    처럼 닫는 괄호는 있는데 여는 괄호가 없음)가 최소 4개 무관한 회사(삼성화재해상보험·
+    보라티알·듀켐바이오·키움증권)에서 반복 확인됐다. R122(닫는 괄호 뒤 "기" 탈락)의
+    거울상 오타."""
+    # 키움증권 20200330004481 CF 별도: "제21(당)기 제20전)기".
+    t1 = _table("<TR><TH>과목</TH><TH>제21(당)기</TH><TH>제20전)기</TH></TR>",
+                "<TR><TD>영업활동현금흐름</TD></TR>")
+    cols1 = parse_header_columns(t1)
+    assert cols1 is not None
+    assert [c.period_rank for c in cols1] == [0, 1]
+
+    # 듀켐바이오 20200330001256 IS 연결: "제 17당) 기 제 16(전) 기 제 15(전전) 기".
+    t2 = _table(
+        "<TR><TH>과목</TH><TH>제 17당) 기</TH><TH>제 16(전) 기</TH><TH>제 15(전전) 기</TH></TR>",
+        "<TR><TD>매출액</TD></TR>",
+    )
+    cols2 = parse_header_columns(t2)
+    assert cols2 is not None
+    assert [c.period_rank for c in cols2] == [0, 1, 2]
+
+    # 회귀 없음 — 정상 표기("(당)"/"(전)" 둘 다 괄호 있음)도 여전히 인식.
+    t3 = _table("<TR><TH>과목</TH><TH>제5(당)기</TH><TH>제4(전)기</TH></TR>",
+                "<TR><TD>매출액</TD></TR>")
+    cols3 = parse_header_columns(t3)
+    assert cols3 is not None
+    assert [c.period_rank for c in cols3] == [0, 1]
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

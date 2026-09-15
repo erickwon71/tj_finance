@@ -1220,6 +1220,72 @@ def test_r128_biosolution_relative_term_digit_quarter_columns_separated():
     assert rev == {0: 2_103_893_158, 1: 1_510_914_353}, rev
 
 
+_DSC_INVESTMENT_2023_Q1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/01109715_DSC인베스트먼트/quarter/2023/20230515002273.xml"
+)
+
+
+def test_r118_dsc_investment_duplicate_period_label_typo_corrected():
+    """R118 후속(2026-09-15, 4개 이상치 카테고리 재검증 중 발견) — DSC인베스트먼트
+    20230515002273 IS 별도. 헤더가 "제11(당)기 1분기"를 COLSPAN=2(3개월/누적) 그룹째로
+    완전히 동일하게 2번 반복하는 원문 오타(실측: 두 그룹 값이 서로 다름 — 영업수익
+    6,806,498,698 vs 8,016,968,098). position2/3(2번째 그룹)을 전기(rank1)로 교정."""
+    if not _DSC_INVESTMENT_2023_Q1.exists():
+        return
+    lines = extract_report_lines(
+        _DSC_INVESTMENT_2023_Q1, rcept_no="20230515002273", corp_code="01109715",
+        report_fiscal_year=2023, report_fiscal_period="Q1")
+    is_s = [l for l in lines if l.statement == "IS" and l.basis == "separate"]
+    assert len(is_s) > 10, f"교정 실패 시 3행 근처로 유실된다: {len(is_s)}"
+    rev = {l.col_index: l.value_won for l in is_s if l.label_raw == "Ⅰ.영업수익"}
+    assert rev == {0: 6_806_498_698, 1: 8_016_968_098}, rev
+
+
+_INNOSIMULATION_2019_Q3 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00965318_이노시뮬레이션/quarter/2019/20191129001722.xml"
+)
+
+
+def test_r128b_innosimulation_two_digit_year_quarter_columns_separated():
+    """R128b(2026-09-15, 4개 이상치 카테고리 재검증 중 발견) — 이노시뮬레이션
+    20191129001722 CF 연결(NO THEAD). "19년 3분기"/"18년 3분기"(연도 2자리 축약형)
+    헤더가 인식 안 돼 당기/전기가 같은 rank 로 병합, 대부분 행이 유실됐다
+    (수정 전 2행만 남음)."""
+    if not _INNOSIMULATION_2019_Q3.exists():
+        return
+    lines = extract_report_lines(
+        _INNOSIMULATION_2019_Q3, rcept_no="20191129001722", corp_code="00965318",
+        report_fiscal_year=2019, report_fiscal_period="Q3")
+    cf_c = [l for l in lines if l.statement == "CF" and l.basis == "consolidated"]
+    assert len(cf_c) > 10, f"교정 실패 시 2행 근처로 유실된다: {len(cf_c)}"
+    rev = {l.col_index: l.value_won for l in cf_c if l.label_raw == "영업활동현금흐름"}
+    assert rev == {0: -6_612_965_761, 1: -3_077_170_102}, rev
+
+
+_ELANSYS_2018_FY = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/01199189_이랜시스/annual/2018/20190401000391.xml"
+)
+
+
+def test_r118_elansys_duplicate_period_label_typo_corrected():
+    """R118 후속(2026-09-15, 4개 이상치 카테고리 재검증 중 발견) — 이랜시스
+    20190401000391 CF 별도(설립 첫해 신설법인). 헤더가 "제1(당)기"를 완전히
+    동일하게 2번 반복하는 원문 오타. 회계항등식(2번째 열 기말현금이 1번째 열
+    기초현금과 정확히 일치)으로 확정: 2번째 열은 실제로 전기(rank1)."""
+    if not _ELANSYS_2018_FY.exists():
+        return
+    lines = extract_report_lines(
+        _ELANSYS_2018_FY, rcept_no="20190401000391", corp_code="01199189",
+        report_fiscal_year=2018, report_fiscal_period="FY")
+    cf_s = [l for l in lines if l.statement == "CF" and l.basis == "separate"]
+    assert len(cf_s) > 15, f"교정 실패 시 8행 근처로 유실된다: {len(cf_s)}"
+    end_cash = {l.col_index: l.value_won for l in cf_s if l.label_raw == "기말 현금및현금성자산"}
+    assert end_cash == {0: 251_087_445, 1: 322_115_040}, end_cash
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

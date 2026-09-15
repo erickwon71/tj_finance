@@ -668,6 +668,24 @@ def test_r126_bare_calendar_date_recognized_as_period_key():
     assert [c.period_rank for c in cols5] == [0, 1, 2]
 
 
+def test_r128b_two_digit_year_quarter_recognized_and_not_confused_with_four_digit():
+    """R128b(2026-09-15, 이노시뮬레이션 20191129001722 CF 연결 실측, NO THEAD) —
+    "19년 3분기"/"18년 3분기"(연도 2자리 축약형+N분기) 헤더가 인식 안 돼 "3분기"만
+    매치되고 당기/전기가 같은 rank 로 병합됐다(수정 전 73행 중 71행 유실)."""
+    t = _table("<TR><TH>계정과목</TH><TH>19년 3분기</TH><TH>18년 3분기</TH></TR>",
+               "<TR><TD>영업활동현금흐름</TD></TR>")
+    cols = parse_header_columns(t)
+    assert cols is not None
+    assert [c.period_rank for c in cols] == [0, 1]
+
+    # 회귀 없음 — 4자리 연도(R126)가 2자리 브랜치에 잘못 가로채이면 안 된다.
+    t2 = _table("<TR><TH>과목</TH><TH>제1(당)기 1분기</TH><TH>2018년 12월</TH></TR>",
+                "<TR><TD>자산총계</TD></TR>")
+    cols2 = parse_header_columns(t2)
+    assert cols2 is not None
+    assert cols2[-1].period_key == "2018년 12월", cols2
+
+
 def test_r126_transition_or_establishment_date_column_treated_as_note():
     """R126(2026-09-15) — "전환일"(IFRS 최초채택 3번째 비교재무상태표 기준일)·"설립일
     현재"(신규상장사가 전기 대신 넣는 기준일) 열은 회계기간이 아니라 참고용 고정

@@ -231,6 +231,41 @@ def test_row_structure_sane():
     assert bs0["부채및자본총계"].depth < bs0["자산총계"].depth < bs0["현금및현금성자산"].depth
 
 
+# ★R129(2026-09-15, CF_separate 이상치 재검증 중 발견) — 코아스템켐온 실측.
+_COASTEM_SAMPLE = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00989664_코아스템켐온/half/2015/20151126000316.zip"
+)
+_COASTEM_RCEPT = "20151126000316"
+_COASTEM_CORP = "00989664"
+_COASTEM_PERIOD_END = date(2015, 6, 30)
+
+
+def test_r129_prohibited_presentation_arc_target_dropped_not_duplicated():
+    """R129 — DART 표준 taxonomy 는 회사가 안 쓰는 표준 계정과목도 `<link:loc>`+
+    arc 로 깔아두고 그 arc 를 `use="prohibited"` 로 명시한다(실측:
+    `dart_ProceedsFromSalesOfShortTermFinancialInstruments` arc 는 order=50
+    use="prohibited", 회사 확장 태그 `...201592152536382`(같은 element, 다른
+    loc)의 arc 가 order=4 use="optional" — 회사는 표준 계정 대신 자기 확장
+    태그를 쓴다는 뜻). 수정 전엔 `use` 속성을 안 읽어 prohibited 표시된 표준
+    계정 loc 도 트리에 남았고, 우연히 fact 가 있어 "단기금융상품의 처분" 등
+    3개 계정이 report_lines 에 정확히 2번씩 중복 방출됐다."""
+    if not _COASTEM_SAMPLE.exists():
+        return
+    lines = extract_report_lines_xbrl(
+        _COASTEM_SAMPLE, rcept_no=_COASTEM_RCEPT, corp_code=_COASTEM_CORP,
+        report_fiscal_year=2015, report_fiscal_period="H1",
+        period_end_date=_COASTEM_PERIOD_END,
+    )
+    cf_s = [l for l in lines if l.statement == "CF" and l.basis == "separate"]
+    labels = [l.label_raw for l in cf_s if l.col_index == 0]
+    assert labels.count("단기금융상품의 처분") == 1, \
+        f"prohibited 표준 계정이 여전히 중복 방출됨: {labels}"
+    val = next(l.value_won for l in cf_s
+               if l.label_raw == "단기금융상품의 처분" and l.col_index == 0)
+    assert val == 9_199_955_000, val
+
+
 def _run():
     if not _SAMPLE.exists():
         print(f"  - SKIP: 실측 파일 없음 {_SAMPLE}")

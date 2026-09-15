@@ -107,6 +107,33 @@ def _parse_locs(link_el: etree._Element, nsmap: dict[str, str], source: str) -> 
     return locs
 
 
+def _drop_prohibited_only_locs(
+    locs: dict[str, QName], prohibited_targets: set[str], optional_targets: set[str],
+) -> dict[str, QName]:
+    """★R129(2026-09-15, 코아스템켐온 20151126000316 XBRL CF 별도 실측 발견) —
+    DART 표준 taxonomy 는 회사가 안 쓰는 표준 계정과목도 전부 `<link:loc>`+arc 로
+    깔아두고, 그 arc를 `use="prohibited"` 로 명시해 "이 문서에선 안 쓴다"고
+    선언한다(실측: `dart_ProceedsFromSalesOfShortTermFinancialInstruments` arc
+    는 order=50 use="prohibited", 회사 확장 태그 `...201592152536382`(같은
+    element, 다른 loc)의 arc가 order=4 use="optional" — 회사는 표준 계정 대신
+    자기 확장 태그를 쓴다는 뜻). 이 모듈은 `use` 속성 자체를 읽지 않아
+    prohibited 표시된 loc 도 그대로 트리에 남았다 — 문제는 표준 계정에도 우연히
+    fact 가 존재하면(같은 값을 표준+확장 태그 둘 다에 제출한 경우) 두 loc 가 트리
+    양쪽에 다 남아 `_emit_statement_lines`가 같은 계정을 두 번 방출한다(실측:
+    "단기금융상품의 처분" 등 3개 계정이 report_lines 에 정확히 2번씩 중복 저장).
+
+    완전한 XBRL arc-prohibition/override 스펙(우선순위 비교 등)은 구현하지
+    않는다 — 관찰된 패턴(같은 element 를 가리키는 to-loc 이 여러 개고, 그중
+    prohibited 로만 도달되는 것)만 좁게 처리한다: 어떤 loc 이 **오직**
+    prohibited arc 로만 도달되고 정상(optional) arc 로는 전혀 도달되지 않으면
+    최종 트리에서 완전히 제외한다(`_build_tree_shape`의 "미선언 loc 참조"
+    방어 로직이 이후 정리를 안전하게 흡수한다)."""
+    dead = prohibited_targets - optional_targets
+    if not dead:
+        return locs
+    return {label: el for label, el in locs.items() if label not in dead}
+
+
 def _build_tree_shape(
     arcs: list[tuple[str, str, float]], locs: dict[str, QName], source: str
 ) -> tuple[dict[str, str], dict[str, list[str]], dict[str, float]]:
@@ -202,15 +229,22 @@ def _parse_presentation_link(link_el: etree._Element, nsmap: dict[str, str], sou
 
     arcs: list[tuple[str, str, float]] = []
     preferred_of: dict[str, str] = {}  # to_label -> preferredLabel role URI
+    prohibited_targets: set[str] = set()
+    optional_targets: set[str] = set()
     for arc_el in link_el.findall(_q("presentationArc")):
         frm, to = _xlink(arc_el, "from"), _xlink(arc_el, "to")
         order_raw = arc_el.get("order")
         if not frm or not to or order_raw is None:
             raise ValueError(f"{source}: <link:presentationArc> missing from/to/order")
+        if arc_el.get("use") == "prohibited":  # R129 — see _drop_prohibited_only_locs
+            prohibited_targets.add(to)
+            continue
+        optional_targets.add(to)
         arcs.append((frm, to, float(order_raw)))
         preferred = arc_el.get("preferredLabel")
         if preferred:
             preferred_of[to] = preferred
+    locs = _drop_prohibited_only_locs(locs, prohibited_targets, optional_targets)
 
     parent_of, children_of, order_of = _build_tree_shape(arcs, locs, source)
     roots = [label for label in locs if label not in parent_of]
@@ -252,13 +286,20 @@ def _parse_calculation_link(link_el: etree._Element, nsmap: dict[str, str], sour
 
     arcs: list[tuple[str, str, float]] = []
     weight_of: dict[str, float] = {}
+    prohibited_targets: set[str] = set()
+    optional_targets: set[str] = set()
     for arc_el in link_el.findall(_q("calculationArc")):
         frm, to = _xlink(arc_el, "from"), _xlink(arc_el, "to")
         order_raw, weight_raw = arc_el.get("order"), arc_el.get("weight")
         if not frm or not to or order_raw is None or weight_raw is None:
             raise ValueError(f"{source}: <link:calculationArc> missing from/to/order/weight")
+        if arc_el.get("use") == "prohibited":  # R129 — see _drop_prohibited_only_locs
+            prohibited_targets.add(to)
+            continue
+        optional_targets.add(to)
         arcs.append((frm, to, float(order_raw)))
         weight_of[to] = float(weight_raw)
+    locs = _drop_prohibited_only_locs(locs, prohibited_targets, optional_targets)
 
     parent_of, children_of, order_of = _build_tree_shape(arcs, locs, source)
     roots = [label for label in locs if label not in parent_of]

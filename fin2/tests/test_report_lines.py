@@ -735,7 +735,10 @@ def test_ancn_2011_revenue_no_longer_lost_to_note_ref():
     """앤씨앤(00537337) 2011FY(K-GAAP→IFRS 전환기) — 수정 전에는 "Ⅰ. 매출액"
     col_index0=5원(주석번호 오채택)이고 진짜 당기금액(458억)은 DB에서 아예 소실됐다.
     헤더기반 탐지(R65) 후에는 col_index0 이 진짜 당기금액, col_index1 이 진짜
-    전기금액이어야 한다(원문 XML 직접대조 확정값)."""
+    전기금액이어야 한다(원문 XML 직접대조 확정값).
+
+    ★2026-09-15 정정: label_raw 는 그 뒤 로마숫자 접두어("Ⅰ. ")가 라벨 정규화로
+    빠져 "매출액"으로 바뀌었다(값 자체는 원래 검증대로 정확 — 라벨 문자열만 갱신)."""
     if not _ANCN_FY2011.exists():
         return
     lines = extract_report_lines(
@@ -743,7 +746,7 @@ def test_ancn_2011_revenue_no_longer_lost_to_note_ref():
         report_fiscal_year=2011, report_fiscal_period="FY",
     )
     rev = {l.col_index: l.value_won for l in lines
-           if l.statement == "IS" and l.basis == "separate" and l.label_raw == "Ⅰ. 매출액"}
+           if l.statement == "IS" and l.basis == "separate" and l.label_raw == "매출액"}
     assert rev == {0: 45_830_369_541, 1: 50_367_549_269}, rev
 
 

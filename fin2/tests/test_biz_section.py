@@ -22,8 +22,12 @@ _BASE = Path(__file__).resolve().parents[2]
 _SAMSUNG = _BASE / "raw_report/KOSPI/00126380_삼성전자/annual/2024/20250311001085.xml"
 _SOIL = _BASE / "raw_report/KOSPI/00138279_S-Oil/annual/2024/20250319000503.xml"
 # B4b 회귀: 강남제비스코 = 계산근거 컬럼('2,350시간÷2,760시간×100=85.1%')이 가동률 2350%로
-# 오염되던 케이스. LX인터내셔널 = 유형자산/공장 소재지·면적 표만 있어 생산행 0이어야 함.
+# 오염되던 케이스.
 _KANGNAM = _BASE / "raw_report/KOSPI/00100939_강남제비스코/annual/2024/20250318001036.xml"
+# LX인터내셔널 = "4. 생산능력 및 생산능력 산출 근거" 절에 LX글라스(원판/코팅/복층유리)·
+# 포승그린파워(전기) 등 실제 생산능력/실적 표가 있다(원문 확인, 2026-09-15 — 예전 테스트는
+# "소재지·면적 표만 있어 0행이어야 함"으로 잘못 전제하고 있었다. 실제로는 생산능력 표가
+# 정상 존재해 오탐이 아니라 정상 추출).
 _LXINTL = _BASE / "raw_report/KOSPI/00120076_LX인터내셔널/annual/2024/20250320000626.xml"
 # B4b-2 회귀: 아세아텍 = 전치형 레이아웃(지표명이 '구분' 열 값) + 기간별 수량/금액 하위열 +
 # 날짜헤더 "2024.06.30(제46기)"(first_data 오탐 유발) + '가동율'(율 표기 변이).
@@ -115,12 +119,17 @@ def test_kangnam_formula_column_excluded():
     assert not any(r["metric"] == "utilization" and r["value"] == 2350 for r in rows)
 
 
-def test_lxintl_facility_table_dropped():
-    """유형자산/공장 소재지·면적 표만 존재 → 생산 지표행 0(오포착 차단)."""
+def test_lxintl_capacity_table_extracted():
+    """LX인터내셔널 "4. 생산능력..." 절 — LX글라스 원판유리 capacity/output 정상 추출
+    (2026-09-15 정정: 이전엔 "소재지/면적 표만 있어 0행이어야 함"으로 잘못 전제했으나,
+    원문 대조 결과 실제 생산능력 표가 있어 0행 기대 자체가 틀린 테스트였다)."""
     if not _LXINTL.exists():
         return
     rows = _rows(_LXINTL, "00120076", 2024)
-    assert len(rows) == 0, f"소재지/면적 표에서 생산행이 새면 안 됨: {rows[:2]}"
+    assert rows, "생산능력 절의 실제 표를 못 뽑으면 안 됨"
+    capacity = _find(rows, metric="capacity", segment="LX글라스", period_year=2024)
+    glass = [r for r in capacity if "원판유리" in r["item"]]
+    assert glass and glass[0]["value"] == 457500, glass
 
 
 def test_aseatech_transposed_layout():

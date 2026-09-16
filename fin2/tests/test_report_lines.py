@@ -1463,6 +1463,59 @@ _NETMARBLE_2017_FY = (
     / "raw_report/KOSPI/00904672_넷마블/annual/2017/20180402005173.xml"
 )
 
+# ★2026-09-16(같은 날 후속, BS 전수스캔) — R132와 동일 유형(자기모순 "백만원"
+# 단위선언) 4건. 각 파일에서 회사 규모상 원(WON) 단위가 맞음을 문서 내 별도
+# 주석표(부채비율 등 다른 단위로 같은 계정을 재공시하는 표)와 대조해 확정했다.
+_AZTEC_WB_2019_Q3 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00201131_아즈텍WB/quarter/2019/20191114000246.xml"
+)
+_HL_DNI_2021_H1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00161116_HL D&I/half/2021/20210817001851.xml"
+)
+_DONGSUNG_CHEMICAL_2017_H1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00679314_동성케미컬/half/2017/20170814002311.xml"
+)
+_SONOSQUARE_2024_Q3 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00104810_소노스퀘어/quarter/2024/20241114002786.xml"
+)
+
+
+def test_r132_followup_bs_self_contradictory_declared_unit_overridden_to_won():
+    """R132 후속(2026-09-16, BS 전수스캔 — 사용자 지시 "1,3,5번 이어서") — 재무상태표가
+    "(단위 : 백만원)"이라고 선언했는데 실제 셀 값은 이미 원(WON) 그대로인 자기모순
+    필링 4건. 넷마블과 같은 유형이지만 표 자체가 아예 저조행수(BS≤20)로 걸려
+    발견됐다 — `_AMOUNT_SANE_MAX`가 ×1,000,000 적용 후 초과값(자산총계 등 큰
+    총계행)만 거부해 총계 행이 통째로 결측되고, 문턱 바로 아래인 세부 항목행은
+    ×1,000,000 이 적용된 채 그대로 남아 비현실적으로 큰 값(수백조~경 단위)으로
+    저장됐었다. 각 필링 원문 내 다른 단위(천원/백만원)로 같은 계정을 재공시하는
+    별도 표(부채비율 주석 등)와 대조해 원(WON)이 맞음을 확정했다."""
+    cases = [
+        (_AZTEC_WB_2019_Q3, "20191114000246", "00201131", 2019, "Q3",
+         "separate", "자산총계", 114_055_541_787),
+        (_HL_DNI_2021_H1, "20210817001851", "00161116", 2021, "H1",
+         "separate", "장기매출채권 (주4,8,27,30)", 3_085_899_000),
+        (_DONGSUNG_CHEMICAL_2017_H1, "20170814002311", "00679314", 2017, "H1",
+         "consolidated", "유동자산", 363_304_597_206),
+        (_SONOSQUARE_2024_Q3, "20241114002786", "00104810", 2024, "Q3",
+         "consolidated", "유동자산", 61_190_747_942),
+    ]
+    for path, rcept_no, corp_code, fy, period, basis, label, expected in cases:
+        if not path.exists():
+            continue
+        lines = extract_report_lines(
+            path, rcept_no=rcept_no, corp_code=corp_code,
+            report_fiscal_year=fy, report_fiscal_period=period)
+        bs = {l.label_raw: l.value_won for l in lines
+              if l.statement == "BS" and l.basis == basis and (l.col_index or 0) == 0}
+        assert bs.get(label) == expected, (rcept_no, label, bs.get(label))
+        # 총계 행이 다시 살아났는지(수정 전엔 _AMOUNT_SANE_MAX 초과로 통째 결측).
+        assert any("총계" in k or k in ("자산", "부채", "자본") for k in bs), \
+            (rcept_no, "총계행 없음", list(bs)[:10])
+
 
 def test_r132_netmarble_self_contradictory_declared_unit_overridden_to_won():
     """R132(2026-09-16, IS_separate 이상치 재검증 중 발견) — 넷마블

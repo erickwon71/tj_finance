@@ -777,15 +777,20 @@ _SOFTCEN_FY2022 = (
 
 def test_softcen_2022_sanemax_reject_no_longer_shifts_columns():
     """소프트센(00204226) 2022FY 연결BS — 원문이 "(단위 : 백만원)" 선언인데 실제로는
-    이미 원 단위 숫자를 찍은 자기모순 필링(원문대조 확정, R73 (가+라) 그룹). 수정 전에는
-    당기(제36기) "이익잉여금(결손금)" 17,293,933,213원이 ×10⁶ 스케일에서
+    이미 원 단위 숫자를 찍은 자기모순 필링(원문대조 확정, R73 (가+라) 그룹). 애초(2026-09-06,
+    R73)엔 당기(제36기) "이익잉여금(결손금)" 17,293,933,213원이 ×10⁶ 스케일에서
     `_AMOUNT_SANE_MAX`(1경원) 가드에 걸려 None 이 됐고, 그 선두 None 을 (진짜 미공시로
-    오인해) 절삭하는 바람에 전기(제35기) 값이 당기 열로, 전전기(제34기) 값이 전기 열로
-    한 칸씩 밀려 들어갔다 — 원문에 없는 값이 특정 회계연도 것으로 둔갑하는 조용한
-    오염(R3 자신의 "오염보다 결측을 택한다" 원칙 위반). 수정 후에는 거부된 당기 셀이
-    그대로 결측(행 자체가 없음)으로 남고, 전기·전전기는 원래 자리(col_index 1·2)를
-    지켜야 한다. (단위선언 자체의 교정은 별도 unit_override 트랙 — 여기서는 컬럼 밀림만
-    검증한다.) 근거: docs/plans/report_lines_sanemax_reject_compaction_shift_design_2026-09-06.md
+    오인해) 절삭하는 바람에 전기(제35기) 값이 당기 열로 한 칸씩 밀려 들어가는 컬럼시프트
+    버그가 있었다 — 그 버그만 먼저 막아 "거부된 셀은 결측으로 남기고 밀지 않는다"로
+    고정했었다(전기·전전기는 그 시점엔 아직 ×10⁶ 스케일 그대로 두고 검증).
+
+    ★2026-09-16(후속, BS 임계값 +3 확장 재검토 중 재발견) — 이 필링이 BS_consolidated
+    22행으로 걸려 다시 나타났다. R73 시점엔 없었던 `_MANUAL_UNIT_OVERRIDE_MULTIPLIER_
+    RCEPTS`(R132, 넷마블에서 신설) 메커니즘으로 이제 rcept 전체를 배수 1(원)로 강제
+    교정한다 — 거부돼 결측이던 당기 셀도 이제 올바른 원 단위 값으로 복구되고, 전기·
+    전전기도 ×10⁶ 오염이 제거된 값으로 같이 교정된다(단위 오버라이드는 표 전체에
+    일괄 적용되므로 세 열이 함께 바뀌는 게 맞다). 근거:
+    docs/plans/report_lines_sanemax_reject_compaction_shift_design_2026-09-06.md
     """
     if not _SOFTCEN_FY2022.exists():
         return
@@ -798,15 +803,17 @@ def test_softcen_2022_sanemax_reject_no_longer_shifts_columns():
         return {l.col_index: (l.context_fiscal_year, l.value_won) for l in lines
                 if l.statement == "BS" and l.basis == basis and l.label_raw == label}
 
+    # 컬럼시프트 없음(각 col_index 가 제 회계연도를 유지) + 단위 오버라이드로 세 열
+    # 전부 원 단위로 정상 복구됐는지 함께 확인.
     re_col = _by_col("이익잉여금(결손금)")
-    assert 0 not in re_col, f"거부된 당기 셀이 결측 대신 값으로 남음: {re_col}"
-    assert re_col[1] == (2021, 6_570_137_526_000_000), re_col
-    assert re_col[2] == (2020, -8_460_317_110_000_000), re_col
+    assert re_col[0] == (2022, 17_293_933_213), re_col
+    assert re_col[1] == (2021, 6_570_137_526), re_col
+    assert re_col[2] == (2020, -8_460_317_110), re_col
 
     nci_col = _by_col("비지배지분")
-    assert 0 not in nci_col, f"거부된 당기 셀이 결측 대신 값으로 남음: {nci_col}"
-    assert nci_col[1] == (2021, 8_058_575_267_000_000), nci_col
-    assert nci_col[2] == (2020, 5_571_400_065_000_000), nci_col
+    assert nci_col[0][0] == 2022, nci_col
+    assert nci_col[1] == (2021, 8_058_575_267), nci_col
+    assert nci_col[2] == (2020, 5_571_400_065), nci_col
 
 
 _3S_FY2023Q3 = (

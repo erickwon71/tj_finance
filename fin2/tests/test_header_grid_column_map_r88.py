@@ -455,17 +455,23 @@ def test_r116_q1_cumulative_blank_uses_three_month_when_allowed():
 def test_r116_merge_group_duplicate_equal_values_accepted_when_allowed():
     """R116 — 드림시큐리티 20160511001294 실측: 서브타입 구분 텍스트가 없는 병합군
     (R114 else 분기)인데 두 물리열이 **완전히 같은 값**을 중복 기재했다(3개월=누적
-    등식을 필자가 그대로 두 칸에 반복). 예외목록 필링에서만 이 경우를 판정불가(R6)
-    대신 확정값으로 채택한다. 값이 서로 다르면(진짜 판정불가) 여전히 건너뛴다."""
+    등식을 필자가 그대로 두 칸에 반복).
+
+    ★R131(2026-09-16) 후속 — KD 20200515002825 실측으로, 이 "값 동일" 판정은
+    `allow_three_month_as_cumulative` 예외 플래그와 무관하게(모호함이 없으므로)
+    **항상** 채택하도록 일반화됐다 — 아래 첫 assert 가 옛 회귀 기대값({})에서
+    새 기대값({0: 100})으로 바뀐 이유. 값이 서로 다르면(진짜 판정불가) 여전히
+    건너뛴다(플래그 유무 무관, R6 유지)."""
     cols = [HeaderColumn(position=0, period_key="제 3 기 1분기", period_rank=0, subtype=None),
             HeaderColumn(position=1, period_key="제 3 기 1분기", period_rank=0, subtype=None)]
-    # 허용 안 하면(기본값) 기존 R6 판정불가 그대로 — 회귀 없음.
-    assert select_by_header_columns(cols, [100, 100]) == {}
-    # 허용 + 값이 같으면 채택.
+    # R131 — 플래그 없어도(기본 호출자) 값이 같으면 이제 채택한다.
+    assert select_by_header_columns(cols, [100, 100]) == {0: 100}
+    # 플래그를 켜도 동일하게 채택(회귀 없음).
     assert select_by_header_columns(
         cols, [100, 100], allow_three_month_as_cumulative=True,
     ) == {0: 100}
-    # 허용해도 값이 서로 다르면(진짜 판정불가) 여전히 건너뜀.
+    # 값이 서로 다르면(진짜 판정불가) 플래그 유무와 무관하게 여전히 건너뜀.
+    assert select_by_header_columns(cols, [100, 200]) == {}
     assert select_by_header_columns(
         cols, [100, 200], allow_three_month_as_cumulative=True,
     ) == {}

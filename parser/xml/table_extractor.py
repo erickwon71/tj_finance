@@ -1119,7 +1119,18 @@ def select_by_header_columns(
     상황이라 R116(값이 같을 때만 통과)과는 다른 분기 — 사용자가 일반 규칙화 대신
     예외목록으로 좁히기로 결정해(R6 정책 유지), `prefer_last_of_two_as_cumulative=
     True`일 때만(호출측 예외 rcept 목록, `fin2/extract/report_lines.py::
-    _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS`) 위치상 마지막 열을 채택한다."""
+    _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS`) 위치상 마지막 열을 채택한다.
+
+    ★R131(2026-09-16, 사용자 확정 — "값이 완전히 같으면 항상 채택해도 R6 취지에 안
+    어긋난다") — KD(케이디) 20200515002825: IS 별도 표 전체가 무표지 COLSPAN=2
+    병합군인데("제47기 분기"/"제46기 분기", 3개월/누적 구분 텍스트 없음), 두 물리열이
+    행마다 예외 없이 완전히 같은 값을 반복 기재한다(매출액 10,672,141,199 가 두 열
+    모두 동일 등). R116 은 이 "값 동일" 판정을 원래도 갖고 있었지만
+    `allow_three_month_as_cumulative` 플래그(Q1 누적-공란 대체라는 별개 취지) 뒤에
+    갇혀 있어 예외목록에 없는 KD 는 표 전체가 유실됐다. 값이 완전히 같은 경우는
+    R6 이 막으려는 "서로 다른 값 중 하나를 짐작"하는 상황 자체가 아니므로(모호함이
+    없다) rcept 예외목록 없이 항상 채택하도록 일반화했다 — R116/R120 예외목록은
+    각각의 원래 취지(공란 대체/서로 다른 값 중 위치 규칙 채택)로만 남는다."""
     def _amount_or_dash_zero(pos: int):
         if pos < len(amounts) and amounts[pos] is not None:
             return amounts[pos]
@@ -1195,13 +1206,23 @@ def select_by_header_columns(
                 # → 구조적 0(R113 취지 유지, 넥슨게임즈 "기초 현금및현금성자산" 실측:
                 #   note 열 옆 병합군 2열 중 한쪽만 대시고 한쪽은 아예 빈칸).
                 result[rank] = 0
-            elif (allow_three_month_as_cumulative and len(real_present) >= 2
+            elif (len(real_present) >= 2
                   and len({amounts[c.position] for c in real_present}) == 1):
-                # R116 — 예외목록 필링: 서브타입 구분 텍스트가 아예 없는 병합군(드림
-                # 시큐리티류)인데 물리열들이 전부 **완전히 같은 값**을 중복 기재했다
-                # (3개월=누적 등식을 필자가 그대로 두 칸에 반복). 값이 같으면 R6 이
+                # R131(2026-09-16, KD/케이디 20200515002825 IS 별도 원문대조로 발견) —
+                # 서브타입 구분 텍스트가 아예 없는 병합군(드림시큐리티류/KD류)인데
+                # 물리열들이 전부 **완전히 같은 값**을 중복 기재했다면, 이건 R6 이
                 # 막으려는 "서로 다른 값 중 하나를 임의로 고르는" 판정불가 상황이
-                # 아니라 이미 확정된 값이므로 채택한다.
+                # 아니라 애초에 모호함이 없는 이미 확정된 값이다 — 예외목록(rcept
+                # 단위)으로 좁힐 이유가 없어 예외 플래그 없이 항상 채택한다(사용자
+                # 결정: "값이 완전히 같으면 항상 채택해도 R6 취지에 안 어긋난다").
+                # 이전엔 이 분기가 R116 플래그(`allow_three_month_as_cumulative`,
+                # Q1 누적-공란 대체용으로 설계된 전혀 다른 취지) 뒤에 갇혀 있어, 그
+                # 예외목록에 없는 KD 같은 필링은 매출액 등 핵심 행 전체가 통째로
+                # 누락됐다(무표지 COLSPAN=2 병합군 전체가 이 분기 하나로 죽음).
+                # R116 예외목록(`_Q1_CUM_BLANK_USE_3M_RCEPTS`)은 이 분기와 무관하게
+                # 그대로 유지 — has_subtype 분기(위쪽)의 "누적 열은 있지만 값이
+                # 공란" 대체 판정에만 쓰인다(서로 다른 값 중 하나를 채택하는 진짜
+                # 판정이라 R6 대상, 예외목록 유지 필요).
                 result[rank] = amounts[real_present[0].position]
             elif (prefer_last_of_two_as_cumulative and len(cols) == 2
                   and len(real_present) == 2):

@@ -6934,6 +6934,71 @@ TOTALS_BY_STATEMENT`)로 우회됐지만, CF에는 이 경로가 없어 트리�
 
 ---
 
+## R131. `parser/xml/table_extractor.py::select_by_header_columns()` —
+무표지 병합군 "값 동일" 판정을 예외목록 없이 일반화 (2026-09-16)
+
+**배경**: 재적재 완료 후 4개 이상치 카테고리 재검증 중 KD(케이디) 2020Q1
+20200515002825 발견 — IS 별도 헤더가 "제47기 분기"/"제46기 분기"를 구분
+텍스트 없는 COLSPAN=2 병합군으로 반복하는데, 두 물리열이 행마다 예외 없이
+완전히 같은 값을 담고 있었다(매출액 10,672,141,199 이 두 열 모두 동일 등).
+
+**원인**: `select_by_header_columns()`의 no-subtype 분기는 이 "값 동일"
+판정 자체는 R116 도입 때부터 갖고 있었지만(드림시큐리티류), `allow_three_
+month_as_cumulative` 플래그(Q1 누적-공란 대체라는 전혀 다른 취지로 설계된
+게이트) 뒤에 갇혀 있었다. 예외목록에 없는 KD 같은 필링은 이 게이트를 못
+통과해 매출액·영업이익·당기순이익 등 핵심 행 전체가 유실됐다(수정 전
+IS_separate 4행).
+
+**수정과 결정**: 값이 완전히 같은 경우는 R6 이 막으려는 "서로 다른 값 중
+하나를 짐작"하는 판정불가 상황이 **아니다**(모호함 자체가 없다) — 사용자
+확정: "값이 완전히 같으면 항상 채택해도 R6 취지에 안 어긋난다". 이 분기를
+`allow_three_month_as_cumulative` 게이트에서 떼어내 rcept 예외목록 없이
+항상 적용하도록 일반화했다. R116(공란 대체)/R120(서로 다른 값 중 마지막
+열 채택)은 각각 진짜 판정을 담당하므로 예외목록 그대로 유지 — 이번
+일반화 대상은 "값 동일" 케이스 하나뿐이다.
+
+**검증**: KD IS_separate 4→32행(매출액~당기순이익 전부 항등식 성립 확인).
+`test_r116_merge_group_duplicate_equal_values_accepted_when_allowed()`
+갱신(플래그 없이도 채택하는 것이 새 기대값), 전체 스코프 테스트(1,034건)
+회귀 없음(사전에 존재하던 뉴인텍 basis_fallback 실패 1건과 무관 확인).
+`fin2/tests/test_report_lines.py::test_r131_kd_...`.
+
+---
+
+## R132. `fin2/extract/report_lines.py::_MANUAL_UNIT_OVERRIDE_MULTIPLIER_
+RCEPTS`(신규) — 자기모순 단위선언 rcept 단위 강제 교정 (2026-09-16)
+
+**배경**: 같은 재검증 중 넷마블 2017FY 20180402005173 발견 — 연결·별도
+IS·CF·BS 표 전부 "(단위: 백만원)"이라고 선언돼 있는데, 실제 셀 값은 이미
+원(WON) 단위 그대로다. 별도 영업수익 "1,668,776,658,371"을 정말 백만원
+으로 읽으면 1.67×10¹⁸원(불가능)이 되고, 연결 영업수익 "2,424,755,040,569"
+는 그대로 2.42조원(넷마블 2017 실제 공시 매출과 일치)이라 원문 자체의
+단위 오기재임을 확정할 수 있다.
+
+**원인**: `_AMOUNT_SANE_MAX`(1경원 상한, R3)가 ×1,000,000 을 적용한
+결과(10¹⁸ 오더)를 정상적으로 거부 — 값 자체는 안전장치가 맞게 걸렀지만,
+그 결과 매출액·영업이익·당기순이익 등 핵심 행 대부분이 통째로 결측
+처리됐다(수정 전 IS_separate 12행 중 대부분 유실, CF/BS 도 같은 패턴).
+
+**수정**: `_MANUAL_UNIT_OVERRIDE_MULTIPLIER_RCEPTS: dict[str, int]`
+신설(rcept_no → 강제 배수) — `_emit_section_lines()`에서 표별 선언 배수
+해석보다 먼저 이 예외목록을 확인해, 있으면 선언값을 무시하고 강제로
+덮어쓴다(`unit_source="manual_unit"`로 근거를 남김). 문서 전체(4개 표×
+연결/별도)에 걸친 자기모순이라 표 단위가 아니라 rcept 단위로 스코프를
+잡았다.
+
+**일반화하지 않는 이유**: "선언 배수가 실제 자릿수와 10⁶배 어긋남"은
+단위 declaration 파싱 성공/실패와 무관한 필자의 오기재라, 다른 필링에도
+이 정도로 큰 자기모순이 흔하다고 가정할 근거가 없다 — 원문대조로 확인된
+rcept 에만 좁힌다(R6 유지, R121/R118류와 같은 정책).
+
+**검증**: 넷마블 2017FY 문서 전체 라인 수 대폭 증가(IS_separate 12→48,
+IS_consolidated →69, CF_separate →108, CF_consolidated →132, BS 도 동반
+증가). 연결 영업수익 2,424,755,040,569원이 실제 공시 매출과 일치함을
+대조 확인. `fin2/tests/test_report_lines.py::test_r132_netmarble_...`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -7022,8 +7087,10 @@ TOTALS_BY_STATEMENT`)로 우회됐지만, CF에는 이 경로가 없어 트리�
 | R128/R128b | 커밋 `7799788`·`43b09c3` · `parser/xml/table_extractor.py::_PERIOD_KEY_RE` |
 | R129 | 커밋 `ac80d52` · `parser/xbrl_instance/taxonomy_linkbase.py::_drop_prohibited_only_locs()` · `fin2/tests/test_xbrl_instance.py` |
 | R130 | 커밋 `5a1bdac` · `fin2/extract/report_lines_xbrl.py::_emit_missing_cf_lines()`(`_REQUIRED_CF_LINES`) · `fin2/tests/test_xbrl_instance.py` |
+| R131 | 최종 전체 재적재 후 이상치 재검증(2026-09-16) · `parser/xml/table_extractor.py::select_by_header_columns()` · `fin2/tests/test_header_grid_column_map_r88.py`·`fin2/tests/test_report_lines.py::test_r131_kd_...` |
+| R132 | 최종 전체 재적재 후 이상치 재검증(2026-09-16) · `fin2/extract/report_lines.py::_MANUAL_UNIT_OVERRIDE_MULTIPLIER_RCEPTS` · `fin2/tests/test_report_lines.py::test_r132_netmarble_...` · 부록 D |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
-| 부록 D | rcept 단위 예외목록 카탈로그(`fin2/extract/report_lines.py`에 흩어진 4개 딕셔너리 — R116/R118/R120/R121) |
+| 부록 D | rcept 단위 예외목록 카탈로그(`fin2/extract/report_lines.py`에 흩어진 5개 딕셔너리 — R116/R118/R120/R121/R132) |
 
 ## 부록 C. 미결 / 위반 현황
 
@@ -7084,6 +7151,8 @@ report_lines DB 자체에는 "이 행이 예외목록을 거쳤다"는 tagging�
 | 20170512001930 | 조광페인트 | 2017 Q1 | IS 별도 |
 | 20190527000008 | 자이글 | 2019 Q1 | IS 연결 |
 | 20180515002398 | 평화산업 | 2018 Q1 | IS 별도 |
+| 20210517001891 | APS | 2021 Q1 | IS 별도 |
+| 20150514004898 | 형지I&C | 2015 Q1(같은 회사 다른 rcept·다른 연도) | IS 별도 |
 
 ### `_HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS` (R120) — 무표지 2열 병합군에서
 물리적 마지막 열을 "누적"으로 채택(DART 관행: [3개월 먼저, 누적 나중])
@@ -7114,7 +7183,14 @@ report_lines DB 자체에는 "이 행이 예외목록을 거쳤다"는 tagging�
 | 20160520000534 | 더블유게임즈 2015FY | [기재정정]사업보고서 — 제3·4기 연결비대상(사용자 확인) |
 | 20160329000657 | 더블유게임즈 2015FY | 정정 전 원본, 동일 이슈 |
 
-### 기타 개별 하드코딩 (참고, 위 4개 딕셔너리와 별개 위치)
+### `_MANUAL_UNIT_OVERRIDE_MULTIPLIER_RCEPTS` (R132) — 문서 전체에 걸친 자기모순
+단위선언(선언 배수가 실제 자릿수와 10⁶배 어긋남)을 rcept 단위로 강제 교정
+
+| rcept_no | 회사 | 강제 배수 | 비고 |
+|---|---|---|---|
+| 20180402005173 | 넷마블 2017FY | 1 (원) | "(단위: 백만원)" 선언이 자기모순, 실제는 원(WON) 그대로. 문서 전체(BS·IS·CF×연결·별도) |
+
+### 기타 개별 하드코딩 (참고, 위 5개 딕셔너리와 별개 위치)
 
 - `fin2/extract/consolidation_evidence.py::_MANUAL_HAS_CONSOLIDATED_OVERRIDE`
   (R110) — SGA솔루션즈 2건(20151113001023·20160329000826), 순번↔회계연도 매핑

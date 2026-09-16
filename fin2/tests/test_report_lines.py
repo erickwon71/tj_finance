@@ -1372,6 +1372,124 @@ def test_r118_shinyoung_securities_duplicate_period_label_typo_corrected():
     assert begin + net == end, (begin, net, end)
 
 
+_APS_2021_Q1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00296078_APS/quarter/2021/20210517001891.xml"
+)
+
+
+def test_r116_aps_separate_is_cumulative_blank_uses_three_month():
+    """R116 후속(2026-09-16, 최종 전체 재적재 후 IS_separate 이상치 재검증 중
+    발견) — APS 20210517001891: 형지I&C/평화산업과 완전히 같은 패턴. Q1 별도
+    손익계산서가 "3개월" 칸만 채우고 "누적" 칸은 통째로 공란(당기순이익 행만
+    예외로 둘 다 채워 3개월=누적 등식을 필자 스스로 증명 — 두 값 모두
+    -207,580,764로 정확히 일치)."""
+    if not _APS_2021_Q1.exists():
+        return
+    lines = extract_report_lines(
+        _APS_2021_Q1, rcept_no="20210517001891", corp_code="00296078",
+        report_fiscal_year=2021, report_fiscal_period="Q1")
+    is_s = {l.label_raw: l.value_won for l in lines
+            if l.statement == "IS" and l.basis == "separate" and (l.col_index or 0) == 0}
+    assert len(is_s) > 10, f"R116 예외목록 누락 시 1행 근처로 유실된다: {len(is_s)}"
+    assert is_s["수익(매출액)"] - is_s["매출원가"] == is_s["매출총이익"]
+    assert is_s["매출총이익"] - is_s["판매비와관리비"] == is_s["영업이익(손실)"]
+
+
+_HYUNGJI_2015_Q1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00142713_형지I&C/quarter/2015/20150514004898.xml"
+)
+
+
+def test_r116_hyungji_ic_2015q1_separate_is_cumulative_blank_uses_three_month():
+    """R116 후속(2026-09-16) — 형지I&C 20150514004898(2015 Q1): 같은 회사의
+    기존 예외목록 항목(20160516001490, 2016 Q1)과는 다른 rcept·다른 연도인데
+    같은 회사가 다른 분기에도 같은 패턴을 반복한다. 6열 헤더(당기 3개월/누적,
+    전기 3개월/누적, 전전기 FY, 전전전기 FY)에서 당기·전기 둘 다 "누적" 열이
+    공란."""
+    if not _HYUNGJI_2015_Q1.exists():
+        return
+    lines = extract_report_lines(
+        _HYUNGJI_2015_Q1, rcept_no="20150514004898", corp_code="00142713",
+        report_fiscal_year=2015, report_fiscal_period="Q1")
+    is_s = {l.label_raw: l.value_won for l in lines
+            if l.statement == "IS" and l.basis == "separate" and (l.col_index or 0) == 0}
+    assert len(is_s) > 10, f"R116 예외목록 누락 시 1행 근처로 유실된다: {len(is_s)}"
+    rev = is_s["수익(매출액) (주25,35)"]
+    cogs = is_s["매출원가 (주26,30,35)"]
+    gp = is_s["매출총이익"]
+    assert rev - cogs == gp, (rev, cogs, gp)
+
+
+_KD_2020_Q1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00111218_KD/quarter/2020/20200515002825.xml"
+)
+
+
+def test_r131_kd_headerless_merge_group_identical_values_always_accepted():
+    """R131(2026-09-16, IS_separate 이상치 재검증 중 발견) — KD(케이디)
+    20200515002825: 별도 손익계산서 헤더가 "제47기 분기"/"제46기 분기"를 구분
+    텍스트 없는 COLSPAN=2 병합군으로 반복하는데, 두 물리열이 행마다 예외 없이
+    완전히 같은 값을 담고 있다(매출액 10,672,141,199 이 두 열 모두 동일 등).
+    이 "값 동일" 판정은 원래 R116 예외목록 플래그(Q1 누적-공란 대체용, 전혀
+    다른 취지) 뒤에 갇혀 있어, 이 rcept처럼 예외목록에 없는 필링은 매출액·
+    영업이익·당기순이익 등 핵심 행 전체가 통째로 유실됐다(수정 전 4행만 생존).
+    값이 완전히 같은 경우는 R6 이 막으려는 "서로 다른 값 중 하나를 짐작"하는
+    상황이 아니므로 예외목록 없이 항상 채택하도록 일반화(`select_by_header_
+    columns` R131 분기, `parser/xml/table_extractor.py`)."""
+    if not _KD_2020_Q1.exists():
+        return
+    lines = extract_report_lines(
+        _KD_2020_Q1, rcept_no="20200515002825", corp_code="00111218",
+        report_fiscal_year=2020, report_fiscal_period="Q1")
+    is_s = {l.label_raw: l.value_won for l in lines
+            if l.statement == "IS" and l.basis == "separate" and (l.col_index or 0) == 0}
+    assert len(is_s) > 10, f"R131 없으면 4행 근처로 유실된다: {len(is_s)}"
+    rev = is_s["Ⅰ.매출액"]
+    cogs = is_s["Ⅱ.매출원가"]
+    gp = is_s["Ⅲ.매출총이익"]
+    opinc = is_s["Ⅴ.영업이익(손실)"]
+    ni = is_s["Ⅶ.당기순이익(손실)"]
+    assert rev == 10_672_141_199, rev
+    assert rev - cogs == gp, (rev, cogs, gp)
+    assert ni == -678_707_922, ni
+    assert opinc < 0, opinc  # 원문 그대로 영업손실
+
+
+_NETMARBLE_2017_FY = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00904672_넷마블/annual/2017/20180402005173.xml"
+)
+
+
+def test_r132_netmarble_self_contradictory_declared_unit_overridden_to_won():
+    """R132(2026-09-16, IS_separate 이상치 재검증 중 발견) — 넷마블
+    20180402005173(2017FY): 연결·별도 IS·CF·BS 표 전부 "(단위: 백만원)"이라고
+    선언돼 있는데, 실제 셀 값은 이미 원(WON) 단위 그대로다(자기모순 단위선언 —
+    원문 자체의 오기재). 별도 영업수익 "1,668,776,658,371"을 정말 백만원으로
+    읽으면 1.67×10¹⁸원이라는 불가능한 값이 돼 `_AMOUNT_SANE_MAX`(1경원 상한)가
+    정상적으로 거부, 매출액·영업이익·당기순이익 등 핵심 행 대부분이 결측
+    처리됐다(수정 전 IS_separate 12행). 이 rcept 단위로 배수를 1(원)로 강제
+    override(`_MANUAL_UNIT_OVERRIDE_MULTIPLIER_RCEPTS`)해 원문 그대로의 값을
+    담는다 — 연결 영업수익 2,424,755,040,569원(2.42조원)은 넷마블 2017 실제
+    공시 매출과 일치함을 대조 확인."""
+    if not _NETMARBLE_2017_FY.exists():
+        return
+    lines = extract_report_lines(
+        _NETMARBLE_2017_FY, rcept_no="20180402005173", corp_code="00904672",
+        report_fiscal_year=2017, report_fiscal_period="FY")
+    is_s = {l.label_raw: l.value_won for l in lines
+            if l.statement == "IS" and l.basis == "separate" and (l.col_index or 0) == 0}
+    is_c = {l.label_raw: l.value_won for l in lines
+            if l.statement == "IS" and l.basis == "consolidated" and (l.col_index or 0) == 0}
+    assert len(is_s) > 10, f"R132 없으면 4행 근처로 유실된다: {len(is_s)}"
+    assert is_s["영업수익"] == 1_668_776_658_371, is_s["영업수익"]
+    assert is_s["영업수익"] - is_s["영업비용"] == is_s["영업이익(손실)"]
+    assert is_c["영업수익"] == 2_424_755_040_569, is_c["영업수익"]  # 실제 공시 매출과 일치
+
+
 def _run():
     if not _KG.exists():
         print(f"  - SKIP(파일 없음): {_KG}")

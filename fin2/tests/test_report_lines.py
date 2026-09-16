@@ -1482,6 +1482,47 @@ _SONOSQUARE_2024_Q3 = (
     Path(__file__).resolve().parents[2]
     / "raw_report/KOSDAQ/00104810_소노스퀘어/quarter/2024/20241114002786.xml"
 )
+_BIOPLUS_2019_Q3 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00636656_바이오플러스/quarter/2019/20191129000890.xml"
+)
+_WOORI_TECH_INVESTMENT_2020_Q3 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00231664_우리기술투자/quarter/2020/20201116001931.xml"
+)
+_MASON_CAPITAL_2021_Q3 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/00136101_메이슨캐피탈/quarter/2021/20210210000442.xml"
+)
+
+
+def test_r120_followup_headerless_merge_missing_subheader_row_picks_cumulative():
+    """R120 후속(2026-09-16, 5번 임계값 재검토 스캔 — 사용자 지시 "지금 원인
+    조사+수정") — "요약재무정보" 서식(공식 재무제표 섹션이 빈 placeholder)의 IS
+    표에서 "3개월"/"누적" 서브헤더 행이 통째로 빠진 채 COLSPAN=2 무표지 병합군만
+    남은 경우. 같은 문서의 다른 basis(정상 서브헤더 보유)와 물리열 순서가 동일함을
+    (DART 관행 [3개월,누적]) 원문대조로 확인 — R120과 같은 메커니즘, 예외목록만
+    확장(`_HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS`)."""
+    cases = [
+        (_BIOPLUS_2019_Q3, "20191129000890", "00636656", 2019, "Q3",
+         "consolidated", "I. 매출액", 12_050_665_141),
+        (_WOORI_TECH_INVESTMENT_2020_Q3, "20201116001931", "00231664", 2020, "Q3",
+         "consolidated", "Ⅰ. 영업수익(주4,22,27)", 18_344_549_484),
+        (_MASON_CAPITAL_2021_Q3, "20210210000442", "00136101", 2021, "Q3",
+         "separate", "1. 영업수익", 3_960_673_087),
+    ]
+    for path, rcept_no, corp_code, fy, period, basis, label, expected in cases:
+        if not path.exists():
+            continue
+        lines = extract_report_lines(
+            path, rcept_no=rcept_no, corp_code=corp_code,
+            report_fiscal_year=fy, report_fiscal_period=period)
+        is_rows = {l.label_raw: l.value_won for l in lines
+                   if l.statement == "IS" and l.basis == basis and (l.col_index or 0) == 0}
+        assert is_rows.get(label) == expected, (rcept_no, basis, label, is_rows.get(label))
+        # 수정 전엔 이 분기가 R6 판정불가로 통째로 빠져 매출액~순이익 행이 전부
+        # 유실됐다 — 이제는 살아나는지 확인.
+        assert len(is_rows) > 10, (rcept_no, basis, len(is_rows))
 
 
 def test_r132_followup_bs_self_contradictory_declared_unit_overridden_to_won():

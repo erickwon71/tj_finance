@@ -6999,6 +6999,45 @@ IS_consolidated →69, CF_separate →108, CF_consolidated →132, BS 도 동반
 
 ---
 
+## R133. `fin2/extract/report_lines_xbrl.py::_emit_missing_leaf_lines()`
+(`_emit_missing_cf_lines`에서 일반화) — IS 통계도 CF와 같은 개별 항목
+트리-미연결 백업 필요 (2026-09-16, 사용자 지시로 R130 즉시 확장)
+
+**배경**: 넵튠 20150817000007(2015 H1) IS_separate 재검증 — 인스턴스에
+`dart:OperatingIncomeLoss`(영업이익)/`ifrs:ProfitLossBeforeTax`(법인세비용
+차감전순이익)/`ifrs:ProfitLossFromContinuingOperations`(계속영업이익)가
+모두 당기 컨텍스트까지 정상 태깅돼 있는데도, 표시 트리엔 SGA·금융수익·
+`_REQUIRED_TOTALS_BY_STATEMENT["IS"]`가 이미 백업하는 ProfitLoss/
+ComprehensiveIncome 만 연결돼 있었다(수정 전 IS_separate 4행) — R130이
+CF에서 고친 것과 똑같은 flat-forest 유형이 IS의 waterfall 중간 항목에도
+있음을 확인.
+
+**설계**: `OperatingIncomeLoss`는 IFRS 국제표준에 대응 개념이 없어 DART가
+`dart:` 네임스페이스로 직접 확장한 계정이라(CF의 다수 개념과 같은 사정),
+`_emit_missing_totals()`의 고정 `ifrs`/`ifrs-full` 네임스페이스 조회로는
+못 찾는다. R130의 `_emit_missing_cf_lines()`를 `_emit_missing_leaf_lines()`
+로 일반화(`statement` 매개변수화, `_REQUIRED_LEAF_LINES_BY_STATEMENT =
+{"CF": _REQUIRED_CF_LINES, "IS": _REQUIRED_IS_LINES}`로 디스패치) — CF쪽
+동작은 완전히 그대로(같은 리스트·같은 호출부, `source_ref` 접미사 문자열만
+"xbrl_tree_gap_cf_line"→"xbrl_tree_gap_leaf_line"로 통일, 순수 진단용
+컬럼이라 하류 소비 없음 확인). `_REQUIRED_IS_LINES = (OperatingIncomeLoss,
+ProfitLossBeforeTax, ProfitLossFromContinuingOperations)`.
+
+**의도적으로 안 넣은 것**: Revenue/CostOfSales/GrossProfit — 넵튠 인스턴스엔
+`Revenue` fact 자체가 아예 태깅돼 있지 않다(직접 grep으로 확인, 트리 문제가
+아니라 진짜 결측). 이 함수가 되살릴 근거(트리엔 없지만 fact는 있다)가 없는
+개념을 목록에 넣는 건 추측이라 R0 원칙 위반 — 이후 다른 필링에서 이 패턴이
+실측 확인되면 그때 추가.
+
+**검증**: 넵튠 IS_separate 4→7행(영업이익 -30,393,449 / 법인세비용차감전
+순이익 -27,151,170 / 계속영업이익 -22,961,058). 계속영업이익=당기순이익
+(중단영업 없는 회사, 항등식 교차검증). 전체 스코프 테스트(1,037건) 회귀
+없음(뉴인텍 basis_fallback 무관 실패 1건 제외). `fin2/tests/
+test_xbrl_instance.py::test_r133_is_leaf_gap_backfill_recovers_waterfall_
+subtotals`.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -7089,6 +7128,7 @@ IS_consolidated →69, CF_separate →108, CF_consolidated →132, BS 도 동반
 | R130 | 커밋 `5a1bdac` · `fin2/extract/report_lines_xbrl.py::_emit_missing_cf_lines()`(`_REQUIRED_CF_LINES`) · `fin2/tests/test_xbrl_instance.py` |
 | R131 | 최종 전체 재적재 후 이상치 재검증(2026-09-16) · `parser/xml/table_extractor.py::select_by_header_columns()` · `fin2/tests/test_header_grid_column_map_r88.py`·`fin2/tests/test_report_lines.py::test_r131_kd_...` |
 | R132 | 최종 전체 재적재 후 이상치 재검증(2026-09-16) · `fin2/extract/report_lines.py::_MANUAL_UNIT_OVERRIDE_MULTIPLIER_RCEPTS` · `fin2/tests/test_report_lines.py::test_r132_netmarble_...` · 부록 D |
+| R133 | 사용자 지시로 R130 즉시 확장(2026-09-16) · `fin2/extract/report_lines_xbrl.py::_emit_missing_leaf_lines()`(`_REQUIRED_IS_LINES`) · `fin2/tests/test_xbrl_instance.py::test_r133_...` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 | 부록 D | rcept 단위 예외목록 카탈로그(`fin2/extract/report_lines.py`에 흩어진 5개 딕셔너리 — R116/R118/R120/R121/R132) |
 

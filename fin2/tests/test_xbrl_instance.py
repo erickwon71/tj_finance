@@ -315,6 +315,46 @@ def test_r130_cf_tree_gap_backfill_recovers_lines_the_tree_never_wired_in():
     assert ("재무활동현금흐름", 1) not in cf_s
 
 
+# ★R133(2026-09-16, 최종 전체 재적재 후 IS_separate 이상치 재검증 중 발견) —
+# 넵튠 실측. `_REQUIRED_TOTALS_BY_STATEMENT["IS"]`는 ProfitLoss/ComprehensiveIncome
+# 둘만 백업하는데, 이 필링은 그 사이 waterfall 개념(영업이익/법인세비용차감전
+# 순이익/계속영업이익)도 트리에 안 걸려 있었다 — R130과 같은 flat-forest 유형을
+# IS로 확장한 사례. `OperatingIncomeLoss`는 `dart:` 확장 네임스페이스라
+# `_emit_missing_totals`의 고정 네임스페이스 조회로는 못 찾고, CF와 같은
+# 네임스페이스 무관 조회(`_emit_missing_leaf_lines`)가 필요했다.
+_NEPTUNE_SAMPLE = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSDAQ/01067808_넵튠/half/2015/20150817000007.zip"
+)
+_NEPTUNE_RCEPT = "20150817000007"
+_NEPTUNE_CORP = "01067808"
+_NEPTUNE_PERIOD_END = date(2015, 6, 30)
+
+
+def test_r133_is_leaf_gap_backfill_recovers_waterfall_subtotals():
+    """수정 전엔 IS_separate 가 4행(판매비와관리비/금융수익/당기순이익/포괄손익)
+    뿐이었다 — 트리에 노드로 안 걸린 영업이익/법인세비용차감전순이익/계속영업이익은
+    전부 누락됐었다(당기순이익/포괄손익은 이미 `_emit_missing_totals`로 복구되고
+    있었음). 수정 후엔 이 3개 개념이 `_emit_missing_leaf_lines`(R133)로 복구되고,
+    계속영업이익(중단영업 없는 회사라 당기순이익과 정확히 일치)이 회계상 말이
+    되는 값임을 확인한다."""
+    if not _NEPTUNE_SAMPLE.exists():
+        return
+    lines = extract_report_lines_xbrl(
+        _NEPTUNE_SAMPLE, rcept_no=_NEPTUNE_RCEPT, corp_code=_NEPTUNE_CORP,
+        report_fiscal_year=2015, report_fiscal_period="H1",
+        period_end_date=_NEPTUNE_PERIOD_END,
+    )
+    is_s = {(l.label_raw, l.col_index): l.value_won
+            for l in lines if l.statement == "IS" and l.basis == "separate"}
+
+    assert is_s[("영업이익(손실)", 0)] == -30_393_449
+    assert is_s[("법인세비용차감전순이익(손실)", 0)] == -27_151_170
+    assert is_s[("계속영업이익(손실)", 0)] == -22_961_058
+    # 중단영업이 없는 회사라 계속영업이익 == 당기순이익이어야 한다(항등식 교차검증).
+    assert is_s[("계속영업이익(손실)", 0)] == is_s[("당기순이익(손실)", 0)]
+
+
 def _run():
     if not _SAMPLE.exists():
         print(f"  - SKIP: 실측 파일 없음 {_SAMPLE}")

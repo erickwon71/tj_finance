@@ -241,6 +241,33 @@ _REQUIRED_CF_LINES: tuple[str, ...] = (
     "CashAndCashEquivalentsAtEndOfPeriodCf",
 )
 
+# R133 (2026-09-16): IS's own version of the same CF-style gap — the tree can
+# leave *individual* IS waterfall subtotals (not just the two rollups
+# `_REQUIRED_TOTALS_BY_STATEMENT["IS"]` already covers) unwired, and one of
+# them (`OperatingIncomeLoss`, 영업이익) is a `dart:` extension whose
+# namespace URI isn't stable across taxonomy vintages — IFRS itself has no
+# single international "operating profit" concept, so DART defines its own.
+# Confirmed against 넵튠 20150817000007 (2015 H1): the instance carries
+# `dart:OperatingIncomeLoss`/`ifrs:ProfitLossBeforeTax`/`ifrs:ProfitLoss
+# FromContinuingOperations` fully tagged (당기 duration context present)
+# across both the half-year-cumulative and Q2-only contexts, but none of the
+# 3 were wired into the presentation tree as nodes (IS_separate had only 4
+# rows before this fix: SGA, financial income, net income, comprehensive
+# income — the other 3 concepts existed only as bare untagged facts). Unlike
+# `_REQUIRED_TOTALS_BY_STATEMENT`'s fixed-namespace lookup (safe for the two
+# core `ifrs`/`ifrs-full` rollups), these need the same namespace-agnostic
+# `_find_qnames_by_local` lookup CF's list uses. Deliberately NOT extended to
+# Revenue/CostOfSales/GrossProfit here — 넵튠's instance has no `Revenue`
+# fact tagged at all (genuinely untagged, confirmed by direct grep), so
+# there is no empirical basis yet for adding concepts this function would
+# never actually recover; R0 policy is to extend only what's been verified
+# to exist as a fact and get dropped by the tree, not to guess at prevalence.
+_REQUIRED_IS_LINES: tuple[str, ...] = (
+    "OperatingIncomeLoss",
+    "ProfitLossBeforeTax",
+    "ProfitLossFromContinuingOperations",
+)
+
 # col_index we attempt to resolve. Only col0 is stored for BS/IS/CF
 # (report_lines.py::_is_loadable) — col1 is best-effort extra context.
 _MAX_COL_INDEX = 1
@@ -832,26 +859,42 @@ def _find_qnames_by_local(facts_by_qname: dict[QName, list[XbrlFact]], local: st
     return [q for q in facts_by_qname if q.local == local]
 
 
-def _emit_missing_cf_lines(
-    *, tree: PresentationTree, facts_by_qname: dict[QName, list[XbrlFact]],
+_REQUIRED_LEAF_LINES_BY_STATEMENT: dict[str, tuple[str, ...]] = {
+    "CF": _REQUIRED_CF_LINES,
+    "IS": _REQUIRED_IS_LINES,
+}
+
+
+def _emit_missing_leaf_lines(
+    *, statement: str, tree: PresentationTree, facts_by_qname: dict[QName, list[XbrlFact]],
     contexts: dict[str, XbrlContext], units: dict[str, XbrlUnit], labels: dict[QName, list[Label]],
     basis_axis: QName, basis_member: QName, basis: str,
     corp_code: str, rcept_no: str, report_fiscal_year: int, report_fiscal_period: str,
     period_end_date: date,
 ) -> list[ReportLineRow]:
-    """CF's version of `_emit_missing_totals` (R130 — see `_REQUIRED_CF_LINES`
-    docstring for the discovery). Backfills individual CF line items (net
-    income for CF, financing activities, interest paid/received, dividends
-    received, income taxes paid, FX effect, net change in cash, cash at
-    beginning/end of period) directly from their fact whenever the
-    presentation tree never wired that concept in as a node at all.
+    """CF's/IS's version of `_emit_missing_totals` (R130 CF, R133 IS — see
+    `_REQUIRED_CF_LINES`/`_REQUIRED_IS_LINES` docstrings for the discovery).
+    Backfills individual leaf/subtotal line items directly from their fact
+    whenever the presentation tree never wired that concept in as a node at
+    all — for CF: net income for CF, financing activities, interest paid/
+    received, dividends received, income taxes paid, FX effect, net change
+    in cash, cash at beginning/end of period; for IS: operating income,
+    pretax income, income from continuing operations.
+
+    ★R133(2026-09-16): generalized from the CF-only `_emit_missing_cf_lines`
+    to also serve IS (`statement` is now a parameter, dispatched via
+    `_REQUIRED_LEAF_LINES_BY_STATEMENT`) — same mechanism, same namespace-
+    agnostic lookup rationale (`OperatingIncomeLoss` is a `dart:` extension
+    just like CF's concepts), no other behavior change for CF (byte-for-byte
+    same `_REQUIRED_CF_LINES` list, same call site, same source_ref/node_role
+    shape aside from the statement-derived prefix).
 
     Unlike `_emit_missing_totals` (one ifrs-full-namespace total per
-    statement), CF has no single rollup to fall back to, and several of
-    these concepts are `dart:` extensions whose namespace URI is not stable
-    across taxonomy vintages — lookup is therefore by local name across
-    every namespace this instance actually uses (`_find_qnames_by_local`),
-    not one fixed QName.
+    statement), neither CF nor these IS subtotals have a single rollup this
+    module already fixed-namespace-looks-up, and several of these concepts
+    are `dart:` extensions whose namespace URI is not stable across taxonomy
+    vintages — lookup is therefore by local name across every namespace this
+    instance actually uses (`_find_qnames_by_local`), not one fixed QName.
 
     R0 — observes, never fabricates: skipped whenever (a) the tree already
     has this local name as a node under ANY namespace (the normal
@@ -861,11 +904,14 @@ def _emit_missing_cf_lines(
     `_resolve_columns`'s deliberate col0-or-nothing rule, a separate design
     point, not this function's job), or (b) no matching fact exists at all
     for this basis (genuinely untagged — do not fabricate)."""
+    required = _REQUIRED_LEAF_LINES_BY_STATEMENT.get(statement, ())
+    if not required:
+        return []
     present_locals = {node.element.local for node in tree.nodes.values()}
-    source = f"{rcept_no}/CF/{basis}/missing_lines"
+    source = f"{rcept_no}/{statement}/{basis}/missing_lines"
 
     out: list[ReportLineRow] = []
-    for local in _REQUIRED_CF_LINES:
+    for local in required:
         if local in present_locals:
             continue  # tree already has it — _emit_statement_lines already emitted this row
         candidates: list[tuple[XbrlFact, XbrlContext]] = []
@@ -884,7 +930,7 @@ def _emit_missing_cf_lines(
                 rcept_no=rcept_no,
                 report_fiscal_year=report_fiscal_year,
                 report_fiscal_period=report_fiscal_period,
-                statement="CF",
+                statement=statement,
                 basis=basis,
                 section_path=None,
                 label_raw=_resolve_label(fact.qname, None, labels),  # no tree node -> no preferredLabel role hint
@@ -895,7 +941,7 @@ def _emit_missing_cf_lines(
                 value_won=value,  # no preferredLabel available (bare fact) -> no negatedLabel sign flip applies
                 adecimal=0,
                 unit_source=UNIT_SOURCE_XBRL,
-                source_ref=f"CF_{basis}/{local}/xbrl_tree_gap_cf_line"[:180],
+                source_ref=f"{statement}_{basis}/{local}/xbrl_tree_gap_leaf_line"[:180],
                 context_raw=fact.context_ref[:255],
                 row_order=-1,
                 depth=0,
@@ -1157,12 +1203,15 @@ def extract_report_lines_xbrl(
                             report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
                             period_end_date=period_end_date,
                         ))
-                        # R130: CF's own version of the same tree-gap backfill
-                        # (_REQUIRED_TOTALS_BY_STATEMENT has no CF entry — CF
-                        # has no single rollup, see _emit_missing_cf_lines).
-                        if statement == "CF":
-                            lines.extend(_emit_missing_cf_lines(
-                                tree=tree, facts_by_qname=facts_by_qname,
+                        # R130(CF)/R133(IS): the individual-leaf-line version of the
+                        # same tree-gap backfill (_REQUIRED_TOTALS_BY_STATEMENT only
+                        # has the one-rollup-per-statement concepts — CF has no
+                        # single rollup at all, and IS's waterfall subtotals below
+                        # ProfitLoss/ComprehensiveIncome need this too, see
+                        # _emit_missing_leaf_lines).
+                        if statement in _REQUIRED_LEAF_LINES_BY_STATEMENT:
+                            lines.extend(_emit_missing_leaf_lines(
+                                statement=statement, tree=tree, facts_by_qname=facts_by_qname,
                                 contexts=instance.contexts, units=instance.units, labels=labels,
                                 basis_axis=basis_axis, basis_member=basis_member, basis=basis,
                                 corp_code=corp_code, rcept_no=rcept_no,

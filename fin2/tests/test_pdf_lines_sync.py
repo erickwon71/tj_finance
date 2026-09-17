@@ -58,7 +58,7 @@ def test_facts_to_report_lines_skips_facts_without_canonical_or_statement():
 
 
 def test_facts_to_report_lines_keeps_unmapped_pdf_fact_when_statement_set():
-    # ★R135(2026-09-18) — PDF 경로는 canonical_account 매핑 성패와 무관하게 .statement
+    # ★R137(2026-09-18) — PDF 경로는 canonical_account 매핑 성패와 무관하게 .statement
     # 를 직접 채운다(extract_pdf_facts()). canonical_account 가 None 이어도 .statement
     # 가 있으면 report_lines 에 실려야 한다(구 동작: 통째로 드롭 — 솔트웨어 실측 버그).
     f = _fact("bs.total_assets", "separate", 300)

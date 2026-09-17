@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from parser.common.account_mapper import get_mapper
 from parser.common.amount_normalizer import normalize_account_name
 from fin2.extract.xbrl import ExtractedFact
-# ★R134(2026-09-18) — XML 경로(table_extractor.py R19/R65)가 이미 검증한 "콤마 없는
+# ★R136(2026-09-18) — XML 경로(table_extractor.py R19/R65)가 이미 검증한 "콤마 없는
 # 단독 주석번호" 판정 패턴을 그대로 재사용(새 정규식 발명 금지). 아래 `_parse_single_line`
 # 참고.
 from parser.xml.table_extractor import _NOTE_REF_PATTERN, _AMOUNT_GROUPED_PATTERN
@@ -191,7 +191,7 @@ def _parse_single_line(line: str, has_note_col: bool = False) -> tuple[str, list
     3줄 모드 리전 안에서도 드물게 라벨+숫자가 한 줄에 온 경계행을 같은 방식으로
     처리하기 위해 재사용한다.
 
-    `has_note_col`(R134, 2026-09-18) — 이 표가 헤더에 "주석" 컬럼을 구조적으로
+    `has_note_col`(R136, 2026-09-18) — 이 표가 헤더에 "주석" 컬럼을 구조적으로
     선언한 것으로 확인됐으면(`_parse_pdf_table_header().has_note_col`, XML 경로
     `_table_has_note_header()`와 동형) 라벨 바로 다음 토큰(첫 번째 숫자)이 콤마
     없는 단독 숫자("14"/"9" 등)일 때도 주석번호로 보고 건너뛴다. 기본 False —
@@ -221,7 +221,7 @@ def _parse_single_line(line: str, has_note_col: bool = False) -> tuple[str, list
             tok = tok[1:-1]
             nums.append(parse_number(tok))
             continue
-        # ★R134(2026-09-18) — 라벨 바로 다음 자리(i==0)만, 표가 주석열을 쓴다고
+        # ★R136(2026-09-18) — 라벨 바로 다음 자리(i==0)만, 표가 주석열을 쓴다고
         #   이미 확인됐을 때만 콤마 없는 단독 숫자도 주석번호로 본다(XML 경로 R19와
         #   동일 위치·동일 조건 — "매 행이 주석 하나씩만 인용"하는 표에서 아래
         #   `_looks_like_real_amount`의 "콤마 없으면 금액" 기본값이 못 잡던 잔여
@@ -274,7 +274,7 @@ def _parse_numline_tokens(label: str, tokens: list[str], statement: str = "BS",
             continue  # 잡음(줄바꿈된 영문 조각 등) — 열 자리를 만들지 않고 버림
         if is_header and tok.startswith("(") and tok.endswith(")"):
             tok = tok[1:-1]
-        # ★R134(2026-09-18) — 라벨 바로 다음 자리(i==0)만, 표가 주석열을 쓴다고
+        # ★R136(2026-09-18) — 라벨 바로 다음 자리(i==0)만, 표가 주석열을 쓴다고
         #   이미 확인됐을 때(has_note_col) 콤마 없는 단독 숫자("14"/"9" 등)도
         #   주석번호로 본다 — 아래 콤마 다중참조 처리와 같은 자리, 같은 "열 보존
         #   대상 아님" 취급(`_parse_single_line`과 동형 수정, 솔트웨어 실측).
@@ -327,7 +327,7 @@ def _iter_data_lines_multiline(region: str, statement: str = "BS", has_note_col:
         label = _strip_inline_english_gloss(line)
         nxt = lines[i + 1] if i + 1 < n else ""
         if nxt and not _HANGUL_RE.search(nxt) and _has_real_number(nxt):
-            # ★R134(2026-09-18) — 콤마 다중참조 주석("4,5,6")은 이 함수가 이미
+            # ★R136(2026-09-18) — 콤마 다중참조 주석("4,5,6")은 이 함수가 이미
             #   위치보존 없이(정상, 주석열은 애초에 기간 위치가 아님) 버리고 있다 —
             #   콤마 없는 단독 주석번호도 has_note_col 로 같은 방식으로 처리한다.
             nums = _parse_numline_tokens(label, nxt.split(), statement,
@@ -443,11 +443,11 @@ _ANCHOR_LABELS = {
     "CF": ("영업활동", "투자활동", "재무활동"),
 }
 
-# ★R135(2026-09-18, 솔트웨어 CF separate 실측으로 발견) — 문서에서 가장 마지막(다음
+# ★R137(2026-09-18, 솔트웨어 CF separate 실측으로 발견) — 문서에서 가장 마지막(다음
 # 앵커가 없는) statement 앵커는 `end = len(text)`로, 그 뒤 이어지는 주석(note) 섹션
 # 전체가 통째로 그 리전에 포함됐다. 예전엔 계정지도 매핑 실패(unknown.)가 그 노이즈를
 # 우연히 걸러줬지만(위 canon 게이트), 그 게이트를 저장 차단용으로 안 쓰기로 하면서
-# (같은 세션 R135 canon/storage 분리) 이 노이즈가 그대로 report_lines 에 실릴 위험이
+# (같은 세션 R137 canon/storage 분리) 이 노이즈가 그대로 report_lines 에 실릴 위험이
 # 생겼다(솔트웨어 실측: "제2기(전전기)"=110, "특정금전신탁"=12,493,953,976 등 주석
 # 내용이 CF 로 저장됨). "재무제표 주석"/"연결재무제표 주석"은 DART 표준 SECTION-2
 # 제목(parser/xml/section_detector.py 참고)이자 PDF 페이지 각주에도 그대로 찍혀
@@ -511,11 +511,11 @@ def _parse_pdf_table_header(region: str) -> "PdfTableHeader | None":
             continue
         period_labels = _HEADER_PERIOD_MARK_RE.findall(line)
         if len(period_labels) >= 2:
-            # ★R135(2026-09-18, 솔트웨어 CF separate "나"/"다" 세부항목 실측) — 일부
+            # ★R137(2026-09-18, 솔트웨어 CF separate "나"/"다" 세부항목 실측) — 일부
             # 헤더는 "주 석"처럼 글자 사이에 공백이 끼어 렌더링된다(자간 강조 서식,
             # "과 목 주 석"). 옛 정규식(`주석` 붙어있어야 매치)이 이걸 놓치면
             # has_note_col=False 로 오판정 → 콤마 없는 단독 주석번호("17")가 진짜
-            # 금액으로 세어져 숫자개수 초과로 행 전체가 드롭된다(R134와 동일 증상,
+            # 금액으로 세어져 숫자개수 초과로 행 전체가 드롭된다(R136와 동일 증상,
             # 다른 헤더 서식 변형).
             has_note = bool(re.search(r"주\s?석|Note", line))
             n_period_cols = len(period_labels)
@@ -741,7 +741,7 @@ def facts_from_text(
             # 대상. interim IS 의 '3개월 누적' 2단헤더가 이 3줄 레이아웃과 만나는 조합은
             # 실측 사례가 아직 없어 미검증 — cum_idx 는 열위치를 그대로 쓰므로 동작은
             # 하나, 실제로 그런 필링이 나오면 원문대조로 재확인할 것(문서 "구현 방향" §3).
-            # ★R134(2026-09-18) — has_note_col 을 `_iter_data_lines*`에 넘기려면
+            # ★R136(2026-09-18) — has_note_col 을 `_iter_data_lines*`에 넘기려면
             #   header를 먼저 계산해야 한다(원래는 아래에서 text_lines 만든 뒤에
             #   계산했음 — 그러면 이 표가 주석열을 쓰는지 모른 채로 라인부터
             #   파싱해버려 콤마 없는 단독 주석번호를 걸러낼 기회가 없었다).
@@ -759,7 +759,7 @@ def facts_from_text(
             #   병합)이 정확히 이 경우.
             if header is not None and _lines_disagree_with_header(text_lines, header):
                 table_rows = _table_rows_for_span(pdf, page_bounds, anc.start, end)
-                # ★R135(2026-09-18, 솔트웨어 CF separate 실측) — `_table_rows_for_span`
+                # ★R137(2026-09-18, 솔트웨어 CF separate 실측) — `_table_rows_for_span`
                 #   은 페이지 단위로 표를 통째로 긁어온다(pdfplumber `extract_tables()`가
                 #   문자 offset이 아니라 페이지 전체 단위). `end`(위에서 이미 주석 섹션
                 #   시작 전으로 클램프됨)가 이 statement 표와 **같은 물리 페이지**에 있는
@@ -803,7 +803,7 @@ def facts_from_text(
             amount = nums[idx] if idx < len(nums) else None
             if amount is None:
                 continue
-            # ★R135(2026-09-18, 솔트웨어 미처분이익잉여금 실측으로 발견) — canonical
+            # ★R137(2026-09-18, 솔트웨어 미처분이익잉여금 실측으로 발견) — canonical
             # 매핑 실패/불신을 "저장 자체를 막는" 게이트로 쓰지 않는다. XML 경로
             # (fin2/extract/report_lines.py)는 account_mapper 를 아예 호출하지 않고
             # "판단 없이 충실전사"한다 — 이 경로도 같은 원칙을 따라야 한다. canon 이
@@ -811,7 +811,7 @@ def facts_from_text(
             # 패턴이면 canonical_account 만 None 으로 남기고, 원문 라벨(label)과
             # 값(amount)은 그대로 저장한다(statement=anc.statement 로 소속 재무제표는
             # 이미 확정돼 있어 canon 없이도 report_lines 배치가 가능 — 아래
-            # ExtractedFact.statement 참고). 상세: docs/PARSING_RULES.md R135.
+            # ExtractedFact.statement 참고). 상세: docs/PARSING_RULES.md R137.
             mapping = mapper.map(label, fs_section=fs_section)
             canon = mapping.account_code
             if not canon or canon.startswith("unknown."):

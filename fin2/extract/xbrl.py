@@ -51,7 +51,7 @@ class ExtractedFact:
     acontext_raw: str | None
     context_parsed: bool
     canonical_account: str | None = None  # Track A=concept_map.map_acode, Track B=account_mapper. 미매핑 NULL
-    # ★R135(2026-09-18) — 원문상 소속 재무제표(BS/IS/CF/SCE), canonical_account와 별개로
+    # ★R137(2026-09-18) — 원문상 소속 재무제표(BS/IS/CF/SCE), canonical_account와 별개로
     # 추출기가 직접 채운다(예: pdf.py의 anchor.statement). collector/pdf_lines_sync.py::
     # facts_to_report_lines()가 report_lines.statement를 정할 때 이 필드를 최우선으로 쓴다 —
     # canonical_account가 없거나(unknown/미매핑) 섹션이 안 맞아 버려져도(None) 원문 행 자체는

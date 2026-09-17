@@ -7082,7 +7082,72 @@ subtotals`.
 
 ---
 
-## R134. `fin2/extract/pdf.py` — 콤마 없는 단독 주석번호가 금액으로 오인식되는
+## R134. `parser/xml/table_extractor.py::_header_rule_name()` — SCE 전용
+`allow_date_label=True`에서도 "기수" 규칙이 계속 걸려 앵커 행(기초/기말
+잔액)이 통째로 드롭 (2026-09-17)
+
+**배경**: 2015+ SCE(자본변동표) 전수 이상치 스캔(히스토그램 기반 임계값
+산정 → 기초+변동=기말 자동 항등식 검증 → 원문대조, 438건 후보 중 59건
+원문대조 완료) 중 발견. `allow_date_label=True`는 이미 "기간 날짜" 규칙
+(예: "2023.01.01~2023.12.31")을 꺼서 SCE의 날짜 라벨 행이 헤더로 오판정
+드롭되는 걸 막고 있었는데, **"기수" 규칙**(`제\s*\d+\s*기` 패턴 + 원/%
+없으면 헤더로 판정, BS/IS/CF 주석 헤더 셀 판정용)은 별개 규칙이라 여전히
+켜져 있었다.
+
+**증상**: SCE 앵커 행 라벨이 "2014.04.01 (제26기 분기초)"처럼 날짜에
+"제N기"까지 같이 붙으면(원/% 없음) "기수" 규칙에 걸려 행 전체(모든 열)가
+드롭됐다. 메이슨캐피탈(20150817001754) 원문대조로 확정.
+
+**수정**: `_header_rule_name()`의 "기수" 판정 조건에 `not allow_date_label`
+을 추가 — SCE(`allow_date_label=True`)에서는 "기수" 규칙도 함께 꺼진다.
+BS/IS/CF 경로는 `allow_date_label=False`라 영향 없음.
+
+**검증**: 본문(BS/IS/CF/SCE) 전체 재적재(104,318건)로 백필. `pytest
+tests/ fin2/tests/` 1044 passed(기존 무관 실패 1건 제외).
+
+## R135. `fin2/extract/report_lines.py::_grid_body_rows()` — 라벨 영역에
+물리 셀이 둘 이상인 행에서 physical[0]만 라벨로 채택, 두 번째 이후 라벨
+셀 유실 (2026-09-17, R134와 같은 스캔에서 발견)
+
+**배경**: 위 R134와 같은 SCE 전수 이상치 스캔에서 발견. `_grid_body_rows()`
+가 라벨 영역(`grid_col < offset`)에 물리 셀이 둘 이상인 행 — ROWSPAN
+카테고리 헤더("자본의 변동")와 그 아래 구체 항목명("배당금지급")이 같은
+행에 나란히 있는 경우 — 에서 `physical[0]`(첫 번째 셀)만 라벨로 쓰고
+두 번째 이후 라벨 셀을 통째로 버리고 있었다.
+
+**영향**: 원익피앤이(20161128000288) 원문대조로 확정 — SCE "자본의 변동"
+행이 실은 "자본의 변동>배당금지급"이었다. **금액 자체는 원래도 정확**
+(offset 정의상 라벨 영역엔 금액이 나온 적이 없어 값 손상은 아니었음) —
+라벨 텍스트만 부정확했던 순수 표시 결함.
+
+**수정**: 라벨 영역 물리 셀(`grid_col < offset`)이 둘 이상이면 전부 ">"로
+이어붙인다(`_label_dict_from_header`의 헤더 다단 조인과 같은 관례를 본문
+행에도 적용). `header_hint` 판정은 의도적으로 `physical[0]` 하나만
+계속 본다 — 뒤에 붙는 구체 라벨까지 합치면 header_hint 정규식(예:
+"구분과목")이 새로 오탐할 위험이 있어 보수적으로 유지.
+
+**검증**: SCE는 R134와 같은 본문 재적재로, 주석(note_lines, 2.47억 행 중
+R135 영향 7.01%=1,772만행)은 전용 스크립트(`scripts/reload_note_lines_
+r135_2026-09-17.py`, 신규 `note_line_reload_progress` 체크포인트 테이블)
+로 별도 백필(104,232건, 오류 0). `pytest tests/ fin2/tests/` 1044
+passed(기존 무관 실패 1건 제외).
+
+**★참고(2026-09-18)** — 이 두 규칙은 commit `d03e177`에서 이미 구현·백필
+됐으나 그때 이 문서에 등재가 안 됐다(커밋 메시지에만 R134/R135로 남음).
+같은 날 이후 세션이 PDF 복구 경로 작업에 R134/R135를 새로 배정하려다
+번호가 이미 코드/테스트(`parser/xml/table_extractor.py`,
+`fin2/extract/report_lines.py`, `fin2/tests/test_header_rule_name_r134_
+sce.py`, `fin2/tests/test_grid_body_rows_r135_multicell_label.py`)에 쓰여
+있는 걸 뒤늦게 발견 — 그 PDF 작업은 R136/R137로 재배정하고(코드/테스트/
+설계문서의 R134/R135 언급도 전부 R136/R137로 같이 수정) 이 문서에 SCE
+몫(R134/R135, 위)을 뒤늦게 등재했다.
+"신규 규칙은 반드시 이 문서에 먼저 적는다"는 원칙이 지켜지지 않아 생긴
+사례 — 커밋 메시지·테스트 파일명에만 번호를 쓰고 이 문서에 실제 절을
+안 쓰면, 다음 세션이 같은 번호를 "비어있다"고 오판해 재사용할 수 있다.
+
+---
+
+## R136. `fin2/extract/pdf.py` — 콤마 없는 단독 주석번호가 금액으로 오인식되는
 결함(has_note_col 미배선) 수정 — XML 경로(R19/R65)와 동형 수정 (2026-09-18)
 
 **배경**: 솔트웨어(01390399) 20220802000208(2022 H1, XML archive 손상으로
@@ -7130,11 +7195,11 @@ table_rows` 세 소비 경로 전부에 배선. **`_parse_numline_tokens`의 3�
 사용자 원문대조 확정값(11,495,730)으로 `unit_source='manual'` 개별 삽입.
 CF의 별개 결함(스코프 밖 "단기금융상품" 가짜행 1개, 원인 미조사 — 앵커
 리전 경계 오판 추정)은 이 수정과 무관하게 남아 데이터에서 개별 삭제.
-★후속(같은 날, R135) — "계정지도에서 의도적으로 제외"라는 이 설명은
+★후속(같은 날, R137) — "계정지도에서 의도적으로 제외"라는 이 설명은
 캐노니컬 개념(총액 이익잉여금 vs 미처분이익잉여금) 혼동 방지로서는 맞지만,
 그게 **저장 자체를 막아도 되는 이유는 아니었다** — PDF 경로만의 별도 설계
 결함(account_mapper 매핑 성패를 report_lines 저장 게이트로 오용)이었음이
-드러나 R135로 근본 수정. 자세한 내용은 아래 R135 참고.
+드러나 R137로 근본 수정. 자세한 내용은 아래 R137 참고.
 `pytest tests/ fin2/tests/` 1051 passed(기존 무관 실패 1건 그대로,
 `test_nyuintek_2007q1_dkme_style_not_affected_by_this_fix`).
 
@@ -7143,12 +7208,12 @@ CF의 별개 결함(스코프 밖 "단기금융상품" 가짜행 1개, 원인 �
 2026-09-18 "2015+로 돌아가서 마무리하자"). 코드 수정 자체는 완료·검증됐고
 솔트웨어(2015+ 유일 사례) 1건만 데이터 반영 완료.
 
-## R135. `fin2/extract/pdf.py::facts_from_text()`/`collector/pdf_lines_
+## R137. `fin2/extract/pdf.py::facts_from_text()`/`collector/pdf_lines_
 sync.py::facts_to_report_lines()` — "저장"과 "캐노니컬 매핑"이 뒤섞여 있던
-설계 결함 근본 수정 (2026-09-18, 같은 날 R134 후속)
+설계 결함 근본 수정 (2026-09-18, 같은 날 R136 후속)
 
-**배경**: R134 조사 중, 솔트웨어 BS separate에 남은 마지막 결측 1건
-(미처분이익잉여금)이 R134(주석번호 오인식)와 무관한 **별개 원인**임을 확인
+**배경**: R136 조사 중, 솔트웨어 BS separate에 남은 마지막 결측 1건
+(미처분이익잉여금)이 R136(주석번호 오인식)와 무관한 **별개 원인**임을 확인
 — `account_maps/bs_accounts.py`가 "이익잉여금(총액)과 미처분이익잉여금(총액의
 하위 sub-line)을 혼동하면 안 된다"는 이유로 이 라벨을 계정지도에서 의도적으로
 제거해둔 상태(`unknown.미처분이익잉여금`)였다. 사용자가 이 설명 자체에
@@ -7220,7 +7285,7 @@ separate가 문서상 마지막 statement). 지금까지 이게 문제가 안 �
    붙어있는 경우만 잡고 "주 석"(자간공백 서식)은 놓쳤다 — 솔트웨어 CF의
    "나. 당기순이익 조정을 위한 가감"/"다. 영업활동으로 인한 자산부채의
    변동"(둘 다 주석번호 "17" 보유)이 이 갭으로 숫자개수 초과 판정을 받아
-   드롭되고 있었다(R134와 동일 증상의 다른 헤더 서식 변형). `주\s?석|Note`
+   드롭되고 있었다(R136와 동일 증상의 다른 헤더 서식 변형). `주\s?석|Note`
    로 정규식 확장.
 
 **스코프**: ①~③(canon/storage 분리)은 **PDF 경로만**(사용자 지시 "PDF
@@ -7239,7 +7304,7 @@ test_unmapped_label_stored_with_null_canon_not_skipped`,
 unmapped_pdf_fact_when_statement_set` 등) + 기존 회귀 2건(canonical_
 account 대신 `.statement`로 재무제표 판정하도록 수정) 전부 통과.
 `recover_one()` 솔트웨어 재실행 실측(원문 항등식 전부 재대조): BS
-separate 21→23행(수동삽입했던 미처분이익잉여금 11,495,730과 R135로 추가
+separate 21→23행(수동삽입했던 미처분이익잉여금 11,495,730과 R137로 추가
 복구된 전환권대가 166,216,647 포함해 전부 `unit_source='pdf'` 자동
 추출 — manual 행 소멸), CF separate 10→10행(내용 교체 — 노이즈 3건 제거
 + 누락됐던 "나"/"다" 세부항목 2건 복구, 항등식 영업에서창출된현금=당기
@@ -7247,9 +7312,9 @@ separate 21→23행(수동삽입했던 미처분이익잉여금 11,495,730과 R1
 `store_report_lines(overwrite_manual=True)`로 DB 반영 완료(최종
 BS/CF/IS=23/10/8행, 전부 `unit_source='pdf'`). `pytest tests/ fin2/tests/`
 1053 passed(기존 무관 실패 1건 그대로, `test_nyuintek_2007q1_dkme_style_
-not_affected_by_this_fix` — R130 트랙 별개 이슈, R134/R135와 무관).
+not_affected_by_this_fix` — R130 트랙 별개 이슈, R136/R137와 무관).
 
-**소급 백필 미실시** — R134와 동일 사유·동일 스코프(2,407개 필링 Track C
+**소급 백필 미실시** — R136와 동일 사유·동일 스코프(2,407개 필링 Track C
 캠페인으로 이월). 이번 세션은 솔트웨어(2015+ 유일 대상) 1건만 데이터 반영
 완료, 코드 수정은 전체 PDF 경로에 적용됨(④~⑥은 범용이라 향후 백필 시
 자동으로 같이 적용).
@@ -7347,6 +7412,8 @@ not_affected_by_this_fix` — R130 트랙 별개 이슈, R134/R135와 무관).
 | R131 | 최종 전체 재적재 후 이상치 재검증(2026-09-16) · `parser/xml/table_extractor.py::select_by_header_columns()` · `fin2/tests/test_header_grid_column_map_r88.py`·`fin2/tests/test_report_lines.py::test_r131_kd_...` |
 | R132 | 최종 전체 재적재 후 이상치 재검증(2026-09-16) · `fin2/extract/report_lines.py::_MANUAL_UNIT_OVERRIDE_MULTIPLIER_RCEPTS` · `fin2/tests/test_report_lines.py::test_r132_netmarble_...` · 부록 D |
 | R133 | 사용자 지시로 R130 즉시 확장(2026-09-16) · `fin2/extract/report_lines_xbrl.py::_emit_missing_leaf_lines()`(`_REQUIRED_IS_LINES`) · `fin2/tests/test_xbrl_instance.py::test_r133_...` |
+| R134/R135 | 커밋 `d03e177`(2026-09-17, 이 문서엔 2026-09-18 뒤늦게 등재) · `parser/xml/table_extractor.py::_header_rule_name()` · `fin2/extract/report_lines.py::_grid_body_rows()` · `fin2/tests/test_header_rule_name_r134_sce.py`·`fin2/tests/test_grid_body_rows_r135_multicell_label.py` |
+| R136/R137 | 커밋 `3fb4d01`(2026-09-18) · `fin2/extract/pdf.py`·`fin2/extract/xbrl.py`·`collector/pdf_lines_sync.py` · `fin2/tests/test_pdf.py`·`fin2/tests/test_pdf_lines_sync.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 | 부록 D | rcept 단위 예외목록 카탈로그(`fin2/extract/report_lines.py`에 흩어진 5개 딕셔너리 — R116/R118/R120/R121/R132) |
 

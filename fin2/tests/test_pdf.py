@@ -156,7 +156,7 @@ def test_interim_cumulative_column_selected():
 
 
 def test_unmapped_label_stored_with_null_canon_not_skipped():
-    # ★R135(2026-09-18) — 계정지도 미매핑 라벨은 canonical_account=None 으로만 남고
+    # ★R137(2026-09-18) — 계정지도 미매핑 라벨은 canonical_account=None 으로만 남고
     # (섹션은 anc.statement 로 이미 확정돼 있으므로) facts 리스트에서 통째로 빠지지
     # 않는다(구 동작: continue 로 드롭 → report_lines 에 영영 안 실림).
     facts = facts_from_text(
@@ -402,7 +402,7 @@ def test_looks_like_real_amount_rejects_note_ref_lists():
     assert not _looks_like_real_amount("4,5,7,18")
 
 
-# ── R134(2026-09-18) — 콤마 없는 단독 주석번호(has_note_col) ─────────────────
+# ── R136(2026-09-18) — 콤마 없는 단독 주석번호(has_note_col) ─────────────────
 # 배경: `_looks_like_real_amount`는 콤마 없는 토큰을 항상 "진짜 금액"으로 본다
 # (위 테스트가 이미 그 계약을 확정하고 있다: "148" 등). 그래서 라벨 바로 다음이
 # 콤마 없는 단독 주석번호("14"/"9"/"10"/"11")인 행은 이 함수만으로는 못 거른다
@@ -513,7 +513,7 @@ def test_half_year_report_title_now_anchors_correctly():
     facts = facts_from_text(
         text, corp_code="01390399", rcept_no="r2022h1",
         report_fiscal_year=2022, report_fiscal_period="H1")
-    # ★R135(2026-09-18) — canonical_account 는 매핑 실패 시 None 일 수 있으므로(저장은
+    # ★R137(2026-09-18) — canonical_account 는 매핑 실패 시 None 일 수 있으므로(저장은
     # 막지 않음), 소속 재무제표 판정은 anchor 가 직접 채운 .statement 로 확인한다.
     stmts = {f.statement for f in facts}
     assert "CF" in stmts, "현금흐름표 앵커가 안 잡혀 CF 사실이 하나도 없음(회귀)"
@@ -622,10 +622,10 @@ def test_saltware_real_pdf_end_to_end():
         cf_sep["반기말의현금및현금성자산"]
 
 
-# ★R135(2026-09-18, 솔트웨어 CF separate 실측) — 문서에서 가장 마지막 앵커(다음 앵커가
+# ★R137(2026-09-18, 솔트웨어 CF separate 실측) — 문서에서 가장 마지막 앵커(다음 앵커가
 # 없어 리전이 `len(text)`까지 뻗어나가는 경우)가 그 뒤 주석(note) 섹션 전체를 통째로
 # 삼키는 결함. 계정지도 매핑 실패 게이트가 이 노이즈를 우연히 걸러주던 게 없어지면서
-# (R135 canon/storage 분리) 노출됐다.
+# (R137 canon/storage 분리) 노출됐다.
 _CF_WITH_TRAILING_NOTES = """현금흐름표
 제 1 기 2020.01.01 ~ 2020.12.31
 (단위 : 원)
@@ -642,7 +642,7 @@ _CF_WITH_TRAILING_NOTES = """현금흐름표
 
 
 def test_header_note_column_detected_with_letter_spaced_label():
-    # ★R135(2026-09-18, 솔트웨어 CF separate "나"/"다" 세부항목 실측) — 헤더가
+    # ★R137(2026-09-18, 솔트웨어 CF separate "나"/"다" 세부항목 실측) — 헤더가
     # "주 석"처럼 자간공백을 넣어 렌더링돼도 has_note_col=True 로 잡혀야 한다
     # (구 정규식은 "주석"이 붙어있어야만 매치해 이 변형을 놓쳤다).
     header = _parse_pdf_table_header(

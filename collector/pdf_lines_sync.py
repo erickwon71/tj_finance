@@ -50,7 +50,7 @@ from fin2.extract.xbrl import ExtractedFact
 def facts_to_report_lines(facts: list[ExtractedFact]) -> list[ReportLineRow]:
     """ExtractedFact → ReportLineRow(raw-label 계약) 역변환.
 
-    ★R135(2026-09-18) — 예전엔 `canonical_account`가 없는 fact(매핑 실패)를 추출기
+    ★R137(2026-09-18) — 예전엔 `canonical_account`가 없는 fact(매핑 실패)를 추출기
     (`extract_pdf_facts()`)가 이미 걸러내 여기 도달하는 건 전부 canonical_account
     보유가 보장됐었다. 그 게이트가 "저장 자체를 막는" 용도로 쓰인 게 문제였다(계정지도에
     없는 라벨은 report_lines에도 못 실림 — XML 경로의 "판단 없이 충실전사" 원칙과 불일치,

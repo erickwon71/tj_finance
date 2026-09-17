@@ -281,6 +281,27 @@ def sanitize_dart_xml(raw: bytes) -> bytes:
 #   격차. 1%(0.01)를 임계치로 잡아도 오탐 여지가 사실상 없다.
 _CORRUPTION_QMARK_THRESHOLD = 0.01
 
+# ★2026-09-17 — 손상 확인·대응이 이미 끝난 rcept는 재스캔·재적재 때마다 같은
+# `logger.warning`이 반복 출력돼 "새 문제처럼" 보인다(사용자 지적, 폴백 재스캔
+# 로그에서 재확인). 판정 자체(반환값 None)는 그대로 두고 — 재파싱해도 여전히
+# 못 읽는 게 사실이므로 — 로그 레벨만 낮춰 노이즈를 줄인다.
+#
+# ★등재 기준(사용자 지시, 2026-09-17 같은 날 정정) — **사용자가 직접 DART 원문
+# (XML이 손상됐으면 PDF/HTML 등 대체 원문)을 함께 열어 "이 rcept는 알려진 문제"로
+# 확정한 것만** 여기 넣는다. 내부 항등식 검산(자산=부채+자본 등)처럼 DB 안에서만
+# 끝나는 간접 확인은 이 기준을 충족하지 않는다 — R9("검증은 집계가 아니라 원문
+# 대조로") 원칙을 이 태깅에도 그대로 적용. 등재 시 근거(확인 날짜·확인자·원문
+# 링크)를 항목 옆 주석에 남긴다.
+_KNOWN_CORRUPTED_TRIAGED_RCEPTS: frozenset[str] = frozenset({
+    # 솔트웨어 2022 H1 — 사용자가 2026-09-17 DART 웹뷰(https://dart.fss.or.kr/
+    # dsaf001/main.do?rcpNo=20220802000208)에서 "Ⅲ-2.연결재무제표" 섹션을 직접
+    # 열어 "연결 해당사항 없습니다"로 명시돼 있음을 확인 — consolidated 0행(DB
+    # 현재 상태)이 맞다, 손상으로 인한 유실이 아니다. separate 는 PDF 복구값이
+    # report_lines에 있고(BS 항등식은 맞음, 2026-09-17 내부 검산) 사람이 직접
+    # 원문 숫자까지 대조하지는 않았음 — 필요해지면 마저 확인할 것.
+    "20220802000208",
+})
+
 
 def _corruption_ratio(raw: bytes) -> float:
     """원문 바이트에서 리터럴 '?'(0x3F) 비율. 인코딩 감지·디코딩과 무관하게 바이트
@@ -309,7 +330,11 @@ def _parse_xml_file(file_path: Path) -> Optional[etree._Element]:
 
     ratio = _corruption_ratio(raw)
     if ratio > _CORRUPTION_QMARK_THRESHOLD:
-        logger.warning(
+        # 파일명 = rcept_no.xml 관례(collector 저장 규칙) — 이미 확인·대응된 건은
+        # 조용히(debug) 넘긴다, 처음 보는 건은 그대로 warning으로 표면화한다.
+        log = (logger.debug if file_path.stem in _KNOWN_CORRUPTED_TRIAGED_RCEPTS
+               else logger.warning)
+        log(
             f"[dart_xml_parser] 원문 손상 의심: {file_path} — "
             f"'?' 치환비율 {ratio:.1%} > 임계치 {_CORRUPTION_QMARK_THRESHOLD:.0%}. "
             f"DART archive 자체 손상 가능성(재다운로드 무효) — PDF/HTML 소스 전환 검토 필요."

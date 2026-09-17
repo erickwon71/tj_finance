@@ -19,6 +19,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from loguru import logger  # noqa: E402
+
+import parser.xml.dart_xml_parser as dart_xml_parser  # noqa: E402
 from parser.xml.dart_xml_parser import (  # noqa: E402
     _CORRUPTION_QMARK_THRESHOLD, _corruption_ratio, _parse_xml_file,
 )
@@ -77,3 +80,51 @@ def test_saltware_real_file_detected_as_corrupted():
     if not path.exists():
         return
     assert _parse_xml_file(path) is None
+
+
+# ── 2026-09-17 — 확인·대응 완료된 손상 파일의 반복 경고 억제 ─────────────────
+# loguru 는 표준 logging 과 별개 시스템이라 pytest `caplog` 로 못 잡는다 —
+# `logger.add()`로 임시 싱크를 붙여 레벨별 레코드를 직접 수집한다.
+
+def _capture_loguru_levels(fn):
+    """fn() 실행 중 loguru 가 낸 모든 레코드의 levelname 리스트를 반환."""
+    levels: list[str] = []
+    handler_id = logger.add(lambda msg: levels.append(msg.record["level"].name),
+                             level="DEBUG")
+    try:
+        fn()
+    finally:
+        logger.remove(handler_id)
+    return levels
+
+
+def test_known_triaged_corrupted_rcept_logs_debug_not_warning(tmp_path, monkeypatch):
+    """등재된(=사용자와 원문 확인을 마친) rcept는 재판정(None) 자체는 그대로이되,
+    로그 레벨이 warning→debug로 낮아져 재스캔 때마다 "새 문제"처럼 보이지 않아야
+    한다. 실제 등재 목록(현재 비어있을 수 있음, 등재 기준은 위 모듈 docstring
+    참고)에 의존하지 않도록 테스트 전용 rcept를 monkeypatch로 주입한다."""
+    rcept = "10000000000000"
+    monkeypatch.setattr(dart_xml_parser, "_KNOWN_CORRUPTED_TRIAGED_RCEPTS",
+                        frozenset({rcept}))
+    corrupted = tmp_path / f"{rcept}.xml"
+    body = '<COMPANY-NAME>?? ??? ?? ????</COMPANY-NAME>' * 200
+    corrupted.write_text(f'<?xml version="1.0" encoding="utf-8"?><DOCUMENT>{body}</DOCUMENT>',
+                         encoding="utf-8")
+    result = {}
+    levels = _capture_loguru_levels(lambda: result.setdefault("root", _parse_xml_file(corrupted)))
+    assert result["root"] is None
+    assert "WARNING" not in levels, f"triaged rcept이 여전히 warning으로 나옴: {levels}"
+    assert "DEBUG" in levels
+
+
+def test_unknown_corrupted_rcept_still_logs_warning(tmp_path):
+    """목록에 없는(=처음 보는) 손상 파일은 기존대로 warning으로 표면화돼야 한다
+    — 억제 목록이 전체 경고를 조용히 삼키는 회귀가 없는지 확인."""
+    corrupted = tmp_path / "99999999999999.xml"
+    body = '<COMPANY-NAME>?? ??? ?? ????</COMPANY-NAME>' * 200
+    corrupted.write_text(f'<?xml version="1.0" encoding="utf-8"?><DOCUMENT>{body}</DOCUMENT>',
+                         encoding="utf-8")
+    result = {}
+    levels = _capture_loguru_levels(lambda: result.setdefault("root", _parse_xml_file(corrupted)))
+    assert result["root"] is None
+    assert "WARNING" in levels, "미등록 손상 파일이 warning 없이 조용히 넘어감(회귀)"

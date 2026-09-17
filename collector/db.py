@@ -1442,6 +1442,26 @@ def _run_migrations() -> None:
         CREATE VIEW standard_financials_verified AS
         SELECT * FROM standard_financials WHERE gate_b_status = 'pass';
         """),
+
+        ("2026_09_17_note_line_reload_progress",
+         # R135(2026-09-16) 다중 라벨 셀 조인 수정을 note_lines(2.47억 행)에 백필하는
+         # 별도 스크립트(scripts/reload_note_lines_r135_2026-09-17.py)용 체크포인트.
+         # report_line_load_progress(rcept_no PK)를 재사용하면 이미 본문(BS/IS/CF/SCE)
+         # 재적재가 기록해 둔 "reload_2015plus" 완료 이력을 note 재적재가 덮어써버린다
+         # (같은 PK라 session.merge 가 그대로 대체) — 그래서 완전히 별도 테이블로 분리.
+         """
+        CREATE TABLE IF NOT EXISTS note_line_reload_progress (
+            rcept_no    VARCHAR(14) PRIMARY KEY,
+            corp_code   VARCHAR(8)  NOT NULL,
+            fiscal_year SMALLINT,
+            status      VARCHAR(8)  NOT NULL,
+            n_lines     INTEGER,
+            message     VARCHAR(200),
+            processed_at TIMESTAMP NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS ix_note_line_reload_progress_corp
+            ON note_line_reload_progress (corp_code);
+        """),
     ]
 
     with engine.begin() as conn:

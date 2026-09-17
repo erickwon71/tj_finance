@@ -1354,11 +1354,18 @@ def _header_rule_name(text: str, allow_date_label: bool = False) -> Optional[str
 
     DART 테이블에서 반복 출현하는 비데이터 행 패턴을 모두 포함.
 
-    allow_date_label: True 면 "기간 날짜" 규칙만 끈다 — **자본변동표(SCE) 전용**.
+    allow_date_label: True 면 "기간 날짜" 규칙과 "기수" 규칙을 끈다 — **자본변동표(SCE) 전용**.
         SCE 는 기초/기말 잔액 행의 라벨이 날짜다("2023.01.01 (기초자본)"). BS/IS/CF 에서
         이 규칙은 기간 헤더 행을 거르는 올바른 동작이지만, SCE 에 그대로 적용하면 그 표의
         **앵커 행이 통째로 사라진다**(실측 2,519행/250보고서 — 기초+Σ변동=기말 검산 불가).
         날짜 '범위' 헤더("2023.01.01~2023.12.31")는 아래 별도 규칙이 계속 잡으므로 안전하다.
+
+        ★R134(2026-09-16): SCE 앵커 행 라벨이 "2014.04.01 (제26기 분기초)"처럼 날짜에
+        "제N기"까지 같이 붙는 경우가 있다. 아래 "기수" 규칙은 "원"·"%" 가 없으면 헤더로
+        보는데(BS/IS/CF 주석 헤더 셀 판정용, R28) 이 앵커 행도 "원"·"%" 가 없어 그대로
+        걸려 행 전체(모든 열)가 사라진다(메이슨캐피탈 20150817001754 원문대조로 확정).
+        SCE 에서 "제N기"가 붙는 라벨은 전부 이런 날짜 앵커 행이라 "기수" 규칙도 같이
+        꺼야 한다 — BS/IS/CF 경로는 allow_date_label=False 라 영향 없음.
     """
     if not text:
         return None
@@ -1380,7 +1387,7 @@ def _header_rule_name(text: str, allow_date_label: bool = False) -> Optional[str
     #   원/% 를 포함하지 않는다 — 이 신호로 가른다(날짜 규칙처럼 잔여 한글 검사 대신 원/%
     #   포함 여부를 쓴 이유: "당기"·"기초"·"1분기말" 같은 정상 부기 주석까지 잔여 한글로
     #   걸려 헤더 오분류가 나기 때문 — 원/% 는 오탐 없이 데이터 행만 정확히 가른다).
-    if re.search(r'제\s*\d+\s*기', text) and not re.search(r'원|%', text):
+    if not allow_date_label and re.search(r'제\s*\d+\s*기', text) and not re.search(r'원|%', text):
         return "기수"
     # 단위 표기: "(단위 : 원)", "단위:천원"
     if re.search(r'단위\s*[:\(]', text):

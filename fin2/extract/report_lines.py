@@ -1191,7 +1191,10 @@ def _grid_body_rows(
         label = physical[0].text
         # ★순서는 옛 `extract_rows`와 동일해야 한다: header_hint 판정·드롭 → 제목행 가드 →
         #   label 공백 가드. 셋 다 "이 행을 아예 버릴지"를 정하는 게이트라 순서가 바뀌면
-        #   드문 조합(예: 빈 라벨인데 헤더 패턴)에서 결과가 갈릴 수 있다.
+        #   드문 조합(예: 빈 라벨인데 헤더 패턴)에서 결과가 갈릴 수 있다. header_hint 는
+        #   **physical[0] 하나만** 본다(아래 R135 다중 라벨 조인 이전 시점) — 뒤에 붙는
+        #   구체 라벨까지 합치면 header_hint 정규식(예: "구분과목")이 새로 오탐할 위험이
+        #   있어 보수적으로 유지한다.
         header_hint = _header_rule_name(label.strip(), allow_date_label=allow_date_label)
         if header_hint and not keep_header_rows:
             continue                        # 옛 SCE 기본 동작(keep_header_rows=False)
@@ -1199,6 +1202,21 @@ def _grid_body_rows(
             continue                        # 재무제표 이름만 있는 제목 행(기존과 동일 가드)
         if not label:
             continue
+
+        # ★R135(2026-09-16) — 라벨 영역(grid_col < offset)에 물리 셀이 둘 이상인 행은
+        #   ROWSPAN 카테고리 헤더("자본의 변동")와 그 아래 구체 항목명("배당금지급")이
+        #   같은 행에 나란히 있는 경우다. physical[0]만 쓰면 두 번째 이후 라벨 셀이
+        #   통째로 유실된다(값으로도 안 읽힘 — offset 정의상 라벨 영역엔 원래 금액이
+        #   나온 적이 없어 안전하게 라벨로만 합칠 수 있다). 원익피앤이 20161128000288
+        #   실측 — SCE "자본의 변동" 행이 실은 "자본의 변동>배당금지급"(원문 확인,
+        #   금액은 원래도 정확했다 — 라벨 텍스트만 부정확했음). 헤더 다단 조인
+        #   (`_label_dict_from_header`)과 같은 ">" 관례를 본문 행에도 적용한다.
+        label_region_cells = [c for c in physical if c.grid_col < offset]
+        if len(label_region_cells) > 1:
+            joined = ">".join(
+                c.text.strip() for c in label_region_cells if c.text.strip())
+            if joined:
+                label = joined
 
         value_cells = [c for c in physical[1:] if c.grid_col >= offset]
         max_idx = max((c.grid_col - offset for c in value_cells), default=-1)

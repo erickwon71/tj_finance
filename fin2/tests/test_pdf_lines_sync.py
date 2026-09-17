@@ -48,11 +48,26 @@ def test_facts_to_report_lines_carries_source_format_as_unit_source():
     assert rows[1].unit_source == "pdf"
 
 
-def test_facts_to_report_lines_skips_facts_without_canonical():
+def test_facts_to_report_lines_skips_facts_without_canonical_or_statement():
+    # statement 도 canonical_account 도 없으면 어느 재무제표(BS/IS/CF) 소속인지 알 방법이
+    # 없다 — 이 경우만 건너뛴다(HTML 경로처럼 아직 .statement 를 안 채우는 구경로 대비).
     f = _fact("bs.total_assets", "separate", 300)
     f_no_canon = ExtractedFact(**{**vars(f), "canonical_account": None})
     rows = facts_to_report_lines([f, f_no_canon])
     assert len(rows) == 1
+
+
+def test_facts_to_report_lines_keeps_unmapped_pdf_fact_when_statement_set():
+    # ★R135(2026-09-18) — PDF 경로는 canonical_account 매핑 성패와 무관하게 .statement
+    # 를 직접 채운다(extract_pdf_facts()). canonical_account 가 None 이어도 .statement
+    # 가 있으면 report_lines 에 실려야 한다(구 동작: 통째로 드롭 — 솔트웨어 실측 버그).
+    f = _fact("bs.total_assets", "separate", 300)
+    f_unmapped = ExtractedFact(
+        **{**vars(f), "canonical_account": None, "statement": "BS", "acode": "미처분이익잉여금"})
+    rows = facts_to_report_lines([f, f_unmapped])
+    assert len(rows) == 2
+    unmapped_row = [r for r in rows if r.label_raw == "미처분이익잉여금"][0]
+    assert unmapped_row.statement == "BS"
 
 
 def test_recover_one_only_includes_html_and_pdf_decisions_not_unresolved():

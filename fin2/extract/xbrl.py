@@ -51,6 +51,15 @@ class ExtractedFact:
     acontext_raw: str | None
     context_parsed: bool
     canonical_account: str | None = None  # Track A=concept_map.map_acode, Track B=account_mapper. 미매핑 NULL
+    # ★R135(2026-09-18) — 원문상 소속 재무제표(BS/IS/CF/SCE), canonical_account와 별개로
+    # 추출기가 직접 채운다(예: pdf.py의 anchor.statement). collector/pdf_lines_sync.py::
+    # facts_to_report_lines()가 report_lines.statement를 정할 때 이 필드를 최우선으로 쓴다 —
+    # canonical_account가 없거나(unknown/미매핑) 섹션이 안 맞아 버려져도(None) 원문 행 자체는
+    # report_lines에 그대로 실려야 한다(XML 경로 report_lines.py와 동일한 "판단 없이
+    # 충실전사" 원칙 — 캐노니컬 해석 실패가 저장을 막을 이유는 없다). 아직 채우지 않는
+    # 경로(HTML/XBRL)는 None으로 두고, facts_to_report_lines()가 기존 canonical_account
+    # 기반 유추로 폴백한다.
+    statement: str | None = None
 
     # ── provenance (2026-07-17 재구축) — fact_v2 동명 컬럼에 그대로 실린다 ──────
     # 이 값들이 "원본을 읽은 행"과 "코드가 추측한 행"을 DB 에서 구분한다. 추출기가 채우지

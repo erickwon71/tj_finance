@@ -13,6 +13,8 @@ from fin2.extract.pdf import (  # noqa: E402
     parse_number, _find_anchors, _iter_data_lines, facts_from_text,
     _looks_multiline_bilingual, _iter_data_lines_multiline,
     _table_has_anchor_labels, _iter_data_lines_from_table_rows,
+    _parse_single_line, _looks_like_real_amount, _parse_pdf_table_header,
+    _lines_disagree_with_header,
 )
 
 # 모던 보고서 모사: 연결 BS(천원) + 연결 IS(천원, interim 3개월·누적) + 별도 BS.
@@ -153,7 +155,10 @@ def test_interim_cumulative_column_selected():
     assert 5_000_000_000 in rev
 
 
-def test_unmapped_label_skipped():
+def test_unmapped_label_stored_with_null_canon_not_skipped():
+    # ★R135(2026-09-18) — 계정지도 미매핑 라벨은 canonical_account=None 으로만 남고
+    # (섹션은 anc.statement 로 이미 확정돼 있으므로) facts 리스트에서 통째로 빠지지
+    # 않는다(구 동작: continue 로 드롭 → report_lines 에 영영 안 실림).
     facts = facts_from_text(
         "재무상태표\n제 1 기 2020.12.31 현재\n(단위 : 원)\n"
         "자산총계 100\n부채총계 60\n자본총계 40\n알수없는계정 999\n",
@@ -161,6 +166,11 @@ def test_unmapped_label_skipped():
     canons = {f.canonical_account for f in facts}
     assert "bs.total_assets" in canons
     assert not any(c and c.startswith("unknown") for c in canons)
+    unmapped = [f for f in facts if f.acode == "알수없는계정"]
+    assert len(unmapped) == 1
+    assert unmapped[0].canonical_account is None
+    assert unmapped[0].statement == "BS"
+    assert unmapped[0].amount_won == 999
 
 
 def test_ascii_roman_numeral_subtotal_header_not_negative():
@@ -392,6 +402,71 @@ def test_looks_like_real_amount_rejects_note_ref_lists():
     assert not _looks_like_real_amount("4,5,7,18")
 
 
+# ── R134(2026-09-18) — 콤마 없는 단독 주석번호(has_note_col) ─────────────────
+# 배경: `_looks_like_real_amount`는 콤마 없는 토큰을 항상 "진짜 금액"으로 본다
+# (위 테스트가 이미 그 계약을 확정하고 있다: "148" 등). 그래서 라벨 바로 다음이
+# 콤마 없는 단독 주석번호("14"/"9"/"10"/"11")인 행은 이 함수만으로는 못 거른다
+# — 솔트웨어 20220802000208 원문대조로 실측(사용자 확인, 2026-09-17~18). XML
+# 경로(`table_extractor.py` R19/R65)와 동형으로, "이 표가 주석열을 쓴다"고 이미
+# 확인됐을 때만(`has_note_col`) 라벨 바로 다음 자리에 한해 콤마 없는 단독 숫자도
+# 주석번호로 처리한다.
+
+def test_parse_single_line_note_col_strips_bare_note_number():
+    """실측 4건 재현 — 이연법인세부채/보통주자본금/주식발행초과금/미처분이익잉여금."""
+    cases = [
+        ("이연법인세부채    14    42,726,070    30,649,401",
+         "이연법인세부채", [42726070, 30649401]),
+        ("보통주자본금    9    648,200,000    648,200,000",
+         "보통주자본금", [648200000, 648200000]),
+        ("주식발행초과금    10    11,764,905,920    11,764,905,920",
+         "주식발행초과금", [11764905920, 11764905920]),
+        ("미처분이익잉여금    11    11,495,730    35,676,617",
+         "미처분이익잉여금", [11495730, 35676617]),
+    ]
+    for line, label, nums in cases:
+        assert _parse_single_line(line, has_note_col=True) == (label, nums)
+
+
+def test_parse_single_line_note_col_false_keeps_old_broken_behavior():
+    """has_note_col 기본값(False)은 회귀 없음 — 기존 호출자(테스트 포함) 그대로.
+    이 "틀린" 결과 자체가 버그의 재현이며, 위 테스트가 고쳐진 동작을 확인한다."""
+    label, nums = _parse_single_line("이연법인세부채    14    42,726,070    30,649,401")
+    assert label == "이연법인세부채"
+    assert nums == [14, 42726070, 30649401]
+
+
+def test_parse_single_line_note_col_does_not_double_filter_comma_note_refs():
+    """콤마 다중참조("4,5,8,16,17")는 has_note_col 값과 무관하게 이미
+    `_looks_like_real_amount`가 걸러낸다 — 새 분기가 이를 중복 처리해 값까지
+    같이 날리지 않는지 확인."""
+    line = "전환사채    4,5,8,16,17    2,282,142,575    2,260,831,260"
+    assert (_parse_single_line(line, has_note_col=True)
+            == _parse_single_line(line, has_note_col=False)
+            == ("전환사채", [2282142575, 2260831260]))
+
+
+def test_parse_single_line_note_col_true_still_parses_normal_row_unaffected():
+    """주석 컬럼이 없는(주석번호 자체가 없는) 정상 행은 has_note_col=True 여도
+    그대로 파싱된다 — 새 분기가 라벨 바로 다음 자리를 무조건 지우는 게 아님을 확인."""
+    line = "자산총계    14,954,294,161    14,939,210,092"
+    assert (_parse_single_line(line, has_note_col=True)
+            == ("자산총계", [14954294161, 14939210092]))
+
+
+def test_iter_data_lines_end_to_end_with_has_note_col():
+    """region 단위 종단 확인 — 솔트웨어 BS 표를 축약 재현."""
+    region = (
+        "재 무 상 태 표\n"
+        "과 목 주석 제 4(당)반기말 제 3(전)기말\n"
+        " I. 유동자산\n"
+        "이연법인세부채    14    42,726,070    30,649,401\n"
+        "전환사채    4,5,8,16,17    2,282,142,575    2,260,831,260\n"
+    )
+    lines = dict(_iter_data_lines(region, has_note_col=True))
+    assert lines["이연법인세부채"] == [42726070, 30649401]
+    assert lines["전환사채"] == [2282142575, 2260831260]
+
+
 def test_parse_pdf_table_header_reads_period_columns():
     region = ("재 무 상 태 표\n제 4(당)반기말: 2022년 06월 30일 현재\n"
               "제 3(전)기말 : 2021년 12월 31일 현재\n미래에셋대우 (단위:원)\n"
@@ -438,9 +513,11 @@ def test_half_year_report_title_now_anchors_correctly():
     facts = facts_from_text(
         text, corp_code="01390399", rcept_no="r2022h1",
         report_fiscal_year=2022, report_fiscal_period="H1")
-    stmts = {f.canonical_account.split(".")[0] for f in facts}
-    assert "cf" in stmts, "현금흐름표 앵커가 안 잡혀 CF 사실이 하나도 없음(회귀)"
-    bs_labels = {f.acode for f in facts if f.canonical_account.startswith("bs.")}
+    # ★R135(2026-09-18) — canonical_account 는 매핑 실패 시 None 일 수 있으므로(저장은
+    # 막지 않음), 소속 재무제표 판정은 anchor 가 직접 채운 .statement 로 확인한다.
+    stmts = {f.statement for f in facts}
+    assert "CF" in stmts, "현금흐름표 앵커가 안 잡혀 CF 사실이 하나도 없음(회귀)"
+    bs_labels = {f.acode for f in facts if f.statement == "BS"}
     assert "영업활동으로인한현금흐름" not in bs_labels, (
         "CF 앵커 부재로 BS 리전이 CF 까지 삼켜 오염됐다(회귀)")
 
@@ -543,6 +620,46 @@ def test_saltware_real_pdf_end_to_end():
     assert cf_sep.get("영업활동으로인한현금흐름") == -52_636_847
     assert cf_sep["기초의현금및현금성자산"] + cf_sep["현금의증가"] == \
         cf_sep["반기말의현금및현금성자산"]
+
+
+# ★R135(2026-09-18, 솔트웨어 CF separate 실측) — 문서에서 가장 마지막 앵커(다음 앵커가
+# 없어 리전이 `len(text)`까지 뻗어나가는 경우)가 그 뒤 주석(note) 섹션 전체를 통째로
+# 삼키는 결함. 계정지도 매핑 실패 게이트가 이 노이즈를 우연히 걸러주던 게 없어지면서
+# (R135 canon/storage 분리) 노출됐다.
+_CF_WITH_TRAILING_NOTES = """현금흐름표
+제 1 기 2020.01.01 ~ 2020.12.31
+(단위 : 원)
+영업활동으로 인한 현금흐름 100,000,000
+투자활동으로 인한 현금흐름 -50,000,000
+재무활동으로 인한 현금흐름 -20,000,000
+별첨 주석은 본 재무제표의 일부입니다.
+재무제표 주석
+1. 일반사항
+주주명 주식수 지분율
+기타 6,182,000 95.37
+합 계 6,482,000 100.0
+"""
+
+
+def test_header_note_column_detected_with_letter_spaced_label():
+    # ★R135(2026-09-18, 솔트웨어 CF separate "나"/"다" 세부항목 실측) — 헤더가
+    # "주 석"처럼 자간공백을 넣어 렌더링돼도 has_note_col=True 로 잡혀야 한다
+    # (구 정규식은 "주석"이 붙어있어야만 매치해 이 변형을 놓쳤다).
+    header = _parse_pdf_table_header(
+        "과 목 주 석 제4(당)반기 제3(전)반기\n"
+        "I. 영업활동으로 인한 현금흐름 (52,636,847) (8,122,944)\n")
+    assert header is not None
+    assert header.has_note_col is True
+
+
+def test_last_anchor_region_clamped_at_notes_section_boundary():
+    facts = facts_from_text(
+        _CF_WITH_TRAILING_NOTES, corp_code="c", rcept_no="r",
+        report_fiscal_year=2020, report_fiscal_period="FY")
+    labels = {f.acode for f in facts}
+    assert "기타" not in labels
+    assert "합계" not in labels
+    assert any("영업활동" in lab for lab in labels)
 
 
 def _run():

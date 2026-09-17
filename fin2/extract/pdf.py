@@ -25,6 +25,10 @@ from dataclasses import dataclass
 from parser.common.account_mapper import get_mapper
 from parser.common.amount_normalizer import normalize_account_name
 from fin2.extract.xbrl import ExtractedFact
+# ★R134(2026-09-18) — XML 경로(table_extractor.py R19/R65)가 이미 검증한 "콤마 없는
+# 단독 주석번호" 판정 패턴을 그대로 재사용(새 정규식 발명 금지). 아래 `_parse_single_line`
+# 참고.
+from parser.xml.table_extractor import _NOTE_REF_PATTERN, _AMOUNT_GROUPED_PATTERN
 
 # ── statement 제목 → 섹션코드 ─────────────────────────────────────────────────
 _TITLE_TOKENS = {
@@ -180,12 +184,18 @@ def _looks_multiline_bilingual(region: str) -> bool:
     return paired / candidates >= 0.6
 
 
-def _parse_single_line(line: str) -> tuple[str, list[int]] | None:
+def _parse_single_line(line: str, has_note_col: bool = False) -> tuple[str, list[int]] | None:
     """한 줄 'label 숫자 숫자 …' → (label, [nums]). 매치 없으면 None.
 
     _iter_data_lines() 의 기존 단일줄 로직을 그대로 함수로 뽑은 것(동작 무변경) —
     3줄 모드 리전 안에서도 드물게 라벨+숫자가 한 줄에 온 경계행을 같은 방식으로
     처리하기 위해 재사용한다.
+
+    `has_note_col`(R134, 2026-09-18) — 이 표가 헤더에 "주석" 컬럼을 구조적으로
+    선언한 것으로 확인됐으면(`_parse_pdf_table_header().has_note_col`, XML 경로
+    `_table_has_note_header()`와 동형) 라벨 바로 다음 토큰(첫 번째 숫자)이 콤마
+    없는 단독 숫자("14"/"9" 등)일 때도 주석번호로 보고 건너뛴다. 기본 False —
+    호출측이 안 넘기면(테스트 등 기존 호출자) 회귀 없음.
     """
     nums_iter = list(_NUM_TOKEN_RE.finditer(line))
     if not nums_iter:
@@ -205,11 +215,20 @@ def _parse_single_line(line: str) -> tuple[str, list[int]] | None:
     is_subtotal_preview = (
         len(nums_iter) == 1 and _SUBTOTAL_HEADER_RE.match(label) is not None)
     nums = []
-    for mm in nums_iter:
+    for i, mm in enumerate(nums_iter):
         tok = mm.group(0)
         if is_subtotal_preview and tok.startswith("(") and tok.endswith(")"):
             tok = tok[1:-1]
             nums.append(parse_number(tok))
+            continue
+        # ★R134(2026-09-18) — 라벨 바로 다음 자리(i==0)만, 표가 주석열을 쓴다고
+        #   이미 확인됐을 때만 콤마 없는 단독 숫자도 주석번호로 본다(XML 경로 R19와
+        #   동일 위치·동일 조건 — "매 행이 주석 하나씩만 인용"하는 표에서 아래
+        #   `_looks_like_real_amount`의 "콤마 없으면 금액" 기본값이 못 잡던 잔여
+        #   케이스, 솔트웨어 20220802000208 이연법인세부채/보통주자본금 등 실측).
+        tok_stripped = tok.strip()
+        if (i == 0 and has_note_col and _NOTE_REF_PATTERN.match(tok_stripped)
+                and not _AMOUNT_GROUPED_PATTERN.match(tok_stripped)):
             continue
         # ★2026-09-12 — 주석번호 열("4,5,6")을 금액으로 오인식하지 않는다(위
         #   _looks_like_real_amount 주석 참고). is_subtotal_preview 경로는 위에서
@@ -222,7 +241,8 @@ def _parse_single_line(line: str) -> tuple[str, list[int]] | None:
     return (label, nums) if nums else None
 
 
-def _parse_numline_tokens(label: str, tokens: list[str], statement: str = "BS") -> list[int | None]:
+def _parse_numline_tokens(label: str, tokens: list[str], statement: str = "BS",
+                          has_note_col: bool = False) -> list[int | None]:
     """숫자단독줄 토큰(공백 split, 열위치 보존) → [값 또는 None].
 
     - 헤더(로마숫자/괄호번호) 행은 그 줄의 **모든** 토큰에서 괄호를 벗겨 파싱한다(단일값
@@ -246,7 +266,7 @@ def _parse_numline_tokens(label: str, tokens: list[str], statement: str = "BS") 
     """
     is_header = statement == "BS" and _SUBTOTAL_HEADER_RE.match(label) is not None
     out: list[int | None] = []
-    for tok in tokens:
+    for i, tok in enumerate(tokens):
         if _DASH_TOKEN_RE.fullmatch(tok):
             out.append(None)
             continue
@@ -254,6 +274,14 @@ def _parse_numline_tokens(label: str, tokens: list[str], statement: str = "BS") 
             continue  # 잡음(줄바꿈된 영문 조각 등) — 열 자리를 만들지 않고 버림
         if is_header and tok.startswith("(") and tok.endswith(")"):
             tok = tok[1:-1]
+        # ★R134(2026-09-18) — 라벨 바로 다음 자리(i==0)만, 표가 주석열을 쓴다고
+        #   이미 확인됐을 때(has_note_col) 콤마 없는 단독 숫자("14"/"9" 등)도
+        #   주석번호로 본다 — 아래 콤마 다중참조 처리와 같은 자리, 같은 "열 보존
+        #   대상 아님" 취급(`_parse_single_line`과 동형 수정, 솔트웨어 실측).
+        tok_stripped = tok.strip()
+        if (i == 0 and has_note_col and _NOTE_REF_PATTERN.match(tok_stripped)
+                and not _AMOUNT_GROUPED_PATTERN.match(tok_stripped)):
+            continue
         # ★2026-09-12 — 주석번호 열("4,5,6") 셀이 그대로 토큰으로 들어오면(격자 폴백
         #   경로에서 특히 흔함 — extract_tables() 가 주석열을 별도 셀로 주지만 이
         #   함수는 셀 내용이 뭔지 모르고 그냥 숫자로 본다) 금액으로 오인식하지 않는다
@@ -265,7 +293,7 @@ def _parse_numline_tokens(label: str, tokens: list[str], statement: str = "BS") 
     return out
 
 
-def _iter_data_lines_multiline(region: str, statement: str = "BS"):
+def _iter_data_lines_multiline(region: str, statement: str = "BS", has_note_col: bool = False):
     """'한글라벨 / 숫자단독(열위치 보존) / 영문' 3줄 레이아웃 → (label, [nums]) 산출.
 
     - 순수 섹션 헤더(라벨 다음이 숫자줄이 아니라 바로 영문줄, 예 "자산\\n(Assets)")는
@@ -288,7 +316,7 @@ def _iter_data_lines_multiline(region: str, statement: str = "BS"):
             i += 1
             continue
         if _has_real_number(line):
-            parsed = _parse_single_line(line)
+            parsed = _parse_single_line(line, has_note_col=has_note_col)
             i += 1
             if parsed:
                 yield parsed
@@ -299,7 +327,11 @@ def _iter_data_lines_multiline(region: str, statement: str = "BS"):
         label = _strip_inline_english_gloss(line)
         nxt = lines[i + 1] if i + 1 < n else ""
         if nxt and not _HANGUL_RE.search(nxt) and _has_real_number(nxt):
-            nums = _parse_numline_tokens(label, nxt.split(), statement)
+            # ★R134(2026-09-18) — 콤마 다중참조 주석("4,5,6")은 이 함수가 이미
+            #   위치보존 없이(정상, 주석열은 애초에 기간 위치가 아님) 버리고 있다 —
+            #   콤마 없는 단독 주석번호도 has_note_col 로 같은 방식으로 처리한다.
+            nums = _parse_numline_tokens(label, nxt.split(), statement,
+                                         has_note_col=has_note_col)
             i += 2
             # ★2026-09-06(00101488 실측) — 순수 섹션 헤더("부채")가 드물게 밑줄/구분선을
             # pdfplumber 가 "0 0" 처럼 숫자로 오독한 가짜 숫자줄을 달고 나온다("부 채\n0
@@ -365,7 +397,8 @@ def _table_has_anchor_labels(rows: list[list], stmt: str) -> bool:
     return hits >= 2
 
 
-def _iter_data_lines_from_table_rows(rows: list[list], statement: str = "BS"):
+def _iter_data_lines_from_table_rows(rows: list[list], statement: str = "BS",
+                                     has_note_col: bool = False):
     """표 행(1열=라벨, 나머지=기간별 금액) → (label, [nums]) 산출.
 
     라벨 셀은 줄바꿈을 공백으로 접어 하나로 합친다(`_strip_inline_english_gloss`
@@ -386,7 +419,7 @@ def _iter_data_lines_from_table_rows(rows: list[list], statement: str = "BS"):
         cells = [c for c in row[1:] if c is not None and c.strip() != ""]
         if not cells:
             continue
-        nums = _parse_numline_tokens(label, cells, statement)
+        nums = _parse_numline_tokens(label, cells, statement, has_note_col=has_note_col)
         # 순수 섹션 헤더가 가짜 0으로 오독되는 경우도 있음(_iter_data_lines_multiline
         # 과 동일한 방어 — 모든 기간이 문자 그대로 0이면 결측과 동일 취급).
         if any(v not in (None, 0) for v in nums):
@@ -409,6 +442,19 @@ _ANCHOR_LABELS = {
            "분기순이익", "분기순손실", "반기순이익", "반기순손실", "영업수익"),
     "CF": ("영업활동", "투자활동", "재무활동"),
 }
+
+# ★R135(2026-09-18, 솔트웨어 CF separate 실측으로 발견) — 문서에서 가장 마지막(다음
+# 앵커가 없는) statement 앵커는 `end = len(text)`로, 그 뒤 이어지는 주석(note) 섹션
+# 전체가 통째로 그 리전에 포함됐다. 예전엔 계정지도 매핑 실패(unknown.)가 그 노이즈를
+# 우연히 걸러줬지만(위 canon 게이트), 그 게이트를 저장 차단용으로 안 쓰기로 하면서
+# (같은 세션 R135 canon/storage 분리) 이 노이즈가 그대로 report_lines 에 실릴 위험이
+# 생겼다(솔트웨어 실측: "제2기(전전기)"=110, "특정금전신탁"=12,493,953,976 등 주석
+# 내용이 CF 로 저장됨). "재무제표 주석"/"연결재무제표 주석"은 DART 표준 SECTION-2
+# 제목(parser/xml/section_detector.py 참고)이자 PDF 페이지 각주에도 그대로 찍혀
+# 나온다 — 이 문구가 리전 안에서 처음 등장하는 위치를 노트 시작으로 보고 거기서
+# 잘라낸다. 중간 앵커(다음 앵커로 이미 좁게 닫힌 리전)는 이 문구가 그 범위 안에
+# 나타날 일이 거의 없어 영향이 없다(안전한 범용 클램프).
+_NOTES_SECTION_RE = re.compile(r"재\s*무\s*제\s*표\s*주\s*석")
 
 
 @dataclass
@@ -465,7 +511,13 @@ def _parse_pdf_table_header(region: str) -> "PdfTableHeader | None":
             continue
         period_labels = _HEADER_PERIOD_MARK_RE.findall(line)
         if len(period_labels) >= 2:
-            has_note = bool(re.search(r"주석|Note", line))
+            # ★R135(2026-09-18, 솔트웨어 CF separate "나"/"다" 세부항목 실측) — 일부
+            # 헤더는 "주 석"처럼 글자 사이에 공백이 끼어 렌더링된다(자간 강조 서식,
+            # "과 목 주 석"). 옛 정규식(`주석` 붙어있어야 매치)이 이걸 놓치면
+            # has_note_col=False 로 오판정 → 콤마 없는 단독 주석번호("17")가 진짜
+            # 금액으로 세어져 숫자개수 초과로 행 전체가 드롭된다(R134와 동일 증상,
+            # 다른 헤더 서식 변형).
+            has_note = bool(re.search(r"주\s?석|Note", line))
             n_period_cols = len(period_labels)
             # ★2026-09-12(솔트웨어 20220802000208 IS 실측, R93 후속) — interim IS/CF는
             #   기간마커줄엔 기간당 1개("제4(당)반기")만 찍히지만, 바로 아래 서브헤더
@@ -586,13 +638,13 @@ def _is_interim_cumulative(region: str) -> bool:
     return "누적" in head and "3개월" in head
 
 
-def _iter_data_lines(region: str):
+def _iter_data_lines(region: str, has_note_col: bool = False):
     """'label  숫자 숫자 …' 데이터 라인 → (label, [nums]) 산출."""
     for raw in region.split("\n"):
         line = raw.strip()
         if not line or not _HANGUL_RE.search(line):
             continue
-        parsed = _parse_single_line(line)
+        parsed = _parse_single_line(line, has_note_col=has_note_col)
         if parsed:
             yield parsed
 
@@ -665,6 +717,9 @@ def facts_from_text(
         if anc.statement == "SCE":
             continue
         end = anchors[i + 1].start if i + 1 < len(anchors) else len(text)
+        notes_match = _NOTES_SECTION_RE.search(text, anc.start, end)
+        if notes_match:
+            end = notes_match.start()
         region = text[anc.start:end]
         if not _region_has_anchor_labels(region, anc.statement):
             # ★2026-09-06(00116268 동성제약 원문대조로 발견) — 텍스트 스트림 게이트가
@@ -675,7 +730,10 @@ def facts_from_text(
             table_rows = _table_rows_for_span(pdf, page_bounds, anc.start, end)
             if not table_rows or not _table_has_anchor_labels(table_rows, anc.statement):
                 continue
-            lines_iter = list(_iter_data_lines_from_table_rows(table_rows, anc.statement))
+            header = _parse_pdf_table_header(region)
+            has_note_col = bool(header and header.has_note_col)
+            lines_iter = list(_iter_data_lines_from_table_rows(
+                table_rows, anc.statement, has_note_col=has_note_col))
         else:
             # ★2026-09-06 — "3줄 이중언어" 레이아웃(1999~2002년대, 설계문서
             # docs/plans/pdf_multiline_bilingual_layout_2026-09-06.md) 지원. CF는 이번
@@ -683,20 +741,43 @@ def facts_from_text(
             # 대상. interim IS 의 '3개월 누적' 2단헤더가 이 3줄 레이아웃과 만나는 조합은
             # 실측 사례가 아직 없어 미검증 — cum_idx 는 열위치를 그대로 쓰므로 동작은
             # 하나, 실제로 그런 필링이 나오면 원문대조로 재확인할 것(문서 "구현 방향" §3).
+            # ★R134(2026-09-18) — has_note_col 을 `_iter_data_lines*`에 넘기려면
+            #   header를 먼저 계산해야 한다(원래는 아래에서 text_lines 만든 뒤에
+            #   계산했음 — 그러면 이 표가 주석열을 쓰는지 모른 채로 라인부터
+            #   파싱해버려 콤마 없는 단독 주석번호를 걸러낼 기회가 없었다).
+            header = _parse_pdf_table_header(region)
+            has_note_col = bool(header and header.has_note_col)
             use_multiline = anc.statement in ("BS", "IS") and _looks_multiline_bilingual(region)
-            text_lines = list(_iter_data_lines_multiline(region, anc.statement) if use_multiline
-                              else _iter_data_lines(region))
+            text_lines = list(
+                _iter_data_lines_multiline(region, anc.statement, has_note_col=has_note_col)
+                if use_multiline else _iter_data_lines(region, has_note_col=has_note_col))
             # ★2026-09-12(헤더 우선 파싱, 위 PdfTableHeader 참고) — 헤더가 선언한 기간
             #   수보다 숫자가 많은 줄이 하나라도 있으면(행 병합 등으로 텍스트 스트림이
             #   깨졌다는 신호) 격자 폴백을 시도한다. 앵커 라벨 자체는 안 깨져(위
             #   `_region_has_anchor_labels`를 통과했으므로) 이 분기 전엔 폴백 계기가
             #   없었다 — 솔트웨어 20220802000208 실측(라벨은 멀쩡, 숫자만 인접행과
             #   병합)이 정확히 이 경우.
-            header = _parse_pdf_table_header(region)
             if header is not None and _lines_disagree_with_header(text_lines, header):
                 table_rows = _table_rows_for_span(pdf, page_bounds, anc.start, end)
+                # ★R135(2026-09-18, 솔트웨어 CF separate 실측) — `_table_rows_for_span`
+                #   은 페이지 단위로 표를 통째로 긁어온다(pdfplumber `extract_tables()`가
+                #   문자 offset이 아니라 페이지 전체 단위). `end`(위에서 이미 주석 섹션
+                #   시작 전으로 클램프됨)가 이 statement 표와 **같은 물리 페이지**에 있는
+                #   다음 섹션(예: 주석 1번 "일반사항"의 주주현황 표)까지 같이 끌려온다 —
+                #   실측: CF 표 재구성 중 주주명/지분율 표("(주)손앤컴퍼니"/"기타"/"합계")
+                #   가 섞여 들어옴. `text_lines`는 이미 이 statement 리전(정확히 클램프된
+                #   `region`)만으로 파싱됐으므로, 그 라벨이 실제로 `region` 안에 있는지로
+                #   되짚어 걸러낸다(격자쪽 라벨이 `region` 밖 페이지 내용이면 드롭 —
+                #   결측이 오염보다 낫다, R6).
+                region_flat = re.sub(r"\s+", "", region)
+                table_rows = [
+                    row for row in table_rows
+                    if row and row[0] and _clean_table_label(row[0])
+                    and _clean_table_label(row[0]) in region_flat
+                ]
                 if table_rows and _table_has_anchor_labels(table_rows, anc.statement):
-                    lines_iter = list(_iter_data_lines_from_table_rows(table_rows, anc.statement))
+                    lines_iter = list(_iter_data_lines_from_table_rows(
+                        table_rows, anc.statement, has_note_col=has_note_col))
                 else:
                     lines_iter = text_lines
             else:
@@ -722,15 +803,24 @@ def facts_from_text(
             amount = nums[idx] if idx < len(nums) else None
             if amount is None:
                 continue
+            # ★R135(2026-09-18, 솔트웨어 미처분이익잉여금 실측으로 발견) — canonical
+            # 매핑 실패/불신을 "저장 자체를 막는" 게이트로 쓰지 않는다. XML 경로
+            # (fin2/extract/report_lines.py)는 account_mapper 를 아예 호출하지 않고
+            # "판단 없이 충실전사"한다 — 이 경로도 같은 원칙을 따라야 한다. canon 이
+            # 없거나(unknown/미매핑) 섹션이 안 맞거나(라벨 오매핑) 알려진 오매핑
+            # 패턴이면 canonical_account 만 None 으로 남기고, 원문 라벨(label)과
+            # 값(amount)은 그대로 저장한다(statement=anc.statement 로 소속 재무제표는
+            # 이미 확정돼 있어 canon 없이도 report_lines 배치가 가능 — 아래
+            # ExtractedFact.statement 참고). 상세: docs/PARSING_RULES.md R135.
             mapping = mapper.map(label, fs_section=fs_section)
             canon = mapping.account_code
             if not canon or canon.startswith("unknown."):
-                continue
-            # 섹션 일치(BS 계정만 BS 등) — 라벨 오매핑(CF '당기순이익' 등) 배제.
-            if not canon.startswith(anc.statement.lower() + "."):
-                continue
-            if canon == "is.tax_expense" and "차감전" in label:
-                continue  # 세전이익 오매핑 가드(Track B 와 동일)
+                canon = None
+            elif not canon.startswith(anc.statement.lower() + "."):
+                # 섹션 불일치(BS 계정이 CF 섹션에 매칭 등, 라벨 오매핑) — 신뢰 못 함.
+                canon = None
+            elif canon == "is.tax_expense" and "차감전" in label:
+                canon = None  # 세전이익 오매핑 가드(Track B 와 동일)
             amount_won = amount * anc.unit
             # ★2026-09-03(PDF 복구 세션, 20010515000606 실측) — pdfplumber 가 인접 컬럼 숫자를
             # 섞어 붙이는 렌더링 결함으로 자릿수가 튀는 값이 드물게 나온다(실측: 별도기준
@@ -781,6 +871,7 @@ def facts_from_text(
                 acontext_raw=f"pdf:{anc.statement}:{anc.basis[:3]}:c0:{report_fiscal_year}",
                 context_parsed=False,
                 canonical_account=canon,
+                statement=anc.statement,
             ))
     _fix_paren_formatted_bs(facts)
     _fix_swapped_grand_total_equity(facts)

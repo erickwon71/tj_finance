@@ -48,18 +48,27 @@ from fin2.extract.xbrl import ExtractedFact
 
 
 def facts_to_report_lines(facts: list[ExtractedFact]) -> list[ReportLineRow]:
-    """ExtractedFact(이미 canonical 매핑됨) → ReportLineRow(raw-label 계약) 역변환.
+    """ExtractedFact → ReportLineRow(raw-label 계약) 역변환.
 
-    `canonical_account`가 없는 fact(매핑 실패)는 추출기(`extract_pdf_facts()`/
-    `extract_html_facts()`)가 이미 걸러낸다 — 여기 도달하는 건 전부 canonical_
-    account 보유. `unit_source`는 `f.source_format`("pdf"/"html")을 그대로 써서
-    이 값이 어느 경로로 복구됐는지 report_lines 에도 남긴다.
+    ★R135(2026-09-18) — 예전엔 `canonical_account`가 없는 fact(매핑 실패)를 추출기
+    (`extract_pdf_facts()`)가 이미 걸러내 여기 도달하는 건 전부 canonical_account
+    보유가 보장됐었다. 그 게이트가 "저장 자체를 막는" 용도로 쓰인 게 문제였다(계정지도에
+    없는 라벨은 report_lines에도 못 실림 — XML 경로의 "판단 없이 충실전사" 원칙과 불일치,
+    솔트웨어 미처분이익잉여금 실측으로 발견). 이제 `extract_pdf_facts()`는 canon 매핑
+    성패와 무관하게 `f.statement`(BS/IS/CF)를 직접 채워 넘긴다 — 이걸 최우선으로 쓴다.
+    `f.statement`가 없는(아직 이 필드를 안 채우는 `extract_html_facts()` 등) 구경로는
+    기존처럼 `canonical_account`에서 유추하고, 그것도 없으면 statement를 알 방법이
+    없으므로 건너뛴다(기존 동작 그대로 유지). `unit_source`는 `f.source_format`
+    ("pdf"/"html")을 그대로 써서 이 값이 어느 경로로 복구됐는지 report_lines 에도 남긴다.
     """
     out: list[ReportLineRow] = []
     for f in facts:
-        if not f.canonical_account:
+        if f.statement:
+            statement = f.statement
+        elif f.canonical_account:
+            statement = f.canonical_account.split(".", 1)[0].upper()
+        else:
             continue
-        statement = f.canonical_account.split(".", 1)[0].upper()
         out.append(ReportLineRow(
             corp_code=f.corp_code,
             rcept_no=f.rcept_no,

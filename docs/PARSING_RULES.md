@@ -7082,6 +7082,180 @@ subtotals`.
 
 ---
 
+## R134. `fin2/extract/pdf.py` — 콤마 없는 단독 주석번호가 금액으로 오인식되는
+결함(has_note_col 미배선) 수정 — XML 경로(R19/R65)와 동형 수정 (2026-09-18)
+
+**배경**: 솔트웨어(01390399) 20220802000208(2022 H1, XML archive 손상으로
+PDF 복구 경로 사용) 사용자 원문대조로 발견. `_looks_like_real_amount()`는
+콤마 있는 다중 주석참조("4,5,6")는 걸러내지만 **콤마 없는 단독 주석번호
+("14"/"9"/"10"/"11")는 무조건 "진짜 금액"으로 통과**시킨다(함수 자체 계약,
+`fin2/tests/test_pdf.py::test_looks_like_real_amount_accepts_proper_
+thousands_grouping`의 `"148"` 케이스가 이미 이 계약을 고정하고 있다 —
+그래서 이 함수만으로는 원리적으로 못 고친다). 결과: 라벨 바로 다음이
+콤마없는 단독 주석번호인 행은 숫자 개수가 헤더 기간수를 초과해 **행 전체가
+드롭**(header 감지 성공 시, 결측) 되거나, header 감지가 실패하는 경로에선
+**주석번호 자체가 금액으로 저장**(오염, 훨씬 위험 — 2026-09-17 세션에서
+`report_lines.unit_source='pdf' AND value_won BETWEEN 1 AND 99` 스캔으로
+1999~2002년대 최소 2,407개 필링에서 재현 확인, 라벨이 "(주석"으로 잘려있는
+1,193행은 스모킹건 수준 확정).
+
+★핵심: XML 경로(`parser/xml/table_extractor.py`)는 이미 2026-09(R19/R65)에
+같은 문제를 두 신호(`_table_has_comma_note_column`/`_table_has_note_header`
+OR 결합)로 해결해뒀다. PDF 경로도 동형 신호(`PdfTableHeader.has_note_col`,
+헤더 줄의 "주석"/"Note" 텍스트 탐지)를 **이미 계산은 하고 있었는데 어디에도
+쓰지 않고 버리고 있었다**(`has_note_col` 필드 정의·대입만 있고 읽는 코드
+0곳, grep으로 확인) — XML 쪽이 이미 검증한 해법을 PDF 쪽에 배선만 하면
+되는 문제였다.
+
+**수정**: `_parse_single_line()`/`_parse_numline_tokens()`에 `has_note_col`
+매개변수 추가 — 라벨 바로 다음 자리(첫 토큰, i==0)에서만, `has_note_col=
+True`이고 토큰이 `_NOTE_REF_PATTERN`(콤마 유무 무관 주석번호 형태)에 맞고
+`_AMOUNT_GROUPED_PATTERN`(정상 3자리그룹 금액)엔 안 맞으면 주석번호로 보고
+건너뛴다(XML `table_extractor.py`의 두 패턴을 그대로 import해 재사용, 새
+정규식 발명 안 함). `facts_from_text()`에서 `header = _parse_pdf_table_
+header(region)` 계산을 **`_iter_data_lines*` 호출보다 먼저**로 옮겨(원래는
+라인부터 파싱한 뒤에야 header를 알아 걸러낼 기회가 없었다) `has_note_col`을
+`_iter_data_lines`/`_iter_data_lines_multiline`/`_iter_data_lines_from_
+table_rows` 세 소비 경로 전부에 배선. **`_parse_numline_tokens`의 3줄
+이중언어(숫자단독줄) 호출부는 배선 안 함** — 그 레이아웃에서 주석번호가
+숫자단독줄에 섞여 나오는 실측 사례가 아직 없어 증거 없는 확장은 보류(R6).
+
+**검증**: `fin2/tests/test_pdf.py` 신규 6건(솔트웨어 실측 4계정 재현 +
+콤마다중참조 이중필터 없음 확인 + 정상행 비영향 확인 + region 종단 확인).
+`recover_one()` 재실행 실측: 솔트웨어 BS separate 17→20행(보통주자본금
+648,200,000 / 이연법인세부채 42,726,070 / 주식발행초과금 11,764,905,920
+전부 정확히 복구, 원문 노트번호와 일치). 잔여 1개(미처분이익잉여금)는 이
+버그와 무관 — `account_maps/bs_accounts.py`가 "총액 이익잉여금과 혼동
+방지" 목적으로 2026-07-18에 의도적으로 지도에서 제거해둔 것(unknown 처리),
+사용자 원문대조 확정값(11,495,730)으로 `unit_source='manual'` 개별 삽입.
+CF의 별개 결함(스코프 밖 "단기금융상품" 가짜행 1개, 원인 미조사 — 앵커
+리전 경계 오판 추정)은 이 수정과 무관하게 남아 데이터에서 개별 삭제.
+★후속(같은 날, R135) — "계정지도에서 의도적으로 제외"라는 이 설명은
+캐노니컬 개념(총액 이익잉여금 vs 미처분이익잉여금) 혼동 방지로서는 맞지만,
+그게 **저장 자체를 막아도 되는 이유는 아니었다** — PDF 경로만의 별도 설계
+결함(account_mapper 매핑 성패를 report_lines 저장 게이트로 오용)이었음이
+드러나 R135로 근본 수정. 자세한 내용은 아래 R135 참고.
+`pytest tests/ fin2/tests/` 1051 passed(기존 무관 실패 1건 그대로,
+`test_nyuintek_2007q1_dkme_style_not_affected_by_this_fix`).
+
+**★소급 백필 미실시(다음 세션 후보)** — 2,407개 필링(1999~2002년대) 전체
+재적재는 이번 세션 스코프 밖(별도 Track C 캠페인으로 이월, 사용자 지시
+2026-09-18 "2015+로 돌아가서 마무리하자"). 코드 수정 자체는 완료·검증됐고
+솔트웨어(2015+ 유일 사례) 1건만 데이터 반영 완료.
+
+## R135. `fin2/extract/pdf.py::facts_from_text()`/`collector/pdf_lines_
+sync.py::facts_to_report_lines()` — "저장"과 "캐노니컬 매핑"이 뒤섞여 있던
+설계 결함 근본 수정 (2026-09-18, 같은 날 R134 후속)
+
+**배경**: R134 조사 중, 솔트웨어 BS separate에 남은 마지막 결측 1건
+(미처분이익잉여금)이 R134(주석번호 오인식)와 무관한 **별개 원인**임을 확인
+— `account_maps/bs_accounts.py`가 "이익잉여금(총액)과 미처분이익잉여금(총액의
+하위 sub-line)을 혼동하면 안 된다"는 이유로 이 라벨을 계정지도에서 의도적으로
+제거해둔 상태(`unknown.미처분이익잉여금`)였다. 사용자가 이 설명 자체에
+날카로운 반문을 제기: "sub total 아래에 세부항목으로 두면 될 것 같은데, 이
+회사 보고서만 봐서는 파서에서 제외한다는 논리가 이해되지 않는다" — 캐노니컬
+개념 혼동을 피하려는 판단이 왜 **저장 자체를 막는 근거**가 되어야 하는지.
+
+**근본원인 확정**: 코드로 직접 대조한 결과, 이 질문이 정확했다.
+- **XML 정상 경로**(`fin2/extract/report_lines.py`, 전체 필링의 절대다수)는
+  자기 docstring에 명시된 대로 "판단 없이 충실전사"한다 — `account_mapper.
+  map()`을 아예 호출하지 않는다(`canonical_account` 컬럼 자체가 없음).
+  계정지도에 있든 없든 원문 라벨 그대로 report_lines에 저장되고, 캐노니컬
+  해석은 계층3(`combine.py`)에서 나중에 따로 한다.
+- **PDF 복구 경로**(`fin2/extract/pdf.py::extract_pdf_facts()`, 원래는
+  1999~2003년대 소수 핵심계정 항등식 검증용으로 설계됐다가 report_lines
+  전체를 채우는 용도로 재사용됨)만 `if not canon or canon.startswith
+  ("unknown."): continue`로, **계정지도 매핑에 실패한 라벨은 저장 자체를
+  거부**했다. "미처분이익잉여금"뿐 아니라 계정지도에 없는 임의의 라벨이
+  이 경로에서는 전부 조용히 통째로 빠질 수 있었다는 뜻 — 솔트웨어 사례는
+  이 구조적 결함의 한 표본일 뿐, 범위가 훨씬 넓다.
+- `collector/pdf_lines_sync.py::facts_to_report_lines()`가 `ExtractedFact→
+  ReportLineRow` 변환 시 `f.canonical_account.split(".", 1)[0].upper()`로
+  `statement`(BS/IS/CF)를 **유추**하는 게 이 게이트가 생긴 진짜 이유였다 —
+  `extract_pdf_facts()`는 앵커(`anc.statement`) 단계에서 이미 소속
+  재무제표를 알고 있는데, 그 정보를 `ExtractedFact`에 직접 실어 보내지
+  않고 canonical_account를 거쳐 역산해야 했던 게 설계상 병목.
+
+**수정**: "저장"과 "캐노니컬 매핑"을 분리(①~③), 그 분리로 노출된 리전
+경계 결함 2건도 같은 세션에서 근본수정(④~⑤ — 사용자 확인 후 진행, 아래
+"부작용 발견" 참고).
+1. `fin2/extract/xbrl.py::ExtractedFact`에 `statement: str | None = None`
+   필드 신설 — canonical_account와 독립적으로 원문상 소속 재무제표를 표시.
+2. `extract_pdf_facts()`(`facts_from_text()`): 매핑 실패(`unknown.`)·섹션
+   불일치(라벨 오매핑)·세전이익 오매핑가드 세 경우 전부 `continue`(행 드롭)
+   대신 `canon = None`으로만 처리 — 행 자체(`label`/`amount`)는 그대로
+   저장, `ExtractedFact.statement=anc.statement`를 항상 채워 넘긴다. 물리적
+   불가능값 필터(10^16 절대상한·핵심 4개념 매그니튜드 캡)는 canon 유무와
+   무관한 별개 안전장치라 그대로 유지.
+3. `facts_to_report_lines()`: `statement` 결정 시 `f.statement`를 최우선
+   사용, 없으면(HTML 경로 등 아직 이 필드를 안 채우는 구경로) 기존처럼
+   `canonical_account`에서 유추, 그것도 없으면 스킵(둘 다 없으면 소속
+   재무제표를 알 방법이 없는 진짜 예외 케이스만 남음).
+
+**부작용 발견(같은 날, 구현 직후 end-to-end 재검증 중)**: 위 ①~③을 실제
+솔트웨어 필링에 재실행해보니, CF separate 리전에 "제2기(전전기)"=110,
+"특정금전신탁"=12,493,953,976, 지분율 표("(주)손앤컴퍼니"/"기타"/"합계")
+같은 **명백히 CF가 아닌 값**이 같이 따라 나왔다. 원인: `_find_anchors()`가
+문서에서 가장 마지막(다음 앵커가 없는) statement 앵커의 리전을
+`end=len(text)`로 잡아, 그 뒤 이어지는 **주석(note) 섹션 전체**가 통째로
+그 리전에 포함되고 있었다(솔트웨어는 연결 대상이 없는 SPAC이라 CF
+separate가 문서상 마지막 statement). 지금까지 이게 문제가 안 됐던 이유는
+계정지도 매핑 실패(`unknown.`) 게이트가 이 노이즈를 **우연히** 걸러주는
+방화벽 역할을 겸하고 있었기 때문 — ①~③으로 그 게이트를 없애면서 노출됐다.
+사용자에게 "지금 같이 고칠지, 별도 세션으로 미룰지" 확인 후 "지금 같이
+고친다"는 답변으로 계속 진행:
+4. `_NOTES_SECTION_RE`(`재\s*무\s*제\s*표\s*주\s*석`, DART 표준 SECTION-2
+   제목이자 PDF 페이지 각주에도 그대로 찍힘) 신설 — 각 앵커의 리전 `end`를
+   계산할 때, 그 구간 안에서 이 패턴이 처음 나오는 위치가 있으면 거기서
+   잘라낸다. 중간 앵커(이미 다음 앵커로 좁게 닫힌 리전)는 이 문구가 그
+   범위 안에 나타날 일이 거의 없어 영향이 없는 범용 클램프.
+5. 위 ④로 텍스트 리전은 깨끗해졌지만, `_lines_disagree_with_header()`가
+   격자 폴백(`_table_rows_for_span`)으로 승격시키는 경로는 별개 결함이
+   남아있었다 — `pdfplumber.extract_tables()`가 **페이지 단위**로 표를
+   긁어와(문자 offset 무관) 클램프된 `end`와 같은 물리 페이지에 있는 다음
+   섹션(주석 1번 "일반사항"의 주주현황 표 등)까지 같이 끌려왔다. 격자에서
+   재구성한 각 행의 라벨이 이미 올바르게 클램프된 `region`(텍스트) 안에도
+   실제로 존재하는지로 되짚어 필터링(없으면 드롭 — 결측이 오염보다 낫다).
+6. (부수 발견) `_parse_pdf_table_header()`의 주석열 감지 정규식이 "주석"이
+   붙어있는 경우만 잡고 "주 석"(자간공백 서식)은 놓쳤다 — 솔트웨어 CF의
+   "나. 당기순이익 조정을 위한 가감"/"다. 영업활동으로 인한 자산부채의
+   변동"(둘 다 주석번호 "17" 보유)이 이 갭으로 숫자개수 초과 판정을 받아
+   드롭되고 있었다(R134와 동일 증상의 다른 헤더 서식 변형). `주\s?석|Note`
+   로 정규식 확장.
+
+**스코프**: ①~③(canon/storage 분리)은 **PDF 경로만**(사용자 지시 "PDF
+경로의 저장과 캐노니컬 매핑을 분리"). `fin2/extract/html_viewer.py::
+facts_from_sections()`도 구조가 완전히 동일한 게이트를 갖고 있어 같은
+결함이 잠재하지만, 이번 세션 스코프 밖 — `.statement`를 안 채우는
+구경로로 그대로 남겨뒀다(`facts_to_report_lines()`의 폴백 분기가 이 경로를
+그대로 지원). ④~⑥(리전 경계·헤더 감지)은 PDF 경로 전체에 적용되는 범용
+수정(특정 필링에 한정되지 않음).
+
+**검증**: 신규 유닛테스트 6건(`fin2/tests/test_pdf.py::
+test_unmapped_label_stored_with_null_canon_not_skipped`,
+`test_last_anchor_region_clamped_at_notes_section_boundary`,
+`test_header_note_column_detected_with_letter_spaced_label`,
+`fin2/tests/test_pdf_lines_sync.py::test_facts_to_report_lines_keeps_
+unmapped_pdf_fact_when_statement_set` 등) + 기존 회귀 2건(canonical_
+account 대신 `.statement`로 재무제표 판정하도록 수정) 전부 통과.
+`recover_one()` 솔트웨어 재실행 실측(원문 항등식 전부 재대조): BS
+separate 21→23행(수동삽입했던 미처분이익잉여금 11,495,730과 R135로 추가
+복구된 전환권대가 166,216,647 포함해 전부 `unit_source='pdf'` 자동
+추출 — manual 행 소멸), CF separate 10→10행(내용 교체 — 노이즈 3건 제거
++ 누락됐던 "나"/"다" 세부항목 2건 복구, 항등식 영업에서창출된현금=당기
+순이익+가감+변동 재확인), IS separate 8행(SCE 오염 4행 제거로 12→8).
+`store_report_lines(overwrite_manual=True)`로 DB 반영 완료(최종
+BS/CF/IS=23/10/8행, 전부 `unit_source='pdf'`). `pytest tests/ fin2/tests/`
+1053 passed(기존 무관 실패 1건 그대로, `test_nyuintek_2007q1_dkme_style_
+not_affected_by_this_fix` — R130 트랙 별개 이슈, R134/R135와 무관).
+
+**소급 백필 미실시** — R134와 동일 사유·동일 스코프(2,407개 필링 Track C
+캠페인으로 이월). 이번 세션은 솔트웨어(2015+ 유일 대상) 1건만 데이터 반영
+완료, 코드 수정은 전체 PDF 경로에 적용됨(④~⑥은 범용이라 향후 백필 시
+자동으로 같이 적용).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.

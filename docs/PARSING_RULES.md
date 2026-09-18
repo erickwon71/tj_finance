@@ -7321,6 +7321,53 @@ not_affected_by_this_fix` — R130 트랙 별개 이슈, R136/R137와 무관).
 
 ---
 
+## R138. `scripts/scan_header_fallback_2015plus_2026-09-14.py` — R125
+플래그(`allow_duplicate_subtype`) 미배선으로 2015+ 폴백 잔여 559건 중
+548건(98%)이 오탐(false positive)이었음 확정 (2026-09-18)
+
+**배경**: `docs/plans/report_lines_legacy_fallback_hardening_design_
+2026-09-17.md`(구버전 헤더 파싱 폴백 고도화 설계) §3의 2026-09-17 재스캔이
+"2015+ BS/IS/CF 표 559건이 `parse_header_columns()`로 미인식"이라고
+보고했고, 그중 98%(548건)가 IS·상위 8개사(보험/증권/은행)에 집중돼
+있어 "THEAD-IS 정밀화부터 착수"하기로 사용자와 합의했다. 8개사 중
+현대해상(00164973) 표본 1건을 직접 열어 THEAD를 확인하는 중 발견.
+
+**근본원인**: `fin2/extract/report_lines.py`(운영 경로)는
+`report_fiscal_year>=2015`면 `parse_header_columns(table,
+allow_duplicate_subtype=True)`를 호출한다(R125, 2026-09-15 — 보험/증권사
+서식의 "명세/소계" COLSPAN=2 중복 서브타입 열 처리). 그런데 §3 재스캔에
+쓰인 `scan_header_fallback_2015plus_2026-09-14.py`는 이 플래그 없이
+(기본값 `False`) `parse_header_columns(tbl)`을 호출해서, **R125가 운영
+경로에서 이미 정확히 해석하고 있는 표까지 "미인식"으로 오탐**했다.
+
+**재검증**(559건 전체를 운영과 동일한 `allow_duplicate_subtype=
+(fiscal_year>=2015)` 플래그로 재실행): 548건(98%)이 오탐, **진짜 잔여는
+11건**(회사 6곳 — 안트로젠·대신증권·팬엔터테인먼트·에스바이오메딕스·
+넥사다이내믹스·아이로보틱스). 이 11건도 report_lines 조회+항등식
+검산(CF: 영업+투자+재무=현금증가, 기초+증가(+환율효과)=기말)으로
+전부 정상값임을 확인 — 기존 위치기반 폴백(cum_map/multicol/else)이
+이미 정확히 처리 중이라 **고칠 버그가 없다**. 상세 경위는 위 설계문서
+§7 참고.
+
+**부수 확인**: R125 문서 자체에 남아있던 미해결 의문("2026-09-14
+스냅샷 1,333건 대비 메모리의 '1,319건 해소(1,333→14)' 수치가 안
+맞음")도 이 스캔 스크립트 버그가 원인이었을 가능성이 높다(확정은
+아님 — 그 세션 측정 방법 직접 재현은 안 함).
+
+**수정**: `scan_header_fallback_2015plus_2026-09-14.py`의
+`parse_header_columns(tbl)` 호출에 `allow_duplicate_subtype=
+(fiscal_year >= 2015)` 배선 — 운영 경로와 동형화. 이 스크립트를 다시
+돌리면 이제 진짜 잔여(11건 근방)만 나올 것으로 예상(재실행으로
+재확인은 안 함 — 이미 수동 재검증으로 559→11 확정됨).
+
+**교훈**: 스캔/감사 스크립트가 운영 코드와 **다른 인자로 같은 함수를
+호출**하면, 운영 코드가 이미 고친 결함을 계속 "미해결"로 재보고할 수
+있다 — 진단 스크립트를 새로 만들 때 운영 호출부의 인자를 그대로
+복사했는지 확인할 것(R9 원칙의 한 변형: 검증 스크립트 자체도 검증
+대상이다).
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -7414,6 +7461,7 @@ not_affected_by_this_fix` — R130 트랙 별개 이슈, R136/R137와 무관).
 | R133 | 사용자 지시로 R130 즉시 확장(2026-09-16) · `fin2/extract/report_lines_xbrl.py::_emit_missing_leaf_lines()`(`_REQUIRED_IS_LINES`) · `fin2/tests/test_xbrl_instance.py::test_r133_...` |
 | R134/R135 | 커밋 `d03e177`(2026-09-17, 이 문서엔 2026-09-18 뒤늦게 등재) · `parser/xml/table_extractor.py::_header_rule_name()` · `fin2/extract/report_lines.py::_grid_body_rows()` · `fin2/tests/test_header_rule_name_r134_sce.py`·`fin2/tests/test_grid_body_rows_r135_multicell_label.py` |
 | R136/R137 | 커밋 `3fb4d01`(2026-09-18) · `fin2/extract/pdf.py`·`fin2/extract/xbrl.py`·`collector/pdf_lines_sync.py` · `fin2/tests/test_pdf.py`·`fin2/tests/test_pdf_lines_sync.py` |
+| R138 | 2026-09-18(사용자 지시 "8개사부터 시작"→표본조사 중 발견) · `scripts/scan_header_fallback_2015plus_2026-09-14.py` · `docs/plans/report_lines_legacy_fallback_hardening_design_2026-09-17.md` §7 |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 | 부록 D | rcept 단위 예외목록 카탈로그(`fin2/extract/report_lines.py`에 흩어진 5개 딕셔너리 — R116/R118/R120/R121/R132) |
 

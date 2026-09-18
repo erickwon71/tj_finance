@@ -97,7 +97,11 @@ def _process_one(args):
         tbl, unit, kind = tbls[0]
         n_tables += 1
         try:
-            cols = parse_header_columns(tbl)
+            # ★R138(2026-09-18) — report_lines.py(운영 경로)는 report_fiscal_year>=2015
+            #   면 항상 allow_duplicate_subtype=True 를 넘긴다(R125). 이 스캔이 그 플래그
+            #   없이(기본값 False) 테스트하면 R125가 이미 해석하는 표까지 "미인식"으로
+            #   오탐한다 — 실측으로 559건 중 548건(98%)이 이 오탐이었음을 확인.
+            cols = parse_header_columns(tbl, allow_duplicate_subtype=(fiscal_year >= 2015))
         except Exception:
             cols = None
         if cols is None:

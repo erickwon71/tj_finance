@@ -7424,7 +7424,41 @@ tests/ fin2/tests/` 전체 1059 passed(기존에 알려진 무관 실패
 
 ---
 
-## 부록 A. 원문(DART XML) 함정 카탈로그
+## R140. 계층2 검토 CSV에 SCE 포함 + `layer2_review.py`에 `--min-severity` 단계
+필터 추가 (2026-09-18, 사용자 지시)
+
+**배경**: R139와 같은 브라우저 에이전트 원문대조 캠페인 설계
+(`docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md`)에서
+사용자가 "bs is cf **sce** 데이터와 비교"라고 명시했는데, `fin2/extract/
+review_csv.py::SCOPE_ORDER`와 `fin2/audit/layer2_selfcheck.py::STATEMENTS`는
+2026-09-08 당시 사용자 범위 결정으로 **BS/IS/CF 3종만**이었다("SCE/APPR은
+대상 밖" 주석). `report_lines` 자체에는 SCE 행이 이미 적재돼 있었다 —
+`load_rows()`의 SQL이 애초에 statement로 거르지 않아서 CSV 생성 단계에서만
+숨겨지고 있었을 뿐.
+
+**수정**: ① `review_csv.py`의 `SCOPE_ORDER`에 `("separate","SCE")`/
+`("consolidated","SCE")` 추가(각 basis 안에서 BS→IS→CF→SCE 순), `scope_counts()`·
+`build_preamble()` 요약도 SCE 포함하도록 확장. `layer2_selfcheck.py`의
+`STMT_KO`에 `"SCE": "자본변동표"` 추가(단, **자동검산 대상(`STATEMENTS`)은
+그대로 BS/IS/CF만** — 자본변동표는 항등식이 BS/CF처럼 단순하지 않아 이
+파일의 라벨-앵커 방식이 안 맞는다. 최종 판정은 어차피 브라우저 원문대조이므로
+자동검산 확장은 불필요). APPR(이익잉여금처분계산서)은 사용자가 언급하지
+않아 그대로 범위 밖.
+② `scripts/layer2_review.py::_pick()`에 `min_severity` 매개변수, `next`/`pass`
+서브커맨드에 `--min-severity` 옵션 추가 — 캠페인 단계(B): 사전 스크리닝
+(`layer2_screen.py`)이 뭔가 걸어놓은 건(`screen_severity>0`, 2015+ 실측
+27,136건)부터 먼저 처리하고, 그 다음 단계(A)로 나머지(`severity=0`,
+80,369건)까지 이어서 전체를 돈다(사용자 지시: "B 먼저 하고 이어서 결국
+전체를 한 번은 돌린다 — 파서 수정 건이 나올 가능성이 높은 쪽부터"). 미지정시
+필터 없음(기존 동작 그대로, 다른 시대 캠페인에 영향 없음). `cmd_status`에도
+이 두 그룹의 pending 잔량을 따로 보여주는 절 추가.
+
+**검증**: `fin2/tests/test_review_csv.py`에 SCE 순서/카운트 테스트 2건
+추가(`test_scope_counts_counts_bs_is_cf_and_sce`,
+`test_scope_order_places_sce_after_cf_in_each_basis`) — 총 22건 통과.
+`_pick(min_severity=1)`을 실제 2015+ 큐로 실행해 severity>0인 항목만
+반환됨을 확인(`corp_rank=3, screen_severity=5`). `pytest tests/ fin2/tests/`
+전체 1060 passed(기존 무관 실패 1건 제외).
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
 
@@ -7519,6 +7553,7 @@ tests/ fin2/tests/` 전체 1059 passed(기존에 알려진 무관 실패
 | R136/R137 | 커밋 `3fb4d01`(2026-09-18) · `fin2/extract/pdf.py`·`fin2/extract/xbrl.py`·`collector/pdf_lines_sync.py` · `fin2/tests/test_pdf.py`·`fin2/tests/test_pdf_lines_sync.py` |
 | R138 | 2026-09-18(사용자 지시 "8개사부터 시작"→표본조사 중 발견) · `scripts/scan_header_fallback_2015plus_2026-09-14.py` · `docs/plans/report_lines_legacy_fallback_hardening_design_2026-09-17.md` §7 |
 | R139 | 사용자 지시 2026-09-18(원문대조 캠페인 자동화 설계 중) · `fin2/extract/report_lines.py::store_report_lines()` · `fin2/tests/test_store_report_lines_manual_guard.py` |
+| R140 | 사용자 지시 2026-09-18(SCE 포함 + 단계(B) 지정) · `fin2/extract/review_csv.py`·`fin2/audit/layer2_selfcheck.py`·`scripts/layer2_review.py` · `fin2/tests/test_review_csv.py` · `docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 | 부록 D | rcept 단위 예외목록 카탈로그(`fin2/extract/report_lines.py`에 흩어진 5개 딕셔너리 — R116/R118/R120/R121/R132) |
 

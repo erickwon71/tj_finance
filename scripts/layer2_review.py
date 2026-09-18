@@ -196,7 +196,8 @@ _ERA_RANK_SQL = """
 """
 
 
-def _pick(session, rcept_no: str | None, *, statuses: tuple[str, ...]):
+def _pick(session, rcept_no: str | None, *, statuses: tuple[str, ...],
+          min_severity: int | None = None):
     """진행 순서 `(era_rank, corp_rank, screen_severity, seq_in_corp)` 로 다음 대상 1건.
     `rcept_no` 지정 시 그것만.
 
@@ -205,6 +206,15 @@ def _pick(session, rcept_no: str | None, *, statuses: tuple[str, ...]):
       스크리닝(`layer2_screen.py`) 심각도 큰 순, 마지막에 회사 내 순번(seq_in_corp).
       screen_severity 가 NULL(미스크리닝)이면 0과 동급으로 취급.
 
+    ★`min_severity` — 브라우저 에이전트 자동화 캠페인의 단계(B) 지원
+      (`docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md`,
+      사용자 지시 2026-09-18). 사전 스크리닝에서 뭔가 걸린 건(`screen_severity>0`,
+      2015+ 기준 27,136건)부터 먼저 끝내고, 그 다음에 `screen_severity=0`인
+      나머지(79,312건)까지 이어서 전체를 돈다 — 파서 수정 건이 나올 가능성이
+      높은 쪽부터 처리해 배치 수정 주기를 앞당기려는 것. `None`(기본값)이면
+      기존 동작 그대로(필터 없음, era 2011-14/2007-10/pre-2007 캠페인도 이 함수를
+      그대로 쓰므로 무변경).
+
     ★어느 경로든 **RowMapping(dict 처럼 쓰는 것)** 으로 통일한다 — 한때 rcept 지정 경로만
       ORM 객체를 돌려줘 호출부에서 `item["..."]` 가 TypeError 로 터졌다.
     """
@@ -212,15 +222,16 @@ def _pick(session, rcept_no: str | None, *, statuses: tuple[str, ...]):
         return session.execute(
             text("SELECT * FROM layer2_review_queue WHERE rcept_no = :r"),
             {"r": rcept_no}).mappings().first()
+    sev_filter = "AND COALESCE(screen_severity, 0) >= :min_sev" if min_severity is not None else ""
     return session.execute(
         text(f"""SELECT * FROM layer2_review_queue
-                WHERE status = ANY(:st)
+                WHERE status = ANY(:st) {sev_filter}
                 ORDER BY {_ERA_RANK_SQL},
                          corp_rank NULLS LAST,
                          COALESCE(screen_severity, 0) DESC,
                          seq_in_corp, rcept_no
                 LIMIT 1"""),
-        {"st": list(statuses)}).mappings().first()
+        {"st": list(statuses), "min_sev": min_severity}).mappings().first()
 
 
 def _current(session):
@@ -374,7 +385,7 @@ def _print_target(item, result: dict) -> None:
     for basis, ko in (("separate", "별도"), ("consolidated", "연결")):
         if counts.get(basis):
             parts.append(f"{ko} " + " / ".join(
-                f"{s} {counts[basis].get(s, 0)}" for s in ("BS", "IS", "CF")))
+                f"{s} {counts[basis].get(s, 0)}" for s in ("BS", "IS", "CF", "SCE")))
     print(f"  적재    {'  ·  '.join(parts) or '0행'}  (총 {result['n_lines']:,}행)")
 
     fails = sc.suspects(result["checks"])
@@ -427,7 +438,8 @@ def cmd_next(args) -> None:
             return
         # blocked 는 자동으로 건너뛴다 — 사람이 할 수 있는 게 없다.
         while True:
-            item = _pick(session, args.rcept, statuses=("pending",))
+            item = _pick(session, args.rcept, statuses=("pending",),
+                        min_severity=args.min_severity)
             if item is None:
                 print("\n✅ 대기 중인 대상이 없습니다. `init` 로 큐를 넓히거나 `status` 로 확인하세요.")
                 return
@@ -460,7 +472,8 @@ def cmd_pass(args) -> None:
                   f"--corp {item['corp_code']}")
             return
     if not args.no_advance:
-        cmd_next(argparse.Namespace(rcept=None, root=args.root, force=False))
+        cmd_next(argparse.Namespace(rcept=None, root=args.root, force=False,
+                                    min_severity=args.min_severity))
 
 
 def cmd_fail(args) -> None:
@@ -575,6 +588,17 @@ def cmd_status(args) -> None:
                 """SELECT status, count(*) n FROM layer2_review_queue
                    GROUP BY 1 ORDER BY 2 DESC""")).fetchall():
             print(f"  {r.status:9s} {r.n:>8,}")
+        # ★브라우저 자동화 캠페인 단계(B) 진행 가시성(2026-09-18) —
+        #   docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md.
+        #   screen_severity>0(사전 스크리닝이 뭔가 걸어놓은 것)을 먼저 끝내고
+        #   =0(스크리닝 무결점)은 나중이므로, 이 둘의 잔량을 따로 보여준다.
+        print("\n── 사전 스크리닝 단계(B/A) — pending만 ──")
+        for r in session.execute(text(
+                """SELECT (COALESCE(screen_severity, 0) > 0) AS flagged, count(*) n
+                   FROM layer2_review_queue WHERE status = 'pending'
+                   GROUP BY 1 ORDER BY 1 DESC""")).fetchall():
+            label = "severity>0 (단계 B)" if r.flagged else "severity=0 (단계 A)"
+            print(f"  {label:<20} {r.n:>8,}")
         print("\n── 회사별 (시총순, 상위 20) ──")
         rows = session.execute(text(
             """SELECT corp_rank, corp_code, corp_name,
@@ -613,6 +637,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rcept", help="특정 rcept 만")
     p.add_argument("--root", help="CSV 루트 디렉터리 (기본 layer2_review/)")
     p.add_argument("--force", action="store_true", help="미판정 건이 있어도 다음으로")
+    p.add_argument("--min-severity", type=int, default=None,
+                   help="이 값 이상 screen_severity 인 건만(브라우저 자동화 캠페인 "
+                        "단계(B) — 미지정시 필터 없음, 기존 동작과 동일)")
     p.set_defaults(func=cmd_next)
 
     p = sub.add_parser("pass", help="원문대조 통과 → 다음 1건")
@@ -620,6 +647,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note")
     p.add_argument("--root")
     p.add_argument("--no-advance", action="store_true", help="다음 건을 자동으로 받지 않음")
+    p.add_argument("--min-severity", type=int, default=None,
+                   help="자동 진행되는 다음 건에도 같은 필터 유지(next 참고)")
     p.set_defaults(func=cmd_pass)
 
     p = sub.add_parser("fail", help="불일치 → 루프 정지 + 트리아지 진입점")

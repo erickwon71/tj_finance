@@ -51,11 +51,16 @@ DART_VIEWER = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept}"
 
 REVIEW_ROOT = Path("layer2_review")
 
-# 본문 3종만(사용자 범위). 표시 순서 = 별도 먼저, 각 basis 안에서 BS→IS→CF.
+# ★본문 4종(2026-09-18부터 SCE 추가 — R139 캠페인, 사용자 지시 "bs is cf sce").
+#   표시 순서 = 별도 먼저, 각 basis 안에서 BS→IS→CF→SCE. APPR(이익잉여금처분계산서)은
+#   여전히 대상 밖(사용자가 명시한 범위 밖).
 SCOPE_ORDER: tuple[tuple[str, str], ...] = (
-    ("separate", "BS"), ("separate", "IS"), ("separate", "CF"),
+    ("separate", "BS"), ("separate", "IS"), ("separate", "CF"), ("separate", "SCE"),
     ("consolidated", "BS"), ("consolidated", "IS"), ("consolidated", "CF"),
+    ("consolidated", "SCE"),
 )
+
+_DISPLAY_STATEMENTS = ("BS", "IS", "CF", "SCE")
 
 HEADER = ("구분", "단위", "순번", "깊이", "항목명", "금액", "원문값", "비고")
 
@@ -219,7 +224,7 @@ def build_preamble(*, corp_name: str, corp_code: str, market: str | None,
                                   "Pattern A). 숫자를 특히 꼼꼼히 대조할 것."])
     summary = "  ·  ".join(
         f"[{BASIS_KO[b]}] " + " / ".join(f"{s} {counts.get(b, {}).get(s, 0)}"
-                                         for s in ("BS", "IS", "CF"))
+                                         for s in _DISPLAY_STATEMENTS)
         for b in ("separate", "consolidated") if counts.get(b))
     lines.append(["# 적재 행수", summary or "0행"])
     lines.append(["#"])
@@ -245,10 +250,11 @@ def write_review_csv(path: Path, preamble: list[list[str]], rows: list[tuple]) -
 
 
 def scope_counts(db_rows: list[dict]) -> dict[str, dict[str, int]]:
-    """{'separate': {'BS': 62, 'IS': 41, 'CF': 33}, 'consolidated': {...}} — 본문 3종만."""
+    """{'separate': {'BS': 62, 'IS': 41, 'CF': 33, 'SCE': 12}, 'consolidated': {...}} —
+    본문 4종만(BS/IS/CF/SCE, 2026-09-18부터 SCE 포함)."""
     out: dict[str, dict[str, int]] = {}
     for r in db_rows:
-        if r["statement"] not in ("BS", "IS", "CF") or r["basis"] not in BASIS_KO:
+        if r["statement"] not in _DISPLAY_STATEMENTS or r["basis"] not in BASIS_KO:
             continue
         out.setdefault(r["basis"], {}).setdefault(r["statement"], 0)
         out[r["basis"]][r["statement"]] += 1

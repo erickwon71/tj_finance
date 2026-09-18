@@ -220,7 +220,19 @@ def test_preamble_warns_on_pdf_recovery_source():
     assert any("PDF/HTML 복구 경로" in "|".join(map(str, line)) for line in pre)
 
 
-def test_scope_counts_only_counts_body_statements():
+def test_scope_counts_counts_bs_is_cf_and_sce():
+    """★2026-09-18부터 SCE도 카운트된다(R139 캠페인, 사용자 지시로 SCE를 브라우저
+    원문대조 대상에 포함) — APPR(이익잉여금처분계산서) 은 여전히 대상 밖이라 제외."""
     rows = [row("BS", "separate", "a", 1), row("SCE", "separate", "b", 1),
-            row("IS", "consolidated", "c", 1)]
-    assert rc.scope_counts(rows) == {"separate": {"BS": 1}, "consolidated": {"IS": 1}}
+            row("IS", "consolidated", "c", 1), row("APPR", "separate", "d", 1)]
+    assert rc.scope_counts(rows) == {"separate": {"BS": 1, "SCE": 1},
+                                     "consolidated": {"IS": 1}}
+
+
+def test_scope_order_places_sce_after_cf_in_each_basis():
+    rows = [row("SCE", "consolidated", "c-sce", 1), row("CF", "consolidated", "c-cf", 1),
+            row("BS", "consolidated", "c-bs", 1), row("IS", "separate", "s-is", 1),
+            row("SCE", "separate", "s-sce", 1), row("CF", "separate", "s-cf", 1),
+            row("BS", "separate", "s-bs", 1), row("IS", "consolidated", "c-is", 1)]
+    assert [r[4] for r in rc.build_rows(rows)] == [
+        "s-bs", "s-is", "s-cf", "s-sce", "c-bs", "c-is", "c-cf", "c-sce"]

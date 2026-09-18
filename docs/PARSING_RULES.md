@@ -7368,6 +7368,62 @@ allow_duplicate_subtype=True)`를 호출한다(R125, 2026-09-15 — 보험/증�
 
 ---
 
+## R139. `store_report_lines()` — 원문대조 완료(`layer2_review_queue.status='pass'`)
+행도 `unit_source='manual'`과 같은 방식으로 재적재 보호 (2026-09-18)
+
+**배경**: 2015+ 전체를 대상으로 "화면에서 원문대조 → DB의 BS/IS/CF/SCE
+값과 비교"하는 캠페인을 자동화하는 설계 중, 사용자가 요구사항을 명확히
+했다 — "눈으로 확인된 것과 같은 효과가 있어야 하고, 확인된 것은
+manual 처리해서 재적재에서 제외하고, 이전에 manual 처리된 것도 제외돼야
+한다." 이걸 실제로 보장하려면 "확인 완료" 표시가 **어느 재적재 경로로
+와도** 그 필링을 보호해야 하는데, 코드를 확인해보니 그렇지 않았다.
+
+**발견**: `layer2_review_queue.status='pass'`(`scripts/layer2_review.py
+pass` — 사람 또는 원문대조 에이전트가 그 rcept의 report_lines를 원문과
+대조해 통과시킨 표시)는 `layer2_review_queue` 테이블 자체의 컬럼만
+바꿀 뿐, `report_lines`에는 어떤 흔적도 남기지 않는다(`_mark()`,
+`scripts/layer2_review.py:292-299`). 이 상태를 실제로 존중해서 재적재를
+건너뛰는 곳은 `reload_report_lines_2015plus_2026-09-12.py`·
+`reload_report_lines_xbrl_2015plus_2026-09-15.py` 딱 2개 스크립트뿐이고,
+둘 다 자기 SELECT 쿼리에 `WHERE status <> 'pass'`를 각자 복붙해둔
+것일 뿐 공용 가드가 아니었다. `store_report_lines()`를 직접 부르는
+나머지 15개+ 호출부(`reload_report_lines_corp.py`, `run.py`의 표준
+적재, `note_lines_sync.py`/`pdf_lines_sync.py`/
+`xbrl_instance_lines_sync.py`, 각종 backfill 스크립트 등)는 이 상태를
+전혀 모른다 — 즉 `status='pass'`로 확정된 필링도 이런 경로로 다시
+처리되면 **아무 경고 없이 통째로 지우고 다시 써서 검증된 상태가 조용히
+무효화**된다. 기존 `unit_source='manual'` 가드(R8/2026-09-08)는 이미
+`store_report_lines()` 안에 내장돼 모든 호출부에 자동 적용되는데, 이번
+"원문대조 완료" 표시는 그런 공용 보호가 없는 비대칭이었다.
+
+**수정**: `fin2/extract/report_lines.py::store_report_lines()`에
+`overwrite_reviewed: bool = False` 매개변수 신설. 기본값에서는
+`unit_source='manual'` 체크와 같은 자리(같은 함수 안, delete 실행 전)에
+`layer2_review_queue.status == 'pass'` 존재 여부를 확인해, 있으면
+`ValueError`로 거부한다(`overwrite_manual`과 독립된 별도 스위치 —
+의미가 다르므로: 하나는 "값 자체가 사람 손입력", 하나는 "자동추출값을
+사람/에이전트가 원문과 대조해 맞다고 확인"). 의도적으로 재검토해
+덮어써야 하면 `overwrite_reviewed=True`를 명시. 기존 2개 스크립트의
+`WHERE status <> 'pass'` 사전 필터는 그대로 둔다(불필요한 재추출 작업
+자체를 건너뛰는 최적화라 무해 — 이제는 이중 방어).
+
+**검증**: `fin2/tests/test_store_report_lines_manual_guard.py`에 회귀
+테스트 5건 추가(총 9건) — 거부/`overwrite_reviewed=True` 허용/무표시시
+정상진행/다른 rcept 비영향/`overwrite_manual=True`을 줘도
+`overwrite_reviewed`는 별도로 거부되는지(두 가드의 독립성). `pytest
+tests/ fin2/tests/` 전체 1059 passed(기존에 알려진 무관 실패
+`test_nyuintek_2007q1_dkme_style_not_affected_by_this_fix` 1건 제외).
+
+**이 캠페인 설계에서 이 R139가 의미하는 것**: 원문대조 캠페인이 어떤
+필링을 "확인 완료"로 표시하려면 `layer2_review_queue.status='pass'`로
+갱신하면 되고, 그 순간부터 이 필링의 `report_lines`는 어떤 재적재
+스크립트를 쓰든 자동으로 보호된다 — 캠페인 쪽에서 "재적재 대상에서
+빼는" 로직을 따로 구현할 필요가 없다. 마찬가지로 이미 과거에
+`status='pass'`로 확정된 필링(이전 계층2 캠페인 잔재)도 이 가드
+신설 시점부터 자동으로 같은 보호를 받는다 — 별도 마이그레이션 불필요.
+
+---
+
 ## 부록 A. 원문(DART XML) 함정 카탈로그
 
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
@@ -7462,6 +7518,7 @@ allow_duplicate_subtype=True)`를 호출한다(R125, 2026-09-15 — 보험/증�
 | R134/R135 | 커밋 `d03e177`(2026-09-17, 이 문서엔 2026-09-18 뒤늦게 등재) · `parser/xml/table_extractor.py::_header_rule_name()` · `fin2/extract/report_lines.py::_grid_body_rows()` · `fin2/tests/test_header_rule_name_r134_sce.py`·`fin2/tests/test_grid_body_rows_r135_multicell_label.py` |
 | R136/R137 | 커밋 `3fb4d01`(2026-09-18) · `fin2/extract/pdf.py`·`fin2/extract/xbrl.py`·`collector/pdf_lines_sync.py` · `fin2/tests/test_pdf.py`·`fin2/tests/test_pdf_lines_sync.py` |
 | R138 | 2026-09-18(사용자 지시 "8개사부터 시작"→표본조사 중 발견) · `scripts/scan_header_fallback_2015plus_2026-09-14.py` · `docs/plans/report_lines_legacy_fallback_hardening_design_2026-09-17.md` §7 |
+| R139 | 사용자 지시 2026-09-18(원문대조 캠페인 자동화 설계 중) · `fin2/extract/report_lines.py::store_report_lines()` · `fin2/tests/test_store_report_lines_manual_guard.py` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 | 부록 D | rcept 단위 예외목록 카탈로그(`fin2/extract/report_lines.py`에 흩어진 5개 딕셔너리 — R116/R118/R120/R121/R132) |
 

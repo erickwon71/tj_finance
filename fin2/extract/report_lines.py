@@ -1670,7 +1670,8 @@ def _is_loadable(line: ReportLineRow) -> bool:
 
 
 def store_report_lines(session, rcept_no: str, lines: list[ReportLineRow], *,
-                       overwrite_manual: bool = False) -> int:
+                       overwrite_manual: bool = False,
+                       overwrite_reviewed: bool = False) -> int:
     """rcept_no 단위 delete-then-insert(재추출 재현성). fact_v2 처럼 셀 단위 upsert 가 아님 —
     report_lines 는 값판단이 없어 충돌 개념 자체가 없고, 재추출은 그 보고서의 이전 tree 를
     통째로 교체하는 게 자연스럽다.
@@ -1690,9 +1691,22 @@ def store_report_lines(session, rcept_no: str, lines: list[ReportLineRow], *,
     있었다 — 반대 방향(수동이 자동을 덮어쓸 때)만 막혀 있던 비대칭을 해소. 호출부는 대부분
     이미 한 건 실패를 로그+스킵으로 흡수하는 try/except라(예: note_lines_sync.py)
     `ValueError`가 파이프라인을 막지 않고 그 rcept만 안전하게 건너뛴다. 의도적으로
-    덮어써야 하면(예: 수동입력 자체가 틀렸다고 재판정) `overwrite_manual=True`를 명시."""
+    덮어써야 하면(예: 수동입력 자체가 틀렸다고 재판정) `overwrite_manual=True`를 명시.
+
+    ★원문대조 완료 보호(2026-09-18, 사용자 지시, R139): `layer2_review_queue.status='pass'`
+    (사람 또는 원문대조 에이전트가 이 rcept의 report_lines 를 원문과 대조해 통과시킨 표시,
+    `scripts/layer2_review.py pass`)도 같은 이유로 보호해야 한다 — 그 표시 자체는
+    layer2_review_queue 테이블에만 쓰여 report_lines 에는 아무 흔적이 남지 않으므로, 이
+    가드가 없으면 어떤 재적재 경로로 이 rcept를 다시 처리하든 검증된 상태가 조용히
+    무효화된다(발견 경위: 기존에는 `reload_report_lines_2015plus_2026-09-12.py` 등
+    딱 2개 스크립트만 `WHERE status <> 'pass'` 를 각자 복붙해뒀을 뿐, 그 외 15개+ 호출부는
+    이 상태를 전혀 몰랐다). `unit_source='manual'` 과 별개 스위치로 두는 이유: 의미가
+    다르다(하나는 "값 자체가 사람 손입력", 하나는 "자동추출값을 사람/에이전트가 원문과
+    대조해 맞다고 확인") — 같은 rcept라도 둘 중 하나만 재판정해서 덮어써야 하는 경우가
+    있을 수 있다. 의도적으로 덮어써야 하면(예: 재검토 결과 기존 pass 판정이 틀렸다고
+    재판정) `overwrite_reviewed=True`를 명시."""
     from sqlalchemy import delete, insert, select
-    from collector.models import ReportLine
+    from collector.models import ReportLine, Layer2ReviewQueue
 
     if not overwrite_manual:
         has_manual = session.execute(
@@ -1704,6 +1718,18 @@ def store_report_lines(session, rcept_no: str, lines: list[ReportLineRow], *,
             raise ValueError(
                 f"{rcept_no} has manually-reviewed report_lines (unit_source='manual') — "
                 f"refusing to auto-overwrite. Pass overwrite_manual=True if this is intentional."
+            )
+
+    if not overwrite_reviewed:
+        is_reviewed = session.execute(
+            select(Layer2ReviewQueue.rcept_no).where(
+                Layer2ReviewQueue.rcept_no == rcept_no, Layer2ReviewQueue.status == "pass",
+            ).limit(1)
+        ).first()
+        if is_reviewed is not None:
+            raise ValueError(
+                f"{rcept_no} is marked reviewed (layer2_review_queue.status='pass') — "
+                f"refusing to auto-overwrite. Pass overwrite_reviewed=True if this is intentional."
             )
 
     body = [l for l in lines if l.statement != "note" and _is_loadable(l)]

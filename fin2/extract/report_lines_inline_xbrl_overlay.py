@@ -81,6 +81,16 @@ carries (see `fin2/tests/test_account_mapper_ebt.py` docstring: bare
 in the fuzzy mapper). Verified empirically here too — 00104573's IS body has
 a "법인세비용차감전순이익(손실)" (EBT) row that would otherwise also pass a bare
 substring check.
+
+★2026-09-19 — also excludes "차감후": "법인세비용차감후 (반)기기타포괄손익"
+(OCI after tax) starts with the same bare "법인세비용" substring and was not
+excluded, so on filings where the real tax-expense row is worded
+"법인세수익(비용)" (not matching the keyword), this OCI row became the sole
+surviving candidate and was overwritten with the tax-expense XBRL fact.
+Root-caused via KB금융 20260814004200/20260515002888 (layer2 review campaign
+fail #9/#10) — 별도 side hit this (no bare "법인세비용" row to create
+ambiguity); 연결 side has a bare "법인세비용" row, so two candidates tripped
+the uniqueness gate and it was already a no-op there.
 """
 from __future__ import annotations
 
@@ -166,7 +176,14 @@ def overlay_dividends_paid_sign(
 _TAX_EXPENSE_LABEL_KEYWORD = "법인세비용"
 # EBT-collision guard — same keyword `parser/common/account_mapper.py` uses
 # to keep "법인세비용차감전이익(손실)" etc. out of is.tax_expense (module docstring).
-_TAX_EXPENSE_EXCLUDE_KEYWORD = "차감전"
+# "차감후" added (2026-09-19, KB금융 20260814004200/20260515002888 root-cause fix):
+# "법인세비용차감후 (반)기기타포괄손익" (OCI after tax) also starts with the bare
+# "법인세비용" substring and was previously left uncaught, so on the 별도 side
+# (where the real tax-expense row is worded "법인세수익(비용)" — not matching the
+# keyword at all) this OCI row became the sole candidate and got overwritten with
+# the real tax-expense XBRL fact. 연결 side was unaffected only because it also has
+# a bare "법인세비용" row, so the two candidates triggered the ambiguity guard below.
+_TAX_EXPENSE_EXCLUDE_KEYWORDS = ("차감전", "차감후")
 _TAX_EXPENSE_TARGET_CANONICAL = "is.tax_expense"
 
 
@@ -199,7 +216,7 @@ def overlay_tax_expense_value(
         r for r in rows
         if r.statement == "IS" and (r.col_index or 0) == 0 and r.value_won is not None
         and _TAX_EXPENSE_LABEL_KEYWORD in (r.label_raw or "")
-        and _TAX_EXPENSE_EXCLUDE_KEYWORD not in (r.label_raw or "")
+        and not any(kw in (r.label_raw or "") for kw in _TAX_EXPENSE_EXCLUDE_KEYWORDS)
     ]
     rows_by_key: dict[tuple, list] = {}
     for r in candidates:

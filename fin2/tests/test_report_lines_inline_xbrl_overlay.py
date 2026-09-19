@@ -201,6 +201,29 @@ def test_overlay_tax_expense_ebt_label_excluded(monkeypatch):
     assert rows[1].value_won == -2_310_052_284  # 진짜 tax_expense 행만 교정
 
 
+def test_overlay_tax_expense_oci_after_tax_label_excluded(monkeypatch):
+    """순수 목 테스트 — '법인세비용차감후 반기기타포괄손익'(OCI 세후)은 '법인세비용'
+    부분문자열을 갖지만 '차감후' 가드로 후보에서 제외된다. 진짜 법인세비용 행이
+    "법인세수익(비용)"처럼 키워드와 매치되지 않는 별도 라벨을 쓰는 경우, 이 OCI 행이
+    유일한 후보가 되어 XBRL 법인세비용 사실이 잘못 덮어써지던 결함
+    (KB금융 20260814004200/20260515002888, layer2 review campaign fail #9/#10) 재현
+    방지 회귀."""
+    import fin2.extract.report_lines_inline_xbrl_overlay as mod
+
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+        _FakeFact("is.tax_expense", "IS", "separate", True, 5_650_000_000),
+    ])
+    rows = [
+        _FakeRow("IS", "separate", 0, True, "법인세수익(비용)", 5_650_000_000),
+        _FakeRow("IS", "separate", 0, True, "법인세비용차감후 반기기타포괄손익", 405_000_000),
+    ]
+    n = overlay_tax_expense_value(rows, "dummy.xml", 2026)
+    assert n == 0  # 진짜 법인세비용 행("법인세수익(비용)")은 키워드 미매치라 후보가 아니고,
+    # OCI 행은 '차감후' 가드로 제외돼 후보가 하나도 없다 — no-op.
+    assert rows[0].value_won == 5_650_000_000
+    assert rows[1].value_won == 405_000_000  # OCI 행 — 손대지 않음
+
+
 def test_overlay_tax_expense_no_magnitude_gate(monkeypatch):
     """dividends_paid 오버레이와 달리 크기가 크게 어긋나도(버그의 증상 자체이므로)
     교정한다 — magnitude tolerance 게이트가 없다."""

@@ -50,7 +50,7 @@ from fin2.extract.statement_titles import (
     classify_statement_in_body_section, SECTION_CODE_OF,
     _is_metadata_only, _STMT_TITLE, _HEADER_LABEL_RE, _is_bare_structural_marker,
     classify_legacy_statement_heading, is_legacy_note_marker,
-    owned_merged_title, titleless_bs_start,
+    owned_merged_title, titleless_bs_start, is_substatement_marker,
 )
 
 # 섹션 코드 → (basis, period_kind)
@@ -349,6 +349,7 @@ def _detect_body_statement_tables(root, fin_type: str,
         # `titleless_bs_start` 는 이 인덱스와 일치할 때만 시도한다(그 아래 참고).
         first_amount_idx = next(
             (i for i, t in enumerate(tbls) if table_has_amount_rows(t)), None)
+        last_stmt: str | None = None   # R142 — 하위표 연속(§ 아래 substatement 분기) 전용.
         for idx, tbl in enumerate(tbls):
             # 섹션이 이미 '본문'을 보장하므로 주석 배제 가드가 불필요 → 재무제표명만 본다
             # (공백·반기/분기 접두 허용). 자본변동표(SCE)는 분류기가 배제한다 —
@@ -372,6 +373,16 @@ def _detect_body_statement_tables(root, fin_type: str,
                 used_merged_title = stmt is not None
             if stmt is None and idx == first_amount_idx and titleless_bs_start(tbl):
                 stmt = "BS"
+            # ★R142(2026-09-19) — 재무제표 하나가 기간대역별 하위표 2개로 쪼개지고, 뒤쪽
+            # 하위표의 표제가 재무제표명을 아예 반복하지 않는 서식("(2) 개별재무제표
+            # (2015년 및 2016년)")일 때, 직전에 성공적으로 분류된 statement 를 그대로
+            # 물려받는다 — 새 statement 로 넘어간 게 아니라 **같은 재무제표의 다음
+            # 기간대역**이라는 뜻이기 때문이다(`is_substatement_marker` 문서화 참고).
+            # 실측: 삼성바이오로직스 20170331005571 별도 자본변동표 — 당기(2016) 데이터가
+            # 담긴 26행 표 전체가 이 서식 때문에 유실됐었다(layer2 review campaign fail #3).
+            if (stmt is None and last_stmt is not None and _table_has_data_rows(tbl)
+                    and is_substatement_marker(title_text_for_classify(tbl))):
+                stmt = last_stmt
             # R4-2 §3(2026-08-07) — 위 폴백 2종도 실패했을 때, 표 자신이 섹션의 첫 번째
             # 금액표이고 표 **안**에서 헤더행이 재등장하면(복수 재무제표가 한 물리적 TABLE 에
             # 이어붙은 서식) 헤더 재등장 지점으로 잘라 각각 분리 처리한다(실측 이노시뮬레이션
@@ -396,6 +407,7 @@ def _detect_body_statement_tables(root, fin_type: str,
                 stmt = "IS"
             if stmt is None:
                 continue
+            last_stmt = stmt   # R142 — 다음 표가 substatement 표지를 만났을 때 물려줄 값.
             # ★내용 기반 최종 가드 — 표제가 CF/BS/IS 를 가리켜도 **행 라벨이 처분계산서**면
             #   본문이 아니다(계양전기 20220420000289: 제목표가 현금흐름표와 동일 문자열).
             if _table_has_data_rows(tbl) and _looks_like_appropriation(tbl):

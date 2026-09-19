@@ -7460,6 +7460,123 @@ review_csv.py::SCOPE_ORDER`와 `fin2/audit/layer2_selfcheck.py::STATEMENTS`는
 반환됨을 확인(`corp_rank=3, screen_severity=5`). `pytest tests/ fin2/tests/`
 전체 1060 passed(기존 무관 실패 1건 제외).
 
+---
+
+## R141. `fin2/extract/statement_titles.py::classify_statement_in_body_section()` —
+병합된 각주+헤딩 표제에서 리스트 순서가 아니라 **텍스트 내 위치**로 재무제표명을
+고른다 (2026-09-19, 계층2 원문대조 캠페인 fail #5~#8)
+
+**배경**: 계층2 원문대조 캠페인이 누적 fail 10건에서 정지한 뒤, 사용자 지시로
+10건 전부 코드 레벨 근본원인을 조사했다. 그중 4건(KB금융 2018H1/Q1 원본+기재정정
+`20180814002480`/`20210427000389`/`20180515001957`/`20210427000369`)이 "연결
+손익계산서(포괄손익계산서) 완전 0행" 증상으로 동일했다.
+
+**발견**: DART 는 "N번 재무제표의 각주"와 "N+1번 재무제표의 헤딩"을 같은 XML
+형제 텍스트에 병합해두는 서식이 있다(실측: `"주) 당반기말 연결재무상태표는
+기업회계기준서 제1109호를 적용하여 작성되었으며, 비교표시된 전기말 및 전전기말
+연결재무상태표는 소급재작성되지 아니함 나. 연결손익계산서(포괄손익계산서)"`).
+`classify_statement_in_body_section()`은 이 병합 텍스트에서 `_BODY_STMT_ORDER`
+리스트 순서상 **먼저 오는 이름**("재무상태표", BS)을 텍스트 내 실제 위치와
+무관하게 채택했다 — 정작 이 표를 지배하는 헤딩은 텍스트 **끝쪽**의 "나.
+연결손익계산서"(IS)인데도. 그 결과 진짜 IS 데이터 표가 BS 로 오분류돼 BS 그룹에
+붙었다가(라벨 체계가 안 맞아) 사실상 유실됐다.
+
+**수정**: `_BODY_STMT_ORDER` 를 순서대로 순회하며 첫 매치에서 `return`하던 루프를,
+각 이름의 `rfind()` 위치를 비교해 **텍스트 내 가장 나중(=표에 가장 가까운) 위치**의
+이름을 채택하도록 바꿨다. 브라우저 원문대조 스크레이퍼(`bucketOfLine()`)가 이미
+같은 문제(같은 서식)에 대해 쓰던 "마지막 매치 헤딩" 원리를 XML 파서 쪽에도
+동일하게 적용한 것이다. `_SCE_RE`/`_APPROPRIATION_RE` 조기 배제는 그대로 유지
+(자본변동표·처분계산서 배제 정책 불변).
+
+**검증**: 4건 모두 연결 IS 0→50/50/44/44행 복원. `raw_report/` XML 을
+`parser.xml.dart_xml_parser._parse_xml_file()`로 직접 재파싱해 review CSV 와
+대조하는 Python 스크립트(브라우저 없이, `build_run_js.py`와 동일 로직)로
+별도+연결 전체(BS/IS/SCE/CF) 373/373/363/363쌍 전량 원문과 정확히 일치(mismatch
+0) 확인. `pytest tests/ fin2/tests/` 전체 1061 passed(기존 무관 실패 1건 제외).
+
+---
+
+## R142. `fin2/extract/statement_titles.py::is_substatement_marker()` 신설 +
+`fin2/extract/text.py::_detect_body_statement_tables()` `last_stmt` 캐리포워드 —
+재무제표명을 반복하지 않는 하위표 구분 표지 (2026-09-19, 계층2 원문대조 캠페인
+fail #3)
+
+**배경**: R141 과 같은 조사에서, 삼성바이오로직스 20170331005571(2016FY) 별도
+자본변동표가 "40행 전부가 2013~2014년(제3~4기) 데이터뿐이고 2015~2016년(제5~6기,
+당기 데이터 포함)은 통째로 누락"됨을 발견했다.
+
+**발견**: 원문 구조가 SCE 표 하나를 기간대역별 하위표 2개로 쪼갠 서식이었다 —
+`"다. 자본변동표(1) 별도재무제표(2013년 및 2014년)"`[데이터 19행] 다음에
+`"(2) 개별재무제표(2015년 및 2016년)"`[데이터 26행, 당기(2016) 포함]가 옴. 뒤쪽
+하위표 표제는 재무제표명("자본변동표")을 **아예 반복하지 않는다** — 앞 표제가
+이미 확정한 문맥에 기대어 "이건 그냥 다음 기간대역"이라고만 알린다.
+`classify_statement_in_body_section()`은 텍스트에 재무제표명이 있어야만 매치하므로
+이 표제에서 stmt=None 이 됐고, `_detect_body_statement_tables()` 메인 루프는 그
+표를 그냥 건너뛰었다(표제/데이터표 분리서식용 forward-scan 은 "표제가 성공적으로
+분류된 경우"에만 발동하므로 여기선 발동 안 함). 결과: 당기 데이터 26행 전체 유실.
+
+**수정**: `statement_titles.py`에 `is_substatement_marker()` 신설 —
+`"(N) 개별/별도/연결재무제표(기간)"` 형태(재무제표명 없음, 순번+기간뿐)를
+인식한다. `text.py::_detect_body_statement_tables()`의 메인 루프에 `last_stmt`
+변수를 두어 매 idx 에서 stmt 가 확정될 때마다 갱신하고, 기존 폴백들이 모두
+실패했을 때 표제가 이 표지에 매치하면 `last_stmt`(직전에 성공 분류된 statement)를
+그대로 물려받는 폴백을 추가했다. "재무제표명이 있는데 다른 데이터로 넘어간
+게 아니라, 이름이 없을 뿐 같은 재무제표의 다음 기간대역"이라는 판단을 순수하게
+표제 문구(순번+기간 패턴)로만 내리므로 R6(추측 금지) 원칙 위반이 아니다 —
+`is_substatement_marker` 매치 자체가 "재무제표명이 없다"는 사실에 기반한 구조적
+판정이다.
+
+**검증**: 별도 SCE 40→116행. "제6기 기말(2016.12.31)" 행이 원문 그대로의 정답값
+(자본금165,412,500,000/자본잉여금2,487,313,082,024/이익잉여금1,424,706,873,013/
+합계4,082,379,459,573)으로 복원, "제6기 기초(2016.01.01)" 행과 더 이상 값이
+겹치지 않음 확인. `fin2/tests/test_r142_substatement_marker.py` 회귀테스트 3건
+신규(순수 목 테스트 2건 + 실측 파일 재현 1건). `raw_report/` XML 직접 재파싱
+대조로 별도+연결 전체 405/405쌍 전량 일치(mismatch 0). `pytest tests/
+fin2/tests/` 전체 1064 passed(기존 무관 실패 1건 제외).
+
+---
+
+## R143. `fin2/extract/report_lines_inline_xbrl_overlay.py::overlay_tax_expense_value()`
+— "차감후"(OCI 세후) 라벨도 EBT 가드처럼 후보에서 제외 (2026-09-19, 계층2
+원문대조 캠페인 fail #9~#10)
+
+**배경**: 같은 조사에서 KB금융 2026년 신규 DOM 패턴(재무제표별 전용 트리노드)
+필링 2건(`20260814004200` 2026H1, `20260515002888` 2026Q1)의 별도
+포괄손익계산서에서 "법인세비용차감후 (반)기기타포괄손익"(OCI 세후) 값이 바로 위
+"법인세수익(비용)" 행과 동일한 값으로 오귀속됨을 발견했다.
+
+**발견**: raw XML 원문 자체는 완전히 정확했다(직접 재파싱 확인 — 두 행 모두
+서로 다른 값). `overlay_tax_expense_value()`(R18/버그②, 2026-08-23 신설)의
+후보 필터가 `_TAX_EXPENSE_LABEL_KEYWORD="법인세비용"` 포함 + `"차감전"` 미포함만
+확인했는데, "법인세비용차감후 반기기타포괄손익"도 "법인세비용" 부분문자열을
+가지면서 "차감전"은 없어(대신 "차감후") 그대로 통과했다. 별도(separate) 쪽은
+진짜 법인세비용 행의 라벨이 "법인세수익(비용)"이라 애초에 키워드 자체와
+매치되지 않아 후보가 이 OCI 행 하나뿐이 됐고, `is.tax_expense` XBRL 사실값이
+그 자리에 잘못 덮어써졌다. 연결(consolidated) 쪽은 진짜 "법인세비용" 라벨이
+별도로 존재해 후보가 2개가 되어 모호성 가드(`len(row_list) != 1`)에 걸려
+스킵됐다 — 그래서 연결만 항상 정상이었다.
+
+**수정**: `_TAX_EXPENSE_EXCLUDE_KEYWORD`(단일 문자열) → `_TAX_EXPENSE_EXCLUDE_
+KEYWORDS`(튜플 `("차감전", "차감후")`)로 확장. 후보 필터를
+`not any(kw in label for kw in _TAX_EXPENSE_EXCLUDE_KEYWORDS)`로 변경.
+
+**검증**: 두 필링 모두 별도 OCI 행이 원문값(405/-62 백만원)으로 복원,
+`source_ref`에 오버레이 흔적 없음(미적용) 확인. `fin2/tests/
+test_report_lines_inline_xbrl_overlay.py`에 회귀테스트 1건 추가(총 14건 통과).
+`raw_report/` XML 직접 재파싱 대조로 별도+연결 전체 265/265·249/249쌍 전량
+일치(mismatch 0). `pytest tests/ fin2/tests/` 전체 1064 passed(기존 무관 실패
+1건 제외).
+
+**★캠페인 방법론 교훈(R139/R140 캠페인 후속)**: 이번 10건 조사 중 4건(SK스퀘어
+`20230814001786`·현대자동차 `20231114002201`·삼성바이오로직스
+`20260814003375`)은 실제로는 **코드 결함이 이미 사라진 stale review CSV**였다 —
+`git stash`로 당시 세션 수정 유무와 무관하게 `extract_report_lines()`를 직접
+호출하면 이미 정답이 나왔다(다른 배경 작업이 DB `report_lines`를 이미 고쳐놨는데
+`layer2_review_queue`의 CSV/노트가 재생성 안 된 상태). **fail 판정 재조사 시
+코드를 고치기 전에 먼저 `git stash`로 현재 HEAD 코드가 이미 정답을 내는지부터
+확인할 것** — `layer2_review.py redo --rcept <rcept>`가 값을 안 바꾸면 stale
+CSV, 바뀌면 진짜 결함.
+
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
 
 | # | 함정 | 증상 | 대응 |
@@ -7554,6 +7671,9 @@ review_csv.py::SCOPE_ORDER`와 `fin2/audit/layer2_selfcheck.py::STATEMENTS`는
 | R138 | 2026-09-18(사용자 지시 "8개사부터 시작"→표본조사 중 발견) · `scripts/scan_header_fallback_2015plus_2026-09-14.py` · `docs/plans/report_lines_legacy_fallback_hardening_design_2026-09-17.md` §7 |
 | R139 | 사용자 지시 2026-09-18(원문대조 캠페인 자동화 설계 중) · `fin2/extract/report_lines.py::store_report_lines()` · `fin2/tests/test_store_report_lines_manual_guard.py` |
 | R140 | 사용자 지시 2026-09-18(SCE 포함 + 단계(B) 지정) · `fin2/extract/review_csv.py`·`fin2/audit/layer2_selfcheck.py`·`scripts/layer2_review.py` · `fin2/tests/test_review_csv.py` · `docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md` |
+| R141 | 사용자 지시 2026-09-19("확인시작해" — 계층2 원문대조 캠페인 fail 10건 근본원인 조사) · `fin2/extract/statement_titles.py::classify_statement_in_body_section()` |
+| R142 | 위와 동일 조사(2026-09-19) · `fin2/extract/statement_titles.py::is_substatement_marker()` · `fin2/extract/text.py::_detect_body_statement_tables()`(`last_stmt`) · `fin2/tests/test_r142_substatement_marker.py` |
+| R143 | 위와 동일 조사(2026-09-19) · `fin2/extract/report_lines_inline_xbrl_overlay.py::overlay_tax_expense_value()`(`_TAX_EXPENSE_EXCLUDE_KEYWORDS`) · `fin2/tests/test_report_lines_inline_xbrl_overlay.py::test_overlay_tax_expense_oci_after_tax_label_excluded` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 | 부록 D | rcept 단위 예외목록 카탈로그(`fin2/extract/report_lines.py`에 흩어진 5개 딕셔너리 — R116/R118/R120/R121/R132) |
 

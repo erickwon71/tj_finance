@@ -166,6 +166,31 @@ def _is_bare_structural_marker(txt: str) -> bool:
     return bool(_BARE_TITLE_NAME.match(stripped))
 
 
+# ★R142(2026-09-19) — SCE 등 재무제표 하나가 기간대역별 하위표 2개로 쪼개질 때, 뒤쪽
+# 하위표의 표제가 재무제표명을 아예 반복하지 않는 서식("(2) 개별재무제표(2015년 및
+# 2016년)")이 있다. `_is_bare_structural_marker`(위)는 재무제표명이 **있어야** 되풀이로
+# 인정하는데, 이 표제는 재무제표명이 **없다** — "이 표는 앞 표와 같은 재무제표의 다른
+# 기간대역"이라는 사실을 순번+기간만으로 전달할 뿐이다. 실측 삼성바이오로직스
+# 20170331005571 별도 자본변동표: "다.자본변동표(1)별도재무제표(2013년및2014년)"
+# [데이터19행] "(2)개별재무제표(2015년및2016년)" [데이터26행, 당기(2016) 데이터 포함] —
+# 뒤쪽 표제가 `classify_statement_in_body_section`에서 어떤 statement 명과도 매치되지
+# 않아 stmt=None → 당기 데이터 26행이 통째로 유실됨(layer2 review campaign fail #3).
+# 호출측(`text.py::_detect_body_statement_tables`)이 "직전에 성공적으로 분류된
+# statement"를 이 표지를 만난 표에 그대로 물려주는 폴백을 쓴다 — 이 함수는 그 폴백을
+# 발동해도 되는 표지인지만 판정한다(무엇을 물려줄지는 모른다).
+_SUBSTATEMENT_MARKER_RE = re.compile(
+    r"^[(（]\d{1,2}[)）](?:개별|별도|연결)재무제표[(（][^)）]{0,20}[)）]$")
+
+
+def is_substatement_marker(txt: str) -> bool:
+    """표제가 "(N) 개별/별도/연결재무제표(기간)" 형태의 **기간대역 구분 표지**뿐인가
+    (재무제표명 자체는 없음 — `_is_bare_structural_marker`와 반대의 결핍)."""
+    if not txt:
+        return False
+    compact = re.sub(r"\s+", "", txt)
+    return bool(_SUBSTATEMENT_MARKER_RE.match(compact))
+
+
 def _is_data_boundary(el) -> bool:
     """이 형제가 **다른 재무제표의 몸통**인가(= back-scan 을 여기서 멈춰야 하는가).
 
@@ -378,6 +403,18 @@ def classify_statement_in_body_section(title: str, include_sce: bool = False) ->
         ★ 기본값을 바꾸지 말 것: fact_v2/std_v2(앱이 사용 중인 구 체인)가 이 함수를 공유하며,
           SCE 가 흘러들면 순이익이 SCE 의 '연결당기순이익' 행으로 오염된다(부국증권 회귀,
           커밋 1b13981 · fin2/tests/test_section_p_header.py 참고).
+
+    ★2026-09-19(R141) — 재무제표명이 **둘 이상** 섞인 표제는 **마지막(=표에 가장 가까운)
+    이름**을 채택한다(list 순서상 먼저 오는 이름이 아니라). DART 는 "[N번 재무제표 각주]
+    [N+1번 재무제표 헤딩]"을 같은 형제 텍스트로 병합해두는 서식이 있다(예: "주) 당반기말
+    연결재무상태표는...소급재작성되지 아니함 나. 연결손익계산서(포괄손익계산서)") — 이 표는
+    "나. 연결손익계산서"가 지배하는 IS 데이터 표인데, 옛 로직은 `_BODY_STMT_ORDER` 리스트
+    순서상 먼저 나오는 이름(BS)이 텍스트 어디에 있든 그것부터 찾아 무조건 BS로 오분류했다
+    (텍스트 내 실제 위치 무관). 실측: KB금융 20180814002480 외 3건(2018 Q1/H1 + 기재정정
+    2건, layer2 review campaign fail #5~#8) — 연결 손익계산서 표 전체가 BS 로 잘못 붙어
+    IS 가 통째로 유실됐다. 이 원리는 브라우저 스크레이퍼(`bucketOfLine()`)가 이미
+    "마지막으로 매치되는 헤딩 줄" 방식으로 검증해 적용 중인 것과 동일하다 — 여기서도
+    같은 원칙(표에 물리적으로 가장 가까운 이름이 그 표의 진짜 표제)을 적용한다.
     """
     if not title:
         return None
@@ -386,10 +423,14 @@ def classify_statement_in_body_section(title: str, include_sce: bool = False) ->
         return None                 # 이익잉여금처분계산서/결손금처리계산서 — 4대 재무제표 아님
     if _SCE_RE.search(t):
         return "SCE" if include_sce else None
+    best_code: str | None = None
+    best_pos = -1
     for name, code in _BODY_STMT_ORDER:
-        if name in t:
-            return code
-    return None
+        pos = t.rfind(name)
+        if pos > best_pos:
+            best_pos = pos
+            best_code = code
+    return best_code
 
 
 # ══════════════════════════════════════════════════════════════════════════

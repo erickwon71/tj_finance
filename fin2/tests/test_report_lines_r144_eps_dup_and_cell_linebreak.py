@@ -78,6 +78,27 @@ def test_eps_row_is_emitted_once_in_million_unit_table():
     assert not [l for l in lines if l.label_raw == "기본주당이익" and l.adecimal == -6]
 
 
+def test_eps_section_header_without_unit_declaration_still_dedups():
+    """EPS 섹션 헤더가 **단위 선언을 안 달아도** 그 아래 행은 본류에서 빠진다.
+
+    실측(00149947 20240814004158): 헤더가 `주당손익 (주32)` 뿐이라 '(단위: 원)' 증거가
+    없고, 그래서 1차 수정에서 유령행이 그대로 남았다. 금액 없는 '주당' 행 = 그 표의
+    EPS 섹션 헤더라는 **구조 신호**를 증거로 같이 인정한다."""
+    table = _fy_table([
+        ["Ⅰ.영업수익", "34,534,340", "31,804,022", "32,240,885"],
+        ["주당손익 (주32)", "", "", ""],
+        ["보통주 기본주당순손익", "1,163", "1,216", "1,102"],
+    ])
+
+    lines = _run_fy(table)
+
+    eps = [l for l in lines if l.label_raw == "보통주 기본주당순손익"]
+    assert eps, "EPS 행이 사라졌다"
+    assert all(l.source_ref.startswith("eps/") for l in eps), [l.source_ref for l in eps]
+    assert not [l for l in eps if l.adecimal == -6], "백만원 유령 중복행이 남았다"
+    assert {l.col_index: l.value_won for l in eps} == {0: 1_163, 1: 1_216, 2: 1_102}
+
+
 def test_non_eps_row_with_judang_substring_is_not_lost_from_main_path():
     """★이번 수정의 안전장치 — 원 단위 **선언이 없는** 백만원 표에서는 '주당' 부분문자열
     행을 본류에서 빼지 않는다.

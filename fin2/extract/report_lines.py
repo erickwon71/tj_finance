@@ -643,6 +643,11 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
             break
 
     emitted_labels: set[str] = set()
+    # 금액 없는 '주당' 행 = 그 표의 **EPS 섹션 헤더**('주당손익 (주32)'·'XIII.…주당이익
+    # (단위: 원)'). 그 아래 행은 원문 스스로 EPS 섹션이라 밝힌 것이므로, 단위 선언이
+    # 없어도 본류에서 빼도 안전하다 — NI귀속 오판 행(R27 '지배주주당기순이익')은 이런
+    # 헤더 아래에 오지 않는다(총계/귀속 섹션에 있다).
+    in_eps_section = False
     for tr in table_direct_rows(table):
         cells = _get_cells(tr)
         if not cells or "주당" not in cells[0]:
@@ -705,7 +710,11 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
             #   같은 규약으로 맞춘 것이다.
             pairs = [(pos, amt) for pos, amt in enumerate(amounts_by_pos[:3])
                      if amt is not None]
-        if pairs and eps_unit_declared:
+        if not pairs:
+            # 금액이 없다 = EPS 섹션 헤더(위 in_eps_section 주석 참고).
+            in_eps_section = True
+            continue
+        if eps_unit_declared or in_eps_section:
             emitted_labels.add(label.strip())
         for col_idx, amount in pairs:
             ctx_fy = report_fiscal_year - col_idx

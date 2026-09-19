@@ -38,14 +38,21 @@ HITS=$LOG/r144_hits.txt
 
 mkdir -p "$LOG"
 
-# EPS 유령행 = '주당' 행인데 표 단위(adecimal≠0)가 적용된 것. R144 (1) 참고.
-read -r -d '' SQL_GHOST <<'EOF'
-SELECT count(*) AS rows, count(DISTINCT rcept_no) AS filings,
-       count(DISTINCT corp_code) AS corps
-FROM report_lines
-WHERE statement='IS' AND label_raw LIKE '%주당%'
-  AND source_ref LIKE 'IS%' AND adecimal IS DISTINCT FROM 0;
-EOF
+# ★R144 유령행 판정 — **같은 원문 숫자를 단위만 달리 두 번 적재**한 것만 센다:
+#   같은 (rcept, basis, label, col_index) 에 `eps/` 행(원)과 `IS_*` 행(표단위)이 둘 다
+#   있고, 후자의 값이 전자 × 표단위배수인 경우.
+#   ※ "'주당' 이 라벨에 있고 adecimal≠0" 만으로 세면 안 된다 — `지배주주당기순이익`
+#     (지배+주주+당기순이익)처럼 우연히 '주당'이 생긴 **정상 총액 행**과, R28 계열
+#     구 K-GAAP 통짜라벨(`ⅩⅢ.반기순손익(주당반기순익 229원)`)까지 같이 걸린다
+#     (실측: 느슨한 판정 6,697행 중 진짜 R144 는 3,070행).
+GHOST_PRED="
+  a.statement='IS' AND a.source_ref LIKE 'IS%' AND a.adecimal IS DISTINCT FROM 0
+  AND EXISTS (SELECT 1 FROM report_lines b
+               WHERE b.rcept_no=a.rcept_no AND b.basis=a.basis AND b.statement='IS'
+                 AND b.label_raw=a.label_raw AND b.col_index=a.col_index
+                 AND b.source_ref LIKE 'eps/%' AND b.value_won <> 0
+                 AND a.value_won = b.value_won * power(10::numeric, -a.adecimal))
+"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -60,10 +67,9 @@ from sqlalchemy import text
 out_path, n_shards = sys.argv[1], int(sys.argv[2])
 with get_session() as s:
     corps = [r[0] for r in s.execute(text("""
-        SELECT DISTINCT corp_code FROM report_lines
-         WHERE statement='IS' AND label_raw LIKE '%주당%'
-           AND source_ref LIKE 'IS%' AND adecimal IS DISTINCT FROM 0
-         ORDER BY corp_code""")).fetchall()]
+        SELECT DISTINCT a.corp_code FROM report_lines a
+         WHERE """ + os.environ["GHOST_PRED"] + """
+         ORDER BY a.corp_code""")).fetchall()]
     if not corps:
         print("EPS 유령행 보유 기업 0개사 — phase1 불필요")
         open(out_path, "w").write("")
@@ -134,19 +140,17 @@ phase_protected() {
   #   단위=백만원으로 ×10⁶ 저장)이 남아 있다 — 객관적으로 틀린 값이고 현재 파서가
   #   확실히 더 정확하다. 그래서 `all` 에는 넣지 않고 **별도 단계로만** 돌게 둔다.
   echo "== protected — R139 보호 필링 중 EPS 유령행이 남은 것만 강제 재적재"
-  $PY - "$LOG/r144_protected.txt" <<'PYEOF'
+  GHOST_PRED="$GHOST_PRED" $PY - "$LOG/r144_protected.txt" <<'PYEOF'
+import os
 import sys
 sys.path.insert(0, ".")
 from collector.db import get_session
 from sqlalchemy import text
 with get_session() as s:
-    rc = [r[0] for r in s.execute(text("""
-        SELECT DISTINCT rl.rcept_no
-          FROM report_lines rl
-          JOIN layer2_review_queue q ON q.rcept_no = rl.rcept_no AND q.status='pass'
-         WHERE rl.statement='IS' AND rl.label_raw LIKE '%주당%'
-           AND rl.source_ref LIKE 'IS%' AND rl.adecimal IS DISTINCT FROM 0
-         ORDER BY rl.rcept_no""")).fetchall()]
+    rc = [r[0] for r in s.execute(text(
+        "SELECT DISTINCT a.rcept_no FROM report_lines a "
+        "JOIN layer2_review_queue q ON q.rcept_no = a.rcept_no AND q.status='pass' "
+        "WHERE " + os.environ["GHOST_PRED"] + " ORDER BY a.rcept_no")).fetchall()]
 open(sys.argv[1], "w").write("\n".join(rc) + ("\n" if rc else ""))
 print(f"  대상 {len(rc)} 필링")
 PYEOF
@@ -157,17 +161,21 @@ PYEOF
 }
 
 phase_verify() {
-  echo "== verify — EPS 유령행 잔존 확인"
-  $PY - <<PYEOF
+  echo "== verify — R144 EPS 이중전사 잔존 확인"
+  GHOST_PRED="$GHOST_PRED" $PY - <<'PYEOF'
+import os
 import sys
 sys.path.insert(0, ".")
 from collector.db import get_session
 from sqlalchemy import text
 with get_session() as s:
-    r = s.execute(text("""$SQL_GHOST""")).mappings().first()
-print(f"  EPS 유령행: {r['rows']:,}행 / {r['filings']:,}필링 / {r['corps']:,}개사")
+    r = s.execute(text(
+        "SELECT count(*) AS rows, count(DISTINCT a.rcept_no) AS filings, "
+        "count(DISTINCT a.corp_code) AS corps FROM report_lines a WHERE "
+        + os.environ["GHOST_PRED"])).mappings().first()
+print(f"  R144 이중전사: {r['rows']:,}행 / {r['filings']:,}필링 / {r['corps']:,}개사")
 print("  ✅ 0건 — 백필 성공" if r['rows'] == 0 else
-      "  ⚠ 잔존 — 남은 기업은 prep 재실행 후 phase1 재시도")
+      "  ⚠ 잔존 — prep 재실행 후 phase1 재시도(파서 수정분 미반영 필링)")
 PYEOF
 }
 

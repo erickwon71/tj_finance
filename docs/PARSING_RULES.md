@@ -7787,6 +7787,87 @@ DB 시그니처로 영향 필링을 고를 때는 이 맹점을 전제할 것. �
 
 ---
 
+## R146. `rule_additive_da()` 가 **같은 감가상각비를 CF·IS·주석에서 각각 더해** D&A
+##      와 EBITDA 를 정수배로 부풀린다 — ★**미해결, 캠페인 종료 후 착수**(2026-09-19)
+
+**★이 규칙은 아직 고쳐지지 않았다.** 사용자 지시로 별도 트랙에 등재만 해 둔 것이다
+(2026-09-19). 아래는 발견 경위·실측 규모·설계 쟁점이고, **코드는 손대지 않았다.**
+
+**증상.** `std_financials_v3.depreciation` / `amortization` / `da_total` 이 원문 값의
+정확히 **2배**(CF+IS) 또는 **약 3.2배**(CF+IS+주석)로 저장된다. `rule_derive_ebitda`
+가 `ebitda = operating_income + da_total` 이므로 **EBITDA 까지 그대로 전파**된다.
+
+```
+제주은행 2021FY 별도   감가상각비  5,451,000,000 → std_v3 10,902,000,000  (×2.00)
+클리오 2017Q3 연결     감가상각비  1,665,242,528 → std_v3  3,330,485,056  (×2.00)
+나이스디앤비 2019FY 연결 감가상각비 2,235,732,580 → std_v3  4,471,465,160  (×2.00)
+더블유게임즈 2016Q3 별도 감가상각비   184,311,032 → std_v3    368,622,064  (×2.00)
+```
+
+**원인.** `fin2/standardize/rules.py:220 rule_additive_da()` 는 `_DEP_CANON` 을 **단순
+합산**한다. 그런데 그 튜플이 같은 개념을 **출처별로 세 벌** 담고 있다:
+
+```python
+_DEP_CANON = ("cf.depreciation", "is.depreciation", "note.depreciation",
+              "cf.rou_depreciation", "is.rou_depreciation", "note.rou_depreciation",
+              "cf.roa_depreciation", "is.roa_depreciation", "note.roa_depreciation")
+_AMORT_CANON = ("cf.amortization", "is.amortization", "note.amortization")
+```
+
+`cf.depreciation` 과 `is.depreciation` 은 **다른 항목이 아니라 같은 금액의 다른 출처**다
+— 은행·증권처럼 감가상각비를 IS(판관비)에도 적고 CF(비현금 가산)에도 적는 서식에서
+둘 다 잡히면 그대로 두 번 더해진다. `_DA_TOTAL_CANON` 은 `next()` 로 하나만 고르지만,
+뒤이어 `da_total = da_direct + dep + amo` 로 **이미 2배가 된 dep/amo 를 다시 더한다**.
+
+★같은 파일 `rule_additive_debt()` 의 주석 "각 leaf 개념은 단일 canonical 로만 매핑되므로
+합산해도 이중계상 없음"이 **D&A 에는 성립하지 않는다** — 차입금 세부항목은 서로 배타적
+이지만 `cf.*`/`is.*`/`note.*` 는 같은 것의 사본이다. 합산 규칙을 새로 쓸 때 "세부항목
+합산"과 "출처 중복"을 구분할 것.
+
+**실측 규모(2015+).** 라벨·금액이 **완전히 같은** CF∩IS 쌍만 센 하한값:
+
+| | |
+|---|---|
+| 중복 개념 쌍 | 2,880 |
+| 영향 `std_v3` 행 | **2,389행 / 119개사** |
+| 그중 `ebitda` 가 NULL 아님 | 2,791 |
+| 비율 분포(감가상각비 한정) | **×2.00 이 486행**, ×3.2 대역 21행(주석까지 3중) |
+
+**★R144/R145 와 무관한 기존 결함이다.** 2026-09-19 std_v3 재빌드(304개사) 진단 중
+제주은행에서 드러났지만, 재빌드 대상이 **아닌** 회사들(클리오·나이스디앤비·더블유게임즈·
+HS애드)이 2026-09-17 빌드인 채로 이미 ×2 다. 제주은행에서 이제야 보인 이유는, 그전엔
+별도 IS 자체가 유실돼(R144 ④ 셀 안 줄바꿈) **CF 값만 세어지며 우연히 맞았기** 때문이다
+— 상류를 고치자 하류의 기존 버그가 드러난 사례.
+
+**미결 설계 쟁점**(착수 시 실측으로 정할 것):
+
+1. **출처 우선순위인가 최댓값인가.** `cf` 우선이 자연스러워 보이지만, CF 가 결합 표기
+   (`감가상각비및무형자산상각비`)만 싣고 IS 가 분해해 싣는 서식이 있으면 해상도를 잃는다.
+2. **"같으면 하나만"으로 충분한가.** 값이 미세하게 다를 때(반올림·표시단위) 중복인지
+   진짜 별도 항목인지 구분이 필요하다. 단순 동일값 배제는 그 구간을 놓친다.
+3. **`rou_`/`roa_` 파생도 같은 문제**를 갖는다 — 출처 3벌 × 개념 3종.
+4. R145 §소급백필과 같은 질문: 고친 뒤 **std_v3 전수 재빌드**가 필요하다
+   ([[gateb-full-reaudit-is-required-to-close]] — 표본으로 닫으면 재등장한다).
+
+**재현 쿼리**(위 표를 그대로 다시 만든다):
+
+```sql
+WITH d AS (
+  SELECT rl.corp_code, f.fiscal_year, f.fiscal_period, rl.basis, rl.statement,
+         rl.label_raw, abs(rl.value_won) v
+  FROM report_lines rl JOIN filings f USING(rcept_no)
+  WHERE rl.report_fiscal_year >= 2015 AND rl.col_index = 0
+    AND rl.statement IN ('CF','IS') AND rl.label_raw IN ('감가상각비','무형자산상각비')
+    AND rl.value_won <> 0)
+SELECT corp_code, fiscal_year, fiscal_period, basis, label_raw, v
+  FROM d WHERE statement='CF'
+INTERSECT
+SELECT corp_code, fiscal_year, fiscal_period, basis, label_raw, v
+  FROM d WHERE statement='IS';
+```
+
+---
+
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
 
 | # | 함정 | 증상 | 대응 |
@@ -7886,6 +7967,7 @@ DB 시그니처로 영향 필링을 고를 때는 이 맹점을 전제할 것. �
 | R143 | 위와 동일 조사(2026-09-19) · `fin2/extract/report_lines_inline_xbrl_overlay.py::overlay_tax_expense_value()`(`_TAX_EXPENSE_EXCLUDE_KEYWORDS`) · `fin2/tests/test_report_lines_inline_xbrl_overlay.py::test_overlay_tax_expense_oci_after_tax_label_excluded` |
 | R144 | 사용자 지시 2026-09-19("문제 20개 확인해서 수정까지 진행해" — 캠페인 fail 20건 근본원인 조사) · `fin2/extract/report_lines.py::_emit_eps_lines()`(반환 라벨집합·`header_cols`·위치보존)·`::_emit_section_lines()` · `parser/common/amount_normalizer.py::strip_cell_whitespace()` · `parser/xml/table_extractor.py::_split_label_amounts_ex()` · `fin2/tests/test_report_lines_r144_eps_dup_and_cell_linebreak.py` |
 | R145 | 사용자 질문 2026-09-19("섹션을 본다면서 왜 다른 섹션 항목이 EPS 로 오분류되나") · `fin2/extract/report_lines.py::_is_eps_label()`/`_in_eps_section()`/`_indent_stack_paths()`/`_emit_eps_lines()`(`section_path` 부여)·`::_emit_section_lines()` · `scripts/scan_eps_section_context_r145.py`(실측 재현) · `fin2/tests/test_report_lines_r145_eps_structural_label.py` · `docs/plans/eps_label_structural_rule_r145_design_2026-09-19.md` |
+| R146 | ★**미해결 — 캠페인 종료 후 착수**(사용자 지시 2026-09-19). R144/R145 백필 뒤처진 std_v3 304개사 재빌드 진단 중 발견 · 결함 위치 `fin2/standardize/rules.py::rule_additive_da()`(`_DEP_CANON`/`_AMORT_CANON` 이 `cf.*`/`is.*`/`note.*` 3벌을 단순합산)·`::rule_derive_ebitda()`(전파) · 실측 2,389행/119개사 · 메모리 `stdv3-da-double-count-r146-2026-09-19` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 | 부록 D | rcept 단위 예외목록 카탈로그(`fin2/extract/report_lines.py`에 흩어진 5개 딕셔너리 — R116/R118/R120/R121/R132) |
 

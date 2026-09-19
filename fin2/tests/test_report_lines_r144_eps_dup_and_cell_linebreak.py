@@ -152,6 +152,30 @@ def test_eps_uses_header_grid_when_available_for_interim_cumulative():
     assert eps == {0: 5_425, 1: 3_512}, eps
 
 
+def test_eps_short_row_does_not_crash_header_grid_selection():
+    """그리드 폭보다 **물리 셀이 모자란** EPS 행에서 터지지 않는다.
+
+    `select_by_header_columns()` 는 `amounts[c.position]` 으로 바로 인덱싱하므로
+    호출자가 그리드 폭까지 패딩해줘야 한다(본류는 `extract_rows(num_cols=…)` 가 해준다).
+    실측: 20040330001459·20040601000173 에서 `IndexError: list index out of range`."""
+    header = ("<THEAD><TR><TD></TD><TD>제 1(당)기</TD><TD>제 2(전)기</TD>"
+              "<TD>제 3(전전)기</TD></TR></THEAD>")
+    # EPS 행의 금액 셀이 1개뿐 — 헤더 그리드는 3열.
+    body = ("<TR><TD>기본주당이익 (단위 : 원)</TD><TD>1,234</TD></TR>")
+    table = etree.fromstring(f"<TABLE>{header}<TBODY>{body}</TBODY></TABLE>")
+
+    lines: list = []
+    _emit_section_lines(
+        "IS_C", [(table, _MILLION, "(단위 : 백만원)")],
+        emit=lines.append, corp_code="TESTCORP", rcept_no=_RCEPT,
+        report_fiscal_year=2020, report_fiscal_period="FY",
+    )
+
+    eps = {l.col_index: l.value_won for l in lines
+           if l.label_raw.startswith("기본주당이익")}
+    assert eps == {0: 1_234}, eps
+
+
 # ── ③ 셀 안 줄바꿈으로 쪼개진 숫자 ─────────────────────────────────────
 def test_parse_amount_joins_number_split_by_linebreak():
     """개행은 나머지 공백과 같이 취급한다 — 한 숫자가 개행으로 쪼개진 원문 실측 패턴."""

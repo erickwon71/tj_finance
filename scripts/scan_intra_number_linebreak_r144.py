@@ -70,6 +70,20 @@ _SQL = text("""
      ORDER BY dt.rcept_no
 """)
 
+# `--exclude-corp-file` 용 — 이미 재적재한 기업의 필링은 스캔할 필요가 없다
+# (재적재하면서 이 결함도 같이 고쳐졌다).
+_SQL_EXCLUDE = text("""
+    SELECT DISTINCT ON (dt.rcept_no) dt.rcept_no, dt.file_path
+      FROM download_tasks dt
+      JOIN filings f USING (rcept_no)
+     WHERE dt.status = 'completed'
+       AND dt.file_type = 'xml'
+       AND dt.file_path IS NOT NULL
+       AND f.corp_code <> ALL(:skip_corps)
+       AND EXISTS (SELECT 1 FROM report_lines rl WHERE rl.rcept_no = dt.rcept_no)
+     ORDER BY dt.rcept_no
+""")
+
 
 def _local(path: str) -> Path:
     """가능하면 SD 카드 미러 경로로 바꾼다(없으면 원 경로)."""
@@ -97,10 +111,19 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=8, help="병렬 프로세스 수(기본 8)")
     ap.add_argument("--resume", action="store_true",
                     help="중단된 스캔 이어서(--out 의 .progress 파일 기준)")
+    ap.add_argument("--exclude-corp-file", type=str, default=None,
+                    help="이미 재적재한 corp_code 목록 파일 — 그 기업 필링은 스캔 제외")
     args = ap.parse_args()
 
     with get_session() as s:
-        rows = [(r.rcept_no, r.file_path) for r in s.execute(_SQL).fetchall()]
+        if args.exclude_corp_file:
+            raw = Path(args.exclude_corp_file).read_text(encoding="utf-8")
+            skip = sorted({t.strip() for t in raw.replace(",", "\n").split() if t.strip()})
+            print(f"제외 기업 {len(skip)}개사")
+            rows = [(r.rcept_no, r.file_path)
+                    for r in s.execute(_SQL_EXCLUDE, {"skip_corps": skip}).fetchall()]
+        else:
+            rows = [(r.rcept_no, r.file_path) for r in s.execute(_SQL).fetchall()]
     if args.limit:
         rows = rows[: args.limit]
 

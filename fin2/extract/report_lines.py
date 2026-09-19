@@ -677,7 +677,16 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
             #   인데 당3개월 1,489 가 당기로, 5,425 가 전기로 저장). 본류는 이미 이 표에서
             #   header_cols 를 우선 쓰고 있어 다른 라인은 정상이었다 — EPS 만 옛 추측
             #   경로에 남아 있던 것.
-            grid_cells = cells[1:]     # 위치 그대로(keep_all_amount_cells 규약과 동일)
+            # 위치 그대로(keep_all_amount_cells 규약과 동일) + **그리드 폭까지 패딩**.
+            # 본류는 `extract_rows(num_cols=max(position)+1, keep_all_amount_cells=True)`
+            # 가 짧은 행을 None 으로 채워주는데, 여기선 셀을 직접 잘라 쓰므로 같은 패딩을
+            # 해줘야 한다 — 안 하면 ROWSPAN 등으로 물리 셀이 모자란 행에서
+            # `select_by_header_columns` 가 `amounts[c.position]` 으로 범위를 벗어난다
+            # (실측 IndexError: 20040330001459·20040601000173).
+            n_grid = max((c.position for c in header_cols), default=-1) + 1
+            grid_cells = cells[1:]
+            if len(grid_cells) < n_grid:
+                grid_cells = grid_cells + [""] * (n_grid - len(grid_cells))
             grid_amounts = [parse_amount(c, unit) for c in grid_cells]
             pairs = list(select_by_header_columns(
                 header_cols, grid_amounts, raw_amounts=grid_cells).items())

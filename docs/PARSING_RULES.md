@@ -7671,6 +7671,91 @@ DART 원문 XML이 한 금액을 `<TD>` 안에서 **개행으로 끊어** 담는
 
 ---
 
+## R145. EPS 행 판정을 `"주당"` 부분문자열에서 **구조 패턴**으로 교체 +
+EPS 경로에 **실제 `section_path`** 부여 (2026-09-19)
+
+설계·실측 전문: `docs/plans/eps_label_structural_rule_r145_design_2026-09-19.md`.
+사용자 질문("섹션을 본다면서 왜 다른 섹션 항목이 EPS 로 오분류되나")에서 출발했다.
+
+**결함.** 계층2 IS 전사는 EPS 를 per-row 원(₩) 단위로 담으려 본류와 **다른 경로**
+(`_emit_eps_lines`)로 처리하는데, 두 경로를 가르는 판정이 라벨의 `"주당"` 부분문자열
+**하나**였다. `지배기업주주당기순이익` 은 `지배기업주주`+`당기순이익` 인데 `주주`의
+`주` 와 `당기`의 `당` 이 붙어 `주당` 이 된다 → 총액이 EPS 로 끌려간다. 뒤이은 게이트는
+`_looks_like_eps_amounts()`(값 크기)뿐이라 **구조를 한 번도 안 본다** — 백만원 표에서
+원문 셀은 `270,700` 이라 EPS 크기로 완벽히 그럴듯하다.
+
+실측(00160588 `20170515004474` 연결IS, 표 단위 백만원). 616,201 = 270,700 + 345,501
+로 지배지분 순이익임이 산술 확정된다:
+
+| 라벨 | 수정 전 | 수정 후 |
+|---|---|---|
+| `지배기업주주당기순이익(손실)` | **270,700** 원(`eps/`, `주당손익`) | **270,700,000,000** 원(`IS_C/`, `당기순이익(손실)의 귀속`) |
+| `(1) 주당계속영업이익` | 3,839 원(`주당손익`) | 3,839 원(`XV. 주당이익(단위:원)>1. 보통주`) |
+
+**왜 섹션을 못 봤나 — 3중 구조.** ① 본류는 `_assign_section_paths` 로 들여쓰기
+`section_path` 를 이미 만들지만 `{id(RowData): path}` 키잉이라, 원본 `<TR>` 을 따로
+훑는 EPS 경로는 **넘겨받아도 키가 안 맞는다**. ② EPS 경로 진입 조건이 부분문자열
+하나뿐. ③ 통과하면 본류가 그 행을 스킵해 **총액이 제 섹션에서 유실**된다.
+
+★더 깊은 원인: `extract_rows` 가 `_header_rule_name` 의 `단위표기` 규칙으로
+`XV. 주당이익(단위:원)` 같은 **EPS 섹션 헤더를 통째로 드롭**한다(실측:
+`기본주당기순이익 (단위 : 원)` 도 동일). 그래서 본류의 섹션 트리는 EPS 경계에서
+이미 불완전했고, 들여쓰기 스택이 직전 섹션(`포괄손익의 귀속`)을 EPS 행에
+물려주고 있었다. **같은 문서에서 연결/별도가 갈린다**(별도는 `XIV.주당이익` 이라
+단위 표기가 없어 생존) — 서식 우연에 좌우되던 결함.
+
+**규칙.** 자간 공백 제거 후(R111) 판정하며, **`(A 또는 B) 또는 (C 그리고 라벨에
+`주당` 포함)`**:
+
+```
+A) 산정방식 선행 : (기본|희석) …≤8자… 주당
+B) 수익어 후행   : 주당 (계속영업|중단영업|계속사업|중단사업|분기|반기|당기|연결|별도)?
+                        (순이익|순손익|순손실|이익|손익|손실)
+C) 섹션 문맥     : section_path 체인 **어디에라도** '주당'
+```
+
+`B` 의 수식어에 **`기` 단독을 넣지 않는 것**이 `보통주주당이익`(=EPS)과
+`지배주주당기순이익`(=총액)을 가르는 지점이다 — R27 이 "라벨로는 원리적 구분 불가"라
+결론냈던 바로 그 쌍이다. **실측으로 뒤집혔다**: `주당` **뒤**를 보면 갈린다.
+
+| 측정(2015+) | |
+|---|---|
+| A∪B 커버리지 | 363,500 / 363,565행 = **99.982%** |
+| 함정 배제 | 7/7 |
+| `기본주당기순이익` 계열 | 213행 / 32종 / 0.059%(R27 이 "대량"이라 한 것과 다름) |
+
+**`C` 는 필수도 단독도 아니다**(표본 1,011필링 실측, 설계문서 §6-2): EPS 섹션 헤더가
+**아예 없는 표가 0.68%**(25/3,693행, 그중 18행은 단위 선언조차 없음) 있어 필수로 걸면
+유실되고, `C` 단독으로만 걸리는 4행은 전부 라벨에 `주당` 을 포함해 보수화 비용이 0 이다.
+체인 전체를 보는 이유도 실측 — 말단만 97.54% vs 체인 전체 98.89%
+(`주당이익(단위 : 원)>계속영업` 류가 흔하다).
+
+**★적용 = 2015+ 한정**(`_EPS_STRUCTURAL_RULE_MIN_FY`). pre-2015 에 적용하면 양방향
+사고다: 진짜 EPS 1,834행/204종(2.2%) 회귀 + K-GAAP 통짜 블럽
+(`ⅩⅢ. 당기순이익주당 경상이익: 주당 순이익 :` = R28 이 본류에 위임해 둔 패턴)
+11,519행/7,350종 신규 오염. `_PRE2015_ROUTING_MAX_FY`(=2010)와는 **다른 경계**다.
+
+**구현.** ① `_indent_stack_paths()` 신설 — 들여쓰기 스택 알고리즘의 **단일 출처**
+(`_assign_section_paths` 도 여기 위임). ② `_emit_eps_lines` 가 **원본 `<TR>` 위에서**
+섹션 트리를 만든다 — 헤더 필터가 없어 `XV. 주당이익(단위:원)` 이 처음부터 안 사라진다.
+③ EPS 경로와 본류가 **같은 `_is_eps_label()`** 을 쓴다(R144 교훈: 같은 판정을 두 경로가
+각자 구현하면 갈린다). ④ `section_path="주당손익"` 하드코딩 → 실제 조상 체인.
+⑤ R144 의 `in_eps_section` one-way latch 제거 — 스택이 대신하며 래치가 아니라서
+"총액 섹션이 EPS 섹션 뒤에 오는 표"에서도 오판하지 않는다.
+
+★`row_order`/`depth`/`node_role` 은 **NULL 로 유지**한다(본류 순회 순번이라 의미가
+섞인다 + `row_order IS NULL` 을 EPS 식별자로 쓰는 코드가 실재). 대신 `section_path=
+'주당손익'` 술어를 쓰던 3개 스크립트를 **`source_ref LIKE 'eps/%'`** 로 교체했다
+(`build_eps_curated_override_final_2026-08-15.py`·`check_rcept_key_granularity_risk_
+2026-08-15.py`·`snapshot_eps_r28_before_after_2026-08-15.py`) — 안 바꾸면 R28 curated
+키 **재생성 시 조용히 빈 목록**이 나온다.
+
+**소급 백필 필요**(R8 ③): 2015+ 재적재 전까지 DB 는 옛 값이다. R144 잔존 38행
+(NH투자증권 등 5개사)은 이 수정으로 해소됨을 재추출로 확인했다(유령 ×10⁶행 소멸).
+`section_path` 는 2015+ EPS 363,565행에서 값이 바뀐다.
+
+---
+
 파서를 새로 쓸 때 **반드시** 확인할 것. 전부 실측으로 확인된 것만 적는다.
 
 | # | 함정 | 증상 | 대응 |
@@ -7769,6 +7854,7 @@ DART 원문 XML이 한 금액을 `<TD>` 안에서 **개행으로 끊어** 담는
 | R142 | 위와 동일 조사(2026-09-19) · `fin2/extract/statement_titles.py::is_substatement_marker()` · `fin2/extract/text.py::_detect_body_statement_tables()`(`last_stmt`) · `fin2/tests/test_r142_substatement_marker.py` |
 | R143 | 위와 동일 조사(2026-09-19) · `fin2/extract/report_lines_inline_xbrl_overlay.py::overlay_tax_expense_value()`(`_TAX_EXPENSE_EXCLUDE_KEYWORDS`) · `fin2/tests/test_report_lines_inline_xbrl_overlay.py::test_overlay_tax_expense_oci_after_tax_label_excluded` |
 | R144 | 사용자 지시 2026-09-19("문제 20개 확인해서 수정까지 진행해" — 캠페인 fail 20건 근본원인 조사) · `fin2/extract/report_lines.py::_emit_eps_lines()`(반환 라벨집합·`header_cols`·위치보존)·`::_emit_section_lines()` · `parser/common/amount_normalizer.py::strip_cell_whitespace()` · `parser/xml/table_extractor.py::_split_label_amounts_ex()` · `fin2/tests/test_report_lines_r144_eps_dup_and_cell_linebreak.py` |
+| R145 | 사용자 질문 2026-09-19("섹션을 본다면서 왜 다른 섹션 항목이 EPS 로 오분류되나") · `fin2/extract/report_lines.py::_is_eps_label()`/`_in_eps_section()`/`_indent_stack_paths()`/`_emit_eps_lines()`(`section_path` 부여)·`::_emit_section_lines()` · `scripts/scan_eps_section_context_r145.py`(실측 재현) · `fin2/tests/test_report_lines_r145_eps_structural_label.py` · `docs/plans/eps_label_structural_rule_r145_design_2026-09-19.md` |
 | 부록 A | 각 행의 파서 docstring(`biz_catalog.py`·`biz_section.py`·`report_lines.py`·`section_detector.py`) |
 | 부록 D | rcept 단위 예외목록 카탈로그(`fin2/extract/report_lines.py`에 흩어진 5개 딕셔너리 — R116/R118/R120/R121/R132) |
 

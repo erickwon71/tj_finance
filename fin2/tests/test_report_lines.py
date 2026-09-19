@@ -321,7 +321,7 @@ def test_previously_gap_filings_now_load_with_doc_default_source():
         assert lines, f"{rcept} 여전히 0행"
         # 주당손익(EPS)행은 제외 — 그건 표 단위가 아니라 라벨 단위(원/주)라 별도 경로(늘 'declared').
         body = [l for l in lines if l.statement in ("BS", "IS", "SCE", "CF")
-                and l.section_path != "주당손익"]
+                and not l.source_ref.startswith("eps/")]
         assert body, f"{rcept} 본문 행 없음"
         assert all(l.unit_source == expected_source for l in body), (
             rcept, {l.unit_source for l in body})
@@ -406,7 +406,7 @@ def test_r67_no_local_declaration_anywhere_falls_through_to_doc_default():
         report_fiscal_year=2015, report_fiscal_period="FY",
     )
     body = [l for l in lines if l.statement in ("BS", "IS", "SCE", "CF")
-            and l.section_path != "주당손익"]
+            and not l.source_ref.startswith("eps/")]
     assert body and all(l.unit_source == "doc_default" for l in body)
 
 

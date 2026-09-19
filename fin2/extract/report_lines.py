@@ -169,7 +169,8 @@ def _apply_duplicate_period_label_fix(header_cols, rcept_no, statement, basis):
     ]
 
 
-from parser.common.amount_normalizer import detect_unit_declaration, parse_amount, normalize_account_name
+from parser.common.amount_normalizer import (
+    detect_unit_declaration, parse_amount, normalize_account_name, strip_cell_whitespace)
 
 from parser.xml.section_detector import (
     assign_tables_to_dart_sections, assign_note_tables_with_titles,
@@ -466,14 +467,25 @@ def _assign_section_paths(rows, statement: str) -> dict[int, str | None]:
     반환: {id(row): section_path or None}. (같은 표 내 row 객체는 서로 다른 id.)
     statement 인자는 향후 IS/CF 전용 처리 여지를 위해 유지(현재 분기 없음 — 순수 구조 동일 적용).
     """
+    paths = _indent_stack_paths([(r.raw_indent, r.account_name) for r in rows])
+    return {id(row): path for row, path in zip(rows, paths)}
+
+
+def _indent_stack_paths(items: list[tuple[int, str]]) -> list[str | None]:
+    """[(raw_indent, label)] → 각 항목의 조상 체인('A>B'). **알고리즘 단일 출처.**
+
+    `_assign_section_paths`(본류 RowData)와 `_emit_eps_lines`(원본 `<TR>`)가 **같은**
+    들여쓰기 규칙을 써야 한다 — R144 가 "두 경로가 같은 판정을 각자 구현하면 갈린다"를
+    이미 증명했다(EPS 경로와 본류가 각자 기간열을 골라 값이 어긋난 건). 그래서 스택
+    자체를 여기로 빼고 양쪽은 어댑터만 갖는다.
+    """
     stack: list[tuple[int, str]] = []   # [(raw_indent, label)]
-    out: dict[int, str | None] = {}
-    for row in rows:
-        ind = row.raw_indent
+    out: list[str | None] = []
+    for ind, label in items:
         while stack and stack[-1][0] >= ind:
             stack.pop()
-        out[id(row)] = ">".join(lbl for _, lbl in stack) if stack else None
-        stack.append((ind, row.account_name))
+        out.append(">".join(lbl for _, lbl in stack) if stack else None)
+        stack.append((ind, label))
     return out
 
 
@@ -562,6 +574,72 @@ def _looks_like_eps_amounts(amounts) -> bool:
     return all(abs(a) <= _EPS_MAX_PLAUSIBLE_WON for a in present)
 
 
+# ★R145(2026-09-19) — EPS 행 판정을 `"주당"` 부분문자열에서 **구조 패턴**으로 교체.
+#
+# R27(위 `_EPS_MAX_PLAUSIBLE_WON` 주석)은 "`지배주주당기순이익` 과 `보통주주당이익` 은
+# 라벨 텍스트로 원리적으로 구분 불가"라고 결론내고 값 크기 게이트만 남겼다. **실측으로
+# 뒤집혔다** — `주당` **뒤**를 보면 갈린다(설계문서 §2-2):
+#     보통주주당이익        → 주당 + '이익'        = EPS
+#     지배주주당기순이익    → 주당 + '기순이익'    = 총액(지배+주주+당기순이익)
+# `기` 단독을 수익어 목록에 넣지 않는 것이 이 구분의 핵심이다. 반대로 `기본주당기순이익`
+# 은 `기본` 접두(A)로 EPS 가 된다.
+#
+# 2015+ `report_lines` 363,565행 기준 A∪B 커버리지 99.982%(미커버 65행/8종),
+# 함정 배제 7/7. 근거·측정 재현법: `docs/plans/eps_label_structural_rule_r145_design_
+# 2026-09-19.md` §2~§3.
+#
+# ★자간 공백을 먼저 제거하고 매칭한다 — 옛 강조체가 `주 당 순 이 익`처럼 글자마다
+#   공백을 넣는다(R111 실측).
+_EPS_METHOD_RE = re.compile(r"(기본|희석).{0,8}주당")        # A) 산정방식 선행
+_EPS_PROFIT_RE = re.compile(                                  # B) 수익어 후행
+    r"주당(계속영업|중단영업|계속사업|중단사업|분기|반기|당기|연결|별도)?"
+    r"(순이익|순손익|순손실|이익|손익|손실)")
+
+# ★적용 경계 = 2015+. pre-2015 는 **적용하면 안 된다**(설계문서 §4, 전수 측정):
+#   · 새 규칙이 "EPS 아님"으로 돌리는 진짜 EPS 가 1,834행/204종(2.2%) — 회귀.
+#   · 새 규칙이 EPS 로 끌어오는 K-GAAP 통짜 블럽이 11,519행/7,350종 — 신규 오염.
+#     ('ⅩⅢ. 당기순이익주당 경상이익: 주당 순이익  :' 류 = R28 이 본류에 위임해 둔 패턴)
+#   pre-2015 는 서식 자체가 다른 별개 트랙이라는 기존 아키텍처(R13 `legacy_pre2015.py`)
+#   와도, 계층2 캠페인 era 게이트와도 일치한다. `_PRE2015_ROUTING_MAX_FY`(=2010) 와는
+#   **다른 경계**다 — 저쪽은 파서 라우팅, 이건 라벨 관행 경계라 값을 공유하지 않는다.
+_EPS_STRUCTURAL_RULE_MIN_FY = 2015
+
+
+def _in_eps_section(section_path: str | None) -> bool:
+    """조상 체인 **어디에라도** `주당` 이 있는가 = 원문이 스스로 밝힌 EPS 절 안인가.
+
+    말단만이 아니라 체인 전체를 보는 이유(실측, 설계문서 §6-2): EPS 헤더가 조부모이고
+    말단은 `계속영업` 인 서식(`주당이익(단위 : 원)>계속영업`)이 흔하다 — 말단만 보면
+    97.54%, 체인 전체면 98.89%.
+    """
+    return bool(section_path) and "주당" in section_path
+
+
+def _is_eps_label(label: str, *, section_path: str | None,
+                  report_fiscal_year: int) -> bool:
+    """이 라벨이 EPS(주당손익) 행인가 — EPS 경로와 본류가 **공유하는 단일 판정**.
+
+    `(A 또는 B) 또는 (C 그리고 라벨에 '주당' 포함)`.
+
+    ★`C` 단독으로는 인정하지 않는다 — EPS 절 아래 섞여 들어온 주식수·비율 행까지
+      EPS 가 될 수 있다. 실측상 보수화 비용은 0 이다(설계문서 §6-2: `C` 단독으로만
+      걸리는 4행이 전부 라벨에 `주당` 을 포함).
+    ★`C` 를 **필수**로 걸지도 않는다 — EPS 섹션 헤더가 아예 없는 표가 0.68% 있고
+      (18/25 는 단위 선언조차 없다), 그 행들은 `A∪B` 로만 구제된다(같은 §6-2).
+    """
+    if report_fiscal_year < _EPS_STRUCTURAL_RULE_MIN_FY:
+        # pre-2015 는 기존 동작 **그대로** — 원문 라벨의 literal 부분문자열(위 상수 주석).
+        # 아래처럼 공백을 제거하면 그 자체로 게이트가 넓어지므로 경계 아래로는 안 넘긴다.
+        return "주당" in label
+    # ★공백 제거를 `주당` 확인보다 **먼저** 한다 — 옛 강조체 `주 당 순 이 익`(R111)은
+    #   literal `주당` 을 갖지 않아, 순서가 뒤면 구조 규칙에 닿기도 전에 탈락한다.
+    s = strip_cell_whitespace(label)
+    if "주당" not in s:
+        return False                     # `C` 단독 인정 안 함(docstring 참고)
+    return bool(_EPS_METHOD_RE.search(s) or _EPS_PROFIT_RE.search(s)
+                or _in_eps_section(section_path))
+
+
 # ★K-GAAP 구서식(00269852류) "헤드라인 순이익 + 괄호 안 EPS 노트" 통짜라벨
 # 목록(2026-08-15, R28). 이 행들은 '주당' 부분문자열 때문에 EPS 경로로
 # 들어오지만 실제로는 그 표의 헤드라인 당기순이익 행이다 — EPS 로 emit 하지
@@ -634,23 +712,33 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
     정확히 저장됨 — 두 라인의 컬럼선택 로직이 서로 달라 생긴 불일치). `cum_map`이 있으면(2단 헤더
     검출) 표 본류와 동일하게 '누적' 토큰이 붙은 컬럼만 위치 기준으로 골라 담는다 — FY/2단 미검출
     표는 기존 동작(앞 3개 위치순) 그대로."""
+    trs = list(table_direct_rows(table))
+    tr_cells = [_get_cells(tr) for tr in trs]
+
     # 이 표의 '주당' 라벨(헤더행 포함)이 원(₩)을 명시 선언했는가 — 위 docstring 참고.
-    eps_unit_declared = False
-    for tr in table_direct_rows(table):
-        head = _get_cells(tr)
-        if head and "주당" in head[0] and detect_unit_declaration(head[0]) == 1:
-            eps_unit_declared = True
-            break
+    eps_unit_declared = any(
+        c and "주당" in c[0] and detect_unit_declaration(c[0]) == 1 for c in tr_cells)
+
+    # ★R145(2026-09-19) — 원문 들여쓰기로 이 표의 **섹션 트리**를 만든다(`section_path`).
+    #   본류(`_emit_section_lines`)는 `_assign_section_paths` 로 이미 하고 있었지만 EPS
+    #   경로는 못 보고 있었다: 본류는 `extract_rows` 산출물(RowData)에 `id()` 로 키잉하는데
+    #   여기는 원본 `<TR>` 을 따로 훑기 때문에 **넘겨받아도 키가 안 맞는다**. 그래서 같은
+    #   스택 알고리즘(`_indent_stack_paths`)을 `<TR>` 에 직접 적용한다.
+    #
+    #   ★원본 `<TR>` 위에서 만드는 것이 오히려 정확하다 — `extract_rows` 는 인라인 단위를
+    #     단 행을 헤더로 판정해 버려서(`_header_rule_name` 의 '단위표기' 규칙) 하필
+    #     `XV. 주당이익(단위:원)` 같은 **EPS 섹션 헤더를 통째로 드롭**한다. 그러면 들여쓰기
+    #     스택이 직전 섹션(`포괄손익의 귀속`)을 EPS 행에 물려준다(실측: 00160588
+    #     20170515004474 연결IS). 여기선 그 필터가 없어 헤더가 살아 있다.
+    section_paths = _indent_stack_paths(
+        [(_first_cell_indent(tr), (c[0].strip() if c else ""))
+         for tr, c in zip(trs, tr_cells)])
 
     emitted_labels: set[str] = set()
-    # 금액 없는 '주당' 행 = 그 표의 **EPS 섹션 헤더**('주당손익 (주32)'·'XIII.…주당이익
-    # (단위: 원)'). 그 아래 행은 원문 스스로 EPS 섹션이라 밝힌 것이므로, 단위 선언이
-    # 없어도 본류에서 빼도 안전하다 — NI귀속 오판 행(R27 '지배주주당기순이익')은 이런
-    # 헤더 아래에 오지 않는다(총계/귀속 섹션에 있다).
-    in_eps_section = False
-    for tr in table_direct_rows(table):
-        cells = _get_cells(tr)
-        if not cells or "주당" not in cells[0]:
+    for tr, cells, sec_path in zip(trs, tr_cells, section_paths):
+        if not cells or not _is_eps_label(
+                cells[0], section_path=sec_path,
+                report_fiscal_year=report_fiscal_year):
             continue
         label = cells[0].strip()
         # ★R28 — K-GAAP 구서식 헤드라인 순이익 행(EPS 아님) → 본류에 위임.
@@ -711,17 +799,30 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
             pairs = [(pos, amt) for pos, amt in enumerate(amounts_by_pos[:3])
                      if amt is not None]
         if not pairs:
-            # 금액이 없다 = EPS 섹션 헤더(위 in_eps_section 주석 참고).
-            in_eps_section = True
+            # 금액 없는 '주당' 행 = 그 표의 EPS 섹션 헤더. R144 에서는 여기서
+            # `in_eps_section` 래치를 세웠으나, R145 에서 그 역할을 `section_paths`
+            # (들여쓰기 스택)가 대신한다 — 스택은 래치가 아니라서 "총액 섹션이 EPS
+            # 섹션보다 뒤에 오는 표"에서도 오판하지 않는다(R144 의 one-way latch 결함).
             continue
-        if eps_unit_declared or in_eps_section:
+        # ★본류에서 빼도 안전한가 — 이 행이 EPS 라는 **양성 증거**가 있을 때만.
+        #   (a) 표가 '주당' 라벨에 원(₩)을 명시 선언했거나, (b) 원문이 스스로 EPS 절
+        #   안이라고 밝혔거나(`section_path`), (c) 라벨 구조가 EPS 라고 말하거나.
+        #   증거 없이 빼면 NI귀속 오판 행의 **총액이 통째로 사라진다**(위 docstring).
+        if (eps_unit_declared or _in_eps_section(sec_path)
+                or (report_fiscal_year >= _EPS_STRUCTURAL_RULE_MIN_FY
+                    and (_EPS_METHOD_RE.search(strip_cell_whitespace(label))
+                         or _EPS_PROFIT_RE.search(strip_cell_whitespace(label))))):
             emitted_labels.add(label.strip())
         for col_idx, amount in pairs:
             ctx_fy = report_fiscal_year - col_idx
             emit(ReportLineRow(
                 corp_code=corp_code, rcept_no=rcept_no,
                 report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
-                statement=statement, basis=basis, section_path="주당손익",
+                statement=statement, basis=basis,
+                # ★R145 — 예전엔 `"주당손익"` 고정 문자열이었다. 원문 조상 체인을 그대로
+                #   담아 (a) "왜 EPS 로 봤는지"를 사후에 SQL 로 되물을 수 있게 하고,
+                #   (b) 계층3 이 EPS 와 총액을 섹션으로 가를 수 있게 한다.
+                section_path=sec_path,
                 label_raw=label, col_index=col_idx, context_fiscal_year=ctx_fy,
                 period_kind="duration", is_cumulative=(report_fiscal_period != "FY"),
                 value_won=amount, adecimal=_adecimal_from_unit(unit), unit_source=eps_source,
@@ -888,9 +989,15 @@ def _emit_section_lines(
             #   기존 게이트에 **더하는** 조건이라 종전보다 빠지는 행이 늘지 않는다.
             if row.account_name.strip() in eps_labels:
                 continue
-            if "주당" in row.account_name and _looks_like_eps_amounts(row.amounts):
-                continue  # 진짜 EPS(원/주)만 본류에서 제외 — NI귀속 오판 가드(R27)
             section_path = section_paths.get(id(row))
+            # ★R145 — 예전엔 `"주당" in row.account_name` 부분문자열이었다. EPS 경로와
+            #   **같은 판정 함수**를 쓴다(R144 교훈: 같은 판정을 두 경로가 각자 구현하면
+            #   갈린다). 이 게이트가 좁아진 만큼 `지배주주당기순이익` 류 총액 행이 본류에
+            #   남는다 — 그게 정답이다(설계문서 §3-2).
+            if (_is_eps_label(row.account_name, section_path=section_path,
+                              report_fiscal_year=report_fiscal_year)
+                    and _looks_like_eps_amounts(row.amounts)):
+                continue  # 진짜 EPS(원/주)만 본류에서 제외 — NI귀속 오판 가드(R27)
             if header_cols is not None:
                 # R88 — 헤더 그리드로 확정된 위치→회계기간 맵으로 직접 선택(설계문서 §3-4).
                 # R113 — raw_amounts 를 같이 넘겨 순수 대시("-") 칸을 0으로 채택(원문

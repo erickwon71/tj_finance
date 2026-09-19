@@ -29,13 +29,13 @@ for r in candidates:
 
 print(f"distinct (rcept,statement,basis,table_seq) keys in candidate set: {len(keys)}")
 
-# For each key, fetch ALL section_path='주당손익' rows (row_order IS NULL) in
+# For each key, fetch ALL EPS-path rows (source_ref 'eps/…') in
 # that exact table, and check for any OTHER label not in our candidate set.
 rcepts = tuple(sorted(set(k[0] for k in keys)))
 cur.execute("""
     SELECT rcept_no, statement, basis, table_seq, label_raw, adecimal
     FROM report_lines
-    WHERE section_path = '주당손익' AND row_order IS NULL
+    WHERE source_ref LIKE 'eps/%%'
       AND rcept_no = ANY(%s)
 """, (list(rcepts),))
 all_eps_rows = cur.fetchall()

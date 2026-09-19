@@ -50,9 +50,9 @@ def test_curated_key_row_skips_eps_and_is_picked_up_by_main_pass(monkeypatch):
 
     lines = _run(table, unit=1000, table_seq=0)
 
-    eps_rows = [l for l in lines if l.section_path == "주당손익"]
+    eps_rows = [l for l in lines if l.source_ref.startswith("eps/")]
     body_row = next(l for l in lines
-                     if l.label_raw == _HEADLINE_LABEL and l.section_path != "주당손익"
+                     if l.label_raw == _HEADLINE_LABEL and not l.source_ref.startswith("eps/")
                      and l.col_index == 0)
     assert eps_rows == [], eps_rows
     # 무손실 불변식(설계 §4-A) — 본류 값은 raw × table_unit.
@@ -66,7 +66,7 @@ def test_non_curated_normal_eps_label_unaffected(monkeypatch):
 
     lines = _run(table, unit=1000, table_seq=0)
 
-    eps_rows = [l for l in lines if l.section_path == "주당손익" and l.label_raw == _NORMAL_EPS_LABEL]
+    eps_rows = [l for l in lines if l.source_ref.startswith("eps/") and l.label_raw == _NORMAL_EPS_LABEL]
     assert len(eps_rows) >= 1, lines
     assert eps_rows[0].value_won == 500, eps_rows[0].value_won  # 라벨 단위(원/주) 그대로, 표단위 미적용
 
@@ -86,7 +86,7 @@ def test_key_table_seq_mismatch_leaves_row_untouched(monkeypatch):
         report_fiscal_year=2004, report_fiscal_period="FY",
     )
     # 실제 매칭된 표의 table_seq 를 확인 — 더미 표가 table_seq=0, 대상 표가 table_seq=1.
-    eps_rows = [l for l in lines if l.section_path == "주당손익" and l.label_raw == _HEADLINE_LABEL]
+    eps_rows = [l for l in lines if l.source_ref.startswith("eps/") and l.label_raw == _HEADLINE_LABEL]
     assert eps_rows, lines  # 키 미매칭(table_seq 불일치) → 기존 EPS 경로 그대로 emit
     assert all(l.table_seq == 1 for l in eps_rows), eps_rows
     eps_row0 = next(l for l in eps_rows if l.col_index == 0)

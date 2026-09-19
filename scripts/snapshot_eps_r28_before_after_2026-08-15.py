@@ -8,7 +8,7 @@ Snapshot the state relevant to the R28 fix for the 286 target corps
 so Phase 5 can diff them instead of assuming "no side effects".
 
 Captures per §8 Phase 3-1:
-  (a) report_lines EPS-path rows (section_path='주당손익') for the 286 corps,
+  (a) report_lines EPS-path rows (source_ref 'eps/…') for the 286 corps,
   (b) report_lines main-pass rows (row_order IS NOT NULL) matching the same
       (rcept_no, statement, basis, table_seq, label_raw) as the curated keys,
   (c) whole-corp report_lines row count + value_won checksum (catches
@@ -67,7 +67,7 @@ def snapshot(mode: str):
     cur.execute("""
         SELECT rcept_no, statement, basis, table_seq, label_raw, col_index, corp_code, value_won
         FROM report_lines
-        WHERE corp_code = ANY(%s) AND section_path = '주당손익'
+        WHERE corp_code = ANY(%s) AND source_ref LIKE 'eps/%%'
     """, (corps,))
     eps_rows = cur.fetchall()
     print(f"(a) EPS-path rows: {len(eps_rows)}")

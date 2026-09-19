@@ -32,7 +32,7 @@ cur.execute("""
     SELECT rcept_no, statement, basis, table_seq, label_raw, corp_code,
            report_fiscal_year, report_fiscal_period, value_won
     FROM report_lines
-    WHERE section_path = '주당손익' AND row_order IS NULL AND adecimal = 0
+    WHERE source_ref LIKE 'eps/%' AND adecimal = 0
 """)
 rows = cur.fetchall()
 

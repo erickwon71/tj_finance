@@ -64,8 +64,14 @@ def _wellformed_violations(rows, all_labels: dict[tuple, set]) -> list[str]:
     for r in rows:
         if not r.section_path:
             continue
-        if "주당" in r.label_raw:
-            continue  # EPS 는 합성 section_path('주당손익') 사용 — 원문 조상 라벨 검증 대상 아님
+        if r.source_ref and r.source_ref.startswith("eps/"):
+            # ★R145(2026-09-19) 전까지 EPS 행은 합성 `section_path='주당손익'` 을 써서
+            #   원문 조상 라벨 검증 대상이 아니었다. 지금은 실제 조상 체인을 담지만,
+            #   그 체인을 **원본 `<TR>` 위에서** 만든다(`_emit_eps_lines`) — 본류가 쓰는
+            #   `extract_rows` 는 인라인 단위선언 행('XV. 주당이익(단위:원)')을 헤더로
+            #   드롭해서, 이 검사기가 모으는 `all_labels` 에 그 헤더가 없다. 그래서
+            #   여기서 검증하면 정상 경로가 "미존재 세그먼트"로 오탐된다. 계속 제외.
+            continue
         known = all_labels.get((r.statement, r.basis), set())
         segs = r.section_path.split(">")
         for seg in segs:

@@ -56,10 +56,10 @@ def test_h1_eps_picks_cumulative_column_not_3month():
     lines = _run_h1(table)
 
     eps_rows = {l.col_index: l.value_won for l in lines
-                if l.section_path == "주당손익" and l.label_raw.startswith("기본주당이익")}
+                if l.source_ref.startswith("eps/") and l.label_raw.startswith("기본주당이익")}
     assert eps_rows == {0: 1_360, 1: 2_479}, eps_rows
     # is_cumulative 메타데이터가 실제 선택된 값(누적)과 이제 일치해야 한다.
-    assert all(l.is_cumulative for l in lines if l.section_path == "주당손익")
+    assert all(l.is_cumulative for l in lines if l.source_ref.startswith("eps/"))
 
 
 def test_fy_eps_unaffected_no_2tier_header():
@@ -74,9 +74,9 @@ def test_fy_eps_unaffected_no_2tier_header():
         report_fiscal_year=2024, report_fiscal_period="FY",
     )
 
-    eps_rows = {l.col_index: l.value_won for l in lines if l.section_path == "주당손익"}
+    eps_rows = {l.col_index: l.value_won for l in lines if l.source_ref.startswith("eps/")}
     assert eps_rows == {0: 500, 1: 450}, eps_rows
-    assert all(not l.is_cumulative for l in lines if l.section_path == "주당손익")
+    assert all(not l.is_cumulative for l in lines if l.source_ref.startswith("eps/"))
 
 
 if __name__ == "__main__":

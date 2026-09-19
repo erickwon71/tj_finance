@@ -36,6 +36,9 @@ def main():
     ap.add_argument("--year", type=int, help="특정 fiscal_year 만(생략 시 전 연도)")
     ap.add_argument("--year-max", type=int,
                      help="fiscal_year <= 이 값만(표적 백필 — 영향권 밖 연도는 건드리지 않는다, R31)")
+    ap.add_argument("--year-min", type=int,
+                     help="fiscal_year >= 이 값만. 계층2 캠페인 스코프가 2015+ 라 "
+                          "그 경계를 지킬 때 쓴다(사용자 지시 2026-09-19)")
     ap.add_argument("--overwrite-reviewed", action="store_true",
                      help="★R139 보호가드 우회 — 원문대조 완료(status='pass')로 표시된 "
                           "필링까지 덮어쓴다. 그 판정이 **이 결함을 알기 전에** 내려졌고 "
@@ -61,11 +64,14 @@ def main():
             corps = [c.strip() for c in args.corp.split(",") if c.strip()]
             yr_clause = " AND f.fiscal_year = :y" if args.year else ""
             yr_clause += " AND f.fiscal_year <= :ymax" if args.year_max else ""
+            yr_clause += " AND f.fiscal_year >= :ymin" if args.year_min else ""
             params = {"corps": tuple(corps)}
             if args.year:
                 params["y"] = args.year
             if args.year_max:
                 params["ymax"] = args.year_max
+            if args.year_min:
+                params["ymin"] = args.year_min
             targets = s.execute(text(f"""
                 SELECT dt.rcept_no, dt.file_path, f.corp_code, f.fiscal_year, f.fiscal_period
                 FROM download_tasks dt JOIN filings f USING(rcept_no)

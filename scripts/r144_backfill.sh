@@ -32,6 +32,9 @@ cd "$(dirname "$0")/.." || exit 1
 
 PY=${PY:-python}
 SHARDS=${SHARDS:-4}
+# ★계층2 캠페인 스코프 = 2015+ (사용자 지시 2026-09-19). pre-2015 는 구 K-GAAP 서식이라
+#   별개 트랙이고, 이 백필도 그 경계를 지킨다. 굳이 넘기려면 YEAR_MIN=1999 로 덮어쓸 것.
+YEAR_MIN=${YEAR_MIN:-2015}
 LOG=logs
 CORPS=$LOG/r144_eps_corps.txt
 HITS=$LOG/r144_hits.txt
@@ -46,7 +49,7 @@ mkdir -p "$LOG"
 #     구 K-GAAP 통짜라벨(`ⅩⅢ.반기순손익(주당반기순익 229원)`)까지 같이 걸린다
 #     (실측: 느슨한 판정 6,697행 중 진짜 R144 는 3,070행).
 GHOST_PRED="
-  a.statement='IS' AND a.source_ref LIKE 'IS%' AND a.adecimal IS DISTINCT FROM 0
+  a.report_fiscal_year >= $YEAR_MIN AND a.statement='IS' AND a.source_ref LIKE 'IS%' AND a.adecimal IS DISTINCT FROM 0
   AND EXISTS (SELECT 1 FROM report_lines b
                WHERE b.rcept_no=a.rcept_no AND b.basis=a.basis AND b.statement='IS'
                  AND b.label_raw=a.label_raw AND b.col_index=a.col_index
@@ -58,7 +61,8 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 
 phase_prep() {
   echo "== prep — 대상 기업 목록 + 샤드 파일 생성"
-  $PY - "$CORPS" "$SHARDS" <<'PYEOF'
+  GHOST_PRED="$GHOST_PRED" $PY - "$CORPS" "$SHARDS" <<'PYEOF'
+import os
 import sys
 sys.path.insert(0, ".")
 from collector.db import get_session
@@ -102,7 +106,7 @@ phase1() {
   for i in $(seq 1 "$SHARDS"); do
     local f=$LOG/r144_shard$i.txt
     [[ -s $f ]] || continue
-    nohup $PY scripts/reload_report_lines_corp.py --corp "$(cat "$f")" \
+    nohup $PY scripts/reload_report_lines_corp.py --corp "$(cat "$f")" --year-min "$YEAR_MIN" \
       > "$LOG/r144_reload_shard$i.log" 2>&1 &
     pids+=($!)
     echo "  shard$i 시작 pid=${pids[-1]}"
@@ -130,7 +134,7 @@ phase_fixup() {
   local n; n=$(wc -l < "$LOG/r144_errors.txt" | tr -d ' ')
   echo "  오류 필링 $n 건"
   [[ $n -gt 0 ]] || { echo "  재처리할 것 없음"; return 0; }
-  $PY scripts/reload_report_lines_corp.py --rcept-file "$LOG/r144_errors.txt" \
+  $PY scripts/reload_report_lines_corp.py --rcept-file "$LOG/r144_errors.txt" --year-min "$YEAR_MIN" \
     2>&1 | tail -5
 }
 
@@ -156,7 +160,7 @@ print(f"  대상 {len(rc)} 필링")
 PYEOF
   local n; n=$(wc -l < "$LOG/r144_protected.txt" | tr -d ' ')
   [[ $n -gt 0 ]] || { echo "  대상 없음"; return 0; }
-  $PY scripts/reload_report_lines_corp.py --rcept-file "$LOG/r144_protected.txt" \
+  $PY scripts/reload_report_lines_corp.py --rcept-file "$LOG/r144_protected.txt" --year-min "$YEAR_MIN" \
       --overwrite-reviewed 2>&1 | tail -5
 }
 
@@ -192,7 +196,7 @@ phase2() {
   [[ -s $HITS ]] || { echo "적중 0건 — phase2 불필요"; return 0; }
   local n; n=$(wc -l < "$HITS" | tr -d ' ')
   echo "== phase2 — 스캔 적중 $n 필링 재적재"
-  $PY scripts/reload_report_lines_corp.py --rcept-file "$HITS" 2>&1 | tail -5
+  $PY scripts/reload_report_lines_corp.py --rcept-file "$HITS" --year-min "$YEAR_MIN" 2>&1 | tail -5
 }
 
 phase_status() {

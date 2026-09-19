@@ -57,7 +57,18 @@ def scan_one(job):
     for code, tables_with_unit in groups.items():
         if not code.startswith("IS"):
             continue
+        # ★`_detect_body_statement_tables` 는 **같은 TABLE 객체를 두 번 담을 수 있다**
+        #   (섹션 감지가 같은 표를 중복 수집 — 실측 플루토스 20170814002137 은 BS/IS/
+        #   SCE/CF 네 섹션 전부 같은 element 가 2개씩). 소비측인 `_emit_section_lines`
+        #   는 2026-07-30 에 `dict.fromkeys()` 로 이미 막았고(그 중복이 report_lines
+        #   중복 키 1,076,974 그룹의 정체였다), `groups` 를 **직접 순회하는 분석
+        #   스크립트는 같은 방어를 스스로 해야 한다** — 안 하면 그 필링의 행이 두 번
+        #   세어져 통계가 부풀고, 값이 아니라 집계만 틀려서 눈에 잘 안 띈다.
+        seen_tables: set[int] = set()
         for table, unit, _hint in tables_with_unit:
+            if id(table) in seen_tables:
+                continue
+            seen_tables.add(id(table))
             # ★design §5-2(가): keep_header_rows=True so rows carrying an inline
             #   unit declaration ('XV. 주당이익(단위:원)') survive into the section
             #   tree instead of being dropped by the '단위표기' header rule.

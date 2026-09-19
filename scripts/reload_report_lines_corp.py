@@ -9,6 +9,7 @@ per-rcept re-store the normal loader already does.
 
 Usage: python scripts/reload_report_lines_corp.py --corp 00139214,00136101 [--year 2020]
        python scripts/reload_report_lines_corp.py --corp <csv> --year-max 2010  # R31(T22)
+       python scripts/reload_report_lines_corp.py --rcept-file hits.txt         # R144
 """
 from __future__ import annotations
 
@@ -30,28 +31,48 @@ from fin2.audit.line_anomaly import detect_anomalies, store_anomalies
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--corp", required=True, help="쉼표구분 corp_code")
+    ap.add_argument("--corp", help="쉼표구분 corp_code")
+    ap.add_argument("--rcept-file", help="rcept_no 목록 파일(줄바꿈 구분) — 필링 단위 표적 재적재(R144)")
     ap.add_argument("--year", type=int, help="특정 fiscal_year 만(생략 시 전 연도)")
     ap.add_argument("--year-max", type=int,
                      help="fiscal_year <= 이 값만(표적 백필 — 영향권 밖 연도는 건드리지 않는다, R31)")
+    ap.add_argument("--overwrite-reviewed", action="store_true",
+                     help="★R139 보호가드 우회 — 원문대조 완료(status='pass')로 표시된 "
+                          "필링까지 덮어쓴다. 그 판정이 **이 결함을 알기 전에** 내려졌고 "
+                          "현재 파서가 확실히 더 정확할 때만 쓸 것(사람 확인 데이터를 "
+                          "조용히 덮는 장치라 기본값은 끔).")
     args = ap.parse_args()
-    corps = [c.strip() for c in args.corp.split(",") if c.strip()]
+    if not args.corp and not args.rcept_file:
+        ap.error("--corp 또는 --rcept-file 중 하나는 필요하다")
 
     with get_session() as s:
-        yr_clause = " AND f.fiscal_year = :y" if args.year else ""
-        yr_clause += " AND f.fiscal_year <= :ymax" if args.year_max else ""
-        params = {"corps": tuple(corps)}
-        if args.year:
-            params["y"] = args.year
-        if args.year_max:
-            params["ymax"] = args.year_max
-        targets = s.execute(text(f"""
-            SELECT dt.rcept_no, dt.file_path, f.corp_code, f.fiscal_year, f.fiscal_period
-            FROM download_tasks dt JOIN filings f USING(rcept_no)
-            WHERE f.corp_code IN :corps AND dt.status='completed' AND dt.file_type='xml'
-              AND dt.file_path IS NOT NULL{yr_clause}
-            ORDER BY f.corp_code, f.fiscal_year, dt.rcept_no
-        """), params).fetchall()
+        if args.rcept_file:
+            rcepts = [t.strip() for t in Path(args.rcept_file).read_text(
+                encoding="utf-8").split() if t.strip()]
+            print(f"입력 rcept = {len(rcepts)}")
+            targets = s.execute(text("""
+                SELECT dt.rcept_no, dt.file_path, f.corp_code, f.fiscal_year, f.fiscal_period
+                FROM download_tasks dt JOIN filings f USING(rcept_no)
+                WHERE dt.rcept_no = ANY(:rcepts) AND dt.status='completed'
+                  AND dt.file_type='xml' AND dt.file_path IS NOT NULL
+                ORDER BY f.corp_code, f.fiscal_year, dt.rcept_no
+            """), {"rcepts": rcepts}).fetchall()
+        else:
+            corps = [c.strip() for c in args.corp.split(",") if c.strip()]
+            yr_clause = " AND f.fiscal_year = :y" if args.year else ""
+            yr_clause += " AND f.fiscal_year <= :ymax" if args.year_max else ""
+            params = {"corps": tuple(corps)}
+            if args.year:
+                params["y"] = args.year
+            if args.year_max:
+                params["ymax"] = args.year_max
+            targets = s.execute(text(f"""
+                SELECT dt.rcept_no, dt.file_path, f.corp_code, f.fiscal_year, f.fiscal_period
+                FROM download_tasks dt JOIN filings f USING(rcept_no)
+                WHERE f.corp_code IN :corps AND dt.status='completed' AND dt.file_type='xml'
+                  AND dt.file_path IS NOT NULL{yr_clause}
+                ORDER BY f.corp_code, f.fiscal_year, dt.rcept_no
+            """), params).fetchall()
 
         print(f"대상 filing = {len(targets)}")
         n_done = n_is = 0
@@ -72,7 +93,8 @@ def main():
                     r.file_path, rcept_no=r.rcept_no, corp_code=r.corp_code,
                     report_fiscal_year=r.fiscal_year,
                     report_fiscal_period=r.fiscal_period, include_notes=False)
-                nl = store_report_lines(s, r.rcept_no, lines)
+                nl = store_report_lines(s, r.rcept_no, lines,
+                                        overwrite_reviewed=args.overwrite_reviewed)
                 found = detect_anomalies(lines, rcept_no=r.rcept_no, corp_code=r.corp_code,
                                          report_fiscal_period=r.fiscal_period)
                 na = store_anomalies(s, r.rcept_no, found)

@@ -29,7 +29,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 from lxml import etree
 
-from parser.common.amount_normalizer import parse_amount, normalize_account_name, _TRAIL_DECOR_RE
+from parser.common.amount_normalizer import (parse_amount, normalize_account_name,
+                                             strip_cell_whitespace, _TRAIL_DECOR_RE)
 
 
 # 숫자 컬럼으로 판단할 패턴 (쉼표 구분 숫자, 괄호음수 등)
@@ -1293,7 +1294,11 @@ def _split_label_amounts_ex(
             # 첫 셀은 항상 계정과목명
             label = cell
         else:
-            cell_nospace = cell.replace(' ', '')             # 쉼표 보존(주석 판정용)
+            # 쉼표 보존(주석 판정용). 개행/탭도 공백과 같이 지운다 — 원문이 한 금액을
+            # TD 안에서 개행으로 끊어 담는 경우가 있고(R144, `strip_cell_whitespace`
+            # 주석 참고), 안 지우면 아래 `_NUMBER_PATTERN`(^…$ 앵커)이 못 맞춰 그 셀이
+            # amount_cells 에서 통째로 빠진다 → 뒤 열이 당기 열로 밀리거나 행이 사라진다.
+            cell_nospace = strip_cell_whitespace(cell)
             # 합계행 밑줄 장식(숫자 뒤 '====' 등) 제거 — 숫자 셀 인식용(parse_amount 도 동일 처리).
             cell_nospace = _TRAIL_DECOR_RE.sub('', cell_nospace)
             cell_stripped = cell_nospace.replace(',', '')      # 쉼표 제거(금액 판정용)

@@ -56,6 +56,31 @@ _LEADING_ROMANISH_RE = re.compile(r'^[A-Za-zⅠ-Ⅹⅰ-ⅹ]+')
 _AMOUNT_SANE_MAX = 10_000_000_000_000_000  # 1경원 (실측 최대치의 약 20배 여유)
 
 
+# ── R144(2026-09-19) — 셀 안에서 **숫자 하나가 줄바꿈으로 쪼개진** 원문 처리.
+# DART 원문 XML 은 한 금액을 TD 안에서 개행으로 끊어 담는 경우가 있다(실측: 삼성생명
+# 20210517001864 연결BS `'22,270,03\n9'`, 연결CF `'(102,6\n41\n)'`, 20220516002463
+# 연결SCE `'41,91\n2'`). 이 함수들은 반각/전각/ZWSP/NBSP 공백은 이미 지우면서 개행만
+# 안 지워서, 그 셀이 "숫자 아님"으로 판정돼 **행이 통째로 사라지거나**(amount_cells 에서
+# 제외) 뒤 열 값이 당기 열로 밀려 들어갔다. 개행도 나머지 공백과 **같은 취급**을 한다 —
+# 새 해석 규칙이 아니라 기존 공백 처리의 누락분을 메우는 것이다.
+# ★두 숫자가 개행으로 나열된 셀(진짜 다중값)은 여기 오기 전에 `parse_amount` R1 가드가
+#   먼저 잡는다 — 그 가드는 `.split()`(모든 공백류 분리)을 쓰므로 개행도 이미 본다.
+_CELL_WHITESPACE = (
+    ' ',        # 반각공백
+    '　',   # 전각공백
+    '​',   # zero-width space
+    '\xa0',     # non-breaking space
+    '\n', '\r', '\t',
+)
+
+
+def strip_cell_whitespace(text: str) -> str:
+    """금액 판정용 공백 제거 — 개행/탭 포함(위 `_CELL_WHITESPACE` 주석 참고)."""
+    for ch in _CELL_WHITESPACE:
+        text = text.replace(ch, '')
+    return text
+
+
 def _is_complete_number(tok: str) -> bool:
     """토큰 하나가 **온전한 금액 표기**인가 — 부호·괄호를 벗긴 뒤 3자리 그룹 또는 무콤마
     정수/소수. 한 셀 안에 이런 토큰이 둘 이상이면 이어붙이면 안 된다(`parse_amount` R1)."""
@@ -358,12 +383,7 @@ def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
             return None            # 어느 값이 이 셀 것인지 원문이 말하지 않는다 → 결측
         cell_text = toks[0]        # 같은 값이 반복된 셀 → 하나로 취한다
 
-    s = (cell_text
-         .strip()
-         .replace(' ', '')          # 반각공백
-         .replace('　', '')         # 전각공백
-         .replace('​', '')     # zero-width space
-         .replace('\xa0', ''))      # non-breaking space
+    s = strip_cell_whitespace(cell_text.strip())
 
     # 합계행 밑줄 장식 제거: 일부 보고서(보험·구형)는 합계 셀에 숫자 뒤로 '====' / '────'
     # 이중선을 붙여 렌더한다(예 '264653801=========='). 숫자의 일부가 아니므로 뒤쪽 장식만 제거.

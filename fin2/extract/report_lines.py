@@ -600,8 +600,24 @@ _EPS_KGAAP_HEADLINE_NOT_EPS_KEYS: frozenset[tuple[str, str, str, int, str]] = _l
 def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                     report_fiscal_year, report_fiscal_period,
                     table_seq=None, table_title=None,
-                    cum_map: dict[int, int] | None = None) -> None:
+                    cum_map: dict[int, int] | None = None,
+                    header_cols=None) -> set[str]:
     """주당손익(EPS) 행을 **per-row 단위**로 전사한다(IS 표 전용).
+
+    ★반환값(R144) = 본류에서 **빼도 안전한** 행의 라벨 집합 = 이 함수가 전사했고 + 그 표가
+    '주당' 라벨에 **원(₩) 단위를 명시 선언**한 것(헤더행 'XIII…주당이익(단위: 원)' 또는 행
+    자신). 왜 이게 필요한가 — 두 경로가 각자 `_looks_like_eps_amounts()` 를 부르는데 넘기는
+    금액의 **스케일이 서로 달라서**(여기는 행 인라인 단위=원, 본류는 표 단위를 이미 곱한 값)
+    표가 백만원 선언이면 같은 행을 두고 판정이 갈렸다 — EPS 8,817원이 본류에선
+    8,817,000,000원으로 보여 상한(`_EPS_MAX_PLAUSIBLE_WON`)을 넘고, 그래서 본류가 "EPS
+    아님"으로 판단해 **백만원 단위 유령 중복행**을 하나 더 만들었다(실측 확정: 삼성생명
+    17개 필링 연결/별도 전 기간).
+
+    ★왜 "전사한 것 전부"가 아니라 **선언 증거가 있는 것만** 돌려주나 — 백만원 표에서는
+    금액 크기로 진짜 EPS와 NI귀속 오판 행(R27 '지배주주당기순이익' = 지배+주주+당기순이익)을
+    가를 수 없다(둘 다 원문 표기가 백만 단위 소액). 증거 없이 본류에서 빼면 그 NI 총액이
+    **통째로 사라진다**. 그래서 이 집합은 본류의 기존 게이트에 **더해서만** 쓴다 — 기존보다
+    빠지는 행이 늘지 않는다(중복만 준다).
 
     ★ 왜 별도 처리인가: 주당이익 라벨은 '계속영업기본주당이익 (단위 : 원)' 처럼 **행 자체에 단위**를
     달고 있어 (a) `_is_header_cell` 이 '단위:' 로 헤더 오인해 드롭하고, (b) 표 단위(천원/백만원)를
@@ -618,6 +634,15 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
     정확히 저장됨 — 두 라인의 컬럼선택 로직이 서로 달라 생긴 불일치). `cum_map`이 있으면(2단 헤더
     검출) 표 본류와 동일하게 '누적' 토큰이 붙은 컬럼만 위치 기준으로 골라 담는다 — FY/2단 미검출
     표는 기존 동작(앞 3개 위치순) 그대로."""
+    # 이 표의 '주당' 라벨(헤더행 포함)이 원(₩)을 명시 선언했는가 — 위 docstring 참고.
+    eps_unit_declared = False
+    for tr in table_direct_rows(table):
+        head = _get_cells(tr)
+        if head and "주당" in head[0] and detect_unit_declaration(head[0]) == 1:
+            eps_unit_declared = True
+            break
+
+    emitted_labels: set[str] = set()
     for tr in table_direct_rows(table):
         cells = _get_cells(tr)
         if not cells or "주당" not in cells[0]:
@@ -643,13 +668,36 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
             # NI귀속류 오판 행 — EPS 로 emit 하지 않고 본류가 처리하도록 남겨둔다(아래
             # _emit_section_lines 의 대응 가드와 짝, 2026-08-15).
             continue
-        if cum_map is not None:
+        if header_cols is not None:
+            # ★R144 — 본류(`_emit_section_lines`)와 **같은 R88 헤더 그리드**로 기간열을
+            #   고른다. 아래 cum_map 은 헤더 행의 논리열 위치(예 [3개월,누적,3개월,누적]
+            #   =4칸)로 만들어지는데, 데이터 행은 값마다 빈칸이 끼어 8칸인 표가 있다 —
+            #   그러면 위치가 어긋나 **당기누적 대신 당기3개월**이 당기로 담긴다(실측
+            #   확정: 삼성생명 20230814002621 연결IS 기본주당이익 — 원문 당기누적 5,425
+            #   인데 당3개월 1,489 가 당기로, 5,425 가 전기로 저장). 본류는 이미 이 표에서
+            #   header_cols 를 우선 쓰고 있어 다른 라인은 정상이었다 — EPS 만 옛 추측
+            #   경로에 남아 있던 것.
+            grid_cells = cells[1:]     # 위치 그대로(keep_all_amount_cells 규약과 동일)
+            grid_amounts = [parse_amount(c, unit) for c in grid_cells]
+            pairs = list(select_by_header_columns(
+                header_cols, grid_amounts, raw_amounts=grid_cells).items())
+        elif cum_map is not None:
             # 2단[3개월|누적] 헤더 검출 표 — '누적' 토큰이 붙은 컬럼만 위치로 선택.
             pairs = [(off, amounts_by_pos[pos]) for pos, off in cum_map.items()
                      if pos < len(amounts_by_pos) and amounts_by_pos[pos] is not None]
         else:
-            # FY 또는 2단 헤더 미검출 — 기존 동작(파싱 순서 앞 3개 = 당기/전기/전전기).
-            pairs = list(enumerate(present[:3]))
+            # FY 또는 2단 헤더 미검출 — 앞 3개 **열 위치**(당기/전기/전전기).
+            # ★R144(2026-09-19) — 예전엔 `present`(None 을 뺀 압축 리스트)를 썼다. 그러면
+            #   당기 셀이 공란인 행에서 열이 통째로 왼쪽으로 밀려 **전기 값이 당기 값으로
+            #   둔갑**한다(실측 확정: 삼성물산 20160330002954·20170331003913 연결IS
+            #   '중단사업 주당이익' — 원문 당기=공란/전기=3,418/전전기=470 인데 DB 에
+            #   당기=3,418, 전기=470 으로 저장). 공란은 공란으로 남긴다 — 짐작 금지(R0/R6).
+            #   본류(`_emit_section_lines`)와 `cum_map` 분기는 이미 위치 기준이라 이 분기만
+            #   같은 규약으로 맞춘 것이다.
+            pairs = [(pos, amt) for pos, amt in enumerate(amounts_by_pos[:3])
+                     if amt is not None]
+        if pairs and eps_unit_declared:
+            emitted_labels.add(label.strip())
         for col_idx, amount in pairs:
             ctx_fy = report_fiscal_year - col_idx
             emit(ReportLineRow(
@@ -666,6 +714,7 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                 row_order=None, depth=None, node_role=None,
                 table_seq=table_seq, table_title=table_title,
             ))
+    return emitted_labels
 
 
 def _emit_section_lines(
@@ -802,19 +851,27 @@ def _emit_section_lines(
         table_title = _note_heading(table)
 
         # 주당손익(EPS)은 per-row 단위(원/주)라 표 본류에서 제외하고 아래 EPS 패스로 전사.
+        eps_labels: set[str] = set()
         if statement == "IS":
-            _emit_eps_lines(table, emit=emit, basis=basis, statement=statement,
-                            corp_code=corp_code, rcept_no=rcept_no,
-                            report_fiscal_year=report_fiscal_year,
-                            report_fiscal_period=report_fiscal_period,
-                            table_seq=table_seq, table_title=table_title,
-                            cum_map=cum_map)
+            eps_labels = _emit_eps_lines(
+                table, emit=emit, basis=basis, statement=statement,
+                corp_code=corp_code, rcept_no=rcept_no,
+                report_fiscal_year=report_fiscal_year,
+                report_fiscal_period=report_fiscal_period,
+                table_seq=table_seq, table_title=table_title,
+                cum_map=cum_map, header_cols=header_cols)
 
         for row in table_rows:
             if not row.account_name:
                 continue
+            # ★R144 — EPS 경로가 전사했고 그 표가 원(₩) 단위를 명시 선언한 행은 본류에서
+            #   뺀다. 표가 백만원 선언이면 아래 기존 게이트가 그 행을 "EPS 아님"으로 보고
+            #   **백만원 단위 유령 중복행**을 만들었다(`_emit_eps_lines` docstring 참고).
+            #   기존 게이트에 **더하는** 조건이라 종전보다 빠지는 행이 늘지 않는다.
+            if row.account_name.strip() in eps_labels:
+                continue
             if "주당" in row.account_name and _looks_like_eps_amounts(row.amounts):
-                continue  # 진짜 EPS(원/주)만 본류에서 제외 — NI귀속 오판 가드(위 참고)
+                continue  # 진짜 EPS(원/주)만 본류에서 제외 — NI귀속 오판 가드(R27)
             section_path = section_paths.get(id(row))
             if header_cols is not None:
                 # R88 — 헤더 그리드로 확정된 위치→회계기간 맵으로 직접 선택(설계문서 §3-4).

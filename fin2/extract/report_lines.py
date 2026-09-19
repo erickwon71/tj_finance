@@ -615,17 +615,64 @@ def _in_eps_section(section_path: str | None) -> bool:
     return bool(section_path) and "주당" in section_path
 
 
+def _eps_headerless_toplevel(section_path: str | None, *, table_has_eps_header: bool,
+                             prev_toplevel_label: str | None) -> bool:
+    """`D` — EPS 절 제목이 없는 표의, 포괄손익 총계 바로 뒤 최상위 행인가."""
+    return (not table_has_eps_header and section_path is None
+            and bool(prev_toplevel_label) and "포괄" in prev_toplevel_label)
+
+
 def _is_eps_label(label: str, *, section_path: str | None,
-                  report_fiscal_year: int) -> bool:
+                  report_fiscal_year: int,
+                  table_has_eps_header: bool = True,
+                  prev_toplevel_label: str | None = None) -> bool:
     """이 라벨이 EPS(주당손익) 행인가 — EPS 경로와 본류가 **공유하는 단일 판정**.
 
-    `(A 또는 B) 또는 (C 그리고 라벨에 '주당' 포함)`.
+    `(A 또는 B) 또는 (C 그리고 '주당') 또는 (D 그리고 '주당')`.
 
-    ★`C` 단독으로는 인정하지 않는다 — EPS 절 아래 섞여 들어온 주식수·비율 행까지
+    ★`C`/`D` 단독으로는 인정하지 않는다 — EPS 절 아래 섞여 들어온 주식수·비율 행까지
       EPS 가 될 수 있다. 실측상 보수화 비용은 0 이다(설계문서 §6-2: `C` 단독으로만
       걸리는 4행이 전부 라벨에 `주당` 을 포함).
     ★`C` 를 **필수**로 걸지도 않는다 — EPS 섹션 헤더가 아예 없는 표가 0.68% 있고
-      (18/25 는 단위 선언조차 없다), 그 행들은 `A∪B` 로만 구제된다(같은 §6-2).
+      (18/25 는 단위 선언조차 없다). 그 구간을 받치는 것이 `D` 다(아래).
+
+    ★`D`(2026-09-19, 사용자 제안) — **EPS 섹션 헤더가 없는 표에 한해**, 최상위 행
+      (조상 없음)이면서 **직전 최상위 행이 포괄손익 총계**인 `주당` 라벨을 EPS 로
+      인정한다. 사용자 관찰: 섹션이 없는 서식은 EPS 행이 표의 최종 총계(총포괄손익류)
+      **바로 뒤에 최상위로** 붙는다 — 실측 10개사 41행 전부에서 성립:
+
+          코리안리    `Ⅹ. 반기연결총포괄이익` → 연결기본주당이익
+          현대엘리베이터 `총포괄손익`          → 기본및희석주당이익(손실)
+          DSC        `Ⅷ.당기총포괄이익(손실)` → Ⅸ.주당손익
+          천일고속     `ⅩlV. 총포괄손익`      → 1. 기본주당이익(손실) (단위 : 원)
+          GMI벤처     `IX. 당기총포괄이익`     → X. 주당손익 / 기본 및 희석주당순이익
+
+      반대로 **함정(총액) 라벨은 당기순이익/귀속 절 쪽에 붙는다**. 그래서 앵커가 둘을
+      가른다 — `지배주주당기순이익` 은 `당기순이익` 뒤(또는 `…의 귀속` 아래)에 오지
+      `총포괄손익` 뒤에 오지 않는다.
+
+      ★**앵커 조건은 뺄 수 없다.** 한때 "헤더 없음 + 최상위"로만 좁히려 했으나,
+        그러면 `지배주주당기순이익` 이 최상위로 놓인 표에서 총액을 EPS 로 삼켜
+        **본류에서 유실**시킨다(회귀 테스트
+        `test_non_eps_row_with_judang_substring_is_not_lost_from_main_path` 가 잡음).
+        앵커를 `포괄` 로 좁히면 그 행의 앵커가 `당기순이익` 이라 D 가 안 걸린다.
+
+      ★앵커를 `순이익` 까지 넓히지 않는 이유가 바로 그것이다 — 넓히는 순간 위 함정이
+        다시 들어온다. 거짓 음성(기타포괄손익이 없어 EPS 가 `당기순이익` 뒤에 오는
+        서식)은 감수한다. 그런 행도 A∪B 가 받고 있고, D 는 어디까지나 **안전망**이다.
+
+      안전성 실측: 2015+ 에서 A∪B 가 거부하는 라벨을 가진 **필링 80건 전수**에
+      "헤더 없는 표 + 최상위 + A∪B 실패" = **0건**. 표본 1,011필링에서도 헤더 없는
+      표의 비-EPS `주당` 행 = 0행. 알려진 함정은 전부 헤더 있는 표에만 산다
+      (피에스케이 `지배주주당기총포괄이익`·한화 `지배기업주주당기순이익(손실)` 포함).
+
+      ★**지금 이 조건으로 새로 구제되는 행은 0** 이다(A∪B 가 헤더 없는 25행을 이미
+        전부 덮는다). 넣는 이유는 **안전망** — 헤더도 단위 선언도 없는 이 0.68%
+        구간은 A∪B 가 유일한 방어선이고 그 미커버율이 0.018%(65행/8종)다.
+
+    table_has_eps_header: 이 표에 **금액 없는 `주당` 행**(= EPS 절 제목)이 있는가.
+        호출측이 표 단위로 한 번 계산해 넘긴다. 기본값 True = `D` 비활성(보수적).
+    prev_toplevel_label: 이 행 앞의 가장 가까운 **최상위** 행 라벨(없으면 None).
     """
     if report_fiscal_year < _EPS_STRUCTURAL_RULE_MIN_FY:
         # pre-2015 는 기존 동작 **그대로** — 원문 라벨의 literal 부분문자열(위 상수 주석).
@@ -635,9 +682,12 @@ def _is_eps_label(label: str, *, section_path: str | None,
     #   literal `주당` 을 갖지 않아, 순서가 뒤면 구조 규칙에 닿기도 전에 탈락한다.
     s = strip_cell_whitespace(label)
     if "주당" not in s:
-        return False                     # `C` 단독 인정 안 함(docstring 참고)
+        return False                     # `C`/`D` 단독 인정 안 함(docstring 참고)
     return bool(_EPS_METHOD_RE.search(s) or _EPS_PROFIT_RE.search(s)
-                or _in_eps_section(section_path))
+                or _in_eps_section(section_path)
+                or _eps_headerless_toplevel(
+                    section_path, table_has_eps_header=table_has_eps_header,
+                    prev_toplevel_label=prev_toplevel_label))
 
 
 # ★K-GAAP 구서식(00269852류) "헤드라인 순이익 + 괄호 안 EPS 노트" 통짜라벨
@@ -734,11 +784,30 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
         [(_first_cell_indent(tr), (c[0].strip() if c else ""))
          for tr, c in zip(trs, tr_cells)])
 
+    # ★R145 `D` — 이 표가 EPS 절 제목(금액 없는 '주당' 행)을 갖고 있는가. 없으면
+    #   최상위 '주당' 행을 EPS 로 인정한다(`_is_eps_label` docstring 의 `D` 참고).
+    #   단위 배수는 1 로 판정한다 — 여기선 "값이 있느냐"만 보므로 배수가 무관하다.
+    table_has_eps_header = any(
+        c and "주당" in c[0]
+        and not any(parse_amount(x, 1) is not None for x in c[1:])
+        for c in tr_cells)
+
+    # `D` 의 앵커 — 각 행 앞의 가장 가까운 **최상위**(조상 없음) 행 라벨.
+    prev_top: list[str | None] = []
+    _last_top: str | None = None
+    for c, p in zip(tr_cells, section_paths):
+        prev_top.append(_last_top)
+        lbl = c[0].strip() if c else ""
+        if lbl and p is None:
+            _last_top = lbl
+
     emitted_labels: set[str] = set()
-    for tr, cells, sec_path in zip(trs, tr_cells, section_paths):
+    for tr, cells, sec_path, anchor in zip(trs, tr_cells, section_paths, prev_top):
         if not cells or not _is_eps_label(
                 cells[0], section_path=sec_path,
-                report_fiscal_year=report_fiscal_year):
+                report_fiscal_year=report_fiscal_year,
+                table_has_eps_header=table_has_eps_header,
+                prev_toplevel_label=anchor):
             continue
         label = cells[0].strip()
         # ★R28 — K-GAAP 구서식 헤드라인 순이익 행(EPS 아님) → 본류에 위임.
@@ -808,10 +877,17 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
         #   (a) 표가 '주당' 라벨에 원(₩)을 명시 선언했거나, (b) 원문이 스스로 EPS 절
         #   안이라고 밝혔거나(`section_path`), (c) 라벨 구조가 EPS 라고 말하거나.
         #   증거 없이 빼면 NI귀속 오판 행의 **총액이 통째로 사라진다**(위 docstring).
+        #   ★`D`(헤더 없는 표의 최상위 행)도 여기 포함해야 한다 — 빼면 본류가 같은 행을
+        #     한 번 더 담아 ×10⁶ 유령행이 생긴다(R144 가 밟은 지뢰 그대로). 본류는
+        #     `table_has_eps_header` 를 스스로 계산할 수 없어(`extract_rows` 가 EPS
+        #     헤더를 드롭한다) `D` 가 꺼진 채 판정하므로, 이 집합이 유일한 다리다.
         if (eps_unit_declared or _in_eps_section(sec_path)
                 or (report_fiscal_year >= _EPS_STRUCTURAL_RULE_MIN_FY
                     and (_EPS_METHOD_RE.search(strip_cell_whitespace(label))
-                         or _EPS_PROFIT_RE.search(strip_cell_whitespace(label))))):
+                         or _EPS_PROFIT_RE.search(strip_cell_whitespace(label))
+                         or _eps_headerless_toplevel(
+                             sec_path, table_has_eps_header=table_has_eps_header,
+                             prev_toplevel_label=anchor)))):
             emitted_labels.add(label.strip())
         for col_idx, amount in pairs:
             ctx_fy = report_fiscal_year - col_idx
@@ -994,6 +1070,10 @@ def _emit_section_lines(
             #   **같은 판정 함수**를 쓴다(R144 교훈: 같은 판정을 두 경로가 각자 구현하면
             #   갈린다). 이 게이트가 좁아진 만큼 `지배주주당기순이익` 류 총액 행이 본류에
             #   남는다 — 그게 정답이다(설계문서 §3-2).
+            #   ★`D` 는 여기서 **끈다**(`table_has_eps_header` 기본 True) — `table_rows`
+            #     는 `extract_rows` 산출물이라 EPS 절 제목이 이미 드롭돼 "헤더 없음"을
+            #     여기서 판정하면 항상 거짓이 된다. `D` 로 걸린 행은 위 EPS 경로가
+            #     `eps_labels` 에 넣어주므로 바로 앞 스킵에서 걸러진다.
             if (_is_eps_label(row.account_name, section_path=section_path,
                               report_fiscal_year=report_fiscal_year)
                     and _looks_like_eps_amounts(row.amounts)):

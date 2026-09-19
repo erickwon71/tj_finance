@@ -176,3 +176,80 @@ def test_no_duplicate_emission_across_paths():
     rows = _run(_TRAP_TABLE, unit=1_000_000)
     keys = [(l.label_raw.strip(), l.col_index) for l in rows]
     assert len(keys) == len(set(keys)), keys
+
+
+# ------------------------------------------------- D: 섹션 없는 표의 최상위 행
+
+def test_d_toplevel_row_in_headerless_table_is_eps():
+    """D(사용자 제안 2026-09-19) — EPS 절 제목이 없는 표에서는 **최상위** `주당` 행을
+    EPS 로 인정한다. 실측: 섹션 없는 서식은 EPS 가 총포괄손익류 바로 뒤 최상위로
+    붙는다(10개사 41행 전부)."""
+    kw = dict(section_path=None, report_fiscal_year=2020,
+              prev_toplevel_label="Ⅸ. 당기총포괄이익")
+    assert _is_eps_label("주당순부가가치", table_has_eps_header=False, **kw)
+    # 헤더가 있는 표에서는 D 를 안 쓴다 → A∪B∪C 로만 판정(이 라벨은 전부 불성립)
+    assert not _is_eps_label("주당순부가가치", table_has_eps_header=True, **kw)
+
+
+def test_d_does_not_rescue_indented_total_rows():
+    """함정(총액)은 예외 없이 들여쓰기된 귀속 절 안에 있다 — 최상위가 아니라 D 밖이다.
+    실측: 2015+ A∪B 거부 라벨 보유 필링 80건 전수에서 '헤더 없음+최상위' 0건."""
+    assert not _is_eps_label("지배기업주주당기순이익(손실)",
+                             section_path="당기순이익(손실)의 귀속",
+                             report_fiscal_year=2020, table_has_eps_header=False,
+                             prev_toplevel_label="당기순이익(손실)의 귀속")
+
+
+def test_d_anchor_must_be_comprehensive_income():
+    """★앵커가 `당기순이익` 이면 D 가 걸리면 안 된다 — 걸리면 최상위로 놓인
+    `지배주주당기순이익` 총액을 EPS 로 삼켜 본류에서 유실시킨다."""
+    assert not _is_eps_label("지배주주당기순이익", section_path=None,
+                             report_fiscal_year=2020, table_has_eps_header=False,
+                             prev_toplevel_label="당기순이익")
+    assert not _is_eps_label("지배주주당기순이익", section_path=None,
+                             report_fiscal_year=2020, table_has_eps_header=False,
+                             prev_toplevel_label=None)   # 앵커 자체가 없는 표
+
+
+def test_d_has_no_effect_before_2015():
+    """pre-2015 는 literal `"주당"` 부분문자열 그대로라 `D` 가 결과를 못 바꾼다 —
+    `table_has_eps_header` 를 뒤집어도 판정이 동일해야 한다(경계 아래 무변경)."""
+    for label in ("주당순부가가치", "지배주주당기순이익", "기본주당이익", "당기순이익"):
+        a = _is_eps_label(label, section_path=None, report_fiscal_year=2014,
+                          table_has_eps_header=False,
+                          prev_toplevel_label="Ⅸ. 당기총포괄이익")
+        b = _is_eps_label(label, section_path=None, report_fiscal_year=2014,
+                          table_has_eps_header=True,
+                          prev_toplevel_label="Ⅸ. 당기총포괄이익")
+        assert a == b == ("주당" in label), (label, a, b)
+
+
+_HEADERLESS_TABLE = """<TABLE>
+<TR><TD>Ⅸ. 당기총포괄이익</TD><TD>(294,382,602)</TD></TR>
+<TR><TD>Ⅹ. 주당손익</TD><TD>(7)</TD></TR>
+<TR><TD>기본 및 희석주당순이익</TD><TD>(7)</TD></TR>
+</TABLE>"""
+
+
+def test_headerless_table_keeps_both_sibling_rows():
+    """GMI벤처 실측 — 절 제목행과 항목행이 **같은 레벨**에 금액을 각각 달고 있다.
+    계층2 는 충실전사라 둘 다 보존한다(중복 판단은 계층3 몫, R1)."""
+    rows = _run(_HEADERLESS_TABLE, unit=1_000_000)
+    eps = {l.label_raw.strip(): l.value_won for l in _eps(rows) if l.col_index == 0}
+    assert eps == {"Ⅹ. 주당손익": -7, "기본 및 희석주당순이익": -7}, eps
+    # 총포괄이익은 본류에 표 단위로 남는다
+    tot = [l for l in _body(rows) if l.label_raw.strip() == "Ⅸ. 당기총포괄이익"]
+    assert len(tot) == 1 and tot[0].value_won == -294_382_602 * 1_000_000
+
+
+def test_d_row_does_not_duplicate_into_body():
+    """★D 로 걸린 행도 `eps_labels` 에 들어가야 한다 — 안 그러면 본류가 한 번 더 담아
+    ×10⁶ 유령행이 생긴다(R144 가 밟은 지뢰)."""
+    rows = _run("<TABLE>"
+                "<TR><TD>Ⅸ. 당기총포괄이익</TD><TD>(294,382,602)</TD></TR>"
+                "<TR><TD>주당순부가가치</TD><TD>(7)</TD></TR>"
+                "</TABLE>", unit=1_000_000)
+    hit = [l for l in rows if l.label_raw.strip() == "주당순부가가치"]
+    assert len(hit) == 1, [(l.source_ref, l.value_won) for l in hit]
+    assert hit[0].source_ref.startswith("eps/")
+    assert hit[0].value_won == -7

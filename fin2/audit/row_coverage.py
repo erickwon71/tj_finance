@@ -232,13 +232,17 @@ def _loaded_value_positions(rows_cells: list[list[str]],
         #   적재 위치가 1 로 잡히고, 그러면 "3개월만 채우고 누적이 빈 행"이 결측으로
         #   둔갑한다(실측 거짓양성: 제닉·HDC랩스·형지I&C·엘컴텍·덕우전자 —
         #   전부 당기누적 칸이 공란이었다). 값으로 맞대면 index 2(누적)가 잡힌다.
-        for i, c in enumerate(cells):
-            if i == 0:
-                continue
-            if _matches_loaded_value(c, values):
-                counts[i] = counts.get(i, 0) + 1
-                n_loaded += 1
-                break
+        # ★매치가 **유일한** 행만 투표한다(2026-09-20 6차) — Q1 필링은 3개월과 누적이
+        #   같은 값이라 적재값이 두 칸에 모두 나타난다. 그러면 "먼저 만난 칸"(3개월)이
+        #   이겨서 적재 열이 3개월로 잡히고, 누적이 빈 행이 결측으로 둔갑한다(실측:
+        #   제닉 20150515001151 '지분법 자본변동' — 누적 칸은 당기·전기 모두 공란이라
+        #   파서가 안 싣는 게 맞는데 발화했다). 값이 한 칸에만 있는 행(= 3개월과 누적이
+        #   다른 행)만 세면 진짜 적재 열이 남는다.
+        matched = [i for i, c in enumerate(cells)
+                   if i > 0 and _matches_loaded_value(c, values)]
+        if len(matched) == 1:
+            counts[matched[0]] = counts.get(matched[0], 0) + 1
+            n_loaded += 1
     if not counts:
         return set()
     floor = max(1, n_loaded * _MIN_COLUMN_SHARE)

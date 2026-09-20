@@ -742,11 +742,65 @@ def _load_kgaap_keys() -> frozenset[tuple[str, str, str, int, str]]:
 _EPS_KGAAP_HEADLINE_NOT_EPS_KEYS: frozenset[tuple[str, str, str, int, str]] = _load_kgaap_keys()
 
 
+def _q1_cumulative_proved_equal_to_three_month(header_cols, table_rows) -> bool:
+    """★R154 — 이 표가 **스스로** "Q1 에서는 3개월 = 누적"임을 증명하는가.
+
+    R116 은 같은 상황(Q1 인데 누적 칸이 공란)을 rcept 예외목록으로만 좁혀 처리했다.
+    그 이유는 "실측이 두 필링에서만 확인됐다"였지 등식이 의심스러워서가 아니다 —
+    1분기는 정의상 연초부터 분기말까지의 누적이 곧 그 3개월 자체다.
+
+    예외목록은 같은 서식을 쓰는 다른 회사·연도를 계속 흘린다. 실측: 기아
+    20240516001819(2024Q1) 연결·별도 IS 에서 EPS 행이 통째로 결측이었다(camp_run
+    캠페인 이슈#20). 그 표는 EPS 행만 누적 칸이 공란이고 **나머지 전 행이 3개월과
+    누적에 똑같은 값을 적어 등식을 스스로 증명**한다:
+
+        매출액  26,212,851 | 26,212,851 | 23,690,660 | 23,690,660
+        기본주당이익  7,125 |     (공란) |      5,323 |     (공란)   ← 유실
+
+    그래서 rcept 목록 대신 **표 자신의 증거**로 판정한다: 3개월과 누적이 둘 다 실값인
+    행이 하나 이상 있고, 그런 행이 **예외 없이 전부 같은 값**이면 증명된 것으로 본다.
+    반례가 하나라도 있으면(3개월 ≠ 누적) 즉시 거짓 — 그 표는 애초에 이 축이 아니다.
+    이 판정은 R6("서로 다른 값 중 하나를 짐작하지 않는다")를 거스르지 않는다: 짐작이
+    아니라 필링 자신이 적어 둔 등식을 읽는 것이다.
+
+    호출측이 `report_fiscal_period == "Q1"` 을 이미 확인한 뒤에만 부른다(등식은 Q1
+    에서만 성립 — H1/Q3 는 3개월 ≠ 누적).
+    """
+    if not header_cols or not table_rows:
+        return False
+    by_rank: dict[int, dict[str, list[int]]] = {}
+    for hc in header_cols:
+        if hc.is_note or hc.subtype not in ("three_month", "cumulative"):
+            continue
+        by_rank.setdefault(hc.period_rank, {}).setdefault(hc.subtype, []).append(
+            hc.position)
+    pairs = [(v["three_month"], v["cumulative"]) for v in by_rank.values()
+             if v.get("three_month") and v.get("cumulative")]
+    if not pairs:
+        return False
+
+    witnesses = 0
+    for row in table_rows:
+        amounts = getattr(row, "amounts", None) or []
+        for tm_pos, cum_pos in pairs:
+            tm = [amounts[p] for p in tm_pos
+                  if p < len(amounts) and amounts[p] is not None]
+            cum = [amounts[p] for p in cum_pos
+                   if p < len(amounts) and amounts[p] is not None]
+            if not tm or not cum:
+                continue                      # 한쪽이 공란인 행은 증거가 못 된다
+            if set(tm) != set(cum):
+                return False                  # 반례 — 이 표는 등식을 안 지킨다
+            witnesses += 1
+    return witnesses > 0
+
+
 def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                     report_fiscal_year, report_fiscal_period,
                     table_seq=None, table_title=None,
                     cum_map: dict[int, int] | None = None,
-                    header_cols=None) -> set[str]:
+                    header_cols=None,
+                    q1_cum_blank_use_3m: bool = False) -> set[str]:
     """주당손익(EPS) 행을 **per-row 단위**로 전사한다(IS 표 전용).
 
     ★반환값(R144) = 본류에서 **빼도 안전한** 행의 라벨 집합 = 이 함수가 전사했고 + 그 표가
@@ -881,7 +935,8 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                 header_cols, grid_amounts, raw_amounts=grid_cells,
                 allow_three_month_as_cumulative=(
                     report_fiscal_period == "Q1"
-                    and rcept_no in _Q1_CUM_BLANK_USE_3M_RCEPTS),
+                    and (rcept_no in _Q1_CUM_BLANK_USE_3M_RCEPTS
+                         or q1_cum_blank_use_3m)),
                 prefer_last_of_two_as_cumulative=(
                     rcept_no in _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS),
             ).items())
@@ -1078,6 +1133,14 @@ def _emit_section_lines(
         # 2표식이면 여기서 '연결손익계산서' / '연결포괄손익계산서' 가 각각 잡힌다.
         table_title = _note_heading(table)
 
+        # ★R154 — 이 표가 스스로 "Q1 에서 3개월 = 누적"을 증명하는지 **표당 한 번**
+        #   판정한다(행마다 다시 세지 않는다). 본류와 EPS 경로에 **같은 값**을 넘기는
+        #   것이 핵심이다 — R144/R153 의 교훈("같은 판정을 두 경로가 각자 하면 갈린다").
+        q1_cum_blank_use_3m = (
+            report_fiscal_period == "Q1"
+            and header_cols is not None
+            and _q1_cumulative_proved_equal_to_three_month(header_cols, table_rows))
+
         # 주당손익(EPS)은 per-row 단위(원/주)라 표 본류에서 제외하고 아래 EPS 패스로 전사.
         eps_labels: set[str] = set()
         if statement == "IS":
@@ -1087,7 +1150,8 @@ def _emit_section_lines(
                 report_fiscal_year=report_fiscal_year,
                 report_fiscal_period=report_fiscal_period,
                 table_seq=table_seq, table_title=table_title,
-                cum_map=cum_map, header_cols=header_cols)
+                cum_map=cum_map, header_cols=header_cols,
+                q1_cum_blank_use_3m=q1_cum_blank_use_3m)
 
         for row in table_rows:
             if not row.account_name:
@@ -1121,7 +1185,8 @@ def _emit_section_lines(
                     header_cols, row.amounts, raw_amounts=row.raw_amounts,
                     allow_three_month_as_cumulative=(
                         report_fiscal_period == "Q1"
-                        and rcept_no in _Q1_CUM_BLANK_USE_3M_RCEPTS),
+                        and (rcept_no in _Q1_CUM_BLANK_USE_3M_RCEPTS
+                             or q1_cum_blank_use_3m)),
                     prefer_last_of_two_as_cumulative=(
                         rcept_no in _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS),
                 ).items())

@@ -43,6 +43,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from collector.db import engine, get_session
 from collector.models import Layer2ReviewQueue
 from fin2.audit import layer2_selfcheck as sc
+from fin2.audit import orphan_tables
 from fin2.extract import review_csv
 from fin2.extract.report_lines import (extract_report_lines, store_report_lines,
                                        store_report_tables)
@@ -145,6 +146,36 @@ def _check_verified_scopes(item, given: str | None) -> tuple[bool, str]:
             f"{','.join(sorted(missing))}\n"
             "     적재된 scope 는 전부 원문과 대조한 뒤 열거해야 합니다.")
     return True, ""
+
+
+def _check_orphan_ack(item, accepted: str | None) -> tuple[bool, str]:
+    """원문 본문표 미귀속 적출(`orphan_tables`)은 **사유를 적어야** 통과시킨다.
+
+    ★`--verified-scopes` 는 적재된 scope 만 열거시키므로 "원문에 있는데 안 실린 표"를
+      원리적으로 못 본다. 그 구멍을 메우는 유일한 신호라 그냥 경고로 두면 의미가 없다.
+      반대로 무조건 차단하면 정당한 제외(은행 신탁계정 등)에서 캠페인이 멈춘다 —
+      그래서 **사유를 남기면 통과**시키고 그 사유를 note 에 기록한다. 실측 발화율은
+      160건 중 1건(0.6%)이라 통상 흐름을 막지 않는다.
+    ★이 검산이 없는 옛 항목(이 기능 이전에 reloaded 된 건)은 그냥 통과시킨다 —
+      없는 근거로 차단하지 않는다.
+    """
+    found = next((c for c in (item["checks"] or [])
+                  if c.get("code") == orphan_tables.CODE), None)
+    if found is None or found.get("verdict") != sc.FAIL:
+        return True, ""
+    if (accepted or "").strip():
+        return True, ""
+    return False, (
+        "  ⛔ PASS 거부 — 원문 본문 섹션에 **어느 재무제표에도 안 붙은 금액표**가 있습니다.\n"
+        f"     {found.get('message', '')}\n"
+        "     표가 통째로 유실되는 결함(R141 연결IS 전체 유실 · R148 SCE 당기 유실)이\n"
+        "     정확히 이 모양이므로, 원문에서 그 표가 무엇인지 직접 확인하세요.\n"
+        "     · 적재됐어야 할 표다 → FAIL 로 기록:\n"
+        f'         python scripts/layer2_review.py fail --rcept {item["rcept_no"]} '
+        '--note "원문 본문표 미귀속 — 유실"\n'
+        "     · 재무제표가 아니라 정당한 제외다 → 사유를 적고 통과:\n"
+        f'         python scripts/layer2_review.py pass --rcept {item["rcept_no"]} '
+        '--verified-scopes ... --accept-orphan-tables "신탁계정 — 은행 자체 재무제표 아님"')
 
 # ────────────────────────────────────────────────────────────────────────────
 # init — 대상 큐 생성
@@ -454,6 +485,10 @@ def _run_target(session, item, *, root: Path | None = None) -> dict:
     rows = sc.load_rows(session, item["rcept_no"])
     checks = sc.run_checks(session, item["rcept_no"], corp_code=item["corp_code"],
                            fiscal_period=item["fiscal_period"], rows=rows)
+    # ★원문 쪽에서 보는 결측 신호(2026-09-20) — 다른 검산은 전부 **적재 결과**를 보므로
+    # "원문에 있는데 안 실린 표"를 원리적으로 못 본다. 여기서만 원문 표 목록과 귀속
+    # 결과를 맞댄다. 근거·실측은 fin2/audit/orphan_tables.py docstring.
+    checks.append(orphan_tables.check(_resolve_source(session, item["rcept_no"])[1]))
     path, counts = review_csv.generate(
         session, rcept_no=item["rcept_no"], corp_code=item["corp_code"],
         corp_name=item["corp_name"], market=item["market"],
@@ -583,14 +618,19 @@ def cmd_pass(args) -> None:
         if item is None:
             print("판정할 대상이 없습니다 (status=reloaded 인 건 없음).")
             return
-        ok, msg = _check_verified_scopes(item, args.verified_scopes)
-        if not ok:
-            print()
-            print(msg)
-            print()
-            return
+        for ok, msg in (_check_verified_scopes(item, args.verified_scopes),
+                        _check_orphan_ack(item, args.accept_orphan_tables)):
+            if not ok:
+                print()
+                print(msg)
+                print()
+                return
+        note = args.note
+        if (args.accept_orphan_tables or "").strip():
+            note = (f"{note} / " if note else "") + \
+                f"원문 미귀속표 확인함: {args.accept_orphan_tables.strip()}"
         _mark(session, item["rcept_no"], status="pass", reviewed_at=datetime.now(),
-              note=args.note, verified_scopes=args.verified_scopes)
+              note=note, verified_scopes=args.verified_scopes)
         session.commit()
         print(f"✅ PASS  r{item['rcept_no']}  {item['corp_name']} "
               f"{item['fiscal_year']}{item['fiscal_period']}")
@@ -789,6 +829,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "`next`/`redo` 출력의 pass 명령에 정확한 목록이 이미 채워져 나옴. "
                         "누락/불일치 시 PASS 자체가 거부됨(2026-09-20, DB감사기록 "
                         "layer2_review_queue.verified_scopes 로 남김).")
+    p.add_argument("--accept-orphan-tables", metavar="사유",
+                   help="원문 본문표 미귀속 적출을 '유실 아님'으로 판단한 사유(예: "
+                        "'신탁계정 — 은행 자체 재무제표 아님'). 사유는 note 에 남는다. "
+                        "재무제표가 아니라서 제외된 것이 확실할 때만 쓸 것 — 유실이면 fail.")
     p.add_argument("--root")
     p.add_argument("--no-advance", action="store_true", help="다음 건을 자동으로 받지 않음")
     p.add_argument("--min-severity", type=int, default=None,

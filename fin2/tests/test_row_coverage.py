@@ -26,6 +26,8 @@ _KOREAZINC_2022H1 = _ROOT / "raw_report/KOSPI/00102858_고려아연/half/2022/20
 _NAVER_2018Q1 = _ROOT / "raw_report/KOSPI/00266961_NAVER/quarter/2018/20180515002682.xml"
 # 분기 CF 의 '조정사항' 세부행이 연간 열에만 값을 싣는 필링 — 거짓 발화 113건이 나던 것.
 _NAVER_2015Q1 = _ROOT / "raw_report/KOSPI/00266961_NAVER/quarter/2015/20150515001873.xml"
+# 라벨이 두 칸으로 나뉜 SCE 서식(R134/R135) — 거짓 발화했던 회귀 가드.
+_DOOSAN_2015Q1 = _ROOT / "raw_report/KOSPI/00117212_두산/quarter/2015/20150515002498.xml"
 # R149(EPS '2,564원' 미파싱)를 되살리면 EPS 행이 결측되는 필링 — 검출력 가드.
 _SHINHAN_2022Q1 = _ROOT / "raw_report/KOSPI/00382199_신한지주/quarter/2022/20220516002487.xml"
 
@@ -150,3 +152,30 @@ def test_source_only_rows_are_written_into_the_review_csv():
     assert "fail" in row[HEADER.index("비고")]
     assert build_source_only_rows([]) == []
     assert build_source_only_rows(None) == []
+
+
+def test_multi_cell_label_parts_are_each_normalized():
+    """★라벨이 **두 칸**으로 나뉜 SCE 서식(R134/R135) — 파서는 '부모>자식' 으로 저장하고
+    원문 첫 칸은 부모뿐이다. 조각을 각각 정규화하지 않으면 꼬리 기호 때문에 안 맞는다.
+
+    실측: 두산 20150515002498 [연결] SCE
+      원문 행 = ['자본에 직접 반영된 소유주와의 거래 등:', '주식선택권의 행사', '116,250,000', ...]
+      적재 라벨 = '자본에 직접 반영된 소유주와의 거래 등:>주식선택권의 행사'
+    """
+    keys = row_coverage.loaded_label_keys(
+        "자본에 직접 반영된 소유주와의 거래 등:>주식선택권의 행사")
+    assert row_coverage.normalize_label("자본에 직접 반영된 소유주와의 거래 등:") in keys
+    assert row_coverage.normalize_label("주식선택권의 행사") in keys
+    assert "" not in keys
+
+
+def test_multi_cell_sce_label_is_not_reported_as_missing():
+    """위 서식이 결측으로 잡히지 않는다(두산·효성중공업에서 거짓 발화했던 회귀 가드)."""
+    for path, rcept, corp, fy, fp in (
+            (_DOOSAN_2015Q1, "20150515002498", "00117212", 2015, "Q1"),):
+        if not path.exists():
+            continue
+        lines = extract_report_lines(path, rcept_no=rcept, corp_code=corp,
+                                     report_fiscal_year=fy, report_fiscal_period=fp)
+        missing = row_coverage.find_missing_rows(path, lines)
+        assert missing == [], [(m.label, m.amounts) for m in missing]

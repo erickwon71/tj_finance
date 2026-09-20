@@ -246,11 +246,21 @@ def normalize_label(text: str) -> str:
 
 def loaded_label_keys(label_raw: str) -> set[str]:
     """적재 라벨 하나가 원문 셀과 맞을 수 있는 형태들. 복합라벨('부모>자식')은
-    전체와 각 조각을 모두 후보로 둔다."""
+    전체와 각 조각을 모두 후보로 둔다.
+
+    ★조각도 **각각** 정규화한다(2026-09-20) — 안 하면 꼬리 기호가 붙은 부모 이름이
+      원문 셀과 안 맞는다. 실측: 두산 20150515002498 [연결] SCE 는 라벨이 **두 칸**으로
+      나뉘어 있고(`['자본에 직접 반영된 소유주와의 거래 등:', '주식선택권의 행사', ...]`,
+      R134/R135 다중라벨 서식) 파서는 이를
+      `'자본에 직접 반영된 소유주와의 거래 등:>주식선택권의 행사'` 로 옳게 저장한다.
+      전체 문자열만 정규화하면 맨 끝 ':' 만 떨어져 조각은 `'…거래 등:'` 으로 남고,
+      원문 첫 칸(`'…거래 등:'` → 정규화하면 콜론 제거)과 달라져 거짓 발화가 났다.
+    """
     n = normalize_label(label_raw)
     keys = {n}
     if ">" in n:
-        keys.update(part for part in n.split(">") if part)
+        keys.update(normalize_label(part) for part in n.split(">") if part.strip())
+    keys.discard("")
     return keys
 
 

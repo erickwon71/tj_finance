@@ -60,7 +60,11 @@ def _resolve_source_fn():
 _TARGETS_SQL = """
     SELECT rcept_no, corp_code, corp_name, corp_rank, fiscal_year, fiscal_period
     FROM layer2_review_queue
-    WHERE source_kind = 'xml' AND fiscal_year >= 2015
+    -- ★`source_kind` 로 거르지 않는다(2026-09-20) — 그 값은 `_reload_one` 이 한 번
+    -- 돌고 나서야 채워지므로, pending 건은 대부분 NULL 이다. 그걸로 필터를 걸면
+    -- 센서스가 **이미 검토된 건만** 보게 돼(실측: 대상이 76건으로 줄었다) 전수라는
+    -- 목적이 무너진다. 원문 유무는 실행 시점에 `_resolve_source` 가 판정한다.
+    WHERE fiscal_year >= 2015
       {corp_filter}
     ORDER BY corp_rank NULLS LAST, corp_code, fiscal_year DESC, rcept_no
 """
@@ -74,7 +78,11 @@ _BREADTH_SQL = """
     SELECT DISTINCT ON (corp_code)
            rcept_no, corp_code, corp_name, corp_rank, fiscal_year, fiscal_period
     FROM layer2_review_queue
-    WHERE source_kind = 'xml' AND fiscal_year >= 2015
+    -- ★`source_kind` 로 거르지 않는다(2026-09-20) — 그 값은 `_reload_one` 이 한 번
+    -- 돌고 나서야 채워지므로, pending 건은 대부분 NULL 이다. 그걸로 필터를 걸면
+    -- 센서스가 **이미 검토된 건만** 보게 돼(실측: 대상이 76건으로 줄었다) 전수라는
+    -- 목적이 무너진다. 원문 유무는 실행 시점에 `_resolve_source` 가 판정한다.
+    WHERE fiscal_year >= 2015
       {corp_filter}
     ORDER BY corp_code, fiscal_year ASC, rcept_no
 """

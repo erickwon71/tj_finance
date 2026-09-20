@@ -673,6 +673,22 @@ def _is_eps_label(label: str, *, section_path: str | None,
     table_has_eps_header: 이 표에 **금액 없는 `주당` 행**(= EPS 절 제목)이 있는가.
         호출측이 표 단위로 한 번 계산해 넘긴다. 기본값 True = `D` 비활성(보수적).
     prev_toplevel_label: 이 행 앞의 가장 가까운 **최상위** 행 라벨(없으면 None).
+
+    ★`E`(R147, 2026-09-20, 두산에너빌리티 계층2 원문대조에서 발견) — 라벨 자체에
+      `주당` 이 없어도, **조상 체인이 EPS 절이고(`C`) 이 행 자신이 원(₩)을 명시
+      선언했다면** EPS 자식행으로 인정한다. 실측(00159616 두산에너빌리티
+      `20191114002511` 등 5건): `기본주당이익(손실)`/`희석주당이익(손실)` 아래에
+      계속영업/중단영업 세부이익이 **같은 라벨을 반복**해 한 단계 더 들여쓰기로만
+      나타난다(`　기본주당이익(손실) (단위 : 원)` → `　　계속영업이익(손실) (단위 :
+      원)`) — 이 자식 라벨엔 `주당` 이 전혀 없다. `C` 단독 인정을 안 하는 이유
+      (문서 상단 — 주식수·비율 행 오염)는 여기서 원(₩) 명시 선언을 **추가로** 요구해
+      회피한다: 주식수·비율 행은 원(₩)을 선언하지 않는다(주/%.). 같은 라벨("계속영업
+      이익(손실)")이 EPS 절 밖(본문 손익계산서)에도 있지만 그쪽은 `(단위 : 원)`
+      인라인 선언이 없다 — `E` 는 그 본문 행까지 삼키지 않는다.
+      ★이 자식 라벨은 `extract_rows` 의 '단위표기' 헤더규칙(`(단위 :` 매치)에 걸려
+      본류 `table_rows` 에는 애초에 없다 — `E` 는 원본 `<TR>` 을 도는
+      `_emit_eps_lines` 안에서만 실효를 갖고, 본류 호출(line~1077)에서는 이 조건이
+      항상 거짓이라(그 라벨이 `table_rows` 자체에 없음) 부작용이 없다.
     """
     if report_fiscal_year < _EPS_STRUCTURAL_RULE_MIN_FY:
         # pre-2015 는 기존 동작 **그대로** — 원문 라벨의 literal 부분문자열(위 상수 주석).
@@ -682,7 +698,8 @@ def _is_eps_label(label: str, *, section_path: str | None,
     #   literal `주당` 을 갖지 않아, 순서가 뒤면 구조 규칙에 닿기도 전에 탈락한다.
     s = strip_cell_whitespace(label)
     if "주당" not in s:
-        return False                     # `C`/`D` 단독 인정 안 함(docstring 참고)
+        # `E` — 라벨엔 `주당` 이 없어도 EPS 절 자식이면서 원(₩)을 스스로 선언한 행.
+        return _in_eps_section(section_path) and detect_unit_declaration(label) == 1
     return bool(_EPS_METHOD_RE.search(s) or _EPS_PROFIT_RE.search(s)
                 or _in_eps_section(section_path)
                 or _eps_headerless_toplevel(

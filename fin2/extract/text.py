@@ -383,6 +383,20 @@ def _detect_body_statement_tables(root, fin_type: str,
             if (stmt is None and last_stmt is not None and _table_has_data_rows(tbl)
                     and is_substatement_marker(title_text_for_classify(tbl))):
                 stmt = last_stmt
+            # ★R148(2026-09-20) — 자본변동표가 페이지 폭 제약으로 **표지 문구조차 없이**
+            # 물리적 <TABLE> 2개로 분할되는 서식(R142와 달리 뒤쪽 표에 "(N) ...재무제표
+            # (기간)" 같은 최소한의 마커도 없다 — 앞 표 마지막 행 바로 다음에 새 <TABLE>이
+            # 시작하고, 자기 THEAD 에 SCE 열이름(자본금/자본잉여금/이익잉여금 등)을 그대로
+            # 반복한다). 텍스트 표지가 전혀 없으므로 `is_substatement_marker` 로는 못 잡는다
+            # — 표 자신의 내용(SCE 자본 구성요소 열이름 ≥3개, `_looks_like_equity_changes_
+            # header`, R127 이 이미 쓰던 판정근거)으로만 이어붙인다(R6: 표제가 아니라 내용
+            # 기반). last_stmt=="SCE" 로 좁혀 다른 재무제표의 헤더리스 연속표에는 적용하지
+            # 않는다. 실측: 신한지주 20220316000748(2021FY)·20190401004307(2018FY) —
+            # 당기(연도말) 롤포워드 구간 표 전체가 이 서식 때문에 유실됐었다(layer2 review
+            # 원문전체대조 캠페인 이슈#7·#8).
+            if (stmt is None and last_stmt == "SCE" and _table_has_data_rows(tbl)
+                    and _looks_like_equity_changes_header(tbl)):
+                stmt = last_stmt
             # R4-2 §3(2026-08-07) — 위 폴백 2종도 실패했을 때, 표 자신이 섹션의 첫 번째
             # 금액표이고 표 **안**에서 헤더행이 재등장하면(복수 재무제표가 한 물리적 TABLE 에
             # 이어붙은 서식) 헤더 재등장 지점으로 잘라 각각 분리 처리한다(실측 이노시뮬레이션

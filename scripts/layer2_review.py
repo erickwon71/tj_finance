@@ -99,22 +99,51 @@ def _scope_codes(counts: dict | None) -> list[str]:
     return out
 
 
+_ALL_SCOPE_CODES = tuple(f"{p}-{s}" for p in ("sep", "con")
+                         for s in ("bs", "is", "cf", "sce"))
+
+
 def _check_verified_scopes(item, given: str | None) -> tuple[bool, str]:
     """(ok, message). given 은 `pass --verified-scopes` 로 받은 콤마구분 문자열."""
-    expected = set(_scope_codes(item["n_lines_by_scope"]))
-    if not expected:
-        return True, ""  # 적재된 scope 가 없는 건(빈 필링 등)은 열거할 게 없다.
+    loaded = set(_scope_codes(item["n_lines_by_scope"]))
     got = {s.strip().lower() for s in (given or "").split(",") if s.strip()}
-    missing = expected - got
-    extra = got - expected
-    if missing or extra:
-        parts = ["  ⛔ PASS 거부 — --verified-scopes 가 실제 적재 scope 와 다릅니다."]
-        if missing:
-            parts.append(f"     누락: {','.join(sorted(missing))}")
-        if extra:
-            parts.append(f"     이 건엔 없는 scope: {','.join(sorted(extra))}")
-        parts.append(f"     필요한 값 그대로: --verified-scopes {','.join(_scope_codes(item['n_lines_by_scope']))}")
-        return False, "\n".join(parts)
+
+    unknown = got - set(_ALL_SCOPE_CODES)
+    if unknown:
+        return False, ("  ⛔ PASS 거부 — 알 수 없는 scope 코드: "
+                       f"{','.join(sorted(unknown))}\n"
+                       f"     쓸 수 있는 값: {','.join(_ALL_SCOPE_CODES)}")
+
+    if not loaded:
+        return False, (
+            "  ⛔ PASS 거부 — 이 건은 적재된 재무제표가 하나도 없습니다.\n"
+            "     원문에 표가 있는데 0행이면 파서 결함이니 `fail`, 원문 자체가 비어 있으면\n"
+            "     `skip` 으로 기록하세요(빈 건을 조용히 통과시키지 않는다).")
+
+    # ★원문엔 있는데 적재가 없는 scope 는 **결함 신고**지 입력 오류가 아니다(2026-09-20 2차).
+    # 같은 날 초판은 이걸 "이 건엔 없는 scope" 로 거부해서, DART 원문을 제대로 열어보고
+    # "연결 손익계산서도 확인했다"고 정직하게 적어낸 검토자에게 그 주장을 **지우라고**
+    # 요구했다. 표가 통째로 유실되는 결함(R141 KB금융 연결IS 전체 유실 · R148 SCE 당기
+    # 롤포워드 유실)이 정확히 이 모양이라, 캠페인이 찾아야 할 바로 그 신호를 입력 오류로
+    # 처리한 셈이었다. 체크리스트를 감사 대상(DB)에서 뽑는 구조의 한계는 남지만, 최소한
+    # 검토자가 "원문 기준으로 더 있었다"고 말할 수 있는 길은 막지 않는다.
+    source_only = got - loaded
+    if source_only:
+        return False, (
+            "  ⛔ PASS 거부 — 원문에서 확인했다는 scope 가 적재돼 있지 않습니다: "
+            f"{','.join(sorted(source_only))}\n"
+            "     이건 입력 오류가 아니라 **결함 신고**로 취급합니다(R141/R148 처럼 표가\n"
+            "     통째로 유실된 모양). PASS 가 아니라 FAIL 로 기록하세요:\n"
+            f'       python scripts/layer2_review.py fail --rcept {item["rcept_no"]} '
+            f'--note "원문엔 {",".join(sorted(source_only))} 있으나 적재 0행"\n'
+            "     원문에도 없는 것을 잘못 적었다면 그 값만 빼고 다시 실행하세요.")
+
+    missing = loaded - got
+    if missing:
+        return False, (
+            "  ⛔ PASS 거부 — 아직 열거되지 않은(=대조 안 끝난) scope 가 있습니다: "
+            f"{','.join(sorted(missing))}\n"
+            "     적재된 scope 는 전부 원문과 대조한 뒤 열거해야 합니다.")
     return True, ""
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -542,6 +571,13 @@ def cmd_next(args) -> None:
 
 
 def cmd_pass(args) -> None:
+    # ★autocompact 대비(2026-09-20) — 세션이 새로 시작해 `next` 없이 곧바로 `pass` 만
+    # 부르면 전체비교 규칙을 한 번도 못 본 채 판정하게 된다(실측: R148 백필 때 `pass
+    # --rcept` 8회가 전부 그 경로였다). 판정은 되돌리기 어려운 마지막 관문이므로
+    # 여기서도 규칙 전문을 다시 찍는다.
+    print()
+    print(_full_comparison_reminder())
+    print()
     with get_session() as session:
         item = _pick(session, args.rcept, statuses=("reloaded",)) if args.rcept else _current(session)
         if item is None:
@@ -716,6 +752,10 @@ def cmd_status(args) -> None:
             print(f"\n  검토 대기 중: r{cur['rcept_no']} {cur['corp_name']} "
                   f"{cur['fiscal_year']}{cur['fiscal_period']}")
             print(f"  CSV: {cur['csv_path']}")
+        # ★autocompact 대비 — `status` 는 새 세션이 캠페인을 이어받을 때 가장 먼저 치는
+        # 명령이다. 여기서 규칙을 먼저 보여줘야 대화 맥락이 날아간 채 재개해도 규칙이 산다.
+        print()
+        print(_full_comparison_reminder())
         print()
 
 

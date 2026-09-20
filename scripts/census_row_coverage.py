@@ -16,9 +16,14 @@ rcept_no 는 건너뛴다. 사용자 지침("장시간 명령 실행 금지")대
 
 ## 사용법
 
-    python scripts/census_row_coverage.py --limit 300
+    python scripts/census_row_coverage.py --limit 300 --breadth   # ★계열 탐색은 이쪽
+    python scripts/census_row_coverage.py --limit 300             # 시총순 깊게
     python scripts/census_row_coverage.py --limit 300 --corp 00382199
-    python scripts/census_row_coverage.py --report          # 누적 결과 집계만
+    python scripts/census_row_coverage.py --report                # 누적 결과 집계만
+
+★처음에는 `--breadth`(회사별 1건씩) 로 돌려라. 기본 순서는 시총순이라 삼성전자 110건을
+다 훑고 나서야 다음 회사로 가는데, 결함은 회사/서식 단위로 무리지으므로 회사를 많이
+보는 쪽이 계열 발견에 압도적으로 유리하다(실측: 시총 상위 296건 발화 0건).
 
 출력: `docs/qa/row_coverage_census.jsonl`(건당 1줄) + `--report` 집계.
 """
@@ -58,6 +63,20 @@ _TARGETS_SQL = """
     WHERE source_kind = 'xml' AND fiscal_year >= 2015
       {corp_filter}
     ORDER BY corp_rank NULLS LAST, corp_code, fiscal_year DESC, rcept_no
+"""
+
+# ★넓게 도는 모드 — 회사별 **가장 오래된** 필링 1건씩.
+#   기본 순서(시총순 → 회사 안에서 최신순)는 삼성전자 110건을 다 훑고 나서야 다음
+#   회사로 간다. 결함은 **회사/서식 단위**로 무리지으므로, 계열을 빨리 찾으려면 회사를
+#   많이 보는 쪽이 압도적으로 낫다. 오래된 쪽을 고르는 이유는 실측에서 발화가 2015~2017
+#   서식에 몰렸기 때문이다(최신 40개사 0건 vs 최고령 40개사 2건).
+_BREADTH_SQL = """
+    SELECT DISTINCT ON (corp_code)
+           rcept_no, corp_code, corp_name, corp_rank, fiscal_year, fiscal_period
+    FROM layer2_review_queue
+    WHERE source_kind = 'xml' AND fiscal_year >= 2015
+      {corp_filter}
+    ORDER BY corp_code, fiscal_year ASC, rcept_no
 """
 
 
@@ -116,6 +135,9 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--limit", type=int, default=200, help="이번 실행에서 처리할 건수")
     ap.add_argument("--corp", help="corp_code 지정 시 그 회사만")
+    ap.add_argument("--breadth", action="store_true",
+                    help="회사별 가장 오래된 1건씩 넓게 훑는다(결함 계열 탐색용). "
+                         "기본은 시총순으로 회사별 전 필링을 깊게 훑는다.")
     ap.add_argument("--report", action="store_true", help="집계만 출력하고 종료")
     args = ap.parse_args()
 
@@ -127,7 +149,7 @@ def main() -> None:
     done = load_done()
     print(f"이미 처리: {len(done):,}건 — 건너뜁니다.")
 
-    sql = _TARGETS_SQL.format(
+    sql = (_BREADTH_SQL if args.breadth else _TARGETS_SQL).format(
         corp_filter="AND corp_code = :corp" if args.corp else "")
     params = {"corp": args.corp} if args.corp else {}
 

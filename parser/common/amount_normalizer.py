@@ -357,6 +357,12 @@ def detect_unit_multiplier(section_text: str) -> int:
     return 1
 
 
+# ── R149(2026-09-20) — 셀이 **스스로** 원(₩) 단위를 밝히는 표기: '2,564원'.
+#   앞이 한글이면 배수를 품은 접미사('1,234천원'·'백만원'·'억원')라 여기 걸리면 안 된다
+#   → 직전 글자가 한글이 아닐 때만 매치(부정 후방탐색).
+_CELL_OWN_WON_RE = re.compile(r"(?<![가-힣])원$")
+
+
 def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
     """
     셀 텍스트를 원(KRW) 단위 정수로 변환한다.
@@ -392,6 +398,21 @@ def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
     # 공란 체크
     if not s or s in _BLANK_PATTERNS:
         return None
+
+    # ── R149(2026-09-20): 셀이 자기 단위를 명시한 '2,564원' — 값은 **원 그대로**이고
+    #   표의 배수는 이 셀에 적용되지 않는다. 금융지주 IS 는 표 전체가 백만원 선언인데
+    #   주당이익 행만 원 단위로 인쇄하는 서식을 쓴다(신한지주·KB금융·하나금융지주·
+    #   NH투자증권·SK스퀘어 실측). 종전엔 '원' 때문에 숫자로 못 읽어 **EPS 행이 통째로
+    #   결측**됐다(값을 틀리게 읽은 게 아니라 행 자체가 사라졌다). 여기서 배수를 1 로
+    #   눌러두지 않으면 반대로 2,564 × 10⁶ 이라는 날조가 된다.
+    #   ※ '천원'·'백만원' 접미사가 붙은 데이터칸은 실측 표본(150건 필링, '원' 계열
+    #     74건 전부 EPS)에서 **한 건도 없었다** → 근거 없는 처리를 넣지 않는다(추측 금지).
+    #     그런 셀은 종전대로 None 이다.
+    if _CELL_OWN_WON_RE.search(s):
+        s = _CELL_OWN_WON_RE.sub('', s).strip()
+        multiplier = 1
+        if not s or s in _BLANK_PATTERNS:
+            return None
 
     # ── R4: 범위 표기가 남아 있으면 금액이 아니다(기간·구간).
     if _RANGE_MARK_RE.search(s):

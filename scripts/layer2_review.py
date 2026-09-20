@@ -50,6 +50,73 @@ from fin2.extract.report_lines import (extract_report_lines, store_report_lines,
 # 회사 안 검토 순서의 기간 정렬 — 달력 순서(Q1 → H1 → Q3 → FY)를 역으로 쓴다.
 _PERIOD_RANK = {"Q1": 1, "H1": 2, "Q3": 3, "FY": 4}
 
+# ★재발방지(2026-09-20): autocompact 로 대화 맥락(지시)이 사라져도 이 커맨드 출력
+# 자체가 규칙을 다시 상기시키도록, 매 건 제시 때마다 전체비교 메모리를 직접 읽어 출력한다.
+# 이 세션에서 신한지주 23건이 BS↔SCE 내부대조만으로 pass 됐다가 전부 redo 로 되돌아갔다
+# (참고: docs/qa/layer2_review_campaign_issues_2026-09-20.md).
+_FULL_COMPARISON_MEMORY = Path(
+    "~/.claude/projects/-Users-taejin-Project-tj-finance/memory/"
+    "feedback-layer2-review-full-comparison-required.md"
+).expanduser()
+
+
+def _full_comparison_reminder() -> str:
+    fallback = (
+        "  ⚠️  ★전체비교 필수★ DART 원문(별도+연결 BS/IS/CF/SCE 전 항목)을 웹뷰로 직접 열어\n"
+        "     CSV 와 라인별로 대조한 뒤에만 pass 할 것. 자본총계↔SCE종가 같은 내부대조나\n"
+        "     부분 항목만 보고 pass 하는 것은 금지 (메모리 파일을 찾을 수 없어 요약만 표시)."
+    )
+    try:
+        text_ = _FULL_COMPARISON_MEMORY.read_text(encoding="utf-8")
+    except OSError:
+        return fallback
+    body = text_.split("---", 2)[-1].strip()
+    if not body:
+        return fallback
+    lines = ["  ⚠️  ★전체비교 필수 (매 pass 전 확인) — " + str(_FULL_COMPARISON_MEMORY.name) + " ★"]
+    lines += ["  " + ln for ln in body.splitlines()]
+    return "\n".join(lines)
+
+
+# ★★2026-09-20 강화(2차) — 리마인더 출력만으로는 "봤지만 그냥 넘어가는 것"을 막지 못한다
+# (신한지주 23건 사고가 리마인더 부재가 아니라 습관적 생략이었다). `pass` 를 **기계적
+# 게이트**로 바꾼다: 그 건에 실제로 적재된 모든 scope(별도/연결 × BS/IS/CF/SCE)를
+# `--verified-scopes` 로 하나하나 열거하지 않으면 pass 자체를 거부한다. 이게 실제로
+# DART 원문을 열어봤다는 것을 증명하진 못하지만(스크립트가 브라우저 사용을 감지할 방법은
+# 없다), 최소한 "그 건에 뭐가 있는지도 모른 채 pass" 는 구조적으로 불가능해지고,
+# 무엇을 확인했다고 주장했는지가 `layer2_review_queue.verified_scopes` 에 감사기록으로
+# 남는다.
+def _scope_codes(counts: dict | None) -> list[str]:
+    """n_lines_by_scope(예: {"separate":{"BS":21,...},"consolidated":{...}}) →
+    실제 행이 있는 scope 코드 리스트(예: ["sep-bs","sep-is","sep-cf","sep-sce",
+    "con-bs","con-is","con-cf","con-sce"]). 순서 고정(별도 먼저, 각 안에서 BS/IS/CF/SCE)."""
+    counts = counts or {}
+    out = []
+    for basis, prefix in (("separate", "sep"), ("consolidated", "con")):
+        for stmt in ("BS", "IS", "CF", "SCE"):
+            if (counts.get(basis) or {}).get(stmt, 0) > 0:
+                out.append(f"{prefix}-{stmt.lower()}")
+    return out
+
+
+def _check_verified_scopes(item, given: str | None) -> tuple[bool, str]:
+    """(ok, message). given 은 `pass --verified-scopes` 로 받은 콤마구분 문자열."""
+    expected = set(_scope_codes(item["n_lines_by_scope"]))
+    if not expected:
+        return True, ""  # 적재된 scope 가 없는 건(빈 필링 등)은 열거할 게 없다.
+    got = {s.strip().lower() for s in (given or "").split(",") if s.strip()}
+    missing = expected - got
+    extra = got - expected
+    if missing or extra:
+        parts = ["  ⛔ PASS 거부 — --verified-scopes 가 실제 적재 scope 와 다릅니다."]
+        if missing:
+            parts.append(f"     누락: {','.join(sorted(missing))}")
+        if extra:
+            parts.append(f"     이 건엔 없는 scope: {','.join(sorted(extra))}")
+        parts.append(f"     필요한 값 그대로: --verified-scopes {','.join(_scope_codes(item['n_lines_by_scope']))}")
+        return False, "\n".join(parts)
+    return True, ""
+
 # ────────────────────────────────────────────────────────────────────────────
 # init — 대상 큐 생성
 # ────────────────────────────────────────────────────────────────────────────
@@ -416,11 +483,16 @@ def _print_target(item, result: dict) -> None:
         for c in fails:
             print(f"           · [{c.grade}] {c.scope} {c.code} — {c.message}")
     print()
+    print(_full_comparison_reminder())
+    print()
     print(f'  open "{result["csv_path"]}"')
     print()
+    scopes = ",".join(_scope_codes(counts))
     print("  → CSV 와 DART 원문을 대조한 뒤:")
-    print("       python scripts/layer2_review.py pass")
+    print(f'       python scripts/layer2_review.py pass --verified-scopes {scopes}')
     print('       python scripts/layer2_review.py fail --note "무엇이 어떻게 틀렸는지"')
+    print("     ⛔ --verified-scopes 는 실제로 대조를 끝낸 scope 만 나열할 것 — 위 목록은")
+    print("        '이 건에 적재된 scope 전부' 일 뿐, 대조 완료를 대신 증명해주지 않습니다.")
     print()
 
 
@@ -475,8 +547,14 @@ def cmd_pass(args) -> None:
         if item is None:
             print("판정할 대상이 없습니다 (status=reloaded 인 건 없음).")
             return
+        ok, msg = _check_verified_scopes(item, args.verified_scopes)
+        if not ok:
+            print()
+            print(msg)
+            print()
+            return
         _mark(session, item["rcept_no"], status="pass", reviewed_at=datetime.now(),
-              note=args.note)
+              note=args.note, verified_scopes=args.verified_scopes)
         session.commit()
         print(f"✅ PASS  r{item['rcept_no']}  {item['corp_name']} "
               f"{item['fiscal_year']}{item['fiscal_period']}")
@@ -665,6 +743,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("pass", help="원문대조 통과 → 다음 1건")
     p.add_argument("--rcept")
     p.add_argument("--note")
+    p.add_argument("--verified-scopes", required=True,
+                   help="이 건에 실제로 적재된 scope 전부를 콤마구분으로 명시(예: "
+                        "sep-bs,sep-is,sep-cf,sep-sce,con-bs,con-is,con-cf,con-sce). "
+                        "`next`/`redo` 출력의 pass 명령에 정확한 목록이 이미 채워져 나옴. "
+                        "누락/불일치 시 PASS 자체가 거부됨(2026-09-20, DB감사기록 "
+                        "layer2_review_queue.verified_scopes 로 남김).")
     p.add_argument("--root")
     p.add_argument("--no-advance", action="store_true", help="다음 건을 자동으로 받지 않음")
     p.add_argument("--min-severity", type=int, default=None,

@@ -2058,6 +2058,10 @@ class Layer2ReviewQueue(Base):
                                    "blocked=재적재 불가(원문부재·manual 보호) / skipped=검토 제외")
     reviewed_at   = Column(DateTime,   nullable=True)
     note          = Column(Text,       nullable=True, comment="FAIL 사유·skip 사유 등 사람이 남긴 메모")
+    verified_scopes = Column(Text,     nullable=True,
+                             comment="PASS 시 --verified-scopes 로 명시한 값(감사기록). "
+                                      "실제 대조를 증명하진 못하지만, 적재된 scope 전부를 "
+                                      "명시하지 않으면 pass 자체가 거부된다(2026-09-20).")
 
     __table_args__ = (
         Index("ix_l2rq_order", "corp_rank", "seq_in_corp"),

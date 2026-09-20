@@ -1462,6 +1462,13 @@ def _run_migrations() -> None:
         CREATE INDEX IF NOT EXISTS ix_note_line_reload_progress_corp
             ON note_line_reload_progress (corp_code);
         """),
+
+        ("2026_09_20_l2rq_verified_scopes",
+         # 2026-09-20: `pass` 가 리마인더만 출력하고 실제 대조 여부는 그대로 자율판단에
+         # 맡기던 문제(신한지주 23건이 내부대조만으로 pass 됐다가 전부 redo)를 기계적으로
+         # 막기 위해 — `pass` 가 그 건에 실제로 적재된 모든 scope(별도/연결 × BS/IS/CF/SCE)를
+         # `--verified-scopes` 로 하나하나 명시하도록 강제하고, 그 값을 감사기록으로 남긴다.
+         "ALTER TABLE layer2_review_queue ADD COLUMN IF NOT EXISTS verified_scopes TEXT"),
     ]
 
     with engine.begin() as conn:

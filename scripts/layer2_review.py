@@ -91,6 +91,24 @@ _UNIVERSE_SQL = text(
     """
 )
 
+# 정기보고서로 등록돼 있지만 **재무제표가 있을 수 없는 서류**를 걸러낸다
+# (2026-09-20, docs/qa/layer2_blocked_filings_investigation_2026-09-20.md §①).
+#
+# `사업보고서제출기한연장신고서`(ACODE 11061) 류는 `report_nm` 이 '사업보고서…' 로
+# 시작해 `report_type='annual'` 로 분류되지만, 본문이 6KB 남짓에 `<TABLE>` 이 하나도
+# 없다(실측: 케이티앤지 `20200320001044`). 큐에 넣어봐야 전부 "추출 0행"으로 blocked
+# 되므로 검토자 시간만 버린다. 실측 202건(193 사업 + 8 반기 + 1 분기)이 그랬다.
+#
+# ★전부 `is_final=False` 라 정본 선정에는 애초에 안 잡힌다 — 데이터 오염 문제가
+#   아니라 **큐 위생** 문제다.
+# ★`[첨부추가]`·`[기재정정]` 접두는 **절대 거르면 안 된다** — 실데이터가 있는 정상
+#   보고서다(전수 확인: `[첨부추가]사업보고서` 만 수천 건, 대부분 lines>0).
+#   그래서 접두가 아니라 **'제출기한연장신고서' 라는 서류 종류 자체**로 거른다
+#   (`[기재정정]사업보고서제출기한연장신고서` 같은 조합도 이 한 조건으로 같이 걸린다).
+# ★전수 확인 결과 `report_type` 이 정기보고서인 `report_nm` 뼈대는 4종뿐이고
+#   (사업/반기/분기보고서 + 이 연장신고서), 다른 비-보고서 오염은 없었다.
+_NON_REPORT_NM = "%제출기한연장신고서%"
+
 # ★is_final 로 거르지 않는다 — R3/`collector/filing_select.py`. 정정본도 대상이다.
 # ★fiscal_year_min — 시대 4단계 분할(docs/plans/layer2_review_staged_screening_design_
 #   2026-09-11.md §1) 지원. NULL 이면 전체 기간(기존 동작 무변경).
@@ -101,6 +119,7 @@ _FILINGS_SQL = text(
     FROM filings f
     WHERE f.corp_code = :c
       AND f.report_type IN ('annual', 'half', 'quarter')
+      AND (f.report_nm IS NULL OR f.report_nm NOT LIKE :non_report_nm)
       AND (CAST(:fy_min AS smallint) IS NULL OR f.fiscal_year >= :fy_min)
     """
 )
@@ -129,7 +148,8 @@ def cmd_init(args) -> None:
 
         for rank, corp in ranked:
             filings = session.execute(
-                _FILINGS_SQL, {"c": corp.corp_code, "fy_min": args.fiscal_year_min}).fetchall()
+                _FILINGS_SQL, {"c": corp.corp_code, "fy_min": args.fiscal_year_min,
+                               "non_report_nm": _NON_REPORT_NM}).fetchall()
             if not filings:
                 continue
             ordered = sorted(

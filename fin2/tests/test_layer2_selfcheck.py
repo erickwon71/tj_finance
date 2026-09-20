@@ -243,3 +243,129 @@ def test_rollup_only_blocking_grade_drives_suspect():
     bad = [sc.CheckResult("bs_balance", "s", sc.GRADE_BLOCKING, "FAIL", "")]
     assert sc.rollup(bad) == "suspect"
     assert sc.rollup([sc.CheckResult("bs_balance", "s", sc.GRADE_BLOCKING, "NA", "")]) == "na"
+
+
+# ── 2026-09-20 캠페인 거짓양성 일괄 회귀 ─────────────────────────────────────
+# 근거: docs/qa/layer2_review_campaign_issues_2026-09-20.md 이슈 3~8·17~19·21~22.
+# 셋 다 "원문 서식 변형을 검산식이 못 따라간" 것이고 파서 결함은 하나도 없었다.
+
+
+def test_is_waterfall_accepts_cogs_stored_negative():
+    """★거짓양성 회귀 — POSCO홀딩스 20251114002479 / LG화학 20240315000957 등.
+
+    원문이 매출원가를 괄호(음수)로 인쇄하면 `value_won` 이 음수로 적재된다. 이때
+    `매출액 − 매출원가` 를 곧이곧대로 빼면 원가를 **더해** 버려 정확히 `2 × 매출원가`
+    만큼 어긋난 FAIL 이 난다(이슈 3·6의 공통 서명).
+    """
+    rows = [row("IS", "separate", "매출액", 1_000, order=1),
+            row("IS", "separate", "매출원가", -700, order=2),
+            row("IS", "separate", "매출총이익", 300, order=3)]
+    assert verdicts(sc.check_is_waterfall(rows), "is_waterfall") == ["PASS"]
+
+
+def test_is_waterfall_still_catches_real_mismatch():
+    rows = [row("IS", "separate", "매출액", 1_000, order=1),
+            row("IS", "separate", "매출원가", -700, order=2),
+            row("IS", "separate", "매출총이익", 250, order=3)]
+    assert verdicts(sc.check_is_waterfall(rows), "is_waterfall") == ["FAIL"]
+
+
+def test_bs_rollup_accepts_third_top_level_group():
+    """★거짓양성 회귀 — HD한국조선해양 20170515004618.
+
+    유동/비유동과 **나란히** '소유주분배예정자산집단' 이 인쇄되는 서식. 2항만 더하면
+    딱 그 금액만큼 모자란 FAIL 이 난다.
+    """
+    rows = [row("BS", "separate", "유동자산", 100, order=1, depth=1, section_path="자산"),
+            row("BS", "separate", "비유동자산", 200, order=2, depth=1, section_path="자산"),
+            row("BS", "separate", "소유주분배예정자산집단", 50, order=3, depth=1,
+                section_path="자산"),
+            row("BS", "separate", "자산총계", 350, order=4, depth=1, section_path="자산")]
+    assert verdicts(sc.check_bs_rollup(rows), "bs_rollup") == ["PASS"]
+
+
+def test_bs_rollup_does_not_double_count_nested_held_for_sale():
+    """'매각예정비유동자산' 이 **유동자산 안**에 들어간 서식은 더하면 이중계상이다.
+
+    depth·section_path 가 유동자산과 다르므로 제3의 대분류로 줍지 않아야 한다.
+    """
+    rows = [row("BS", "separate", "유동자산", 100, order=1, depth=1, section_path="자산"),
+            row("BS", "separate", "매각예정비유동자산", 30, order=2, depth=2,
+                section_path="자산>유동자산"),
+            row("BS", "separate", "비유동자산", 200, order=3, depth=1, section_path="자산"),
+            row("BS", "separate", "자산총계", 300, order=4, depth=1, section_path="자산")]
+    assert verdicts(sc.check_bs_rollup(rows), "bs_rollup") == ["PASS"]
+
+
+def test_cf_net_change_identity_without_any_adjustment_row():
+    """★거짓양성 회귀 — 레인보우로보틱스 20230323000602.
+
+    환율효과 행이 소계와 기말 사이에 있어도 **소계에 이미 반영된** 서식이 있다.
+    '무조건 더한다' 로 고정하면 그 금액만큼 어긋난다 — 안 더한 식이 먼저 맞으면 그걸 쓴다.
+    """
+    rows = _cf(("현금및현금성자산의 순증가", 40),
+               ("기초 현금및현금성자산", 1_000),
+               ("현금및현금성자산에 대한 환율변동효과", 7),
+               ("기말 현금및현금성자산", 1_040))
+    assert verdicts(sc.check_cf_closing_cash(rows), "cf_closing_cash") == ["PASS"]
+
+
+def test_cf_net_change_identity_adds_all_intermediate_rows():
+    """★거짓양성 회귀 — 한국전력 20180515002408 / 대한항공 20201116001718 / LS 20190401004913.
+
+    소계와 기말 사이에 환율효과 말고도 연결범위변동·대체 등 여러 조정행이 찍히는 서식.
+    화이트리스트로 쫓지 말고 그 구간 전체를 더한 식도 후보로 둔다.
+    """
+    rows = _cf(("현금및현금성자산의 증가", 40),
+               ("기초 현금및현금성자산", 1_000),
+               ("외화환산으로 인한 현금의 변동", 7),
+               ("연결범위 변동으로 인한 현금의 증가", 3),
+               ("기말 현금및현금성자산", 1_050))
+    assert verdicts(sc.check_cf_closing_cash(rows), "cf_closing_cash") == ["PASS"]
+
+
+def test_cf_adjustment_row_sign_can_live_in_the_label():
+    """★거짓양성 회귀 — SK이노베이션 20250318000862 / HMM 20161114002386.
+
+    '…의 감소' 행을 **양수 절대값**으로 인쇄하는 발행사가 있다(원문 확인:
+    `ENG="Decrease in cash due to replacement of assets held for sale"` + `<P>9,137,925</P>`).
+    라벨에 부호가 있으면 라벨을 따른다 — 단 '증감'·'증가' 가 함께 있으면 금액 부호를 믿는다.
+    """
+    rows = _cf(("현금및현금성자산의 증가", 40),
+               ("기초 현금및현금성자산", 1_000),
+               ("매각예정자산 대체로 인한 현금의 감소", 9),
+               ("기말 현금및현금성자산", 1_031))
+    assert verdicts(sc.check_cf_closing_cash(rows), "cf_closing_cash") == ["PASS"]
+
+
+def test_cf_still_fails_when_no_variant_balances():
+    """세 식 어느 것도 안 맞으면 여전히 FAIL — 관대해진 것이지 꺼진 게 아니다."""
+    rows = _cf(("현금및현금성자산의 증가", 40),
+               ("기초 현금및현금성자산", 1_000),
+               ("외화환산으로 인한 현금의 변동", 7),
+               ("기말 현금및현금성자산", 5_000))
+    assert verdicts(sc.check_cf_closing_cash(rows), "cf_closing_cash") == ["FAIL"]
+
+
+def test_duplicate_rows_ignores_zero_and_null_values():
+    """★거짓양성 회귀 — 값 0 인 행은 같은 표에서 얼마든지 반복된다(빈칸/해당없음).
+
+    0 을 중복으로 세면 정상 보고서 대부분이 걸린다.
+    """
+    rows = [row("BS", "separate", "기타자본조정", 0, order=3, section_path="자본"),
+            row("BS", "separate", "기타자본조정", 0, order=8, section_path="자본"),
+            row("BS", "separate", "기타포괄손익누계액", None, order=9, section_path="자본")]
+    assert verdicts(sc.check_duplicate_rows(rows), "duplicate_rows") == ["PASS"]
+
+
+def test_duplicate_rows_message_reports_share_for_triage():
+    """이슈 18(한진칼 20230515002432)은 **현재열만 적재**라 원문 라벨 반복과 진짜 이중
+    append 를 구분할 수 없다 — 그래서 끄지 않고, 대신 '몇 행 중 몇 행' 을 메시지에 실어
+    검토자가 즉시 분류할 수 있게 한다(진짜 이중 append 는 표가 통째로 반복된다).
+    """
+    rows = [row("BS", "separate", "유동자산", 100, order=1, section_path="자산"),
+            row("BS", "separate", "유동자산", 100, order=9, section_path="자산"),
+            row("BS", "separate", "비유동자산", 200, order=2, section_path="자산")]
+    res = [r for r in sc.check_duplicate_rows(rows) if r.code == "duplicate_rows"]
+    assert res[0].verdict == "FAIL"
+    assert "3행" in res[0].message, res[0].message

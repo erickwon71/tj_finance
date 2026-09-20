@@ -26,8 +26,14 @@
 | `unit_sanity`       | 차단 | 단위를 확정 못해 금액이 공란으로 적재된 행 (단위 혼재는 정상이라 안 잡음) |
 | `row_count_outlier` | 의심 | 같은 corp·basis·statement 의 다른 기간 행수 중앙값 대비 ±50% 이탈 |
 | `duplicate_rows`    | 의심 | 같은 (statement,basis,table_seq) 안 라벨+값 완전중복(파서 이중 append 신호) |
-| `bs_rollup`         | 참고 | 유동+비유동 = 총계 (자산/부채) |
-| `is_waterfall`      | 참고 | 매출액 − 매출원가 = 매출총이익 |
+| `bs_rollup`         | 참고 | 유동+비유동(+매각예정/소유주분배예정 처분자산집단) = 총계 (자산/부채) |
+| `is_waterfall`      | 참고 | 매출액 − |매출원가| = 매출총이익 |
+
+★2026-09-20 캠페인 오탐 일괄 수정 — 근거는
+`docs/qa/layer2_review_campaign_issues_2026-09-20.md` 이슈 3~8·17~19·21~22.
+셋 다 "원문 서식의 변형을 검산식이 못 따라간" 것이고, 파서 결함은 하나도 없었다.
+공통 교훈: **표기 변형을 화이트리스트로 쫓지 말고, 성립하는 식을 여러 개 두고
+먼저 맞는 것을 채택한다.** 억지로 하나의 식을 고집하면 어느 쪽 서식에서든 거짓 FAIL 이 난다.
 
 `check_status` 롤업 = 차단 등급에 FAIL 이 하나라도 있으면 `suspect`,
 전부 PASS/NA 면 `ok`, 판정 자체가 하나도 안 선 경우(행 0건 등) `na`.
@@ -96,6 +102,15 @@ _RE_CURRENT_ASSETS = re.compile(r"^유동\s*자산$")
 _RE_NONCURRENT_ASSETS = re.compile(r"^비유동\s*자산$")
 _RE_CURRENT_LIAB = re.compile(r"^유동\s*부채$")
 _RE_NONCURRENT_LIAB = re.compile(r"^비유동\s*부채$")
+# ★유동/비유동 **밖의 제3의 BS 대분류.** IFRS5 매각예정·소유주분배예정(배당)으로 분류된
+#   처분자산집단은 유동자산의 하위항목이 아니라 유동/비유동과 **나란한 대분류**로 인쇄돼
+#   총계에 별도 가산된다(2026-09-20 실측: HD한국조선해양 20170515004618 별도
+#   '소유주분배예정자산집단' 7,055,545,660천원 — 유동+비유동만 더하면 정확히 그 금액만큼
+#   어긋난 거짓 FAIL 이 난다). 대분류로 인쇄된 것만 주워야 하므로 호출부가 **유동자산과
+#   같은 depth·같은 section_path** 인 행으로 한정한다 — '매각예정비유동자산' 처럼 유동자산
+#   **안에** 들어가는 동명 항목(depth 가 한 단계 깊다)을 이중계상하지 않기 위해서다.
+_RE_BS_OTHER_TOP_GROUP = re.compile(
+    r"^(?:매각예정|소유주분배예정|처분자산|중단영업).*(?:자산|부채)(?:집단|군)?$")
 
 _RE_REVENUE = re.compile(r"^(?:매출액|매출|영업수익|수익\(매출액\))$")
 _RE_COGS = re.compile(r"^매출\s*원가$")
@@ -122,6 +137,15 @@ _RE_CF_FX_EFFECT = re.compile(r"환율변동|외화환산|외화표시|환율차
 #   확인. 이걸 안 더하면 정확히 그 금액만큼 어긋난 거짓 FAIL 이 난다).
 _RE_CF_HFS_RECLASS = re.compile(r"매각예정.*현금|현금.*매각예정|처분자산군.*현금|현금.*처분자산군")
 _RE_CF_NET_CHANGE_TOKEN = re.compile(r"증가|감소|순증감|증감")
+# ★조정행의 부호가 **금액이 아니라 라벨에 있는** 서식이 있다 — DART 원문이
+#   '매각예정자산 대체로 인한 현금의 감소' 를 괄호 없이 `9,137,925` 로 인쇄한다
+#   (2026-09-20 원문 확인: SK이노베이션 20250318000862 연결, ACODE=…Decrease
+#   InCashDueToReplacementOfAssetsHeldForSale…, ENG="Decrease in cash …").
+#   그대로 더하면 정확히 그 금액의 2배만큼 어긋난 거짓 FAIL 이 난다.
+#   '순증가(감소)' 처럼 증가/증감 토큰이 함께 있으면 부호는 금액 쪽에 있으므로 건드리지
+#   않는다 — 실제로 '연결범위변동으로 인한 현금의 증감' 은 음수로 인쇄된다
+#   (HMM 20161114002386 실측 -1,415백만).
+_RE_CF_INCREASE_TOKEN = re.compile(r"증가|증감")
 # 활동별 소계 — K-GAAP 구서식은 '영업활동으로 인한 현금의 증가' 처럼 쓰기도 해서,
 # 순증감 소계를 고를 때 이걸 배제하지 않으면 활동 소계를 총증감으로 오인한다.
 _RE_CF_ACTIVITY = re.compile(r"영업활동|투자활동|재무활동")
@@ -344,6 +368,40 @@ def _fx_after(rows: list[dict], basis: str, net: dict, closing: dict) -> list[di
             and not _RE_CF_CLOSING.search(_norm(r["label_raw"]))]
 
 
+def _rows_after(rows: list[dict], basis: str, net: dict, closing: dict) -> list[dict]:
+    """순증감 소계 뒤·기말 앞에 인쇄된 **모든** 행(기초/기말 행 자체는 제외).
+
+    `_fx_after()` 가 라벨 화이트리스트(환율효과·매각예정재분류)로 좁게 줍는 데 비해, 이쪽은
+    그 자리에 인쇄된 것은 전부 roll-forward 조정행이라고 본다. 화이트리스트로는 원문이
+    쓰는 라벨 변형을 따라잡을 수 없다는 것이 실측으로 확인됐다 — 2026-09-20 캠페인에서만
+    '기준서 변경으로 인한 효과'(한국전력 20180515002408)·'처분집단으로 분류된
+    현금및현금성자산'(HMM 20171114002539)·'연결범위변동으로 인한 현금의 증감'(HMM
+    20161114002386)·'중단영업 현금및현금성자산'(LS 20190401004913)·'매각예정자산으로의
+    대체'(대한항공 20201116001718) 5종의 신규 라벨이 새로 나왔다.
+    """
+    lo, hi = _doc_pos(net), _doc_pos(closing)
+    return [r for r in rows
+            if r["statement"] == "CF" and r["basis"] == basis and r["value_won"] is not None
+            and lo < _doc_pos(r) < hi
+            and not _RE_CF_OPENING.search(_norm(r["label_raw"]))
+            and not _RE_CF_CLOSING.search(_norm(r["label_raw"]))]
+
+
+def _adjust_value(row: dict) -> int:
+    """조정행이 roll-forward 에 기여하는 부호 있는 금액.
+
+    라벨이 '…감소' 만 말하고 증가/증감 토큰이 없으면 **크기만큼 차감**이다 — 원문이 부호를
+    금액이 아니라 라벨에 실어 쓰는 서식이 있기 때문(`_RE_CF_INCREASE_TOKEN` 주석의 SK
+    이노베이션 사례). 원문이 같은 뜻을 괄호(음수)로 인쇄했다면 `-abs()` 는 그 값 그대로라
+    두 서식 어느 쪽이든 같은 답이 나온다.
+    """
+    label = _norm(row["label_raw"])
+    value = row["value_won"]
+    if "감소" in label and not _RE_CF_INCREASE_TOKEN.search(label):
+        return -abs(value)
+    return value
+
+
 def check_cf_closing_cash(rows: list[dict]) -> list[CheckResult]:
     """현금흐름표 항등식.
 
@@ -385,16 +443,38 @@ def check_cf_closing_cash(rows: list[dict]) -> list[CheckResult]:
             #   같은 자리에 IFRS5 매각예정(처분자산군) 현금 재분류행도 따로 찍히는
             #   서식이 있다(2026-09-12 SK스퀘어 20260514001477 실측).
             #   소계 **뒤에** 오는 조정행만 더한다 — 앞에 있으면 이미 소계에 포함됐다.
+            # ★조정행을 "어떻게 세느냐"는 서식마다 달라서 **한 가지 식으로 못 맞춘다.**
+            #   실측으로 확인된 서식이 세 갈래라(2026-09-20 캠페인) 아래 순서로 시도하고
+            #   **먼저 맞는 것을 채택**한다. 셋 다 틀릴 때만 FAIL 이고, 그때는 가장 근접한
+            #   식의 차이를 보고한다. 순서는 "더 강한 근거 먼저"다.
+            #   ① 조정행 없음 — '기말 − 기초 = 순증감' 이 그대로 성립하면 그게 정답이다.
+            #      순증감 소계가 이미 환율효과를 품고 있고, 환율효과 행은 그 안에 포함된
+            #      금액을 참고로 다시 보여주는 **메모행**인 서식이 있다(2026-09-20 원문
+            #      확인: 레인보우로보틱스 20230323000602 — 별도·연결 모두 3개 연도 열
+            #      전부 '기초+순증감=기말' 로 재현되고 환율효과 행은 어느 열에서도
+            #      가산되지 않는다). 이 행을 더하면 거꾸로 그 금액만큼 거짓 FAIL 이 난다.
+            #   ② 환율효과/매각예정재분류만 가산 — 기존 동작(보수적 화이트리스트).
+            #   ③ 소계~기말 사이 **모든** 행을 라벨 부호까지 반영해 가산 — 화이트리스트가
+            #      못 따라잡는 신규 라벨을 통째로 흡수한다.
             tail_fx = _fx_after(rows, basis, net, closing)
-            expected = net["value_won"] + sum(f["value_won"] for f in tail_fx)
-            diff = (closing["value_won"] - opening["value_won"]) - expected
-            verdict = PASS if abs(diff) <= slack else FAIL
+            tail_all = _rows_after(rows, basis, net, closing)
+            target = closing["value_won"] - opening["value_won"]
+            variants = [
+                ("", net["value_won"]),
+                (f" + 조정행 {len(tail_fx)}행(환율효과/매각예정재분류)",
+                 net["value_won"] + sum(f["value_won"] for f in tail_fx)),
+                (f" + 소계~기말 사이 조정행 {len(tail_all)}행 전부",
+                 net["value_won"] + sum(_adjust_value(r) for r in tail_all)),
+            ]
+            scored = [(abs(target - exp), desc, target - exp) for desc, exp in variants]
+            hit = next((s for s in scored if s[0] <= slack), None)
+            _, desc, diff = hit if hit is not None else min(scored)
+            verdict = PASS if hit is not None else FAIL
             msg = (f"기말 {_fmt(closing['value_won'])} − 기초 {_fmt(opening['value_won'])} "
                    f"{'=' if verdict == PASS else '≠'} "
-                   f"'{net['label_raw']}' {_fmt(net['value_won'])}"
-                   + (f" + 조정행 {len(tail_fx)}행(환율효과/매각예정재분류)" if tail_fx else ""))
+                   f"'{net['label_raw']}' {_fmt(net['value_won'])}{desc}")
             if verdict == FAIL:
-                msg += f" (차 {_fmt(diff)}원)"
+                msg += f" (차 {_fmt(diff)}원 — 가장 근접한 식 기준)"
             out.append(CheckResult("cf_closing_cash", scope, GRADE_BLOCKING, verdict, msg))
             continue
 
@@ -486,11 +566,19 @@ def check_duplicate_rows(rows: list[dict]) -> list[CheckResult]:
       에 각각(20140530001276), '비지배지분' 0 이 `당기순이익의 귀속` 과 `총포괄손익의
       귀속` 에 각각(20260327000210). 진짜 이중 append 는 표가 통째로 반복되므로
       section_path 까지 같아 이 키로도 그대로 잡힌다.
+
+    ★★값이 **0 인 행은 세지 않는다.** 0 은 서로 다른 항목끼리도 흔히 겹쳐, 라벨까지
+      우연히 같으면 "완전중복" 으로 오판된다 — 2026-09-20 원문 확인: 레인보우로보틱스
+      20230323000602 연결 CF 는 원문 자체가 '전환우선주의 발행' 행을 두 번 쓰는데
+      (둘째는 실제로는 유상증자 28,306,586,760 의 오기재) **당기 열만** 둘 다 0 이라
+      걸렸다. 진짜 이중 append 는 표가 통째로 반복되므로 0 아닌 행에서도 그대로 잡힌다.
     """
     seen: dict[tuple, int] = {}
+    body = 0
     for r in rows:
-        if r["statement"] not in STATEMENTS or r["value_won"] is None:
-            continue
+        if r["statement"] not in STATEMENTS or not r["value_won"]:
+            continue        # value_won 이 None 이거나 0 인 행은 중복 판정에서 뺀다
+        body += 1
         key = (r["statement"], r["basis"], r["table_seq"], r["section_path"],
                _norm(r["label_raw"]), r["value_won"])
         seen[key] = seen.get(key, 0) + 1
@@ -499,8 +587,15 @@ def check_duplicate_rows(rows: list[dict]) -> list[CheckResult]:
         return [CheckResult("duplicate_rows", "전체", GRADE_SUSPECT, PASS, "완전중복 행 없음")]
     sample = sorted(dups.items(), key=lambda kv: -kv[1])[:3]
     desc = "; ".join(f"[{BASIS_KO.get(k[1], k[1])}]{k[0]} '{k[4]}' ×{n}" for k, n in sample)
+    # ★중복이 **몇 행을 덮는지**를 같이 적는다 — 이중 append 는 표가 통째로 반복되므로
+    #   비중이 크고, 원문 자체의 라벨 중복(2026-09-20 한진칼 20230515002432 별도 IS
+    #   '기본주당우선주순이익' ×2 — 원문 확인 완료)은 한두 행에 그친다. 이 둘은 당기 열
+    #   값만으로는 원리적으로 구분되지 않으므로(비교연도 열은 report_lines 에 없다)
+    #   억누르지 않고 **어디를 볼지**만 알려준다.
+    affected = sum(dups.values())
+    share = f"{affected}/{body}행" if body else "―"
     return [CheckResult("duplicate_rows", "전체", GRADE_SUSPECT, FAIL,
-                        f"라벨+값 완전중복 {len(dups)}종 — {desc}")]
+                        f"라벨+값 완전중복 {len(dups)}종({share}) — {desc}")]
 
 
 def check_row_count_outlier(rows: list[dict], sibling_counts: dict) -> list[CheckResult]:
@@ -531,6 +626,24 @@ def check_row_count_outlier(rows: list[dict], sibling_counts: dict) -> list[Chec
                         "; ".join(hits))]
 
 
+def _bs_other_top_groups(rows: list[dict], basis: str,
+                         cur: dict, non: dict, tot: dict) -> list[dict]:
+    """유동/비유동과 **나란한** 제3의 대분류 행들(매각예정·소유주분배예정 처분자산집단 등).
+
+    유동자산과 `depth`·`section_path` 가 같고 총계보다 앞에 인쇄된 것만 줍는다 —
+    '매각예정비유동자산' 처럼 유동자산 **안에** 들어가는 동명 항목은 depth 가 한 단계
+    깊어 여기 걸리지 않는다(걸리면 이중계상이 된다).
+    """
+    anchors = {id(cur), id(non), id(tot)}
+    limit = _doc_pos(tot)
+    return [r for r in rows
+            if r["statement"] == "BS" and r["basis"] == basis and r["value_won"] is not None
+            and id(r) not in anchors
+            and r["depth"] == cur["depth"] and r["section_path"] == cur["section_path"]
+            and _doc_pos(r) < limit
+            and _RE_BS_OTHER_TOP_GROUP.search(_norm(r["label_raw"]))]
+
+
 def check_bs_rollup(rows: list[dict]) -> list[CheckResult]:
     """유동+비유동 = 총계 (자산/부채). 참고 등급 — 금융업은 유동/비유동 구분 자체가 없다."""
     out = []
@@ -543,10 +656,23 @@ def check_bs_rollup(rows: list[dict]) -> list[CheckResult]:
             cur, non, tot = (_find(rows, "BS", basis, p) for p in (cur_re, non_re, tot_re))
             if cur is None or non is None or tot is None:
                 continue        # 금융업 등 — 판정 대상 아님(NA 조차 찍지 않는다, 소음)
-            diff = tot["value_won"] - (cur["value_won"] + non["value_won"])
             slack = _slack(rows, "BS", basis)
-            verdict = PASS if abs(diff) <= slack else FAIL
-            msg = f"유동{kind}+비유동{kind} {'=' if verdict == PASS else '≠'} {kind}총계"
+            others = _bs_other_top_groups(rows, basis, cur, non, tot)
+            # 유동/비유동 2항만으로 맞으면 그걸 채택한다(기존 동작). 안 맞을 때만 제3의
+            # 대분류를 더해 다시 본다 — 둘 중 하나라도 맞으면 PASS.
+            strict = tot["value_won"] - (cur["value_won"] + non["value_won"])
+            extended = strict - sum(o["value_won"] for o in others)
+            if abs(strict) <= slack:
+                verdict, diff, extra = PASS, strict, ""
+            elif others and abs(extended) <= slack:
+                verdict, diff = PASS, extended
+                extra = "+" + "+".join(f"'{o['label_raw']}'" for o in others)
+            else:
+                verdict = FAIL
+                diff, extra = ((extended, "+" + "+".join(f"'{o['label_raw']}'" for o in others))
+                               if others and abs(extended) < abs(strict) else (strict, ""))
+            msg = (f"유동{kind}+비유동{kind}{extra} "
+                   f"{'=' if verdict == PASS else '≠'} {kind}총계")
             if verdict == FAIL:
                 msg += f" (차 {_fmt(diff)}원)"
             out.append(CheckResult("bs_rollup", scope, GRADE_INFO, verdict, msg))
@@ -554,17 +680,26 @@ def check_bs_rollup(rows: list[dict]) -> list[CheckResult]:
 
 
 def check_is_waterfall(rows: list[dict]) -> list[CheckResult]:
-    """매출액 − 매출원가 = 매출총이익. 참고 등급 — 매출총이익을 안 쓰는 서식이 많다."""
+    """매출액 − 매출원가 = 매출총이익. 참고 등급 — 매출총이익을 안 쓰는 서식이 많다.
+
+    ★매출원가의 **부호 표기는 회사마다 갈린다.** 괄호(음수)로 인쇄하는 회사가 적지 않고
+      (2026-09-20 실측: POSCO홀딩스 20251114002479 −48,116,109,522,197 / LG화학
+      20240315000957 별도·연결 / 한미반도체 20241114002196 별도·연결), 파서는 원문대로
+      적재한다. 부호를 안 보고 늘 빼면 정확히 `2 × 매출원가` 만큼 어긋난 거짓 FAIL 이
+      난다 — 위 5건의 보고 차이가 전부 이 값과 원 단위까지 일치했다. 매출원가는 비용이라
+      표기 부호와 무관하게 **크기만큼 차감**이므로 `abs()` 를 쓴다.
+    """
     out = []
     for basis in BASES:
         rev, cogs, gp = (_find(rows, "IS", basis, p)
                          for p in (_RE_REVENUE, _RE_COGS, _RE_GROSS_PROFIT))
         if rev is None or cogs is None or gp is None:
             continue
-        diff = gp["value_won"] - (rev["value_won"] - cogs["value_won"])
+        diff = gp["value_won"] - (rev["value_won"] - abs(cogs["value_won"]))
         slack = _slack(rows, "IS", basis)
         verdict = PASS if abs(diff) <= slack else FAIL
-        msg = f"매출액−매출원가 {'=' if verdict == PASS else '≠'} 매출총이익"
+        msg = (f"매출액−매출원가{'(원문 음수표기)' if cogs['value_won'] < 0 else ''} "
+               f"{'=' if verdict == PASS else '≠'} 매출총이익")
         if verdict == FAIL:
             msg += f" (차 {_fmt(diff)}원)"
         out.append(CheckResult("is_waterfall", f"[{BASIS_KO[basis]}] 손익계산서",

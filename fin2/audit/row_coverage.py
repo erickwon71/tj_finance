@@ -32,17 +32,28 @@ agent_automation_design_2026-09-18.md` §4-3)라서 방향이 CSV → 원문 **�
 정규화를 안 하면 이 3종만으로 발화율이 17.5% → (정규화 후) 12.5% 로, SCE 계열
 거짓양성이 대부분 사라진다(시총순 40개사 최신 필링 측정).
 
+## 당기 열만 본다 — 초판의 체계적 거짓양성 (2026-09-20 같은 날 수정)
+
+초판은 "금액칸이 있는데 적재 안 된 행"을 전부 올렸다가 **정상 동작을 결함으로 신고**했다.
+BS 는 설계상 당기(`col_index=0`)만 적재하므로(`_PERIOD_AXIS_STATEMENTS` 정책), 당기가
+공란이고 전기에만 값이 있는 행은 적재될 것이 애초에 없다:
+· 고려아연 20220816001335 `['장기파생상품금융부채', '', '1,928,974,207']` —
+  당기(2022-06-30)엔 그 부채가 없다.
+· NAVER 20180515002682 `['유동매도가능금융자산 (주5,16)', '', '79,435,727,110']` —
+  IFRS 9 이 2018-01-01 시행돼 그 계정 자체가 당기부터 사라졌다.
+둘 다 원문이 당기를 비워둔 것이고 파서는 옳게 동작했다. → `_current_period_index()` 로
+**당기 칸에 값이 있는 행만** 대상으로 삼는다(그 docstring 에 열 위치 판정 근거).
+
 ## 실측 (2026-09-20)
 
-정규화 후 발화 5/40건. 표본에서 확인한 발화분은 **거짓양성이 아니라 실제 결측**이었다:
-· 고려아연 20220816001335 — 원문 [연결] BS 에 파생상품 행 4개, 적재 3개.
-  `'장기파생상품금융부채'` 1,928,974,207 유실.
-· NAVER 20180515002682 — `'유동매도가능금융자산'` 79,435,727,110 ·
-  `'비유동매도가능금융자산'` 943,632,439,930 이 [연결] BS 에서 통째로 빠졌다.
-공통 모양 = **금액칸이 1개뿐인(다른 행보다 짧은) 행**. 별도 결함으로 조사 필요.
+· 검출력 — R149 수정만 끈 상태(=EPS 결측 재현)에서 신한지주 20220516002487 의
+  EPS 3행([연결] 기본·희석주당순이익, [별도] 기본 및 희석주당이익)을 정확히 적출.
+  수정 적용 상태에서는 0건. 위 두 거짓양성 사례도 수정 후 0건.
+· 발화율 — 시총순 회사별 1건씩 80건(최신 40 + 최고령 40)에서 발화 2건(2.5%).
 
-그래서 이 검산은 **차단하지 않는다**(`GRADE_INFO`) — 발화분이 대체로 진짜라서 차단하면
-캠페인이 통째로 멈춘다. 가시화·기록만 하고, 실제 처리는 전수 센서스로 모아서 한다.
+이 검산은 **차단하지 않는다**(`GRADE_INFO`) — 남은 발화분은 사람이 원문을 봐야
+판단되는 것들이고, 차단하면 캠페인 흐름이 끊긴다. 가시화·기록만 하고 실제 처리는
+전수 센서스(`scripts/census_row_coverage.py`)로 모아서 한다.
 """
 from __future__ import annotations
 
@@ -73,6 +84,44 @@ _SECTION_META = {
     "CF_S": ("separate", "CF"), "SCE_S": ("separate", "SCE"),
     "APPR_S": ("separate", "APPR"),
 }
+
+
+def _first_number_index(cells: list[str]) -> int | None:
+    """그 행에서 **처음으로 숫자인 칸**의 위치(라벨칸 0 은 제외). 없으면 None."""
+    for i, c in enumerate(cells):
+        if i == 0:
+            continue
+        if _LOOSE_NUM.match(c):
+            return i
+    return None
+
+
+def _current_period_index(rows_cells: list[list[str]]) -> int | None:
+    """표의 **당기 열 위치**를 행들의 다수결로 정한다.
+
+    ★왜 필요한가(2026-09-20, 초판의 체계적 거짓양성 수정) — BS 는 설계상 당기
+      (`col_index=0`)만 적재한다(`_PERIOD_AXIS_STATEMENTS` 정책). 그래서 **당기가
+      공란이고 전기에만 값이 있는 행**은 적재될 것이 애초에 없다. 초판은 이걸
+      "결측"으로 올려 정상 동작을 결함으로 신고했다:
+        · 고려아연 20220816001335 `['장기파생상품금융부채', '', '1,928,974,207']`
+          — 당기(2022-06-30)엔 그 부채가 없다.
+        · NAVER 20180515002682 `['유동매도가능금융자산 (주5,16)', '', '79,435,727,110']`
+          — IFRS 9 이 2018-01-01 시행돼 그 계정 자체가 당기부터 사라졌다.
+      둘 다 원문이 당기를 비워둔 것이고 파서는 옳게 동작했다.
+    ★그래서 "당기 칸에 숫자가 있는 행"만 대상으로 삼는다. 열 위치는 표마다 다르고
+      (주석 열이 끼거나 값 사이에 빈 칸이 끼는 서식이 흔하다) 헤더 해석은 또 하나의
+      추측이 되므로, **행들이 실제로 값을 넣은 위치의 최빈값**으로 정한다.
+      실측: 신한지주 EPS 표는 값 사이에 빈 칸이 끼어 당기 열이 index 2 인데, 이
+      방식이면 EPS 행도 그대로 잡힌다(R149 재검출 확인).
+    """
+    counts: dict[int, int] = {}
+    for cells in rows_cells:
+        idx = _first_number_index(cells)
+        if idx is not None:
+            counts[idx] = counts.get(idx, 0) + 1
+    if not counts:
+        return None
+    return max(counts.items(), key=lambda kv: (kv[1], -kv[0]))[0]
 
 
 @dataclass(frozen=True)
@@ -131,17 +180,24 @@ def find_missing_rows(file_path: str | Path, lines) -> list[MissingRow]:
         basis, statement = meta
         known = loaded.get((basis, statement), set())
         for (tbl, *_rest) in tables:
-            for tr in tbl.findall(".//TR"):
-                cells = [" ".join("".join(td.itertext()).split()) for td in tr]
+            rows_cells = [[" ".join("".join(td.itertext()).split()) for td in tr]
+                          for tr in tbl.findall(".//TR")]
+            current = _current_period_index(rows_cells)
+            if current is None:
+                continue
+            for cells in rows_cells:
                 if not cells:
                     continue
                 label = normalize_label(cells[0])
                 # 라벨 자리가 비었거나 표 머리행이거나 숫자면 데이터 행이 아니다.
                 if not label or label in _HEADER_LABELS or _LOOSE_NUM.match(cells[0].strip()):
                     continue
-                amounts = tuple(c for c in cells[1:] if _LOOSE_NUM.match(c))
-                if not amounts or label in known:
+                # ★당기 칸에 값이 있는 행만 본다(위 `_current_period_index` docstring).
+                if current >= len(cells) or not _LOOSE_NUM.match(cells[current]):
                     continue
+                if label in known:
+                    continue
+                amounts = tuple(c for c in cells[1:] if _LOOSE_NUM.match(c))
                 out.append(MissingRow(basis=basis, statement=statement,
                                       label=cells[0].strip()[:60], amounts=amounts[:3]))
     return out

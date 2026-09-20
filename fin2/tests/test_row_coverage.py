@@ -122,6 +122,22 @@ def test_first_number_index_ignores_period_markers():
     assert row_coverage._first_number_index(["구분", "", ""]) is None
 
 
+def test_date_cells_are_not_counted_as_amounts():
+    """★SCE 의 날짜 칸을 금액으로 세면 금액 없는 표지 행이 결측으로 발화한다.
+
+    실측: 에브리봇 20170727000272 별도SCE `['2015년 \\n(제1기)', '2015.01.06',
+    '-', '-', '-', '-']` — 구간 표지 행이라 금액이 하나도 없는데, `_AMOUNT_LIKE_RE`
+    가 선두 '2015' 를 4자리 수로 보고 '.01.06' 을 삼켜 금액으로 오인했다.
+    """
+    for date_cell in ("2015.01.06", "2015-01-06", "2015.12.31", "2015년 1월 6일"):
+        assert not row_coverage._looks_like_amount(date_cell), date_cell
+    # 진짜 금액은 그대로 금액이다(과잉 배제 방지).
+    for amount in ("2,564", "1,127,319,164", "(205,474,481)", "12345"):
+        assert row_coverage._looks_like_amount(amount), amount
+    assert row_coverage._first_number_index(
+        ["2015년 (제1기)", "2015.01.06", "-", "-"]) is None
+
+
 def test_rows_whose_values_sit_in_non_loaded_columns_are_not_reported():
     """★적재 대상이 아닌 열에만 값이 있는 행은 결함이 아니다 — 초판들이 이걸 결함으로
     신고했던 회귀 가드.

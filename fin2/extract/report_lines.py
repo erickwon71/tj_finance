@@ -867,8 +867,24 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
             if len(grid_cells) < n_grid:
                 grid_cells = grid_cells + [""] * (n_grid - len(grid_cells))
             grid_amounts = [parse_amount(c, unit) for c in grid_cells]
+            # ★R153(2026-09-20) — 본류와 **같은 예외 플래그**를 넘긴다. 안 넘기면
+            #   R116/R120 예외 필링에서 EPS 행만 조용히 사라진다: 본류는 예외로
+            #   3개월 값을 누적으로 채택해 정상 행을 싣는데, 여기서는 누적 칸이 공란이라
+            #   `pairs` 가 비어 `continue` 로 빠지고, 그 직후 본류의 EPS 위임 가드가
+            #   "EPS 처럼 보이면 무조건 건너뜀" 이라 본류도 안 싣는다 — **두 경로 사이
+            #   틈으로 행이 증발**한다. 실측: 형지I&C 20150514004898(2015Q1) 연결·별도
+            #   IS 에서 기본/희석/계속영업 주당이익 4행이 전부 결측(행 단위 결측 탐지기
+            #   전수 센서스 2,528개사에서 적출). 같은 목록의 나머지 6건도 같은 증상이다.
+            #   R144 의 교훈("같은 판정을 두 경로가 각자 구현하면 갈린다")이 열 선택
+            #   **인자**에도 그대로 적용된다.
             pairs = list(select_by_header_columns(
-                header_cols, grid_amounts, raw_amounts=grid_cells).items())
+                header_cols, grid_amounts, raw_amounts=grid_cells,
+                allow_three_month_as_cumulative=(
+                    report_fiscal_period == "Q1"
+                    and rcept_no in _Q1_CUM_BLANK_USE_3M_RCEPTS),
+                prefer_last_of_two_as_cumulative=(
+                    rcept_no in _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS),
+            ).items())
         elif cum_map is not None:
             # 2단[3개월|누적] 헤더 검출 표 — '누적' 토큰이 붙은 컬럼만 위치로 선택.
             pairs = [(off, amounts_by_pos[pos]) for pos, off in cum_map.items()

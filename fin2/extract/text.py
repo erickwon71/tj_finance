@@ -1010,12 +1010,23 @@ def _looks_like_equity_changes_header(tbl) -> bool:
     ★첫 두 행을 합쳐서 본다 — 비큐AI 20210323000745 CF_S 실측: 열이름이 한 행이
     아니라 두 행에 걸쳐 나뉘어 있다("자본금/기타불입자본/이익잉여금(결손금)/합계"
     1행 + "주식발행초과금/감자차(손)익/자본조정" 2행, THEAD/COLSPAN 없는 순수 TR
-    나열이라 한 행만 보면 2개만 걸려 임계값(3) 미달이었다)."""
+    나열이라 한 행만 보면 2개만 걸려 임계값(3) 미달이었다).
+
+    ★R151(2026-09-20) — **공백을 제거하고** 본다. DART 는 열이름에 자간을 벌려 넣는
+    서식을 흔히 쓰는데('과 목  자 본 금  자 본잉여금  기타포괄손익누계액  이 익잉여금
+    자기주식  총 계'), 원문 그대로 매칭하면 `자본금`·`자본잉여금`·`이익잉여금` 이 전부
+    빗나가고 공백 없는 `기타포괄손익누계액` 1개만 걸려 임계값(3) 미달로 False 가 됐다.
+    그래서 R148(표지 없는 SCE 물리분할표 이어붙이기)이 발동하지 못해 **당기 롤포워드 표가
+    통째로 유실**됐다 — 실측: KB금융 20180814002480(2018H1) 별도 자본변동표(캠페인
+    원문전체대조 이슈#18). 같은 함정을 `_is_metadata_only`·
+    `classify_statement_in_body_section` 은 이미 공백 제거로 처리하고 있었다 —
+    이 술어만 규약에서 빠져 있었다.
+    """
     rows = table_direct_rows(tbl)
     if not rows:
         return False
     cells = _get_cells(rows[0]) + (_get_cells(rows[1]) if len(rows) > 1 else [])
-    joined = "".join(cells)
+    joined = re.sub(r"\s+", "", "".join(cells))
     return len(_SCE_COLUMN_LABELS_RE.findall(joined)) >= 3
 
 

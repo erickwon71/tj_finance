@@ -238,6 +238,32 @@ def build_preamble(*, corp_name: str, corp_code: str, market: str | None,
     return lines
 
 
+def build_source_only_rows(missing) -> list[tuple]:
+    """**원문에만 있고 적재되지 않은 행**을 CSV 데이터 블록 끝에 붙일 튜플로 만든다.
+
+    ★왜 CSV 에 넣는가(2026-09-20) — 이 CSV 가 원문대조의 **대조 표면**이고, 캠페인
+      판정 기준이 "CSV 라벨을 기준으로 화면에서 찾아 비교"라 방향이 CSV → 원문
+      **단방향**이다. 그래서 CSV 에 없는 행은 아무리 성실히 대조해도 순회 대상에
+      들어오지 않는다(실증: R149 EPS 결측이 '전 항목 원문대조' 규칙 시행 후에도
+      신한지주 13건에서 안 걸렸다 — `docs/PARSING_RULES.md` R149).
+      검산 메시지로만 알리면 예비란 한 줄이라 그냥 지나친다. **결측을 데이터 행으로
+      실어야** 검토자가 "이 줄을 원문에서 확인" 하는 같은 동작으로 잡을 수 있다.
+    """
+    if not missing:
+        return []
+    rows: list[tuple] = []
+    for m in missing:
+        rows.append((
+            f"★원문만 [{BASIS_KO.get(m.basis, m.basis)}] {m.statement}",
+            "", "", "",
+            m.label,
+            "",                                   # 적재 금액 없음 — 그게 요점이다
+            " / ".join(m.amounts),                # 원문에 인쇄된 값
+            "원문에 있는데 적재 안 됨 → 원문 확인 후 결측이면 fail",
+        ))
+    return rows
+
+
 def write_review_csv(path: Path, preamble: list[list[str]], rows: list[tuple]) -> Path:
     """UTF-8 with BOM 으로 저장. 디렉터리는 여기서 만든다."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -267,8 +293,13 @@ def generate(session, *, rcept_no: str, corp_code: str, corp_name: str,
              filed_at, source_kind: str, checks: list[CheckResult],
              reloaded_at: datetime | None = None,
              root: Path | None = None,
-             db_rows: list[dict] | None = None) -> tuple[Path, dict[str, dict[str, int]]]:
-    """DB → CSV 파일 1개. 반환 (경로, 범위별 행수)."""
+             db_rows: list[dict] | None = None,
+             source_only_rows=None) -> tuple[Path, dict[str, dict[str, int]]]:
+    """DB → CSV 파일 1개. 반환 (경로, 범위별 행수).
+
+    `source_only_rows` = `fin2.audit.row_coverage` 가 찾은 **원문에만 있는 행**
+    (`build_source_only_rows` docstring 에 왜 CSV 에 실어야 하는지).
+    """
     rows_db = load_rows(session, rcept_no) if db_rows is None else db_rows
     counts = scope_counts(rows_db)
     path = csv_path_for(market=market, corp_code=corp_code, corp_name=corp_name,
@@ -279,5 +310,6 @@ def generate(session, *, rcept_no: str, corp_code: str, corp_name: str,
         report_nm=report_nm, fiscal_year=fiscal_year, fiscal_period=fiscal_period,
         rcept_no=rcept_no, filed_at=filed_at, source_kind=source_kind,
         reloaded_at=reloaded_at or datetime.now(), checks=checks, counts=counts)
-    write_review_csv(path, preamble, build_rows(rows_db))
+    write_review_csv(path, preamble,
+                     build_rows(rows_db) + build_source_only_rows(source_only_rows))
     return path, counts

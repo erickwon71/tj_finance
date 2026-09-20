@@ -105,3 +105,25 @@ def test_detects_eps_row_loss_when_r149_is_disabled(monkeypatch):
     labels = {m.label for m in missing}
     assert any("주당" in x for x in labels), sorted(labels)
     assert row_coverage.check(_SHINHAN_2022Q1, lines).verdict == FAIL
+
+
+def test_source_only_rows_are_written_into_the_review_csv():
+    """★대조 방향 보강 — 결측행이 검토 CSV 의 데이터 블록에 '★원문만' 으로 실려야
+    한다. 예비란 검산 한 줄로만 알리면 단방향 대조에서 그대로 지나친다."""
+    from fin2.audit.row_coverage import MissingRow
+    from fin2.extract.review_csv import HEADER, build_source_only_rows
+
+    rows = build_source_only_rows([
+        MissingRow(basis="separate", statement="IS",
+                   label="기본 및 희석주당이익", amounts=("2,564원", "2,428원")),
+    ])
+    assert len(rows) == 1
+    row = rows[0]
+    assert len(row) == len(HEADER)
+    assert "★원문만" in row[0] and "별도" in row[0]
+    assert row[HEADER.index("항목명")] == "기본 및 희석주당이익"
+    assert row[HEADER.index("금액")] == ""            # 적재된 금액이 없다는 게 요점
+    assert "2,564원" in row[HEADER.index("원문값")]
+    assert "fail" in row[HEADER.index("비고")]
+    assert build_source_only_rows([]) == []
+    assert build_source_only_rows(None) == []

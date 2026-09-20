@@ -203,24 +203,36 @@ def find_missing_rows(file_path: str | Path, lines) -> list[MissingRow]:
     return out
 
 
-def check(file_path: str | Path | None, lines) -> CheckResult:
-    """검산 1건으로 포장. **차단 등급이 아니다**(위 docstring 마지막 단락)."""
-    scope = "전체(원문 행 적재여부)"
+_SCOPE = "전체(원문 행 적재여부)"
+
+
+def scan(file_path: str | Path | None, lines) -> tuple[list[MissingRow], CheckResult]:
+    """한 번만 훑어 **(결측행 목록, 검산결과)** 를 같이 돌려준다.
+
+    ★검산과 검토 CSV 가 반드시 **같은 목록**을 봐야 한다 — 검산은 "3개 있다"고 하는데
+      CSV 엔 다른 게 실리면 검토자가 무엇을 믿을지 알 수 없다. 그래서 호출부가 두 번
+      훑지 않도록 여기서 한 번에 준다.
+    """
     if not file_path:
-        return CheckResult(code=CODE, scope=scope, grade=GRADE_INFO, verdict=NA,
-                           message="원문 경로를 알 수 없어 확인하지 않음")
+        return [], CheckResult(code=CODE, scope=_SCOPE, grade=GRADE_INFO, verdict=NA,
+                               message="원문 경로를 알 수 없어 확인하지 않음")
     try:
         missing = find_missing_rows(file_path, lines)
     except Exception as exc:                  # 감사 실패가 재적재를 막으면 안 된다
-        return CheckResult(code=CODE, scope=scope, grade=GRADE_INFO, verdict=NA,
-                           message=f"확인 실패: {type(exc).__name__}: {exc}")
+        return [], CheckResult(code=CODE, scope=_SCOPE, grade=GRADE_INFO, verdict=NA,
+                               message=f"확인 실패: {type(exc).__name__}: {exc}")
     if not missing:
-        return CheckResult(code=CODE, scope=scope, grade=GRADE_INFO, verdict=PASS,
-                           message="원문 본문표의 금액 있는 행이 전부 적재됨")
+        return [], CheckResult(code=CODE, scope=_SCOPE, grade=GRADE_INFO, verdict=PASS,
+                               message="원문 본문표의 금액 있는 행이 전부 적재됨")
     head = missing[0]
     where = ", ".join(sorted({f"{m.basis[:3]}/{m.statement}" for m in missing}))
-    return CheckResult(
-        code=CODE, scope=scope, grade=GRADE_INFO, verdict=FAIL,
+    return missing, CheckResult(
+        code=CODE, scope=_SCOPE, grade=GRADE_INFO, verdict=FAIL,
         message=(f"원문에 있는데 적재 안 된 행 {len(missing)}개({where}) — "
                  f"예: [{head.basis[:3]}/{head.statement}] {head.label!r} "
-                 f"{list(head.amounts)}. 원문↔적재 결측이면 fail 로 보고할 것."))
+                 f"{list(head.amounts)}. 검토 CSV 끝의 '★원문만' 블록에 전부 실렸다."))
+
+
+def check(file_path: str | Path | None, lines) -> CheckResult:
+    """검산 1건만 필요할 때. **차단 등급이 아니다**(위 docstring 마지막 단락)."""
+    return scan(file_path, lines)[1]

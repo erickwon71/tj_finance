@@ -43,3 +43,7 @@ db_backups/
 
 # 계층2 재적재 검토 CSV (사람이 원문과 대조하는 작업 파일 — 로컬 전용)
 layer2_review/
+
+# 행 결측 센서스 누적 결과 — 로컬 작업 산출물(재개용 진행기록). 집계는
+# `python scripts/census_row_coverage.py --report` 로 다시 만들 수 있다.
+docs/qa/row_coverage_census.jsonl

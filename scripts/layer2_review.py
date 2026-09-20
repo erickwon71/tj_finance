@@ -497,15 +497,19 @@ def _run_target(session, item, *, root: Path | None = None) -> dict:
     src_path = _resolve_source(session, item["rcept_no"])[1]
     checks.append(orphan_tables.check(src_path))
     # 행 단위 결측(표는 정상 귀속되고 안의 행만 사라지는 R149 류). 차단 등급이 아니다 —
-    # 근거는 fin2/audit/row_coverage.py docstring 마지막 단락.
-    checks.append(row_coverage.check(src_path, lines))
+    # 근거는 fin2/audit/row_coverage.py docstring 마지막 단락. ★결측행 목록은 검토
+    # CSV 에도 '★원문만' 블록으로 실어 대조 방향을 양방향으로 만든다(같은 목록을 써야
+    # 검산과 CSV 가 어긋나지 않으므로 `scan()` 으로 한 번만 훑는다).
+    missing_rows, row_check = row_coverage.scan(src_path, lines)
+    checks.append(row_check)
     path, counts = review_csv.generate(
         session, rcept_no=item["rcept_no"], corp_code=item["corp_code"],
         corp_name=item["corp_name"], market=item["market"],
         corp_rank=item["corp_rank"], report_type=item["report_type"],
         report_nm=item["report_nm"], fiscal_year=item["fiscal_year"],
         fiscal_period=item["fiscal_period"], filed_at=item["filed_at"],
-        source_kind=kind, checks=checks, reloaded_at=now, root=root, db_rows=rows)
+        source_kind=kind, checks=checks, reloaded_at=now, root=root, db_rows=rows,
+        source_only_rows=missing_rows)
 
     n_lines = len(rows)
     _mark(session, item["rcept_no"], status="reloaded", source_kind=kind,

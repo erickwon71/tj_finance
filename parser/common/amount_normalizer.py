@@ -384,6 +384,22 @@ def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
     #   아래에서 공백을 지우고 이어붙이면 원문에 없는 값이 된다. XML 이 깨진 게 아니라
     #   원문 구조 자체가 그렇다(중첩 없는 단일 TD).
     toks = cell_text.split()
+
+    # ── R150(2026-09-20): 한 숫자가 **천단위 콤마 **바로 뒤**에서 공백으로 쪼개진 서식.
+    #   '4,244, 863' 은 두 값이 아니라 4,244,863 하나다 — 콤마로 끝나는 토큰은 온전한
+    #   숫자가 아니라 **조각**이므로, 아래 R1(둘 이상의 온전한 숫자 → 결측) 이 판정하면
+    #   안 된다. R1 은 '723,570,750 723,570,750' 처럼 **둘 다 콤마로 끝나지 않는** 경우를
+    #   막으려는 규칙이고, 그 케이스는 이 분기에 걸리지 않는다.
+    #   실측: 신한지주 20150515002196 [연결] BS — 'Ⅸ.무형자산' 4,244,863(백만원)과
+    #   'XIV.기타자산' 18,245,860 의 당기 칸이 이 서식이라 `parse_amount` 가 None 을
+    #   돌려주고, BS 는 당기만 적재하므로 **두 행이 통째로 유실**됐다(자산 4.2조·18.2조).
+    #   이어붙인 결과가 온전한 숫자일 때만 채택한다 — 자릿수가 깨지면 그대로 R1 로 간다.
+    if len(toks) >= 2 and all(tk.endswith(",") for tk in toks[:-1]):
+        joined = "".join(toks)
+        if _is_complete_number(joined):
+            cell_text = joined
+            toks = [joined]
+
     if len(toks) >= 2 and all(_is_complete_number(tk) for tk in toks):
         if len({tk.strip() for tk in toks}) > 1:
             return None            # 어느 값이 이 셀 것인지 원문이 말하지 않는다 → 결측

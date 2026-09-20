@@ -89,6 +89,29 @@ _LOOSE_NUM = re.compile(r"^[(\[]?\s*[-−△▲]?\s*\d[\d,\.\s]*\s*[)\]]?\s*(?:[
 
 _HEADER_LABELS = frozenset({"과목", "계정과목", "구분", "내용", "항목"})
 
+# ★"숫자처럼 보인다"로는 부족하다 — 재무제표 표에는 **주석번호 열**이 있고 거기엔
+#   '31' 같은 작은 정수가 들어간다. 그걸 금액으로 세면 절 제목 행이 결측으로 잡힌다
+#   (실측: 삼성증권 20160516003030 `['ⅩⅧ. 지배기업소유주지분주당손익','31','','','','']`
+#   — '31' 은 주석번호이고 그 행은 EPS 절 제목이다. 거짓 발화 6건).
+#   그래서 **금액다움**을 따로 본다: 천단위 콤마가 있거나 / 4자리 이상이거나 /
+#   괄호·부호로 음수를 표시했거나. 주석번호(1~3자리 맨숫자)는 여기서 빠진다.
+#   한계: 진짜로 작은 금액(예: 백만원 단위 표의 '449')만 가진 행이 유실되면 놓친다 —
+#   선별 도구의 의도된 절충이다(거짓양성이 거짓음성보다 비싸다, R6 주석과 같은 이유).
+_AMOUNT_LIKE_RE = re.compile(
+    r"^[(\[]?\s*[-−△▲]?\s*(?:\d{1,3}(?:[,\s]\d{3})+|\d{4,})[\d,\.\s]*\s*[)\]]?"
+    r"\s*(?:[가-힣]{0,3}원)?$")
+
+
+def _looks_like_amount(cell: str) -> bool:
+    """그 칸이 **금액**으로 보이는가(주석번호·기간표기 제외)."""
+    s = (cell or "").strip()
+    if not s:
+        return False
+    if _AMOUNT_LIKE_RE.match(s):
+        return True
+    # 괄호/부호로 음수를 표시한 작은 수도 금액이다('(31)' 은 주석번호가 아니다).
+    return bool(_LOOSE_NUM.match(s)) and (s[0] in "(-[−△▲")
+
 # 당기 열로 인정하려면 그 위치가 "숫자를 가진 행"의 이 비율 이상에서 채워져 있어야 한다
 # (한 행의 오타성 숫자나 주석번호 한두 개에 끌려 왼쪽으로 밀리지 않도록).
 _MIN_COLUMN_SHARE = 0.25
@@ -105,11 +128,14 @@ _SECTION_META = {
 
 
 def _first_number_index(cells: list[str]) -> int | None:
-    """그 행에서 **처음으로 숫자인 칸**의 위치(라벨칸 0 은 제외). 없으면 None."""
+    """그 행에서 **처음으로 금액인 칸**의 위치(라벨칸 0 은 제외). 없으면 None.
+
+    판정은 `_looks_like_amount()` — 주석번호 열('31')을 금액으로 세지 않기 위해서다.
+    """
     for i, c in enumerate(cells):
         if i == 0:
             continue
-        if _LOOSE_NUM.match(c):
+        if _looks_like_amount(c):
             return i
     return None
 
@@ -135,8 +161,17 @@ def _loaded_value_positions(rows_cells: list[list[str]], known: set[str]) -> set
     · BS 의 '당기 공란' 행 — 값이 전기 열에만 있다 → 같은 이유로 제외(고려아연·NAVER).
     · 신한지주 EPS 행 — 적재된 '총포괄이익' 등과 **같은 위치**에 값이 있다 → 그대로
       적출(R149 검출력 유지, 연결·별도 양쪽).
+
+    ★집합을 **적재행 다수가 쓰는 위치로 좁힌다**(2026-09-20 4차) — 적재된 행의 "첫 금액
+      위치"는 그 행이 *적재된 열*과 같지 않다. 당기가 비고 전기에만 값이 있는 행도
+      (IS/CF 는 전기열까지 적재하므로) 적재되는데, 그 행의 첫 금액 위치는 전기 열이다.
+      그래서 소수 행 때문에 전기·연간 열까지 집합에 들어오고, "연간 열에만 값이 있는
+      행"이 다시 결측으로 잡혔다(실측: NAVER 20150515001873 [연결] IS — 적재행 대부분은
+      index 1 인데 소수가 3·5 를 써서 집합이 {1,3,5} 가 되고, index 5 에만 값이 있는
+      세후기타포괄손익 행 4건이 거짓 발화). 비율 문턱으로 그 꼬리를 자른다.
     """
-    out: set[int] = set()
+    counts: dict[int, int] = {}
+    n_loaded = 0
     for cells in rows_cells:
         if not cells:
             continue
@@ -145,8 +180,12 @@ def _loaded_value_positions(rows_cells: list[list[str]], known: set[str]) -> set
             continue
         idx = _first_number_index(cells)
         if idx is not None:
-            out.add(idx)
-    return out
+            counts[idx] = counts.get(idx, 0) + 1
+            n_loaded += 1
+    if not counts:
+        return set()
+    floor = max(1, n_loaded * _MIN_COLUMN_SHARE)
+    return {idx for idx, n in counts.items() if n >= floor}
 
 
 def _current_period_index(rows_cells: list[list[str]]) -> int | None:
@@ -267,7 +306,7 @@ def find_missing_rows(file_path: str | Path, lines) -> list[MissingRow]:
                 idx = _first_number_index(cells)
                 if idx is None or idx not in positions:
                     continue
-                amounts = tuple(c for c in cells[1:] if _LOOSE_NUM.match(c))
+                amounts = tuple(c for c in cells[1:] if _looks_like_amount(c))
                 out.append(MissingRow(basis=basis, statement=statement,
                                       label=cells[0].strip()[:60], amounts=amounts[:3]))
     return out

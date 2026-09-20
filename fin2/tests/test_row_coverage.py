@@ -73,17 +73,44 @@ def test_reference_positions_come_from_rows_that_were_loaded():
     "표의 당기 열은 index N" 이라는 모델은 쓸 수 없다. DART 표는 값 사이에 빈 칸을
     끼워서 **같은 표 안에서도 행마다 당기 값의 위치가 다르다**.
     """
-    rows = [["자산총계", "1,000", "900"],            # 적재됨 → 위치 1
-            ["부채총계", "400", "350"],               # 적재됨 → 위치 1
+    rows = [["자산총계", "1,000", "900"],            # 적재값 1,000 → 위치 1
+            ["부채총계", "400", "350"],               # 적재값 400  → 위치 1
             ["장기파생상품금융부채", "", "1,928"]]     # 미적재, 위치 2
-    known = {row_coverage.normalize_label("자산총계"),
-             row_coverage.normalize_label("부채총계")}
-    assert row_coverage._loaded_value_positions(rows, known) == {1}
+    loaded = {row_coverage.normalize_label("자산총계"): {1_000},
+              row_coverage.normalize_label("부채총계"): {400}}
+    assert row_coverage._loaded_value_positions(rows, loaded) == {1}
 
-    spaced = [["Ⅶ. 총포괄이익", "", "1,406,564", "", "1,328,049"],   # 적재됨 → 위치 2
+    spaced = [["Ⅶ. 총포괄이익", "", "1,406,564", "", "1,328,049"],   # 적재값 → 위치 2
               ["기본 및 희석주당이익", "", "2,564원", "", "2,428원"]]  # 미적재, 위치 2
-    known2 = {row_coverage.normalize_label("Ⅶ. 총포괄이익")}
-    assert row_coverage._loaded_value_positions(spaced, known2) == {2}
+    loaded2 = {row_coverage.normalize_label("Ⅶ. 총포괄이익"): {1_406_564}}
+    assert row_coverage._loaded_value_positions(spaced, loaded2) == {2}
+
+
+def test_loaded_position_is_found_by_value_not_by_first_number():
+    """★중간보고서 IS 는 열이 [당기3개월, 당기누적, 전기3개월, 전기누적, …] 이고 파서는
+    **누적**을 적재한다(R144). '첫 금액 위치'로 잡으면 3개월 열(1)이 적재 위치로
+    둔갑해, 3개월만 채우고 누적이 빈 행이 결측으로 오인된다(실측 거짓양성: 제닉·
+    HDC랩스·형지I&C·엘컴텍·덕우전자). 값으로 맞대면 누적 열(2)이 잡힌다."""
+    rows = [["수익(매출액)", "16,558,035,571", "16,558,035,571", "14,487,143,074"],
+            ["지분법 자본변동", "28,839,787", "", ""]]
+    # 파서가 적재한 값 = 누적 열 값. 여기선 3개월과 같아도 위치는 값으로 찾는다.
+    loaded = {row_coverage.normalize_label("수익(매출액)"): {16_558_035_571}}
+    # 같은 값이 1·2 둘 다 있으면 **먼저 만나는** 위치가 잡힌다 — 그래서 열이 다른
+    # 값을 갖는 표에서만 변별력이 있다(아래가 실제 판별 케이스).
+    rows2 = [["Ⅰ. 매출액", "50,303,355,700", "132,995,381,389", "33,883,434,440"],
+             ["매도가능금융자산평가손익", "(3,401,400)", "", ""]]
+    loaded2 = {row_coverage.normalize_label("Ⅰ. 매출액"): {132_995_381_389}}
+    assert row_coverage._loaded_value_positions(rows2, loaded2) == {2}
+    assert row_coverage._loaded_value_positions(rows, loaded) == {1}
+
+
+def test_loaded_value_matching_tolerates_unit_scaling():
+    """적재값은 원 단위(표 배수 적용 후)라 원문 셀과 자릿수가 다르다 — 배수만 다른
+    같은 숫자면 같은 칸으로 본다."""
+    assert row_coverage._matches_loaded_value("1,406,564", {1_406_564_000_000})
+    assert row_coverage._matches_loaded_value("(3,401,400)", {3_401_400})
+    assert not row_coverage._matches_loaded_value("999", {1_406_564})
+    assert not row_coverage._matches_loaded_value("", {1_000})
 
 
 def test_first_number_index_ignores_period_markers():

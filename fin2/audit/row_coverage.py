@@ -65,7 +65,7 @@ agent_automation_design_2026-09-18.md` §4-3)라서 방향이 CSV → 원문 **�
   계열이었다. (3) 적용 후 남는 것은 신한지주 20150515002196 의 `'4,244, 863'`
   (숫자 안에 공백이 든 원문 서식) 계열뿐 — 실제 결함 후보다.
 
-## 센서스 실측 (2026-09-20) — 회사별 1건씩 400개사
+## 센서스 실측 (2026-09-20) — 회사별 1건씩 400개사 (5차 수정 **이전** 수치)
 
 발화 3건(**0.8%**). 원문 셀을 덤프해 분류한 결과 **2건은 진짜 결함, 1건은 거짓양성**:
 · 대신증권 20150515002053 · 코리안리 20150515002691 — 원문이 **3개 논리행을 1개 `<TR>`
@@ -76,18 +76,22 @@ agent_automation_design_2026-09-18.md` §4-3)라서 방향이 CSV → 원문 **�
   금융업 대손준비금·비상위험준비금 서식. 별도 결함으로 조사 필요.
 · 한화에어로스페이스 20150515001451 — 아래 "남은 거짓양성".
 
-## 남은 거짓양성 1계열 (알고 남긴 것)
+## 적재 위치는 **값으로** 찾는다 — 5차이자 마지막 수정 (2026-09-20)
 
-적재된 행 중 **당기가 비고 전기에만 값이 있는 것**들 때문에(IS/CF 는 전기열까지
-적재한다) 위치 집합에 전기·연간 열이 섞여 들어온다. 그러면 "연간 열에만 값이 있는
-행"이 다시 걸린다 — 실측: 한화에어로스페이스 20150515001451 [별도] IS 는 집합이
-`{1, 5}` 이고 index 5 에만 값이 있는 세전기타포괄손익 2행이 발화했다.
+위 (3)은 적재된 행의 **첫 금액 위치**를 적재 위치로 봤다. 그게 마지막 오답이었다.
+중간보고서 손익계산서는 열이 `[당기3개월, 당기누적, 전기3개월, 전기누적, 전기연간,
+전전기연간]` 이고 파서는 **누적** 열을 적재한다(R144). 그런데 첫 금액은 3개월 열
+(index 1)이라 적재 위치가 1 로 잡히고, 그러면 **3개월만 채우고 누적이 빈 행**이
+결측으로 둔갑한다.
 
-**"집합의 최솟값(=당기 열)만 인정" 으로 좁히면 이 계열이 사라지지만 진짜 결함까지
-놓친다** — 코리안리의 3행압축 결측이 사라지고 R149 EPS 검출이 3행 → 1행으로 줄었다
-(같은 표 안에서 행마다 당기 값의 물리 위치가 다르므로 당기 값이 최솟값 위치에 없는
-행이 흔하다). 이건 선별 도구이고 발화분은 사람이 원문을 덤프해 확인하므로 **재현율을
-택했다.** 발화를 보면 먼저 "값이 당기 열에 있는지" 부터 확인할 것.
+이 하나가 남은 거짓양성 전부였다 — 실측: 제닉·HDC랩스·형지I&C·엘컴텍·덕우전자·
+한화에어로스페이스·큐렉소. 전부 "당기 누적 칸이 공란" 이었고 파서는 옳게 동작했다.
+(초기 조사에서 이 중 3건을 "진짜 결함" 으로 잘못 보고했다 — 원문 셀만 보고 열 의미를
+확인하지 않은 탓이다.)
+
+→ `_matches_loaded_value()` 로 **적재된 값이 실제로 놓인 칸**을 찾는다. 값은 단위
+배수만 다르므로 자릿수 스케일을 허용해 맞댄다. 이러면 누적 열(index 2)이 잡히고,
+3개월만 있는 행은 대상에서 빠진다. 헤더 해석이 아니라 값 대조라 추측이 끼지 않는다.
 
 이 검산은 **차단하지 않는다**(`GRADE_INFO`) — 남은 발화분은 사람이 원문을 봐야
 판단되는 것들이고, 차단하면 캠페인 흐름이 끊긴다. 가시화·기록만 하고 실제 처리는
@@ -164,7 +168,25 @@ def _first_number_index(cells: list[str]) -> int | None:
     return None
 
 
-def _loaded_value_positions(rows_cells: list[list[str]], known: set[str]) -> set[int]:
+_UNIT_STEPS = (1, 1_000, 1_000_000, 100_000_000, 1_000_000_000, 1_000_000_000_000)
+
+
+def _cell_digits(cell: str) -> int | None:
+    """셀 텍스트에서 숫자만 뽑아 정수로(부호 무시). 비교용이라 부호·괄호는 안 본다."""
+    digits = re.sub(r"[^\d]", "", cell or "")
+    return int(digits) if digits else None
+
+
+def _matches_loaded_value(cell: str, values: set[int]) -> bool:
+    """그 셀이 적재된 값 중 하나와 **단위 배수만 다르게** 같은가."""
+    d = _cell_digits(cell)
+    if d is None or d == 0:
+        return False
+    return any(d * step == v for v in values for step in _UNIT_STEPS)
+
+
+def _loaded_value_positions(rows_cells: list[list[str]],
+                            loaded_by_label: dict[str, set[int]]) -> set[int]:
     """그 표에서 **이미 적재된 행들이 값을 놓은 물리 위치들**.
 
     ★왜 이렇게 하는가(2026-09-20 3차 수정) — "표의 당기 열은 index N" 이라는 모델이
@@ -200,12 +222,23 @@ def _loaded_value_positions(rows_cells: list[list[str]], known: set[str]) -> set
         if not cells:
             continue
         label = normalize_label(cells[0])
-        if not label or label not in known:
+        values = loaded_by_label.get(label)
+        if not values:
             continue
-        idx = _first_number_index(cells)
-        if idx is not None:
-            counts[idx] = counts.get(idx, 0) + 1
-            n_loaded += 1
+        # ★적재된 **값**이 실제로 놓인 칸을 찾는다(2026-09-20 5차). "첫 금액 위치"를
+        #   쓰면 틀린다 — 중간보고서 손익계산서는 열이
+        #   [당기3개월, 당기누적, 전기3개월, 전기누적, 전기연간, 전전기연간] 인데
+        #   파서는 **누적** 열을 적재한다(R144). 첫 금액은 3개월 열(index 1)이라
+        #   적재 위치가 1 로 잡히고, 그러면 "3개월만 채우고 누적이 빈 행"이 결측으로
+        #   둔갑한다(실측 거짓양성: 제닉·HDC랩스·형지I&C·엘컴텍·덕우전자 —
+        #   전부 당기누적 칸이 공란이었다). 값으로 맞대면 index 2(누적)가 잡힌다.
+        for i, c in enumerate(cells):
+            if i == 0:
+                continue
+            if _matches_loaded_value(c, values):
+                counts[i] = counts.get(i, 0) + 1
+                n_loaded += 1
+                break
     if not counts:
         return set()
     floor = max(1, n_loaded * _MIN_COLUMN_SHARE)
@@ -307,9 +340,17 @@ def find_missing_rows(file_path: str | Path, lines) -> list[MissingRow]:
     groups = _detect_body_statement_tables(root, fin_type, include_sce=True)
 
     loaded: dict[tuple[str, str], set[str]] = {}
+    # 라벨 → 적재된 **당기 값**들. 적재 위치를 값으로 되찾기 위해 쓴다
+    # (`_loaded_value_positions` docstring).
+    values_by_label: dict[tuple[str, str], dict[str, set[int]]] = {}
     for line in lines:
-        loaded.setdefault((line.basis, line.statement), set()).update(
-            loaded_label_keys(line.label_raw))
+        scope = (line.basis, line.statement)
+        keys = loaded_label_keys(line.label_raw)
+        loaded.setdefault(scope, set()).update(keys)
+        if line.col_index == 0 and line.value_won is not None:
+            bucket = values_by_label.setdefault(scope, {})
+            for k in keys:
+                bucket.setdefault(k, set()).add(abs(line.value_won))
 
     out: list[MissingRow] = []
     for code, tables in groups.items():
@@ -318,10 +359,11 @@ def find_missing_rows(file_path: str | Path, lines) -> list[MissingRow]:
             continue
         basis, statement = meta
         known = loaded.get((basis, statement), set())
+        by_value = values_by_label.get((basis, statement), {})
         for (tbl, *_rest) in tables:
             rows_cells = [[" ".join("".join(td.itertext()).split()) for td in tr]
                           for tr in tbl.findall(".//TR")]
-            positions = _loaded_value_positions(rows_cells, known)
+            positions = _loaded_value_positions(rows_cells, by_value)
             if not positions:
                 # 그 표에서 적재된 행이 하나도 없다 = 표 단위 문제다 →
                 # `orphan_tables` 의 영역이므로 행 단위로 중복 신고하지 않는다.

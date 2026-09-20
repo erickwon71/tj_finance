@@ -44,6 +44,7 @@ from collector.db import engine, get_session
 from collector.models import Layer2ReviewQueue
 from fin2.audit import layer2_selfcheck as sc
 from fin2.audit import orphan_tables
+from fin2.audit import row_coverage
 from fin2.extract import review_csv
 from fin2.extract.report_lines import (extract_report_lines, store_report_lines,
                                        store_report_tables)
@@ -410,8 +411,13 @@ def _resolve_source(session, rcept_no: str) -> tuple[str, str | None]:
     return "none", None
 
 
-def _reload_one(session, item) -> tuple[str, str | None]:
-    """재파싱 + 적재. 반환 (source_kind, 실패사유 or None).
+def _reload_one(session, item) -> tuple[str, str | None, list]:
+    """재파싱 + 적재. 반환 (source_kind, 실패사유 or None, 추출된 lines).
+
+    ★lines 를 돌려주는 이유(2026-09-20) — `row_coverage` 감사가 "원문 행이 전부
+      실렸나"를 보려면 **방금 추출한 결과**가 필요하다. DB 를 다시 읽으면
+      `store_report_lines()` 의 col_index=0 필터(BS/IS/CF)가 걸린 뒤라 멀쩡한 행도
+      결측으로 오인된다. 여기서 이미 손에 있는 것을 그대로 넘겨 재파싱도 아낀다.
 
     ★`store_report_lines` 와 `store_report_tables` 를 **반드시 같이** 부른다 —
       `run.py::cmd_extract_lines` 는 후자를 부르지 않아 검토 CSV 에 찍을 단위 선언
@@ -422,29 +428,29 @@ def _reload_one(session, item) -> tuple[str, str | None]:
     """
     kind, path = _resolve_source(session, item["rcept_no"])
     if kind == "none":
-        return kind, "원문 파일 없음(다운로드 미완/소실)"
+        return kind, "원문 파일 없음(다운로드 미완/소실)", []
     if kind != "xml":
         # PDF/HTML 복구 경로는 DART 웹 스크래핑이 필요하고 값조작 결함 이력이 있다
         # (docs/qa/report_lines_row_count_outlier_scan_2026-09-08.md Pattern A).
         # 이 캠페인의 1차 대상(시총 상위 = 2015+ XML)에는 사실상 안 나온다.
         return kind, (f"{kind} 소스는 이 CLI 가 자동 재적재하지 않는다 — "
-                      f"collector/pdf_lines_sync.py::sync_pdf_recovery 로 별도 처리")
+                      f"collector/pdf_lines_sync.py::sync_pdf_recovery 로 별도 처리"), []
     try:
         lines = extract_report_lines(
             path, rcept_no=item["rcept_no"], corp_code=item["corp_code"],
             report_fiscal_year=item["fiscal_year"],
             report_fiscal_period=item["fiscal_period"], include_notes=False)
     except (FileNotFoundError, OSError) as exc:
-        return kind, f"원문 읽기 실패: {type(exc).__name__}: {exc}"
+        return kind, f"원문 읽기 실패: {type(exc).__name__}: {exc}", []
     if not lines:
-        return kind, "추출 0행(보류) — 섹션/표 미검출"
+        return kind, "추출 0행(보류) — 섹션/표 미검출", []
     try:
         store_report_lines(session, item["rcept_no"], lines)
         store_report_tables(session, item["rcept_no"], lines)
     except ValueError as exc:      # manual 보호가드
         session.rollback()
-        return kind, str(exc)
-    return kind, None
+        return kind, str(exc), []
+    return kind, None, lines
 
 
 def _mark(session, rcept_no: str, **fields) -> None:
@@ -475,7 +481,7 @@ def _delete_review_csv(csv_path: str | None) -> None:
 def _run_target(session, item, *, root: Path | None = None) -> dict:
     """1건 재적재 → 검산 → CSV. 큐 상태까지 갱신하고 요약 dict 를 돌려준다."""
     now = datetime.now()
-    kind, err = _reload_one(session, item)
+    kind, err, lines = _reload_one(session, item)
     if err:
         _mark(session, item["rcept_no"], status="blocked", source_kind=kind,
               reloaded_at=now, note=err)
@@ -488,7 +494,11 @@ def _run_target(session, item, *, root: Path | None = None) -> dict:
     # ★원문 쪽에서 보는 결측 신호(2026-09-20) — 다른 검산은 전부 **적재 결과**를 보므로
     # "원문에 있는데 안 실린 표"를 원리적으로 못 본다. 여기서만 원문 표 목록과 귀속
     # 결과를 맞댄다. 근거·실측은 fin2/audit/orphan_tables.py docstring.
-    checks.append(orphan_tables.check(_resolve_source(session, item["rcept_no"])[1]))
+    src_path = _resolve_source(session, item["rcept_no"])[1]
+    checks.append(orphan_tables.check(src_path))
+    # 행 단위 결측(표는 정상 귀속되고 안의 행만 사라지는 R149 류). 차단 등급이 아니다 —
+    # 근거는 fin2/audit/row_coverage.py docstring 마지막 단락.
+    checks.append(row_coverage.check(src_path, lines))
     path, counts = review_csv.generate(
         session, rcept_no=item["rcept_no"], corp_code=item["corp_code"],
         corp_name=item["corp_name"], market=item["market"],

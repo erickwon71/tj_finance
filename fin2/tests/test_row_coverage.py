@@ -24,6 +24,8 @@ _ROOT = Path(__file__).resolve().parents[2]
 # 초판이 이 둘을 결함으로 신고했던 회귀를 막는 가드다.
 _KOREAZINC_2022H1 = _ROOT / "raw_report/KOSPI/00102858_고려아연/half/2022/20220816001335.xml"
 _NAVER_2018Q1 = _ROOT / "raw_report/KOSPI/00266961_NAVER/quarter/2018/20180515002682.xml"
+# 분기 CF 의 '조정사항' 세부행이 연간 열에만 값을 싣는 필링 — 거짓 발화 113건이 나던 것.
+_NAVER_2015Q1 = _ROOT / "raw_report/KOSPI/00266961_NAVER/quarter/2015/20150515001873.xml"
 # R149(EPS '2,564원' 미파싱)를 되살리면 EPS 행이 결측되는 필링 — 검출력 가드.
 _SHINHAN_2022Q1 = _ROOT / "raw_report/KOSPI/00382199_신한지주/quarter/2022/20220516002487.xml"
 
@@ -62,24 +64,45 @@ def test_loose_number_test_does_not_reuse_parser_logic():
     assert not row_coverage._LOOSE_NUM.match("-")
 
 
-def test_current_period_index_picks_the_modal_column():
-    """당기 열은 '행들이 실제로 값을 넣은 위치의 최빈값'으로 정한다 — 값 사이에 빈 칸이
-    끼는 서식(신한지주 EPS 표)에서도 맞아야 한다."""
-    rows = [["자산총계", "1,000", "900"], ["부채총계", "400", "350"],
-            ["장기파생상품금융부채", "", "1,928"]]
-    assert row_coverage._current_period_index(rows) == 1
-    spaced = [["Ⅶ. 총포괄이익", "", "1,406,564", "", "1,328,049"],
-              ["Ⅳ. 법인세비용", "", "12,345", "", "11,000"]]
-    assert row_coverage._current_period_index(spaced) == 2
+def test_reference_positions_come_from_rows_that_were_loaded():
+    """★판정 기준을 **파서 자신의 결과**에서 가져온다 — 적재된 행들이 값을 놓은 물리
+    위치만 '적재되는 열'로 인정한다.
+
+    "표의 당기 열은 index N" 이라는 모델은 쓸 수 없다. DART 표는 값 사이에 빈 칸을
+    끼워서 **같은 표 안에서도 행마다 당기 값의 위치가 다르다**.
+    """
+    rows = [["자산총계", "1,000", "900"],            # 적재됨 → 위치 1
+            ["부채총계", "400", "350"],               # 적재됨 → 위치 1
+            ["장기파생상품금융부채", "", "1,928"]]     # 미적재, 위치 2
+    known = {row_coverage.normalize_label("자산총계"),
+             row_coverage.normalize_label("부채총계")}
+    assert row_coverage._loaded_value_positions(rows, known) == {1}
+
+    spaced = [["Ⅶ. 총포괄이익", "", "1,406,564", "", "1,328,049"],   # 적재됨 → 위치 2
+              ["기본 및 희석주당이익", "", "2,564원", "", "2,428원"]]  # 미적재, 위치 2
+    known2 = {row_coverage.normalize_label("Ⅶ. 총포괄이익")}
+    assert row_coverage._loaded_value_positions(spaced, known2) == {2}
 
 
-def test_row_with_no_current_period_value_is_not_reported():
-    """★당기가 공란이고 전기에만 값이 있는 행은 적재될 것이 없다 — 결함이 아니다.
-    초판이 이걸 결함으로 신고했던 회귀 가드(고려아연 '장기파생상품금융부채',
-    NAVER IFRS 9 로 소멸한 '매도가능금융자산')."""
+def test_first_number_index_ignores_period_markers():
+    assert row_coverage._first_number_index(["과 목", "제22기", "2,564"]) == 2
+    assert row_coverage._first_number_index(["자산총계", "1,000", "900"]) == 1
+    assert row_coverage._first_number_index(["구분", "", ""]) is None
+
+
+def test_rows_whose_values_sit_in_non_loaded_columns_are_not_reported():
+    """★적재 대상이 아닌 열에만 값이 있는 행은 결함이 아니다 — 초판들이 이걸 결함으로
+    신고했던 회귀 가드.
+
+    · 고려아연 `['장기파생상품금융부채', '', '1,928,974,207']` — 당기 공란, 전기에만 값
+    · NAVER 2018Q1 — IFRS 9 시행으로 당기부터 소멸한 '매도가능금융자산'
+    · NAVER 2015Q1 — 분기 CF 의 '조정사항' 세부행이 **연간 열에만** 값을 싣는다
+      (분기보고서라 파서는 분기 열만 적재한다). 거짓 발화 113건이 나던 케이스.
+    """
     for path, rcept, corp, fy, fp in (
             (_KOREAZINC_2022H1, "20220816001335", "00102858", 2022, "H1"),
-            (_NAVER_2018Q1, "20180515002682", "00266961", 2018, "Q1")):
+            (_NAVER_2018Q1, "20180515002682", "00266961", 2018, "Q1"),
+            (_NAVER_2015Q1, "20150515001873", "00266961", 2015, "Q1")):
         if not path.exists():
             continue
         lines = extract_report_lines(path, rcept_no=rcept, corp_code=corp,

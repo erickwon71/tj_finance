@@ -32,24 +32,38 @@ agent_automation_design_2026-09-18.md` §4-3)라서 방향이 CSV → 원문 **�
 정규화를 안 하면 이 3종만으로 발화율이 17.5% → (정규화 후) 12.5% 로, SCE 계열
 거짓양성이 대부분 사라진다(시총순 40개사 최신 필링 측정).
 
-## 당기 열만 본다 — 초판의 체계적 거짓양성 (2026-09-20 같은 날 수정)
+## 어느 행을 대상으로 삼나 — 거짓양성과 세 번 싸운 기록 (2026-09-20)
 
 초판은 "금액칸이 있는데 적재 안 된 행"을 전부 올렸다가 **정상 동작을 결함으로 신고**했다.
-BS 는 설계상 당기(`col_index=0`)만 적재하므로(`_PERIOD_AXIS_STATEMENTS` 정책), 당기가
-공란이고 전기에만 값이 있는 행은 적재될 것이 애초에 없다:
+적재되지 않는 **열**에만 값이 있는 행이 그렇다:
 · 고려아연 20220816001335 `['장기파생상품금융부채', '', '1,928,974,207']` —
-  당기(2022-06-30)엔 그 부채가 없다.
+  당기(2022-06-30)엔 그 부채가 없다. BS 는 당기만 적재한다.
 · NAVER 20180515002682 `['유동매도가능금융자산 (주5,16)', '', '79,435,727,110']` —
   IFRS 9 이 2018-01-01 시행돼 그 계정 자체가 당기부터 사라졌다.
-둘 다 원문이 당기를 비워둔 것이고 파서는 옳게 동작했다. → `_current_period_index()` 로
-**당기 칸에 값이 있는 행만** 대상으로 삼는다(그 docstring 에 열 위치 판정 근거).
+· NAVER 20150515001873 — 분기 CF 의 '조정사항' 세부행이 **연간 열에만** 값을 싣는다.
+  분기보고서라 파서는 분기 열만 적재한다 → 거짓 발화 113건.
 
-## 실측 (2026-09-20)
+두 번의 실패한 접근을 남겨둔다(같은 함정을 다시 밟지 않도록):
+ (1) **최빈값** — "당기 열 = 행들이 값을 넣은 위치의 최빈값". 위 분기 CF 에서 연간
+     열만 채운 행이 다수라 최빈값이 연간 열로 잡혀 정상 동작이 통째로 뒤집혔다.
+ (2) **최좌측 + 비율 임계값** — 임계값 경계에서 표마다 결과가 갈렸고(index 1 이 20행,
+     임계 21행이라 탈락), 무엇보다 **전제 자체가 틀렸다**: DART 표는 값 사이에 빈 칸을
+     끼워서 같은 표 안에서도 행마다 당기 값의 물리 위치가 다르다(신한지주 [연결] IS 는
+     index 1 인 행 21개와 index 2 인 행 27개가 섞여 있다). "표당 당기 열 하나" 모델로는
+     풀리지 않는다 — 파서는 이걸 헤더 그리드(R88/R144)로 푼다.
+ (3) **채택 — 파서 자신의 결과를 기준으로 자기교정**. `_loaded_value_positions()` 가
+     "적재된 행들이 값을 놓은 위치"를 모으고, 적재 안 된 행은 그 위치에 값이 있을
+     때만 결측으로 본다. 헤더를 해석하지 않으므로 추측이 끼지 않는다.
+
+## 실측 (2026-09-20, (3) 적용 후)
 
 · 검출력 — R149 수정만 끈 상태(=EPS 결측 재현)에서 신한지주 20220516002487 의
-  EPS 3행([연결] 기본·희석주당순이익, [별도] 기본 및 희석주당이익)을 정확히 적출.
-  수정 적용 상태에서는 0건. 위 두 거짓양성 사례도 수정 후 0건.
-· 발화율 — 시총순 회사별 1건씩 80건(최신 40 + 최고령 40)에서 발화 2건(2.5%).
+  EPS **3행 전부**([연결] 기본·희석주당순이익, [별도] 기본 및 희석주당이익)를 적출.
+  수정 적용 상태에서는 0건.
+· 거짓양성 — 위 3개 사례 전부 0건.
+· 발화율 — 회사별 1건씩 453건 센서스에서 5건(1.1%)이었고, 그중 4건이 위 거짓양성
+  계열이었다. (3) 적용 후 남는 것은 신한지주 20150515002196 의 `'4,244, 863'`
+  (숫자 안에 공백이 든 원문 서식) 계열뿐 — 실제 결함 후보다.
 
 이 검산은 **차단하지 않는다**(`GRADE_INFO`) — 남은 발화분은 사람이 원문을 봐야
 판단되는 것들이고, 차단하면 캠페인 흐름이 끊긴다. 가시화·기록만 하고 실제 처리는
@@ -74,6 +88,10 @@ CODE = "SOURCE_ROW_NOT_LOADED"
 _LOOSE_NUM = re.compile(r"^[(\[]?\s*[-−△▲]?\s*\d[\d,\.\s]*\s*[)\]]?\s*(?:[가-힣]{0,3}원)?$")
 
 _HEADER_LABELS = frozenset({"과목", "계정과목", "구분", "내용", "항목"})
+
+# 당기 열로 인정하려면 그 위치가 "숫자를 가진 행"의 이 비율 이상에서 채워져 있어야 한다
+# (한 행의 오타성 숫자나 주석번호 한두 개에 끌려 왼쪽으로 밀리지 않도록).
+_MIN_COLUMN_SHARE = 0.25
 _NOTE_REF_RE = re.compile(r"[\(（]\s*주\s*석?\s*[\d,\.\s·]*\s*[\)）]")
 
 _SECTION_META = {
@@ -96,8 +114,46 @@ def _first_number_index(cells: list[str]) -> int | None:
     return None
 
 
+def _loaded_value_positions(rows_cells: list[list[str]], known: set[str]) -> set[int]:
+    """그 표에서 **이미 적재된 행들이 값을 놓은 물리 위치들**.
+
+    ★왜 이렇게 하는가(2026-09-20 3차 수정) — "표의 당기 열은 index N" 이라는 모델이
+      애초에 틀렸다. DART 표는 값 사이에 빈 칸을 끼우거나 colspan 을 쓰기 때문에 **같은
+      표 안에서도 행마다 당기 값의 물리 위치가 다르다**(실측: 신한지주 20220516002487
+      [연결] IS 는 첫 숫자 위치가 index 1 인 행 21개, index 2 인 행 27개가 섞여 있다).
+      파서는 이걸 헤더 그리드(R88/R144 `header_cols`)로 푼다 — 감사가 그 해석을 다시
+      추측하면 그 추측이 또 하나의 결함원이 된다.
+
+    그래서 기준을 **파서 자신의 결과**에서 가져온다: 적재된 행들이 실제로 값을 놓은
+    위치 집합을 모으고, 적재 안 된 행은 **그 위치 중 하나에 값이 있을 때만** 결측으로
+    본다. 자기교정이라 서식마다 따로 맞출 필요가 없다.
+
+    이 방식이 앞선 두 판(최빈값 / 최좌측+임계값)에서 틀렸던 것들을 전부 바로잡는다:
+    · 분기보고서 CF 의 '조정사항' 세부행 — 연간 열에만 값이 있고(index 3), 적재된 행은
+      분기 열(index 1)을 쓴다 → 위치 불일치로 제외(NAVER 20150515001873 에서 거짓
+      발화 113건 → 0건).
+    · BS 의 '당기 공란' 행 — 값이 전기 열에만 있다 → 같은 이유로 제외(고려아연·NAVER).
+    · 신한지주 EPS 행 — 적재된 '총포괄이익' 등과 **같은 위치**에 값이 있다 → 그대로
+      적출(R149 검출력 유지, 연결·별도 양쪽).
+    """
+    out: set[int] = set()
+    for cells in rows_cells:
+        if not cells:
+            continue
+        label = normalize_label(cells[0])
+        if not label or label not in known:
+            continue
+        idx = _first_number_index(cells)
+        if idx is not None:
+            out.add(idx)
+    return out
+
+
 def _current_period_index(rows_cells: list[list[str]]) -> int | None:
-    """표의 **당기 열 위치**를 행들의 다수결로 정한다.
+    """표의 **당기 열 위치**를 행들의 다수결로 정한다(구버전, 참고용).
+
+    ★실사용 경로에서는 쓰지 않는다 — `_loaded_value_positions()` 로 교체됐다.
+      남겨둔 이유는 왜 이 접근이 실패하는지가 회귀 테스트로 고정돼 있기 때문이다.
 
     ★왜 필요한가(2026-09-20, 초판의 체계적 거짓양성 수정) — BS 는 설계상 당기
       (`col_index=0`)만 적재한다(`_PERIOD_AXIS_STATEMENTS` 정책). 그래서 **당기가
@@ -108,20 +164,30 @@ def _current_period_index(rows_cells: list[list[str]]) -> int | None:
         · NAVER 20180515002682 `['유동매도가능금융자산 (주5,16)', '', '79,435,727,110']`
           — IFRS 9 이 2018-01-01 시행돼 그 계정 자체가 당기부터 사라졌다.
       둘 다 원문이 당기를 비워둔 것이고 파서는 옳게 동작했다.
-    ★그래서 "당기 칸에 숫자가 있는 행"만 대상으로 삼는다. 열 위치는 표마다 다르고
-      (주석 열이 끼거나 값 사이에 빈 칸이 끼는 서식이 흔하다) 헤더 해석은 또 하나의
-      추측이 되므로, **행들이 실제로 값을 넣은 위치의 최빈값**으로 정한다.
-      실측: 신한지주 EPS 표는 값 사이에 빈 칸이 끼어 당기 열이 index 2 인데, 이
-      방식이면 EPS 행도 그대로 잡힌다(R149 재검출 확인).
+    ★그래서 "당기 칸에 숫자가 있는 행"만 대상으로 삼는다. 열 위치는 표마다 다르므로
+      (주석 열이 끼거나 값 사이에 빈 칸이 끼는 서식이 흔하다) **행들이 실제로 값을 넣은
+      위치**에서 유도한다. DART 는 당기를 **맨 왼쪽**에 인쇄하므로 *가장 작은* 위치를
+      쓴다 — 단, 한 행의 오타성 숫자에 끌려가지 않도록 그 위치가 숫자를 가진 행의
+      `_MIN_COLUMN_SHARE` 이상에서 채워져 있어야 한다.
+
+    ★최빈값을 쓰면 안 된다(2026-09-20 2차 수정) — 분기보고서 현금흐름표는 열이
+      [당기분기, 전기분기, 전기연간, 전전기연간] 인데 '조정사항' 세부행 다수가
+      **연간 열에만** 값을 싣는다. 그러면 최빈값이 연간 열로 잡혀, 분기 열만 적재하는
+      정상 동작이 결측으로 뒤집힌다(실측: NAVER 20150515001873 에서 CF 113행이
+      거짓 발화). 가장 왼쪽 기준이면 같은 표에서 0건이 된다.
     """
     counts: dict[int, int] = {}
+    n_rows_with_numbers = 0
     for cells in rows_cells:
         idx = _first_number_index(cells)
         if idx is not None:
             counts[idx] = counts.get(idx, 0) + 1
+            n_rows_with_numbers += 1
     if not counts:
         return None
-    return max(counts.items(), key=lambda kv: (kv[1], -kv[0]))[0]
+    floor = max(1, int(n_rows_with_numbers * _MIN_COLUMN_SHARE))
+    solid = [idx for idx, n in counts.items() if n >= floor]
+    return min(solid) if solid else min(counts)
 
 
 @dataclass(frozen=True)
@@ -182,8 +248,10 @@ def find_missing_rows(file_path: str | Path, lines) -> list[MissingRow]:
         for (tbl, *_rest) in tables:
             rows_cells = [[" ".join("".join(td.itertext()).split()) for td in tr]
                           for tr in tbl.findall(".//TR")]
-            current = _current_period_index(rows_cells)
-            if current is None:
+            positions = _loaded_value_positions(rows_cells, known)
+            if not positions:
+                # 그 표에서 적재된 행이 하나도 없다 = 표 단위 문제다 →
+                # `orphan_tables` 의 영역이므로 행 단위로 중복 신고하지 않는다.
                 continue
             for cells in rows_cells:
                 if not cells:
@@ -192,10 +260,12 @@ def find_missing_rows(file_path: str | Path, lines) -> list[MissingRow]:
                 # 라벨 자리가 비었거나 표 머리행이거나 숫자면 데이터 행이 아니다.
                 if not label or label in _HEADER_LABELS or _LOOSE_NUM.match(cells[0].strip()):
                     continue
-                # ★당기 칸에 값이 있는 행만 본다(위 `_current_period_index` docstring).
-                if current >= len(cells) or not _LOOSE_NUM.match(cells[current]):
-                    continue
                 if label in known:
+                    continue
+                # ★적재된 행들이 쓰는 위치에 값이 있을 때만 결측으로 본다
+                #   (위 `_loaded_value_positions` docstring).
+                idx = _first_number_index(cells)
+                if idx is None or idx not in positions:
                     continue
                 amounts = tuple(c for c in cells[1:] if _LOOSE_NUM.match(c))
                 out.append(MissingRow(basis=basis, statement=statement,

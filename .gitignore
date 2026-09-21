@@ -53,3 +53,4 @@ docs/qa/row_coverage_census.jsonl
 # 캠페인 세션이 재검토에 쓰므로 docs/qa/r154_backfill_applied_2026-09-21.txt 로 커밋했다.
 docs/qa/dual_column_scan.jsonl
 docs/qa/r154_backfill.jsonl
+docs/qa/decimal_cell_scan.jsonl

@@ -9,6 +9,7 @@
     parse_amount("　")                   → None          (전각공백)
 """
 import re
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional
 
 # ── 단위 키워드 → 배수 ───────────────────────────────────────────────
@@ -481,14 +482,28 @@ def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
         #   깨진 원문에서 셀이 병합돼 18 자리 문자열이 들어오면(예 '723,570,750 723,570,750')
         #   이 경로를 타서 DB 에 원문에도 없는 값이 남았다(전수조사에서 17,771 행 발견).
         #   소수 표기('1.0'·환율 '1,106.52')는 종전대로 float 경유가 필요하다.
-        val = int(s) if _PLAIN_INT_RE.fullmatch(s) else int(float(s))
-        val *= multiplier
+        if _PLAIN_INT_RE.fullmatch(s):
+            val = int(s) * multiplier
+        else:
+            # ── R157(2026-09-22): 소수 표기는 **배수를 먼저** 적용하고 반올림한다.
+            #   종전엔 `int(float(s))` 로 소수부를 버린 **뒤** 배수를 곱해, 단위가
+            #   선언된 표에서 소수부만큼이 조용히 사라졌다:
+            #     '1,234.5' 백만원 → 1,234,000,000  (정확값 1,234,500,000)
+            #     '0.5'     백만원 → 0              ← 값이 통째로 사라진다
+            #   결측이 아니라 **값 왜곡**이라 기존 검산이 못 잡는다(그럴듯한 값이
+            #   들어 있다). 배수 1 인 표에서 '69.0'·'343.0' 같은 EPS 소수는 결과가
+            #   종전과 같다(소수부가 0 이라 반올림해도 그대로).
+            #   ★float 대신 Decimal 을 쓴다 — float64 는 유효자릿수 15~17 자리라
+            #   큰 값에서 조용히 틀어진다(위 정수 경로가 float 를 피하는 것과 같은
+            #   이유). 반올림은 ROUND_HALF_UP(회계 관행).
+            val = int((Decimal(s) * multiplier).to_integral_value(
+                rounding=ROUND_HALF_UP))
         # ── R3: 금액 타당성 상한. 종전 상한 9×10^18 은 BIGINT 한도라 사실상 무제한이어서
         #   병합으로 날조된 값(1.6×10^17 등)이 전부 통과했다(DB 실측 17,771 행).
         if abs(val) > _AMOUNT_SANE_MAX:
             return None   # 두 숫자 이어붙음·인코딩 오류 — 오염보다 결측을 택한다
         return -val if negative else val
-    except (ValueError, OverflowError):
+    except (ValueError, OverflowError, InvalidOperation):
         return None
 
 

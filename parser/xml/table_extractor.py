@@ -395,6 +395,11 @@ def extract_rows(
             amount_cells = [_first_of_compacted_supplementary_cell(ac)
                             for ac in amount_cells]
 
+        # ★R158(2026-09-22) — 천단위 구분자가 마침표로 깨진 셀을 **같은 행의 정수
+        #   칸과 대조해** 복원한다. 짝이 없으면 손대지 않는다(주당손익류 정상 소수
+        #   보호). 근거·실측은 `_repair_dot_grouped_cells` docstring.
+        amount_cells = _repair_dot_grouped_cells(amount_cells)
+
         # 금액 파싱 (전체 amount_cells 파싱 후 재정렬)
         all_parsed = [parse_amount(ac, multiplier) for ac in amount_cells]
 
@@ -1322,6 +1327,71 @@ def select_by_header_columns(
             # 진짜값 0개+대시/공란 아닌 결측(진짜 결측) 또는 진짜값 2개 이상(서로 다른
             # 값, 판정불가, R6) 이면 이 rank 는 건너뜀.
     return result
+
+
+# ★R158(2026-09-22) — 천단위 구분자가 **마침표**로 깨진 셀.
+#   실측(전수 스캔 2,528개사 → 11필링 32셀): 재무제표 셀의 콤마 하나가 마침표로
+#   렌더돼 소수점처럼 보인다. 결정적 증거는 트리니티항공 20260515001132 —
+#   **같은 값**이 연결 표엔 '41,106,779.959', 별도 표엔 '41,106,779,959' 로 찍혔다.
+#   코오롱 20260515002605 은 한 행 안에 나란히 있다: '393,211,876', '393,211.876'.
+#   이걸 소수로 읽으면 값이 10³~10⁶ 배 작아진다 — 결측이 아니라 **값 왜곡**이라
+#   기존 검산이 못 잡는다.
+#
+#   ★복원은 추측이 아니다. 숫자열은 온전히 남아 있고, 정확한 값이 **같은 행 다른
+#   칸에 정수로** 들어 있다(구성요소가 전부 0 인 SCE 변동 행이라 합계 칸이 같은 값).
+#   그래서 "같은 행에서 숫자열이 일치하는 정수 칸"을 찾아 그 배율만 가져온다.
+#   뒤 0 이 잘리는 경우도 있어(('10,590,556.9') → 10,590,556,900) 텍스트만으로는
+#   배율이 안 나오므로, 이 대조가 **유일한** 근거다.
+#
+#   안 건드리는 것: 주당손익처럼 **원 단위 소수가 정상인** 값. 같은 행에 일치하는
+#   정수 칸이 없으면 그대로 둔다(에스티아이 20260515000677 '343.0' 은 주당 금액이고
+#   행 안에 짝이 없어 손대지 않는다).
+_DOT_GROUPED_RE = re.compile(
+    r"^([(\[]?\s*[-−△▲]?\s*)(\d{1,3}(?:,\d{3})*)\.(\d+)(\s*[)\]]?)$")
+
+
+def _digits_only(text: str) -> str:
+    return re.sub(r"[^\d]", "", text or "")
+
+
+def _repair_dot_grouped_cells(amount_cells: list[str]) -> list[str]:
+    """행 안에서 짝을 찾아 마침표-구분자 셀을 복원한다(못 찾으면 그대로).
+
+    판정: 깨진 셀의 숫자열이 같은 행의 **정수 칸** 숫자열의 접두사이고, 남는
+    꼬리가 전부 0 이면 그 정수 칸의 자릿수를 정답으로 본다.
+        '42,549.493'  ↔ '42,549,493'      (정확히 일치)
+        '10,590,556.9' ↔ '10,590,556,900' (꼬리 '00' — 잘린 뒤 0)
+    """
+    broken = [i for i, c in enumerate(amount_cells)
+              if _DOT_GROUPED_RE.match((c or "").strip())]
+    if not broken:
+        return amount_cells
+
+    # 같은 행의 '온전한 정수' 칸들(마침표 없음)의 숫자열
+    intact = []
+    for c in amount_cells:
+        t = (c or "").strip()
+        if not t or "." in t:
+            continue
+        d = _digits_only(t)
+        if d:
+            intact.append(d)
+    if not intact:
+        return amount_cells
+
+    out = list(amount_cells)
+    for i in broken:
+        m = _DOT_GROUPED_RE.match(amount_cells[i].strip())
+        digits = _digits_only(m.group(2)) + m.group(3)
+        # 더 긴 후보가 여러 개면 판정불가로 두고 손대지 않는다(R6).
+        cands = {d for d in intact
+                 if len(d) >= len(digits) and d.startswith(digits)
+                 and set(d[len(digits):]) <= {"0"}}
+        if len(cands) != 1:
+            continue
+        full = cands.pop()
+        out[i] = f"{m.group(1)}{full}{m.group(4)}"
+    return out
 
 
 def _split_label_amounts(

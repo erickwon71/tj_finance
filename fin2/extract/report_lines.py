@@ -39,7 +39,7 @@ from parser.xml.table_extractor import (
     RowData, _header_rule_name, _is_fs_title_row, _detect_indent, _first_cell_indent,
     _table_has_comma_note_column, _table_has_note_header,
     parse_header_columns, select_by_header_columns, drop_mismatched_granularity_columns,
-    HeaderColumn,
+    HeaderColumn, _repair_dot_grouped_cells,
 )
 
 # ★R116(2026-09-14, 사용자 원문대조로 확정) — 형지I&C 20160516001490·드림시큐리티
@@ -1583,9 +1583,15 @@ def _grid_body_rows(
         amounts: list[int | None] = [None] * (max_idx + 1)
         raw_amounts: list[str] = [""] * (max_idx + 1)
         for c in value_cells:
-            idx = c.grid_col - offset
-            amounts[idx] = parse_amount(c.text, multiplier)
-            raw_amounts[idx] = c.text
+            raw_amounts[c.grid_col - offset] = c.text
+        # ★R158(2026-09-22) — 천단위 구분자가 마침표로 깨진 셀 복원. **이 경로도
+        #   반드시 거쳐야 한다** — `extract_rows` 에만 넣었더니 SCE(이 그리드 경로)는
+        #   복원이 안 돼 왜곡값이 그대로 남았다(실측: 엘에스일렉트릭 20260318001243
+        #   별도 SCE '확정급여제도의 재측정요소' col=3 에 -6,105 가 잔존).
+        #   R144/R153 의 교훈 — 같은 판정을 두 경로가 각자 하면 갈린다.
+        raw_amounts = _repair_dot_grouped_cells(raw_amounts)
+        for idx, txt in enumerate(raw_amounts):
+            amounts[idx] = parse_amount(txt, multiplier) if txt else None
 
         out.append(RowData(
             account_name=label.lstrip(),

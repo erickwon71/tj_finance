@@ -39,7 +39,7 @@ from parser.xml.table_extractor import (
     RowData, _header_rule_name, _is_fs_title_row, _detect_indent, _first_cell_indent,
     _table_has_comma_note_column, _table_has_note_header,
     parse_header_columns, select_by_header_columns, drop_mismatched_granularity_columns,
-    HeaderColumn, _repair_dot_grouped_cells,
+    HeaderColumn, _repair_dot_grouped_cells, apply_source_typo_fixes,
 )
 
 # ★R116(2026-09-14, 사용자 원문대조로 확정) — 형지I&C 20160516001490·드림시큐리티
@@ -1110,7 +1110,8 @@ def _emit_section_lines(
             n_cols = max(c.position for c in header_cols) + 1
             table_rows = list(extract_rows(table, multiplier=unit, num_cols=n_cols,
                                             direct_only=True, skip_junk=False,
-                                            keep_all_amount_cells=True))
+                                            keep_all_amount_cells=True,
+                                            rcept_no=rcept_no))
         else:
             # 보험/증권 기간당 다열 포맷 감지(2단 누적표는 별도 경로라 제외).
             n_periods, multicol = (3, False) if cum_map is not None else _detect_period_layout(table)
@@ -1125,7 +1126,8 @@ def _emit_section_lines(
             # 이 플래그를 안 보므로 결과가 그대로다(§1 실측).
             table_rows = list(extract_rows(table, multiplier=unit, num_cols=n_cols,
                                             direct_only=True, skip_junk=False,
-                                            preserve_col_positions=(cum_map is not None)))
+                                            preserve_col_positions=(cum_map is not None),
+                                            rcept_no=rcept_no))
         section_paths = _assign_section_paths(table_rows, statement)
         node_roles = _classify_positions(table_rows)
         table_seq = doc_seq[id(table)]
@@ -1495,6 +1497,7 @@ def _note_heading(table) -> str | None:
 def _grid_body_rows(
     table, grid_rows, n_header: int, offset: int, *,
     multiplier: int = 1, allow_date_label: bool = False, keep_header_rows: bool = True,
+    rcept_no: str | None = None,
 ) -> list[RowData]:
     """`expand_table_grid`의 본문(헤더 이후) 그리드 행을 `RowData`로 변환한다(R11) —
     주석(`_emit_note_lines`, T2.4)·SCE(`_emit_sce_lines`, T2.5) **공용**. T1.4가 "L 규칙은
@@ -1589,7 +1592,9 @@ def _grid_body_rows(
         #   복원이 안 돼 왜곡값이 그대로 남았다(실측: 엘에스일렉트릭 20260318001243
         #   별도 SCE '확정급여제도의 재측정요소' col=3 에 -6,105 가 잔존).
         #   R144/R153 의 교훈 — 같은 판정을 두 경로가 각자 하면 갈린다.
-        raw_amounts = _repair_dot_grouped_cells(raw_amounts)
+        # ★R159 — 원문 오타 교정을 복원보다 먼저(위 `extract_rows` 와 같은 순서).
+        raw_amounts = apply_source_typo_fixes(raw_amounts, rcept_no)
+        raw_amounts = _repair_dot_grouped_cells(raw_amounts, label)
         for idx, txt in enumerate(raw_amounts):
             amounts[idx] = parse_amount(txt, multiplier) if txt else None
 
@@ -1830,11 +1835,13 @@ def _emit_sce_lines(
             # 헤더 구간을 못 찾음(실전에서 드묾) — col_label 없이도 값은 잃지 않는다(R6).
             col_labels: dict[int, str] = {}
             rows = _grid_body_rows(table, grid_rows, 0, 0, multiplier=unit,
-                                   allow_date_label=True, keep_header_rows=False)
+                                   allow_date_label=True, keep_header_rows=False,
+                                   rcept_no=rcept_no)
         else:
             col_labels = _label_dict_from_header(grid_rows[:n_header], n_header, offset, width)
             rows = _grid_body_rows(table, grid_rows, n_header, offset, multiplier=unit,
-                                   allow_date_label=True, keep_header_rows=False)
+                                   allow_date_label=True, keep_header_rows=False,
+                                   rcept_no=rcept_no)
         adecimal = _adecimal_from_unit(unit)
         section_paths = _assign_section_paths(rows, "SCE")
         node_roles = _classify_positions(rows)

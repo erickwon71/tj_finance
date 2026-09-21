@@ -42,6 +42,7 @@ import pytest                                                      # noqa: E402
 from parser.common.amount_normalizer import parse_amount           # noqa: E402
 from parser.xml.table_extractor import (                           # noqa: E402
     _repair_dot_grouped_cells as repair,
+    _SOURCE_TYPO_CELL_FIXES, apply_source_typo_fixes,
 )
 from fin2.extract.report_lines import extract_report_lines         # noqa: E402
 
@@ -146,5 +147,56 @@ def test_both_extraction_paths_are_wired():
     """상수·함수명이 바뀌면 조용히 깨지므로 배선 자체를 소스에서 확인한다."""
     te = (_ROOT / "parser/xml/table_extractor.py").read_text(encoding="utf-8")
     rl = (_ROOT / "fin2/extract/report_lines.py").read_text(encoding="utf-8")
-    assert "_repair_dot_grouped_cells(amount_cells)" in te
-    assert "_repair_dot_grouped_cells(raw_amounts)" in rl
+    # ★라벨 인자까지 넘기는지 확인한다 — 안 넘기면 EPS 가드가 조용히 무력화된다.
+    assert "_repair_dot_grouped_cells(amount_cells, label)" in te
+    assert "_repair_dot_grouped_cells(raw_amounts, label)" in rl
+
+
+# ─────────────────── R158 EPS 가드 · R159 원문 오타 교정 ───────────────────
+
+def test_eps_rows_are_skipped_by_label():
+    """★주당손익 행은 라벨로 배제한다 — 짝처럼 보이는 배치가 실제로 나온다.
+
+    실측(핸즈코퍼레이션 20260515002776 연결IS): `'(1,500.00)'` 과 `'(1,500)'` 이 한
+    행에 있다. 자릿수가 하나만 달라지면 EPS 를 1,500,000 으로 **날조**한다.
+    """
+    cells = ["(1,500.00)", "(1,500,000)"]
+    assert repair(cells, "계속영업 기본주당순손실 (단위 : 원)") == cells
+    # 라벨이 없으면(구 호출부) 종전 동작 — 가드는 라벨을 줄 때만 작동한다
+    assert repair(list(cells)) != cells
+
+
+def test_non_eps_rows_still_repaired_with_label():
+    cells = ["0", "(42,549.493)", "(42,549,493)"]
+    assert repair(cells, "확정급여제도의 재측정손익")[1] == "(42549493)"
+
+
+def test_source_typo_fix_applies_only_to_listed_rcept():
+    """R159 — rcept 예외목록에 등재된 셀만 교정한다."""
+    cells = ["10,937,873.5", "92,662,328,851"]
+    fixed = apply_source_typo_fixes(cells, "20260515002776")
+    assert fixed[0] == "10,937,873,500"
+    assert fixed[1] == "92,662,328,851"
+    # 다른 필링·rcept 없음이면 손대지 않는다
+    assert apply_source_typo_fixes(cells, "99999999999999") == cells
+    assert apply_source_typo_fixes(cells, None) == cells
+
+
+def test_typo_fix_entries_carry_a_reason_comment():
+    """등재 조건: 정정값이 원문 다른 곳에 인쇄돼 있을 때만. 근거 주석을 강제한다."""
+    te = (_ROOT / "parser/xml/table_extractor.py").read_text(encoding="utf-8")
+    block = te.split("_SOURCE_TYPO_CELL_FIXES", 2)[2].split("}", 1)[0]
+    for (rcept, _cell) in _SOURCE_TYPO_CELL_FIXES:
+        assert rcept in block, f"{rcept} 항목에 근거 주석이 없다"
+
+
+def test_typo_fix_is_wired_into_both_paths():
+    te = (_ROOT / "parser/xml/table_extractor.py").read_text(encoding="utf-8")
+    rl = (_ROOT / "fin2/extract/report_lines.py").read_text(encoding="utf-8")
+    assert "apply_source_typo_fixes(amount_cells, rcept_no)" in te
+    assert "apply_source_typo_fixes(raw_amounts, rcept_no)" in rl
+    # 오타 교정이 **복원보다 먼저** 와야 한다(교정 후엔 정상 정수라 복원 대상 아님)
+    assert te.index("apply_source_typo_fixes(amount_cells") < \
+        te.index("_repair_dot_grouped_cells(amount_cells")
+    assert rl.index("apply_source_typo_fixes(raw_amounts") < \
+        rl.index("_repair_dot_grouped_cells(raw_amounts")

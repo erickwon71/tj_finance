@@ -289,6 +289,7 @@ def extract_rows(
     date_labels_ok: bool = False,
     preserve_col_positions: bool = False,
     keep_all_amount_cells: bool = False,
+    rcept_no: Optional[str] = None,
     keep_header_rows: bool = False,
 ) -> list[RowData]:
     """
@@ -398,7 +399,10 @@ def extract_rows(
         # ★R158(2026-09-22) — 천단위 구분자가 마침표로 깨진 셀을 **같은 행의 정수
         #   칸과 대조해** 복원한다. 짝이 없으면 손대지 않는다(주당손익류 정상 소수
         #   보호). 근거·실측은 `_repair_dot_grouped_cells` docstring.
-        amount_cells = _repair_dot_grouped_cells(amount_cells)
+        # ★R159 — 원문 오타 교정을 **복원보다 먼저** 적용한다(교정된 셀은 정상
+        #   정수가 되므로 R158 이 건드릴 일이 없어진다).
+        amount_cells = apply_source_typo_fixes(amount_cells, rcept_no)
+        amount_cells = _repair_dot_grouped_cells(amount_cells, label)
 
         # 금액 파싱 (전체 amount_cells 파싱 후 재정렬)
         all_parsed = [parse_amount(ac, multiplier) for ac in amount_cells]
@@ -1350,11 +1354,61 @@ _DOT_GROUPED_RE = re.compile(
     r"^([(\[]?\s*[-−△▲]?\s*)(\d{1,3}(?:,\d{3})*)\.(\d+)(\s*[)\]]?)$")
 
 
+# ★R159(2026-09-22) — **원문 자체의 오타 셀**을 rcept 단위 예외목록으로 교정한다.
+#   R118("원문 자체의 헤더 오타"를 rcept 목록으로 교정)과 **같은 패턴**이고, 같은 이유로
+#   일반 규칙화하지 않는다 — 제출인의 오타는 규칙이 없다.
+#
+#   등재 조건(사용자 확정 2026-09-22): 정정값이 **원문 다른 곳에 그대로 인쇄돼 있어**
+#   추측 없이 확정될 때만. 근거를 주석에 반드시 남긴다.
+#
+#   ★왜 `manual_report_lines` 를 쓰지 않는가 — 그쪽은 (rcept, statement, basis) 스코프를
+#   통째로 delete-then-insert 하므로, 셀 4개를 고치려고 SCE 80행을 전부 손으로 옮겨
+#   적어야 하고 그 스코프는 이후 자동 재추출에서 영구 제외된다(manual 보호 가드).
+#   나머지 76행이 정상인데 파서 개선 혜택을 못 받게 되므로 맞지 않는다.
+_SOURCE_TYPO_CELL_FIXES = {
+    # 핸즈코퍼레이션 00119140 20260515002776(2026Q1) 연결·별도 자본변동표 **자본금** 열 —
+    # 천단위 구분자 자리에 '.5' 가 찍혔다(',500' → '.5' 오타). 같은 표
+    # `2025.01.01 (기초자본)` 행의 같은 열에 `10,937,873,500` 이 정수로 인쇄돼 있고
+    # 자본금은 그 사이 변동이 없어, 정정값이 원문으로 확정된다(사용자 확인 2026-09-22).
+    # R158(행 안의 정수 짝 대조)은 **같은 행**만 보므로 이 건을 복원하지 못한다.
+    ("20260515002776", "10,937,873.5"): "10,937,873,500",
+}
+
+
+def apply_source_typo_fixes(cells: list[str],
+                            rcept_no: Optional[str]) -> list[str]:
+    """`_SOURCE_TYPO_CELL_FIXES` 에 등재된 셀만 교정한다(없으면 원본 그대로).
+
+    ★두 추출 경로(`extract_rows`, `report_lines._grid_body_rows`)가 **같은 함수**를
+      불러야 한다 — 같은 판정을 두 경로가 각자 하면 갈린다(R144/R153/R158 교훈).
+    """
+    if not rcept_no or not _SOURCE_TYPO_CELL_FIXES:
+        return cells
+    out = None
+    for i, c in enumerate(cells):
+        fixed = _SOURCE_TYPO_CELL_FIXES.get((rcept_no, (c or "").strip()))
+        if fixed is None:
+            continue
+        if out is None:
+            out = list(cells)
+        out[i] = fixed
+    return out if out is not None else cells
+
+
 def _digits_only(text: str) -> str:
     return re.sub(r"[^\d]", "", text or "")
 
 
-def _repair_dot_grouped_cells(amount_cells: list[str]) -> list[str]:
+# ★주당손익 행은 R158 대상이 아니다 — 주당 금액은 **원 단위 소수가 정상**이고
+#   (`'(69.0)'` → -69), 그 행에는 `['주당이익','(1,500.00)','(1,500,000)']` 처럼 짝처럼
+#   보이는 배치가 실제로 나온다(핸즈코퍼레이션 20260515002776 IS 실측: `'(1,500.00)'`
+#   과 `'(1,500)'` 이 한 행에 있다). 지금 규칙은 우연히 안 걸리지만, 자릿수가 하나만
+#   달라지면 EPS 를 1,500,000 으로 **날조**한다. 라벨로 먼저 배제한다.
+_EPS_ROW_LABEL_RE = re.compile(r"주당|per\s*share", re.I)
+
+
+def _repair_dot_grouped_cells(amount_cells: list[str],
+                              label: Optional[str] = None) -> list[str]:
     """행 안에서 짝을 찾아 마침표-구분자 셀을 복원한다(못 찾으면 그대로).
 
     판정: 깨진 셀의 숫자열이 같은 행의 **정수 칸** 숫자열의 접두사이고, 남는
@@ -1362,6 +1416,8 @@ def _repair_dot_grouped_cells(amount_cells: list[str]) -> list[str]:
         '42,549.493'  ↔ '42,549,493'      (정확히 일치)
         '10,590,556.9' ↔ '10,590,556,900' (꼬리 '00' — 잘린 뒤 0)
     """
+    if label and _EPS_ROW_LABEL_RE.search(label):
+        return amount_cells                 # 주당손익 행 — 위 주석 참고
     broken = [i for i, c in enumerate(amount_cells)
               if _DOT_GROUPED_RE.match((c or "").strip())]
     if not broken:

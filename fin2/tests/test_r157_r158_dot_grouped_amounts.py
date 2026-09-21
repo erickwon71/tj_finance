@@ -183,11 +183,19 @@ def test_source_typo_fix_applies_only_to_listed_rcept():
 
 
 def test_typo_fix_entries_carry_a_reason_comment():
-    """등재 조건: 정정값이 원문 다른 곳에 인쇄돼 있을 때만. 근거 주석을 강제한다."""
+    """등재 조건: 정정값이 원문 다른 곳에 인쇄돼 있을 때만. 근거 주석을 강제한다.
+
+    ★dict **리터럴 영역**만 잘라서 본다 — 초판은 함수 본문을 보고 있어서(같은 이름이
+      네 번 나온다) 우연히 통과했다. 항목을 추가했을 때 비로소 드러났다.
+    """
     te = (_ROOT / "parser/xml/table_extractor.py").read_text(encoding="utf-8")
-    block = te.split("_SOURCE_TYPO_CELL_FIXES", 2)[2].split("}", 1)[0]
+    head = "_SOURCE_TYPO_CELL_FIXES = {"
+    assert head in te
+    block = te.split(head, 1)[1].split("\n}", 1)[0]
     for (rcept, _cell) in _SOURCE_TYPO_CELL_FIXES:
         assert rcept in block, f"{rcept} 항목에 근거 주석이 없다"
+        # 근거는 "원문 어디에 정수로 있다"를 밝혀야 한다 — 값만 적고 넘어가는 것 방지
+        assert "→" in block or "->" in block, "근거에 정정 출처 표기가 없다"
 
 
 def test_typo_fix_is_wired_into_both_paths():

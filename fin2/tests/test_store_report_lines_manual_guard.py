@@ -65,7 +65,7 @@ def session():
                 source_kind TEXT, reloaded_at TEXT, n_lines INTEGER, n_lines_by_scope TEXT,
                 check_status TEXT, checks TEXT, screen_severity INTEGER, screen_flags TEXT,
                 screened_at TEXT, csv_path TEXT, status TEXT, reviewed_at TEXT, note TEXT,
-                verified_scopes TEXT
+                verified_scopes TEXT, owner TEXT
             )
         """))
     with Session(engine) as s:

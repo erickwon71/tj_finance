@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -344,6 +345,30 @@ _ERA_RANK_SQL = """
 """
 
 
+_OWNER_ENV = "L2_REVIEW_OWNER"
+
+
+def _owner() -> str:
+    """이 실행의 소유자 식별자 — 기본값은 **워크트리 경로**.
+
+    ★왜 워크트리 경로인가(2026-09-21) — CLI 프로세스는 명령 1회마다 죽으므로 PID 는
+      키가 못 된다. 반면 세션마다 워크트리가 다르고(캠페인 = 메인 체크아웃 또는 자기
+      워크트리, 결함조사 = `.claude/worktrees/camp_err_review`) 경로는 실행 사이에
+      안정적이며 사람이 읽고 바로 이해한다.
+
+    같은 워크트리를 둘로 나눠 써야 하면 `L2_REVIEW_OWNER` 로 덮는다.
+
+    설계: docs/plans/layer2_review_session_ownership_design_2026-09-21.md
+    """
+    override = os.environ.get(_OWNER_ENV, "").strip()
+    return override or str(Path(__file__).resolve().parents[1])
+
+
+def _owner_label(owner: str | None) -> str:
+    """표시용 짧은 이름(경로 마지막 조각). 없으면 '미지정'."""
+    return Path(owner).name if owner else "미지정"
+
+
 def _pick(session, rcept_no: str | None, *, statuses: tuple[str, ...],
           min_severity: int | None = None):
     """진행 순서 `(era_rank, corp_rank, screen_severity, seq_in_corp)` 로 다음 대상 1건.
@@ -382,12 +407,29 @@ def _pick(session, rcept_no: str | None, *, statuses: tuple[str, ...],
         {"st": list(statuses), "min_sev": min_severity}).mappings().first()
 
 
-def _current(session):
-    """가장 최근에 재적재돼 사람 검토를 기다리는 건(= `pass`/`fail` 의 기본 대상)."""
+def _current(session, *, owner: str | None = None):
+    """**이 세션이** 재적재해 검토를 기다리는 건(= `pass`/`fail` 의 기본 대상).
+
+    ★`owner` 로 한정하는 이유(2026-09-21) — 예전엔 `status='reloaded'` 중 **전역에서
+      가장 최근**을 집었다. 큐를 만지는 세션이 둘(캠페인 진행 + 결함조사·백필)이라,
+      조사 세션이 어떤 건을 재적재한 직후 캠페인 세션이 `pass` 를 부르면 **자기가 본
+      적 없는 건에 통과 판정이 찍혔다.** `pass` 는 R139 보호가 걸리는 되돌리기 어려운
+      관문이라 이 사고의 대가가 크다(그 뒤 `store_report_lines()` 가 그 rcept 를
+      거부한다).
+
+      ★`--verified-scopes` 게이트도 이걸 못 막는다 — 그 게이트는 "적재된 scope 를 다
+      명시했는가"만 보므로, 검토한 건의 scope 집합이 우연히 엉뚱한 건과 같으면 그대로
+      통과한다.
+
+    ★`owner IS NULL`(이 컬럼 도입 전에 만들어진 건)은 **일부러 제외**한다 — 포함시키면
+      막으려던 위험이 그대로 남는다. 전환기에 남은 건은 `--rcept` 로 한 번 지목해
+      처리한다(설계문서 §5).
+    """
     return session.execute(
         text("""SELECT * FROM layer2_review_queue
-                WHERE status = 'reloaded'
-                ORDER BY reloaded_at DESC NULLS LAST LIMIT 1""")).mappings().first()
+                WHERE status = 'reloaded' AND owner = :o
+                ORDER BY reloaded_at DESC NULLS LAST LIMIT 1"""),
+        {"o": owner or _owner()}).mappings().first()
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -483,8 +525,10 @@ def _run_target(session, item, *, root: Path | None = None) -> dict:
     now = datetime.now()
     kind, err, lines = _reload_one(session, item)
     if err:
+        # ★blocked 경로도 소유자를 찍는다 — 빠뜨리면 그 건이 무소유로 남아
+        #   `redo`(소유자 범위)로 이어서 다룰 수 없다.
         _mark(session, item["rcept_no"], status="blocked", source_kind=kind,
-              reloaded_at=now, note=err)
+              reloaded_at=now, note=err, owner=_owner())
         session.commit()
         return {"blocked": True, "source_kind": kind, "reason": err}
 
@@ -515,7 +559,8 @@ def _run_target(session, item, *, root: Path | None = None) -> dict:
     _mark(session, item["rcept_no"], status="reloaded", source_kind=kind,
           reloaded_at=now, n_lines=n_lines, n_lines_by_scope=counts,
           check_status=sc.rollup(checks),
-          checks=[c.as_dict() for c in checks], csv_path=str(path))
+          checks=[c.as_dict() for c in checks], csv_path=str(path),
+          owner=_owner())
     session.commit()
     return {"blocked": False, "source_kind": kind, "n_lines": n_lines,
             "counts": counts, "checks": checks, "csv_path": path}
@@ -597,7 +642,7 @@ def cmd_next(args) -> None:
         # --rcept 는 특정 건 지목이라 '미판정 건 있음' 가드를 건너뛴다.
         pending = None if (args.rcept or args.force) else _current(session)
         if pending is not None:
-            print("\n⚠ 아직 검토가 끝나지 않은 건이 있습니다 "
+            print("\n⚠ 이 세션이 아직 판정하지 않은 건이 있습니다 "
                   f"(r{pending['rcept_no']}, status=reloaded).")
             print("  pass / fail 로 판정하거나, --force 로 건너뛰고 다음 건을 받으세요.")
             _print_target(pending, {"blocked": False, "source_kind": pending["source_kind"],
@@ -619,6 +664,33 @@ def cmd_next(args) -> None:
                 return
 
 
+def _print_no_target() -> None:
+    """`pass`/`fail` 대상이 없을 때 — 왜 없는지와 다음 수를 같이 알려준다.
+
+    소유자 범위(2026-09-21)로 바뀐 뒤엔 "reloaded 건이 아예 없음"과 "남의 세션 것만
+    있음"이 구분되므로, 후자에서 사용자가 막막해지지 않게 `--rcept` 를 안내한다.
+    """
+    print("판정할 대상이 없습니다 — 이 세션이 재적재한 reloaded 건이 없습니다.")
+    print(f"  (소유자: {_owner_label(_owner())})")
+    print("  다른 세션이 재적재한 건을 판정하려면 `--rcept <접수번호>` 로 지목하세요.")
+
+
+def _warn_if_other_owner(item, *, explicit: bool) -> None:
+    """`--rcept` 로 **남의 세션 것**을 지목했으면 경고한다(차단하지는 않는다).
+
+    ★차단하지 않는 이유 — 이 워크트리가 백필 후 재검토를 대신 처리하는 정상 흐름이
+      실제로 있다(R154 백필 77건). 막으면 그 흐름이 죽는다. 다만 상대 세션이 지금
+      원문대조 중일 수 있으므로 반드시 눈에 띄게 알린다.
+    """
+    if not explicit:
+        return
+    other = item["owner"]
+    if other and other != _owner():
+        print(f"\n⚠ 이 건의 소유 세션은 {_owner_label(other)} 입니다 "
+              f"(현재: {_owner_label(_owner())}).")
+        print("  그 세션이 원문대조 중일 수 있습니다 — 확인하고 진행하세요.")
+
+
 def cmd_pass(args) -> None:
     # ★autocompact 대비(2026-09-20) — 세션이 새로 시작해 `next` 없이 곧바로 `pass` 만
     # 부르면 전체비교 규칙을 한 번도 못 본 채 판정하게 된다(실측: R148 백필 때 `pass
@@ -630,8 +702,9 @@ def cmd_pass(args) -> None:
     with get_session() as session:
         item = _pick(session, args.rcept, statuses=("reloaded",)) if args.rcept else _current(session)
         if item is None:
-            print("판정할 대상이 없습니다 (status=reloaded 인 건 없음).")
+            _print_no_target()
             return
+        _warn_if_other_owner(item, explicit=bool(args.rcept))
         for ok, msg in (_check_verified_scopes(item, args.verified_scopes),
                         _check_orphan_ack(item, args.accept_orphan_tables)):
             if not ok:
@@ -668,8 +741,9 @@ def cmd_fail(args) -> None:
     with get_session() as session:
         item = _pick(session, args.rcept, statuses=("reloaded",)) if args.rcept else _current(session)
         if item is None:
-            print("판정할 대상이 없습니다 (status=reloaded 인 건 없음).")
+            _print_no_target()
             return
+        _warn_if_other_owner(item, explicit=bool(args.rcept))
         _mark(session, item["rcept_no"], status="fail", reviewed_at=datetime.now(),
               note=args.note)
         session.commit()
@@ -689,11 +763,17 @@ def cmd_redo(args) -> None:
                 text("SELECT * FROM layer2_review_queue WHERE rcept_no = :r"),
                 {"r": args.rcept}).mappings().first()
         else:
+            # ★소유자 범위(2026-09-21) — **이 함수가 실제로 사고를 낸 경로다.**
+            #   `--rcept` 없이 부르면 전역에서 가장 최근 건을 집어, 백필 중에
+            #   캠페인 세션이 보고 있던 항목을 가로챘다(2026-09-20). 그 뒤로 "백필에
+            #   redo 를 쓰지 않는다"는 규약으로만 회피했는데, 규약은 autocompact 를
+            #   못 견딘다 — 코드로 막는다.
             item = session.execute(
                 text("""SELECT * FROM layer2_review_queue
                         WHERE status IN ('fail','reloaded','blocked')
+                          AND owner = :o
                         ORDER BY reviewed_at DESC NULLS LAST, reloaded_at DESC NULLS LAST
-                        LIMIT 1""")).mappings().first()
+                        LIMIT 1"""), {"o": _owner()}).mappings().first()
         if item is None:
             print("재실행할 대상이 없습니다.")
             return

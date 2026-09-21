@@ -2049,6 +2049,17 @@ class Layer2ReviewQueue(Base):
                              comment='[{"code":..,"message":..}] — 걸린 신호 목록')
     screened_at     = Column(DateTime, nullable=True)
 
+    # ★소유 세션(2026-09-21) — 이 건을 reloaded/blocked 상태로 만든 세션의 식별자
+    # (워크트리 경로). `pass`/`fail`/`redo` 가 `--rcept` 없이 부를 때의 **기본 대상
+    # 선택을 이 세션 것으로 한정**하는 데 쓴다. 예전엔 전역에서 가장 최근 reloaded 건을
+    # 집었는데, 큐를 만지는 세션이 둘(캠페인 진행 + 결함조사·백필)이라 한쪽이 어떤 건을
+    # 재적재한 직후 다른 쪽이 `pass` 를 부르면 **자기가 본 적 없는 건에 통과 판정이
+    # 찍혔다**(실측: `redo` 로 캠페인 세션의 현재 항목을 가로챈 사고 2026-09-20).
+    # `pass` 는 R139 보호가 걸리는 되돌리기 어려운 관문이라 대가가 크다. 설계:
+    # docs/plans/layer2_review_session_ownership_design_2026-09-21.md
+    owner         = Column(Text,       nullable=True,
+                           comment="이 건을 reloaded 로 만든 세션(워크트리 경로) — "
+                                   "pass/fail/redo 기본 대상 선택을 이 세션으로 한정")
     csv_path      = Column(Text,       nullable=True, comment="생성된 검토 CSV 경로(프로젝트 상대)")
 
     # ── 사람 판단 (init/재적재가 절대 덮어쓰지 않는다) ─────────────────────
@@ -2068,6 +2079,7 @@ class Layer2ReviewQueue(Base):
         Index("ix_l2rq_status", "status"),
         Index("ix_l2rq_corp", "corp_code"),
         Index("ix_l2rq_screen", "status", "screen_severity"),
+        Index("ix_l2rq_status_owner", "status", "owner"),
     )
 
     def __repr__(self):

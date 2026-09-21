@@ -1469,6 +1469,19 @@ def _run_migrations() -> None:
          # 막기 위해 — `pass` 가 그 건에 실제로 적재된 모든 scope(별도/연결 × BS/IS/CF/SCE)를
          # `--verified-scopes` 로 하나하나 명시하도록 강제하고, 그 값을 감사기록으로 남긴다.
          "ALTER TABLE layer2_review_queue ADD COLUMN IF NOT EXISTS verified_scopes TEXT"),
+
+        ("2026_09_21_l2rq_owner",
+         # 2026-09-21: `pass`/`fail`/`redo` 가 `--rcept` 없이 부를 때의 기본 대상이
+         # "전역에서 가장 최근 reloaded 건"이라, 큐를 만지는 세션이 둘(캠페인 진행 +
+         # 결함조사·백필)인 상황에서 **다른 세션이 보고 있는 건에 판정이 꽂힐 수
+         # 있었다**(실측: `redo` 로 캠페인 세션의 현재 항목을 가로챈 사고 2026-09-20 —
+         # 그 뒤로 "백필에 redo 를 쓰지 않는다"는 규약으로만 회피 중이었고, 규약은
+         # autocompact 를 못 견딘다). 소유 세션 것으로 한정하기 위한 컬럼. 설계:
+         # docs/plans/layer2_review_session_ownership_design_2026-09-21.md
+         "ALTER TABLE layer2_review_queue ADD COLUMN IF NOT EXISTS owner TEXT"),
+        ("2026_09_21_l2rq_status_owner_idx",
+         "CREATE INDEX IF NOT EXISTS ix_l2rq_status_owner "
+         "ON layer2_review_queue (status, owner)"),
     ]
 
     with engine.begin() as conn:

@@ -424,7 +424,25 @@ def _detect_body_statement_tables(root, fin_type: str,
             last_stmt = stmt   # R142 — 다음 표가 substatement 표지를 만났을 때 물려줄 값.
             # ★내용 기반 최종 가드 — 표제가 CF/BS/IS 를 가리켜도 **행 라벨이 처분계산서**면
             #   본문이 아니다(계양전기 20220420000289: 제목표가 현금흐름표와 동일 문자열).
-            if _table_has_data_rows(tbl) and _looks_like_appropriation(tbl):
+            # ★R164(2026-09-22) — 단, **내용으로 SCE 임이 확인된 표에는 이 가드를 적용하지
+            #   않는다.** `_looks_like_appropriation` 은 ①처분계산서 계정이 있고
+            #   ②`_REAL_STMT_ROW_RE`(자산총계·매출액·영업활동현금흐름…)가 **없을** 때 참인데,
+            #   그 ②는 BS/IS/CF 에서만 판별력이 있다 — SCE 의 행 라벨은 변동사유이고 헤더 행은
+            #   자본 구성요소 이름이라 ②가 **구조적으로 절대 매칭되지 않는다**. 그래서
+            #   '미처분이익잉여금'(정상적인 자본 구성요소!)을 품은 SCE 는 예외 없이 처분계산서로
+            #   오판돼 표 전체가 버려졌다. 실측: 한화오션 20170515004751 별도 SCE 74행 통째
+            #   유실 — 그 표의 블록 헤더 행 첫 셀이 '미처분이익잉여금재평가차익'(열이름 2개가
+            #   한 셀에 병합)이라 ①이 성립했고, 연결 SCE 에는 그 열이 없어 **같은 필링에서
+            #   연결만 정상**이라는 비대칭이 생겼다(캠페인 이슈#30).
+            #   전수 스캔(2015+): 127필링·131표·원문 4,279행(`scripts/scan_r164_sce_
+            #   appropriation_guard.py`). pre-2015 는 다른 탐지기를 타므로 영향 없다.
+            #   ★가드를 통째로 풀지 않고 **양성 증거**(SCE 자본 구성요소 열 ≥3개,
+            #   `_looks_like_equity_changes_header` — R127/R148 이 이미 쓰는 판정)를 요구한다:
+            #   표제와 내용이 모두 SCE 를 가리킬 때만 면제다(R6 — 짐작으로 가드를 약화시키지
+            #   않는다).
+            sce_confirmed = stmt == "SCE" and _looks_like_equity_changes_header(tbl)
+            if (_table_has_data_rows(tbl) and not sce_confirmed
+                    and _looks_like_appropriation(tbl)):
                 continue
             section_code = SECTION_CODE_OF[(basis, stmt)]
             # ★R127(2026-09-15) — 표제(CF/IS/BS)와 표 내용(SCE 자본항목 열)이 어긋나면
@@ -459,7 +477,13 @@ def _detect_body_statement_tables(root, fin_type: str,
                 if classify_statement_in_body_section(title_text_owned(nxt), include_sce=include_sce) is not None:
                     break   # 다음 재무제표 제목 도달 → 이 재무제표엔 데이터표 없음(보류)
                 if _table_has_data_rows(nxt):
-                    if _looks_like_appropriation(nxt):
+                    # ★R164 — 위 정상 서식 분기와 **같은 면제**를 여기에도 적용한다(같은
+                    #   결함이 이 경로로도 들어온다: 표제표/데이터표가 분리된 SCE).
+                    #   런북 요구사항 "두 call site 모두 배선" 에 해당 — 한쪽만 고치면
+                    #   서식에 따라 여전히 유실된다(R158 때 한 경로만 고쳐 샌 전례).
+                    if (_looks_like_appropriation(nxt)
+                            and not (stmt == "SCE"
+                                     and _looks_like_equity_changes_header(nxt))):
                         break              # 처분계산서 — 이 재무제표의 데이터가 아니다
                     # ★R127b(2026-09-15, 현대차증권 20180515002185 IS_C 실측) — R127 은
                     # "제목+데이터 한 표"만 가드했는데, 여기(제목표/데이터표 분리 서식)에도

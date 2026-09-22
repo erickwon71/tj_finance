@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import inspect
+import sys
 
 import pytest
 
@@ -241,3 +242,68 @@ def test_blocks_are_scoped_per_column_and_table():
 def test_concept_of_col_label(raw, expected):
     """BS 라벨과 맞추려면 계층 접두어('자본>')를 떼고 마지막 조각만 쓴다."""
     assert concept_of_col_label(raw) == expected
+
+
+# --------------------------------------------------------------------------
+# R162-b — 이월잔액 앵커(전기 비교 블록)
+# --------------------------------------------------------------------------
+
+def _two_block_lines():
+    """전기 블록 + 당기 블록. BS 는 **당기만** 적재하므로 전기엔 앵커가 없다.
+
+    기타자본 열(실측 엠케이전자 `20150515000634` 구조):
+        전기: 기초 100 → 배당 30 → 기말 70      (전부 괄호 유실)
+        당기: 기초  70 → 배당 20 → 기말 50      (전부 괄호 유실)
+    참값은 전부 음수다. BS 는 당기말 −50 만 갖고 있다.
+    """
+    col = "자본>기타자본구성요소"
+    lines = [_Line("BS", "separate", "기타자본구성요소", -50)]
+    rows = [
+        (0, "2018.01.01 (전기초)", 100),
+        (1, "배당", 30),
+        (2, "2018.12.31 (전기말)", 70),
+        (3, "2019.01.01 (당기초)", 70),
+        (4, "배당", 20),
+        (5, "2019.12.31 (당기말)", 50),
+    ]
+    for row_order, label, value in rows:
+        lines.append(_Line("SCE", "separate", label, value,
+                           col_index=0, col_label=col, row_order=row_order))
+    return lines
+
+
+def test_prior_year_block_is_reached_via_carried_balance():
+    """당기 블록이 BS 로 풀리면 그 기초가 전기 블록의 기말 앵커가 된다.
+
+    ★BS 는 col_index=0(당기)만 적재하므로 전기 블록에는 라벨 앵커가 원리적으로
+    없다. 한 블록의 기말은 다른 블록의 기초와 **같은 잔액 그 자체**라 부호를
+    물려받을 수 있다 — 이게 없으면 전기 블록이 영원히 틀린 채 남는다.
+    """
+    lines = _two_block_lines()
+    repair_sce_sign_loss(lines)
+    got = [l.value_won for l in lines if l.statement == "SCE"]
+    assert got == [-100, 30, -70, -70, 20, -50]
+
+
+def test_carried_balance_only_anchors_balance_rows():
+    """이월잔액 앵커는 **잔액행에만** 쓴다 — 변동행까지 절대값으로 맞추면 날조된다."""
+    src = inspect.getsource(
+        sys.modules["fin2.extract.sce_sign_repair"]._required_sign)
+    assert "_is_balance_label(cell.label_raw)" in src
+
+
+def test_conflicting_carried_magnitude_is_dropped():
+    """같은 절대값의 확정 잔액이 부호가 엇갈리면 그 절대값은 앵커로 쓰지 않는다."""
+    from fin2.extract.sce_sign_repair import _carried_balance_signs, _Cell
+
+    def cell(label, value):
+        return _Cell(line=None, basis="separate", label_raw=label,
+                     col_label=None, value=value)
+
+    cells = [cell("2018.01.01 (전기초)", 100), cell("변동", 0),
+             cell("2018.12.31 (전기말)", -100), cell("변동", 0),
+             cell("2019.12.31 (당기말)", 55)]
+    blocks = [(0, [1], 2), (2, [3], 4)]
+    carried = _carried_balance_signs(cells, blocks, pending=[])
+    assert 100 not in carried          # +100 과 −100 이 충돌 → 버린다
+    assert carried.get(55) == 1

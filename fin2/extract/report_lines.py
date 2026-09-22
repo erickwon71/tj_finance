@@ -192,6 +192,7 @@ from fin2.extract.report_lines_inline_xbrl_overlay import (
     overlay_tax_expense_value,
 )
 from fin2.extract.sce_sign_repair import repair_sce_sign_loss
+from fin2.extract.cf_cash_sign_repair import repair_cf_cash_sign_loss
 
 # report_fiscal_year 가 이 값 이하면 pre-2015 K-GAAP 라우팅을 먼저 시도한다(설계문서
 # `docs/plans/pre2015_layer2_backfill_phase2_design_2026-08-10.md` §2-1·§3-3 잔여항목③
@@ -2027,6 +2028,13 @@ def extract_report_lines(
     sce_fixes = repair_sce_sign_loss(lines)
     if sce_fixes:
         logger.debug(f"[report_lines] R162 SCE 부호 복원: {len(sce_fixes)}셀 "
+                     f"({rcept_no})")
+
+    # R163(2026-09-22) — R162 의 자매. CF 현금 조정 구간(기초+순증감+환율효과=기말)이
+    # 깨진 열에서 단일 셀 부호를 복원한다. 캠페인 이슈#29.
+    cf_fixes = repair_cf_cash_sign_loss(lines)
+    if cf_fixes:
+        logger.debug(f"[report_lines] R163 CF 현금 부호 복원: {len(cf_fixes)}셀 "
                      f"({rcept_no})")
 
     return lines

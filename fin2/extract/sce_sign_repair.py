@@ -104,13 +104,26 @@ def build_sign_anchors(lines: Iterable) -> Dict[Tuple[str, str], Set[int]]:
     return anchors
 
 
-def _required_sign(cell, anchors: Dict[Tuple[str, str], Set[int]]
+def _is_balance_label(label: str) -> bool:
+    return bool(_OPEN_BALANCE_RE.search(label)
+                or _CLOSE_BALANCE_RE.search(label))
+
+
+def _required_sign(cell, anchors: Dict[Tuple[str, str], Set[int]],
+                   carried: Optional[Dict[int, int]] = None
                    ) -> Tuple[Optional[int], str]:
-    """이 셀의 부호가 BS/IS 로 확정되는가 → `(+1|-1|None, 앵커라벨)`.
+    """이 셀의 부호가 확정되는가 → `(+1|-1|None, 앵커라벨)`.
 
     개념 라벨을 두 곳에서 찾는다:
       1. 셀 자신의 `label_raw` — 변동행(예: '순확정급여부채의 재측정요소')
       2. `col_label` 의 마지막 조각 — 잔액행(라벨이 날짜라서 1번이 안 먹는다)
+
+    `carried` 는 **같은 열에서 이미 확정된 잔액**의 `{절대값: 부호}` 다(R162-b).
+    SCE 는 당기·전기 블록이 세로로 쌓이고 BS 는 당기만 적재하므로 전기 블록에는 1·2
+    앵커가 없다. 그런데 한 블록의 기말은 다른 블록의 기초와 **같은 잔액 그 자체**라
+    (엠케이전자 `20150515000634`: 2014.12.31 기말 = 2015.01.01 기초) 확정된 쪽의
+    부호를 그대로 물려받을 수 있다.
+    ★**잔액행에만** 적용한다 — 변동행까지 절대값으로 맞추면 우연 일치로 날조된다.
     """
     magnitude = abs(cell.value)
     for key in (cell.label_raw.strip(),
@@ -127,6 +140,10 @@ def _required_sign(cell, anchors: Dict[Tuple[str, str], Set[int]]
         if has_pos and not has_neg:
             return +1, key
         # 양쪽 다 있으면 방향이 엇갈린다 — 이 앵커로는 판정하지 않는다.
+    if carried and _is_balance_label(cell.label_raw):
+        sign = carried.get(magnitude)
+        if sign is not None:
+            return sign, "이월잔액"
     return None, ""
 
 
@@ -164,7 +181,8 @@ def _blocks(cells: Sequence[_Cell]) -> List[Tuple[int, List[int], int]]:
     return out
 
 
-def _solve_block(cells: Sequence[_Cell], block, anchors
+def _solve_block(cells: Sequence[_Cell], block, anchors,
+                 carried: Optional[Dict[int, int]] = None
                  ) -> Tuple[List[Tuple[int, int]], str]:
     """한 블록의 부호 배정을 푼다 → `([(cell idx, new sign)], 앵커설명)`.
 
@@ -190,7 +208,7 @@ def _solve_block(cells: Sequence[_Cell], block, anchors
 
     required: Dict[int, Tuple[int, str]] = {}
     for i in members:
-        sign, anchor_label = _required_sign(cells[i], anchors)
+        sign, anchor_label = _required_sign(cells[i], anchors, carried)
         if sign is not None:
             required[i] = (sign, anchor_label)
     if not required:
@@ -244,24 +262,78 @@ def repair_sce_sign_loss(lines: List) -> List[Correction]:
                        label_raw=(l.label_raw or ""),
                        col_label=getattr(l, "col_label", None),
                        value=int(l.value_won)) for l in group]
-        for block in _blocks(cells):
-            fixes, anchor_label = _solve_block(cells, block, anchors)
-            for idx, sign in fixes:
-                cell = cells[idx]
-                new_value = sign * abs(cell.value)
-                corrections.append(Correction(
-                    basis=cell.basis,
-                    table_seq=getattr(cell.line, "table_seq", None),
-                    row_order=getattr(cell.line, "row_order", None),
-                    col_index=cell.line.col_index,
-                    col_label=cell.col_label,
-                    label_raw=cell.label_raw,
-                    old_value=cell.value,
-                    new_value=new_value,
-                    anchor_label=anchor_label,
-                ))
-                cell.line.value_won = new_value
+        # R162-b — 블록을 한 번에 다 풀지 못한다. 당기 블록은 BS 앵커로 풀리고, 그렇게
+        # 확정된 잔액이 전기 블록의 앵커가 된다(이월잔액). 진전이 없을 때까지 반복한다.
+        blocks = _blocks(cells)
+        pending = list(range(len(blocks)))
+        while True:
+            carried = _carried_balance_signs(cells, blocks, pending)
+            progressed = False
+            for bi in list(pending):
+                fixes, anchor_label = _solve_block(
+                    cells, blocks[bi], anchors, carried)
+                if not fixes:
+                    if _block_identity_holds(cells, blocks[bi]):
+                        pending.remove(bi)      # 이미 닫힘 = 확정 → 앵커로 쓸 수 있다
+                        progressed = True
+                    continue
+                pending.remove(bi)
+                progressed = True
+                _apply(cells, fixes, anchor_label, corrections)
+            if not progressed:
+                break
 
     if corrections:
         logger.debug(f"[report_lines/R162] SCE 부호 복원 {len(corrections)}셀")
     return corrections
+
+
+def _block_identity_holds(cells: Sequence[_Cell], block) -> bool:
+    open_i, move_i, close_i = block
+    total = cells[open_i].value + sum(cells[m].value for m in move_i)
+    return total == cells[close_i].value
+
+
+def _carried_balance_signs(cells: Sequence[_Cell], blocks,
+                           pending: Sequence[int]) -> Dict[int, int]:
+    """확정된(=pending 이 아닌) 블록의 잔액 셀에서 `{절대값: 부호}` 를 모은다.
+
+    같은 절대값에 부호가 엇갈리면 그 절대값은 버린다(판정 근거로 쓸 수 없다).
+    """
+    out: Dict[int, int] = {}
+    conflicting: Set[int] = set()
+    for bi, (open_i, _moves, close_i) in enumerate(blocks):
+        if bi in pending:
+            continue
+        for i in (open_i, close_i):
+            magnitude = abs(cells[i].value)
+            sign = 1 if cells[i].value > 0 else -1
+            if magnitude in out and out[magnitude] != sign:
+                conflicting.add(magnitude)
+            out[magnitude] = sign
+    for magnitude in conflicting:
+        out.pop(magnitude, None)
+    return out
+
+
+def _apply(cells: Sequence[_Cell], fixes, anchor_label: str,
+           corrections: List[Correction]) -> None:
+    """푼 배정을 라인 객체에 반영하고 교정 내역을 쌓는다."""
+    for idx, sign in fixes:
+        cell = cells[idx]
+        new_value = sign * abs(cell.value)
+        corrections.append(Correction(
+            basis=cell.basis,
+            table_seq=getattr(cell.line, "table_seq", None),
+            row_order=getattr(cell.line, "row_order", None),
+            col_index=cell.line.col_index,
+            col_label=cell.col_label,
+            label_raw=cell.label_raw,
+            old_value=cell.value,
+            new_value=new_value,
+            anchor_label=anchor_label,
+        ))
+        cell.line.value_won = new_value
+        # `cells` 는 불변 NamedTuple 이라 값을 제자리에서 못 바꾼다 — 같은 열을 다시
+        # 훑는 다음 라운드가 갱신된 부호를 보도록 교체해 둔다.
+        cells[idx] = cell._replace(value=new_value)

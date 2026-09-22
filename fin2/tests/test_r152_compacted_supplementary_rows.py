@@ -120,3 +120,70 @@ def test_mirae_consolidated_equity_identity_closes():
              if any(x in k for x in ("자본금", "자본잉여금", "자본조정",
                                      "기타포괄손익누계액", "이익잉여금"))]
     assert sum(parts) == owner, (sum(parts), owner)
+
+
+# ───────────────────── R152-b: 0 을 붙임표로 찍는 변형 ─────────────────────
+# 보충표기 3개 중 첫째의 값이 0 이면 원문이 그것을 `-` 로 찍는다. 그러면 본항목 바로
+# 뒤가 `(` 가 아니라 `-` 라서 `_COMPACTED_PAREN_HEAD_RE` 가 빗나가고, 칸이 결측이 되어
+# **이익잉여금 행이 통째로 유실**된다.
+#
+# 실측: 우리금융지주 20200330004490 [별도] BS
+#   라벨 '5. 이익잉여금 (대손준비금 적립액) (대손준비금 전입필요액) (대손준비금 전입예정액)'
+#   금액칸 '623,930- (692)(692)'      (적립액 = 0 → '-')
+# 캠페인 이슈#32(camp_run 발견). 붙임표/전각 대시는 한국 재무제표에서 0(해당없음)의
+# 관용 표기다.
+
+_WOORI = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/01350869_우리금융지주/annual/2019/20200330004490.xml"
+)
+
+
+def test_dash_zero_placeholder_between_head_and_parens():
+    """★핵심 — 본항목과 괄호 보충표기 사이의 `-`(=0) 를 건너뛴다."""
+    from parser.xml.table_extractor import _first_of_compacted_supplementary_cell
+    f = _first_of_compacted_supplementary_cell
+    assert f("623,930- (692)(692)") == "623,930"
+    assert f("623,930-(692)(692)") == "623,930"
+    # 종전 변형은 그대로 동작한다(가산적 수정 확인)
+    assert f("1,828,134(13,701)(2,886)") == "1,828,134"
+    assert f("623,930 - (692) (692)") == "623,930"
+
+
+def test_dash_variant_does_not_open_a_fabrication_path():
+    """★가드가 살아 있는지 — 주석번호와 괄호 없는 칸은 여전히 손대지 않는다."""
+    from parser.common.amount_normalizer import parse_amount
+    from parser.xml.table_extractor import _first_of_compacted_supplementary_cell
+    f = _first_of_compacted_supplementary_cell
+    # 주석번호 칸(미래에셋증권 실측) — 금액다움 게이트에 걸려 그대로 결측
+    assert parse_amount(f("26, 27")) is None
+    # 괄호가 없으면 이 경로 자체가 아니다 — 두 숫자 중 무엇이 값인지 원문이 말하지 않는다
+    assert parse_amount(f("1,234-5,678")) is None
+
+
+def test_woori_2019fy_separate_equity_identity_closes():
+    """실측 필링 — 이익잉여금 행이 복구되고 자본총계 항등식이 정확히 닫힌다.
+
+    앵커는 같은 표의 자본총계다(행 자신이 아니라 독립 합계).
+    """
+    if not _WOORI.exists():
+        return
+    lines = extract_report_lines(_WOORI, rcept_no="20200330004490",
+                                 corp_code="01350869", report_fiscal_year=2019,
+                                 report_fiscal_period="FY")
+    bs = [l for l in lines if l.statement == "BS" and l.basis == "separate"
+          and (l.col_index or 0) == 0]
+
+    def find(pred):
+        return next((l.value_won for l in bs
+                     if pred((l.label_raw or "").replace(" ", "").replace("\n", ""))),
+                    None)
+
+    retained = find(lambda k: k.startswith("5.이익잉여금"))
+    assert retained == 623_930_000_000, retained
+
+    total = find(lambda k: k == "자본총계")
+    parts = [find(lambda k: k.startswith(p)) for p in
+             ("1.자본금", "2.신종자본증권", "3.자본잉여금", "4.기타자본")]
+    assert all(p is not None for p in parts), parts
+    assert sum(parts) + retained == total, (sum(parts) + retained, total)

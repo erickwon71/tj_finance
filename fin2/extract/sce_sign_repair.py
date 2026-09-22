@@ -57,6 +57,13 @@ _MAX_AMBIGUOUS_CELLS = 14
 _OPEN_BALANCE_RE = re.compile(r"기\s*초")
 _CLOSE_BALANCE_RE = re.compile(r"기\s*말")
 
+# 소계 행의 **라벨** 조건(R162-c). 산술만으로 소계를 찾으면 오탐이 난다 — 실측에서
+# '당기순이익(손실)'·'해외사업환산손익'·'감자차손보전' 처럼 소계가 아닌 행이 앞 구간의
+# 합과 절대값이 같아 걸렸다. 그래서 **라벨 + 산술 둘 다** 요구한다(R159 와 같은 2근거
+# 원칙). 자간 공백('소 계')과 접두 기호('- 총포괄이익 소계')를 견딘다.
+_SUBTOTAL_LABEL_RE = re.compile(
+    r"소\s*계|합\s*계|총\s*계|총\s*포괄|총\s*기타\s*포괄")
+
 
 class Correction(NamedTuple):
     """한 셀의 부호 복원 결과 — 백필/보고가 그대로 쓸 수 있게 근거까지 담는다."""
@@ -181,6 +188,40 @@ def _blocks(cells: Sequence[_Cell]) -> List[Tuple[int, List[int], int]]:
     return out
 
 
+def _proven_subtotals(cells: Sequence[_Cell],
+                      move_i: Sequence[int]) -> List[int]:
+    """변동행 중 **앞선 연속 구간의 합과 절대값이 같은** 행 = 소계(R162-c).
+
+    SCE 는 구성요소 행 뒤에 그 합('총포괄손익' 등)을 **형제로** 한 줄 더 찍는 서식이
+    흔하다. 그걸 Σ변동에 같이 넣으면 **이중계상**돼 항등식이 절대 닫히지 않는다.
+    실측 디에이치엑스컴퍼니 `20150515000944` 연결 기타포괄손익누계액 열:
+
+        지분법기타포괄손익      21,360,989
+        매도가능증권평가손익     -6,006,966
+        총포괄손익           15,354,023   ← 앞 두 행의 합
+        (기초+Σ변동) − 기말 = 15,354,023  ← 차이가 정확히 이 소계
+
+    ★**들여쓰기로는 못 찾는다** — 이 표는 모든 행이 `depth=0`·`node_role='F'` 다
+    (원문에 들여쓰기가 없다). 그래서 `node_role='P'`(부모) 로 소계를 찾으려던 1차
+    가설은 실측에서 **0건**으로 기각됐다. 판정은 **산술**로 해야 한다.
+
+    ★절대값으로 비교한다 — 소계 자신이 부호를 잃은 경우도 잡아야 한다. 부호는
+    나중에 구성요소의 합으로 확정한다(추측하지 않는다).
+    ★소계로 판정된 행은 다음 구간의 합산 대상에서 뺀다(소계의 소계를 만들지 않는다).
+    """
+    out: List[int] = []
+    run: List[int] = []
+    for idx in move_i:
+        if run and _SUBTOTAL_LABEL_RE.search(cells[idx].label_raw):
+            total = sum(cells[j].value for j in run)
+            if total and abs(cells[idx].value) == abs(total):
+                out.append(idx)
+                run = []            # 구간을 닫는다 — 소계는 다음 합에 안 들어간다
+                continue
+        run.append(idx)
+    return out
+
+
 def _solve_block(cells: Sequence[_Cell], block, anchors,
                  carried: Optional[Dict[int, int]] = None
                  ) -> Tuple[List[Tuple[int, int]], str]:
@@ -189,17 +230,23 @@ def _solve_block(cells: Sequence[_Cell], block, anchors,
     첫 반환이 빈 목록이면 '손대지 않는다'는 뜻이다.
     """
     open_i, move_i, close_i = block
-    members = [open_i, *move_i, close_i]
+    # R162-c — 소계 행은 Σ변동에서 뺀다(이중계상). 소계 자신의 부호는 추측하지 않고
+    # 구성요소의 합으로 확정한다(아래 `_subtotal_fixes`).
+    subtotals = _proven_subtotals(cells, move_i)
+    summed = [m for m in move_i if m not in set(subtotals)]
+    members = [open_i, *summed, close_i]
 
     def identity_holds(signs: Dict[int, int]) -> bool:
         total = signs[open_i] * abs(cells[open_i].value)
-        for m in move_i:
+        for m in summed:
             total += signs[m] * abs(cells[m].value)
         return total == signs[close_i] * abs(cells[close_i].value)
 
     current = {i: (1 if cells[i].value > 0 else -1) for i in members}
     if identity_holds(current):
-        return [], ""                   # 정상 표 — 고칠 것이 없다
+        # 항등식은 닫혔다 — 그래도 소계 행 자신이 부호를 잃었을 수 있다.
+        fixes = _subtotal_fixes(cells, move_i, subtotals, current)
+        return (fixes, "소계=구성요소 합") if fixes else ([], "")
 
     # 음수로 파싱된 셀은 원문에 괄호가 있었다는 뜻 → 부호가 명시된 것이므로 후보 아님.
     ambiguous = [i for i in members if cells[i].value > 0]
@@ -230,8 +277,35 @@ def _solve_block(cells: Sequence[_Cell], block, anchors,
     winner = solutions[0]
     anchor_desc = ", ".join(sorted({label for _s, label in required.values()
                                     if label}))
-    return ([(i, winner[i]) for i in members
-             if winner[i] * abs(cells[i].value) != cells[i].value], anchor_desc)
+    fixes = [(i, winner[i]) for i in members
+             if winner[i] * abs(cells[i].value) != cells[i].value]
+    fixes += _subtotal_fixes(cells, move_i, subtotals, winner)
+    return fixes, anchor_desc
+
+
+def _subtotal_fixes(cells: Sequence[_Cell], move_i: Sequence[int],
+                    subtotals: Sequence[int],
+                    signs: Dict[int, int]) -> List[Tuple[int, int]]:
+    """소계 행의 부호를 **구성요소의 합**으로 확정한다(R162-c).
+
+    소계는 Σ변동에서 빠져 있으므로 항등식이 그 부호를 정해 주지 않는다. 대신 그
+    구성요소(앞선 연속 구간)의 합이 부호까지 알려 준다 — 추측이 아니다.
+    """
+    out: List[Tuple[int, int]] = []
+    sub = set(subtotals)
+    run: List[int] = []
+    for idx in move_i:
+        if idx in sub:
+            total = sum(signs.get(j, 1 if cells[j].value > 0 else -1)
+                        * abs(cells[j].value) for j in run)
+            if total and abs(total) == abs(cells[idx].value):
+                want = 1 if total > 0 else -1
+                if want * abs(cells[idx].value) != cells[idx].value:
+                    out.append((idx, want))
+            run = []
+            continue
+        run.append(idx)
+    return out
 
 
 def repair_sce_sign_loss(lines: List) -> List[Correction]:

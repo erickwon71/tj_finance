@@ -307,3 +307,141 @@ def test_conflicting_carried_magnitude_is_dropped():
     carried = _carried_balance_signs(cells, blocks, pending=[])
     assert 100 not in carried          # +100 과 −100 이 충돌 → 버린다
     assert carried.get(55) == 1
+
+
+# --------------------------------------------------------------------------
+# R162-c — 소계 행 이중계상 제외
+# --------------------------------------------------------------------------
+
+def _subtotal_lines(subtotal_label="총포괄손익", subtotal_value=15_354_023):
+    """실측 디에이치엑스컴퍼니 `20150515000944` 연결 기타포괄손익누계액 열.
+
+    구성요소 2행 뒤에 그 합이 **형제로** 한 줄 더 찍힌다. Σ변동에 같이 넣으면
+    이중계상돼 항등식이 절대 닫히지 않는다.
+    """
+    col = "자본>기타포괄손익누계액"
+    rows = [
+        (0, "2013.01.01 (기초자본)", 127_312_821),
+        (3, "지분법기타포괄손익", 21_360_989),
+        (4, "매도가능증권평가손익", -6_006_966),
+        (6, subtotal_label, subtotal_value),
+        (8, "2013.12.31 (기말자본)", 142_666_844),
+    ]
+    lines = [_Line("BS", "consolidated", "기타포괄손익누계액", 142_666_844)]
+    for row_order, label, value in rows:
+        lines.append(_Line("SCE", "consolidated", label, value,
+                           col_index=0, col_label=col, row_order=row_order))
+    return lines
+
+
+def test_subtotal_row_is_excluded_from_the_sum():
+    """소계를 Σ변동에서 빼면 항등식이 닫힌다 — 그러면 고칠 것이 없다.
+
+    ★이게 없으면 이 열은 영원히 '안 닫힘'으로 남아 같은 표의 다른 결함도 못 고친다.
+    127,312,821 + 21,360,989 − 6,006,966 = 142,666,844 (소계 15,354,023 제외)
+    """
+    lines = _subtotal_lines()
+    assert repair_sce_sign_loss(lines) == []
+    assert [l.value_won for l in lines if l.statement == "SCE"] == [
+        127_312_821, 21_360_989, -6_006_966, 15_354_023, 142_666_844]
+
+
+def test_subtotal_own_sign_is_fixed_from_its_components():
+    """소계는 Σ에서 빠져 항등식이 부호를 안 정해 준다 — 구성요소의 합으로 확정한다.
+
+    구성요소 합이 −15,354,023 이면 소계도 그 부호여야 한다(추측이 아니다).
+    """
+    lines = _subtotal_lines(subtotal_value=15_354_023)
+    sce = [l for l in lines if l.statement == "SCE"]
+    sce[1].value_won = -21_360_989      # 지분법 −
+    sce[2].value_won = 6_006_966        # 매도가능 +
+    sce[0].value_won = 142_666_844      # 기초/기말을 맞춰 항등식은 닫히게 둔다
+    sce[4].value_won = 127_312_821
+    fixes = repair_sce_sign_loss(lines)
+    assert sce[3].value_won == -15_354_023
+    assert any(f.anchor_label == "소계=구성요소 합" for f in fixes)
+
+
+def test_subtotal_needs_both_label_and_arithmetic():
+    """★라벨만·산술만으로는 안 된다 — 둘 다 요구한다.
+
+    실측에서 '당기순이익(손실)'·'해외사업환산손익'·'감자차손보전' 처럼 소계가 아닌
+    행이 앞 구간의 합과 절대값이 같아 걸렸다. 산술만 믿으면 멀쩡한 변동행이 Σ에서
+    빠져 항등식이 거짓으로 닫힌다.
+    """
+    from fin2.extract.sce_sign_repair import _proven_subtotals, _Cell
+
+    def cell(label, value):
+        return _Cell(line=None, basis="consolidated", label_raw=label,
+                     col_label=None, value=value)
+
+    # 산술은 맞지만 라벨이 소계가 아니다 → 소계로 보지 않는다.
+    cells = [cell("지분법기타포괄손익", 10), cell("매도가능증권평가손익", 5),
+             cell("해외사업환산손익", 15)]
+    assert _proven_subtotals(cells, [0, 1, 2]) == []
+
+    # 라벨은 소계지만 산술이 안 맞는다 → 소계로 보지 않는다.
+    cells = [cell("지분법기타포괄손익", 10), cell("매도가능증권평가손익", 5),
+             cell("총포괄손익", 99)]
+    assert _proven_subtotals(cells, [0, 1, 2]) == []
+
+    # 둘 다 맞다 → 소계.
+    cells = [cell("지분법기타포괄손익", 10), cell("매도가능증권평가손익", 5),
+             cell("총포괄손익 소계", 15)]
+    assert _proven_subtotals(cells, [0, 1, 2]) == [2]
+
+
+def test_single_component_subtotal_is_allowed():
+    """구성요소가 1개인 소계도 정당하다('총포괄손익' 아래 '당기순이익' 하나).
+
+    실측에서 흔하다 — 구성요소 2개 이상을 요구하면 진짜 소계를 놓친다.
+    """
+    from fin2.extract.sce_sign_repair import _proven_subtotals, _Cell
+
+    cells = [_Cell(line=None, basis="c", label_raw="당기순이익",
+                   col_label=None, value=200),
+             _Cell(line=None, basis="c", label_raw="총포괄손익",
+                   col_label=None, value=200)]
+    assert _proven_subtotals(cells, [0, 1]) == [1]
+
+
+def test_node_role_is_not_used_for_subtotals():
+    """★들여쓰기(node_role='P')로는 소계를 못 찾는다 — 실측 0건으로 기각된 가설.
+
+    문제의 표들은 모든 행이 depth=0·node_role='F' 다(원문에 들여쓰기가 없다).
+    이 테스트는 판정이 산술+라벨로 이뤄진다는 계약을 고정한다.
+    """
+    src = inspect.getsource(
+        sys.modules["fin2.extract.sce_sign_repair"]._proven_subtotals)
+    # docstring 은 기각된 가설을 설명하느라 node_role 을 언급한다 — **코드**가
+    # 그것을 읽지 않는다는 것만 검사한다(속성 접근이 없어야 한다).
+    assert ".node_role" not in src
+    assert "_SUBTOTAL_LABEL_RE" in src
+
+
+def test_subtotal_exclusion_enables_a_repair_that_is_otherwise_impossible():
+    """소계를 빼야 비로소 풀리는 블록 — 이 테스트가 R162-c 의 실제 가치를 고정한다.
+
+    기초가 괄호를 잃은 표다. 소계('총포괄손익' = 구성요소 합)를 Σ에 그대로 두면 어떤
+    부호 배정으로도 항등식이 닫히지 않아 기각된다. 소계를 빼면 유일한 배정이 나온다:
+
+        −100 + 10 − 5 = −95   (기말은 BS 앵커로 음수 확정)
+    """
+    col = "자본>기타포괄손익누계액"
+    lines = [_Line("BS", "consolidated", "기타포괄손익누계액", -95)]
+    for row_order, label, value in [
+        (0, "2013.01.01 (기초자본)", 100),      # 참값 −100 (괄호 유실)
+        (1, "지분법기타포괄손익", 10),
+        (2, "매도가능증권평가손익", -5),
+        (3, "총포괄손익", 5),                    # = 10 + (−5) → 소계
+        (4, "2013.12.31 (기말자본)", -95),
+    ]:
+        lines.append(_Line("SCE", "consolidated", label, value,
+                           col_index=0, col_label=col, row_order=row_order))
+
+    fixes = repair_sce_sign_loss(lines)
+    sce = [l for l in lines if l.statement == "SCE"]
+    assert sce[0].value_won == -100, "소계를 빼야 이 복원이 가능하다"
+    assert any(f.row_order == 0 for f in fixes)
+    # 소계와 구성요소는 건드리지 않는다
+    assert [l.value_won for l in sce[1:4]] == [10, -5, 5]

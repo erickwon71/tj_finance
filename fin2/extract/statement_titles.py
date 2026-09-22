@@ -229,7 +229,41 @@ def title_text_owned(tbl) -> str:
     prev = tbl.getprevious()
     if prev is None or _is_data_boundary(prev):
         return ""
-    return title_text(tbl)
+    # ★R161 — 각주 문장이 앞에 붙은 형제는 각주를 떼고 본다. **이 경로에도 반드시
+    #   적용해야 한다** — `title_text_for_classify` 에만 넣었더니 삼성화재
+    #   20190515002191 별도 섹션의 각주표(5행)가 owned 경로로 여전히 'SCE' 로
+    #   분류돼, '제목표/데이터표 분리' 분기가 **현금흐름표 데이터를 SCE 로 끌어왔다**
+    #   (별도 SCE 398행에 CF 라벨 28행이 남았다). 같은 판정을 두 경로가 각자 하면
+    #   갈린다는 R144/R153 의 교훈이 여기도 적용된다.
+    #   ★`title_text` 자체는 고치지 않는다 — `declared_unit` 이 단위줄 원문을 필요로 한다.
+    return strip_leading_note_sentences(title_text(tbl))
+
+
+# ★R161(2026-09-22) — 하나의 `<P>` 가 **[직전 표의 각주] + [다음 표의 제목]** 을 함께
+#   담는 서식. 분류기가 그 텍스트를 읽으면 각주에 언급된 **앞 재무제표명**이 먼저 걸려
+#   제목 판정이 한 칸씩 밀린다.
+#
+#   실측(캠페인 이슈#26) — 삼성화재해상보험 20190515002191 별도 섹션:
+#       <P> '註) 당분기 자본변동표는 … 아니하였습니다. 분 기 현 금 흐 름 표'
+#   이 `<P>` 가 현금흐름표 데이터표의 직전 형제다. 분류 결과가 'SCE' 가 되어 **별도
+#   현금흐름표 82행이 자본변동표로 오분류**됐다(별도 CF 는 0행, 별도 SCE 는 398행으로
+#   부풀었다). 각주를 떼면 `'분 기 현 금 흐 름 표'` → 'CF' 로 정확히 분류된다.
+#   ※자간 공백('분 기 현 금 …')은 원인이 아니다 — 분류기가 이미 처리한다(실측 확인).
+#
+#   ★`(주)삼성…` 처럼 **회사명의 '주)'** 를 각주로 오인하면 실제 텍스트를 먹어버린다.
+#     그래서 **문자열 맨 앞**에서만 각주를 인정한다 — 회사명은 앞에 '(' 가 붙으므로
+#     이 패턴에 걸리지 않는다.
+_NOTE_SENTENCE_RE = re.compile(r"^\s*(?:註|주)\s*[)\）]\s*.*?니다\s*\.\s*", re.S)
+
+
+def strip_leading_note_sentences(text: str) -> str:
+    """텍스트 맨 앞의 각주 문장(들)을 제거한다. 각주가 없으면 원본 그대로."""
+    out = text or ""
+    while True:
+        stripped = _NOTE_SENTENCE_RE.sub("", out, count=1)
+        if stripped == out:
+            return out
+        out = stripped
 
 
 def title_text_for_classify(tbl, max_skip: int = 3) -> str:
@@ -262,9 +296,13 @@ def title_text_for_classify(tbl, max_skip: int = 3) -> str:
         if _is_data_boundary(prev):
             return ""               # 데이터표 = 남의 재무제표 몸통 — 넘어가지 않는다
         txt = " ".join("".join(prev.itertext()).split())
-        if not _is_metadata_only(txt):
+        # ★R161 — 각주 문장이 앞에 붙어 있으면 떼고 본다(위 헬퍼 docstring 에 실측).
+        #   각주만 있던 형제는 여기서 빈 문자열이 되어 **메타줄과 같이** 취급되므로
+        #   계속 뒤로 스캔한다 — 데이터표 경계 검사가 남의 제목을 막아 준다.
+        txt = strip_leading_note_sentences(txt)
+        if txt and not _is_metadata_only(txt):
             return txt[:200]        # 표제(또는 라벨 있는 비메타 형제) — 여기서 멈춘다
-        prev = prev.getprevious()   # 메타줄(단위/기간/빈칸) 건너뛴다
+        prev = prev.getprevious()   # 메타줄(단위/기간/빈칸)·각주뿐인 형제 건너뛴다
     return ""
 
 

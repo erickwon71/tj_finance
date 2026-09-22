@@ -43,6 +43,7 @@ from parser.common.amount_normalizer import parse_amount           # noqa: E402
 from parser.xml.table_extractor import (                           # noqa: E402
     _repair_dot_grouped_cells as repair,
     _SOURCE_TYPO_CELL_FIXES, apply_source_typo_fixes,
+    unresolved_dot_cell_indices as unresolved,
 )
 from fin2.extract.report_lines import extract_report_lines         # noqa: E402
 
@@ -208,3 +209,39 @@ def test_typo_fix_is_wired_into_both_paths():
         te.index("_repair_dot_grouped_cells(amount_cells")
     assert rl.index("apply_source_typo_fixes(raw_amounts") < \
         rl.index("_repair_dot_grouped_cells(raw_amounts")
+
+
+# ───────────── R160 미해결 마침표 셀은 적재하지 않는다 ─────────────
+
+def test_unresolved_dot_cell_is_reported_not_stored():
+    """★사용자 정책(2026-09-22): 담지도 반올림하지도 말고 결측으로 남긴다."""
+    assert unresolved(["0", "41,106,779.959", "133,785,146"], "기말자본") == [1]
+
+
+def test_unit_declaration_is_not_an_exception():
+    """★B안 — 천원/백만원 선언 표라고 예외를 두지 않는다.
+
+    초판은 `multiplier != 1` 을 "소수가 정상 표기"라며 제외했는데, 그건 **관측 없이
+    단정한** 것이었다(전수 스캔 32셀 전부 단위 '원', 천원/백만원 표의 소수는 0건).
+    시그니처에서 multiplier 를 아예 없애 실수로 예외가 생기지 않게 했다.
+    """
+    import inspect
+    assert "multiplier" not in inspect.signature(unresolved).parameters
+
+
+def test_eps_rows_are_never_nulled():
+    """주당손익 소수는 정상이므로 결측으로 만들지 않는다."""
+    assert unresolved(["343.0", "213.00"], "희석당기순이익 (단위 : 원)") == []
+    assert unresolved(["(1,500.00)", "(1,500)"], "계속영업 기본주당순손실") == []
+
+
+def test_resolved_cells_are_not_nulled():
+    """R159/R158 이 해결한 셀은 정상 정수 텍스트라 이 패턴에 안 걸린다."""
+    assert unresolved(["0", "41,106,779,959", "133,785,146"], "기말자본") == []
+
+
+def test_nulling_is_wired_into_both_paths():
+    te = (_ROOT / "parser/xml/table_extractor.py").read_text(encoding="utf-8")
+    rl = (_ROOT / "fin2/extract/report_lines.py").read_text(encoding="utf-8")
+    assert "unresolved_dot_cell_indices(amount_cells, label)" in te
+    assert "unresolved_dot_cell_indices(raw_amounts, label)" in rl

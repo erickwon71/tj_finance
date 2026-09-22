@@ -40,6 +40,7 @@ from parser.xml.table_extractor import (
     _table_has_comma_note_column, _table_has_note_header,
     parse_header_columns, select_by_header_columns, drop_mismatched_granularity_columns,
     HeaderColumn, _repair_dot_grouped_cells, apply_source_typo_fixes,
+    unresolved_dot_cell_indices,
 )
 
 # ★R116(2026-09-14, 사용자 원문대조로 확정) — 형지I&C 20160516001490·드림시큐리티
@@ -1597,6 +1598,11 @@ def _grid_body_rows(
         raw_amounts = _repair_dot_grouped_cells(raw_amounts, label)
         for idx, txt in enumerate(raw_amounts):
             amounts[idx] = parse_amount(txt, multiplier) if txt else None
+        # ★R160 — 해결되지 않은 마침표 셀은 값을 버린다(결측). 이 경로도 반드시
+        #   같이 적용해야 한다 — R158 때 한 경로만 고쳐 SCE 가 샌 전례가 있다.
+        for _i in unresolved_dot_cell_indices(raw_amounts, label):
+            if _i < len(amounts):
+                amounts[_i] = None
 
         out.append(RowData(
             account_name=label.lstrip(),

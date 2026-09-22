@@ -191,6 +191,7 @@ from fin2.extract.report_lines_inline_xbrl_overlay import (
     overlay_dividends_paid_sign,
     overlay_tax_expense_value,
 )
+from fin2.extract.sce_sign_repair import repair_sce_sign_loss
 
 # report_fiscal_year 가 이 값 이하면 pre-2015 K-GAAP 라우팅을 먼저 시도한다(설계문서
 # `docs/plans/pre2015_layer2_backfill_phase2_design_2026-08-10.md` §2-1·§3-3 잔여항목③
@@ -2019,6 +2020,14 @@ def extract_report_lines(
     if n_tax_overlay:
         logger.debug(f"[report_lines] tax_expense inline XBRL overlay 적용: "
                      f"{n_tax_overlay}건 ({rcept_no})")
+
+    # R162(2026-09-22) — SCE 표 원문에서 빠진 음수 괄호를 복원. ★반드시 **맨 마지막**에
+    # 돈다: 부호 방향을 BS/IS 값으로 확정하므로(앵커) 위 overlay 들이 BS/IS 를 손본 뒤의
+    # 최종값을 봐야 한다. SCE 만 바꾸고 BS/IS/CF 는 읽기만 한다.
+    sce_fixes = repair_sce_sign_loss(lines)
+    if sce_fixes:
+        logger.debug(f"[report_lines] R162 SCE 부호 복원: {len(sce_fixes)}셀 "
+                     f"({rcept_no})")
 
     return lines
 

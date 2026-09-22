@@ -1016,8 +1016,14 @@ def _looks_like_cashflow(tbl) -> bool:
 # ★R127(2026-09-15, 잔여 header-fallback 14건 재조사로 발견) — 자본변동표(SCE) 데이터
 # 열이름(자본금/자본잉여금/이익잉여금 등)이 **첫 데이터행**에 3개 이상 동시 등장하면
 # SCE 로 본다. THEAD 가 없는 서식은 이 첫 행이 사실상의 헤더 역할을 한다.
+# ★R164-b(2026-09-22) — `기타불입자본`·`기타자본구성요소` 추가. 실측 KD
+# 20150515001189 별도 SCE 열이름은 '자본금·기타불입자본·기타자본구성요소·
+# 미처분이익잉여금(미처리결손금)·자본 합계' 인데, 옛 목록으로는 `자본금` 과
+# (미처분)`이익잉여금` **2개만** 걸려 임계값(3) 미달로 SCE 가 아니라고 판정됐다.
+# 둘 다 자본변동표에만 쓰이는 자본 구성요소 명칭이라 BS/IS/CF 헤더에는 나타나지 않는다.
 _SCE_COLUMN_LABELS_RE = re.compile(
-    r"자본금|자본잉여금|이익잉여금|자본조정|기타포괄손익누계액|비지배지분|주식발행초과금")
+    r"자본금|자본잉여금|이익잉여금|자본조정|기타포괄손익누계액|비지배지분|주식발행초과금"
+    r"|기타불입자본|기타자본구성요소")
 
 
 def _looks_like_equity_changes_header(tbl) -> bool:
@@ -1049,7 +1055,18 @@ def _looks_like_equity_changes_header(tbl) -> bool:
     rows = table_direct_rows(tbl)
     if not rows:
         return False
-    cells = _get_cells(rows[0]) + (_get_cells(rows[1]) if len(rows) > 1 else [])
+    # ★R164-b(2026-09-22) — 창을 첫 **세** 행으로 넓혔다(종전 두 행).
+    #   실측: 삼진엘앤디 20260513000016 · 삼화전자공업 20160330003638 연결 SCE 는
+    #   0행이 COLSPAN 배너(`['', '자본']`)고, 1행이 '지배기업의 소유주에게 귀속되는
+    #   지분 / 비지배지분 / 자본 합계', **2행**에 자본 구성요소 열이름(자본금·연결자본
+    #   잉여금·연결기타포괄손익누계액·연결이익잉여금)이 온다. 두 행만 보면 배너+중간
+    #   계층만 읽어 임계값 미달 → SCE 가 아니라고 판정됐다.
+    #   3행이면 충분한 근거: 배너(0) + 그룹계층(1) + 구성요소(2) 가 관측된 최대 깊이다.
+    #   ★이 술어는 R127·R127b·R148·R164 가 공유하므로 확장 영향을 2015+ 전수로 재서
+    #   확인했다(변경 표 귀속 diff, `scripts/measure_r164b_predicate_widening.py`).
+    cells: list = []
+    for r in rows[:3]:
+        cells += _get_cells(r)
     joined = re.sub(r"\s+", "", "".join(cells))
     return len(_SCE_COLUMN_LABELS_RE.findall(joined)) >= 3
 

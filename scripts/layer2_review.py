@@ -106,9 +106,36 @@ _ALL_SCOPE_CODES = tuple(f"{p}-{s}" for p in ("sep", "con")
                          for s in ("bs", "is", "cf", "sce"))
 
 
-def _check_verified_scopes(item, given: str | None) -> tuple[bool, str]:
+def _loaded_scope_codes(session, rcept_no: str) -> list[str]:
+    """지금 `report_lines` 에 **실제로 있는** scope 코드 — 큐 캐시를 믿지 않는다.
+
+    ★2026-09-22 근본수정. 종전엔 `item["n_lines_by_scope"]`(큐의 JSONB 캐시)를 적재
+    여부의 근거로 썼는데, 그 캐시는 `_run_target()` 이 재적재할 때만 갱신된다. 백필
+    스크립트가 `store_report_lines()` 로 직접 `report_lines` 를 바꾸면(R147 EPS 세부행,
+    R162 SCE 부호, R163 CF 부호 …) 캐시는 그대로 남아 **스냅샷이 낡는다**.
+
+    실측(2026-09-22, pass 1,241건): 완전 일치 1,133건 · **SCE 키 누락 89건** ·
+    행수만 다름 19건(전부 두산에너빌리티 `consolidated.IS` — R147 백필이 pass 이후
+    행을 늘린 흔적). 89건은 SCE 를 정직하게 원문대조한 검토자에게 "적재되지 않은
+    scope 를 주장했다"며 pass 를 **거짓 거부**한다(캠페인 세션 실측 보고).
+
+    이 함수가 있는 한 그 계열은 재발하지 않는다 — 캐시가 낡아도 판정은 실데이터에서
+    나온다. `n_lines_by_scope` 는 이제 **표시·기록 전용**이다.
+    """
+    rows = session.execute(text("""
+        SELECT basis, statement, count(*) AS n
+        FROM report_lines
+        WHERE rcept_no = :r AND statement IN ('BS', 'IS', 'CF', 'SCE')
+        GROUP BY basis, statement"""), {"r": rcept_no}).mappings().all()
+    counts: dict = {}
+    for r in rows:
+        counts.setdefault(r["basis"], {})[r["statement"]] = r["n"]
+    return _scope_codes(counts)
+
+
+def _check_verified_scopes(session, item, given: str | None) -> tuple[bool, str]:
     """(ok, message). given 은 `pass --verified-scopes` 로 받은 콤마구분 문자열."""
-    loaded = set(_scope_codes(item["n_lines_by_scope"]))
+    loaded = set(_loaded_scope_codes(session, item["rcept_no"]))
     got = {s.strip().lower() for s in (given or "").split(",") if s.strip()}
 
     unknown = got - set(_ALL_SCOPE_CODES)
@@ -705,7 +732,7 @@ def cmd_pass(args) -> None:
             _print_no_target()
             return
         _warn_if_other_owner(item, explicit=bool(args.rcept))
-        for ok, msg in (_check_verified_scopes(item, args.verified_scopes),
+        for ok, msg in (_check_verified_scopes(session, item, args.verified_scopes),
                         _check_orphan_ack(item, args.accept_orphan_tables)):
             if not ok:
                 print()

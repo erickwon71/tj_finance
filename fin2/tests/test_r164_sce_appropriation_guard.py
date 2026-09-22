@@ -239,3 +239,80 @@ def test_hanwha_ocean_2017q1_separate_sce_recovered():
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ───────────────── R164-b: the positive-evidence window ─────────────────
+# `_looks_like_equity_changes_header` originally read only rows[0:2]. Formats
+# whose row 0 is a COLSPAN banner (`['', '자본']`) and whose equity component
+# names sit on row 2 therefore failed the test, so the R164 exemption did not
+# apply and the SCE was still dropped: 119 filings / 145 tables remained.
+#
+# The predicate is shared by R127/R127b/R148, so widening it was verified over
+# the whole 2015+ corpus (104,533 filings) by diffing table assignments before
+# and after: 152 filings changed, every one of them a GAIN
+# (142 code-level + 34 an extra SCE_S table), 0 lost, 0 removed, 0 reassigned.
+
+def _sce_rows_with_banner() -> str:
+    """Row 0 = COLSPAN banner, row 1 = group tier, row 2 = the component names.
+    Shape taken from 삼진엘앤디 20260513000016 / 삼화전자공업 20160330003638."""
+    return ("<TABLE>"
+            "<TR><TD><P></P></TD><TD><P>자본</P></TD></TR>"
+            "<TR><TD><P>지배기업의 소유주에게 귀속되는 지분</P></TD>"
+            "<TD><P>비지배지분</P></TD><TD><P>자본 합계</P></TD></TR>"
+            "<TR><TD><P>자본금</P></TD><TD><P>연결자본잉여금</P></TD>"
+            "<TD><P>연결기타포괄손익누계액</P></TD><TD><P>연결이익잉여금</P></TD></TR>"
+            "<TR><TD><P>2025.01.01 (기초자본)</P></TD><TD><P>12,479,616,000</P></TD>"
+            "<TD><P>50,980,946,410</P></TD><TD><P>1,415,054,923</P></TD>"
+            "<TD><P>(35,110,515,764)</P></TD></TR>"
+            "</TABLE>")
+
+
+def test_equity_header_seen_when_component_names_are_on_the_third_row():
+    """★R164-b — 배너 행이 앞에 붙어도 SCE 로 인식한다(종전 두 행만 봐서 실패)."""
+    tbl = etree.fromstring(_sce_rows_with_banner().encode())
+    assert _looks_like_equity_changes_header(tbl) is True
+
+
+def test_equity_header_tokens_cover_spelled_out_equity_components():
+    """★R164-b — `기타불입자본`·`기타자본구성요소` 도 자본 구성요소 명칭이다.
+
+    실측 KD 20150515001189 별도 SCE 열이름은 '자본금·기타불입자본·기타자본구성요소·
+    미처분이익잉여금(미처리결손금)·자본 합계' 인데, 옛 목록으로는 `자본금` 과
+    (미처분)`이익잉여금` 2개만 걸려 임계값(3) 미달이었다.
+    """
+    tbl = etree.fromstring(
+        "<TABLE>"
+        "<TR><TD><P>자본금</P></TD><TD><P>기타불입자본</P></TD>"
+        "<TD><P>기타자본구성요소</P></TD>"
+        "<TD><P>미처분이익잉여금(미처리결손금)</P></TD>"
+        "<TD><P>자본 합계</P></TD></TR>"
+        "<TR><TD><P>2013.01.01 (기초자본)</P></TD><TD><P>8,809,504,200</P></TD>"
+        "<TD><P>18,237,515,177</P></TD><TD><P>(20,202,226,206)</P></TD>"
+        "<TD><P>6,844,793,171</P></TD></TR>"
+        "</TABLE>".encode())
+    assert _looks_like_equity_changes_header(tbl) is True
+
+
+def test_equity_header_still_rejects_a_plain_cashflow_table():
+    """★넓힌 창이 아무 표나 SCE 로 보지 않는다 — R127 이 지키던 경계."""
+    tbl = etree.fromstring(
+        "<TABLE>"
+        "<TR><TD><P>과 목</P></TD><TD><P>당기</P></TD><TD><P>전기</P></TD></TR>"
+        "<TR><TD><P>Ⅰ.영업활동현금흐름</P></TD><TD><P>1,111,111,111</P></TD>"
+        "<TD><P>2,222,222,222</P></TD></TR>"
+        "<TR><TD><P>당기순이익</P></TD><TD><P>333,333,333</P></TD>"
+        "<TD><P>444,444,444</P></TD></TR>"
+        "</TABLE>".encode())
+    assert _looks_like_equity_changes_header(tbl) is False
+
+
+def test_equity_header_still_rejects_a_balance_sheet_header():
+    """BS 헤더('과목/당기말/전기말')에는 자본 구성요소 열이름이 없다."""
+    tbl = etree.fromstring(
+        "<TABLE>"
+        "<TR><TD><P>과 목</P></TD><TD><P>제 18 기말</P></TD>"
+        "<TD><P>제 17 기말</P></TD></TR>"
+        "<TR><TD><P>자산총계</P></TD><TD><P>9,999,999,999</P></TD>"
+        "<TD><P>8,888,888,888</P></TD></TR>"
+        "</TABLE>".encode())
+    assert _looks_like_equity_changes_header(tbl) is False

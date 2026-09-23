@@ -45,6 +45,8 @@ from fin2.extract.report_lines import (
 APPROVED = [
     ("20250515002500",
      "HD한국조선해양 2025Q1  연결SCE 비지배지분 3셀 — 콤마오타 확정 2026-09-23"),
+    ("20250318001131",
+     "HD한국조선해양 2024FY  연결SCE 비지배지분 1셀 — 2단계 항등식으로 확정 2026-09-23"),
 ]
 
 _LINK = "/Users/taejin/Project/tj_finance/raw_report"

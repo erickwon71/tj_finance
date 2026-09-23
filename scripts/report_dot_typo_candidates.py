@@ -40,6 +40,7 @@ import argparse
 import re
 import sys
 from datetime import date
+from itertools import combinations
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -117,6 +118,43 @@ def _as_int(t: str):
     return -v if t.startswith("(") or t.startswith("-") else v
 
 
+def _find_identity(vals: list, mi: int, mine: int):
+    """이 행 안에서 `vals[mi]`(=mine, 가설값)이 들어가는 덧셈 항등식을 찾는다.
+
+    ★초판은 "vals[:t] 전부를 더하면 vals[t]" 만 봤다. SCE 는 흔히 **2단 구조**다 —
+      구성요소(자본금..이익잉여금) → 부분합(지배기업 소유주지분 합계) →
+      **부분합 + 비지배지분 = 총계**. 부분합 칸까지 함께 누적하면 이중계산이라
+      절대 안 닫힌다(실측: HD한국조선해양 `20250318001131` [연결] 자본변동표
+      `파생상품평가손익` 비지배지분 칸 — 사용자가 DART 원문에서 직접 찾아냄,
+      2026-09-23). 그래서 `vals[:t]` 전체가 아니라 **`mine` 을 포함하는 작은
+      부분집합**을 찾는다(최대 4개 — 그보다 크면 우연한 일치일 위험이 커 근거로
+      쓰지 않는다). 같은 크기면 총계 열에 **인접한** 열부터 시도한다 — 실제
+      부분합일 가능성이 더 높다.
+    """
+    n = len(vals)
+    for t in range(1, n):
+        total = vals[t]
+        if total is None:
+            continue
+        if t == mi:
+            # mine 자신이 부분합/총계 열 — 그 앞 전부가 구성요소인 표준 형태만 인정.
+            present = [v for v in vals[:t] if v is not None]
+            if present and sum(present) == mine:
+                return ("+".join("{:,}".format(v) for v in present), mine)
+            continue
+        if t < mi:
+            continue
+        others = [(i, v) for i, v in enumerate(vals[:t])
+                  if i != mi and v is not None]
+        others.sort(key=lambda iv: -iv[0])
+        for size in range(0, min(4, len(others)) + 1):
+            for combo in combinations(others, size):
+                if mine + sum(v for _, v in combo) == total:
+                    parts = [mine] + [v for _, v in combo]
+                    return ("+".join("{:,}".format(v) for v in parts), total)
+    return None
+
+
 def scan_one(path: str, rcept_no: str) -> list[dict]:
     """이 필링의 미해결 마침표 셀 + 근거를 모아 반환한다."""
     root = _parse_xml_file(path)
@@ -179,33 +217,18 @@ def scan_one(path: str, rcept_no: str) -> list[dict]:
         b["identity"] = None
         b["hypothesis"] = None
         vals_raw = b["row_cells"][1:]
+        mi = b["col"] - 1
         # 두 가설을 각각 그 셀 자리에 넣어 보고, 행의 덧셈 항등식이 닫히는 쪽을 찾는다.
         for tag, conv in (("콤마", _as_int), ("절삭", _as_trunc)):
             mine = conv(b["cell"])
             if not mine:
                 continue
-            vals = [conv(c) if c is b["cell"] else _as_int(c) for c in vals_raw]
-            # `is` 비교가 빗나가는 경우를 대비해 위치로도 대체한다.
             vals = [_as_int(c) for c in vals_raw]
-            if 0 <= b["col"] - 1 < len(vals):
-                vals[b["col"] - 1] = mine
+            if 0 <= mi < len(vals):
+                vals[mi] = mine
             if len(vals) < 2:
                 continue
-            hit = None
-            for t in range(1, len(vals)):
-                total = vals[t]
-                if total is None:
-                    continue
-                left = vals[:t]
-                present = [v for v in left if v is not None]
-                if mine in present:
-                    if sum(present) == total:
-                        hit = ("+".join("{:,}".format(v) for v in present if v),
-                               total)
-                        break
-                elif mine == total and sum(present) == mine:
-                    hit = ("+".join("{:,}".format(v) for v in present if v), mine)
-                    break
+            hit = _find_identity(vals, mi, mine)
             if hit:
                 b["identity"] = hit
                 b["hypothesis"] = (tag, mine)

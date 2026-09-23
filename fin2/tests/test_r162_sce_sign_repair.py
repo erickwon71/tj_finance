@@ -6,14 +6,18 @@ from __future__ import annotations
 
 import inspect
 import sys
+from pathlib import Path
 
 import pytest
 
 from fin2.extract.sce_sign_repair import (
     Correction,
+    apply_manual_sign_fixes,
     concept_of_col_label,
     repair_sce_sign_loss,
 )
+
+_ROOT = Path(__file__).resolve().parents[2]
 
 
 class _Line:
@@ -445,3 +449,42 @@ def test_subtotal_exclusion_enables_a_repair_that_is_otherwise_impossible():
     assert any(f.row_order == 0 for f in fixes)
     # 소계와 구성요소는 건드리지 않는다
     assert [l.value_won for l in sce[1:4]] == [10, -5, 5]
+
+
+# --------------------------------------------------------------------------
+# R162-manual — 개별 확정 (issue#38, 2026-09-23)
+# --------------------------------------------------------------------------
+
+def test_manual_fix_flips_the_registered_cell():
+    """SK텔레콤 20210517001554 — BS 에 '자기주식' 단독 행이 없어 일반 알고리즘의
+    (가)앵커가 원리적으로 없다. 사용자가 개별 승인한 rcept 예외목록으로만 뒤집힌다.
+    """
+    line = _Line("SCE", "separate", "2021.03.31 (기말자본)", 2_169_660_000_000,
+                 col_index=6, col_label="자본>기타불입자본>자기주식", row_order=17)
+    fixes = apply_manual_sign_fixes([line], "20210517001554")
+    assert line.value_won == -2_169_660_000_000
+    assert len(fixes) == 1
+    assert fixes[0].old_value == 2_169_660_000_000
+    assert fixes[0].new_value == -2_169_660_000_000
+
+
+def test_manual_fix_is_scoped_to_its_rcept():
+    line = _Line("SCE", "separate", "2021.03.31 (기말자본)", 2_169_660_000_000,
+                 col_index=6, col_label="자본>기타불입자본>자기주식", row_order=17)
+    fixes = apply_manual_sign_fixes([line], "99999999999999")
+    assert line.value_won == 2_169_660_000_000
+    assert fixes == []
+
+
+def test_manual_fix_requires_the_old_value_to_match():
+    """★원문/코드가 달라져 값이 이미 다르면 조용히 덮지 않는다(R6)."""
+    line = _Line("SCE", "separate", "2021.03.31 (기말자본)", 999,
+                 col_index=6, col_label="자본>기타불입자본>자기주식", row_order=17)
+    fixes = apply_manual_sign_fixes([line], "20210517001554")
+    assert line.value_won == 999
+    assert fixes == []
+
+
+def test_manual_fix_is_wired_into_extract_report_lines():
+    rl = (_ROOT / "fin2/extract/report_lines.py").read_text(encoding="utf-8")
+    assert "apply_manual_sign_fixes(lines, rcept_no)" in rl

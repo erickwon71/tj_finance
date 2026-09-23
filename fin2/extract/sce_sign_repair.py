@@ -308,6 +308,67 @@ def _subtotal_fixes(cells: Sequence[_Cell], move_i: Sequence[int],
     return out
 
 
+# ── R162-d 원리의 개별 확정 사례(2026-09-22 결정: 일반 백필은 보류, 개별
+#    필링은 확정된 대로 등재) ───────────────────────────────────────────────
+#
+# camp_run 이슈#38(2026-09-23): SK텔레콤 00159023 `20210517001554`(2021Q1)
+# [별도] 자본변동표 `2021.03.31 (기말자본)` 행 **자기주식** 열.
+#
+# R162 의 (가)BS/IS 교차대조 앵커가 원리적으로 없다 — 이 필링 BS 에 '자기주식'
+# 단독 행이 없다(재무상태표에 자본조정/기타불입자본으로만 뭉쳐 있음). 그래서
+# 일반 `repair_sce_sign_loss()` 는 이 셀을 손대지 않았다(R6, 정상 동작).
+#
+# 그런데 **행 내부 항등식**이 orientation 을 거울 모호성 없이 확정한다(R162-d 와
+# 같은 원리 — 2026-09-22 '스캔·증명 완료·백필 보류' 결정의 그 패턴). 독립된
+# 두 증거가 일치한다:
+#   ① 열 롤포워드: 2021.01.01(기초) −2,123,661,000,000 + 자기주식의 취득
+#      −72,982,000,000 + 자기주식의 처분 +26,983,000,000 = −2,169,660,000,000
+#   ② 행 내부 분해: 기타불입자본 합계(245,841,000,000) = 주식발행초과금
+#      (2,915,887,000,000) + 자기주식 + 신종자본증권(398,759,000,000) +
+#      주식선택권(1,528,000,000) + 기타(−900,673,000,000)
+#      → 자기주식 = −2,169,660,000,000 (역산, 동일)
+# DB 는 현재 +2,169,660,000,000(원문 그대로, 괄호 누락)으로 적재돼 있다.
+#
+# ★R162-d 전체 백필은 여전히 보류다(사용자 결정 2026-09-22) — 이건 그 범위를
+#   넓히는 게 아니라, camp_run 이 실측 발견하고 사용자가 개별 승인한 **이 필링
+#   1건만**의 확정이다(2026-09-23). old_value 가 일치할 때만 적용해, 원문/코드가
+#   달라지면 조용히 틀린 값을 덮지 않는다.
+_MANUAL_SIGN_FIXES: Dict[Tuple[str, str, str, str], Tuple[int, int]] = {
+    ("20210517001554", "separate", "2021.03.31 (기말자본)", "자기주식"):
+        (2_169_660_000_000, -2_169_660_000_000),
+}
+
+
+def apply_manual_sign_fixes(lines: List, rcept_no: Optional[str]) -> List[Correction]:
+    """`_MANUAL_SIGN_FIXES` 에 등재된 셀만 부호를 뒤집는다(없으면 아무 것도 안 함).
+
+    `apply_source_typo_fixes()`(R159)와 같은 패턴 — rcept 단위 예외목록, old_value
+    일치 확인 후에만 적용.
+    """
+    if not rcept_no or not _MANUAL_SIGN_FIXES:
+        return []
+    corrections: List[Correction] = []
+    for ln in lines:
+        if getattr(ln, "statement", None) != "SCE":
+            continue
+        key = (rcept_no, ln.basis, (ln.label_raw or "").strip(),
+               concept_of_col_label(getattr(ln, "col_label", None)))
+        fix = _MANUAL_SIGN_FIXES.get(key)
+        if fix is None or ln.value_won != fix[0]:
+            continue
+        old_value = ln.value_won
+        ln.value_won = fix[1]
+        corrections.append(Correction(
+            basis=ln.basis, table_seq=getattr(ln, "table_seq", None),
+            row_order=ln.row_order, col_index=ln.col_index,
+            col_label=getattr(ln, "col_label", None), label_raw=ln.label_raw or "",
+            old_value=old_value, new_value=fix[1], anchor_label="manual(R162-d 개별확정)"))
+    if corrections:
+        logger.debug(f"[report_lines/R162-manual] SCE 부호 수동확정 "
+                     f"{len(corrections)}셀 ({rcept_no})")
+    return corrections
+
+
 def repair_sce_sign_loss(lines: List) -> List[Correction]:
     """`lines` 의 SCE 행 부호를 제자리에서 복원하고 교정 내역을 돌려준다.
 

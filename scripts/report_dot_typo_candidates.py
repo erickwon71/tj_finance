@@ -40,6 +40,7 @@ import argparse
 import re
 import sys
 from datetime import date
+from itertools import combinations
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -86,6 +87,27 @@ def _digits(t: str) -> str:
     return re.sub(r"[^\d]", "", t or "")
 
 
+def _as_trunc(t: str):
+    """소수점 **이하를 버린** 정수값(부호 유지).
+
+    ★두 번째 가설이다. `_as_int` 는 "콤마를 마침표로 잘못 찍었다" 를 가정하지만,
+    실제 데이터에는 **소수부가 군더더기**인 경우도 있다 — 두산 20260323000945
+    `(35,851.435)` 는 행 항등식이 **-35,851** 에서 닫힌다(콤마 가설의
+    -35,851,435 로는 안 닫힌다). 반대로 SK이노베이션 20260316000827 `801.523` 은
+    **801,523**(콤마 가설)에서 닫힌다. 두 가설이 모두 실재하므로 어느 쪽이 항등식을
+    닫는지 함께 보고해야 사용자가 "정정값이 무엇인가" 를 판정할 수 있다.
+    """
+    t = (t or "").strip()
+    m = re.match(r"^\(?\s*-?\s*([\d,]+)", t)
+    if not m:
+        return None
+    d = m.group(1).replace(",", "")
+    if not d:
+        return None
+    v = int(d)
+    return -v if t.startswith("(") or t.startswith("-") else v
+
+
 def _as_int(t: str):
     """마침표를 콤마로 되돌렸다고 가정한 정수값(부호 유지)."""
     t = (t or "").strip()
@@ -94,6 +116,43 @@ def _as_int(t: str):
         return None
     v = int(d)
     return -v if t.startswith("(") or t.startswith("-") else v
+
+
+def _find_identity(vals: list, mi: int, mine: int):
+    """이 행 안에서 `vals[mi]`(=mine, 가설값)이 들어가는 덧셈 항등식을 찾는다.
+
+    ★초판은 "vals[:t] 전부를 더하면 vals[t]" 만 봤다. SCE 는 흔히 **2단 구조**다 —
+      구성요소(자본금..이익잉여금) → 부분합(지배기업 소유주지분 합계) →
+      **부분합 + 비지배지분 = 총계**. 부분합 칸까지 함께 누적하면 이중계산이라
+      절대 안 닫힌다(실측: HD한국조선해양 `20250318001131` [연결] 자본변동표
+      `파생상품평가손익` 비지배지분 칸 — 사용자가 DART 원문에서 직접 찾아냄,
+      2026-09-23). 그래서 `vals[:t]` 전체가 아니라 **`mine` 을 포함하는 작은
+      부분집합**을 찾는다(최대 4개 — 그보다 크면 우연한 일치일 위험이 커 근거로
+      쓰지 않는다). 같은 크기면 총계 열에 **인접한** 열부터 시도한다 — 실제
+      부분합일 가능성이 더 높다.
+    """
+    n = len(vals)
+    for t in range(1, n):
+        total = vals[t]
+        if total is None:
+            continue
+        if t == mi:
+            # mine 자신이 부분합/총계 열 — 그 앞 전부가 구성요소인 표준 형태만 인정.
+            present = [v for v in vals[:t] if v is not None]
+            if present and sum(present) == mine:
+                return ("+".join("{:,}".format(v) for v in present), mine)
+            continue
+        if t < mi:
+            continue
+        others = [(i, v) for i, v in enumerate(vals[:t])
+                  if i != mi and v is not None]
+        others.sort(key=lambda iv: -iv[0])
+        for size in range(0, min(4, len(others)) + 1):
+            for combo in combinations(others, size):
+                if mine + sum(v for _, v in combo) == total:
+                    parts = [mine] + [v for _, v in combo]
+                    return ("+".join("{:,}".format(v) for v in parts), total)
+    return None
 
 
 def scan_one(path: str, rcept_no: str) -> list[dict]:
@@ -156,21 +215,24 @@ def scan_one(path: str, rcept_no: str) -> list[dict]:
         #   합계 항등식이고 자본금과 상관없다). 확인 요청 문서에 무관한 산수를 근거로
         #   싣는 것은 판단을 흐린다.
         b["identity"] = None
-        mine = _as_int(b["cell"])
-        vals = [_as_int(c) for c in b["row_cells"][1:]]
-        if mine and len(vals) >= 3 and vals[-1] is not None:
-            comp = [v for v in vals[:-1] if v]
-            total = vals[-1]
-            for i in range(len(comp)):
-                for j in range(i + 1, len(comp)):
-                    if comp[i] + comp[j] != total:
-                        continue
-                    if mine not in (comp[i], comp[j]):
-                        continue            # 내 값이 안 들어간 식은 근거가 아니다
-                    b["identity"] = (comp[i], comp[j], total)
-                    break
-                if b["identity"]:
-                    break
+        b["hypothesis"] = None
+        vals_raw = b["row_cells"][1:]
+        mi = b["col"] - 1
+        # 두 가설을 각각 그 셀 자리에 넣어 보고, 행의 덧셈 항등식이 닫히는 쪽을 찾는다.
+        for tag, conv in (("콤마", _as_int), ("절삭", _as_trunc)):
+            mine = conv(b["cell"])
+            if not mine:
+                continue
+            vals = [_as_int(c) for c in vals_raw]
+            if 0 <= mi < len(vals):
+                vals[mi] = mine
+            if len(vals) < 2:
+                continue
+            hit = _find_identity(vals, mi, mine)
+            if hit:
+                b["identity"] = hit
+                b["hypothesis"] = (tag, mine)
+                break
     return broken
 
 
@@ -207,7 +269,9 @@ def _render(found: dict[str, dict]) -> str:
         "판정해 주실 것: **오타인가**, 그리고 **정정값이 무엇인가**.",
         "",
         "- `정수판` = 같은 필링 원문 다른 곳에 인쇄된 정수(근거 가)",
-        "- `항등식` = 그 행 합계가 정확히 닫히는 조합(근거 나)",
+        "- `항등식` = 그 행의 덧셈이 정확히 닫히는 값(근거 나). **콤마**=마침표를 "
+        "콤마로 되돌린 값, **절삭**=소수부를 버린 값 — 둘 중 항등식을 닫는 쪽을 "
+        "표시했습니다(두 가설이 모두 실재합니다).",
         "- 둘 다 없으면 DART 원문을 직접 보셔야 합니다.",
         "",
     ]
@@ -229,8 +293,9 @@ def _render(found: dict[str, dict]) -> str:
                 twin = f"`{wt}` ← {_SCOPE_KO.get(wk, wk)} `{wl[:20]}`"
             ident = "—"
             if b["identity"]:
-                a, c, t = b["identity"]
-                ident = f"{a:,} + {c:,} = {t:,}"
+                left, total = b["identity"]
+                tag, mine = b["hypothesis"]
+                ident = f"**{tag}→{mine:,}**  ({left} = {total:,})"
             unit_ko = {1: "원", 1000: "천원", 1000000: "백만원"}.get(
                 b.get("unit"), str(b.get("unit")))
             out.append(
@@ -252,6 +317,12 @@ def _render(found: dict[str, dict]) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=200)
+    ap.add_argument("--from-scan", action="store_true",
+                    help="★`docs/qa/decimal_cell_scan.jsonl` 에 발화로 기록된 "
+                         "필링만 대상으로 삼는다. 이 스크립트는 종전에 큐 전체를 "
+                         "처음부터 다시 훑었고(기본 --limit 200) 그래서 전수 스캔을 "
+                         "끝내 놓고도 200건만 보고 '0건' 을 냈다. 스캔 결과를 "
+                         "재사용하면 근거 수집만 하므로 233건은 즉시 끝난다.")
     ap.add_argument("--breadth", action="store_true")
     ap.add_argument("--corp")
     ap.add_argument("--write", action="store_true", help="문서 파일로 저장")
@@ -261,13 +332,31 @@ def main() -> int:
     sql = (_BREADTH_SQL if args.breadth else _TARGETS_SQL).format(
         corp_filter="AND corp_code = :corp" if args.corp else "")
 
+    only: set | None = None
+    if args.from_scan:
+        import json as _json
+        scan = Path(__file__).resolve().parents[1] / "docs/qa/decimal_cell_scan.jsonl"
+        only = set()
+        for line in scan.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = _json.loads(line)
+            except ValueError:
+                continue
+            if rec.get("hits"):
+                only.add(rec["rcept_no"])
+        print("스캔 발화 필링: %d건만 대상" % len(only), flush=True)
+
     found: dict[str, dict] = {}
     n = 0
     with get_session() as s:
         rows = s.execute(text(sql),
                          {"corp": args.corp} if args.corp else {}).mappings().all()
+        if only is not None:
+            rows = [r for r in rows if r["rcept_no"] in only]
         for r in rows:
-            if n >= args.limit:
+            if only is None and n >= args.limit:
                 break
             n += 1
             try:

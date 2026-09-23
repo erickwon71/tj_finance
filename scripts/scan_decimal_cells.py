@@ -120,7 +120,7 @@ def report() -> None:
     if not _OUT.exists():
         print("아직 스캔 결과가 없습니다.")
         return
-    n = hit_files = n_cells = 0
+    n = hit_files = n_cells = n_skip = 0
     by_corp, by_scope, by_unit, errors = Counter(), Counter(), Counter(), Counter()
     with _OUT.open() as fh:
         for line in fh:
@@ -129,6 +129,9 @@ def report() -> None:
             except ValueError:
                 continue
             n += 1
+            if rec.get("skipped"):
+                n_skip += 1
+                continue
             if rec.get("error"):
                 errors[rec["error"][:60]] += 1
                 continue
@@ -141,9 +144,11 @@ def report() -> None:
             for h in hits:
                 by_scope[h["scope"]] += 1
                 by_unit[str(h.get("declared_unit"))] += 1
-    print(f"스캔 {n:,}건 · 발화 {hit_files:,}건"
-          f"{f' ({hit_files / n:.1%})' if n else ''} · 소수셀 {n_cells:,} · "
-          f"오류 {sum(errors.values()):,}건")
+    scanned = n - n_skip
+    print(f"레코드 {n:,} = XML 스캔 {scanned:,} + 대상아님(비XML 원천) {n_skip:,}")
+    print(f"발화 {hit_files:,}건"
+          f"{f' ({hit_files / scanned:.1%} of scanned)' if scanned else ''} · "
+          f"소수셀 {n_cells:,} · 오류 {sum(errors.values()):,}건")
     print(f"\n회사별(상위 20): {by_corp.most_common(20)}")
     print(f"\n재무제표별: {by_scope.most_common()}")
     print(f"\n선언단위별: {by_unit.most_common()}")
@@ -181,7 +186,7 @@ def main() -> int:
     sql = (_BREADTH_SQL if args.breadth else _TARGETS_SQL).format(
         corp_filter="AND corp_code = :corp" if args.corp else "")
 
-    n = n_hit = 0
+    n = n_hit = n_skip = 0
     with get_session() as s, _OUT.open("a") as out:
         rows = s.execute(text(sql),
                          {"corp": args.corp} if args.corp else {}).mappings().all()
@@ -194,7 +199,16 @@ def main() -> int:
                    "corp_name": r["corp_name"], "fiscal_year": r["fiscal_year"]}
             try:
                 _kind, path = resolve_source(s, r["rcept_no"])
-                rec["hits"] = scan_one(path)
+                # ★2026-09-23 — 이 스캐너는 **XML 본문 표**의 마침표 셀을 찾는다.
+                #   원천이 PDF·XBRL zip 인 필링에는 볼 표가 없다. 종전에는 그것을
+                #   그냥 `_parse_xml_file` 에 넘겨 None 이 돌아오고
+                #   `AttributeError: 'NoneType' ... findall` 로 **오류 2,016건**으로
+                #   집계됐다 — "스캔 실패" 로 읽혀 전수 완료 여부를 흐린다.
+                #   실패가 아니라 **대상 아님**이므로 그렇게 기록한다.
+                if _kind != "xml":
+                    rec["skipped"] = "non-xml source (%s)" % _kind
+                else:
+                    rec["hits"] = scan_one(path)
             except Exception as exc:                              # noqa: BLE001
                 rec["error"] = f"{type(exc).__name__}: {exc}"
             out.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -202,10 +216,13 @@ def main() -> int:
             n += 1
             if rec.get("hits"):
                 n_hit += 1
+            if rec.get("skipped"):
+                n_skip += 1
             if n % 25 == 0:
                 print(f"  ... {n}/{args.limit} (발화 {n_hit})", flush=True)
 
-    print(f"\n이번 실행: {n:,}건 처리, 발화 {n_hit:,}건 → {_OUT}")
+    print(f"\n이번 실행: {n:,}건 처리, 발화 {n_hit:,}건, "
+          f"대상아님(비XML 원천) {n_skip:,}건 → {_OUT}")
     return 0
 
 

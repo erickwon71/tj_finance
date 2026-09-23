@@ -42,43 +42,62 @@ from collector.db import get_session
 from fin2.extract.report_lines import (
     _detect_fin_type, _grid_header_split, _parse_xml_file)
 from fin2.extract.text import _detect_body_statement_tables
+from parser.common.amount_normalizer import parse_amount
 
 _LINK = "/Users/taejin/Project/tj_finance/raw_report"
 _SD = "/Volumes/dart_data/raw_report"
 
 
-def _scan_table(tbl) -> tuple[int, int, int]:
-    """(trigger_rows, fillable_cells, declined_cells) for one table."""
+def _scan_table(tbl) -> tuple[int, int, int, int]:
+    """(trigger_rows, fillable, zero_replaced, declined) for one table.
+
+    ★`zero_replaced` is separated out because R166-b treats a preceding
+    EXPLICIT '0' as a placeholder that a non-zero continuation value may
+    replace (한미반도체 20230814001921, issue #35). That is the only case where
+    the merge changes an existing value rather than filling a gap, so it is the
+    one number that carries real risk and must be reported on its own.
+    `declined` = the preceding row holds a real non-zero value -> untouched
+    (SK이노베이션 2021, where the incoming figure closes no identity - R6).
+    """
     grid_rows, n_header, offset, _w = _grid_header_split(tbl)
     if not grid_rows or not offset:
-        return 0, 0, 0
-    trigger = fillable = declined = 0
-    prev_filled: set = set()
+        return 0, 0, 0, 0
+    trigger = fillable = zero_replaced = declined = 0
+    prev: dict = {}          # col_idx -> raw text of the preceding logical row
     for row in grid_rows[n_header:]:
         physical = [c for c in row if not c.inherited]
         if not physical:
             continue
         if any(c.grid_col < offset for c in physical):
-            # An ordinary labelled row - remember which columns it fills.
-            prev_filled = {c.grid_col - offset for c in physical
-                           if c.grid_col >= offset and c.text.strip()}
+            prev = {c.grid_col - offset: c.text.strip()
+                    for c in physical
+                    if c.grid_col >= offset and c.text.strip()}
             continue
-        # No physical cell in the label region -> the R166 trigger.
-        cols = {c.grid_col - offset for c in physical
-                if c.grid_col >= offset and c.text.strip()}
-        if not cols:
+        cells = {c.grid_col - offset: c.text.strip()
+                 for c in physical
+                 if c.grid_col >= offset and c.text.strip()}
+        if not cells:
             continue
         trigger += 1
-        fillable += len(cols - prev_filled)
-        declined += len(cols & prev_filled)
-        prev_filled |= cols
-    return trigger, fillable, declined
+        for idx, txt in cells.items():
+            if idx not in prev:
+                fillable += 1
+                prev[idx] = txt
+                continue
+            prev_val = parse_amount(prev[idx], 1)
+            inc = parse_amount(txt, 1)
+            if prev_val == 0 and inc is not None and inc != 0:
+                zero_replaced += 1
+                prev[idx] = txt
+            else:
+                declined += 1
+    return trigger, fillable, zero_replaced, declined
 
 
 def _one(job: dict) -> dict:
     out = {"rcept_no": job["rcept_no"], "corp_name": job["corp_name"],
            "fy": job["fiscal_year"], "trigger": 0, "fillable": 0,
-           "declined": 0, "codes": [], "status": "ok"}
+           "zero_replaced": 0, "declined": 0, "codes": [], "status": "ok"}
     path = Path(job["path"])
     if not path.exists():
         out["status"] = "missing"
@@ -98,12 +117,13 @@ def _one(job: dict) -> dict:
     for code, entries in groups.items():
         for tbl, _u, _k in entries:
             try:
-                t, f, d = _scan_table(tbl)
+                t, f, z, d = _scan_table(tbl)
             except Exception:                           # noqa: BLE001
                 continue
             if t:
                 out["trigger"] += t
                 out["fillable"] += f
+                out["zero_replaced"] += z
                 out["declined"] += d
                 out["codes"].append(code)
     return out
@@ -181,8 +201,12 @@ def main() -> int:
     print("\nmeasured=%d  affected filings=%d  unreadable/error=%d"
           % (len(results), len(hits), n_err))
     print("  trigger rows   : %d" % sum(r["trigger"] for r in hits))
-    print("  ★cells R166 fills   : %d" % sum(r["fillable"] for r in hits))
-    print("  cells R166 declines : %d   (preceding row already had them)"
+    print("  ★cells filled into an EMPTY column   : %d"
+          % sum(r["fillable"] for r in hits))
+    print("  ★★cells REPLACING an explicit '0'     : %d   (R166-b - the only "
+          "case that changes an existing value)"
+          % sum(r.get("zero_replaced", 0) for r in hits))
+    print("  cells declined (real value present)  : %d"
           % sum(r["declined"] for r in hits))
 
     from collections import Counter
@@ -195,14 +219,14 @@ def main() -> int:
         print("    %-8s %d" % (k, v))
 
     print("\n  top filings by cells filled:")
-    for r in sorted(hits, key=lambda x: -x["fillable"])[:20]:
-        print("    %s %-16s %s  fill=%-4d decline=%-3d %s" % (
+    for r in sorted(hits, key=lambda x: -(x["fillable"] + x.get("zero_replaced", 0)))[:20]:
+        print("    %s %-16s %s  fill=%-4d zero=%-3d decline=%-3d %s" % (
             r["rcept_no"], (r["corp_name"] or "")[:14], r["fy"],
-            r["fillable"], r["declined"], ",".join(sorted(set(r["codes"])))))
+            r["fillable"], r.get("zero_replaced", 0), r["declined"], ",".join(sorted(set(r["codes"])))))
 
     if args.out and hits:
         Path(args.out).write_text(
-            "\n".join(r["rcept_no"] for r in hits if r["fillable"]) + "\n")
+            "\n".join(r["rcept_no"] for r in hits if r["fillable"] or r.get("zero_replaced")) + "\n")
         print("\n  affected list -> %s" % args.out)
     return 0
 

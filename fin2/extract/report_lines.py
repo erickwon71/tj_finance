@@ -1555,64 +1555,38 @@ def _grid_body_rows(
         if not physical:
             continue                        # ROWSPAN 이 이 행 전체를 흡수(자기 물리 셀 없음)
 
-        # ★R166(2026-09-23) — **라벨 칸이 ROWSPAN 으로 이어지는 두 번째 물리행**의 값이
-        #   통째로 버려졌다. 원문은 라벨 TE 에 ROWSPAN=2 를 주고 값을 **둘째 물리행**에
-        #   싣는데, 그 행에는 자기 라벨 칸이 없어 `physical[0]` 이 첫 **금액** 칸이 되고
-        #   그 텍스트가 비면 아래 `if not label: continue` 가 행 전체를 값째로 버린다.
+        # ★R166(2026-09-23, 설계 개정 R166-c) — **라벨 칸이 ROWSPAN 으로 이어지는
+        #   두 번째 물리행**의 값이 통째로 버려졌다. 그 행에는 자기 라벨 칸이 없어
+        #   `physical[0]` 이 첫 **금액** 칸이 되고, 그 텍스트가 비면 아래
+        #   `if not label: continue` 가 행 전체를 값째로 버린다. 상속 칸은 origin
+        #   텍스트를 이미 들고 있으므로(`_label_dict_from_header` 주석) 라벨은 복원된다.
         #
-        #   실측: SK이노베이션 20240320000950 [연결] SCE, 라벨 '기타포괄손익-공정가치측정
-        #   금융자산 평가손익' 3개 연차 구간(캠페인 이슈#34, camp_run 발견·화면대조).
-        #   camp_run 이 스크린샷+computed style 로 확인한 바 **화면과 XML 이 일치**한다
-        #   (라벨 셀만 height 65px = 2행, 나머지는 32px 단일행) — 렌더 괴리는 아니다.
+        #   ★**직전 행에 병합하지 않는다. 상속 라벨을 붙여 별도 행으로 낸다.**
+        #   처음엔 "한 논리행이 두 물리행으로 쪼개진 것" 으로 보고 직전 행의 빈 열(및
+        #   0 인 열)을 채우게 했다가, 그 전제가 틀린 실측을 만났다 — SK이노베이션
+        #   20260316000827 [별도] SCE:
         #
-        #     2022(TR24/25)·2023(TR42/43)  라벨행이 **전부 공란**이고 값 전부가 둘째 행에
-        #                                  있으며 그 행만으로 항등식이 닫힌다 → 병합이 옳다
-        #     2021(TR6/7)                  라벨행 TR6 이 **이미 자기완결**
-        #                                  (20,388,640 + 17,913 = 20,406,553)이고 둘째 행은
-        #                                  자본합계 칸에 20,599,397 하나뿐인데 그 값은 어떤
-        #                                  항등식도 닫지 않는다 → **정체 불명**
+        #     라벨행    기타자본구성요소 16,264,649 · 자본합계 16,264,649   ← 자기완결
+        #     이어짐행  이익잉여금 17,201,204 · 기타자본구성요소 (17,201,204)
+        #               · 자본합계 0                                      ← 자기완결
         #
-        #   그래서 **직전 논리행의 빈 열만 채우고, 이미 값이 있는 열은 건드리지 않는다.**
-        #   2022·2023 은 라벨행이 비어 있으니 전부 복구되고, 2021 은 열이 이미 차 있어
-        #   자동으로 거부된다 — 정체를 모르는 값을 밀어넣지 않는다(R6). 새 행으로 쪼개지도
-        #   않는다: 같은 라벨의 행이 둘이 되면 열 롤포워드 항등식(R162·R165)이 깨진다.
-        if offset > 0 and out and not any(c.grid_col < offset for c in physical):
-            merged = 0
-            for c in physical:
-                if c.grid_col < offset or not c.text.strip():
-                    continue
-                idx = c.grid_col - offset
-                prev = out[-1]
-                while len(prev.raw_amounts) <= idx:
-                    prev.raw_amounts.append("")
-                    prev.amounts.append(None)
-                incoming = parse_amount(c.text, multiplier)
-                # ★R166-b(2026-09-23) — 라벨행이 **명시적 0** 으로 채워진 변형.
-                #   원문이 빈 칸 대신 '0' 을 찍는 서식이 있어, 빈칸 조건만 보면 모든 열이
-                #   '이미 찬 것' 이 되어 이어짐 행의 실제 값이 전부 거부됐다.
-                #   실측: 한미반도체 20230814001921 [연결] SCE '자기주식처분이익' —
-                #   라벨행 전 열이 '0' 이고 이어짐 행에 5,464,171,128(자본잉여금·
-                #   지배기업지분합계·자본합계)이 있다(캠페인 이슈#35, camp_run).
-                #   ★독립 앵커: 같은 필링 **[별도] SCE** 에 같은 금액이 단일 행으로
-                #   정상 적재돼 있어 그 항목이 실재함이 확인된다. 이어짐 행 자체의
-                #   항등식도 닫힌다(0 + 5,464,171,128 = 5,464,171,128).
-                #   그래서 **직전 값이 0 이고 들어오는 값이 0 이 아닐 때만** 대체한다.
-                #   SK이노베이션 2021 구간은 직전 값이 실제 수치(20,406,553 등)라
-                #   그대로 거부된다 — 정체 불명 값 주입 금지(R6)는 유지된다.
-                if prev.raw_amounts[idx]:
-                    if not (prev.amounts[idx] == 0
-                            and incoming is not None and incoming != 0):
-                        continue    # 직전 행이 실제 값을 갖고 있다 — 덮지 않는다
-                prev.raw_amounts[idx] = c.text
-                prev.amounts[idx] = incoming
-                merged += 1
-            if merged:
-                logger.debug(
-                    "[report_lines/R166] ROWSPAN 이어짐 행 병합: %s %d셀 -> %r",
-                    rcept_no, merged, out[-1].account_name[:30])
-            continue
-
-        label = physical[0].text
+        #   같은 캡션 아래 **서로 다른 두 변동**(평가손익 증가 / 이익잉여금↔기타자본
+        #   재분류)이고 **각각 항등식이 닫힌다**. 병합하면 둘이 섞여 `17,201,204 +
+        #   16,264,649 = 33,465,853` 인데 합계는 `0` 인 **날조된 행**이 나온다.
+        #   그래서 병합을 폐기했다 — 원문이 두 행으로 인쇄한 것을 두 행으로 전사한다.
+        #   덮어쓰기가 없으니 기존 값이 바뀔 일도 없다(가산적).
+        #
+        #   실측 근거: 이슈#34 SK이노베이션 20240320000950 · 이슈#35 한미반도체
+        #   20230814001921(camp_run 발견·화면대조로 렌더 괴리 아님 확인).
+        is_continuation = (offset > 0
+                           and not any(c.grid_col < offset for c in physical))
+        if is_continuation:
+            label = next((c.text for c in row
+                          if c.grid_col < offset and c.text.strip()), "")
+            if not label.strip():
+                continue                # 라벨을 복원할 수 없으면 종전대로 버린다
+        else:
+            label = physical[0].text
         # ★순서는 옛 `extract_rows`와 동일해야 한다: header_hint 판정·드롭 → 제목행 가드 →
         #   label 공백 가드. 셋 다 "이 행을 아예 버릴지"를 정하는 게이트라 순서가 바뀌면
         #   드문 조합(예: 빈 라벨인데 헤더 패턴)에서 결과가 갈릴 수 있다. header_hint 는
@@ -1636,13 +1610,16 @@ def _grid_body_rows(
         #   금액은 원래도 정확했다 — 라벨 텍스트만 부정확했음). 헤더 다단 조인
         #   (`_label_dict_from_header`)과 같은 ">" 관례를 본문 행에도 적용한다.
         label_region_cells = [c for c in physical if c.grid_col < offset]
-        if len(label_region_cells) > 1:
+        if not is_continuation and len(label_region_cells) > 1:
             joined = ">".join(
                 c.text.strip() for c in label_region_cells if c.text.strip())
             if joined:
                 label = joined
 
-        value_cells = [c for c in physical[1:] if c.grid_col >= offset]
+        # ★이어짐 행은 `physical[0]` 자체가 첫 금액 칸이다(라벨 칸이 없다) —
+        #   `physical[1:]` 로 자르면 그 값을 잃는다.
+        value_cells = [c for c in (physical if is_continuation else physical[1:])
+                       if c.grid_col >= offset]
         max_idx = max((c.grid_col - offset for c in value_cells), default=-1)
         amounts: list[int | None] = [None] * (max_idx + 1)
         raw_amounts: list[str] = [""] * (max_idx + 1)

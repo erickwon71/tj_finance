@@ -1554,6 +1554,49 @@ def _grid_body_rows(
         physical = [c for c in row if not c.inherited]
         if not physical:
             continue                        # ROWSPAN 이 이 행 전체를 흡수(자기 물리 셀 없음)
+
+        # ★R166(2026-09-23) — **라벨 칸이 ROWSPAN 으로 이어지는 두 번째 물리행**의 값이
+        #   통째로 버려졌다. 원문은 라벨 TE 에 ROWSPAN=2 를 주고 값을 **둘째 물리행**에
+        #   싣는데, 그 행에는 자기 라벨 칸이 없어 `physical[0]` 이 첫 **금액** 칸이 되고
+        #   그 텍스트가 비면 아래 `if not label: continue` 가 행 전체를 값째로 버린다.
+        #
+        #   실측: SK이노베이션 20240320000950 [연결] SCE, 라벨 '기타포괄손익-공정가치측정
+        #   금융자산 평가손익' 3개 연차 구간(캠페인 이슈#34, camp_run 발견·화면대조).
+        #   camp_run 이 스크린샷+computed style 로 확인한 바 **화면과 XML 이 일치**한다
+        #   (라벨 셀만 height 65px = 2행, 나머지는 32px 단일행) — 렌더 괴리는 아니다.
+        #
+        #     2022(TR24/25)·2023(TR42/43)  라벨행이 **전부 공란**이고 값 전부가 둘째 행에
+        #                                  있으며 그 행만으로 항등식이 닫힌다 → 병합이 옳다
+        #     2021(TR6/7)                  라벨행 TR6 이 **이미 자기완결**
+        #                                  (20,388,640 + 17,913 = 20,406,553)이고 둘째 행은
+        #                                  자본합계 칸에 20,599,397 하나뿐인데 그 값은 어떤
+        #                                  항등식도 닫지 않는다 → **정체 불명**
+        #
+        #   그래서 **직전 논리행의 빈 열만 채우고, 이미 값이 있는 열은 건드리지 않는다.**
+        #   2022·2023 은 라벨행이 비어 있으니 전부 복구되고, 2021 은 열이 이미 차 있어
+        #   자동으로 거부된다 — 정체를 모르는 값을 밀어넣지 않는다(R6). 새 행으로 쪼개지도
+        #   않는다: 같은 라벨의 행이 둘이 되면 열 롤포워드 항등식(R162·R165)이 깨진다.
+        if offset > 0 and out and not any(c.grid_col < offset for c in physical):
+            merged = 0
+            for c in physical:
+                if c.grid_col < offset or not c.text.strip():
+                    continue
+                idx = c.grid_col - offset
+                prev = out[-1]
+                while len(prev.raw_amounts) <= idx:
+                    prev.raw_amounts.append("")
+                    prev.amounts.append(None)
+                if prev.raw_amounts[idx]:
+                    continue        # 직전 행이 이미 그 열을 채웠다 — 덮지 않는다(2021 구간)
+                prev.raw_amounts[idx] = c.text
+                prev.amounts[idx] = parse_amount(c.text, multiplier)
+                merged += 1
+            if merged:
+                logger.debug(
+                    "[report_lines/R166] ROWSPAN 이어짐 행 병합: %s %d셀 -> %r",
+                    rcept_no, merged, out[-1].account_name[:30])
+            continue
+
         label = physical[0].text
         # ★순서는 옛 `extract_rows`와 동일해야 한다: header_hint 판정·드롭 → 제목행 가드 →
         #   label 공백 가드. 셋 다 "이 행을 아예 버릴지"를 정하는 게이트라 순서가 바뀌면

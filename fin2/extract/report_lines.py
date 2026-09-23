@@ -191,7 +191,7 @@ from fin2.extract.report_lines_inline_xbrl_overlay import (
     overlay_dividends_paid_sign,
     overlay_tax_expense_value,
 )
-from fin2.extract.sce_sign_repair import repair_sce_sign_loss
+from fin2.extract.sce_sign_repair import apply_manual_sign_fixes, repair_sce_sign_loss
 from fin2.extract.cf_cash_sign_repair import repair_cf_cash_sign_loss
 
 # report_fiscal_year 가 이 값 이하면 pre-2015 K-GAAP 라우팅을 먼저 시도한다(설계문서
@@ -2064,6 +2064,13 @@ def extract_report_lines(
     if sce_fixes:
         logger.debug(f"[report_lines] R162 SCE 부호 복원: {len(sce_fixes)}셀 "
                      f"({rcept_no})")
+
+    # R162-d 원리의 개별 확정(2026-09-22/23) — 일반 알고리즘이 앵커 부재로 손대지
+    # 못하는 셀 중, 사용자가 개별 승인한 것만 rcept 예외목록으로 뒤집는다.
+    manual_sign_fixes = apply_manual_sign_fixes(lines, rcept_no)
+    if manual_sign_fixes:
+        logger.debug(f"[report_lines] R162-manual SCE 부호 수동확정: "
+                     f"{len(manual_sign_fixes)}셀 ({rcept_no})")
 
     # R163(2026-09-22) — R162 의 자매. CF 현금 조정 구간(기초+순증감+환율효과=기말)이
     # 깨진 열에서 단일 셀 부호를 복원한다. 캠페인 이슈#29.

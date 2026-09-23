@@ -153,3 +153,66 @@ def test_sk_innovation_2023fy_sections_recovered_and_identities_close():
     assert 53_102_471_000 in vals, "2022 구간 미복구(R166 회귀)"
     assert 28_607_200_000 in vals, "2023 구간 미복구(R166 회귀)"
     assert 20_599_397_000 not in vals, "정체 불명 값이 주입됐다(R6 위반)"
+
+
+# ─────────────── R166-b: 라벨행이 명시적 '0' 으로 채워진 변형 ───────────────
+# 원문이 빈 칸 대신 '0' 을 찍는 서식이 있다. 빈칸 조건만 보면 모든 열이 "이미 찬 것"이
+# 되어 이어짐 행의 실제 값이 전부 거부된다.
+#
+# 실측: 한미반도체 20230814001921 [연결] SCE '자기주식처분이익'
+#   라벨행   전 열이 '0'
+#   이어짐행 자본잉여금·지배기업지분합계·자본합계 = 5,464,171,128
+# ★독립 앵커: 같은 필링 [별도] SCE 에 같은 금액이 단일 행으로 정상 적재돼 있다.
+# 캠페인 이슈#35(camp_run).
+
+def test_explicit_zero_label_row_is_replaced_by_a_real_value():
+    """★핵심 — 직전 값이 0 이고 들어오는 값이 0 이 아니면 대체한다."""
+    tbl = _table(["0", "0", "0", "0", "0", "0"],
+                 ["0", "5,464,171,128", "0", "5,464,171,128", "0",
+                  "5,464,171,128"])
+    rows = _rows(tbl)
+    assert len(rows) == 2, [r.account_name for r in rows]
+    got = [a for a in rows[1].amounts if a is not None]
+    assert got.count(5_464_171_128) == 3, got
+
+
+def test_a_real_value_is_still_never_overwritten():
+    """★R6 가드 유지 — 직전 값이 실제 수치면 이어짐 행이 덮지 못한다.
+
+    SK이노베이션 2021 구간이 이 경우다. 0 만 예외이며, 0 이 아닌 값을 덮기 시작하면
+    정체 불명 값이 정상값을 밀어낸다.
+    """
+    tbl = _table([None, "914,716", "19,473,924", "20,388,640", "17,913",
+                  "20,406,553"],
+                 [None] * 5 + ["20,599,397"])
+    rows = _rows(tbl)
+    got = [a for a in rows[1].amounts if a is not None]
+    assert 20_406_553 in got and 20_599_397 not in got, got
+
+
+def test_incoming_zero_does_not_erase_an_existing_zero():
+    """0 → 0 은 변화가 없다(무의미한 덮어쓰기·로그 소음 방지)."""
+    tbl = _table(["0", "0", "0", "0", "0", "0"],
+                 ["0", "0", "0", "0", "0", "0"])
+    rows = _rows(tbl)
+    assert len(rows) == 2
+    assert all(a in (0, None) for a in rows[1].amounts), rows[1].amounts
+
+
+_HANMI = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00161383_한미반도체/half/2023/20230814001921.xml"
+)
+
+
+def test_hanmi_2023h1_treasury_gain_recovered_on_both_bases():
+    """실측 필링 — [연결] 3셀이 복구되고 [별도](원래 정상)는 그대로다."""
+    if not _HANMI.exists():
+        return
+    lines = extract_report_lines(
+        _HANMI, rcept_no="20230814001921", corp_code="00161383",
+        report_fiscal_year=2023, report_fiscal_period="H1")
+    for basis, expected in (("consolidated", 3), ("separate", 2)):
+        n = len([l for l in lines if l.statement == "SCE" and l.basis == basis
+                 and l.value_won == 5_464_171_128])
+        assert n == expected, (basis, n, expected)

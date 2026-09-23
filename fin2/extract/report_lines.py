@@ -1586,10 +1586,25 @@ def _grid_body_rows(
                 while len(prev.raw_amounts) <= idx:
                     prev.raw_amounts.append("")
                     prev.amounts.append(None)
+                incoming = parse_amount(c.text, multiplier)
+                # ★R166-b(2026-09-23) — 라벨행이 **명시적 0** 으로 채워진 변형.
+                #   원문이 빈 칸 대신 '0' 을 찍는 서식이 있어, 빈칸 조건만 보면 모든 열이
+                #   '이미 찬 것' 이 되어 이어짐 행의 실제 값이 전부 거부됐다.
+                #   실측: 한미반도체 20230814001921 [연결] SCE '자기주식처분이익' —
+                #   라벨행 전 열이 '0' 이고 이어짐 행에 5,464,171,128(자본잉여금·
+                #   지배기업지분합계·자본합계)이 있다(캠페인 이슈#35, camp_run).
+                #   ★독립 앵커: 같은 필링 **[별도] SCE** 에 같은 금액이 단일 행으로
+                #   정상 적재돼 있어 그 항목이 실재함이 확인된다. 이어짐 행 자체의
+                #   항등식도 닫힌다(0 + 5,464,171,128 = 5,464,171,128).
+                #   그래서 **직전 값이 0 이고 들어오는 값이 0 이 아닐 때만** 대체한다.
+                #   SK이노베이션 2021 구간은 직전 값이 실제 수치(20,406,553 등)라
+                #   그대로 거부된다 — 정체 불명 값 주입 금지(R6)는 유지된다.
                 if prev.raw_amounts[idx]:
-                    continue        # 직전 행이 이미 그 열을 채웠다 — 덮지 않는다(2021 구간)
+                    if not (prev.amounts[idx] == 0
+                            and incoming is not None and incoming != 0):
+                        continue    # 직전 행이 실제 값을 갖고 있다 — 덮지 않는다
                 prev.raw_amounts[idx] = c.text
-                prev.amounts[idx] = parse_amount(c.text, multiplier)
+                prev.amounts[idx] = incoming
                 merged += 1
             if merged:
                 logger.debug(

@@ -50,6 +50,9 @@ from fin2.extract.report_lines import extract_report_lines         # noqa: E402
 _ROOT = Path(__file__).resolve().parents[2]
 _LS_2025FY = (_ROOT / "raw_report/KOSPI/00105855_엘에스일렉트릭"
                       "/annual/2025/20260318001243.xml")
+_HD_SHIPBUILDING_2025Q1 = (
+    _ROOT / "raw_report/KOSPI/00164830_HD한국조선해양"
+            "/quarter/2025/20250515002500.xml")
 
 
 # ─────────────────────────── R157 ───────────────────────────
@@ -141,6 +144,27 @@ def test_ls_electric_sce_values_match_the_source():
         assert want in got, want
     # 10⁻⁶ 로 깎인 값이 하나도 남지 않아야 한다
     for bad in (-82_196, -86_133, 213_382, -6_105, 293_824, -5_999):
+        assert bad not in got, bad
+
+
+@pytest.mark.skipif(not _HD_SHIPBUILDING_2025Q1.exists(), reason="원문 XML 없음")
+def test_hd_shipbuilding_nci_values_match_the_source():
+    """R159 — HD한국조선해양 20250515002500 연결SCE 비지배지분 3셀.
+
+    사용자가 DART 원문을 직접 확인해 콤마 오타로 확정했다(2026-09-23).
+    복원값은 그 행 자신의 항등식으로도 검산된다 —
+    지배기업 소유주지분 합계 + 비지배지분 = 자본 총계 합계.
+    """
+    lines = extract_report_lines(
+        str(_HD_SHIPBUILDING_2025Q1), rcept_no="20250515002500",
+        corp_code="00164830", report_fiscal_year=2025,
+        report_fiscal_period="Q1")
+    got = {l.value_won for l in lines
+           if l.statement == "SCE" and l.basis == "consolidated"}
+    for want in (-41_423_000, -1_259_803_000, 3_082_923_000):
+        assert want in got, want
+    # 10⁻³ 로 깎인 소수-오독값이 하나도 남지 않아야 한다
+    for bad in (-41, -1_259, 3_082):
         assert bad not in got, bad
 
 

@@ -21,6 +21,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fin2.extract.report_lines import extract_report_lines             # noqa: E402
@@ -142,7 +144,7 @@ _WOORI = (
 def test_dash_zero_placeholder_between_head_and_parens():
     """★핵심 — 본항목과 괄호 보충표기 사이의 `-`(=0) 를 건너뛴다."""
     from parser.xml.table_extractor import _first_of_compacted_supplementary_cell
-    f = _first_of_compacted_supplementary_cell
+    f = first_of
     assert f("623,930- (692)(692)") == "623,930"
     assert f("623,930-(692)(692)") == "623,930"
     # 종전 변형은 그대로 동작한다(가산적 수정 확인)
@@ -154,7 +156,7 @@ def test_dash_variant_does_not_open_a_fabrication_path():
     """★가드가 살아 있는지 — 주석번호와 괄호 없는 칸은 여전히 손대지 않는다."""
     from parser.common.amount_normalizer import parse_amount
     from parser.xml.table_extractor import _first_of_compacted_supplementary_cell
-    f = _first_of_compacted_supplementary_cell
+    f = first_of
     # 주석번호 칸(미래에셋증권 실측) — 금액다움 게이트에 걸려 그대로 결측
     assert parse_amount(f("26, 27")) is None
     # 괄호가 없으면 이 경로 자체가 아니다 — 두 숫자 중 무엇이 값인지 원문이 말하지 않는다
@@ -187,3 +189,59 @@ def test_woori_2019fy_separate_equity_identity_closes():
              ("1.자본금", "2.신종자본증권", "3.자본잉여금", "4.기타자본")]
     assert all(p is not None for p in parts), parts
     assert sum(parts) + retained == total, (sum(parts) + retained, total)
+
+
+# ───────────────── R152-c: 셀 안 <SPAN> 경계 개행이 첫 숫자를 쪼갠다 ─────────────────
+# 압축칸이 평문 TD 가 아니라 여러 <SPAN> 으로 나뉘어 오는 변형이 있다. DART 원문이
+# 첫 <SPAN> 앞에서 줄바꿈을 넣으면, `_get_cells`(itertext) 는 그 개행을 그대로 보존해
+# 본항목 금액 자체가 '1,' 과 '958,360' 처럼 쪼개진 채 들어온다. R150(콤마 뒤 공백으로
+# 쪼개진 숫자)과 같은 원인이지만 이번엔 셀 경계가 아니라 셀 **안**의 개행이다.
+#
+# 실측: 미래에셋증권 00111722 20160516002286(2016Q1) [연결] BS
+#   `<TD>5. 이익잉여금 ...</TD><TD>26,27</TD>
+#    <TD>1,<SPAN>958,360&cr;</SPAN><SPAN>(19,556)&cr;</SPAN><SPAN>3,315</SPAN></TD>`
+# 같은 필링 [별도] BS 의 같은 행은 평문 TD(SPAN 없음)라 원래도 멀쩡히 뽑혔다 — 그래서
+# 연결만 깨지고 별도는 안 깨지는 비대칭이 났다(camp_run 이슈#41).
+
+_MIRAE_2016Q1 = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00111722_미래에셋증권/quarter/2016/20160516002286.xml"
+)
+
+
+def test_comma_split_by_span_boundary_newline_is_rejoined():
+    """'1,\\n958,360\\n(19,556)\\n3,315' → 본항목은 '1,958,360'."""
+    f = first_of
+    assert f("1,\n958,360\n(19,556)\n3,315") == "1,958,360"
+    # 이미 온전한 케이스는 그대로(회귀 방지)
+    assert f("1,882,018\n(19,556)\n3,315") == "1,882,018"
+
+
+def test_comma_split_does_not_reopen_the_note_reference_fabrication():
+    """★가드 재확인 — 이어붙여도 유효한 숫자가 아니면(주석번호) 여전히 손대지 않는다.
+
+    '26,' + '27' = '26,27' 은 3자리 그룹이 아니라 `_is_complete_number` 가 거부한다.
+    """
+    f = first_of
+    assert f("26,\n27") == "26,\n27"
+
+
+@pytest.mark.skipif(not _MIRAE_2016Q1.exists(), reason="원문 XML 없음")
+def test_mirae_2016q1_consolidated_equity_identity_closes():
+    """실측 필링 — 연결 이익잉여금 행이 복구되고 지배기업소유주지분 항등식이 닫힌다."""
+    lines = extract_report_lines(_MIRAE_2016Q1, rcept_no="20160516002286",
+                                 corp_code="00111722", report_fiscal_year=2016,
+                                 report_fiscal_period="Q1")
+    bs = {(l.label_raw or "").replace("\n", " ").strip(): l.value_won
+          for l in lines
+          if l.statement == "BS" and l.basis == "consolidated" and l.col_index == 0}
+    retained = next((v for k, v in bs.items() if "이익잉여금" in k), None)
+    assert retained == 1_958_360_000_000, retained
+    owner = next(v for k, v in bs.items() if "지배기업소유주지분" in k)
+    parts = [v for k, v in bs.items()
+             if any(x in k for x in ("자본금", "자본잉여금", "자본조정",
+                                     "기타포괄손익누계액", "이익잉여금"))]
+    assert sum(parts) == owner, (sum(parts), owner)
+    nci = next(v for k, v in bs.items() if "비지배지분" in k)
+    total = next(v for k, v in bs.items() if k.replace(" ", "") == "자본총계")
+    assert owner + nci == total, (owner, nci, total)

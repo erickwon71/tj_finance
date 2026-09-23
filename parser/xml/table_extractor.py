@@ -276,6 +276,22 @@ def _first_of_compacted_supplementary_cell(cell_text: str) -> str:
       압축칸 6개 중 2개였다 — 드물지 않다.
     """
     toks = cell_text.split()
+
+    # ★R152-c(2026-09-23, camp_run 이슈#41) — 첫 토큰이 콤마로 끝나 아직 안 끝난
+    #   숫자 조각일 수 있다. 원인은 R150 과 같다(콤마 바로 뒤가 공백/개행) — 다만
+    #   여기서는 그 공백이 *셀 경계*가 아니라 **같은 셀 안, `<SPAN>` 경계 사이의
+    #   원문 개행**이다. 실측: 미래에셋증권 20160516002286 [연결] BS `5. 이익잉여금`
+    #   행 — 원문이 `<TD>1,\n<SPAN>958,360&cr;</SPAN>...` 로 찍혀 본항목 금액이
+    #   `'1,'` 과 `'958,360'` 으로 쪼개진 채 이 함수에 들어온다. `_get_cells` 가
+    #   `itertext()` 로 그 개행을 그대로 보존하기 때문. 같은 필링 [별도] BS 의 같은
+    #   행은 이 서식이 아니라서(평문 TD, SPAN 없음) 멀쩡히 뽑혔다 — 그래서 연결만
+    #   깨지고 별도는 안 깨진 비대칭이 나온다. R150 과 같은 방식으로 콤마로 끝나는
+    #   선행 토큰을 다음 토큰과 이어붙인다.
+    if len(toks) >= 2 and toks[0].endswith(","):
+        joined = toks[0] + toks[1]
+        if _is_complete_number(joined):
+            toks = [joined] + toks[2:]
+
     if len(toks) >= 2 and _is_complete_number(toks[0]) and _AMOUNT_LIKE_RE.match(toks[0]):
         return toks[0]
 

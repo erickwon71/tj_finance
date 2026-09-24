@@ -60,7 +60,7 @@ touch ~/.claude/notify/STOP_VERIFY
 rm ~/.claude/notify/STOP_VERIFY
 ```
 
-- 매 회차 `git merge --ff-only origin/main` 을 하므로, 수정 워크트리가 push 한 코드가 자동으로 반영된다.
+- 매 회차 `git merge --ff-only origin/main` 을 하므로, 수정 워크트리가 push 한 코드가 자동으로 반영된다. 러너 스크립트 자신이 바뀌면 회차 사이에 스스로 재시작한다.
 - 예산: 5시간 창당 `runner.slots_per_window`(기본 12), 7일 `runner.weekly_slots`(파일럿 후 설정). 값은 `verification.kv` 에 있어 코드 수정 없이 조정된다.
 - 사용량 한도 메시지가 오면 리셋 시각까지 쉰다. 이 경우 재시도 횟수는 늘지 않는다.
 - 연속 3회 실패, 디스크 여유 50GB 미만, 코드 동기화 실패일 때만 텔레그램 알림을 보내고 정지한다.

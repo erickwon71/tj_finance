@@ -109,6 +109,9 @@ run_claude() {  # $1 = prompt, $2 = log file; returns claude's exit code (124 on
 # Everything runs inside main(): bash parses a function body completely before running it,
 # so the `git merge --ff-only` below can safely replace this very file mid-loop (a plain
 # top-level script is read incrementally and would execute the new bytes at an old offset).
+SELF="$ROOT/scripts/verify_runner.sh"
+SELF_SUM="$(shasum "$SELF" | cut -d' ' -f1)"
+
 main() {
   [ -f "$PROMPT_FILE" ] || { log "프롬프트 파일 없음: $PROMPT_FILE"; exit 1; }
   "${VQ[@]}" whoami | grep -q '"role": "verify"' || {
@@ -138,6 +141,13 @@ main() {
     fi
 
     sync_code
+    # main() is parsed once at start, so a pulled change to THIS script would otherwise only
+    # take effect after a manual restart (it did: the tab cleanup and max-turns 120 stayed
+    # inactive for hours). Re-exec between runs when the file changed.
+    if [ "$(shasum "$SELF" | cut -d' ' -f1)" != "$SELF_SUM" ]; then
+      log "러너 스크립트가 갱신됨 - 새 버전으로 재시작"
+      exec "$SELF" "$@"
+    fi
     prune_logs
 
     slot=$("${VQ[@]}" claim --json | jq -r '.slot // empty')

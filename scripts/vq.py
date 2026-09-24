@@ -264,7 +264,8 @@ def cmd_batch_add(a):
 
 
 def cmd_batch_reload(a):
-    print(_j(ops.batch_reload(a.batch_id, a.limit)))
+    shard = tuple(int(x) for x in a.shard.split("/")) if a.shard else None
+    print(_j(ops.batch_reload(a.batch_id, a.limit, shard=shard)))
 
 
 def cmd_batch_mark_fixed(a):
@@ -382,6 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
     y = bsp.add_parser("add-targets"); y.add_argument("batch_id", type=int)
     y.add_argument("--rcept-file", required=True); y.set_defaults(fn=cmd_batch_add)
     y = bsp.add_parser("reload"); y.add_argument("batch_id", type=int); y.add_argument("--limit", type=int)
+    y.add_argument("--shard", help="i/n — n 개 프로세스로 나눠 재적재할 때 이 프로세스 몫")
     y.set_defaults(fn=cmd_batch_reload)
     y = bsp.add_parser("mark-fixed"); y.add_argument("batch_id", type=int); y.set_defaults(fn=cmd_batch_mark_fixed)
     y = bsp.add_parser("set"); y.add_argument("batch_id", type=int)
@@ -402,7 +404,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.set_defaults(fn=cmd_decision)
 
     x = sp.add_parser("machine", help="기계 대조: 슬롯을 점유해 원문 XML 과 자동 대조(모델 없음)")
-    x.add_argument("action", choices=["run", "try", "gate", "issues-json"])
+    x.add_argument("action", choices=["run", "try", "gate", "issues-json", "recheck"])
     x.add_argument("--kinds", help="issues-json: 쉼표구분 발견 종류(기본: 셀 사실 전부)")
     x.add_argument("--out", help="issues-json: 저장할 JSON 경로")
     x.add_argument("--limit", type=int); x.add_argument("--rcept", nargs="*")
@@ -426,6 +428,10 @@ def cmd_machine(a):
     if a.action == "run":
         from fin2.verification import machine_pass
         print(_j(machine_pass.run(limit=a.limit)))
+    elif a.action == "recheck":
+        # the machine's own fixed issues: close/reopen by comparing the reloaded filing
+        from fin2.verification import machine_pass
+        print(_j(machine_pass.recheck(limit=a.limit)))
     elif a.action == "try":
         # read-only: compare given rcepts and print findings, nothing is stored
         from collector.db import engine

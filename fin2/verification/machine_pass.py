@@ -263,3 +263,75 @@ def run(limit: int | None = None, log=print) -> dict:
         total["audit"] += int(r["audit"])
         log(json.dumps(r, ensure_ascii=False))
     return total
+
+
+def _issue_key(i: dict) -> tuple:
+    return (i["basis"], i["account_label"], i.get("column_label"))
+
+
+def recheck_slot(slot: Slot) -> dict:
+    """Close or reopen the machine's own fixed issues of an already claimed slot by comparing
+    the reloaded filing again: an issue whose sign finding is gone is closed, one that still
+    shows up is reopened. Then release the slot (filings with all issues closed go back to
+    pending, and the next `machine run` passes them if they are clean)."""
+    out = {"slot": str(slot), "closed": 0, "reopened": 0, "skipped": 0}
+    with engine.connect() as conn:
+        issues = [dict(r) for r in conn.execute(text("""
+            SELECT i.issue_id, i.rcept_no, i.basis, i.account_label, i.column_label
+            FROM verification.issues i
+            WHERE i.corp_code = :c AND i.fiscal_year = :y AND i.fiscal_period = :p
+              AND i.status = 'fixed' AND i.created_by LIKE '%machine'"""), slot.params()).mappings()]
+        by_rcept: dict[str, list[dict]] = {}
+        for i in issues:
+            by_rcept.setdefault(i["rcept_no"], []).append(i)
+        still: dict[str, set] = {}
+        for rcept in by_rcept:
+            path = _source_path(conn, rcept)
+            if path is None:
+                continue
+            res = mc.compare_filing(conn, rcept, path)
+            still[rcept] = {_issue_key(x) for x in sign_issues(res)}
+    for rcept, items in by_rcept.items():
+        if rcept not in still:
+            out["skipped"] += len(items)
+            continue
+        for i in items:
+            if _issue_key(i) in still[rcept]:
+                ops.transition(i["issue_id"], "reopened",
+                               f"[machine {mc.TOOL_VERSION}] 재적재 후에도 이 셀 부호만 뒤집어야 롤포워드가 닫힘")
+                out["reopened"] += 1
+            else:
+                ops.transition(i["issue_id"], "closed",
+                               f"[machine {mc.TOOL_VERSION}] 재적재 후 이 셀의 부호 누락 발견이 사라짐"
+                               f"(롤포워드 닫힘)")
+                out["closed"] += 1
+    res = ops.done(slot)
+    out["status"] = res["status"]
+    return out
+
+
+RECHECK_SQL = """
+    (p.status = 'has_issues' AND EXISTS (
+        SELECT 1 FROM verification.issues i
+        WHERE i.corp_code = p.corp_code AND i.fiscal_year = p.fiscal_year
+          AND i.fiscal_period = p.fiscal_period AND i.status = 'fixed'
+          AND i.created_by LIKE '%machine'))"""
+
+
+def recheck(limit: int | None = None, log=print) -> dict:
+    total = {"slots": 0, "closed": 0, "reopened": 0, "skipped": 0}
+    while limit is None or total["slots"] < limit:
+        slot = ops.claim(lease_minutes=MACHINE_LEASE_MINUTES, where=RECHECK_SQL)
+        if slot is None:
+            break
+        try:
+            r = recheck_slot(slot)
+        except Exception as exc:
+            ops.release(slot, failed=True, note=f"machine recheck: {type(exc).__name__}: {exc}"[:500])
+            log(f"{slot} 실패: {type(exc).__name__}: {exc}")
+            continue
+        total["slots"] += 1
+        for k in ("closed", "reopened", "skipped"):
+            total[k] += r[k]
+        log(json.dumps(r, ensure_ascii=False))
+    return total

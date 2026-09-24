@@ -212,3 +212,27 @@ def test_audit_draw_keeps_a_clean_slot_for_the_model(engines, as_role):
     as_role("model")
     assert ops.claim() == SLOT_OK
     ops.done(SLOT_OK)
+
+
+def test_machine_recheck_closes_after_the_fix_reload(engines, as_role):
+    # the fix side (admin here) marks the machine's sign issue fixed after a reload that
+    # flipped the dividend cell; the machine re-check closes it, the model never sees it
+    as_role("admin")
+    _sql(engines, "UPDATE verification.issues SET status = 'fixing' WHERE rcept_no = :r", {"r": R_SIGN})
+    _sql(engines, "UPDATE report_lines SET value_won = -7 WHERE rcept_no = :r AND label_raw = '배당금지급'",
+         {"r": R_SIGN})
+    _sql(engines, "UPDATE verification.issues SET status = 'fixed', fixed_parser_commit = 'c0ffee' "
+         "WHERE rcept_no = :r", {"r": R_SIGN})
+    as_role("model")
+    assert ops.claim() is None or ops.own_slot() != Slot(CORP, 2022, "FY")
+    if ops.own_slot():
+        ops.done(ops.own_slot())
+    as_role("verify")
+    total = machine_pass.recheck(limit=5, log=lambda _m: None)
+    assert total["closed"] == 1 and total["reopened"] == 0, (total, _sql(engines, "SELECT status, created_by, fixed_parser_commit FROM verification.issues WHERE rcept_no = :r", {"r": R_SIGN}), _sql(engines, "SELECT fiscal_year, status FROM verification.progress"))
+    assert _sql(engines, "SELECT status FROM verification.issues WHERE rcept_no = :r", {"r": R_SIGN}) == [("closed",)]
+    # the filing is pending again; the machine passes it now that the roll-forward closes
+    _kv(engines, "machine.audit_pct", "0")
+    got = machine_pass.run(limit=5, log=lambda _m: None)
+    dbg = _sql(engines, "SELECT verdict, counts::text, findings::text FROM verification.machine_checks WHERE rcept_no = :r", {"r": R_SIGN})
+    assert dict(_sql(engines, "SELECT fiscal_year, status FROM verification.progress"))[2022] == "passed", (got, dbg)

@@ -375,9 +375,8 @@ def repair_sce_sign_loss(lines: List) -> List[Correction]:
     BS/IS 앵커가 필요하므로 **추출이 끝난 뒤 전체 라인 목록에** 적용한다
     (`extract_report_lines` 말미). SCE 만 건드리고 BS/IS/CF 는 읽기만 한다.
     """
+    # R162-e runs without BS/IS anchors too, so no early return on an empty anchor map.
     anchors = build_sign_anchors(lines)
-    if not anchors:
-        return []
 
     # (basis, table_seq, col_index) 단위로 한 열을 모은다 — SCE 의 col_index 는 기간이
     # 아니라 자본 구성요소 위치이므로, 항등식은 이 열 안에서 닫힌다.
@@ -417,10 +416,66 @@ def repair_sce_sign_loss(lines: List) -> List[Correction]:
                 _apply(cells, fixes, anchor_label, corrections)
             if not progressed:
                 break
+        # R162-e — blocks the anchored passes could not close: one positive cell whose
+        # flip alone closes the roll-forward, and no other such cell.
+        for bi in pending:
+            fixes = _solve_single_flip(cells, blocks[bi], anchors, carried)
+            if fixes:
+                _apply(cells, fixes, "R162-e 롤포워드 단일셀", corrections)
 
     if corrections:
         logger.debug(f"[report_lines/R162] SCE 부호 복원 {len(corrections)}셀")
     return corrections
+
+
+def _solve_single_flip(cells: Sequence[_Cell], block, anchors,
+                       carried: Optional[Dict[int, int]] = None) -> List[Tuple[int, int]]:
+    """R162-e (2026-09-25, 사용자 지시 "R162 확장 배치로 자동 이슈 처리").
+
+    (가) BS/IS 앵커가 **원리적으로 없는** 셀 — 대표적으로 '배당금지급'·'연차배당'
+    (BS/IS 에 같은 개념 행이 없다) — 은 R162 가 손대지 못한다. 이런 블록에서 롤포워드가
+    닫히지 않고, **양수 셀 하나의 부호만** 뒤집으면 정확히 닫히며, 그런 셀이 **정확히
+    하나**일 때만 그 셀을 뒤집는다.
+
+    거울 모호성(R162 의 (나) 단독 금지 사유)은 '최소 변경'으로 끊는다 — 전체 반전은
+    나머지 모든 셀의 원문 부호를 부정하는 다(多)셀 변경이고, 여기서는 원문 부호가 맞다는
+    전제 아래 틀린 셀이 하나뿐인 배정만 받는다. 후보가 둘 이상이면 판정불가(R6).
+    ★음수로 파싱된 셀은 여전히 후보가 아니다(괄호가 명시된 것).
+    ★앵커(또는 이월잔액)가 그 셀의 부호를 정해 두었는데 반대로 뒤집게 되면 받지 않는다.
+    """
+    open_i, move_i, close_i = block
+    subtotals = _proven_subtotals(cells, move_i)
+    summed = [m for m in move_i if m not in set(subtotals)]
+    members = [open_i, *summed, close_i]
+    current = {i: (1 if cells[i].value > 0 else -1) for i in members}
+
+    def holds(signs: Dict[int, int]) -> bool:
+        total = signs[open_i] * abs(cells[open_i].value)
+        for m in summed:
+            total += signs[m] * abs(cells[m].value)
+        return total == signs[close_i] * abs(cells[close_i].value)
+
+    if holds(current):
+        return []
+    winners = []
+    for i in members:
+        if cells[i].value <= 0:
+            continue
+        trial = dict(current)
+        trial[i] = -1
+        if holds(trial):
+            winners.append(i)
+            if len(winners) > 1:
+                return []
+    if len(winners) != 1:
+        return []
+    i = winners[0]
+    sign, _label = _required_sign(cells[i], anchors, carried)
+    if sign == 1:
+        return []                       # an anchor says this cell is positive
+    signs = dict(current)
+    signs[i] = -1
+    return [(i, -1)] + _subtotal_fixes(cells, move_i, subtotals, signs)
 
 
 def _block_identity_holds(cells: Sequence[_Cell], block) -> bool:

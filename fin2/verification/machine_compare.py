@@ -515,6 +515,7 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
             findings.append({"kind": "unmatched_table", "basis": t.basis, "table": t.idx,
                              "title": t.title, "first_rows": [r.label[:40] for r in t.rows[:4]]})
             counts["unmatched_table"] += 1
+    counts = Counter({k: v for k, v in counts.items() if v})
     blocking = [f for f in findings if f["kind"] not in INFO_KINDS]
     return Result("clean" if not blocking else "mismatch", counts, findings)
 

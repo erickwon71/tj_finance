@@ -147,10 +147,11 @@ def test_healthy_table_is_untouched():
     assert [l.value_won for l in lines] == before
 
 
-def test_no_anchor_means_no_repair():
-    """앵커가 없으면 orientation 을 못 정한다 — mirror 배정이 늘 함께 성립하므로.
+def test_no_anchor_single_flip_repairs_under_r162e():
+    """R162-e (2026-09-25): 앵커가 없어도 **한 셀만** 뒤집어 닫히고 그런 셀이 유일하면 복원.
 
-    항등식만으로는 (기초 −, 변동 +, 기말 −) 와 그 전체반전이 **둘 다** 만족한다.
+    (구 test_no_anchor_means_no_repair — R162 는 앵커 없으면 손대지 않았다. 배당금처럼
+    BS/IS 에 짝이 원리적으로 없는 셀을 위해 최소 변경 원칙으로 확장했다.)
     """
     lines = [
         _Line("SCE", "separate", "2019.01.01 (당기초)", 100,
@@ -160,8 +161,42 @@ def test_no_anchor_means_no_repair():
         _Line("SCE", "separate", "2019.12.31 (당기말)", 70,
               col_index=0, col_label="자본>기타자본구성요소", row_order=2),
     ]
+    fixes = repair_sce_sign_loss(lines)
+    assert [(c.label_raw, c.new_value, c.anchor_label) for c in fixes] == [
+        ("평가손익", -30, "R162-e 롤포워드 단일셀")]
+    assert [l.value_won for l in lines] == [100, -30, 70]
+
+
+def test_no_anchor_two_single_flip_candidates_is_left_alone():
+    """두 셀 중 어느 쪽을 뒤집어도 닫히면 판정불가(R6) — 손대지 않는다."""
+    lines = [
+        _Line("SCE", "separate", "2019.01.01 (당기초)", 100,
+              col_index=0, col_label="자본>이익잉여금", row_order=0),
+        _Line("SCE", "separate", "배당금지급", 30,
+              col_index=0, col_label="자본>이익잉여금", row_order=1),
+        _Line("SCE", "separate", "자기주식처분", 30,
+              col_index=0, col_label="자본>이익잉여금", row_order=2),
+        _Line("SCE", "separate", "2019.12.31 (당기말)", 100,
+              col_index=0, col_label="자본>이익잉여금", row_order=3),
+    ]
     assert repair_sce_sign_loss(lines) == []
-    assert [l.value_won for l in lines] == [100, 30, 70]
+    assert [l.value_won for l in lines] == [100, 30, 30, 100]
+
+
+def test_no_anchor_dividend_positive_is_flipped():
+    """배당금지급이 괄호 없이 양수(20260313000835 현금배당 패턴) — BS/IS 앵커 없음."""
+    lines = [
+        _Line("SCE", "consolidated", "2024.01.01 (기초자본)", 1000,
+              col_index=0, col_label="자본>이익잉여금", row_order=0),
+        _Line("SCE", "consolidated", "당기순이익(손실)", 300,
+              col_index=0, col_label="자본>이익잉여금", row_order=1),
+        _Line("SCE", "consolidated", "현금배당", 50,
+              col_index=0, col_label="자본>이익잉여금", row_order=2),
+        _Line("SCE", "consolidated", "2024.12.31 (기말자본)", 1250,
+              col_index=0, col_label="자본>이익잉여금", row_order=3),
+    ]
+    fixes = repair_sce_sign_loss(lines)
+    assert [(c.label_raw, c.new_value) for c in fixes] == [("현금배당", -50)]
 
 
 def test_ambiguous_solution_is_rejected():

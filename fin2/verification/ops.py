@@ -303,14 +303,20 @@ def own_slot() -> Slot | None:
 # for a human eye - a finding, no usable source, or the 1% audit draw. Slots with fixed issues
 # (re-check) are always eligible. Design: docs/plans/verification_machine_compare_design_2026-09-24.md
 MODEL_READY_SQL = """
-    (p.status = 'has_issues' OR NOT EXISTS (
+    ((p.status = 'has_issues' AND EXISTS (
+        -- re-checks of machine-registered issues belong to `vq.py machine recheck`
+        SELECT 1 FROM verification.issues i
+        WHERE i.corp_code = p.corp_code AND i.fiscal_year = p.fiscal_year
+          AND i.fiscal_period = p.fiscal_period AND i.status = 'fixed'
+          AND i.created_by NOT LIKE '%machine'))
+     OR (p.status = 'pending' AND NOT EXISTS (
         SELECT 1 FROM verification.progress_filings pf
         LEFT JOIN verification.filing_loads fl USING (rcept_no)
         LEFT JOIN verification.machine_checks mc USING (rcept_no)
         WHERE pf.corp_code = p.corp_code AND pf.fiscal_year = p.fiscal_year
           AND pf.fiscal_period = p.fiscal_period AND pf.status = 'pending'
           AND (mc.rcept_no IS NULL OR mc.load_seq IS DISTINCT FROM fl.load_seq
-               OR (mc.tool_version <> '{tool}' AND mc.verdict IN ('mismatch', 'error')))))"""
+               OR (mc.tool_version <> '{tool}' AND mc.verdict IN ('mismatch', 'error'))))))"""
 
 
 def _model_ready_sql() -> str:
@@ -850,7 +856,10 @@ def _reload_rcept(rcept: str, reason: str) -> tuple[str, str | None]:
     return "done", None
 
 
-def batch_reload(batch_id: int, limit: int | None = None) -> dict:
+def batch_reload(batch_id: int, limit: int | None = None,
+                 shard: tuple[int, int] | None = None) -> dict:
+    """`shard=(i, n)` reloads only targets with int(rcept) % n == i, so n processes can
+    share one batch without touching the same filing."""
     _require("fix")
     commit = require_clean_pushed_head()
     batch_set(batch_id, status="reloading", commit_sha=commit)
@@ -859,6 +868,8 @@ def batch_reload(batch_id: int, limit: int | None = None) -> dict:
             SELECT rcept_no FROM verification.batch_targets
             WHERE batch_id = :b AND status IN ('pending', 'deferred') ORDER BY rcept_no"""),
             {"b": batch_id}).fetchall()]
+    if shard:
+        targets = [t for t in targets if int(t) % shard[1] == shard[0]]
     if limit:
         targets = targets[:limit]
     tally = {"done": 0, "deferred": 0, "failed": 0}

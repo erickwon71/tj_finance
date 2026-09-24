@@ -74,61 +74,69 @@ run_claude() {  # $1 = prompt, $2 = log file; returns claude's exit code (124 on
   return "$rc"
 }
 
-[ -f "$PROMPT_FILE" ] || { log "프롬프트 파일 없음: $PROMPT_FILE"; exit 1; }
-"${VQ[@]}" whoami | grep -q '"role": "verify"' || {
-  log "이 워크트리의 DB 역할이 verify 가 아니다 - .env 의 DATABASE_URL 확인"; exit 1; }
+# Everything runs inside main(): bash parses a function body completely before running it,
+# so the `git merge --ff-only` below can safely replace this very file mid-loop (a plain
+# top-level script is read incrementally and would execute the new bytes at an old offset).
+main() {
+  [ -f "$PROMPT_FILE" ] || { log "프롬프트 파일 없음: $PROMPT_FILE"; exit 1; }
+  "${VQ[@]}" whoami | grep -q '"role": "verify"' || {
+    log "이 워크트리의 DB 역할이 verify 가 아니다 - .env 의 DATABASE_URL 확인"; exit 1; }
 
-mkdir -p "$LOG_ROOT"
-log "verify 러너 시작 (model=$MODEL, timeout=${RUN_TIMEOUT}s, max-turns=$MAX_TURNS)"
+  mkdir -p "$LOG_ROOT"
+  log "verify 러너 시작 (model=$MODEL, timeout=${RUN_TIMEOUT}s, max-turns=$MAX_TURNS)"
 
-while :; do
-  if [ -e "$STOP_FILE" ]; then
-    log "STOP 파일 발견 - 정지 (재개하려면 파일 삭제 후 다시 실행)"
-    exit 0
-  fi
+  while :; do
+    if [ -e "$STOP_FILE" ]; then
+      log "STOP 파일 발견 - 정지 (재개하려면 파일 삭제 후 다시 실행)"
+      exit 0
+    fi
 
-  free=$(free_gb)
-  if [ -n "$free" ] && [ "$free" -lt "$MIN_FREE_GB" ]; then
-    log "디스크 여유 ${free}GB < ${MIN_FREE_GB}GB - 정지"
-    notify "[verify 러너 정지] 디스크 여유 ${free}GB (<${MIN_FREE_GB}GB)"
-    exit 4
-  fi
+    free=$(free_gb)
+    if [ -n "$free" ] && [ "$free" -lt "$MIN_FREE_GB" ]; then
+      log "디스크 여유 ${free}GB < ${MIN_FREE_GB}GB - 정지"
+      notify "[verify 러너 정지] 디스크 여유 ${free}GB (<${MIN_FREE_GB}GB)"
+      exit 4
+    fi
 
-  wait_s=$("${VQ[@]}" runner budget | jq -r '.wait_seconds')
-  if [ "${wait_s:-0}" -gt 0 ]; then
-    log "사용량 예산 대기 ${wait_s}s"
-    sleep "$(( wait_s < 1800 ? wait_s : 1800 ))"
-    continue
-  fi
+    wait_s=$("${VQ[@]}" runner budget | jq -r '.wait_seconds')
+    if [ "${wait_s:-0}" -gt 0 ]; then
+      log "사용량 예산 대기 ${wait_s}s"
+      sleep "$(( wait_s < 1800 ? wait_s : 1800 ))"
+      continue
+    fi
 
-  sync_code
-  prune_logs
+    sync_code
+    prune_logs
 
-  slot=$("${VQ[@]}" claim --json | jq -r '.slot // empty')
-  if [ -z "$slot" ]; then
-    log "대기 슬롯 없음 - 종료"
-    exit 0
-  fi
+    slot=$("${VQ[@]}" claim --json | jq -r '.slot // empty')
+    if [ -z "$slot" ]; then
+      log "대기 슬롯 없음 - 종료"
+      exit 0
+    fi
 
-  day_dir="$LOG_ROOT/$(date '+%Y-%m-%d')"
-  mkdir -p "$day_dir"
-  logf="$day_dir/${slot//:/_}_$(date '+%H%M%S').json"
-  run_id=$("${VQ[@]}" runner start --slot "$slot" --model "$MODEL")
-  prompt="$(cat "$PROMPT_FILE")
+    day_dir="$LOG_ROOT/$(date '+%Y-%m-%d')"
+    mkdir -p "$day_dir"
+    logf="$day_dir/${slot//:/_}_$(date '+%H%M%S').json"
+    run_id=$("${VQ[@]}" runner start --slot "$slot" --model "$MODEL")
+    prompt="$(cat "$PROMPT_FILE")
 
----
-이번 실행의 슬롯: $slot   (run_id=$run_id)
-임시 파일(이슈 JSON 등)은 $day_dir 아래에만 쓴다."
+  ---
+  이번 실행의 슬롯: $slot   (run_id=$run_id)
+  임시 파일(이슈 JSON 등)은 $day_dir 아래에만 쓴다."
 
-  log "run $run_id 시작: $slot"
-  run_claude "$prompt" "$logf"
-  rc=$?
-  res=$("${VQ[@]}" runner finish --run-id "$run_id" --log "$logf" --exit-code "$rc")
-  log "run $run_id 종료(rc=$rc): $res"
+    log "run $run_id 시작: $slot"
+    run_claude "$prompt" "$logf"
+    rc=$?
+    res=$("${VQ[@]}" runner finish --run-id "$run_id" --log "$logf" --exit-code "$rc")
+    log "run $run_id 종료(rc=$rc): $res"
 
-  if printf '%s' "$res" | grep -q '"stop": true'; then
-    log "연속 실패 - 러너 정지 (알림 발송됨)"
-    exit 5
-  fi
-  sleep "$PAUSE"
-done
+    if printf '%s' "$res" | grep -q '"stop": true'; then
+      log "연속 실패 - 러너 정지 (알림 발송됨)"
+      exit 5
+    fi
+    sleep "$PAUSE"
+  done
+}
+
+main "$@"
+exit $?

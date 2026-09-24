@@ -42,7 +42,12 @@
    source_unit(원|천원|백만원|억원), error_type, evidence(한두 줄).
    error_type: missing_row · extra_row · value_mismatch · sign_flip · unit_scale · column_misassign ·
    period_misassign · label_mismatch · source_defect · unclassified.
-   이미 `docs/PARSING_RULES.md` 에 있는 원문 오타 패턴이면(Grep 으로 확인) source_defect 로 등록한다. 새 패턴이면 unclassified 로 등록한다.
+   **원문 자체 오타**(괄호 누락·마침표 소수 등)는 이렇게 처리한다.
+   - `docs/PARSING_RULES.md` 에 문서화된 패턴이고(Grep 으로 확인, 예: R157~R163) **DB 값이 이미 올바르게 복원돼 있으면 이슈가 아니다.**
+     등록하지 않고, pass 의 `--note` 에 "원문 오타(R번호) 복원 확인: 셀 위치·원문·DB" 를 적는다.
+   - DB 가 원문 오타를 그대로 따라 틀려 있으면 결함이다. 그 증상의 error_type(sign_flip 등)으로 등록한다.
+   - 원문이 틀렸는지 DB 가 틀렸는지 판단이 안 서면 source_defect 로 등록한다(수정 쪽이 판단).
+   - 새 패턴이면 unclassified 로 등록한다.
 5. 필링 판정:
    - 이슈 없이 전부 일치하면 `vq.py pass --rcept <R> --verified-scopes <show가 알려준 목록> --note "<행수·구조·결과>"`.
    - 원문에 재무제표가 없는 필링은 `vq.py skip --rcept <R> --note "<사유>"`.

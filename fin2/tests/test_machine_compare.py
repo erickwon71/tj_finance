@@ -212,3 +212,12 @@ def test_findings_to_issues_are_unique_cells():
     items = mp.findings_to_issues(f)
     assert [i["account_label"] for i in items] == ["배당", "배당 (#2)", "현금"]
     assert items[0]["source_value_raw"] == "(7)" and items[2]["error_type"] == "period_misassign"
+
+
+def test_bs_identity_ignores_grand_total_labels(tmp_path):
+    body = _section("4. 재무제표", _title("재무상태표"), _table(
+        ["자산총계", "1,000"], ["부채총계", "400"], ["자본총계", "600"], ["자본과부채총계", "1,000"], head=["과목", "당기"]))
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    rows = [_row("BS", "separate", i, lab, v) for i, (lab, v) in
+            enumerate((("자산총계", 1000), ("자본과부채총계", 1000), ("부채총계", 400), ("자본총계", 600)))]
+    assert mc.compare(rows, tables).verdict == "clean"

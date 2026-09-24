@@ -34,7 +34,7 @@ from pathlib import Path
 
 from lxml import etree
 
-TOOL_VERSION = "mc3"
+TOOL_VERSION = "mc4"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -627,7 +627,9 @@ def bs_identity(items: list[dict], scale: int) -> dict | None:
         if r["col_index"] in (0, None) and r["value_won"] is not None:
             k = norm_label(r["label_raw"])
             for name in ("자산총계", "부채총계", "자본총계"):
-                if k.endswith(name) and name not in cur and "부채와" not in k and "부채및" not in k:
+                # '자본과부채총계' / '부채와자본총계' are the grand total, not either side
+                other = "자본" if name == "부채총계" else "부채" if name == "자본총계" else None
+                if k.endswith(name) and name not in cur and not (other and other in k):
                     cur[name] = r["value_won"]
     if len(cur) < 3:
         return None

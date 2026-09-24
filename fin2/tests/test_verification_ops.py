@@ -94,6 +94,9 @@ def engines():
 
 @pytest.fixture
 def as_role(engines, monkeypatch):
+    # The usage probe calls the network; runner bookkeeping must not depend on it in tests.
+    monkeypatch.setattr(runner, "usage_snapshot", lambda: (None, None))
+
     def _use(role: str):
         for mod in (ops, dz, runner):
             monkeypatch.setattr(mod, "engine", engines[role])

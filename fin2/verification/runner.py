@@ -36,14 +36,38 @@ def _kv(conn, key: str) -> str:
     return v if v is not None else DEFAULTS.get(key, "")
 
 
+_USAGE_PROBE = Path.home() / ".claude/plugins/cache/claude-dashboard/claude-dashboard"
+
+
+def usage_snapshot() -> tuple[float | None, float | None]:
+    """(5-hour %, 7-day %) of the Claude account, or (None, None) if the probe is missing.
+
+    Uses the installed claude-dashboard plugin's check-usage script (latest version).
+    """
+    try:
+        scripts = sorted(_USAGE_PROBE.glob("*/dist/check-usage.js"),
+                         key=lambda p: [int(x) if x.isdigit() else x
+                                        for x in re.split(r"[.]", p.parts[-3])])
+        if not scripts:
+            return None, None
+        out = subprocess.run(["node", str(scripts[-1]), "--json"], capture_output=True,
+                             text=True, timeout=30)
+        c = (json.loads(out.stdout) or {}).get("claude") or {}
+        return c.get("fiveHourPercent"), c.get("sevenDayPercent")
+    except Exception:  # noqa: BLE001 — bookkeeping only, never block a run
+        return None, None
+
+
 def start(slot: Slot, model: str | None) -> int:
+    five, seven = usage_snapshot()
     with _Tx() as conn:
         return conn.execute(text("""
             INSERT INTO verification.runner_runs
-                (worktree, corp_code, fiscal_year, fiscal_period, model, git_head)
-            VALUES (:w, :c, :y, :p, :m, :g) RETURNING run_id"""),
+                (worktree, corp_code, fiscal_year, fiscal_period, model, git_head,
+                 usage_5h_start, usage_7d_start)
+            VALUES (:w, :c, :y, :p, :m, :g, :u5, :u7) RETURNING run_id"""),
             {"w": worktree_name(), **slot.params(), "m": model,
-             "g": parser_commit()}).scalar_one()
+             "g": parser_commit(), "u5": five, "u7": seven}).scalar_one()
 
 
 def budget_state() -> dict:
@@ -151,13 +175,15 @@ def finish(run_id: int, log: Path, exit_code: int) -> dict:
         if res.get("status") == "blocked":
             outcome = "blocked"
 
+    five, seven = usage_snapshot()
     with _Tx() as conn:
         conn.execute(text("""
             UPDATE verification.runner_runs
                SET ended_at = now(), exit_code = :x, outcome = :o, log_path = :l,
-                   num_turns = :t, input_tokens = :i, output_tokens = :ot, cost_usd = :c
+                   num_turns = :t, input_tokens = :i, output_tokens = :ot, cost_usd = :c,
+                   usage_5h_end = :u5, usage_7d_end = :u7
              WHERE run_id = :r"""),
-            {"r": run_id, "x": exit_code, "o": outcome, "l": str(log),
+            {"r": run_id, "x": exit_code, "o": outcome, "l": str(log), "u5": five, "u7": seven,
              "t": data.get("num_turns"),
              "i": (usage.get("input_tokens") or 0) + (usage.get("cache_read_input_tokens") or 0)
                   + (usage.get("cache_creation_input_tokens") or 0) or None,

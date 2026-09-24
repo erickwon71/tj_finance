@@ -274,6 +274,13 @@ CREATE TABLE IF NOT EXISTS verification.runner_runs (
     git_head      text
 );
 CREATE INDEX IF NOT EXISTS ix_vrr_started ON verification.runner_runs (started_at);
+-- Account usage (percent of the 5-hour / 7-day limits) at run start and end, from the
+-- claude-dashboard usage probe. Other sessions share the account, so a delta is an upper
+-- bound for the run, not an exact cost - good enough to size the runner budget.
+ALTER TABLE verification.runner_runs ADD COLUMN IF NOT EXISTS usage_5h_start numeric(5, 1);
+ALTER TABLE verification.runner_runs ADD COLUMN IF NOT EXISTS usage_5h_end   numeric(5, 1);
+ALTER TABLE verification.runner_runs ADD COLUMN IF NOT EXISTS usage_7d_start numeric(5, 1);
+ALTER TABLE verification.runner_runs ADD COLUMN IF NOT EXISTS usage_7d_end   numeric(5, 1);
 
 CREATE TABLE IF NOT EXISTS verification.decisions (
     decision_id   bigserial PRIMARY KEY,

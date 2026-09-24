@@ -55,17 +55,16 @@ free_gb() { df -g /opt/homebrew/var 2>/dev/null | awk 'NR==2 {print $4}'; }
 
 prune_logs() { find "$LOG_ROOT" -type f -mtime +30 -delete 2>/dev/null; }
 
+# macOS has no coreutils `timeout`. perl's alarm survives exec, so the claude process
+# itself gets SIGALRM at the deadline - no watchdog subshell, no orphaned sleep.
+# ${EXTRA_ARGS[@]+...}: an empty array is "unbound" under `set -u` in bash 3.2.
 run_claude() {  # $1 = prompt, $2 = log file; returns claude's exit code (124 on timeout)
-  claude -p "$1" --output-format json --max-turns "$MAX_TURNS" --model "$MODEL" \
-    --allowedTools "${ALLOWED_TOOLS[@]}" "${EXTRA_ARGS[@]}" > "$2" 2>"$2.err" &
-  local pid=$!
-  ( sleep "$RUN_TIMEOUT"; kill -TERM "$pid" 2>/dev/null ) &
-  local watchdog=$!
-  wait "$pid"
+  perl -e 'alarm shift; exec @ARGV' "$RUN_TIMEOUT" \
+    claude -p "$1" --output-format json --max-turns "$MAX_TURNS" --model "$MODEL" \
+    --allowedTools "${ALLOWED_TOOLS[@]}" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
+    > "$2" 2>"$2.err"
   local rc=$?
-  kill "$watchdog" 2>/dev/null
-  wait "$watchdog" 2>/dev/null
-  [ "$rc" -eq 143 ] && rc=124
+  [ "$rc" -eq 142 ] && rc=124
   return "$rc"
 }
 

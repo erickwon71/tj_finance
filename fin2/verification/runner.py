@@ -11,6 +11,7 @@ Budget knobs live in verification.kv so the pilot can tune them without a code c
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -122,8 +123,16 @@ def _parse_log(log: Path) -> dict:
 
 
 def _notify(msg: str) -> None:
+    # Belt and braces: a test run must never message the user.
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
     if NOTIFY.exists():
-        subprocess.run([str(NOTIFY), msg[:190]], capture_output=True, timeout=30)
+        rc = subprocess.run([str(NOTIFY), msg[:190]], capture_output=True, timeout=30).returncode
+        # Same log the Notification hook writes, so "which process sent this?" is answerable.
+        from datetime import datetime
+        with (NOTIFY.parent / "sent.log").open("a", encoding="utf-8") as fh:
+            fh.write(f"{datetime.now():%m-%d %H:%M:%S}  runner    {'sent' if rc == 0 else 'queued'} "
+                     f"{msg[:190]}\n")
 
 
 def finish(run_id: int, log: Path, exit_code: int) -> dict:

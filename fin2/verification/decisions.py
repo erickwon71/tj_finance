@@ -56,8 +56,12 @@ class TelegramError(RuntimeError):
 
 def tg(method: str, payload: dict, timeout: int = 20) -> dict:
     """Call the Bot API. Exceptions are re-raised WITHOUT the URL (it contains the token)."""
+    import os
+
     import requests
 
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        raise TelegramError(f"{method}: blocked under pytest")
     env = _env()
     token = env.get("TELEGRAM_BOT_TOKEN")
     if not token:

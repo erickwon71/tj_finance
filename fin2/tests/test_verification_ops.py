@@ -96,6 +96,10 @@ def engines():
 def as_role(engines, monkeypatch):
     # The usage probe calls the network; runner bookkeeping must not depend on it in tests.
     monkeypatch.setattr(runner, "usage_snapshot", lambda: (None, None))
+    # Never reach the real Telegram from a test (2026-09-24: the usage-limit test did, twice,
+    # because only the stop test patched _notify and the stop condition carried over).
+    monkeypatch.setattr(runner, "_notify", lambda msg: None)
+    monkeypatch.setattr(dz, "tg", lambda method, payload, timeout=20: {"message_id": 0})
 
     def _use(role: str):
         for mod in (ops, dz, runner):

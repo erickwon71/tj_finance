@@ -42,7 +42,12 @@ DISALLOWED_TOOLS=("Edit" "NotebookEdit" "Bash(git:*)" "Bash(python3:*)" "Bash(ps
 
 log() { printf '%s  %s\n' "$(date '+%m-%d %H:%M:%S')" "$*"; }
 
-notify() { [ -x "$NOTIFY" ] && "$NOTIFY" "$1" >/dev/null 2>&1; }
+notify() {
+  [ -x "$NOTIFY" ] || return 0
+  local st=queued
+  "$NOTIFY" "$1" >/dev/null 2>&1 && st=sent
+  printf '%s  runner    %s %s\n' "$(date '+%m-%d %H:%M:%S')" "$st" "$1" >> "$HOME/.claude/notify/sent.log"
+}
 
 # The verify worktree never edits code, so a fast-forward always succeeds unless someone
 # broke that rule - then stop instead of running old code against new data.

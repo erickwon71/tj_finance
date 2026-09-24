@@ -236,3 +236,17 @@ def test_scope_order_places_sce_after_cf_in_each_basis():
             row("BS", "separate", "s-bs", 1), row("IS", "consolidated", "c-is", 1)]
     assert [r[4] for r in rc.build_rows(rows)] == [
         "s-bs", "s-is", "s-cf", "s-sce", "c-bs", "c-is", "c-cf", "c-sce"]
+
+
+def test_sce_rows_carry_their_column_label():
+    # SCE is a matrix: without the column name a reviewer cannot tell which source column a
+    # CSV line belongs to (2026-09-24 runner session reverse-engineered it from code).
+    from fin2.extract.review_csv import build_rows
+    base = {"statement": "SCE", "basis": "separate", "table_seq": 1, "row_order": 1,
+            "depth": 0, "node_role": None, "section_path": None, "label_raw": "기초자본",
+            "value_raw": None, "adecimal": 0, "unit_source": "declared", "header_hint": None,
+            "unit_decl_raw": "(단위 : 원)", "declared_unit": 1, "currency": None,
+            "table_title": None}
+    rows = build_rows([{**base, "col_index": 1, "col_label": "자본잉여금", "value_won": 20},
+                       {**base, "col_index": 0, "col_label": "자본금", "value_won": 10}])
+    assert [(r[5], r[7]) for r in rows] == [("10", "열=자본금"), ("20", "열=자본잉여금")]

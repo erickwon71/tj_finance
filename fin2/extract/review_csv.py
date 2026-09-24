@@ -113,6 +113,11 @@ def _unit_label(row: dict) -> str:
 def _note(row: dict) -> str:
     """비고 — 사람이 "이 행은 왜 이런가"를 CSV 안에서 바로 알 수 있게."""
     bits = []
+    # SCE is a matrix: every cell of one row is its own report_lines row with the same label,
+    # so without the column name the CSV cannot be matched to the source table (2026-09-24:
+    # a runner session spent ~2 min reverse-engineering the layout from code).
+    if row.get("statement") == "SCE" and row.get("col_label"):
+        bits.append(f"열={row['col_label']}")
     if (row.get("unit_source") or "") == "fx_declared":
         bits.append(f"표시통화({row.get('currency') or '?'}) 미환산")
     if row.get("header_hint"):
@@ -143,7 +148,8 @@ def build_rows(db_rows: list[dict]) -> list[tuple]:
         #   맨 뒤로 보낸다. -1 로 두면 반대로 맨 앞(예: 매출액보다 위)에 찍혀 원문과
         #   어긋난다 — 2026-09-09 실측(삼성전자 20260814003699, 사용자가 원문대조로 발견).
         scope_rows.sort(key=lambda r: (r["table_seq"] if r["table_seq"] is not None else -1,
-                                       r["row_order"] if r["row_order"] is not None else math.inf))
+                                       r["row_order"] if r["row_order"] is not None else math.inf,
+                                       r.get("col_index") if r.get("col_index") is not None else -1))
         label = f"[{BASIS_KO[basis]}] {STMT_KO[stmt]}"
         i = 0
         stack: list[str] = []   # 현재 "열려 있는" 조상 라벨 스택(가상 헤더 + P행 자기 라벨)

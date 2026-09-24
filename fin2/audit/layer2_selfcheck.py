@@ -173,7 +173,7 @@ _ROWS_SQL = text(
     SELECT rl.id, rl.statement, rl.basis, rl.table_seq, rl.row_order, rl.depth,
            rl.node_role, rl.section_path,
            rl.label_raw, rl.value_won, rl.value_raw, rl.adecimal, rl.unit_source,
-           rl.header_hint,
+           rl.header_hint, rl.col_index, rl.col_label,
            rt.unit_decl_raw, rt.declared_unit, rt.currency, rt.table_title
     FROM report_lines rl
     LEFT JOIN report_tables rt

@@ -68,7 +68,9 @@ tmux attach -t verify
   - 스키마 변경이므로 러너를 STOP 한 뒤 `admin apply-schema` 를 돌린다.
 - 오류 유형 분포(파일럿 이후 신규): missing_row 68 · unclassified 16 · period_misassign 11 · column_misassign 7 · sign_flip 4 · source_defect 4(오등록 정리됨).
 
-### ③ 검증 품질 표본 확대 (Sonnet 유지 판단 근거)
+### ③ 검증 품질 표본 확대 (Sonnet 유지 판단 근거) — ✅완료(2026-09-24 21시)
+- 결과: 6슬롯·필링 11건·4,087행·6,906셀을 `scripts/verification_audit_compare.py` 로 기계 대조했다. 오판 0 → **Sonnet 유지**.
+  상세는 설계 §11.2. 아래는 착수 전 메모다.
 - 지금까지는 run 28(에이피알 2019H1 별도 BS 48항목) 1건을 직접 원문대조했고, 전부 일치했다.
 - 5~10건이 필요하다. 표본 추출은 `vq.py admin audit-sample --pct 2`. 무거운 슬롯, 금융업, 2024+ 서식을 섞는다.
 - 오판이 나오면 모델을 Opus 로 올릴지 사용자에게 판단을 요청하고(`vq.py ask`), 설계 §11 의 예산을 다시 계산한다.

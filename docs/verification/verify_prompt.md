@@ -15,7 +15,7 @@
 3. `pending` 인 필링마다 DART 웹뷰(Chrome)에서 재무제표를 열어 DB 값(CSV)과 대조한다.
    - Chrome 도구는 지연 로딩이다. 먼저 ToolSearch 로 한 번에 불러온다: `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__tabs_close_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__javascript_tool,mcp__claude-in-chrome__get_page_text`.
    - 시작할 때 `tabs_context_mcp`(createIfEmpty: true)로 탭 그룹을 만들고, `tabs_create_mcp` 로 새 탭을 **하나만** 연다. 필링이 여러 개면 같은 탭에서 `navigate` 로 옮겨 다닌다.
-   - `tabs_context_mcp` 에 이전 회차가 남긴 DART 탭이 보이면 먼저 닫는다.
+   - 표 값은 **`javascript_tool` 로 표 전체(`tr`/`td` 텍스트)를 한 번에 추출**해 CSV 와 기계적으로 비교한다. 스크린샷·스크롤·확대는 불일치 셀을 눈으로 확인할 때만 쓴다(턴 상한이 있다). 여러 동작은 `browser_batch` 로 묶는다.
    - 표는 JS(`javascript_tool`)로 `#listTree` 목차를 클릭한 뒤 `table tr` 을 순회해서 추출한다.
    - Chrome 도구를 쓸 수 없으면 대조하지 말고 `vq.py done` 으로 끝낸다. 로컬 XML 등 다른 수단으로 대체하지 않는다.
    - 허용된 명령은 `vq.py` 와 Read/Grep/Glob 뿐이다. 그 밖의 명령은 거부된다.

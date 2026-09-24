@@ -22,7 +22,7 @@ NOTIFY="$HOME/.claude/notify/telegram.sh"
 PROMPT_FILE="$ROOT/docs/verification/verify_prompt.md"
 LOG_ROOT="$ROOT/logs/verify_runner"
 RUN_TIMEOUT="${VQ_RUN_TIMEOUT:-2700}"          # 45 min per slot
-MAX_TURNS="${VQ_MAX_TURNS:-80}"
+MAX_TURNS="${VQ_MAX_TURNS:-120}"   # run 6 hit 80 on a 2-filing SCE-heavy slot
 MODEL="${VQ_MODEL:-sonnet}"
 PAUSE="${VQ_PAUSE:-30}"
 MIN_FREE_GB="${VQ_MIN_FREE_GB:-50}"
@@ -58,6 +58,38 @@ sync_code() {
 free_gb() { df -g /opt/homebrew/var 2>/dev/null | awk 'NR==2 {print $4}'; }
 
 prune_logs() { find "$LOG_ROOT" -type f -mtime +30 -delete 2>/dev/null; }
+
+# Close the Chrome tabs this slot opened. Each `claude -p` gets its own tab group and cannot
+# see earlier ones, and a run cut off by max-turns/timeout never closes its tab - so the
+# runner does it. Only tabs whose URL carries one of THIS slot's rcept numbers are touched,
+# so DART tabs the user opened for other filings stay open.
+close_slot_tabs() {  # $1 = slot
+  local rcepts
+  rcepts=$("${VQ[@]}" rcepts "$1" 2>/dev/null) || return 0
+  [ -n "$rcepts" ] || return 0
+  # shellcheck disable=SC2086
+  osascript - $rcepts <<'OSA' 2>/dev/null || log "탭 정리 실패(Chrome 자동화 권한 확인)"
+on run argv
+  set n to 0
+  if application "Google Chrome" is not running then return n
+  tell application "Google Chrome"
+    repeat with w in windows
+      repeat with i from (count of tabs of w) to 1 by -1
+        set u to URL of tab i of w
+        repeat with r in argv
+          if u contains ("rcpNo=" & (contents of r as text)) then
+            close tab i of w
+            set n to n + 1
+            exit repeat
+          end if
+        end repeat
+      end repeat
+    end repeat
+  end tell
+  return n
+end run
+OSA
+}
 
 # macOS has no coreutils `timeout`. perl's alarm survives exec, so the claude process
 # itself gets SIGALRM at the deadline - no watchdog subshell, no orphaned sleep.
@@ -129,6 +161,8 @@ main() {
     rc=$?
     res=$("${VQ[@]}" runner finish --run-id "$run_id" --log "$logf" --exit-code "$rc")
     log "run $run_id 종료(rc=$rc): $res"
+    closed=$(close_slot_tabs "$slot")
+    [ -n "$closed" ] && [ "$closed" != "0" ] && log "탭 ${closed}개 닫음"
 
     if printf '%s' "$res" | grep -q '"stop": true'; then
       log "연속 실패 - 러너 정지 (알림 발송됨)"

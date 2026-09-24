@@ -134,6 +134,11 @@ def cmd_show(a):
     _show(slot, a)
 
 
+def cmd_rcepts(a):
+    d = ops.slot_detail(Slot.parse(a.slot))
+    print(" ".join(f["rcept_no"] for f in d["filings"]))
+
+
 def cmd_pass(a):
     scopes = [s.strip() for s in a.verified_scopes.split(",") if s.strip()]
     print(_j(ops.pass_filing(a.rcept, scopes, a.note)))
@@ -320,6 +325,8 @@ def build_parser() -> argparse.ArgumentParser:
     x = sp.add_parser("show"); x.add_argument("slot", nargs="?")
     x.add_argument("--no-csv", action="store_true"); x.add_argument("--json", action="store_true")
     x.set_defaults(fn=cmd_show)
+    x = sp.add_parser("rcepts", help="슬롯의 접수번호 목록(러너의 탭 정리용)")
+    x.add_argument("slot"); x.set_defaults(fn=cmd_rcepts)
     x = sp.add_parser("pass"); x.add_argument("--rcept", required=True)
     x.add_argument("--verified-scopes", required=True); x.add_argument("--note")
     x.set_defaults(fn=cmd_pass)

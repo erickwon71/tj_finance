@@ -65,7 +65,8 @@ rm ~/.claude/notify/STOP_VERIFY
 - 사용량 한도 메시지가 오면 리셋 시각까지 쉰다. 이 경우 재시도 횟수는 늘지 않는다.
 - 연속 3회 실패, 디스크 여유 50GB 미만, 코드 동기화 실패일 때만 텔레그램 알림을 보내고 정지한다.
 - 로그: `logs/verify_runner/<날짜>/` (30일 뒤 자동 삭제).
-- 파일럿 옵션(환경변수): `VQ_MODEL`(기본 sonnet), `VQ_MAX_TURNS`(80), `VQ_RUN_TIMEOUT`(2700초), `VQ_CLAUDE_ARGS`(추가 플래그).
+- 파일럿 옵션(환경변수): `VQ_MODEL`(기본 sonnet), `VQ_MAX_TURNS`(120), `VQ_RUN_TIMEOUT`(2700초), `VQ_CLAUDE_ARGS`(추가 플래그).
+- 탭 정리: 회차가 끝날 때마다 러너가 **그 슬롯의 접수번호가 URL에 든 Chrome 탭만** AppleScript로 닫는다. `claude -p` 는 세션마다 새 탭 그룹을 만들어 이전 회차 탭을 볼 수 없고, 턴 상한이나 타임아웃으로 끊긴 회차는 탭을 닫지 못하기 때문이다. 직접 연 다른 DART 탭은 건드리지 않는다. 처음 한 번 macOS 가 "터미널이 Chrome 을 제어" 권한을 물으면 허용한다.
 
 ## 5. 수정 워크트리 시작 절차
 

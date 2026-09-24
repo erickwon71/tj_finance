@@ -349,21 +349,18 @@ def test_runner_usage_limit_has_no_retry_penalty(engines, as_role, tmp_path):
 def test_pace_wait_rules():
     from datetime import datetime, timezone
     now = datetime(2026, 9, 24, 4, 0, tzinfo=timezone.utc)
-    week_end = "2026-09-29T04:00:00Z"          # 5 days left -> 2/7 elapsed = 28.6%
-    kw = dict(max_5h=70, slack_7d=10, max_7d=90, now=now)
-    # ahead of the weekly pace line (54% > 38.6%) -> idle 30 min
-    w, why = runner.pace_wait({"fiveHourPercent": 10, "sevenDayPercent": 54,
-                               "fiveHourReset": "2026-09-24T05:00:00Z",
-                               "sevenDayReset": week_end}, **kw)
-    assert w == 1800 and "7d" in why
-    # on pace -> go
-    assert runner.pace_wait({"fiveHourPercent": 10, "sevenDayPercent": 30,
-                             "fiveHourReset": "2026-09-24T05:00:00Z",
-                             "sevenDayReset": week_end}, **kw) == (0, None)
+    week_end = "2026-09-29T04:00:00Z"          # 5 of 7 days left -> ceiling 100-40*5/7-5 = 66.4
+    kw = dict(max_5h=70, reserve_7d=40, safety_7d=5, now=now)
+    base = {"fiveHourPercent": 10, "fiveHourReset": "2026-09-24T05:00:00Z",
+            "sevenDayReset": week_end}
+    assert runner.pace_wait({**base, "sevenDayPercent": 58}, **kw) == (0, None)
+    w, why = runner.pace_wait({**base, "sevenDayPercent": 67}, **kw)
+    assert w == 1800 and "ceiling 66.4" in why
+    # near the reset the ceiling rises: 1 hour left -> ~94.8
+    late = datetime(2026, 9, 29, 3, 0, tzinfo=timezone.utc)
+    assert runner.pace_wait({**base, "sevenDayPercent": 90}, **{**kw, "now": late}) == (0, None)
     # 5h window hot -> wait until its reset (1 hour)
-    w, why = runner.pace_wait({"fiveHourPercent": 75, "sevenDayPercent": 30,
-                               "fiveHourReset": "2026-09-24T05:00:00Z",
-                               "sevenDayReset": week_end}, **kw)
+    w, why = runner.pace_wait({**base, "fiveHourPercent": 75, "sevenDayPercent": 30}, **kw)
     assert w == 3600 and "5h" in why
     # no data never blocks
     assert runner.pace_wait({}, **kw) == (0, None)

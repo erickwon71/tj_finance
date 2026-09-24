@@ -96,8 +96,17 @@ def budget_state() -> dict:
             wait = max(wait, conn.execute(text(
                 "SELECT greatest(0, extract(epoch FROM CAST(:t AS timestamptz) - now()))::bigint"),
                 {"t": limited_until}).scalar_one())
+        # Pilot: stop by itself after N measured runs (runs with a usage snapshot), so the
+        # un-throttled pilot cannot drain the weekly limit unnoticed.
+        target = _kv(conn, "runner.stop_after_measured_runs")
+        measured = conn.execute(text("""
+            SELECT count(*) FROM verification.runner_runs
+            WHERE usage_7d_start IS NOT NULL AND ended_at IS NOT NULL""")).scalar_one()
+    stop = bool(target) and measured >= int(target)
     return {"wait_seconds": int(wait), "runs_5h": runs_5h, "slots_per_window": per_window,
-            "runs_7d": runs_7d, "weekly_slots": weekly or None}
+            "runs_7d": runs_7d, "weekly_slots": weekly or None,
+            "measured_runs": measured, "stop_after": int(target) if target else None,
+            "stop": stop}
 
 
 def _parse_log(log: Path) -> dict:

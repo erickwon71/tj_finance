@@ -139,7 +139,14 @@ main() {
       exit 4
     fi
 
-    wait_s=$("${VQ[@]}" runner budget | jq -r '.wait_seconds')
+    budget=$("${VQ[@]}" runner budget)
+    if [ "$(printf '%s' "$budget" | jq -r '.stop')" = "true" ]; then
+      n=$(printf '%s' "$budget" | jq -r '.measured_runs')
+      log "파일럿 목표 ${n}회 완료 - 러너 정지"
+      notify "[verify 러너] 파일럿 측정 ${n}회 완료 - 정지. 튜닝 분석 대기"
+      exit 0
+    fi
+    wait_s=$(printf '%s' "$budget" | jq -r '.wait_seconds')
     if [ "${wait_s:-0}" -gt 0 ]; then
       log "사용량 예산 대기 ${wait_s}s"
       sleep "$(( wait_s < 1800 ? wait_s : 1800 ))"

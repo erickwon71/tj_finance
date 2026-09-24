@@ -236,3 +236,23 @@ def test_machine_recheck_closes_after_the_fix_reload(engines, as_role):
     got = machine_pass.run(limit=5, log=lambda _m: None)
     dbg = _sql(engines, "SELECT verdict, counts::text, findings::text FROM verification.machine_checks WHERE rcept_no = :r", {"r": R_SIGN})
     assert dict(_sql(engines, "SELECT fiscal_year, status FROM verification.progress"))[2022] == "passed", (got, dbg)
+
+
+def test_repass_keeps_clean_and_demotes_mismatch(engines, as_role):
+    # two filings passed by the model before the machine existed: one faithful, one not
+    _sql(engines, "UPDATE report_lines SET value_won = 900 WHERE rcept_no = :r AND label_raw = '자산총계'",
+         {"r": R_BAD})
+    _sql(engines, "DELETE FROM verification.machine_checks WHERE rcept_no IN (:a, :b)", {"a": R_OK, "b": R_BAD})
+    _sql(engines, "UPDATE verification.progress_filings SET status = 'passed', verified_by = 'camp_run' "
+         "WHERE rcept_no IN (:a, :b)", {"a": R_OK, "b": R_BAD})
+    for fy in (2024, 2023):
+        _sql(engines, f"SELECT verification.refresh_slot('{CORP}', {fy}, 'FY')")
+    as_role("verify")
+    with pytest.raises(Exception):
+        machine_pass.repass()                           # admin only
+    as_role("admin")
+    total = machine_pass.repass(log=lambda _m: None)
+    assert total["kept"] == 1 and total["demoted"] == 1
+    st = dict(_sql(engines, "SELECT rcept_no, status FROM verification.progress_filings WHERE rcept_no IN (:a, :b)",
+                   {"a": R_OK, "b": R_BAD}))
+    assert st == {R_OK: "passed", R_BAD: "pending"}

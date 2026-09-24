@@ -335,3 +335,51 @@ def recheck(limit: int | None = None, log=print) -> dict:
             total[k] += r[k]
         log(json.dumps(r, ensure_ascii=False))
     return total
+
+
+def repass(limit: int | None = None, log=print) -> dict:
+    """Machine re-comparison of filings passed before the machine existed (legacy / model
+    web-view verdicts; user decision 2026-09-25). Clean keeps the pass and records the check.
+    Anything else demotes the filing to pending and drops the check, so the next
+    `machine run` handles it like any unchecked filing (pass / auto issue / model review)."""
+    if ops.role() != "admin":
+        raise ops.VqError("machine repass 는 admin(main) 전용 — passed 판정을 되돌리기 때문")
+    total = {"checked": 0, "kept": 0, "demoted": 0, "no_source": 0}
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT pf.rcept_no, pf.corp_code, pf.fiscal_year, pf.fiscal_period
+            FROM verification.progress_filings pf
+            LEFT JOIN verification.machine_checks mc USING (rcept_no)
+            WHERE pf.status = 'passed' AND coalesce(pf.verified_by, '') NOT LIKE '%machine'
+              AND mc.rcept_no IS NULL
+            ORDER BY pf.rcept_no""")).fetchall()
+    for n, (rcept, corp, fy, fp) in enumerate(rows):
+        if limit is not None and n >= limit:
+            break
+        with engine.connect() as conn:
+            path = _source_path(conn, rcept)
+            if path is None:
+                total["no_source"] += 1
+                continue
+            res = mc.compare_filing(conn, rcept, path)
+        total["checked"] += 1
+        with ops._Tx(evidence=f"[machine repass {mc.TOOL_VERSION}] {res.verdict}") as conn:
+            seq = conn.execute(text("SELECT verification.ensure_baseline(:r)"), {"r": rcept}).scalar_one()
+            if res.verdict == "clean":
+                _store(conn, rcept, seq, res, False)
+                total["kept"] += 1
+                continue
+            conn.execute(text("""
+                UPDATE verification.progress_filings
+                   SET status = 'pending',
+                       note = left(coalesce(note || ' / ', '') || :n, 2000), updated_at = now()
+                 WHERE rcept_no = :r AND status = 'passed'"""),
+                {"r": rcept, "n": f"[machine repass {mc.TOOL_VERSION}] 기계 재대조 {res.verdict} "
+                                  f"{dict((k, v) for k, v in res.counts.items() if k not in ('rows', 'cells'))}"
+                                  f" → 재검토"})
+            conn.execute(text("DELETE FROM verification.machine_checks WHERE rcept_no = :r"), {"r": rcept})
+            conn.execute(text("SELECT verification.refresh_slot(:c, :y, :p)"), {"c": corp, "y": fy, "p": fp})
+            total["demoted"] += 1
+        if total["checked"] % 200 == 0:
+            log(json.dumps(total, ensure_ascii=False))
+    return total

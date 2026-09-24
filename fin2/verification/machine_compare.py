@@ -34,7 +34,7 @@ from pathlib import Path
 
 from lxml import etree
 
-TOOL_VERSION = "mc4"
+TOOL_VERSION = "mc5"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -257,7 +257,7 @@ def load_statement_tables(path: str) -> list[SrcTable]:
 # Recorded but not blocking a pass: the source's own arithmetic does not close while every DB
 # cell equals its source cell - the DB is faithful and the web view would show the same
 # numbers (the previous full web-view standard passed these too).
-INFO_KINDS = {"sce_arith"}
+INFO_KINDS = {"sce_arith", "zero_row"}
 
 
 @dataclass
@@ -374,6 +374,44 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                         if abs(x * s - r["value_won"]) < 1:
                             cand_s[s] += 1
         scale = cand_s.most_common(1)[0][0] if cand_s else 1
+
+        # Value-assisted re-pairing: a label repeated in every year block ('Ⅲ. 반기순이익')
+        # can be aligned to the wrong block. When a DB row's cells disagree with its source
+        # row, move it to another same-label source row where every DB cell agrees.
+        cells_of: dict[tuple, list[dict]] = {}
+        for r in items:
+            if r["value_won"] is not None:
+                cells_of.setdefault((r["row_order"], r["label_raw"]), []).append(r)
+
+        def agrees(rs: list[dict], row: SrcRow) -> bool:
+            for r in rs:
+                sc_ = 1 if "주당" in r["label_raw"] else scale
+                ks = col_for(r["col_index"] or 0, r.get("is_cumulative"), headers_of[row.table])
+                xs = [row.cells[k] for k in ks if k < len(row.cells)]
+                if not any(isinstance(x, float) and abs(x * sc_ - r["value_won"]) <= (1.0 if sc_ == 1 else 0.5)
+                           for x in xs) and not (r["value_won"] == 0 and all(x in (0.0, _EMPTY) for x in xs)):
+                    return False
+            return True
+
+        # 1) release every pairing that disagrees, 2) give each released row the first free
+        # same-label source row that agrees (a wrong pairing may hold the right row hostage)
+        bad = [i for i, k in enumerate(seq) if cells_of.get(k) and i in d2s
+               and not agrees(cells_of[k], win[d2s[i]])]
+        bad += [i for i, k in enumerate(seq) if cells_of.get(k) and i not in d2s]
+        old_pair = {i: d2s.pop(i) for i in bad if i in d2s}
+        used = set(d2s.values())
+        for i in bad:
+            key_i = dkeys[i]
+            for j, row in enumerate(win):
+                if j not in used and (row.key == key_i or row.alt == key_i) and agrees(cells_of[seq[i]], row):
+                    d2s[i] = j
+                    used.add(j)
+                    break
+        for i, j in old_pair.items():  # no agreeing row: keep the original pairing if still free
+            if i not in d2s and j not in used:
+                d2s[i] = j
+                used.add(j)
+        rowmap = {seq[i]: win[j] for i, j in d2s.items()}
         counts["rows"] += len(seq)
         covered: dict[tuple, set[int]] = {}
         for r in items:

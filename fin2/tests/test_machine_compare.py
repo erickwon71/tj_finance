@@ -185,6 +185,7 @@ def test_zero_row_and_appropriation_statement(tmp_path):
     res = mc.compare([_row("IS", "separate", 0, "매출액", 100), _row("IS", "separate", 2, "당기순이익", 10)],
                      tables)
     assert [f["kind"] for f in res.findings] == ["zero_row"]      # appropriation table ignored
+    assert res.verdict == "clean"                                  # value-neutral: recorded, not blocking
 
 
 def test_notes_sections_are_not_statement_tables(tmp_path):
@@ -221,3 +222,26 @@ def test_bs_identity_ignores_grand_total_labels(tmp_path):
     rows = [_row("BS", "separate", i, lab, v) for i, (lab, v) in
             enumerate((("자산총계", 1000), ("자본과부채총계", 1000), ("부채총계", 400), ("자본총계", 600)))]
     assert mc.compare(rows, tables).verdict == "clean"
+
+
+def test_repeated_block_labels_repair_to_the_agreeing_row(tmp_path):
+    # the DB skipped the all-dash row of the first block, so difflib pairs the second
+    # block's '당기순이익' with the first block's row; values put it back
+    body = _sce([["2023.01.01 (기초자본)", "100", "10", "110"],
+                 ["자본조정", "-", "-", "-"],
+                 ["당기순이익", "", "5", "5"],
+                 ["2023.12.31 (기말자본)", "100", "15", "115"],
+                 ["2024.01.01 (기초자본)", "100", "15", "115"],
+                 ["당기순이익", "", "7", "7"],
+                 ["2024.12.31 (기말자본)", "100", "22", "122"]])
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    data = (("2023.01.01 (기초자본)", (100, 10, 110)), ("당기순이익", (None, 5, 5)),
+            ("2023.12.31 (기말자본)", (100, 15, 115)), ("2024.01.01 (기초자본)", (100, 15, 115)),
+            ("당기순이익", (None, 7, 7)), ("2024.12.31 (기말자본)", (100, 22, 122)))
+    rows = []
+    for order, (lab, vals) in enumerate(data):
+        for col, v in enumerate(vals):
+            if v is not None:
+                rows.append(_row("SCE", "separate", order, lab, v, col=col))
+    res = mc.compare(rows, tables)
+    assert not [f for f in res.findings if f["kind"] == "value"], res.findings

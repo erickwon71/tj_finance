@@ -38,15 +38,20 @@ CLI: `scripts/vq.py` (모든 명령은 `--help`)
 
 ## 4. 검증 러너 운영
 
-실행(검증 워크트리, tmux 안에서):
+실행: tmux 세션 `verify` 로 띄운다. 터미널을 닫아도 계속 돌고, 원격(tailscale ssh)에서 붙어 볼 수 있다.
 
 ```bash
-cd /Users/taejin/Project/tj_finance/.claude/worktrees/camp_run
+tmux new-session -d -s verify -c /Users/taejin/Project/tj_finance/.claude/worktrees/camp_run 'caffeinate -i scripts/verify_runner.sh 2>&1 | tee -a logs/verify_runner/runner.out'
 ```
 
+진행 화면 보기(빠져나올 때는 Ctrl-b 다음 d):
+
 ```bash
-caffeinate -i scripts/verify_runner.sh
+tmux attach -t verify
 ```
+
+- 러너 스크립트 자신이 바뀌면 회차 사이에 스스로 재시작한다. 단 **재시작 기능이 없는 옛 버전으로 떠 있던 러너**는 한 번 수동으로 다시 띄워야 한다.
+  2026-09-24 12:14 에 띄운 러너가 그랬다. `ps` 에 스크립트 경로가 상대경로로 보이면 한 번도 재실행되지 않은 것이다.
 
 정지(현재 슬롯을 끝낸 뒤 멈춤):
 
@@ -62,7 +67,12 @@ rm ~/.claude/notify/STOP_VERIFY
 
 - 매 회차 `git merge --ff-only origin/main` 을 하므로, 수정 워크트리가 push 한 코드가 자동으로 반영된다. 러너 스크립트 자신이 바뀌면 회차 사이에 스스로 재시작한다.
 - 예산: 5시간 창당 `runner.slots_per_window`(기본 12), 7일 `runner.weekly_slots`(파일럿 후 설정). 값은 `verification.kv` 에 있어 코드 수정 없이 조정된다.
-  **파일럿 중(2026-09-24~)에는 사용자 결정으로 상한을 해제했다**(`runner.slots_per_window=1000`). 실제 계정 한도에 걸리면 리셋까지 대기한다.
+  **2026-09-24 파일럿 30회 실측 후 튜닝(Max x5)**: `runner.pace_mode=on`.
+  - 5시간 창: 계정 사용률이 `runner.max_5h_pct`(70) 이상이면 리셋까지 대기한다.
+  - 주간: 상한 = 100 − `runner.reserve_7d_pct`(40) × 남은기간비율 − `runner.safety_7d_pct`(5).
+    수정·대화형 몫을 남은 기간에 비례해 보장한다.
+  - `runner.slots_per_window`=60 은 안전장치로만 둔다.
+  - 실측: 회당 주간 ≈0.13%p, 5h ≈1.6%p, 평균 4.6분. 근거는 설계 §11.
   회차마다 `runner_runs.usage_5h_*`/`usage_7d_*` 에 계정 사용률(%)을 시작·끝으로 남긴다. 다른 세션과 한도를 공유하므로 차이는 상한값이다. 이 값으로 파일럿 후 예산을 정한다.
 - 사용량 한도 메시지가 오면 리셋 시각까지 쉰다. 이 경우 재시도 횟수는 늘지 않는다.
 - 연속 3회 실패, 디스크 여유 50GB 미만, 코드 동기화 실패일 때만 텔레그램 알림을 보내고 정지한다.

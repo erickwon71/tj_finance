@@ -191,3 +191,12 @@ def test_notes_sections_are_not_statement_tables(tmp_path):
     body = _section("3. 연결재무제표 주석", _table(["매출액", "1", "2"], head=["과목", "당기", "전기"]))
     assert mc.load_statement_tables(_xml(tmp_path, body)) == []
     assert mc.compare([], []).verdict == "no_structure"
+
+
+def test_income_breakdown_tables_in_statement_section_are_not_unmatched(tmp_path):
+    body = _section("2. 연결재무제표", _title("제56기 : 2016년 01월 01일부터"), _table(
+        ["Ⅰ.예치금이자", "10", "9"], ["Ⅱ.증권이자", "20", "19"], ["1.국채이자", "5", "4"], head=["과목", "당기", "전기"]),
+        _title("(단위: 천원)"), _table(["1. 처분전이익잉여금", "10", "9"], ["전기이월이익잉여금", "3", "2"],
+                                     ["당기순이익", "7", "7"], head=["과목", "당기", "전기"]))
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    assert mc.compare([], tables).findings == []

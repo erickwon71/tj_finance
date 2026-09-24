@@ -34,7 +34,7 @@ from pathlib import Path
 
 from lxml import etree
 
-TOOL_VERSION = "mc2"
+TOOL_VERSION = "mc3"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -212,6 +212,8 @@ def statement_type(t: "SrcTable") -> str | None:
         return "CF"
     if re.search(r"자산총계|부채총계", keys):
         return "BS"
+    if re.search(r"(당기|분기|반기)순(이익|손실|손익)", keys) and re.search(r"법인세|영업이익|영업손실|매출", keys):
+        return "IS"
     return None
 
 
@@ -468,7 +470,10 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                                                  header=row_table_header(win_tables, row, c), src=x))
                         counts["uncovered_cell"] += 1
     for t in tables:
-        if t.idx not in used_tables and t.n_amount_rows >= 3 and not _is_appropriation(t):
+        # only tables recognisably a statement: banks/insurers put income breakdowns
+        # (예치금이자·증권이자 …) in the statement section too, and those are not loaded
+        if t.idx not in used_tables and t.n_amount_rows >= 3 and t.stype is not None \
+                and not _is_appropriation(t):
             findings.append({"kind": "unmatched_table", "basis": t.basis, "table": t.idx,
                              "title": t.title, "first_rows": [r.label[:40] for r in t.rows[:4]]})
             counts["unmatched_table"] += 1
@@ -644,7 +649,7 @@ def period_groups(headers: list[str]) -> list[list[int]]:
     return groups
 
 
-_APPROPRIATION_RE = re.compile(r"처분계산서|처리계산서|미처분이익잉여금|미처리결손금")
+_APPROPRIATION_RE = re.compile(r"처분계산서|처리계산서|미처분이익잉여금|미처리결손금|처분전이익잉여금|처분예정")
 
 
 def _is_appropriation(t: SrcTable) -> bool:

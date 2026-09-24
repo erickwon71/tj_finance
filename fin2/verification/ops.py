@@ -818,8 +818,9 @@ def require_clean_pushed_head() -> str:
 
 
 def _reload_rcept(rcept: str, reason: str) -> tuple[str, str | None]:
-    """Re-extract one filing from its XML and store body+notes+table meta in ONE
-    transaction (same routine as the daily collector/note_lines_sync.py)."""
+    """Re-extract one filing from its XML (or, R170, its XBRL instance zip) and store
+    body(+notes)+table meta in ONE transaction (same routines as the daily
+    collector/note_lines_sync.py / collector/xbrl_instance_lines_sync.py)."""
     from psycopg2 import errors as pg_errors
     from sqlalchemy.exc import DBAPIError
 
@@ -829,22 +830,35 @@ def _reload_rcept(rcept: str, reason: str) -> tuple[str, str | None]:
 
     with get_session() as s:
         t = s.execute(text("""
-            SELECT dt.file_path, f.corp_code, f.fiscal_year, f.fiscal_period
+            SELECT dt.file_path, dt.file_type, f.corp_code, f.fiscal_year, f.fiscal_period,
+                   f.period_end_date
             FROM download_tasks dt JOIN filings f USING (rcept_no)
-            WHERE dt.rcept_no = :r AND dt.status = 'completed' AND dt.file_type = 'xml'
-              AND dt.file_path IS NOT NULL LIMIT 1"""), {"r": rcept}).fetchone()
+            WHERE dt.rcept_no = :r AND dt.status = 'completed'
+              AND dt.file_type IN ('xml', 'xbrl_zip')
+              AND dt.file_path IS NOT NULL
+            ORDER BY (dt.file_type = 'xml') DESC LIMIT 1"""), {"r": rcept}).fetchone()
     if t is None or not Path(t.file_path).exists():
-        return "failed", "XML 원문 없음 — PDF/XBRL 경로는 전용 스크립트로 처리"
-    lines = extract_report_lines(t.file_path, rcept_no=rcept, corp_code=t.corp_code,
-                                 report_fiscal_year=t.fiscal_year,
-                                 report_fiscal_period=t.fiscal_period, include_notes=True)
+        return "failed", "XML/XBRL 원문 없음 — PDF 경로는 전용 스크립트로 처리"
+    if t.file_type == "xbrl_zip":
+        # R170: XBRL-instance filings (body only, no notes) — the same extract+store
+        # the daily collector/xbrl_instance_lines_sync.py does.
+        from fin2.extract.report_lines_xbrl import extract_report_lines_xbrl
+        lines = extract_report_lines_xbrl(t.file_path, rcept_no=rcept, corp_code=t.corp_code,
+                                          report_fiscal_year=t.fiscal_year,
+                                          report_fiscal_period=t.fiscal_period,
+                                          period_end_date=t.period_end_date)
+    else:
+        lines = extract_report_lines(t.file_path, rcept_no=rcept, corp_code=t.corp_code,
+                                     report_fiscal_year=t.fiscal_year,
+                                     report_fiscal_period=t.fiscal_period, include_notes=True)
     if not lines:
         return "failed", "추출 0행 — 기존 적재를 지우지 않고 중단"
     try:
         with get_session() as s:
             s.execute(text("SELECT set_config('verification.load_reason', :r, true)"),
                       {"r": reason})
-            store_note_lines(s, rcept, lines)
+            if t.file_type == "xml":
+                store_note_lines(s, rcept, lines)
             store_report_tables(s, rcept, lines)
             store_report_lines(s, rcept, lines)
     except DBAPIError as exc:

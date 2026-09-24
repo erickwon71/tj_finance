@@ -301,7 +301,11 @@ def test_r130_cf_tree_gap_backfill_recovers_lines_the_tree_never_wired_in():
 
     assert cf_s[("당기순이익(손실)", 0)] == 2_003_975_720
     assert cf_s[("당기순이익(손실)", 1)] == 5_561_769_646
-    assert cf_s[("영업활동으로 분류된 법인세납부(환급)", 0)] == 5_582_220
+    # R170: this filing's _pre.xml is a delta over DART's base CF presentation;
+    # merged, 법인세납부 is a real tree node (base terseLabel "법인세납부(환급)")
+    # and the base's outflow negation renders it as the 원문 does, (5,582,220).
+    # Before R170 it came from the R130 gap fallback as the raw +5,582,220.
+    assert cf_s[("법인세납부(환급)", 0)] == -5_582_220
     assert cf_s[("현금및현금성자산에 대한 환율변동효과", 0)] == -4_666_912
     assert cf_s[("기초현금및현금성자산", 0)] == 12_061_706_274
     assert cf_s[("기말현금및현금성자산", 0)] == 9_100_975_564

@@ -265,17 +265,305 @@ def _parse_presentation_link(link_el: etree._Element, nsmap: dict[str, str], sou
     return PresentationTree(role_uri=role_uri, nodes=nodes, roots=roots)
 
 
-def parse_presentation(path: Path, nsmap: dict[str, str]) -> dict[str, PresentationTree]:
-    """Parse a `_pre.xml` presentation linkbase into role URI -> tree."""
+def parse_presentation(
+    path: Path, nsmap: dict[str, str], base_links: dict[str, list[Path]] | None = None,
+    denegate_base_roles: frozenset[str] = frozenset(),
+) -> dict[str, PresentationTree]:
+    """Parse a `_pre.xml` presentation linkbase into role URI -> tree.
+
+    `base_links` (R170): role URI -> DART's shared *base* presentation
+    linkbase files for that role (`resolve_external_base_presentation()`).
+    When a role has one, the filer's link is only a delta on top of it and
+    the tree is built from the merged relationship network
+    (`_build_merged_presentation_tree`); every other role keeps the
+    filer-file-only builder unchanged. `denegate_base_roles`: roles whose
+    base-template `negated*` preferredLabels are dropped (`_denegate_role`)."""
     tree = etree.parse(str(path))
     source = str(path)
+    base_links = base_links or {}
     trees: dict[str, PresentationTree] = {}
     for link_el in tree.getroot().findall(_q("presentationLink")):
-        ptree = _parse_presentation_link(link_el, nsmap, source)
+        role_uri = _xlink(link_el, "role")
+        base_paths = base_links.get(role_uri or "")
+        if base_paths:
+            ptree = _build_merged_presentation_tree(
+                link_el, base_paths, nsmap, source, denegate_base=role_uri in denegate_base_roles,
+            )
+        else:
+            ptree = _parse_presentation_link(link_el, nsmap, source)
         if ptree.role_uri in trees:
             logger.warning(f"{source}: duplicate presentationLink role {ptree.role_uri!r}, overwriting")
         trees[ptree.role_uri] = ptree
     return trees
+
+
+def presentation_role_uris(path: Path) -> set[str]:
+    """Role URIs of every presentationLink in a `_pre.xml` (no tree building)."""
+    root = etree.parse(str(path)).getroot()
+    return {r for r in (_xlink(el, "role") for el in root.findall(_q("presentationLink"))) if r}
+
+
+@dataclass(frozen=True)
+class _PresArc:
+    frm: str                # loc label (base labels carry a "base:" prefix, never collide with filer ones)
+    to: str
+    frm_el: QName
+    to_el: QName
+    order: float
+    preferred: str | None
+    priority: int
+    prohibited: bool
+    from_base: bool
+
+
+_BASE_LABEL_PREFIX = "base:"
+
+_XBRL_2003_ROLE = "http://www.xbrl.org/2003/role/"
+_XBRL_2009_ROLE = "http://www.xbrl.org/2009/role/"
+
+
+def _denegate_role(role: str | None) -> str | None:
+    """R170-b — the *income statement* base template negates deductions
+    (IncomeTaxExpense, DistributionCosts, AdministrativeExpense ... carry
+    `negatedTerseLabel`), i.e. it renders them as subtractions. Korean
+    손익계산서 print expenses as positive amounts, so the XBRL fact sign
+    (expense +, 법인세수익 −) already equals the 원문 (measured on batch #4:
+    법인세비용 9/9 matched raw, 9/9 flipped once negated). The *cash-flow*
+    base template's negation of outflows (이자지급·법인세납부·차입금상환·리스부채
+    상환, 8/8) does match the 원문's parentheses, so callers apply this to IS
+    roles only. Keeps the label role (terse/total/...), drops only the
+    negation. A filer's own negated arcs are never touched (R10)."""
+    if not role:
+        return role
+    local = role.rsplit("/", 1)[-1]
+    if not local.startswith("negated"):
+        return role
+    plain = local[len("negated"):]
+    plain = plain[:1].lower() + plain[1:]
+    if plain == "netLabel":
+        return _XBRL_2009_ROLE + plain
+    return _XBRL_2003_ROLE + plain
+
+
+def _collect_presentation_arcs(
+    link_el: etree._Element, nsmap: dict[str, str], source: str, from_base: bool,
+) -> tuple[dict[str, QName], list[_PresArc]]:
+    """Locs + arcs of one presentationLink, tolerant of locators whose prefix
+    the instance never declares (a base-template concept this filer never
+    tagged — it can't carry a fact, so dropping its loc loses nothing)."""
+    prefix = _BASE_LABEL_PREFIX if from_base else ""
+    locs: dict[str, QName] = {}
+    for loc_el in link_el.findall(_q("loc")):
+        label, href = _xlink(loc_el, "label"), _xlink(loc_el, "href")
+        if not label or not href:
+            continue
+        try:
+            locs[prefix + label] = resolve_href_fragment(href, nsmap)
+        except ValueError:
+            continue
+    arcs: list[_PresArc] = []
+    for arc_el in link_el.findall(_q("presentationArc")):
+        frm, to, order_raw = _xlink(arc_el, "from"), _xlink(arc_el, "to"), arc_el.get("order")
+        if not frm or not to:
+            continue
+        frm, to = prefix + frm, prefix + to
+        if frm not in locs or to not in locs:
+            continue
+        arcs.append(_PresArc(
+            frm=frm, to=to, frm_el=locs[frm], to_el=locs[to],
+            order=float(order_raw) if order_raw is not None else 1.0,
+            preferred=arc_el.get("preferredLabel"),
+            priority=int(arc_el.get("priority") or 0),
+            prohibited=arc_el.get("use") == "prohibited",
+            from_base=from_base,
+        ))
+    return locs, arcs
+
+
+def _build_merged_presentation_tree(
+    link_el: etree._Element, base_paths: list[Path], nsmap: dict[str, str], source: str,
+    denegate_base: bool = False,
+) -> PresentationTree:
+    """★R170 — DART delta presentation linkbases (2013-03-31/2017-10-01/
+    2018-07-01 vintages): the filer's `_pre.xml` is NOT the statement tree,
+    it is a delta over DART's shared base presentation linkbase for the same
+    role (`pre_dart_{vintage}_role-D310005.xml` etc., declared by
+    `dart_{vintage}.xsd` and therefore part of the filing's DTS). Measured on
+    한화엔진 20150515002710: 1,301 of 1,488 filer arcs are `use="prohibited"`
+    cancellations of base arcs, and GrossProfit/IncomeTaxExpense exist only
+    in the base — reading the filer file alone silently drops them.
+
+    XBRL relationship semantics, applied to the merged base+filer network:
+      1. Arcs are relationships between *concepts*; locator labels are
+         file-local pointers. Equivalent relationships (same from/to concept,
+         order, preferredLabel) are resolved by priority: the highest wins,
+         and a prohibited arc at that priority removes the relationship.
+      2. A filer placement of a concept beats any base placement of the same
+         concept with the same preferredLabel (the filer re-parents by
+         prohibiting the base arc and adding its own; if it only adds, the
+         base placement would otherwise duplicate the row).
+      3. An arc's parent is resolved by concept: when its `from` locator is
+         not itself a placed node (e.g. R129 dropped it because its own
+         parent arc was prohibited and re-added under a new locator — 엘앤에프
+         20151104000116: 단기차입금/유동성장기차입금 hung off the orphaned
+         `Loc_label_ifrs_CurrentLiabilities`), it attaches to the node that
+         placed the same concept."""
+    role_uri = _xlink(link_el, "role")
+    if not role_uri:
+        raise ValueError(f"{source}: <link:presentationLink> missing xlink:role")
+    locs, arcs = _collect_presentation_arcs(link_el, nsmap, source, from_base=False)
+    filer_locs = dict(locs)
+    for base_path in base_paths:
+        try:
+            base_root = etree.parse(str(base_path)).getroot()
+        except Exception as e:  # noqa: BLE001 — a corrupt cache entry degrades to filer-only
+            logger.warning(f"{source}: base presentation 파싱 실패({base_path}): {type(e).__name__}: {e}")
+            continue
+        for base_link in base_root.findall(_q("presentationLink")):
+            if _xlink(base_link, "role") != role_uri:
+                continue
+            b_locs, b_arcs = _collect_presentation_arcs(base_link, nsmap, source, from_base=True)
+            locs.update(b_locs)
+            arcs.extend(b_arcs)
+
+    # 1. priority / prohibition over equivalent relationships
+    groups: dict[tuple, list[_PresArc]] = {}
+    for a in arcs:
+        groups.setdefault((a.frm_el, a.to_el, a.order, a.preferred), []).append(a)
+    surviving: list[_PresArc] = []
+    for group in groups.values():
+        top = max(a.priority for a in group)
+        winners = [a for a in group if a.priority == top]
+        if any(a.prohibited for a in winners):
+            continue
+        winners.sort(key=lambda a: a.from_base)  # filer arc first among equals
+        surviving.append(winners[0])
+
+    # 2. filer placement beats base placement of the same concept+label role
+    filer_placed = {(a.to_el, a.preferred) for a in surviving if not a.from_base}
+    surviving = [a for a in surviving
+                 if not a.from_base or (a.to_el, a.preferred) not in filer_placed]
+    # arcs keep document order: filer first, then base
+    surviving.sort(key=lambda a: a.from_base)
+
+    # 3. nodes = arc targets; parents resolved by concept when the locator isn't placed
+    target_labels: list[str] = []
+    for a in surviving:
+        if a.to not in target_labels:
+            target_labels.append(a.to)
+    nodes_of_el: dict[QName, list[str]] = {}
+    for label in target_labels:
+        nodes_of_el.setdefault(locs[label], []).append(label)
+
+    parent_of: dict[str, str] = {}
+    order_of: dict[str, float] = {}
+    preferred_of: dict[str, str] = {}
+    pending_children: dict[str, list[tuple[str, float]]] = {}
+    root_labels: list[str] = []
+    root_of_el: dict[QName, str] = {}
+    for a in surviving:
+        if a.to in parent_of:
+            continue
+        if a.frm in nodes_of_el.get(a.frm_el, []):
+            parent = a.frm
+        elif nodes_of_el.get(a.frm_el):
+            parent = nodes_of_el[a.frm_el][0]
+        else:
+            parent = root_of_el.setdefault(a.frm_el, a.frm)
+            if parent not in root_labels:
+                root_labels.append(parent)
+        if parent == a.to:
+            continue
+        parent_of[a.to] = parent
+        order_of[a.to] = a.order
+        preferred = _denegate_role(a.preferred) if (a.from_base and denegate_base) else a.preferred
+        if preferred:
+            preferred_of[a.to] = preferred
+        pending_children.setdefault(parent, []).append((a.to, a.order))
+    # a filer loc that takes part in no arc at all stays a standalone root, as
+    # the filer-only builder keeps it (unless its concept is already placed)
+    in_any_arc = {lbl for a in arcs for lbl in (a.frm, a.to)}
+    for label, element in filer_locs.items():
+        if label in in_any_arc or element in nodes_of_el or element in root_of_el:
+            continue
+        root_of_el[element] = label
+        root_labels.append(label)
+
+    children_of = {
+        frm: [label for label, _ in sorted(pairs, key=lambda pair: pair[1])]
+        for frm, pairs in pending_children.items()
+    }
+    node_labels = root_labels + [lbl for lbl in target_labels if lbl in parent_of]
+    roots = [lbl for lbl in node_labels if lbl not in parent_of]
+    depths = _compute_depths(roots, children_of)
+    nodes = {
+        label: PresentationNode(
+            loc_label=label,
+            element=locs[label],
+            order=order_of.get(label, 0.0),
+            preferred_label=preferred_of.get(label),
+            parent_loc_label=parent_of.get(label),
+            depth=depths.get(label, 0),
+            children=children_of.get(label, []),
+        )
+        for label in node_labels
+    }
+    return PresentationTree(role_uri=role_uri, nodes=nodes, roots=roots)
+
+
+_EXTERNAL_BASE_PRE_FETCH_BUDGET = 15
+
+
+def resolve_external_base_presentation(xsd_path: Path, role_uris: set[str]) -> dict[str, list[Path]]:
+    """R170 — DART's shared base presentation linkbase(s) for `role_uris`,
+    found the same way `resolve_external_labels()` finds shared label
+    linkbases: walk the filing xsd's `xsd:import` chain out to
+    `dart_{vintage}.xsd` and collect its `presentationLinkbaseRef`s. Only
+    files named after one of the wanted roles' ids (`..._role-D310005.xml`)
+    are fetched, and each is kept only if it really carries that role URI.
+    Vintages whose shared schema declares no base presentation (2019-10-01+,
+    where filers bundle the full tree) return {} — callers then keep the
+    filer-file-only tree."""
+    from parser.xbrl_instance import external_taxonomy as ext
+
+    wanted = {uri.rsplit("role-", 1)[-1]: uri for uri in role_uris if "role-" in uri}
+    if not wanted:
+        return {}
+    seen: set[str] = set()
+    queue = ext.dart_first(ext.local_import_urls(xsd_path))
+    pre_urls: list[str] = []
+    fetches = 0
+    while queue and fetches < _EXTERNAL_BASE_PRE_FETCH_BUDGET:
+        url = queue.pop(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        fetches += 1
+        root = ext.parse(url)
+        if root is None:
+            continue
+        for found in ext.linkbase_ref_urls(root, url, "presentationLinkbaseRef"):
+            if found not in pre_urls:
+                pre_urls.append(found)
+        queue = ext.dart_first(queue + [u for u in ext.import_urls(root, url) if u not in seen])
+
+    out: dict[str, list[Path]] = {}
+    for url in pre_urls:
+        stem = url.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        role_id = stem.rsplit("role-", 1)[-1] if "role-" in stem else None
+        role_uri = wanted.get(role_id or "")
+        if role_uri is None:
+            continue
+        path = ext.fetch(url)
+        if path is None:
+            continue
+        try:
+            roles = presentation_role_uris(path)
+        except Exception:  # noqa: BLE001 — corrupt cache / HTML error page
+            continue
+        if role_uri in roles:
+            out.setdefault(role_uri, []).append(path)
+    return out
 
 
 def _parse_calculation_link(link_el: etree._Element, nsmap: dict[str, str], source: str) -> CalculationTree:

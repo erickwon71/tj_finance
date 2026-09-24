@@ -1,0 +1,192 @@
+"""
+R170 — DART delta presentation linkbase + shared base presentation merge
+(parser/xbrl_instance/taxonomy_linkbase.py::_build_merged_presentation_tree).
+
+Synthetic linkbases pin the XBRL relationship semantics (prohibition by
+priority, filer-over-base placement, parent resolution by concept, IS-only
+base de-negation); real-filing tests pin the batch #4 recoveries.
+"""
+from __future__ import annotations
+
+import sys
+from datetime import date
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from parser.xbrl_instance.taxonomy_linkbase import (  # noqa: E402
+    _denegate_role, parse_presentation,
+)
+from fin2.extract.report_lines_xbrl import extract_report_lines_xbrl  # noqa: E402
+
+_ROLE = "http://dart.fss.or.kr/role/ifrs/dart_2013-03-31_role-D310005"
+_NS = {"ifrs": "http://xbrl.iasb.org/taxonomy/2009-04-01/ifrs",
+       "dart": "http://dart.fss.or.kr/2013-03-31/dart"}
+_NEG = "http://www.xbrl.org/2009/role/negatedTerseLabel"
+
+
+def _linkbase(locs: list[str], arcs: list[tuple]) -> str:
+    """locs: loc labels shaped '{prefix}_{Local}[suffix]'; arcs: (from, to, order, extra-attrs)."""
+    body = []
+    for label in locs:
+        concept = label.split("#")[0]
+        body.append(f'<link:loc xlink:type="locator" xlink:href="x.xsd#{concept}" xlink:label="{label}"/>')
+    for frm, to, order, extra in arcs:
+        body.append(f'<link:presentationArc xlink:type="arc" '
+                    f'xlink:arcrole="http://www.xbrl.org/2003/arcrole/parent-child" '
+                    f'xlink:from="{frm}" xlink:to="{to}" order="{order}" {extra}/>')
+    return ('<link:linkbase xmlns:link="http://www.xbrl.org/2003/linkbase" '
+            'xmlns:xlink="http://www.w3.org/1999/xlink">'
+            f'<link:presentationLink xlink:type="extended" xlink:role="{_ROLE}">'
+            + "".join(body) + "</link:presentationLink></link:linkbase>")
+
+
+def _tree(tmp_path: Path, filer: str, base: str, denegate: bool = False):
+    fp, bp = tmp_path / "pre_filer.xml", tmp_path / "pre_base.xml"
+    fp.write_text(filer, encoding="utf-8")
+    bp.write_text(base, encoding="utf-8")
+    trees = parse_presentation(fp, _NS, {_ROLE: [bp]},
+                               denegate_base_roles=frozenset({_ROLE}) if denegate else frozenset())
+    return trees[_ROLE]
+
+
+def _children(tree, local: str) -> list[str]:
+    node = next(n for n in tree.nodes.values() if n.element.local == local)
+    return [tree.nodes[c].element.local for c in node.children]
+
+
+_BASE = _linkbase(
+    ["ifrs_IncomeStatementAbstract", "ifrs_Revenue", "ifrs_GrossProfit",
+     "ifrs_IncomeTaxExpenseContinuingOperations", "dart_OperatingIncomeLoss", "ifrs_ProfitLoss"],
+    [("ifrs_IncomeStatementAbstract", "ifrs_Revenue", "1.0", ""),
+     ("ifrs_IncomeStatementAbstract", "ifrs_GrossProfit", "3.0", ""),
+     ("ifrs_IncomeStatementAbstract", "dart_OperatingIncomeLoss", "4.0", ""),
+     ("ifrs_IncomeStatementAbstract", "ifrs_IncomeTaxExpenseContinuingOperations", "21.0",
+      f'preferredLabel="{_NEG}"'),
+     ("ifrs_IncomeStatementAbstract", "ifrs_ProfitLoss", "22.0", "")],
+)
+
+
+def test_base_only_concepts_join_the_filer_tree(tmp_path):
+    """한화엔진 20150515002710 형태: 회사 파일엔 GrossProfit 이 아예 없고 base 에만
+    있다 — 병합 트리엔 들어와야 한다."""
+    filer = _linkbase(["ifrs_IncomeStatementAbstract", "ifrs_Revenue"],
+                      [("ifrs_IncomeStatementAbstract", "ifrs_Revenue", "1.0", 'priority="1"')])
+    tree = _tree(tmp_path, filer, _BASE)
+    assert _children(tree, "IncomeStatementAbstract") == [
+        "Revenue", "GrossProfit", "OperatingIncomeLoss", "IncomeTaxExpenseContinuingOperations", "ProfitLoss"]
+    assert sum(n.element.local == "Revenue" for n in tree.nodes.values()) == 1  # equivalent arcs collapse
+
+
+def test_prohibited_base_arc_removes_the_concept(tmp_path):
+    filer = _linkbase(["ifrs_IncomeStatementAbstract", "ifrs_GrossProfit"],
+                      [("ifrs_IncomeStatementAbstract", "ifrs_GrossProfit", "3.0",
+                        'use="prohibited" priority="1"')])
+    tree = _tree(tmp_path, filer, _BASE)
+    assert "GrossProfit" not in {n.element.local for n in tree.nodes.values()}
+
+
+def test_filer_replacement_arc_beats_base_placement(tmp_path):
+    """회사가 base arc 를 prohibit 하고 다른 order 로 다시 걸면 한 번만, 회사 위치로."""
+    filer = _linkbase(
+        ["ifrs_IncomeStatementAbstract", "ifrs_GrossProfit", "ifrs_GrossProfit#new"],
+        [("ifrs_IncomeStatementAbstract", "ifrs_GrossProfit", "3.0", 'use="prohibited" priority="1"'),
+         ("ifrs_IncomeStatementAbstract", "ifrs_GrossProfit#new", "0.5", 'priority="2"')])
+    tree = _tree(tmp_path, filer, _BASE)
+    assert _children(tree, "IncomeStatementAbstract")[0] == "GrossProfit"
+    assert sum(n.element.local == "GrossProfit" for n in tree.nodes.values()) == 1
+
+
+def test_filer_addition_without_prohibition_does_not_duplicate(tmp_path):
+    filer = _linkbase(["ifrs_IncomeStatementAbstract", "ifrs_GrossProfit#x"],
+                      [("ifrs_IncomeStatementAbstract", "ifrs_GrossProfit#x", "2.5", "")])
+    tree = _tree(tmp_path, filer, _BASE)
+    assert sum(n.element.local == "GrossProfit" for n in tree.nodes.values()) == 1
+
+
+def test_orphaned_parent_locator_resolves_by_concept(tmp_path):
+    """엘앤에프 20151104000116 형태: 부모 loc 자신은 prohibited 로만 도달돼 탈락하고,
+    같은 개념의 새 loc 이 다시 걸렸는데 자식 arc 는 옛 loc 에서 나간다 — 자식은
+    같은 개념의 노드 밑으로 붙어야 한다(수정 전엔 arc 가 통째로 버려졌다)."""
+    base = _linkbase(["ifrs_LiabilitiesAbstract", "ifrs_CurrentLiabilities"],
+                     [("ifrs_LiabilitiesAbstract", "ifrs_CurrentLiabilities", "1.0", "")])
+    filer = _linkbase(
+        ["ifrs_LiabilitiesAbstract", "ifrs_CurrentLiabilities", "ifrs_CurrentLiabilities#new",
+         "dart_ShortTermBorrowings#new"],
+        [("ifrs_LiabilitiesAbstract", "ifrs_CurrentLiabilities", "1.0", 'use="prohibited" priority="1"'),
+         ("ifrs_LiabilitiesAbstract", "ifrs_CurrentLiabilities#new", "0.5", 'priority="2"'),
+         ("ifrs_CurrentLiabilities", "dart_ShortTermBorrowings#new", "0.75", 'priority="2"')])
+    tree = _tree(tmp_path, filer, base)
+    assert _children(tree, "CurrentLiabilities") == ["ShortTermBorrowings"]
+    assert _children(tree, "LiabilitiesAbstract") == ["CurrentLiabilities"]
+
+
+def test_is_base_negation_dropped_only_when_asked(tmp_path):
+    filer = _linkbase(["ifrs_IncomeStatementAbstract"], [])
+    kept = _tree(tmp_path, filer, _BASE, denegate=False)
+    dropped = _tree(tmp_path, filer, _BASE, denegate=True)
+    tax = "IncomeTaxExpenseContinuingOperations"
+    assert next(n for n in kept.nodes.values() if n.element.local == tax).preferred_label == _NEG
+    assert next(n for n in dropped.nodes.values()
+                if n.element.local == tax).preferred_label == "http://www.xbrl.org/2003/role/terseLabel"
+
+
+def test_denegate_role_mapping():
+    assert _denegate_role("http://www.xbrl.org/2009/role/negatedLabel") == "http://www.xbrl.org/2003/role/label"
+    assert _denegate_role("http://www.xbrl.org/2009/role/negatedTotalLabel") == \
+        "http://www.xbrl.org/2003/role/totalLabel"
+    assert _denegate_role("http://www.xbrl.org/2009/role/negatedNetLabel") == "http://www.xbrl.org/2009/role/netLabel"
+    assert _denegate_role("http://www.xbrl.org/2003/role/terseLabel") == "http://www.xbrl.org/2003/role/terseLabel"
+    assert _denegate_role(None) is None
+
+
+# ── real filings (skipped when raw_report isn't mounted) ─────────────────────
+_RAW = Path(__file__).resolve().parents[2] / "raw_report"
+
+
+def _lines(rel: str, rcept: str, corp: str, fy: int, fp: str, ped: date):
+    path = _RAW / rel
+    if not path.exists():
+        return None
+    return extract_report_lines_xbrl(path, rcept_no=rcept, corp_code=corp, report_fiscal_year=fy,
+                                     report_fiscal_period=fp, period_end_date=ped)
+
+
+def test_hanwha_engine_2015q1_separate_is_complete():
+    """batch #4 이슈 #24093·#24097·#24149·#24151 — 원문 별도 손익계산서 값."""
+    lines = _lines("KOSPI/00361008_한화엔진/quarter/2015/20150515002710.zip",
+                   "20150515002710", "00361008", 2015, "Q1", date(2015, 3, 31))
+    if lines is None:
+        return
+    is_s = {l.source_ref.split("/")[1]: l.value_won
+            for l in lines if l.statement == "IS" and l.basis == "separate" and l.col_index == 0}
+    assert is_s["GrossProfit"] == -782_632_621
+    assert is_s["OperatingIncomeLoss"] == -11_411_155_327
+    assert is_s["IncomeTaxExpenseContinuingOperations"] == -2_585_746_745  # 원문 (2,585,746,745)
+    assert is_s["BasicEarningsLossPerShare"] == -115  # unitRef="SHARES" (R170-c)
+    assert is_s["ProfitLoss"] == -8_010_347_261
+
+
+def test_lnf_2015q3_consolidated_borrowings_under_current_liabilities():
+    """batch #4 이슈 #19166·#19167 — 고아 loc 밑 arc 가 버려져 빠졌던 행."""
+    lines = _lines("KOSPI/00398701_엘앤에프/quarter/2015/20151104000116.zip",
+                   "20151104000116", "00398701", 2015, "Q3", date(2015, 9, 30))
+    if lines is None:
+        return
+    bs_c = {l.source_ref.split("/")[1]: l for l in lines
+            if l.statement == "BS" and l.basis == "consolidated" and l.col_index == 0}
+    assert bs_c["ShortTermBorrowings"].value_won == 42_554_298_115
+    assert bs_c["CurrentPortionOfLongtermBorrowings"].value_won == 3_981_720_000
+    assert bs_c["ShortTermBorrowings"].section_path and "유동부채" in bs_c["ShortTermBorrowings"].section_path
+
+
+def test_daehan_2017h1_cf_outflows_keep_base_negation():
+    """batch #4 이슈 #83810·#83811 — CF base 의 유출 negation 은 원문 괄호와 일치(유지)."""
+    lines = _lines("KOSDAQ/00113261_대한광통신/half/2017/20170818000262.zip",
+                   "20170818000262", "00113261", 2017, "H1", date(2017, 6, 30))
+    if lines is None:
+        return
+    cf_s = {l.source_ref.split("/")[1]: l.value_won
+            for l in lines if l.statement == "CF" and l.basis == "separate" and l.col_index == 0}
+    assert cf_s["InterestPaidClassifiedAsOperatingActivities"] == -454_000_662
+    assert cf_s["IncomeTaxesPaidRefundClassifiedAsOperatingActivities"] == -6_326_321

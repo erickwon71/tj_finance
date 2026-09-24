@@ -147,7 +147,7 @@ from parser.xbrl_instance.instance_parser import (
 )
 from parser.xbrl_instance.taxonomy_linkbase import (
     Label, PresentationTree, merge_label_catalogs, parse_labels, parse_presentation,
-    resolve_external_labels,
+    presentation_role_uris, resolve_external_base_presentation, resolve_external_labels,
 )
 from parser.xbrl_instance.role_map import build_role_map, has_local_role_types, index_core_roles
 
@@ -557,7 +557,13 @@ def _numeric_value(fact: XbrlFact, units: dict[str, XbrlUnit]) -> int | None:
         return None
     is_krw = unit.measure is not None and unit.measure.local == "KRW"
     is_krweps = unit.numerator is not None and unit.numerator.local == "KRW" and unit.denominator is not None
-    if not (is_krw or is_krweps):
+    # R170-c: 2013-03-31 vintage filers tag per-share concepts (EPS) with a
+    # bare `shares` unit instead of KRW/shares (한화엔진 20150515002710:
+    # BasicEarningsLossPerShare unitRef="SHARES" -115 = 원문 주당손실 (115)원).
+    # The concept itself fixes the meaning — accept it for *PerShare* concepts only.
+    is_misdeclared_eps = (unit.measure is not None and unit.measure.local == "shares"
+                          and "PerShare" in fact.qname.local)
+    if not (is_krw or is_krweps or is_misdeclared_eps):
         return None
     try:
         num = Decimal(fact.value_raw)
@@ -1122,7 +1128,7 @@ def extract_report_lines_xbrl(
             members = _extract_zip_members(zip_path, tmp_dir)
 
             instance = parse_instance(members.xbrl)
-            pre_trees = parse_presentation(members.pre, instance.nsmap)
+            pre_role_uris = presentation_role_uris(members.pre)
             labels = merge_label_catalogs(
                 parse_labels(members.lab_ko, instance.nsmap) if members.lab_ko else {},
                 parse_labels(members.lab_en, instance.nsmap) if members.lab_en else {},
@@ -1143,7 +1149,21 @@ def extract_report_lines_xbrl(
             # for if it has to fall back to DART's external shared taxonomy
             # (older vintages don't bundle roleType locally at all).
             core_roles = index_core_roles(
-                build_role_map(members.xsd, needed_role_uris=set(pre_trees.keys()))
+                build_role_map(members.xsd, needed_role_uris=pre_role_uris)
+            )
+            # R170: delta-style vintages (2013-03-31/2017-10-01/2018-07-01)
+            # ship only a delta over DART's shared base presentation linkbase —
+            # merge it in for the core statement roles (taxonomy_linkbase.py::
+            # _build_merged_presentation_tree). Vintages without one keep the
+            # filer-file-only tree.
+            base_pre = resolve_external_base_presentation(
+                members.xsd, {info.role_uri for info in core_roles.values()}
+            )
+            pre_trees = parse_presentation(
+                members.pre, instance.nsmap, base_pre,
+                denegate_base_roles=frozenset(
+                    info.role_uri for (statement, _basis), info in core_roles.items() if statement == "IS"
+                ),
             )
 
             basis_axis_ns = _resolve_ifrs_namespace(instance.nsmap)

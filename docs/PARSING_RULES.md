@@ -9877,6 +9877,66 @@ not_fixed 0**. std_v3·calendar_v3 는 85개사를 재빌드했다(실패 0, 런
 
 **관련**: R132(수기판의 일반화) · R73(계층3 교정, 2건 이관) · R6 · R74 · R154/R168(자기증명 선례)
 
+---
+
+## R170. XBRL 경로: 회사 `_pre.xml` 은 **DART 표준 base 표시링크베이스에 대한 델타**다 — base 를 병합하고 arc 는 **개념 단위**로 잇는다 (2026-09-25)
+
+**발견**: verification 캠페인 missing_row 이슈 177건(fix batch #4). XBRL instance zip 경로(PDF-only) 10필링:
+한화엔진 2015Q1 `20150515002710`, 엘앤에프 2015Q3 `20151104000116`·`20151221000346`, 롯데케미칼 2016H1
+`20160816002306`, SK가스 2017Q1·H1·Q3 `20170529000325`·`20170816000261`·`20171117000389`, 대한광통신 2017H1
+`20170818000262`, 케어젠 2019Q1 `20190515002560`, 로보티즈 2019Q1 `20190522000395`. 매출총이익·영업이익·
+법인세비용·EPS·단기차입금·이연법인세부채·비지배지분·SCE 전체 등이 빠져 있었다. 사실(fact)은 instance 에 전부 있다.
+
+**원인 1 — base 미병합**: 2013-03-31·2017-10-01·2018-07-01 vintage 의 회사 `_pre.xml` 은 완전한 트리가 아니다.
+`dart_{vintage}.xsd` 가 `presentationLinkbaseRef` 로 선언한 **공유 base**(`ifrs_for_dart/pre_dart_{vintage}_role-D310005.xml`
+등, 즉 필링 DTS 의 일부) 위에 얹는 델타다. 한화엔진 회사 파일 arc 1,488개 중 1,301개가 `use="prohibited"`(base arc 취소)다.
+GrossProfit·IncomeTaxExpense 는 base 에만 있다. 회사 파일만 읽으면 조용히 사라진다. 9필링 전부 prohibited 1,290~2,652개(델타형).
+2019-10-01 vintage 는 공유 스키마에 base 표시링크베이스 선언이 없다(회사가 전체 트리를 번들). 병합 대상이 아니다.
+
+**원인 2 — 고아 부모 loc(R129 부작용)**: 회사는 base arc 를 prohibit 한 뒤 **같은 개념을 새 loc 이름으로** 다시 건다.
+그런데 자식 arc 는 옛 loc 이름에서 나간다. 엘앤에프: `Loc_label_ifrs_CurrentLiabilities` 는 prohibited arc 로만 도달돼
+R129 가 지우고, 새 loc `..._CurrentLiabilities2015102910317929` 가 걸렸다. 단기차입금·유동성장기차입금 arc 는
+`from=Loc_label_ifrs_CurrentLiabilities` 라 "undeclared loc" 로 통째로 버려졌다. XBRL 에서 arc 는 **개념 사이의 관계**이고
+loc 이름은 파일 안의 포인터일 뿐이다.
+
+**원인 3 — EPS unit**: 2013 vintage 회사가 EPS 를 `unitRef="SHARES"`(measure `shares`)로 태깅한다(한화엔진
+BasicEarningsLossPerShare −115 = 원문 주당손실 (115)원). `_numeric_value` 가 KRW·KRW/shares 만 받아 버려졌다.
+
+**규칙** (`parser/xbrl_instance/taxonomy_linkbase.py::_build_merged_presentation_tree`, `resolve_external_base_presentation`):
+1. 핵심 재무제표 role 마다 필링 xsd 의 import 체인에서 `dart_{vintage}.xsd` 를 찾는다. 그 `presentationLinkbaseRef` 중
+   role id(`..._role-D310005.xml`)가 맞는 파일을 받아 **그 role URI 를 실제로 담은 것만** base 로 쓴다. 캐시는
+   `external_taxonomy.fetch` 를 쓴다. base 가 없는 role 은 기존 회사 파일 단독 빌더를 그대로 쓴다(무변경).
+2. 병합망의 동등 관계(from·to 개념, order, preferredLabel 이 같음)는 **priority 최고값**이 이긴다. 그 최고값에
+   prohibited 가 있으면 관계를 제거한다(XBRL 2.1 §3.5.3.9).
+3. 같은 개념+preferredLabel 을 회사가 한 번이라도 배치했으면 base 의 배치는 버린다(재배치 중복 방지).
+4. arc 의 부모는 **개념으로** 찾는다. from loc 이 배치된 노드가 아니면 같은 개념의 노드에 붙인다.
+5. **IS role 만** base 의 `negated*` preferredLabel 을 뗀다(label role 은 유지, `_denegate_role`). base IS 템플릿은
+   법인세비용·판관비를 차감 표시(negatedTerseLabel)한다. 국내 손익계산서는 비용을 양수로 인쇄하므로 fact 부호가
+   곧 원문이다(batch #4 법인세비용 9/9: 원값 일치, negation 시 9/9 반대). **CF 의 base negation 은 유지한다**:
+   유출(이자지급·법인세납부·차입금상환·리스부채상환 8/8)을 원문 괄호대로 음수로 만든다. 회사 자신의 negated arc 는 R10 그대로다.
+6. `*PerShare*` 개념은 measure `shares` 로 잘못 선언돼도 값을 받는다(R170-c). 다른 개념엔 적용하지 않는다.
+
+**검증(2015+ XBRL 경로 전수 1,627필링, 수정 전후 추출 diff)**: 행 494,205 → 890,058. **값 소실 0**(부호 무시 비교).
+SCE 가 새로 생긴 필링: 별도 1,620 · 연결 1,266(수정 전엔 axis/LineItems 노드가 base 에만 있어 "노드 없음, 스킵").
+새 SCE 2,895블록은 전부 기말자본이 BS 자본총계와 일치한다(2,895/2,895). 부호가 바뀐 기존 행 5,102개:
+법인세납부 3,309 · 이자지급 1,775 는 R130 트리-갭 백업 행(원값 양수)이 트리 노드(base CF negation, 원문 괄호)로
+바뀐 것이다. 나머지 18행(7필링)은 회사 자신의 negated arc(R10)가 고아 loc 로 떨어져 있다가 붙은 것이다
+(지배력 획득·소유지분 변동 지급·재무활동 법인세납부·차입금상환, 전부 유출).
+batch #4 이슈 177건 중 176건이 원문 값·부호와 일치한다. 1건(#83818 대한광통신 연결 CF 퇴직금의 지급)은 행이 생겼으나
+부호가 반대다. base·회사 모두 negation 이 없고 회사가 fact 를 +363,582,949 로 태깅했다(원문 (363,582,949)).
+→ sign_flip 계열로 넘긴다.
+
+**배선**: `fin2/extract/report_lines_xbrl.py::extract_report_lines_xbrl` 안쪽 변경이라 데일리
+`collector/xbrl_instance_lines_sync.py` 는 그대로 반영된다. `fin2/verification/ops.py::_reload_rcept` 가 이제
+`xbrl_zip` 필링도 재적재한다(그전엔 "PDF/XBRL 경로는 전용 스크립트로" 실패 처리).
+
+**테스트**: `fin2/tests/test_xbrl_base_presentation_merge.py`(합성 링크베이스 7 + 실필링 3: 한화엔진 IS·엘앤에프 BS·
+대한광통신 CF). `fin2/tests/test_xbrl_instance.py::test_r130_…` 의 법인세납부 기대값을 +5,582,220 → −5,582,220
+(라벨 "법인세납부(환급)")으로 바꿨다. 트리 노드가 되면서 원문 괄호 부호가 됐다.
+
+**관련**: R10(negated 부호) · R14(구형 taxonomy) · R129(prohibited — 이 규칙이 병합 경로에서 대체) · R130/R133(트리-갭 백업,
+병합 후엔 대부분 발동 안 함)
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |
@@ -9944,6 +10004,7 @@ not_fixed 0**. std_v3·calendar_v3 는 85개사를 재빌드했다(실패 0, 런
 | R139 (2026-09-24 폐지→R167) | 사용자 지시 2026-09-18(원문대조 캠페인 자동화 설계 중) · `fin2/extract/report_lines.py::store_report_lines()` · `fin2/tests/test_store_report_lines_manual_guard.py` |
 | R167 | 사용자 결정 2026-09-24(verification 캠페인) · `fin2/verification/schema.sql` · `collector/db.py::_set_verification_identity` · `fin2/tests/test_verification_*.py` |
 | R169 | verification fix batch #3(2026-09-25, 야간 자율) · `fin2/audit/unit_self_contradiction.py` · `scripts/unit_self_contradiction_scan.py` · `fin2/extract/data/unit_self_contradiction_overrides.json` · `fin2/extract/report_lines.py::_unit_override()` · `scripts/collect_new.py::_report_unit_self_contradiction()` · `fin2/tests/test_r169_unit_self_contradiction.py` |
+| R170 | verification fix batch #4(2026-09-25, 야간 자율) · `parser/xbrl_instance/taxonomy_linkbase.py::_build_merged_presentation_tree()`/`resolve_external_base_presentation()`/`_denegate_role()` · `fin2/extract/report_lines_xbrl.py::_numeric_value()` · `fin2/verification/ops.py::_reload_rcept()` · `fin2/tests/test_xbrl_base_presentation_merge.py` |
 | R140 | 사용자 지시 2026-09-18(SCE 포함 + 단계(B) 지정) · `fin2/extract/review_csv.py`·`fin2/audit/layer2_selfcheck.py`·`scripts/layer2_review.py` · `fin2/tests/test_review_csv.py` · `docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md` |
 | R141 | 사용자 지시 2026-09-19("확인시작해" — 계층2 원문대조 캠페인 fail 10건 근본원인 조사) · `fin2/extract/statement_titles.py::classify_statement_in_body_section()` |
 | R142 | 위와 동일 조사(2026-09-19) · `fin2/extract/statement_titles.py::is_substatement_marker()` · `fin2/extract/text.py::_detect_body_statement_tables()`(`last_stmt`) · `fin2/tests/test_r142_substatement_marker.py` |

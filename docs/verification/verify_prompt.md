@@ -23,8 +23,10 @@
        DB 가 원문과 다른 열/부호로 적재돼 산수가 깨졌으면 그 증상의 error_type 으로 등록한다.
      - 기계의 오판(원문과 DB 가 실제로 같음)이면 이슈 없이 `pass` 하고, `--note` 에 `기계오탐: <발견 종류>·<원인 한 줄>` 을 남긴다.
        이 노트는 기계 대조 규칙 개선에 쓰인다.
-   - `clean 이지만 audit`(1% 표본 재확인), `기계대조: 없음`, `no_source`/`no_structure`/`error`, `stale` → 아래 방식으로 **적재 scope 전체**를 대조한다.
+   - `clean 이지만 audit`(1% 표본 재확인), `no_source`/`no_structure`/`error` → 아래 방식으로 **적재 scope 전체**를 대조한다.
      audit 슬롯에서 불일치를 찾으면 이슈 evidence 에 `기계 clean 판정 누락` 을 적는다.
+   - `기계대조: 없음` 또는 `stale`(재적재 이후) 필링은 **대조하지 않고 그대로 둔다**. 슬롯이 pending 으로 돌아가면 기계가 먼저 대조하고,
+     불일치만 다시 모델에게 온다. fixed 이슈 재확인(위 2)만 하고 `done` 한다.
    웹뷰 대조 방법(DART 웹뷰(Chrome)에서 재무제표를 열어 DB 값(CSV)과 대조):
    - Chrome 도구는 지연 로딩이다. 먼저 ToolSearch 로 한 번에 불러온다: `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__tabs_close_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__javascript_tool,mcp__claude-in-chrome__get_page_text`.
    - 시작할 때 `tabs_context_mcp`(createIfEmpty: true)로 탭 그룹을 만들고, `tabs_create_mcp` 로 새 탭을 **하나만** 연다. 필링이 여러 개면 같은 탭에서 `navigate` 로 옮겨 다닌다.

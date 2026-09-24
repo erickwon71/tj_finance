@@ -63,10 +63,16 @@ prune_logs() { find "$LOG_ROOT" -type f -mtime +30 -delete 2>/dev/null; }
 # see earlier ones, and a run cut off by max-turns/timeout never closes its tab - so the
 # runner does it. Only tabs whose URL carries one of THIS slot's rcept numbers are touched,
 # so DART tabs the user opened for other filings stay open.
-close_slot_tabs() {  # $1 = slot
+# DONE_RCEPTS accumulates every slot this runner finished (last ~60 rcepts), so a tab that
+# one cleanup missed (observed once: 0 closed while the tab was still settling) is retried
+# on every later run instead of being left behind for good.
+DONE_RCEPTS=""
+close_slot_tabs() {  # $1 = slot just finished
   local rcepts
-  rcepts=$("${VQ[@]}" rcepts "$1" 2>/dev/null) || return 0
-  [ -n "$rcepts" ] || return 0
+  rcepts=$("${VQ[@]}" rcepts "$1" 2>/dev/null) || rcepts=""
+  DONE_RCEPTS=$(printf '%s %s' "$DONE_RCEPTS" "$rcepts" | tr ' ' '\n' | grep -v '^$' | tail -60 | tr '\n' ' ')
+  rcepts="$DONE_RCEPTS"
+  [ -n "${rcepts// /}" ] || return 0
   # shellcheck disable=SC2086
   osascript - $rcepts <<'OSA' 2>/dev/null || log "탭 정리 실패(Chrome 자동화 권한 확인)"
 on run argv

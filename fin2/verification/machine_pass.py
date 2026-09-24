@@ -18,6 +18,7 @@ import json
 import random
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from collector.db import engine
 from fin2.verification import machine_compare as mc
@@ -88,15 +89,22 @@ def sign_issues(res: mc.Result) -> list[dict]:
     and whose flip closes it exactly, with no other candidate (R162 pattern - the source
     dropped the parentheses and the DB followed it). The arithmetic is the proof, so no web-view
     look is needed; the fix side extends the R162 repair."""
-    out = []
+    out, seen = [], set()
     for f in res.findings:
         if f["kind"] != "sign_omitted":
             continue
+        # the same row label recurs in every year block: the block's closing row tells them
+        # apart (one active issue per cell - ux_vissues_active_cell)
+        col = f"{f.get('header') or '열' + str(f['col'])} @ {f['to']}"[:200]
+        key = (f["basis"], f["row"][:300], col)
+        if key in seen:
+            continue
+        seen.add(key)
         s = f.get("scale") or 1
         v = f["value"]
         out.append({
             "basis": f["basis"], "statement": "SCE", "account_label": f["row"][:300],
-            "column_label": (f.get("header") or f"열{f['col']}")[:200],
+            "column_label": col,
             "db_value": int(round(v * s)), "source_value": int(round(-v * s)),
             "source_value_raw": f"{abs(v):,.0f}" if v >= 0 else f"({abs(v):,.0f})",
             "source_unit": _UNIT.get(s, "원"), "error_type": "sign_flip", "rule_id": "R162",
@@ -153,8 +161,12 @@ def verify_slot(slot: Slot) -> dict:
             out["skipped"] += 1
         elif r.verdict == "mismatch" and {x["kind"] for x in r.findings
                                           if x["kind"] not in mc.INFO_KINDS} <= AUTO_ISSUE_KINDS:
-            ops.add_issues(f["rcept_no"], sign_issues(r))
-            out["auto_issue"] += 1
+            try:
+                ops.add_issues(f["rcept_no"], sign_issues(r))
+                out["auto_issue"] += 1
+            except IntegrityError:
+                # an active issue already sits on that cell: the model reviewer sorts it out
+                out["mismatch"] += 1
         elif r.verdict == "mismatch":
             out["mismatch"] += 1
         else:

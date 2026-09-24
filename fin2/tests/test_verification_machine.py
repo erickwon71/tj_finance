@@ -163,7 +163,7 @@ def test_machine_passes_clean_and_leaves_mismatch_for_the_model(engines, as_role
     assert st == {2024: "passed", 2023: "pending", 2022: "has_issues"}
     iss = _sql(engines, "SELECT account_label, column_label, db_value, source_value, error_type, rule_id "
                "FROM verification.issues WHERE rcept_no = :r", {"r": R_SIGN})
-    assert iss == [("배당금지급", "이익잉여금", 7, -7, "sign_flip", "R162")]
+    assert iss == [("배당금지급", "이익잉여금 @ 2022.12.31 (기말자본)", 7, -7, "sign_flip", "R162")]
     who = _sql(engines, "SELECT verified_by, note FROM verification.progress_filings "
                "WHERE rcept_no = :r", {"r": R_OK})[0]
     assert who[0] == "camp_run:machine" and who[1].startswith("[machine ")

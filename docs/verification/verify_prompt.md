@@ -15,8 +15,17 @@
 3. `pending` 인 필링마다 DART 웹뷰(Chrome)에서 재무제표를 열어 DB 값(CSV)과 대조한다.
    - Chrome 도구는 지연 로딩이다. 먼저 ToolSearch 로 한 번에 불러온다: `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__tabs_close_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__javascript_tool,mcp__claude-in-chrome__get_page_text`.
    - 시작할 때 `tabs_context_mcp`(createIfEmpty: true)로 탭 그룹을 만들고, `tabs_create_mcp` 로 새 탭을 **하나만** 연다. 필링이 여러 개면 같은 탭에서 `navigate` 로 옮겨 다닌다.
-   - 표 값은 **`javascript_tool` 로 표 전체(`tr`/`td` 텍스트)를 한 번에 추출**해 CSV 와 기계적으로 비교한다. 스크린샷·스크롤·확대는 불일치 셀을 눈으로 확인할 때만 쓴다(턴 상한이 있다). 여러 동작은 `browser_batch` 로 묶는다.
-   - 표는 JS(`javascript_tool`)로 `#listTree` 목차를 클릭한 뒤 `table tr` 을 순회해서 추출한다.
+   - **표 추출은 아래 JS 로 한다**(2026-09-24 실측 검증). 본문은 `#ifrm` iframe 안에 있지만 같은 출처라 `contentDocument` 로 읽힌다.
+     ★URL·iframe src·location 을 **반환하지 말 것** — 확장이 쿼리스트링이 든 출력을 `[BLOCKED: Cookie/query string data]` 로 가려,
+     "JS 로는 못 읽는다"고 오판하게 된다(run 6 이 이 때문에 스크롤·확대로 80턴을 다 썼다).
+     ① 목차 이름 확인: `[...document.querySelectorAll('#listTree a')].map(a=>a.textContent.trim()).filter(t=>t.includes('재무'))`
+     ② 목차 클릭 + 표 목록(연결은 `'2. 연결재무제표'`, 별도는 `'4. 재무제표'`; 2024년 이후 필링은 `2-1.` 식 하위 항목일 수 있음):
+        `const a=[...document.querySelectorAll('#listTree a')].find(x=>x.textContent.trim()==='4. 재무제표'); a.click(); await new Promise(r=>setTimeout(r,2500)); const d=document.querySelector('#ifrm').contentDocument; [...d.querySelectorAll('table')].map((t,i)=>i+': rows='+t.rows.length+' | '+t.innerText.replace(/\s+/g,' ').slice(0,70)).join('\n')`
+        보통 제목표와 데이터표가 번갈아 나온다(재무상태표·손익·포괄손익·자본변동·현금흐름).
+     ③ 데이터표 i 전체를 TSV 로: `const t=document.querySelector('#ifrm').contentDocument.querySelectorAll('table')[7]; [...t.rows].map(r=>[...r.cells].map(c=>c.innerText.replace(/\s+/g,' ').trim()).join('\t')).join('\n')`
+     이 TSV 와 CSV 를 **행 단위로** 비교한다. 괄호 `( )` 는 음수이고, 빈 칸은 값 없음(0 이 아님)이다.
+     표 단위 선언(`(단위 : 원)` 등)은 제목표 텍스트에서 확인한다.
+   - 스크린샷·스크롤·확대는 쓰지 않는다. TSV 로 판단이 안 되는 셀(병합 셀 정렬이 애매한 경우 등)만 예외로 한다. 여러 동작은 `browser_batch` 로 묶는다.
    - Chrome 도구를 쓸 수 없으면 대조하지 말고 `vq.py done` 으로 끝낸다. 로컬 XML 등 다른 수단으로 대체하지 않는다.
    - 허용된 명령은 `vq.py` 와 Read/Grep/Glob 뿐이다. 그 밖의 명령은 거부된다.
    - 대조 범위: 연결/별도 × BS·IS(포괄손익 포함)·CF·SCE 가운데 **적재된 scope 전부, 모든 행과 모든 열**.

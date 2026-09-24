@@ -46,7 +46,13 @@ tmux attach -t verify
 
 ## 2. 남은 최적화 후보 (효과 큰 순)
 
-### ① 기계 대조 + 모델은 불일치만 웹뷰로 확인 — ★사용자 판단 필요(검증 방식 변경)
+### ① 기계 대조 + 모델은 불일치만 웹뷰로 확인 — ✅A안 채택·가동(2026-09-24 22시, e4d3cab)
+- 사용자 결정: 기계 대조를 기본으로, 일치분 1% 웹뷰 재확인, 2015+ 전체.
+- 설계·검증: `docs/plans/verification_machine_compare_design_2026-09-24.md`. 운영: WORKFLOW §4-1.
+- 가동
+  - tmux `verify_machine`: 6프로세스, 약 5~6필링/초 → 10만 4천 필링 약 5시간.
+  - tmux `verify`: 모델 러너, `machine.gate=on` → 기계가 남긴 슬롯만 처리.
+- 다음: 모델 pass 노트의 `기계오탐:` 을 모아 mc2 로 오탐 축소. 1% audit 결과로 기계 누락률 측정. 아래는 착수 전 메모다.
 - 현재 방식: 모델이 Chrome JS 로 원문 표를 TSV 로 뽑고, CSV 와 행 단위로 직접 비교한다.
 - 제안:
   - `vq.py compare <rcept>` 가 DART 뷰어 HTML 에서 표를 추출해 DB(`report_lines`)와 자동 비교한다. 웹뷰가 보여주는 것과 같은 원문이다.

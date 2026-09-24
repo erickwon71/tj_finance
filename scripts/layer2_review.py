@@ -480,7 +480,7 @@ def _resolve_source(session, rcept_no: str) -> tuple[str, str | None]:
     return "none", None
 
 
-def _reload_one(session, item) -> tuple[str, str | None, list]:
+def _reload_one(session, item, *, overwrite_reviewed: bool = False) -> tuple[str, str | None, list]:
     """재파싱 + 적재. 반환 (source_kind, 실패사유 or None, 추출된 lines).
 
     ★lines 를 돌려주는 이유(2026-09-20) — `row_coverage` 감사가 "원문 행이 전부
@@ -514,9 +514,9 @@ def _reload_one(session, item) -> tuple[str, str | None, list]:
     if not lines:
         return kind, "추출 0행(보류) — 섹션/표 미검출", []
     try:
-        store_report_lines(session, item["rcept_no"], lines)
+        store_report_lines(session, item["rcept_no"], lines, overwrite_reviewed=overwrite_reviewed)
         store_report_tables(session, item["rcept_no"], lines)
-    except ValueError as exc:      # manual 보호가드
+    except ValueError as exc:      # manual/원문대조 보호가드
         session.rollback()
         return kind, str(exc), []
     return kind, None, lines
@@ -547,10 +547,10 @@ def _delete_review_csv(csv_path: str | None) -> None:
         print(f"  🗑 CSV 삭제: {path}")
 
 
-def _run_target(session, item, *, root: Path | None = None) -> dict:
+def _run_target(session, item, *, root: Path | None = None, overwrite_reviewed: bool = False) -> dict:
     """1건 재적재 → 검산 → CSV. 큐 상태까지 갱신하고 요약 dict 를 돌려준다."""
     now = datetime.now()
-    kind, err, lines = _reload_one(session, item)
+    kind, err, lines = _reload_one(session, item, overwrite_reviewed=overwrite_reviewed)
     if err:
         # ★blocked 경로도 소유자를 찍는다 — 빠뜨리면 그 건이 무소유로 남아
         #   `redo`(소유자 범위)로 이어서 다룰 수 없다.
@@ -782,7 +782,14 @@ def cmd_fail(args) -> None:
 
 
 def cmd_redo(args) -> None:
-    """파서를 고친 뒤 같은 대상만 재적재 → 재검산 → CSV 재생성."""
+    """파서를 고친 뒤 같은 대상만 재적재 → 재검산 → CSV 재생성.
+
+    ★--overwrite-reviewed(2026-09-22, R162 백필 요청 대응): `store_report_lines`의
+      원문대조-pass 보호가드(R139)를 이 건 하나에 한해 명시적으로 해제한다. 파서가
+      수정된 뒤(예: R162 SCE 부호복원) 이미 pass 된 건을 재검토자 스스로 재판정해
+      덮어써야 하는 경우를 위한 것 — **--rcept 로 특정 건을 지정했을 때만** 허용한다
+      (owner 범위 최신픽 경로에 실수로 걸리지 않도록). 재적재 후 반드시 원문 재대조 →
+      다시 pass 할 것."""
     root = Path(args.root) if args.root else None
     with get_session() as session:
         if args.rcept:
@@ -804,7 +811,8 @@ def cmd_redo(args) -> None:
         if item is None:
             print("재실행할 대상이 없습니다.")
             return
-        result = _run_target(session, item, root=root)
+        overwrite_reviewed = bool(args.overwrite_reviewed and args.rcept)
+        result = _run_target(session, item, root=root, overwrite_reviewed=overwrite_reviewed)
         _print_target(item, result)
 
 
@@ -968,6 +976,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("redo", help="파서 수정 후 같은 건 재적재")
     p.add_argument("--rcept")
     p.add_argument("--root")
+    p.add_argument("--overwrite-reviewed", action="store_true",
+                   help="원문대조-pass 보호(R139)를 이 건 한정 해제 — --rcept 필수, "
+                        "파서 수정 후 재판정 백필 요청(예: R162) 대응용")
     p.set_defaults(func=cmd_redo)
 
     p = sub.add_parser("skip", help="검토 제외")

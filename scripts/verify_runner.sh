@@ -29,12 +29,16 @@ MIN_FREE_GB="${VQ_MIN_FREE_GB:-50}"
 # Extra claude flags for the pilot (e.g. the Chrome integration switch), space separated.
 read -r -a EXTRA_ARGS <<< "${VQ_CLAUDE_ARGS:-}"
 
+# Enforced with --permission-mode dontAsk: anything not listed here is denied outright.
+# (The user's global defaultMode is "auto", which would otherwise approve arbitrary Bash -
+# seen in the first pilot run.) Absolute paths in permission rules need a leading "//".
 ALLOWED_TOOLS=(
   "Read" "Grep" "Glob"
   "Bash($PY scripts/vq.py:*)"
-  "Write($LOG_ROOT/**)"
+  "Write(/$LOG_ROOT/**)"
   "mcp__claude-in-chrome__*"
 )
+DISALLOWED_TOOLS=("Edit" "NotebookEdit" "Bash(git:*)" "Bash(python3:*)" "Bash(psql:*)")
 
 log() { printf '%s  %s\n' "$(date '+%m-%d %H:%M:%S')" "$*"; }
 
@@ -61,7 +65,9 @@ prune_logs() { find "$LOG_ROOT" -type f -mtime +30 -delete 2>/dev/null; }
 run_claude() {  # $1 = prompt, $2 = log file; returns claude's exit code (124 on timeout)
   perl -e 'alarm shift; exec @ARGV' "$RUN_TIMEOUT" \
     claude -p "$1" --output-format json --max-turns "$MAX_TURNS" --model "$MODEL" \
-    --allowedTools "${ALLOWED_TOOLS[@]}" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
+    --chrome --permission-mode dontAsk \
+    --allowedTools "${ALLOWED_TOOLS[@]}" --disallowedTools "${DISALLOWED_TOOLS[@]}" \
+    ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
     > "$2" 2>"$2.err"
   local rc=$?
   [ "$rc" -eq 142 ] && rc=124

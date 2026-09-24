@@ -13,6 +13,11 @@
    원문 셀과 현재 DB 값이 같으면 `vq.py close <id> --evidence "..."`, 다르면 `vq.py reopen <id> --evidence "..."`.
    근거에는 원문 셀 문자열과 DB 값을 그대로 적는다.
 3. `pending` 인 필링마다 DART 웹뷰(Chrome)에서 재무제표를 열어 DB 값(CSV)과 대조한다.
+   - Chrome 도구는 지연 로딩이다. 먼저 ToolSearch 로 한 번에 불러온다: `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__javascript_tool,mcp__claude-in-chrome__get_page_text`.
+   - 시작할 때 `tabs_context_mcp`(createIfEmpty: true)로 탭 그룹을 만들고, `tabs_create_mcp` 로 새 탭을 연다. 기존 탭은 재사용하지 않는다.
+   - 표는 JS(`javascript_tool`)로 `#listTree` 목차를 클릭한 뒤 `table tr` 을 순회해서 추출한다.
+   - Chrome 도구를 쓸 수 없으면 대조하지 말고 `vq.py done` 으로 끝낸다. 로컬 XML 등 다른 수단으로 대체하지 않는다.
+   - 허용된 명령은 `vq.py` 와 Read/Grep/Glob 뿐이다. 그 밖의 명령은 거부된다.
    - 대조 범위: 연결/별도 × BS·IS(포괄손익 포함)·CF·SCE 가운데 **적재된 scope 전부, 모든 행과 모든 열**.
      총계·EPS·마감행만 보는 축약은 금지다.
    - "이전 판정 이후 바뀐 scope" 가 표시된 필링은 그 scope만 다시 대조하면 된다. 바뀌지 않은 scope는 이미 검증된 내용과 byte-identical 이다.

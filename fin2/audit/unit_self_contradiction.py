@@ -123,6 +123,14 @@ def _decide(hits: dict) -> int | None:
     return best
 
 
+def _label(k: int | None, decl_mults: set[int]) -> str:
+    if k is None:
+        return "unconfirmed"
+    if decl_mults == {k}:
+        return "declared_correct"  # evidence agrees with the declaration — nothing to override
+    return f"confirmed:{k}"
+
+
 def scan_rcept(s, rcept_no: str, suspects: set[str]) -> list[dict]:
     meta = s.execute(text("""
         SELECT dt.file_path, f.corp_code, f.corp_name, f.fiscal_year, f.fiscal_period
@@ -148,14 +156,18 @@ def scan_rcept(s, rcept_no: str, suspects: set[str]) -> list[dict]:
         vanished = n_raw > 0 and len(decl) < n_raw
         if not big and not (vanished and not decl):
             continue
+        decl_mults = {10 ** -ln.adecimal for ln in decl if ln.adecimal is not None}
+        if decl_mults == {1}:
+            continue  # the big value is not a scale effect (e.g. R152 concatenated cell)
         hits = {k: _hits(by_sec_raw[code], k, ev) for k in CANDIDATE_KS}
         k = _decide(hits)
         out.append({
             "rcept": rcept_no, "corp_code": meta.corp_code, "corp_name": meta.corp_name,
             "fy": meta.fiscal_year, "fp": meta.fiscal_period, "section": code,
+            "declared_mults": sorted(decl_mults),
             "rows_declared": len(decl), "rows_forced": n_raw,
             "hits": {str(c): hits[c] for c in CANDIDATE_KS},
-            "decision": f"confirmed:{k}" if k else "unconfirmed",
+            "decision": _label(k, decl_mults),
         })
     # Second pass — in-document evidence from sections confirmed at k=1 (same basis).
     for r in out:
@@ -173,7 +185,7 @@ def scan_rcept(s, rcept_no: str, suspects: set[str]) -> list[dict]:
         k = _decide(hits)
         r["doc_hits"] = {str(c): hits[c] for c in CANDIDATE_KS}
         if k:
-            r["decision"] = f"confirmed:{k}"
+            r["decision"] = _label(k, set(r["declared_mults"]))
             r["evidence"] = "same_document"
     return out
 

@@ -101,3 +101,27 @@ def test_r169_data_file_shape():
         assert len(rcept) == 14 and rcept.isdigit(), rcept
         assert secs and set(secs) <= codes, (rcept, secs)
         assert set(secs.values()) <= {1, 1_000}, (rcept, secs)
+
+
+_HL_HOLDINGS_2024_FY = _RAW / "KOSPI/00299002_HL홀딩스/annual/2024/20250318001269.xml"
+
+
+def test_r169_tax_expense_inline_overlay_does_not_reinflate_overridden_row():
+    """HL홀딩스 2024FY — the R143 tax-expense overlay (no magnitude gate) replaced the
+    proved 원 value with the inline-XBRL fact scaled by the wrong declared 백만원 unit
+    (5,127,350,201 → 5,127,350,201,000,000). Overridden rows are now skipped."""
+    if not _HL_HOLDINGS_2024_FY.exists():
+        return
+    lines = extract_report_lines(
+        _HL_HOLDINGS_2024_FY, rcept_no="20250318001269", corp_code="00299002",
+        report_fiscal_year=2024, report_fiscal_period="FY")
+    tax = _rows(lines, "IS", "consolidated")["법인세비용 (주24)"]
+    assert tax.value_won == 5_127_350_201
+    assert "xbrl_inline_override" not in (tax.source_ref or "")
+
+
+def test_r169_non_scale_big_value_is_not_an_override():
+    """유화증권 2017FY — the only >=1e15 row is a 대손준비금 cell holding two amounts
+    (R152 family) in a table correctly declared in 원. That is not a unit problem, so
+    the rcept must not be in the data file (it was, before the declared-unit check)."""
+    assert "20180330003573" not in rl._PROVED_UNIT_OVERRIDES

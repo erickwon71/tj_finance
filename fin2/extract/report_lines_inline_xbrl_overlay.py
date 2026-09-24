@@ -184,6 +184,8 @@ _TAX_EXPENSE_LABEL_KEYWORD = "법인세비용"
 # the real tax-expense XBRL fact. 연결 side was unaffected only because it also has
 # a bare "법인세비용" row, so the two candidates triggered the ambiguity guard below.
 _TAX_EXPENSE_EXCLUDE_KEYWORDS = ("차감전", "차감후")
+# unit_source values written when the declared unit was overridden (report_lines R132/R169).
+_OVERRIDDEN_UNIT_SOURCES = ("manual_unit", "proved_unit")
 _TAX_EXPENSE_TARGET_CANONICAL = "is.tax_expense"
 
 
@@ -217,6 +219,9 @@ def overlay_tax_expense_value(
         if r.statement == "IS" and (r.col_index or 0) == 0 and r.value_won is not None
         and _TAX_EXPENSE_LABEL_KEYWORD in (r.label_raw or "")
         and not any(kw in (r.label_raw or "") for kw in _TAX_EXPENSE_EXCLUDE_KEYWORDS)
+        # R169 — the inline fact is scaled by the table's declared unit, which R132/R169
+        # proved wrong for these rows; with no magnitude gate it would re-inflate x10^6.
+        and getattr(r, "unit_source", None) not in _OVERRIDDEN_UNIT_SOURCES
     ]
     rows_by_key: dict[tuple, list] = {}
     for r in candidates:

@@ -234,6 +234,20 @@ _ALL_YEARS_SQL = """
     ORDER BY f.rcept_no
 """
 
+# 2015+ campaign scope (layer2_review_queue) with the XML path joined in one
+# query — avoids a per-filing DB lookup + NAS exists() check before the scan.
+_QUEUE_PATHS_SQL = """
+    SELECT DISTINCT ON (q.rcept_no)
+           q.rcept_no, q.corp_code, q.corp_name, q.fiscal_year, q.fiscal_period,
+           d.file_path
+    FROM layer2_review_queue q
+    JOIN download_tasks d
+      ON d.rcept_no = q.rcept_no AND d.status = 'completed'
+     AND d.file_type = 'xml' AND d.file_path IS NOT NULL
+    WHERE q.fiscal_year >= 2015 {corp_filter}
+    ORDER BY q.rcept_no
+"""
+
 _LINK_PREFIX = "/Users/taejin/Project/tj_finance/raw_report"
 _SD_PREFIX = "/Volumes/dart_data/raw_report"
 _NAS_PREFIX = "/Volumes/tj_finance_data/raw_report"
@@ -285,23 +299,24 @@ def main() -> int:
         return 0
 
     done = load_done()
-    corp_filter = "AND {}corp_code = :corp".format("f." if args.all_years else "") \
-        if args.corp else ""
+    alias = "f." if args.all_years else "" if args.breadth else "q."
+    corp_filter = f"AND {alias}corp_code = :corp" if args.corp else ""
+    joined = not args.breadth          # SQL already carries file_path
     sql = (_ALL_YEARS_SQL if args.all_years
-           else _BREADTH_SQL if args.breadth else _TARGETS_SQL)
+           else _BREADTH_SQL if args.breadth else _QUEUE_PATHS_SQL)
     sql = sql.format(corp_filter=corp_filter)
 
     tasks: list[dict] = []
     with get_session() as s:
         rows = s.execute(text(sql),
                          {"corp": args.corp} if args.corp else {}).mappings().all()
-        resolve_source = None if args.all_years else _resolve_source_fn()
+        resolve_source = None if joined else _resolve_source_fn()
         for r in rows:
             if len(tasks) >= args.limit:
                 break
             if r["rcept_no"] in done:
                 continue
-            if args.all_years:
+            if joined:
                 path = r["file_path"]
             else:
                 _kind, path = resolve_source(s, r["rcept_no"])
@@ -318,7 +333,9 @@ def main() -> int:
     with _OUT.open("a") as out:
         if args.workers > 1:
             import multiprocessing as mp
-            pool = mp.Pool(args.workers, maxtasksperchild=500)
+            # Recycle workers often: a 25MB filing peaks ~540MB and CPython keeps
+            # the heap, so long-lived workers would sit at their largest file.
+            pool = mp.Pool(args.workers, maxtasksperchild=50)
             it = pool.imap_unordered(_scan_task, tasks, chunksize=8)
         else:
             pool = None

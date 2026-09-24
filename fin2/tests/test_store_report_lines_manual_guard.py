@@ -150,16 +150,15 @@ def _mark_reviewed(session, rcept_no="20020814000872"):
     session.commit()
 
 
-def test_refuses_to_overwrite_when_marked_reviewed(session):
+def test_pass_mark_no_longer_blocks_reload(session):
+    # R139 retired 2026-09-24: a pass verdict is invalidated by the verification load
+    # trigger (Postgres) instead of refusing the reload here.
     _mark_reviewed(session)
-    with pytest.raises(ValueError, match="marked reviewed"):
-        store_report_lines(session, "20020814000872", [_row()])
-    # 거부됐으니 report_lines 자체가 비어 있어야 한다(delete도 실행 안 됨).
-    remaining = session.query(ReportLine).filter_by(rcept_no="20020814000872").all()
-    assert len(remaining) == 0
+    n = store_report_lines(session, "20020814000872", [_row()])
+    assert n == 1
 
 
-def test_overwrite_reviewed_flag_allows_replacement(session):
+def test_overwrite_reviewed_flag_is_accepted_for_compat(session):
     _mark_reviewed(session)
     n = store_report_lines(session, "20020814000872", [_row()], overwrite_reviewed=True)
     assert n == 1
@@ -178,9 +177,8 @@ def test_reviewed_guard_is_scoped_to_this_rcept_only(session):
     assert n == 1
 
 
-def test_manual_and_reviewed_guards_are_independent(session):
-    # manual 가드만 풀고 reviewed 가드는 그대로 두면 여전히 거부돼야 한다.
+def test_manual_guard_still_applies_to_pass_marked_rcept(session):
     _insert_manual_row(session)
     _mark_reviewed(session)
-    with pytest.raises(ValueError, match="marked reviewed"):
-        store_report_lines(session, "20020814000872", [_row()], overwrite_manual=True)
+    with pytest.raises(ValueError, match="manually-reviewed"):
+        store_report_lines(session, "20020814000872", [_row()])

@@ -4,7 +4,7 @@ PostgreSQL 연결 및 세션 관리
 - get_session() context manager로 트랜잭션 관리
 """
 from contextlib import contextmanager
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker, Session
 
 from collector.config import DATABASE_URL
@@ -21,6 +21,28 @@ engine = create_engine(
 )
 
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+
+
+@event.listens_for(engine, "connect")
+def _set_verification_identity(dbapi_conn, _record) -> None:
+    """Tell Postgres who is writing, once per new connection (verification campaign).
+
+    The report_lines load hook in fin2/verification/schema.sql stamps every content change
+    with `verification.actor` (worktree) and `verification.parser_commit` (git HEAD). Doing
+    it here covers every writer - daily pipeline, reload and backfill scripts alike - without
+    wiring each call site. Committed immediately: a session-level SET inside a transaction
+    that later rolls back would be undone.
+    """
+    if not DATABASE_URL.startswith("postgresql"):
+        return
+    from fin2.verification.session_info import connect_settings
+    cur = dbapi_conn.cursor()
+    try:
+        for key, value in connect_settings().items():
+            cur.execute("SELECT set_config(%s, %s, false)", (f"verification.{key}", value))
+        dbapi_conn.commit()
+    finally:
+        cur.close()
 
 
 def init_db() -> None:
@@ -65,6 +87,11 @@ def init_db() -> None:
     _run_migrations()
 
 
+def _apply_verification_schema(engine_) -> None:
+    from fin2.verification.schema import apply_schema
+    apply_schema(engine_)
+
+
 def _run_migrations() -> None:
     """
     Alembic 없이 컬럼 추가 등 경량 마이그레이션 처리.
@@ -77,7 +104,7 @@ def _run_migrations() -> None:
     """
     from loguru import logger
 
-    migrations: list[tuple[str, str]] = [
+    migrations: list[tuple[str, object]] = [
         ("2025_05_corp_last_filing_sync",
          # 2025-05: last_filing_sync 컬럼 추가 (sync-filings resume 기능)
          "ALTER TABLE corporations ADD COLUMN IF NOT EXISTS last_filing_sync TIMESTAMP"),
@@ -1482,6 +1509,13 @@ def _run_migrations() -> None:
         ("2026_09_21_l2rq_status_owner_idx",
          "CREATE INDEX IF NOT EXISTS ix_l2rq_status_owner "
          "ON layer2_review_queue (status, owner)"),
+
+        ("2026_09_24_verification_schema",
+         # 2026-09-24: verification 캠페인 상태를 DB 에 둔다(스키마 verification, 계정
+         # tjf_verify/tjf_fix, report_lines 적재 스탬프 트리거). SQL 이 커서 raw 실행이
+         # 필요해 callable 로 둔다. 설계: docs/plans/verification_schema_two_worktree_
+         # design_2026-09-24.md. 개발 중 SQL 을 고치면 `scripts/vq.py admin apply-schema`.
+         _apply_verification_schema),
     ]
 
     with engine.begin() as conn:
@@ -1499,6 +1533,12 @@ def _run_migrations() -> None:
         return
 
     for mid, sql in pending:
+        if callable(sql):
+            sql(engine)
+            with engine.begin() as conn:
+                conn.execute(text("INSERT INTO schema_migrations (id) VALUES (:id)"),
+                             {"id": mid})
+            continue
         with engine.begin() as conn:
             conn.execute(text(sql))
             conn.execute(text("INSERT INTO schema_migrations (id) VALUES (:id)"), {"id": mid})

@@ -7371,6 +7371,11 @@ allow_duplicate_subtype=True)`를 호출한다(R125, 2026-09-15 — 보험/증�
 ## R139. `store_report_lines()` — 원문대조 완료(`layer2_review_queue.status='pass'`)
 행도 `unit_source='manual'`과 같은 방식으로 재적재 보호 (2026-09-18)
 
+> ★**2026-09-24 폐지·대체(사용자 결정)** — 아래 하드 차단은 **R167** 로 대체됐다.
+> pass 판정은 이제 `verification` 스키마가 들고, 재적재 자체는 허용하되 **내용이 실제로 바뀐
+> 경우에만** 그 필링을 pending 으로 되돌려 재검증한다. `overwrite_reviewed` 인자는 호환용으로
+> 받기만 한다. 이 절은 이력으로 남긴다.
+
 **배경**: 2015+ 전체를 대상으로 "화면에서 원문대조 → DB의 BS/IS/CF/SCE
 값과 비교"하는 캠페인을 자동화하는 설계 중, 사용자가 요구사항을 명확히
 했다 — "눈으로 확인된 것과 같은 효과가 있어야 하고, 확인된 것은
@@ -9634,6 +9639,41 @@ XML 구조를 직접 센다**(현재 코드가 이미 반영된 필링도 "해�
 회귀 테스트 9건, 변이 검사로 비침묵 확인(R166 이전 코드로 되돌리면 4건 실패).
 `pytest fin2/tests/` — 1,126 passed(2026-09-23 재확인, R159/R162-manual 추가분 포함).
 
+## R167. 검증 ↔ 재적재 규칙 — 적재 스탬프·lease·내용버전 (2026-09-24, R139 대체)
+
+**배경**: 몇 달짜리 원문대조 캠페인의 상태를 DB(`verification` 스키마)에 두면서, 검증 중이거나
+이미 검증된 데이터와 재적재가 섞이는 문제를 **규약이 아니라 DB 가 강제하도록** 정했다.
+실제 사고 두 건이 계기다: 검증 세션이 구코드로 재적재해 백필을 되돌린 일(R164 백필 SCE
+12,192행), 그리고 보지 않은 필링에 pass 가 찍힌 일. 설계:
+`docs/plans/verification_schema_two_worktree_design_2026-09-24.md` §4.
+
+**규칙**
+1. **적재 스탬프는 트리거가 찍는다.** `report_lines` 의 INSERT/UPDATE/DELETE 는 커밋 시점에
+   필링별 **내용 해시**(BS/IS/CF/SCE, scope 별)로 요약된다. 내용이 바뀌었을 때만
+   `verification.filing_loads.load_seq` 가 +1 된다. 이력은 `filing_load_events` 에 남는다
+   (바뀐 scope, git commit, 워크트리, reason). 호출부 배선이 필요 없다 — 데일리·백필·임시
+   스크립트 모두 같은 경로로 기록된다. `collector/db.py` 는 연결마다 `verification.actor`
+   (워크트리)와 `verification.parser_commit`(HEAD, 미커밋 변경이 있으면 `-dirty`)을 세션에 싣는다.
+   해시에서 빼는 것: `id`, `source_ref`, `context_raw`(출처 표기일 뿐 검증 대상 값이 아니다).
+2. **같은 결과로 다시 파싱하면 아무 일도 없다.** 해시가 같으면 판정은 그대로 유지된다.
+3. **검증 중(lease) 필링은 수정 계정이 바꿀 수 없다.** 트리거가 커밋을 거부한다(SQLSTATE `55P03`).
+   `vq.py batch reload` 는 그 건을 `deferred` 로 두고 다음에 다시 시도한다. 관리자 계정(데일리
+   파이프라인)은 막지 않는다 — 대신 규칙 4 가 판정을 무효화한다.
+4. **판정은 적재 버전에 묶인다.** `pass`/`issue add` 는 점유 시점의 `load_seq` 와 현재 값이
+   다르면 거부된다. passed 필링의 내용이 바뀌면 그 필링은 pending 으로 돌아가고, 슬롯은 다시
+   큐에 들어간다. `vq.py show` 는 판정 당시 해시와 비교해 **바뀐 scope 만** 알려준다.
+5. **`fixed` 는 데이터가 바뀐 재적재를 요구한다**(이슈 트리거). 커밋만으로는 fixed 가 되지 않는다.
+6. `unit_source='manual'` 보호(2026-09-08)는 그대로 유지된다(별개 규칙).
+
+**범위 밖**: `note_lines`·`report_tables` 는 스탬프하지 않는다. 캠페인이 대조하는 것은 본문 재무제표이고,
+`note_lines`(2억 행)에 트리거를 거는 비용을 피하기 위해서다.
+
+**근거 코드**: `fin2/verification/schema.sql`(trg_finalize_load, trg_issue_before),
+`fin2/extract/report_lines.py::store_report_lines`(R139 제거), `collector/db.py`
+(`_set_verification_identity`). 테스트: `fin2/tests/test_verification_schema.py`,
+`fin2/tests/test_verification_ops.py`. 실측: pending 필링 1건 연속 2회 재적재 → load_seq 1 유지
+(해시 안정), 해시 계산 ~40ms/필링(SCE 900행 규모).
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |
@@ -9698,7 +9738,8 @@ XML 구조를 직접 센다**(현재 코드가 이미 반영된 필링도 "해�
 | R134/R135 | 커밋 `d03e177`(2026-09-17, 이 문서엔 2026-09-18 뒤늦게 등재) · `parser/xml/table_extractor.py::_header_rule_name()` · `fin2/extract/report_lines.py::_grid_body_rows()` · `fin2/tests/test_header_rule_name_r134_sce.py`·`fin2/tests/test_grid_body_rows_r135_multicell_label.py` |
 | R136/R137 | 커밋 `3fb4d01`(2026-09-18) · `fin2/extract/pdf.py`·`fin2/extract/xbrl.py`·`collector/pdf_lines_sync.py` · `fin2/tests/test_pdf.py`·`fin2/tests/test_pdf_lines_sync.py` |
 | R138 | 2026-09-18(사용자 지시 "8개사부터 시작"→표본조사 중 발견) · `scripts/scan_header_fallback_2015plus_2026-09-14.py` · `docs/plans/report_lines_legacy_fallback_hardening_design_2026-09-17.md` §7 |
-| R139 | 사용자 지시 2026-09-18(원문대조 캠페인 자동화 설계 중) · `fin2/extract/report_lines.py::store_report_lines()` · `fin2/tests/test_store_report_lines_manual_guard.py` |
+| R139 (2026-09-24 폐지→R167) | 사용자 지시 2026-09-18(원문대조 캠페인 자동화 설계 중) · `fin2/extract/report_lines.py::store_report_lines()` · `fin2/tests/test_store_report_lines_manual_guard.py` |
+| R167 | 사용자 결정 2026-09-24(verification 캠페인) · `fin2/verification/schema.sql` · `collector/db.py::_set_verification_identity` · `fin2/tests/test_verification_*.py` |
 | R140 | 사용자 지시 2026-09-18(SCE 포함 + 단계(B) 지정) · `fin2/extract/review_csv.py`·`fin2/audit/layer2_selfcheck.py`·`scripts/layer2_review.py` · `fin2/tests/test_review_csv.py` · `docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md` |
 | R141 | 사용자 지시 2026-09-19("확인시작해" — 계층2 원문대조 캠페인 fail 10건 근본원인 조사) · `fin2/extract/statement_titles.py::classify_statement_in_body_section()` |
 | R142 | 위와 동일 조사(2026-09-19) · `fin2/extract/statement_titles.py::is_substatement_marker()` · `fin2/extract/text.py::_detect_body_statement_tables()`(`last_stmt`) · `fin2/tests/test_r142_substatement_marker.py` |

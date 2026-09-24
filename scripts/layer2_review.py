@@ -997,6 +997,16 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+# ★2026-09-24 동결 — 캠페인 상태는 verification 스키마(`scripts/vq.py`)로 이관됐다.
+#   큐 판정(pass 1,913 · skip 568)은 `vq.py admin import-queue` 로 옮겼고, 이 CLI 로 계속
+#   판정·재적재하면 두 곳의 상태가 갈라진다. 감사용 `status` 만 남긴다.
+#   설계: docs/plans/verification_schema_two_worktree_design_2026-09-24.md §6.
+_FROZEN_ALLOWED = {"status"}
+
 if __name__ == "__main__":
     args = build_parser().parse_args()
+    if args.func.__name__.removeprefix("cmd_").replace("_", "-") not in _FROZEN_ALLOWED \
+            and not os.environ.get("L2_REVIEW_LEGACY"):
+        sys.exit("layer2_review.py 는 동결됐다(2026-09-24) — `python scripts/vq.py` 를 쓸 것 "
+                 "(docs/verification/WORKFLOW.md). 감사용 조회는 `status` 만 가능.")
     args.func(args)

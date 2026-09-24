@@ -54,3 +54,6 @@ docs/qa/row_coverage_census.jsonl
 docs/qa/dual_column_scan.jsonl
 docs/qa/r154_backfill.jsonl
 docs/qa/decimal_cell_scan.jsonl
+
+# --- Per-worktree Claude role file (verification campaign, 2026-09-24) ---
+CLAUDE.local.md

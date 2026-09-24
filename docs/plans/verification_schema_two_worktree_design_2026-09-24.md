@@ -519,3 +519,33 @@ claude
 8. **아침 보고**: 08:00 다이제스트가 git log 외에 `vq.py status --digest`(전날 슬롯 수, 신규 이슈, error_type 분포, 디스크 여유)도 보낸다.
 9. **범위 확장(2015 이전)**: `vq.py init --era 2011-14`로 행만 추가한다. 스키마는 그대로이고, 순서는 era → 시총순이다.
 
+
+---
+
+## 10. 구현 메모 (2026-09-24, 설계 대비 달라진 점)
+
+- **적재 스탬프를 호출부 배선 대신 DB 트리거로 구현했다.** `report_lines` 문장 트리거가 필링을 모으고,
+  커밋 시점의 지연 트리거가 내용 해시를 계산한다. 이렇게 하면 데일리·백필·임시 스크립트 모두 빠짐없이
+  기록되고, `collect_new.py` 두 call site 를 배선할 필요가 없다. 대상은 `report_lines` 만이다
+  (`note_lines`·`report_tables` 는 대조 대상이 아니고, 2억 행 테이블에 트리거를 거는 비용을 피했다).
+  규칙: `docs/PARSING_RULES.md` R167.
+- **load_seq 는 "적재 횟수"가 아니라 "내용 버전"이다.** 해시가 같으면 오르지 않으므로, 같은 결과로
+  재파싱해도 판정이 무효화되지 않는다. passed 필링은 내용이 바뀐 경우에만 pending 으로 돌아간다.
+  재대조는 바뀐 scope 만 하면 된다(`show` 가 판정 당시 scope 해시와 비교해 알려준다).
+- **lease 가드는 수정 계정(tjf_fix)에만 건다.** 관리자(데일리)는 막지 않는다. 그 대신 버전 검사가
+  `pass`/`issue add` 를 거부한다 — 데일리 배치 전체가 실패하는 것을 피하기 위해서다.
+- 슬롯 상태에 **`blocked`** 를 추가했다(러너 3회 실패).
+- 이슈 이관: 마크다운 #1~#41 은 **현재 필링 상태로만** 상태를 정한다.
+  - 필링이 passed/skipped → closed
+  - 필링이 pending → `fixed`(`legacy-unverified`). 러너가 원문과 재대조하도록 가장 먼저 배정된다.
+- main 루트에 있던 미추적 이슈로그는 camp_run 문서의 구버전이 아니라 **이름만 같은 별개 문서**(셀프체크 시기 이슈 1~26)였다.
+  그래서 삭제하지 않고 `docs/qa/layer2_review_selfcheck_issues_main_2026-09-20.md` 로 보존했다.
+- 파일
+  - 스키마: `fin2/verification/schema.sql`
+  - 로직: `fin2/verification/{ops,decisions,runner,session_info,schema}.py`
+  - CLI: `scripts/vq.py`
+  - 러너: `scripts/verify_runner.sh`
+  - 봇: `scripts/decision_bot.py`
+  - 백업: `scripts/vq_backup.sh`
+  - 이관: `scripts/vq_import_legacy_issues.py`
+  - 문서: `docs/verification/{WORKFLOW,verify_prompt}.md`

@@ -23,6 +23,12 @@
        DB 가 원문과 다른 열/부호로 적재돼 산수가 깨졌으면 그 증상의 error_type 으로 등록한다.
      - 기계의 오판(원문과 DB 가 실제로 같음)이면 이슈 없이 `pass` 하고, `--note` 에 `기계오탐: <발견 종류>·<원인 한 줄>` 을 남긴다.
        이 노트는 기계 대조 규칙 개선에 쓰인다.
+     - **발견이 많을 때(필링당 10건 이상)**: 셀 사실형 발견(`value`·`missing_row`·`zero_row`·`uncovered_cell`·`extra_row`·`sign_omitted`)은
+       종류마다 대표 3건만 웹뷰로 확인한다. 확인한 표본이 모두 기계와 같으면, 그 종류 전체를 한 번에 등록한다:
+       `vq.py machine issues-json --rcept <R> --kinds <확인한 종류들> --out <임시 디렉터리>/<R>_issues.json` →
+       `vq.py issue add --rcept <R> --json-file <그 파일>`. 표본 중 하나라도 기계가 틀렸으면 그 종류는 하나씩 확인한다.
+       `sce_identity`·`bs_identity`·`unmatched_table`·`no_table` 은 판단이 필요하므로 직접 보고 등록한다.
+     - 이슈를 명령 인자로 하나씩 등록하지 않는다(턴 낭비). 언제나 JSON 파일 한 번으로 등록한다.
    - `clean 이지만 audit`(1% 표본 재확인), `no_source`/`no_structure`/`error` → 아래 방식으로 **적재 scope 전체**를 대조한다.
      audit 슬롯에서 불일치를 찾으면 이슈 evidence 에 `기계 clean 판정 누락` 을 적는다.
    - `기계대조: 없음` 또는 `stale`(재적재 이후) 필링은 **대조하지 않고 그대로 둔다**. 슬롯이 pending 으로 돌아가면 기계가 먼저 대조하고,

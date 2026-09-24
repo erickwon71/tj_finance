@@ -200,3 +200,15 @@ def test_income_breakdown_tables_in_statement_section_are_not_unmatched(tmp_path
                                      ["당기순이익", "7", "7"], head=["과목", "당기", "전기"]))
     tables = mc.load_statement_tables(_xml(tmp_path, body))
     assert mc.compare([], tables).findings == []
+
+
+def test_findings_to_issues_are_unique_cells():
+    from fin2.verification import machine_pass as mp
+    f = [{"kind": "missing_row", "basis": "separate", "statement": "SCE", "label": "배당", "cells": [0.0, -7.0]},
+         {"kind": "missing_row", "basis": "separate", "statement": "SCE", "label": "배당", "cells": [-9.0]},
+         {"kind": "value", "basis": "separate", "statement": "BS", "label": "현금", "db": 9, "src": 5.0, "src_col": 0,
+          "header": "당기", "found_at": [1], "flipped_at": [], "scale": 1},
+         {"kind": "sce_identity", "basis": "separate", "statement": "SCE"}]
+    items = mp.findings_to_issues(f)
+    assert [i["account_label"] for i in items] == ["배당", "배당 (#2)", "현금"]
+    assert items[0]["source_value_raw"] == "(7)" and items[2]["error_type"] == "period_misassign"

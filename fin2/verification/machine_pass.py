@@ -115,6 +115,74 @@ def sign_issues(res: mc.Result) -> list[dict]:
     return out
 
 
+# Finding kinds that are plain cell facts read off the source - convertible to issues once the
+# reviewer confirmed a sample in the web view. Identity/table findings need judgement.
+CELL_KINDS = ("value", "missing_row", "zero_row", "uncovered_cell", "extra_row", "sign_omitted")
+
+
+def _raw(v) -> str:
+    """Source-style cell text: 1,234 / (1,234) / '-'."""
+    if not isinstance(v, (int, float)) or v == 0:
+        return "-" if v in (0, None) else str(v)
+    return f"{v:,.0f}" if v >= 0 else f"({-v:,.0f})"
+
+
+def findings_to_issues(findings: list[dict], kinds=CELL_KINDS) -> list[dict]:
+    """Issue items (vq.py issue add --json-file) for the cell-fact findings of one filing."""
+    out, seen = [], set()
+    res = mc.Result("mismatch", mc.Counter(), [f for f in findings if f["kind"] == "sign_omitted"])
+    if "sign_omitted" in kinds:
+        out += sign_issues(res)
+        seen |= {(i["basis"], i["statement"], i["account_label"], i["column_label"]) for i in out}
+    for f in findings:
+        kind = f["kind"]
+        if kind not in kinds or kind == "sign_omitted":
+            continue
+        s = f.get("scale") or 1
+        item = {"basis": f["basis"], "statement": f["statement"], "account_label": (f.get("label") or "")[:300],
+                "column_label": None, "source_unit": _UNIT.get(s, "원")}
+        if kind == "value":
+            src = f.get("src")
+            moved = f.get("found_at") or []
+            if f.get("flipped_at") and f["src_col"] in f["flipped_at"]:
+                et = "sign_flip"
+            elif moved:
+                et = "column_misassign" if f["statement"] == "SCE" else "period_misassign"
+            else:
+                et = "value_mismatch"
+            item.update(column_label=(f.get("header") or None), db_value=f.get("db"),
+                        source_value=int(round(src * s)) if isinstance(src, (int, float)) else None,
+                        source_value_raw=_raw(src), error_type=et,
+                        evidence=f"[machine {mc.TOOL_VERSION}] DB {f.get('db')} ≠ 원문 기대열({f.get('header')}) "
+                                 f"{src}; 같은 값이 있는 열 {moved}, 부호만 다른 열 {f.get('flipped_at')}")
+        elif kind in ("missing_row", "zero_row"):
+            cells = f.get("cells") or []
+            nums = [c for c in cells if isinstance(c, (int, float))]
+            # BS/IS/CF: the current-period cell; SCE: the first component that moved
+            cur = (next((c for c in nums if c), 0.0) if f["statement"] == "SCE"
+                   else (nums[0] if nums else None))
+            item.update(source_value=int(round(cur * s)) if cur is not None else 0,
+                        source_value_raw=_raw(cur), error_type="missing_row",
+                        evidence=f"[machine {mc.TOOL_VERSION}] 원문 행이 DB 에 없음 (원문 셀 {cells[:6]})"
+                                 + (" — 전열 '-'" if kind == "zero_row" else ""))
+        elif kind == "uncovered_cell":
+            src = f.get("src")
+            item.update(column_label=f.get("header"), source_value=int(round(src * s)) if src else None,
+                        source_value_raw=_raw(src), error_type="missing_row",
+                        evidence=f"[machine {mc.TOOL_VERSION}] 원문 SCE 셀({f.get('header')}={src})이 DB 에 없음")
+        elif kind == "extra_row":
+            item.update(error_type="extra_row", evidence=f"[machine {mc.TOOL_VERSION}] DB 행이 원문 표에 없음")
+        key = (item["basis"], item["statement"], item["account_label"], item["column_label"])
+        n = 2
+        while key in seen:  # the same label recurs across year blocks
+            item["account_label"] = f"{(f.get('label') or '')[:280]} (#{n})"
+            key = (item["basis"], item["statement"], item["account_label"], item["column_label"])
+            n += 1
+        seen.add(key)
+        out.append({k: v for k, v in item.items() if v is not None})
+    return out
+
+
 def verify_slot(slot: Slot) -> dict:
     """Machine-verify the pending filings of an already claimed slot, then release it."""
     out = {"slot": str(slot), "clean": 0, "mismatch": 0, "auto_issue": 0, "other": 0, "skipped": 0,

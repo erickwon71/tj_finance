@@ -402,7 +402,9 @@ def build_parser() -> argparse.ArgumentParser:
     x.set_defaults(fn=cmd_decision)
 
     x = sp.add_parser("machine", help="기계 대조: 슬롯을 점유해 원문 XML 과 자동 대조(모델 없음)")
-    x.add_argument("action", choices=["run", "try", "gate"])
+    x.add_argument("action", choices=["run", "try", "gate", "issues-json"])
+    x.add_argument("--kinds", help="issues-json: 쉼표구분 발견 종류(기본: 셀 사실 전부)")
+    x.add_argument("--out", help="issues-json: 저장할 JSON 경로")
     x.add_argument("--limit", type=int); x.add_argument("--rcept", nargs="*")
     x.add_argument("--value", choices=["on", "off"])
     x.set_defaults(fn=cmd_machine)
@@ -436,6 +438,24 @@ def cmd_machine(a):
                 print(r, _j(res.summary()) if res else "원문 XML 없음")
                 for x in (res.findings if res else [])[:40]:
                     print("   ", json.dumps(x, ensure_ascii=False, default=str)[:300])
+    elif a.action == "issues-json":
+        # machine findings of one filing -> issue items for `vq.py issue add --json-file`
+        from collector.db import engine
+        from fin2.verification import machine_pass
+        if not a.rcept or len(a.rcept) != 1 or not a.out:
+            raise VqError("issues-json 은 --rcept <접수번호 1개> --out <파일> 이 필요하다")
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT findings FROM verification.machine_checks WHERE rcept_no = :r"),
+                               {"r": a.rcept[0]}).fetchone()
+        if row is None:
+            raise VqError(f"{a.rcept[0]} 의 기계 판정이 없다")
+        kinds = tuple(k.strip() for k in a.kinds.split(",")) if a.kinds else machine_pass.CELL_KINDS
+        items = machine_pass.findings_to_issues(row[0], kinds)
+        Path(a.out).write_text(json.dumps(items, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+        by = {}
+        for i in items:
+            by[i["error_type"]] = by.get(i["error_type"], 0) + 1
+        print(f"이슈 {len(items)}건 → {a.out} {by}  (등록: vq.py issue add --rcept {a.rcept[0]} --json-file {a.out})")
     elif a.action == "gate":
         _require_admin_or_verify()
         from collector.db import engine

@@ -63,6 +63,9 @@ def cmd_status(a):
           f"{st['top200_passed']}/{st['top200_total']}")
     print(f"  점유 중 : {[(r['corp_code'], r['fiscal_year'], r['fiscal_period'], r['claimed_by']) for r in st['in_progress']]}")
     print(f"  러너 24h: {st['runs_24h']} · 대기 판단 {st['pending_decisions']}건")
+    m = st["machine"]
+    print(f"  기계대조: 게이트={m['gate']} · 현재판정 {m['current']} · audit {m['audit']} · "
+          f"stale {m['stale']} · 미대조 pending 필링 {m['unchecked_pending_filings']}")
     warn = " ★경고: 50GB 미만" if (st["disk_free_gb"] or 999) < 50 else ""
     print(f"  디스크 : DB {st['db_size']} · verification {st['verification_schema_size']} · "
           f"여유 {st['disk_free_gb']} GB{warn}")
@@ -89,12 +92,38 @@ def _print_detail(d: dict, csvs: dict[str, str] | None) -> None:
                   f"{f['changed_since_verified'] or '없음'} — 바뀐 scope 만 원문 재대조")
         for other, same in f["identical_to_earlier"].items():
             print(f"      = {other} 와 byte-identical: {','.join(same)}")
+        _print_machine(f)
     if d["open_issues"]:
         print("\n  미해결 이슈:")
         for i in d["open_issues"]:
             print(f"    #{i['issue_id']} [{i['status']}] {i['rcept_no']} {i['basis']}/{i['statement']} "
                   f"{i['account_label']}{'/' + i['column_label'] if i['column_label'] else ''} "
                   f"DB={i['db_value']} 원문={i['source_value_raw']} ({i['error_type']})")
+
+
+def _print_machine(f: dict) -> None:
+    """Machine comparison result the model reviewer works from (design: machine_compare)."""
+    v = f.get("machine_verdict")
+    if v is None:
+        print("      기계대조: 없음 → 전체 대조")
+        return
+    stale = "" if f.get("machine_current") else " ★재적재 이후 판정(stale) → 전체 대조"
+    if f.get("machine_audit"):
+        print(f"      기계대조: clean 이지만 1% 표본 재확인 대상(audit) → ★적재 scope 전체를 웹뷰로 대조{stale}")
+        return
+    if v in ("no_source", "no_structure", "error"):
+        print(f"      기계대조: {v} → 기계가 판단 못함, 적재 scope 전체를 웹뷰로 대조{stale}")
+        return
+    print(f"      기계대조: {v} {f.get('machine_counts')}{stale}")
+    if v != "mismatch":
+        return
+    print("      ★아래 발견 항목만 웹뷰에서 확인한다(나머지 셀은 기계가 원문과 일치 확인):")
+    for i, x in enumerate(f.get("machine_findings") or [], 1):
+        x = dict(x)
+        kind = x.pop("kind")
+        where = "/".join(str(x.pop(k)) for k in ("basis", "statement") if k in x)
+        x.pop("table_seq", None)
+        print(f"        {i:>3}. [{kind}] {where} {json.dumps(x, ensure_ascii=False, default=str)[:400]}")
 
 
 def _show(slot: Slot, a) -> None:
@@ -372,6 +401,11 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--text"); x.add_argument("--timeout", type=int, default=540)
     x.set_defaults(fn=cmd_decision)
 
+    x = sp.add_parser("machine", help="기계 대조: 슬롯을 점유해 원문 XML 과 자동 대조(모델 없음)")
+    x.add_argument("action", choices=["run", "try", "gate"])
+    x.add_argument("--limit", type=int); x.add_argument("--rcept", nargs="*")
+    x.add_argument("--value", choices=["on", "off"])
+    x.set_defaults(fn=cmd_machine)
     x = sp.add_parser("runner"); x.add_argument("action", choices=["start", "finish", "budget"])
     x.add_argument("--slot"); x.add_argument("--model"); x.add_argument("--run-id", type=int)
     x.add_argument("--log"); x.add_argument("--exit-code", type=int)
@@ -384,6 +418,39 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--pct", type=float, default=2.0)
     x.set_defaults(fn=cmd_admin)
     return p
+
+
+def cmd_machine(a):
+    if a.action == "run":
+        from fin2.verification import machine_pass
+        print(_j(machine_pass.run(limit=a.limit)))
+    elif a.action == "try":
+        # read-only: compare given rcepts and print findings, nothing is stored
+        from collector.db import engine
+        from fin2.verification import machine_compare as mc
+        from fin2.verification import machine_pass
+        with engine.connect() as conn:
+            for r in a.rcept or []:
+                path = machine_pass._source_path(conn, r)
+                res = mc.compare_filing(conn, r, path) if path else None
+                print(r, _j(res.summary()) if res else "원문 XML 없음")
+                for x in (res.findings if res else [])[:40]:
+                    print("   ", json.dumps(x, ensure_ascii=False, default=str)[:300])
+    elif a.action == "gate":
+        _require_admin_or_verify()
+        from collector.db import engine
+        with engine.begin() as conn:
+            if a.value:
+                conn.execute(text("""
+                    INSERT INTO verification.kv (key, value, updated_at) VALUES ('machine.gate', :v, now())
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()"""),
+                             {"v": a.value})
+            print(f"machine.gate = {ops.machine_gate_on(conn) and 'on' or 'off'}")
+
+
+def _require_admin_or_verify():
+    if ops.role() not in ("admin", "verify"):
+        raise VqError("machine gate 는 admin/verify 역할만 바꿀 수 있다")
 
 
 def main(argv=None) -> int:

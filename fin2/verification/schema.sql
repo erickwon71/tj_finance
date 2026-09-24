@@ -253,6 +253,27 @@ CREATE TABLE IF NOT EXISTS verification.progress_events (
 CREATE INDEX IF NOT EXISTS ix_vpe_slot
     ON verification.progress_events (corp_code, fiscal_year, fiscal_period, event_id);
 
+-- ───────────────────────────── machine comparison ─────────────────────────────
+-- One row per rcept: the latest machine comparison (fin2/verification/machine_compare.py)
+-- of its report_lines against the source XML. Valid only while load_seq matches
+-- filing_loads.load_seq - a reload makes it stale and the machine pass re-checks it.
+-- clean   -> the machine passed the filing (progress_filings.verified_by = '<wt>:machine')
+-- others  -> the model reviewer looks at `findings` in the web view (vq.py show lists them)
+-- audit   -> clean, but the slot was drawn for the 1% web-view re-check (full comparison)
+CREATE TABLE IF NOT EXISTS verification.machine_checks (
+    rcept_no     varchar(14) PRIMARY KEY REFERENCES public.filings(rcept_no),
+    load_seq     integer     NOT NULL,
+    tool_version text        NOT NULL,
+    verdict      varchar(12) NOT NULL
+                 CHECK (verdict IN ('clean', 'mismatch', 'no_source', 'no_structure', 'error')),
+    audit        boolean     NOT NULL DEFAULT false,
+    counts       jsonb       NOT NULL DEFAULT '{}'::jsonb,
+    findings     jsonb       NOT NULL DEFAULT '[]'::jsonb,
+    checked_at   timestamptz NOT NULL DEFAULT now(),
+    checked_by   text        NOT NULL DEFAULT verification.actor()
+);
+CREATE INDEX IF NOT EXISTS ix_vmc_verdict ON verification.machine_checks (verdict);
+
 -- ───────────────────────────── runner + decisions ─────────────────────────────
 CREATE TABLE IF NOT EXISTS verification.runner_runs (
     run_id        bigserial PRIMARY KEY,
@@ -760,6 +781,7 @@ GRANT UPDATE ON verification.progress, verification.progress_filings TO tjf_veri
 GRANT INSERT, UPDATE ON verification.issues TO tjf_verify;
 GRANT INSERT, UPDATE ON verification.runner_runs TO tjf_verify;
 GRANT INSERT, UPDATE ON verification.kv TO tjf_verify;
+GRANT INSERT, UPDATE ON verification.machine_checks TO tjf_verify;
 
 -- fix: fixer transitions, batches, decisions.
 GRANT UPDATE ON verification.issues TO tjf_fix;

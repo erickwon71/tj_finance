@@ -12,7 +12,20 @@
 2. 이 슬롯에 **fixed 이슈**가 있으면 먼저 재확인한다: `vq.py recheck <슬롯>`.
    원문 셀과 현재 DB 값이 같으면 `vq.py close <id> --evidence "..."`, 다르면 `vq.py reopen <id> --evidence "..."`.
    근거에는 원문 셀 문자열과 DB 값을 그대로 적는다.
-3. `pending` 인 필링마다 DART 웹뷰(Chrome)에서 재무제표를 열어 DB 값(CSV)과 대조한다.
+3. `pending` 인 필링마다 `show` 의 **기계대조** 줄을 먼저 본다(설계: `docs/plans/verification_machine_compare_design_2026-09-24.md`).
+   기계가 원문 XML 재무제표 섹션과 DB 를 모든 셀·행 단위로 먼저 대조해 두었다.
+   - `mismatch` + 발견 목록 → **발견 항목만** 웹뷰에서 확인한다. 나머지 셀은 기계가 원문과 일치를 확인했으니 다시 대조하지 않는다.
+     발견 종류: `value`(DB≠원문 셀) · `missing_row`(당기 금액이 있는 원문 행이 DB 에 없음) · `zero_row`(전열 `-` 행이 DB 에 없음) ·
+     `extra_row` · `uncovered_cell`(SCE 원문 셀이 DB 에 없음) · `unmatched_table`(DB 와 짝 없는 재무제표 섹션 표) · `no_table` ·
+     `sce_identity`(자본변동표 열별 기초+변동=기말 또는 기말→다음 기초 불일치) · `bs_identity`(자산=부채+자본 불일치).
+     - 원문과 DB 가 실제로 다르면 이슈로 등록한다(아래 4).
+     - `sce_identity`/`bs_identity` 는 원문 자체의 산수 불일치일 수 있다. 원문이 틀렸고 DB 가 원문 그대로면 `source_defect`,
+       DB 가 원문과 다른 열/부호로 적재돼 산수가 깨졌으면 그 증상의 error_type 으로 등록한다.
+     - 기계의 오판(원문과 DB 가 실제로 같음)이면 이슈 없이 `pass` 하고, `--note` 에 `기계오탐: <발견 종류>·<원인 한 줄>` 을 남긴다.
+       이 노트는 기계 대조 규칙 개선에 쓰인다.
+   - `clean 이지만 audit`(1% 표본 재확인), `기계대조: 없음`, `no_source`/`no_structure`/`error`, `stale` → 아래 방식으로 **적재 scope 전체**를 대조한다.
+     audit 슬롯에서 불일치를 찾으면 이슈 evidence 에 `기계 clean 판정 누락` 을 적는다.
+   웹뷰 대조 방법(DART 웹뷰(Chrome)에서 재무제표를 열어 DB 값(CSV)과 대조):
    - Chrome 도구는 지연 로딩이다. 먼저 ToolSearch 로 한 번에 불러온다: `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__tabs_close_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__javascript_tool,mcp__claude-in-chrome__get_page_text`.
    - 시작할 때 `tabs_context_mcp`(createIfEmpty: true)로 탭 그룹을 만들고, `tabs_create_mcp` 로 새 탭을 **하나만** 연다. 필링이 여러 개면 같은 탭에서 `navigate` 로 옮겨 다닌다.
    - **표 추출은 아래 JS 로 한다**(2026-09-24 실측 검증). 본문은 `#ifrm` iframe 안에 있지만 같은 출처라 `contentDocument` 로 읽힌다.
@@ -31,8 +44,8 @@
    - 스크린샷·스크롤·확대는 쓰지 않는다. TSV 로 판단이 안 되는 셀(병합 셀 정렬이 애매한 경우 등)만 예외로 한다. 여러 동작은 `browser_batch` 로 묶는다.
    - Chrome 도구를 쓸 수 없으면 대조하지 말고 `vq.py done` 으로 끝낸다. 로컬 XML 등 다른 수단으로 대체하지 않는다.
    - 허용된 명령은 `vq.py` 와 Read/Grep/Glob 뿐이다. 그 밖의 명령은 거부된다.
-   - 대조 범위: 연결/별도 × BS·IS(포괄손익 포함)·CF·SCE 가운데 **적재된 scope 전부, 모든 행과 모든 열**.
-     총계·EPS·마감행만 보는 축약은 금지다.
+   - 전체 대조일 때 범위: 연결/별도 × BS·IS(포괄손익 포함)·CF·SCE 가운데 **적재된 scope 전부, 모든 행과 모든 열**.
+     총계·EPS·마감행만 보는 축약은 금지다. (기계 `mismatch` 필링은 발견 항목만 — 위 3.)
    - "이전 판정 이후 바뀐 scope" 가 표시된 필링은 그 scope만 다시 대조하면 된다. 바뀌지 않은 scope는 이미 검증된 내용과 byte-identical 이다.
    - 정정본에서 "= <rcept> 와 byte-identical" 로 표시된 scope는 원문 재접속 없이 같다고 봐도 된다. 표시되지 않은 scope만 원문과 대조한다.
 4. 불일치 셀 1개 = 이슈 1건이다. JSON 파일(임시 디렉터리)에 모아 한 번에 등록한다:

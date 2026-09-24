@@ -46,8 +46,10 @@ def parser_commit() -> str:
 
 def connect_settings() -> dict[str, str]:
     reason = os.environ.get("VQ_LOAD_REASON") or Path(sys.argv[0] or "python").name
+    # VQ_ACTOR lets a non-model verifier (the machine pass) sign its verdicts separately,
+    # e.g. 'camp_run:machine', so machine and model verdicts stay distinguishable.
     return {
-        "actor": worktree_name(),
+        "actor": os.environ.get("VQ_ACTOR") or worktree_name(),
         "parser_commit": parser_commit(),
         "load_reason": reason[:120],
     }

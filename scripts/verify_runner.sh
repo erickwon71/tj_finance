@@ -170,6 +170,13 @@ main() {
 
     slot=$("${VQ[@]}" claim --json | jq -r '.slot // empty')
     if [ -z "$slot" ]; then
+      # With the machine gate on, model work appears as the machine pass progresses.
+      unchecked=$("${VQ[@]}" status --json | jq -r '.machine.unchecked_pending_filings // 0')
+      if [ "${unchecked:-0}" -gt 0 ]; then
+        log "모델 대상 슬롯 없음 - 기계 대조 진행 대기(미대조 필링 ${unchecked}) 10분"
+        sleep 600
+        continue
+      fi
       log "대기 슬롯 없음 - 종료"
       exit 0
     fi

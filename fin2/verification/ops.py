@@ -298,17 +298,40 @@ def own_slot() -> Slot | None:
     return Slot(*row) if row else None
 
 
-def claim(slot: Slot | None = None, lease_minutes: int = LEASE_MINUTES) -> Slot | None:
+# Model-review gate (kv machine.gate = on): a pending slot goes to the model reviewer only once
+# the machine pass has looked at every pending filing at its current load and left something
+# for a human eye - a finding, no usable source, or the 1% audit draw. Slots with fixed issues
+# (re-check) are always eligible. Design: docs/plans/verification_machine_compare_design_2026-09-24.md
+MODEL_READY_SQL = """
+    (p.status = 'has_issues' OR NOT EXISTS (
+        SELECT 1 FROM verification.progress_filings pf
+        LEFT JOIN verification.filing_loads fl USING (rcept_no)
+        LEFT JOIN verification.machine_checks mc USING (rcept_no)
+        WHERE pf.corp_code = p.corp_code AND pf.fiscal_year = p.fiscal_year
+          AND pf.fiscal_period = p.fiscal_period AND pf.status = 'pending'
+          AND (mc.rcept_no IS NULL OR mc.load_seq IS DISTINCT FROM fl.load_seq)))"""
+
+
+def machine_gate_on(conn) -> bool:
+    v = conn.execute(text("SELECT value FROM verification.kv WHERE key = 'machine.gate'")).scalar()
+    return (v or "off").strip().lower() == "on"
+
+
+def claim(slot: Slot | None = None, lease_minutes: int = LEASE_MINUTES,
+          where: str | None = None) -> Slot | None:
     """Claim the next slot (or a named one). Priority:
     1. slots with fixed issues waiting for a re-check,
     2. pending slots that were verified before (reload / closed issue → re-compare),
     3. everything else by era → market-cap rank → latest year → latest period.
+    `where` narrows the pick (the machine pass passes its own filter); without it the model
+    gate applies when kv machine.gate = on.
     """
     _require("verify")
     sync_if_stale()
     with _Tx(evidence="claim") as conn:
         _reap_expired(conn)
         if slot is None:
+            extra = where or (MODEL_READY_SQL if machine_gate_on(conn) else "TRUE")
             row = conn.execute(text(f"""
                 SELECT p.corp_code, p.fiscal_year, p.fiscal_period
                 FROM verification.progress p
@@ -317,6 +340,7 @@ def claim(slot: Slot | None = None, lease_minutes: int = LEASE_MINUTES) -> Slot 
                         SELECT 1 FROM verification.issues i
                          WHERE i.corp_code = p.corp_code AND i.fiscal_year = p.fiscal_year
                            AND i.fiscal_period = p.fiscal_period AND i.status = 'fixed'))
+                  AND {extra}
                 ORDER BY
                   (p.status = 'has_issues') DESC,
                   EXISTS (SELECT 1 FROM verification.progress_filings pf
@@ -369,10 +393,15 @@ def slot_detail(slot: Slot) -> dict:
         filings = [dict(r) for r in conn.execute(text("""
             SELECT pf.*, f.report_nm, f.filed_at, f.report_type,
                    fl.load_seq, fl.parser_commit, fl.scope_hashes, fl.n_lines, fl.baseline,
-                   fl.loaded_at
+                   fl.loaded_at,
+                   mc.verdict AS machine_verdict, mc.audit AS machine_audit,
+                   mc.counts AS machine_counts, mc.findings AS machine_findings,
+                   mc.tool_version AS machine_tool,
+                   (mc.load_seq IS NOT DISTINCT FROM fl.load_seq) AS machine_current
             FROM verification.progress_filings pf
             JOIN filings f USING (rcept_no)
             LEFT JOIN verification.filing_loads fl USING (rcept_no)
+            LEFT JOIN verification.machine_checks mc USING (rcept_no)
             WHERE pf.corp_code = :c AND pf.fiscal_year = :y AND pf.fiscal_period = :p
             ORDER BY pf.seq_in_slot, pf.rcept_no"""), slot.params()).mappings()]
         counts = conn.execute(text("""
@@ -864,8 +893,34 @@ def batch_mark_fixed(batch_id: int) -> dict:
 
 
 # ═══════════════════════════════ status ═══════════════════════════════
+def machine_status(conn) -> dict:
+    rows = conn.execute(text("""
+        SELECT mc.verdict, mc.audit, (mc.load_seq IS NOT DISTINCT FROM fl.load_seq) AS cur,
+               count(*) AS n
+        FROM verification.machine_checks mc
+        LEFT JOIN verification.filing_loads fl USING (rcept_no)
+        GROUP BY 1, 2, 3""")).fetchall()
+    out: dict = {"current": {}, "stale": 0, "audit": 0}
+    for verdict, audit, cur, n in rows:
+        if not cur:
+            out["stale"] += n
+            continue
+        out["current"][verdict] = out["current"].get(verdict, 0) + n
+        if audit:
+            out["audit"] += n
+    out["gate"] = "on" if machine_gate_on(conn) else "off"
+    out["unchecked_pending_filings"] = conn.execute(text("""
+        SELECT count(*) FROM verification.progress_filings pf
+        LEFT JOIN verification.filing_loads fl USING (rcept_no)
+        LEFT JOIN verification.machine_checks mc USING (rcept_no)
+        WHERE pf.status = 'pending'
+          AND (mc.rcept_no IS NULL OR mc.load_seq IS DISTINCT FROM fl.load_seq)""")).scalar_one()
+    return out
+
+
 def status() -> dict:
     with engine.connect() as conn:
+        machine = machine_status(conn)
         slots = dict(conn.execute(text(
             "SELECT status, count(*) FROM verification.progress GROUP BY 1")).fetchall())
         filings = dict(conn.execute(text(
@@ -896,7 +951,8 @@ def status() -> dict:
         "/opt/homebrew/var").exists() else None
     return {"slots": slots, "filings": filings, "issues": issues, "corps_done": corps_done,
             "top200_passed": top200[0], "top200_total": top200[1], "in_progress": in_progress,
-            "runs_24h": runs, "pending_decisions": pending_decisions, "db_size": db_size,
+            "runs_24h": runs, "pending_decisions": pending_decisions, "machine": machine,
+            "db_size": db_size,
             "verification_schema_size": schema_size,
             "disk_free_gb": round(free_gb, 1) if free_gb is not None else None,
             "at": datetime.now().isoformat(timespec="minutes")}

@@ -80,6 +80,29 @@ rm ~/.claude/notify/STOP_VERIFY
 - 파일럿 옵션(환경변수): `VQ_MODEL`(기본 sonnet), `VQ_MAX_TURNS`(120), `VQ_RUN_TIMEOUT`(2700초), `VQ_CLAUDE_ARGS`(추가 플래그).
 - 탭 정리: 회차가 끝날 때마다 러너가 **그 슬롯의 접수번호가 URL에 든 Chrome 탭만** AppleScript로 닫는다. `claude -p` 는 세션마다 새 탭 그룹을 만들어 이전 회차 탭을 볼 수 없고, 턴 상한이나 타임아웃으로 끊긴 회차는 탭을 닫지 못하기 때문이다. 직접 연 다른 DART 탭은 건드리지 않는다. 처음 한 번 macOS 가 "터미널이 Chrome 을 제어" 권한을 물으면 허용한다.
 
+## 4-1. 기계 대조 (2026-09-24~, 설계 `docs/plans/verification_machine_compare_design_2026-09-24.md`)
+
+기계가 먼저 모든 pending 필링을 원문 XML 과 대조한다. clean 은 기계가 pass 하고, 나머지는 모델 러너가 발견 항목만 웹뷰로 확인한다.
+clean 슬롯의 1%(`machine.audit_pct`)는 모델이 전체를 다시 대조한다.
+
+실행: tmux 세션 `verify_machine` 로 camp_run 워크트리에서 6개 프로세스를 병렬로 돌린다. 슬롯이 없으면 스스로 끝난다.
+
+```bash
+tmux new-session -d -s verify_machine -c /Users/taejin/Project/tj_finance/.claude/worktrees/camp_run 'for i in 1 2 3 4 5 6; do VQ_ACTOR=camp_run:machine caffeinate -i /Users/taejin/Project/tj_finance/.venv/bin/python scripts/vq.py machine run > logs/verify_runner/machine_$i.log 2>&1 & done; wait; echo 기계 대조 종료; sleep 86400'
+```
+
+진행 확인(`기계대조:` 줄의 미대조 필링 수가 줄어든다):
+
+```bash
+cd /Users/taejin/Project/tj_finance && .venv/bin/python scripts/vq.py status
+```
+
+- 모델 게이트: `vq.py machine gate --value on` 이면 모델 러너는 기계가 끝낸 슬롯만 집는다. off 면 예전처럼 모든 pending 을 집는다.
+- 필링 하나를 저장 없이 시험 대조: `vq.py machine try --rcept 20240320001504`
+- 재적재된 필링은 기계 판정이 stale 이 되어 다음 `machine run` 에서 다시 대조된다. 데일리 신규 필링도 같다.
+  그래서 `machine run` 을 주기적으로 다시 띄워야 한다(끝나면 스스로 종료).
+- 기계 판정은 `verification.machine_checks` 에 남는다. 모델이 기계 오판을 확인하면 pass 노트에 `기계오탐:` 을 적는다. 이것을 모아 규칙을 개선한다.
+
 ## 5. 수정 워크트리 시작 절차
 
 1. 터미널 준비

@@ -9775,6 +9775,77 @@ R155 스캔은 **회사별 가장 오래된 1건**만 봤다(R155 에 적어 둔
 
 **관련**: R155(이 규칙이 뒤집음) · R6 · R125 · R131 · R154(자기증명 패턴의 선례)
 
+---
+
+## R169. 자기모순 단위선언(선언 백만원·천원, 실제 원)을 **타 필링 동일값 대조**로 섹션별 확정해 교정한다 (2026-09-25, R132 일반화)
+
+**발견**: verification 캠페인 missing_row 이슈 318건(fix batch #3). 휴젤 2022FY `20230322000822`
+147건, 알테오젠 2022FY `20230320000985` 96건, LIG디펜스앤에어로스페이스 2018FY `20190401002321`
+74건, 한국타이어앤테크놀로지 2022FY `20230324001066` 1건. 네 필링 모두 재무제표가 "(단위 : 백만원)"
+(한국타이어 IS 는 천원)을 선언했지만 셀은 이미 원 단위다. 예: 휴젤 연결 유동자산 `617,863,083,758`,
+같은 문서 다른 표에는 같은 숫자가 "(단위 : 원)"으로 다시 나온다.
+
+**증상(R132 와 같은 메커니즘)**: 선언 배수 ×10⁶ 적용 후 `_AMOUNT_SANE_MAX`(1경원)를 넘는 총계·
+소계는 거부돼 **행이 통째로 결측**되고, 문턱 아래 세부 행은 **×10⁶ 부풀린 값으로 적재**된다.
+휴젤 연결 BS 는 115행 중 12행만 남았고 그 12행도 값이 틀렸다. R132 는 이것을 수기 예외목록
+(rcept 6건)으로만 고쳤다. 게다가 **SCE 방출기(`_emit_sce_lines`)에는 override 가 닿지 않아**
+R132 6건의 자본변동표도 ×10⁶ 값으로 남아 있었다.
+
+**규모(2015+ 전수, `abs(value_won) ≥ 1e15` 인 declared 행을 가진 필링)**: 111필링 / 637섹션.
+1,000조원 이상 계정은 상장사에 존재하지 않는다(실측 최대 총계 약 5×10¹⁴). 증권사 CF 의 총액
+매매흐름만 예외이고, 아래 판정이 그것을 걸러낸다.
+
+**왜 문서 안에서 판정하지 않나**: 선언 백만원이 불가능하다는 것까지는 문서가 증명한다(1경 초과).
+그러나 원인지 천원인지는 문서만으로 가를 수 없다(R6). 같은 숫자가 "(단위 : 원)" 표에 다시 나오는
+문서 내 증거는 111필링 중 약 절반에만 있었다(실측).
+
+**판정(섹션 = rcept × BS/IS/CF/SCE × 연결/별도 단위)** — `fin2/audit/unit_self_contradiction.py`:
+1. 의심 섹션: 선언 단위 행에 `|value_won| ≥ 1e15` 가 있거나, 선언 단위에서 섹션이 통째로 사라짐.
+2. 그 섹션을 배수 1 로 다시 읽은 원문 금액 A(≥1e7)에 k ∈ {1, 1,000, 1,000,000} 을 곱해,
+   **같은 회사의 다른 필링**에 이미 적재된 값(같은 basis·statement·context_fiscal_year, SCE 는
+   같은 basis 의 SCE·BS)과 **정확히 같은** 금액 수를 센다 = hits(k). 의심 필링 자신들은 증거에서 뺀다.
+   이 필링의 전기 비교열은 앞선 정상 필링의 당기열이므로 원 단위 12자리 금액이 그대로 겹친다.
+3. 확정: hits(k) ≥ 3 이고, 다른 k(선언 배수 포함)는 전부 hits ≤ 1 이면서 hits(k) ≥ 10×그 값.
+   hits ≤ 1 을 허용하는 이유는 둥근 숫자 우연 1건(예: 5,000,000×1,000 = 자본금 5,000,000,000)이
+   정확일치 80건을 거부하지 않게 하려는 것이다.
+4. 2차: 타 필링 증거가 없는 섹션은 **같은 문서에서 이미 k=1 로 확정된 섹션**(같은 basis)의 금액을
+   증거로 같은 규칙을 적용한다. 당기순이익·현금·자본총계가 IS/CF/SCE/BS 에 반복되기 때문이다.
+5. 확정분만 `fin2/extract/data/unit_self_contradiction_overrides.json` 에 `{rcept: {섹션코드: k}}`
+   로 기록한다(`scripts/unit_self_contradiction_scan.py --apply`). 파서는
+   `report_lines._unit_override()` 에서 R132 수기목록 다음으로 이 파일을 보고, BS/IS/CF 와 SCE
+   **두 방출기 모두** 같은 자리에서 적용한다. `unit_source='proved_unit'`(R132 는 `manual_unit`).
+   파일에 없는 섹션은 선언 단위 그대로다(R6).
+
+**측정(2026-09-25 스캔, `docs/qa/r169_unit_self_contradiction_scan_2015plus.jsonl`)**:
+
+| 지표 | 값 |
+|---|---|
+| 의심 필링 / 섹션 | 111 / 637 |
+| 확정 섹션 (전부 k=1, 원) | 600 · **93필링 85개사** (2차 문서내 증거로 확정 11섹션) |
+| 확정 섹션의 행 수 (선언 단위 → 원 단위 추출) | 33,682 → 44,472 |
+| 미확정 | 37섹션 — NH투자증권 18필링 CF 36섹션(선언 백만원이 맞음: hits(10⁶)>0, hits(1)=0) · 제주항공 `20170814001427` IS_C 1섹션(증거 2건뿐) |
+| 기존 수기 확정과의 일치 | R132 6필링 전부, 계층3 R73 2슬롯(유아이디 2020Q1·다원넥스뷰 2024H1) 전부 k=1 로 독립 재확정 |
+
+**함께 바꾼 것**: 계층3 `fin2/layer3/unit_overrides.py` 의 유아이디 2020Q1(3항목)·다원넥스뷰
+2024H1(20항목) ×10⁻⁶ 교정을 삭제했다. 계층2가 원 단위로 적재하므로 남겨두면 이중 교정된다.
+테스트 `test_3s_2023q3_sanemax_reject_cum_map_no_longer_wrong_column` 의 기대값이 "매출액 결측"에서
+"원문 누적값 28,371,524,760 / 18,062,116,780"으로 바뀌었다. 전기 3개월값을 누적으로 둔갑시키지
+않는다는 R74 가드 확인은 그대로 둔다.
+
+**데일리(런북 A3)**: `scripts/collect_new.py::_report_unit_self_contradiction()` 을
+`_run_standardize_batches` 안 `_sync_layer2_lines` 직후에 배선했다. 두 call site 가 모두 이 함수를
+지난다. 데일리는 **탐지·보고만** 하고(`logs/unit_self_contradiction_pending.jsonl` + 경고 로그) 데이터
+파일은 쓰지 않는다. 추적 파일을 main 체크아웃에서 더럽히지 않기 위해서다. 교정은 수정 워크트리에서
+`--apply` → 커밋 → `vq.py batch reload` 로 한다. 선언 백만원이 맞는 섹션(hits(10⁶)>0)은 보고하지 않는다.
+
+**범위 밖(남은 것)**: ① 선언 천원·실제 원인데 금액이 작아 1e15 에 못 미치는 섹션은 트리거가 안 걸린다.
+② 2015 이전은 스캔하지 않았다. ③ XBRL/PDF 경로 필링은 대상이 아니다(XML 원문 전용).
+
+**테스트**: `fin2/tests/test_r169_unit_self_contradiction.py`(휴젤·한국타이어·넷마블 SCE·NH투자증권
+비대상·판정 규칙·데이터파일 형식).
+
+**관련**: R132(수기판의 일반화) · R73(계층3 교정, 2건 이관) · R6 · R74 · R154/R168(자기증명 선례)
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |
@@ -9841,6 +9912,7 @@ R155 스캔은 **회사별 가장 오래된 1건**만 봤다(R155 에 적어 둔
 | R138 | 2026-09-18(사용자 지시 "8개사부터 시작"→표본조사 중 발견) · `scripts/scan_header_fallback_2015plus_2026-09-14.py` · `docs/plans/report_lines_legacy_fallback_hardening_design_2026-09-17.md` §7 |
 | R139 (2026-09-24 폐지→R167) | 사용자 지시 2026-09-18(원문대조 캠페인 자동화 설계 중) · `fin2/extract/report_lines.py::store_report_lines()` · `fin2/tests/test_store_report_lines_manual_guard.py` |
 | R167 | 사용자 결정 2026-09-24(verification 캠페인) · `fin2/verification/schema.sql` · `collector/db.py::_set_verification_identity` · `fin2/tests/test_verification_*.py` |
+| R169 | verification fix batch #3(2026-09-25, 야간 자율) · `fin2/audit/unit_self_contradiction.py` · `scripts/unit_self_contradiction_scan.py` · `fin2/extract/data/unit_self_contradiction_overrides.json` · `fin2/extract/report_lines.py::_unit_override()` · `scripts/collect_new.py::_report_unit_self_contradiction()` · `fin2/tests/test_r169_unit_self_contradiction.py` |
 | R140 | 사용자 지시 2026-09-18(SCE 포함 + 단계(B) 지정) · `fin2/extract/review_csv.py`·`fin2/audit/layer2_selfcheck.py`·`scripts/layer2_review.py` · `fin2/tests/test_review_csv.py` · `docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md` |
 | R141 | 사용자 지시 2026-09-19("확인시작해" — 계층2 원문대조 캠페인 fail 10건 근본원인 조사) · `fin2/extract/statement_titles.py::classify_statement_in_body_section()` |
 | R142 | 위와 동일 조사(2026-09-19) · `fin2/extract/statement_titles.py::is_substatement_marker()` · `fin2/extract/text.py::_detect_body_statement_tables()`(`last_stmt`) · `fin2/tests/test_r142_substatement_marker.py` |
@@ -9964,6 +10036,8 @@ report_lines DB 자체에는 "이 행이 예외목록을 거쳤다"는 tagging�
 | 20170814002311 | 동성케미컬 2017H1 | 1 (원) | 유동자산 원문 그대로 363,304,597,206, 회사 규모상 원 단위가 타당 |
 | 20241114002786 | 소노스퀘어 2024Q3 | 1 (원) | 유동자산 원문 그대로 61,190,747,942, 회사 규모상 원 단위가 타당 |
 | 20230323001157 | 소프트센 2022FY | 1 (원) | 재고자산 원문 그대로 4,334,282,109(43억원), R73(2026-09-06)에서 컬럼시프트만 막고 값은 결측 처리했던 것을 R132 메커니즘으로 완전 복구 |
+
+**R169(2026-09-25)**: 이 6건은 R169 스캔으로 전부 독립 재확정됐다. 수기 목록이 우선 적용되지만, 이제 SCE 에도 적용된다(그전엔 BS/IS/CF 만). 신규 건은 이 딕셔너리가 아니라 R169 데이터파일 `fin2/extract/data/unit_self_contradiction_overrides.json`(스캔이 생성, 93필링 600섹션)에 들어간다.
 
 ### 기타 개별 하드코딩 (참고, 위 5개 딕셔너리와 별개 위치)
 

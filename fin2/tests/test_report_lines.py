@@ -834,6 +834,12 @@ def test_3s_2023q3_sanemax_reject_cum_map_no_longer_wrong_column():
     위험한 변종). 수정 후에는 매출액 자체가 결측(행 없음)이어야 한다 — 엉뚱한 값보다
     결측이 안전하다는 R3/R74 원칙. 근거:
     docs/plans/report_lines_sanemax_reject_compaction_shift_design_2026-09-06.md
+
+    ★R169(2026-09-25) — 이 필링의 자기모순 단위가 타 필링 동일값 대조로 확정돼
+    (`fin2/extract/data/unit_self_contradiction_overrides.json`) 원 단위로 읽힌다.
+    이제 거부 자체가 일어나지 않으므로 기대값이 "결측"에서 "원문 누적값"으로 바뀐다.
+    R74 가드의 본래 목적(전기 3개월값 6,642,030,087 을 누적으로 둔갑시키지 않음)은
+    그대로 확인한다. 원문 행: 10,406,577,832 | 28,371,524,760 | 6,642,030,087 | 18,062,116,780.
     """
     if not _3S_FY2023Q3.exists():
         return
@@ -841,9 +847,10 @@ def test_3s_2023q3_sanemax_reject_cum_map_no_longer_wrong_column():
         _3S_FY2023Q3, rcept_no="20230209000202", corp_code="00378363",
         report_fiscal_year=2023, report_fiscal_period="Q3",
     )
-    rev = [l for l in lines if l.statement == "IS" and l.basis == "consolidated"
-           and l.label_raw == "매출액"]
-    assert rev == [], f"거부된 누적값 대신 엉뚱한 값(전기 3개월)이 남음: {rev}"
+    rev = {(l.col_index, l.context_fiscal_year): l.value_won for l in lines
+           if l.statement == "IS" and l.basis == "consolidated" and l.label_raw == "매출액"}
+    assert 6_642_030_087 not in rev.values(), f"전기 3개월값이 누적으로 둔갑: {rev}"
+    assert rev == {(0, 2023): 28_371_524_760, (1, 2022): 18_062_116_780}, rev
 
 
 _SAMSUNG_2019FY = (

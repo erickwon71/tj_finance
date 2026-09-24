@@ -127,13 +127,14 @@ def test_m2n_2004q3_revenue():
     assert applied["revenue"]["multiplier"] == 1e-6
 
 
-def test_uid_2020q1_retained_earnings_and_revenue():
-    col = {"retained_earnings": -2_697_894_422_000_000, "revenue": 7_356_347_189_000_000}
-    applied = apply_unit_overrides("00400121", 2020, "Q1", "separate",
-                                   {**_BS_DIRECT_MAP, **_IS_DIRECT_MAP}, col)
-    assert col["retained_earnings"] == -2_697_894_422
-    assert col["revenue"] == 7_356_347_189
-    assert set(applied) == {"retained_earnings", "revenue"}
+def test_uid_2020q1_and_dawon_nexview_2024h1_moved_to_layer2_r169():
+    # R169(2026-09-25) — 유아이디 2020Q1(20200601000502)·다원넥스뷰 2024H1(20240813000596)은
+    # 계층2가 원 단위로 적재한다(R169 데이터파일). 여기 ×10^-6 이 남으면 이중 교정이다.
+    from fin2.extract.report_lines import _PROVED_UNIT_OVERRIDES
+    for key in UNIT_OVERRIDES:
+        assert key[:3] not in {("00400121", 2020, "Q1"), ("01344363", 2024, "H1")}, key
+    assert "20200601000502" in _PROVED_UNIT_OVERRIDES
+    assert "20240813000596" in _PROVED_UNIT_OVERRIDES
 
 
 def test_wellcron_hantech_2010h1_revenue():

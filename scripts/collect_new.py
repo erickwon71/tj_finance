@@ -171,6 +171,7 @@ def _run_standardize_batches(affected: list[str], timeout: int, batch_size: int 
         agg["ok_corps"].extend(ok)
         _sync_cf_da(ok)
         _sync_layer2_lines(ok)
+        _report_unit_self_contradiction(ok)
         _sync_shares_transcribe(ok)
         logger.info(f"[collect]   배치 {i // batch_size + 1}/{total_batches} 완결 — "
                     f"{len(ok)}개사 layer2+주식수 반영")
@@ -572,6 +573,48 @@ def _sync_layer2_lines(corps: list[str]) -> None:
                         f"본문 {res['body_rows']:,}행 (실패 {res['errors']})")
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[collect] ④-3 계층2 전사 실패(비치명적): {exc}")
+
+
+_UNIT_SELF_CONTRADICTION_LOG = (Path(__file__).resolve().parents[1] / "logs"
+                                / "unit_self_contradiction_pending.jsonl")
+
+
+def _report_unit_self_contradiction(corps: list[str]) -> None:
+    """④-3b R169 — report (never fix) newly loaded filings whose declared unit is proven
+    wrong. The fix is a tracked data file (`fin2/extract/data/unit_self_contradiction_
+    overrides.json`) that only `scripts/unit_self_contradiction_scan.py --apply` in the fix
+    worktree writes; the daily job must not dirty it. Findings are appended to
+    `logs/unit_self_contradiction_pending.jsonl` for the next fix batch.
+
+    Called from `_run_standardize_batches`, which both call sites (main ④ and
+    `--standardize-only`) go through — runbook A3 is satisfied by that single place."""
+    if not corps:
+        return
+    try:
+        import json
+
+        from collector.db import get_session
+        from fin2.audit.unit_self_contradiction import scan_rcept, suspect_rcepts
+        from fin2.extract.report_lines import _PROVED_UNIT_OVERRIDES
+        with get_session() as s:
+            suspects = [r for r in suspect_rcepts(s, 2015, corps) if r not in _PROVED_UNIT_OVERRIDES]
+            found = [row for rc in suspects for row in scan_rcept(s, rc, set(suspects))]
+        # Genuinely huge 백만원 sections (e.g. securities gross trading flows) match other
+        # filings only at x10^6 — not a defect, and they would be re-reported every day.
+        found = [r for r in found if r.get("decision", "").startswith("confirmed:")
+                 or not r.get("hits", {}).get("1000000")]
+        if not found:
+            return
+        _UNIT_SELF_CONTRADICTION_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with _UNIT_SELF_CONTRADICTION_LOG.open("a", encoding="utf-8") as f:
+            for row in found:
+                f.write(json.dumps({**row, "seen_at": date.today().isoformat()},
+                                   ensure_ascii=False) + "\n")
+        n_conf = sum(1 for r in found if r.get("decision", "").startswith("confirmed:"))
+        logger.warning(f"[collect] ④-3b R169 단위 자기모순 의심 — 필링 {len(suspects)} · "
+                       f"섹션 {len(found)}(확정 {n_conf}) → {_UNIT_SELF_CONTRADICTION_LOG}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ④-3b R169 단위 자기모순 탐지 실패(비치명적): {exc}")
 
 
 def _sync_xbrl_instance_lines(corps: list[str]) -> None:

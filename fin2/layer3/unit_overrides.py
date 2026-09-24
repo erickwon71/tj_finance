@@ -194,20 +194,9 @@ UNIT_OVERRIDES: dict[tuple[str, int, str, str, str], UnitOverride] = {
         multiplier=1e-6, note="위 consolidated 항목과 동일 근거(이 회사는 basis_fallback으로 "
         "별도=연결)."),
 
-    # 00400121 유아이디 2020Q1 — (가+라) 그룹, 2026-09-06 원문 XML 직접대조
-    # (quarter/2020/20200601000502.xml): "이익잉여금(결손금)" 행 인쇄값이
-    # "(2,695,312,230)"(연결)/각주 "18-4 이익잉여금" 표가 명시적으로 "(단위 : 원)"
-    # 선언 + "합 계" 행도 동일값 재확인. "매출액" 행도 별도 요약표(천원단위
-    # "7,356,347")와 원단위 정밀값(7,356,347,189)이 반올림 일치.
-    ("00400121", 2020, "Q1", "consolidated", "bs.retained_earnings"): UnitOverride(
-        multiplier=1e-6, note="원문 각주 '18-4 이익잉여금' 표가 명시적으로 '(단위 : 원)' "
-        "선언 + 본문 인쇄값 (2,695,312,230)과 정확 일치 확인."),
-    ("00400121", 2020, "Q1", "separate", "bs.retained_earnings"): UnitOverride(
-        multiplier=1e-6, note="원문 인쇄값 (2,697,895)천원 요약표와 정밀값 "
-        "(2,697,894,422) 반올림 일치 확인."),
-    ("00400121", 2020, "Q1", "separate", "is.revenue"): UnitOverride(
-        multiplier=1e-6, note="원문 요약표 '매출액' 7,356,347천원과 정밀값 "
-        "7,356,347,189 반올림 일치 확인."),
+    # 00400121 유아이디 2020Q1 (rcept 20200601000502) — 2026-09-25 R169 로 이관, 삭제.
+    # 계층2가 이 필링 8개 섹션 전부를 원 단위로 적재한다(fin2/extract/data/
+    # unit_self_contradiction_overrides.json). 여기 ×10^-6 을 남겨두면 이중 교정된다.
 
     # 00487546 웰크론한텍 2010H1 — (가+라) 그룹, 2026-09-06 원문 XML 직접대조
     # (half/2010/20100816001285.xml): 손익계산서 "매출액" 행의 실제 인쇄값이
@@ -300,55 +289,8 @@ UNIT_OVERRIDES: dict[tuple[str, int, str, str, str], UnitOverride] = {
     ("00133751", 2004, "H1", "consolidated", "cf.dividends_paid"): UnitOverride(
         multiplier=1e-6, note="위와 동일(basis_fallback)."),
 
-    # 01344363 다원넥스뷰 2024H1(rcept 20240813000596) — 원래 "declared 경계오판정"(다)
-    # 그룹. R74(else 분기, 00204226와 같은 컬럼압축 메커니즘)로 컬럼밀림 증상은 이미
-    # 해소됐지만, 근본원인인 자기모순 단위(선언 백만원·인쇄 원) 자체는 그대로 남아 있어
-    # 별도 unit_overrides 등록이 필요(§(다) 카테고리 소멸 시 확정한 재분류). 별도재무제표만
-    # 존재(연결 없음). BS·IS·CF 전 표가 같은 자기모순(declared '(단위:백만원)', adecimal=-6,
-    # 실제 인쇄값은 이미 원단위) — BS "자본총계" raw=3,783,475,775,000,000를 ×10^-6하면
-    # 3,783,475,775원(38억원)으로 소형 상장사 규모에 부합.
-    ("01344363", 2024, "H1", "separate", "bs.total_equity"): UnitOverride(
-        multiplier=1e-6, note="BS declared '(단위:백만원)' 자기모순(실제 인쇄값 이미 원단위) — "
-        "÷10^6하면 소형 상장사 규모(38억원)에 부합."),
-    ("01344363", 2024, "H1", "separate", "is.revenue"): UnitOverride(
-        multiplier=1e-6, note="위 bs.total_equity와 동일 표군·동일 근거."),
-    ("01344363", 2024, "H1", "separate", "is.cogs"): UnitOverride(
-        multiplier=1e-6, note="위와 동일 근거."),
-    ("01344363", 2024, "H1", "separate", "is.operating_income"): UnitOverride(
-        multiplier=1e-6, note="위와 동일 근거."),
-    ("01344363", 2024, "H1", "separate", "is.ebt"): UnitOverride(
-        multiplier=1e-6, note="위와 동일 근거."),
-    ("01344363", 2024, "H1", "separate", "is.tax_expense"): UnitOverride(
-        multiplier=1e-6, note="위와 동일 근거."),
-    ("01344363", 2024, "H1", "separate", "is.net_income"): UnitOverride(
-        multiplier=1e-6, note="위와 동일 근거."),
-    ("01344363", 2024, "H1", "separate", "cf.operating"): UnitOverride(
-        multiplier=1e-6, note="위와 동일 근거."),
-    ("01344363", 2024, "H1", "separate", "cf.investing"): UnitOverride(
-        multiplier=1e-6, note="위와 동일 근거."),
-    ("01344363", 2024, "H1", "separate", "cf.financing"): UnitOverride(
-        multiplier=1e-6, note="위와 동일 근거."),
-    ("01344363", 2024, "H1", "consolidated", "bs.total_equity"): UnitOverride(
-        multiplier=1e-6, note="위 separate 항목과 동일 근거(이 회사는 basis_fallback으로 "
-        "연결=별도)."),
-    ("01344363", 2024, "H1", "consolidated", "is.revenue"): UnitOverride(
-        multiplier=1e-6, note="위와 동일(basis_fallback)."),
-    ("01344363", 2024, "H1", "consolidated", "is.cogs"): UnitOverride(
-        multiplier=1e-6, note="위와 동일(basis_fallback)."),
-    ("01344363", 2024, "H1", "consolidated", "is.operating_income"): UnitOverride(
-        multiplier=1e-6, note="위와 동일(basis_fallback)."),
-    ("01344363", 2024, "H1", "consolidated", "is.ebt"): UnitOverride(
-        multiplier=1e-6, note="위와 동일(basis_fallback)."),
-    ("01344363", 2024, "H1", "consolidated", "is.tax_expense"): UnitOverride(
-        multiplier=1e-6, note="위와 동일(basis_fallback)."),
-    ("01344363", 2024, "H1", "consolidated", "is.net_income"): UnitOverride(
-        multiplier=1e-6, note="위와 동일(basis_fallback)."),
-    ("01344363", 2024, "H1", "consolidated", "cf.operating"): UnitOverride(
-        multiplier=1e-6, note="위와 동일(basis_fallback)."),
-    ("01344363", 2024, "H1", "consolidated", "cf.investing"): UnitOverride(
-        multiplier=1e-6, note="위와 동일(basis_fallback)."),
-    ("01344363", 2024, "H1", "consolidated", "cf.financing"): UnitOverride(
-        multiplier=1e-6, note="위와 동일(basis_fallback)."),
+    # 01344363 다원넥스뷰 2024H1 (rcept 20240813000596) — 2026-09-25 R169 로 이관, 삭제.
+    # 계층2가 BS_S·IS_S·CF_S·SCE_S 를 원 단위로 적재한다(위 유아이디와 같은 이유).
 
     # 00122825 (2003 Q3, is_final rcept 20031203000256) — 원래 "DART 503 재수집" 분류였으나
     # R74 재조사로 파일 자체는 온전(에러 아님) 확인 — 연결 BS만 자기모순 단위((가+라)

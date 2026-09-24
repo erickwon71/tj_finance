@@ -344,3 +344,26 @@ def test_runner_usage_limit_has_no_retry_penalty(engines, as_role, tmp_path):
         assert c.execute(text("SELECT status, retry_count FROM verification.progress "
                               "WHERE corp_code=:c"), {"c": CORP}).fetchone() == ("pending", 0)
     assert runner.budget_state()["wait_seconds"] > 0
+
+
+def test_pace_wait_rules():
+    from datetime import datetime, timezone
+    now = datetime(2026, 9, 24, 4, 0, tzinfo=timezone.utc)
+    week_end = "2026-09-29T04:00:00Z"          # 5 days left -> 2/7 elapsed = 28.6%
+    kw = dict(max_5h=70, slack_7d=10, max_7d=90, now=now)
+    # ahead of the weekly pace line (54% > 38.6%) -> idle 30 min
+    w, why = runner.pace_wait({"fiveHourPercent": 10, "sevenDayPercent": 54,
+                               "fiveHourReset": "2026-09-24T05:00:00Z",
+                               "sevenDayReset": week_end}, **kw)
+    assert w == 1800 and "7d" in why
+    # on pace -> go
+    assert runner.pace_wait({"fiveHourPercent": 10, "sevenDayPercent": 30,
+                             "fiveHourReset": "2026-09-24T05:00:00Z",
+                             "sevenDayReset": week_end}, **kw) == (0, None)
+    # 5h window hot -> wait until its reset (1 hour)
+    w, why = runner.pace_wait({"fiveHourPercent": 75, "sevenDayPercent": 30,
+                               "fiveHourReset": "2026-09-24T05:00:00Z",
+                               "sevenDayReset": week_end}, **kw)
+    assert w == 3600 and "5h" in why
+    # no data never blocks
+    assert runner.pace_wait({}, **kw) == (0, None)

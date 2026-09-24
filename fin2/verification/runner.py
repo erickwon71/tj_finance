@@ -40,23 +40,60 @@ def _kv(conn, key: str) -> str:
 _USAGE_PROBE = Path.home() / ".claude/plugins/cache/claude-dashboard/claude-dashboard"
 
 
-def usage_snapshot() -> tuple[float | None, float | None]:
-    """(5-hour %, 7-day %) of the Claude account, or (None, None) if the probe is missing.
-
-    Uses the installed claude-dashboard plugin's check-usage script (latest version).
-    """
+def usage_probe() -> dict:
+    """Claude account usage from the installed claude-dashboard plugin (latest version):
+    {fiveHourPercent, sevenDayPercent, fiveHourReset, sevenDayReset}, or {} if unavailable."""
     try:
         scripts = sorted(_USAGE_PROBE.glob("*/dist/check-usage.js"),
                          key=lambda p: [int(x) if x.isdigit() else x
                                         for x in re.split(r"[.]", p.parts[-3])])
         if not scripts:
-            return None, None
+            return {}
         out = subprocess.run(["node", str(scripts[-1]), "--json"], capture_output=True,
                              text=True, timeout=30)
         c = (json.loads(out.stdout) or {}).get("claude") or {}
-        return c.get("fiveHourPercent"), c.get("sevenDayPercent")
+        return {} if c.get("error") else c
     except Exception:  # noqa: BLE001 — bookkeeping only, never block a run
-        return None, None
+        return {}
+
+
+def usage_snapshot() -> tuple[float | None, float | None]:
+    """(5-hour %, 7-day %) of the Claude account, or (None, None) if the probe is missing."""
+    c = usage_probe()
+    return c.get("fiveHourPercent"), c.get("sevenDayPercent")
+
+
+def pace_wait(c: dict, *, max_5h: float, slack_7d: float, max_7d: float,
+              now=None) -> tuple[int, str | None]:
+    """Seconds to wait under measured-usage pacing (Max x5 tuning, design §11), and why.
+
+    - 5-hour window: at or above max_5h percent, wait for its reset (the rest of the window
+      belongs to the interactive / fix sessions).
+    - Weekly: allowed usage grows linearly over the week, `elapsed% + slack`, capped at
+      max_7d. Ahead of that line the runner idles in 30-minute steps until the line catches
+      up, so the fix session still has budget at the end of the week.
+    Missing data never blocks (the usage_limit handling is the backstop).
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = now or datetime.now(timezone.utc)
+
+    def _ts(v):
+        try:
+            return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+
+    five, seven = c.get("fiveHourPercent"), c.get("sevenDayPercent")
+    five_reset, seven_reset = _ts(c.get("fiveHourReset")), _ts(c.get("sevenDayReset"))
+    if five is not None and five >= max_5h and five_reset:
+        return max(60, int((five_reset - now).total_seconds())), f"5h {five}% >= {max_5h}%"
+    if seven is not None and seven_reset:
+        elapsed = 1 - max(0.0, (seven_reset - now).total_seconds()) / timedelta(days=7).total_seconds()
+        allowed = min(max_7d, elapsed * 100 + slack_7d)
+        if seven >= allowed:
+            return 1800, f"7d {seven}% >= pace {allowed:.1f}%"
+    return 0, None
 
 
 def start(slot: Slot, model: str | None) -> int:
@@ -97,6 +134,10 @@ def budget_state() -> dict:
             wait = max(wait, conn.execute(text(
                 "SELECT greatest(0, extract(epoch FROM CAST(:t AS timestamptz) - now()))::bigint"),
                 {"t": limited_until}).scalar_one())
+        pace = _kv(conn, "runner.pace_mode") == "on"
+        max_5h = float(_kv(conn, "runner.max_5h_pct") or 70)
+        slack_7d = float(_kv(conn, "runner.slack_7d_pct") or 10)
+        max_7d = float(_kv(conn, "runner.max_7d_pct") or 90)
         # Pilot: stop by itself after N measured runs (runs with a usage snapshot), so the
         # un-throttled pilot cannot drain the weekly limit unnoticed.
         target = _kv(conn, "runner.stop_after_measured_runs")
@@ -104,7 +145,13 @@ def budget_state() -> dict:
             SELECT count(*) FROM verification.runner_runs
             WHERE usage_7d_start IS NOT NULL AND ended_at IS NOT NULL""")).scalar_one()
     stop = bool(target) and measured >= int(target)
-    return {"wait_seconds": int(wait), "runs_5h": runs_5h, "slots_per_window": per_window,
+    pace_reason = None
+    if pace and not stop:
+        pw, pace_reason = pace_wait(usage_probe(), max_5h=max_5h, slack_7d=slack_7d,
+                                    max_7d=max_7d)
+        wait = max(wait, pw)
+    return {"wait_seconds": int(wait), "pace": pace, "pace_reason": pace_reason,
+            "runs_5h": runs_5h, "slots_per_window": per_window,
             "runs_7d": runs_7d, "weekly_slots": weekly or None,
             "measured_runs": measured, "stop_after": int(target) if target else None,
             "stop": stop}

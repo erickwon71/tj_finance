@@ -34,7 +34,9 @@ NEEDS_MACHINE_SQL = """
         LEFT JOIN verification.machine_checks mc USING (rcept_no)
         WHERE pf.corp_code = p.corp_code AND pf.fiscal_year = p.fiscal_year
           AND pf.fiscal_period = p.fiscal_period AND pf.status = 'pending'
-          AND (mc.rcept_no IS NULL OR mc.load_seq IS DISTINCT FROM fl.load_seq)))"""
+          AND (mc.rcept_no IS NULL OR mc.load_seq IS DISTINCT FROM fl.load_seq
+               OR (mc.tool_version <> '""" + mc.TOOL_VERSION + """'
+                   AND mc.verdict IN ('mismatch', 'error')))))"""
 
 
 def audit_pct(conn) -> float:
@@ -77,9 +79,38 @@ def _note(res: mc.Result) -> str:
             f"행 {c.get('rows', 0)} · 셀 {c.get('cells', 0)}{extra}")
 
 
+_UNIT = {1: "원", 1_000: "천원", 1_000_000: "백만원", 100_000_000: "억원"}
+AUTO_ISSUE_KINDS = {"sign_omitted"}
+
+
+def sign_issues(res: mc.Result) -> list[dict]:
+    """Issues the machine registers itself: a cell whose sign alone breaks the SCE roll-forward
+    and whose flip closes it exactly, with no other candidate (R162 pattern - the source
+    dropped the parentheses and the DB followed it). The arithmetic is the proof, so no web-view
+    look is needed; the fix side extends the R162 repair."""
+    out = []
+    for f in res.findings:
+        if f["kind"] != "sign_omitted":
+            continue
+        s = f.get("scale") or 1
+        v = f["value"]
+        out.append({
+            "basis": f["basis"], "statement": "SCE", "account_label": f["row"][:300],
+            "column_label": (f.get("header") or f"열{f['col']}")[:200],
+            "db_value": int(round(v * s)), "source_value": int(round(-v * s)),
+            "source_value_raw": f"{abs(v):,.0f}" if v >= 0 else f"({abs(v):,.0f})",
+            "source_unit": _UNIT.get(s, "원"), "error_type": "sign_flip", "rule_id": "R162",
+            "evidence": (f"[machine {mc.TOOL_VERSION}] 자본변동표 열 '{f.get('header')}' {f['from']}→{f['to']} "
+                         f"롤포워드가 닫히지 않고(차이 {f['diff']:,.0f}), 이 셀 부호만 뒤집으면 정확히 닫힌다"
+                         f"(다른 후보 없음). DB 는 원문 그대로({v:,.0f}) — 원문 괄호 누락(R162 패턴)."),
+        })
+    return out
+
+
 def verify_slot(slot: Slot) -> dict:
     """Machine-verify the pending filings of an already claimed slot, then release it."""
-    out = {"slot": str(slot), "clean": 0, "mismatch": 0, "other": 0, "skipped": 0, "audit": False}
+    out = {"slot": str(slot), "clean": 0, "mismatch": 0, "auto_issue": 0, "other": 0, "skipped": 0,
+           "audit": False}
     with engine.connect() as conn:
         filings = [dict(r) for r in conn.execute(text("""
             SELECT pf.rcept_no, pf.claim_load_seq, fl.scope_hashes,
@@ -120,6 +151,10 @@ def verify_slot(slot: Slot) -> dict:
             ops.skip_filing(f["rcept_no"], f"[machine {mc.TOOL_VERSION}] 원문에 재무제표 섹션 표가 없고 "
                                            f"DB 적재 행도 없음")
             out["skipped"] += 1
+        elif r.verdict == "mismatch" and {x["kind"] for x in r.findings
+                                          if x["kind"] not in mc.INFO_KINDS} <= AUTO_ISSUE_KINDS:
+            ops.add_issues(f["rcept_no"], sign_issues(r))
+            out["auto_issue"] += 1
         elif r.verdict == "mismatch":
             out["mismatch"] += 1
         else:
@@ -131,7 +166,7 @@ def verify_slot(slot: Slot) -> dict:
 
 def run(limit: int | None = None, log=print) -> dict:
     """Claim and machine-verify slots until none is left (or `limit` slots)."""
-    total = {"slots": 0, "clean": 0, "mismatch": 0, "other": 0, "skipped": 0, "audit": 0}
+    total = {"slots": 0, "clean": 0, "mismatch": 0, "auto_issue": 0, "other": 0, "skipped": 0, "audit": 0}
     while limit is None or total["slots"] < limit:
         slot = ops.claim(lease_minutes=MACHINE_LEASE_MINUTES, where=NEEDS_MACHINE_SQL)
         if slot is None:
@@ -143,7 +178,7 @@ def run(limit: int | None = None, log=print) -> dict:
             log(f"{slot} 실패: {type(exc).__name__}: {exc}")
             continue
         total["slots"] += 1
-        for k in ("clean", "mismatch", "other", "skipped"):
+        for k in ("clean", "mismatch", "auto_issue", "other", "skipped"):
             total[k] += r[k]
         total["audit"] += int(r["audit"])
         log(json.dumps(r, ensure_ascii=False))

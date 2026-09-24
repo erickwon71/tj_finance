@@ -124,8 +124,28 @@ def test_sce_identity_catches_dropped_sign_in_source(tmp_path):
             if v is not None:
                 rows.append(_row("SCE", "separate", order, lab, v, col=col))
     res = mc.compare(rows, tables)
-    assert [f["kind"] for f in res.findings] == ["sce_identity"]
-    assert res.findings[0]["col"] == 1
+    kinds = [f["kind"] for f in res.findings]
+    assert "sign_omitted" in kinds and res.verdict == "mismatch"
+    f = next(f for f in res.findings if f["kind"] == "sign_omitted" and f["col"] == 1)
+    assert f["explain"] == "sign" and f["row"].startswith("2024.12.31") and f["value"] == 30.0
+
+
+def test_sce_arithmetic_of_the_source_alone_does_not_block(tmp_path):
+    # capital rises with no change row (source omission): DB equals the source everywhere
+    body = _sce([["2024.01.01 (기초자본)", "100", "10", "110"],
+                 ["당기순이익", "", "5", "5"],
+                 ["2024.12.31 (기말자본)", "125", "15", "140"]])
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    rows = []
+    for order, (lab, vals) in enumerate((("2024.01.01 (기초자본)", (100, 10, 110)),
+                                         ("당기순이익", (None, 5, 5)),
+                                         ("2024.12.31 (기말자본)", (125, 15, 140)))):
+        for col, v in enumerate(vals):
+            if v is not None:
+                rows.append(_row("SCE", "separate", order, lab, v, col=col))
+    res = mc.compare(rows, tables)
+    assert res.verdict == "clean"
+    assert {f["kind"] for f in res.findings} == {"sce_arith"}
 
 
 def test_sce_sign_restored_by_loader_is_not_a_finding(tmp_path):

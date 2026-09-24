@@ -34,7 +34,7 @@ from pathlib import Path
 
 from lxml import etree
 
-TOOL_VERSION = "mc1"
+TOOL_VERSION = "mc2"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -252,6 +252,12 @@ def load_statement_tables(path: str) -> list[SrcTable]:
     return tables
 
 
+# Recorded but not blocking a pass: the source's own arithmetic does not close while every DB
+# cell equals its source cell - the DB is faithful and the web view would show the same
+# numbers (the previous full web-view standard passed these too).
+INFO_KINDS = {"sce_arith"}
+
+
 @dataclass
 class Result:
     verdict: str                      # clean | mismatch | no_structure | error
@@ -435,9 +441,12 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
             eff_rows = [SrcRow(r.table, r.key, r.alt, r.label, eff[id(r)]) for r in win]
             bad_cols = set()
             for f in sce_identity(eff_rows):
-                findings.append(_finding("sce_identity", key, **f))
-                counts["sce_identity"] += 1
                 bad_cols.add(f["col"])
+                kind = {"sign": "sign_omitted", "shift": "sce_identity"}.get(f["explain"], "sce_arith")
+                f["header"] = next((t.headers[f["col"]] for t in win_tables if f["col"] < len(t.headers)), None)
+                f["scale"] = scale
+                findings.append(_finding(kind, key, **f))
+                counts[kind] += 1
             # DB = -source on a cell and the arithmetic holds with the DB sign: the loader
             # restored a sign the source dropped (R162) - proven, not a defect.
             for f in [f for f in findings if f.get("kind") == "value" and f["statement"] == "SCE"
@@ -463,7 +472,8 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
             findings.append({"kind": "unmatched_table", "basis": t.basis, "table": t.idx,
                              "title": t.title, "first_rows": [r.label[:40] for r in t.rows[:4]]})
             counts["unmatched_table"] += 1
-    return Result("clean" if not findings else "mismatch", counts, findings)
+    blocking = [f for f in findings if f["kind"] not in INFO_KINDS]
+    return Result("clean" if not blocking else "mismatch", counts, findings)
 
 
 _OPEN_RE = re.compile(r"기초|期初")
@@ -545,11 +555,39 @@ def sce_identity(rows: list[SrcRow]) -> list[dict]:
             vals = [_num(r.cells[c]) if c < len(r.cells) else 0.0 for r in mids]
             if not start and not end and not any(vals):
                 continue
-            cands = [start + _kept_sum(vals, totals, start, tol, f, bk)
-                     for f, bk in ((True, True), (False, True), (True, False))]
-            if all(abs(t - end) > tol for t in cands):
-                out.append({"check": kind, "col": c, "from": rows[a].label[:60], "to": rows[b].label[:60],
-                            "start": start, "end": end, "sum": cands[0], "diff": end - cands[0]})
+            def closes(st: float, vs: list[float], en: float) -> bool:
+                return any(abs(st + _kept_sum(vs, totals, st, tol, f, bk) - en) <= tol
+                           for f, bk in ((True, True), (False, True), (True, False)))
+
+            if closes(start, vals, end):
+                continue
+            total = start + _kept_sum(vals, totals, start, tol, True, True)
+            f = {"check": kind, "col": c, "from": rows[a].label[:60], "to": rows[b].label[:60],
+                 "start": start, "end": end, "sum": total, "diff": end - total}
+            # Which single change closes the column? A sign on one cell (R162: the source
+            # dropped parentheses) or one row whose values sit one column off (shifted cells).
+            signs = []
+            if start and closes(-start, vals, end):
+                signs.append((rows[a].label, start))
+            if end and closes(start, vals, -end):
+                signs.append((rows[b].label, end))
+            for i, v in enumerate(vals):
+                if v and closes(start, vals[:i] + [-v] + vals[i + 1:], end):
+                    signs.append((mids[i].label, v))
+            shifts = []
+            for i, r in enumerate(mids):
+                for dc in (-1, 1):
+                    k = c + dc
+                    if 0 <= k < len(r.cells) and _num(r.cells[k]) and _num(r.cells[k]) != vals[i]:
+                        if closes(start, vals[:i] + [_num(r.cells[k])] + vals[i + 1:], end):
+                            shifts.append((r.label, dc))
+            if len(signs) == 1 and not shifts:
+                f.update(explain="sign", row=signs[0][0][:80], value=signs[0][1])
+            elif shifts:
+                f.update(explain="shift", row=shifts[0][0][:80], shift=shifts[0][1])
+            else:
+                f.update(explain="source_arithmetic")
+            out.append(f)
 
     for (k1, i1), (k2, i2) in zip(marks, marks[1:]):
         if k1 == "open" and k2 == "close":

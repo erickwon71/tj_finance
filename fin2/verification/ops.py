@@ -309,7 +309,14 @@ MODEL_READY_SQL = """
         LEFT JOIN verification.machine_checks mc USING (rcept_no)
         WHERE pf.corp_code = p.corp_code AND pf.fiscal_year = p.fiscal_year
           AND pf.fiscal_period = p.fiscal_period AND pf.status = 'pending'
-          AND (mc.rcept_no IS NULL OR mc.load_seq IS DISTINCT FROM fl.load_seq)))"""
+          AND (mc.rcept_no IS NULL OR mc.load_seq IS DISTINCT FROM fl.load_seq
+               OR (mc.tool_version <> '{tool}' AND mc.verdict IN ('mismatch', 'error')))))"""
+
+
+def _model_ready_sql() -> str:
+    # an older machine tool's mismatch is re-done by the machine before the model sees it
+    from fin2.verification.machine_compare import TOOL_VERSION
+    return MODEL_READY_SQL.format(tool=TOOL_VERSION)
 
 
 def machine_gate_on(conn) -> bool:
@@ -331,7 +338,7 @@ def claim(slot: Slot | None = None, lease_minutes: int = LEASE_MINUTES,
     with _Tx(evidence="claim") as conn:
         _reap_expired(conn)
         if slot is None:
-            extra = where or (MODEL_READY_SQL if machine_gate_on(conn) else "TRUE")
+            extra = where or (_model_ready_sql() if machine_gate_on(conn) else "TRUE")
             row = conn.execute(text(f"""
                 SELECT p.corp_code, p.fiscal_year, p.fiscal_period
                 FROM verification.progress p
@@ -909,12 +916,16 @@ def machine_status(conn) -> dict:
         if audit:
             out["audit"] += n
     out["gate"] = "on" if machine_gate_on(conn) else "off"
+    from fin2.verification.machine_compare import TOOL_VERSION
+    out["tool"] = TOOL_VERSION
     out["unchecked_pending_filings"] = conn.execute(text("""
         SELECT count(*) FROM verification.progress_filings pf
         LEFT JOIN verification.filing_loads fl USING (rcept_no)
         LEFT JOIN verification.machine_checks mc USING (rcept_no)
         WHERE pf.status = 'pending'
-          AND (mc.rcept_no IS NULL OR mc.load_seq IS DISTINCT FROM fl.load_seq)""")).scalar_one()
+          AND (mc.rcept_no IS NULL OR mc.load_seq IS DISTINCT FROM fl.load_seq
+               OR (mc.tool_version <> :t AND mc.verdict IN ('mismatch', 'error')))"""),
+        {"t": TOOL_VERSION}).scalar_one()
     return out
 
 

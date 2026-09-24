@@ -39,6 +39,7 @@ from parser.xml.table_extractor import (
     RowData, _header_rule_name, _is_fs_title_row, _detect_indent, _first_cell_indent,
     _table_has_comma_note_column, _table_has_note_header,
     parse_header_columns, select_by_header_columns, drop_mismatched_granularity_columns,
+    update_dual_closing_runs,
     HeaderColumn, _repair_dot_grouped_cells, apply_source_typo_fixes,
     unresolved_dot_cell_indices,
 )
@@ -1158,6 +1159,7 @@ def _emit_section_lines(
                 cum_map=cum_map, header_cols=header_cols,
                 q1_cum_blank_use_3m=q1_cum_blank_use_3m)
 
+        dual_closing_runs: dict[int, list] = {}   # R168 — per table
         for row in table_rows:
             if not row.account_name:
                 continue
@@ -1194,7 +1196,11 @@ def _emit_section_lines(
                              or q1_cum_blank_use_3m)),
                     prefer_last_of_two_as_cumulative=(
                         rcept_no in _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS),
+                    closing_runs=dual_closing_runs,
                 ).items())
+                # R168 — old [detail, balance] print layout: track the detail-cell run
+                # so a group-closing row can be proved by arithmetic (see selector).
+                update_dual_closing_runs(header_cols, row.amounts, dual_closing_runs)
             elif cum_map is not None:
                 pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()
                          if pos < len(row.amounts) and row.amounts[pos] is not None]

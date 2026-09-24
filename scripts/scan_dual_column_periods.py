@@ -47,7 +47,8 @@ from sqlalchemy import text
 from collector.db import get_session
 from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.table_extractor import (extract_rows, parse_header_columns,
-                                        select_by_header_columns)
+                                        select_by_header_columns,
+                                        update_dual_closing_runs)
 import fin2.extract.text as _text
 
 _OUT = Path(__file__).resolve().parents[1] / "docs/qa/dual_column_scan.jsonl"
@@ -125,6 +126,7 @@ def scan_one(path: str, fiscal_year: int) -> list[dict]:
             if not ranks:
                 continue
             n_cols = max(c.position for c in header_cols) + 1
+            runs: dict[int, list] = {}
             for row in extract_rows(table, multiplier=1, num_cols=n_cols,
                                     direct_only=True, skip_junk=False,
                                     keep_all_amount_cells=True):
@@ -136,6 +138,12 @@ def scan_one(path: str, fiscal_year: int) -> list[dict]:
                 #   138행 과탐). 실제로 그 rank 가 결과에서 빠졌는지만 본다.
                 picked = select_by_header_columns(
                     header_cols, row.amounts, raw_amounts=row.raw_amounts)
+                # R168 — same call with the closing-row proof, exactly as
+                # `report_lines` makes it. `recovered` = the value R168 now loads.
+                picked_r168 = select_by_header_columns(
+                    header_cols, row.amounts, raw_amounts=row.raw_amounts,
+                    closing_runs=runs)
+                update_dual_closing_runs(header_cols, row.amounts, runs)
                 for rank, positions in ranks.items():
                     # ★rank 0(당기)만 진짜 유실이다 — `store_report_lines()` 는
                     #   BS/IS/CF 를 `_PERIOD_AXIS_STATEMENTS` 정책대로 col_index=0
@@ -150,10 +158,12 @@ def scan_one(path: str, fiscal_year: int) -> list[dict]:
                     # 실값이 2개 이상 서로 다르게 있는데 채택이 없다 = R6 판정불가로
                     # 버려진 행(값이 전부 같으면 R131 이 이미 채택하므로 유실 아님).
                     if len(real) >= 2 and len(set(real)) > 1:
+                        rec_v = picked_r168.get(rank)
                         hits.append({
                             "basis": basis, "statement": statement,
                             "rank": rank, "label": label,
                             "values": [str(v) for v in real],
+                            "recovered": None if rec_v is None else str(rec_v),
                         })
                         break
     return hits
@@ -165,7 +175,7 @@ def report() -> None:
         return
     n = hit_files = 0
     by_corp, by_scope, by_label, errors = Counter(), Counter(), Counter(), Counter()
-    n_rows = 0
+    n_rows = n_recovered = 0
     with _OUT.open() as fh:
         for line in fh:
             try:
@@ -183,11 +193,13 @@ def report() -> None:
             n_rows += len(hits)
             by_corp[rec["corp_name"]] += 1
             for h in hits:
+                if h.get("recovered") is not None:
+                    n_recovered += 1
                 by_scope[f'{h["basis"][:3]}/{h["statement"]}'] += 1
                 by_label[h["label"]] += 1
     print(f"스캔 {n:,}건 · 발화 {hit_files:,}건"
           f"{f' ({hit_files / n:.1%})' if n else ''} · 유실행 {n_rows:,} · "
-          f"오류 {sum(errors.values()):,}건")
+          f"오류 {sum(errors.values()):,}건 · R168 복원행 {n_recovered:,}")
     print(f"\n회사별 발화(상위 20): {by_corp.most_common(20)}")
     print(f"\n재무제표별: {by_scope.most_common()}")
     print(f"\n라벨별(상위 25): {by_label.most_common(25)}")
@@ -208,48 +220,121 @@ def load_done() -> set[str]:
     return done
 
 
+# R168 — every filing with a completed XML source, any fiscal year. The old
+# two-column print layout is K-GAAP-era, so pre-2015 filings are the main target.
+_ALL_YEARS_SQL = """
+    SELECT DISTINCT ON (f.rcept_no)
+           f.rcept_no, f.corp_code, f.corp_name, f.fiscal_year, f.fiscal_period,
+           d.file_path
+    FROM filings f
+    JOIN download_tasks d
+      ON d.rcept_no = f.rcept_no AND d.status = 'completed'
+     AND d.file_type = 'xml' AND d.file_path IS NOT NULL
+    WHERE TRUE {corp_filter}
+    ORDER BY f.rcept_no
+"""
+
+_LINK_PREFIX = "/Users/taejin/Project/tj_finance/raw_report"
+_SD_PREFIX = "/Volumes/dart_data/raw_report"
+_NAS_PREFIX = "/Volumes/tj_finance_data/raw_report"
+
+
+def _storage_path(path: str, storage: str, seq: int) -> str:
+    """Bulk reads go to the SD mirror by default (NAS SMB stalls on full scans)."""
+    if not path or not path.startswith(_LINK_PREFIX) or storage == "link":
+        return path
+    rel = path[len(_LINK_PREFIX):]
+    if storage == "nas" or (storage == "both" and seq % 2):
+        cand = _NAS_PREFIX + rel
+    else:
+        cand = _SD_PREFIX + rel
+    return cand if Path(cand).exists() else path
+
+
+def _scan_task(rec: dict) -> dict:
+    """Pool worker: scan one filing, never raise (the error is recorded)."""
+    path = rec.pop("_path", None)
+    try:
+        if not path:
+            raise FileNotFoundError("원문 XML 없음")
+        rec["hits"] = scan_one(path, rec["fiscal_year"] or 2015)
+    except Exception as exc:                                      # noqa: BLE001
+        rec["error"] = f"{type(exc).__name__}: {exc}"
+    return rec
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=200)
     ap.add_argument("--breadth", action="store_true",
                     help="회사별 1건씩 넓게(계열 탐색용, 권장)")
+    ap.add_argument("--all-years", action="store_true",
+                    help="R168: 연도 무관 XML 원문이 있는 전 필링(회사×필링 전수)")
     ap.add_argument("--corp", help="corp_code 한정")
+    ap.add_argument("--workers", type=int, default=1)
+    ap.add_argument("--storage", choices=("sd", "nas", "both", "link"), default="sd")
     ap.add_argument("--report", action="store_true")
+    ap.add_argument("--out", help="결과 JSONL 경로(기본 docs/qa/dual_column_scan.jsonl)")
     args = ap.parse_args()
+    if args.out:
+        global _OUT
+        _OUT = Path(args.out)
 
     if args.report:
         report()
         return 0
 
-    resolve_source = _resolve_source_fn()
     done = load_done()
-    sql = _BREADTH_SQL if args.breadth else _TARGETS_SQL
-    sql = sql.format(corp_filter="AND corp_code = :corp" if args.corp else "")
+    corp_filter = "AND {}corp_code = :corp".format("f." if args.all_years else "") \
+        if args.corp else ""
+    sql = (_ALL_YEARS_SQL if args.all_years
+           else _BREADTH_SQL if args.breadth else _TARGETS_SQL)
+    sql = sql.format(corp_filter=corp_filter)
 
-    n = n_hit = 0
-    with get_session() as s, _OUT.open("a") as out:
+    tasks: list[dict] = []
+    with get_session() as s:
         rows = s.execute(text(sql),
                          {"corp": args.corp} if args.corp else {}).mappings().all()
+        resolve_source = None if args.all_years else _resolve_source_fn()
         for r in rows:
-            if n >= args.limit:
+            if len(tasks) >= args.limit:
                 break
             if r["rcept_no"] in done:
                 continue
-            rec = {"rcept_no": r["rcept_no"], "corp_code": r["corp_code"],
-                   "corp_name": r["corp_name"], "fiscal_year": r["fiscal_year"],
-                   "fiscal_period": r["fiscal_period"]}
-            try:
+            if args.all_years:
+                path = r["file_path"]
+            else:
                 _kind, path = resolve_source(s, r["rcept_no"])
-                rec["hits"] = scan_one(path, r["fiscal_year"] or 2015)
-            except Exception as exc:                              # noqa: BLE001
-                rec["error"] = f"{type(exc).__name__}: {exc}"
+            tasks.append({
+                "rcept_no": r["rcept_no"], "corp_code": r["corp_code"],
+                "corp_name": r["corp_name"], "fiscal_year": r["fiscal_year"],
+                "fiscal_period": r["fiscal_period"],
+                "_path": _storage_path(path, args.storage, len(tasks)),
+            })
+    print(f"대상 {len(tasks):,}건 (이미 처리 {len(done):,}건 제외) · "
+          f"workers={args.workers} · storage={args.storage}", flush=True)
+
+    n = n_hit = 0
+    with _OUT.open("a") as out:
+        if args.workers > 1:
+            import multiprocessing as mp
+            pool = mp.Pool(args.workers, maxtasksperchild=500)
+            it = pool.imap_unordered(_scan_task, tasks, chunksize=8)
+        else:
+            pool = None
+            it = map(_scan_task, tasks)
+        for rec in it:
+            # Append per filing — a killed run keeps everything done so far.
             out.write(json.dumps(rec, ensure_ascii=False) + "\n")
             out.flush()
             n += 1
             if rec.get("hits"):
                 n_hit += 1
-            if n % 25 == 0:
-                print(f"  ... {n}/{args.limit} (발화 {n_hit})", flush=True)
+            if n % 500 == 0:
+                print(f"  ... {n:,}/{len(tasks):,} (발화 {n_hit:,})", flush=True)
+        if pool is not None:
+            pool.close()
+            pool.join()
 
     print(f"\n이번 실행: {n:,}건 처리, 발화 {n_hit:,}건 → {_OUT}")
     print("이어서 돌리려면 같은 명령을 다시 실행하세요(처리한 건은 건너뜁니다).")

@@ -1200,6 +1200,7 @@ def select_by_header_columns(
     columns: list[HeaderColumn], amounts: list, raw_amounts: Optional[list[str]] = None,
     allow_three_month_as_cumulative: bool = False,
     prefer_last_of_two_as_cumulative: bool = False,
+    closing_runs: Optional[dict[int, list]] = None,
 ) -> dict[int, object]:
     """`HeaderColumn` 맵 + 위치보존 원시 `amounts`(`keep_all_amount_cells=True` 출력)
     → {period_rank: 값}. `_emit_section_lines`가 이 결과를 `col_index=period_rank`로
@@ -1359,9 +1360,68 @@ def select_by_header_columns(
                 # DART 관행상 무표지 2열은 항상 [3개월 먼저, 누적 나중] 순서 — 위치상
                 # 마지막 열(누적)을 채택한다(호출측이 산수로 직접 검증한 예외목록에서만).
                 result[rank] = amounts[max(real_present, key=lambda c: c.position).position]
+            elif closing_runs is not None and len(cols) == 2 and len(real_present) == 2:
+                # ★R168 — old two-column print layout ([detail, balance] per period):
+                #   a group-closing row fills both cells. Pick the detail (left) cell
+                #   only when the arithmetic proves the layout — see
+                #   `_dual_closing_row_proved()`. Otherwise the rank stays skipped (R6).
+                left, right = sorted(real_present, key=lambda c: c.position)
+                run = closing_runs.get(rank) or []
+                if _dual_closing_row_proved(
+                        run, amounts[left.position], amounts[right.position]):
+                    result[rank] = amounts[left.position]
             # 진짜값 0개+대시/공란 아닌 결측(진짜 결측) 또는 진짜값 2개 이상(서로 다른
             # 값, 판정불가, R6) 이면 이 rank 는 건너뜀.
     return result
+
+
+def _dual_closing_row_proved(run: list, left, right) -> bool:
+    """R168 — does this row's `left` cell provably belong to the row itself?
+
+    `run` holds the left-only (detail cell) values of the rows since the last row
+    that filled the balance cell, in order. The row closes that group when the
+    balance cell equals either
+      - a deduction chain: run[0] - |run[1]| - ... - |left|  (gross, then contras
+        printed without parentheses: 건물 / 감가상각누계액 / 국고보조금), or
+      - a signed sum: run[0] + run[1] + ... + left  (contras printed in
+        parentheses, or an additive detail group).
+    Exact integer equality only — no tolerance, so a coincidence needs the whole
+    group to add up to the printed balance."""
+    if not run:
+        return False
+    try:
+        if run[0] - sum(abs(v) for v in run[1:]) - abs(left) == right:
+            return True
+        return sum(run) + left == right
+    except TypeError:
+        return False
+
+
+def update_dual_closing_runs(
+    columns: Optional[list[HeaderColumn]], amounts: list, runs: dict[int, list],
+) -> None:
+    """R168 — advance the per-rank detail-cell runs after a row was processed.
+
+    Only two-column, subtype-free period groups are tracked. A row that fills
+    only the detail (left) cell extends the run; any other row (balance cell
+    filled, or both empty) ends the group."""
+    if not columns:
+        return
+    by_rank: dict[int, list[HeaderColumn]] = {}
+    for hc in columns:
+        if hc.is_note:
+            continue
+        by_rank.setdefault(hc.period_rank, []).append(hc)
+    for rank, cols in by_rank.items():
+        if len(cols) != 2 or any(c.subtype is not None for c in cols):
+            continue
+        left, right = sorted(cols, key=lambda c: c.position)
+        lv = amounts[left.position] if left.position < len(amounts) else None
+        rv = amounts[right.position] if right.position < len(amounts) else None
+        if lv is not None and rv is None:
+            runs.setdefault(rank, []).append(lv)
+        else:
+            runs[rank] = []
 
 
 # ★R158(2026-09-22) — 천단위 구분자가 **마침표**로 깨진 셀.

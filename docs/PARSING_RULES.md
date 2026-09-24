@@ -9948,7 +9948,47 @@ batch #4 이슈 177건 중 176건이 원문 값·부호와 일치한다. 1건(#8
 BS 항등식(자산=부채+자본)은 2행이 새로 깨졌다: 00242378 2019Q3 연결, 00453488 2018Q1 연결. 00242378 의 XBRL 정정본
 `20191206000533` 은 자체로 맞는다(자산 1,912,137,914,170 = 부채 1,135,133,772,680 + 자본 777,004,141,490). 원인은 계층3
 조립이다. 원본 → XBRL 정정 → XML 정정(`20200721000363`) 세 필링에서 자산은 XML 정정, 부채는 XBRL 정정 값을 골랐다.
-R170 추출 결함이 아니며 **미착수**로 남긴다(판단 대상). DQ: `statement_magnitude_impossible` 0.
+R170 추출 결함이 아니며 R171 로 해소. DQ: `statement_magnitude_impossible` 0.
+
+**★R170-d 정정(2026-09-25 오전, R171 작업 중 발견) — 5번(IS base negation 제거) 단독은 틀렸다**: 법인세 fact 부호 관례는
+제출자마다 다르다. 엘앤에프 `20151104000116` 별도는 fact −38,948,803 인데 세전 −207,824,678·순이익 −246,773,481 이라
+원문 법인세비용은 +38,948,803 이다(같은 필링 연결은 + 관례). R170 적재 후 XBRL 손익계산서 2,896개 중
+**437개가 세전+법인세=순이익**(부호 반대)이었다. 규칙: `report_lines_xbrl._settle_is_tax_sign()` —
+같은 (basis, col)에서 세전 + 법인세 = 계속영업이익(없으면 당기순이익)이고 세전 − 법인세 ≠ 그 값일 때만 법인세 부호를
+뒤집는다. 어느 쪽도 성립하지 않으면(중단영업 등, 26개) 그대로 둔다(R6). 적용 후 ok 2,530 · 반대 0 · 판정불가 366.
+변화 438필링 / 법인세 셀 866(col0+col1)만 바뀌고 다른 셀은 무변화다. 5번의 "법인세 9/9" 표본은 이 관례 차이를 대표하지 못했다.
+
+---
+
+## R171. 정정 체인에 추출 경로가 섞이면(XML → XBRL → XML) **나중 XML 필링이 앞선 XBRL 셀을 스코프 단위로 대체**한다 (2026-09-25)
+
+**발견**: R170 재빌드 후 std_v3 BS 항등식 신규 위반 2행. 00242378 2019Q3 연결: 원본 XML `20191114002491` →
+정정1 XBRL `20191206000533` → 정정2 XML `20200721000363`. 세 필링은 각자 항등식이 성립한다. 그런데 std 는 자산·자본을
+정정2, 부채(1,135,133,772,680)를 정정1 에서 골랐다. 정답은 정정2(부채 1,134,848,933,304)다. 00453488 2018Q1 연결도 같은 체인이다.
+
+**원인**: R2 델타패치 셀 키 `(statement, basis, col_index, section_path, label_raw)` 는 **같은 추출 경로끼리만** 맞는다.
+XBRL 은 "재무상태표 [abstract]>부채 [abstract]" 같은 section_path 를 쓴다. 그래서 경로가 바뀐 정정본의 셀은 '추가'로만
+쌓이고, 그 뒤 필링도 그것을 덮지 못한다. R170 전에는 XBRL 정정본에 총계행이 거의 없어 드러나지 않았다.
+경로 혼합 기간은 1,497개다(xbrl+xml 1,495 · pdf+xml 2). XBRL 필링은 거의 전부 XML 원본의 정정본이다(XBRL 단독 기간 3).
+
+**규칙** (`fin2/layer3/combine.py::build_merged_lines`, `_filing_source_kind`): 나중 필링이 **XBRL 이 아니고**(xml/pdf)
+어떤 (statement, basis) 스코프를 실제로 담고 있으면, 그 스코프의 **XBRL 출처 셀**을 지운 뒤 델타패치한다.
+그 필링이 담지 않은 스코프는 그대로 둔다(R2-0).
+
+**왜 반대 방향(XBRL 이 XML 을 대체)은 안 하나**: 양방향으로 적용해 보면(드라이런, 776개사) 법인세 2,122 · 지배순이익 305셀이 비었다.
+계층3 매퍼가 XBRL 라벨("법인세비용, 계속영업", "[abstract]" section_path 아래 귀속행)을 못 읽기 때문이다. 이것은
+**계층3 XBRL 개념(source_ref) 기반 매핑이 생겨야 풀린다 — 별도 과제, 미착수**. 그때까지 XBRL 정정본이 마지막인
+체인은 현행(두 경로 셀 공존)을 유지한다.
+
+**검증(드라이런, 경로 혼합 776개사, 롤백)**: 핵심 컬럼이 바뀐 std 행 8개. BS 항등식 위반→성립 2(위 두 건), 성립→위반 0.
+부수 변화는 전부 교정이다. HD현대 `20191114002747`(XBRL 정정)이 천원 값을 배수 없이 태깅해 매출 414,877,871 로 들어가 있던
+2019Q3 별도가 나중 XML 정정 기준 414,877,871,000 이 됐다. 차입금상환 부호 33은 XML 원문 표기를 따른다.
+※드라이런에서 사라진 std 776행(2026Q1 별도 등)은 R171 무관이다. 옛 코드로 재빌드해도 똑같이 사라진다(아래 재빌드는 경로 혼합 기간만 한다).
+
+**테스트**: `fin2/tests/test_combine_cross_source_amendment_r171.py`(가짜 세션) ·
+`fin2/tests/test_xbrl_base_presentation_merge.py`(R170-d 등식 3건).
+
+**관련**: R2/R2-0 · R170 · R63(delete-then-maybe-insert)
 
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
@@ -10018,6 +10058,7 @@ R170 추출 결함이 아니며 **미착수**로 남긴다(판단 대상). DQ: `
 | R167 | 사용자 결정 2026-09-24(verification 캠페인) · `fin2/verification/schema.sql` · `collector/db.py::_set_verification_identity` · `fin2/tests/test_verification_*.py` |
 | R169 | verification fix batch #3(2026-09-25, 야간 자율) · `fin2/audit/unit_self_contradiction.py` · `scripts/unit_self_contradiction_scan.py` · `fin2/extract/data/unit_self_contradiction_overrides.json` · `fin2/extract/report_lines.py::_unit_override()` · `scripts/collect_new.py::_report_unit_self_contradiction()` · `fin2/tests/test_r169_unit_self_contradiction.py` |
 | R170 | verification fix batch #4(2026-09-25, 야간 자율) · `parser/xbrl_instance/taxonomy_linkbase.py::_build_merged_presentation_tree()`/`resolve_external_base_presentation()`/`_denegate_role()` · `fin2/extract/report_lines_xbrl.py::_numeric_value()` · `fin2/verification/ops.py::_reload_rcept()` · `fin2/tests/test_xbrl_base_presentation_merge.py` |
+| R171 | 사용자 지시 2026-09-25(R170 후속 판단 1번) · `fin2/layer3/combine.py::build_merged_lines()`/`_filing_source_kind()` · `fin2/extract/report_lines_xbrl.py::_settle_is_tax_sign()`(R170-d) · `fin2/tests/test_combine_cross_source_amendment_r171.py` |
 | R140 | 사용자 지시 2026-09-18(SCE 포함 + 단계(B) 지정) · `fin2/extract/review_csv.py`·`fin2/audit/layer2_selfcheck.py`·`scripts/layer2_review.py` · `fin2/tests/test_review_csv.py` · `docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md` |
 | R141 | 사용자 지시 2026-09-19("확인시작해" — 계층2 원문대조 캠페인 fail 10건 근본원인 조사) · `fin2/extract/statement_titles.py::classify_statement_in_body_section()` |
 | R142 | 위와 동일 조사(2026-09-19) · `fin2/extract/statement_titles.py::is_substatement_marker()` · `fin2/extract/text.py::_detect_body_statement_tables()`(`last_stmt`) · `fin2/tests/test_r142_substatement_marker.py` |

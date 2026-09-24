@@ -135,7 +135,7 @@ from __future__ import annotations
 import re
 import tempfile
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
@@ -958,6 +958,43 @@ def _emit_missing_leaf_lines(
     return out
 
 
+_TAX_LOCAL = "IncomeTaxExpenseContinuingOperations"
+_PBT_LOCAL = "ProfitLossBeforeTax"
+_AFTER_TAX_LOCALS = ("ProfitLossFromContinuingOperations", "ProfitLoss")
+
+
+def _settle_is_tax_sign(lines: list[ReportLineRow]) -> list[ReportLineRow]:
+    """★R170-d (2026-09-25): 법인세비용 부호를 표 자신의 산수로 확정한다.
+
+    XBRL 제출자마다 법인세 fact 의 부호 관례가 다르다. 대부분은 비용 +(→ R170-b 가
+    base 의 negatedTerseLabel 을 떼어 원값 그대로 저장), 일부는 base 의 negation 을
+    전제로 비용을 −로 태깅했다(엘앤에프 20151104000116 별도: fact −38,948,803,
+    세전 −207,824,678 · 순이익 −246,773,481 → 원문 법인세비용 +38,948,803). vintage 나
+    role 로는 가를 수 없어(같은 필링 연결은 + 관례) 같은 (basis, col) 의
+    세전이익 − 법인세 = 계속영업이익(없으면 당기순이익) 등식으로만 판정한다:
+    세전 + 법인세 = 계속영업이익 이고 세전 − 법인세 ≠ 계속영업이익 일 때만 부호를 뒤집는다.
+    둘 다 아니면(중단영업·반올림 등) 건드리지 않는다(R6)."""
+    by_key: dict[tuple, dict[str, ReportLineRow]] = {}
+    for row in lines:
+        if row.statement != "IS" or row.value_won is None:
+            continue
+        local = row.source_ref.split("/")[1] if "/" in (row.source_ref or "") else None
+        if local in (_TAX_LOCAL, _PBT_LOCAL, *_AFTER_TAX_LOCALS):
+            by_key.setdefault((row.basis, row.col_index), {}).setdefault(local, row)
+    flip: set[int] = set()
+    for rows in by_key.values():
+        tax, pbt = rows.get(_TAX_LOCAL), rows.get(_PBT_LOCAL)
+        after = next((rows[l] for l in _AFTER_TAX_LOCALS if l in rows), None)
+        if tax is None or pbt is None or after is None or tax.value_won == 0:
+            continue
+        if (pbt.value_won + tax.value_won == after.value_won
+                and pbt.value_won - tax.value_won != after.value_won):
+            flip.add(id(tax))
+    if not flip:
+        return lines
+    return [replace(r, value_won=-r.value_won) if id(r) in flip else r for r in lines]
+
+
 def _emit_sce_lines(
     *, tree: PresentationTree, facts_by_qname: dict[QName, list[XbrlFact]],
     contexts: dict[str, XbrlContext], units: dict[str, XbrlUnit],
@@ -1244,7 +1281,7 @@ def extract_report_lines_xbrl(
 
             if not core_roles:
                 logger.debug(f"[report_lines_xbrl] {rcept_no}: core statement role 없음 → 빈 결과")
-            return lines
+            return _settle_is_tax_sign(lines)
     except Exception as e:
         logger.warning(f"[report_lines_xbrl] {rcept_no}: 추출 실패 ({type(e).__name__}: {e})")
         return []

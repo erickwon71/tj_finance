@@ -1786,6 +1786,22 @@ def _period_filings_chrono(session, corp: str, fy: int, period: str) -> list[tup
 _CELL_KEY = ("statement", "basis", "col_index", "section_path", "label_raw")
 
 
+def _filing_source_kind(session, rcept: str) -> str:
+    """R171 — which extraction path produced a filing's report_lines: 'xbrl' (XBRL
+    instance tree labels/section_paths), 'pdf' (PDF text) or 'xml' (DART document).
+    _CELL_KEY only aligns cells produced by the SAME path — the paths write the same
+    account under different label_raw/section_path strings."""
+    r = session.execute(text("""
+        SELECT bool_or(unit_source = 'xbrl'), bool_or(unit_source = 'pdf')
+        FROM report_lines WHERE rcept_no = :r AND col_index = 0
+    """), {"r": rcept}).fetchone()
+    if r and r[0]:
+        return "xbrl"
+    if r and r[1]:
+        return "pdf"
+    return "xml"
+
+
 def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
     """★정본 정책(사용자 2026-07-22): 최초등록본 + 순차 델타 패치.
 
@@ -1811,6 +1827,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
     """
     chrono = _period_filings_chrono(session, corp, fy, period)
     merged: dict[tuple, dict] = {}
+    kind_of_cell: dict[tuple, str] = {}
     for i, (rcept, is_amend) in enumerate(chrono):
         # ★ base = the FIRST filing (chrono). Its cells are never "amended" even if that
         # filing is itself a [기재정정] (no earlier original to patch → it IS the base).
@@ -1846,6 +1863,21 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                     AND b.label_raw ~ '^\\[.*\\]$'
               )
         """), {"r": rcept}).fetchall()
+        # ★R171(2026-09-25): a later filing from a DIFFERENT extraction path can't be
+        # delta-aligned (_CELL_KEY never matches across paths), so its cells would only
+        # ever be "added" next to the earlier path's cells, and the earlier cells could
+        # never be patched by it again — _resolve() then mixes restatements
+        # (00242378 2019Q3 연결: 원본 XML → 정정1 XBRL → 정정2 XML; 자산·자본은 정정2,
+        # 부채는 정정1 값을 골라 BS 항등식이 깨졌다). Such a filing replaces the other-
+        # path cells of every (statement, basis) scope it actually covers; scopes it
+        # doesn't carry keep their cells (R2-0: amendments are arbitrary subsets).
+        kind = _filing_source_kind(session, rcept)
+        if not is_base and kind != "xbrl":
+            covered = {(r[0], r[1]) for r in rows}
+            for k in [k for k in merged
+                      if (k[0], k[1]) in covered and kind_of_cell.get(k) == "xbrl"]:
+                del merged[k]
+                kind_of_cell.pop(k, None)
         for (statement, basis, col_index, section_path, label_raw, value_won,
              node_role, table_seq, is_cum) in rows:
             key = (statement, basis, col_index, section_path, label_raw)
@@ -1863,6 +1895,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                 cell["amended_by"] = None if is_base else rcept
                 cell["amend_chain"] = [] if is_base else [rcept]
                 merged[key] = cell
+                kind_of_cell[key] = kind
             else:
                 base = merged[key]
                 # ★2026-08-27(R49 버그B, 포스코인터내셔널 00124504 2025FY): 원래 조건은

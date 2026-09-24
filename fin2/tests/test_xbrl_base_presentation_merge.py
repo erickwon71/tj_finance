@@ -190,3 +190,45 @@ def test_daehan_2017h1_cf_outflows_keep_base_negation():
             for l in lines if l.statement == "CF" and l.basis == "separate" and l.col_index == 0}
     assert cf_s["InterestPaidClassifiedAsOperatingActivities"] == -454_000_662
     assert cf_s["IncomeTaxesPaidRefundClassifiedAsOperatingActivities"] == -6_326_321
+
+
+# ── R170-d: 법인세 부호는 세전 − 법인세 = 계속영업이익 등식으로 확정 ─────────────
+def _is_row(local: str, value: int, basis: str = "separate", col: int = 0):
+    from fin2.extract.report_lines import ReportLineRow
+    return ReportLineRow(corp_code="x", rcept_no="r", report_fiscal_year=2015, report_fiscal_period="Q3",
+                         statement="IS", basis=basis, section_path=None, label_raw=local, col_index=col,
+                         context_fiscal_year=2015, period_kind="duration", is_cumulative=True,
+                         value_won=value, adecimal=0, unit_source="xbrl",
+                         source_ref=f"IS_{basis}/{local}", context_raw="c", row_order=0, depth=0,
+                         node_role="F", table_seq=0, table_title=None)
+
+
+def test_tax_sign_flipped_only_when_identity_proves_it():
+    from fin2.extract.report_lines_xbrl import _settle_is_tax_sign
+    rows = [_is_row("ProfitLossBeforeTax", -207_824_678),
+            _is_row("IncomeTaxExpenseContinuingOperations", -38_948_803),
+            _is_row("ProfitLoss", -246_773_481)]
+    tax = next(r for r in _settle_is_tax_sign(rows) if "IncomeTax" in r.source_ref)
+    assert tax.value_won == 38_948_803
+
+
+def test_tax_sign_kept_when_identity_already_holds_or_is_unprovable():
+    from fin2.extract.report_lines_xbrl import _settle_is_tax_sign
+    ok = [_is_row("ProfitLossBeforeTax", -10_596_094_006),
+          _is_row("IncomeTaxExpenseContinuingOperations", -2_585_746_745),
+          _is_row("ProfitLossFromContinuingOperations", -8_010_347_261)]
+    assert _settle_is_tax_sign(ok)[1].value_won == -2_585_746_745
+    unprovable = [_is_row("ProfitLossBeforeTax", 1_000),
+                  _is_row("IncomeTaxExpenseContinuingOperations", 100),
+                  _is_row("ProfitLoss", 555)]  # 중단영업 등 — 어느 쪽도 성립 안 함
+    assert _settle_is_tax_sign(unprovable)[1].value_won == 100
+
+
+def test_lnf_2015q3_separate_tax_sign_follows_identity():
+    lines = _lines("KOSPI/00398701_엘앤에프/quarter/2015/20151104000116.zip",
+                   "20151104000116", "00398701", 2015, "Q3", date(2015, 9, 30))
+    if lines is None:
+        return
+    is_s = {l.source_ref.split("/")[1]: l.value_won
+            for l in lines if l.statement == "IS" and l.basis == "separate" and l.col_index == 0}
+    assert is_s["IncomeTaxExpenseContinuingOperations"] == 38_948_803

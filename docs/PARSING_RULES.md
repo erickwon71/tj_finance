@@ -10169,6 +10169,27 @@ OtherTransactions 3 · IssueOfEquity 2 · 회사 확장개념 등. 깨진 칸이
 같았다**(load_seq 불변 — 이슈의 db_value 가 같은 행의 다른 열·basis 값). 그래서 fixed 가 거부됐고, open 으로 되돌려 검증측 withdraw
 검토 대상으로 넘겼다(fix 역할은 withdraw 권한 없음). std_v3 488행(해당 기간) 재빌드: 핵심컬럼 무변화, orphan 0, D&A 18 채움.
 
+---
+
+## R162-f. 원문 **소계행이 틀려** R162-c 산술증명이 실패하면, 라벨로 식별한 소계행을 빼고 R162-e(단일셀 반전)를 다시 시도한다 (2026-09-25)
+
+**발견**: sign_flip 220건(원문 음수표기 없음) 조사. LG전자 2024FY `20250317001029` 연결 SCE '배당'(153,915 / 126,905 / 234,945 …)은
+원문에 괄호가 없다. 그래도 R162-e 가 못 풀었다. 블록 끝 '자본 증가(감소) 합계' 2,389,964 가 실제 변동(기말−기초) 2,393,964 와
+4,000(사업결합) 어긋나 R162-c 가 이 행을 소계로 증명하지 못했다. 그래서 Σ변동에 이중으로 들어가 **어떤 단일 반전으로도 닫히지 않았다.**
+
+**규칙** (`sce_sign_repair._solve_single_flip`): R162-e 표준 모형에서 반전 후보가 **0개**일 때만, `_SUBTOTAL_LABEL_RE`(합계·소계·총계·
+총포괄…)에 걸리는 변동행을 빼고 다시 센다. 명시적 기초·기말이 정확히 닫히고 반전 후보가 **정확히 하나**여야 한다(음수 셀은 후보 아님,
+앵커가 양수라 하면 거부 — R162-e 와 같은 안전장치). 라벨 소계의 부호는 건드리지 않는다.
+
+**측정(2015+ SCE 보유 XML 전수 DB 스캔 → 후보 1,084필링 수정 전후 재추출)**: 바뀐 셀 4,165 — **전부 순수 부호반전**
+(배당금지급 1,465 · 연차배당 458 · 자본의 변동>배당금지급 357 · 현금배당 202 · 기타포괄손익-공정가치 53 · 자기주식 취득 45 · 재측정요소 41 …).
+★DB 행에 수리 루틴을 다시 돌리는 스캔은 적재 시점 행 집합과 달라 멱등이 아니다(오늘 재적재한 필링에서도 '고칠 셀'이 나옴).
+그래서 규모는 반드시 **재추출 전후 비교**로만 잰다.
+sign_flip 220건 중 이 규칙으로 해소 43 + 이미 해소 4. **나머지 대부분(SKC·삼성E&A·두산 등)은 행 내부 항등식(구성요소 열 합 = 합계 열)과
+BS 대조를 근거로 한 것**이다. 이는 R162-d 의 영역이고, R162-d 는 사용자 결정(2026-09-22)으로 백필 보류 중이다.
+
+**테스트**: `fin2/tests/test_xbrl_base_presentation_merge.py::test_r162f_…`(LG전자 배당 3개년 음수).
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |
@@ -10243,6 +10264,7 @@ OtherTransactions 3 · IssueOfEquity 2 · 회사 확장개념 등. 깨진 칸이
 | R174 | 사용자 지시 2026-09-25(148건 트리아지 후속) · `fin2/audit/face_audit.py::_apply_proved_unit_overrides()`/`read_report_face_text()` · `fin2/tests/test_r173_r174_eps_note_col_gateb_reader.py` |
 | R175 | 사용자 지시 2026-09-25(sign_flip 934건 착수) · `parser/xbrl_instance/taxonomy_linkbase.py::merged_calculation_weights()`/`resolve_external_base_presentation(kind=)` · `fin2/extract/report_lines_xbrl.py::_emit_statement_lines()` · `fin2/tests/test_xbrl_base_presentation_merge.py` |
 | R176 | 사용자 지시 2026-09-25(sign_flip 45건) · `fin2/extract/report_lines_xbrl.py::_settle_sce_signs_by_rollforward()` · `fin2/tests/test_xbrl_base_presentation_merge.py::test_r176_…` |
+| R162-f | 사용자 지시 2026-09-25(sign_flip 220건) · `fin2/extract/sce_sign_repair.py::_solve_single_flip()` · `fin2/tests/test_xbrl_base_presentation_merge.py::test_r162f_…` |
 | R140 | 사용자 지시 2026-09-18(SCE 포함 + 단계(B) 지정) · `fin2/extract/review_csv.py`·`fin2/audit/layer2_selfcheck.py`·`scripts/layer2_review.py` · `fin2/tests/test_review_csv.py` · `docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md` |
 | R141 | 사용자 지시 2026-09-19("확인시작해" — 계층2 원문대조 캠페인 fail 10건 근본원인 조사) · `fin2/extract/statement_titles.py::classify_statement_in_body_section()` |
 | R142 | 위와 동일 조사(2026-09-19) · `fin2/extract/statement_titles.py::is_substatement_marker()` · `fin2/extract/text.py::_detect_body_statement_tables()`(`last_stmt`) · `fin2/tests/test_r142_substatement_marker.py` |

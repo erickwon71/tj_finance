@@ -467,6 +467,41 @@ def _solve_single_flip(cells: Sequence[_Cell], block, anchors,
             winners.append(i)
             if len(winners) > 1:
                 return []
+    if not winners:
+        # R162-f (2026-09-25) — the filer's own subtotal row can be internally off, so the
+        # arithmetic subtotal proof (R162-c) fails and the row stays in Σ, double-counting:
+        # LG전자 20250317001029 연결 '자본 증가(감소) 합계' 2,389,964 vs the real change
+        # 2,393,964 (it omits 사업결합 4,000). Retry with **label-identified** subtotal rows
+        # left out; the explicit 기초/기말 balances still have to close exactly and the flip
+        # must still be unique.
+        label_subs = {m for m in summed if _SUBTOTAL_LABEL_RE.search(cells[m].label_raw)}
+        if label_subs:
+            summed_f = [m for m in summed if m not in label_subs]
+            members_f = [open_i, *summed_f, close_i]
+
+            def holds_f(signs: Dict[int, int]) -> bool:
+                total = signs[open_i] * abs(cells[open_i].value)
+                for m in summed_f:
+                    total += signs[m] * abs(cells[m].value)
+                return total == signs[close_i] * abs(cells[close_i].value)
+
+            if holds_f(current):
+                return []
+            for i in members_f:
+                if cells[i].value <= 0:
+                    continue
+                trial = dict(current)
+                trial[i] = -1
+                if holds_f(trial):
+                    winners.append(i)
+                    if len(winners) > 1:
+                        return []
+            if len(winners) == 1:
+                i = winners[0]
+                sign, _label = _required_sign(cells[i], anchors, carried)
+                if sign == 1:
+                    return []
+                return [(i, -1)]
     if len(winners) != 1:
         return []
     i = winners[0]

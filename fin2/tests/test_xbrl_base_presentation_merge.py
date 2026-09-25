@@ -270,3 +270,17 @@ def test_r176_sk_gas_sce_dividends_negative():
            and l.source_ref.endswith("/DividendsPaid")}
     assert -22_340_715_800 in div and -22_770_340_800 in div
     assert 22_340_715_800 not in div
+
+
+# ── R162-f: 원문 소계행이 틀려(R162-c 산술증명 실패) 이중계상되던 블록도 라벨소계 제외로 단일셀 반전 ──
+def test_r162f_lg_dividends_negative_despite_inconsistent_subtotal():
+    """LG전자 2024FY 연결 '자본 증가(감소) 합계' 2,389,964 ≠ 실제 변동 2,393,964(사업결합 4,000 누락)."""
+    path = _RAW / "KOSPI/00401731_LG전자/annual/2024/20250317001029.xml"
+    if not path.exists():
+        return
+    from fin2.extract.report_lines import extract_report_lines
+    rows = extract_report_lines(path, rcept_no="20250317001029", corp_code="00401731",
+                                report_fiscal_year=2024, report_fiscal_period="FY")
+    div = {r.value_won for r in rows if r.statement == "SCE" and r.basis == "consolidated"
+           and r.label_raw.strip() == "배당" and r.col_index == 8}
+    assert div == {-231_468_000_000, -240_987_000_000, -316_709_000_000}

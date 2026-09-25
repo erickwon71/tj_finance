@@ -817,7 +817,24 @@ def require_clean_pushed_head() -> str:
     return commit
 
 
-def _reload_rcept(rcept: str, reason: str) -> tuple[str, str | None]:
+# raw_report 심링크(= NAS, `/Volumes/tj_finance_data`)는 SMB 라 대량 재적재에서
+# 병목이다(메모리 `feedback-bulk-read-use-sdcard`: 8샤드로도 3.5시간에 13%). 로컬
+# SD카드 미러(`/Volumes/dart_data/raw_report`)가 있으면 그리로 치환해서 읽는다 —
+# 이미 여러 일회성 backfill 스크립트가 쓰던 패턴(예: `scripts/backfill_r164_sce_appropriation_guard.py`)
+# 을 배치-추적 재적재(`vq.py batch reload`)에도 R162-d(2026-09-25)에서 옮겨왔다.
+_RAW_REPORT_NAS = "/Users/taejin/Project/tj_finance/raw_report"
+_RAW_REPORT_SD = "/Volumes/dart_data/raw_report"
+
+
+def _sd_path(file_path: str) -> str:
+    """NAS 경로를 SD 미러 경로로 치환한다 — 그 파일이 SD 에 실제로 있을 때만."""
+    if not file_path.startswith(_RAW_REPORT_NAS):
+        return file_path
+    candidate = _RAW_REPORT_SD + file_path[len(_RAW_REPORT_NAS):]
+    return candidate if Path(candidate).exists() else file_path
+
+
+def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, str | None]:
     """Re-extract one filing from its XML (or, R170, its XBRL instance zip) and store
     body(+notes)+table meta in ONE transaction (same routines as the daily
     collector/note_lines_sync.py / collector/xbrl_instance_lines_sync.py)."""
@@ -837,7 +854,10 @@ def _reload_rcept(rcept: str, reason: str) -> tuple[str, str | None]:
               AND dt.file_type IN ('xml', 'xbrl_zip')
               AND dt.file_path IS NOT NULL
             ORDER BY (dt.file_type = 'xml') DESC LIMIT 1"""), {"r": rcept}).fetchone()
-    if t is None or not Path(t.file_path).exists():
+    if t is None:
+        return "failed", "XML/XBRL 원문 없음 — PDF 경로는 전용 스크립트로 처리"
+    file_path = _sd_path(t.file_path) if use_sd and t.file_type == "xml" else t.file_path
+    if not Path(file_path).exists():
         return "failed", "XML/XBRL 원문 없음 — PDF 경로는 전용 스크립트로 처리"
     if t.file_type == "xbrl_zip":
         # R170: XBRL-instance filings (body only, no notes) — the same extract+store
@@ -848,7 +868,7 @@ def _reload_rcept(rcept: str, reason: str) -> tuple[str, str | None]:
                                           report_fiscal_period=t.fiscal_period,
                                           period_end_date=t.period_end_date)
     else:
-        lines = extract_report_lines(t.file_path, rcept_no=rcept, corp_code=t.corp_code,
+        lines = extract_report_lines(file_path, rcept_no=rcept, corp_code=t.corp_code,
                                      report_fiscal_year=t.fiscal_year,
                                      report_fiscal_period=t.fiscal_period, include_notes=True)
     if not lines:
@@ -871,9 +891,12 @@ def _reload_rcept(rcept: str, reason: str) -> tuple[str, str | None]:
 
 
 def batch_reload(batch_id: int, limit: int | None = None,
-                 shard: tuple[int, int] | None = None) -> dict:
+                 shard: tuple[int, int] | None = None, use_sd: bool = False) -> dict:
     """`shard=(i, n)` reloads only targets with int(rcept) % n == i, so n processes can
-    share one batch without touching the same filing."""
+    share one batch without touching the same filing. `use_sd` reads XML from the local
+    SD-card mirror (`/Volumes/dart_data/raw_report`) instead of the NAS symlink when the
+    file exists there — lets one shard hit SD while another hits NAS concurrently
+    (R162-d 2026-09-25; NAS-only sharding bottlenecked on SMB, see PARSING_RULES.md)."""
     _require("fix")
     commit = require_clean_pushed_head()
     batch_set(batch_id, status="reloading", commit_sha=commit)
@@ -888,7 +911,7 @@ def batch_reload(batch_id: int, limit: int | None = None,
         targets = targets[:limit]
     tally = {"done": 0, "deferred": 0, "failed": 0}
     for i, rcept in enumerate(targets, 1):
-        status, err = _reload_rcept(rcept, f"fix_batch:{batch_id}")
+        status, err = _reload_rcept(rcept, f"fix_batch:{batch_id}", use_sd=use_sd)
         tally[status] += 1
         with _Tx() as conn:
             conn.execute(text("""

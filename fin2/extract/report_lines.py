@@ -192,7 +192,9 @@ from fin2.extract.report_lines_inline_xbrl_overlay import (
     overlay_dividends_paid_sign,
     overlay_tax_expense_value,
 )
-from fin2.extract.sce_sign_repair import apply_manual_sign_fixes, repair_sce_sign_loss
+from fin2.extract.sce_sign_repair import (
+    apply_manual_sign_fixes, repair_sce_row_identity, repair_sce_sign_loss,
+)
 from fin2.extract.cf_cash_sign_repair import repair_cf_cash_sign_loss
 
 # report_fiscal_year 가 이 값 이하면 pre-2015 K-GAAP 라우팅을 먼저 시도한다(설계문서
@@ -2120,6 +2122,15 @@ def extract_report_lines(
     if manual_sign_fixes:
         logger.debug(f"[report_lines] R162-manual SCE 부호 수동확정: "
                      f"{len(manual_sign_fixes)}셀 ({rcept_no})")
+
+    # R162-d(2026-09-25, 사용자 결정: 이중증거 셀만) — SCE 행 내부 열 항등식(구성요소 합 =
+    # 그룹 합계, 지배기업 합계 + 비지배 = 자본 합계)으로 빠진 음수 괄호를 복원한다.
+    # R162 의 열 롤포워드가 먼저 확정해 둔 값을 이 행의 다른 항등식이 물려받을 수 있게
+    # 반드시 R162 뒤에 돈다. `fin2/extract/sce_sign_repair.py` 모듈 docstring 참고.
+    row_identity_fixes = repair_sce_row_identity(lines)
+    if row_identity_fixes:
+        logger.debug(f"[report_lines] R162-d SCE 행 항등식 부호 복원: "
+                     f"{len(row_identity_fixes)}셀 ({rcept_no})")
 
     # R163(2026-09-22) — R162 의 자매. CF 현금 조정 구간(기초+순증감+환율효과=기말)이
     # 깨진 열에서 단일 셀 부호를 복원한다. 캠페인 이슈#29.

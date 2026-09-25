@@ -562,3 +562,183 @@ def _apply(cells: Sequence[_Cell], fixes, anchor_label: str,
         # `cells` 는 불변 NamedTuple 이라 값을 제자리에서 못 바꾼다 — 같은 열을 다시
         # 훑는 다음 라운드가 갱신된 부호를 보도록 교체해 둔다.
         cells[idx] = cell._replace(value=new_value)
+
+
+# ── R162-d (2026-09-25, 사용자 결정: **이중증거 셀만** 적용) ─────────────────────────
+#
+# 열(`col_label`) 계층에서 한 그룹 아래 '합계' 열이 정확히 하나면
+# Σ(형제 열) = 그 합계 열 — 최상위도 같다(지배기업 소유주 귀속 자본 합계 + 비지배지분
+# = 자본 합계). 한 행 안에서 이 항등식이 깨져 있는데, 닫는 **양수 셀의 최소 부분집합이
+# 유일**하면(≤`_MAX_ROW_FLIP`, 원래 성립하던 항등식은 깨지 않고) 그 배정을 후보로 삼는다.
+#
+# ★이중증거(사용자 결정): 뒤집는 셀 **모두**가 이 필링 안 다른 곳(BS·IS·CF 본문, 다른
+# SCE 행, 주석)에 같은 금액이 **음수로** 있어야 한다. 단, 그 "다른 곳"이 **같은 행의
+# 다른 열**일 때는 그 열이 지금 풀려는 항등식의 구성원이면 안 된다 — 그건 새 증거가
+# 아니라 지금 풀려는 항등식 자체를 순환 재사용하는 것이다(2026-09-25 표본 원문대조
+# #7: '당기순이익(손실)' 행에서 이익잉여금·합계 두 칸뿐인 항등식에 서로를 증거로 썼다).
+# 반대로 **다른** 항등식(예: 중첩계층의 안쪽 합계)의 구성원이면 유효한 증거다 — 2026-09-25
+# 표본원문대조 #17(제이씨현시스템 `20210517000597`)에서 이익잉여금 칸이 이미
+# 확정 음수인 것이 그 바깥 합계 칸의 증거로 유효했다.
+#
+# ★교차-basis(연결↔별도) SCE 증거는 **자본거래/이월잔액**(자기주식·배당·자본조정·
+# 결손금·증자·감자·전환·상환·기초자본/기말자본 등)에만 인정한다. 순이익·기타포괄손익
+# 재측정·지분법·처분손익 같은 **손익 결과** 항목은 연결·별도가 서로 다른 부호를 가지는
+# 것이 정상이라 배제한다 — 2026-09-25 표본원문대조 #1(이니텍 `20171114002176`
+# 별도 '확정급여채무의재측정요소'): 원문은 별도 두 칸 모두 양수(무괄호)로 일관되게
+# 인쇄됐는데, 연결의 같은 금액이 음수(원문에 괄호 있음)라는 이유만으로 뒤집으면
+# 오히려 이전 규칙이 잘못 뒤집어 놓은 형제 칸을 "확증"하며 별도 금액까지 틀리게 만든다.
+_TOTAL_COL_RE = re.compile(r"합\s*계|총\s*계")
+_MAX_ROW_FLIP = 3
+_CAPITAL_TRANSACTION_RE = re.compile(
+    r"자기주식|배당|자본조정|결손금|무상증자|유상증자|무상감자|유상감자|감자차손|"
+    r"전환|상환|신종자본증권|연결범위변동|자본금|주식기준보상|주식선택권"
+)
+
+
+def _row_identities(by_path: Dict[Tuple[str, ...], object]) -> List[Tuple[Tuple, List[Tuple]]]:
+    """`{col-path -> line}` 한 행에서 (합계 경로, [구성원 경로...]) 항등식 목록을 뽑는다."""
+    children: Dict[Tuple, List[Tuple]] = defaultdict(list)
+    for path in by_path:
+        children[path[:-1]].append(path)
+    out = []
+    for parent, kids in children.items():
+        totals = [k for k in kids if _TOTAL_COL_RE.search(k[-1])]
+        if len(totals) != 1:
+            continue
+        members = [k for k in kids if k != totals[0]]
+        resolved = [m for m in members if m in by_path]
+        groups = {k[:len(parent) + 1] for k in by_path if len(k) > len(parent) + 1
+                  and k[:len(parent)] == parent}
+        ok = True
+        for g in groups:
+            gkids = children.get(g, [])
+            gt = [k for k in gkids if _TOTAL_COL_RE.search(k[-1])]
+            if len(gt) != 1:
+                ok = False
+                break
+            resolved.append(gt[0])
+        if ok and resolved:
+            out.append((totals[0], resolved))
+    return out
+
+
+def _row_flip_solution(by_path: Dict[Tuple, object],
+                        identities: List[Tuple[Tuple, List[Tuple]]]
+                        ) -> Optional[Tuple[Tuple, ...]]:
+    """항등식을 전부 닫는, 유일한 최소 양수-부분집합 반전을 찾는다(없으면 None)."""
+    def holds(signs: Dict[Tuple, int], ident) -> bool:
+        total, members = ident
+        val = lambda p: signs.get(p, 1) * getattr(by_path[p], "value_won")  # noqa: E731
+        return sum(val(m) for m in members) == val(total)
+
+    broken = [i for i in identities if not holds({}, i)]
+    if not broken:
+        return None
+    involved = sorted({p for t, ms in broken for p in [t, *ms]}
+                      | {p for t, ms in identities for p in [t, *ms]})
+    positives = [p for p in involved if getattr(by_path[p], "value_won") > 0]
+    for size in range(1, _MAX_ROW_FLIP + 1):
+        sols = []
+        for combo in itertools.combinations(positives, size):
+            signs = {p: -1 for p in combo}
+            if all(holds(signs, i) for i in identities):
+                sols.append(combo)
+                if len(sols) > 1:
+                    break
+        if sols:
+            return sols[0] if len(sols) == 1 else None
+    return None
+
+
+def repair_sce_row_identity(lines: List) -> List[Correction]:
+    """R162-d — SCE 한 행 안의 **열 항등식**과 **이중증거**로 원문에서 빠진 음수 괄호를
+    복원한다. 모듈 docstring의 R162-d 절 참조. 열 롤포워드(R162/R162-e/f)가 먼저 돈
+    뒤에 적용한다."""
+    anchors = build_sign_anchors(lines)
+    # magnitude -> {(statement, basis, table_seq, row_order, col_path)} — report_lines
+    # statements only (BS/IS/CF/SCE). note_lines (statement='note') tracked separately:
+    # per the user's decision any note magnitude match counts regardless of site,
+    # so it needs no site-exclusion bookkeeping.
+    neg_sites: Dict[int, Set[Tuple]] = defaultdict(set)
+    has_neg_note: Set[int] = set()
+    for ln in lines:
+        v = getattr(ln, "value_won", None)
+        if v is None or v >= 0:
+            continue
+        mag = -int(v)
+        stmt = getattr(ln, "statement", None)
+        if stmt == "note":
+            has_neg_note.add(mag)
+            continue
+        col_label = getattr(ln, "col_label", None)
+        col_path = tuple(s.strip() for s in col_label.split(">")) if col_label else ()
+        neg_sites[mag].add((stmt, ln.basis, getattr(ln, "table_seq", None),
+                            getattr(ln, "row_order", None), col_path))
+
+    rows: Dict[Tuple, Dict[Tuple, object]] = defaultdict(dict)
+    for ln in lines:
+        if getattr(ln, "statement", None) != "SCE" or getattr(ln, "value_won", None) is None:
+            continue
+        col_label = getattr(ln, "col_label", None)
+        if not col_label:
+            continue
+        path = tuple(s.strip() for s in col_label.split(">"))
+        rows[(ln.basis, getattr(ln, "table_seq", None), ln.row_order)][path] = ln
+
+    corrections: List[Correction] = []
+    for (basis, table_seq, row_order), by_path in rows.items():
+        if len(by_path) < 2:
+            continue
+        identities = _row_identities(by_path)
+        if not identities:
+            continue
+        solution = _row_flip_solution(by_path, identities)
+        if not solution:
+            continue
+
+        participants: Dict[Tuple, Set[Tuple]] = defaultdict(set)
+        for t, ms in identities:
+            group = {t, *ms}
+            for p in group:
+                participants[p] |= group - {p}
+
+        row_label = next(iter(by_path.values())).label_raw or ""
+        row_is_capital_txn = bool(_is_balance_label(row_label)
+                                  or _CAPITAL_TRANSACTION_RE.search(row_label))
+
+        ok = True
+        for p in solution:
+            ln = by_path[p]
+            mag = abs(int(ln.value_won))
+            excluded = {("SCE", basis, table_seq, row_order, q) for q in participants[p]}
+            report_sites = {s for s in neg_sites.get(mag, ()) if s not in excluded}
+            if not report_sites and mag not in has_neg_note:
+                ok = False
+                break
+            same_basis_evidence = any(b == basis for _st, b, _ts, _ro, _cp in report_sites)
+            # 같은 basis 의 report_lines 증거가 아니면(교차-basis SCE·BS/IS/CF, 또는
+            # 주석뿐) — 그 신뢰도를 원문으로 직접 검증하지 않았으므로, 자본거래/이월
+            # 잔액 행에만 인정한다(모듈 상단 R162-d 절 참조).
+            if not same_basis_evidence and not row_is_capital_txn:
+                ok = False
+                break
+            anchor_sign, _ = _required_sign(
+                _Cell(line=ln, basis=basis, label_raw=ln.label_raw or "",
+                      col_label=ln.col_label, value=int(ln.value_won)), anchors)
+            if anchor_sign == 1:
+                ok = False
+                break
+        if not ok:
+            continue
+
+        for p in solution:
+            ln = by_path[p]
+            old = int(ln.value_won)
+            ln.value_won = -old
+            corrections.append(Correction(
+                basis=basis, table_seq=table_seq, row_order=row_order,
+                col_index=ln.col_index, col_label=ln.col_label, label_raw=ln.label_raw or "",
+                old_value=old, new_value=-old, anchor_label="R162-d 행항등식+이중증거"))
+    if corrections:
+        logger.debug(f"[report_lines/R162-d] SCE 행 항등식 부호 복원 {len(corrections)}셀")
+    return corrections

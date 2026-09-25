@@ -64,22 +64,43 @@ free_gb() { df -g /opt/homebrew/var 2>/dev/null | awk 'NR==2 {print $4}'; }
 
 prune_logs() { find "$LOG_ROOT" -type f -mtime +30 -delete 2>/dev/null; }
 
-# Close the Chrome tabs this slot opened. Each `claude -p` gets its own tab group and cannot
-# see earlier ones, and a run cut off by max-turns/timeout never closes its tab - so the
-# runner does it. Only tabs whose URL carries one of THIS slot's rcept numbers are touched,
-# so DART tabs the user opened for other filings stay open.
-# DONE_RCEPTS accumulates every slot this runner finished (last ~60 rcepts), so a tab that
-# one cleanup missed (observed once: 0 closed while the tab was still settling) is retried
-# on every later run instead of being left behind for good.
-DONE_RCEPTS=""
-close_slot_tabs() {  # $1 = slot just finished
-  local rcepts
-  rcepts=$("${VQ[@]}" rcepts "$1" 2>/dev/null) || rcepts=""
-  DONE_RCEPTS=$(printf '%s %s' "$DONE_RCEPTS" "$rcepts" | tr ' ' '\n' | grep -v '^$' | tail -60 | tr '\n' ' ')
-  rcepts="$DONE_RCEPTS"
-  [ -n "${rcepts// /}" ] || return 0
+# Close leftover DART tabs after every run. Each `claude -p` gets its own tab group and cannot
+# see earlier ones, a run cut off by max-turns/timeout never closes its tab, and the model also
+# opens OTHER periods of the same company for comparison - so a per-slot list misses tabs
+# (observed 2026-09-25: 4 tabs of finished 고려아연/한국전력 slots left open, none logged).
+# Rule: list every DART tab, and close those whose rcpNo is a campaign filing of a slot that is
+# not in progress right now (`vq.py stale-tabs`). DART tabs for non-campaign filings - the
+# user's own browsing - are never touched.
+dart_tab_rcepts() {
+  osascript <<'OSA' 2>/dev/null
+set out to ""
+if application "Google Chrome" is not running then return out
+tell application "Google Chrome"
+  repeat with w in windows
+    repeat with t in tabs of w
+      set u to URL of t
+      if u contains "dart.fss.or.kr" and u contains "rcpNo=" then
+        set AppleScript's text item delimiters to "rcpNo="
+        set r to text 1 thru 14 of (text item 2 of u)
+        set AppleScript's text item delimiters to ""
+        set out to out & r & " "
+      end if
+    end repeat
+  end repeat
+end tell
+return out
+OSA
+}
+
+close_slot_tabs() {  # $1 = slot just finished (kept for the log line; the sweep is global)
+  local open stale
+  open=$(dart_tab_rcepts) || open=""
+  [ -n "${open// /}" ] || return 0
   # shellcheck disable=SC2086
-  osascript - $rcepts <<'OSA' 2>/dev/null || log "탭 정리 실패(Chrome 자동화 권한 확인)"
+  stale=$("${VQ[@]}" stale-tabs $open 2>/dev/null) || stale=""
+  [ -n "${stale// /}" ] || return 0
+  # shellcheck disable=SC2086
+  osascript - $stale <<'OSA' 2>/dev/null || log "탭 정리 실패(Chrome 자동화 권한 확인)"
 on run argv
   set n to 0
   if application "Google Chrome" is not running then return n

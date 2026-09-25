@@ -163,6 +163,19 @@ def cmd_show(a):
     _show(slot, a)
 
 
+def cmd_stale_tabs(a):
+    """Of the given rcepts (open DART tabs), print those safe to close: campaign filings whose
+    slot is not being verified right now. Non-campaign rcepts are left out (user's tabs)."""
+    from collector.db import engine
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT pf.rcept_no FROM verification.progress_filings pf
+            JOIN verification.progress p USING (corp_code, fiscal_year, fiscal_period)
+            WHERE pf.rcept_no = ANY(:rs) AND p.status <> 'in_progress'"""),
+            {"rs": list(dict.fromkeys(a.rcepts))}).fetchall()
+    print(" ".join(r[0] for r in rows))
+
+
 def cmd_rcepts(a):
     d = ops.slot_detail(Slot.parse(a.slot))
     print(" ".join(f["rcept_no"] for f in d["filings"]))
@@ -355,6 +368,8 @@ def build_parser() -> argparse.ArgumentParser:
     x = sp.add_parser("show"); x.add_argument("slot", nargs="?")
     x.add_argument("--no-csv", action="store_true"); x.add_argument("--json", action="store_true")
     x.set_defaults(fn=cmd_show)
+    x = sp.add_parser("stale-tabs", help="러너: 열린 DART 탭 접수번호 중 닫아도 되는 것(점유 중 아닌 캠페인 필링)")
+    x.add_argument("rcepts", nargs="*"); x.set_defaults(fn=cmd_stale_tabs)
     x = sp.add_parser("rcepts", help="슬롯의 접수번호 목록(러너의 탭 정리용)")
     x.add_argument("slot"); x.set_defaults(fn=cmd_rcepts)
     x = sp.add_parser("pass"); x.add_argument("--rcept", required=True)

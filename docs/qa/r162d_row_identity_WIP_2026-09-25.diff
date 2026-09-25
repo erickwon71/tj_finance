@@ -1,0 +1,163 @@
+diff --git a/fin2/extract/report_lines.py b/fin2/extract/report_lines.py
+index 39e55b8..6f1afeb 100644
+--- a/fin2/extract/report_lines.py
++++ b/fin2/extract/report_lines.py
+@@ -192,7 +192,9 @@ from fin2.extract.report_lines_inline_xbrl_overlay import (
+     overlay_dividends_paid_sign,
+     overlay_tax_expense_value,
+ )
+-from fin2.extract.sce_sign_repair import apply_manual_sign_fixes, repair_sce_sign_loss
++from fin2.extract.sce_sign_repair import (
++    apply_manual_sign_fixes, repair_sce_row_identity, repair_sce_sign_loss,
++)
+ from fin2.extract.cf_cash_sign_repair import repair_cf_cash_sign_loss
+ 
+ # report_fiscal_year 가 이 값 이하면 pre-2015 K-GAAP 라우팅을 먼저 시도한다(설계문서
+@@ -2121,6 +2123,12 @@ def extract_report_lines(
+         logger.debug(f"[report_lines] R162-manual SCE 부호 수동확정: "
+                      f"{len(manual_sign_fixes)}셀 ({rcept_no})")
+ 
++    # R162-d(2026-09-25, 사용자 결정: 이중증거 셀만) — SCE 행 내부 열 항등식(구성요소 합 =
++    # 그룹 합계, 지배기업 합계 + 비지배 = 자본 합계)으로 빠진 음수 괄호 복원.
++    row_fixes = repair_sce_row_identity(lines)
++    if row_fixes:
++        logger.debug(f"[report_lines] R162-d SCE 행 항등식 부호 복원: {len(row_fixes)}셀 ({rcept_no})")
++
+     # R163(2026-09-22) — R162 의 자매. CF 현금 조정 구간(기초+순증감+환율효과=기말)이
+     # 깨진 열에서 단일 셀 부호를 복원한다. 캠페인 이슈#29.
+     cf_fixes = repair_cf_cash_sign_loss(lines)
+diff --git a/fin2/extract/sce_sign_repair.py b/fin2/extract/sce_sign_repair.py
+index a54139a..a8aeb97 100644
+--- a/fin2/extract/sce_sign_repair.py
++++ b/fin2/extract/sce_sign_repair.py
+@@ -562,3 +562,130 @@ def _apply(cells: Sequence[_Cell], fixes, anchor_label: str,
+         # `cells` 는 불변 NamedTuple 이라 값을 제자리에서 못 바꾼다 — 같은 열을 다시
+         # 훑는 다음 라운드가 갱신된 부호를 보도록 교체해 둔다.
+         cells[idx] = cell._replace(value=new_value)
++
++
++# ── R162-d (2026-09-25, 사용자 결정: **이중증거 셀만** 적용) ─────────────────────────
++_TOTAL_COL_RE = re.compile(r"합\s*계|총\s*계")
++_MAX_ROW_FLIP = 3
++
++
++def repair_sce_row_identity(lines: List) -> List[Correction]:
++    """SCE 한 행 안의 **열 항등식**으로 원문에서 빠진 음수 괄호를 복원한다(R162-d).
++
++    열 머리(`col_label`, '자본>지배기업…>자본조정')가 계층이다. 한 그룹 아래 '합계' 열이 정확히
++    하나면 Σ(나머지 형제 열) = 그 합계 열이다. 최상위도 같다(지배기업 합계 + 비지배지분 = 자본 합계,
++    그룹의 값은 그 그룹의 합계 열). SKC `20210322000882` 연결 2018.01.01 기초자본: 구성요소 합
++    1,682.85B ≠ 지배기업 합계 1,450.01B → 자본조정(108,226,487,739)과 기타포괄손익누계액
++    (8,196,428,738)을 **함께** 음수로 해야만 정확히 닫힌다.
++
++    채택 조건:
++      1. 그 행에서 깨진 항등식을 모두 닫는 **양수 셀 부분집합 중 최소 크기의 해가 유일**
++         (크기 ≤ `_MAX_ROW_FLIP`)하고, 원래 성립하던 항등식을 하나도 깨지 않는다.
++         음수 셀은 후보가 아니다(괄호가 명시된 것).
++      2. **이중증거(사용자 결정 2026-09-25)**: 뒤집는 셀 **모두**가 두 번째 증거를 가져야 한다 —
++         같은 문서의 다른 행/표(BS·IS·CF·주석·다른 SCE 행)에 그 금액이 **음수로** 있거나,
++         BS/IS 앵커(같은 basis·같은 개념 라벨)가 음수. 하나라도 없으면 그 행은 건드리지 않는다.
++    열 롤포워드(R162/R162-e/f)가 먼저 돈 뒤에 적용한다."""
++    anchors = build_sign_anchors(lines)
++    # negative magnitudes present elsewhere in the document, keyed to where they sit
++    neg_sites: Dict[int, Set[Tuple]] = defaultdict(set)
++    for ln in lines:
++        v = getattr(ln, "value_won", None)
++        if v is not None and v < 0:
++            neg_sites[-int(v)].add((getattr(ln, "statement", None), ln.basis,
++                                    getattr(ln, "table_seq", None), getattr(ln, "row_order", None)))
++
++    rows: Dict[Tuple, List] = defaultdict(list)
++    for ln in lines:
++        if getattr(ln, "statement", None) != "SCE" or getattr(ln, "value_won", None) is None:
++            continue
++        if not getattr(ln, "col_label", None):
++            continue
++        rows[(ln.basis, getattr(ln, "table_seq", None), ln.row_order)].append(ln)
++
++    corrections: List[Correction] = []
++    for key, cells in rows.items():
++        by_path = {}
++        for c in cells:
++            by_path.setdefault(tuple(s.strip() for s in c.col_label.split(">")), c)
++        if len(by_path) != len(cells):
++            continue                                    # duplicate column path — ambiguous layout
++        # identities: parent path -> (total child path, [member child paths])
++        children: Dict[Tuple, List[Tuple]] = defaultdict(list)
++        for path in by_path:
++            children[path[:-1]].append(path)
++        identities = []
++        for parent, kids in children.items():
++            totals = [k for k in kids if _TOTAL_COL_RE.search(k[-1])]
++            if len(totals) != 1:
++                continue
++            members = [k for k in kids if k != totals[0]]
++            # a member that is itself a group contributes through its own total column
++            resolved = []
++            for m in members:
++                if m in by_path:
++                    resolved.append(m)
++            groups = {k[:len(parent) + 1] for k in by_path if len(k) > len(parent) + 1
++                      and k[:len(parent)] == parent}
++            for g in groups:
++                gkids = children.get(g, [])
++                gt = [k for k in gkids if _TOTAL_COL_RE.search(k[-1])]
++                if len(gt) != 1:
++                    resolved = None
++                    break
++                resolved.append(gt[0])
++            if resolved:
++                identities.append((totals[0], resolved))
++        if not identities:
++            continue
++
++        def holds(signs: Dict[Tuple, int], ident) -> bool:
++            total, members = ident
++            val = lambda p: signs.get(p, 1) * by_path[p].value_won  # noqa: E731
++            return sum(val(m) for m in members) == val(total)
++
++        base = {}
++        broken = [i for i in identities if not holds(base, i)]
++        if not broken:
++            continue
++        involved = sorted({p for t, ms in broken for p in [t, *ms]}
++                          | {p for t, ms in identities for p in [t, *ms]})
++        positives = [p for p in involved if by_path[p].value_won > 0]
++        solution = None
++        for size in range(1, _MAX_ROW_FLIP + 1):
++            sols = []
++            for combo in itertools.combinations(positives, size):
++                signs = {p: -1 for p in combo}
++                if all(holds(signs, i) for i in identities):
++                    sols.append(combo)
++                    if len(sols) > 1:
++                        break
++            if sols:
++                solution = sols[0] if len(sols) == 1 else None
++                break
++        if not solution:
++            continue
++        row_site = ("SCE", key[0], key[1], key[2])
++        ok = True
++        for p in solution:
++            c = by_path[p]
++            mag = abs(c.value_won)
++            elsewhere = any(site != row_site for site in neg_sites.get(mag, ()))
++            anchor_sign, _ = _required_sign(_Cell(line=c, basis=c.basis, label_raw=c.label_raw or "",
++                                                  col_label=c.col_label, value=int(c.value_won)), anchors)
++            if anchor_sign == 1 or not (elsewhere or anchor_sign == -1):
++                ok = False
++                break
++        if not ok:
++            continue
++        for p in solution:
++            c = by_path[p]
++            old = int(c.value_won)
++            c.value_won = -old
++            corrections.append(Correction(
++                basis=c.basis, table_seq=getattr(c, "table_seq", None), row_order=c.row_order,
++                col_index=c.col_index, col_label=c.col_label, label_raw=c.label_raw or "",
++                old_value=old, new_value=-old, anchor_label="R162-d 행항등식+이중증거"))
++    if corrections:
++        logger.debug(f"[report_lines/R162-d] SCE 행 항등식 부호 복원 {len(corrections)}셀")
++    return corrections

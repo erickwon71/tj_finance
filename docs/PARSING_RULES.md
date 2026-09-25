@@ -10190,6 +10190,8 @@ BS 대조를 근거로 한 것**이다. 이는 R162-d 의 영역이고, R162-d �
 
 **테스트**: `fin2/tests/test_xbrl_base_presentation_merge.py::test_r162f_…`(LG전자 배당 3개년 음수).
 
+**재적재·결과(fix batch #8, 커밋 715a4e1)**: 1,085필링 done / failed 0. 이슈 47건 DB 원문부호 일치 47/47 → fixed 47. std_v3 355개사 해당 기간 재빌드: 핵심컬럼 무변화, orphan 0, D&A/EBITDA 842 채움(재적재된 주석 반영).
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |

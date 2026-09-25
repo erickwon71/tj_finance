@@ -10164,6 +10164,11 @@ OtherTransactions 3 · IssueOfEquity 2 · 회사 확장개념 등. 깨진 칸이
 
 **테스트**: `fin2/tests/test_xbrl_base_presentation_merge.py::test_r176_…`(SK가스 배당 음수, 기타자본 열 +429,625,000 유지).
 
+**재적재·결과(fix batch #7, 2026-09-25, 커밋 426ba13)**: 45건 + R176 이 반전하는 XBRL 246필링 = 271필링, done 271 / failed 0.
+이슈 셀 45/45 가 DB 에서 원문 괄호 부호와 일치한다. mark-fixed 결과 **fixed 21**. 나머지 **24건은 등록 시점부터 DB 가 이미 원문과
+같았다**(load_seq 불변 — 이슈의 db_value 가 같은 행의 다른 열·basis 값). 그래서 fixed 가 거부됐고, open 으로 되돌려 검증측 withdraw
+검토 대상으로 넘겼다(fix 역할은 withdraw 권한 없음). std_v3 488행(해당 기간) 재빌드: 핵심컬럼 무변화, orphan 0, D&A 18 채움.
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |

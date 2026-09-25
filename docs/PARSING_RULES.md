@@ -10035,6 +10035,13 @@ D&A 11 · capex 10 · fcf 13(최종 XBRL 정정이 유형자산 취득을 기계
 
 **관련**: R2 · R171 · R16/R42(trade_payables 라벨 관례) · 2026-08-15 NI 귀속 구조 복구
 
+**적용 결과(2026-09-25 12시, 커밋 157da1e)**: std_v3 경로 혼합 1,498기간(777개사) 재빌드 2,848행, 실패 0. 드라이런과 일치한다
+(핵심 컬럼 변경 136행, 소실 0, BS 항등식 성립→위반 0). calendar_v3 777개사, orphan 0.
+DQ: `statement_magnitude_impossible` 0, `std_v3_conflicts_unresolved` 37,459 → 37,440.
+★Gate B 재감사(런북 C3)는 **미실행**이다. `scripts/gateb_audit.py` 가 시작 시 `init_db()`(DDL)를 불러 수정 역할
+(tjf_fix)로는 `permission denied for schema public`. main(관리자)에서 돌려야 한다:
+`python scripts/gateb_audit.py --corp-file <경로혼합 777개사> --fy-min 2015 --fy-max 2025 --recheck`.
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |

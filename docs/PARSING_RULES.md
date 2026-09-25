@@ -10051,6 +10051,9 @@ DQ: `statement_magnitude_impossible` 0, `std_v3_conflicts_unresolved` 37,459 →
 경로 혼합 기간 전이(첫 재감사, R172-b 전): fail_b→pass 47 · pending→pass 384 · pass→pass 76 · pass→pending 8(n_fail 0,
 LABEL_UNMATCHED) · pending→fail_b 5(위). 경로 혼합 밖 pass→fail_b 148 은 비교 기준이 2026-09-02/03 감사라 3주 누적 변화다.
 그 가운데 R170 재빌드 772개사에 속한 124건도 실패 필드의 std 값이 R170 재빌드 전후 동일해 오늘 작업과 무관하다(별도 조사 대상).
+**R172-b 적용 후 재감사(13시53분~, 커밋 9e35c40)**: 경로 혼합 기간 fail_b→pass 47 · pending→pass 385 · pass→pending 8(값 오류 아님) ·
+pending→fail_b **2**(둘 다 Gate B 기준값이 총포괄 귀속값인 건: 00456218 2016H1·00122551 2019Q3 연결 지배순이익, 우리 값이
+순이익 귀속으로 맞다). **R172 로 새로 틀린 값은 0건이다.**
 
 ## 부록 B. 규칙이 사는 곳 (원출처)
 

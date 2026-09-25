@@ -133,6 +133,9 @@ class FaceLine:
 
 _NUM_RE = re.compile(r"[0-9][0-9,  ]*\.?[0-9]*")
 _NEG_MARK = ("△", "▲", "▵", "−", "-", "(")
+# R174 — a first current-period cell that reads 'nothing happened'.
+_DASH_CELLS = frozenset({"-", "−", "–", "―", "－", "—"})
+_NOTE_ONLY_RE = re.compile(r"^[\d,\s.]{1,12}$")
 
 
 def parse_displayed(text: str) -> int | None:
@@ -912,7 +915,9 @@ def read_report_face_text(file_path: str | Path, root=None) -> list[FaceLine]:
     **행 내 모든 숫자 셀 리터럴** 읽기(any-column). is_cumulative=True 로 interim 필터 통과.
     요약재무정보표·주석표는 제외(본문만, `_detect_body_statement_tables` 가 이미 보장).
     """
-    from parser.xml.table_extractor import _get_cells
+    from parser.xml.table_extractor import (
+        _get_cells, _table_has_comma_note_column, _table_has_note_header,
+    )
     from parser.common.account_mapper import get_mapper
     from fin2.extract.text import declared_unit, _detect_body_statement_tables, _detect_fin_type
 
@@ -927,19 +932,33 @@ def read_report_face_text(file_path: str | Path, root=None) -> list[FaceLine]:
     def _read_table(tbl, basis, stmt, unit, from_gapfill=False):
         fs_section = stmt.lower()
         adecimal = _adecimal_from_unit(unit or 1)
+        tbl_trs = list(tbl.findall(".//TR"))
+        table_has_note = (_table_has_note_header(tbl_trs)
+                          or _table_has_comma_note_column([_get_cells(tr) for tr in tbl_trs]))
         for tr in tbl.findall(".//TR"):
             cells = _get_cells(tr)
             label = None
             nums: list[int] = []
+            value_cells: list[str] = []
             for cell in cells:
                 if label is None and _HANGUL_RE.search(cell):
                     label = cell.strip()
                     continue
                 if label is None:
                     continue
+                value_cells.append(cell.strip())
                 v = parse_displayed(cell)
                 if v is not None:
                     nums.append(v)
+            # ★R174(2026-09-25) — 당기 첫 값 칸이 '-'(발생 없음)이면 0 도 후보다. any-column
+            #   판독은 숫자 칸만 후보로 삼아, 당기 '-'·전기 금액인 행(패션플랫폼 01101041 2017Q3
+            #   별도 재무활동현금흐름 `-, -, -, 11,827,416,000`)에서 DB 의 정답 0 과 절대 맞지
+            #   않았다(148건 트리아지, DB=0 유형 195필드). 첫 값 칸만 본다 — 주석 열이면 그다음 칸.
+            first = value_cells[1] if (len(value_cells) > 1 and table_has_note
+                                       and _NOTE_ONLY_RE.match(value_cells[0])) else (
+                value_cells[0] if value_cells else "")
+            if first in _DASH_CELLS:
+                nums.append(0)
             if not label or not nums:
                 continue
             mapping = mapper.map(label, fs_section=fs_section)
@@ -1028,6 +1047,27 @@ def _supplement_with_text(a_lines: list[FaceLine], file_path: str | Path,
     return a_lines
 
 
+def _apply_proved_unit_overrides(lines: list[FaceLine], file_path: str | Path) -> list[FaceLine]:
+    """★R174(2026-09-25) — Gate B 가 계층2 와 **같은 자기모순 단위 교정**을 따른다.
+
+    R132(수기)·R169(타 필링 동일값 대조로 증명)는 "(단위: 백만원)"을 선언했지만 셀이 이미 원인
+    (rcept, 섹션)을 확정한 목록이다. Gate B 판독기는 셀의 ADECIMAL(−6)·선언 단위를 그대로 믿어
+    그 필링들에서 기준값이 ×10⁶ 로 부풀었다 — DB 가 맞는데 fail_b 가 났다(00161116 2021H1 ·
+    00201131 2019Q3 · 00679314 2017H1, 148건 트리아지). 이 목록은 문서 밖 증거(다른 필링의 같은
+    금액)로 확정된 것이라 "독자 재파싱" 원칙과 충돌하지 않는다 — 선언을 믿으면 틀린다는 게
+    이미 증명된 섹션만 바꾼다. 섹션 = statement + basis(연결 C / 별도 S)."""
+    from fin2.extract.report_lines import _unit_override
+    rcept = Path(file_path).stem
+    for line in lines:
+        if not line.statement or not line.basis:
+            continue
+        code = f"{line.statement}_{'C' if line.basis == 'consolidated' else 'S'}"
+        ov = _unit_override(rcept, code)
+        if ov is not None:
+            line.adecimal = _adecimal_from_unit(ov[0])
+    return lines
+
+
 def read_report_face(file_path: str | Path) -> list[FaceLine]:
     """Track A 우선(+텍스트 보충), 0행이면 Track B(텍스트) 폴백. 감사 러너의 단일 진입점."""
     # ③ Fix 2 — 파일을 1회만 파싱해 두 reader 가 공유한다(read_report_face_xbrl 참고).
@@ -1039,7 +1079,7 @@ def read_report_face(file_path: str | Path) -> list[FaceLine]:
         lines = _supplement_with_text(lines, file_path, root=root)
     else:
         lines = read_report_face_text(file_path, root=root)
-    return _with_ni_attribution_text_fallback(lines, root)
+    return _apply_proved_unit_overrides(_with_ni_attribution_text_fallback(lines, root), file_path)
 
 
 def read_report_face_xbrl_zip(
@@ -1125,13 +1165,13 @@ def read_report_face_tracked(file_path: str | Path,
         # 읽으므로 비교컬럼 대조에 그대로 부합. 비교행 분기는 불일치를 fail 로 승격하지 않음
         # (COMPARATIVE_ROW pending) → 후보 추가는 매칭만 늘려 단조 개선.
         lines = _supplement_with_text(lines, file_path, root=root)
-        return _with_ni_attribution_text_fallback(lines, root), "A"
+        return _apply_proved_unit_overrides(_with_ni_attribution_text_fallback(lines, root), file_path), "A"
     lines = read_report_face_text(file_path, root=root)
     if lines:
         # R35 — Track B 가 이미 전체를 읽었어도(예: '지배주주지분' 짧은 라벨은 account_mapper
         # 가 의도적으로 안 잡음, 함수 docstring 참고) 이 개념만 빠질 수 있다 → 트랙 자체는
         # 그대로 "B"(이미 Track B 였으므로 신뢰도 격하 없음), 후보만 가산.
-        return _with_ni_attribution_text_fallback(lines, root), "B"
+        return _apply_proved_unit_overrides(_with_ni_attribution_text_fallback(lines, root), file_path), "B"
     return [], None
 
 

@@ -870,6 +870,13 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
     표는 기존 동작(앞 3개 위치순) 그대로."""
     trs = list(table_direct_rows(table))
     tr_cells = [_get_cells(tr) for tr in trs]
+    # ★R173(2026-09-25) — 본류(`_emit_section_lines`)와 **같은 주석열 판정**. 안 넘기면
+    #   '주석' 열의 단일 번호("21")가 첫 금액으로 잡혀 위치가 한 칸씩 밀린다: Q3 표
+    #   [주석 21 | 3개월 277 | 누적 (118)] 에서 누적 대신 3개월 277 이 당기로, FY 표에선
+    #   주석번호 자체(29·31)가 당기 EPS 로 적재됐다(아이큐어 20161129000515 별도 등,
+    #   Gate B 148건 트리아지 중 발견). R144 교훈 — 같은 판정은 두 경로가 공유해야 한다.
+    table_has_note_column = (_table_has_comma_note_column(tr_cells)
+                             or _table_has_note_header(trs))
 
     # 이 표의 '주당' 라벨(헤더행 포함)이 원(₩)을 명시 선언했는가 — 위 docstring 참고.
     eps_unit_declared = any(
@@ -928,7 +935,7 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
         else:
             unit, eps_source, eps_currency = (
                 detect_unit_declaration(label) or 1, "declared", None)
-        _, amt_cells = _split_label_amounts(cells)
+        _, amt_cells = _split_label_amounts(cells, table_has_note_column)
         # 위치보존(라벨/주석컬럼 제외, 그 외 자리는 그대로) — cum_map 은 이 위치 기준.
         amounts_by_pos = [parse_amount(c, unit) for c in amt_cells]
         present = [a for a in amounts_by_pos if a is not None]

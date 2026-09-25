@@ -10055,6 +10055,40 @@ LABEL_UNMATCHED) · pending→fail_b 5(위). 경로 혼합 밖 pass→fail_b 148
 pending→fail_b **2**(둘 다 Gate B 기준값이 총포괄 귀속값인 건: 00456218 2016H1·00122551 2019Q3 연결 지배순이익, 우리 값이
 순이익 귀속으로 맞다). **R172 로 새로 틀린 값은 0건이다.**
 
+---
+
+## R173. EPS 경로도 본류와 **같은 주석열 판정**으로 금액 칸을 가른다 (2026-09-25)
+
+**발견**: Gate B 148건 트리아지(`docs/qa/gateb_pass_to_fail_148_triage_2026-09-25.md`) 중 원문 셀대조에서 EPS 행 불일치가
+반복됐다. 아이큐어 2016Q3 `20161129000515` 별도 IS 원문은 `기본주당이익(손실) | 21(주석) | 277(3개월) | (118)(누적) | …` 이다.
+DB 는 277(3개월)을 당기로 담았고, FY 표에서는 주석번호 자체(29·31 등)가 당기 EPS 로 들어갔다.
+
+**원인**: `_emit_eps_lines` 가 `_split_label_amounts(cells)` 를 `table_has_note_column` 없이 불렀다. 그래서 '주석' 열의 단일
+번호가 첫 금액으로 남아 위치가 한 칸 밀렸다(cum_map·앞 3칸 분기). 본류(`_emit_section_lines`)는 같은 표에서
+`_table_has_comma_note_column or _table_has_note_header` 로 판정해 넘기고 있었다. R144 와 같은 유형이다(같은 판정을 두 경로가 따로 가짐).
+
+**규칙**: `_emit_eps_lines` 는 표마다 본류와 같은 식으로 `table_has_note_column` 을 구해 `_split_label_amounts` 에 넘긴다.
+헤더 그리드(R88/R144) 분기는 헤더 위치를 쓰므로 영향이 없다.
+
+**테스트**: `fin2/tests/test_r173_r174_eps_note_col_gateb_reader.py::test_r173_…`(아이큐어 별도 −118·연결 −440).
+
+---
+
+## R174. Gate B 판독기 — 증명된 단위 교정(R132/R169)을 따르고, 당기 첫 칸 '-' 는 0 후보로 둔다 (2026-09-25)
+
+**발견**: Gate B 148건 트리아지. DB 는 원문과 맞는데 기준값(report_won)이 틀려 fail_b 가 났다.
+(1) R169 교정 필링 3건에서 ×10⁶ — 판독기가 셀 ADECIMAL(−6)/선언 백만원을 그대로 믿었다.
+(2) 당기 칸이 '-' 인 행 — Track B any-column 판독은 숫자 칸만 후보로 삼아 정답 0 과 맞을 수 없었다(DB=0 유형 195필드).
+
+**규칙** (`fin2/audit/face_audit.py`):
+1. `_apply_proved_unit_overrides`: `read_report_face`/`read_report_face_tracked`(XML A·B 트랙) 결과에
+   `report_lines._unit_override(rcept, 섹션)` 을 적용해 adecimal 을 바꾼다. 문서 밖 증거로 확정된 섹션만이라
+   "독자 재파싱" 원칙과 충돌하지 않는다.
+2. `read_report_face_text._read_table`: 라벨 다음 첫 값 칸(주석열이면 그다음 칸)이 대시(-, −, –, ―, －, —)면
+   그 행 후보에 0 을 더한다. 첫 칸만 보므로 전기 '-' 로 0 이 들어가지는 않는다.
+
+**테스트**: `fin2/tests/test_r173_r174_eps_note_col_gateb_reader.py`(동성케미컬 R169 · 패션플랫폼 대시).
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |
@@ -10125,6 +10159,8 @@ pending→fail_b **2**(둘 다 Gate B 기준값이 총포괄 귀속값인 건: 0
 | R170 | verification fix batch #4(2026-09-25, 야간 자율) · `parser/xbrl_instance/taxonomy_linkbase.py::_build_merged_presentation_tree()`/`resolve_external_base_presentation()`/`_denegate_role()` · `fin2/extract/report_lines_xbrl.py::_numeric_value()` · `fin2/verification/ops.py::_reload_rcept()` · `fin2/tests/test_xbrl_base_presentation_merge.py` |
 | R171 | 사용자 지시 2026-09-25(R170 후속 판단 1번) · `fin2/layer3/combine.py::build_merged_lines()`/`_filing_source_kind()` · `fin2/extract/report_lines_xbrl.py::_settle_is_tax_sign()`(R170-d) · `fin2/tests/test_combine_cross_source_amendment_r171.py` |
 | R172 | 사용자 지시 2026-09-25(XBRL 개념 매핑 착수) · `fin2/layer3/combine.py::_map_xbrl_concept()`/`_map_rows()`/`_ni_attribution_structural_candidates()`/`build_merged_lines()` · `fin2/taxonomy/concept_map.py` · `fin2/tests/test_combine_cross_source_amendment_r171.py` |
+| R173 | 사용자 지시 2026-09-25(148건 트리아지 부수발견) · `fin2/extract/report_lines.py::_emit_eps_lines()` · `fin2/tests/test_r173_r174_eps_note_col_gateb_reader.py` |
+| R174 | 사용자 지시 2026-09-25(148건 트리아지 후속) · `fin2/audit/face_audit.py::_apply_proved_unit_overrides()`/`read_report_face_text()` · `fin2/tests/test_r173_r174_eps_note_col_gateb_reader.py` |
 | R140 | 사용자 지시 2026-09-18(SCE 포함 + 단계(B) 지정) · `fin2/extract/review_csv.py`·`fin2/audit/layer2_selfcheck.py`·`scripts/layer2_review.py` · `fin2/tests/test_review_csv.py` · `docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md` |
 | R141 | 사용자 지시 2026-09-19("확인시작해" — 계층2 원문대조 캠페인 fail 10건 근본원인 조사) · `fin2/extract/statement_titles.py::classify_statement_in_body_section()` |
 | R142 | 위와 동일 조사(2026-09-19) · `fin2/extract/statement_titles.py::is_substatement_marker()` · `fin2/extract/text.py::_detect_body_statement_tables()`(`last_stmt`) · `fin2/tests/test_r142_substatement_marker.py` |

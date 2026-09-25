@@ -1099,6 +1099,7 @@ def _emit_sce_lines(
     stride = len(row_flat)
 
     out: list[ReportLineRow] = []
+    meta: list[tuple[str, int, int]] = []   # (row_loc, period_idx, col_idx) per out row — R176
     for row_loc in row_flat:
         row_node = tree.nodes[row_loc]
         row_depth = row_node.depth
@@ -1175,9 +1176,120 @@ def _emit_sce_lines(
                     table_seq=0,
                     table_title=None,
                 ))
+                meta.append((row_loc, period_idx, col_idx))
 
+    _settle_sce_signs_by_rollforward(out, meta, tree, row_flat, ifrs_full_ns, source)
     _check_sce_column_rollup(out, col_parent_of, source)
     return out
+
+
+def _settle_sce_signs_by_rollforward(
+    out: list[ReportLineRow], meta: list[tuple[str, int, int]], tree: PresentationTree,
+    row_flat: list[str], ifrs_full_ns: str, source: str,
+) -> None:
+    """★R176(2026-09-25) — XBRL SCE 변동 행 부호를 표 자신의 **롤포워드 등식**으로 확정한다.
+
+    원문 자본변동표는 감소 변동(배당·자기주식 취득·주식선택권 소멸 …)을 괄호로 적는다. XBRL fact 는
+    대개 양수이고, 부호는 preferredLabel(negated, R10)로만 나오는데 회사가 base 템플릿 배치를
+    자기 배치로 바꾸면 그 negation 이 사라진다(SK가스 20171117000389 '연차배당' fact +22,340,715,800
+    → 원문 (22,340,715,800), sign_flip 이슈 12건).
+    판정: 기간 블록 × 자본구성요소 열마다 기초 + Σ(말단 변동 행) = 기말. 어떤 행 개념의 부호를 뒤집으면
+    깨진 칸이 줄고 **성립하던 칸은 하나도 안 깨질 때만** 뒤집는다. 가장 많이 고치는 개념부터 반복한다.
+    어느 개념도 조건을 못 채우면 그대로 둔다(R6)."""
+    begin_local, end_local = _SCE_BEGINNING_LOCAL, _SCE_ENDING_LOCAL
+    local_of = {loc: tree.nodes[loc].element.local for loc in row_flat}
+    has_kids = {loc for loc in row_flat if any(k in local_of for k in tree.nodes[loc].children)}
+    cells: dict[tuple[int, int], dict[str, int]] = {}      # (period, col) -> row_loc -> out index
+    for i, (row_loc, period_idx, col_idx) in enumerate(meta):
+        cells.setdefault((period_idx, col_idx), {})[row_loc] = i
+
+    order_of = {loc: i for i, loc in enumerate(row_flat)}
+
+    def numeric_subtotals(block: dict[str, int]) -> set[str]:
+        """Rows that are sums of the contiguous rows right after them (sibling subtotals such
+        as '총포괄손익' followed by 당기순이익·기타포괄손익) — counting both would double-count
+        and make R176 'fix' the identity by flipping the subtotal. Sign-agnostic (|v| = Σ|x|)
+        so a subtotal whose component carries the very sign error we are hunting still counts."""
+        rows = sorted((loc for loc in block if local_of[loc] not in (begin_local, end_local)),
+                      key=lambda l: order_of[l])
+        vals = [out[block[l]].value_won for l in rows]
+        subs = set()
+        for i, v in enumerate(vals):
+            if not v:
+                continue
+            # components right after (header-style subtotal) …
+            acc = acc_abs = 0
+            for j in range(i + 1, len(vals)):
+                acc += vals[j]; acc_abs += abs(vals[j])
+                if j >= i + 2 and (acc == v or acc_abs == abs(v)):
+                    subs.add(rows[i]); break
+            if rows[i] in subs:
+                continue
+            # … or right before it (footer-style: '총포괄손익' after 순이익·기타포괄손익,
+            # '자본 증가(감소) 합계' closing the block — 00161116 20150331003085).
+            acc = acc_abs = 0
+            for j in range(i - 1, -1, -1):
+                acc += vals[j]; acc_abs += abs(vals[j])
+                if j <= i - 2 and (acc == v or acc_abs == abs(v)):
+                    subs.add(rows[i]); break
+        return subs
+
+    subtotal_cache: dict[tuple[int, int], set[str]] = {}
+
+    def flow_locs(block: dict[str, int], key: tuple[int, int] | None = None) -> list[str]:
+        if key is not None and key not in subtotal_cache:
+            subtotal_cache[key] = numeric_subtotals(block)
+        subs = subtotal_cache.get(key, set()) if key is not None else numeric_subtotals(block)
+        return [loc for loc in block if local_of[loc] not in (begin_local, end_local)
+                and loc not in subs
+                and not (loc in has_kids and any(k in block for k in tree.nodes[loc].children))]
+
+    def residuals(flipped: set[str]) -> dict[tuple[int, int], int]:
+        res = {}
+        for key, block in cells.items():
+            b = next((out[i].value_won for loc, i in block.items() if local_of[loc] == begin_local), None)
+            e = next((out[i].value_won for loc, i in block.items() if local_of[loc] == end_local), None)
+            flows = flow_locs(block, key)
+            if b is None or e is None or not flows:
+                continue
+            total = sum((-1 if loc in flipped else 1) * out[block[loc]].value_won for loc in flows)
+            res[key] = b + total - e
+        return res
+
+    # Never flip what the income statement already signs (순이익·포괄손익·기타포괄손익 and the
+    # filer's OCI items under a ComprehensiveIncome abstract) nor the block total — only owner
+    # transactions (배당·자기주식·유상증자 …) are candidates. Measured: without this, the
+    # greedy step 'fixed' double-counted blocks by flipping 총포괄손익 (44 statements).
+    anchored = {loc for loc in row_flat
+                if local_of[loc].startswith(("ProfitLoss", "ComprehensiveIncome", "OtherComprehensiveIncome"))
+                or local_of[loc] == "ChangesInEquity"
+                or "ComprehensiveIncome" in local_of[loc]}
+    flipped: set[str] = set()
+    initial = residuals(flipped)
+    while True:
+        base = residuals(flipped)
+        broken = {k for k, r in base.items() if r != 0}
+        if not broken:
+            break
+        best, best_fix = None, 0
+        for loc in {loc for key, block in cells.items() for loc in flow_locs(block, key)} - flipped - anchored:
+            trial = residuals(flipped | {loc})
+            if any(trial.get(k, 0) != 0 for k, r in base.items() if r == 0):
+                continue    # would break a cell that currently holds
+            fixed = sum(1 for k in broken if trial.get(k, 1) == 0)
+            if fixed > best_fix:
+                best, best_fix = loc, fixed
+        if best is None:
+            break
+        flipped.add(best)
+    for i, (row_loc, _p, _c) in enumerate(meta):
+        if row_loc in flipped:
+            r = out[i]
+            out[i] = replace(r, value_won=-r.value_won)
+    final = residuals(set())   # values in `out` already carry the flips
+    logger.debug(f"{source}: R176 cells={len(initial)} broken_before="
+                 f"{sum(1 for r in initial.values() if r)} broken_after={sum(1 for r in final.values() if r)} "
+                 f"flipped={sorted(local_of[l] for l in flipped)}")
 
 
 def extract_report_lines_xbrl(

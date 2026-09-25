@@ -10140,6 +10140,30 @@ std_v3 1,452기간(759개사) 재빌드: 핵심컬럼 무변화, 소실 0, orpha
 **남은 sign_flip 279건(미착수)**: SCE 에서 원문 셀에 음수 표기가 **없는** 220건(원문 괄호 누락, R162 류 — 검증측이 항등식으로
 음수 판정) · SCE 에서 원문에 음수 표기가 **있는데** DB 가 양수인 45건(파서가 부호를 잃음 — 실결함 후보) · IS 9 · CF 1 · 데이터 없음 4.
 
+---
+
+## R176. XBRL SCE 소유주거래 행 부호 = 롤포워드 등식(기초 + Σ변동 = 기말)이 **증명할 때만** 반전 (2026-09-25)
+
+**발견**: sign_flip 45건(원문에 음수 표기가 있는데 DB 가 양수) 중 12건은 SK가스 2017Q3 `20171117000389`(XBRL) '연차배당'이었다.
+fact 가 +22,340,715,800 인데 원문은 (22,340,715,800) 이다. XBRL SCE 부호는 preferredLabel(R10)로만 정하는데, 회사가 base 배치를
+자기 배치로 바꾸면 그 negation 이 사라진다. 나머지 33건(XML)은 이미 DB 가 원문 셀 부호와 같았다(이전 재적재로 해소, 2건은 원문
+자체가 행 안에서 부호가 엇갈림 — 삼성중공업 2020H1 파생상품평가손익·삼성전기 2015 해외사업환산손익).
+
+**규칙** (`report_lines_xbrl._settle_sce_signs_by_rollforward`):
+1. 기간 블록 × 자본구성요소 열마다 기초 + Σ(말단 변동 행) = 기말 을 계산한다. 소계 행은 뺀다. 소계 = 트리 자식이 있거나, 값(≠0)이
+   바로 뒤·앞의 연속 행 합(부호 무관 |v| = Σ|x| 포함)과 같은 행이다. 앞 행 합이 소계가 되는 경우: '총포괄손익' 이 순이익·기타포괄손익
+   뒤에 오거나 '자본 증가(감소) 합계' 가 블록을 닫는 경우(00161116 `20150331003085`).
+2. 행 개념 하나를 뒤집어 깨진 칸이 줄고 **성립하던 칸은 하나도 안 깨질 때만** 뒤집는다. 가장 많이 고치는 개념부터 반복한다.
+3. **손익계산서가 이미 부호를 정한 개념은 후보에서 뺀다**(ProfitLoss*, *ComprehensiveIncome*, OtherComprehensiveIncome*,
+   ChangesInEquity). 빼지 않으면 이중계산 블록을 '총포괄손익 반전'으로 맞춰 버렸다(44개 재무제표, 실측).
+
+**검증(2015+ XBRL 경로 전수 1,627필링 / SCE 2,895개)**: 롤포워드 칸 34,831 중 깨진 칸 19,306 → 18,466(−840). 반전된 재무제표 361,
+**나빠진 재무제표 0**. 반전 개념: DividendsPaid 290 · TreasuryShareTransactions 5 · OtherDistributionsToOwners 5 ·
+OtherTransactions 3 · IssueOfEquity 2 · 회사 확장개념 등. 깨진 칸이 여전히 많은 이유는 행 누락·XBRL 태깅 불완전으로 등식이 애초에
+안 서는 블록이 많아서다. R176 은 그런 블록을 건드리지 않는다.
+
+**테스트**: `fin2/tests/test_xbrl_base_presentation_merge.py::test_r176_…`(SK가스 배당 음수, 기타자본 열 +429,625,000 유지).
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |
@@ -10213,6 +10237,7 @@ std_v3 1,452기간(759개사) 재빌드: 핵심컬럼 무변화, 소실 0, orpha
 | R173 | 사용자 지시 2026-09-25(148건 트리아지 부수발견) · `fin2/extract/report_lines.py::_emit_eps_lines()` · `fin2/tests/test_r173_r174_eps_note_col_gateb_reader.py` |
 | R174 | 사용자 지시 2026-09-25(148건 트리아지 후속) · `fin2/audit/face_audit.py::_apply_proved_unit_overrides()`/`read_report_face_text()` · `fin2/tests/test_r173_r174_eps_note_col_gateb_reader.py` |
 | R175 | 사용자 지시 2026-09-25(sign_flip 934건 착수) · `parser/xbrl_instance/taxonomy_linkbase.py::merged_calculation_weights()`/`resolve_external_base_presentation(kind=)` · `fin2/extract/report_lines_xbrl.py::_emit_statement_lines()` · `fin2/tests/test_xbrl_base_presentation_merge.py` |
+| R176 | 사용자 지시 2026-09-25(sign_flip 45건) · `fin2/extract/report_lines_xbrl.py::_settle_sce_signs_by_rollforward()` · `fin2/tests/test_xbrl_base_presentation_merge.py::test_r176_…` |
 | R140 | 사용자 지시 2026-09-18(SCE 포함 + 단계(B) 지정) · `fin2/extract/review_csv.py`·`fin2/audit/layer2_selfcheck.py`·`scripts/layer2_review.py` · `fin2/tests/test_review_csv.py` · `docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md` |
 | R141 | 사용자 지시 2026-09-19("확인시작해" — 계층2 원문대조 캠페인 fail 10건 근본원인 조사) · `fin2/extract/statement_titles.py::classify_statement_in_body_section()` |
 | R142 | 위와 동일 조사(2026-09-19) · `fin2/extract/statement_titles.py::is_substatement_marker()` · `fin2/extract/text.py::_detect_body_statement_tables()`(`last_stmt`) · `fin2/tests/test_r142_substatement_marker.py` |

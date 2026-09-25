@@ -256,3 +256,17 @@ def test_r175_filer_with_negative_facts_keeps_r10_signs():
     cf_s = {l.source_ref.split("/")[1]: l.value_won for l in lines
             if l.statement == "CF" and l.basis == "separate" and l.col_index == 0}
     assert cf_s["PurchaseOfFinancialAssetsAtFairValueThroughProfitOrLossClassifiedAsInvestingActivities"] == -1_910_000_000
+
+
+# ── R176: XBRL SCE 소유주거래 행 부호 = 롤포워드 등식(기초+Σ변동=기말)이 증명할 때만 반전 ──
+def test_r176_sk_gas_sce_dividends_negative():
+    """원문 (22,340,715,800)[자본 합계]·(22,770,340,800)[이익잉여금]. 기타자본 열의 +429,625,000
+    (자기주식분 배당)은 원문도 양수 — 합계 = 이익잉여금 + 기타 로 서로 맞는다."""
+    lines = _lines("KOSPI/00144164_SK가스/quarter/2017/20171117000389.zip",
+                   "20171117000389", "00144164", 2017, "Q3", date(2017, 9, 30))
+    if lines is None:
+        return
+    div = {l.value_won for l in lines if l.statement == "SCE" and l.basis == "separate"
+           and l.source_ref.endswith("/DividendsPaid")}
+    assert -22_340_715_800 in div and -22_770_340_800 in div
+    assert 22_340_715_800 not in div

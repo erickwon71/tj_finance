@@ -272,6 +272,26 @@ def test_r176_sk_gas_sce_dividends_negative():
     assert 22_340_715_800 not in div
 
 
+# ── R177: XBRL SCE canonical_dates(row_order 기간 순서)는 행마다 따로 잡지 않고 표 전체에서 한 번만 잡는다 ──
+def test_r177_sk_gas_sce_treasury_share_no_chain_shift():
+    """SK가스 2017Q1 연결 SCE '자기주식 취득' — 당기(2017Q1)엔 원문에 이 행이 전열 공백인데,
+    행마다 따로 날짜를 랭킹하던 예전 코드는 이 개념의 total 열 날짜 목록이 다른 행보다 하나
+    짧다는 이유로 FY2016 값을 당기 칸에, FY2015 값을 FY2016 칸에 밀어넣고 FY2015 칸은
+    비워버렸다(3구간 연쇄 오귀속, batch #11 이슈 #84674~84680/84825~84835). 원문 실제값:
+    당기=공백, FY2016=(154,645,788), FY2015=(131,459,328)(별도 CF·SCE 재무활동 자기주식의
+    취득 열 제32기/제31기와 대조 확정)."""
+    lines = _lines("KOSPI/00144164_SK가스/quarter/2017/20170529000325.zip",
+                   "20170529000325", "00144164", 2017, "Q1", date(2017, 3, 31))
+    if lines is None:
+        return
+    treasury = {l.row_order: l.value_won for l in lines
+                if l.statement == "SCE" and l.basis == "consolidated" and l.col_index == 0
+                and l.label_raw == "자기주식 취득"}
+    assert not any(o <= 17 for o in treasury), "당기(2017Q1) 블록엔 원문 공백 — 값이 있으면 안 된다"
+    assert treasury.get(32) == -154_645_788   # FY2016 블록
+    assert treasury.get(68) == -131_459_328   # FY2015 블록
+
+
 # ── R162-f: 원문 소계행이 틀려(R162-c 산술증명 실패) 이중계상되던 블록도 라벨소계 제외로 단일셀 반전 ──
 def test_r162f_lg_dividends_negative_despite_inconsistent_subtotal():
     """LG전자 2024FY 연결 '자본 증가(감소) 합계' 2,389,964 ≠ 실제 변동 2,393,964(사업결합 4,000 누락)."""

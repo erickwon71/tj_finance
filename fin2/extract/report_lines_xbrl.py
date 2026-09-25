@@ -492,8 +492,9 @@ def _bucket_by_period(
     module docstring). Used by `_resolve_columns` (BS/IS/CF, anchored to
     `period_end_date`) and directly by `_emit_sce_lines` (SCE, which ranks by
     recency instead — module docstring's SCE section explains why SCE can't
-    anchor to `period_end_date`, and why it resolves periods once per row
-    from the total column rather than per column)."""
+    anchor to `period_end_date`, and why it resolves periods once per table
+    (R177: union of every row's total-column dates) from the total column
+    rather than per column or per row)."""
     kinds = {ctx.period_kind for _, ctx in candidates}
     if not kinds:
         return {}
@@ -1098,6 +1099,40 @@ def _emit_sce_lines(
     # NULL, matching the HTML-parser SCE convention).
     stride = len(row_flat)
 
+    # ★R177(2026-09-26) — canonical period-block ranking must be resolved
+    # ONCE for the whole table (union of every row's total-column dates), not
+    # independently per ROW from that row's own total-column bucket. A
+    # movement row that's blank in the source for one period block (no XBRL
+    # fact at all for that date — e.g. "자기주식 취득" absent in the current
+    # quarter) has a total-column date set that's a *subset* of the table's
+    # true period set. Ranking that subset on its own (previous code)
+    # silently compresses the missing block out of the row's own
+    # `canonical_dates` — period_idx 0 then names a different real date for
+    # this row than for a row with a full date set, and every older period
+    # shifts one row_order block out of step with every other row (confirmed
+    # empirically: SK가스 20170529000325 연결 SCE '자기주식 취득' — FY2015 has
+    # no total-column fact at all, so the row's own ranking skipped straight
+    # from FY2016 to FY2014-era rows; FY2016's value landed in the row_order
+    # slot other rows use for 당기(2017Q1) and FY2015's value landed in the
+    # slot other rows use for FY2016, chaining the shift through 3 blocks).
+    # `total_buckets` is still resolved per row (needed for col_loc==total_col
+    # below either way, so cache it in the same pass) but `canonical_dates`
+    # is now the union across every row, computed once — a row missing a
+    # given block simply has no bucket entry for that date (sparse,
+    # `col_buckets.get(d) is None`, unchanged pre-existing behaviour) instead
+    # of a shifted index. The original rationale for anchoring on the TOTAL
+    # column (not per-member-column ranking) still holds — see `_bucket_by_period`
+    # docstring — this only widens the anchor from "per row" to "per table".
+    total_required = frozenset({Dimension(axis=basis_axis, member=basis_member)})
+    total_buckets_of: dict[str, dict[date, tuple]] = {}
+    all_dates: set[date] = set()
+    for row_loc in row_flat:
+        total_candidates = _dim_candidates(tree.nodes[row_loc].element, facts_by_qname, contexts, total_required)
+        total_buckets = _bucket_by_period(total_candidates, source)
+        total_buckets_of[row_loc] = total_buckets
+        all_dates.update(total_buckets)
+    canonical_dates = sorted(all_dates, reverse=True)
+
     out: list[ReportLineRow] = []
     meta: list[tuple[str, int, int]] = []   # (row_loc, period_idx, col_idx) per out row — R176
     for row_loc in row_flat:
@@ -1107,24 +1142,8 @@ def _emit_sce_lines(
         row_section_path = _section_path(row_loc, tree, label_of)
         base_label = label_of[row_loc]
 
-        # ★ Canonical period ranking comes from the TOTAL column only, then
-        # every other column looks up that *same date* in its own bucket —
-        # resolving periods independently per column (rank-by-recency on each
-        # column's own candidate set) is wrong whenever a member column is
-        # missing a period a sibling has (e.g. 비지배지분 absent in an
-        # earlier year): the local rankings then shift out of step and
-        # period_idx 1 can mean a different real date in different columns,
-        # silently mixing unrelated periods into the same row_order (found
-        # empirically — hanwha/baxelbio both tripped `_check_sce_column_rollup`
-        # until this was fixed). The total column is the right anchor because
-        # a statement's grand-total line exists for every period covered
-        # (Phase 3-6 §1: "총계열은 context dims==1"), while member columns can
-        # legitimately be sparse.
-        total_required = frozenset({Dimension(axis=basis_axis, member=basis_member)})
-        total_candidates = _dim_candidates(row_node.element, facts_by_qname, contexts, total_required)
-        total_buckets = _bucket_by_period(total_candidates, source)
-        canonical_dates = sorted(total_buckets, reverse=True)
-        if not canonical_dates:
+        total_buckets = total_buckets_of[row_loc]
+        if not total_buckets:
             continue  # this row concept has no total-column value anywhere — nothing to anchor periods to
 
         for col_loc in col_flat:

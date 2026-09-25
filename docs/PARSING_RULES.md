@@ -10171,6 +10171,43 @@ OtherTransactions 3 · IssueOfEquity 2 · 회사 확장개념 등. 깨진 칸이
 
 ---
 
+## R177. XBRL SCE row_order 기간 순서(`canonical_dates`)는 행마다 따로 잡지 않고 **표 전체에서 한 번만** 잡는다 (2026-09-26)
+
+**발견**: verification fix batch #11(period_misassign)에서 SK가스·비에이치·동진쎄미켐·대한광통신·케어젠·
+큐리언트·트리니티항공 등 9개 XBRL 필링(연결·별도 합 115셀)이 SCE 움직임 행 값을 **엉뚱한 기간 블록**에
+담고 있었다. 최악의 사례(SK가스 2017Q1 `20170529000325` 연결 '자기주식 취득')는 3구간 연쇄 오귀속:
+당기(2017Q1) 칸에 FY2016 값이, FY2016 칸에 FY2015 값이 들어가고, FY2015 칸은 통째로 비었다(원문상
+당기 행은 공백).
+
+**원인** (`_emit_sce_lines`, `fin2/extract/report_lines_xbrl.py`): 자본변동표는 기간 축이 없어(모듈
+docstring), 기간(당기/전기/…)을 `row_order` 블록 쌓기로만 인코딩한다. 이 블록 순서를 매기는
+`canonical_dates`(=period_idx가 가리키는 실제 날짜 목록)를 **행 하나의 TOTAL 열 날짜만으로** 매 행마다
+따로 계산했다. TOTAL 열은 그 통계표 전체(모든 기간)에 존재해야 한다는 전제(R176 이전 주석 그대로)는
+맞지만, 그 전제가 성립하는 건 '이 개념이 **그 기간에 fact가 하나라도 있을 때**'뿐이다. 원문에서 특정
+기간에 그 행 자체가 전열 공백(=XBRL fact 부재)이면, 그 행의 TOTAL 열 날짜 목록이 다른 행보다 **한
+칸 짧아진다** — 짧아진 목록을 `sorted(..., reverse=True)`로 다시 랭킹하면 `period_idx 0`이 이 행에서만
+다른 실제 날짜를 가리키게 되고, 그보다 오래된 모든 기간이 한 칸씩 밀려 다른 행들의 같은
+`row_order`(=period_idx × stride + 행 인덱스) 위치와 어긋난다.
+
+**수정**: `canonical_dates`를 행 루프 밖에서 **한 번만** 계산한다 — 모든 행의 TOTAL 열 날짜를
+합집합(union)한 뒤 내림차순 정렬. 개별 행의 `total_buckets`(TOTAL 열 dict)는 여전히 행마다 캐시해
+재사용하지만(`col_loc == total_col` 조회에도 필요), 기간 랭킹 자체는 표 전체에서 공유한다. 특정
+기간에 fact가 없는 행은 여전히 그 날짜의 `col_buckets.get(d) is None`으로 건너뛴다(기존 sparse 처리
+그대로) — 인덱스가 밀리는 대신 그 칸이 정말로 비게 된다.
+
+**검증**: SK가스 20170529000325 재추출 — 당기(row_order 1~17) 칸 공백, FY2016 블록(19~35)에
+`-154,645,788`, FY2015 블록(55~71)에 `-131,459,328` — 별도 CF·SCE 재무활동 자기주식의 취득 열
+제32기/제31기 값과 정확히 일치(교차대조). 케어젠 `20190515002560`(현금배당, 위치+부호 복합오류)·
+트리니티항공 `20191119000102`(유상증자, 당기→2018 비교기간)도 정정 확인.
+`fin2/tests/test_xbrl_base_presentation_merge.py::test_r177_sk_gas_sce_treasury_share_no_chain_shift`.
+`pytest tests/ fin2/tests/` 1,395 passed.
+
+**재적재·백필**: fix batch #11. 표적 9필링 재적재로 이슈 셀 115/115 전부 fixed(합계 24+115=139/139).
+같은 결함 시그니처(SCE 움직임 행이 `total_buckets`가 다른 행보다 짧은 XBRL 필링) 2015+ 전수 스캔·백필은
+batch note 참고.
+
+---
+
 ## R162-f. 원문 **소계행이 틀려** R162-c 산술증명이 실패하면, 라벨로 식별한 소계행을 빼고 R162-e(단일셀 반전)를 다시 시도한다 (2026-09-25)
 
 **발견**: sign_flip 220건(원문 음수표기 없음) 조사. LG전자 2024FY `20250317001029` 연결 SCE '배당'(153,915 / 126,905 / 234,945 …)은
@@ -10339,6 +10376,7 @@ candidates(증거 무시) 8,753필링/32,121셀, 이중증거+게이트 통과 7
 | R174 | 사용자 지시 2026-09-25(148건 트리아지 후속) · `fin2/audit/face_audit.py::_apply_proved_unit_overrides()`/`read_report_face_text()` · `fin2/tests/test_r173_r174_eps_note_col_gateb_reader.py` |
 | R175 | 사용자 지시 2026-09-25(sign_flip 934건 착수) · `parser/xbrl_instance/taxonomy_linkbase.py::merged_calculation_weights()`/`resolve_external_base_presentation(kind=)` · `fin2/extract/report_lines_xbrl.py::_emit_statement_lines()` · `fin2/tests/test_xbrl_base_presentation_merge.py` |
 | R176 | 사용자 지시 2026-09-25(sign_flip 45건) · `fin2/extract/report_lines_xbrl.py::_settle_sce_signs_by_rollforward()` · `fin2/tests/test_xbrl_base_presentation_merge.py::test_r176_…` |
+| R177 | verification fix batch #11(2026-09-26, period_misassign 115건) · `fin2/extract/report_lines_xbrl.py::_emit_sce_lines()`(`canonical_dates` 표 전체 1회 계산) · `fin2/tests/test_xbrl_base_presentation_merge.py::test_r177_…` |
 | R162-f | 사용자 지시 2026-09-25(sign_flip 220건) · `fin2/extract/sce_sign_repair.py::_solve_single_flip()` · `fin2/tests/test_xbrl_base_presentation_merge.py::test_r162f_…` |
 | R162-d | 사용자 결정 2026-09-22(이중증거 셀만) · 최종 설계 확정 2026-09-25(표본 원문대조 8건) · `fin2/extract/sce_sign_repair.py::repair_sce_row_identity()` · `fin2/tests/test_r162d_row_identity.py` · `scripts/verify_r162d_live_extraction.py` |
 | R140 | 사용자 지시 2026-09-18(SCE 포함 + 단계(B) 지정) · `fin2/extract/review_csv.py`·`fin2/audit/layer2_selfcheck.py`·`scripts/layer2_review.py` · `fin2/tests/test_review_csv.py` · `docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md` |

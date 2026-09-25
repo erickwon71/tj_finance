@@ -25,11 +25,13 @@ import json
 import re
 from collections import defaultdict
 from functools import lru_cache
+from typing import NamedTuple
 from pathlib import Path
 
 from sqlalchemy import text
 
 from parser.common.account_mapper import get_mapper
+from fin2.taxonomy.concept_map import map_acode
 from fin2.standardize.rules import (DIRECT_MAP, CONSUMED_CANON, StdContext,
                                     rule_additive_capex, rule_derive_fcf,
                                     rule_derive_net_debt, rule_additive_da,
@@ -1274,6 +1276,31 @@ def _map_label(label_raw: str, fs: str | None):
     (label_raw, fs) is the dominant speedup for the full std_v3 build. Deterministic."""
     return get_mapper().map(label_raw, fs_section=fs)
 
+class _ConceptMatch(NamedTuple):
+    account_code: str
+    confidence: float
+    stage: str
+    matched_alias: str | None
+
+
+def _map_xbrl_concept(local: str | None, fs: str | None) -> _ConceptMatch | None:
+    """★R172(2026-09-25) — an XBRL-path cell carries its concept (report_lines.source_ref
+    local name). When the Korean label doesn't map, the concept does, through the
+    same ACODE dictionary the XBRL tracks use
+    (fin2/taxonomy/concept_map.py, same bs./is./cf. vocabulary as account_mapper).
+    Without it the Korean-label mapper misses XBRL labels such as '법인세비용, 계속영업'
+    and attribution rows under '... [abstract]' section paths, so an XBRL amendment
+    could never replace the XML cells it restates (R171). Unregistered concepts
+    (filer extensions udf_*, ambiguous ones) return None → label mapping as before.
+    Only a concept whose canonical belongs to this statement is accepted."""
+    if not local or not fs:
+        return None
+    canon = map_acode(f"ifrs-full_{local}") or map_acode(f"dart_{local}")
+    if canon is None or not canon.startswith(fs + "."):
+        return None
+    return _ConceptMatch(canon, 1.0, "exact", None)
+
+
 # mapping-stage provenance rank (exact/normalized beat fuzzy). Mirrors build._STAGE_RANK.
 # 'structural' (2026-08-15, is.controlling_ni/is.noncontrolling_ni mismap fix — see
 # _ni_attribution_structural_candidates) ranks with 'fuzzy': it's a label-independent
@@ -1835,7 +1862,8 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
         is_base = (i == 0)
         rows = session.execute(text("""
             SELECT statement, basis, col_index, section_path, label_raw, value_won,
-                   node_role, table_seq, COALESCE(is_cumulative, false) AS is_cum
+                   node_role, table_seq, COALESCE(is_cumulative, false) AS is_cum,
+                   CASE WHEN unit_source = 'xbrl' THEN split_part(source_ref, '/', 2) END AS xbrl_local
             FROM report_lines rl
             WHERE rcept_no=:r AND col_index=0 AND value_won IS NOT NULL
               -- F2 가드(2026-07-31): 헤더 규칙에 걸린 행은 기본 제외(계층2 가 이제 버리지
@@ -1872,20 +1900,21 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
         # path cells of every (statement, basis) scope it actually covers; scopes it
         # doesn't carry keep their cells (R2-0: amendments are arbitrary subsets).
         kind = _filing_source_kind(session, rcept)
-        if not is_base and kind != "xbrl":
+        if not is_base:
             covered = {(r[0], r[1]) for r in rows}
             for k in [k for k in merged
-                      if (k[0], k[1]) in covered and kind_of_cell.get(k) == "xbrl"]:
+                      if (k[0], k[1]) in covered and kind_of_cell.get(k) != kind]:
                 del merged[k]
                 kind_of_cell.pop(k, None)
         for (statement, basis, col_index, section_path, label_raw, value_won,
-             node_role, table_seq, is_cum) in rows:
+             node_role, table_seq, is_cum, xbrl_local) in rows:
             key = (statement, basis, col_index, section_path, label_raw)
             cell = {
                 "statement": statement, "basis": basis, "col_index": col_index,
                 "section_path": section_path, "label_raw": label_raw,
                 "value_won": int(value_won), "node_role": node_role,
                 "table_seq": table_seq, "is_cumulative": bool(is_cum),
+                "xbrl_local": xbrl_local,
             }
             if key not in merged:
                 # first occurrence. From the base filing → not amended. From a later
@@ -2821,7 +2850,13 @@ def _ni_attribution_structural_candidates(rows: list[dict], period: str,
         # 자동확정 분기에서 '계속영업'/'중단' section 유래 후보를 신뢰 대상에서 빼는 식으로
         # 더 정밀하게 다시 설계해야 함 — 다음 세션 과제로 분리(메모리
         # `gateb-continuing-ops-attribution-sibling-guard-2026-08-25` 참고).
-        if ("순이익" in sp or "순손실" in sp) and "포괄" not in sp:
+        #
+        # ★R172(2026-09-25): an XBRL-path section_path starts at the statement's root
+        # abstract ('포괄손익계산서 [abstract]>당기순이익(손실)'), whose title always
+        # contains '포괄' — judge only the immediate parent section there, or every XBRL
+        # NI attribution section is excluded as if it were the OCI one.
+        own = sp.rsplit(">", 1)[-1] if "[abstract]" in sp else sp
+        if ("순이익" in own or "순손실" in own) and "포괄" not in own:
             sections[(r["table_seq"], sp)].append(r)
 
     extra: dict[str, list[dict]] = defaultdict(list)
@@ -3037,7 +3072,14 @@ def _map_rows(rows, period: str, basis: str, statements,
         fs = _FS.get(r["statement"])
         res = _map_label(r["label_raw"], fs)
         if res.confidence < 0.88 or res.account_code.startswith("unknown."):
-            continue
+            # R172: an XBRL cell whose Korean label the mapper can't place falls back to
+            # its concept. Label first, so the label track's tuned conventions
+            # (_NARROW_PREFER trade_payables, R16/R42 overrides …) keep deciding
+            # whenever they apply — concept-first measured 357 new trade_payables
+            # conflicts (parent TradeAndOtherCurrentPayables vs narrow child).
+            res = _map_xbrl_concept(r.get("xbrl_local"), fs)
+            if res is None:
+                continue
         c = res.account_code
         # is.revenue fuzzy-containment false positives (R52, 2026-08-27 — see
         # docs/plans/gateb_r52_revenue_cogs_note_mismap_design_2026-08-27.md).

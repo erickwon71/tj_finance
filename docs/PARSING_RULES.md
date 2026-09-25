@@ -9975,7 +9975,7 @@ XBRL 은 "재무상태표 [abstract]>부채 [abstract]" 같은 section_path 를 
 어떤 (statement, basis) 스코프를 실제로 담고 있으면, 그 스코프의 **XBRL 출처 셀**을 지운 뒤 델타패치한다.
 그 필링이 담지 않은 스코프는 그대로 둔다(R2-0).
 
-**왜 반대 방향(XBRL 이 XML 을 대체)은 안 하나**: 양방향으로 적용해 보면(드라이런, 776개사) 법인세 2,122 · 지배순이익 305셀이 비었다.
+**왜 반대 방향(XBRL 이 XML 을 대체)은 안 하나**(→ R172 에서 해소, 양방향화): 양방향으로 적용해 보면(드라이런, 776개사) 법인세 2,122 · 지배순이익 305셀이 비었다.
 계층3 매퍼가 XBRL 라벨("법인세비용, 계속영업", "[abstract]" section_path 아래 귀속행)을 못 읽기 때문이다. 이것은
 **계층3 XBRL 개념(source_ref) 기반 매핑이 생겨야 풀린다 — 별도 과제, 미착수**. 그때까지 XBRL 정정본이 마지막인
 체인은 현행(두 경로 셀 공존)을 유지한다.
@@ -9999,6 +9999,41 @@ std 변화: BS 항등식 위반→성립 2(00242378 2019Q3 연결 1,909,991,807,
 00453488 2018Q1 연결 250,442,096,694 = 172,573,069,934 + 77,869,026,760), 성립→위반 0, 소실 행 0,
 법인세 부호 교정 258셀. 부수 변화로 판관비 2셀이 비었다. 엘앤에프 2015Q3 별도는 최종 XML 정정의 '판매비'·'관리비'
 분리 표기를 계층3 가 합산하지 못한다(기존 계층3 한계). DQ `statement_magnitude_impossible` 0.
+
+---
+
+## R172. 계층3: XBRL 셀은 라벨이 매핑 안 되면 **XBRL 개념(source_ref)** 으로 매핑한다 — R171 양방향화 (2026-09-25)
+
+**배경**: R171 은 "XBRL 정정본이 앞선 XML 셀을 대체"하는 방향을 막아 두었다. 계층3 라벨 매퍼가 XBRL 라벨을 못 읽어
+(법인세 "법인세비용, 계속영업", "[abstract]" 경로 아래 귀속행) 법인세 2,122·지배순이익 305셀이 비었기 때문이다.
+XBRL 필링은 거의 전부 XML 원본의 정정본(경로 혼합 기간 1,495, XBRL 단독 3)이다. 따라서 이 방향이 막히면 XBRL 정정의
+재작성 값이 std 에 반영되지 않는다(예: 00163196 2017H1 연결 정정 순이익 5,124,145,921 대신 원본 9,579,248,640 유지).
+
+**규칙**:
+1. `build_merged_lines` 가 XBRL 셀에 개념(`source_ref` 두 번째 구간 = local name)을 싣는다(`xbrl_local`, 셀 키는 불변).
+2. `_map_rows`: **라벨 먼저**, 라벨이 안 맞을 때만(`confidence<0.88` 또는 unknown) `_map_xbrl_concept` —
+   `fin2/taxonomy/concept_map.map_acode("ifrs-full_"+local 또는 "dart_"+local)`. 그 statement 의 canonical 만 받는다.
+   회사 확장개념(udf_*)·미등록 개념은 매핑하지 않는다.
+   ★개념 먼저로 해 보면(드라이런) trade_payables 충돌 357건이 새로 생겼다. 개념사전은 부모 `TradeAndOtherCurrentPayables` 를
+   trade_payables 로 보지만, 라벨 트랙 관례(`_NARROW_PREFER`)는 좁은 하위행을 고른다. 그래서 라벨 우선이다.
+3. `_ni_attribution_structural_candidates`: XBRL section_path(`[abstract]` 포함)는 **직전 부모 구간만** 보고 '순이익'·'포괄'을
+   판정한다. 루트 '포괄손익계산서 [abstract]' 에 '포괄'이 늘 들어 있어, 전에는 XBRL 귀속 구간 전부가 OCI 구간으로 배제됐다.
+4. R171 은 이제 양방향이다. 나중 필링이 다른 경로면 그 필링이 담은 스코프의 다른 경로 셀을 대체한다.
+
+**검증(드라이런 롤백, 경로 혼합 777개사·1,498기간, R171 적용 상태 대비)**: 핵심 컬럼이 바뀐 std 행 138. BS 항등식
+성립→위반 0 · 위반→위반 1(기존). 채움: 무형자산 627 · 지배순이익 53 · 법인세 35 · 장기차입금 27 · 단기차입금 15.
+교정: 법인세 부호 154(바뀐 법인세 273셀 중 세전−법인세=순이익 성립 0 → 265), 감가상각/D&A 이중계상 119(XML·XBRL 셀이
+둘 다 합산돼 정확히 2배였다), 지배순이익 값 41(표본 00101220 2017Q1: 4,336,258,781 + 비지배 10,120,192,838 = 순이익).
+비워진 것: 판관비 23(표본 00329093: 확장 태깅 '판매원가'·'관리비'가 둘 다 판관비로 매핑돼 충돌 보류, 기존 값은 관리비 일부),
+D&A 11 · capex 10 · fcf 13(최종 XBRL 정정이 유형자산 취득을 기계장치·차량·비품으로만 나열해 합계행 없음),
+0원 차입·배당 칸 약 60(0 → 공란).
+
+**재빌드**: `build_corp` 의 `_periods` 를 경로 혼합 기간으로 좁혀 실행한다(회사 전체 재빌드는 무관한 2026Q1 별도 등 776행을
+지우는 기존 부작용이 있다, R171 참고). 이어서 calendar_v3 를 재동기화한다.
+
+**테스트**: `fin2/tests/test_combine_cross_source_amendment_r171.py`(XBRL 최종 정정 대체 · 개념 매핑 · XBRL 귀속 구간).
+
+**관련**: R2 · R171 · R16/R42(trade_payables 라벨 관례) · 2026-08-15 NI 귀속 구조 복구
 
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
@@ -10069,6 +10104,7 @@ std 변화: BS 항등식 위반→성립 2(00242378 2019Q3 연결 1,909,991,807,
 | R169 | verification fix batch #3(2026-09-25, 야간 자율) · `fin2/audit/unit_self_contradiction.py` · `scripts/unit_self_contradiction_scan.py` · `fin2/extract/data/unit_self_contradiction_overrides.json` · `fin2/extract/report_lines.py::_unit_override()` · `scripts/collect_new.py::_report_unit_self_contradiction()` · `fin2/tests/test_r169_unit_self_contradiction.py` |
 | R170 | verification fix batch #4(2026-09-25, 야간 자율) · `parser/xbrl_instance/taxonomy_linkbase.py::_build_merged_presentation_tree()`/`resolve_external_base_presentation()`/`_denegate_role()` · `fin2/extract/report_lines_xbrl.py::_numeric_value()` · `fin2/verification/ops.py::_reload_rcept()` · `fin2/tests/test_xbrl_base_presentation_merge.py` |
 | R171 | 사용자 지시 2026-09-25(R170 후속 판단 1번) · `fin2/layer3/combine.py::build_merged_lines()`/`_filing_source_kind()` · `fin2/extract/report_lines_xbrl.py::_settle_is_tax_sign()`(R170-d) · `fin2/tests/test_combine_cross_source_amendment_r171.py` |
+| R172 | 사용자 지시 2026-09-25(XBRL 개념 매핑 착수) · `fin2/layer3/combine.py::_map_xbrl_concept()`/`_map_rows()`/`_ni_attribution_structural_candidates()`/`build_merged_lines()` · `fin2/taxonomy/concept_map.py` · `fin2/tests/test_combine_cross_source_amendment_r171.py` |
 | R140 | 사용자 지시 2026-09-18(SCE 포함 + 단계(B) 지정) · `fin2/extract/review_csv.py`·`fin2/audit/layer2_selfcheck.py`·`scripts/layer2_review.py` · `fin2/tests/test_review_csv.py` · `docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md` |
 | R141 | 사용자 지시 2026-09-19("확인시작해" — 계층2 원문대조 캠페인 fail 10건 근본원인 조사) · `fin2/extract/statement_titles.py::classify_statement_in_body_section()` |
 | R142 | 위와 동일 조사(2026-09-19) · `fin2/extract/statement_titles.py::is_substatement_marker()` · `fin2/extract/text.py::_detect_body_statement_tables()`(`last_stmt`) · `fin2/tests/test_r142_substatement_marker.py` |

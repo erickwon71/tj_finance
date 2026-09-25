@@ -1298,7 +1298,11 @@ def _map_xbrl_concept(local: str | None, fs: str | None) -> _ConceptMatch | None
     canon = map_acode(f"ifrs-full_{local}") or map_acode(f"dart_{local}")
     if canon is None or not canon.startswith(fs + "."):
         return None
-    return _ConceptMatch(canon, 1.0, "exact", None)
+    # ranked below a real label match ('normalized' < 'exact'): the concept is only the
+    # filer's tag, and filers mis-tag (00158024 2017Q1: FX-translation OCI line tagged
+    # ProfitLoss → a −87M 'net income' candidate next to the real 2,086M line;
+    # 01089378 2019Q3: a second tax line) — it should decide only when no label does.
+    return _ConceptMatch(canon, 1.0, "normalized", None)
 
 
 # mapping-stage provenance rank (exact/normalized beat fuzzy). Mirrors build._STAGE_RANK.

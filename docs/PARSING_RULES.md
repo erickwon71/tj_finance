@@ -10042,6 +10042,16 @@ DQ: `statement_magnitude_impossible` 0, `std_v3_conflicts_unresolved` 37,459 →
 (tjf_fix)로는 `permission denied for schema public`. main(관리자)에서 돌려야 한다:
 `python scripts/gateb_audit.py --corp-file <경로혼합 777개사> --fy-min 2015 --fy-max 2025 --recheck`.
 
+**★R172-b (같은 날 13시, Gate B 재감사 결과로 수정)**: 사용자 지시로 Gate B 를 admin 계정(환경변수 DATABASE_URL)으로 돌렸다.
+경로 혼합 기간 pending→fail_b 5건 중 2건이 R172 결함이었다. 개념 폴백을 `exact` 로 둬서 라벨 매치와 동급으로 경쟁했다.
+00158024 2017Q1 연결은 회사가 해외사업환산손익(OCI)을 `ProfitLoss` 로 오태깅해 −87,243,237 이 순이익 후보가 됐다
+(실제 2,086,131,213). 01089378 2019Q3 은 법인세 두 줄 중 개념 쪽 109,605,787 이 이겼다(원문·Gate B 227,964,000).
+→ 개념 폴백 stage 를 `normalized`(라벨 exact 보다 아래)로 내렸다. 개념은 라벨 후보가 없을 때만 결정한다.
+나머지 3건은 우리 값이 맞다(00122551·00456218 지배순이익: Gate B report_won 이 총포괄 귀속값을 잡았다).
+경로 혼합 기간 전이(첫 재감사, R172-b 전): fail_b→pass 47 · pending→pass 384 · pass→pass 76 · pass→pending 8(n_fail 0,
+LABEL_UNMATCHED) · pending→fail_b 5(위). 경로 혼합 밖 pass→fail_b 148 은 비교 기준이 2026-09-02/03 감사라 3주 누적 변화다.
+그 가운데 R170 재빌드 772개사에 속한 124건도 실패 필드의 std 값이 R170 재빌드 전후 동일해 오늘 작업과 무관하다(별도 조사 대상).
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |

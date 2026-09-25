@@ -87,3 +87,9 @@ def test_xbrl_ni_attribution_section_is_not_mistaken_for_oci():
             row("지배기업 소유주지분", 489_183_647, oci), row("비재배지분", -222_983_109, oci)]
     extra = _ni_attribution_structural_candidates(rows, "Q1", "consolidated")
     assert [c["value"] for c in extra["is.controlling_ni"]] == [359_627_990]
+
+
+def test_concept_fallback_ranks_below_label_matches():
+    from fin2.layer3.combine import _map_xbrl_concept, _STAGE_RANK
+    m = _map_xbrl_concept("ProfitLoss", "is")
+    assert _STAGE_RANK[m.stage] < _STAGE_RANK["exact"]

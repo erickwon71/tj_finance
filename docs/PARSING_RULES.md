@@ -10084,8 +10084,9 @@ DB 는 277(3개월)을 당기로 담았고, FY 표에서는 주석번호 자체(
 1. `_apply_proved_unit_overrides`: `read_report_face`/`read_report_face_tracked`(XML A·B 트랙) 결과에
    `report_lines._unit_override(rcept, 섹션)` 을 적용해 adecimal 을 바꾼다. 문서 밖 증거로 확정된 섹션만이라
    "독자 재파싱" 원칙과 충돌하지 않는다.
-2. `read_report_face_text._read_table`: 라벨 다음 첫 값 칸(주석열이면 그다음 칸)이 대시(-, −, –, ―, －, —)면
-   그 행 후보에 0 을 더한다. 첫 칸만 보므로 전기 '-' 로 0 이 들어가지는 않는다.
+2. `read_report_face_text._read_table`: 라벨 다음 **첫 비공란** 값 칸(주석열이면 그 뒤부터)이 대시(-, −, –, ―, －, —)면
+   그 행 후보에 0 을 더한다. 2단(내역/합계) 서식은 당기 내역 칸이 공란이라 공란을 건너뛴다(디와이디 01089378 2016Q3
+   `'', '-', '', 14,765,347,500`).
 
 **테스트**: `fin2/tests/test_r173_r174_eps_note_col_gateb_reader.py`(동성케미컬 R169 · 패션플랫폼 대시).
 

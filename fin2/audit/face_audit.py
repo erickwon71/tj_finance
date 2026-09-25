@@ -954,9 +954,11 @@ def read_report_face_text(file_path: str | Path, root=None) -> list[FaceLine]:
             #   판독은 숫자 칸만 후보로 삼아, 당기 '-'·전기 금액인 행(패션플랫폼 01101041 2017Q3
             #   별도 재무활동현금흐름 `-, -, -, 11,827,416,000`)에서 DB 의 정답 0 과 절대 맞지
             #   않았다(148건 트리아지, DB=0 유형 195필드). 첫 값 칸만 본다 — 주석 열이면 그다음 칸.
-            first = value_cells[1] if (len(value_cells) > 1 and table_has_note
-                                       and _NOTE_ONLY_RE.match(value_cells[0])) else (
-                value_cells[0] if value_cells else "")
+            #   2단(내역/합계) 서식은 당기 내역 칸이 공란이라(디와이디 01089378 2016Q3
+            #   `'', '-', '', 14,765,347,500`) 공란을 건너뛴 **첫 비공란** 칸을 본다.
+            vals = value_cells[1:] if (len(value_cells) > 1 and table_has_note
+                                       and _NOTE_ONLY_RE.match(value_cells[0])) else value_cells
+            first = next((v for v in vals if v), "")
             if first in _DASH_CELLS:
                 nums.append(0)
             if not label or not nums:

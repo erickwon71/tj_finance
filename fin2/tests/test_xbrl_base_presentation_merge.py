@@ -232,3 +232,27 @@ def test_lnf_2015q3_separate_tax_sign_follows_identity():
     is_s = {l.source_ref.split("/")[1]: l.value_won
             for l in lines if l.statement == "IS" and l.basis == "separate" and l.col_index == 0}
     assert is_s["IncomeTaxExpenseContinuingOperations"] == 38_948_803
+
+
+# ── R175: CF 표시부호 = 계산 weight 누적곱(표 자신의 부모=Σ자식 등식이 더 성립할 때만) ──
+def test_r175_lnf_cf_deduction_group_items_are_negative():
+    lines = _lines("KOSPI/00398701_엘앤에프/quarter/2015/20151104000116.zip",
+                   "20151104000116", "00398701", 2015, "Q3", date(2015, 9, 30))
+    if lines is None:
+        return
+    cf_c = {l.label_raw: l.value_won for l in lines
+            if l.statement == "CF" and l.basis == "consolidated" and l.col_index == 0}
+    assert cf_c["이자수익"] == -12_568_236          # 원문 (12,568,236)
+    assert cf_c["외화환산이익"] == -292_686_451
+    assert cf_c["단기금융상품의 취득"] == -2_501_324_561
+
+
+def test_r175_filer_with_negative_facts_keeps_r10_signs():
+    """박셀바이오: 유출 fact 를 이미 음수로 태깅 + weight −1 — weight 를 쓰면 등식이 깨지므로 R10 유지."""
+    lines = _lines("KOSDAQ/01335851_박셀바이오/half/2024/20250828000534.zip",
+                   "20250828000534", "01335851", 2024, "H1", date(2024, 6, 30))
+    if lines is None:
+        return
+    cf_s = {l.source_ref.split("/")[1]: l.value_won for l in lines
+            if l.statement == "CF" and l.basis == "separate" and l.col_index == 0}
+    assert cf_s["PurchaseOfFinancialAssetsAtFairValueThroughProfitOrLossClassifiedAsInvestingActivities"] == -1_910_000_000

@@ -147,7 +147,8 @@ from parser.xbrl_instance.instance_parser import (
 )
 from parser.xbrl_instance.taxonomy_linkbase import (
     Label, PresentationTree, merge_label_catalogs, parse_labels, parse_presentation,
-    presentation_role_uris, resolve_external_base_presentation, resolve_external_labels,
+    merged_calculation_weights, presentation_role_uris, resolve_external_base_presentation,
+    resolve_external_labels,
 )
 from parser.xbrl_instance.role_map import build_role_map, has_local_role_types, index_core_roles
 
@@ -292,6 +293,7 @@ class _ZipMembers:
     xbrl: Path
     xsd: Path
     pre: Path
+    cal: Path | None
     lab_ko: Path | None
     lab_en: Path | None
 
@@ -319,6 +321,7 @@ _MEMBER_PATTERNS: dict[str, tuple[re.Pattern, ...]] = {
     # dimension-role-only one); prefer the entry-point by name when >1 match.
     "xsd": (re.compile(r"entry_point.*\.xsd$"), re.compile(r"\.xsd$")),
     "pre": (re.compile(r"_pre\.xml$"), re.compile(r"^pre_.*\.xml$")),
+    "cal": (re.compile(r"_cal\.xml$"), re.compile(r"^cal_.*\.xml$")),
     "lab_ko": (re.compile(r"_lab-ko\.xml$"), re.compile(r"^lab_.*-ko[_.].*\.xml$")),
     "lab_en": (re.compile(r"_lab-en\.xml$"), re.compile(r"^lab_.*-en[_.].*\.xml$")),
 }
@@ -356,6 +359,7 @@ def _extract_zip_members(zip_path: Path, dest_dir: Path) -> _ZipMembers:
         xbrl=dest_dir / _find_member(names, "xbrl", source),
         xsd=dest_dir / _find_member(names, "xsd", source),
         pre=dest_dir / _find_member(names, "pre", source),
+        cal=dest_dir / n if (n := _find_member(names, "cal", source, required=False)) else None,
         lab_ko=dest_dir / n if (n := _find_member(names, "lab_ko", source, required=False)) else None,
         lab_en=dest_dir / n if (n := _find_member(names, "lab_en", source, required=False)) else None,
     )
@@ -702,6 +706,7 @@ def _emit_statement_lines(
     labels: dict[QName, list[Label]], basis_axis: QName, basis_member: QName,
     statement: str, basis: str, corp_code: str, rcept_no: str,
     report_fiscal_year: int, report_fiscal_period: str, period_end_date: date,
+    calc_weights: dict[QName, float] | None = None,
 ) -> list[ReportLineRow]:
     flat = _flatten_preorder(tree)
     row_order_of = {loc_label: i for i, loc_label in enumerate(flat)}
@@ -712,7 +717,9 @@ def _emit_statement_lines(
     }
     source = f"{rcept_no}/{statement}/{basis}"
 
-    out: list[ReportLineRow] = []
+    # collect (loc_label, col_idx, fact, ctx, raw value) first — the sign scheme is decided
+    # once per statement below (R175).
+    cells: list[tuple] = []
     for loc_label in flat:
         node = tree.nodes[loc_label]
         candidates = _basis_candidates(node.element, facts_by_qname, contexts, basis_axis, basis_member)
@@ -722,31 +729,68 @@ def _emit_statement_lines(
             value = _numeric_value(fact, units)
             if value is None:
                 continue
-            value *= _value_sign(node.preferred_label)
-            out.append(ReportLineRow(
-                corp_code=corp_code,
-                rcept_no=rcept_no,
-                report_fiscal_year=report_fiscal_year,
-                report_fiscal_period=report_fiscal_period,
-                statement=statement,
-                basis=basis,
-                section_path=_section_path(loc_label, tree, label_of),
-                label_raw=label_of[loc_label],
-                col_index=col_idx,
-                context_fiscal_year=report_fiscal_year - col_idx,
-                period_kind=ctx.period_kind,
-                is_cumulative=(ctx.period_kind == "duration" and report_fiscal_period != "FY"),
-                value_won=value,
-                adecimal=0,  # XBRL facts are already base-unit values (module docstring)
-                unit_source=UNIT_SOURCE_XBRL,
-                source_ref=f"{statement}_{basis}/{node.element.local}"[:180],
-                context_raw=fact.context_ref[:255],
-                row_order=row_order_of[loc_label],
-                depth=node.depth,
-                node_role=node_role_of[loc_label],
-                table_seq=0,  # one role = one coherent statement tree, no multi-table split
-                table_title=None,
-            ))
+            cells.append((loc_label, col_idx, fact, ctx, value))
+
+    def r10(loc_label: str, value: int) -> int:
+        return value * _value_sign(tree.nodes[loc_label].preferred_label)
+
+    def weighted(loc_label: str, value: int) -> int:
+        w = calc_weights.get(tree.nodes[loc_label].element) if calc_weights else None
+        return value * int(w) if w in (1.0, -1.0) else r10(loc_label, value)
+
+    # ★R175(2026-09-25) — CF: 원문은 각 줄을 **활동별 합계에 대한 기여분**으로 적는다(유출·차감은
+    #   괄호). 회사가 가져온 확장개념은 base 의 negatedLabel 을 못 물려받아(R10 경로) 부호가 빠졌다
+    #   (엘앤에프 20151104000116 '수익 등의 차감' 이자수익 fact +12,568,236 → 원문 (12,568,236),
+    #   sign_flip 이슈 207건). 계산링크베이스 weight 누적곱(taxonomy_linkbase.
+    #   merged_calculation_weights)이 그 기여 부호다. 다만 fact 를 이미 표시부호(음수)로 태깅하고
+    #   weight 도 −1 로 둔 회사가 있어(박셀바이오 20250828000534) weight 만으로는 못 정한다 →
+    #   표 자신의 **부모=Σ자식 등식이 더 많이 성립하는 쪽**을 고른다(동률이면 R10 유지).
+    sign_of = r10
+    if calc_weights:
+        children_of = {lbl: tree.nodes[lbl].children for lbl in flat}
+        col0 = {c[0]: c[4] for c in cells if c[1] == 0}
+
+        def score(fn) -> int:
+            vals = {lbl: fn(lbl, v) for lbl, v in col0.items()}
+            ok = 0
+            for lbl, kids in children_of.items():
+                if lbl not in vals:
+                    continue
+                kv = [vals[k] for k in kids if k in vals]
+                if len(kv) >= 2 and sum(kv) == vals[lbl]:
+                    ok += 1
+            return ok
+        if score(weighted) > score(r10):
+            sign_of = weighted
+
+    out: list[ReportLineRow] = []
+    for loc_label, col_idx, fact, ctx, raw in cells:
+        node = tree.nodes[loc_label]
+        value = sign_of(loc_label, raw)
+        out.append(ReportLineRow(
+            corp_code=corp_code,
+            rcept_no=rcept_no,
+            report_fiscal_year=report_fiscal_year,
+            report_fiscal_period=report_fiscal_period,
+            statement=statement,
+            basis=basis,
+            section_path=_section_path(loc_label, tree, label_of),
+            label_raw=label_of[loc_label],
+            col_index=col_idx,
+            context_fiscal_year=report_fiscal_year - col_idx,
+            period_kind=ctx.period_kind,
+            is_cumulative=(ctx.period_kind == "duration" and report_fiscal_period != "FY"),
+            value_won=value,
+            adecimal=0,  # XBRL facts are already base-unit values (module docstring)
+            unit_source=UNIT_SOURCE_XBRL,
+            source_ref=f"{statement}_{basis}/{node.element.local}"[:180],
+            context_raw=fact.context_ref[:255],
+            row_order=row_order_of[loc_label],
+            depth=node.depth,
+            node_role=node_role_of[loc_label],
+            table_seq=0,  # one role = one coherent statement tree, no multi-table split
+            table_title=None,
+        ))
     return out
 
 
@@ -1196,6 +1240,15 @@ def extract_report_lines_xbrl(
             base_pre = resolve_external_base_presentation(
                 members.xsd, {info.role_uri for info in core_roles.values()}
             )
+            # R175: CF display sign = the line's contribution to its calculation
+            # parent (fact × summation weight), from the filer+base merged calc network.
+            cf_roles = {info.role_uri for (statement, _basis), info in core_roles.items() if statement == "CF"}
+            cf_weights: dict[str, dict[QName, float]] = {}
+            if members.cal is not None and cf_roles:
+                base_cal = resolve_external_base_presentation(members.xsd, cf_roles, kind="calculation")
+                for role in cf_roles:
+                    cf_weights[role] = merged_calculation_weights(
+                        members.cal, instance.nsmap, role, base_cal.get(role))
             pre_trees = parse_presentation(
                 members.pre, instance.nsmap, base_pre,
                 denegate_base_roles=frozenset(
@@ -1246,6 +1299,7 @@ def extract_report_lines_xbrl(
                             corp_code=corp_code, rcept_no=rcept_no,
                             report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
                             period_end_date=period_end_date,
+                            calc_weights=cf_weights.get(role_info.role_uri) if statement == "CF" else None,
                         ))
                         # A-5: fact-level fallback for required totals the tree never
                         # wired in as a node (module docstring / _emit_missing_totals

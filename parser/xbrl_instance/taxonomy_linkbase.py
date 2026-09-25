@@ -514,7 +514,8 @@ def _build_merged_presentation_tree(
 _EXTERNAL_BASE_PRE_FETCH_BUDGET = 15
 
 
-def resolve_external_base_presentation(xsd_path: Path, role_uris: set[str]) -> dict[str, list[Path]]:
+def resolve_external_base_presentation(xsd_path: Path, role_uris: set[str],
+                                       kind: str = "presentation") -> dict[str, list[Path]]:
     """R170 — DART's shared base presentation linkbase(s) for `role_uris`,
     found the same way `resolve_external_labels()` finds shared label
     linkbases: walk the filing xsd's `xsd:import` chain out to
@@ -523,9 +524,14 @@ def resolve_external_base_presentation(xsd_path: Path, role_uris: set[str]) -> d
     are fetched, and each is kept only if it really carries that role URI.
     Vintages whose shared schema declares no base presentation (2019-10-01+,
     where filers bundle the full tree) return {} — callers then keep the
-    filer-file-only tree."""
+    filer-file-only tree.
+
+    `kind="calculation"` (R175) walks the same chain for `calculationLinkbaseRef`
+    (`cal_dart_{vintage}_role-D520000.xml` …) instead."""
     from parser.xbrl_instance import external_taxonomy as ext
 
+    ref_role = f"{kind}LinkbaseRef"
+    link_tag = f"{kind}Link"
     wanted = {uri.rsplit("role-", 1)[-1]: uri for uri in role_uris if "role-" in uri}
     if not wanted:
         return {}
@@ -542,7 +548,7 @@ def resolve_external_base_presentation(xsd_path: Path, role_uris: set[str]) -> d
         root = ext.parse(url)
         if root is None:
             continue
-        for found in ext.linkbase_ref_urls(root, url, "presentationLinkbaseRef"):
+        for found in ext.linkbase_ref_urls(root, url, ref_role):
             if found not in pre_urls:
                 pre_urls.append(found)
         queue = ext.dart_first(queue + [u for u in ext.import_urls(root, url) if u not in seen])
@@ -558,11 +564,96 @@ def resolve_external_base_presentation(xsd_path: Path, role_uris: set[str]) -> d
         if path is None:
             continue
         try:
-            roles = presentation_role_uris(path)
+            root = etree.parse(str(path)).getroot()
+            roles = {_xlink(el, "role") for el in root.findall(_q(link_tag))}
         except Exception:  # noqa: BLE001 — corrupt cache / HTML error page
             continue
         if role_uri in roles:
             out.setdefault(role_uri, []).append(path)
+    return out
+
+
+def merged_calculation_weights(
+    path: Path, nsmap: dict[str, str], role_uri: str, base_paths: list[Path] | None = None,
+) -> dict[QName, float]:
+    """★R175 — concept -> display sign (+1/-1) = product of summation-item weights up to
+    its CF section total (see `cumulative` below),
+    from the filer's `_cal.xml` merged with DART's shared base calculation linkbase for
+    `role_uri` (same delta structure and XBRL prohibition/priority semantics as
+    `_build_merged_presentation_tree`; equivalence also keys on `weight`). A concept
+    with more than one surviving calculation parent is left out (ambiguous — R6).
+    The section totals themselves get no entry (their own sign stays R10)."""
+    def collect(link_el, prefix: str) -> list[tuple]:
+        locs: dict[str, QName] = {}
+        for loc_el in link_el.findall(_q("loc")):
+            label, href = _xlink(loc_el, "label"), _xlink(loc_el, "href")
+            if not label or not href:
+                continue
+            try:
+                locs[prefix + label] = resolve_href_fragment(href, nsmap)
+            except ValueError:
+                continue
+        arcs = []
+        for arc_el in link_el.findall(_q("calculationArc")):
+            frm, to, w = _xlink(arc_el, "from"), _xlink(arc_el, "to"), arc_el.get("weight")
+            if not frm or not to or w is None:
+                continue
+            frm, to = prefix + frm, prefix + to
+            if frm not in locs or to not in locs:
+                continue
+            arcs.append((locs[frm], locs[to], float(arc_el.get("order") or 1.0), float(w),
+                         int(arc_el.get("priority") or 0), arc_el.get("use") == "prohibited",
+                         bool(prefix)))
+        return arcs
+
+    arcs: list[tuple] = []
+    for p_, prefix in [(path, "")] + [(b, _BASE_LABEL_PREFIX) for b in (base_paths or [])]:
+        try:
+            root = etree.parse(str(p_)).getroot()
+        except Exception:  # noqa: BLE001
+            continue
+        for link_el in root.findall(_q("calculationLink")):
+            if _xlink(link_el, "role") == role_uri:
+                arcs.extend(collect(link_el, prefix))
+    groups: dict[tuple, list[tuple]] = {}
+    for a in arcs:
+        groups.setdefault((a[0], a[1], a[2], a[3]), []).append(a)
+    surviving = []
+    for group in groups.values():
+        top = max(a[4] for a in group)
+        winners = [a for a in group if a[4] == top]
+        if any(a[5] for a in winners):
+            continue
+        surviving.append(winners[0])
+    # a filer placement of a concept beats the base template's (as in presentation)
+    filer_to = {a[1] for a in surviving if not a[6]}
+    surviving = [a for a in surviving if not a[6] or a[1] not in filer_to]
+    edges: dict[QName, set[tuple[QName, float]]] = {}
+    for a in surviving:
+        edges.setdefault(a[1], set()).add((a[0], a[3]))
+    parent_of = {c: next(iter(e)) for c, e in edges.items() if len(e) == 1}
+
+    # Korean CF prints every line as its contribution to the **section total**
+    # (영업/투자/재무활동현금흐름), not to its immediate group: an outflow group
+    # modelled as [group −1, children +1] (20180801000294) and one modelled as
+    # [group +1, children −1] (엘앤에프 20151104000116) both print the children in
+    # parentheses. So the display sign is the product of weights up the chain, stopping
+    # at a section total (CashFlowsFromUsedIn*Activities) or the chain's top.
+    def cumulative(c: QName) -> float | None:
+        sign, seen = 1.0, set()
+        while c in parent_of and c not in seen:
+            if c.local.startswith("CashFlowsFromUsedIn") and c.local.endswith("Activities"):
+                break
+            seen.add(c)
+            parent, w = parent_of[c]
+            sign *= w
+            c = parent
+        return sign if seen else None
+    out: dict[QName, float] = {}
+    for c in parent_of:
+        v = cumulative(c)
+        if v is not None:
+            out[c] = v
     return out
 
 

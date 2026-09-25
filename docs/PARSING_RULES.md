@@ -10105,6 +10105,33 @@ std_v3 는 700기간(173개사)만 재빌드했다(실패 0, orphan 0, 소실 0,
 fail_b→pass 140 · pending→pass 78 · pass→(fail/pending) 0. 남은 7건은 판독 한계다: 요약표·다른 서식 행(시큐브 00402110 배당은 원문
 '-' 가 정답, 제14기 값을 읽음), 주석번호 '32' 를 법인세로 읽은 건(00554352), 2024년 재정정본(00145686 2019FY) 등. DB 결함은 확인되지 않았다.
 
+---
+
+## R175. XBRL 경로 CF 표시부호 = 계산링크베이스 weight 누적곱 — 단, **표 자신의 부모=Σ자식 등식이 더 많이 성립할 때만** (2026-09-25)
+
+**발견**: verification sign_flip 이슈 중 CF 207건이 XBRL 경로 12필링(엘앤에프·SK가스·롯데케미칼·대한광통신·케어젠·로보티즈 등)에
+몰려 있었다. '현금의 유입이 없는 수익 등의 차감' 아래 이자수익·외화환산이익·처분이익, 투자·재무 유출(취득·상환·지급)이
+원문은 괄호(음수)인데 DB 는 양수였다. 회사 확장개념(udf_*)은 base 템플릿의 negatedLabel 을 물려받지 못해 R10 으로는
+부호가 나오지 않는다.
+
+**원리**: 원문 CF 는 각 줄을 **활동별 합계(영업/투자/재무활동현금흐름)에 대한 기여분**으로 적는다. 그 부호는 계산링크베이스의
+summation weight 에 있다. 모형은 두 가지다: [그룹 +1, 자식 −1](엘앤에프)와 [그룹 −1, 자식 +1](20180801000294). 둘 다 자식이
+괄호로 인쇄되므로 활동별 합계까지 weight **누적곱**을 쓴다.
+
+**규칙** (`taxonomy_linkbase.merged_calculation_weights` · `report_lines_xbrl._emit_statement_lines`):
+1. 회사 `_cal.xml` + DART base 계산링크베이스(`cal_dart_{vintage}_role-D5x…`, R170 과 같은 해석·prohibited/priority 병합)로
+   개념별 유일한 계산 부모와 weight 를 구한다. 부모가 둘 이상인 개념은 뺀다(R6).
+2. 활동별 합계(`CashFlowsFromUsedIn*Activities`)나 사슬 끝까지 weight 를 곱한다. 활동별 합계 자신은 R10 을 따른다.
+3. **판정(자기증명)**: 같은 (CF, basis)에서 R10 부호와 weight 부호로 각각 col0 값을 만들어, 부모=Σ자식(자식 값 ≥2개) 등식 성립
+   개수를 센다. weight 쪽이 **더 많을 때만** 쓴다(동률이면 R10). 박셀바이오 `20250828000534` 처럼 fact 를 이미 음수로
+   태깅하고 weight 도 −1 로 둔 회사는 weight 부호가 등식을 깨므로 R10 이 유지된다.
+
+**검증(2015+ XBRL 경로 전수 1,627필링, 수정 전후)**: CF 부모=Σ자식 성립 6,385 → **11,623**, 불성립 5,537 → 299.
+등식이 늘어난 필링 1,473, **줄어든 필링 0**. 부호가 바뀐 CF 셀 약 1.6만. sign_flip 이슈 CF 213건이 전부 원문 부호와 일치한다
+(207 + 이전부터 맞던 6). IS 는 대상이 아니다(국내 손익계산서는 비용을 양수로 인쇄, R170-b/d).
+
+**테스트**: `fin2/tests/test_xbrl_base_presentation_merge.py::test_r175_…`(엘앤에프 차감·유출 음수, 박셀바이오 R10 유지).
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |
@@ -10177,6 +10204,7 @@ fail_b→pass 140 · pending→pass 78 · pass→(fail/pending) 0. 남은 7건�
 | R172 | 사용자 지시 2026-09-25(XBRL 개념 매핑 착수) · `fin2/layer3/combine.py::_map_xbrl_concept()`/`_map_rows()`/`_ni_attribution_structural_candidates()`/`build_merged_lines()` · `fin2/taxonomy/concept_map.py` · `fin2/tests/test_combine_cross_source_amendment_r171.py` |
 | R173 | 사용자 지시 2026-09-25(148건 트리아지 부수발견) · `fin2/extract/report_lines.py::_emit_eps_lines()` · `fin2/tests/test_r173_r174_eps_note_col_gateb_reader.py` |
 | R174 | 사용자 지시 2026-09-25(148건 트리아지 후속) · `fin2/audit/face_audit.py::_apply_proved_unit_overrides()`/`read_report_face_text()` · `fin2/tests/test_r173_r174_eps_note_col_gateb_reader.py` |
+| R175 | 사용자 지시 2026-09-25(sign_flip 934건 착수) · `parser/xbrl_instance/taxonomy_linkbase.py::merged_calculation_weights()`/`resolve_external_base_presentation(kind=)` · `fin2/extract/report_lines_xbrl.py::_emit_statement_lines()` · `fin2/tests/test_xbrl_base_presentation_merge.py` |
 | R140 | 사용자 지시 2026-09-18(SCE 포함 + 단계(B) 지정) · `fin2/extract/review_csv.py`·`fin2/audit/layer2_selfcheck.py`·`scripts/layer2_review.py` · `fin2/tests/test_review_csv.py` · `docs/plans/layer2_review_browser_agent_automation_design_2026-09-18.md` |
 | R141 | 사용자 지시 2026-09-19("확인시작해" — 계층2 원문대조 캠페인 fail 10건 근본원인 조사) · `fin2/extract/statement_titles.py::classify_statement_in_body_section()` |
 | R142 | 위와 동일 조사(2026-09-19) · `fin2/extract/statement_titles.py::is_substatement_marker()` · `fin2/extract/text.py::_detect_body_statement_tables()`(`last_stmt`) · `fin2/tests/test_r142_substatement_marker.py` |

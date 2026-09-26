@@ -153,6 +153,7 @@ from parser.xbrl_instance.taxonomy_linkbase import (
 from parser.xbrl_instance.role_map import build_role_map, has_local_role_types, index_core_roles
 
 from fin2.extract.report_lines import ReportLineRow
+from fin2.extract.sce_source_defects import apply_source_defect_fixes, verify_row_drops
 
 _STANDARD_LABEL_ROLE = "http://www.xbrl.org/2003/role/label"
 _BASIS_AXIS_LOCAL = "ConsolidatedAndSeparateFinancialStatementsAxis"
@@ -1588,7 +1589,10 @@ def extract_report_lines_xbrl(
 
             if not core_roles:
                 logger.debug(f"[report_lines_xbrl] {rcept_no}: core statement role 없음 → 빈 결과")
-            return _apply_manual_is_sign_fixes(_settle_is_tax_sign(lines), rcept_no)
+            lines = _apply_manual_is_sign_fixes(_settle_is_tax_sign(lines), rcept_no)
+            # R183: SCE source-defect exception list, identity-guarded (sce_source_defects.py).
+            verify_row_drops(lines, apply_source_defect_fixes(lines, rcept_no))
+            return lines
     except Exception as e:
         logger.warning(f"[report_lines_xbrl] {rcept_no}: 추출 실패 ({type(e).__name__}: {e})")
         return []

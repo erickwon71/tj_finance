@@ -196,6 +196,7 @@ from fin2.extract.sce_sign_repair import (
     apply_manual_sign_fixes, repair_sce_row_identity, repair_sce_sign_loss,
 )
 from fin2.extract.cf_cash_sign_repair import repair_cf_cash_sign_loss
+from fin2.extract.sce_source_defects import apply_source_defect_fixes, verify_row_drops
 
 # report_fiscal_year 가 이 값 이하면 pre-2015 K-GAAP 라우팅을 먼저 시도한다(설계문서
 # `docs/plans/pre2015_layer2_backfill_phase2_design_2026-08-10.md` §2-1·§3-3 잔여항목③
@@ -2108,6 +2109,11 @@ def extract_report_lines(
         logger.debug(f"[report_lines] tax_expense inline XBRL overlay 적용: "
                      f"{n_tax_overlay}건 ({rcept_no})")
 
+    # R183(2026-09-26) — SCE source defects (wrong-block row, duplicated row, typo cell)
+    # listed per rcept and re-proved by the table's own identities. Runs BEFORE the sign
+    # repair chain: a misplaced/spurious row is what keeps that chain from closing.
+    sce_dropped = apply_source_defect_fixes(lines, rcept_no)
+
     # R162(2026-09-22) — SCE 표 원문에서 빠진 음수 괄호를 복원. ★반드시 **맨 마지막**에
     # 돈다: 부호 방향을 BS/IS 값으로 확정하므로(앵커) 위 overlay 들이 BS/IS 를 손본 뒤의
     # 최종값을 봐야 한다. SCE 만 바꾸고 BS/IS/CF 는 읽기만 한다.
@@ -2138,6 +2144,9 @@ def extract_report_lines(
     if cf_fixes:
         logger.debug(f"[report_lines] R163 CF 현금 부호 복원: {len(cf_fixes)}셀 "
                      f"({rcept_no})")
+
+    # R183 post-check: a dropped row stays dropped only if its block now closes.
+    verify_row_drops(lines, sce_dropped)
 
     return lines
 

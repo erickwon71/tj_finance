@@ -389,6 +389,28 @@ def test_runner_tool_denied_paraphrased_still_detected(engines, as_role, tmp_pat
                               "WHERE corp_code=:c"), {"c": CORP}).fetchone() == ("pending", 0)
 
 
+def test_runner_tool_denied_detected_via_permission_denials_field(engines, as_role, tmp_path):
+    # 2026-09-26 16:0x-16:3x (runs 407/408/409): the paraphrase kept drifting with no fixed
+    # phrase at all ("Bash 권한이 거부되었습니다", "triggered by a routine `grep` call") - a text
+    # regex can never keep up. Claude Code attaches a structured `permission_denials` array to
+    # the result JSON regardless of wording; that field is now the primary signal.
+    _admin_sql(engines, "UPDATE verification.progress SET status='pending', retry_count=0 "
+               "WHERE corp_code=:c", {"c": CORP})
+    as_role("verify")
+    slot = ops.claim(SLOT)
+    run_id = runner.start(slot, "sonnet")
+    log = _fake_log(tmp_path, "denied_structured.json", {
+        "type": "result", "is_error": False, "num_turns": 49,
+        "permission_denials": [{"tool_name": "Bash", "tool_use_id": "toolu_x",
+                                "tool_input": {"command": "grep -n foo bar.md"}}],
+        "result": "Bash 권한이 거부되었습니다. 지침에 따라 재시도하지 않고 즉시 멈춥니다."})
+    res = runner.finish(run_id, log, 0)
+    assert res["outcome"] == "tool_denied"
+    with engines["admin"].connect() as c:
+        assert c.execute(text("SELECT status, retry_count FROM verification.progress "
+                              "WHERE corp_code=:c"), {"c": CORP}).fetchone() == ("pending", 0)
+
+
 def test_reopen_after_batch_done_clears_stale_fix_batch_id(engines, as_role):
     # handoff docs/qa/handoff_2026-09-26_full_automation.md §5: reopening an issue whose
     # fix_batch_id points at an already-finished batch used to leave it invisible to both the

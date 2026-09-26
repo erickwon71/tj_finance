@@ -34,9 +34,11 @@ _EPOCH_RE = re.compile(r"\|(\d{10})\b")
 # then can't even call `vq.py done`. Not a data problem, so it must not burn a retry or count
 # toward the consecutive-failure stop (docs/qa/handoff_2026-09-26_full_automation.md §2).
 # ★The model's own summary paraphrases the denial instead of always quoting the literal tool
-# error ("Bash access was just denied", "Bash was denied on my first attempted write action" -
-# runs 393/394 same day, 2026-09-26 14:3x) - a literal-string match missed both and let the
-# runner stop itself again. "don't ask mode" is the one phrase every observed paraphrase kept.
+# error, in wording that keeps drifting (English, Korean, "don't ask mode" mentioned or not —
+# runs 393/394/407/408/409 same day). A text regex chases an open-ended paraphrase space and
+# will keep missing new phrasings. The reliable signal is the *structured* `permission_denials`
+# array Claude Code itself attaches to the result JSON (see `finish()`) — this regex is now
+# only a fallback for the rare case that field is empty but the text still names the error.
 _BASH_DENIED_RE = re.compile(r"permission to use bash has been denied|don't ask mode", re.I)
 
 
@@ -208,7 +210,8 @@ def finish(run_id: int, log: Path, exit_code: int) -> dict:
         outcome = "timeout"
     elif _LIMIT_RE.search(result_text) and data.get("is_error", True) and status == "in_progress":
         outcome = "usage_limit"
-    elif _BASH_DENIED_RE.search(result_text) and status == "in_progress":
+    elif (data.get("permission_denials") or _BASH_DENIED_RE.search(result_text)) \
+            and status == "in_progress":
         outcome = "tool_denied"
     elif status == "passed":
         outcome = "passed"

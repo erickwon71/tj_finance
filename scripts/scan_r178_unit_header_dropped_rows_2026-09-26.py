@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -80,8 +81,9 @@ def scan(limit: int | None) -> None:
         if rescued:
             n_hits += 1
             rcept = xml_path.stem
-            print(f'{{"rcept_no": "{rcept}", "path": "{xml_path}", "n_cells": {len(rescued)}, '
-                  f'"sample": {rescued[:3]!r}}}')
+            print(json.dumps({"rcept_no": rcept, "path": str(xml_path),
+                               "n_cells": len(rescued), "sample": rescued[:3]},
+                              ensure_ascii=False))
         if n_files % 5000 == 0:
             print(f"# progress: {n_files} files scanned, {n_hits} candidates", file=sys.stderr)
     print(f"# done: {n_files} files scanned, {n_hits} candidate rcepts", file=sys.stderr)

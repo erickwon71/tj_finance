@@ -10291,11 +10291,24 @@ SCE·BS/IS/CF 본문은 그 필터로 행 자체가 사라졌다 — 같은 함�
 **검증**: 카카오 `20250318001297` 재추출 — con-SCE "자기주식 소각 (단위: 주)" 13셀 전부 복원,
 값이 등록된 이슈(#8493 등)와 정확히 일치. `pytest tests/ fin2/tests/` 1,396 passed(신규 0 실패).
 
-**재적재·백필**: fix batch #12. 이 결함은 SCE 뿐 아니라 BS/IS/CF 본문 전체에 걸려 있고, 드롭된
-행은 DB에 흔적이 없어(header_hint 행 자체가 저장 전에 버려진다) 영향 필링을 찾으려면 원문을
-다시 훑어야 한다. 전사(189,485건) 재적재는 수시간 규모라 `vq.py ask`(irreversible,
-`r178-unit-header-backfill-scope`)로 백필 범위를 물어 두고 이번 배치는 실측 대상 rcept만
-반영했다 — 전사 백필은 답변 이후(또는 별도 세션) 진행.
+**재적재·백필**: fix batch #12(카카오 실측 1건). 이 결함은 SCE 뿐 아니라 BS/IS/CF 본문 전체에
+걸려 있고, 드롭된 행은 DB에 흔적이 없어(header_hint 행 자체가 저장 전에 버려진다) 영향 필링을
+찾으려면 원문을 다시 훑어야 한다. 전사(189,485건) 재적재는 수시간 규모라 `vq.py ask`
+(irreversible, `r178-unit-header-backfill-scope`)로 백필 범위를 물었고, 답변("정적 스캔
+먼저")에 따라 2단계 스캔을 설계했다.
+
+**전사 백필 완료(2026-09-26, batch #21)**: raw_report 전체(282,722개 XML 파일)를 1차로
+스캔해 구/신 정규식 판정이 갈리는 셀(라벨에 "단위"가 있으면서 신 fullmatch 규칙엔 안 걸리는
+셀)을 가진 필링 148,035건을 후보로 뽑았다(`scripts/scan_r178_unit_header_dropped_rows_
+2026-09-26.py`) — 이 1차 후보만으로는 표 캡션·비재무 단위표기 등 노이즈가 대부분이라
+쓸 수 없다(위 ★한계 참고). 2차로 각 후보를 **현재(수정된) 코드로 실제 재추출**해
+`extract_report_lines(include_notes=False)` 결과 중 `_is_loadable()`을 통과하는 본문 행이
+DB의 현재 `report_lines`에 없고 라벨에 "단위"가 들어간 경우만 "진짜 드롭 확정"으로 판정했다
+(`scripts/scan_r178_unit_header_stage2_live_check_2026-09-26.py`, 6-way `--shard`로 병렬화).
+결과: 148,035건 중 **383건 확정**(IS 754셀·SCE 50셀·BS 1셀·CF 1셀 — 대부분 EPS 계속/중단영업
+라벨의 "(단위 : 원)" 자기부기 패턴). 확정 rcept만 `batch add-targets`+`batch reload`로
+재적재해 fix batch #21로 종결했다. (20,000파일 표본 사전검증: 후보 7,320건 중 확정 9건으로
+동일 패턴 재현 — 전사 결과와 비율이 일관됨.)
 
 ---
 

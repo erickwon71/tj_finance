@@ -221,6 +221,21 @@ def test_source_typo_fix_hanwha_investment_missing_digit():
     assert apply_source_typo_fixes(cells, "20180515002604") == cells  # 정정신고 rcept엔 미적용
 
 
+def test_source_typo_fix_samsung_ena_dot_plus_digit_typo():
+    """검증 이슈 #18060/#18208 — 마침표 오타에 숫자 하나까지 틀린 칸('278.632').
+
+    R158 행 안 정수 짝(숫자열 불일치)도 R160 이 먼저 결측 처리하므로, 예외목록이
+    유일한 복원 경로다. 원본·기재정정 두 rcept 모두 등재돼야 한다.
+    """
+    cells = ["0", "633,492,278.632", "0", "633,492,277,632"]
+    for rcept in ("20240313000522", "20240314001768"):
+        fixed = apply_source_typo_fixes(cells, rcept)
+        assert fixed[1] == "633,492,277,632"
+        assert unresolved(fixed, "당기순이익(손실)") == []
+    # 등재 전(다른 rcept)엔 R160 결측 대상 그대로
+    assert unresolved(cells, "당기순이익(손실)") == [1]
+
+
 def test_typo_fix_entries_carry_a_reason_comment():
     """등재 조건: 정정값이 원문 다른 곳에 인쇄돼 있을 때만. 근거 주석을 강제한다.
 

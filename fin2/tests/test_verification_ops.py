@@ -523,3 +523,65 @@ def test_duplicate_sce_label_recheck_and_add_issues_backfill_db_label(engines, a
         # and the read-side fallback for any future caller that still skips db_label)
         legacy = {**issue, "db_label": None, "column_label": None}
         assert ops._current_db_value(conn, legacy) == [-100, -200]  # honest ambiguity, not None
+
+
+def test_normalize_column_label_strips_camp_run_period_annotations():
+    # camp_run annotates column_label with the period/block to satisfy ux_vissues_active_cell
+    # (forms observed in verification.issues, 2026-09-26) — report_lines.col_label never has them.
+    n = ops._normalize_column_label
+    assert n("[Q1-2016] 열=자본 [member] (총계)") == "자본 [member]"
+    assert n("[FY2016] 열=자본 [member] (총계); 세부 자기주식처분이익 56,151,398 / 자기주식 1") \
+        == "자본 [member]"
+    assert n("열=자본 [member] | 구간=2016.01.01~2016.12.31") == "자본 [member]"
+    assert n("열=자본 [member] (기초자본(2015-12-31) 블록)") == "자본 [member]"
+    assert n("열=자본>자본 합계 (2018기 구간)") == "자본>자본 합계"
+    assert n("자본>자본 합계 (2014.01.01~2014.06.30 비교분기 블록)") == "자본>자본 합계"
+    assert n("자본|2016-03-31(Q1비교표시)") == "자본"
+    assert n("자본자본 합계 @ 2016.12.31 (기말자본)") == "자본자본 합계"
+    # genuine column names that end in a parenthesis are not rewritten
+    assert n("미처분이익잉여금(미처리결손금)") is None
+    assert n("기타포괄손익누계액(지배기업의 소유주에게 귀속되는 자본)") is None
+    assert n("자본 합계") is None
+    assert n(None) is None
+
+
+def test_recheck_sce_annotated_column_label_and_period_blocks(engines, as_role):
+    # 2026-09-26 batch #24: 20 fixed period_misassign SCE issues were reopened although the DB
+    # was already right — (a) column_label carried camp_run's block annotation so the lookup
+    # returned None, and (b) where it did match, a bare value array could not show that the
+    # value now sat in the correct period block (롯데케미칼 20160816002306 #84430).
+    rows = [  # (row_order, label, col_label, value)
+        (200, "비지배지분의 취득", "자본 [member]", -64),
+        (201, "비지배지분의 취득", "자본 [member]>비지배지분 [member]", -57),
+        (202, "기말자본 (기말) (2015-12-31)", "자본 [member]", 1000),
+        (203, "비지배지분의 취득", "자본 [member]", -99),
+        (204, "기말자본 (기말) (2014-12-31)", "자본 [member]", 900),
+        (205, "유상증자", "지배기업의 소유주에게 귀속되는 자본>자본 합계", 7),
+        (206, "유상증자", "비지배지분>자본 합계", 3),
+        (207, "자기주식", "자본>자본 합계", 5),
+    ]
+    for ro, lbl, cl, v in rows:
+        _admin_sql(engines, "INSERT INTO report_lines (corp_code, rcept_no, report_fiscal_year, "
+                   "report_fiscal_period, statement, basis, label_raw, col_label, value_won, "
+                   "row_order, col_index) VALUES (:c, :r, 2024, 'FY', 'SCE', 'separate', "
+                   ":l, :cl, :v, :ro, 0)",
+                   {"c": CORP, "r": R2, "l": lbl, "cl": cl, "v": v, "ro": ro})
+    base = {"rcept_no": R2, "basis": "separate", "statement": "SCE", "db_label": None}
+    as_role("admin")
+    with engines["admin"].connect() as conn:
+        def issue(label, col):
+            return {**base, "account_label": label, "column_label": col}
+
+        blk = issue("비지배지분의 취득", "열=자본 [member] (기초자본(2014-12-31) 블록)")
+        assert ops._current_db_value(conn, blk) == [-64, -99]
+        assert ops._current_db_blocks(conn, blk) == ["-64 (~2015-12-31 블록)",
+                                                     "-99 (~2014-12-31 블록)"]
+        assert ops._current_db_value(conn, issue("비지배지분의 취득",
+                                                 "[FY2016] 열=자본 [member] (총계)")) == [-64, -99]
+        # leaf-only column name resolves when it names exactly one DB column ...
+        assert ops._current_db_value(conn, issue("자기주식", "자본 합계")) == [5]
+        # ... and stays None when ambiguous (never guesses a column)
+        assert ops._current_db_value(conn, issue("유상증자", "자본 합계")) is None
+        assert ops._current_db_blocks(conn, issue("유상증자", "자본 합계")) is None
+        # non-SCE issues get no block view
+        assert ops._current_db_blocks(conn, {**blk, "statement": "IS"}) is None

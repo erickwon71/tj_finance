@@ -217,6 +217,8 @@ def cmd_recheck(a):
               f"{'/' + r['column_label'] if r['column_label'] else ''}  원문={r['source_value_raw']}"
               f"({r['source_unit']}) 등록시DB={r['db_value']} 현재DB={r['db_value_now']}  "
               f"fix={r['fixed_parser_commit']} batch={r['fix_batch_id']} {r['rule_id'] or ''}")
+        if r.get("db_blocks_now"):
+            print(f"    현재DB(기간블록별)={', '.join(r['db_blocks_now'])}")
         print(f"    {r['dart_url']}")
 
 

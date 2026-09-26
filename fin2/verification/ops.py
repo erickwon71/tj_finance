@@ -702,16 +702,129 @@ def _strip_column_label_prefix(label: str | None) -> str | None:
     return label
 
 
-def _current_db_value(conn, issue: dict):
+# camp_run also annotates column_label with the period/block of the cell, because the same
+# (account_label, column_label) repeats across SCE period blocks and the unique index would
+# otherwise reject the second issue. report_lines.col_label never carries any of these.
+# Observed forms (verification.issues, 2026-09-26):
+#   '[Q1-2016] 열=자본 [member] (총계)'               leading period tag
+#   '열=자본 [member] | 구간=2017.01.01~2017.03.31'   ' | 구간=…' suffix
+#   '자본|2016-03-31(Q1비교표시)'                      '|<date>…' suffix
+#   '열=자본 [member] (기초자본(2015-12-31) 블록)'     trailing '(…블록/구간/총계/비교…)'
+#   '… (총계); 세부 자기주식처분이익 …'                 '; 세부 …' remark
+#   '자본자본 합계 @ 2016.12.31 (기말자본)'             ' @ <date> (…)' suffix
+_COL_TAG_PREFIX_RE = re.compile(r"^\[[^\[\]]+\]\s*")
+_COL_REMARK_RE = re.compile(r"\s*;\s*세부.*$")
+_COL_PERIOD_SUFFIX_RE = re.compile(r"\s*(?:\|\s*구간\s*=.*|\|\s*\d{4}[-.]\d{2}[-.]\d{2}.*|@\s*\d{4}[-.]\d{2}[-.]\d{2}.*)$")
+_COL_PAREN_ANNOT_RE = re.compile(
+    r"\s*\((?:[^()]|\([^()]*\))*(?:블록|구간|총계|비교|기말자본)(?:[^()]|\([^()]*\))*\)$")
+
+
+def _normalize_column_label(label: str | None) -> str | None:
+    """Strip camp_run's period/block annotations (see the forms above) off an issue
+    column_label. Returns None when nothing was stripped, so callers only take this path as a
+    fallback after the exact match missed — a genuine col_label that happens to end in a
+    parenthesis (e.g. '미처분이익잉여금(미처리결손금)') is never rewritten on the exact path."""
+    if not label:
+        return None
+    out = _strip_column_label_prefix(_COL_TAG_PREFIX_RE.sub("", label.strip()))
+    prev = None
+    while prev != out:
+        prev = out
+        out = _COL_REMARK_RE.sub("", out)
+        out = _COL_PERIOD_SUFFIX_RE.sub("", out)
+        out = _COL_PAREN_ANNOT_RE.sub("", out).strip()
+    out = _strip_column_label_prefix(out)
+    return out if out and out != _strip_column_label_prefix(label) else None
+
+
+def _compact_column_label(label: str) -> str:
+    return re.sub(r"[\s>]", "", label)
+
+
+def _resolve_issue_cell(conn, issue: dict) -> tuple[dict, str | None] | None:
+    """(query params, col_label) of the report_lines cell an issue points at, or None when no
+    DB column can be identified.
+
+    column_label is matched in three steps, each only when the previous one found nothing:
+    exact (after the '열=' prefix) → annotation-stripped exact (`_normalize_column_label`) →
+    whitespace/'>'-insensitive leaf match ('자본 합계' vs DB '자본>자본 합계'), the last one only
+    when it names exactly one DB column. An ambiguous or empty match gives None, as before —
+    the fallback never guesses a column (false close is worse than false reopen)."""
     label = issue["db_label"] or _strip_label_disambiguator(issue["account_label"]) or issue["account_label"]
+    params = {"r": issue["rcept_no"], "b": issue["basis"],
+              "s": "IS" if issue["statement"] == "CIS" else issue["statement"], "l": label}
+    exists_sql = text("""
+        SELECT EXISTS (SELECT 1 FROM report_lines
+        WHERE rcept_no = :r AND basis = :b AND statement = :s AND label_raw = :l
+          AND (CAST(:cl AS text) IS NULL OR col_label = :cl))""")
     col_label = _strip_column_label_prefix(issue["column_label"])
+    if conn.execute(exists_sql, {**params, "cl": col_label}).scalar():
+        return params, col_label
+    if col_label is None:
+        return None
+
+    normalized = _normalize_column_label(issue["column_label"])
+    if normalized is not None and conn.execute(exists_sql, {**params, "cl": normalized}).scalar():
+        return params, normalized
+
+    key = _compact_column_label(normalized or col_label)
+    db_cols = [r[0] for r in conn.execute(text("""
+        SELECT DISTINCT col_label FROM report_lines
+        WHERE rcept_no = :r AND basis = :b AND statement = :s AND label_raw = :l
+          AND col_label IS NOT NULL"""), params)]
+    hits = ([c for c in db_cols if _compact_column_label(c) == key]
+            or [c for c in db_cols if c.rsplit(">", 1)[-1].replace(" ", "") == key])
+    return (params, hits[0]) if len(hits) == 1 else None
+
+
+_DATE_IN_LABEL_RE = re.compile(r"\d{4}[-.]\s*\d{1,2}[-.]\s*\d{1,2}")
+
+
+def _current_db_value(conn, issue: dict):
+    """Current report_lines values of the issue cell (all period blocks, row_order order)."""
+    cell = _resolve_issue_cell(conn, issue)
+    if cell is None:
+        return None
+    params, col_label = cell
     return conn.execute(text("""
         SELECT array_agg(value_won ORDER BY row_order) FROM report_lines
         WHERE rcept_no = :r AND basis = :b AND statement = :s AND label_raw = :l
           AND (CAST(:cl AS text) IS NULL OR col_label = :cl)"""),
-        {"r": issue["rcept_no"], "b": issue["basis"],
-         "s": "IS" if issue["statement"] == "CIS" else issue["statement"],
-         "l": label, "cl": col_label}).scalar()
+        {**params, "cl": col_label}).scalar()
+
+
+def _current_db_blocks(conn, issue: dict) -> list[str] | None:
+    """SCE only: each current value tagged with the period block it sits in, so the reviewer
+    can tell "value moved to the right block" from "value still in the wrong block".
+
+    A bare value array cannot: SCE repeats one label per period block, and camp_run reopened
+    fixed period_misassign issues whose value was present — just in a different (correct)
+    block (롯데케미칼 20160816002306 #84430~84433, 2026-09-26). The block is named by the
+    first following row whose label carries a date and '기말' (XBRL '기말자본 (기말)
+    (2014-12-31)', HTML '2020.12.31 (기말자본)'); the XBRL 기초 row's date is the
+    extractor's block key, not the opening date, so it is not used."""
+    if issue["statement"] != "SCE":
+        return None
+    cell = _resolve_issue_cell(conn, issue)
+    if cell is None:
+        return None
+    params, col_label = cell
+    cells = conn.execute(text("""
+        SELECT row_order, value_won FROM report_lines
+        WHERE rcept_no = :r AND basis = :b AND statement = :s AND label_raw = :l
+          AND (CAST(:cl AS text) IS NULL OR col_label = :cl)
+        ORDER BY row_order"""), {**params, "cl": col_label}).fetchall()
+    closings = [(ro, lbl) for ro, lbl in conn.execute(text("""
+        SELECT DISTINCT row_order, label_raw FROM report_lines
+        WHERE rcept_no = :r AND basis = :b AND statement = 'SCE' AND row_order IS NOT NULL
+          AND label_raw LIKE '%기말%'
+        ORDER BY row_order"""), params).fetchall() if _DATE_IN_LABEL_RE.search(lbl)]
+    out = []
+    for ro, value in cells:
+        block = next((_DATE_IN_LABEL_RE.search(lbl).group(0) for c_ro, lbl in closings
+                      if ro is not None and c_ro > ro), None)
+        out.append(f"{value} (~{block} 블록)" if block else f"{value} (블록 미상)")
+    return out
 
 
 def recheck_list(slot: Slot | None = None) -> list[dict]:
@@ -724,6 +837,7 @@ def recheck_list(slot: Slot | None = None) -> list[dict]:
         rows = [dict(r) for r in conn.execute(text(q + " ORDER BY issue_id"), params).mappings()]
         for r in rows:
             r["db_value_now"] = _current_db_value(conn, r)
+            r["db_blocks_now"] = _current_db_blocks(conn, r)
     return rows
 
 

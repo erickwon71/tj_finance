@@ -741,6 +741,34 @@ def _compact_column_label(label: str) -> str:
     return re.sub(r"[\s>]", "", label)
 
 
+# Income-tax-expense line as camp_run writes it from the DART web view ('법인세비용',
+# '법인세비용(수익)', '계속영업법인세비용', ...), compared with spaces removed.
+_TAX_EXPENSE_ISSUE_LABEL_RE = re.compile(r"(계속영업)?법인세(비용|수익)(\((수익|비용)\))?")
+
+
+def _xbrl_tax_label_fallback(conn, params: dict) -> str | None:
+    """The DB label of the IS tax-expense row when the issue's label names no DB row at all.
+
+    XBRL-extracted filings store that row under the taxonomy label ('법인세비용, 계속영업'),
+    not the printed one, so the exact label_raw lookup returned None and camp_run reopened
+    8 missing_row issues whose value was already right (엘앤에프 20151104000116, 한화엔진
+    20150515002710, 대한광통신 20170818000262/20160816002050, 2026-09-26). The row is found by
+    its concept (source_ref '…/IncomeTaxExpenseContinuingOperations') and only when that
+    names exactly one label — never a guess."""
+    if params["s"] != "IS" or not _TAX_EXPENSE_ISSUE_LABEL_RE.fullmatch(params["l"].replace(" ", "")):
+        return None
+    if conn.execute(text("""
+            SELECT EXISTS (SELECT 1 FROM report_lines
+            WHERE rcept_no = :r AND basis = :b AND statement = :s AND label_raw = :l)"""),
+            params).scalar():
+        return None
+    labels = [r[0] for r in conn.execute(text("""
+        SELECT DISTINCT label_raw FROM report_lines
+        WHERE rcept_no = :r AND basis = :b AND statement = :s
+          AND source_ref LIKE '%/IncomeTaxExpenseContinuingOperations'"""), params)]
+    return labels[0] if len(labels) == 1 else None
+
+
 def _resolve_issue_cell(conn, issue: dict) -> tuple[dict, str | None] | None:
     """(query params, col_label) of the report_lines cell an issue points at, or None when no
     DB column can be identified.
@@ -753,6 +781,7 @@ def _resolve_issue_cell(conn, issue: dict) -> tuple[dict, str | None] | None:
     label = issue["db_label"] or _strip_label_disambiguator(issue["account_label"]) or issue["account_label"]
     params = {"r": issue["rcept_no"], "b": issue["basis"],
               "s": "IS" if issue["statement"] == "CIS" else issue["statement"], "l": label}
+    params["l"] = _xbrl_tax_label_fallback(conn, params) or label
     exists_sql = text("""
         SELECT EXISTS (SELECT 1 FROM report_lines
         WHERE rcept_no = :r AND basis = :b AND statement = :s AND label_raw = :l

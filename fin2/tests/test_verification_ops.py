@@ -593,3 +593,36 @@ def test_recheck_sce_annotated_column_label_and_period_blocks(engines, as_role):
         assert ops._current_db_blocks(conn, issue("유상증자", "자본 합계")) is None
         # non-SCE issues get no block view
         assert ops._current_db_blocks(conn, {**blk, "statement": "IS"}) is None
+
+
+def test_recheck_xbrl_tax_expense_label_resolves_by_concept(engines, as_role):
+    # 2026-09-26 missing_row batch: 8 reopened issues (엘앤에프·한화엔진·대한광통신) named the
+    # printed label '법인세비용'/'법인세비용(수익)', but XBRL filings store the row under the
+    # taxonomy label '법인세비용, 계속영업' — the exact lookup gave None although the value was right.
+    rows = [  # (basis, label, source_ref, value)
+        ("consolidated", "법인세비용차감전순이익(손실)", "IS_consolidated/ProfitLossBeforeTax", -80),
+        ("consolidated", "법인세비용, 계속영업",
+         "IS_consolidated/IncomeTaxExpenseContinuingOperations", -32),
+        ("separate", "법인세비용(수익)", "IS_separate/IncomeTaxExpenseContinuingOperations", 39),
+    ]
+    for ro, (basis, lbl, ref, v) in enumerate(rows, start=300):
+        _admin_sql(engines, "INSERT INTO report_lines (corp_code, rcept_no, report_fiscal_year, "
+                   "report_fiscal_period, statement, basis, label_raw, source_ref, value_won, "
+                   "row_order, col_index) VALUES (:c, :r, 2024, 'FY', 'IS', :b, :l, :sr, :v, :ro, 0)",
+                   {"c": CORP, "r": R2, "b": basis, "l": lbl, "sr": ref, "v": v, "ro": ro})
+    base = {"rcept_no": R2, "statement": "IS", "db_label": None, "column_label": None}
+    as_role("admin")
+    with engines["admin"].connect() as conn:
+        def value(basis, label, statement="IS"):
+            return ops._current_db_value(conn, {**base, "basis": basis, "account_label": label,
+                                                "statement": statement})
+
+        assert value("consolidated", "법인세비용") == [-32]
+        assert value("consolidated", "법인세비용(수익)") == [-32]
+        assert value("consolidated", "계속영업 법인세비용") == [-32]
+        assert value("consolidated", "법인세비용", statement="CIS") == [-32]
+        # an existing printed label is still matched exactly, never redirected
+        assert value("separate", "법인세비용(수익)") == [39]
+        # non-tax labels and the pre-tax line get no fallback
+        assert value("consolidated", "법인세비용차감전순이익") is None
+        assert value("consolidated", "당기순이익") is None

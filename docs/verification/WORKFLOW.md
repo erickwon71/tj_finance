@@ -86,9 +86,12 @@ rm ~/.claude/notify/STOP_VERIFY
 clean 슬롯의 1%(`machine.audit_pct`)는 모델이 전체를 다시 대조한다.
 
 실행: tmux 세션 `verify_machine` 로 camp_run 워크트리에서 `scripts/machine_daemon.sh` 를 상시 기동한다.
-`machine_pass.run()` 의 claim 루프는 claim 할 게 없으면 스스로 끝나는 게 설계다(무한폴링으로 바꾸면 안 됨) —
-그래서 데몬이 대신 미대조 pending 필링 수를 주기적으로(기본 10분) 확인해, 0보다 크면 워커 6개를 다시 띄우고
-빌 때까지 기다린 뒤 다시 잠든다. 재적재나 데일리 신규 필링이 쌓여도 사람이 재기동할 필요가 없다.
+`machine_pass.run()`/`.recheck()` 의 claim 루프는 claim 할 게 없으면 스스로 끝나는 게 설계다(무한폴링으로
+바꾸면 안 됨) — 그래서 데몬이 매 주기(기본 10분)마다 ① `machine recheck`(수정 배치가 `fixed` 로 넘긴
+이슈를 재적재 결과로 재검증 — close/reopen) 를 한 번 돌리고, ② 미대조 pending 필링 수를 확인해 0보다
+크면 워커 6개를 다시 띄우고 빌 때까지 기다린다. 재적재·데일리 신규 필링·수정 배치의 `fixed` 이슈가
+쌓여도 사람이 챙길 필요가 없다(2026-09-26: `machine recheck` 가 아무도 안 돌려서 481건 방치돼 있던 것을
+발견하고 데몬에 편입).
 
 ```bash
 tmux new-session -d -s verify_machine -c /Users/taejin/Project/tj_finance/.claude/worktrees/camp_run 'caffeinate -i scripts/machine_daemon.sh'

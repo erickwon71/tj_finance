@@ -1,12 +1,14 @@
 #!/bin/bash
 # Machine-compare worker daemon: relaunches `vq.py machine run` workers whenever pending
-# filings need checking, so nobody has to notice the queue drained and restart the
-# tmux `verify_machine` session by hand.
+# filings need checking, and periodically runs `vq.py machine recheck` for the fix side's
+# 'fixed' issues — so nobody has to notice either queue drained and restart things by hand.
 #
-# Why a separate daemon: machine_pass.run()'s claim loop exits as soon as there is nothing
-# to claim (must stay that way — turning it into a busy DB poll is worse). Reload batches
-# and daily new filings then pile up unchecked forever unless something re-launches the
-# workers. This script is that something.
+# Why a separate daemon: machine_pass.run()'s and .recheck()'s claim loops exit as soon as
+# there is nothing to claim (must stay that way — turning either into a busy DB poll is
+# worse). Reload batches and daily new filings then pile up unchecked forever, and a fix
+# batch's 'fixed' issues sit unverified forever, unless something re-launches them. This
+# script is that something (docs/qa/handoff_2026-09-26_full_automation.md §1, extended
+# 2026-09-26 to also cover `machine recheck` — found idle with 481 'fixed' issues waiting).
 #
 # Design: docs/qa/handoff_2026-09-26_full_automation.md section 1.
 #
@@ -73,6 +75,13 @@ main() {
     fi
     prune_logs
 
+    day_dir="$LOG_ROOT/$(date '+%Y-%m-%d')"
+    mkdir -p "$day_dir"
+    stamp="$(date '+%H%M%S')"
+
+    recheck_out=$(VQ_ACTOR=camp_run:machine "${VQ[@]}" machine recheck 2>>"$day_dir/recheck_${stamp}.log")
+    log "recheck: ${recheck_out:-처리 없음}"
+
     n=$("${VQ[@]}" status --json | jq -r '.machine.unchecked_pending_filings // 0')
     if [ "${n:-0}" -eq 0 ]; then
       log "미대조 pending 필링 없음 - ${POLL_S}s 후 재확인"
@@ -81,9 +90,6 @@ main() {
     fi
 
     log "미대조 pending 필링 ${n}건 - 워커 ${WORKERS}개 기동"
-    day_dir="$LOG_ROOT/$(date '+%Y-%m-%d')"
-    mkdir -p "$day_dir"
-    stamp="$(date '+%H%M%S')"
     pids=()
     for i in $(seq 1 "$WORKERS"); do
       VQ_ACTOR=camp_run:machine "${VQ[@]}" machine run \

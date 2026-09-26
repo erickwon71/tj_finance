@@ -73,11 +73,28 @@ Bash 전체(읽기전용 `vq.py show` 포함)가 거부됨. 같은 슬롯(001172
    9분 넘게 쓰고 나서야 포기) 프롬프트에 "Bash 첫 거부 감지 즉시 포기, 재시도하지 말 것" 같은 조기종료
    조건을 넣는 것도 턴 낭비를 줄인다.
 
-**✅ 완료(2026-09-26 12:48)**: 1·3 항목 구현. `verify_prompt.md` 에 병렬 Bash 상한(≤5)·거부 즉시포기
-가이드 추가. `runner.py` 에 `tool_denied` outcome 신설(`_BASH_DENIED_RE`) — usage_limit과 동일하게
-retry_count 미증가·연속실패 카운터·예산 슬롯 집계 제외, `runner_runs.outcome` CHECK 제약 갱신.
-회귀 테스트 `test_runner_tool_denied_has_no_retry_penalty`. 2 항목(제품 버그 자체)은 여전히 Claude Code
-쪽 몫, 이 세션에서는 로컬 완화만.
+**✅ 완료(2026-09-26 12:48), ★2차 수정 필요했음(16:00~16:40)**: 1·3 항목 구현. `verify_prompt.md` 에
+병렬 Bash 상한(≤5)·거부 즉시포기 가이드 추가. `runner.py` 에 `tool_denied` outcome 신설
+(`_BASH_DENIED_RE`) — usage_limit과 동일하게 retry_count 미증가·연속실패 카운터·예산 슬롯 집계
+제외, `runner_runs.outcome` CHECK 제약 갱신. 2 항목(제품 버그 자체)은 여전히 Claude Code 쪽 몫,
+이 세션에서는 로컬 완화만.
+
+★같은 날 오후 **두 번 더 재발**했다(커밋 fc5e9de, 5cb3f37 — memory
+[[sign-flip-r162e-residual-investigation-2026-09-26]] 아님, 별도 이슈). 1차 재발: 모델이 도구
+오류를 리터럴로 인용하지 않고 매번 다르게 풀어썼다("Bash access was just denied" 등) — 리터럴
+정규식이 못 잡음, "don't ask mode" 문구까지 넓혀서 대응. 2차 재발(더 심각): 그 패러프레이즈도
+매번 또 달랐고("Bash 권한이 거부되었습니다"(한국어), "don't ask mode" 언급도 없음) — **정규식으로
+패러프레이즈를 쫓는 접근 자체가 한계**임을 확인. 최종 수정: Claude Code가 result JSON에 항상
+붙이는 구조화 필드 `permission_denials`(도구명·명령어 포함)를 1차 신호로 전환, 텍스트 정규식은
+폴백으로만 남김.
+**더 심각한 부수적 발견**: 재발 3건 중 1건만 진짜 dontAsk 전면차단이었고, 나머지 2건은
+`grep`/`find`를 Bash로 시도해 **정상적으로**(원래 허용 목록 밖이라) 거부된 것뿐인데, 앞서 추가한
+"Bash 거부되면 즉시 포기" 규칙이 이 정상적인 단발성 거부까지 치명적 버그로 오인해 40~49턴
+작업한 세션을 통째로 포기시켰다 — **완화책 자체가 새로운 낭비를 만든 것**. `verify_prompt.md`를
+"vq.py 자체가 거부됐을 때만 포기, 그 외 도구 거부는 맞는 도구로 바꿔서 계속"으로 재수정.
+회귀 테스트 `test_runner_tool_denied_has_no_retry_penalty`·
+`test_runner_tool_denied_paraphrased_still_detected`·
+`test_runner_tool_denied_detected_via_permission_denials_field`.
 
 ## 3. 예산 예비율(reserve_7d_pct=40 / safety_7d_pct=5) 실측 기반 재검토 (main, 관찰 위주)
 

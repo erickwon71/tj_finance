@@ -11,6 +11,7 @@ Roles (decided by the DB login, see schema.sql::actor_role):
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -606,6 +607,13 @@ def add_issues(rcept: str, items: list[dict]) -> list[int]:
                 if not it.get(req):
                     raise VqError(f"이슈 필드 {req} 필수")
             row = {k: it.get(k) for k in _ISSUE_FIELDS}
+            if not row.get("db_label"):
+                # camp_run disambiguates a duplicate SCE label by appending "[period]" to
+                # account_label for the unique index; without db_label, recheck's exact-match
+                # lookup would compare that suffix against label_raw and always miss (see
+                # _strip_label_disambiguator).
+                row["db_label"] = _strip_label_disambiguator(row["account_label"])
+            row["column_label"] = _strip_column_label_prefix(row.get("column_label"))
             row.update(slot.params(), r=rcept, url=DART_URL.format(rcept=rcept))
             conn.execute(text("SELECT set_config('verification.evidence', :e, true)"),
                          {"e": (it.get("evidence") or "")[:2000]})
@@ -673,15 +681,37 @@ def slot_status(slot: Slot) -> str:
 
 
 # ═══════════════════════════════ recheck (verify) ═══════════════════════════════
+_LABEL_DISAMBIG_RE = re.compile(r"\s*\[[^\[\]]+\]$")
+
+
+def _strip_label_disambiguator(label: str) -> str | None:
+    """Undo a period/block annotation account_label may carry to satisfy the duplicate-label
+    unique index (e.g. '당기순이익(손실) [2022.01.01~2022.12.31]', added when the same label
+    repeats across SCE year blocks) — report_lines.label_raw never has that suffix, so matching
+    on the raw account_label always misses and _current_db_value reports a false "None"
+    (confirmed false reopen: 알테오젠 8건 + 카카오 13건, 2026-09-26)."""
+    stripped = _LABEL_DISAMBIG_RE.sub("", label)
+    return stripped if stripped and stripped != label else None
+
+
+def _strip_column_label_prefix(label: str | None) -> str | None:
+    """Some camp_run issues write column_label as '열=<path>' for readability — report_lines.
+    col_label never carries that prefix, so the exact-match lookup misses (same 카카오 사례)."""
+    if label and label.startswith("열="):
+        return label[len("열="):]
+    return label
+
+
 def _current_db_value(conn, issue: dict):
-    label = issue["db_label"] or issue["account_label"]
+    label = issue["db_label"] or _strip_label_disambiguator(issue["account_label"]) or issue["account_label"]
+    col_label = _strip_column_label_prefix(issue["column_label"])
     return conn.execute(text("""
         SELECT array_agg(value_won ORDER BY row_order) FROM report_lines
         WHERE rcept_no = :r AND basis = :b AND statement = :s AND label_raw = :l
           AND (CAST(:cl AS text) IS NULL OR col_label = :cl)"""),
         {"r": issue["rcept_no"], "b": issue["basis"],
          "s": "IS" if issue["statement"] == "CIS" else issue["statement"],
-         "l": label, "cl": issue["column_label"]}).scalar()
+         "l": label, "cl": col_label}).scalar()
 
 
 def recheck_list(slot: Slot | None = None) -> list[dict]:

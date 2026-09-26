@@ -465,3 +465,61 @@ def test_pace_wait_rules():
     assert w == 3600 and "5h" in why
     # no data never blocks
     assert runner.pace_wait({}, **kw) == (0, None)
+
+
+def test_strip_label_disambiguator():
+    # camp_run appends "[period]" (or similar) to disambiguate a label that repeats across SCE
+    # year blocks, to satisfy ux_vissues_active_cell — report_lines.label_raw never carries it.
+    assert ops._strip_label_disambiguator("당기순이익(손실) [2022.01.01~2022.12.31]") \
+        == "당기순이익(손실)"
+    assert ops._strip_label_disambiguator("당기순이익(손실)[제20기(2017)1분기 비교]") \
+        == "당기순이익(손실)"
+    assert ops._strip_label_disambiguator("자기주식 소각 (단위: 주) [2017블록]") \
+        == "자기주식 소각 (단위: 주)"
+    # an ordinary label, or one whose own text just happens to end in "]", is left alone
+    assert ops._strip_label_disambiguator("매출액") is None
+    assert ops._strip_label_disambiguator("[camp_run#1] 결측") is None
+
+    # column_label's "열=" prefix hits the exact same failure mode (카카오 13건, 2026-09-26):
+    # report_lines.col_label never carries it, so it must be stripped before matching.
+    assert ops._strip_column_label_prefix("열=자본>자본 합계") == "자본>자본 합계"
+    assert ops._strip_column_label_prefix("자본>자본 합계") == "자본>자본 합계"
+    assert ops._strip_column_label_prefix(None) is None
+
+
+def test_duplicate_sce_label_recheck_and_add_issues_backfill_db_label(engines, as_role):
+    # 2026-09-26: 알테오젠 8건 + 카카오 13건이 이 정확한 패턴으로 거짓 reopen 됐다 — 같은 SCE 표에
+    # 라벨이 두 연도 블록에 반복되고, account_label 에 "[기간]" 을 덧붙여 등록했는데 db_label 을
+    # 채우지 않아 recheck 조회가 report_lines.label_raw 와 영원히 불일치했다.
+    dup_label = "당기순이익(손실)"
+    for v, ro, cl in ((-100, 90, "2022년 구간"), (-200, 92, "2023년 구간")):
+        _admin_sql(engines, "INSERT INTO report_lines (corp_code, rcept_no, report_fiscal_year, "
+                   "report_fiscal_period, statement, basis, label_raw, col_label, value_won, "
+                   "row_order, col_index) VALUES (:c, :r, 2024, 'FY', 'SCE', 'consolidated', "
+                   ":l, :cl, :v, :ro, 0)",
+                   {"c": CORP, "r": R1, "l": dup_label, "cl": cl, "v": v, "ro": ro})
+
+    as_role("verify")
+    assert ops.claim(SLOT) == SLOT
+    ids = ops.add_issues(R1, [{"basis": "consolidated", "statement": "SCE",
+                               "account_label": f"{dup_label} [2023.01.01~2023.12.31]",
+                               "column_label": "2023년 구간",
+                               "source_value": 200, "source_value_raw": "(200)",
+                               "source_unit": "원", "error_type": "missing_row",
+                               "evidence": "원문 2023년 구간 값이 DB에 없음"}])
+    ops.done()
+
+    row = _admin_sql(engines, "SELECT db_label FROM verification.issues WHERE issue_id = :i",
+                      {"i": ids[0]})[0]
+    assert row == (dup_label,)                         # add_issues auto-derived it
+
+    as_role("admin")
+    with engines["admin"].connect() as conn:
+        issue = dict(conn.execute(text("SELECT * FROM verification.issues WHERE issue_id = :i"),
+                                   {"i": ids[0]}).mappings().one())
+        assert ops._current_db_value(conn, issue) == [-200]     # the 2023 block, not None
+
+        # a legacy issue with the suffix baked into account_label and no db_label (pre-fix rows,
+        # and the read-side fallback for any future caller that still skips db_label)
+        legacy = {**issue, "db_label": None, "column_label": None}
+        assert ops._current_db_value(conn, legacy) == [-100, -200]  # honest ambiguity, not None

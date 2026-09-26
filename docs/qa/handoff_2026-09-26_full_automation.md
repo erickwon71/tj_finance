@@ -1,5 +1,11 @@
 # 핸드오프 — 검증 루프 완전자동화 보강 (2026-09-26 11:34)
 
+**갱신(2026-09-26 12:50)**: ①②④⑤ 구현·적용 완료(커밋 `885fa6b`). ③은 보류(관찰 데이터 부족).
+세부 내용은 각 절 하단 "✅ 완료" 블록과 메모리 [[fix-batch-id-stale-cleanup-backfill-2026-09-26]] 참조.
+⑤는 실측 결과가 이 문서의 원래 추정(18건)과 크게 달라 — **실제로는 open/reopened 이슈 12,168건 중
+11,949건(98%)** 이 이미 이 상태였고 전량 백필했다. 백필 후 fix-queue에 sign_flip 11,967건이 새로
+노출됐으니 다음 세션에서 이 배치를 어떻게 쪼갤지 사용자와 우선순위를 논의할 것.
+
 이어받는 세션: 아무 워크트리든(항목마다 다름, 각 항목에 표기). 시작 전에 `docs/verification/WORKFLOW.md` ·
 `docs/plans/verification_machine_compare_design_2026-09-24.md`(특히 §11 예산) 를 먼저 읽을 것.
 
@@ -41,6 +47,11 @@ done
 - launchd(macOS) 로 주기 기동하는 대안도 검토할 것 — 사용자 환경은 `~/.claude/notify/` 에 이미 launchd
   에이전트(08:00 다이제스트)가 있으니 같은 패턴 참고 가능.
 
+**✅ 완료(2026-09-26 12:48)**: `scripts/machine_daemon.sh` 구현(verify_runner.sh 패턴: 자기 코드
+재동기화·STOP 파일·로그정리, poll 기본 600초). `docs/verification/WORKFLOW.md` §4-1 갱신.
+tmux `verify_machine` 세션에서 기동해 즉시 미대조 pending 3,104건을 집어 워커 6개 기동 확인.
+정지: `touch ~/.claude/notify/STOP_MACHINE`. launchd 전환은 보류(tmux 상시기동으로 충분히 검증됨).
+
 ## 2. dontAsk 모드 Bash 권한 전면거부 버그 완화 (camp_run 워크트리)
 
 **증상**(2026-09-26 10:19~10:55, run 368~370): 모델이 한 턴에 Bash 를 약 14개 병렬호출하자 이후 세션 내내
@@ -61,6 +72,12 @@ Bash 전체(읽기전용 `vq.py show` 포함)가 거부됨. 같은 슬롯(001172
 3. 재현되면 최소한 모델이 "Bash 막힘 → 남은 안내만 짧게 보고 후 종료"를 더 빨리 하도록(지금은 52턴,
    9분 넘게 쓰고 나서야 포기) 프롬프트에 "Bash 첫 거부 감지 즉시 포기, 재시도하지 말 것" 같은 조기종료
    조건을 넣는 것도 턴 낭비를 줄인다.
+
+**✅ 완료(2026-09-26 12:48)**: 1·3 항목 구현. `verify_prompt.md` 에 병렬 Bash 상한(≤5)·거부 즉시포기
+가이드 추가. `runner.py` 에 `tool_denied` outcome 신설(`_BASH_DENIED_RE`) — usage_limit과 동일하게
+retry_count 미증가·연속실패 카운터·예산 슬롯 집계 제외, `runner_runs.outcome` CHECK 제약 갱신.
+회귀 테스트 `test_runner_tool_denied_has_no_retry_penalty`. 2 항목(제품 버그 자체)은 여전히 Claude Code
+쪽 몫, 이 세션에서는 로컬 완화만.
 
 ## 3. 예산 예비율(reserve_7d_pct=40 / safety_7d_pct=5) 실측 기반 재검토 (main, 관찰 위주)
 
@@ -89,6 +106,9 @@ Bash 전체(읽기전용 `vq.py show` 포함)가 거부됨. 같은 슬롯(001172
 `action='reloaded_after_pass'` 건수를 한 줄 추가한다. 스키마 변경 없음(기존 `progress_events` 테이블
 조회만 추가).
 
+**✅ 완료(2026-09-26 12:48)**: `machine_status()` 에 `reloaded_after_pass_24h` 추가, `vq.py status`
+출력에 한 줄 추가. 실측: 09-26 12시 기준 24h 역행 2,357건(수정 워크트리 재적재로 인한 정상 동작).
+
 ## 5. 이번 세션에서 발견한 운영 함정 — 재발 방지용 코드화 검토 (camp_run 또는 main)
 
 `vq.py reopen` 이 `fix_batch_id` 를 그대로 두는 바람에, 이미 `status=done` 인 배치에 걸린 이슈를
@@ -103,13 +123,25 @@ reopen 하면 `fix-queue` 의 "미배정"(`fix_batch_id IS NULL`)에도 "진행�
 넣거나, admin 전용 헬퍼 함수로 만들어 `close`/`reopen` CLI 가 내부적으로 호출하게 한다.
 재발하면 또 수동 삽질해야 하므로 **자동화 우선순위 중간~상**.
 
+**✅ 완료(2026-09-26 12:48)**: `trg_issue_before` 에 자동청소 규칙 추가(admin 헬퍼가 아니라 트리거
+자체에 — `fixed`→`closed` 정상종료는 감사기록으로 `fix_batch_id` 유지, `open`/`reopened` 로 갈 때만
+가리키는 배치가 done/abandoned 면 자동 NULL). 회귀 테스트 `test_reopen_after_batch_done_clears_stale_fix_batch_id`.
+**실측 규모가 원래 추정(18건)과 크게 다름**: 라이브 DB 전체 스캔 결과 open/reopened 12,168건 중
+11,949건(98%)이 이미 이 상태였음 — `scripts/backfill_stale_fix_batch_id_2026-09-26.py` 로 전량 백필,
+잔존 0건. 백필 후 fix-queue: sign_flip 11,967건(3,881필링/1,212사) · source_defect 152 · missing_row 44 ·
+period_misassign 4 · unclassified 3 · value_mismatch 2 — sign_flip 물량이 이 규모로 드러난 건 신규 결함이
+아니라 이 버그로 오래 방치돼 있던 것. **다음 세션 논의 필요**: 이 sign_flip 11,967건을 어떻게 배치로
+쪼개 처리할지(R162-d 형제열 미수정 패턴이 상당수 원인일 가능성, 미확인).
+
 ## 6. 완전자동화의 정의 (참고용 체크리스트)
 
 사람이 지금 손으로 해야 하는 것 — 이게 전부 없어지면 "완전자동화":
-- [ ] 검증 러너 재시작 (§2 완화되면 빈도 줄어듦, §1 이 자동 재기동 데몬을 만들면 같은 프레임으로 해결 가능)
-- [ ] 기계 대조 워커 재기동 (§1)
-- [ ] fix_batch_id 정리 같은 상태 불일치 수동 복구 (§5)
-- [ ] 예산 소진 시 사람이 눈치채고 쉬게 하기 (지금은 `pace_mode` 가 자동으로 하므로 이미 해결됨 — 참고용)
+- [x] 검증 러너 재시작 (§2 완화 — tool_denied 로 재시도 낭비/연속실패오정지는 줄었으나, 제품버그 자체는
+      여전히 재현 가능. 완전 해소는 Claude Code 쪽 수정 대기)
+- [x] 기계 대조 워커 재기동 (§1 — `scripts/machine_daemon.sh`, tmux `verify_machine` 로 가동 중)
+- [x] fix_batch_id 정리 같은 상태 불일치 수동 복구 (§5 — 트리거 자동청소 + 기존 11,949건 백필)
+- [ ] 예산 소진 시 사람이 눈치채고 쉬게 하기 (지금도 `pace_mode` 가 자동으로 하므로 이미 해결됨 — 참고용)
 - [ ] 8scope 전체대조 vs 발견항목만 대조 전환 판단 (이미 자동 — `기계대조` 줄 보고 모델이 스스로 분기)
 
 우선순위: **1 > 5 > 2 > 4 > 3**(3 은 관찰 기간이 더 필요해 지금 당장 코드로 할 게 적음).
+**진행상황(2026-09-26 12:50)**: 1·5·2·4 구현·적용·커밋(`885fa6b`)·push 완료. 3만 보류.

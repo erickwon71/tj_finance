@@ -10409,6 +10409,53 @@ total 열(col_index=0)은 이 행에서 여전히 비어 있음(원문과 일치
 
 ---
 
+## R181. XBRL SCE '기초자본' 라벨 날짜 — DART 는 기초 fact 를 **블록 기말 instant context** 에 싣는다, 라벨엔 블록 기초일을 쓴다 (2026-09-26)
+
+**발견**: verification fix batch #25(unclassified) 이슈 #85224/#85225 — 롯데케미칼 2016H1 `20160816002306`
+연결·별도 SCE 4블록 전부 `기초자본 (2016-06-30)` · `기초자본 (2015-12-31)` … 처럼 **그 블록의 기말일**이
+기초 행 라벨에 찍혀 있었다(원문 `2016.01.01 (기초자본)`). 값(=직전 기말)과 row_order 블록 배치는 맞다.
+이 라벨 오기로 recheck 자동매칭이 실패해 period_misassign 거짓 이슈(#84430~84433)가 생겼다.
+
+**원인** (`_sce_row_label`, `fin2/extract/report_lines_xbrl.py`): 라벨 날짜를 fact 의 `ctx.instant` 로
+그대로 썼다. DART XBRL 은 `EquityAtBeginningOfPeriod` fact 를 기초일이 아니라 블록 기말 instant
+context(예: `CFY2016eHYA` = 2016-06-30)에 싣는다 — 그래서 버킷(블록 정렬)은 맞고 **라벨 날짜만** 틀린다.
+DB 실측: 날짜가 붙은 기초 행 5,524행/885필링 전부가 같은 관례(자기 블록 기말일 = 기초 라벨일, 기말 행이
+없는 블록 11행 포함). 기간 context 로 태깅된 기초 행(날짜 없는 `기초자본`, 2,622행)은 해당 없음.
+
+**수정**: `_emit_sce_lines` 가 표 전체 total 열 fact 중 duration context 로 **블록(종료일)별 가장 이른
+시작일**(=누적기간 시작, 원문 기초일)을 모으고, `EquityAtBeginningOfPeriod`(네임스페이스 무관) 라벨에만
+그 날짜를 쓴다. 해당 블록에 duration fact 가 없으면 기존 `ctx.instant` 유지(짐작 금지). 값·row_order·
+col_index 는 불변 — 라벨 문자열만 바뀐다. 하류(계층3·detect_sce_anomalies·machine_compare)는 기초 라벨의
+날짜를 파싱하지 않음을 grep 으로 확인.
+
+**회귀 테스트**: `fin2/tests/test_xbrl_base_presentation_merge.py::test_r181_lotte_chemical_opening_label_shows_opening_date`.
+
+**재적재·백필**: fix batch #25 — 날짜 붙은 `EquityAtBeginningOfPeriod` 행이 있는 XBRL 필링 전수(batch note).
+
+---
+
+## R182. XBRL tree-gap(R133) 계속영업이익 fact 는 표 자신의 **법인세차감전 − 법인세** 등식과 모순이면 올리지 않는다 (2026-09-26)
+
+**발견**: fix batch #25 이슈 #85106 — 한화오션 2024Q1 `20240514001522` 연결 IS 에 원문에 없는
+'계속영업이익(손실)' 52,936,000,000 행(`xbrl_tree_gap_leaf_line`). 인스턴스 자체에
+`ProfitLossFromContinuingOperations`(연결 plain context, decimals=0) = 52,936,000,000 이 있다 — 부문
+주석 합계(백만원 반올림, 부문축 fact 들과 같은 개념)를 회사가 이 개념으로 태깅한 것이다. IS 본문엔 그
+행이 없고, 본문 자신의 법인세차감전 53,926,707,041 − 법인세 2,905,831,852 = 51,020,875,189(=분기순이익).
+
+**원인** (`_emit_missing_leaf_lines`): R133 은 IS 트리에 없는 개념을 basis-태깅 fact 로 **무조건** 올린다.
+tree-gap fact 는 표시 트리와 연결이 없으므로 같은 개념이 주석 표에 태깅된 값일 수 있다.
+
+**수정**: IS `ProfitLossFromContinuingOperations` 는 같은 basis·같은 열의 `ProfitLossBeforeTax` 와
+`IncomeTaxExpenseContinuingOperations` 가 둘 다 있을 때 `PBT − tax` 와 1원 넘게 다르면 올리지 않는다(경고
+로그). 한쪽이라도 없으면 R133 동작 그대로. DB 실측: tree-gap 계속영업이익 행은 전사 1행(이 필링)뿐 — 그
+1행이 등식 위반.
+
+**회귀 테스트**: `fin2/tests/test_xbrl_base_presentation_merge.py::test_r182_hanwha_ocean_note_tagged_continuing_ops_not_adopted`.
+
+**재적재·백필**: fix batch #25, 1필링.
+
+---
+
 ## R159-보강. 백만원 선언 표의 **진짜 소수 정밀도** 셀 — R158/R160 콤마-오타 판정으로 못 푸는
 경우는 반올림 예외등재 (2026-09-26)
 

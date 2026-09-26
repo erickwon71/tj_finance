@@ -647,7 +647,10 @@ def _dim_candidates(
     return out
 
 
-def _sce_row_label(base_label: str, element: QName, ifrs_full_ns: str, ctx: XbrlContext) -> str:
+def _sce_row_label(
+    base_label: str, element: QName, ifrs_full_ns: str, ctx: XbrlContext,
+    opening_date: date | None = None,
+) -> str:
     """Synthesizes the date (+ 기말/기초 marker) suffix that lets
     `detect_sce_anomalies()` keep working unmodified (module docstring). Only
     instant-typed rows get a suffix — duration rows (flow items: 당기순이익/
@@ -662,7 +665,17 @@ def _sce_row_label(base_label: str, element: QName, ifrs_full_ns: str, ctx: Xbrl
     elif element.ns == ifrs_full_ns and element.local == _SCE_BEGINNING_LOCAL:
         marker = "기초"          # not required for compat, added for fidelity/symmetry
     suffix = f" ({marker})" if marker else ""
-    return f"{base_label}{suffix} ({ctx.instant})"
+    shown = ctx.instant
+    # ★R181(2026-09-26) — DART files the opening-balance fact
+    # (EquityAtBeginningOfPeriod, any namespace) on the block's CLOSING
+    # instant context (e.g. CFY2016eHYA = 2016-06-30), not on the opening
+    # date. The value is the true opening balance and bucketing on that
+    # instant is what aligns it with its own block, so only the label date
+    # is wrong — show the block's opening date (start of its cumulative
+    # duration period) instead, matching the source text "2016.01.01".
+    if element.local == _SCE_BEGINNING_LOCAL and opening_date is not None:
+        shown = opening_date.isoformat()
+    return f"{base_label}{suffix} ({shown})"
 
 
 def _check_sce_column_rollup(
@@ -861,6 +874,19 @@ def _emit_missing_totals(
                        if node.element.ns == basis_axis_ns}
     source = f"{rcept_no}/{statement}/{basis}/missing_total"
 
+    def _col_values(local_name: str) -> dict[int, int]:
+        """{col_idx: value} of a concept's basis-tagged facts (any namespace)."""
+        for qname in _find_qnames_by_local(facts_by_qname, local_name):
+            cands = _basis_candidates(qname, facts_by_qname, contexts, basis_axis, basis_member)
+            if cands:
+                vals: dict[int, int] = {}
+                for ci, f, _ in _resolve_columns(cands, period_end_date, source):
+                    v = _numeric_value(f, units)
+                    if v is not None:
+                        vals[ci] = v
+                return vals
+        return {}
+
     out: list[ReportLineRow] = []
     for local in required:
         if local in present_locals:
@@ -961,6 +987,19 @@ def _emit_missing_leaf_lines(
     present_locals = {node.element.local for node in tree.nodes.values()}
     source = f"{rcept_no}/{statement}/{basis}/missing_lines"
 
+    def _col_values(local_name: str) -> dict[int, int]:
+        """{col_idx: value} of a concept's basis-tagged facts (any namespace)."""
+        for qname in _find_qnames_by_local(facts_by_qname, local_name):
+            cands = _basis_candidates(qname, facts_by_qname, contexts, basis_axis, basis_member)
+            if cands:
+                vals: dict[int, int] = {}
+                for ci, f, _ in _resolve_columns(cands, period_end_date, source):
+                    v = _numeric_value(f, units)
+                    if v is not None:
+                        vals[ci] = v
+                return vals
+        return {}
+
     out: list[ReportLineRow] = []
     for local in required:
         if local in present_locals:
@@ -972,9 +1011,27 @@ def _emit_missing_leaf_lines(
                 break  # first namespace variant that actually has basis-tagged facts wins
         if not candidates:
             continue  # genuinely untagged for this filing/basis (2026-08-06 웰킵스하이텍 precedent)
+        # ★R182(2026-09-26) — a tree-gap fact is not tied to this statement's
+        # presentation, so a filer can have tagged the SAME concept on a note
+        # table (한화오션 2024Q1 `20240514001522`: segment-note total 52,936
+        # million tagged ProfitLossFromContinuingOperations on the plain
+        # consolidated context — the face IS has no such line and its own
+        # PBT − tax = 51,020,875,189). Adopt it only when the statement's own
+        # identity (PBT − income tax = continuing-ops profit) does not
+        # contradict it; with either side untagged, keep R133 behaviour.
+        identity: dict[int, int] = {}
+        if statement == "IS" and local == "ProfitLossFromContinuingOperations":
+            pbt = _col_values("ProfitLossBeforeTax")
+            tax = _col_values("IncomeTaxExpenseContinuingOperations")
+            identity = {ci: pbt[ci] - tax[ci] for ci in pbt.keys() & tax.keys()}
         for col_idx, fact, ctx in _resolve_columns(candidates, period_end_date, source):
             value = _numeric_value(fact, units)
             if value is None:
+                continue
+            if col_idx in identity and abs(value - identity[col_idx]) > 1:
+                logger.warning(
+                    f"{source}: {local} col{col_idx}={value} ≠ PBT−tax={identity[col_idx]}"
+                    f" — tree-gap fact contradicts the statement, skipped (R182)")
                 continue
             out.append(ReportLineRow(
                 corp_code=corp_code,
@@ -1160,11 +1217,20 @@ def _emit_sce_lines(
     total_required = frozenset({Dimension(axis=basis_axis, member=basis_member)})
     total_buckets_of: dict[str, dict[date, tuple]] = {}
     all_dates: set[date] = set()
+    opening_date_of: dict[date, date] = {}   # block (end) date -> opening date — R181
     for row_loc in row_flat:
         total_candidates = _dim_candidates(tree.nodes[row_loc].element, facts_by_qname, contexts, total_required)
         total_buckets = _bucket_by_period(total_candidates, source)
         total_buckets_of[row_loc] = total_buckets
         all_dates.update(total_buckets)
+        # R181 — earliest start of any duration context ending on a block
+        # date = that block's opening date (cumulative period start).
+        for _, ctx in total_candidates:
+            if ctx.period_kind == "duration" and ctx.start_date and ctx.end_date:
+                end_d = date.fromisoformat(ctx.end_date)
+                start_d = date.fromisoformat(ctx.start_date)
+                if end_d not in opening_date_of or start_d < opening_date_of[end_d]:
+                    opening_date_of[end_d] = start_d
     canonical_dates = sorted(all_dates, reverse=True)
 
     out: list[ReportLineRow] = []
@@ -1231,7 +1297,10 @@ def _emit_sce_lines(
                     statement="SCE",
                     basis=basis,
                     section_path=row_section_path,
-                    label_raw=_sce_row_label(base_label, row_node.element, ifrs_full_ns, ctx),
+                    label_raw=_sce_row_label(
+                        base_label, row_node.element, ifrs_full_ns, ctx,
+                        opening_date=opening_date_of.get(d),
+                    ),
                     col_index=col_idx,                       # position (자본 구성요소), NOT a period
                     col_label=col_label_of[col_loc],
                     context_fiscal_year=None,                # ★ no year claim (module docstring)

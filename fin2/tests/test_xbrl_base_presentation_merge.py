@@ -354,3 +354,51 @@ def test_manual_is_sign_fix_scoped_to_rcept():
     con = _is_row(local, -1_170_736_386, basis="consolidated")
     fixed = _apply_manual_is_sign_fixes([con], "99999999999999")
     assert fixed[0].value_won == -1_170_736_386
+
+
+# ── R181: DART 기초자본 fact 는 블록 '기말' instant context 에 실린다 — 라벨 날짜만 기초일로 ──
+def test_r181_lotte_chemical_opening_label_shows_opening_date():
+    """롯데케미칼 2016H1 `20160816002306` 연결·별도 SCE '기초자본' — DART XBRL 은
+    EquityAtBeginningOfPeriod fact 를 그 블록의 기말 instant context(CFY2016eHYA=2016-06-30)에
+    싣는다. 값(=직전 기말)과 블록 배치는 맞고 라벨 날짜만 기말일로 찍히던 결함(batch #25,
+    이슈 #85224/#85225). 원문 표기 '2016.01.01 (기초자본)'과 같게 블록 누적기간 시작일을 쓴다."""
+    lines = _lines("KOSPI/00165413_롯데케미칼/half/2016/20160816002306.zip",
+                   "20160816002306", "00165413", 2016, "H1", date(2016, 6, 30))
+    if lines is None:
+        return
+    for basis, expected in (
+        ("consolidated", {
+            ("기초자본 (2016-01-01)", 7_555_586_074_856),
+            ("기초자본 (2015-01-01)", 6_468_998_769_263),
+            ("기초자본 (2014-01-01)", 6_294_458_723_169),
+        }),
+        ("separate", {
+            ("기초자본 (2016-01-01)", 7_471_314_445_548),
+            ("기초자본 (2015-01-01)", 6_619_395_621_256),
+            ("기초자본 (2014-01-01)", 6_434_921_871_942),
+        }),
+    ):
+        got = {(l.label_raw, l.value_won) for l in lines
+               if l.statement == "SCE" and l.basis == basis and l.col_index == 0
+               and l.label_raw.startswith("기초자본")}
+        assert expected <= got, f"{basis}: {sorted(got)}"
+        assert not any(lbl.endswith("-06-30)") or lbl.endswith("-12-31)") for lbl, _ in got), \
+            f"{basis}: 기초 라벨에 기말일이 남아 있음 {sorted(got)}"
+
+
+# ── R182: tree-gap 계속영업이익 fact 가 표 자신의 PBT − 법인세 등식과 모순이면 채택하지 않는다 ──
+def test_r182_hanwha_ocean_note_tagged_continuing_ops_not_adopted():
+    """한화오션 2024Q1 `20240514001522` 연결 — 인스턴스의 ProfitLossFromContinuingOperations
+    52,936,000,000 은 부문 주석 합계(백만원 반올림)를 태깅한 것이고 IS 본문에는 그 행이 없다.
+    IS 자신의 법인세차감전순이익 53,926,707,041 − 법인세 2,905,831,852 = 51,020,875,189 와
+    모순이라 R133 tree-gap 행으로 올리면 안 된다(batch #25, 이슈 #85106)."""
+    lines = _lines("KOSPI/00111704_한화오션/quarter/2024/20240514001522.zip",
+                   "20240514001522", "00111704", 2024, "Q1", date(2024, 3, 31))
+    if lines is None:
+        return
+    cont = [l for l in lines if l.statement == "IS" and l.basis == "consolidated"
+            and "ProfitLossFromContinuingOperations" in (l.source_ref or "")]
+    assert not any(l.value_won == 52_936_000_000 for l in cont), cont
+    pl = {l.value_won for l in lines if l.statement == "IS" and l.basis == "consolidated"
+          and l.col_index == 0 and (l.source_ref or "").endswith("/ProfitLoss")}
+    assert pl == {51_020_875_189}

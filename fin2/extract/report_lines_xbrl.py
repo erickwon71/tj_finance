@@ -1176,9 +1176,28 @@ def _emit_sce_lines(
         row_section_path = _section_path(row_loc, tree, label_of)
         base_label = label_of[row_loc]
 
+        # ★R180(2026-09-26) — do NOT skip a row just because it has no
+        # total-column fact anywhere. That early-exit predates R177: back
+        # when `canonical_dates` was derived per-row from this same
+        # `total_buckets`, a row with none had nothing to rank periods by,
+        # so skipping it was harmless (it could not have emitted anything
+        # anyway). R177 made `canonical_dates` a table-wide union, so
+        # skipping here is no longer required for ranking — but a **pure
+        # equity-component reclassification** row (moves value between two
+        # non-total columns, e.g. 기타자본잉여금 ↔ 미처분이익잉여금, net
+        # zero on the total) never has a total-column fact in ANY period by
+        # construction, and this guard dropped the row's real facts on its
+        # non-total columns along with the (correctly absent) total. Real
+        # case: 대한광통신 2016H1 `20160816002050` SCE '대체와 기타 변동에
+        # 따른 증가(감소), 자본' — FY2014 block has ±1,864,362,937 in
+        # 기타자본잉여금/미처분이익잉여금, blank in 자본합계(원문 자체가
+        # 공란) — the row vanished entirely, not just its (rightly empty)
+        # total cell. `total_buckets` (possibly {}) still flows into
+        # `col_buckets` below when `col_loc == total_col`, so the total
+        # column itself correctly emits nothing (`if not col_buckets:
+        # continue`) — removing this guard only stops throwing away the
+        # OTHER columns' real values.
         total_buckets = total_buckets_of[row_loc]
-        if not total_buckets:
-            continue  # this row concept has no total-column value anywhere — nothing to anchor periods to
 
         for col_loc in col_flat:
             col_idx = col_index_of[col_loc]

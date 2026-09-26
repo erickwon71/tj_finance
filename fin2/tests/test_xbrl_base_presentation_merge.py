@@ -292,6 +292,29 @@ def test_r177_sk_gas_sce_treasury_share_no_chain_shift():
     assert treasury.get(68) == -131_459_328   # FY2015 블록
 
 
+# ── R180: SCE 행이 total 열(자본합계) fact 를 어디에도 안 가져도 다른 열 값은 버리지 않는다 ──
+def test_r180_daehan_optical_pure_reclass_row_survives_blank_total():
+    """대한광통신 2016H1 연결/별도 SCE '대체와 기타 변동에 따른 증가(감소), 자본' — FY2014
+    블록에서 기타자본잉여금(-1,864,362,937)↔미처분이익잉여금(+1,864,362,937) 간 순수 재분류라
+    자본합계(total) 열은 원문 자체가 공란이다. R177 이전 코드는 `total_buckets`가 있는 행만
+    기간을 앵커했는데, R177 이후에도 그 판정이 "행 전체를 건너뛴다"로 남아 있어 total 열이
+    영원히 비는 이 행(순수 재분류)이 **다른 열의 진짜 값까지** 통째로 사라졌다(batch #23
+    이슈 #84688/#84689/#84699/#84700). total 열 자체는 여전히 비어야 한다 — 이 행 자체가
+    없어지면 안 된다는 것만 확인한다."""
+    lines = _lines("KOSDAQ/00113261_대한광통신/half/2016/20160816002050.zip",
+                   "20160816002050", "00113261", 2016, "H1", date(2016, 6, 30))
+    if lines is None:
+        return
+    for basis in ("separate", "consolidated"):
+        reclass = [l for l in lines if l.statement == "SCE" and l.basis == basis
+                   and l.label_raw == "대체와 기타 변동에 따른 증가(감소), 자본"]
+        assert reclass, f"{basis} SCE 재분류 행이 여전히 결측"
+        values = {l.value_won for l in reclass}
+        assert -1_864_362_937 in values and 1_864_362_937 in values
+        assert all(l.col_index != 0 for l in reclass), \
+            "total(자본합계=col_index 0) 열은 원문 자체가 공란이라 여전히 비어야 한다"
+
+
 # ── R162-f: 원문 소계행이 틀려(R162-c 산술증명 실패) 이중계상되던 블록도 라벨소계 제외로 단일셀 반전 ──
 def test_r162f_lg_dividends_negative_despite_inconsistent_subtotal():
     """LG전자 2024FY 연결 '자본 증가(감소) 합계' 2,389,964 ≠ 실제 변동 2,393,964(사업결합 4,000 누락)."""

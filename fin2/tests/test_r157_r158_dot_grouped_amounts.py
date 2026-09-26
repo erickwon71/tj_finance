@@ -207,6 +207,20 @@ def test_source_typo_fix_applies_only_to_listed_rcept():
     assert apply_source_typo_fixes(cells, None) == cells
 
 
+def test_source_typo_fix_hanwha_investment_missing_digit():
+    """검증 이슈 #84907 — 콤마 그룹핑 결손("27" 그룹이 2자리)으로 자릿수 하나가
+
+    통째로 빠졌다(dot-typo 계열이 아니라 comma-grouping 계열이지만 같은 예외목록
+    메커니즘으로 교정한다 — 등재 조건은 정정값이 원문 다른 곳에 인쇄돼 있는지일 뿐,
+    깨짐의 형태는 무관하다).
+    """
+    cells = ["I. 영업수익", "637,930,27,772", "598,928,031,581"]
+    fixed = apply_source_typo_fixes(cells, "20180515001426")
+    assert fixed[1] == "637,930,827,772"
+    assert fixed[2] == "598,928,031,581"          # 다른 셀은 그대로
+    assert apply_source_typo_fixes(cells, "20180515002604") == cells  # 정정신고 rcept엔 미적용
+
+
 def test_typo_fix_entries_carry_a_reason_comment():
     """등재 조건: 정정값이 원문 다른 곳에 인쇄돼 있을 때만. 근거 주석을 강제한다.
 

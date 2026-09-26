@@ -66,6 +66,8 @@ def cmd_status(a):
     m = st["machine"]
     print(f"  기계대조: 게이트={m['gate']} · 현재판정 {m['current']} · audit {m['audit']} · "
           f"stale {m['stale']} · 미대조 pending 필링 {m['unchecked_pending_filings']}")
+    print(f"  재적재 역행(24h): passed → pending {m['reloaded_after_pass_24h']}건"
+          " (수정 워크트리 재적재로 재검증 필요해진 것 — 정상 동작)")
     warn = " ★경고: 50GB 미만" if (st["disk_free_gb"] or 999) < 50 else ""
     print(f"  디스크 : DB {st['db_size']} · verification {st['verification_schema_size']} · "
           f"여유 {st['disk_free_gb']} GB{warn}")

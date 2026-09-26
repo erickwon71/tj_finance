@@ -29,6 +29,11 @@ STOP_AFTER_CONSECUTIVE_FAILS = 3
 NOTIFY = Path.home() / ".claude" / "notify" / "telegram.sh"
 _LIMIT_RE = re.compile(r"(usage limit|limit reached|rate limit|resets? )", re.I)
 _EPOCH_RE = re.compile(r"\|(\d{10})\b")
+# 2026-09-26: ~14 parallel Bash calls in one turn tripped dontAsk mode into denying every
+# further Bash call (including read-only `vq.py show`) for the rest of that run — the model
+# then can't even call `vq.py done`. Not a data problem, so it must not burn a retry or count
+# toward the consecutive-failure stop (docs/qa/handoff_2026-09-26_full_automation.md §2).
+_BASH_DENIED_RE = re.compile(r"Permission to use Bash has been denied")
 
 
 def _kv(conn, key: str) -> str:
@@ -118,7 +123,7 @@ def budget_state() -> dict:
         runs_5h, oldest_5h = conn.execute(text("""
             SELECT count(*), min(started_at) FROM verification.runner_runs
             WHERE started_at > now() - interval '5 hours'
-              AND coalesce(outcome, '') <> 'usage_limit'""")).fetchone()
+              AND coalesce(outcome, '') NOT IN ('usage_limit', 'tool_denied')""")).fetchone()
         wait = 0
         if runs_5h >= per_window:
             wait = conn.execute(text(
@@ -127,7 +132,7 @@ def budget_state() -> dict:
         runs_7d = conn.execute(text("""
             SELECT count(*) FROM verification.runner_runs
             WHERE started_at > now() - interval '7 days'
-              AND coalesce(outcome, '') <> 'usage_limit'""")).scalar_one()
+              AND coalesce(outcome, '') NOT IN ('usage_limit', 'tool_denied')""")).scalar_one()
         if weekly and runs_7d >= int(weekly):
             wait = max(wait, 3600)
         limited_until = conn.execute(text("""
@@ -199,6 +204,8 @@ def finish(run_id: int, log: Path, exit_code: int) -> dict:
         outcome = "timeout"
     elif _LIMIT_RE.search(result_text) and data.get("is_error", True) and status == "in_progress":
         outcome = "usage_limit"
+    elif _BASH_DENIED_RE.search(result_text) and status == "in_progress":
+        outcome = "tool_denied"
     elif status == "passed":
         outcome = "passed"
     elif status == "has_issues":
@@ -211,7 +218,11 @@ def finish(run_id: int, log: Path, exit_code: int) -> dict:
         outcome = "incomplete"
 
     sleep_until = None
-    if outcome == "usage_limit":
+    if outcome == "tool_denied":
+        # Not the slot's fault either: release without a retry penalty, no back-off needed
+        # (each `claude -p` run starts a fresh process, so the next run is unaffected).
+        ops.release(slot, failed=False, note=f"runner run {run_id}: tool_denied")
+    elif outcome == "usage_limit":
         # Not the slot's fault: release without a retry penalty and back off.
         ops.release(slot, failed=False, note=None)
         m = _EPOCH_RE.search(result_text)
@@ -257,7 +268,8 @@ def finish(run_id: int, log: Path, exit_code: int) -> dict:
              "ot": usage.get("output_tokens"), "c": data.get("total_cost_usd")})
         last = [r[0] for r in conn.execute(text("""
             SELECT outcome FROM verification.runner_runs
-            WHERE worktree = :w AND outcome IS NOT NULL AND outcome <> 'usage_limit'
+            WHERE worktree = :w AND outcome IS NOT NULL
+              AND outcome NOT IN ('usage_limit', 'tool_denied')
             ORDER BY run_id DESC LIMIT :n"""),
             {"w": run["worktree"], "n": STOP_AFTER_CONSECUTIVE_FAILS}).fetchall()]
 

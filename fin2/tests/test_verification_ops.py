@@ -346,6 +346,64 @@ def test_runner_usage_limit_has_no_retry_penalty(engines, as_role, tmp_path):
     assert runner.budget_state()["wait_seconds"] > 0
 
 
+def test_runner_tool_denied_has_no_retry_penalty(engines, as_role, tmp_path):
+    # handoff §2: ~14 parallel Bash calls tripped dontAsk into denying every further Bash
+    # call, including the final `done` — the model's only recourse was a text summary.
+    _admin_sql(engines, "UPDATE verification.progress SET status='pending', retry_count=0 "
+               "WHERE corp_code=:c", {"c": CORP})
+    as_role("verify")
+    slot = ops.claim(SLOT)
+    run_id = runner.start(slot, "sonnet")
+    log = _fake_log(tmp_path, "denied.json", {
+        "type": "result", "is_error": False, "num_turns": 52,
+        "result": "I hit a hard blocker: Bash access was completely revoked mid-session "
+                  "(every `vq.py` call, including read-only `show`, now returns \"Permission "
+                  "to use Bash has been denied because Claude Code is running in don't ask "
+                  "mode\"). I cannot execute any more `vq.py` commands, including the final "
+                  "`done`."})
+    res = runner.finish(run_id, log, 0)
+    assert res["outcome"] == "tool_denied"
+    with engines["admin"].connect() as c:
+        assert c.execute(text("SELECT status, retry_count FROM verification.progress "
+                              "WHERE corp_code=:c"), {"c": CORP}).fetchone() == ("pending", 0)
+
+
+def test_reopen_after_batch_done_clears_stale_fix_batch_id(engines, as_role):
+    # handoff docs/qa/handoff_2026-09-26_full_automation.md §5: reopening an issue whose
+    # fix_batch_id points at an already-finished batch used to leave it invisible to both the
+    # "unassigned" (fix_batch_id IS NULL) and "active batch" fix-queue views.
+    issue_id = _admin_sql(engines, """
+        INSERT INTO verification.issues
+            (corp_code, fiscal_year, fiscal_period, rcept_no, basis, statement, account_label,
+             error_type)
+        VALUES (:c, 2024, 'FY', :r, 'consolidated', 'BS', '자산총계', 'value_mismatch')
+        RETURNING issue_id""", {"c": CORP, "r": R1})[0][0]
+
+    as_role("fix")
+    b = ops.batch_new("value_mismatch", "test stale-batch cleanup", [issue_id], "R_STALE")
+    assert b["issues"] == 1
+
+    _admin_sql(engines, "UPDATE verification.issues SET status='fixed', "
+               "fixed_parser_commit='deadbeef' WHERE issue_id=:i", {"i": issue_id})
+
+    as_role("admin")
+    ops.batch_set(b["batch_id"], status="done")
+
+    as_role("verify")
+    ops.transition(issue_id, "closed", "임시 종료")
+    row = _admin_sql(engines, "SELECT fix_batch_id, status FROM verification.issues "
+                      "WHERE issue_id=:i", {"i": issue_id})[0]
+    assert row == (b["batch_id"], "closed")           # closed keeps the batch link (audit trail)
+
+    ops.transition(issue_id, "reopened", "재검토 필요")
+    row = _admin_sql(engines, "SELECT fix_batch_id, status FROM verification.issues "
+                      "WHERE issue_id=:i", {"i": issue_id})[0]
+    assert row == (None, "reopened")                  # reopened into a done batch → auto-cleared
+
+    as_role("fix")
+    assert issue_id in [i["issue_id"] for i in ops.issues_of_type("value_mismatch")]
+
+
 def test_pace_wait_rules():
     from datetime import datetime, timezone
     now = datetime(2026, 9, 24, 4, 0, tzinfo=timezone.utc)

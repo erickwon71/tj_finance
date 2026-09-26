@@ -85,10 +85,25 @@ rm ~/.claude/notify/STOP_VERIFY
 기계가 먼저 모든 pending 필링을 원문 XML 과 대조한다. clean 은 기계가 pass 하고, 나머지는 모델 러너가 발견 항목만 웹뷰로 확인한다.
 clean 슬롯의 1%(`machine.audit_pct`)는 모델이 전체를 다시 대조한다.
 
-실행: tmux 세션 `verify_machine` 로 camp_run 워크트리에서 6개 프로세스를 병렬로 돌린다. 슬롯이 없으면 스스로 끝난다.
+실행: tmux 세션 `verify_machine` 로 camp_run 워크트리에서 `scripts/machine_daemon.sh` 를 상시 기동한다.
+`machine_pass.run()` 의 claim 루프는 claim 할 게 없으면 스스로 끝나는 게 설계다(무한폴링으로 바꾸면 안 됨) —
+그래서 데몬이 대신 미대조 pending 필링 수를 주기적으로(기본 10분) 확인해, 0보다 크면 워커 6개를 다시 띄우고
+빌 때까지 기다린 뒤 다시 잠든다. 재적재나 데일리 신규 필링이 쌓여도 사람이 재기동할 필요가 없다.
 
 ```bash
-tmux new-session -d -s verify_machine -c /Users/taejin/Project/tj_finance/.claude/worktrees/camp_run 'for i in 1 2 3 4 5 6; do VQ_ACTOR=camp_run:machine caffeinate -i /Users/taejin/Project/tj_finance/.venv/bin/python scripts/vq.py machine run > logs/verify_runner/machine_$i.log 2>&1 & done; wait; echo 기계 대조 종료; sleep 86400'
+tmux new-session -d -s verify_machine -c /Users/taejin/Project/tj_finance/.claude/worktrees/camp_run 'caffeinate -i scripts/machine_daemon.sh'
+```
+
+정지(진행 중인 배치는 끝까지 돌고 정지):
+
+```bash
+touch ~/.claude/notify/STOP_MACHINE
+```
+
+재개(정지 파일 삭제 후 tmux 세션 다시 기동):
+
+```bash
+rm ~/.claude/notify/STOP_MACHINE
 ```
 
 진행 확인(`기계대조:` 줄의 미대조 필링 수가 줄어든다):
@@ -99,8 +114,9 @@ cd /Users/taejin/Project/tj_finance && .venv/bin/python scripts/vq.py status
 
 - 모델 게이트: `vq.py machine gate --value on` 이면 모델 러너는 기계가 끝낸 슬롯만 집는다. off 면 예전처럼 모든 pending 을 집는다.
 - 필링 하나를 저장 없이 시험 대조: `vq.py machine try --rcept 20240320001504`
-- 재적재된 필링은 기계 판정이 stale 이 되어 다음 `machine run` 에서 다시 대조된다. 데일리 신규 필링도 같다.
-  그래서 `machine run` 을 주기적으로 다시 띄워야 한다(끝나면 스스로 종료).
+- 재적재된 필링은 기계 판정이 stale 이 되어 다음 워커 기동 때 다시 대조된다. 데일리 신규 필링도 같다 —
+  이제 데몬이 자동으로 다시 띄우므로 사람이 챙길 필요 없다.
+- 폴링 주기는 `VQ_MACHINE_POLL_S`(기본 600초), 워커 수는 `VQ_MACHINE_WORKERS`(기본 6)로 조정 가능.
 - 기계 판정은 `verification.machine_checks` 에 남는다. 모델이 기계 오판을 확인하면 pass 노트에 `기계오탐:` 을 적는다. 이것을 모아 규칙을 개선한다.
 
 ## 5. 수정 워크트리 시작 절차

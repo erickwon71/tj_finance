@@ -974,6 +974,12 @@ def machine_status(conn) -> dict:
           AND (mc.rcept_no IS NULL OR mc.load_seq IS DISTINCT FROM fl.load_seq
                OR (mc.tool_version <> :t AND mc.verdict IN ('mismatch', 'error')))"""),
         {"t": TOOL_VERSION}).scalar_one()
+    # A passed-count drop is usually this, not a regression: trg_finalize_load demotes a
+    # filing back to pending when a reload changes data that was already passed
+    # (handoff docs/qa/handoff_2026-09-26_full_automation.md §4).
+    out["reloaded_after_pass_24h"] = conn.execute(text("""
+        SELECT count(*) FROM verification.progress_events
+        WHERE action = 'reloaded_after_pass' AND at > now() - interval '24 hours'""")).scalar_one()
     return out
 
 

@@ -290,11 +290,26 @@ CREATE TABLE IF NOT EXISTS verification.runner_runs (
     cost_usd      numeric(10, 4),
     model         text,
     outcome       varchar(12) CHECK (outcome IN
-                  ('passed', 'has_issues', 'incomplete', 'timeout', 'usage_limit', 'error', 'blocked')),
+                  ('passed', 'has_issues', 'incomplete', 'timeout', 'usage_limit', 'error',
+                   'blocked', 'tool_denied')),
     log_path      text,
     git_head      text
 );
 CREATE INDEX IF NOT EXISTS ix_vrr_started ON verification.runner_runs (started_at);
+-- 2026-09-26: add 'tool_denied' outcome (handoff §2). CREATE TABLE above is a no-op once the
+-- table exists, so the CHECK on an already-live table needs its own idempotent migration.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'verification.runner_runs'::regclass
+                      AND conname = 'runner_runs_outcome_check'
+                      AND pg_get_constraintdef(oid) LIKE '%tool_denied%') THEN
+        ALTER TABLE verification.runner_runs DROP CONSTRAINT IF EXISTS runner_runs_outcome_check;
+        ALTER TABLE verification.runner_runs ADD CONSTRAINT runner_runs_outcome_check
+            CHECK (outcome IN ('passed', 'has_issues', 'incomplete', 'timeout', 'usage_limit',
+                                'error', 'blocked', 'tool_denied'));
+    END IF;
+END $$;
 -- Account usage (percent of the 5-hour / 7-day limits) at run start and end, from the
 -- claude-dashboard usage probe. Other sessions share the account, so a delta is an upper
 -- bound for the run, not an exact cost - good enough to size the runner budget.
@@ -638,8 +653,26 @@ BEGIN
                            OLD.source_value_raw, OLD.source_unit, OLD.evidence) THEN
         RAISE EXCEPTION 'fix worktree may not edit the observed facts of an issue';
     END IF;
-    IF v_role = 'verify' AND (NEW.fixed_parser_commit, NEW.fixed_load_seq, NEW.fix_batch_id)
-            IS DISTINCT FROM (OLD.fixed_parser_commit, OLD.fixed_load_seq, OLD.fix_batch_id) THEN
+    IF v_role = 'verify' AND (NEW.fixed_parser_commit, NEW.fixed_load_seq)
+            IS DISTINCT FROM (OLD.fixed_parser_commit, OLD.fixed_load_seq) THEN
+        RAISE EXCEPTION 'verify worktree may not edit the fix fields of an issue';
+    END IF;
+
+    -- An issue going back into the fix queue (open/reopened) while still pointing at an
+    -- already-finished batch is invisible to both the "unassigned" (fix_batch_id IS NULL)
+    -- and "active batch" fix-queue views. Auto-clear it here instead of leaving it for
+    -- someone to notice and UPDATE by hand (docs/qa/handoff_2026-09-26_full_automation.md §5).
+    IF NEW.status IN ('open', 'reopened') AND NEW.fix_batch_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM verification.fix_batches b
+                        WHERE b.batch_id = NEW.fix_batch_id
+                          AND b.status IN ('open', 'waiting_decision', 'reloading')) THEN
+        NEW.fix_batch_id := NULL;
+    END IF;
+
+    -- Still block a *client-supplied* reassignment to some other non-null batch — only the
+    -- auto-clear above (which only ever nulls it) may change this field under role verify.
+    IF v_role = 'verify' AND NEW.fix_batch_id IS NOT NULL
+       AND NEW.fix_batch_id IS DISTINCT FROM OLD.fix_batch_id THEN
         RAISE EXCEPTION 'verify worktree may not edit the fix fields of an issue';
     END IF;
 

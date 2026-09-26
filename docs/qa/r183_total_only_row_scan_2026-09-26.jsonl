@@ -1,0 +1,652 @@
+{"rcept": "20030808000157", "basis": "consolidated", "seq": 0, "row_order": 16, "label": "외부주주지분변동", "total_col": "총 계", "value": -13296033013, "fill_col": "외부주주지 분", "fill_ci": 4}
+{"rcept": "20040330002372", "basis": "consolidated", "seq": 0, "row_order": 16, "label": "외부주주지분변동", "total_col": "총 계", "value": -13296033013, "fill_col": "외부주주지 분", "fill_ci": 4}
+{"rcept": "20040507000902", "basis": "consolidated", "seq": 0, "row_order": 16, "label": "외부주주지분변동", "total_col": "총 계", "value": -13296033013, "fill_col": "외부주주지 분", "fill_ci": 4}
+{"rcept": "20040607000130", "basis": "consolidated", "seq": 0, "row_order": 16, "label": "외부주주지분변동", "total_col": "총 계", "value": -13296033013, "fill_col": "외부주주지 분", "fill_ci": 4}
+{"rcept": "20071113000281", "basis": "separate", "seq": 0, "row_order": 1, "label": "전환사채", "total_col": "총 계", "value": 318750000, "fill_col": "자본금", "fill_ci": 0}
+{"rcept": "20071113000281", "basis": "separate", "seq": 0, "row_order": 6, "label": "주식매수선택권", "total_col": "총 계", "value": -11225254, "fill_col": "자본조정", "fill_ci": 2}
+{"rcept": "20071113000281", "basis": "separate", "seq": 0, "row_order": 8, "label": "지분법자본변동", "total_col": "총 계", "value": 347136189, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20071114000140", "basis": "separate", "seq": 0, "row_order": 21, "label": "해외사업환산손실", "total_col": "총 계", "value": -14306353, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20071114000140", "basis": "separate", "seq": 0, "row_order": 22, "label": "당기순이익(손실)", "total_col": "총 계", "value": -2242267040, "fill_col": "이익잉여금", "fill_ci": 4}
+{"rcept": "20080331000542", "basis": "separate", "seq": 0, "row_order": 6, "label": "지분법자본변동", "total_col": "총 계", "value": 267745, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20080331001367", "basis": "separate", "seq": 0, "row_order": 7, "label": "당기순이익(손실)", "total_col": "총 계", "value": 229602125, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20080331001527", "basis": "separate", "seq": 0, "row_order": 2, "label": "2.당기순이익(손실)", "total_col": "총 계", "value": 1276000000, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20080331002328", "basis": "separate", "seq": 0, "row_order": 4, "label": "부의지분법자본변동", "total_col": "총 계", "value": -374999, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20080331002367", "basis": "separate", "seq": 0, "row_order": 5, "label": "자기주식처분", "total_col": "총 계", "value": 29257000000, "fill_col": "자본조정", "fill_ci": 2}
+{"rcept": "20080331002669", "basis": "separate", "seq": 0, "row_order": 2, "label": "2.당기순이익(손실)", "total_col": "총 계", "value": 1276000000, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20080331002834", "basis": "separate", "seq": 0, "row_order": 5, "label": "5.지분법자본변동", "total_col": "총 계", "value": 91401368, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20080430000782", "basis": "separate", "seq": 0, "row_order": 2, "label": "2.당기순이익(손실)", "total_col": "총 계", "value": 1276000000, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20080506001180", "basis": "separate", "seq": 0, "row_order": 6, "label": "지분법자본변동", "total_col": "총 계", "value": 267745, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20080508001584", "basis": "separate", "seq": 0, "row_order": 8, "label": "부의지분법자본변동", "total_col": "총 계", "value": -851566900, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20080515002010", "basis": "separate", "seq": 0, "row_order": 5, "label": "자기주식처분", "total_col": "총 계", "value": 29257000000, "fill_col": "자본조정", "fill_ci": 2}
+{"rcept": "20080814001678", "basis": "consolidated", "seq": 0, "row_order": 4, "label": "매도가능증권평가손익", "total_col": "총 계", "value": -512250, "fill_col": "연결기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20081114000305", "basis": "separate", "seq": 0, "row_order": 10, "label": "지분법자본변동", "total_col": "총 계", "value": -2758473324, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20081114000568", "basis": "separate", "seq": 0, "row_order": 5, "label": "1.당기순이익(손실)", "total_col": "총 계", "value": 782340, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20081114001050", "basis": "separate", "seq": 0, "row_order": 37, "label": "부의지분법자본변동", "total_col": "총 계", "value": 1495235943, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20081114001807", "basis": "separate", "seq": 0, "row_order": 7, "label": "장기투자증권평가이익", "total_col": "총 계", "value": -56169857715, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20081120000025", "basis": "separate", "seq": 0, "row_order": 7, "label": "장기투자증권평가이익", "total_col": "총 계", "value": -56169857715, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20090327000734", "basis": "separate", "seq": 0, "row_order": 16, "label": "5.당기순이익(손실)", "total_col": "총 계", "value": -53600030, "fill_col": "자본조정", "fill_ci": 2}
+{"rcept": "20090330000463", "basis": "separate", "seq": 0, "row_order": 12, "label": "매도가능증권평가이익", "total_col": "총 계", "value": 11722990884, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20090330001287", "basis": "consolidated", "seq": 0, "row_order": 21, "label": "매도가능증권평가손실", "total_col": "총 계", "value": 967310128, "fill_col": "연 결자본조정", "fill_ci": 3}
+{"rcept": "20090331000444", "basis": "separate", "seq": 0, "row_order": 14, "label": "매도가능증권처분손실", "total_col": "총 계", "value": -19087150, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20090331000797", "basis": "separate", "seq": 0, "row_order": 10, "label": "부의지분법자본변동", "total_col": "총 계", "value": 62846720, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20090331002114", "basis": "separate", "seq": 0, "row_order": 11, "label": "11.주식선택권", "total_col": "총 계", "value": 67955988, "fill_col": "자본조정", "fill_ci": 2}
+{"rcept": "20090331002336", "basis": "separate", "seq": 0, "row_order": 16, "label": "5.당기순이익(손실)", "total_col": "총 계", "value": -53600030, "fill_col": "자본조정", "fill_ci": 2}
+{"rcept": "20090331002456", "basis": "separate", "seq": 0, "row_order": 6, "label": "부의지분법자본변동", "total_col": "총 계", "value": -374999, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20090331002662", "basis": "separate", "seq": 0, "row_order": 18, "label": "당기순이익(손실)", "total_col": "총 계", "value": 151394191, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20090514002912", "basis": "separate", "seq": 0, "row_order": 20, "label": "외화환산평가손실", "total_col": "총 계", "value": 590967750, "fill_col": "이익잉여금", "fill_ci": 4}
+{"rcept": "20090515000967", "basis": "separate", "seq": 0, "row_order": 5, "label": "5.당기순이익(손실)", "total_col": "총 계", "value": -53600030, "fill_col": "자본조정", "fill_ci": 2}
+{"rcept": "20090515001249", "basis": "separate", "seq": 0, "row_order": 32, "label": "매도가능증권평가손익", "total_col": "총 계", "value": -808010000, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20090515002135", "basis": "separate", "seq": 0, "row_order": 14, "label": "4.부의지분법자본변동", "total_col": "총 계", "value": 268328158, "fill_col": "이익잉여금", "fill_ci": 4}
+{"rcept": "20090812000167", "basis": "separate", "seq": 0, "row_order": 5, "label": "5.당기순이익(손실)", "total_col": "총 계", "value": -53600030, "fill_col": "자본조정", "fill_ci": 2}
+{"rcept": "20090814000584", "basis": "separate", "seq": 0, "row_order": 9, "label": "매도가능증권평가손실", "total_col": "총 계", "value": -16343683, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20090814001254", "basis": "separate", "seq": 0, "row_order": 34, "label": "8.매도가능증권평가손익", "total_col": "총 계", "value": -808010000, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20091113000606", "basis": "separate", "seq": 0, "row_order": 9, "label": "매도가능증권평가손실", "total_col": "총 계", "value": -16343683, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20091116000509", "basis": "separate", "seq": 0, "row_order": 37, "label": "9.매도가능증권평가손익", "total_col": "총 계", "value": -808010000, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20091116000783", "basis": "separate", "seq": 0, "row_order": 43, "label": "부의지분법자본변동", "total_col": "총 계", "value": 1495235943, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20100326000357", "basis": "separate", "seq": 0, "row_order": 7, "label": "지분법자본변동", "total_col": "총 계", "value": 716487443, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20100331000093", "basis": "separate", "seq": 0, "row_order": 21, "label": "당기순이익(손실)", "total_col": "총 계", "value": 667861385, "fill_col": "이익잉여금", "fill_ci": 4}
+{"rcept": "20100331000126", "basis": "separate", "seq": 0, "row_order": 13, "label": "당기순이익(손실)", "total_col": "총 계", "value": 1497897353, "fill_col": "이익잉여금", "fill_ci": 4}
+{"rcept": "20100331000530", "basis": "separate", "seq": 0, "row_order": 4, "label": "자기주식처분이익", "total_col": "총 계", "value": 2218089612, "fill_col": "자본잉여금", "fill_ci": 1}
+{"rcept": "20100331000868", "basis": "separate", "seq": 0, "row_order": 3, "label": "매도가능증권평가손실", "total_col": "총 계", "value": -18732000, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20100331001324", "basis": "separate", "seq": 0, "row_order": 16, "label": "부의지분법자본변동", "total_col": "총 계", "value": 62846720, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20100331001745", "basis": "separate", "seq": 0, "row_order": 15, "label": "당기순이익(손실)", "total_col": "총 계", "value": 151394191, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20100331001998", "basis": "separate", "seq": 0, "row_order": 23, "label": "자기주식처분이익", "total_col": "총 계", "value": -1694642000, "fill_col": "자본잉여금", "fill_ci": 1}
+{"rcept": "20100331001998", "basis": "separate", "seq": 0, "row_order": 37, "label": "자기주식처분이익", "total_col": "총 계", "value": 1584741000, "fill_col": "자본잉여금", "fill_ci": 1}
+{"rcept": "20100331002354", "basis": "separate", "seq": 0, "row_order": 3, "label": "주식선택권행사", "total_col": "총 계", "value": 27807192, "fill_col": "자본조정", "fill_ci": 2}
+{"rcept": "20100511000294", "basis": "separate", "seq": 0, "row_order": 16, "label": "부의지분법자본변동", "total_col": "총 계", "value": 62846720, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20100816000745", "basis": "separate", "seq": 0, "row_order": 30, "label": "당기순이익(손실)", "total_col": "총 계", "value": -509014407, "fill_col": "이익잉여금", "fill_ci": 4}
+{"rcept": "20110329000572", "basis": "separate", "seq": 0, "row_order": 26, "label": "부의지분법자본변동", "total_col": "총 계", "value": -73314078, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20110330000945", "basis": "separate", "seq": 0, "row_order": 13, "label": "4.자기주식취득", "total_col": "총 계", "value": 31928029, "fill_col": "자본조정", "fill_ci": 2}
+{"rcept": "20110330001319", "basis": "separate", "seq": 0, "row_order": 6, "label": "신주인수권부사채발행", "total_col": "총 계", "value": 165265556, "fill_col": "자본잉여금", "fill_ci": 1}
+{"rcept": "20110330001400", "basis": "separate", "seq": 0, "row_order": 9, "label": "주식매수선택권", "total_col": "총 계", "value": 417427232, "fill_col": "자본조정", "fill_ci": 2}
+{"rcept": "20110330001400", "basis": "separate", "seq": 0, "row_order": 12, "label": "당기순이익", "total_col": "총 계", "value": 3480287647, "fill_col": "이익잉여금", "fill_ci": 4}
+{"rcept": "20110331000013", "basis": "separate", "seq": 0, "row_order": 11, "label": "지분법자본변동", "total_col": "총 계", "value": 1479567721, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20110331000863", "basis": "separate", "seq": 0, "row_order": 4, "label": "부의지분법자본변동", "total_col": "총 계", "value": -2515532, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20110331002175", "basis": "separate", "seq": 0, "row_order": 4, "label": "신주인수권대가", "total_col": "총 계", "value": 166809516, "fill_col": "자본잉여금", "fill_ci": 1}
+{"rcept": "20110331002682", "basis": "separate", "seq": 0, "row_order": 16, "label": "재평가잉여금", "total_col": "총 계", "value": 238088813865, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20110331002682", "basis": "separate", "seq": 0, "row_order": 35, "label": "재평가잉여금", "total_col": "총 계", "value": -469947167, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20110425000011", "basis": "separate", "seq": 0, "row_order": 26, "label": "부의지분법자본변동", "total_col": "총 계", "value": -73314078, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20110429001060", "basis": "separate", "seq": 0, "row_order": 16, "label": "재평가잉여금", "total_col": "총 계", "value": 238088813865, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20110429001060", "basis": "separate", "seq": 0, "row_order": 35, "label": "재평가잉여금", "total_col": "총 계", "value": -469947167, "fill_col": "기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20110511002020", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -764921197, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20110511002020", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -664730167, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20110513001641", "basis": "separate", "seq": 0, "row_order": 6, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 510673617, "fill_col": "자본>이익준비금", "fill_ci": 4}
+{"rcept": "20110516002544", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 9062654891, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20110516002544", "basis": "separate", "seq": 0, "row_order": 11, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 2010941312, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20110516002544", "basis": "separate", "seq": 0, "row_order": 21, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 1163442625, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20110516002888", "basis": "separate", "seq": 0, "row_order": 11, "label": "보험수리차손익", "total_col": "자본>자본 합계", "value": 168441295, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20110516003075", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": -13394938887, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20110516003437", "basis": "separate", "seq": 0, "row_order": 2, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 7604520692, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20110516004268", "basis": "separate", "seq": 0, "row_order": 3, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 190043135, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20110516004268", "basis": "separate", "seq": 0, "row_order": 20, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 261884057, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20110530000431", "basis": "consolidated", "seq": 0, "row_order": 3, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 3334987455, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20110530000431", "basis": "consolidated", "seq": 0, "row_order": 15, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 2541913284, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20110530000431", "basis": "separate", "seq": 0, "row_order": 3, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 3341620808, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20110530000431", "basis": "separate", "seq": 0, "row_order": 5, "label": "총포괄손익", "total_col": "자본>자본 합계", "value": 3341620808, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20110530000431", "basis": "separate", "seq": 0, "row_order": 15, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 2540547623, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20110530000431", "basis": "separate", "seq": 0, "row_order": 17, "label": "총포괄손익", "total_col": "자본>자본 합계", "value": 2540547623, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20110629000029", "basis": "separate", "seq": 0, "row_order": 26, "label": "당기순이익(손실)", "total_col": "총 계", "value": 7815484668, "fill_col": "이익잉여금", "fill_ci": 4}
+{"rcept": "20110810000227", "basis": "separate", "seq": 0, "row_order": 2, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -56778038, "fill_col": "자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20110816000172", "basis": "separate", "seq": 0, "row_order": 3, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -118913697, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20110816000393", "basis": "separate", "seq": 0, "row_order": 8, "label": "(2)포괄손익>1.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 18968185566, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20110816000946", "basis": "separate", "seq": 0, "row_order": 7, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 3067787117, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20110816001578", "basis": "separate", "seq": 0, "row_order": 13, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -924535270, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 6}
+{"rcept": "20111114000708", "basis": "separate", "seq": 0, "row_order": 2, "label": "(2)포괄손익>1.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 26435386127, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20111114000708", "basis": "separate", "seq": 0, "row_order": 8, "label": "(2)포괄손익>1.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 23597220423, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20111114000964", "basis": "separate", "seq": 0, "row_order": 17, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 8100658767, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20111114001260", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동", "total_col": "자본>자본합계", "value": -1888417901, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20111114001319", "basis": "separate", "seq": 0, "row_order": 17, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -125077030, "fill_col": "자본>기타자본", "fill_ci": 3}
+{"rcept": "20111129000185", "basis": "separate", "seq": 0, "row_order": 29, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1340211069, "fill_col": "자본>이익영여금", "fill_ci": 6}
+{"rcept": "20111130000022", "basis": "separate", "seq": 0, "row_order": 2, "label": "(2)포괄손익>1.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 26435386127, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20111130000022", "basis": "separate", "seq": 0, "row_order": 8, "label": "(2)포괄손익>1.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 23597220423, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20120329000202", "basis": "separate", "seq": 0, "row_order": 8, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": -2234139703, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20120330000810", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -153051994, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20120330000810", "basis": "separate", "seq": 0, "row_order": 8, "label": "자본의 변동>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -458546948, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20120330000866", "basis": "separate", "seq": 0, "row_order": 2, "label": "포괄손익", "total_col": "자본>자본 합계", "value": 13007063195, "fill_col": "자본>이익잉여금", "fill_ci": 5}
+{"rcept": "20120330000971", "basis": "separate", "seq": 0, "row_order": 9, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": -11577995575, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20120330001183", "basis": "consolidated", "seq": 0, "row_order": 6, "label": "보험수리적손익", "total_col": "자본>자본 합계", "value": -4110689554, "fill_col": "자본>이익잉여금", "fill_ci": 7}
+{"rcept": "20120330001523", "basis": "separate", "seq": 0, "row_order": 2, "label": "(2)포괄손익>1.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 31675630046, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20120330001523", "basis": "separate", "seq": 0, "row_order": 10, "label": "(2)포괄손익>1.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 29480903962, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20120330002795", "basis": "separate", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -21765247226, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20120330002831", "basis": "separate", "seq": 0, "row_order": 2, "label": "기타포괄손익>매도가능금융자산의 공정가치변동", "total_col": "자본>자본 합계", "value": 819739817, "fill_col": "자본>적립금", "fill_ci": 2}
+{"rcept": "20120330003105", "basis": "consolidated", "seq": 0, "row_order": 10, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 24748176641, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>미처분이익잉여금(미처리결손금)", "fill_ci": 8}
+{"rcept": "20120514005372", "basis": "consolidated", "seq": 0, "row_order": 42, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 444406059, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20120515000597", "basis": "separate", "seq": 0, "row_order": 23, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 5295242309, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 2}
+{"rcept": "20120515000849", "basis": "separate", "seq": 0, "row_order": 16, "label": "자기주식 거래에 따른 증가(감소)", "total_col": "자본>자본 합계", "value": -1253264, "fill_col": "자본>기타자본잉여금", "fill_ci": 3}
+{"rcept": "20120515001076", "basis": "separate", "seq": 0, "row_order": 14, "label": "자기주식 거래에 따른 증가(감소)", "total_col": "자본>자본 합계", "value": -586866200, "fill_col": "자본>자본조정", "fill_ci": 2}
+{"rcept": "20120515001254", "basis": "separate", "seq": 0, "row_order": 17, "label": "Ⅱ.자본의 변동", "total_col": "자본>자본 합계", "value": 34893413, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20120515001400", "basis": "separate", "seq": 0, "row_order": 22, "label": "Ⅱ.자본의 변동", "total_col": "자본>자본 합계", "value": -214514060, "fill_col": "자본>이익잉여금", "fill_ci": 5}
+{"rcept": "20120515001425", "basis": "separate", "seq": 0, "row_order": 2, "label": "기타포괄손익>매도가능금융자산의 공정가치변동", "total_col": "자본>자본 합계", "value": 819739817, "fill_col": "자본>적립금", "fill_ci": 2}
+{"rcept": "20120515001475", "basis": "separate", "seq": 0, "row_order": 21, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": -1009263096, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20120515001623", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 8497304683, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20120515001714", "basis": "separate", "seq": 0, "row_order": 2, "label": "포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4742514464, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 5}
+{"rcept": "20120515001714", "basis": "separate", "seq": 0, "row_order": 8, "label": "포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 6281902156, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 5}
+{"rcept": "20120515001971", "basis": "separate", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -21765247226, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20120515002047", "basis": "separate", "seq": 0, "row_order": 35, "label": "포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1656301340, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20120515002127", "basis": "separate", "seq": 0, "row_order": 25, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -643316161, "fill_col": "자본>이익잉영금", "fill_ci": 4}
+{"rcept": "20120515002148", "basis": "separate", "seq": 0, "row_order": 25, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -643316161, "fill_col": "자본>이익잉영금", "fill_ci": 4}
+{"rcept": "20120516000085", "basis": "separate", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -21765247226, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20120601000305", "basis": "separate", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -21765247226, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20120619000046", "basis": "separate", "seq": 0, "row_order": 9, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": -11577995575, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20120814000037", "basis": "separate", "seq": 0, "row_order": 8, "label": "보험수리적손익", "total_col": "자본>자본 합계", "value": -415734106, "fill_col": "자본>이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20120814000128", "basis": "separate", "seq": 0, "row_order": 13, "label": "배당금지급", "total_col": "자본>자본 합계", "value": -7127000000, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20120814000152", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익", "total_col": "자본>자본 합계", "value": 765797326, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20120814000357", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 1571213815, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20120814000544", "basis": "separate", "seq": 0, "row_order": 16, "label": "기타자본변동", "total_col": "자본>자본 합계", "value": 2820149890, "fill_col": "자본>자본잉여금", "fill_ci": 1}
+{"rcept": "20120814000959", "basis": "separate", "seq": 0, "row_order": 10, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 10220312505, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 4}
+{"rcept": "20120814000998", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 8497304683, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20120814001129", "basis": "separate", "seq": 0, "row_order": 3, "label": "퇴직급여채무에 대한 보험수리적손익", "total_col": "자본>자본 합계", "value": -172520605, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20120814001129", "basis": "separate", "seq": 0, "row_order": 6, "label": "주식의보상", "total_col": "자본>자본 합계", "value": 108075581, "fill_col": "자본>기타자본구성요소", "fill_ci": 3}
+{"rcept": "20120814001129", "basis": "separate", "seq": 0, "row_order": 9, "label": "소유주와의 거래총액", "total_col": "자본>자본 합계", "value": 108075581, "fill_col": "자본>기타자본구성요소", "fill_ci": 3}
+{"rcept": "20120814001129", "basis": "separate", "seq": 0, "row_order": 22, "label": "종속회사와 합병", "total_col": "자본>자본 합계", "value": -791881621, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20120814001238", "basis": "separate", "seq": 0, "row_order": 14, "label": "자기주식 거래에 따른 증가(감소)", "total_col": "자본>자본 합계", "value": -586866200, "fill_col": "자본>자본조정", "fill_ci": 2}
+{"rcept": "20120814001389", "basis": "separate", "seq": 0, "row_order": 18, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3890988865, "fill_col": "자본>이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20120814001885", "basis": "separate", "seq": 0, "row_order": 18, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3890988865, "fill_col": "자본>이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20121112000029", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익", "total_col": "자본>자본 합계", "value": 765797326, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20121113000133", "basis": "separate", "seq": 0, "row_order": 11, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 10220312505, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 4}
+{"rcept": "20121114000476", "basis": "separate", "seq": 0, "row_order": 8, "label": "보험수리적손익", "total_col": "자본>자본 합계", "value": -415734106, "fill_col": "자본>이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20121114000998", "basis": "separate", "seq": 0, "row_order": 27, "label": "(3)보험수리적손익", "total_col": "자본>자본 합계", "value": 380969251, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20121114001114", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 8497304683, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20121114001148", "basis": "separate", "seq": 0, "row_order": 13, "label": "자본의 변동>총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 381459228, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20121114001169", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 1571213815, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20121114001201", "basis": "separate", "seq": 0, "row_order": 14, "label": "자기주식 거래에 따른 증가(감소)", "total_col": "자본>자본 합계", "value": -586866200, "fill_col": "자본>자본조정", "fill_ci": 2}
+{"rcept": "20121114001302", "basis": "separate", "seq": 0, "row_order": 31, "label": "종속기업투자", "total_col": "자본>자본 합계", "value": -6955370755, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20121114001362", "basis": "separate", "seq": 0, "row_order": 13, "label": "자본의 변동>총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 381459228, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20121114001958", "basis": "separate", "seq": 0, "row_order": 21, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": -1009263096, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20121129000665", "basis": "separate", "seq": 0, "row_order": 11, "label": "당기순이익", "total_col": "자본>자본 합계", "value": -4558929470, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20121129000993", "basis": "separate", "seq": 0, "row_order": 2, "label": "보험수리적손실", "total_col": "자본>자본 합계", "value": 883195551, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20121129000993", "basis": "separate", "seq": 0, "row_order": 11, "label": "보험수리적손실", "total_col": "자본>자본 합계", "value": -893352787, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20130327000488", "basis": "separate", "seq": 0, "row_order": 5, "label": "포괄손익", "total_col": "자본>자본 합계", "value": 92058906185, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20130329000374", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2001120856, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20130401000871", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 1571213815, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20130401001229", "basis": "separate", "seq": 0, "row_order": 13, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 3093223413, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20130401002321", "basis": "separate", "seq": 0, "row_order": 2, "label": "보험수리적손실", "total_col": "자본>자본 합계", "value": 883195551, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20130401002321", "basis": "separate", "seq": 0, "row_order": 11, "label": "보험수리적손실", "total_col": "자본>자본 합계", "value": -893352787, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20130401002363", "basis": "separate", "seq": 0, "row_order": 15, "label": "자본의 변동>총포괄손익>당기순이익", "total_col": "자본>자본 합계", "value": 84474873474, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20130402000549", "basis": "separate", "seq": 0, "row_order": 4, "label": "보험수리적손익", "total_col": "자본>자본 합계", "value": -136222681, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 7}
+{"rcept": "20130506000474", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2001120856, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20130515000162", "basis": "separate", "seq": 0, "row_order": 22, "label": "대체와 기타 변동에 따른 증가>신주인수권대가의 증가", "total_col": "자본>자본 합계", "value": 1627964350, "fill_col": "자본>자본잉여금", "fill_ci": 1}
+{"rcept": "20130515001061", "basis": "separate", "seq": 0, "row_order": 13, "label": "포괄손익", "total_col": "자본>자본 합계", "value": 10229945674, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 5}
+{"rcept": "20130515001501", "basis": "separate", "seq": 0, "row_order": 19, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 404913459, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20130516000207", "basis": "separate", "seq": 0, "row_order": 13, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 3093223413, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20130527000325", "basis": "separate", "seq": 0, "row_order": 18, "label": "배당금지급", "total_col": "자본>자본 합계", "value": -1554651500, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20130529000145", "basis": "separate", "seq": 0, "row_order": 26, "label": "총포괄손익>당기순이익", "total_col": "자본>자본 합계", "value": -1656301340, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20130530000442", "basis": "separate", "seq": 0, "row_order": 7, "label": "신주인수권대가", "total_col": "자본>자본 합계", "value": 22239888, "fill_col": "자본>기타자본", "fill_ci": 2}
+{"rcept": "20130530000547", "basis": "separate", "seq": 0, "row_order": 6, "label": "Ⅶ.주식보상비용", "total_col": "자본>자본 합계", "value": 4666775, "fill_col": "자본>주식매수선택권", "fill_ci": 6}
+{"rcept": "20130530000855", "basis": "separate", "seq": 0, "row_order": 13, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 555312130, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20130530001041", "basis": "consolidated", "seq": 0, "row_order": 69, "label": "기타", "total_col": "자본>지배기업의 소유주에게 귀속되는 자본>지배기업의 소유주에게 귀속되는 자본 합계", "value": -4964575, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>기타자본항목", "fill_ci": 2}
+{"rcept": "20130530001092", "basis": "consolidated", "seq": 0, "row_order": 16, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 174431165786, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20130813000392", "basis": "separate", "seq": 0, "row_order": 21, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 1004581213, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20130814001558", "basis": "separate", "seq": 0, "row_order": 37, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": -233756187504, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20130828000076", "basis": "consolidated", "seq": 0, "row_order": 1, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 5336835180, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>미처분이익잉여금(미처리결손금)", "fill_ci": 2}
+{"rcept": "20130828000449", "basis": "consolidated", "seq": 0, "row_order": 17, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 174431165786, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20130829000368", "basis": "separate", "seq": 0, "row_order": 34, "label": "보험수리적손익", "total_col": "자본>자본 합계", "value": -392186469, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20130829000556", "basis": "separate", "seq": 0, "row_order": 10, "label": "포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 667759236, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 6}
+{"rcept": "20130829001612", "basis": "separate", "seq": 0, "row_order": 7, "label": "신주인수권대가", "total_col": "자본>자본 합계", "value": 22239888, "fill_col": "자본>기타자본", "fill_ci": 2}
+{"rcept": "20130829001865", "basis": "separate", "seq": 0, "row_order": 31, "label": "매도가능증권평가손익", "total_col": "자본>자본 합계", "value": -1062750, "fill_col": "자본>기타포괄손익/기타자본항목", "fill_ci": 3}
+{"rcept": "20131114000779", "basis": "consolidated", "seq": 0, "row_order": 73, "label": "신주인수권부사채의 발행", "total_col": "자본>자본 합계", "value": -9839976, "fill_col": "자본>비지배지분", "fill_ci": 6}
+{"rcept": "20131125000110", "basis": "separate", "seq": 0, "row_order": 20, "label": "확정급여채무 재측정요소의 변동", "total_col": "자본>자본 합계", "value": -60511783, "fill_col": "자본>이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20131127000245", "basis": "consolidated", "seq": 0, "row_order": 1, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 5336835180, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>미처분이익잉여금(미처리결손금)", "fill_ci": 2}
+{"rcept": "20131128000366", "basis": "consolidated", "seq": 0, "row_order": 49, "label": "해외사업환산손익", "total_col": "자본>자본 합계", "value": -128373741, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20131128000544", "basis": "separate", "seq": 0, "row_order": 7, "label": "신주인수권대가", "total_col": "자본>자본 합계", "value": 22239888, "fill_col": "자본>기타자본", "fill_ci": 2}
+{"rcept": "20131128000793", "basis": "separate", "seq": 0, "row_order": 7, "label": "신주인수권대가", "total_col": "자본>자본 합계", "value": 22239888, "fill_col": "자본>기타자본", "fill_ci": 2}
+{"rcept": "20131128000870", "basis": "separate", "seq": 0, "row_order": 23, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 4268926100, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20131128000926", "basis": "consolidated", "seq": 0, "row_order": 16, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 174431165786, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20131129000985", "basis": "separate", "seq": 0, "row_order": 10, "label": "포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 667759236, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 6}
+{"rcept": "20131129001321", "basis": "separate", "seq": 0, "row_order": 16, "label": "매도가능증권평가손익", "total_col": "자본>자본 합계", "value": 9215887, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 2}
+{"rcept": "20131213000145", "basis": "consolidated", "seq": 0, "row_order": 73, "label": "신주인수권부사채의 발행", "total_col": "자본>자본 합계", "value": -9839976, "fill_col": "자본>비지배지분", "fill_ci": 6}
+{"rcept": "20140303000386", "basis": "separate", "seq": 0, "row_order": 10, "label": "포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 667759236, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 6}
+{"rcept": "20140307000480", "basis": "separate", "seq": 0, "row_order": 10, "label": "포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 667759236, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 6}
+{"rcept": "20140327000100", "basis": "separate", "seq": 0, "row_order": 16, "label": "매도가능금융자산의 평가에 따른 증가(감소)", "total_col": "자본>자본 합계", "value": -53337680, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20140331003342", "basis": "separate", "seq": 0, "row_order": 16, "label": "매도가능증권평가손익", "total_col": "자본>자본 합계", "value": 9215887, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 2}
+{"rcept": "20140331003368", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": -115170524220, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20140331003554", "basis": "separate", "seq": 0, "row_order": 14, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3050464296, "fill_col": "자본>이익잉여금", "fill_ci": 6}
+{"rcept": "20140331003643", "basis": "separate", "seq": 0, "row_order": 4, "label": "순확정급여부채의 재측정요소", "total_col": "자본>자본 합계", "value": -8941000000, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 2}
+{"rcept": "20140331003860", "basis": "separate", "seq": 0, "row_order": 4, "label": "순확정급여부채의 재측정요소", "total_col": "자본>자본 합계", "value": -8941000000, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 2}
+{"rcept": "20140512001664", "basis": "separate", "seq": 0, "row_order": 16, "label": "매도가능금융자산의 평가에 따른 증가(감소)", "total_col": "자본>자본 합계", "value": -53337680, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20140515000368", "basis": "separate", "seq": 0, "row_order": 34, "label": "소유주와거래", "total_col": "자본>자본 합계", "value": -3692820000, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20140515000539", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>포괄손익>당기순이익", "total_col": "자본>자본 합계", "value": 4610486567, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20140515001008", "basis": "separate", "seq": 0, "row_order": 14, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3050464296, "fill_col": "자본>이익잉여금", "fill_ci": 6}
+{"rcept": "20140515001799", "basis": "separate", "seq": 0, "row_order": 4, "label": "순확정급여부채의 재측정요소", "total_col": "자본>자본 합계", "value": -8941000000, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 2}
+{"rcept": "20140529000512", "basis": "separate", "seq": 0, "row_order": 16, "label": "매도가능증권평가손익", "total_col": "자본>자본 합계", "value": 9215887, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 2}
+{"rcept": "20140529000529", "basis": "separate", "seq": 0, "row_order": 16, "label": "매도가능증권평가손익", "total_col": "자본>자본 합계", "value": 9215887, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 2}
+{"rcept": "20140530000288", "basis": "separate", "seq": 0, "row_order": 19, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 923099004, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20140530000971", "basis": "separate", "seq": 0, "row_order": 24, "label": "주식선택권", "total_col": "자본>자본 합계", "value": 101112751, "fill_col": "자본>자본조정", "fill_ci": 2}
+{"rcept": "20140530000999", "basis": "consolidated", "seq": 0, "row_order": 23, "label": "(10)보험수리적손익", "total_col": "자본>지배기업의 소유주에게 귀속되는 자본>지배기업의 소유주에게 귀속되는 자본 합계", "value": 73471496, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20140814000036", "basis": "separate", "seq": 0, "row_order": 34, "label": "소유주와거래", "total_col": "자본>자본 합계", "value": -3692820000, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20140814000287", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>포괄손익>당기순이익", "total_col": "자본>자본 합계", "value": 4610486567, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20140814000446", "basis": "separate", "seq": 0, "row_order": 9, "label": "당기순손익", "total_col": "자본>자본 합계", "value": 9794488208, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20140828000437", "basis": "separate", "seq": 0, "row_order": 16, "label": "매도가능증권평가손익", "total_col": "자본>자본 합계", "value": 9215887, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 2}
+{"rcept": "20140828000557", "basis": "separate", "seq": 0, "row_order": 52, "label": "포괄손익", "total_col": "자본>자본 합계", "value": 1033813760, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20140829000646", "basis": "separate", "seq": 0, "row_order": 30, "label": "당기순이익", "total_col": "자본>자본 합계", "value": 3206722319, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20140829000772", "basis": "separate", "seq": 0, "row_order": 19, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 2640704075, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20140829002188", "basis": "separate", "seq": 0, "row_order": 9, "label": "매도가능금융자산의 평가에 따른 증가(감소)", "total_col": "자본>자본 합계", "value": -631595292, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20140829002190", "basis": "separate", "seq": 0, "row_order": 9, "label": "매도가능금융자산의 평가에 따른 증가(감소)", "total_col": "자본>자본 합계", "value": -631595292, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20140829002190", "basis": "separate", "seq": 0, "row_order": 11, "label": "자기주식 거래에 따른 증가(감소)", "total_col": "자본>자본 합계", "value": -586866200, "fill_col": "자본>자기주식", "fill_ci": 2}
+{"rcept": "20141027000675", "basis": "separate", "seq": 0, "row_order": 61, "label": "신주발행비", "total_col": "자본>자본 합계", "value": 3500043000, "fill_col": "자본>자본잉여금", "fill_ci": 1}
+{"rcept": "20141114000362", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>포괄손익>당기순이익", "total_col": "자본>자본 합계", "value": 4610486567, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20141127000674", "basis": "separate", "seq": 0, "row_order": 6, "label": "확정급여채무 재측정요소의 변동", "total_col": "자본>자본 합계", "value": -60511783, "fill_col": "자본>이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20141128001065", "basis": "separate", "seq": 0, "row_order": 18, "label": "매도가능증권평가손익", "total_col": "자본>자본 합계", "value": 9215887, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 2}
+{"rcept": "20141201000259", "basis": "separate", "seq": 0, "row_order": 9, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 34764780439, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20141203000272", "basis": "separate", "seq": 0, "row_order": 9, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 34764780439, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20150323000516", "basis": "separate", "seq": 0, "row_order": 3, "label": "주식선택권행사", "total_col": "총 계", "value": 27807192, "fill_col": "자본조정", "fill_ci": 2}
+{"rcept": "20150327001302", "basis": "consolidated", "seq": 0, "row_order": 1, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": -47444301053, "fill_col": "자본>지배기업 소유주지분>이익잉여금", "fill_ci": 3}
+{"rcept": "20150331002012", "basis": "separate", "seq": 0, "row_order": 11, "label": "자본의 변동", "total_col": "자본>자본 합계", "value": 15538161394, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20150331002326", "basis": "separate", "seq": 0, "row_order": 3, "label": "총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 8832950212, "fill_col": "자본>이익잉여금", "fill_ci": 7}
+{"rcept": "20150331002326", "basis": "separate", "seq": 0, "row_order": 10, "label": "총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -23965595249, "fill_col": "자본>이익잉여금", "fill_ci": 7}
+{"rcept": "20150515000930", "basis": "separate", "seq": 0, "row_order": 21, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3425262329, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 1}
+{"rcept": "20150515001275", "basis": "consolidated", "seq": 0, "row_order": 6, "label": "자기주식거래", "total_col": "자본>자본 합계", "value": 12742229, "fill_col": "자본>지배기업의 소유지분", "fill_ci": 5}
+{"rcept": "20150515001580", "basis": "separate", "seq": 0, "row_order": 21, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2722078967, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20150812000003", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 34373355913, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20150812000003", "basis": "separate", "seq": 0, "row_order": 12, "label": "자본의 변동>총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 45571478330, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20150813000944", "basis": "separate", "seq": 0, "row_order": 22, "label": "당기순이익", "total_col": "자본>자본 합계", "value": 3206722319, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20150813001247", "basis": "separate", "seq": 0, "row_order": 4, "label": "배당금지급", "total_col": "자본>자본 합계", "value": -513043750, "fill_col": "자본>이익잉여금", "fill_ci": 5}
+{"rcept": "20150817000965", "basis": "separate", "seq": 0, "row_order": 15, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 455320274, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20150817001231", "basis": "consolidated", "seq": 0, "row_order": 7, "label": "자기주식처분이익", "total_col": "자본>자본 합계", "value": 12742229, "fill_col": "자본>지배기업의 소유지분", "fill_ci": 5}
+{"rcept": "20151103000191", "basis": "separate", "seq": 0, "row_order": 28, "label": "합병에 따른 증가", "total_col": "자본>자본 합계", "value": 244643091, "fill_col": "자본>자본잉여금", "fill_ci": 1}
+{"rcept": "20151111000013", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 34373355913, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20151111000013", "basis": "separate", "seq": 0, "row_order": 12, "label": "자본의 변동>총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 45571478330, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20151111000039", "basis": "separate", "seq": 0, "row_order": 47, "label": "해외사업환산손익", "total_col": "자본>자본 합계", "value": -2990393, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20151113000535", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 325759670, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20151113000535", "basis": "separate", "seq": 0, "row_order": 10, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -2664094075, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20151113001220", "basis": "separate", "seq": 0, "row_order": 30, "label": "자기주식의 취득", "total_col": "자본>자본 합계", "value": -1407049550, "fill_col": "자본>기타자본", "fill_ci": 2}
+{"rcept": "20151116000732", "basis": "consolidated", "seq": 0, "row_order": 6, "label": "자기주식처분이익", "total_col": "자본>자본 합계", "value": 12742229, "fill_col": "자본>지배기업의 소유지분", "fill_ci": 5}
+{"rcept": "20151116001077", "basis": "separate", "seq": 0, "row_order": 17, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4492432083, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20151116001107", "basis": "separate", "seq": 0, "row_order": 15, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1116889569, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20151116001349", "basis": "separate", "seq": 0, "row_order": 4, "label": "Ⅲ.배당금지급", "total_col": "자본>자본 합계", "value": -513043750, "fill_col": "자본>이익잉여금", "fill_ci": 5}
+{"rcept": "20151116001373", "basis": "separate", "seq": 0, "row_order": 45, "label": "자기주식의취득", "total_col": "자본>자본 합계", "value": -8707616700, "fill_col": "자본>자기주식", "fill_ci": 5}
+{"rcept": "20151123000084", "basis": "consolidated", "seq": 0, "row_order": 33, "label": "자본의 변동>배당금지급", "total_col": "자본>지배기업의 소유주에게 귀속되는 자본>지배기업의 소유주에게 귀속되는 자본 합계", "value": -30000000, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>미처분이익잉여금", "fill_ci": 5}
+{"rcept": "20151209000128", "basis": "separate", "seq": 0, "row_order": 45, "label": "자기주식의취득", "total_col": "자본>자본 합계", "value": -8707616700, "fill_col": "자본>자기주식", "fill_ci": 5}
+{"rcept": "20151229000310", "basis": "separate", "seq": 0, "row_order": 25, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2380985751, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20160316000346", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 34373355913, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20160316000346", "basis": "separate", "seq": 0, "row_order": 12, "label": "자본의 변동>총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 45571478330, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20160329000439", "basis": "consolidated", "seq": 0, "row_order": 5, "label": "자기주식처분이익", "total_col": "자본>자본 합계", "value": 12742229, "fill_col": "자본>지배기업의 소유지분", "fill_ci": 5}
+{"rcept": "20160329001067", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 20551875838, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20160329001067", "basis": "separate", "seq": 0, "row_order": 11, "label": "자본의 변동>총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 505790080, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20160330001987", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4952646351, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 2}
+{"rcept": "20160330003083", "basis": "separate", "seq": 0, "row_order": 16, "label": "배당금지급", "total_col": "자본>자본 합계", "value": -1058582550, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20160330003596", "basis": "consolidated", "seq": 0, "row_order": 7, "label": "총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2260216199, "fill_col": "자본>연결이익잉여금", "fill_ci": 4}
+{"rcept": "20160330004526", "basis": "consolidated", "seq": 0, "row_order": 6, "label": "신주인수권 행사", "total_col": "자본>자본 합계", "value": 1733962560, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20160512000109", "basis": "separate", "seq": 0, "row_order": 29, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 980093895, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 10}
+{"rcept": "20160513000148", "basis": "separate", "seq": 0, "row_order": 14, "label": "당기순이익>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 9369782068, "fill_col": "자본>이익잉여금", "fill_ci": 5}
+{"rcept": "20160513000148", "basis": "separate", "seq": 0, "row_order": 27, "label": "당기순이익>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -841390416, "fill_col": "자본>이익잉여금", "fill_ci": 5}
+{"rcept": "20160516000925", "basis": "consolidated", "seq": 0, "row_order": 6, "label": "신주인수권 행사", "total_col": "자본>자본 합계", "value": 1733962560, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20160516002381", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4952646351, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 2}
+{"rcept": "20160523000017", "basis": "separate", "seq": 0, "row_order": 12, "label": "포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 831411567, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20160812000368", "basis": "separate", "seq": 0, "row_order": 21, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3949773116, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 2}
+{"rcept": "20160812000368", "basis": "separate", "seq": 0, "row_order": 31, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -346454565, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 2}
+{"rcept": "20160816001626", "basis": "consolidated", "seq": 0, "row_order": 22, "label": "주식기준보상거래의 인식", "total_col": "자본>자본 합계", "value": 34616142, "fill_col": "자본>종업원급여적립금", "fill_ci": 3}
+{"rcept": "20160816001626", "basis": "consolidated", "seq": 0, "row_order": 23, "label": "자기주식취득", "total_col": "자본>자본 합계", "value": -6378300, "fill_col": "자본>자기주식", "fill_ci": 4}
+{"rcept": "20161111000087", "basis": "separate", "seq": 0, "row_order": 21, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -6017105763, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 2}
+{"rcept": "20161111000087", "basis": "separate", "seq": 0, "row_order": 31, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1868869547, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 2}
+{"rcept": "20161111000179", "basis": "separate", "seq": 0, "row_order": 8, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3352384835, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20161111000468", "basis": "separate", "seq": 0, "row_order": 15, "label": "자본의 변동>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1972572124, "fill_col": "자본>이익잉여금", "fill_ci": 1}
+{"rcept": "20161111000468", "basis": "separate", "seq": 0, "row_order": 19, "label": "주식선택권", "total_col": "자본>자본 합계", "value": 20666877, "fill_col": "자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20161111000703", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>총포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 20551875838, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20161114000932", "basis": "consolidated", "seq": 0, "row_order": 22, "label": "주식기준보상거래의 인식", "total_col": "자본>자본 합계", "value": 34616142, "fill_col": "자본>종업원급여적립금", "fill_ci": 3}
+{"rcept": "20161114000932", "basis": "consolidated", "seq": 0, "row_order": 23, "label": "자기주식취득", "total_col": "자본>자본 합계", "value": -6378300, "fill_col": "자본>자기주식", "fill_ci": 4}
+{"rcept": "20161114001267", "basis": "separate", "seq": 0, "row_order": 7, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 365583728, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20161114001954", "basis": "separate", "seq": 0, "row_order": 19, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1617472270, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 2}
+{"rcept": "20170331002372", "basis": "separate", "seq": 0, "row_order": 33, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1818891689, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20170331002726", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -403257017, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20170331002807", "basis": "consolidated", "seq": 0, "row_order": 1, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3705702758, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 6}
+{"rcept": "20170331004939", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -403257017, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20170512004723", "basis": "separate", "seq": 0, "row_order": 25, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -279685003, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 3}
+{"rcept": "20170512005157", "basis": "separate", "seq": 0, "row_order": 16, "label": "Ⅱ.자본의 변동>(1)포괄손익>1.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1675292634, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20170512006122", "basis": "separate", "seq": 0, "row_order": 25, "label": "주식선택권", "total_col": "자본>자본 합계", "value": 81875001, "fill_col": "자본>기타자본항목", "fill_ci": 3}
+{"rcept": "20170515002649", "basis": "separate", "seq": 0, "row_order": 40, "label": "Ⅱ.자본의 변동>(1)포괄손익>1.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 729613457, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20170515003583", "basis": "separate", "seq": 0, "row_order": 23, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1742455945, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20170515004608", "basis": "separate", "seq": 0, "row_order": 18, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1103219421, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 6}
+{"rcept": "20170531000990", "basis": "separate", "seq": 0, "row_order": 33, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1818891689, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20170814000152", "basis": "consolidated", "seq": 0, "row_order": 7, "label": "Ⅱ.자본의 변동>(1)포괄손익>1.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 6089665844, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금(미처리결손금)", "fill_ci": 4}
+{"rcept": "20170814000694", "basis": "consolidated", "seq": 0, "row_order": 13, "label": "자기주식 거래에 따른 증가(감소)", "total_col": "자본>자본 합계", "value": -7660666150, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>자기주식", "fill_ci": 2}
+{"rcept": "20170814000694", "basis": "separate", "seq": 0, "row_order": 13, "label": "자기주식 거래에 따른 증가(감소)", "total_col": "자본>자본 합계", "value": -7660666150, "fill_col": "자본>자기주식", "fill_ci": 2}
+{"rcept": "20170814001487", "basis": "separate", "seq": 0, "row_order": 12, "label": "자본의 변동>당기순이익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2271281551, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20170814001564", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>포괄손익>반기순이익", "total_col": "자본>자본 합계", "value": 15550300992, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20170814002394", "basis": "separate", "seq": 0, "row_order": 16, "label": "주식기준보상거래의인식", "total_col": "자본금>자본금 합계", "value": 138192903, "fill_col": "자본금>기타불입자본", "fill_ci": 1}
+{"rcept": "20171113000167", "basis": "separate", "seq": 0, "row_order": 9, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 6646521921, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20171114000413", "basis": "separate", "seq": 0, "row_order": 1, "label": "Ⅱ.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4555100123, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20171114000972", "basis": "consolidated", "seq": 0, "row_order": 8, "label": "Ⅱ.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2726857434, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20171114000972", "basis": "separate", "seq": 0, "row_order": 6, "label": "Ⅱ.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1294850053, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20171114001301", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1121093330, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20171114001301", "basis": "separate", "seq": 0, "row_order": 6, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 298801289, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20171114002146", "basis": "consolidated", "seq": 0, "row_order": 12, "label": "종속기업의 처분", "total_col": "자본>자본 합계", "value": -17300000, "fill_col": "자본>비지배지분", "fill_ci": 5}
+{"rcept": "20171114002195", "basis": "separate", "seq": 0, "row_order": 11, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1441421435, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20171114002811", "basis": "separate", "seq": 0, "row_order": 11, "label": "배당금지급", "total_col": "자본>자본 합계", "value": -702237500, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20180328000112", "basis": "separate", "seq": 0, "row_order": 1, "label": "Ⅱ.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4550440765, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20180329001147", "basis": "separate", "seq": 0, "row_order": 24, "label": "연결대상범위의 변동", "total_col": "자본>자본 합계", "value": -1428001093, "fill_col": "자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20180330001576", "basis": "separate", "seq": 0, "row_order": 25, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -4244567116, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20180330002552", "basis": "separate", "seq": 0, "row_order": 1, "label": "포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 8923304264, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20180330003176", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -6390211572, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20180330003631", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1830965379, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20180402002138", "basis": "separate", "seq": 0, "row_order": 6, "label": "유상증자", "total_col": "자본>자본 합계", "value": 1319188520, "fill_col": "자본>납입자본", "fill_ci": 0}
+{"rcept": "20180402002458", "basis": "separate", "seq": 0, "row_order": 7, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 7865253525, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20180402003714", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3003326734, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20180402003935", "basis": "separate", "seq": 0, "row_order": 13, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1070110586, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20180402004837", "basis": "separate", "seq": 0, "row_order": 16, "label": "매도가능금융자산평가손익", "total_col": "자본>자본 합계", "value": 7857213, "fill_col": "자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20180515001214", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 28811030, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20180515001337", "basis": "consolidated", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 479410809, "fill_col": "자본>지배주주지분계>이익잉여금", "fill_ci": 3}
+{"rcept": "20180515001360", "basis": "separate", "seq": 0, "row_order": 1, "label": "Ⅱ.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 961444157, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20180515001456", "basis": "separate", "seq": 0, "row_order": 1, "label": "분기순이익", "total_col": "자본>자본 합계", "value": 1494402008, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20180515001696", "basis": "separate", "seq": 0, "row_order": 9, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 257320525, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20180515001861", "basis": "separate", "seq": 0, "row_order": 3, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 22916882702, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20180515002009", "basis": "separate", "seq": 0, "row_order": 3, "label": "분기순이익", "total_col": "자본>자본 합계", "value": 13587000000, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20180515002047", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2760823374, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20180523000091", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -484963519, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20180608000537", "basis": "separate", "seq": 0, "row_order": 24, "label": "연결대상범위의 변동", "total_col": "자본>자본 합계", "value": -1428001093, "fill_col": "자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20180612000051", "basis": "separate", "seq": 0, "row_order": 1, "label": "Ⅱ.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4550440765, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20180814001281", "basis": "separate", "seq": 0, "row_order": 7, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1041860263, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 4}
+{"rcept": "20180828000085", "basis": "separate", "seq": 0, "row_order": 6, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 843975527, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20180828000085", "basis": "separate", "seq": 0, "row_order": 7, "label": "자본 증가(감소) 합계", "total_col": "자본>자본 합계", "value": 843975527, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20181114000026", "basis": "separate", "seq": 0, "row_order": 5, "label": "분기순이익(손실)", "total_col": "자본>자본 합계", "value": 5447648478, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20181114000594", "basis": "separate", "seq": 0, "row_order": 1, "label": "분기순이익(손실)", "total_col": "자본>자본 합계", "value": 660931508, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20181114001114", "basis": "separate", "seq": 0, "row_order": 6, "label": "신주청약증거금", "total_col": "자본>자본 합계", "value": -51602000, "fill_col": "자본>기타불입자본", "fill_ci": 1}
+{"rcept": "20181114001161", "basis": "separate", "seq": 0, "row_order": 7, "label": "전환권대가", "total_col": "자본>자본 합계", "value": 5612654744, "fill_col": "자본>자본잉여금", "fill_ci": 1}
+{"rcept": "20181114002131", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1321954862, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20181114002442", "basis": "consolidated", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -606199753, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20190327001563", "basis": "separate", "seq": 0, "row_order": 21, "label": "연차배당", "total_col": "자본>자본 합계", "value": 1632339500, "fill_col": "자본>자본금", "fill_ci": 0}
+{"rcept": "20190329002847", "basis": "separate", "seq": 0, "row_order": 2, "label": "Ⅲ.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 15612709158, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20190329003628", "basis": "separate", "seq": 0, "row_order": 20, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 9709850772, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20190329004028", "basis": "separate", "seq": 0, "row_order": 16, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 8223956143, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20190329004157", "basis": "separate", "seq": 0, "row_order": 12, "label": "당기순이익", "total_col": "자본>자본 합계", "value": 5432302682, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20190401001033", "basis": "consolidated", "seq": 0, "row_order": 26, "label": "단주취득 및 처분", "total_col": "자본>자본 합계", "value": -890688, "fill_col": "자본>기타자본", "fill_ci": 2}
+{"rcept": "20190401001571", "basis": "consolidated", "seq": 0, "row_order": 24, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4653261683, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20190401001571", "basis": "separate", "seq": 0, "row_order": 22, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4784481616, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20190401001623", "basis": "consolidated", "seq": 0, "row_order": 3, "label": "당기순이익", "total_col": "자본>자본 합계", "value": 1934500961, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20190401001934", "basis": "consolidated", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -5413917229, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20190401002306", "basis": "separate", "seq": 0, "row_order": 14, "label": "당기순이익", "total_col": "자본>자본 합계", "value": 9911739440, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20190401002750", "basis": "separate", "seq": 0, "row_order": 17, "label": "Ⅷ.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1091132145, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20190401004505", "basis": "separate", "seq": 0, "row_order": 11, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -11056378954, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20190408003181", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 13638631820, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20190515000640", "basis": "separate", "seq": 0, "row_order": 1, "label": "파생상품평가손익", "total_col": "자본>자본 합계", "value": 1331269077, "fill_col": "자본>자본잉여금", "fill_ci": 1}
+{"rcept": "20190515000640", "basis": "separate", "seq": 0, "row_order": 8, "label": "전환권대가", "total_col": "자본>자본 합계", "value": 1331269077, "fill_col": "자본>자본잉여금", "fill_ci": 1}
+{"rcept": "20190515000902", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -130296974, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20190515001164", "basis": "consolidated", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 479410809, "fill_col": "자본>지배주주지분계>이익잉여금", "fill_ci": 3}
+{"rcept": "20190515001926", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -482473531, "fill_col": "자본>이익잉여금", "fill_ci": 5}
+{"rcept": "20190813000285", "basis": "separate", "seq": 0, "row_order": 11, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 5668399544, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20190814000625", "basis": "separate", "seq": 0, "row_order": 6, "label": "Ⅱ.당기순이익(손실)", "total_col": "자본>자본 합계", "value": 8404163474, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20190814001251", "basis": "separate", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -6563856430, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20190814001262", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -609143067, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20190814001522", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3115199026, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20190814001980", "basis": "separate", "seq": 0, "row_order": 5, "label": "주식보상비용", "total_col": "자본>자본 합계", "value": 3584748, "fill_col": "자본>기타자본", "fill_ci": 2}
+{"rcept": "20190814002202", "basis": "separate", "seq": 0, "row_order": 7, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 382703583, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20191114000207", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1274084581, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20191114001068", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -8035797471, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20200311000388", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -482473531, "fill_col": "자본>이익잉여금", "fill_ci": 5}
+{"rcept": "20200325000661", "basis": "separate", "seq": 0, "row_order": 9, "label": "연차배당", "total_col": "자본>자본 합계", "value": 1632339500, "fill_col": "자본>자본금", "fill_ci": 0}
+{"rcept": "20200327001431", "basis": "separate", "seq": 0, "row_order": 25, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -35576942926, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20200330000517", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3367829681, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20200330001201", "basis": "separate", "seq": 0, "row_order": 20, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -2457391348, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20200330003172", "basis": "separate", "seq": 0, "row_order": 22, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -45013079, "fill_col": "자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20200330003180", "basis": "separate", "seq": 0, "row_order": 11, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 9710840855, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20200330003364", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1372274543, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20200330003596", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -37306350499, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20200330004133", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 34457082576, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20200330004457", "basis": "separate", "seq": 0, "row_order": 3, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2994514838, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20200330004780", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -6856046583, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20200409002226", "basis": "separate", "seq": 0, "row_order": 3, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2994514838, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20200515000710", "basis": "consolidated", "seq": 0, "row_order": 23, "label": "연결대상범위의 변동", "total_col": "자본>지배기업의 소유주에게 귀속되는 자본>지배기업의 소유주에게 귀속되는 자본 합계", "value": 347055, "fill_col": "자본>비지배지분", "fill_ci": 6}
+{"rcept": "20200515000772", "basis": "consolidated", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1498367591, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20200515000838", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 939307443, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20200515001033", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 40144779, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20200515001320", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -28443586, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20200515001320", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 47724923, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20200515001530", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3378667567, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20200515001530", "basis": "separate", "seq": 0, "row_order": 12, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -26735808251, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20200515001530", "basis": "separate", "seq": 0, "row_order": 23, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -69866099558, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20200515001997", "basis": "consolidated", "seq": 0, "row_order": 5, "label": "관계기업자본변동", "total_col": "자본>자본 합계", "value": 54988024, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>기타포괄손익누계액", "fill_ci": 2}
+{"rcept": "20200626000382", "basis": "separate", "seq": 0, "row_order": 25, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -35576942926, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20200814000256", "basis": "consolidated", "seq": 0, "row_order": 13, "label": "해외사업환산손익", "total_col": "자본>자본 합계", "value": 40670186, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20200814002337", "basis": "separate", "seq": 0, "row_order": 10, "label": "반기순이익(손실)", "total_col": "자본>자본 합계", "value": -22213622833, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20210217000607", "basis": "separate", "seq": 0, "row_order": 3, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 8223956143, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20210219001350", "basis": "separate", "seq": 0, "row_order": 3, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3908618006, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20210316001240", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 9710840855, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20210317000566", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3367829681, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20210318000833", "basis": "separate", "seq": 0, "row_order": 12, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -35576942926, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20210319001126", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 453623204, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20210319001201", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 741696321, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20210319001201", "basis": "separate", "seq": 0, "row_order": 11, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -994710909, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20210319001201", "basis": "separate", "seq": 0, "row_order": 20, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 463945595, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20210319001233", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1848967823, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 4}
+{"rcept": "20210324000144", "basis": "separate", "seq": 0, "row_order": 17, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -4454433040, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20210513000419", "basis": "consolidated", "seq": 0, "row_order": 5, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 565374163, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20210514001413", "basis": "consolidated", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1164389067, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20210517000270", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4379597571, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20210517000345", "basis": "consolidated", "seq": 0, "row_order": 7, "label": "연결실체의 변동", "total_col": "자본>지배기업의 소유주에게 귀속되는 자본>지배기업의 소유주에게 귀속되는 자본 합계", "value": 347055, "fill_col": "자본>비지배지분", "fill_ci": 6}
+{"rcept": "20210517000478", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1328037748, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20210517000623", "basis": "separate", "seq": 0, "row_order": 9, "label": "Ⅹ.매도가능금융자산의 평가에 따른 증가(감소)", "total_col": "자본>자본 합계", "value": -2747511, "fill_col": "자본>기타자본구성요소", "fill_ci": 4}
+{"rcept": "20210517001135", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1873490238, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20210517001484", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1247055700, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20210525000116", "basis": "consolidated", "seq": 0, "row_order": 7, "label": "연결실체의 변동", "total_col": "자본>지배기업의 소유주에게 귀속되는 자본>지배기업의 소유주에게 귀속되는 자본 합계", "value": 347055, "fill_col": "자본>비지배지분", "fill_ci": 6}
+{"rcept": "20210806000361", "basis": "separate", "seq": 0, "row_order": 17, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -4454433040, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20210811000413", "basis": "separate", "seq": 0, "row_order": 17, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -4454433040, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20210813000965", "basis": "separate", "seq": 0, "row_order": 12, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3745158560, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20210817000251", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -14862736583, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20210817000971", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1359586248, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20210817000971", "basis": "separate", "seq": 0, "row_order": 5, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 382481806, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20211112001123", "basis": "separate", "seq": 0, "row_order": 3, "label": "배당금지급", "total_col": "자본>자본 합계", "value": -1287799920, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20211115000038", "basis": "separate", "seq": 0, "row_order": 12, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1621163454, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20211115001374", "basis": "separate", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3185320070, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20211115001613", "basis": "separate", "seq": 0, "row_order": 9, "label": "확정급여채무의 재측정요소", "total_col": "합 계", "value": -54241633, "fill_col": "이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20220315000744", "basis": "separate", "seq": 0, "row_order": 3, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -13797204821, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20220316000745", "basis": "separate", "seq": 0, "row_order": 12, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 5764883295, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20220321001030", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 81821127779, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20220322000096", "basis": "separate", "seq": 0, "row_order": 6, "label": "당기순손실", "total_col": "자본>자본 합계", "value": -63639068, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20220322000594", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익", "total_col": "자본>자본 합계", "value": 333162676, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20220513000944", "basis": "separate", "seq": 0, "row_order": 5, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -887779670, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20220516000137", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -2507654051, "fill_col": "자본>이익잉여금", "fill_ci": 7}
+{"rcept": "20220516000239", "basis": "separate", "seq": 0, "row_order": 5, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 329242569, "fill_col": "자본>이익잉여금", "fill_ci": 1}
+{"rcept": "20220516000392", "basis": "separate", "seq": 0, "row_order": 16, "label": "주식매수선택권", "total_col": "자본>자본 합계", "value": 93573257, "fill_col": "자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20220516000666", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1267946523, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20220516000669", "basis": "consolidated", "seq": 0, "row_order": 11, "label": "분기순이익(손실)", "total_col": "자본>자본 합계", "value": 8552155488, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20220516000832", "basis": "consolidated", "seq": 0, "row_order": 11, "label": "분기순이익(손실)", "total_col": "자본>자본 합계", "value": 8552155488, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20220516002066", "basis": "separate", "seq": 0, "row_order": 15, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 43411387212, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20220516002677", "basis": "separate", "seq": 0, "row_order": 7, "label": "분기순이익(손실)", "total_col": "자본>자본 합계", "value": 1045213878, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20220524000172", "basis": "separate", "seq": 0, "row_order": 5, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 329242569, "fill_col": "자본>이익잉여금", "fill_ci": 1}
+{"rcept": "20220812000435", "basis": "separate", "seq": 0, "row_order": 1, "label": "반기순이익(손실)", "total_col": "자본>자본 합계", "value": 822970621, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20220816000883", "basis": "separate", "seq": 0, "row_order": 9, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3141307580, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20220816000906", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -8809785700, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20220816002014", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익", "total_col": "자본>자본 합계", "value": 333162676, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20220816002256", "basis": "consolidated", "seq": 0, "row_order": 11, "label": "기타", "total_col": "자본>자본 합계", "value": -200000000, "fill_col": "자본>비지배지분", "fill_ci": 5}
+{"rcept": "20220816002529", "basis": "consolidated", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3704158756, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20220816002529", "basis": "consolidated", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -7877071804, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20220816002529", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3723799790, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20220816002529", "basis": "separate", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -7801938897, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20220930000044", "basis": "separate", "seq": 0, "row_order": 12, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 5764883295, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20220930000533", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 81821127779, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20221114002059", "basis": "consolidated", "seq": 0, "row_order": 6, "label": "확정급여제도의 재측정요소", "total_col": "자본>자본 합계", "value": 100713834, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20221114002183", "basis": "separate", "seq": 0, "row_order": 6, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -5161917768, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20221114002394", "basis": "separate", "seq": 0, "row_order": 12, "label": "분기순이익", "total_col": "자본>자본 합계", "value": -96503882406, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20221114002620", "basis": "separate", "seq": 0, "row_order": 4, "label": "자기주식 거래로 인한 증감", "total_col": "자본>자본 합계", "value": -676084970, "fill_col": "자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20221115000217", "basis": "consolidated", "seq": 0, "row_order": 6, "label": "확정급여제도의 재측정요소", "total_col": "자본>자본 합계", "value": 100713834, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20221129001148", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 9295033367, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20221129001148", "basis": "separate", "seq": 0, "row_order": 12, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 6335946654, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20230309000498", "basis": "separate", "seq": 0, "row_order": 7, "label": "배당금지급", "total_col": "자본>자본 합계", "value": -24395288000, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20230309000835", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 250968822411, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20230315001315", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 5764883295, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20230317000751", "basis": "separate", "seq": 0, "row_order": 7, "label": "배당금지급", "total_col": "자본>자본 합계", "value": -24395288000, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20230321000809", "basis": "separate", "seq": 0, "row_order": 7, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1170415067, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20230321001534", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -4953440, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20230321001534", "basis": "separate", "seq": 0, "row_order": 6, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -41755315, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20230322001293", "basis": "consolidated", "seq": 0, "row_order": 24, "label": "지분법이익잉여금변동", "total_col": "자본>자본 합계", "value": 10234772, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 10}
+{"rcept": "20230322001330", "basis": "consolidated", "seq": 0, "row_order": 24, "label": "지분법이익잉여금변동", "total_col": "자본>자본 합계", "value": 10234772, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금", "fill_ci": 10}
+{"rcept": "20230323001546", "basis": "separate", "seq": 0, "row_order": 11, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3331835159, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20230324000010", "basis": "separate", "seq": 0, "row_order": 13, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 9985217222, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 2}
+{"rcept": "20230324000049", "basis": "separate", "seq": 0, "row_order": 11, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3331835159, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20230504000374", "basis": "consolidated", "seq": 0, "row_order": 7, "label": "당기순이익", "total_col": "자본>자본 합계", "value": 1903678900, "fill_col": "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20230515000487", "basis": "separate", "seq": 0, "row_order": 6, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1751320022, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20230515001534", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -670265724, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20230515002453", "basis": "separate", "seq": 0, "row_order": 11, "label": "Ⅱ.분기순이익", "total_col": "자본>자본 합계", "value": 8318188000, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20230515002739", "basis": "separate", "seq": 0, "row_order": 10, "label": "Ⅴ.주식기준보상거래", "total_col": "자본>자본 합계", "value": 278075851, "fill_col": "자본>자본조정", "fill_ci": 2}
+{"rcept": "20230712000322", "basis": "separate", "seq": 0, "row_order": 11, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3331835159, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20230811000737", "basis": "separate", "seq": 0, "row_order": 4, "label": "주식매수선택권행사", "total_col": "자본>자본 합계", "value": -8865000, "fill_col": "자본>기타불입자본", "fill_ci": 1}
+{"rcept": "20230814001518", "basis": "separate", "seq": 0, "row_order": 9, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 42417442262, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20231106000128", "basis": "separate", "seq": 0, "row_order": 16, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 67499305918, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20231113000111", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>총포괄손익>분기순이익", "total_col": "자본>자본 합계", "value": 1667114764, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20231114000035", "basis": "separate", "seq": 0, "row_order": 9, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 125567205, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20231114000132", "basis": "separate", "seq": 0, "row_order": 7, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -429290492, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20231114000482", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익", "total_col": "자본>자본 합계", "value": 4284396905, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20231114000673", "basis": "separate", "seq": 0, "row_order": 13, "label": "Ⅲ.기타포괄손익", "total_col": "자본>자본 합계", "value": -20846793, "fill_col": "자본>기타자본구성요소", "fill_ci": 3}
+{"rcept": "20231114001445", "basis": "separate", "seq": 0, "row_order": 2, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": 173872601, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 4}
+{"rcept": "20231114002567", "basis": "consolidated", "seq": 0, "row_order": 5, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -155887807, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20231114002603", "basis": "separate", "seq": 0, "row_order": 11, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -24616111414, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20231114002745", "basis": "separate", "seq": 0, "row_order": 1, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": 35723072420, "fill_col": "자본>이익잉여금", "fill_ci": 5}
+{"rcept": "20240312000308", "basis": "separate", "seq": 0, "row_order": 15, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 11135156805, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240312000745", "basis": "separate", "seq": 0, "row_order": 4, "label": "주식매입선택권", "total_col": "자본>자본 합계", "value": 49669841, "fill_col": "자본>기타자본구성요소", "fill_ci": 3}
+{"rcept": "20240318000001", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 10464326998, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20240318000001", "basis": "separate", "seq": 0, "row_order": 19, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -4403447220, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20240318000711", "basis": "separate", "seq": 0, "row_order": 6, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2219605920, "fill_col": "자본>결손금", "fill_ci": 3}
+{"rcept": "20240320000152", "basis": "consolidated", "seq": 0, "row_order": 6, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2980333411, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>이익잉여금", "fill_ci": 4}
+{"rcept": "20240320000791", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1170415067, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240320000866", "basis": "separate", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -14158088635, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240320001169", "basis": "separate", "seq": 0, "row_order": 4, "label": "자기주식 거래로 인한 증감", "total_col": "자본>자본 합계", "value": -2997304750, "fill_col": "자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20240320001491", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -14758081656, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240320001491", "basis": "separate", "seq": 0, "row_order": 9, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 11311492257, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240320001491", "basis": "separate", "seq": 0, "row_order": 17, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -15164831008, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240320001574", "basis": "separate", "seq": 0, "row_order": 25, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 9792685965, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20240320001675", "basis": "separate", "seq": 0, "row_order": 7, "label": "배당금의 지급", "total_col": "자본>자본 합계", "value": -18593000000, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240320002028", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -2771420046, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20240320002028", "basis": "separate", "seq": 0, "row_order": 11, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 11361560467, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20240320002028", "basis": "separate", "seq": 0, "row_order": 21, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 281120106, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20240321000882", "basis": "separate", "seq": 0, "row_order": 6, "label": "자기주식 거래로 인한 증감", "total_col": "자본>자본 합계", "value": -1074601695, "fill_col": "자본>기타불입자본", "fill_ci": 1}
+{"rcept": "20240321000907", "basis": "separate", "seq": 0, "row_order": 22, "label": "확정급여제도의재측정요소", "total_col": "자본>자본 합계", "value": 2440736845, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20240321000907", "basis": "separate", "seq": 0, "row_order": 39, "label": "확정급여제도의재측정요소", "total_col": "자본>자본 합계", "value": -12148661640, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20240321001445", "basis": "separate", "seq": 0, "row_order": 10, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -65941612, "fill_col": "자본>기타자본구성요소", "fill_ci": 5}
+{"rcept": "20240321001469", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -27786784338, "fill_col": "자본>결손금", "fill_ci": 3}
+{"rcept": "20240321001916", "basis": "separate", "seq": 0, "row_order": 2, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": 23450539, "fill_col": "자본>결손금", "fill_ci": 3}
+{"rcept": "20240321001985", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1921744889, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20240321001985", "basis": "separate", "seq": 0, "row_order": 13, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -252457734, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20240321002027", "basis": "separate", "seq": 0, "row_order": 12, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": 624875734, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240325000002", "basis": "separate", "seq": 0, "row_order": 23, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -281491629, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240408002597", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -13297120474, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20240408003770", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 9985217222000, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20240408003770", "basis": "separate", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -7275817876000, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20240424000461", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -14758081656, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240424000461", "basis": "separate", "seq": 0, "row_order": 9, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 11311492257, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240424000461", "basis": "separate", "seq": 0, "row_order": 17, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -15164831008, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240502000551", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -13297120474, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20240514000053", "basis": "separate", "seq": 0, "row_order": 4, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -704516940, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240514000342", "basis": "consolidated", "seq": 0, "row_order": 3, "label": "당기기타포괄손익", "total_col": "자본>자본 합계", "value": 26503342, "fill_col": "자본>지배기업 소유주지분", "fill_ci": 6}
+{"rcept": "20240514000867", "basis": "separate", "seq": 0, "row_order": 3, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": 6267784, "fill_col": "자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20240514001124", "basis": "separate", "seq": 0, "row_order": 8, "label": "주식기준보상거래에 따른 증가(감소), 지분", "total_col": "자본>자본 합계", "value": 82010200, "fill_col": "자본>기타자본구성요소", "fill_ci": 1}
+{"rcept": "20240516000295", "basis": "consolidated", "seq": 0, "row_order": 2, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -28544614, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20240516000384", "basis": "separate", "seq": 0, "row_order": 6, "label": "순확정급여부채의 재측정요소", "total_col": "자본>자본 합계", "value": 9141351, "fill_col": "자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20240516000574", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -2866364806, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20240516000923", "basis": "separate", "seq": 0, "row_order": 11, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1478377726, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20240516001123", "basis": "consolidated", "seq": 0, "row_order": 7, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 706742587, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>이익잉여금", "fill_ci": 4}
+{"rcept": "20240516001250", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -183879799, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20240516001349", "basis": "consolidated", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -2747007911, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>이익잉여금", "fill_ci": 4}
+{"rcept": "20240516001500", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -4011632858, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20240516001517", "basis": "separate", "seq": 0, "row_order": 8, "label": "주식기준보상거래에 따른 증가(감소), 지분", "total_col": "자본>자본 합계", "value": 82010200, "fill_col": "자본>기타자본구성요소", "fill_ci": 1}
+{"rcept": "20240516001698", "basis": "separate", "seq": 0, "row_order": 10, "label": "확정급여제도의재측정요소", "total_col": "자본>자본 합계", "value": 33843264, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20240719000309", "basis": "separate", "seq": 0, "row_order": 23, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -281491629, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20240813001295", "basis": "separate", "seq": 0, "row_order": 17, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 8403021027, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20240813001295", "basis": "consolidated", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 6394848061, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>이익잉여금", "fill_ci": 4}
+{"rcept": "20240813001295", "basis": "consolidated", "seq": 0, "row_order": 13, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 8223171957, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>이익잉여금", "fill_ci": 4}
+{"rcept": "20240814001214", "basis": "separate", "seq": 0, "row_order": 5, "label": "총포괄손익", "total_col": "자본>자본 합계", "value": -302797550, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20240814002294", "basis": "consolidated", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4529191960, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>이익잉여금", "fill_ci": 4}
+{"rcept": "20240814003721", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2983609927, "fill_col": "자본>이익잉여금", "fill_ci": 5}
+{"rcept": "20240814004300", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -12345421953, "fill_col": "자본>결손금", "fill_ci": 3}
+{"rcept": "20240814004341", "basis": "consolidated", "seq": 0, "row_order": 11, "label": "배당금 지급", "total_col": "자본>자본 합계", "value": -13364690000, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>이익잉여금", "fill_ci": 3}
+{"rcept": "20241025000554", "basis": "separate", "seq": 0, "row_order": 13, "label": "자본의 변동>포괄손익>당기순이익(손실)", "total_col": "자본>자본 합계", "value": -11669698132, "fill_col": "자본>미처분이익잉여금(미처리결손금)", "fill_ci": 2}
+{"rcept": "20241114001000", "basis": "consolidated", "seq": 0, "row_order": 8, "label": "관계기업 및 공동기업의 기타포괄손익에 대한 지분", "total_col": "자본>자본 합계", "value": 35005791, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20250109000195", "basis": "separate", "seq": 0, "row_order": 12, "label": "분기순이익", "total_col": "자본>자본 합계", "value": -96503882406, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250214002077", "basis": "separate", "seq": 0, "row_order": 3, "label": "분기순이익", "total_col": "자본>자본 합계", "value": 85142383730, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250214002307", "basis": "separate", "seq": 0, "row_order": 9, "label": "총 포괄손익", "total_col": "자본>자본 합계", "value": -633248749, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 7}
+{"rcept": "20250214002307", "basis": "separate", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -633248749, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 7}
+{"rcept": "20250313000877", "basis": "separate", "seq": 0, "row_order": 36, "label": "지분법 이익잉여금 변동", "total_col": "자본>자본 합계", "value": 2510165, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250313001194", "basis": "separate", "seq": 0, "row_order": 9, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 5209685670, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250314001110", "basis": "separate", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 5167432439, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250314001143", "basis": "separate", "seq": 0, "row_order": 4, "label": "기타포괄손익-공정가치측정금융자산평가손익", "total_col": "자본>자본 합계", "value": -42000, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20250314001597", "basis": "separate", "seq": 0, "row_order": 2, "label": "기타포괄손익-공정가치 측정 지분상품 평가손익", "total_col": "자본>자본 합계", "value": -7013158596, "fill_col": "자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20250318000339", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3494825279, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250318000359", "basis": "separate", "seq": 0, "row_order": 3, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": 680948115, "fill_col": "자본>이익잉여금", "fill_ci": 6}
+{"rcept": "20250318000739", "basis": "separate", "seq": 0, "row_order": 20, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 10043699124, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250318001385", "basis": "separate", "seq": 0, "row_order": 17, "label": "당기순손실", "total_col": "자본>자본 합계", "value": -6573575825, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 4}
+{"rcept": "20250318001416", "basis": "separate", "seq": 0, "row_order": 17, "label": "당기순손실", "total_col": "자본>자본 합계", "value": -6573575825, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 4}
+{"rcept": "20250318001437", "basis": "separate", "seq": 0, "row_order": 2, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": 533163221, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250319000086", "basis": "separate", "seq": 0, "row_order": 6, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 6949410125, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250319000958", "basis": "separate", "seq": 0, "row_order": 3, "label": "총포괄손익", "total_col": "자본>자본 합계", "value": 1158371011, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20250319000958", "basis": "separate", "seq": 0, "row_order": 4, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1158371011, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20250319000993", "basis": "separate", "seq": 0, "row_order": 12, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -18750166548, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250319001003", "basis": "consolidated", "seq": 0, "row_order": 3, "label": "확정급여제도의재측정요소", "total_col": "자본>자본 합계", "value": 142869768, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>이익잉여금", "fill_ci": 3}
+{"rcept": "20250319001003", "basis": "separate", "seq": 0, "row_order": 3, "label": "확정급여제도의재측정요소", "total_col": "자본>자본 합계", "value": 142869768, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250319001135", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -4411028153, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250319001141", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -4411028153, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250321000008", "basis": "separate", "seq": 0, "row_order": 10, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3583070145, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250321001223", "basis": "separate", "seq": 0, "row_order": 18, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -30179694985, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250321001446", "basis": "separate", "seq": 0, "row_order": 3, "label": "확정급여제도의 재측정요소", "total_col": "자본>자본 합계", "value": -30565200, "fill_col": "자본>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20250321001464", "basis": "separate", "seq": 0, "row_order": 2, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": 624875734, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250321001701", "basis": "separate", "seq": 0, "row_order": 49, "label": "주식선택권의부여", "total_col": "자본>자본 합계", "value": 26720598, "fill_col": "자본>기타자본구성요소", "fill_ci": 5}
+{"rcept": "20250321001745", "basis": "separate", "seq": 0, "row_order": 10, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -68511371, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250321001745", "basis": "separate", "seq": 0, "row_order": 18, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -145945886, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250321001959", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 7817349485, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250324000878", "basis": "separate", "seq": 0, "row_order": 7, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 36264828365, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20250324000878", "basis": "separate", "seq": 0, "row_order": 16, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 36088780787, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20250324000878", "basis": "separate", "seq": 0, "row_order": 25, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -95752174211, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20250327001024", "basis": "separate", "seq": 0, "row_order": 7, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 36264828365, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20250327001024", "basis": "separate", "seq": 0, "row_order": 16, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 36088780787, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20250327001024", "basis": "separate", "seq": 0, "row_order": 25, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -95752174211, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20250327001227", "basis": "separate", "seq": 0, "row_order": 3, "label": "총포괄손익", "total_col": "자본>자본 합계", "value": 1158371011, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20250327001227", "basis": "separate", "seq": 0, "row_order": 4, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1158371011, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20250331004082", "basis": "consolidated", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -8895608414, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>이익잉여금", "fill_ci": 4}
+{"rcept": "20250331004082", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -8895608414, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250331004082", "basis": "separate", "seq": 0, "row_order": 9, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -9758504978, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250331004264", "basis": "separate", "seq": 0, "row_order": 49, "label": "주식선택권의부여", "total_col": "자본>자본 합계", "value": 26720598, "fill_col": "자본>기타자본구성요소", "fill_ci": 5}
+{"rcept": "20250407004260", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 7817349485, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250410002107", "basis": "separate", "seq": 0, "row_order": 36, "label": "지분법 이익잉여금 변동", "total_col": "자본>자본 합계", "value": 2510165, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250509000006", "basis": "separate", "seq": 0, "row_order": 18, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -30179694985, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250514000037", "basis": "consolidated", "seq": 0, "row_order": 8, "label": "순확정급여채무의 재측정요소", "total_col": "자본>자본 합계", "value": -1382377, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>이익잉여금", "fill_ci": 3}
+{"rcept": "20250514000199", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -693865578, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250514000907", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 2960464749, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250515001134", "basis": "separate", "seq": 0, "row_order": 2, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": 2180512, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250515001134", "basis": "separate", "seq": 0, "row_order": 3, "label": "확정급여제도의재측정요소", "total_col": "자본>자본 합계", "value": 2180512, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250515001443", "basis": "separate", "seq": 0, "row_order": 7, "label": "Ⅵ.연차배당", "total_col": "자본>자본 합계", "value": -3575014625, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250515002265", "basis": "separate", "seq": 0, "row_order": 3, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -345096819, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250812000450", "basis": "separate", "seq": 0, "row_order": 5, "label": "지분법자본변동", "total_col": "자본>자본 합계", "value": 76049063, "fill_col": "자본>기타포괄손익누적액", "fill_ci": 2}
+{"rcept": "20250813000912", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4165325382, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20250814001480", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3333342354, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250814002023", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -398776835, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250814002625", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4655971200, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20250814002978", "basis": "separate", "seq": 0, "row_order": 2, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": 1335560, "fill_col": "자본>기타불입자본", "fill_ci": 1}
+{"rcept": "20251031000217", "basis": "consolidated", "seq": 0, "row_order": 9, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -255536673, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>기타포괄손익누계액", "fill_ci": 3}
+{"rcept": "20251113000141", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3051126335, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 4}
+{"rcept": "20251114001167", "basis": "separate", "seq": 0, "row_order": 1, "label": "분기순손실", "total_col": "자본>자본 합계", "value": -4892051428, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20251114001474", "basis": "separate", "seq": 0, "row_order": 10, "label": "Ⅴ.전환권대가", "total_col": "자본>자본 합계", "value": 440577000, "fill_col": "자본>기타자본구성요소", "fill_ci": 2}
+{"rcept": "20251114001636", "basis": "separate", "seq": 0, "row_order": 10, "label": "분기순이익", "total_col": "자본>자본 합계", "value": 1513180161, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20251114002436", "basis": "separate", "seq": 0, "row_order": 6, "label": "자기주식 거래로 인한 증감", "total_col": "자본>자본 합계", "value": 29473275, "fill_col": "자본>기타자본항목", "fill_ci": 1}
+{"rcept": "20260311003176", "basis": "separate", "seq": 0, "row_order": 17, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 11032825567, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20260312001418", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4166744337, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260313000218", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4166744337, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260316000918", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -8285397661, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20260318000278", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -3583070145, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20260318001376", "basis": "separate", "seq": 0, "row_order": 9, "label": "연차배당", "total_col": "자본>자본 합계", "value": -11608529000, "fill_col": "자본>이익잉여금", "fill_ci": 6}
+{"rcept": "20260318001470", "basis": "consolidated", "seq": 0, "row_order": 31, "label": "비지배지분의 감소", "total_col": "자본>자본 합계", "value": 1000, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>주식발행초과금 등을 제외한 자본잉여금", "fill_ci": 2}
+{"rcept": "20260318001476", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순손실", "total_col": "자본>자본 합계", "value": -6573575825, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20260318001677", "basis": "consolidated", "seq": 0, "row_order": 6, "label": "재평가잉여금", "total_col": "자본>자본 합계", "value": 55750734062, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>기타포괄손익누계액", "fill_ci": 2}
+{"rcept": "20260319000185", "basis": "consolidated", "seq": 0, "row_order": 15, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 4209746695, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>이익잉여금", "fill_ci": 3}
+{"rcept": "20260319000587", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -6327762559, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 3}
+{"rcept": "20260320001269", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 40761607, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260320001347", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -9758504978, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260323000016", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 7817349485, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260323001475", "basis": "separate", "seq": 0, "row_order": 2, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -206796895, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20260323001708", "basis": "separate", "seq": 0, "row_order": 10, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -231442961, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260323001708", "basis": "separate", "seq": 0, "row_order": 11, "label": "확정급여제도의 재측정요소", "total_col": "자본>자본 합계", "value": -231442961, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260324000162", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1487089838, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20260324000162", "basis": "separate", "seq": 0, "row_order": 11, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 3291570134, "fill_col": "자본>이익잉여금", "fill_ci": 2}
+{"rcept": "20260415000660", "basis": "separate", "seq": 0, "row_order": 10, "label": "기타포괄손익", "total_col": "자본>자본 합계", "value": -231442961, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260415000660", "basis": "separate", "seq": 0, "row_order": 11, "label": "확정급여제도의 재측정요소", "total_col": "자본>자본 합계", "value": -231442961, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260512000522", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1259990945, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20260514000038", "basis": "consolidated", "seq": 0, "row_order": 7, "label": "총포괄손익", "total_col": "자본>자본 합계", "value": 2805437362, "fill_col": "자본>지배기업의 소유주에게 귀속되는 지분>이익잉여금", "fill_ci": 3}
+{"rcept": "20260514001394", "basis": "separate", "seq": 0, "row_order": 6, "label": "Ⅱ.당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1055308063, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260514001401", "basis": "separate", "seq": 0, "row_order": 9, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 143794892, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20260515000468", "basis": "separate", "seq": 0, "row_order": 3, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -16597752801, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20260515000468", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1435500618, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20260515001001", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 1294596946, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260515001374", "basis": "separate", "seq": 0, "row_order": 2, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 5065544191, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20260515001374", "basis": "separate", "seq": 0, "row_order": 8, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": 6791685238, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20260515001648", "basis": "separate", "seq": 0, "row_order": 1, "label": "Ⅱ.당기순이익(손실)", "total_col": "자본>자본 합계", "value": -1917257018, "fill_col": "자본>이익잉여금", "fill_ci": 4}
+{"rcept": "20260515003064", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -85400679, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260518000011", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -85400679, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260706000055", "basis": "separate", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -9758504978, "fill_col": "자본>이익잉여금", "fill_ci": 3}
+{"rcept": "20260813000001", "basis": "consolidated", "seq": 0, "row_order": 1, "label": "당기순이익(손실)", "total_col": "자본>자본 합계", "value": -790520151, "fill_col": "자본>이익잉여금(결손금)", "fill_ci": 4}

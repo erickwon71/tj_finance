@@ -1,7 +1,8 @@
 """R183 — SCE source defects (per-rcept exception lists re-proved by identities).
 
 Real cases: 동진쎄미켐 `20170515004289` (value typos), 에코프로 `20180402002079` /
-`20181206000084` (row in the wrong year block, duplicated row). `docs/PARSING_RULES.md` R183.
+`20181206000084` (row in the wrong year block, duplicated row), 현대위아 `20240320001675`
+(movement printed only in the total column). `docs/PARSING_RULES.md` R183.
 """
 from __future__ import annotations
 
@@ -182,6 +183,57 @@ def test_row_drop_needs_exact_expected_values():
         if ln.row_order == 3 and ln.col_index == 3:
             ln.value_won = 104_092_713
     assert apply_source_defect_fixes(lines, "20180402002079") == []
+
+
+# ── 현대위아 2023FY separate SCE 2021 block (백만원 → 원) ──────────────────────
+_HW_COLS = {0: "자본>자본금", 1: "자본>기타불입자본", 2: "자본>기타자본구성요소",
+            3: "자본>이익잉여금", 4: "자본>자본 합계"}
+_M = 1_000_000
+
+
+def _hyundai_wia(closing_re=2_544_918):
+    lines = _rows("separate", [
+        (0, "2021.01.01 (기초자본)", {0: 135_975 * _M, 1: 425_996 * _M, 2: 25_336 * _M,
+                                  3: 2_440_374 * _M, 4: 3_027_681 * _M}),
+        (1, "기타포괄손익-공정가치측정금융자산평가손익", {0: 0, 1: 0, 2: 35 * _M, 3: 0, 4: 35 * _M}),
+        (3, "확정급여제도의 재측정요소", {0: 0, 1: 0, 2: 0, 3: 14_193 * _M, 4: 14_193 * _M}),
+        (4, "당기순이익(손실)", {0: 0, 1: 0, 2: 0, 3: 108_944 * _M, 4: 108_944 * _M}),
+        (7, "배당금의 지급", {4: -18_593 * _M}),
+        (8, "2021.12.31 (기말자본)", {0: 135_975 * _M, 1: 425_996 * _M, 2: 25_371 * _M,
+                                  3: closing_re * _M, 4: 3_132_260 * _M}),
+    ], _HW_COLS)
+    for ln in lines:
+        ln.context_raw = f"sce:separate:c{ln.col_index}"
+    return lines
+
+
+def test_cell_fill_adds_the_blank_component_cell():
+    lines = _hyundai_wia()
+    apply_source_defect_fixes(lines, "20240320001675")
+    assert _get(lines, "separate", 7, 3) == -18_593 * _M
+    added = [ln for ln in lines if ln.row_order == 7 and ln.col_index == 3][0]
+    assert added.col_label == "자본>이익잉여금" and added.context_raw == "sce:separate:c3"
+    assert _get(lines, "separate", 7, 4) == -18_593 * _M
+
+
+def test_cell_fill_skipped_when_roll_forward_does_not_prove_it():
+    lines = _hyundai_wia(closing_re=2_563_511)   # column already closes without the cell
+    apply_source_defect_fixes(lines, "20240320001675")
+    assert _get(lines, "separate", 7, 3) is None
+
+
+def test_cell_fill_skipped_when_cell_already_present():
+    lines = _hyundai_wia()
+    lines.append(_Line("separate", 7, "배당금의 지급", 3, -18_593 * _M, "자본>이익잉여금"))
+    n = len(lines)
+    apply_source_defect_fixes(lines, "20240320001675")
+    assert len(lines) == n
+
+
+def test_cell_fill_other_rcept_untouched():
+    lines = _hyundai_wia()
+    apply_source_defect_fixes(lines, "20240320001676")
+    assert _get(lines, "separate", 7, 3) is None
 
 
 # ── wiring ────────────────────────────────────────────────────────────────────

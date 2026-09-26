@@ -9,7 +9,7 @@ guard** — every listed correction is re-proved against the table on every relo
 silently skipped (with a warning) when the proof no longer holds, so a changed source
 or parser never gets overwritten with a stale "fix".
 
-Three kinds of source defect:
+Four kinds of source defect:
 
 1. `_VALUE_FIXES` — a printed cell value is wrong (typo / opening+closing summed).
    Guard: with the new value BOTH (a) the column roll-forward of its block
@@ -28,9 +28,16 @@ Three kinds of source defect:
    spurious row is what keeps that chain from closing the column; after the chain,
    `verify_row_drops()` requires the block to close exactly in every component column
    the row filled, and otherwise puts the row back.
+4. `_CELL_FILLS` — a movement printed only in the total column; the one component
+   column it belongs to is left blank in the source (U+3000), so no line exists.
+   A line is added, copied from the row's total cell.
+   Guard: before the fill the component column's block roll-forward is off by exactly
+   the amount and the row's components do not sum to its total; after the fill both
+   close exactly.
 """
 from __future__ import annotations
 
+import copy
 import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -90,6 +97,17 @@ _ROW_MOVES: Dict[Tuple[str, str, str, int], int] = {
 _ROW_DROPS: Dict[Tuple[str, str, str, int], Dict[int, int]] = {
     ("20180402002079", "separate", "지분법이익잉여금변동", 3): {2: 104_092_712, 3: 104_092_712},
     ("20181206000084", "separate", "지분법이익잉여금변동", 3): {2: 104_092_712, 3: 104_092_712},
+}
+
+# ── 4. cell fills: (rcept, basis, label_raw, row_order, col_label) → value ───────
+# 현대위아 00106623 2023FY 20240320001675, separate SCE 2021 block '배당금의 지급':
+# the source prints (18,593) in the total column only; the 이익잉여금 column is a
+# U+3000 blank. Every other component is 0 in that row, and the 이익잉여금 column
+# closes only with it: 2,440,374 + 14,193 + 108,944 - 18,593 = 2,544,918 (백만원).
+# The 2022/2023 blocks print the same row in both columns. Issue #84768, user asked
+# to fix it 2026-09-26.
+_CELL_FILLS: Dict[Tuple[str, str, str, int, str], int] = {
+    ("20240320001675", "separate", "배당금의 지급", 7, "자본>이익잉여금"): -18_593_000_000,
 }
 
 
@@ -239,18 +257,65 @@ def _apply_row_drops(lines: List, rcept_no: str) -> List[Tuple[Tuple, List]]:
     return dropped
 
 
+def _row_components_close(lines: Sequence, basis: str, table_seq, row_order: int,
+                          extra: int = 0) -> bool:
+    """Flat row identity: Σ non-total cells (+ `extra`) == the row's only total cell."""
+    row = [ln for ln in _sce(lines) if ln.basis == basis
+           and getattr(ln, "table_seq", None) == table_seq and ln.row_order == row_order]
+    totals = [ln for ln in row if _is_total_col(ln.col_label)]
+    if len(totals) != 1:
+        return False
+    parts = sum(int(ln.value_won) for ln in row if not _is_total_col(ln.col_label))
+    return parts + extra == int(totals[0].value_won)
+
+
+def _apply_cell_fills(lines: List, rcept_no: str) -> int:
+    n = 0
+    for (rcept, basis, label, ro, col_label), value in _CELL_FILLS.items():
+        if rcept != rcept_no:
+            continue
+        row = [ln for ln in _sce(lines) if ln.basis == basis
+               and (ln.label_raw or "").strip() == label and ln.row_order == ro]
+        totals = [ln for ln in row if _is_total_col(ln.col_label)]
+        # The column index comes from the same column's other rows.
+        col = [ln for ln in _sce(lines) if ln.basis == basis and ln.col_label == col_label
+               and {getattr(ln, "table_seq", None)} == {getattr(t, "table_seq", None) for t in totals}]
+        ok = (len(totals) == 1 and totals[0].value_won == value and col
+              and not any(ln.col_label == col_label for ln in row))
+        if ok:
+            seq, ci = getattr(totals[0], "table_seq", None), col[0].col_index
+            filled = copy.copy(totals[0])
+            filled.col_index, filled.col_label = ci, col_label
+            ctx = getattr(filled, "context_raw", None)
+            if ctx:
+                filled.context_raw = re.sub(r":c\d+$", f":c{ci}", ctx)
+            before = _residual_at(_column_entries(lines, basis, seq, ci), ro)
+            after = _residual_at(_column_entries(lines + [filled], basis, seq, ci), ro)
+            ok = (before == -value and after == 0
+                  and not _row_components_close(lines, basis, seq, ro)
+                  and _row_components_close(lines, basis, seq, ro, extra=value))
+        if not ok:
+            logger.warning(f"[R183] {rcept_no} {basis} '{label}' row {ro} {col_label}: "
+                           f"guard failed — cell fill skipped")
+            continue
+        lines.append(filled)
+        n += 1
+    return n
+
+
 def apply_source_defect_fixes(lines: List, rcept_no: Optional[str]) -> List[Tuple[Tuple, List]]:
-    """Apply value fixes, row moves and row drops in place. Call BEFORE the SCE sign
+    """Apply value fixes, cell fills, row moves and row drops in place. Call BEFORE the SCE sign
     repair chain. Returns the dropped rows, which `verify_row_drops()` must check after
     the chain."""
     if not rcept_no:
         return []
     n_val = _apply_value_fixes(lines, rcept_no)
+    n_fill = _apply_cell_fills(lines, rcept_no)
     n_mov = _apply_row_moves(lines, rcept_no)
     dropped = _apply_row_drops(lines, rcept_no)
-    if n_val or n_mov or dropped:
-        logger.debug(f"[R183] {rcept_no}: value {n_val} · row move {n_mov} · "
-                     f"row drop {len(dropped)}")
+    if n_val or n_fill or n_mov or dropped:
+        logger.debug(f"[R183] {rcept_no}: value {n_val} · cell fill {n_fill} · "
+                     f"row move {n_mov} · row drop {len(dropped)}")
     return dropped
 
 

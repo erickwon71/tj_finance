@@ -636,7 +636,41 @@ def _solve_single_flip(cells: Sequence[_Cell], block, anchors,
         return []                       # an anchor says this cell is positive
     signs = dict(current)
     signs[i] = -1
-    return [(i, -1)] + _subtotal_fixes(cells, move_i, subtotals, signs)
+    fixes = [(i, -1)] + _subtotal_fixes(cells, move_i, subtotals, signs)
+    if not _closes_after_flip(cells, block, fixes):
+        return []
+    return fixes
+
+
+def _closes_after_flip(cells: Sequence[_Cell], block, fixes) -> bool:
+    """R186 (2026-09-27, fix batch #33) — self-consistency of an R162-e solution. Apply
+    the flip, prove the subtotal rows again (R162-c), and require the block to close under
+    that Σ as well.
+
+    A sign loss can keep a real subtotal row from being proven, so it gets summed as a
+    movement (double-counted). The single-flip search can then find a mirror solution
+    that closes only under that wrong Σ. 고려아연 `20130814000828` 연결 기타포괄손익누계액
+    2012 block: 파생상품평가손실/부의지분법/해외사업환산 lost their parentheses, and
+    '기타포괄손익합계'/'총포괄손익합계' (2,413,817,620) were summed. Flipping the AFS gain
+    43,051,561,400 then "closed" 45,693.6 → 48,107.4. After that flip, '기타포괄손익합계'
+    is proven (|−2,413.8| = 2,413.8), and the block no longer closes, so the solution is
+    rejected. The row itself closes as printed: 43,051,561,400 + 325,846,581 (NCI)
+    = 43,377,407,981.
+
+    Not applied to the R162-f path: there the label-identified subtotals are already left
+    out on purpose, because the filer's own subtotal can be off (LG전자 `20250317001029`).
+    """
+    open_i, move_i, close_i = block
+    trial = list(cells)
+    for idx, sign in fixes:
+        trial[idx] = trial[idx]._replace(value=sign * abs(trial[idx].value))
+    # Rows proven as subtotals before the flip stay subtotals — the filer's own subtotal can
+    # carry the lost sign (샘표 `20141128001686` 2014 block: 3,379,965,224 = 2,451,790,724
+    # + 928,174,500 with the dividend's sign lost), so it stops adding up after a correct
+    # flip. Only newly proven subtotals are added.
+    subtotals = set(_proven_subtotals(cells, move_i)) | set(_proven_subtotals(trial, move_i))
+    total = trial[open_i].value + sum(trial[m].value for m in move_i if m not in subtotals)
+    return total == trial[close_i].value
 
 
 def _block_identity_holds(cells: Sequence[_Cell], block) -> bool:

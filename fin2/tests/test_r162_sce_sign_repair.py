@@ -618,3 +618,44 @@ def test_manual_fix_jeju_semi_scope_change_parent_total():
     apply_manual_sign_fixes([other, parent], "20200330002326")
     assert other.value_won == parent.value_won == -259_656_740
     assert parent.value_won + 21_837_466_740 == 21_577_810_000
+
+
+# ── R186: an R162-e flip must close the block after subtotals are proven again ──
+def _mirror_solution_table():
+    """고려아연 shape. True signs: 50 − 30 − 10 = 10 (기타포괄손익합계), 100 + 10 = 110.
+    As printed (30 and 10 lost their parentheses), the subtotal rows cannot be proven
+    and get summed, so flipping 50 alone "closes": 100 − 50 + 30 + 10 + 10 + 10 = 110."""
+    col = "자본>기타포괄손익누계액"
+    rows = [("2012.01.01 (기초자본)", 100), ("매도가능증권평가이익", 50), ("파생상품평가손실", 30),
+            ("해외사업환산손익", 10), ("기타포괄손익합계", 10), ("총포괄손익합계", 10),
+            ("2012.12.31 (기말자본)", 110)]
+    return [_Line("SCE", "consolidated", lab, v, col_index=0, col_label=col, row_order=ro)
+            for ro, (lab, v) in enumerate(rows)]
+
+
+def test_r186_mirror_solution_under_double_counted_subtotals_is_rejected():
+    lines = _mirror_solution_table()
+    fixes = repair_sce_sign_loss(lines)
+    assert not [c for c in fixes if c.label_raw == "매도가능증권평가이익"]
+    assert lines[1].value_won == 50
+
+
+def test_r186_plain_single_flip_still_applies():
+    # No subtotal rows: the existing R162-e behaviour is unchanged.
+    col = "자본>이익잉여금"
+    lines = [_Line("SCE", "consolidated", lab, v, col_index=0, col_label=col, row_order=ro)
+             for ro, (lab, v) in enumerate([("2012.01.01 (기초자본)", 100), ("배당금지급", 30),
+                                            ("2012.12.31 (기말자본)", 70)])]
+    repair_sce_sign_loss(lines)
+    assert lines[1].value_won == -30
+
+
+def test_r186_subtotal_proven_before_the_flip_stays_a_subtotal():
+    # 샘표 shape: the filer's subtotal adds the dividend with its sign lost (20 + 5 = 25).
+    col = "자본>이익잉여금"
+    rows = [("2014.01.01 (기초자본)", 100), ("당기순이익", 20), ("배당금지급", 5),
+            ("자본 증가(감소) 합계", 25), ("2014.09.30 (기말자본)", 115)]
+    lines = [_Line("SCE", "separate", lab, v, col_index=0, col_label=col, row_order=ro)
+             for ro, (lab, v) in enumerate(rows)]
+    repair_sce_sign_loss(lines)
+    assert lines[2].value_won == -5

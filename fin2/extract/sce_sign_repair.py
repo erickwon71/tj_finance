@@ -411,6 +411,12 @@ _MANUAL_SIGN_FIXES: Dict[Tuple[str, str, str, str, int], Tuple[int, int]] = {
         (47_822_249, -47_822_249),
     ("20200330002326", "consolidated", "연결대상범위의 변동", "기타자본구성요소", 22):
         (259_656_740, -259_656_740),
+    # batch #27: same row's parent-total cell. Only sign that closes both row identities
+    # (기타자본구성요소 = 지배합계, 지배합계 + 비지배지분 21,837,466,740 = 자본합계
+    # 21,577,810,000); the source prints it without parentheses.
+    ("20200330002326", "consolidated", "연결대상범위의 변동",
+     "지배기업의 소유주에게 귀속되는 자본 합계", 22):
+        (259_656_740, -259_656_740),
 
     # SKC 2020FY 20210322000882 consolidated
     ("20210322000882", "consolidated", "기타거래", "지배기업의 소유주에게 귀속되는 자본 합계", 16):
@@ -425,7 +431,7 @@ _MANUAL_SIGN_FIXES: Dict[Tuple[str, str, str, str, int], Tuple[int, int]] = {
 }
 
 # 두산 2019FY separate — 20200330004497 + byte-identical 20240418000398 · 20241002000388.
-# 3개 rcept 모두 동일 10패턴이라 별도로 생성한다(반복 리터럴을 피하려 코드로 구성해도
+# 3개 rcept 모두 동일 패턴이라 별도로 생성한다(반복 리터럴을 피하려 코드로 구성해도
 # _MANUAL_SIGN_FIXES 는 순수 데이터 딕셔너리로 유지 — 값 자체는 위 항목들과 같은
 # 방식으로 하드코드해야 `git grep` 로 이력을 추적하기 쉽다).
 _DOOSAN_2019_SEP_PATTERNS: Tuple[Tuple[str, str, int, int, int], ...] = (
@@ -434,11 +440,24 @@ _DOOSAN_2019_SEP_PATTERNS: Tuple[Tuple[str, str, int, int, int], ...] = (
     ("-배당금지급", "이익잉여금", 14, 100_425_616_900, -100_425_616_900),
     ("-자기주식", "기타자본구성요소", 17, 26_624_854_000, -26_624_854_000),
     ("소계.", "이익잉여금", 18, 161_906_101_681, -161_906_101_681),
-    ("-인적분할", "자본금", 55, -11_107_630_000, 11_107_630_000),  # revert
-    ("-인적분할", "기타포괄손익누계액", 55, -804_793_372, 804_793_372),  # revert
-    ("-인적분할", "이익잉여금", 55, 804_793_372, -804_793_372),
-    ("소계.", "자본금", 58, -11_107_630_000, 11_107_630_000),  # revert
-    ("소계.", "기타포괄손익누계액", 58, -804_793_372, 804_793_372),  # revert
+    # 2019 capital-transaction block (rows 52-58). The source prints every cell without
+    # parentheses. Signs come from the 2019 column roll-forward (opening row 40 +
+    # comprehensive subtotal row 48 + transaction subtotal row 58 = closing row 59) and
+    # the row identity of row 55 (components sum = 자본 합계 -750,816,303,718). The
+    # source note also says 자본금 fell because of the spin-off. batch #13 had
+    # registered five "revert" entries here (자본금/기타포괄손익누계액 on rows 55 and
+    # 58, 이익잉여금 on row 55) that pushed R162-e/f's already-correct values the wrong
+    # way. batch #27 removed them and lists only the cells the rules leave unsigned.
+    ("-주식선택권의 취소", "기타자본구성요소", 52, 460_905_100, -460_905_100),
+    ("-배당금지급", "이익잉여금", 54, 102_398_830_700, -102_398_830_700),
+    ("-배당금지급", "자본 합계", 54, 102_398_830_700, -102_398_830_700),
+    ("-인적분할", "기타자본구성요소", 55, 802_198_724_892, -802_198_724_892),
+    ("-인적분할", "자본 합계", 55, 750_816_303_718, -750_816_303_718),
+    ("-자기주식", "기타자본구성요소", 57, 592_076_206, -592_076_206),
+    ("-자기주식", "자본 합계", 57, 592_076_206, -592_076_206),
+    ("소계.", "기타자본구성요소", 58, 803_251_706_198, -803_251_706_198),
+    ("소계.", "이익잉여금", 58, 101_594_037_328, -101_594_037_328),
+    ("소계.", "자본 합계", 58, 853_807_210_624, -853_807_210_624),
 )
 for _rcept in ("20200330004497", "20240418000398", "20241002000388"):
     for _label, _concept, _row, _old, _new in _DOOSAN_2019_SEP_PATTERNS:

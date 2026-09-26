@@ -531,17 +531,57 @@ def test_manual_fix_is_wired_into_extract_report_lines():
 # --------------------------------------------------------------------------
 
 def test_manual_fix_disambiguates_repeated_label_by_row_order():
-    """두산 20200330004497 — '소계.' 라벨이 이익잉여금 열(row18)과 자본금 열(row58)에
-    서로 다른 정답으로 반복 등장한다. row_order 가 없으면 딕셔너리 키가 충돌해 한쪽만
+    """두산 20200330004497 — '소계.' 라벨이 2017 블록(row18)과 2019 블록(row58)에
+    같은 이익잉여금 열로 반복 등장한다. row_order 가 없으면 딕셔너리 키가 충돌해 한쪽만
     적용되거나 잘못된 값을 적용한다."""
     row18 = _Line("SCE", "separate", "소계.", 161_906_101_681,
                   col_index=4, col_label="자본>이익잉여금", row_order=18)
-    row58 = _Line("SCE", "separate", "소계.", -11_107_630_000,
-                  col_index=0, col_label="자본>자본금", row_order=58)
+    row58 = _Line("SCE", "separate", "소계.", 101_594_037_328,
+                  col_index=4, col_label="자본>이익잉여금", row_order=58)
     fixes = apply_manual_sign_fixes([row18, row58], "20200330004497")
     assert row18.value_won == -161_906_101_681
-    assert row58.value_won == 11_107_630_000
+    assert row58.value_won == -101_594_037_328
     assert len(fixes) == 2
+
+
+def test_manual_fix_doosan_2019_spinoff_block_closes_rollforward():
+    """batch #27 — 두산 2019 별도 SCE 자본거래 블록. 원문은 괄호가 전혀 없다.
+    batch #13 의 revert 5항목이 R162-e/f 가 이미 맞게 음수화한 자본금·기타포괄손익누계액
+    (row55·58)을 양수로 되돌리고 있었다(자본금은 분할로 감소 — 원문 주석 명시). 그
+    항목들을 빼고 남은 셀만 등재한 뒤, 블록 전체가 (1) 인적분할 행 항등식, (2) 소계 =
+    구성요소 합, (3) 기초 + 포괄손익소계 + 자본거래소계 = 기말 을 모두 만족해야 한다."""
+    cols = ["자본금", "자본잉여금", "기타자본구성요소", "기타포괄손익누계액", "이익잉여금", "자본 합계"]
+    # Values as R162-e/f leave them (before the manual list), row -> {concept: value}.
+    before = {
+        52: {"자본잉여금": 460_905_100, "기타자본구성요소": 460_905_100},
+        54: {"이익잉여금": 102_398_830_700, "자본 합계": 102_398_830_700},
+        55: {"자본금": -11_107_630_000, "자본잉여금": 62_490_051_174,
+             "기타자본구성요소": 802_198_724_892, "기타포괄손익누계액": -804_793_372,
+             "이익잉여금": 804_793_372, "자본 합계": 750_816_303_718},
+        57: {"기타자본구성요소": 592_076_206, "자본 합계": 592_076_206},
+        58: {"자본금": -11_107_630_000, "자본잉여금": 62_950_956_274,
+             "기타자본구성요소": 803_251_706_198, "기타포괄손익누계액": -804_793_372,
+             "이익잉여금": 101_594_037_328, "자본 합계": 853_807_210_624},
+    }
+    labels = {52: "-주식선택권의 취소", 54: "-배당금지급", 55: "-인적분할",
+              57: "-자기주식", 58: "소계."}
+    opening = [134_845_735_000, 734_169_198_021, -343_557_210_106, 137_012_789_266,
+               1_643_037_267_085, 2_305_507_779_266]
+    comprehensive = [0, 0, 0, 65_148_367_013, 627_803_727_893, 692_952_094_906]
+    closing = [123_738_105_000, 797_120_154_295, -1_146_808_916_304, 201_356_362_907,
+               2_169_246_957_650, 2_144_652_663_548]
+    for rcept in ("20200330004497", "20240418000398", "20241002000388"):
+        lines = [_Line("SCE", "separate", labels[r], v, col_index=cols.index(c),
+                       col_label=f"자본>{c}", row_order=r)
+                 for r, cells in before.items() for c, v in cells.items()]
+        apply_manual_sign_fixes(lines, rcept)
+        got = {(l.row_order, cols[l.col_index]): l.value_won for l in lines}
+        spin = [got.get((55, c), 0) for c in cols]
+        assert sum(spin[:-1]) == spin[-1] == -750_816_303_718
+        for i, c in enumerate(cols):
+            members = sum(got.get((r, c), 0) for r in (52, 54, 55, 57))
+            assert members == got.get((58, c), 0), c
+            assert opening[i] + comprehensive[i] + got.get((58, c), 0) == closing[i], c
 
 
 def test_manual_fix_reverts_a_previously_wrong_direction_flip():
@@ -563,3 +603,18 @@ def test_manual_fix_scoped_to_rcept_and_row_order_together():
     fixes = apply_manual_sign_fixes([wrong_row], "20170515004148")
     assert wrong_row.value_won == -329_265_129
     assert fixes == []
+
+
+def test_manual_fix_jeju_semi_scope_change_parent_total():
+    """batch #27 — 제주반도체 20200330002326 연결 '연결대상범위의 변동'(row22). 형제
+    기타자본구성요소 칸만 음수화돼 있어 행 항등식 두 개(구성요소 = 지배합계, 지배합계 +
+    비지배지분 = 자본합계)가 모두 깨져 있었다. 지배합계 칸도 음수여야 둘 다 닫힌다."""
+    other = _Line("SCE", "consolidated", "연결대상범위의 변동", 259_656_740, col_index=2,
+                  col_label="자본>지배기업의 소유주에게 귀속되는 자본>기타자본구성요소",
+                  row_order=22)
+    parent = _Line("SCE", "consolidated", "연결대상범위의 변동", 259_656_740, col_index=5,
+                   col_label="자본>지배기업의 소유주에게 귀속되는 자본>"
+                             "지배기업의 소유주에게 귀속되는 자본 합계", row_order=22)
+    apply_manual_sign_fixes([other, parent], "20200330002326")
+    assert other.value_won == parent.value_won == -259_656_740
+    assert parent.value_won + 21_837_466_740 == 21_577_810_000

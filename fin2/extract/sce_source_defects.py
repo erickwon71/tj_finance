@@ -303,6 +303,63 @@ def _apply_cell_fills(lines: List, rcept_no: str) -> int:
     return n
 
 
+def fill_total_only_rows(lines: List) -> int:
+    """R184 — the general form of `_CELL_FILLS` (user decision 2026-09-26, fix batch #31).
+
+    A movement row printed only in the total column, its component cell left blank.
+    A cell is added only when every condition holds:
+    - the table has exactly one total column, and the row's only non-zero cell is in it;
+    - among the component columns with NO cell in that row (a printed 0 is the source's
+      own answer and is never overwritten), exactly one has a block roll-forward residual
+      of exactly −value;
+    - the total column's own block closes (so the value is a real movement, not a
+      heading or a double-counted subtotal);
+    - after the fill that component column closes too.
+    """
+    sce = _sce(lines)
+    tables: Dict[Tuple, List] = {}
+    for ln in sce:
+        tables.setdefault((ln.basis, getattr(ln, "table_seq", None)), []).append(ln)
+    added: List = []
+    for (basis, seq), cells in tables.items():
+        cols: Dict[int, str] = {}
+        for ln in cells:
+            cols.setdefault(ln.col_index, ln.col_label or "")
+        total_cols = [ci for ci, cl in cols.items() if _is_total_col(cl)]
+        if len(total_cols) != 1:
+            continue
+        tot_ci = total_cols[0]
+        rows: Dict[int, List] = {}
+        for ln in cells:
+            if ln.row_order is not None:
+                rows.setdefault(ln.row_order, []).append(ln)
+        entries = {ci: _column_entries(lines, basis, seq, ci) for ci in cols}
+        for ro, row in rows.items():
+            nz = [ln for ln in row if ln.value_won != 0]
+            if len(nz) != 1 or nz[0].col_index != tot_ci:
+                continue
+            total = nz[0]
+            value = int(total.value_won)
+            if _residual_at(entries[tot_ci], ro) != 0:
+                continue
+            present = {ln.col_index for ln in row}
+            cands = [ci for ci in cols if ci != tot_ci and ci not in present
+                     and _residual_at(entries[ci], ro) == -value]
+            if len(cands) != 1:
+                continue
+            ci = cands[0]
+            filled = copy.copy(total)
+            filled.col_index, filled.col_label = ci, cols[ci]
+            ctx = getattr(filled, "context_raw", None)
+            if ctx:
+                filled.context_raw = re.sub(r":c\d+$", f":c{ci}", ctx)
+            if _residual_at(_column_entries(lines + [filled], basis, seq, ci), ro) != 0:
+                continue
+            added.append(filled)
+    lines.extend(added)
+    return len(added)
+
+
 def apply_source_defect_fixes(lines: List, rcept_no: Optional[str]) -> List[Tuple[Tuple, List]]:
     """Apply value fixes, cell fills, row moves and row drops in place. Call BEFORE the SCE sign
     repair chain. Returns the dropped rows, which `verify_row_drops()` must check after
@@ -311,6 +368,7 @@ def apply_source_defect_fixes(lines: List, rcept_no: Optional[str]) -> List[Tupl
         return []
     n_val = _apply_value_fixes(lines, rcept_no)
     n_fill = _apply_cell_fills(lines, rcept_no)
+    n_fill += fill_total_only_rows(lines)
     n_mov = _apply_row_moves(lines, rcept_no)
     dropped = _apply_row_drops(lines, rcept_no)
     if n_val or n_fill or n_mov or dropped:

@@ -9,7 +9,9 @@ from __future__ import annotations
 import inspect
 
 from fin2.extract import report_lines, report_lines_xbrl
-from fin2.extract.sce_source_defects import apply_source_defect_fixes, verify_row_drops
+from fin2.extract.sce_source_defects import (
+    apply_source_defect_fixes, fill_total_only_rows, verify_row_drops,
+)
 
 
 class _Line:
@@ -230,10 +232,47 @@ def test_cell_fill_skipped_when_cell_already_present():
     assert len(lines) == n
 
 
-def test_cell_fill_other_rcept_untouched():
+def test_cell_fill_other_rcept_filled_by_general_rule_r184():
     lines = _hyundai_wia()
     apply_source_defect_fixes(lines, "20240320001676")
-    assert _get(lines, "separate", 7, 3) is None
+    assert _get(lines, "separate", 7, 3) == -18_593 * _M
+
+
+# ── R184: general total-only row fill ────────────────────────────────────────
+def test_r184_fills_the_single_short_component_column():
+    lines = _hyundai_wia()
+    assert fill_total_only_rows(lines) == 1
+    assert _get(lines, "separate", 7, 3) == -18_593 * _M
+
+
+def test_r184_never_overwrites_a_printed_zero():
+    lines = _hyundai_wia()
+    lines.append(_Line("separate", 7, "배당금의 지급", 3, 0, "자본>이익잉여금"))
+    assert fill_total_only_rows(lines) == 0
+
+
+def test_r184_skips_when_two_columns_are_short_by_the_same_amount():
+    lines = _hyundai_wia()
+    for ln in lines:
+        if ln.row_order == 8 and ln.col_index == 2:
+            ln.value_won -= 18_593 * _M      # 기타자본구성요소 now also short by it
+    assert fill_total_only_rows(lines) == 0
+
+
+def test_r184_skips_when_total_column_does_not_close():
+    lines = _hyundai_wia()
+    for ln in lines:
+        if ln.row_order == 8 and ln.col_index == 4:
+            ln.value_won += 1
+    assert fill_total_only_rows(lines) == 0
+
+
+def test_r184_skips_tables_with_two_total_columns():
+    lines = _hyundai_wia()
+    for ln in lines:
+        if ln.col_index == 2:
+            ln.col_label = "자본>지배기업 소유지분 합계"
+    assert fill_total_only_rows(lines) == 0
 
 
 # ── wiring ────────────────────────────────────────────────────────────────────

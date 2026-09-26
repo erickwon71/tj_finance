@@ -286,7 +286,8 @@ def cmd_batch_reload(a):
 
 
 def cmd_batch_mark_fixed(a):
-    print(_j(ops.batch_mark_fixed(a.batch_id)))
+    exclude = [int(x) for x in a.exclude.split(",")] if a.exclude else []
+    print(_j(ops.batch_mark_fixed(a.batch_id, exclude=exclude, exclude_note=a.note)))
 
 
 def cmd_batch_set(a):
@@ -407,7 +408,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="XML 을 NAS(raw_report 심링크) 대신 SD 미러(/Volumes/dart_data/raw_report)에서 읽는다"
                          "(파일이 SD 에 없으면 자동으로 NAS 로 폴백)")
     y.set_defaults(fn=cmd_batch_reload)
-    y = bsp.add_parser("mark-fixed"); y.add_argument("batch_id", type=int); y.set_defaults(fn=cmd_batch_mark_fixed)
+    y = bsp.add_parser("mark-fixed"); y.add_argument("batch_id", type=int)
+    y.add_argument("--exclude", help="쉼표구분 issue_id — 고치지 않은(주차) 이슈. fixed 대신 open 으로 되돌린다")
+    y.add_argument("--note", help="--exclude 이슈를 되돌리는 사유(evidence 에 남음)")
+    y.set_defaults(fn=cmd_batch_mark_fixed)
     y = bsp.add_parser("set"); y.add_argument("batch_id", type=int)
     y.add_argument("--status", choices=["open", "waiting_decision", "reloading", "done", "abandoned"])
     y.add_argument("--rule"); y.add_argument("--note"); y.set_defaults(fn=cmd_batch_set)

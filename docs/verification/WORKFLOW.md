@@ -167,6 +167,7 @@ claude
    6. commit, `git push origin HEAD:main`
    7. `batch reload <id>`
    8. `batch mark-fixed <id>`
+      - 코드로 고치지 않고 주차한 이슈(원문 결함 등)는 `--exclude 1,2 --note "사유"` 로 빼야 한다. 트리거는 "필링이 재적재됐는가"만 보므로, 빼지 않으면 값이 그대로여도 fixed 가 된다(batch #25 사고). 뺀 이슈는 open 으로 돌아간다.
    9. `batch set <id> --status done`
 5. 배치가 끝나면 `/clear` 하거나 세션을 끝낸다. 다음 배치는 1부터 다시 한다.
 

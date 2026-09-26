@@ -182,6 +182,14 @@ def test_fix_batch_cycle_and_recheck(engines, as_role, monkeypatch):
     assert b["issues"] == 1
 
     monkeypatch.setattr(ops, "require_clean_pushed_head", lambda: "feedbee")
+    # a parked (not fixed) issue is released fixing → open, never marked fixed
+    res = ops.batch_mark_fixed(b["batch_id"], exclude=[issue_id], exclude_note="source defect")
+    assert res["released"] == [issue_id] and res["fixed"] == []
+    with ops._Tx(evidence="re-take for test") as c:
+        assert c.execute(text("SELECT status FROM verification.issues WHERE issue_id = :i"),
+                         {"i": issue_id}).scalar() == "open"
+        c.execute(text("UPDATE verification.issues SET status = 'fixing' WHERE issue_id = :i"),
+                  {"i": issue_id})
     res = ops.batch_mark_fixed(b["batch_id"])
     assert res["fixed"] == [] and res["not_fixed"]           # no reload yet → refused
     with engines["fix"].begin() as c:                          # the "reload" of the fix

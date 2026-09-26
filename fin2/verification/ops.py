@@ -1068,17 +1068,30 @@ def batch_reload(batch_id: int, limit: int | None = None,
     return {"batch_id": batch_id, "commit": commit, "targets": len(targets), **tally}
 
 
-def batch_mark_fixed(batch_id: int) -> dict:
+def batch_mark_fixed(batch_id: int, exclude: list[int] | None = None,
+                     exclude_note: str | None = None) -> dict:
     """fixing → fixed for every issue of the batch whose filing was actually reloaded with
-    changed data (the trigger enforces it). The rest stay fixing and are listed."""
+    changed data (the trigger enforces it). The rest stay fixing and are listed.
+
+    The trigger checks that the FILING was reloaded, not that this issue's cell changed —
+    an issue parked without a code fix (e.g. a source defect) whose filing got reloaded as
+    a batch target would pass. `exclude` releases such issues fixing → open instead
+    (batch #25: four parked issues were marked fixed this way)."""
     _require("fix")
     commit = require_clean_pushed_head()
-    fixed, not_changed = [], []
+    fixed, not_changed, released = [], [], []
     with engine.connect() as conn:
         ids = [r[0] for r in conn.execute(text("""
             SELECT issue_id FROM verification.issues
             WHERE fix_batch_id = :b AND status = 'fixing' ORDER BY issue_id"""),
             {"b": batch_id}).fetchall()]
+    excluded = set(exclude or ())
+    for iid in [i for i in ids if i in excluded]:
+        with _Tx(evidence=f"fix_batch:{batch_id} released (not fixed): {exclude_note or ''}") as conn:
+            conn.execute(text("""
+                UPDATE verification.issues SET status = 'open' WHERE issue_id = :i"""), {"i": iid})
+        released.append(iid)
+    ids = [i for i in ids if i not in excluded]
     for iid in ids:
         try:
             with _Tx(evidence=f"fix_batch:{batch_id} @ {commit}") as conn:
@@ -1088,7 +1101,7 @@ def batch_mark_fixed(batch_id: int) -> dict:
             fixed.append(iid)
         except Exception as exc:  # noqa: BLE001 — trigger refusal is per issue
             not_changed.append((iid, str(getattr(exc, "orig", exc)).splitlines()[0][:200]))
-    return {"batch_id": batch_id, "fixed": fixed, "not_fixed": not_changed}
+    return {"batch_id": batch_id, "fixed": fixed, "not_fixed": not_changed, "released": released}
 
 
 # ═══════════════════════════════ status ═══════════════════════════════

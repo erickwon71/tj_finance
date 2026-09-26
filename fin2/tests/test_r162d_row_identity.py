@@ -130,3 +130,52 @@ def test_note_lines_evidence_gated_by_capital_transaction_too():
     ]
     fixes = repair_sce_row_identity(lines)
     assert fixes == []
+
+
+# ── R185: column-consistency guard (도이치모터스 `20110516003437` shape) ──────────
+_COLS = {0: "자본>자본금", 1: "자본>자본조정", 2: "자본>이익잉여금", 3: "자본>자본 합계"}
+
+
+def _row(ro, label, vals):
+    return [_Line("SCE", "separate", label, v, col_index=ci, col_label=_COLS[ci], row_order=ro)
+            for ci, v in vals.items()]
+
+
+def _partial_evidence_table(movement=10, opening=40, closing=50):
+    total = lambda cap, adj, re_: cap - adj + re_          # noqa: E731 — true (negative) 자본조정
+    return (
+        _row(0, "2010.01.01 (기초자본)", {0: 100, 1: opening, 2: 50, 3: total(100, opening, 50)})
+        + _row(1, "합병으로 인한 증가", {0: 10, 1: movement})
+        + _row(2, "당기순이익", {2: 20, 3: 20})
+        + _row(3, "2010.12.31 (기말자본)", {0: 110, 1: closing, 2: 70, 3: total(110, closing, 70)})
+        + _row(4, "2011.01.01 (기초자본)", {0: 110, 1: closing, 2: 70, 3: total(110, closing, 70)})
+        + _row(5, "2011.03.31 (기말자본)", {0: 110, 1: closing, 2: 70, 3: total(110, closing, 70)})
+        # BS prints the closing balance in parentheses — evidence for `closing` only.
+        + [_Line("BS", "separate", "자본조정", -closing)]
+    )
+
+
+def test_r185_extends_partial_flip_to_the_whole_column():
+    lines = _partial_evidence_table()
+    fixes = repair_sce_row_identity(lines)
+    col = {ro: _sce(lines, "separate", ro, "자본>자본조정").value_won for ro in (0, 1, 3, 4, 5)}
+    assert col == {0: -40, 1: -10, 3: -50, 4: -50, 5: -50}
+    assert sum(f.anchor_label == "R185 열일관성 확장" for f in fixes) == 2
+
+
+def test_r185_keeps_proven_flips_when_the_whole_column_does_not_close():
+    # A real negative movement: flipping every positive cell can no longer close the block.
+    # R162-d's flips are each proven on their own, so they stay; nothing is extended.
+    lines = _partial_evidence_table(movement=-10, opening=40, closing=30)
+    fixes = repair_sce_row_identity(lines)
+    col = {ro: _sce(lines, "separate", ro, "자본>자본조정").value_won for ro in (0, 1, 3, 4, 5)}
+    assert col == {0: 40, 1: -10, 3: -30, 4: -30, 5: -30}
+    assert not [f for f in fixes if f.anchor_label == "R185 열일관성 확장"]
+
+
+def test_r185_leaves_flips_alone_when_no_closed_block_breaks():
+    # Evidence for every balance, no movement: R162-d flips them all, blocks stay closed.
+    lines = _partial_evidence_table(movement=0, opening=50, closing=50)
+    repair_sce_row_identity(lines)
+    col = {ro: _sce(lines, "separate", ro, "자본>자본조정").value_won for ro in (0, 3, 4, 5)}
+    assert col == {0: -50, 3: -50, 4: -50, 5: -50}

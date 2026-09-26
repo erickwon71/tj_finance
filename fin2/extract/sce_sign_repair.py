@@ -866,5 +866,100 @@ def repair_sce_row_identity(lines: List) -> List[Correction]:
                 col_index=ln.col_index, col_label=ln.col_label, label_raw=ln.label_raw or "",
                 old_value=old, new_value=-old, anchor_label="R162-d 행항등식+이중증거"))
     if corrections:
+        corrections = _column_consistency_guard(lines, corrections, anchors)
+    if corrections:
         logger.debug(f"[report_lines/R162-d] SCE 행 항등식 부호 복원 {len(corrections)}셀")
     return corrections
+
+
+def _column_residuals(col_lines: Sequence, override: Optional[Dict[int, int]] = None) -> List[int]:
+    """Roll-forward residual of every block of one SCE column (proven subtotals left out).
+    `override` maps `id(line)` → value to evaluate instead of the stored one."""
+    ordered = sorted(col_lines, key=lambda l: (l.row_order if l.row_order is not None else 0))
+    cells = [_Cell(line=l, basis=l.basis, label_raw=(l.label_raw or ""),
+                   col_label=getattr(l, "col_label", None),
+                   value=(override or {}).get(id(l), int(l.value_won))) for l in ordered]
+    out = []
+    for open_i, move_i, close_i in _blocks(cells):
+        subtotals = set(_proven_subtotals(cells, move_i))
+        out.append(cells[open_i].value
+                   + sum(cells[m].value for m in move_i if m not in subtotals)
+                   - cells[close_i].value)
+    return out
+
+
+def _row_identities_hold(lines: Sequence, basis: str, table_seq, row_order) -> bool:
+    by_path = {}
+    for ln in lines:
+        if (getattr(ln, "statement", None) != "SCE" or getattr(ln, "value_won", None) is None
+                or ln.basis != basis or getattr(ln, "table_seq", None) != table_seq
+                or ln.row_order != row_order or not getattr(ln, "col_label", None)):
+            continue
+        by_path[tuple(s.strip() for s in ln.col_label.split(">"))] = ln
+    for total, members in _row_identities(by_path):
+        if sum(int(by_path[m].value_won) for m in members) != int(by_path[total].value_won):
+            return False
+    return True
+
+
+def _column_consistency_guard(lines: List, corrections: List[Correction],
+                              anchors) -> List[Correction]:
+    """R185 (2026-09-27, fix batch #32) — R162-d decides row by row, and only cells whose
+    magnitude has negative evidence elsewhere get flipped. When the source dropped the
+    parentheses on a whole column, that flips part of the column and breaks a roll-forward
+    block that closed before (도이치모터스 `20110516003437` 자본조정: the 17,791,068,388
+    balances had BS evidence, the 2010 opening 14,636,161,542 and the merger movement had
+    none).
+
+    For each column R162-d touched: if a block closed before the flips and is broken
+    after, flip every remaining positive cell of the column as well — accepted only when
+    every block of the column then closes, every touched row's identities hold, and no
+    cell carries a positive anchor. Otherwise R162-d's flips stay as they are: each one is
+    proven on its own (row identity + negative evidence), so undoing them would trade
+    proven cells for a roll-forward that closes only because the whole column is wrong
+    (엔켐 `20240516001964`: the flipped 이익잉여금 closing −338,557,163,873 equals the BS).
+    """
+    by_col: Dict[Tuple, List[Correction]] = defaultdict(list)
+    for c in corrections:
+        by_col[(c.basis, c.table_seq, c.col_index)].append(c)
+    keep: List[Correction] = []
+    for (basis, table_seq, col_index), fixes in by_col.items():
+        col_lines = [ln for ln in lines if getattr(ln, "statement", None) == "SCE"
+                     and getattr(ln, "value_won", None) is not None and ln.basis == basis
+                     and getattr(ln, "table_seq", None) == table_seq and ln.col_index == col_index]
+        flipped_rows = {c.row_order for c in fixes}
+        before = {id(ln): -int(ln.value_won) for ln in col_lines if ln.row_order in flipped_rows}
+        res_before = _column_residuals(col_lines, before)
+        res_after = _column_residuals(col_lines)
+        if not any(b == 0 and a != 0 for b, a in zip(res_before, res_after)):
+            keep.extend(fixes)
+            continue
+        extend = [ln for ln in col_lines if int(ln.value_won) > 0]
+        ext_vals = {id(ln): -int(ln.value_won) for ln in extend}
+        ok = bool(extend) and all(r == 0 for r in _column_residuals(col_lines, ext_vals))
+        for ln in extend:
+            if not ok:
+                break
+            sign, _ = _required_sign(
+                _Cell(line=ln, basis=basis, label_raw=ln.label_raw or "",
+                      col_label=ln.col_label, value=int(ln.value_won)), anchors)
+            ok = sign != 1
+        if ok:
+            for ln in extend:
+                ln.value_won = -int(ln.value_won)
+            ok = all(_row_identities_hold(lines, basis, table_seq, ro)
+                     for ro in {ln.row_order for ln in extend} | flipped_rows)
+            if not ok:
+                for ln in extend:
+                    ln.value_won = -int(ln.value_won)
+        keep.extend(fixes)
+        if ok:
+            keep.extend(Correction(
+                basis=basis, table_seq=table_seq, row_order=ln.row_order, col_index=col_index,
+                col_label=ln.col_label, label_raw=ln.label_raw or "",
+                old_value=-int(ln.value_won), new_value=int(ln.value_won),
+                anchor_label="R185 열일관성 확장") for ln in extend)
+        else:
+            logger.debug(f"[R185] {basis} {table_seq} col {col_index}: R162-d partial flip "
+                         f"breaks a closed block; the whole column does not close — kept as is")
+    return keep

@@ -304,3 +304,30 @@ def test_r162f_lg_dividends_negative_despite_inconsistent_subtotal():
     div = {r.value_won for r in rows if r.statement == "SCE" and r.basis == "consolidated"
            and r.label_raw.strip() == "배당" and r.col_index == 8}
     assert div == {-231_468_000_000, -240_987_000_000, -316_709_000_000}
+
+
+# ── 개별 확정(fix batch #13, 2026-09-26): IS '재분류 OCI 관련 법인세' 부호 예외목록 ──
+def test_manual_is_sign_fix_e1_reclass_oci_tax():
+    """E1 2017Q1 20180130000271 — '당기손익으로 재분류되는 기타포괄손익의 구성요소와
+    관련된 법인세'는 R170-d(IncomeTaxExpenseContinuingOperations, 본선 법인세)가 보지
+    않는 별개 개념이다. 연결·별도 모두 세전재분류OCI − OCI = 이 값 등식으로 원문 부호가
+    자기증명되는데(연결 -3,541,999,661-(-4,712,736,047)=+1,170,736,386, 별도
+    55,600,396-73,351,436=-17,751,040) 파서가 반대로 저장했다."""
+    from fin2.extract.report_lines_xbrl import _apply_manual_is_sign_fixes
+    local = ("IncomeTaxRelatingToComponentsOfOtherComprehensiveIncomeThatWillBeReclassified"
+             "ToProfitOrLoss")
+    con = _is_row(local, -1_170_736_386, basis="consolidated")
+    sep = _is_row(local, 17_751_040, basis="separate")
+    fixed = _apply_manual_is_sign_fixes([con, sep], "20180130000271")
+    by_basis = {r.basis: r.value_won for r in fixed}
+    assert by_basis["consolidated"] == 1_170_736_386
+    assert by_basis["separate"] == -17_751_040
+
+
+def test_manual_is_sign_fix_scoped_to_rcept():
+    from fin2.extract.report_lines_xbrl import _apply_manual_is_sign_fixes
+    local = ("IncomeTaxRelatingToComponentsOfOtherComprehensiveIncomeThatWillBeReclassified"
+             "ToProfitOrLoss")
+    con = _is_row(local, -1_170_736_386, basis="consolidated")
+    fixed = _apply_manual_is_sign_fixes([con], "99999999999999")
+    assert fixed[0].value_won == -1_170_736_386

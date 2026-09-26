@@ -523,3 +523,43 @@ def test_manual_fix_requires_the_old_value_to_match():
 def test_manual_fix_is_wired_into_extract_report_lines():
     rl = (_ROOT / "fin2/extract/report_lines.py").read_text(encoding="utf-8")
     assert "apply_manual_sign_fixes(lines, rcept_no)" in rl
+
+
+# --------------------------------------------------------------------------
+# R162-manual — 배치#13(2026-09-26): row_order 로 같은 라벨의 반복 스냅샷을 가른다,
+# 그리고 '반대방향으로 뒤집힌' 셀을 되돌리는 revert 항목.
+# --------------------------------------------------------------------------
+
+def test_manual_fix_disambiguates_repeated_label_by_row_order():
+    """두산 20200330004497 — '소계.' 라벨이 이익잉여금 열(row18)과 자본금 열(row58)에
+    서로 다른 정답으로 반복 등장한다. row_order 가 없으면 딕셔너리 키가 충돌해 한쪽만
+    적용되거나 잘못된 값을 적용한다."""
+    row18 = _Line("SCE", "separate", "소계.", 161_906_101_681,
+                  col_index=4, col_label="자본>이익잉여금", row_order=18)
+    row58 = _Line("SCE", "separate", "소계.", -11_107_630_000,
+                  col_index=0, col_label="자본>자본금", row_order=58)
+    fixes = apply_manual_sign_fixes([row18, row58], "20200330004497")
+    assert row18.value_won == -161_906_101_681
+    assert row58.value_won == 11_107_630_000
+    assert len(fixes) == 2
+
+
+def test_manual_fix_reverts_a_previously_wrong_direction_flip():
+    """고려아연 20170515004148 — '(부의)지분법자본변동' 기타포괄손익누계액 셀은 원문
+    양수·같은 행 자본합계도 양수인데 이전 배치(R162-d)가 반대 방향으로 음수 처리해
+    놓았다. 예외목록은 이를 원문값으로 되돌린다(계속 음수로 고정하는 게 아니다)."""
+    line = _Line("SCE", "consolidated", "(부의)지분법자본변동", -329_265_129,
+                 col_index=3, col_label="자본>기타포괄손익누계액", row_order=36)
+    fixes = apply_manual_sign_fixes([line], "20170515004148")
+    assert line.value_won == 329_265_129
+    assert fixes[0].old_value == -329_265_129
+    assert fixes[0].new_value == 329_265_129
+
+
+def test_manual_fix_scoped_to_rcept_and_row_order_together():
+    """같은 rcept 의 같은 라벨·개념이라도 row_order 가 다르면 적용되지 않는다."""
+    wrong_row = _Line("SCE", "consolidated", "(부의)지분법자본변동", -329_265_129,
+                      col_index=3, col_label="자본>기타포괄손익누계액", row_order=999)
+    fixes = apply_manual_sign_fixes([wrong_row], "20170515004148")
+    assert wrong_row.value_won == -329_265_129
+    assert fixes == []

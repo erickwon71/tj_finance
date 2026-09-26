@@ -1040,6 +1040,40 @@ def _settle_is_tax_sign(lines: list[ReportLineRow]) -> list[ReportLineRow]:
     return [replace(r, value_won=-r.value_won) if id(r) in flip else r for r in lines]
 
 
+# verification fix batch #13(2026-09-26, sign_flip 잔여): 개별 확정 셀 예외목록 —
+# `sce_sign_repair._MANUAL_SIGN_FIXES` 와 같은 패턴(rcept 단위, old_value 일치 확인
+# 후에만 적용), IS(XBRL) 경로용. 이 리스트가 다루는 개념은 R170-d(`_settle_is_tax_sign`,
+# `IncomeTaxExpenseContinuingOperations`)가 보는 법인세비용 본선과 다르다 — 여기는
+# 기타포괄손익 재분류 조정분에 딸린 법인세(`IncomeTaxRelatingToComponentsOf…`) 라인이라
+# 별도 등재가 필요했다. E1 2017Q1 `20180130000271`: 세전재분류OCI·OCI 두 항목의 차로
+# 원문 부호가 자기증명되는데(연결 -3,541,999,661−(-4,712,736,047)=+1,170,736,386,
+# 별도 55,600,396−73,351,436=−17,751,040) 파서가 반대로 저장했다 — 원인 미상(회귀
+# 테스트로 고정, 재발하면 여기 값이 매 재적재마다 틀린 old_value 로 걸려 조용히
+# 무시되므로 다음 세션이 알아챌 수 있다).
+_MANUAL_IS_SIGN_FIXES: dict[tuple[str, str, str], tuple[int, int]] = {
+    ("20180130000271", "consolidated",
+     "IncomeTaxRelatingToComponentsOfOtherComprehensiveIncomeThatWillBeReclassifiedToProfitOrLoss"):
+        (-1_170_736_386, 1_170_736_386),
+    ("20180130000271", "separate",
+     "IncomeTaxRelatingToComponentsOfOtherComprehensiveIncomeThatWillBeReclassifiedToProfitOrLoss"):
+        (17_751_040, -17_751_040),
+}
+
+
+def _apply_manual_is_sign_fixes(lines: list[ReportLineRow], rcept_no: str) -> list[ReportLineRow]:
+    if not _MANUAL_IS_SIGN_FIXES:
+        return lines
+    out = []
+    for r in lines:
+        local = r.source_ref.split("/")[1] if r.source_ref and "/" in r.source_ref else None
+        fix = _MANUAL_IS_SIGN_FIXES.get((rcept_no, r.basis, local or ""))
+        if fix is not None and r.value_won == fix[0]:
+            out.append(replace(r, value_won=fix[1]))
+        else:
+            out.append(r)
+    return out
+
+
 def _emit_sce_lines(
     *, tree: PresentationTree, facts_by_qname: dict[QName, list[XbrlFact]],
     contexts: dict[str, XbrlContext], units: dict[str, XbrlUnit],
@@ -1466,7 +1500,7 @@ def extract_report_lines_xbrl(
 
             if not core_roles:
                 logger.debug(f"[report_lines_xbrl] {rcept_no}: core statement role 없음 → 빈 결과")
-            return _settle_is_tax_sign(lines)
+            return _apply_manual_is_sign_fixes(_settle_is_tax_sign(lines), rcept_no)
     except Exception as e:
         logger.warning(f"[report_lines_xbrl] {rcept_no}: 추출 실패 ({type(e).__name__}: {e})")
         return []

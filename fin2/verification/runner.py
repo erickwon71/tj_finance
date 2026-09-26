@@ -33,7 +33,11 @@ _EPOCH_RE = re.compile(r"\|(\d{10})\b")
 # further Bash call (including read-only `vq.py show`) for the rest of that run — the model
 # then can't even call `vq.py done`. Not a data problem, so it must not burn a retry or count
 # toward the consecutive-failure stop (docs/qa/handoff_2026-09-26_full_automation.md §2).
-_BASH_DENIED_RE = re.compile(r"Permission to use Bash has been denied")
+# ★The model's own summary paraphrases the denial instead of always quoting the literal tool
+# error ("Bash access was just denied", "Bash was denied on my first attempted write action" -
+# runs 393/394 same day, 2026-09-26 14:3x) - a literal-string match missed both and let the
+# runner stop itself again. "don't ask mode" is the one phrase every observed paraphrase kept.
+_BASH_DENIED_RE = re.compile(r"permission to use bash has been denied|don't ask mode", re.I)
 
 
 def _kv(conn, key: str) -> str:

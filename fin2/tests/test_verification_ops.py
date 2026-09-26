@@ -368,6 +368,27 @@ def test_runner_tool_denied_has_no_retry_penalty(engines, as_role, tmp_path):
                               "WHERE corp_code=:c"), {"c": CORP}).fetchone() == ("pending", 0)
 
 
+def test_runner_tool_denied_paraphrased_still_detected(engines, as_role, tmp_path):
+    # 2026-09-26 14:3x (runs 393/394, same day as the fix above): the model paraphrased the
+    # denial instead of quoting the tool error verbatim, so the literal-string match missed it
+    # and the runner stopped itself again 3 slots later. Only "don't ask mode" survived intact.
+    _admin_sql(engines, "UPDATE verification.progress SET status='pending', retry_count=0 "
+               "WHERE corp_code=:c", {"c": CORP})
+    as_role("verify")
+    slot = ops.claim(SLOT)
+    run_id = runner.start(slot, "sonnet")
+    log = _fake_log(tmp_path, "denied_paraphrase.json", {
+        "type": "result", "is_error": False, "num_turns": 10,
+        "result": "Bash access was denied (\"don't ask mode\" permission denial) on my very "
+                  "first attempted write action. Per the runner's explicit rule, I must not "
+                  "retry and must stop immediately."})
+    res = runner.finish(run_id, log, 0)
+    assert res["outcome"] == "tool_denied"
+    with engines["admin"].connect() as c:
+        assert c.execute(text("SELECT status, retry_count FROM verification.progress "
+                              "WHERE corp_code=:c"), {"c": CORP}).fetchone() == ("pending", 0)
+
+
 def test_reopen_after_batch_done_clears_stale_fix_batch_id(engines, as_role):
     # handoff docs/qa/handoff_2026-09-26_full_automation.md §5: reopening an issue whose
     # fix_batch_id points at an already-finished batch used to leave it invisible to both the

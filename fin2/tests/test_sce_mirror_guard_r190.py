@@ -212,3 +212,29 @@ def test_r190d_does_not_override_a_cell_proven_twice_inside_the_sce():
     ]
     prior = {datetime.date(2017, 12, 31): [("separate", "기타자본구성요소", 120), ("separate", "자본총계", 880)]}
     assert apply_dated_balance_signs(lines, prior) == []
+
+
+def test_r190d_skips_deficit_columns():
+    # 롤링스톤 `20190329004131`: the BS prints the deficit as a positive amount under '결손금'.
+    from fin2.extract.sce_sign_repair import apply_dated_balance_signs
+    lines = [
+        _Line("SCE", "separate", "2018.01.01 (기초자본)", -280, col_index=0, col_label="자본>결손금", row_order=0),
+        _Line("SCE", "separate", "2018.01.01 (기초자본)", 720, col_index=1, col_label=_TOT, row_order=0),
+        _Line("SCE", "separate", "당기순손실", -10, col_index=0, col_label="자본>결손금", row_order=1),
+        _Line("SCE", "separate", "2018.12.31 (기말자본)", -300, col_index=0, col_label="자본>결손금", row_order=2),
+    ]
+    prior = {datetime.date(2017, 12, 31): [("separate", "결손금", 280), ("separate", "자본총계", 720)]}
+    assert apply_dated_balance_signs(lines, prior) == []
+
+
+def test_r190d_skips_when_both_sce_checks_get_worse():
+    # 상아프론테크 `20260515001959` shape: flipping to the BS sign makes the column residual
+    # and the row identity both worse → the BS value is the suspect one.
+    from fin2.extract.sce_sign_repair import apply_dated_balance_signs
+    lines = [
+        *_sce_row("2025.01.01 (기초자본)", 0, -440, 1000, 560),
+        *_sce_row("기타변동", 1, 30, None, 30),
+        *_sce_row("2025.12.31 (기말자본)", 2, -400, 1000, 600),
+    ]
+    prior = {datetime.date(2024, 12, 31): [("separate", "기타자본구성요소", 440), ("separate", "자본총계", 560)]}
+    assert apply_dated_balance_signs(lines, prior) == []

@@ -1200,10 +1200,25 @@ def apply_dated_balance_signs(lines: List, prior_balances=None) -> List[Correcti
         # override that.
         # With no row identity at all (no group total column: 미래에셋생명 `20240320002014`),
         # a closing block alone is no proof — the mirror of a closed block closes too.
+        # '결손금' columns: the BS often prints the deficit as a positive amount under that
+        # label (롤링스톤 `20190329004131`, 온코크로스), so its sign is no evidence.
+        if "결손금" in concept and "잉여금" not in concept:
+            continue
         # Only identities that contain this cell's column count (a 자본잉여금 sub-identity in
-        # the same row says nothing about 자본조정).
+        # the same row says nothing about 자본조정). A cell with no block to check (residual
+        # None) but a holding row identity is proven as printed too (인지컨트롤스 2018.01.01,
+        # 수산인더스트리, 코스모화학: explicit parentheses).
         row_res = _cell_identity_residuals(lines, ln)
-        if _block_residual(lines, ln) == 0 and row_res and not any(row_res):
+        rf = _block_residual(lines, ln)
+        if rf in (0, None) and row_res and not any(row_res):
+            continue
+        # Both SCE checks get worse with the flip → the BS value is the suspect one
+        # (상아프론테크 `20260515001959`, 코스나인 `20240514000995`, 케스피온 `20160816000082`).
+        ln.value_won = -value
+        rf_after, row_after = _block_residual(lines, ln), _cell_identity_residuals(lines, ln)
+        ln.value_won = value
+        if (rf is not None and rf_after is not None and abs(rf_after) > abs(rf)
+                and row_res and sum(row_after) > sum(row_res)):
             continue
         targets.append((ln, concept, date))
     corrections: List[Correction] = []

@@ -13,8 +13,9 @@ matched by magnitude. This module adds anchors keyed by `(basis, concept label, 
 - Stage 1, same filing: BS col 1 (and col 2 in an annual report) are the prior period
   ends. Their dates come from the SCE's own opening dates. Col 1 is the day before the
   latest block's opening, and col 2 is the day before the next older block's opening.
-- Stage 2, other filings: `prior_balances`, which the loader reads from the prior annual
-  reports' BS col 0 (`load_prior_balances`). The extractor itself stays DB-free.
+- Stage 2, other filings: `prior_balances`, which the loader reads from the prior periodic
+  reports' BS col 0 — annual, half and quarter (R190) — (`load_prior_balances`). The
+  extractor itself stays DB-free.
 
 Guard: a date's anchors are used only when that BS's 자본총계 equals the SCE total
 column at the same date. That rules out restated periods and wrong column/date mapping.
@@ -31,6 +32,8 @@ _DATE_RE = re.compile(r"(\d{4})\s*[.\-/년]\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})"
 _OPEN_RE = re.compile(r"기\s*초")
 _CLOSE_RE = re.compile(r"기\s*말")
 _TOTAL_COL_RE = re.compile(r"합\s*계|총\s*계")
+# Note reference in a BS label: '(주20)', '(주석 21,31)' (same shape as pdf.py).
+_NOTE_REF_RE = re.compile(r"\(\s*주석?\s*\d[\d,\s와과및]*\)")
 
 # Prior-period BS balances handed in by the loader: date → [(basis, label, value)].
 PriorBalances = Dict[datetime.date, List[Tuple[str, str, int]]]
@@ -58,7 +61,7 @@ def balance_anchor_date(label: str) -> Optional[datetime.date]:
     return None
 
 
-def _is_bs_equity_total(label: str) -> bool:
+def is_bs_equity_total(label: str) -> bool:
     norm = re.sub(r"[\s\d.ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ()]", "", label or "")
     return "부채" not in norm and (norm.endswith("자본총계") or norm.endswith("자본합계")
                                    or norm == "총자본")
@@ -131,12 +134,17 @@ def add_dated_anchors(anchors: Dict, lines: Sequence,
 
     def admit(basis: str, date: datetime.date, rows: Iterable[Tuple[str, int]]) -> None:
         rows = list(rows)
-        totals = {v for label, v in rows if _is_bs_equity_total(label)}
+        totals = {v for label, v in rows if is_bs_equity_total(label)}
         if not totals or not (totals & sce_totals.get((basis, date), set())):
             return                      # restated / mismatched period — no evidence
         for label, v in rows:
             if label:
                 anchors.setdefault((basis, label, date), set()).add(v)
+                # R190 — BS labels carry note refs ('자본금 (주20)'); the SCE column concept
+                # does not (넵튠 `20210817001798`). Key the stripped label as well.
+                bare = _NOTE_REF_RE.sub("", label).strip()
+                if bare and bare != label:
+                    anchors.setdefault((basis, bare, date), set()).add(v)
 
     # Stage 1 — this filing's BS prior-period columns (and col 0 under its date).
     by_col: Dict[Tuple[str, int], List[Tuple[str, int]]] = defaultdict(list)
@@ -152,7 +160,7 @@ def add_dated_anchors(anchors: Dict, lines: Sequence,
             if (basis, ci) in by_col:
                 admit(basis, date, by_col[(basis, ci)])
 
-    # Stage 2 — prior annual reports supplied by the loader.
+    # Stage 2 — prior periodic reports (annual + interim, R190) supplied by the loader.
     for date, rows in (prior_balances or {}).items():
         per_basis: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
         for basis, label, v in rows:
@@ -164,9 +172,14 @@ def add_dated_anchors(anchors: Dict, lines: Sequence,
 
 
 def load_prior_balances(session, corp_code: str, rcept_no: str, years: int = 3) -> PriorBalances:
-    """Loader-side (DB) helper for stage 2: BS col 0 of this company's annual reports whose
-    period ends before this filing's, the latest `years` periods. For each period end, the
-    latest rcept that has BS lines (amendments included)."""
+    """Loader-side (DB) helper for stage 2: BS col 0 of this company's periodic reports
+    (annual, half, quarter) whose period ends before this filing's, within `years` years.
+    For each period end, the latest rcept that has BS lines (amendments included).
+
+    R190 (2026-09-27) — interim reports too. A comparative SCE block ends on a quarter or
+    half-year date (씨에스베어링 `20220516002123` 2021.03.31, 넵튠 `20210817001798`
+    2020.06.30); with annual BS only, those balances had no anchor and R162-e picked a
+    mirror solution."""
     from sqlalchemy import text
 
     rows = session.execute(text("""
@@ -174,14 +187,13 @@ def load_prior_balances(session, corp_code: str, rcept_no: str, years: int = 3) 
         prior AS (
             SELECT f.period_end_date, max(f.rcept_no) AS rcept_no
             FROM filings f, me
-            WHERE f.corp_code = :c AND f.report_type = 'annual'
+            WHERE f.corp_code = :c
               AND f.period_end_date IS NOT NULL AND f.period_end_date < me.period_end_date
+              AND f.period_end_date >= me.period_end_date - (:n * interval '1 year')
               AND f.rcept_no <> :r
               AND EXISTS (SELECT 1 FROM report_lines l WHERE l.rcept_no = f.rcept_no
                           AND l.statement = 'BS')
-            GROUP BY f.period_end_date
-            ORDER BY f.period_end_date DESC
-            LIMIT :n)
+            GROUP BY f.period_end_date)
         SELECT p.period_end_date, l.basis, l.label_raw, l.value_won
         FROM prior p JOIN report_lines l ON l.rcept_no = p.rcept_no
         WHERE l.statement = 'BS' AND l.col_index = 0 AND l.value_won IS NOT NULL"""),

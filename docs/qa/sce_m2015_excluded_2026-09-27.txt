@@ -1,0 +1,8 @@
+# M-set 2015+ reload exclusions (2026-09-27) — new extraction clearly worse, verified against BS / row identity
+# Final code (R190/R190-b) — still excluded:
+20190618000144	효성중공업 2019Q1 XBRL: DB 전기말 −904.7B 오류 상태에서 전기초 13셀(자본금 포함)까지 음수로 뒤집힘 — XBRL 경로, 원인 미조사
+20191114000117	비지배 기타자본항목 열 전체가 괄호 없이 인쇄(잔액 행 col6+col7=col8 은 col7 음수에서만 성립) — R162-e 가 변동 +250,400,208 을 거울해로 뒤집음. G-B(ii) 범위(사용자 결정으로 미구현)
+# Resolved by R190 (no longer excluded; final extraction = DB or verified improvement):
+#   20220516002123 씨에스베어링 — G-A 분기 BS 앵커(2021-03-31 기타자본항목 −4,067,083,224)로 주식선택권 +3,426,150 유지
+#   20210817001798 · 20220906000316 넵튠 — G-A 반기 BS '자본금 (주20)' 앵커(주석번호 제거)로 기말 자본금 뒤집기 거부
+#   20241114000214 제닉스로보틱스 — G-B(i) 기말 행 자체 증명(합계 = BS 자본총계)으로 이월잔액 뒤집기 거부

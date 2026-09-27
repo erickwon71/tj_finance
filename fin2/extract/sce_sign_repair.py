@@ -47,7 +47,8 @@ from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tu
 
 from loguru import logger
 
-from fin2.extract.sce_dated_anchors import add_dated_anchors, balance_anchor_date, block_period
+from fin2.extract.sce_dated_anchors import (add_dated_anchors, balance_anchor_date, block_period,
+                                            is_bs_equity_total)
 
 # Search-space guard. A real SCE block has a handful of movement rows per column;
 # anything wider is a layout we have not proven and must not guess at.
@@ -110,6 +111,60 @@ def build_sign_anchors(lines: Iterable) -> Dict[Tuple[str, str], Set[int]]:
         if value is None or not label:
             continue
         anchors[(ln.basis, label)].add(int(value))
+    return anchors
+
+
+def add_row_proven_anchors(anchors: Dict, lines: Iterable) -> Dict:
+    """R190 (2026-09-27) — a SCE balance row that proves its own printed signs.
+
+    Conditions, per balance row (date + 기초/기말 label): the row's top total cell equals
+    the BS 자본총계 admitted at that date by `add_dated_anchors` (R187 guard), and every
+    row identity holds as printed. Then each non-zero cell's printed value becomes a dated
+    anchor `(basis, column concept, date)`.
+
+    Why the BS total matters: a row that lost the same parentheses in every column still
+    adds up as printed (§3 of the design doc), so "the row holds" alone proves nothing.
+    With the total pinned to the BS, a consistent loss would have to flip the total too.
+
+    제닉스로보틱스 `20241114000214` 2024.09.30: 기타자본구성요소 +121,834,279 with the row
+    total 55,619,067,423 = BS 자본총계. The movement '주식매수선택권' was printed negative
+    (a spurious parenthesis), and the carried-balance pass flipped the closing balance to
+    close the column — a mirror solution. The anchor now rejects it.
+
+    Design: `docs/plans/sce_mirror_guard_design_2026-09-27.md` (G-B(i)). Only R162 uses it;
+    the later stages see values already repaired, not the printed row.
+    """
+    equity: Dict[Tuple[str, object], Set[int]] = defaultdict(set)
+    for key, values in anchors.items():
+        if len(key) == 3 and is_bs_equity_total(key[1]):
+            equity[(key[0], key[2])] |= values
+    if not equity:
+        return anchors
+    rows: Dict[Tuple, Dict[Tuple[str, ...], object]] = defaultdict(dict)
+    for ln in lines:
+        if (getattr(ln, "statement", None) != "SCE" or getattr(ln, "value_won", None) is None
+                or ln.row_order is None or not getattr(ln, "col_label", None)):
+            continue
+        rows[(ln.basis, getattr(ln, "table_seq", None), ln.row_order)][
+            tuple(s.strip() for s in ln.col_label.split(">"))] = ln
+    for (basis, _seq, _ro), by_path in rows.items():
+        date = balance_anchor_date(next(iter(by_path.values())).label_raw or "")
+        if date is None or (basis, date) not in equity:
+            continue
+        identities = _row_identities(by_path)
+        if not identities:
+            continue
+        top = min((total for total, _ in identities), key=len)
+        if int(by_path[top].value_won) not in equity[(basis, date)]:
+            continue
+        if any(sum(int(by_path[m].value_won) for m in members) != int(by_path[total].value_won)
+               for total, members in identities):
+            continue
+        for ln in by_path.values():
+            value = int(ln.value_won)
+            concept = concept_of_col_label(ln.col_label)
+            if value and concept:
+                anchors.setdefault((basis, concept, date), set()).add(value)
     return anchors
 
 
@@ -292,6 +347,14 @@ def _solve_block(cells: Sequence[_Cell], block, anchors,
     fixes = [(i, winner[i]) for i in members
              if winner[i] * abs(cells[i].value) != cells[i].value]
     fixes += _subtotal_fixes(cells, move_i, subtotals, winner)
+    # R190-b — the R186 self-consistency check for anchored solutions too. LB인베스트먼트
+    # `20260318000708` 연결 자본 합계 2025 block: the opening total is a typo (126,962,988,014
+    # = the closing, instead of 119,034,309,285), and the lost dividend parenthesis kept
+    # '자본 증가(감소) 합계' from being proven, so it was summed. With the closing anchored,
+    # "dividend −, subtotal −" closed the block. After the flip the subtotal is proven and
+    # the block no longer closes, so the solution is rejected.
+    if fixes and not _closes_after_flip(cells, block, fixes):
+        return [], ""
     return fixes, anchor_desc
 
 
@@ -515,6 +578,7 @@ def repair_sce_sign_loss(lines: List, prior_balances=None) -> List[Correction]:
     """
     # R162-e runs without BS/IS anchors too, so no early return on an empty anchor map.
     anchors = add_dated_anchors(build_sign_anchors(lines), lines, prior_balances)
+    anchors = add_row_proven_anchors(anchors, lines)      # R190 G-B(i)
 
     # (basis, table_seq, col_index) 단위로 한 열을 모은다 — SCE 의 col_index 는 기간이
     # 아니라 자본 구성요소 위치이므로, 항등식은 이 열 안에서 닫힌다.

@@ -179,3 +179,27 @@ def test_r185_leaves_flips_alone_when_no_closed_block_breaks():
     repair_sce_row_identity(lines)
     col = {ro: _sce(lines, "separate", ro, "자본>자본조정").value_won for ro in (0, 3, 4, 5)}
     assert col == {0: -50, 3: -50, 4: -50, 5: -50}
+
+
+def test_r185b_extends_despite_an_unrelated_defect_in_another_column():
+    # 모두투어 shape: the 2011 closing row has a second, unrelated 1-won defect in
+    # 이익잉여금, so its row identity cannot fully close. Extending the sign-lost 자본조정
+    # column still brings that row strictly closer, and every block closes.
+    lines = _partial_evidence_table()
+    for ln in lines:
+        if ln.row_order == 5 and ln.col_label == "자본>이익잉여금":
+            ln.value_won += 1
+    repair_sce_row_identity(lines)
+    col = {ro: _sce(lines, "separate", ro, "자본>자본조정").value_won for ro in (0, 1, 3, 4, 5)}
+    assert col == {0: -40, 1: -10, 3: -50, 4: -50, 5: -50}
+
+
+def test_r185b_no_extension_when_it_breaks_a_held_row_identity():
+    # The 2010 opening row's total is printed as if 자본조정 were positive (100 + 40 + 50):
+    # its identity holds as printed, and flipping 40 would break it.
+    lines = _partial_evidence_table()
+    for ln in lines:
+        if ln.row_order == 0 and ln.col_label == "자본>자본 합계":
+            ln.value_won = 190
+    repair_sce_row_identity(lines)
+    assert _sce(lines, "separate", 0, "자본>자본조정").value_won == 40

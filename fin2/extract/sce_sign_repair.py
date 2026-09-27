@@ -936,6 +936,29 @@ def _row_identities_hold(lines: Sequence, basis: str, table_seq, row_order) -> b
     return True
 
 
+def _row_identity_residuals(lines: Sequence, basis: str, table_seq, row_order) -> List[int]:
+    """|Σ members − total| of every row identity of one SCE row (empty: no identity)."""
+    by_path = {}
+    for ln in lines:
+        if (getattr(ln, "statement", None) != "SCE" or getattr(ln, "value_won", None) is None
+                or ln.basis != basis or getattr(ln, "table_seq", None) != table_seq
+                or ln.row_order != row_order or not getattr(ln, "col_label", None)):
+            continue
+        by_path[tuple(s.strip() for s in ln.col_label.split(">"))] = ln
+    return [abs(sum(int(by_path[m].value_won) for m in members) - int(by_path[total].value_won))
+            for total, members in _row_identities(by_path)]
+
+
+def _row_not_worse(before: Sequence[int], after: Sequence[int]) -> bool:
+    """R185-b: every identity that held still holds, and a row that does not fully close
+    gets strictly closer. A second, unrelated defect in another column of the row (모두투어
+    `20130829001679` 2013.06.30: 49,581,008 off in the NI row's parent total) must not block
+    an extension that the column's own blocks prove."""
+    if any(b == 0 and a != 0 for b, a in zip(before, after)):
+        return False
+    return not any(after) or sum(after) < sum(before)
+
+
 def _column_consistency_guard(lines: List, corrections: List[Correction],
                               anchors) -> List[Correction]:
     """R185 (2026-09-27, fix batch #32) — R162-d decides row by row, and only cells whose
@@ -947,8 +970,9 @@ def _column_consistency_guard(lines: List, corrections: List[Correction],
 
     For each column R162-d touched: if a block closed before the flips and is broken
     after, flip every remaining positive cell of the column as well — accepted only when
-    every block of the column then closes, every touched row's identities hold, and no
-    cell carries a positive anchor. Otherwise R162-d's flips stay as they are: each one is
+    every block of the column then closes, no touched row gets worse (R185-b: identities
+    that held still hold, and a row that does not fully close gets strictly closer), and
+    no cell carries a positive anchor. Otherwise R162-d's flips stay as they are: each one is
     proven on its own (row identity + negative evidence), so undoing them would trade
     proven cells for a roll-forward that closes only because the whole column is wrong
     (엔켐 `20240516001964`: the flipped 이익잉여금 closing −338,557,163,873 equals the BS).
@@ -979,10 +1003,14 @@ def _column_consistency_guard(lines: List, corrections: List[Correction],
                       col_label=ln.col_label, value=int(ln.value_won)), anchors)
             ok = sign != 1
         if ok:
+            touched_rows = {ln.row_order for ln in extend} | flipped_rows
+            before_res = {ro: _row_identity_residuals(lines, basis, table_seq, ro)
+                          for ro in touched_rows}
             for ln in extend:
                 ln.value_won = -int(ln.value_won)
-            ok = all(_row_identities_hold(lines, basis, table_seq, ro)
-                     for ro in {ln.row_order for ln in extend} | flipped_rows)
+            ok = all(_row_not_worse(before_res[ro],
+                                    _row_identity_residuals(lines, basis, table_seq, ro))
+                     for ro in touched_rows)
             if not ok:
                 for ln in extend:
                     ln.value_won = -int(ln.value_won)

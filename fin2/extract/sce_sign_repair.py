@@ -47,7 +47,7 @@ from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tu
 
 from loguru import logger
 
-from fin2.extract.sce_dated_anchors import add_dated_anchors, balance_anchor_date
+from fin2.extract.sce_dated_anchors import add_dated_anchors, balance_anchor_date, block_period
 
 # Search-space guard. A real SCE block has a handful of movement rows per column;
 # anything wider is a layout we have not proven and must not guess at.
@@ -1116,7 +1116,7 @@ def _block_residual(lines: Sequence, target) -> Optional[int]:
     return None
 
 
-def repair_sce_sibling_cells(lines: List, prior_balances=None) -> List[Correction]:
+def repair_sce_sibling_cells(lines: List, prior_balances=None, prior_income=None) -> List[Correction]:
     """R189 (2026-09-27, fix batch #37) — a row identity left broken after the whole chain
     is closed by its unique minimal set of positive cells (`_row_flip_solution`, the R162-d
     search) when **each** of those cells is also supported by its own column. Flipping it
@@ -1176,11 +1176,16 @@ def repair_sce_sibling_cells(lines: List, prior_balances=None) -> List[Correctio
                 break
             if not _is_balance_label(ln.label_raw or ""):
                 # Movement rows need a sign that is known from outside the table: the IS
-                # prints the same amount as negative, or the row is a dividend / treasury
-                # acquisition (negative by nature). Measured without this: OCI/NI rows
-                # contradicted the IS in 60 of 145 evidenced cells (20231114002833 NI total,
-                # 20120417000015 AFS gain) …
-                if not (is_signs.get(abs(v)) == {False}
+                # prints the same amount as negative (this filing, or R189-b the earlier
+                # report whose IS covers exactly this block's period), or the row is a
+                # dividend / treasury acquisition (negative by nature). Measured without
+                # this: OCI/NI rows contradicted the IS in 60 of 145 evidenced cells
+                # (20231114002833 NI total, 20120417000015 AFS gain) …
+                prior_signs = _prior_income_signs(lines, ln, prior_income)
+                if prior_signs == {True} or is_signs.get(abs(v)) == {True}:
+                    ok = False
+                    break
+                if not (is_signs.get(abs(v)) == {False} or prior_signs == {False}
                         or _NEGATIVE_BY_NATURE_RE.search(ln.label_raw or "")):
                     ok = False
                     break
@@ -1203,3 +1208,45 @@ def repair_sce_sibling_cells(lines: List, prior_balances=None) -> List[Correctio
     if corrections:
         logger.debug(f"[report_lines/R189] SCE 행 항등식 형제 셀 부호 복원 {len(corrections)}셀")
     return corrections
+
+
+def _prior_income_signs(lines: Sequence, target, prior_income) -> Set[bool]:
+    """R189-b — signs of `|target|` in the earlier report's IS whose period is exactly the
+    block's period (same basis). Empty set = no evidence."""
+    if not prior_income:
+        return set()
+    period = block_period(lines, target)
+    if period is None:
+        return set()
+    magnitude = abs(int(target.value_won))
+    return {v > 0 for basis, label, v in prior_income.get(period, ())
+            if basis == target.basis and abs(v) == magnitude
+            and _same_income_item(target.label_raw or "", label or "")}
+
+
+# R189-b label guard: the IS line must be the same kind of item as the SCE movement, or a
+# comprehensive-income subtotal (one-item OCI sections print the same amount twice).
+# Measured: 67 of 363 matches had a different label family. Most were such subtotals, but
+# some were coincidences (20140717000223 '해외사업환산손익' vs IS '해외사업장순투자의 위험회피').
+_INCOME_FAMILIES = (
+    ("afs", re.compile(r"매도가능|공정가치|금융자산\s*평가|증권\s*평가")),
+    ("fx", re.compile(r"환\s*산")),
+    ("db", re.compile(r"재\s*측\s*정|보험\s*수리|확정\s*급여")),
+    ("eq", re.compile(r"지분법|관계기업")),
+    ("ni", re.compile(r"순\s*이\s*익|순\s*손\s*실|순\s*손\s*익")),
+    ("reval", re.compile(r"재\s*평\s*가")),
+    ("hedge", re.compile(r"위험\s*회피|파생")),
+)
+_INCOME_SUBTOTAL_RE = re.compile(
+    r"^[\s\dⅠ-Ⅹ().]*(세후\s*)?(기타\s*)?포괄\s*(손익|이익|손실)|재분류|지배기업|소유주")
+
+
+def _income_families(label: str) -> Set[str]:
+    return {name for name, rx in _INCOME_FAMILIES if rx.search(label)}
+
+
+def _same_income_item(sce_label: str, is_label: str) -> bool:
+    is_fam = _income_families(is_label)
+    if _income_families(sce_label) & is_fam:
+        return True
+    return not is_fam and bool(_INCOME_SUBTOTAL_RE.search(is_label))

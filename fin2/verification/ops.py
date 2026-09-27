@@ -485,13 +485,13 @@ def write_review_csvs(slot: Slot, detail: dict) -> dict[str, str]:
                                    fiscal_period=info["fiscal_period"], rows=rows)
             missing = None
             if kind == "xml":
-                from fin2.extract.sce_dated_anchors import load_prior_balances
+                from fin2.extract.sce_dated_anchors import load_prior_evidence
+                prior_bs, prior_is = load_prior_evidence(session, info["corp_code"], f["rcept_no"])
                 lines = extract_report_lines(
                     path, rcept_no=f["rcept_no"], corp_code=info["corp_code"],
                     report_fiscal_year=info["fiscal_year"],
                     report_fiscal_period=info["fiscal_period"], include_notes=False,
-                    prior_balances=load_prior_balances(session, info["corp_code"],
-                                                       f["rcept_no"]))
+                    prior_balances=prior_bs, prior_income=prior_is)
                 checks.append(orphan_tables.check(path))
                 missing, row_check = row_coverage.scan(path, lines)
                 checks.append(row_check)
@@ -1044,13 +1044,13 @@ def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, s
                                           report_fiscal_period=t.fiscal_period,
                                           period_end_date=t.period_end_date)
     else:
-        from fin2.extract.sce_dated_anchors import load_prior_balances
+        from fin2.extract.sce_dated_anchors import load_prior_evidence
         with get_session() as s:
-            prior = load_prior_balances(s, t.corp_code, rcept)      # R187 stage 2
+            prior_bs, prior_is = load_prior_evidence(s, t.corp_code, rcept)  # R187 / R189-b
         lines = extract_report_lines(file_path, rcept_no=rcept, corp_code=t.corp_code,
                                      report_fiscal_year=t.fiscal_year,
                                      report_fiscal_period=t.fiscal_period, include_notes=True,
-                                     prior_balances=prior)
+                                     prior_balances=prior_bs, prior_income=prior_is)
     if not lines:
         return "failed", "추출 0행 — 기존 적재를 지우지 않고 중단"
     try:

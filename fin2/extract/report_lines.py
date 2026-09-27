@@ -1985,6 +1985,7 @@ def extract_report_lines(
     report_fiscal_period: str,
     include_notes: bool = False,
     prior_balances: dict | None = None,
+    prior_income: dict | None = None,
 ) -> list[ReportLineRow]:
     """계층2 추출 진입점. 본문(BS/IS/CF) 을 tree 로 전사. `include_notes=True` 면 주석 표도.
 
@@ -1997,6 +1998,8 @@ def extract_report_lines(
 
     `prior_balances`(R187 2단계): 적재 쪽이 `sce_dated_anchors.load_prior_balances()` 로 읽어
     넘기는 직전 사업보고서 BS 잔액. 추출기는 DB 를 모른 채로 둔다. None 이면 필링 내부 증거만 쓴다.
+    `prior_income`(R189-b): 같은 방식으로 넘기는 이전 보고서 IS(연간·누적) 금액, 키=(기간 시작, 끝).
+    둘 다 `sce_dated_anchors.load_prior_evidence()` 가 한 번에 읽는다.
     """
     root = _parse_xml_file(Path(file_path))
     if root is None:
@@ -2159,7 +2162,7 @@ def extract_report_lines(
 
     # R189(2026-09-27) — 체인 뒤에도 깨진 행 항등식을 유일한 최소 양수 셀 조합으로 닫는다.
     # 각 셀은 자기 열 롤포워드 잔차를 줄여야 한다(형제 합계 열 미수정 해소).
-    sibling_fixes = repair_sce_sibling_cells(lines, prior_balances)
+    sibling_fixes = repair_sce_sibling_cells(lines, prior_balances, prior_income)
     if sibling_fixes:
         logger.debug(f"[report_lines] R189 SCE 형제 셀 복원: {len(sibling_fixes)}셀 ({rcept_no})")
 

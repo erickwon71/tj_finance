@@ -190,3 +190,66 @@ def load_prior_balances(session, corp_code: str, rcept_no: str, years: int = 3) 
     for date, basis, label, value in rows:
         out[date].append((basis, label, int(value)))
     return dict(out)
+
+
+# Prior-period income-statement amounts handed in by the loader (R189-b):
+# (period start, period end) → [(basis, label, value)].
+PriorIncome = Dict[Tuple[datetime.date, datetime.date], List[Tuple[str, str, int]]]
+
+
+def block_period(lines: Sequence, target) -> Optional[Tuple[datetime.date, datetime.date]]:
+    """`(opening date, closing date)` of the SCE block (in `target`'s column) that holds
+    `target`'s row, from the block's own balance labels."""
+    col = sorted((ln for ln in lines if getattr(ln, "statement", None) == "SCE"
+                  and ln.basis == target.basis
+                  and getattr(ln, "table_seq", None) == getattr(target, "table_seq", None)
+                  and ln.col_index == target.col_index and ln.row_order is not None),
+                 key=lambda l: l.row_order)
+    open_d = None
+    for ln in col:
+        label = ln.label_raw or ""
+        if _OPEN_RE.search(label):
+            open_d = _label_date(label) if ln.row_order <= target.row_order else open_d
+        elif _CLOSE_RE.search(label) and ln.row_order >= target.row_order:
+            close_d = _label_date(label)
+            return (open_d, close_d) if open_d and close_d else None
+    return None
+
+
+def load_prior_income(session, corp_code: str, rcept_no: str, years: int = 3) -> PriorIncome:
+    """Loader-side (DB) helper for R189-b: IS amounts of this company's earlier reports
+    (annual full year, interim cumulative year-to-date), keyed by their period. The period
+    start is the day after the latest annual period end before it (fiscal year start)."""
+    from sqlalchemy import text
+
+    rows = session.execute(text("""
+        WITH me AS (SELECT period_end_date FROM filings WHERE rcept_no = :r),
+        prior AS (
+            SELECT f.period_end_date, f.report_type, max(f.rcept_no) AS rcept_no
+            FROM filings f, me
+            WHERE f.corp_code = :c AND f.period_end_date IS NOT NULL
+              AND f.period_end_date < me.period_end_date
+              AND f.period_end_date >= me.period_end_date - (:n * interval '1 year')
+              AND f.rcept_no <> :r
+            GROUP BY f.period_end_date, f.report_type)
+        SELECT p.period_end_date, p.report_type, l.basis, l.label_raw, l.value_won
+        FROM prior p JOIN report_lines l ON l.rcept_no = p.rcept_no
+        WHERE l.statement = 'IS' AND l.col_index = 0 AND l.value_won IS NOT NULL
+          AND (p.report_type = 'annual' OR l.is_cumulative)"""),
+        {"r": rcept_no, "c": corp_code, "n": years + 1}).fetchall()
+    annual_ends = session.execute(text("""
+        SELECT DISTINCT period_end_date FROM filings
+        WHERE corp_code = :c AND report_type = 'annual' AND period_end_date IS NOT NULL"""),
+        {"c": corp_code}).scalars().all()
+    out: PriorIncome = defaultdict(list)
+    for end, rtype, basis, label, value in rows:
+        before = [d for d in annual_ends if d < end]
+        start = (max(before) + datetime.timedelta(days=1)) if before else datetime.date(end.year, 1, 1)
+        out[(start, end)].append((basis, label, int(value)))
+    return dict(out)
+
+
+def load_prior_evidence(session, corp_code: str, rcept_no: str) -> Tuple[PriorBalances, PriorIncome]:
+    """Both loader-side evidence sets for `extract_report_lines(prior_balances=, prior_income=)`."""
+    return (load_prior_balances(session, corp_code, rcept_no),
+            load_prior_income(session, corp_code, rcept_no))

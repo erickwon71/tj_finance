@@ -38,7 +38,7 @@ from fin2.extract.consolidation_evidence import store_filing_consolidation_evide
 from fin2.extract.ifrs_evidence import store_filing_ifrs_evidence
 from fin2.extract.report_lines import (extract_report_lines, store_note_lines,
                                        store_report_lines, store_report_tables)
-from fin2.extract.sce_dated_anchors import load_prior_balances
+from fin2.extract.sce_dated_anchors import load_prior_evidence
 
 FY_MIN = 1999
 
@@ -130,8 +130,9 @@ def sync_layer2_lines(
                     report_fiscal_year=t.fiscal_year,
                     report_fiscal_period=t.fiscal_period,
                     include_notes=True,
-                    # R187 stage 2 — prior annual BS balances as dated sign anchors.
-                    prior_balances=load_prior_balances(session, t.corp_code, t.rcept_no),
+                    # R187 stage 2 / R189-b — earlier reports' BS balances and IS amounts.
+                    **dict(zip(("prior_balances", "prior_income"),
+                               load_prior_evidence(session, t.corp_code, t.rcept_no))),
                 )
                 out["rows"] += store_note_lines(session, t.rcept_no, lines)
                 store_report_tables(session, t.rcept_no, lines)   # 표 메타(F3)

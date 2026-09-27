@@ -153,3 +153,27 @@ def test_r189_needs_the_column_to_shrink():
     # The total column would move away from closing (+10 is right for that column).
     lines = _sibling_table(total_closing=115)
     assert repair_sce_sibling_cells(lines) == []
+
+
+# ── R189-b: the earlier report's IS for exactly this block's period ────────────
+_PERIOD = (datetime.date(2012, 1, 1), datetime.date(2012, 12, 31))
+
+
+def test_r189b_prior_is_for_the_block_period_is_outside_evidence():
+    prior_income = {_PERIOD: [("consolidated", "해외사업환산손실", -10)]}
+    fixes = repair_sce_sibling_cells(_sibling_table(), prior_income=prior_income)
+    assert [(f.label_raw, f.new_value) for f in fixes] == [("해외사업환산차이", -10)]
+
+
+def test_r189b_other_period_or_other_item_is_no_evidence():
+    other_period = {(datetime.date(2011, 1, 1), datetime.date(2011, 12, 31)):
+                    [("consolidated", "해외사업환산손실", -10)]}
+    assert repair_sce_sibling_cells(_sibling_table(), prior_income=other_period) == []
+    other_item = {_PERIOD: [("consolidated", "해외사업장순투자의 위험회피", -10)]}
+    assert repair_sce_sibling_cells(_sibling_table(), prior_income=other_item) == []
+
+
+def test_r189b_prior_is_positive_vetoes():
+    prior_income = {_PERIOD: [("consolidated", "해외사업환산이익", 10)]}
+    lines = _sibling_table() + [_Line("IS", "consolidated", "해외사업환산손실", -10, period="FY")]
+    assert repair_sce_sibling_cells(lines, prior_income=prior_income) == []

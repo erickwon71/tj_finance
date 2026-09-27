@@ -1149,6 +1149,75 @@ _NEGATIVE_BY_NATURE_RE = re.compile(r"배\s*당|자\s*기\s*주\s*식\s*(의\s*)
 _TOLERANCE_WON = 1_000
 
 
+def _cell_identity_residuals(lines: Sequence, target) -> List[int]:
+    """|Σ members − total| of the row identities of `target`'s row that include its column."""
+    by_path = {}
+    for ln in lines:
+        if (getattr(ln, "statement", None) != "SCE" or getattr(ln, "value_won", None) is None
+                or ln.basis != target.basis
+                or getattr(ln, "table_seq", None) != getattr(target, "table_seq", None)
+                or ln.row_order != target.row_order or not getattr(ln, "col_label", None)):
+            continue
+        by_path[tuple(x.strip() for x in ln.col_label.split(">"))] = ln
+    me = tuple(x.strip() for x in (target.col_label or "").split(">"))
+    return [abs(sum(int(by_path[m].value_won) for m in members) - int(by_path[total].value_won))
+            for total, members in _row_identities(by_path) if me == total or me in members]
+
+
+def apply_dated_balance_signs(lines: List, prior_balances=None) -> List[Correction]:
+    """R190-d (2026-09-27, user decision "measure, then apply") — a SCE balance cell whose
+    magnitude equals the BS balance of its column concept at its own date takes the BS sign,
+    even when the block does not close.
+
+    Evidence is the R187 dated anchor. It is admitted only when that date's BS 자본총계 equals
+    the SCE total at that date, and then must match this cell's magnitude exactly with only
+    the opposite sign. Runs last in the chain; only balance rows are touched, never movements.
+
+    Before this rule, a proven balance stayed wrong when the column had another defect
+    (화승엔터프라이즈 `20210319000901` 2018.01.01 기타자본구성요소 −14,306,637,624, BS 2017-12-31)
+    or when the block closed as printed with no movement (미래에셋생명 `20240320002014` 2023
+    자본조정 371,276,252,895, BS −371,276,252,895; 대화제약 `20221114000343` 2021 자기주식).
+    Older code sometimes got these right by accident; R190-c removed the accidents.
+    """
+    anchors = add_dated_anchors(build_sign_anchors(lines), lines, prior_balances)
+    targets = []
+    for ln in lines:
+        if (getattr(ln, "statement", None) != "SCE" or getattr(ln, "value_won", None) is None
+                or not ln.value_won):
+            continue
+        date = balance_anchor_date(ln.label_raw or "")
+        concept = concept_of_col_label(getattr(ln, "col_label", None))
+        if date is None or not concept:
+            continue
+        values = anchors.get((ln.basis, concept, date))
+        value = int(ln.value_won)
+        if not values or -value not in values or value in values:
+            continue
+        # Guard: the BS can be wrong too (비엘팜텍 `20260515000210`: DB consolidated BS 자본금
+        # −13,341,512,500, separate +; 인지컨트롤스 `20180515001307`: SCE OCI printed with
+        # parentheses, closing its block and its row). A cell whose block closes AND whose row
+        # identities hold as it stands is proven twice inside the SCE — the BS does not
+        # override that.
+        # With no row identity at all (no group total column: 미래에셋생명 `20240320002014`),
+        # a closing block alone is no proof — the mirror of a closed block closes too.
+        # Only identities that contain this cell's column count (a 자본잉여금 sub-identity in
+        # the same row says nothing about 자본조정).
+        row_res = _cell_identity_residuals(lines, ln)
+        if _block_residual(lines, ln) == 0 and row_res and not any(row_res):
+            continue
+        targets.append((ln, concept, date))
+    corrections: List[Correction] = []
+    for ln, concept, date in targets:
+        value = int(ln.value_won)
+        corrections.append(Correction(
+            basis=ln.basis, table_seq=getattr(ln, "table_seq", None), row_order=ln.row_order,
+            col_index=ln.col_index, col_label=ln.col_label, label_raw=ln.label_raw or "",
+            old_value=value, new_value=-value,
+            anchor_label=f"R190-d {concept}@{date.isoformat()}"))
+        ln.value_won = -value
+    return corrections
+
+
 def repair_sce_balance_tolerance(lines: List, prior_balances=None) -> List[Correction]:
     """R188 — flip a positive SCE balance cell (기초/기말) when BOTH identities it belongs
     to close within `_TOLERANCE_WON` only after the flip: its column's roll-forward block

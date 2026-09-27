@@ -193,8 +193,8 @@ from fin2.extract.report_lines_inline_xbrl_overlay import (
     overlay_tax_expense_value,
 )
 from fin2.extract.sce_sign_repair import (
-    apply_manual_sign_fixes, repair_sce_balance_tolerance, repair_sce_row_identity,
-    repair_sce_sibling_cells, repair_sce_sign_loss,
+    apply_dated_balance_signs, apply_manual_sign_fixes, repair_sce_balance_tolerance,
+    repair_sce_row_identity, repair_sce_sibling_cells, repair_sce_sign_loss,
 )
 from fin2.extract.cf_cash_sign_repair import repair_cf_cash_sign_loss
 from fin2.extract.sce_source_defects import apply_source_defect_fixes, verify_row_drops
@@ -2165,6 +2165,12 @@ def extract_report_lines(
     sibling_fixes = repair_sce_sibling_cells(lines, prior_balances, prior_income)
     if sibling_fixes:
         logger.debug(f"[report_lines] R189 SCE 형제 셀 복원: {len(sibling_fixes)}셀 ({rcept_no})")
+
+    # R190-d(2026-09-27) — a balance cell equal in magnitude to its dated BS balance (R187
+    # anchor, equity totals agreeing) takes the BS sign even if its block does not close.
+    dated_fixes = apply_dated_balance_signs(lines, prior_balances)
+    if dated_fixes:
+        logger.debug(f"[report_lines] R190-d SCE 잔액 BS 부호: {len(dated_fixes)}셀 ({rcept_no})")
 
     # R183 post-check: a dropped row stays dropped only if its block now closes.
     verify_row_drops(lines, sce_dropped)

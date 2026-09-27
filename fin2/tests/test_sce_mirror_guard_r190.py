@@ -164,3 +164,51 @@ def test_r190c_nested_subtotal_signs_follow_the_inner_subtotal():
     subs = _proven_subtotals(cells, [1, 2, 3])
     assert subs == [2, 3]
     assert sorted(_subtotal_fixes(cells, [1, 2, 3], subs, {})) == [(2, -1), (3, -1)]
+
+
+def _unclosed_block_filing(bs_total=880):
+    """화승엔터프라이즈 `20210319000901` shape: the opening 기타자본구성요소 lost its parentheses
+    (BS at the prior year end: −140) and the column has another defect (a movement that does
+    not belong), so the block cannot close either way."""
+    return [
+        *_sce_row("2018.01.01 (기초자본)", 0, 140, 1000, 880),
+        *_sce_row("무상증자", 1, -500, None, -500),
+        *_sce_row("2018.12.31 (기말자본)", 2, -90, 1000, 910),
+    ], {datetime.date(2017, 12, 31): [("separate", "기타자본구성요소", -140), ("separate", "자본총계", bs_total)]}
+
+
+def test_r190d_dated_bs_balance_sign_applies_without_a_closing_block():
+    from fin2.extract.sce_sign_repair import apply_dated_balance_signs
+    lines, prior = _unclosed_block_filing()
+    fixes = apply_dated_balance_signs(lines, prior)
+    got = {ln.row_order: ln.value_won for ln in lines if ln.col_index == 0}
+    assert got == {0: -140, 1: -500, 2: -90}
+    assert [(c.row_order, c.new_value) for c in fixes] == [(0, -140)]
+
+
+def test_r190d_needs_the_equity_totals_to_agree():
+    from fin2.extract.sce_sign_repair import apply_dated_balance_signs
+    lines, prior = _unclosed_block_filing(bs_total=999)
+    assert apply_dated_balance_signs(lines, prior) == []
+
+
+def test_r190d_leaves_movement_rows_alone():
+    from fin2.extract.sce_sign_repair import apply_dated_balance_signs
+    lines, prior = _unclosed_block_filing()
+    # A movement row with the same magnitude as the anchored balance is not a balance row.
+    lines += _sce_row("기타변동", 5, 140, None, 140)
+    apply_dated_balance_signs(lines, prior)
+    assert next(ln.value_won for ln in lines if ln.row_order == 5 and ln.col_index == 0) == 140
+
+
+def test_r190d_does_not_override_a_cell_proven_twice_inside_the_sce():
+    # 인지컨트롤스 `20180515001307` shape: the closing OCI is printed with parentheses, its
+    # block closes and its row identity holds; the (wrong) BS value has the other sign.
+    from fin2.extract.sce_sign_repair import apply_dated_balance_signs
+    lines = [
+        *_sce_row("2017.01.01 (기초자본)", 0, -100, 1000, 900),
+        *_sce_row("해외사업환산손익", 1, -20, None, -20),
+        *_sce_row("2017.12.31 (기말자본)", 2, -120, 1000, 880),
+    ]
+    prior = {datetime.date(2017, 12, 31): [("separate", "기타자본구성요소", 120), ("separate", "자본총계", 880)]}
+    assert apply_dated_balance_signs(lines, prior) == []

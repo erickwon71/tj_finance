@@ -128,3 +128,39 @@ def test_r190b_anchored_solution_must_stay_consistent_with_its_subtotal():
     repair_sce_sign_loss(lines)
     got = {(ln.row_order, ln.col_index): ln.value_won for ln in lines if ln.statement == "SCE"}
     assert got[(4, 0)] == 79 and got[(4, 1)] == 79
+
+
+def test_r190c_nested_subtotals_are_proven():
+    # 미래에셋생명 `20240320002014` shape: an inner subtotal (−2054 + 2064 = 10), then
+    # '소유주와의 거래 합계' = 10 + 347 and '자본 증가(감소) 합계' repeating it. The balances lost
+    # their parentheses (BS: −3716 → −3712). With both outer subtotals proven, the anchored
+    # solve flips the balances and keeps the movements positive.
+    from fin2.extract.sce_sign_repair import _Cell as C, _proven_subtotals
+    adj = "자본>자본조정"
+    rows = (("2022.01.01 (기초자본)", 3716), ("자기주식의 취득", -2054), ("자기주식의 처분", 2064),
+            ("자기주식 거래에 따른 증가(감소) 합계", 10), ("기타변동", 347),
+            ("소유주와의 거래 합계", 357), ("자본 증가(감소) 합계", 357), ("2022.12.31 (기말자본)", 3359))
+    cells = [C(line=None, basis="separate", label_raw=l, col_label=adj, value=v) for l, v in rows]
+    assert _proven_subtotals(cells, list(range(1, 7))) == [3, 5, 6]
+
+    lines = [_Line("SCE", "separate", l, v, col_index=0, col_label=adj, row_order=i)
+             for i, (l, v) in enumerate(rows)]
+    prior = {datetime.date(2022, 12, 31): [("separate", "자본조정", -3359), ("separate", "자본총계", -3359)]}
+    lines += [_Line("SCE", "separate", rows[0][0], 3716, col_index=1, col_label=_TOT, row_order=0),
+              _Line("SCE", "separate", rows[7][0], -3359, col_index=1, col_label=_TOT, row_order=7)]
+    repair_sce_sign_loss(lines, prior)
+    got = {ln.row_order: ln.value_won for ln in lines if ln.col_index == 0}
+    assert got[0] == -3716 and got[7] == -3359 and got[5] == 357 and got[6] == 357
+
+
+def test_r190c_nested_subtotal_signs_follow_the_inner_subtotal():
+    # 미래에셋생명 주식발행초과금 2021 block: '기타변동' −20 → '소유주와의 거래 합계' and
+    # '자본 증가(감소) 합계' both printed 20 without parentheses; both must become −20.
+    from fin2.extract.sce_sign_repair import _Cell as C, _proven_subtotals, _subtotal_fixes
+    rows = (("2021.01.01 (기초자본)", 1000), ("기타변동", -20), ("소유주와의 거래 합계", 20),
+            ("자본 증가(감소) 합계", 20), ("2021.12.31 (기말자본)", 980))
+    cells = [C(line=None, basis="separate", label_raw=l, col_label="자본>주식발행초과금", value=v)
+             for l, v in rows]
+    subs = _proven_subtotals(cells, [1, 2, 3])
+    assert subs == [2, 3]
+    assert sorted(_subtotal_fixes(cells, [1, 2, 3], subs, {})) == [(2, -1), (3, -1)]

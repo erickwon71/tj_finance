@@ -275,17 +275,40 @@ def _proven_subtotals(cells: Sequence[_Cell],
     ★절대값으로 비교한다 — 소계 자신이 부호를 잃은 경우도 잡아야 한다. 부호는
     나중에 구성요소의 합으로 확정한다(추측하지 않는다).
     ★소계로 판정된 행은 다음 구간의 합산 대상에서 뺀다(소계의 소계를 만들지 않는다).
+    ★R190-c (2026-09-27) — **중첩 소계**. 안쪽 소계를 닫으면 `run` 은 비지만, 그 소계를
+    대표값으로 남긴 `wide` 구간도 함께 유지한다. 바깥 소계는 둘 중 하나와 맞으면 소계다.
+    미래에셋생명 `20240320002014` 연결 자본조정 2022 블록:
+        자기주식 취득 −2,054,753,945 · 처분 2,064,968,675 → '…증가(감소) 합계' 10,214,730
+        기타변동 347,009,000 → '소유주와의 거래 합계' 357,223,730 → '자본 증가(감소) 합계' 357,223,730
+    `run` 만 보면 바깥 두 소계는 증명되지 못해 Σ 에 이중 합산됐다. 그래서 BS 날짜 앵커
+    (자본조정 −371.6B → −371.3B)가 있어도 블록이 풀리지 않았다.
     """
     out: List[int] = []
     run: List[int] = []
+    wide: List[int] = []            # run with each closed subtotal kept as its stand-in
     for idx in move_i:
         if run and _SUBTOTAL_LABEL_RE.search(cells[idx].label_raw):
-            total = sum(cells[j].value for j in run)
-            if total and abs(cells[idx].value) == abs(total):
+            proven = False
+            for part in (run, wide):
+                total = sum(cells[j].value for j in part)
+                if total and abs(cells[idx].value) == abs(total):
+                    proven = True
+                    break
+            if proven:
                 out.append(idx)
                 run = []            # 구간을 닫는다 — 소계는 다음 합에 안 들어간다
+                wide = [idx]        # …but an enclosing subtotal may sum it (R190-c)
+                continue
+        elif not run and wide and _SUBTOTAL_LABEL_RE.search(cells[idx].label_raw):
+            # A subtotal right after a subtotal: '자본 증가(감소) 합계' repeating
+            # '소유주와의 거래 합계' (R190-c).
+            total = sum(cells[j].value for j in wide)
+            if total and abs(cells[idx].value) == abs(total):
+                out.append(idx)
+                wide = [idx]
                 continue
         run.append(idx)
+        wide.append(idx)
     return out
 
 
@@ -365,21 +388,36 @@ def _subtotal_fixes(cells: Sequence[_Cell], move_i: Sequence[int],
 
     소계는 Σ변동에서 빠져 있으므로 항등식이 그 부호를 정해 주지 않는다. 대신 그
     구성요소(앞선 연속 구간)의 합이 부호까지 알려 준다 — 추측이 아니다.
+    ★R190-c — 중첩 소계는 `_proven_subtotals` 와 같은 `wide` 구간(닫힌 소계를 **확정된 부호**로
+    대표)으로 부호를 정한다. 미래에셋생명 `20240320002014` 주식발행초과금 2021 블록: '소유주와의
+    거래 합계' 가 −20,664,124 로 정해진 뒤 '자본 증가(감소) 합계' 도 그 값을 따라야 한다.
     """
     out: List[Tuple[int, int]] = []
     sub = set(subtotals)
+    signed: Dict[int, int] = {}
+
+    def value(j: int) -> int:
+        if j in signed:
+            return signed[j]
+        return signs.get(j, 1 if cells[j].value > 0 else -1) * abs(cells[j].value)
+
     run: List[int] = []
+    wide: List[int] = []
     for idx in move_i:
         if idx in sub:
-            total = sum(signs.get(j, 1 if cells[j].value > 0 else -1)
-                        * abs(cells[j].value) for j in run)
-            if total and abs(total) == abs(cells[idx].value):
-                want = 1 if total > 0 else -1
-                if want * abs(cells[idx].value) != cells[idx].value:
-                    out.append((idx, want))
+            for part in (run, wide):
+                total = sum(value(j) for j in part)
+                if total and abs(total) == abs(cells[idx].value):
+                    want = 1 if total > 0 else -1
+                    signed[idx] = want * abs(cells[idx].value)
+                    if signed[idx] != cells[idx].value:
+                        out.append((idx, want))
+                    break
             run = []
+            wide = [idx]
             continue
         run.append(idx)
+        wide.append(idx)
     return out
 
 

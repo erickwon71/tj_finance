@@ -117,3 +117,39 @@ def test_r188_positive_anchor_vetoes():
         _Line("BS", "separate", "기타포괄손익누계액", 705_022_515, col_index=0, period="FY")]
     repair_sce_balance_tolerance(lines)
     assert lines[0].value_won == 705_022_515
+
+
+# ── R189: row identity closed by sibling cells that their own column supports ──
+from fin2.extract.sce_sign_repair import repair_sce_sibling_cells  # noqa: E402
+
+
+def _sibling_table(total_closing=85):
+    """기타포괄 already fixed (−10); the total column still prints +10 for the same row
+    and also lost the dividend's parentheses (+5): 100 + 5 + 10 ≠ 85."""
+    oci, tot = "자본>기타포괄손익누계액", "자본>자본 합계"
+    rows = [("2012.01.01 (기초자본)", {0: 40, 1: 100}), ("배당금지급", {1: 5}),
+            ("해외사업환산차이", {0: -10, 1: 10}), ("2012.12.31 (기말자본)", {0: 30, 1: total_closing})]
+    out = []
+    for ro, (lab, cells) in enumerate(rows):
+        for ci, v in cells.items():
+            out.append(_Line("SCE", "consolidated", lab, v, col_index=ci,
+                             col_label=oci if ci == 0 else tot, row_order=ro, period="FY"))
+    return out
+
+
+def test_r189_flips_the_total_cell_its_column_supports():
+    # The IS prints the translation loss as (10): the sign is known from outside the table.
+    lines = _sibling_table() + [_Line("IS", "consolidated", "해외사업환산손실", -10, period="FY")]
+    fixes = repair_sce_sibling_cells(lines)
+    assert [(f.label_raw, f.new_value) for f in fixes] == [("해외사업환산차이", -10)]
+
+
+def test_r189_movement_without_outside_evidence_is_left_alone():
+    # OCI/NI rows contradicted the IS in 60 of 145 evidenced cells, so no IS → no flip.
+    assert repair_sce_sibling_cells(_sibling_table()) == []
+
+
+def test_r189_needs_the_column_to_shrink():
+    # The total column would move away from closing (+10 is right for that column).
+    lines = _sibling_table(total_closing=115)
+    assert repair_sce_sibling_cells(lines) == []

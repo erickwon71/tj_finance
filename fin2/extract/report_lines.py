@@ -194,7 +194,7 @@ from fin2.extract.report_lines_inline_xbrl_overlay import (
 )
 from fin2.extract.sce_sign_repair import (
     apply_manual_sign_fixes, repair_sce_balance_tolerance, repair_sce_row_identity,
-    repair_sce_sign_loss,
+    repair_sce_sibling_cells, repair_sce_sign_loss,
 )
 from fin2.extract.cf_cash_sign_repair import repair_cf_cash_sign_loss
 from fin2.extract.sce_source_defects import apply_source_defect_fixes, verify_row_drops
@@ -2156,6 +2156,12 @@ def extract_report_lines(
     if tolerance_fixes:
         logger.debug(f"[report_lines] R188 SCE 잔액 허용오차 복원: {len(tolerance_fixes)}셀 "
                      f"({rcept_no})")
+
+    # R189(2026-09-27) — 체인 뒤에도 깨진 행 항등식을 유일한 최소 양수 셀 조합으로 닫는다.
+    # 각 셀은 자기 열 롤포워드 잔차를 줄여야 한다(형제 합계 열 미수정 해소).
+    sibling_fixes = repair_sce_sibling_cells(lines, prior_balances)
+    if sibling_fixes:
+        logger.debug(f"[report_lines] R189 SCE 형제 셀 복원: {len(sibling_fixes)}셀 ({rcept_no})")
 
     # R183 post-check: a dropped row stays dropped only if its block now closes.
     verify_row_drops(lines, sce_dropped)

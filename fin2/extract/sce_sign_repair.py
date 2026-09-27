@@ -1039,6 +1039,10 @@ def _column_consistency_guard(lines: List, corrections: List[Correction],
     return keep
 
 
+# R189 movement rows whose sign is negative by nature (equity leaves the company).
+_NEGATIVE_BY_NATURE_RE = re.compile(r"배\s*당|자\s*기\s*주\s*식\s*(의\s*)?취\s*득")
+
+
 # ── R188 (2026-09-27, 사용자 결정: 소액 차이 1,000원 이하 허용, fix batch #35) ─────────────
 _TOLERANCE_WON = 1_000
 
@@ -1110,3 +1114,92 @@ def _block_residual(lines: Sequence, target) -> Optional[int]:
         return (cells[open_i].value + sum(cells[m].value for m in move_i if m not in subtotals)
                 - cells[close_i].value)
     return None
+
+
+def repair_sce_sibling_cells(lines: List, prior_balances=None) -> List[Correction]:
+    """R189 (2026-09-27, fix batch #37) — a row identity left broken after the whole chain
+    is closed by its unique minimal set of positive cells (`_row_flip_solution`, the R162-d
+    search) when **each** of those cells is also supported by its own column. Flipping it
+    strictly shrinks the roll-forward residual of the block that holds the row. For a
+    movement row, every other non-zero cell of the row must be proven by its own column
+    (block closes exactly), and the sign must be known from outside the table: the IS
+    prints the same amount as negative, or the row is a dividend / treasury acquisition. R162-d needs a negative magnitude elsewhere as its second proof. Here the
+    column's own roll-forward is the second proof.
+
+    Measured before those two movement-row conditions: the balance cells checked against
+    BS gave 261 agree / 0 disagree. The movement cells checked against the IS gave real
+    errors: the row's component cell was itself wrongly negative, and flipping the
+    positive totals spread that error (20231114002833 NI total vs IS +1,392,030,273).
+
+    Typical case: a component column printed with inverted signs as a whole is fixed by
+    R162/R187, but the row's total columns keep a separate multi-cell sign loss, so no
+    single-flip rule can close them. 20131128000817 연결 '해외사업환산차이': 기타포괄 is
+    now −254,104,651, and 지배합계/자본합계 still print +254,104,651, while the 자본합계
+    roll-forward is off by 2 × (1,429,817,000 + 254,104,651). A positive anchor vetoes.
+    Runs after R188.
+    """
+    anchors = add_dated_anchors(build_sign_anchors(lines), lines, prior_balances)
+    # IS magnitudes (any column) → signs. A movement flip that contradicts the same amount
+    # in the income statement is rejected (CF is not used: it prints outflows unbracketed).
+    is_signs: Dict[int, Set[bool]] = defaultdict(set)
+    for ln in lines:
+        v = getattr(ln, "value_won", None)
+        if getattr(ln, "statement", None) == "IS" and v:
+            is_signs[abs(int(v))].add(int(v) > 0)
+    rows: Dict[Tuple, Dict[Tuple[str, ...], object]] = defaultdict(dict)
+    for ln in lines:
+        if (getattr(ln, "statement", None) != "SCE" or getattr(ln, "value_won", None) is None
+                or not getattr(ln, "col_label", None) or ln.row_order is None):
+            continue
+        rows[(ln.basis, getattr(ln, "table_seq", None), ln.row_order)][
+            tuple(x.strip() for x in ln.col_label.split(">"))] = ln
+    corrections: List[Correction] = []
+    for (basis, table_seq, row_order), by_path in sorted(rows.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0, kv[0][2])):
+        identities = _row_identities(by_path)
+        if not identities:
+            continue
+        solution = _row_flip_solution(by_path, identities)
+        if not solution:
+            continue
+        ok = True
+        for p in solution:
+            ln = by_path[p]
+            v = int(ln.value_won)
+            sign, _ = _required_sign(_Cell(line=ln, basis=basis, label_raw=ln.label_raw or "",
+                                           col_label=ln.col_label, value=v), anchors)
+            r0 = _block_residual(lines, ln)
+            ln.value_won = -v
+            r1 = _block_residual(lines, ln)
+            ln.value_won = v
+            if sign == 1 or r0 is None or r1 is None or not abs(r1) < abs(r0):
+                ok = False
+                break
+            if not _is_balance_label(ln.label_raw or ""):
+                # Movement rows need a sign that is known from outside the table: the IS
+                # prints the same amount as negative, or the row is a dividend / treasury
+                # acquisition (negative by nature). Measured without this: OCI/NI rows
+                # contradicted the IS in 60 of 145 evidenced cells (20231114002833 NI total,
+                # 20120417000015 AFS gain) …
+                if not (is_signs.get(abs(v)) == {False}
+                        or _NEGATIVE_BY_NATURE_RE.search(ln.label_raw or "")):
+                    ok = False
+                    break
+        if ok and not _is_balance_label(next(iter(by_path.values())).label_raw or ""):
+            # … and every other non-zero cell of the row, which the identity takes as the
+            # truth, must be proven by its own column: that block closes exactly.
+            fixed = set(solution)
+            ok = all(_block_residual(lines, other) == 0 for p2, other in by_path.items()
+                     if p2 not in fixed and int(other.value_won) != 0)
+        if not ok:
+            continue
+        for p in solution:
+            ln = by_path[p]
+            old = int(ln.value_won)
+            ln.value_won = -old
+            corrections.append(Correction(
+                basis=basis, table_seq=table_seq, row_order=row_order, col_index=ln.col_index,
+                col_label=ln.col_label, label_raw=ln.label_raw or "", old_value=old,
+                new_value=-old, anchor_label="R189 행항등식+열 롤포워드"))
+    if corrections:
+        logger.debug(f"[report_lines/R189] SCE 행 항등식 형제 셀 부호 복원 {len(corrections)}셀")
+    return corrections

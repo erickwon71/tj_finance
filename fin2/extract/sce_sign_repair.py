@@ -47,6 +47,8 @@ from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tu
 
 from loguru import logger
 
+from fin2.extract.sce_dated_anchors import add_dated_anchors, balance_anchor_date
+
 # Search-space guard. A real SCE block has a handful of movement rows per column;
 # anything wider is a layout we have not proven and must not guess at.
 _MAX_AMBIGUOUS_CELLS = 14
@@ -133,6 +135,16 @@ def _required_sign(cell, anchors: Dict[Tuple[str, str], Set[int]],
     ★**잔액행에만** 적용한다 — 변동행까지 절대값으로 맞추면 우연 일치로 날조된다.
     """
     magnitude = abs(cell.value)
+    # R187 — a balance row's own date first: the BS balance at that date (this filing's
+    # prior-period columns, or a prior annual report), `sce_dated_anchors`.
+    anchor_date = balance_anchor_date(cell.label_raw)
+    if anchor_date is not None:
+        key = concept_of_col_label(cell.col_label)
+        values = anchors.get((cell.basis, key, anchor_date)) if key else None
+        if values:
+            has_neg, has_pos = -magnitude in values, magnitude in values
+            if has_neg != has_pos:
+                return (-1 if has_neg else 1), f"{key}@{anchor_date.isoformat()}"
     for key in (cell.label_raw.strip(),
                 concept_of_col_label(cell.col_label)):
         if not key:
@@ -495,14 +507,14 @@ def apply_manual_sign_fixes(lines: List, rcept_no: Optional[str]) -> List[Correc
     return corrections
 
 
-def repair_sce_sign_loss(lines: List) -> List[Correction]:
+def repair_sce_sign_loss(lines: List, prior_balances=None) -> List[Correction]:
     """`lines` 의 SCE 행 부호를 제자리에서 복원하고 교정 내역을 돌려준다.
 
     BS/IS 앵커가 필요하므로 **추출이 끝난 뒤 전체 라인 목록에** 적용한다
     (`extract_report_lines` 말미). SCE 만 건드리고 BS/IS/CF 는 읽기만 한다.
     """
     # R162-e runs without BS/IS anchors too, so no early return on an empty anchor map.
-    anchors = build_sign_anchors(lines)
+    anchors = add_dated_anchors(build_sign_anchors(lines), lines, prior_balances)
 
     # (basis, table_seq, col_index) 단위로 한 열을 모은다 — SCE 의 col_index 는 기간이
     # 아니라 자본 구성요소 위치이므로, 항등식은 이 열 안에서 닫힌다.
@@ -810,11 +822,11 @@ def _row_flip_solution(by_path: Dict[Tuple, object],
     return None
 
 
-def repair_sce_row_identity(lines: List) -> List[Correction]:
+def repair_sce_row_identity(lines: List, prior_balances=None) -> List[Correction]:
     """R162-d — SCE 한 행 안의 **열 항등식**과 **이중증거**로 원문에서 빠진 음수 괄호를
     복원한다. 모듈 docstring의 R162-d 절 참조. 열 롤포워드(R162/R162-e/f)가 먼저 돈
     뒤에 적용한다."""
-    anchors = build_sign_anchors(lines)
+    anchors = add_dated_anchors(build_sign_anchors(lines), lines, prior_balances)
     # magnitude -> {(statement, basis, table_seq, row_order, col_path)} — report_lines
     # statements only (BS/IS/CF/SCE). note_lines (statement='note') tracked separately:
     # per the user's decision any note magnitude match counts regardless of site,
@@ -1025,3 +1037,76 @@ def _column_consistency_guard(lines: List, corrections: List[Correction],
             logger.debug(f"[R185] {basis} {table_seq} col {col_index}: R162-d partial flip "
                          f"breaks a closed block; the whole column does not close — kept as is")
     return keep
+
+
+# ── R188 (2026-09-27, 사용자 결정: 소액 차이 1,000원 이하 허용, fix batch #35) ─────────────
+_TOLERANCE_WON = 1_000
+
+
+def repair_sce_balance_tolerance(lines: List, prior_balances=None) -> List[Correction]:
+    """R188 — flip a positive SCE balance cell (기초/기말) when BOTH identities it belongs
+    to close within `_TOLERANCE_WON` only after the flip: its column's roll-forward block
+    and its row identity. Each was off by more than the tolerance before the flip.
+
+    Filers round, so a table can be off by a few won and never close exactly. The R162
+    family requires an exact close. 원익큐브 `20160330000801` 별도 "2013.01.01 (기초자본)"
+    기타포괄손익누계액 705,022,515: the 2013 roll-forward gives −705,022,513 and the row
+    total 52,723,885,541 vs parts 52,723,885,539. Both are 2 won off, and only negative.
+    Two independent identities agreeing on the sign is the double evidence. An anchor
+    that says positive (R187 dated or BS col 0) vetoes the flip. Runs after the whole
+    R162…R185 chain.
+    """
+    anchors = add_dated_anchors(build_sign_anchors(lines), lines, prior_balances)
+    corrections: List[Correction] = []
+    sce = [ln for ln in lines if getattr(ln, "statement", None) == "SCE"
+           and getattr(ln, "value_won", None) is not None and ln.row_order is not None]
+    for ln in sorted(sce, key=lambda l: (l.basis, getattr(l, "table_seq", None) or 0,
+                                         l.row_order, l.col_index)):
+        v = int(ln.value_won)
+        if v <= _TOLERANCE_WON or not _is_balance_label(ln.label_raw or ""):
+            continue
+        row = (ln.basis, getattr(ln, "table_seq", None), ln.row_order)
+        rf_before = _block_residual(lines, ln)
+        row_before = _row_identity_residuals(lines, *row)
+        if rf_before is None or not row_before:
+            continue
+        if abs(rf_before) <= _TOLERANCE_WON or sum(row_before) <= _TOLERANCE_WON:
+            continue
+        sign, _ = _required_sign(_Cell(line=ln, basis=ln.basis, label_raw=ln.label_raw or "",
+                                       col_label=getattr(ln, "col_label", None), value=v),
+                                 anchors)
+        if sign == 1:
+            continue
+        ln.value_won = -v
+        rf_after = _block_residual(lines, ln)
+        row_after = _row_identity_residuals(lines, *row)
+        if (rf_after is not None and abs(rf_after) <= _TOLERANCE_WON
+                and all(r <= _TOLERANCE_WON for r in row_after)):
+            corrections.append(Correction(
+                basis=ln.basis, table_seq=row[1], row_order=ln.row_order,
+                col_index=ln.col_index, col_label=getattr(ln, "col_label", None),
+                label_raw=ln.label_raw or "", old_value=v, new_value=-v,
+                anchor_label=f"R188 허용오차 {_TOLERANCE_WON}원 이중항등식"))
+            continue
+        ln.value_won = v
+    if corrections:
+        logger.debug(f"[report_lines/R188] SCE 잔액 허용오차 부호 복원 {len(corrections)}셀")
+    return corrections
+
+
+def _block_residual(lines: Sequence, target) -> Optional[int]:
+    """Roll-forward residual of the block of `target`'s column that holds its row."""
+    col = sorted((l for l in lines if getattr(l, "statement", None) == "SCE"
+                  and getattr(l, "value_won", None) is not None and l.basis == target.basis
+                  and getattr(l, "table_seq", None) == getattr(target, "table_seq", None)
+                  and l.col_index == target.col_index and l.row_order is not None),
+                 key=lambda l: l.row_order)
+    cells = [_Cell(line=l, basis=l.basis, label_raw=(l.label_raw or ""), col_label=None,
+                   value=int(l.value_won)) for l in col]
+    for open_i, move_i, close_i in _blocks(cells):
+        if not col[open_i].row_order <= target.row_order <= col[close_i].row_order:
+            continue
+        subtotals = set(_proven_subtotals(cells, move_i))
+        return (cells[open_i].value + sum(cells[m].value for m in move_i if m not in subtotals)
+                - cells[close_i].value)
+    return None

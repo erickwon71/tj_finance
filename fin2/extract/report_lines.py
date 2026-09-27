@@ -193,7 +193,8 @@ from fin2.extract.report_lines_inline_xbrl_overlay import (
     overlay_tax_expense_value,
 )
 from fin2.extract.sce_sign_repair import (
-    apply_manual_sign_fixes, repair_sce_row_identity, repair_sce_sign_loss,
+    apply_manual_sign_fixes, repair_sce_balance_tolerance, repair_sce_row_identity,
+    repair_sce_sign_loss,
 )
 from fin2.extract.cf_cash_sign_repair import repair_cf_cash_sign_loss
 from fin2.extract.sce_source_defects import apply_source_defect_fixes, verify_row_drops
@@ -1983,6 +1984,7 @@ def extract_report_lines(
     report_fiscal_year: int,
     report_fiscal_period: str,
     include_notes: bool = False,
+    prior_balances: dict | None = None,
 ) -> list[ReportLineRow]:
     """계층2 추출 진입점. 본문(BS/IS/CF) 을 tree 로 전사. `include_notes=True` 면 주석 표도.
 
@@ -1992,6 +1994,9 @@ def extract_report_lines(
 
     include_notes 기본 False(본문 먼저·주석 다음, 계획 단계화). 주석은 표 수가 많아(96%)
     볼륨이 크므로 명시적으로 켠다. 주석 커버 범위·컬럼 처리는 `_emit_note_lines` 참고.
+
+    `prior_balances`(R187 2단계): 적재 쪽이 `sce_dated_anchors.load_prior_balances()` 로 읽어
+    넘기는 직전 사업보고서 BS 잔액. 추출기는 DB 를 모른 채로 둔다. None 이면 필링 내부 증거만 쓴다.
     """
     root = _parse_xml_file(Path(file_path))
     if root is None:
@@ -2117,7 +2122,7 @@ def extract_report_lines(
     # R162(2026-09-22) — SCE 표 원문에서 빠진 음수 괄호를 복원. ★반드시 **맨 마지막**에
     # 돈다: 부호 방향을 BS/IS 값으로 확정하므로(앵커) 위 overlay 들이 BS/IS 를 손본 뒤의
     # 최종값을 봐야 한다. SCE 만 바꾸고 BS/IS/CF 는 읽기만 한다.
-    sce_fixes = repair_sce_sign_loss(lines)
+    sce_fixes = repair_sce_sign_loss(lines, prior_balances)
     if sce_fixes:
         logger.debug(f"[report_lines] R162 SCE 부호 복원: {len(sce_fixes)}셀 "
                      f"({rcept_no})")
@@ -2133,7 +2138,7 @@ def extract_report_lines(
     # 그룹 합계, 지배기업 합계 + 비지배 = 자본 합계)으로 빠진 음수 괄호를 복원한다.
     # R162 의 열 롤포워드가 먼저 확정해 둔 값을 이 행의 다른 항등식이 물려받을 수 있게
     # 반드시 R162 뒤에 돈다. `fin2/extract/sce_sign_repair.py` 모듈 docstring 참고.
-    row_identity_fixes = repair_sce_row_identity(lines)
+    row_identity_fixes = repair_sce_row_identity(lines, prior_balances)
     if row_identity_fixes:
         logger.debug(f"[report_lines] R162-d SCE 행 항등식 부호 복원: "
                      f"{len(row_identity_fixes)}셀 ({rcept_no})")
@@ -2143,6 +2148,13 @@ def extract_report_lines(
     cf_fixes = repair_cf_cash_sign_loss(lines)
     if cf_fixes:
         logger.debug(f"[report_lines] R163 CF 현금 부호 복원: {len(cf_fixes)}셀 "
+                     f"({rcept_no})")
+
+    # R188(2026-09-27) — 잔액 셀 하나로 열 롤포워드와 행 항등식이 둘 다 1,000원 이내로
+    # 닫히면 부호를 복원한다(원 단위 반올림으로 정확히 닫히지 않는 표). R162…R185 뒤에 돈다.
+    tolerance_fixes = repair_sce_balance_tolerance(lines, prior_balances)
+    if tolerance_fixes:
+        logger.debug(f"[report_lines] R188 SCE 잔액 허용오차 복원: {len(tolerance_fixes)}셀 "
                      f"({rcept_no})")
 
     # R183 post-check: a dropped row stays dropped only if its block now closes.

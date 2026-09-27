@@ -1,0 +1,18 @@
+# R190 corpus backfill (2015+ SCE XML 104,133 dry-run → 572 filings changed by R190 vs HEAD 12dca70) — excluded
+# New (R190 cells judged worse or unproven):
+20200515000912	씨에스윈드 2020Q1: 재측정요소 지배 셀 음수화로 행 항등식(456,210+605,907=1,062,117)이 깨짐, 외부 증거 없음
+20221114000693	넥스트아이 2022Q3: 연결범위변동(설립) 자본 합계 +43,806,922 → 음수, 비지배 +43,806,922 와 모순, 외부 증거 없음
+20240320002014	미래에셋생명 2023FY: 자본조정 열 '소유주와의 거래 합계'·'자본 증가(감소) 합계' −357,223,730(롤포워드 371,633,476,625→371,276,252,895 로 증명, 기준선=DB 정답)이 R190 앵커 추가로 해법을 잃어 +357,223,730 으로 되돌아감
+20240430001080	미래에셋생명 20240320002014 정정본, 같은 셀
+20260313000615	잉크테크 2025FY: 8행 '당기순이익(손실)' 이 기초 잔액을 반복한 원문 오류 행 — 자본금 셀 부호 변경은 의미 없음(R183 대상 후보)
+# Already on an earlier exclusion list (docs/qa/*_excluded_2026-09-27.txt), known regressions from other rules:
+20150817001389	prior-excluded
+20151113001218	prior-excluded
+20151116001701	prior-excluded
+20171114000961	prior-excluded
+20180515001199	prior-excluded
+20190514000387	prior-excluded
+20190813000326	prior-excluded
+20200814002352	prior-excluded
+20230814002233	prior-excluded
+20240405000748	prior-excluded

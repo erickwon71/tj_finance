@@ -238,3 +238,29 @@ def test_r190d_skips_when_both_sce_checks_get_worse():
     ]
     prior = {datetime.date(2024, 12, 31): [("separate", "기타자본구성요소", 440), ("separate", "자본총계", 560)]}
     assert apply_dated_balance_signs(lines, prior) == []
+
+
+def test_r191_leading_subtotal_keeps_its_printed_sign():
+    # BNK금융지주 `20260515002476` 연결 비지배지분: '총포괄손익' is printed above its components.
+    # The run above it (신종자본증권배당 −5255) matches it by |value| only by coincidence;
+    # the rows below (당기순이익 5255 … up to '총기타포괄손익') prove the printed +5255.
+    from fin2.extract.sce_sign_repair import _Cell as C, _proven_subtotals, _subtotal_fixes
+    rows = (("2025.01.01 (기초자본)", 448753), ("연차배당", 0), ("신종자본증권배당", -5255),
+            ("총포괄손익", 5255), ("당기순이익(손실)", 5255), ("확정급여제도의재측정요소", 0),
+            ("총기타포괄손익", 0), ("2025.03.31 (기말자본)", 448753))
+    cells = [C(line=None, basis="consolidated", label_raw=l, col_label="자본>비지배지분", value=v)
+             for l, v in rows]
+    move_i = list(range(1, 7))
+    subs = _proven_subtotals(cells, move_i)
+    assert 3 in subs
+    assert _subtotal_fixes(cells, move_i, subs, {}) == []
+
+
+def test_r191_block_with_leading_subtotal_is_left_as_printed():
+    nci = "자본>비지배지분"
+    rows = (("2025.01.01 (기초자본)", 448753), ("신종자본증권배당", -5255), ("총포괄손익", 5255),
+            ("당기순이익(손실)", 5255), ("총기타포괄손익", 0), ("2025.03.31 (기말자본)", 448753))
+    lines = [_Line("SCE", "consolidated", l, v, col_index=0, col_label=nci, row_order=i)
+             for i, (l, v) in enumerate(rows)]
+    repair_sce_sign_loss(lines, {})
+    assert [ln.value_won for ln in lines] == [v for _l, v in rows]

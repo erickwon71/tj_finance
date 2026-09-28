@@ -401,10 +401,29 @@ def _subtotal_fixes(cells: Sequence[_Cell], move_i: Sequence[int],
             return signed[j]
         return signs.get(j, 1 if cells[j].value > 0 else -1) * abs(cells[j].value)
 
+    def leading_total(pos: int) -> int:
+        # R191 — the rows after a subtotal up to the next subtotal-labelled row.
+        total = 0
+        for j in move_i[pos + 1:]:
+            if _SUBTOTAL_LABEL_RE.search(cells[j].label_raw):
+                break
+            total += value(j)
+        return total
+
     run: List[int] = []
     wide: List[int] = []
-    for idx in move_i:
+    for pos, idx in enumerate(move_i):
         if idx in sub:
+            # R191 — a subtotal printed **before** its components ('총포괄손익' above
+            # '당기순이익' … '총기타포괄손익') can match the preceding run by |value| only by
+            # coincidence. BNK금융지주 `20260515002476` 연결 비지배지분: 신종자본증권배당
+            # −5,255,684,930 above, 당기순이익 +5,255,684,930 below. When the following rows
+            # prove the printed sign exactly, keep it.
+            if value(idx) == leading_total(pos):
+                signed[idx] = value(idx)
+                run = []
+                wide = [idx]
+                continue
             for part in (run, wide):
                 total = sum(value(j) for j in part)
                 if total and abs(total) == abs(cells[idx].value):

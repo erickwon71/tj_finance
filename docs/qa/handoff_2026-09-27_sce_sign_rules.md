@@ -5,7 +5,8 @@
 - #44 악화 제외 24 + 기존 제외목록 재판정 → 28 재적재 · 18 제외(`docs/qa/handoff2_flip_excluded_review_2026-09-28.md`)
 - #45 **R191** 선행 소계 인쇄 부호 유지(BNK금융지주 6필링)
 - #46 **R192** 이전 보고서 IS 부호를 R162 변동 셀 앵커로 + 가드 3종 + IS 로더 '[첨부정정]' 수정 + 영문 로마숫자 → 340필링
-- 새 판정 도구(외부 증거 셀 판정): 이 세션 scratchpad 에만 있었다. 다시 쓰려면 `scripts/sce_onoff_tools_2026-09-27/` 에 정리해 넣을 것
+- 판정·측정 도구(`scripts/sce_onoff_tools_2026-09-27/`): `external_sign_evidence.py`(외부 증거 셀 판정, 인자 = 드라이런 jsonl · drift_identity_full 출력 · 결과 json),
+  `measure_onoff_r192.py`(켬/끔 한 워커 비교, R192 용 — 다른 규칙은 monkeypatch 대상만 바꿔 쓴다), `trace_blocks.py`·`trace_anchors_fixes.py`(블록별 앵커·해 추적), `rowdump.py`.
   (같은 법인 3년 BS/IS 같은 절대값 부호 + 배당·신종자본증권 이자=감소, 자본금·자본잉여금 잔액>0, 자기주식 잔액<0).
   ★주의: 배당 행은 BS '미지급배당금'(부채, 양수)과 금액이 우연히 같아 "DB 가 맞음"으로 오판된다 — 배당 prior 가 이긴다.
 

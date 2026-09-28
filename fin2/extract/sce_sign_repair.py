@@ -68,6 +68,10 @@ _SUBTOTAL_LABEL_RE = re.compile(
     r"소\s*계|합\s*계|총\s*계|총\s*포괄|총\s*기타\s*포괄")
 
 
+_PRIOR_IS_LABEL = "이전 보고서 IS"      # R192 anchor label (`_required_sign`)
+_TOTAL_COL_RE = re.compile(r"합\s*계|총\s*계")
+
+
 class Correction(NamedTuple):
     """한 셀의 부호 복원 결과 — 백필/보고가 그대로 쓸 수 있게 근거까지 담는다."""
     basis: str
@@ -168,6 +172,69 @@ def add_row_proven_anchors(anchors: Dict, lines: Iterable) -> Dict:
     return anchors
 
 
+def add_prior_income_anchors(anchors: Dict, lines: Iterable, prior_income=None) -> Dict:
+    """R192 (2026-09-28) — movement cells whose sign the earlier report's IS proves.
+
+    The R189-b evidence (`_prior_income_signs`: the IS covering exactly the block's period,
+    same basis, same |amount|, same income-item family) becomes a per-cell anchor for the
+    R162 solver, keyed `("prior_is", id(line))`. Without it, a block whose opening balance
+    has no dated anchor was closed by flipping an IS-backed movement instead of the
+    balance. DMS `20151113001218` 별도 기타자본구성요소 2013: printed 420,359,510 /
+    413,584,791 / 6,774,719, BS 2013-12-31 −6,774,719, 2013 IS OCI +413,584,791 → the
+    opening balance is −420,359,510, not the movement.
+    """
+    if not prior_income:
+        return anchors
+    columns: Dict[Tuple, List] = defaultdict(list)
+    for ln in lines:
+        if getattr(ln, "statement", None) == "SCE" and getattr(ln, "value_won", None) is not None \
+                and ln.row_order is not None:
+            columns[(ln.basis, getattr(ln, "table_seq", None), ln.col_index)].append(ln)
+    sum_like: Set[int] = set()
+    for col in columns.values():
+        col.sort(key=lambda l: l.row_order)
+        # Leading subtotals too: a row equal to a sum of the movements right below it.
+        # 코스모화학 `20181005000496` 별도 기타포괄손익누계액 2010: '총포괄손익' 131,115,548 and
+        # '기타포괄손익' 131,115,548 above 매도가능 166,687,950 + 지분법 −35,572,402.
+        for pos, ln in enumerate(col):
+            value = int(ln.value_won)
+            if not value or _is_balance_label(ln.label_raw or ""):
+                continue
+            total = 0
+            for nxt in col[pos + 1:]:
+                if _is_balance_label(nxt.label_raw or ""):
+                    break
+                total += int(nxt.value_won)
+                if abs(total) == abs(value):
+                    sum_like.add(id(ln))
+                    break
+        run: List[int] = []
+        for ln in col:
+            if _is_balance_label(ln.label_raw or ""):
+                run = []
+                continue
+            value = int(ln.value_won)
+            # A row equal to a sum of the movements right above it is a subtotal whether or not
+            # its label says so. 강남제비스코 `20150515001398` '기타포괄손익 계' / '3.총포괄손익 계':
+            # unproven, both stayed in Σ, and anchoring them let three components flip.
+            total = 0
+            for prev in reversed(run):
+                total += prev
+                if value and abs(total) == abs(value):
+                    sum_like.add(id(ln))
+                    break
+            run.append(value)
+    for ln in lines:
+        if (getattr(ln, "statement", None) != "SCE" or not getattr(ln, "value_won", None)
+                or ln.row_order is None or _is_balance_label(ln.label_raw or "")
+                or id(ln) in sum_like):
+            continue
+        signs = _prior_income_signs(lines, ln, prior_income)
+        if len(signs) == 1:
+            anchors[("prior_is", id(ln))] = 1 if signs == {True} else -1
+    return anchors
+
+
 def _is_balance_label(label: str) -> bool:
     return bool(_OPEN_BALANCE_RE.search(label)
                 or _CLOSE_BALANCE_RE.search(label))
@@ -190,6 +257,10 @@ def _required_sign(cell, anchors: Dict[Tuple[str, str], Set[int]],
     ★**잔액행에만** 적용한다 — 변동행까지 절대값으로 맞추면 우연 일치로 날조된다.
     """
     magnitude = abs(cell.value)
+    # R192 — a movement cell whose sign the earlier report's IS proves (`add_prior_income_anchors`).
+    line_sign = anchors.get(("prior_is", id(cell.line))) if cell.line is not None else None
+    if line_sign is not None:
+        return line_sign, _PRIOR_IS_LABEL
     # R187 — a balance row's own date first: the BS balance at that date (this filing's
     # prior-period columns, or a prior annual report), `sce_dated_anchors`.
     anchor_date = balance_anchor_date(cell.label_raw)
@@ -350,6 +421,19 @@ def _solve_block(cells: Sequence[_Cell], block, anchors,
             required[i] = (sign, anchor_label)
     if not required:
         return [], ""                   # orientation 미증명(mirror 를 못 가른다)
+    # R192 — the earlier-report IS alone orients a block only when it contradicts a printed
+    # sign (a lost parenthesis on an IS-backed movement), and it never turns an equity-total
+    # balance negative (that needs the BS). Agreeing with the print it proves
+    # nothing: 태웅 `20150515001603` 별도 미처분이익잉여금 2014Q1 — the only anchor was an
+    # IS-backed movement printed negative, and the solver flipped the closing balance against
+    # the BS in a column whose rows are misaligned. CMG제약 `20150331003486` 2012 결손금 block
+    # closes as printed (all positive) but the IS proves the NI and the actuarial loss negative
+    # → the whole block is negative. 제닉 `20150515001151` 지배 자본 합계 2014 block does not
+    # close as printed (a dividend lost its parenthesis too); the solution flipped the
+    # positive equity balances.
+    is_only = all(label == _PRIOR_IS_LABEL for _s, label in required.values())
+    if is_only and not any(sign == -1 and cells[i].value > 0 for i, (sign, _l) in required.items()):
+        return [], ""
 
     solutions: List[Dict[int, int]] = []
     for combo in itertools.product((1, -1), repeat=len(ambiguous)):
@@ -365,6 +449,10 @@ def _solve_block(cells: Sequence[_Cell], block, anchors,
     if not solutions:
         return [], ""
     winner = solutions[0]
+    if is_only and any(winner[i] == -1 and cells[i].value > 0
+                       and _TOTAL_COL_RE.search((cells[i].col_label or "").split(">")[-1])
+                       for i in (open_i, close_i)):
+        return [], ""                   # R192 — IS alone never makes an equity total negative
     anchor_desc = ", ".join(sorted({label for _s, label in required.values()
                                     if label}))
     fixes = [(i, winner[i]) for i in members
@@ -627,7 +715,7 @@ def apply_manual_sign_fixes(lines: List, rcept_no: Optional[str]) -> List[Correc
     return corrections
 
 
-def repair_sce_sign_loss(lines: List, prior_balances=None) -> List[Correction]:
+def repair_sce_sign_loss(lines: List, prior_balances=None, prior_income=None) -> List[Correction]:
     """`lines` 의 SCE 행 부호를 제자리에서 복원하고 교정 내역을 돌려준다.
 
     BS/IS 앵커가 필요하므로 **추출이 끝난 뒤 전체 라인 목록에** 적용한다
@@ -636,6 +724,7 @@ def repair_sce_sign_loss(lines: List, prior_balances=None) -> List[Correction]:
     # R162-e runs without BS/IS anchors too, so no early return on an empty anchor map.
     anchors = add_dated_anchors(build_sign_anchors(lines), lines, prior_balances)
     anchors = add_row_proven_anchors(anchors, lines)      # R190 G-B(i)
+    anchors = add_prior_income_anchors(anchors, lines, prior_income)   # R192
 
     # (basis, table_seq, col_index) 단위로 한 열을 모은다 — SCE 의 col_index 는 기간이
     # 아니라 자본 구성요소 위치이므로, 항등식은 이 열 안에서 닫힌다.
@@ -1442,8 +1531,9 @@ _INCOME_FAMILIES = (
     ("reval", re.compile(r"재\s*평\s*가")),
     ("hedge", re.compile(r"위험\s*회피|파생")),
 )
+# R192 — ASCII Roman numerals too: DMS `20151113001218` IS 'VIII. 기타포괄손익', 'ⅥI.' mixed.
 _INCOME_SUBTOTAL_RE = re.compile(
-    r"^[\s\dⅠ-Ⅹ().]*(세후\s*)?(기타\s*)?포괄\s*(손익|이익|손실)|재분류|지배기업|소유주")
+    r"^[\s\dⅠ-ⅩIVX().]*(세후\s*)?(기타\s*)?포괄\s*(손익|이익|손실)|재분류|지배기업|소유주")
 
 
 def _income_families(label: str) -> Set[str]:

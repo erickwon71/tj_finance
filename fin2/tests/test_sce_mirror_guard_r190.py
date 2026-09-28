@@ -264,3 +264,71 @@ def test_r191_block_with_leading_subtotal_is_left_as_printed():
              for i, (l, v) in enumerate(rows)]
     repair_sce_sign_loss(lines, {})
     assert [ln.value_won for ln in lines] == [v for _l, v in rows]
+
+
+def _dms_2013_block():
+    """DMS `20151113001218` 별도 기타자본구성요소 2013: the balances lost their parentheses
+    (BS 2013-12-31 −6,774,719); the 2013 IS prints the OCI +413,584,791."""
+    oth = "자본>기타자본구성요소"
+    rows = (("2013.01.01 (기초자본)", 420359510), ("기타포괄손익", 413584791),
+            ("2013.12.31 (기말자본)", 6774719))
+    lines = [_Line("SCE", "separate", l, v, col_index=0, col_label=oth, row_order=i, period="FY")
+             for i, (l, v) in enumerate(rows)]
+    totals = (1000000000, 413584791, 1413584791)       # the dated anchor needs the BS 자본총계 (R187)
+    lines += [_Line("SCE", "separate", l, t, col_index=1, col_label=_TOT, row_order=i, period="FY")
+              for i, ((l, _v), t) in enumerate(zip(rows, totals))]
+    prior_bal = {datetime.date(2013, 12, 31): [("separate", "기타자본구성요소", -6774719),
+                                               ("separate", "자본총계", 1413584791)]}
+    prior_is = {(datetime.date(2013, 1, 1), datetime.date(2013, 12, 31)):
+                [("separate", "VIII. 기타포괄손익", 413584791)]}
+    return lines, prior_bal, prior_is
+
+
+def test_r192_prior_is_anchors_the_movement_so_the_opening_balance_flips():
+    lines, prior_bal, prior_is = _dms_2013_block()
+    repair_sce_sign_loss(lines, prior_bal, prior_is)
+    assert [ln.value_won for ln in lines[:3]] == [-420359510, 413584791, -6774719]
+
+
+def test_r192_prior_is_alone_does_not_orient_a_block():
+    # 태웅 `20150515001603` shape: no BS anchor, only an IS-backed movement → leave the block.
+    lines, _, prior_is = _dms_2013_block()
+    repair_sce_sign_loss(lines, {}, prior_is)
+    assert [ln.value_won for ln in lines[:3]] == [420359510, 413584791, 6774719]
+
+
+def test_r192_ascii_roman_numeral_is_label_counts_as_a_subtotal():
+    from fin2.extract.sce_sign_repair import _same_income_item
+    assert _same_income_item("기타포괄손익", "VIII. 기타포괄손익")
+    assert _same_income_item("기타포괄손익", "Ⅷ. 기타포괄손익")
+
+
+def _oci_block(rows, prior_is_items):
+    oci = "자본>기타포괄손익누계액"
+    lines = [_Line("SCE", "consolidated", l, v, col_index=0, col_label=oci, row_order=i, period="FY")
+             for i, (l, v) in enumerate(rows)]
+    prior_is = {(datetime.date(2013, 1, 1), datetime.date(2013, 12, 31)):
+                [("consolidated", lab, v) for lab, v in prior_is_items]}
+    return lines, prior_is
+
+
+def test_r192_no_anchor_on_an_unproven_trailing_subtotal():
+    # 강남제비스코 `20150515001398` shape: '기타포괄손익 계' / '3.총포괄손익 계' are not recognised
+    # as subtotals, so the block double-counts. An IS anchor on them must not let the
+    # three components flip.
+    rows = (("2013.01.01 (기초자본)", 2182), ("매도가능금융자산평가이익", 1251), ("외환차이", 63),
+            ("기타포괄손익 계", 1314), ("3.총포괄손익 계", 1314), ("2013.12.31 (기말자본)", 3496))
+    lines, prior_is = _oci_block(rows, [("(2)당기손익으로 재분류되는 항목", 1314)])
+    repair_sce_sign_loss(lines, {}, prior_is)
+    assert [ln.value_won for ln in lines] == [v for _l, v in rows]
+
+
+def test_r192_no_anchor_on_a_leading_subtotal():
+    # 코스모화학 `20181005000496` shape: '총포괄손익' and '기타포괄손익' printed above their components.
+    rows = (("2013.01.01 (기초자본)", 150073), ("총포괄손익", 131), ("기타포괄손익", 131),
+            ("매도가능금융자산평가이익", 166), ("부의지분법자본변동", -35), ("2013.12.31 (기말자본)", 150204))
+    lines, prior_is = _oci_block(rows, [("XII.기타포괄이익", 131)])
+    prior_bal = {datetime.date(2012, 12, 31): [("consolidated", "기타포괄손익누계액", 150073)],
+                 datetime.date(2013, 12, 31): [("consolidated", "기타포괄손익누계액", 150204)]}
+    repair_sce_sign_loss(lines, prior_bal, prior_is)
+    assert [ln.value_won for ln in lines] == [v for _l, v in rows]

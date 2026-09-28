@@ -2125,7 +2125,7 @@ def extract_report_lines(
     # R162(2026-09-22) — SCE 표 원문에서 빠진 음수 괄호를 복원. ★반드시 **맨 마지막**에
     # 돈다: 부호 방향을 BS/IS 값으로 확정하므로(앵커) 위 overlay 들이 BS/IS 를 손본 뒤의
     # 최종값을 봐야 한다. SCE 만 바꾸고 BS/IS/CF 는 읽기만 한다.
-    sce_fixes = repair_sce_sign_loss(lines, prior_balances)
+    sce_fixes = repair_sce_sign_loss(lines, prior_balances, prior_income)
     if sce_fixes:
         logger.debug(f"[report_lines] R162 SCE 부호 복원: {len(sce_fixes)}셀 "
                      f"({rcept_no})")

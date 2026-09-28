@@ -231,7 +231,11 @@ def block_period(lines: Sequence, target) -> Optional[Tuple[datetime.date, datet
 def load_prior_income(session, corp_code: str, rcept_no: str, years: int = 3) -> PriorIncome:
     """Loader-side (DB) helper for R189-b: IS amounts of this company's earlier reports
     (annual full year, interim cumulative year-to-date), keyed by their period. The period
-    start is the day after the latest annual period end before it (fiscal year start)."""
+    start is the day after the latest annual period end before it (fiscal year start).
+
+    R192 (2026-09-28) — only reports that have IS lines, as `load_prior_balances` does for
+    BS: CMG제약 2013 사업보고서 `20140331000231` lost to its later '[첨부정정]'
+    `20140407000591` (no IS lines), so the 2013 period had no evidence at all."""
     from sqlalchemy import text
 
     rows = session.execute(text("""
@@ -243,6 +247,8 @@ def load_prior_income(session, corp_code: str, rcept_no: str, years: int = 3) ->
               AND f.period_end_date < me.period_end_date
               AND f.period_end_date >= me.period_end_date - (:n * interval '1 year')
               AND f.rcept_no <> :r
+              AND EXISTS (SELECT 1 FROM report_lines l WHERE l.rcept_no = f.rcept_no
+                          AND l.statement = 'IS')
             GROUP BY f.period_end_date, f.report_type)
         SELECT p.period_end_date, p.report_type, l.basis, l.label_raw, l.value_won
         FROM prior p JOIN report_lines l ON l.rcept_no = p.rcept_no

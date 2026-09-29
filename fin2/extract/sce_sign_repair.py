@@ -329,6 +329,33 @@ def _blocks(cells: Sequence[_Cell]) -> List[Tuple[int, List[int], int]]:
 # R193 switch (module attribute so on/off measurements can monkeypatch it).
 _LEADING_SUBTOTALS = True
 
+# R197 (2026-09-29) — guard found while investigating the R192/R193 defect candidates
+# (docs/qa/r192_r193_defect_candidates_2026-09-29.md). Module attribute so a full-corpus on/off
+# measurement can flip it in one worker.
+# (A second guard, "re-solve a block without the prior-IS anchors when they leave it unsolved", was
+# implemented and measured on 107,951 filings and dropped: 24 of its 48 changed cells contradicted the
+# IS of the same item — see PARSING_RULES R197.)
+_R162E_ROW_GUARD = True              # R197-b: R162-e may not break a holding row identity whose total column closes as printed
+_RECORD_GUARD_EVENTS = False         # measurement only
+GUARD_EVENTS: List[Tuple] = []
+
+# R197-c (2026-09-29) — filings whose SCE table is itself defective, so the earlier report's IS
+# must not anchor the R162 solve (R192 behaviour off, = the values loaded before R192). Listed only
+# after the source was checked; each entry states the evidence. Same idea as the R183 lists
+# (`sce_source_defects`): no generalisation, a filing is added only when its source is confirmed wrong.
+_PRIOR_IS_ANCHOR_EXEMPT: Dict[str, str] = {
+    # 제닉 연결: the first two blocks are FY2012/FY2013 but their row labels say 2013/2014 (one year
+    # too late) and the parentheses are gone; R192 then took the FY2014 IS (5,332,665 loss, the same
+    # magnitude as 2013's +5,332,665) as the anchor. The FY2014 annual and later reports print the
+    # same rows correctly: (17,035,939), (88,087,827), (99,791,101).
+    "20150515001151": "block period labels shifted one year in the source (cross-filing evidence)",
+    # 신신제약 별도 2019Q3: row labels are misaligned — the '배당금지급' row holds the adjusted opening
+    # balance (52,245,318,744 = 52,270,977,917 − 25,659,173), so a total-column solve closes only by
+    # flipping that balance; the 2열 rows close by the row identity (…30,218,989,417 − 9,340,500 = 52,245,318,744).
+    "20191114000854": "row labels misaligned in the source",
+}
+GUARD_EVENTS: List[Tuple] = []
+
 
 def _leading_subtotal_parts(cells: Sequence[_Cell],
                             move_i: Sequence[int]) -> Dict[int, List[int]]:
@@ -857,7 +884,9 @@ def repair_sce_sign_loss(lines: List, prior_balances=None, prior_income=None) ->
     # R162-e runs without BS/IS anchors too, so no early return on an empty anchor map.
     anchors = add_dated_anchors(build_sign_anchors(lines), lines, prior_balances)
     anchors = add_row_proven_anchors(anchors, lines)      # R190 G-B(i)
-    anchors = add_prior_income_anchors(anchors, lines, prior_income)   # R192
+    _rcept = next((getattr(l, "rcept_no", None) for l in lines if getattr(l, "rcept_no", None)), None)
+    anchors = add_prior_income_anchors(                                 # R192
+        anchors, lines, None if _rcept in _PRIOR_IS_ANCHOR_EXEMPT else prior_income)
 
     # (basis, table_seq, col_index) 단위로 한 열을 모은다 — SCE 의 col_index 는 기간이
     # 아니라 자본 구성요소 위치이므로, 항등식은 이 열 안에서 닫힌다.
@@ -901,6 +930,10 @@ def repair_sce_sign_loss(lines: List, prior_balances=None, prior_income=None) ->
         # flip alone closes the roll-forward, and no other such cell.
         for bi in pending:
             fixes = _solve_single_flip(cells, blocks[bi], anchors, carried)
+            if fixes and _R162E_ROW_GUARD and _breaks_closed_partner_column(lines, cells, fixes):
+                if _RECORD_GUARD_EVENTS:
+                    GUARD_EVENTS.append(("R197-b", key, blocks[bi][0]))
+                fixes = []
             if fixes:
                 _apply(cells, fixes, "R162-e 롤포워드 단일셀", corrections)
 
@@ -995,6 +1028,70 @@ def _solve_single_flip(cells: Sequence[_Cell], block, anchors,
     if not _closes_after_flip(cells, block, fixes):
         return []
     return fixes
+
+
+def _block_residual_at(lines: Sequence, basis: str, table_seq, col_index: int, row_order) -> Optional[int]:
+    """Roll-forward residual of the block of one SCE column that contains `row_order`
+    (proven subtotals left out); None when the row is in no block."""
+    col = sorted((l for l in lines if getattr(l, "statement", None) == "SCE"
+                  and getattr(l, "value_won", None) is not None and l.basis == basis
+                  and getattr(l, "table_seq", None) == table_seq and l.col_index == col_index
+                  and l.row_order is not None), key=lambda l: l.row_order)
+    cells = [_Cell(line=l, basis=l.basis, label_raw=(l.label_raw or ""),
+                   col_label=getattr(l, "col_label", None), value=int(l.value_won)) for l in col]
+    for open_i, move_i, close_i in _blocks(cells):
+        if not col[open_i].row_order <= row_order <= col[close_i].row_order:
+            continue
+        subtotals = set(_proven_subtotals(cells, move_i))
+        return (cells[open_i].value + sum(cells[m].value for m in move_i if m not in subtotals)
+                - cells[close_i].value)
+    return None
+
+
+def _breaks_closed_partner_column(lines: Sequence, cells: Sequence[_Cell], fixes) -> bool:
+    """R197-b — a single-cell roll-forward flip (R162-e) that breaks a row identity that held
+    while another column of that identity already closes its own roll-forward as printed.
+
+    케일럼 `20250515000242` 별도: the retained-earnings balances contradict the total column
+    and the IS (a source defect). Flipping the profit row in that column closed it, broke
+    `이익잉여금 = 자본 합계` on the row, and left the total column — which closes with the
+    printed +33,225,562 — to be flipped later by R162-d. The other column proves the printed
+    sign, so the flip is refused (R6: no guess). A row whose identity did not hold before, or a
+    partner column that does not close as printed, is not affected (all columns of a row can
+    have lost the same parentheses; each column's own pass fixes its own cell).
+    """
+    for idx, sign in fixes:
+        ln = cells[idx].line
+        if ln is None or ln.row_order is None:
+            continue
+        _label = ln.label_raw or ""
+        if _NEGATIVE_BY_NATURE_RE.search(_label) or ("자기주식" in _label and "취득" in _label):
+            continue      # dividends / treasury-stock purchases are negative by nature: the flip is right
+        basis, seq, row = ln.basis, getattr(ln, "table_seq", None), ln.row_order
+        if not _row_identities_hold(lines, basis, seq, row):
+            continue
+        old = ln.value_won
+        ln.value_won = sign * abs(int(old))
+        try:
+            holds_after = _row_identities_hold(lines, basis, seq, row)
+        finally:
+            ln.value_won = old
+        if holds_after:
+            continue
+        by_path = {}
+        for l in lines:
+            if (getattr(l, "statement", None) == "SCE" and getattr(l, "value_won", None) is not None
+                    and l.basis == basis and getattr(l, "table_seq", None) == seq
+                    and l.row_order == row and getattr(l, "col_label", None)):
+                by_path[tuple(x.strip() for x in l.col_label.split(">"))] = l
+        me = tuple(x.strip() for x in (ln.col_label or "").split(">"))
+        # Only the identity's own total column counts as proof: a sibling component that has no
+        # movement closes trivially and says nothing about this cell's sign.
+        for total, members in _row_identities(by_path):
+            if me in members and _block_residual_at(
+                    lines, basis, seq, by_path[total].col_index, row) == 0:
+                return True
+    return False
 
 
 def _closes_after_flip(cells: Sequence[_Cell], block, fixes) -> bool:

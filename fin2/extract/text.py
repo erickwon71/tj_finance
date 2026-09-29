@@ -456,7 +456,12 @@ def _detect_body_statement_tables(root, fin_type: str,
                          or _looks_like_cashflow(tbl)))
             # sec_kind 를 그대로 들고 간다(basis 에서 되유도하지 않음) — 적재된 행의
             # section_kind 는 **실제로 귀속된 섹션**이어야 감사에 쓸 수 있다.
-            if _table_has_data_rows(tbl) and not misattached_sce:
+            # ★R194 — 거울 가드: SCE 표제 아래 표 자신이 IS/CF 내용이면(원문 표제 오기, 디케이앤디
+            #   20190401005200 — 손익계산서 표에 '연결자본변동표' 표제) 표제를 믿지 않는다.
+            misattached_face = (
+                stmt == "SCE" and _table_has_data_rows(tbl)
+                and _looks_like_income_or_cashflow_face(tbl))
+            if _table_has_data_rows(tbl) and not misattached_sce and not misattached_face:
                 # 정상 서식: 제목+데이터가 한 표(단위는 그 표가 명시 선언한 것만 신뢰).
                 unit = declared_unit(tbl)
                 # R4-2: 병합표(owned_merged_title 로 확정된 표)만 표 **내부** 메타행에서
@@ -495,6 +500,11 @@ def _detect_body_statement_tables(root, fin_type: str,
                     # stmt=="SCE" 자신을 찾는 스캔은 건드리지 않는다(정상 목적).
                     if stmt != "SCE" and _looks_like_equity_changes_header(nxt):
                         continue           # 이 표는 SCE 데이터 — 계속 뒤에서 진짜 데이터를 찾는다
+                    # ★R194 — 거울: SCE 표제 뒤 첫 데이터표가 IS/CF 내용이면 SCE 데이터가 아니다.
+                    #   (표제표 `연결자본변동표` 뒤에 손익계산서 표가 오고, 진짜 자본변동표는 그 뒤
+                    #   두 번째 표제표 아래에 있다 — 디케이앤디 20190401005200.)
+                    if stmt == "SCE" and _looks_like_income_or_cashflow_face(nxt):
+                        continue
                     unit = title_unit if title_unit is not None else declared_unit(nxt)
                     groups.setdefault(section_code, []).append((nxt, unit, sec_kind))
                     break   # 첫 데이터표만 연결(재무제표 하나당 데이터표 하나)
@@ -1069,6 +1079,19 @@ def _looks_like_equity_changes_header(tbl) -> bool:
         cells += _get_cells(r)
     joined = re.sub(r"\s+", "", "".join(cells))
     return len(_SCE_COLUMN_LABELS_RE.findall(joined)) >= 3
+
+
+def _looks_like_income_or_cashflow_face(tbl) -> bool:
+    """R194 — 자본 구성요소 열이 **없는** IS/CF 본문 표인가(SCE 표제 아래 붙은 오귀속 판정용).
+
+    R127 의 거울이다: R127 은 IS/CF/BS 표제 아래 SCE 데이터가 붙은 경우를 막았고, 이 술어는
+    **SCE 표제 아래 IS/CF 데이터가 붙은 경우**를 막는다. 판정은 표 자신의 행 라벨만 본다
+    (매출+이익 계정 / 영업·투자·재무활동현금흐름). BS 술어는 쓰지 않는다 — `_BS_TOTAL_RE`
+    가 '자본총계'를 포함해 정상 SCE 도 걸리기 때문이다.
+    """
+    if _looks_like_equity_changes_header(tbl):
+        return False
+    return _looks_like_income_statement(tbl) or _looks_like_cashflow(tbl)
 
 
 def _build_synthetic_table(rows: list) -> etree._Element:

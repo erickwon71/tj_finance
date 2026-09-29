@@ -43,7 +43,7 @@ from __future__ import annotations
 import itertools
 import re
 from collections import defaultdict
-from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from loguru import logger
 
@@ -326,6 +326,121 @@ def _blocks(cells: Sequence[_Cell]) -> List[Tuple[int, List[int], int]]:
     return out
 
 
+# R193 switch (module attribute so on/off measurements can monkeypatch it).
+_LEADING_SUBTOTALS = True
+
+
+def _leading_subtotal_parts(cells: Sequence[_Cell],
+                            move_i: Sequence[int]) -> Dict[int, List[int]]:
+    """R193 — subtotals printed **above** their components → `{subtotal idx: [component idx]}`.
+
+    코스모화학 `20181005000496` 별도 합계 열 2010 블록 (the heading carries the sum of the
+    rows below it, nested):
+
+        총포괄손익                 31,040,544,566   ← 당기순이익 + 기타포괄손익
+          당기순이익               30,909,429,018
+          기타포괄손익                131,115,548   ← the two rows below
+            - 매도가능금융자산평가이익   166,687,950
+            - 부의지분법자본변동        −35,572,402
+            - 신주인수권대가          3,789,598,460
+
+    `_proven_subtotals` proves a subtotal only from the rows **before** it, so these headings
+    were summed as movements and the block never closed (double-counted).
+
+    Two pieces of evidence, both required (R159):
+      1. the row is a heading — a subtotal label, or `node_role='P'` (the next row is indented
+         deeper in the source);
+      2. the rows right below it (nested headings already proven are skipped, so their parts
+         count once) add up to its value **with the sign**, stopping at the first match. A
+         subtotal-labelled row that is not itself a proven heading ends the search (it closes
+         an earlier group).
+    Printed signs only: a component that lost its parenthesis breaks the match, and the row
+    stays summed as before (no guess).
+    """
+    parts: Dict[int, List[int]] = {}
+    if not _LEADING_SUBTOTALS:
+        return parts
+    for pos in range(len(move_i) - 1, -1, -1):
+        idx = move_i[pos]
+        cell = cells[idx]
+        if not cell.value:
+            continue
+        if not (_SUBTOTAL_LABEL_RE.search(cell.label_raw)
+                or getattr(cell.line, "node_role", None) == "P"):
+            continue
+        total = 0
+        used: List[int] = []
+        for j in move_i[pos + 1:]:
+            if j in parts:
+                continue                # nested heading — its parts are summed instead
+            if _SUBTOTAL_LABEL_RE.search(cells[j].label_raw):
+                break
+            total += cells[j].value
+            used.append(j)
+            if total == cell.value:
+                parts[idx] = used
+                break
+    return parts
+
+
+def _leading_covered(leading: Dict[int, List[int]], move_i: Sequence[int]) -> Set[int]:
+    """R193 — rows under a leading heading (its parts and nested headings)."""
+    pos = {idx: p for p, idx in enumerate(move_i)}
+    out: Set[int] = set()
+    for idx, parts in leading.items():
+        out.update(move_i[pos[idx] + 1: max(pos[j] for j in parts) + 1])
+    return out
+
+
+def _trailing_by_terms(cells: Sequence[_Cell], move_i: Sequence[int],
+                       leading: Dict[int, List[int]],
+                       value: Callable[[int], int]) -> Dict[int, int]:
+    """R193 — trailing subtotals of a block that has leading headings → `{idx: signed total}`.
+
+    The block is read as a list of **terms**: a plain row, or a proven subtotal standing in
+    for its whole group (a leading heading for the rows under it, a trailing subtotal for
+    the terms it closed). A subtotal-labelled row is proven when a **suffix** of the terms
+    adds up to it by |value| (shortest first); the suffix is then replaced by that row.
+    The `run`/`wide` pair of `_proven_subtotals` cannot follow a group that starts at a
+    heading: 미래에셋생명 `20250318001228` 별도 자본 합계 2023 블록 —
+
+        당기순이익(손실)                         109,199,854,875
+        …관련손익 합계 (heading of the next row)   653,331,958,330
+          …관련손익 총손익                         653,331,958,330
+        보험계약 … 확정급여 (5 rows)             −618,746,292,619
+        총기타포괄손익                            34,585,665,711   = heading + 5 rows
+        총포괄손익                               143,785,520,586   = 당기순이익 + 총기타포괄손익
+        기타변동 / 소유주와의 거래 합계                  −272,395
+        자본 증가(감소) 합계                      143,785,248,191   = 총포괄손익 + 소유주와의 거래 합계
+
+    미원에스씨 `20260515000421` 별도 이익잉여금: '자본 증가(감소) 합계' 6,441,170,695 = the two
+    headings '포괄손익' 15,206,823,295 and '자본에 직접 반영된 소유주와의 거래 등' −8,765,652,600.
+    The sign of a proven subtotal is that of its terms (`value` gives the settled values).
+    """
+    covered = _leading_covered(leading, move_i)
+    settled: Dict[int, int] = {}
+
+    def val(j: int) -> int:
+        return settled[j] if j in settled else value(j)
+
+    terms: List[int] = []
+    for idx in move_i:
+        if idx in covered:
+            continue
+        if idx not in leading and _SUBTOTAL_LABEL_RE.search(cells[idx].label_raw) and cells[idx].value:
+            for k in range(len(terms) - 1, -1, -1):
+                total = sum(val(j) for j in terms[k:])
+                if total and abs(total) == abs(cells[idx].value):
+                    settled[idx] = (1 if total > 0 else -1) * abs(cells[idx].value)
+                    terms[k:] = [idx]
+                    break
+            else:
+                terms.append(idx)
+            continue
+        terms.append(idx)
+    return settled
+
+
 def _proven_subtotals(cells: Sequence[_Cell],
                       move_i: Sequence[int]) -> List[int]:
     """변동행 중 **앞선 연속 구간의 합과 절대값이 같은** 행 = 소계(R162-c).
@@ -354,6 +469,11 @@ def _proven_subtotals(cells: Sequence[_Cell],
     `run` 만 보면 바깥 두 소계는 증명되지 못해 Σ 에 이중 합산됐다. 그래서 BS 날짜 앵커
     (자본조정 −371.6B → −371.3B)가 있어도 블록이 풀리지 않았다.
     """
+    leading = _leading_subtotal_parts(cells, move_i)
+    if leading:
+        # R193 — headings above their rows: read the block as terms.
+        trailing = _trailing_by_terms(cells, move_i, leading, lambda j: cells[j].value)
+        return [idx for idx in move_i if idx in leading or idx in trailing]
     out: List[int] = []
     run: List[int] = []
     wide: List[int] = []            # run with each closed subtotal kept as its stand-in
@@ -498,6 +618,19 @@ def _subtotal_fixes(cells: Sequence[_Cell], move_i: Sequence[int],
             total += value(j)
         return total
 
+    leading = _leading_subtotal_parts(cells, move_i)
+    if leading:
+        # R193 — a heading takes the sign of the rows under it (their parts are leaves, so
+        # the order does not matter), then the trailing subtotals that of their terms.
+        for idx in leading:
+            total = sum(value(j) for j in leading[idx])
+            if idx in sub and total and abs(total) == abs(cells[idx].value):
+                signed[idx] = (1 if total > 0 else -1) * abs(cells[idx].value)
+        for idx, v in _trailing_by_terms(cells, move_i, leading, value).items():
+            if idx in sub:
+                signed[idx] = v
+        return [(idx, 1 if signed[idx] > 0 else -1) for idx in move_i
+                if idx in signed and signed[idx] != cells[idx].value]
     run: List[int] = []
     wide: List[int] = []
     for pos, idx in enumerate(move_i):

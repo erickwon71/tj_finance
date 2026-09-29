@@ -1,0 +1,10 @@
+# R193 제외 — DB 값이 맞다는 외부 증거(배당 함정 제외) 또는 행 항등식 악화 셀 보유. rcept\t회사\tFY\t기간\t판정
+20200814002329	신세계인터내셔날	2020	H1	{"NEW_OK": 8, "rf:better": 6, "row:same": 10, "cells": 11, "NOEVID": 3, "rf:same": 5, "row:worse": 1}
+20230811001335	에프엔에스테크	2023	H1	{"NOEVID": 18, "rf:better": 15, "row:worse": 7, "cells": 23, "NEW_OK": 5, "rf:same": 8, "row:same": 12, "row:better": 4}
+20241114001149	신라교역	2024	Q3	{"NOEVID": 1, "rf:better": 1, "row:worse": 1, "cells": 1}
+20250312000909	호텔신라	2024	FY	{"NOEVID": 3, "rf:same": 2, "row:better": 2, "cells": 5, "NEW_OK": 2, "rf:better": 3, "row:same": 2, "row:worse": 1}
+20250515000242	케일럼	2025	Q1	{"OLD_OK": 3, "rf:better": 1, "row:same": 2, "cells": 3, "rf:worse": 2, "row:better": 1}
+20250515002269	호텔신라	2024	FY	{"NEW_OK": 2, "rf:better": 3, "row:same": 2, "cells": 5, "NOEVID": 3, "rf:same": 2, "row:better": 2, "row:worse": 1}
+20260317000021	에프엔에스테크	2025	FY	{"NOEVID": 1, "rf:better": 1, "row:worse": 1, "cells": 1}
+20260318001345	펩트론	2025	FY	{"NOEVID": 1, "rf:better": 1, "row:worse": 1, "cells": 1}
+20260515000171	흥아해운	2026	Q1	{"NEW_OK": 4, "rf:better": 6, "row:same": 6, "cells": 7, "NOEVID": 3, "row:worse": 1, "rf:same": 1}

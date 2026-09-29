@@ -27,7 +27,7 @@ def work(rc):
     pb, pi = D._prior(rc, corp)
     import importlib.util
     from collector.db import get_session
-    spec = importlib.util.spec_from_file_location("old_sda", os.path.join(os.path.dirname(os.path.abspath(__file__)), "old_sda.py"  # git show <base>:fin2/extract/sce_dated_anchors.py > old_sda.py next to this script))
+    spec = importlib.util.spec_from_file_location("old_sda", os.path.join(os.path.dirname(os.path.abspath(__file__)), "old_sda.py"))  # old_sda.py = git show <base>:fin2/extract/sce_dated_anchors.py, placed next to this script
     old_sda = importlib.util.module_from_spec(spec); spec.loader.exec_module(old_sda)
     with get_session() as ss:
         pi_old = old_sda.load_prior_income(ss, corp, rc)

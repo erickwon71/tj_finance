@@ -109,7 +109,7 @@ def test_r197c_other_filing_keeps_the_prior_is_anchors():
 
 
 def test_r197c_listed_filings_carry_their_evidence():
-    assert set(ssr._PRIOR_IS_ANCHOR_EXEMPT) == {"20150515001151", "20191114000854"}
+    assert set(ssr._PRIOR_IS_ANCHOR_EXEMPT) == {"20150515001151", "20191114000854", "20200514000260", "20200522000329"}
     assert all(ssr._PRIOR_IS_ANCHOR_EXEMPT.values())
 
 

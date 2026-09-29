@@ -353,6 +353,13 @@ _PRIOR_IS_ANCHOR_EXEMPT: Dict[str, str] = {
     # balance (52,245,318,744 = 52,270,977,917 − 25,659,173), so a total-column solve closes only by
     # flipping that balance; the 2열 rows close by the row identity (…30,218,989,417 − 9,340,500 = 52,245,318,744).
     "20191114000854": "row labels misaligned in the source",
+    # 미창석유공업 별도 2020Q1 (both receipts): the 2019 comparative block prints '확정급여제도의
+    # 재측정요소' 39,788,585 and the net income without parentheses (user checked the DART source), and
+    # the block closes as printed once only the dividend is negative. The IS of 2019Q1 has the
+    # actuarial item as (39,788,585), so the IS anchor turned the retained-earnings column into its
+    # mirror (opening −230.8bn against a positive 243.1bn opening in the next block).
+    "20200514000260": "SCE prints the actuarial item without parentheses, unlike the IS (source checked)",
+    "20200522000329": "SCE prints the actuarial item without parentheses, unlike the IS (source checked)",
 }
 GUARD_EVENTS: List[Tuple] = []
 

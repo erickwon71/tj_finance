@@ -406,6 +406,8 @@ def titleless_bs_start(tbl) -> bool:
 # 실측 본문 섹션 구성(3S·DB손해보험 공통): [단위표 4행 + 데이터표] × 4 = BS·IS·SCE·CF.
 
 _SCE_RE = re.compile(r"자본변동표")
+# R196 — 한국자산신탁 20161114000383 prints its consolidated cash-flow title as '연 결 연 금 흐 름 표'.
+_CF_TITLE_TYPO_RE = re.compile(r"(?<!퇴직)연금흐름표")
 # 이익잉여금처분계산서/결손금처리계산서 표지(공백 제거 후). **4대 재무제표가 아니다.**
 #
 # ★ 왜 이름 매칭만으로는 부족한가(2026-08-05 실측) — 본문 섹션 안에 처분계산서가 함께 오는데,
@@ -466,6 +468,12 @@ def classify_statement_in_body_section(title: str, include_sce: bool = False) ->
         if pos > best_pos:
             best_pos = pos
             best_code = code
+    # R196 — a filer's title typo '연결연금흐름표' (현금→연금) is a cash-flow statement heading.
+    #   '퇴직연금흐름표' is a different word, so a preceding '퇴직' excludes it.
+    for m_typo in _CF_TITLE_TYPO_RE.finditer(t):
+        if m_typo.start() > best_pos:
+            best_pos = m_typo.start()
+            best_code = "CF"
     # R195 — the SCE name takes part in the same "last name wins" rule as R141. It used to
     # return first, wherever it sat, so an SCE footnote merged with the next heading
     # ('…연결자본변동표는 …소급재작성되지 아니하였습니다 라. 연결현금흐름표') was read as SCE.

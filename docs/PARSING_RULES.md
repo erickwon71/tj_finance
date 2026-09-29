@@ -11368,6 +11368,27 @@ candidates(증거 무시) 8,753필링/32,121셀, 이중증거+게이트 통과 7
 돌렸다(NAS 단독은 SMB 병목으로 3.5시간에 13%만 진행됐던 전례, 메모리
 `feedback-bulk-read-use-sdcard`) — `fin2/verification/ops.py::_sd_path()`.
 
+## R199. XBRL 필링의 **두 번째 IS role**(손익계산서 + 포괄손익계산서 별개 표) 을 적재한다 (2026-09-30, fix queue missing_row)
+
+**발견**: verification `missing_row` 이슈 중 XBRL zip 필링의 포괄손익 행 누락 — 현대코퍼레이션 `20150803000405`·`20190809000488`, 피노 `20150827000392`,
+코스모화학 `20180801000294`, LS마린솔루션 `20180515001393`(이슈 51건). 이 회사들의 `_pre.xml` 은 IS role 을 둘 갖는다
+(`[D310000/D310005]` 손익계산서 + `[D410000/D410005]` 포괄손익계산서). `role_map.index_core_roles` 는 (statement, basis) 당 하나만 남기고
+`role_map: more than one core role ... keeping the first` 경고만 냈다. 그래서 두 번째 표(기타포괄손익·총포괄손익·귀속 행)가 통째로 사라졌다.
+
+**규칙** (`parser/xbrl_instance/role_map.py::extra_core_roles`, `fin2/extract/report_lines_xbrl.py` 의 `_EMIT_EXTRA_IS_ROLES`):
+1. 같은 (statement, basis) 의 **IS** role 이 둘 이상이면 첫 role 은 종전과 같이 처리하고, 나머지 role 은 트리 그대로 `_emit_statement_lines` 로 낸다
+   (누락 총계·leaf 보충은 첫 role 에서 이미 했으므로 다시 하지 않는다).
+2. 추가 role 의 행은 `table_seq = 1, 2, …`(basis 별)로 적재한다. 한 role = 하나의 일관된 표라는 설계와 HTML 경로의 다중 IS 표와 같다.
+3. 첫 role 과 (basis, label_raw, col_index, value_won) 이 같은 행은 버린다(양쪽 표에 있는 당기순이익·EPS 등).
+4. IS 이외 statement 의 중복 role 은 건드리지 않는다.
+
+**측정**(전수, 켬/끔 같은 워커): completed xbrl_zip 1,639필링 → **144필링에 3,068행 추가, 기존 행 변경 0**(`scripts/sce_onoff_tools_2026-09-27/measure_onoff_r199.py`).
+추가 행 라벨은 기타포괄손익 · 총포괄손익 · 매도가능금융자산평가손익 · 확정급여 재측정 · 지배/비지배 귀속 등이다.
+
+**회귀 테스트**: `fin2/tests/test_xbrl_second_is_role.py`.
+**데일리 배선**: 별도 배선 불필요 — `extract_report_lines_xbrl` 자체를 고쳤으므로 `collector/xbrl_instance_lines_sync.py`(데일리)와 `fin2/verification/ops.py`(batch reload) 모두 자동 적용.
+**소급**: 144필링은 자동 재적재되지 않는다 → `vq.py batch add-targets` + `batch reload`.
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |

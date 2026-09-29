@@ -150,7 +150,7 @@ from parser.xbrl_instance.taxonomy_linkbase import (
     merged_calculation_weights, presentation_role_uris, resolve_external_base_presentation,
     resolve_external_labels,
 )
-from parser.xbrl_instance.role_map import build_role_map, has_local_role_types, index_core_roles
+from parser.xbrl_instance.role_map import build_role_map, extra_core_roles, has_local_role_types, index_core_roles
 
 from fin2.extract.report_lines import ReportLineRow
 from fin2.extract.sce_source_defects import apply_source_defect_fixes, verify_row_drops
@@ -195,6 +195,8 @@ def _resolve_ifrs_namespace(nsmap: dict[str, str]) -> str | None:
 # Statements handled by the period-axis path (_emit_statement_lines). SCE has
 # its own emitter (_emit_sce_lines) — see module docstring.
 _SUPPORTED_STATEMENTS = ("BS", "IS", "CF")
+# R199 (2026-09-30) measurement switch: also emit the 2nd IS role of a (basis) pair.
+_EMIT_EXTRA_IS_ROLES = True
 _SUPPORTED_SCE_STATEMENT = "SCE"
 
 # ★ Phase 2 (pdf_only_parser_phase2_design_2026-08-12 §A-5, quantified in
@@ -1483,9 +1485,11 @@ def extract_report_lines_xbrl(
             # _pre.xml (Phase 5-A) — lets build_role_map() know what to look
             # for if it has to fall back to DART's external shared taxonomy
             # (older vintages don't bundle roleType locally at all).
-            core_roles = index_core_roles(
-                build_role_map(members.xsd, needed_role_uris=pre_role_uris)
-            )
+            _role_map = build_role_map(members.xsd, needed_role_uris=pre_role_uris)
+            core_roles = index_core_roles(_role_map)
+            # R199: the second income-statement role (손익계산서 + 포괄손익계산서 filed as two statements).
+            extra_is_roles = [info for info in extra_core_roles(_role_map) if info.statement == "IS"] \
+                if _EMIT_EXTRA_IS_ROLES else []
             # R170: delta-style vintages (2013-03-31/2017-10-01/2018-07-01)
             # ship only a delta over DART's shared base presentation linkbase —
             # merge it in for the core statement roles (taxonomy_linkbase.py::
@@ -1493,6 +1497,7 @@ def extract_report_lines_xbrl(
             # filer-file-only tree.
             base_pre = resolve_external_base_presentation(
                 members.xsd, {info.role_uri for info in core_roles.values()}
+                | {info.role_uri for info in extra_is_roles}
             )
             # R175: CF display sign = the line's contribution to its calculation
             # parent (fact × summation weight), from the filer+base merged calc network.
@@ -1507,7 +1512,7 @@ def extract_report_lines_xbrl(
                 members.pre, instance.nsmap, base_pre,
                 denegate_base_roles=frozenset(
                     info.role_uri for (statement, _basis), info in core_roles.items() if statement == "IS"
-                ),
+                ) | frozenset(info.role_uri for info in extra_is_roles),
             )
 
             basis_axis_ns = _resolve_ifrs_namespace(instance.nsmap)
@@ -1585,6 +1590,33 @@ def extract_report_lines_xbrl(
                             ))
                 except Exception as e:
                     logger.warning(f"[report_lines_xbrl] {rcept_no}: {statement}/{basis} 추출 실패 "
+                                    f"({type(e).__name__}: {e}), 이 role 만 스킵")
+
+            # R199 — the extra IS role(s): emit the tree itself (the totals/leaf fallbacks above already
+            # ran for the primary role) as table_seq=1.., dropping cells the primary role already carries.
+            _extra_seq: dict[str, int] = {}
+            for role_info in extra_is_roles:
+                extra_no = _extra_seq[role_info.basis] = _extra_seq.get(role_info.basis, 0) + 1
+                tree = pre_trees.get(role_info.role_uri)
+                if tree is None:
+                    continue
+                basis_member = QName(ns=basis_axis_ns, local=_BASIS_MEMBER_LOCAL[role_info.basis])
+                try:
+                    seen = {(l.basis, l.label_raw, l.col_index, l.value_won) for l in lines if l.statement == "IS"}
+                    for row in _emit_statement_lines(
+                        tree=tree, facts_by_qname=facts_by_qname, contexts=instance.contexts,
+                        units=instance.units, labels=labels, basis_axis=basis_axis,
+                        basis_member=basis_member, statement="IS", basis=role_info.basis,
+                        corp_code=corp_code, rcept_no=rcept_no,
+                        report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
+                        period_end_date=period_end_date,
+                    ):
+                        if (row.basis, row.label_raw, row.col_index, row.value_won) in seen:
+                            continue
+                        row.table_seq = extra_no
+                        lines.append(row)
+                except Exception as e:
+                    logger.warning(f"[report_lines_xbrl] {rcept_no}: IS/{role_info.basis} 추가 role 추출 실패 "
                                     f"({type(e).__name__}: {e}), 이 role 만 스킵")
 
             if not core_roles:

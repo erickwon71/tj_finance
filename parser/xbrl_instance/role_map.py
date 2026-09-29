@@ -274,3 +274,20 @@ def index_core_roles(role_map: dict[str, RoleInfo]) -> dict[tuple[str, str], Rol
             continue
         index[key] = info
     return index
+
+
+def extra_core_roles(role_map: dict[str, RoleInfo]) -> list[RoleInfo]:
+    """Second-and-later core roles of a (statement, basis) pair that `index_core_roles`
+    skips, in the same first-wins order. R199: a filer that presents the income statement and
+    the statement of comprehensive income as two statements files two IS roles per basis
+    ([D310000] 손익계산서 + [D410000] 포괄손익계산서); keeping only the first dropped every
+    other-comprehensive-income row."""
+    seen: set[tuple[str, str]] = set()
+    extra: list[RoleInfo] = []
+    for info in role_map.values():
+        key = (info.statement, info.basis)
+        if key in seen:
+            extra.append(info)
+        else:
+            seen.add(key)
+    return extra

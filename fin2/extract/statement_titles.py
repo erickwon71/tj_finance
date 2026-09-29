@@ -459,8 +459,6 @@ def classify_statement_in_body_section(title: str, include_sce: bool = False) ->
     t = re.sub(r"\s+", "", title)
     if _APPROPRIATION_RE.search(t):
         return None                 # 이익잉여금처분계산서/결손금처리계산서 — 4대 재무제표 아님
-    if _SCE_RE.search(t):
-        return "SCE" if include_sce else None
     best_code: str | None = None
     best_pos = -1
     for name, code in _BODY_STMT_ORDER:
@@ -468,6 +466,17 @@ def classify_statement_in_body_section(title: str, include_sce: bool = False) ->
         if pos > best_pos:
             best_pos = pos
             best_code = code
+    # R195 — the SCE name takes part in the same "last name wins" rule as R141. It used to
+    # return first, wherever it sat, so an SCE footnote merged with the next heading
+    # ('…연결자본변동표는 …소급재작성되지 아니하였습니다 라. 연결현금흐름표') was read as SCE.
+    sce_pos = -1
+    m_sce = None
+    for m_sce in _SCE_RE.finditer(t):
+        pass
+    if m_sce is not None:
+        sce_pos = m_sce.start()
+    if sce_pos >= 0 and sce_pos > best_pos:
+        return "SCE" if include_sce else None
     return best_code
 
 

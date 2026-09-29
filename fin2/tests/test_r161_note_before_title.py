@@ -80,12 +80,15 @@ def test_note_only_text_becomes_empty():
 
 # ──────────────── 분류가 실제로 바로잡히는지 ────────────────
 
-def test_classification_flips_from_sce_to_cf():
-    """★이 테스트가 결함 자체를 재현한다 — 각주가 붙어 있으면 SCE 로 잘못 간다."""
-    assert classify_statement_in_body_section(
-        _NOTE_CF, include_sce=True) == "SCE"          # 결함 재현
-    assert classify_statement_in_body_section(
-        strip(_NOTE_CF), include_sce=True) == "CF"    # 수정 후
+def test_note_plus_cf_heading_is_cf_with_or_without_stripping():
+    """각주가 붙어 있어도 CF 다.
+
+    R161 당시에는 각주를 떼지 않으면 'SCE' 로 잘못 갔다(이 테스트가 결함을 재현했다).
+    R195 가 분류기 자체를 '가장 나중 이름 채택'으로 바꿔 각주 표기(註)/주)/※ …)와
+    무관하게 CF 가 된다. 각주 제거(R161)는 그대로 두 번째 방어선이다.
+    """
+    assert classify_statement_in_body_section(_NOTE_CF, include_sce=True) == "CF"
+    assert classify_statement_in_body_section(strip(_NOTE_CF), include_sce=True) == "CF"
 
 
 def test_letter_spacing_alone_is_not_the_problem():

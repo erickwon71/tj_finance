@@ -195,6 +195,7 @@ from fin2.extract.report_lines_inline_xbrl_overlay import (
 from fin2.extract.sce_sign_repair import (
     apply_dated_balance_signs, apply_manual_sign_fixes, repair_sce_balance_tolerance,
     repair_sce_row_identity, repair_sce_sibling_cells, repair_sce_sign_loss,
+    rerun_sign_loss_after_row_identity,
 )
 from fin2.extract.cf_cash_sign_repair import repair_cf_cash_sign_loss
 from fin2.extract.sce_source_defects import apply_source_defect_fixes, verify_row_drops
@@ -2145,6 +2146,13 @@ def extract_report_lines(
     if row_identity_fixes:
         logger.debug(f"[report_lines] R162-d SCE 행 항등식 부호 복원: "
                      f"{len(row_identity_fixes)}셀 ({rcept_no})")
+
+    # R162-e2(2026-09-30) — 행 항등식이 셀을 뒤집으면 그 열 블록이 단일 양수 셀 하나만 남기고
+    # 닫히는 경우가 생긴다. 열 롤포워드 풀이는 이미 지나갔으므로 R162-d 가 바꾼 필링에 한해 한 번 더 돈다.
+    if row_identity_fixes:
+        rerun_fixes = rerun_sign_loss_after_row_identity(lines, prior_balances, prior_income)
+        if rerun_fixes:
+            logger.debug(f"[report_lines] R162-e2 SCE 부호 복원 재실행: {len(rerun_fixes)}셀 ({rcept_no})")
 
     # R163(2026-09-22) — R162 의 자매. CF 현금 조정 구간(기초+순증감+환율효과=기말)이
     # 깨진 열에서 단일 셀 부호를 복원한다. 캠페인 이슈#29.

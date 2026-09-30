@@ -70,6 +70,7 @@ _SUBTOTAL_LABEL_RE = re.compile(
 
 _PRIOR_IS_LABEL = "이전 보고서 IS"      # R192 anchor label (`_required_sign`)
 _R162D_BLANK_GROUP_TOTAL = True     # R162-d2: a group whose total cell is blank and has one printed member closes the parent total via that member
+_R162E_RERUN_AFTER_D = True          # R162-e2: run the sign-loss pass once more when R162-d/d2 changed a cell
 _TOTAL_COL_RE = re.compile(r"합\s*계|총\s*계")
 
 
@@ -1659,6 +1660,44 @@ def repair_sce_balance_tolerance(lines: List, prior_balances=None) -> List[Corre
         logger.debug(f"[report_lines/R188] SCE 잔액 허용오차 부호 복원 {len(corrections)}셀")
     return corrections
 
+
+
+def rerun_sign_loss_after_row_identity(lines: List, prior_balances=None, prior_income=None) -> List[Correction]:
+    """R162-e2 (2026-09-30, fix batch #62) — the sign-loss chain (R162/R162-e) runs BEFORE the row
+    identity pass (R162-d/d2). A cell that pass flips can leave its column block one single positive cell
+    short of closing — the solver already ran, so nothing closes it. Run it once more after R162-d.
+
+    Two of the second pass's changes are refused (reverted): a printed negative cell turned positive
+    (the pass only restores lost parentheses), and a cell whose column residual becomes larger.
+    Measured (11,178 filings with a single-cell-closable block): 716 filings / 2,235 cells, 2,137 close
+    their block exactly, 30 improve, 67 leave it unchanged (subtotal rows), 1 worse, 7 negative→positive."""
+    if not _R162E_RERUN_AFTER_D:
+        return []
+    before = {id(l): l.value_won for l in lines if getattr(l, "statement", None) == "SCE"}
+    fixes = repair_sce_sign_loss(lines, prior_balances, prior_income)
+    if not fixes:
+        return []
+    by_id = {id(l): l for l in lines if id(l) in before}
+    kept: List[Correction] = []
+    refused = set()
+    for lid, old in before.items():
+        ln = by_id[lid]
+        new = ln.value_won
+        if new == old:
+            continue
+        r_after = _block_residual(lines, ln)
+        ln.value_won = old
+        r_before = _block_residual(lines, ln)
+        ln.value_won = new
+        if old < 0 or (r_before is not None and r_after is not None and abs(r_after) > abs(r_before)):
+            ln.value_won = old
+            refused.add((ln.basis, getattr(ln, "table_seq", None), ln.row_order, ln.col_index))
+    for c in fixes:
+        if (c.basis, c.table_seq, c.row_order, c.col_index) not in refused:
+            kept.append(c)
+    if kept:
+        logger.debug(f"[report_lines/R162-e2] SCE 행 항등식 뒤 부호 복원 재실행 {len(kept)}셀")
+    return kept
 
 def _block_residual(lines: Sequence, target) -> Optional[int]:
     """Roll-forward residual of the block of `target`'s column that holds its row."""

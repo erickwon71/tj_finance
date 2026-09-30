@@ -11518,6 +11518,8 @@ R162-d(`_row_identities`)는 그룹마다 '합계' 칸이 정확히 하나여야
 **회귀 테스트**: `fin2/tests/test_r162e2_rerun_after_row_identity.py`. **데일리 배선**: 별도 배선 불필요(`extract_report_lines` 체인 안).
 **소급**: 613필링(`docs/qa/r162e2_backfill_targets_2026-09-30.txt`)을 `batch add-targets` + `batch reload`.
 
+**batch #62 결과(2026-09-30)**: 재적재 613필링 done 613 / failed 0. #86976 fixed(남해화학 재측정요소 자본 합계 −4,399,383,571, 연차배당 −2,397,434,750 과 합쳐 롤포워드 −6,796,818,321 일치), not_fixed 0.
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |

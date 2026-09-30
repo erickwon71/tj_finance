@@ -1,5 +1,13 @@
 # 인계 — 2015+ PDF-only 정기보고서 결측 462건 + Track C 백필 시도 (2026-09-29)
 
+> **★사용자 결정 (2026-10-01): 2015+ 캠페인 동안 PDF-only 462건은 "PDF-only 보류"로 둔다.**
+> Track C 적재·백필은 하지 않는다. 이 필링에서 올라오는 검증 이슈(missing_row·unclassified 등)는
+> fix 세션이 고치지 않고 `python scripts/hold_pdf_only_issues.py --apply` 로 **주차**한다
+> (error_type 별 배치를 만들어 `waiting_decision`). 주차 배치에는 **절대 `batch reload` 를 하지 않는다.**
+> 첫 실행: 배치 #66(missing_row 22건·9필링), #67(unclassified 2건·2필링).
+> PDF-only 판정: 2015+ · 완료된 PDF 다운로드 있음 · 완료된 비-PDF 다운로드 없음 · report_lines 0행(462건 census 와 일치).
+> 아래 "다음 fix 세션이 할 일"은 캠페인 종료 후 재개할 때의 목록이다.
+
 ## 배경
 
 verify 러너가 19:13 "연속 3회 실패"로 정지(슬롯 `00131054:2015:Q3`, 유진증권). 원인 조사 중

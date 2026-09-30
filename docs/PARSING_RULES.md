@@ -11583,6 +11583,22 @@ R162-d(`_row_identities`)는 그룹마다 '합계' 칸이 정확히 하나여야
 
 **batch #63 결과(2026-09-30)**: 재적재 285필링 done 285 / failed 0. #85494 fixed(호텔신라 별도 CF '소 계' 당기 173,918,853,979 — 원문 및 섹션 항목 합과 일치), not_fixed 0.
 
+## R203. XBRL EPS 를 **회사 확장 개념(`perShareItemType`) + `unitRef="SHARES"`** 로 태깅한 필링 — 주당이익이 통째로 누락 (2026-10-01, fix queue missing_row)
+
+**발견**: 콜마비앤에이치 2018Q1 정정본 `20180516000266`(IS 주당순이익 347·353), 무학 2018H1 `20190225002801`·Q3 `20190225002824`(기본·희석 EPS 8건)가 missing_row 이슈였다.
+최초본(`.xml`)은 EPS 를 적재했지만 정정본은 XBRL zip 경로라 EPS 행이 없다. instance 에 fact 는 있다(347 등).
+EPS 가 표준 `BasicEarningsLossPerShare` 가 아니라 회사 확장 `udf_IS_…_StatementOfComprehensiveIncomeAbstract`(이름은 Abstract 지만 xsd `abstract="false"`, `type="num:perShareItemType"`)로 태깅돼 있고 단위가 `SHARES` 다.
+R170-c 는 이름에 `PerShare` 가 든 개념만 `shares` 단위를 받아 이 fact 는 `_numeric_value` 에서 버려졌다.
+
+**규칙** (`report_lines_xbrl._custom_per_share_qnames`, `_normalize_custom_eps_units`): 필링 entry-point xsd 에서 `type` 끝이 `perShareItemType` 인 요소를 모은다(이름에 `PerShare` 가 없는 확장 개념 포함).
+그 개념의 fact 가 bare `shares` 단위이면 합성 단위 `KRWEPS_R203`(KRW/shares)로 바꿔 R170-c 와 같이 받는다. 다른 개념의 `shares` 단위 fact 는 여전히 버린다. xsd 파싱 실패는 빈 집합(추출을 막지 않음).
+
+**측정**(`/Volumes/dart_data/raw_report` XBRL zip 3,482개 전수): 해당 패턴 6필링 — 위 3필링 + `20181115000252`(2018H1)·`20180615000422`(2018Q1)·`20190618000144`(2019Q1).
+후자 3필링은 기존 EPS 값(별도 143·연결 -2,508/2,661·432)이 그대로 유지되고 누락돼 있던 연결 215·별도 407 등과 직전 기간 열이 추가된다(값 소실 0).
+재추출 값: 20180516000266 연결 353·별도 347, 20190225002801 연결 135·별도 153(원문과 일치).
+
+**회귀 테스트**: `fin2/tests/test_xbrl_custom_eps_unit_r203.py`. **데일리 배선**: 별도 배선 불필요(`extract_report_lines_xbrl` 안의 규칙). **소급**: 6필링을 `batch add-targets` + `batch reload`.
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |

@@ -143,7 +143,7 @@ from pathlib import Path
 from loguru import logger
 
 from parser.xbrl_instance.instance_parser import (
-    Dimension, QName, XbrlContext, XbrlFact, XbrlUnit, parse_instance,
+    Dimension, QName, XbrlContext, XbrlFact, XbrlInstance, XbrlUnit, parse_instance,
 )
 from parser.xbrl_instance.taxonomy_linkbase import (
     Label, PresentationTree, merge_label_catalogs, parse_labels, parse_presentation,
@@ -560,6 +560,50 @@ def _resolve_columns(
         f, ctx = buckets[d]
         results.append((col_idx, f, ctx))
     return results
+
+
+_R203_EPS_UNIT = "KRWEPS_R203"
+_XSD_NS = "http://www.w3.org/2001/XMLSchema"
+
+
+def _custom_per_share_qnames(xsd_path: Path) -> set[QName]:
+    """R203: elements the filer's own entry-point xsd declares with a `perShareItemType`
+    type. Some filers tag EPS with a custom concept whose name has no "PerShare"
+    (e.g. `udf_IS_..._StatementOfComprehensiveIncomeAbstract`) and unitRef="SHARES"."""
+    try:
+        from lxml import etree
+        root = etree.parse(str(xsd_path)).getroot()
+    except Exception as exc:  # a malformed xsd must not stop extraction
+        logger.warning(f"[report_lines_xbrl] R203 xsd parse failed {xsd_path}: {exc}")
+        return set()
+    tns = root.get("targetNamespace")
+    if not tns:
+        return set()
+    out: set[QName] = set()
+    for el in root.iter(f"{{{_XSD_NS}}}element"):
+        typ = el.get("type") or ""
+        if typ.split(":")[-1] == "perShareItemType" and el.get("name"):
+            out.add(QName(ns=tns, local=el.get("name")))
+    return out
+
+
+def _normalize_custom_eps_units(instance: XbrlInstance, per_share: set[QName]) -> int:
+    """R203: re-point bare-`shares` facts of custom per-share concepts to a synthetic
+    KRW/shares unit so `_numeric_value` accepts them (same meaning as R170-c)."""
+    if not per_share:
+        return 0
+    n = 0
+    for f in instance.facts:
+        unit = instance.units.get(f.unit_ref) if f.unit_ref else None
+        if (f.qname in per_share and unit is not None and unit.measure is not None
+                and unit.measure.local == "shares"):
+            if _R203_EPS_UNIT not in instance.units:
+                instance.units[_R203_EPS_UNIT] = XbrlUnit(
+                    id=_R203_EPS_UNIT, numerator=QName(ns=unit.measure.ns, local="KRW"),
+                    denominator=unit.measure)
+            f.unit_ref = _R203_EPS_UNIT
+            n += 1
+    return n
 
 
 def _numeric_value(fact: XbrlFact, units: dict[str, XbrlUnit]) -> int | None:
@@ -1536,6 +1580,7 @@ def extract_report_lines_xbrl(
             members = _extract_zip_members(zip_path, tmp_dir)
 
             instance = parse_instance(members.xbrl)
+            _normalize_custom_eps_units(instance, _custom_per_share_qnames(members.xsd))
             pre_role_uris = presentation_role_uris(members.pre)
             labels = merge_label_catalogs(
                 parse_labels(members.lab_ko, instance.nsmap) if members.lab_ko else {},

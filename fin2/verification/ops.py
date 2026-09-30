@@ -986,6 +986,30 @@ def batch_add_targets(batch_id: int, rcepts: list[str]) -> int:
 
 def batch_set(batch_id: int, *, status: str | None = None, rule_id: str | None = None,
               note: str | None = None, commit_sha: str | None = None) -> None:
+    """★2026-09-30(사용자 지시) — batch #22(2026-09-26, "source_defect 180건 전수조사 —
+    원문결함 확인, 코드수정 불필요")가 `status='done'`으로 닫혔는데 issue 183건이 여전히
+    `fixing`에 남아있었다: 트리거가 `fixed`를 거부(재적재해도 데이터가 안 바뀜 = 오탐)했고,
+    그렇다고 `--exclude`로 `fixing→open` 풀어주지도 않은 채 배치만 닫아버린 것 — 그 이후
+    이 이슈들은 fix_batch_id가 이미 done인 배치를 계속 가리켜서 fix_queue 에도 안 보이고,
+    fixed 도 open 도 아니라서 아무도 안 건드리는 상태로 영구 고아가 됐다(회귀:
+    fin2/tests/test_verification_ops.py::test_batch_set_done_refuses_when_issues_still_fixing).
+    done/abandoned 으로 닫기 전에 이 배치의 `fixing` 잔량을 막아 재발을 원천 차단한다 —
+    코드수정이 필요없다고 판단됐으면 `batch mark-fixed <id> --exclude <남은 issue_id들>
+    --note "사유"` 로 먼저 풀어줄 것. `--exclude` 로 풀린 issue 는 아직 배치가 열려있는
+    동안은 다시 집을 수 있게 fix_batch_id 를 일부러 안 지운다(재수거 시나리오,
+    test_fix_batch_cycle_and_recheck) — 그래서 배치를 진짜로 닫는 지금 이 시점에
+    한 번만 정리한다."""
+    if status in ("done", "abandoned"):
+        with engine.connect() as conn:
+            stuck = [r[0] for r in conn.execute(text("""
+                SELECT issue_id FROM verification.issues
+                WHERE fix_batch_id = :b AND status = 'fixing' ORDER BY issue_id"""),
+                {"b": batch_id}).fetchall()]
+        if stuck:
+            raise VqError(
+                f"batch {batch_id} 를 {status} 로 닫을 수 없다 — 이슈 {len(stuck)}건이 아직 "
+                f"'fixing'이다(오탐이면 fixed 대신 --exclude 로 open 으로 풀 것): {stuck[:20]}"
+                + (" ..." if len(stuck) > 20 else ""))
     with _Tx() as conn:
         conn.execute(text("""
             UPDATE verification.fix_batches
@@ -995,6 +1019,17 @@ def batch_set(batch_id: int, *, status: str | None = None, rule_id: str | None =
                    done_at = CASE WHEN :s IN ('done', 'abandoned') THEN now() ELSE done_at END
              WHERE batch_id = :b"""),
             {"b": batch_id, "s": status, "r": rule_id, "n": note, "c": commit_sha})
+        if status in ("done", "abandoned"):
+            # Batch is closing for good — an issue released via --exclude sits at `open`
+            # with fix_batch_id still pointing here (deliberately, for the re-take window
+            # above); once the batch is done nothing will ever write to that row again to
+            # trigger the lazy auto-clear, so it stays invisible to fix_queue forever
+            # (batch #22). `fixed`/`closed` issues are left alone — their fix_batch_id is a
+            # wanted audit trail (test_reopen_after_batch_done_clears_stale_fix_batch_id
+            # clears it lazily on its own next transition, by design).
+            conn.execute(text("""
+                UPDATE verification.issues SET fix_batch_id = NULL
+                 WHERE fix_batch_id = :b AND status IN ('open', 'reopened')"""), {"b": batch_id})
 
 
 def _git(*args: str) -> str:
@@ -1149,6 +1184,9 @@ def batch_mark_fixed(batch_id: int, exclude: list[int] | None = None,
             {"b": batch_id}).fetchall()]
     excluded = set(exclude or ())
     for iid in [i for i in ids if i in excluded]:
+        # fix_batch_id deliberately stays set here (not nulled) — a still-open batch may
+        # legitimately re-take a released issue back into `fixing` (test_fix_batch_cycle_
+        # and_recheck). It gets cleared once the batch itself closes (see batch_set()).
         with _Tx(evidence=f"fix_batch:{batch_id} released (not fixed): {exclude_note or ''}") as conn:
             conn.execute(text("""
                 UPDATE verification.issues SET status = 'open' WHERE issue_id = :i"""), {"i": iid})

@@ -455,6 +455,37 @@ def test_reopen_after_batch_done_clears_stale_fix_batch_id(engines, as_role):
     assert issue_id in [i["issue_id"] for i in ops.issues_of_type("value_mismatch")]
 
 
+def test_batch_set_done_refuses_when_issues_still_fixing(engines, as_role, monkeypatch):
+    # 2026-09-30 (user report): batch #22 ("source_defect 180건 전수조사 — 원문결함 확인,
+    # 코드수정 불필요") was closed `done` with 183 issues still `fixing` — the trigger had
+    # refused `fixed` (no data actually changed, so it's a false positive) and nobody ran
+    # `--exclude` to release them `fixing -> open` first. Those issues became permanent
+    # orphans: fix_batch_id still points at a `done` batch (invisible to fix_queue's
+    # unassigned view), not `fixed`, not `open` — nobody works them ever again.
+    issue_id = _admin_sql(engines, """
+        INSERT INTO verification.issues
+            (corp_code, fiscal_year, fiscal_period, rcept_no, basis, statement, account_label,
+             error_type)
+        VALUES (:c, 2024, 'FY', :r, 'separate', 'BS', '자본총계', 'source_defect')
+        RETURNING issue_id""", {"c": CORP, "r": R1})[0][0]
+
+    as_role("fix")
+    b = ops.batch_new("source_defect", "test orphan-fixing guard", [issue_id], "R_ORPHAN")
+
+    with pytest.raises(VqError, match="fixing"):
+        ops.batch_set(b["batch_id"], status="done")
+
+    # the documented way out: release it fixing -> open with a note, *then* close the batch.
+    monkeypatch.setattr(ops, "require_clean_pushed_head", lambda: "feedbee")
+    res = ops.batch_mark_fixed(b["batch_id"], exclude=[issue_id], exclude_note="원문결함, 코드수정 불필요")
+    assert res["released"] == [issue_id]
+    ops.batch_set(b["batch_id"], status="done")  # no longer raises
+
+    row = _admin_sql(engines, "SELECT status, fix_batch_id FROM verification.issues "
+                      "WHERE issue_id=:i", {"i": issue_id})[0]
+    assert row == ("open", None)                 # auto-cleared: the batch is now done
+
+
 def test_pace_wait_rules():
     from datetime import datetime, timezone
     now = datetime(2026, 9, 24, 4, 0, tzinfo=timezone.utc)

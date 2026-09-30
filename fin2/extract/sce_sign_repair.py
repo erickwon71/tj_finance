@@ -69,6 +69,7 @@ _SUBTOTAL_LABEL_RE = re.compile(
 
 
 _PRIOR_IS_LABEL = "이전 보고서 IS"      # R192 anchor label (`_required_sign`)
+_R162D_BLANK_GROUP_TOTAL = True     # R162-d2: a group whose total cell is blank and has one printed member closes the parent total via that member
 _TOTAL_COL_RE = re.compile(r"합\s*계|총\s*계")
 
 
@@ -1214,8 +1215,13 @@ _CAPITAL_TRANSACTION_RE = re.compile(
 )
 
 
-def _row_identities(by_path: Dict[Tuple[str, ...], object]) -> List[Tuple[Tuple, List[Tuple]]]:
-    """`{col-path -> line}` 한 행에서 (합계 경로, [구성원 경로...]) 항등식 목록을 뽑는다."""
+def _row_identities(by_path: Dict[Tuple[str, ...], object],
+                    blank_group_total: bool = False) -> List[Tuple[Tuple, List[Tuple]]]:
+    """`{col-path -> line}` 한 행에서 (합계 경로, [구성원 경로...]) 항등식 목록을 뽑는다.
+
+    `blank_group_total` (R162-d2) — opt-in, only the two repair passes (R162-d, R189) ask for it and
+    only while `_R162D_BLANK_GROUP_TOTAL` is on; the guards that read identities keep the old meaning."""
+    blank_group_total = blank_group_total and _R162D_BLANK_GROUP_TOTAL
     children: Dict[Tuple, List[Tuple]] = defaultdict(list)
     for path in by_path:
         children[path[:-1]].append(path)
@@ -1232,6 +1238,13 @@ def _row_identities(by_path: Dict[Tuple[str, ...], object]) -> List[Tuple[Tuple,
         for g in groups:
             gkids = children.get(g, [])
             gt = [k for k in gkids if _TOTAL_COL_RE.search(k[-1])]
+            if (blank_group_total and not gt and len(gkids) == 1 and gkids[0] in by_path
+                    and not any(len(k) > len(g) + 1 and k[:len(g)] == g for k in by_path)):
+                # R162-d2 — the group's own total cell is blank in the source and exactly one
+                # member is printed: that member IS the group total (Σ of one printed member),
+                # so it closes the parent total directly.
+                resolved.append(gkids[0])
+                continue
             if len(gt) != 1:
                 ok = False
                 break
@@ -1308,12 +1321,30 @@ def repair_sce_row_identity(lines: List, prior_balances=None) -> List[Correction
     for (basis, table_seq, row_order), by_path in rows.items():
         if len(by_path) < 2:
             continue
-        identities = _row_identities(by_path)
+        identities = _row_identities(by_path, True)
         if not identities:
             continue
         solution = _row_flip_solution(by_path, identities)
         if not solution:
             continue
+        if identities != _row_identities(by_path):
+            # R162-d2 — a solution that leans on the blank-group-total identity must be backed by
+            # the flipped cell's own column: its roll-forward residual has to shrink strictly.
+            # Measured without this: 31 of 189 changed cells made the residual larger (closed
+            # net-income / dividend columns broken, 6 more left it unchanged, 10 had no block).
+            worse = False
+            for p in solution:
+                ln = by_path[p]
+                v = int(ln.value_won)
+                r0 = _block_residual(lines, ln)
+                ln.value_won = -v
+                r1 = _block_residual(lines, ln)
+                ln.value_won = v
+                if r0 is None or r1 is None or not abs(r1) < abs(r0):
+                    worse = True
+                    break
+            if worse:
+                continue
 
         participants: Dict[Tuple, Set[Tuple]] = defaultdict(set)
         for t, ms in identities:
@@ -1686,7 +1717,7 @@ def repair_sce_sibling_cells(lines: List, prior_balances=None, prior_income=None
             tuple(x.strip() for x in ln.col_label.split(">"))] = ln
     corrections: List[Correction] = []
     for (basis, table_seq, row_order), by_path in sorted(rows.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0, kv[0][2])):
-        identities = _row_identities(by_path)
+        identities = _row_identities(by_path, True)
         if not identities:
             continue
         solution = _row_flip_solution(by_path, identities)

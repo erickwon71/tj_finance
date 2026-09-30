@@ -82,6 +82,9 @@ def strip_cell_whitespace(text: str) -> str:
     return text
 
 
+_R202_SPLIT_LEADING_DIGITS = True   # R202: '1 73,918,853,979' (leading digits split off inside one cell) = 173,918,853,979
+
+
 def _is_complete_number(tok: str) -> bool:
     """토큰 하나가 **온전한 금액 표기**인가 — 부호·괄호를 벗긴 뒤 3자리 그룹 또는 무콤마
     정수/소수. 한 셀 안에 이런 토큰이 둘 이상이면 이어붙이면 안 된다(`parse_amount` R1)."""
@@ -404,6 +407,18 @@ def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
         if _is_complete_number(joined):
             cell_text = joined
             toks = [joined]
+
+    # ── R202(2026-09-30): 숫자의 **첫 1~2자리가 셀 안에서 따로 떨어져** 공백으로 이어진 서식.
+    #   '1 73,918,853,979' 는 두 값이 아니라 173,918,853,979 하나다(원문 실측: 호텔신라
+    #   20220308000990 별도 CF '소 계' — `<SPAN>1</SPAN><SPAN>73,918,853,979</SPAN>`).
+    #   떨어진 자리 + 뒤 토큰의 첫 콤마 그룹이 **정확히 3자리**일 때만 이어붙인다.
+    #   합계 행 열 합 항등식으로 검증한 판정 가능 셀 약 35건이 전부 결합값이 맞았고, 앞자리를
+    #   버린 값이 맞는 경우는 0건이었다(docs/PARSING_RULES.md R202).
+    if (_R202_SPLIT_LEADING_DIGITS and len(toks) == 2 and re.fullmatch(r"\d{1,2}", toks[0])
+            and re.fullmatch(r"\d{1,2}(?:,\d{3})+", toks[1])
+            and len(toks[0]) + len(toks[1].split(",")[0]) == 3):
+        cell_text = toks[0] + toks[1]
+        toks = [cell_text]
 
     if len(toks) >= 2 and all(_is_complete_number(tk) for tk in toks):
         if len({tk.strip() for tk in toks}) > 1:

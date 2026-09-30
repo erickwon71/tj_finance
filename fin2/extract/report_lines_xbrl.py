@@ -197,6 +197,13 @@ def _resolve_ifrs_namespace(nsmap: dict[str, str]) -> str | None:
 _SUPPORTED_STATEMENTS = ("BS", "IS", "CF")
 # R199 (2026-09-30) measurement switch: also emit the 2nd IS role of a (basis) pair.
 _EMIT_EXTRA_IS_ROLES = True
+# R200 (2026-09-30) — R176 tie handling: "strict" = deterministic candidate order, and a tie between rows is
+# resolved only among negative-by-nature rows (none → no flip); "first" = deterministic, first row wins;
+# "legacy" = the old set-order iteration (PYTHONHASHSEED-dependent) — measurement only.
+_R176_TIE_POLICY = "strict"
+_NEGATIVE_BY_NATURE_LOCAL_RE = re.compile(r"Dividend|TreasuryShares|PurchaseOfTreasury|AcquisitionOfTreasury", re.I)
+# Filer-extension rows (`udf_CE_*`) carry no standard concept name — their Korean label decides.
+_NEGATIVE_BY_NATURE_LABEL_RE = re.compile(r"(?<!주식)배\s*당|자\s*기\s*주\s*식.*취\s*득")
 _SUPPORTED_SCE_STATEMENT = "SCE"
 
 # ★ Phase 2 (pdf_only_parser_phase2_design_2026-08-12 §A-5, quantified in
@@ -1409,6 +1416,20 @@ def _settle_sce_signs_by_rollforward(
                 or local_of[loc] == "ChangesInEquity"
                 or "ComprehensiveIncome" in local_of[loc]}
     flipped: set[str] = set()
+    # R200 — tie-break candidates: a negative-by-nature row (배당·자기주식 취득) with a positive fact
+    # (a lost parenthesis). One whose facts are already negative carries its parenthesis — flipping it to
+    # positive can never be the repair (케이피티유 `20180816000025` '배당').
+    row_label: dict[str, str] = {}
+    row_values: dict[str, list[int]] = {}
+    for (row_loc, _p, _c), line in zip(meta, out):
+        row_label.setdefault(row_loc, line.label_raw or "")
+        row_values.setdefault(row_loc, []).append(line.value_won)
+
+    def natural_negative(loc: str) -> bool:
+        return bool((_NEGATIVE_BY_NATURE_LOCAL_RE.search(local_of[loc])
+                     or _NEGATIVE_BY_NATURE_LABEL_RE.search(row_label.get(loc, "")))
+                    and any(v > 0 for v in row_values[loc]))
+
     initial = residuals(flipped)
     while True:
         base = residuals(flipped)
@@ -1416,15 +1437,28 @@ def _settle_sce_signs_by_rollforward(
         if not broken:
             break
         best, best_fix = None, 0
-        for loc in {loc for key, block in cells.items() for loc in flow_locs(block, key)} - flipped - anchored:
+        tied: list[str] = []
+        candidates = {loc for key, block in cells.items() for loc in flow_locs(block, key)} - flipped - anchored
+        if _R176_TIE_POLICY != "legacy":
+            candidates = sorted(candidates, key=lambda l: order_of[l])   # R200: never iterate a set
+        for loc in candidates:
             trial = residuals(flipped | {loc})
             if any(trial.get(k, 0) != 0 for k, r in base.items() if r == 0):
                 continue    # would break a cell that currently holds
             fixed = sum(1 for k in broken if trial.get(k, 1) == 0)
             if fixed > best_fix:
-                best, best_fix = loc, fixed
+                best, best_fix, tied = loc, fixed, [loc]
+            elif fixed == best_fix and fixed:
+                tied.append(loc)
         if best is None:
             break
+        if _R176_TIE_POLICY == "strict" and len(tied) > 1:
+            # R200 — several rows fix the same number of cells: the equation cannot tell which one lost its
+            # parenthesis. Owner transactions that are negative by nature decide; otherwise nothing is flipped (R6).
+            natural = [l for l in tied if natural_negative(l)]
+            if not natural:
+                break
+            best = natural[0]     # every natural candidate is negative by nature, the next pass takes the others
         flipped.add(best)
     for i, (row_loc, _p, _c) in enumerate(meta):
         if row_loc in flipped:

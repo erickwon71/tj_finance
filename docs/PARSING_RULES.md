@@ -11469,6 +11469,8 @@ DB 데이터는 바뀌지 않는다(재적재 없음). 해당 이슈는 검증 �
 **회귀 테스트**: `fin2/tests/test_xbrl_second_is_role.py`(`test_dup_key_…`, `test_hanwha_ocean_…`).
 **데일리 배선**: 별도 배선 불필요(`extract_report_lines_xbrl` 자체 수정). **소급**: 위 7필링을 `batch add-targets` + `batch reload`.
 
+**batch #60 결과(2026-09-30)**: 재적재 7필링 done 7 / failed 0. 이슈 3건(#86985·#86986·#86987) fixed(DB 값이 원문과 일치), not_fixed 0. 근거 목록: `docs/qa/r199b_backfill_targets_2026-09-30.txt`.
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |

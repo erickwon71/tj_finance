@@ -112,6 +112,7 @@ class SrcTable:
     headers: list[str]  # header text per amount column (spaces removed)
     rows: list[SrcRow] = field(default_factory=list)
     stype: str | None = None  # BS / IS / SCE / CF, None when undecidable
+    has_note_col: bool = False  # header carries a note ('주석') column that `headers` drops
 
     @property
     def n_amount_rows(self) -> int:
@@ -178,7 +179,7 @@ def _parse_table(idx: int, table, basis: str, title: str) -> SrcTable | None:
     cols = [c for c in range(first_amt, width) if c not in note_cols]
     headers = [_WS_RE.sub("", "".join(t for row in header_rows for cc, t, _ in row if cc == c))
                for c in cols]
-    st = SrcTable(idx, basis, title, headers)
+    st = SrcTable(idx, basis, title, headers, has_note_col=bool(note_cols))
     for row in g[first_data:]:
         by_col = {c: t for c, t, o in row if o}
         parts = [by_col[c] for c in sorted(by_col) if c < first_amt and c not in note_cols
@@ -275,6 +276,20 @@ def _finding(kind: str, key, **kw) -> dict:
     return {"kind": kind, "statement": st, "basis": basis, "table_seq": ts, **kw}
 
 
+def _rebase_sce_note_column(items: list[dict], source_has_note_col: bool) -> list[dict]:
+    """R201-b: the source table drops note ('주석') columns, but report_lines counts a leading note
+    column (col_index 0) whenever the header has one, even on rows that carry no note value (a source
+    table that kept the note column as cell 0 needs no shift). Drop
+    the note cells and shift the component columns so the first one lines up with source cell 0."""
+    comp = [r["col_index"] for r in items
+            if r.get("col_label") != "주석" and r["col_index"] is not None]
+    shift = min(comp) if comp else 0
+    if not (source_has_note_col and shift >= 1):
+        return items
+    return [dict(r, col_index=r["col_index"] - shift) if r["col_index"] is not None else r
+            for r in items if r.get("col_label") != "주석"]
+
+
 def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
     """db_rows: report_lines dicts (statement, basis, table_seq, row_order, label_raw,
     col_index, value_won, is_cumulative)."""
@@ -361,6 +376,8 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                         return g
             return groups[0] if groups else [0]
 
+        if st_code == "SCE":
+            items = _rebase_sce_note_column(items, all(t.has_note_col for t in win_tables))
         headers_of = {t.idx: t.headers for t in win_tables}
         cand_s: Counter = Counter()
         for r in items:
@@ -707,7 +724,7 @@ def row_table_header(win_tables: list[SrcTable], row: SrcRow, c: int) -> str | N
 
 
 DB_SQL = """
-    SELECT statement, basis, table_seq, row_order, label_raw, col_index, value_won, is_cumulative
+    SELECT statement, basis, table_seq, row_order, label_raw, col_index, col_label, value_won, is_cumulative
     FROM report_lines WHERE rcept_no = :r AND statement IN ('BS', 'IS', 'CF', 'SCE')"""
 
 

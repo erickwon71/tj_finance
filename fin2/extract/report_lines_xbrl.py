@@ -724,6 +724,28 @@ def _check_sce_column_rollup(
                 )
 
 
+def _drop_quarter_only_cells(cells: list[tuple], report_fiscal_period: str) -> list[tuple]:
+    """R201 — H1/Q3 duration cells whose only context is the single-quarter one are dropped.
+
+    `_bucket_by_period` keeps the earliest-start context per end date, so a line whose cumulative
+    (`...A`) fact is absent falls back to the 3-month (`...Q`) fact and would then be stored as
+    cumulative. The filing prints that cumulative cell blank (R3/R85: no 3-month substitution).
+    The statement's cumulative start is the earliest start seen in the same column; a later start
+    means the cell is the quarter-only fact."""
+    if report_fiscal_period not in ("H1", "Q3"):
+        return cells
+    earliest: dict[int, str] = {}
+    for _, col_idx, _, ctx, _ in cells:
+        if ctx.period_kind == "duration" and ctx.start_date:
+            if col_idx not in earliest or ctx.start_date < earliest[col_idx]:
+                earliest[col_idx] = ctx.start_date
+    return [
+        c for c in cells
+        if not (c[3].period_kind == "duration" and c[3].start_date
+                and c[3].start_date > earliest[c[1]])
+    ]
+
+
 def _emit_statement_lines(
     *, tree: PresentationTree, facts_by_qname: dict[QName, list[XbrlFact]],
     contexts: dict[str, XbrlContext], units: dict[str, XbrlUnit],
@@ -754,6 +776,8 @@ def _emit_statement_lines(
             if value is None:
                 continue
             cells.append((loc_label, col_idx, fact, ctx, value))
+
+    cells = _drop_quarter_only_cells(cells, report_fiscal_period)
 
     def r10(loc_label: str, value: int) -> int:
         return value * _value_sign(tree.nodes[loc_label].preferred_label)

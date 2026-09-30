@@ -11424,6 +11424,33 @@ set 순서가 `PYTHONHASHSEED` 에 따라 달라 **같은 수의 깨진 칸을 �
 
 **회귀 테스트**: `fin2/tests/test_xbrl_sce_settle_determinism.py`(seed 0·5 서브프로세스 산출물 동일, 배당 동률, 자기주식 확장 행, strict ⊆ first).
 
+## R201. XBRL H1/Q3 IS·CF — **누적 fact 가 없고 3개월 fact 만 있는 칸은 적재하지 않는다** (2026-09-30, fix queue column_misassign)
+
+**발견**: 네이처셀 2017Q3 `20171120000585` 별도 IS '외화환산손실(금융원가)' 이 DB 에 −67,431,249 (누적 열, `is_cumulative=True`)로 들어갔는데 원문 누적(9개월) 열은 공백이고 3개월 열에만 (67,431,249) 가 있다.
+원인: `_bucket_by_period` 는 같은 종료일 후보 중 시작일이 가장 이른 것(=누적)을 고른다. 누적 fact(`...dTQA`)가 없으면 3개월 fact(`...dTQQ`)가 유일 후보라 그대로 뽑히고,
+`_emit_statement_lines` 가 H1/Q3 duration 이면 무조건 `is_cumulative=True` 를 붙인다. R3/R85("누적 공란 → 3개월로 대체 안 함")와 어긋난다.
+
+**규칙** (`report_lines_xbrl._drop_quarter_only_cells`): H1/Q3 에서 같은 표·같은 열(col_index)의 duration 셀 중 **가장 이른 시작일보다 늦게 시작하는 셀**(= 3개월 단독 fact)은 버린다.
+Q1·FY 는 3개월=누적이거나 단일 기간이라 손대지 않는다. 누락 총계·리프 보충 경로(`_emit_missing_*`)는 이번 범위 밖(측정 시 해당 없음).
+
+**측정**(DB, `context_raw ~ 'd(TQ|HY)Q'` 이면서 `is_cumulative` 인 IS/CF col0): H1 42행·19필링, Q3 69행·42필링. 상당수는 값 0 인 칸(원문 공란/'-')이다.
+
+**회귀 테스트**: `fin2/tests/test_xbrl_quarter_only_cell_r201.py`.
+
+## R201-b. 기계대조(machine_compare)의 **SCE 주석 열 오프셋** 오탐 (2026-09-30, 검증 도구 수정)
+
+**발견**: 카카오게임즈 2023FY `20240320002052`(160건)·기가비스 2023H1 `20230814003197`(32)·카페24 2017FY `20180402005387`(33) column_misassign 이슈는 전부 mc5 가 낸 것이다.
+DB 행은 자체 항등식이 맞는다(예: 기가비스 자본금 100,000,000 + 이익잉여금 61,077,361,961 = 합계 61,177,361,961). 기계대조가 SCE 열을 `col_index` 그대로 원문 셀 번호로 쓴 것이 원인이다.
+원문 표 파서는 '주석' 열을 버리지만(`_parse_table` `cols`), report_lines 는 헤더에 주석 열이 있으면 첫 구성요소를 col_index 1 부터 매긴다(주석 값이 없는 행도 마찬가지, 주석 열 보유 SCE 226필링 중 195가 1부터).
+
+**규칙** (`machine_compare._rebase_sce_note_column`): 원문 표(윈도우 전체)가 주석 열을 버렸고 DB 그룹의 최소 구성요소 col_index 가 ≥1 이면, 주석 셀을 비교에서 빼고 col_index 를 그 최소값만큼 당긴다.
+원문이 주석 열 헤더를 인식 못 해 셀 0 으로 남긴 표(`&cr;주석` 등)는 이동하지 않는다.
+
+**측정**(주석 열 SCE 230필링 + 2016+ 무작위 SCE 150필링, 구·신 비교): 개선 225 / 동일 151 / 악화 0. 세 필링 모두 clean.
+DB 데이터는 바뀌지 않는다(재적재 없음). 해당 이슈는 검증 쪽에서 withdraw/재확인해야 한다.
+
+**회귀 테스트**: `fin2/tests/test_xbrl_quarter_only_cell_r201.py`(R201-b 3건).
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |

@@ -11495,6 +11495,8 @@ R162-d(`_row_identities`)는 그룹마다 '합계' 칸이 정확히 하나여야
 연차배당 행이 뒤집힌 뒤 그 열 블록은 단일 양수 셀 하나로 닫히므로 R162-e 를 한 번 더 도는 방법이 후보지만, 체인 순서를 바꾸는 일이라 별도 측정이 필요하다.
 그래서 #86976 은 이 배치에서 fixed 가 아니다.
 
+**batch #61 결과(2026-09-30)**: 재적재 92필링 done 92 / failed 0. #86977 fixed(연차배당 자본 합계 −2,397,434,750, 열 롤포워드와 일치), #86976 은 open 으로 반환(not_fixed). 근거 목록: `docs/qa/r162d2_backfill_targets_2026-09-30.txt`.
+
 **회귀 테스트**: `fin2/tests/test_r162d2_blank_group_total.py`. **데일리 배선**: 별도 배선 불필요(`extract_report_lines` 체인 안). **소급**: 92필링(`docs/qa/r162d2_backfill_targets_2026-09-30.txt`)을 `batch add-targets` + `batch reload`.
 
 ## 부록 B. 규칙이 사는 곳 (원출처)

@@ -257,8 +257,10 @@ def cmd_fix_queue(a):
         print("  없음")
     print("■ 미배정 이슈 (error_type 별)")
     for g in q["groups"] or []:
+        warn = f" ★반려됨 {g['n_released_fp']}건(새 배치 금지, issues --type 으로 확인)" \
+            if g["n_released_fp"] else ""
         print(f"  {g['error_type']:17s} {g['label_ko']:10s} 이슈 {g['n_issues']:4d} · 필링 {g['n_filings']} · "
-              f"회사 {g['n_corps']} · 재오픈 {g['n_reopened']} (첫 이슈 #{g['first_issue']})")
+              f"회사 {g['n_corps']} · 재오픈 {g['n_reopened']} (첫 이슈 #{g['first_issue']}){warn}")
     if not q["groups"]:
         print("  없음")
 
@@ -279,6 +281,13 @@ def cmd_issues(a):
             if r["last_reopen_evidence"]:
                 print(f"    마지막 재오픈 사유({r['last_reopen_actor']}, {r['last_reopen_at']}): "
                       f"{r['last_reopen_evidence'][:300]}")
+        # ★2026-09-30 — batch #59 실사례: --exclude로 풀린 '오탐, 코드수정 불필요' 이슈가
+        # 맨 open으로 fix_queue에 재등장해 다음 세션이 또 새 배치를 만들 뻔했다. 이미 결론난
+        # 이슈임을 fix에 바로 보여주고, verify가 withdraw로 닫아야 함을 알린다.
+        if r.get("released_note"):
+            print(f"    ★★이전 batch #{r['released_batch_id']}에서 '코드수정 불필요'로 반려됨"
+                  f"({r['released_at']}) — 새 배치에 넣지 말 것. verify의 withdraw 대기 중")
+            print(f"    반려 사유: {r['released_note'][:300]}")
 
 
 def cmd_batch_new(a):

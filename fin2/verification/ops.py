@@ -897,6 +897,16 @@ def fix_queue() -> dict:
             SELECT i.error_type, et.label_ko, count(*) AS n_issues,
                    count(DISTINCT i.rcept_no) AS n_filings, count(DISTINCT i.corp_code) AS n_corps,
                    count(*) FILTER (WHERE i.status = 'reopened') AS n_reopened,
+                   -- ★2026-09-30 (batch #59 실사례) — --exclude 로 '코드수정 불필요' 반려된
+                   -- 이슈가 open 으로 fix_queue 에 재등장해 신규 결함처럼 보이는 걸 미리 표시.
+                   -- 이 카운트가 n_issues 대부분이면 새 배치 만들지 말고 verify 의 withdraw
+                   -- 를 먼저 기다릴 것(issues --type 으로 개별 반려 사유 확인).
+                   count(*) FILTER (
+                       WHERE EXISTS (
+                           SELECT 1 FROM verification.issue_events e
+                           WHERE e.issue_id = i.issue_id AND e.to_status = 'open'
+                             AND e.evidence LIKE 'fix_batch:%released (not fixed):%')
+                   ) AS n_released_fp,
                    min(i.issue_id) AS first_issue
             FROM verification.issues i JOIN verification.error_types et ON et.code = i.error_type
             WHERE i.status IN ('open', 'reopened') AND i.fix_batch_id IS NULL
@@ -929,12 +939,21 @@ def issues_of_type(error_type: str, statuses=("open", "reopened")) -> list[dict]
     `issues.fixed_parser_commit`/`fixed_load_seq`(직전 fix 시도의 흔적, transition()이
     status만 바꾸므로 reopened 이후에도 남아있음)에 더해, `issue_events`에서 이 이슈가
     지금까지 몇 번 reopened 됐고 마지막 reopen 사유가 뭐였는지를 같이 반환한다 — 같은
-    문제를 몇 번째 보는 건지 첫눈에 보이게 한다."""
+    문제를 몇 번째 보는 건지 첫눈에 보이게 한다.
+
+    ★같은 날 후속 발견 — `open`도 똑같이 반복된다. batch #59("R201-b mc5 SCE 주석열 오프셋
+    오탐 225건 — 원문결함 아님·DB 정상, 코드수정 불필요")가 `--exclude`로 정확히 풀어줬는데,
+    풀린 이슈는 그냥 `open`(신규 이슈와 구분 안 됨)으로 fix_queue 에 바로 재등장해 다음
+    세션이 또 새 배치를 만들 뻔했다. `batch_mark_fixed`의 exclude 경로가 남기는
+    `fix_batch:<N> released (not fixed): <note>` 형태의 evidence(action='transition',
+    to_status='open')를 찾아 이미 "코드수정 불필요"로 결론난 적이 있는지 같이 반환한다 —
+    이 건은 fix가 다시 배치화할 게 아니라 verify가 `withdraw`로 닫아야 하는 대상이다."""
     with engine.connect() as conn:
         return [dict(r) for r in conn.execute(text("""
             SELECT i.*, c.corp_name,
                    coalesce(h.reopen_count, 0) AS reopen_count,
-                   h.last_reopen_at, h.last_reopen_evidence, h.last_reopen_actor
+                   h.last_reopen_at, h.last_reopen_evidence, h.last_reopen_actor,
+                   h.released_at, h.released_batch_id, h.released_note
             FROM verification.issues i
             JOIN corporations c USING (corp_code)
             LEFT JOIN LATERAL (
@@ -943,7 +962,19 @@ def issues_of_type(error_type: str, statuses=("open", "reopened")) -> list[dict]
                        (array_agg(e.evidence ORDER BY e.at DESC)
                         FILTER (WHERE e.to_status = 'reopened'))[1] AS last_reopen_evidence,
                        (array_agg(e.actor ORDER BY e.at DESC)
-                        FILTER (WHERE e.to_status = 'reopened'))[1] AS last_reopen_actor
+                        FILTER (WHERE e.to_status = 'reopened'))[1] AS last_reopen_actor,
+                       max(e.at) FILTER (WHERE e.to_status = 'open'
+                                          AND e.evidence LIKE 'fix_batch:%released (not fixed):%')
+                         AS released_at,
+                       (array_agg(substring(e.evidence FROM 'fix_batch:(\\d+)')
+                                  ORDER BY e.at DESC)
+                        FILTER (WHERE e.to_status = 'open'
+                                AND e.evidence LIKE 'fix_batch:%released (not fixed):%'))[1]
+                         AS released_batch_id,
+                       (array_agg(e.evidence ORDER BY e.at DESC)
+                        FILTER (WHERE e.to_status = 'open'
+                                AND e.evidence LIKE 'fix_batch:%released (not fixed):%'))[1]
+                         AS released_note
                 FROM verification.issue_events e WHERE e.issue_id = i.issue_id
             ) h ON true
             WHERE i.error_type = :t AND i.status = ANY(:s) AND i.fix_batch_id IS NULL

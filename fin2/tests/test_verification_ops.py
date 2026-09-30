@@ -485,6 +485,17 @@ def test_batch_set_done_refuses_when_issues_still_fixing(engines, as_role, monke
                       "WHERE issue_id=:i", {"i": issue_id})[0]
     assert row == ("open", None)                 # auto-cleared: the batch is now done
 
+    # 2026-09-30 (user report): batch #59 released 225 issues this exact way and they came
+    # straight back into fix_queue looking like brand-new defects — issues_of_type() must
+    # surface that this one was already investigated and released as a false positive.
+    as_role("fix")
+    q = ops.fix_queue()
+    g = next(x for x in q["groups"] if x["error_type"] == "source_defect")
+    assert g["n_released_fp"] == g["n_issues"] == 1
+    r = next(x for x in ops.issues_of_type("source_defect") if x["issue_id"] == issue_id)
+    assert r["released_batch_id"] == str(b["batch_id"])
+    assert "원문결함, 코드수정 불필요" in r["released_note"]
+
 
 def test_pace_wait_rules():
     from datetime import datetime, timezone

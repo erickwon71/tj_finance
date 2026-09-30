@@ -10,7 +10,8 @@ import inspect
 
 from fin2.extract import report_lines, report_lines_xbrl
 from fin2.extract.sce_source_defects import (
-    apply_source_defect_fixes, fill_total_only_rows, verify_row_drops,
+    apply_source_defect_fixes, fill_hierarchical_total_only_rows, fill_total_only_rows,
+    verify_row_drops,
 )
 
 
@@ -273,6 +274,65 @@ def test_r184_skips_tables_with_two_total_columns():
         if ln.col_index == 2:
             ln.col_label = "자본>지배기업 소유지분 합계"
     assert fill_total_only_rows(lines) == 0
+
+
+# ── R184-b: hierarchical table (group subtotal + grand total) ─────────────────
+# 지역난방공사 `20240321000860` 2023FY consolidated SCE: the hedge row prints the amount
+# in the group subtotal and the grand total only; the 기타자본구성요소 cell is blank.
+_G = "자본>지배기업의 소유주에게 귀속되는 지분>"
+_HIER_COLS = {0: _G + "납입자본", 1: _G + "기타자본구성요소",
+              2: _G + "지배기업의 소유주에게 귀속되는 지분 합계", 3: "자본>자본 합계"}
+
+
+def _kdhc(hedge_cells=None, closing_other=120):
+    lines = _rows("consolidated", [
+        (0, "2021.01.01 (기초)", {0: 10, 1: 100, 2: 110, 3: 110}),
+        (1, "기타포괄손익", {0: 0, 1: 50, 2: 50, 3: 50}),
+        (2, "현금흐름위험회피의 세후차익(차손)", hedge_cells or {2: -30, 3: -30}),
+        (3, "2021.12.31 (기말)", {0: 10, 1: closing_other, 2: 10 + closing_other,
+                                3: 10 + closing_other}),
+    ], _HIER_COLS)
+    for ln in lines:
+        ln.context_raw = f"sce:consolidated:c{ln.col_index}"
+    return lines
+
+
+def test_r184b_fills_the_blank_component_of_a_hierarchical_table():
+    lines = _kdhc()
+    assert fill_total_only_rows(lines) == 0          # R184 skips two-total tables
+    assert fill_hierarchical_total_only_rows(lines) == 1
+    assert _get(lines, "consolidated", 2, 1) == -30
+    added = [ln for ln in lines if ln.row_order == 2 and ln.col_index == 1][0]
+    assert added.col_label == _HIER_COLS[1] and added.context_raw == "sce:consolidated:c1"
+
+
+def test_r184b_is_part_of_the_general_fix_entry_point():
+    lines = _kdhc()
+    apply_source_defect_fixes(lines, "20240321000860")
+    assert _get(lines, "consolidated", 2, 1) == -30
+
+
+def test_r184b_never_overwrites_a_printed_zero():
+    lines = _kdhc({1: 0, 2: -30, 3: -30})
+    assert fill_hierarchical_total_only_rows(lines) == 0
+
+
+def test_r184b_skips_when_the_column_already_closes_without_the_cell():
+    lines = _kdhc(closing_other=90)       # 100 + 50 - 90 = 60, not 30
+    assert fill_hierarchical_total_only_rows(lines) == 0
+
+
+def test_r184b_skips_when_group_total_block_does_not_close():
+    lines = _kdhc()
+    for ln in lines:
+        if ln.row_order == 3 and ln.col_index == 2:
+            ln.value_won += 1
+    assert fill_hierarchical_total_only_rows(lines) == 0
+
+
+def test_r184b_skips_when_group_and_grand_total_differ():
+    lines = _kdhc({2: -30, 3: -31})
+    assert fill_hierarchical_total_only_rows(lines) == 0
 
 
 # ── wiring ────────────────────────────────────────────────────────────────────

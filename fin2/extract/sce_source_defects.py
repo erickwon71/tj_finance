@@ -360,6 +360,67 @@ def fill_total_only_rows(lines: List) -> int:
     return len(added)
 
 
+def fill_hierarchical_total_only_rows(lines: List) -> int:
+    """R184-b — R184 for hierarchical tables (group subtotal + grand total).
+
+    A movement row whose only non-zero cells are a group subtotal and the grand total
+    (same value, group one level deeper), with one component cell of that group left
+    blank. R184 skips these tables (more than one total column). A cell is added only
+    when every condition holds:
+    - the two non-zero cells are both total columns with equal value;
+    - among the group's component columns with NO cell in that row, exactly one has a
+      block roll-forward residual of exactly −value;
+    - the group-total and grand-total blocks both close;
+    - after the fill that component column closes too.
+    """
+    sce = _sce(lines)
+    tables: Dict[Tuple, List] = {}
+    for ln in sce:
+        tables.setdefault((ln.basis, getattr(ln, "table_seq", None)), []).append(ln)
+    added: List = []
+    for (basis, seq), cells in tables.items():
+        cols: Dict[int, str] = {}
+        for ln in cells:
+            cols.setdefault(ln.col_index, ln.col_label or "")
+        if sum(_is_total_col(cl) for cl in cols.values()) < 2:
+            continue
+        rows: Dict[int, List] = {}
+        for ln in cells:
+            if ln.row_order is not None:
+                rows.setdefault(ln.row_order, []).append(ln)
+        entries = {ci: _column_entries(lines, basis, seq, ci) for ci in cols}
+        for ro, row in rows.items():
+            nz = [ln for ln in row if ln.value_won != 0]
+            if len(nz) != 2 or not all(_is_total_col(ln.col_label) for ln in nz):
+                continue
+            if nz[0].value_won != nz[1].value_won:
+                continue
+            a, b = sorted(nz, key=lambda ln: (ln.col_label or "").count(">"), reverse=True)
+            if (a.col_label or "").count(">") != (b.col_label or "").count(">") + 1:
+                continue
+            value = int(a.value_won)
+            prefix = (a.col_label or "").rsplit(">", 1)[0] + ">"
+            if _residual_at(entries[a.col_index], ro) != 0 or _residual_at(entries[b.col_index], ro) != 0:
+                continue
+            present = {ln.col_index for ln in row}
+            cands = [ci for ci, cl in cols.items()
+                     if ci not in present and not _is_total_col(cl) and cl.startswith(prefix)
+                     and _residual_at(entries[ci], ro) == -value]
+            if len(cands) != 1:
+                continue
+            ci = cands[0]
+            filled = copy.copy(a)
+            filled.col_index, filled.col_label = ci, cols[ci]
+            ctx = getattr(filled, "context_raw", None)
+            if ctx:
+                filled.context_raw = re.sub(r":c\d+$", f":c{ci}", ctx)
+            if _residual_at(_column_entries(lines + [filled], basis, seq, ci), ro) != 0:
+                continue
+            added.append(filled)
+    lines.extend(added)
+    return len(added)
+
+
 def apply_source_defect_fixes(lines: List, rcept_no: Optional[str]) -> List[Tuple[Tuple, List]]:
     """Apply value fixes, cell fills, row moves and row drops in place. Call BEFORE the SCE sign
     repair chain. Returns the dropped rows, which `verify_row_drops()` must check after
@@ -369,6 +430,7 @@ def apply_source_defect_fixes(lines: List, rcept_no: Optional[str]) -> List[Tupl
     n_val = _apply_value_fixes(lines, rcept_no)
     n_fill = _apply_cell_fills(lines, rcept_no)
     n_fill += fill_total_only_rows(lines)
+    n_fill += fill_hierarchical_total_only_rows(lines)
     n_mov = _apply_row_moves(lines, rcept_no)
     dropped = _apply_row_drops(lines, rcept_no)
     if n_val or n_fill or n_mov or dropped:

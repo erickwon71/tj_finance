@@ -11541,6 +11541,8 @@ R162-d(`_row_identities`)는 그룹마다 '합계' 칸이 정확히 하나여야
 **회귀 테스트**: `fin2/tests/test_r202_split_leading_digits.py`. **데일리 배선**: 별도 배선 불필요(`parse_amount` 안의 규칙이라 XML 경로 전부에 적용).
 **소급**: 285필링(`docs/qa/r202_backfill_targets_2026-09-30.txt`)을 `batch add-targets` + `batch reload`.
 
+**batch #63 결과(2026-09-30)**: 재적재 285필링 done 285 / failed 0. #85494 fixed(호텔신라 별도 CF '소 계' 당기 173,918,853,979 — 원문 및 섹션 항목 합과 일치), not_fixed 0.
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |

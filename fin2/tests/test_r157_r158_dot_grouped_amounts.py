@@ -236,6 +236,22 @@ def test_source_typo_fix_samsung_ena_dot_plus_digit_typo():
     assert unresolved(cells, "당기순이익(손실)") == [1]
 
 
+def test_source_typo_fix_lotte_energy_materials_dot_five():
+    """검증 이슈 #86151 — 천단위 구분자 자리에 '.5' 가 찍힌 기타불입자본 칸.
+
+    행 안에 숫자열이 같은 정수 짝이 없어 R158 이 못 푼다. 원문 인쇄 합계 항등식
+    (3,127,314,000 + X = 174,681,841,500)이 정정값을 확정한다.
+    """
+    cells = ["3,127,314,000", "171,554,527.5", "0", "0", "174,681,841,500"]
+    fixed = apply_source_typo_fixes(cells, "20260310002974")
+    assert fixed[1] == "171,554,527,500"
+    assert sum(int(c.replace(",", "")) for c in fixed[:4]) == int(fixed[4].replace(",", ""))
+    assert unresolved(fixed, "유상증자") == []
+    # 다른 rcept 에는 미적용 — R160 결측 대상 그대로
+    assert apply_source_typo_fixes(cells, "20260310002975") == cells
+    assert unresolved(cells, "유상증자") == [1]
+
+
 def test_typo_fix_entries_carry_a_reason_comment():
     """등재 조건: 정정값이 원문 다른 곳에 인쇄돼 있을 때만. 근거 주석을 강제한다.
 

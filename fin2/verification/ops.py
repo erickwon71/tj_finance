@@ -870,6 +870,12 @@ def recheck_list(slot: Slot | None = None) -> list[dict]:
         for r in rows:
             r["db_value_now"] = _current_db_value(conn, r)
             r["db_blocks_now"] = _current_db_blocks(conn, r)
+            # ★2026-09-30 — 이 이슈가 이미 몇 번 reopened였는지 verify 쪽에도 보여준다.
+            # 반복 reopen은 진짜 재발보다 recheck 쪽 오판(거짓 reopen) 신호일 수 있다 —
+            # 그때마다 fix가 처음부터 재조사하는 낭비를 막으려면 verify가 먼저 의심해야 한다.
+            r["reopen_count"] = conn.execute(text("""
+                SELECT count(*) FROM verification.issue_events
+                WHERE issue_id = :i AND to_status = 'reopened'"""), {"i": r["issue_id"]}).scalar_one()
     return rows
 
 
@@ -917,9 +923,29 @@ def fix_queue() -> dict:
 
 
 def issues_of_type(error_type: str, statuses=("open", "reopened")) -> list[dict]:
+    """★2026-09-30(사용자 지시) — `reopened`은 fix_queue()에서 순수 신규 `open`과 구분 없이
+    섞여 나온다. fix가 "이걸 이미 한 번 고쳤었다"는 걸 모른 채 매번 처음부터 재조사하는
+    일이 반복됐다(recheck의 거짓 reopen 버그가 특히 여러 번 재발 — 메모리 다수 기록).
+    `issues.fixed_parser_commit`/`fixed_load_seq`(직전 fix 시도의 흔적, transition()이
+    status만 바꾸므로 reopened 이후에도 남아있음)에 더해, `issue_events`에서 이 이슈가
+    지금까지 몇 번 reopened 됐고 마지막 reopen 사유가 뭐였는지를 같이 반환한다 — 같은
+    문제를 몇 번째 보는 건지 첫눈에 보이게 한다."""
     with engine.connect() as conn:
         return [dict(r) for r in conn.execute(text("""
-            SELECT i.*, c.corp_name FROM verification.issues i JOIN corporations c USING (corp_code)
+            SELECT i.*, c.corp_name,
+                   coalesce(h.reopen_count, 0) AS reopen_count,
+                   h.last_reopen_at, h.last_reopen_evidence, h.last_reopen_actor
+            FROM verification.issues i
+            JOIN corporations c USING (corp_code)
+            LEFT JOIN LATERAL (
+                SELECT count(*) FILTER (WHERE e.to_status = 'reopened') AS reopen_count,
+                       max(e.at) FILTER (WHERE e.to_status = 'reopened') AS last_reopen_at,
+                       (array_agg(e.evidence ORDER BY e.at DESC)
+                        FILTER (WHERE e.to_status = 'reopened'))[1] AS last_reopen_evidence,
+                       (array_agg(e.actor ORDER BY e.at DESC)
+                        FILTER (WHERE e.to_status = 'reopened'))[1] AS last_reopen_actor
+                FROM verification.issue_events e WHERE e.issue_id = i.issue_id
+            ) h ON true
             WHERE i.error_type = :t AND i.status = ANY(:s) AND i.fix_batch_id IS NULL
             ORDER BY i.issue_id"""), {"t": error_type, "s": list(statuses)}).mappings()]
 

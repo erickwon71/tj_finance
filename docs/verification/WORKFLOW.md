@@ -23,6 +23,15 @@ CLI: `scripts/vq.py` (모든 명령은 `--help`)
   - 수정 계정만 가능: `open/reopened → fixing`, `fixing → fixed`
   - `fixed` 는 해당 필링의 데이터가 실제로 바뀐 재적재(load_seq 증가)가 있어야만 된다
 - 모든 상태 변경은 트리거가 `issue_events` / `progress_events` 에 자동 기록한다(이 이력은 수정·삭제 불가).
+- ★2026-09-30 — `reopened`은 순수 신규 `open`과 fix_queue 화면에서 구분 없이 섞여 나오지만,
+  이제 이력을 바로 볼 수 있다. **fix**: `vq.py issues --type <타입>`이 재오픈 건마다
+  "재오픈 N회 · 직전 fix batch/commit · 마지막 재오픈 사유"를 함께 보여준다 — 같은 문제를
+  몇 번째 보는 건지 먼저 확인하고, 반복 재오픈이면 처음부터 재조사하기 전에 recheck 쪽
+  오판(거짓 reopen)부터 의심할 것. **verify**: `vq.py recheck`도 이슈별 과거 재오픈
+  횟수를 같이 보여준다 — 1회 이상이면 reopen 처리 전에 판정 근거를 한 번 더 검토할 것
+  (recheck 거짓 reopen 이 여러 차례 재발한 전례가 있다 — 관련 메모리:
+  `recheck-tool-label-rename-false-reopen-2026-09-25`,
+  `recheck-account-label-column-label-exact-match-false-reopen-2026-09-26`).
 
 ## 3. 재적재와 검증이 섞이지 않는 장치 (자동)
 

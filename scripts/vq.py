@@ -219,6 +219,9 @@ def cmd_recheck(a):
               f"fix={r['fixed_parser_commit']} batch={r['fix_batch_id']} {r['rule_id'] or ''}")
         if r.get("db_blocks_now"):
             print(f"    현재DB(기간블록별)={', '.join(r['db_blocks_now'])}")
+        if r.get("reopen_count"):
+            print(f"    ★과거 재오픈 {r['reopen_count']}회 — 이번에도 reopen 하기 전에 "
+                  f"recheck 판정 로직 자체의 오판(거짓 reopen) 가능성부터 의심할 것")
         print(f"    {r['dart_url']}")
 
 
@@ -268,6 +271,14 @@ def cmd_issues(a):
               f"원문={r['source_value_raw']}({r['source_unit']})")
         if r["evidence"]:
             print(f"    근거: {r['evidence'][:300]}")
+        # ★2026-09-30 — reopened가 몇 번째인지, 직전 fix 시도가 뭐였는지 fix가 바로 보게 한다.
+        # (재오픈 이력을 안 보고 매번 처음부터 재조사하는 반복을 막기 위함 — 사용자 지시)
+        if r["reopen_count"]:
+            print(f"    ★재오픈 {r['reopen_count']}회 — 직전 fix: batch={r['fix_batch_id']} "
+                  f"commit={r['fixed_parser_commit']}")
+            if r["last_reopen_evidence"]:
+                print(f"    마지막 재오픈 사유({r['last_reopen_actor']}, {r['last_reopen_at']}): "
+                      f"{r['last_reopen_evidence'][:300]}")
 
 
 def cmd_batch_new(a):

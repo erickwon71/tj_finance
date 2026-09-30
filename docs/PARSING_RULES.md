@@ -11451,6 +11451,24 @@ DB 데이터는 바뀌지 않는다(재적재 없음). 해당 이슈는 검증 �
 
 **회귀 테스트**: `fin2/tests/test_xbrl_quarter_only_cell_r201.py`(R201-b 3건).
 
+## R199-b. R199 의 중복 판정에 **개념(concept)** 을 넣는다 — 순이익 귀속 vs 총포괄손익 귀속 `비지배지분` (2026-09-30, fix queue missing_row)
+
+**발견**: 한화오션 2024Q1 `20240514001522`(#86985)·HJ중공업 2019Q1 `20190524000326`(#86986)·2016Q3 `20161114002629`(#86987) 의 연결 포괄손익 `비지배지분` 행이 적재되지 않았다.
+`지배기업 소유주` 행은 값이 순이익 귀속과 달라 적재됐고, `비지배지분` 행은 순이익 귀속의 같은 라벨·같은 값(당기순이익 = 총포괄손익 귀속이 같을 때 흔하다)이라 R199 규칙 3
+("첫 role 과 (basis, label_raw, col_index, value_won) 이 같은 행은 버린다")에 걸려 버려졌다. 두 행은 다른 개념이다(`ProfitLossAttributableToNoncontrollingInterests` 대
+`ComprehensiveIncomeAttributableToNoncontrollingInterests`, HJ중공업 2016 은 회사 확장 개념 `udf_IS_…_ComprehensiveIncome`).
+
+**규칙** (`report_lines_xbrl._extra_role_dup_key`): 추가 IS role 의 행이 "첫 role 이 이미 가진 셀"인지는 **(basis, 개념, label_raw, col_index, value_won)** 으로 판정한다.
+개념은 `source_ref` 의 `IS_<basis>/<개념>[/…]` 두 번째 조각이며 누락 총계·leaf 보충 행의 접미사(`/xbrl_tree_gap_*`)는 개념을 바꾸지 않는다.
+같은 개념이 두 표에 인쇄된 경우(당기순이익·EPS)는 종전처럼 버린다.
+
+**측정**(전수, completed xbrl_zip 1,639필링, 새 코드의 IS `table_seq>=1` 행 대 DB): 제거되는 행 0. 당기(`col_index=0`) 추가 행이 있는 필링 7 · 11셀 —
+이슈 3건(위 3필링) + 이슈 미등록 4필링(`20171010000819` 5셀·`20180515002718`·`20180516000116`·`20180612000181` 각 1셀). 전기(`col_index>=1`) 열은 저장 단계가 적재하지 않아 비교에서 뺐다.
+원문 대조: 한화오션 (13,998,845)·HJ중공업 2019 213·2016 (21) 가 추출 결과와 일치.
+
+**회귀 테스트**: `fin2/tests/test_xbrl_second_is_role.py`(`test_dup_key_…`, `test_hanwha_ocean_…`).
+**데일리 배선**: 별도 배선 불필요(`extract_report_lines_xbrl` 자체 수정). **소급**: 위 7필링을 `batch add-targets` + `batch reload`.
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |

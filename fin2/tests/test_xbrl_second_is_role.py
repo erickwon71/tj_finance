@@ -83,3 +83,36 @@ def test_extra_role_rows_never_duplicate_the_primary_role():
     added = [k for k in keys(on)[len(keys(off)):]]
     assert added and not (set(added) & primary)
     assert len(added) == len(set(added))
+
+
+def test_dup_key_keeps_same_label_and_value_under_a_different_concept():
+    """R199-b — 순이익 귀속 '비지배지분' and 총포괄손익 귀속 '비지배지분' share label and value but are
+    different concepts; the extra role's row must not be dropped as a duplicate of the primary's."""
+    from types import SimpleNamespace as NS
+
+    def row(concept, value=-13998845):
+        return NS(basis="consolidated", label_raw="비지배지분", col_index=0, value_won=value,
+                  source_ref=f"IS_consolidated/{concept}")
+
+    ni = row("ProfitLossAttributableToNoncontrollingInterests")
+    ci = row("ComprehensiveIncomeAttributableToNoncontrollingInterests")
+    assert X._extra_role_dup_key(ni) != X._extra_role_dup_key(ci)
+    # the same concept (ProfitLoss printed in both statements) is still a duplicate, and a
+    # gap-fill suffix on source_ref does not change the concept
+    assert X._extra_role_dup_key(row("ProfitLoss")) == X._extra_role_dup_key(row("ProfitLoss"))
+    gap = row("ProfitLoss")
+    gap.source_ref = "IS_consolidated/ProfitLoss/xbrl_tree_gap_total"
+    assert X._extra_role_dup_key(gap) == X._extra_role_dup_key(row("ProfitLoss"))
+
+
+def test_hanwha_ocean_2024q1_comprehensive_income_noncontrolling_row_present():
+    """이슈 #86985 — 원문 연결 포괄손익의 귀속 '비지배지분' (13,998,845) 가 순이익 귀속 행과 같은 라벨·값이라
+    중복으로 버려졌다."""
+    args = ("KOSPI/00111704_한화오션/quarter/2024/20240514001522.zip", "20240514001522", "00111704", 2024, "Q1",
+            date(2024, 3, 31))
+    on = _extract(*args, on=True)
+    if on is None:
+        return
+    hit = [l for l in on if l.statement == "IS" and l.basis == "consolidated" and l.label_raw == "비지배지분"
+           and l.col_index == 0 and l.table_seq >= 1]
+    assert [l.value_won for l in hit] == [-13998845]

@@ -1494,6 +1494,19 @@ def _settle_sce_signs_by_rollforward(
                  f"flipped={sorted(local_of[l] for l in flipped)}")
 
 
+
+def _extra_role_dup_key(row) -> tuple:
+    """R199-b — identity of an IS cell for "the primary role already carries it".
+
+    The concept (source_ref `IS_<basis>/<local>[/...]`) is part of the key: 순이익 귀속 and 총포괄손익
+    귀속 both label a row `비지배지분` and often hold the same value, but they are different
+    concepts (ProfitLossAttributableToNoncontrollingInterests vs
+    ComprehensiveIncomeAttributableToNoncontrollingInterests). Label+value alone dropped the second."""
+    ref = row.source_ref or ""
+    concept = ref.split("/")[1] if "/" in ref else ref
+    return (row.basis, concept, row.label_raw, row.col_index, row.value_won)
+
+
 def extract_report_lines_xbrl(
     zip_path: str | Path,
     *,
@@ -1660,7 +1673,7 @@ def extract_report_lines_xbrl(
                     continue
                 basis_member = QName(ns=basis_axis_ns, local=_BASIS_MEMBER_LOCAL[role_info.basis])
                 try:
-                    seen = {(l.basis, l.label_raw, l.col_index, l.value_won) for l in lines if l.statement == "IS"}
+                    seen = {_extra_role_dup_key(l) for l in lines if l.statement == "IS"}
                     for row in _emit_statement_lines(
                         tree=tree, facts_by_qname=facts_by_qname, contexts=instance.contexts,
                         units=instance.units, labels=labels, basis_axis=basis_axis,
@@ -1669,7 +1682,7 @@ def extract_report_lines_xbrl(
                         report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
                         period_end_date=period_end_date,
                     ):
-                        if (row.basis, row.label_raw, row.col_index, row.value_won) in seen:
+                        if _extra_role_dup_key(row) in seen:
                             continue
                         row.table_seq = extra_no
                         lines.append(row)

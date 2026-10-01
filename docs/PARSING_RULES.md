@@ -11615,6 +11615,27 @@ R158 후보가 있으면 R158 이 우선한다. 주당손익 행은 기존대로
 
 **회귀 테스트**: `fin2/tests/test_r157_r158_dot_grouped_amounts.py` 의 R158-b 4건. **데일리 배선**: 두 추출 경로가 이미 `_repair_dot_grouped_cells` 를 부르므로 별도 배선 불필요. **소급**: 5필링 `batch add-targets` + `batch reload`.
 
+## R204. XBRL IS — **필링이 base 배치를 옮겨 단 비용 개념**도 base 템플릿의 negation 을 물려받아 제거한다 (2026-10-01, fix queue unclassified B묶음)
+
+**발견**: 원익홀딩스 `20180816000066`(2018H1) IS `투자비용`이 DB 에 -3,176,117,802(연결)·-908,418,000(별도)로 적재됐다(이슈 #85470·#85471).
+PDF 원문은 양수이고 같은 표의 금융비용·기타비용도 양수다. 투자비용을 양수로 빼야 세전이익 74,732,995,179 가 닫힌다.
+NHN `20160829000092`·`20161115000010`(관계기업투자손실), 서울전자통신 `20161114002549`(관리비 -2,790,502,820 → 매출총이익 − 판매비 − 관리비 − 연구개발비 = 영업이익이 +일 때만 성립),
+동진쎄미켐 `20170515004289`(물류비)도 같은 모양이다.
+
+**원인**: R170-b 는 IS 역할의 **base 템플릿 arc** 의 `negated*` preferredLabel 만 떼었다("필링 자체 arc 는 건드리지 않는다, R10"). 그런데 이 필링들의 `_pre.xml` 은 base 개념을 자기 arc 로 **다시 달면서 같은 negatedLabel 을 복사**했다.
+이 arc 는 새 표시 결정이 아니라 base 배치를 옮긴 것이다(국내 손익계산서는 비용을 양수로 인쇄, R170-b). R10 으로 그대로 두면 양수 fact 가 음수로 저장된다.
+
+**규칙**(`taxonomy_linkbase._build_merged_presentation_tree`): 필링 arc 의 `(to 개념, preferredLabel)` 이 같은 역할의 **base arc(prohibit 되지 않은 것)** 와 같고, 개념 이름이 비용·손실 계열(`_R204_EXPENSE_LOCAL_RE`: Expense|Cost(s)|Losses)이면 base arc 와 똑같이 negation 을 뗀다. IS 역할에만 적용한다.
+**제외**: ① 법인세(`IncomeTax`) — 부호를 R170-d(`_settle_is_tax_sign`) 가 표 산수로 정한다. 시험 삼아 포함했더니 세전+법인세=순이익 등식이 1원 어긋나는 필링(`20181114002559`)에서 정답이던 값이 틀어졌다.
+② OCI 재분류조정(`Reclassification…`) — 넥스트아이 `20180816000176` 은 재분류조정 +1,196,612,121 이 부모 합과 일치(양수가 맞다). 비용 계열이 아니라서 정규식이 걸러낸다.
+③ 필링이 base 에 없는 개념을 자기 배치로만 단 arc(KB금융 등) — base 와 비교할 근거가 없어 건드리지 않는다.
+
+**측정**(XBRL IS 필링 1,627건 전수, 변경 전후 추출 비교): 값이 바뀌는 필링 **28건**. 개념별 `AdministrativeExpense`·`DistributionCosts`·`LossesArisingFromDerecognition…` 만 바뀐다(음수 → 양수).
+바뀐 필링 중 매출총이익·영업이익 행이 있는 43건은 새 부호에서 영업이익 등식이 전부 닫힌다(깨짐 0). 특정 규칙 효과로 귀속하지 않는 측정값이다.
+`SellingGeneralAndAdministrativeExpense` 등 금융업 개념 11건은 base 비교 근거가 없어 변하지 않는다.
+
+**회귀 테스트**: `fin2/tests/test_r204_filer_replaced_expense_negation.py`. **데일리 배선**: 별도 배선 불필요(XBRL 추출 안의 규칙). **소급**: 28필링 `docs/qa/batch73_r204_targets.txt` 를 `batch add-targets` + `batch reload`.
+
 ## 부록 B. 규칙이 사는 곳 (원출처)
 
 | 규칙 | 원출처 |

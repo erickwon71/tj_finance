@@ -52,6 +52,8 @@ Verified against real filings (see docs/plans/xbrl_instance_parser_todo_2026-08-
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -322,6 +324,14 @@ _XBRL_2003_ROLE = "http://www.xbrl.org/2003/role/"
 _XBRL_2009_ROLE = "http://www.xbrl.org/2009/role/"
 
 
+# R204 — filer re-placements inherit the base template's negation only for expense/loss concepts. A
+# re-placed OCI reclassification-adjustment concept carries the OCI item itself (넥스트아이
+# 20180816000176: 재분류조정 +1,196,612,121 closes its parent sum), so it must keep its sign.
+# Income tax is left to R170-d (`_settle_is_tax_sign`), which decides its sign from the statement's own
+# arithmetic; changing it here would bypass that and break rows whose identity is off by rounding.
+_R204_EXPENSE_LOCAL_RE = re.compile(r"^(?!.*IncomeTax)(?=.*(Expense|Costs?|Losses))")
+
+
 def _denegate_role(role: str | None) -> str | None:
     """R170-b — the *income statement* base template negates deductions
     (IncomeTaxExpense, DistributionCosts, AdministrativeExpense ... carry
@@ -439,6 +449,11 @@ def _build_merged_presentation_tree(
         winners.sort(key=lambda a: a.from_base)  # filer arc first among equals
         surviving.append(winners[0])
 
+    # R204 — a filer arc that re-places a concept the base template also places with the same
+    # preferredLabel is the base placement moved, not a new display decision; it inherits the
+    # base template's negation, so it is de-negated like the base arc (IS roles only).
+    base_placed = {(a.to_el, a.preferred) for a in arcs if a.from_base and not a.prohibited}
+
     # 2. filer placement beats base placement of the same concept+label role
     filer_placed = {(a.to_el, a.preferred) for a in surviving if not a.from_base}
     surviving = [a for a in surviving
@@ -476,7 +491,9 @@ def _build_merged_presentation_tree(
             continue
         parent_of[a.to] = parent
         order_of[a.to] = a.order
-        preferred = _denegate_role(a.preferred) if (a.from_base and denegate_base) else a.preferred
+        inherited = a.from_base or (
+            (a.to_el, a.preferred) in base_placed and _R204_EXPENSE_LOCAL_RE.search(a.to_el.local) is not None)
+        preferred = _denegate_role(a.preferred) if (inherited and denegate_base) else a.preferred
         if preferred:
             preferred_of[a.to] = preferred
         pending_children.setdefault(parent, []).append((a.to, a.order))

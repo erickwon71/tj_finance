@@ -198,6 +198,7 @@ from fin2.extract.sce_sign_repair import (
     rerun_sign_loss_after_row_identity,
 )
 from fin2.extract.cf_cash_sign_repair import repair_cf_cash_sign_loss
+from fin2.extract.sce_as_printed import apply_as_printed_cells
 from fin2.extract.sce_source_defects import apply_source_defect_fixes, verify_row_drops
 
 # report_fiscal_year 가 이 값 이하면 pre-2015 K-GAAP 라우팅을 먼저 시도한다(설계문서
@@ -2179,6 +2180,10 @@ def extract_report_lines(
     dated_fixes = apply_dated_balance_signs(lines, prior_balances)
     if dated_fixes:
         logger.debug(f"[report_lines] R190-d SCE 잔액 BS 부호: {len(dated_fixes)}셀 ({rcept_no})")
+
+    # R206 (2026-10-02, user decision) — uncertain cells of the 22 R192-excluded filings are loaded as printed.
+    # Runs after the whole sign chain, so it only undoes what the chain decided for exactly those cells.
+    apply_as_printed_cells(lines, rcept_no)
 
     # R183 post-check: a dropped row stays dropped only if its block now closes.
     verify_row_drops(lines, sce_dropped)

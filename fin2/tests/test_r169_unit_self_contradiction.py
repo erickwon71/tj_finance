@@ -125,3 +125,43 @@ def test_r169_non_scale_big_value_is_not_an_override():
     (R152 family) in a table correctly declared in 원. That is not a unit problem, so
     the rcept must not be in the data file (it was, before the declared-unit check)."""
     assert "20180330003573" not in rl._PROVED_UNIT_OVERRIDES
+
+
+# --- R207: ratio trigger — a 천원 declaration over cells already in 원 stays below the 1e15 cap ---
+_CMG_2024_Q1 = _RAW / "KOSDAQ/00380429_CMG제약/quarter/2024/20240514000672.xml"
+_COLMAR_BNH_2024_Q1 = _RAW / "KOSDAQ/01032404_콜마비앤에이치/quarter/2024/20240516002083.xml"
+
+
+def test_r207_ratio_trigger_nominates_but_never_confirms():
+    """The ratio only nominates suspects (자산총계 >= 100x neighbours). Confirmation is the
+    unchanged R169 exact-amount rule, so a genuine jump in assets is never rewritten."""
+    from fin2.audit import unit_self_contradiction as usc
+    assert usc.RATIO_SUSPECT_MIN == 100
+    assert usc.SUSPECT_MIN == 10**15            # the cap trigger is untouched
+    assert "자산총계" in usc._TOTAL_ASSETS_LABELS
+    assert usc._decide({1: 0, 1_000: 0, 1_000_000: 0}) is None   # no evidence → unchanged
+
+
+def test_r207_cmg_2024q1_thousand_declared_won_cells_proved_unit():
+    """CMG제약 2024Q1 — "(단위 : 천원)" over 원 amounts (자산총계 247,379,902,177원) was stored
+    x1,000 as 247조원; the 1e15 cap never fired. Cross-filing exact matches prove k=1."""
+    assert "20240514000672" in json.loads(
+        rl._PROVED_UNIT_OVERRIDES_PATH.read_text(encoding="utf-8"))
+    if not _CMG_2024_Q1.exists():
+        return
+    lines = extract_report_lines(
+        _CMG_2024_Q1, rcept_no="20240514000672", corp_code="00380429",
+        report_fiscal_year=2024, report_fiscal_period="Q1")
+    assert _rows(lines, "BS", "consolidated")["자산총계"].value_won == 247_379_902_177
+    assert _rows(lines, "BS", "separate")["자산총계"].value_won == 246_319_829_768
+
+
+def test_r207_colmar_bnh_original_q1_proved_unit():
+    """콜마비앤에이치 2024Q1 원본 — 정정본(`(단위 : 원)`)이 덮어써 계층3 은 정상이지만 계층2
+    원본 행은 매출 119조원(x1,000)이었다."""
+    if not _COLMAR_BNH_2024_Q1.exists():
+        return
+    lines = extract_report_lines(
+        _COLMAR_BNH_2024_Q1, rcept_no="20240516002083", corp_code="01032404",
+        report_fiscal_year=2024, report_fiscal_period="Q1")
+    assert _rows(lines, "IS", "separate")["매출액"].value_won == 119_858_420_057

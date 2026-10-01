@@ -10,6 +10,13 @@ Trigger (suspect sections): a declared-unit row with |value_won| >= 1e15 (1,000�
 listed-company line item reaches this; the largest real totals are ~5e14), or the section
 vanished entirely under the declared unit.
 
+R207 second trigger (ratio): a 천원 declaration over cells already in 원 inflates x1,000 and
+stays far below 1e15 (콜마비앤에이치 별도 매출 119조원), so the cap never fires. A filing/basis
+whose declared-unit 자산총계 is >= RATIO_SUSPECT_MIN x the median 자산총계 of the same
+corp+basis's other filings within +-1 fiscal year (and >= 0.1 x the declared multiplier) is a
+suspect too. The ratio only *nominates*; confirmation is unchanged (exact cross-filing amount
+matches), so a real jump in assets is never rewritten.
+
 Confirmation rule, per section:
   hits(k) = distinct |amount| >= 1e7 that appear in the same corp's other filings with the
             same basis/statement/context year (SCE: same basis, SCE or BS, any year)
@@ -35,6 +42,8 @@ from sqlalchemy import text
 import fin2.extract.report_lines as rl
 
 SUSPECT_MIN = 10**15
+RATIO_SUSPECT_MIN = 100
+_TOTAL_ASSETS_LABELS = ("자산총계", "자 산 총 계", "자산 총계")
 EVIDENCE_MIN = 10**7
 MIN_HITS = 3
 CANDIDATE_KS = (1, 1_000, 1_000_000)
@@ -48,13 +57,53 @@ def _section_code(line) -> str | None:
     return f"{line.statement}_{b}" if b else None
 
 
+def _ratio_suspect_sql(corp_clause: str, rcept_clause: str) -> str:
+    return f"""
+        WITH ta AS (
+          SELECT rcept_no, corp_code, report_fiscal_year fy, basis, value_won a, adecimal
+          FROM report_lines
+          WHERE statement = 'BS' AND col_index = 0 AND label_raw = ANY(:labels)
+            AND value_won > 0 AND basis IN ('consolidated','separate'){corp_clause}),
+        tgt AS (
+          SELECT * FROM ta
+          WHERE adecimal < 0 AND fy >= :y{rcept_clause}
+            AND EXISTS (SELECT 1 FROM report_lines r WHERE r.rcept_no = ta.rcept_no
+                        AND r.statement = 'BS' AND r.unit_source = 'declared'
+                        AND r.basis = ta.basis AND r.col_index = 0
+                        AND r.label_raw = ANY(:labels))),
+        med AS (
+          SELECT t.rcept_no, t.basis, t.a, t.adecimal,
+                 percentile_cont(0.5) WITHIN GROUP (ORDER BY o.a) AS m
+          FROM tgt t JOIN ta o ON o.corp_code = t.corp_code AND o.basis = t.basis
+                                AND o.rcept_no <> t.rcept_no AND abs(o.fy - t.fy) <= 1
+          GROUP BY t.rcept_no, t.basis, t.a, t.adecimal)
+        SELECT rcept_no, basis FROM med
+        WHERE a >= m * :ratio AND a >= 0.1 * power(10, -adecimal) * m
+        ORDER BY 1, 2"""
+
+
+def ratio_suspects(s, era_min: int, corps: list[str] | None = None,
+                   rcept_no: str | None = None) -> list[tuple[str, str]]:
+    """(rcept_no, basis) whose declared-unit 자산총계 is >= RATIO_SUSPECT_MIN x the same
+    corp+basis's neighbouring filings (R207 nomination trigger — not a proof)."""
+    corp_clause = " AND corp_code = ANY(:c)" if corps else ""
+    if rcept_no:   # neighbours must come from the same corp, so scope by corp not by rcept
+        corp_clause = (" AND corp_code = (SELECT corp_code FROM filings WHERE rcept_no = :rc)")
+    rcept_clause = " AND rcept_no = :rc" if rcept_no else ""
+    rows = s.execute(text(_ratio_suspect_sql(corp_clause, rcept_clause)),
+                     {"labels": list(_TOTAL_ASSETS_LABELS), "y": era_min, "c": corps or [],
+                      "ratio": RATIO_SUSPECT_MIN, "rc": rcept_no})
+    return [(r, b) for r, b in rows]
+
+
 def suspect_rcepts(s, era_min: int, corps: list[str] | None = None) -> list[str]:
     corp_clause = " AND corp_code = ANY(:c)" if corps else ""
-    return [r for (r,) in s.execute(text(f"""
+    cap = {r for (r,) in s.execute(text(f"""
         SELECT DISTINCT rcept_no FROM report_lines
         WHERE statement IN ('BS','IS','CF','SCE') AND unit_source = 'declared'
           AND abs(value_won) >= :m AND report_fiscal_year >= :y{corp_clause}
-        ORDER BY 1"""), {"m": SUSPECT_MIN, "y": era_min, "c": corps or []})]
+        ORDER BY 1"""), {"m": SUSPECT_MIN, "y": era_min, "c": corps or []})}
+    return sorted(cap | {r for r, _ in ratio_suspects(s, era_min, corps)})
 
 
 def _extract(fp, meta, rcept_no, forced: int | None):
@@ -148,13 +197,15 @@ def scan_rcept(s, rcept_no: str, suspects: set[str]) -> list[dict]:
     for ln in raw:
         by_sec_raw[_section_code(ln)].append(ln)
     ev = _evidence(s, meta.corp_code, suspects)
+    ratio_bases = {_BASIS_CODE[b] for r, b in ratio_suspects(s, 0, rcept_no=rcept_no)}
     out = []
     for code in sorted(c for c in by_sec_raw if c):
         decl = [ln for ln in by_sec_decl.get(code, []) if ln.unit_source == "declared"]
         n_raw = sum(1 for ln in by_sec_raw[code] if ln.unit_source == "manual_unit")
         big = any(ln.value_won is not None and abs(ln.value_won) >= SUSPECT_MIN for ln in decl)
         vanished = n_raw > 0 and len(decl) < n_raw
-        if not big and not (vanished and not decl):
+        by_ratio = code.split("_")[1] in ratio_bases
+        if not big and not by_ratio and not (vanished and not decl):
             continue
         decl_mults = {10 ** -ln.adecimal for ln in decl if ln.adecimal is not None}
         if decl_mults == {1}:

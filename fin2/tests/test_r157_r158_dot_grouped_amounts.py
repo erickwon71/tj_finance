@@ -334,3 +334,40 @@ def test_nonzero_fraction_is_not_touched_by_r158_b():
 
 def test_r158_prefix_pair_still_wins_over_r158_b():
     assert repair(["10,590,556.9", "10,590,556,900"], "x")[0] == "10590556900"
+
+
+# ───────────────── R205 — mixed separator cell ('69.792,290') ─────────────────
+
+def test_mixed_separator_cell_is_reported_when_no_twin():
+    """'69.792,290' (20180515000412) was parsed as 69.79 -> 70; it must be left for R160 (missing)."""
+    cells = ["69.792,290", "", "397,439,274", ""]
+    assert unresolved(cells, "1. 투자활동으로 인한 현금유입액") == [0]
+    assert repair(cells, "1. 투자활동으로 인한 현금유입액") == cells
+
+
+def test_mixed_separator_cell_restored_only_from_exact_twin():
+    cells = ["3.193,161", "3,193,161", ""]
+    assert repair(cells, "금융기관예치금의 증가")[0] == "3193161"
+    assert parse_amount(repair(cells, "금융기관예치금의 증가")[0]) == 3193161
+    assert unresolved(repair(cells, "금융기관예치금의 증가"), "금융기관예치금의 증가") == []
+
+
+def test_mixed_separator_prefix_twin_is_not_a_match():
+    """No prefix/zero-tail matching for the mixed shape — that would be a guess."""
+    cells = ["3.193,161", "3,193,161,000"]
+    assert repair(cells, "금융기관예치금의 증가") == cells
+    assert unresolved(cells, "금융기관예치금의 증가") == [0]
+
+
+def test_mixed_separator_keeps_parentheses_and_sign():
+    cells = ["(9.807,252)", "9,807,252"]
+    assert repair(cells, "장기대여금의 증가")[0] == "(9807252)"
+    assert parse_amount(repair(cells, "장기대여금의 증가")[0]) == -9807252
+
+
+def test_mixed_separator_eps_row_is_left_alone():
+    assert unresolved(["39.652,640"], "기본주당이익(손실)") == []
+
+
+def test_ordinary_comma_amounts_are_not_flagged():
+    assert unresolved(["69,792,290", "(1,234)", "12.5"], "매출액") == [2]

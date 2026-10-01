@@ -1444,6 +1444,14 @@ def update_dual_closing_runs(
 _DOT_GROUPED_RE = re.compile(
     r"^([(\[]?\s*[-−△▲]?\s*)(\d{1,3}(?:,\d{3})*)\.(\d+)(\s*[)\]]?)$")
 
+# ★R205 — 첫 구분자만 마침표고 나머지는 쉼표인 **혼합 구분자** 셀('69.792,290' = 69,792,290).
+#   `_DOT_GROUPED_RE` 는 마침표 뒤가 숫자뿐이어야 해서 이 꼴을 놓쳤고, `parse_amount` 가 쉼표를
+#   지우고 소수로 읽어 70 (천원 표에선 3193 같은 값) 으로 적재했다 — 정밀해 보이는 틀린 값이다.
+#   모든 그룹이 정확히 3자리라 천단위 오타 구조이지만, R160 정책(오타는 추측하지 않는다)에 따라
+#   같은 행의 **정확히 같은 숫자열** 정수 칸이 있을 때만 복원하고 아니면 결측으로 남긴다.
+_DOT_THEN_COMMA_RE = re.compile(
+    r"^([(\[]?\s*[-−△▲]?\s*)(\d{1,3})\.(\d{3}(?:,\d{3})+)(\s*[)\]]?)$")
+
 
 # ★R159(2026-09-22) — **원문 자체의 오타 셀**을 rcept 단위 예외목록으로 교정한다.
 #   R118("원문 자체의 헤더 오타"를 rcept 목록으로 교정)과 **같은 패턴**이고, 같은 이유로
@@ -1924,7 +1932,8 @@ def unresolved_dot_cell_indices(amount_cells: list[str],
     if label and _EPS_ROW_LABEL_RE.search(label):
         return []
     return [i for i, c in enumerate(amount_cells)
-            if _DOT_GROUPED_RE.match((c or "").strip())]
+            if _DOT_GROUPED_RE.match((c or "").strip())
+            or _DOT_THEN_COMMA_RE.match((c or "").strip())]
 
 
 def _repair_dot_grouped_cells(amount_cells: list[str],
@@ -1939,7 +1948,8 @@ def _repair_dot_grouped_cells(amount_cells: list[str],
     if label and _EPS_ROW_LABEL_RE.search(label):
         return amount_cells                 # 주당손익 행 — 위 주석 참고
     broken = [i for i, c in enumerate(amount_cells)
-              if _DOT_GROUPED_RE.match((c or "").strip())]
+              if _DOT_GROUPED_RE.match((c or "").strip())
+              or _DOT_THEN_COMMA_RE.match((c or "").strip())]
     if not broken:
         return amount_cells
 
@@ -1957,6 +1967,15 @@ def _repair_dot_grouped_cells(amount_cells: list[str],
 
     out = list(amount_cells)
     for i in broken:
+        mixed = _DOT_THEN_COMMA_RE.match(amount_cells[i].strip())
+        if mixed:
+            # R205: every group is 3 digits, so the only claim made is 'same digits as an intact
+            # cell of this row' — no prefix/zero-tail matching (that would be a guess).
+            digits = _digits_only(mixed.group(2) + mixed.group(3))
+            twins = {d for d in intact if d == digits}
+            if len(twins) == 1:
+                out[i] = f"{mixed.group(1)}{twins.pop()}{mixed.group(4)}"
+            continue
         m = _DOT_GROUPED_RE.match(amount_cells[i].strip())
         digits = _digits_only(m.group(2)) + m.group(3)
         # 더 긴 후보가 여러 개면 판정불가로 두고 손대지 않는다(R6).

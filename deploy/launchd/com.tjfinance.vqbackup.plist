@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  매일 19:10 검증(verification) 스키마 백업 (launchd LaunchAgent).
+  18:00 수집(com.tjfinance.collect)의 pmset wake(17:58) 창을 타고, 19:00 core 백업
+  직후(com.tjfinance.backup) 실행된다. pg_dump -n verification 결과를 NAS(RAID1,
+  /Volumes/tj_finance_data/db_backups/verification)에 저장, 최근 30개 보관.
+
+  ProgramArguments 가 python을 직접 실행해야 한다 — /bin/bash 를 거치면(예: 예전
+  morning_digest.sh 안에서 호출) launchd TCC 가 NAS(SMB) 쓰기를 막는다. bash 자체에
+  Full Disk Access 가 없으면 그 밑의 python 자식도 자기 몫의 grant 와 무관하게 막힌다
+  (2026-10-01 실측, docs/qa 메모 launchd-tcc-nas-blocked). 설치: deploy/launchd/README 참조.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tjfinance.vqbackup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/taejin/Project/tj_finance/.venv/bin/python</string>
+        <string>/Users/taejin/Project/tj_finance/scripts/vq_backup.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/taejin/Project/tj_finance</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>19</integer>
+        <key>Minute</key>
+        <integer>10</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/vqbackup.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/taejin/Project/tj_finance/logs/vqbackup.err.log</string>
+</dict>
+</plist>

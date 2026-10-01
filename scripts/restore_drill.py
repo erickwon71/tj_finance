@@ -94,7 +94,13 @@ def main() -> None:
         sys.exit(1)
 
     logger.info(f"[drill] pg_restore → {SCRATCH_DB} (this can take a few minutes)")
-    r = _run([_bin("pg_restore"), "-d", SCRATCH_DB, "--no-owner", "--no-privileges", str(dump_path)])
+    # pg_restore reading the NAS path directly as its own argument fails under launchd — it has
+    # no TCC grant for the NAS (SMB) volume, same category as pg_dump's write failure (memory
+    # launchd-tcc-nas-blocked, confirmed 2026-10-01). This interpreter already holds that grant,
+    # so it opens the file itself and hands pg_restore the fd via stdin instead of a path.
+    with open(dump_path, "rb") as f:
+        r = subprocess.run([_bin("pg_restore"), "-d", SCRATCH_DB, "--no-owner", "--no-privileges"],
+                            stdin=f, capture_output=True, text=True)
     if r.returncode != 0:
         # pg_restore often exits nonzero on benign warnings (e.g. missing extensions/roles);
         # surface stderr so the user can judge, but don't abort the drill on that alone.

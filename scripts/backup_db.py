@@ -76,25 +76,41 @@ def main() -> None:
 
     ts = datetime.now().strftime("%Y%m%d_%H%M")
     path = out_dir / f"{args.db}_full_{ts}.dump"
+    tmp = path.with_name(path.name + ".part")
 
-    cmd = [_pg_dump_bin(), "-Fc", "--no-owner", "--no-privileges", "-d", args.db, "-f", str(path)]
+    # pg_dump writes to stdout only, never touches the NAS path directly: under launchd it
+    # has no TCC grant for the network volume (EPERM — memory launchd-tcc-nas-blocked) and a
+    # 143GB DB is too big to stage locally first (note_lines/report_lines alone are 120GB).
+    # This interpreter already has the Full Disk Access grant that fixes the NAS write.
+    cmd = [_pg_dump_bin(), "-Fc", "--no-owner", "--no-privileges", "-d", args.db]
+    logger.info(f"[backup] pg_dump 시작 → {path.name} (전체, NAS로 스트리밍)")
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    size = 0
+    assert proc.stdout is not None
+    with open(tmp, "wb") as f:
+        while True:
+            chunk = proc.stdout.read(1024 * 1024)
+            if not chunk:
+                break
+            f.write(chunk)
+            size += len(chunk)
+    rc = proc.wait()
+    stderr = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
 
-    logger.info(f"[backup] pg_dump 시작 → {path.name} (전체)")
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        err = f"pg_dump 실패(rc={r.returncode}): {r.stderr.strip()[:500]}"
+    if rc != 0:
+        err = f"pg_dump 실패(rc={rc}): {stderr.strip()[:500]}"
         logger.error(f"[backup] {err}")
         _notify("백업 실패 — pg_dump 오류", err)
-        # 실패한 부분 파일 정리
-        if path.exists() and path.stat().st_size == 0:
-            path.unlink()
+        tmp.unlink(missing_ok=True)
         sys.exit(1)
 
-    size = path.stat().st_size if path.exists() else 0
     if size == 0:
         logger.error("[backup] 결과 파일 크기 0 — 실패로 간주.")
         _notify("백업 실패 — 빈 파일", f"{path.name} 크기 0")
+        tmp.unlink(missing_ok=True)
         sys.exit(1)
+
+    tmp.rename(path)
     removed = _rotate(out_dir, args.db, args.keep)
 
     logger.success(f"[backup] 완료 — {path.name} ({size/1e6:,.1f} MB) · 보관 {args.keep}개"

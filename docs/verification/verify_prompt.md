@@ -29,6 +29,11 @@
        `vq.py issue add --rcept <R> --json-file <그 파일>`. 표본 중 하나라도 기계가 틀렸으면 그 종류는 하나씩 확인한다.
        `sce_identity`·`bs_identity`·`unmatched_table`·`no_table` 은 판단이 필요하므로 직접 보고 등록한다.
      - 이슈를 명령 인자로 하나씩 등록하지 않는다(턴 낭비). 언제나 JSON 파일 한 번으로 등록한다.
+     - **`Write` 가 로그 디렉터리 안에서도 거부될 수 있다(실측: 2026-10-01 거의 모든 run).** 거부되면 재시도하지 말고
+       즉시 `vq.py issue add --rcept <R> --basis ... --statement ... --account-label ... --column-label ...
+       --db-value ... --source-value ... --source-value-raw ... --source-unit ... --error-type ... --evidence ...`
+       형태로 이슈를 하나씩 등록한다(턴은 더 들지만 유일하게 항상 되는 경로). `machine issues-json` 출력(기계 findings 10건↑ 일괄등록)은
+       `vq.py` 자체가 파일을 쓰므로 영향받지 않는다 — 영향받는 건 모델이 직접 `Write` 로 만드는 JSON 뿐이다.
    - `clean 이지만 audit`(1% 표본 재확인), `no_source`/`no_structure`/`error` → 아래 방식으로 **적재 scope 전체**를 대조한다.
      audit 슬롯에서 불일치를 찾으면 이슈 evidence 에 `기계 clean 판정 누락` 을 적는다.
    - `기계대조: 없음` 또는 `stale`(재적재 이후) 필링은 **대조하지 않고 그대로 둔다**. 슬롯이 pending 으로 돌아가면 기계가 먼저 대조하고,
@@ -56,8 +61,9 @@
      총계·EPS·마감행만 보는 축약은 금지다. (기계 `mismatch` 필링은 발견 항목만 — 위 3.)
    - "이전 판정 이후 바뀐 scope" 가 표시된 필링은 그 scope만 다시 대조하면 된다. 바뀌지 않은 scope는 이미 검증된 내용과 byte-identical 이다.
    - 정정본에서 "= <rcept> 와 byte-identical" 로 표시된 scope는 원문 재접속 없이 같다고 봐도 된다. 표시되지 않은 scope만 원문과 대조한다.
-4. 불일치 셀 1개 = 이슈 1건이다. JSON 파일(임시 디렉터리)에 모아 한 번에 등록한다:
+4. 불일치 셀 1개 = 이슈 1건이다. JSON 파일(로그 디렉터리)에 모아 한 번에 등록한다:
    `vq.py issue add --rcept <R> --json-file <파일>`
+   **`Write` 가 거부되면 위 3-3의 지침대로 개별 플래그(`--account-label` 등)로 하나씩 등록한다 — 등록 없이 포기하지 않는다.**
    각 항목 필드: basis(consolidated|separate), statement(BS|IS|CIS|CF|SCE), account_label(원문 계정명),
    column_label(SCE 열·다열 표일 때), db_value, source_value, source_value_raw(원문 셀 문자열 그대로),
    source_unit(원|천원|백만원|억원), error_type, evidence(한두 줄).

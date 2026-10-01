@@ -60,3 +60,19 @@ def test_sce_not_rebased_when_source_kept_note_column_as_cell0():
     from fin2.verification.machine_compare import _rebase_sce_note_column
     items = [_db(1, "자본금"), _db(2, "합계")]
     assert _rebase_sce_note_column(items, False) == items
+
+
+# R201-c — group-prefixed note column label ('지배기업 소유주 귀속분>주석')
+def test_sce_rebase_with_group_prefixed_note_label():
+    from fin2.verification.machine_compare import _rebase_sce_note_column
+    items = [_db(0, "지배기업 소유주 귀속분>주석"), _db(1, "지배기업 소유주 귀속분>자본금"),
+             _db(2, "지배기업 소유주 귀속분>자본잉여금")]
+    out = _rebase_sce_note_column(items, True)
+    assert [r["col_index"] for r in out] == [0, 1]
+    assert all("주석" not in r["col_label"] for r in out)
+
+
+def test_sce_rebase_prefixed_note_label_with_spacing():
+    from fin2.verification.machine_compare import _rebase_sce_note_column
+    out = _rebase_sce_note_column([_db(0, "자본 > 주 석"), _db(1, "자본>자본금")], True)
+    assert [r["col_index"] for r in out] == [0]

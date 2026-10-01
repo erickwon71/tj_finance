@@ -276,18 +276,26 @@ def _finding(kind: str, key, **kw) -> dict:
     return {"kind": kind, "statement": st, "basis": basis, "table_seq": ts, **kw}
 
 
+def _is_note_col_label(label: str | None) -> bool:
+    """True when the leaf of a (possibly '>'-joined, group-prefixed) column label is '주석'."""
+    return bool(label) and re.sub(r"\s+", "", label.split(">")[-1]) == "주석"
+
+
 def _rebase_sce_note_column(items: list[dict], source_has_note_col: bool) -> list[dict]:
     """R201-b: the source table drops note ('주석') columns, but report_lines counts a leading note
     column (col_index 0) whenever the header has one, even on rows that carry no note value (a source
     table that kept the note column as cell 0 needs no shift). Drop
-    the note cells and shift the component columns so the first one lines up with source cell 0."""
+    the note cells and shift the component columns so the first one lines up with source cell 0.
+    R201-c: the note column label may carry a group prefix ('지배기업 소유주 귀속분>주석'); match on
+    the leaf so such tables are shifted too (an exact '주석' match left the note cell in the minimum
+    and disabled the shift for the whole table)."""
     comp = [r["col_index"] for r in items
-            if r.get("col_label") != "주석" and r["col_index"] is not None]
+            if not _is_note_col_label(r.get("col_label")) and r["col_index"] is not None]
     shift = min(comp) if comp else 0
     if not (source_has_note_col and shift >= 1):
         return items
     return [dict(r, col_index=r["col_index"] - shift) if r["col_index"] is not None else r
-            for r in items if r.get("col_label") != "주석"]
+            for r in items if not _is_note_col_label(r.get("col_label"))]
 
 
 def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:

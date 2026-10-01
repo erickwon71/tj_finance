@@ -314,3 +314,23 @@ def test_nulling_is_wired_into_both_paths():
     rl = (_ROOT / "fin2/extract/report_lines.py").read_text(encoding="utf-8")
     assert "unresolved_dot_cell_indices(amount_cells, label)" in te
     assert "unresolved_dot_cell_indices(raw_amounts, label)" in rl
+
+
+# ───────────────── R158-b (batch: A group, issue #87278) ─────────────────
+
+def test_zero_fraction_cell_with_same_row_integer_pair_is_restored():
+    """'125,309,341.0' (DSC인베스트먼트 20180330002918) is a plain won amount, not a typo."""
+    row = ["125,309,341.0", "125,309,341", "125,309,341"]
+    assert repair(row, "지분법자본변동")[0] == "125,309,341"
+
+
+def test_zero_fraction_cell_without_pair_is_left_for_r160():
+    assert repair(["125,309,341.0", "7,000"], "지분법자본변동")[0] == "125,309,341.0"
+
+
+def test_nonzero_fraction_is_not_touched_by_r158_b():
+    assert repair(["125,309,341.5", "125,309,341"], "x")[0] == "125,309,341.5"
+
+
+def test_r158_prefix_pair_still_wins_over_r158_b():
+    assert repair(["10,590,556.9", "10,590,556,900"], "x")[0] == "10590556900"

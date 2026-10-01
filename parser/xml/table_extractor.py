@@ -1963,10 +1963,16 @@ def _repair_dot_grouped_cells(amount_cells: list[str],
         cands = {d for d in intact
                  if len(d) >= len(digits) and d.startswith(digits)
                  and set(d[len(digits):]) <= {"0"}}
-        if len(cands) != 1:
+        if len(cands) == 1:
+            full = cands.pop()
+            out[i] = f"{m.group(1)}{full}{m.group(4)}"
             continue
-        full = cands.pop()
-        out[i] = f"{m.group(1)}{full}{m.group(4)}"
+        # R158-b: all-zero 1~2 digit fraction ('125,309,341.0') is a plain integer won amount
+        # printed with a decimal tail, not a broken thousands separator. Self-proof: the same
+        # row prints the integer part as an intact cell.
+        if (not cands and len(m.group(3)) <= 2 and set(m.group(3)) <= {"0"}
+                and _digits_only(m.group(2)) in intact):
+            out[i] = f"{m.group(1)}{m.group(2)}{m.group(4)}"
     return out
 
 

@@ -22,10 +22,10 @@ DB에 없다(의도적, §1-1). 데일리 재개(신규 기간)는 이 시점부
 expense_nature_sync 는 fact_v2 대신 extended_facts_v3 에 적재하도록 전환. fact_v2
 쓰기는 이제 이 파일 경로에 없다(추출 파이프라인 본체의 fact_v2 쓰기는 별개, §4-4 소관).
 
-④ 파싱·표준화는 **기업당 워커 프로세스 + 타임아웃**으로 처리한다: 대용량/병리 보고서
-(예: 30MB iXBRL)에서 100% CPU 로 정체하는 기업을 `--timeout` 초 초과 시 강제 종료·스킵하고
-다음 기업으로 넘어간다(C레벨 lxml 멈춤도 프로세스 kill 로 확실히 중단). 워커는 재사용하고
-멈춘 경우에만 재생성하므로 정상 기업엔 오버헤드가 거의 없다.
+④ 파싱·표준화: ★2026-10-03 기업당 extract/reconcile 워커(+`--timeout`)는 은퇴했다 —
+fact_v2 DROP(2026-09-01) 후 그 워커가 전 기업 실패해 계층2·std_v3 가 통째로 건너뛰어졌다
+(`_standardize_with_timeout` docstring 참고). 파싱은 `_sync_layer2_lines` 가 메인
+프로세스에서 한다. `--timeout` 은 호환용으로 받기만 한다.
 
 실행:
   .venv/bin/python scripts/collect_new.py [--days 7] [--timeout 300]
@@ -33,8 +33,6 @@ expense_nature_sync 는 fact_v2 대신 extended_facts_v3 에 적재하도록 전
 from __future__ import annotations
 
 import argparse
-import multiprocessing as mp
-import queue as pyqueue
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -44,86 +42,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from loguru import logger
 
 
-def _worker(in_q, out_q) -> None:
-    """워커 프로세스: in_q 에서 corp 받아 process_corp 실행·커밋, 결과를 out_q 로.
-    None 받으면 종료. (spawn 으로 모듈 재임포트되므로 함수는 모듈 레벨이어야 함)
-
-    ★2026-08-30(Phase 2, std_v3_daily_wiring_plan_2026-08-30.md D1-b) — `stages`를
-    `("extract", "reconcile")`만 남기고 `standardize`·`quarterly`·`calendar`(std_v2
-    계열)는 뺐다. ④-6(`_sync_std_v3`)이 report_lines 로부터 std_financials_v3 를
-    별도로 채우므로 std_v2 표준화는 데일리에 더 이상 필요 없다.
-    ★ 잃는 것 — 이산분기(`is_discrete`)·달력정규화(`std_financials_calendar`)는
-    std_v2 전용 개념이라 v3엔 대응 컬럼/테이블이 없다. 이 시점(이 커밋) 이후의
-    **신규** 기간에 대해 두 산출물이 멈춘다. 현재 뷰·스크리너 미사용이라 즉각적
-    영향은 없고(사용자 확인, D1-b), 정보 손실도 아니다 — v3는 report_lines 에서
-    언제든 재생성 가능. §8 소비자 재구현 트랙에서 v3 기반으로 새로 만든 뒤 이
-    공백(이 커밋 이후~재구현 완료 시점)을 소급 생성해야 한다.
-    ★2026-09-02 — 달력정규화는 ④-7 `_sync_calendar_v3`(v3 기반, 이 파일 하단)로 복구.
-    이산분기 자체는 여전히 DB에 저장하지 않는다(설계 변경, 메모리 계산으로 대체) —
-    §8이 필요했던 이유(재구현) 자체가 이걸로 해소됨.
-    """
-    from collector.db import get_session
-    from run import process_corp
-
-    while True:
-        corp = in_q.get()
-        if corp is None:
-            return
-        try:
-            with get_session() as session:
-                out = process_corp(session, corp, stages=("extract", "reconcile"))
-                session.commit()
-            out_q.put(("ok", corp, out))
-        except Exception as exc:  # noqa: BLE001
-            out_q.put(("err", corp, str(exc)))
-
-
 def _standardize_with_timeout(affected: list[str], timeout: int) -> dict:
-    """기업당 워커+타임아웃으로 파싱·표준화. 타임아웃 초과 기업은 워커 kill 후 스킵."""
-    ctx = mp.get_context("spawn")
-    in_q, out_q = ctx.Queue(), ctx.Queue()
-    worker = ctx.Process(target=_worker, args=(in_q, out_q), daemon=True)
-    worker.start()
+    """④ 입력 정리 — 이 경로의 extract/reconcile worker 는 은퇴했다(2026-10-03).
 
-    # ★2026-08-30(Phase 2) — "s"/"q"/"c"(std_v2 표준화/이산분기/달력) 카운터는 `_worker`가
-    # 그 stages를 더 이상 돌지 않아 항상 0으로 고정되므로 뺐다(process_corp은 여전히 그
-    # 키를 반환하지만 값은 0). 대신 extract 단계가 실제로 한 일을 보여주는 "e_facts"만 집계.
-    agg = {"e_facts": 0, "errors": 0, "timeout": 0}
-    ok_corps: list[str] = []
-    skipped: list[str] = []
-    total = len(affected)
-    for i, corp in enumerate(affected, 1):
-        in_q.put(corp)
-        try:
-            status, c, payload = out_q.get(timeout=timeout)
-            if status == "ok":
-                agg["e_facts"] += payload["e_facts"]
-                ok_corps.append(c)
-            else:
-                agg["errors"] += 1
-                logger.warning(f"[collect]   {c} 실패: {payload}")
-        except pyqueue.Empty:
-            # timeout 초과 = 정체 기업 → 워커 강제종료 후 재생성(미커밋 트랜잭션은 롤백)
-            agg["timeout"] += 1
-            skipped.append(corp)
-            logger.warning(f"[collect]   ⏱ {corp} {timeout}초 초과 → 강제 스킵·워커 재시작")
-            worker.terminate()
-            worker.join()
-            in_q, out_q = ctx.Queue(), ctx.Queue()
-            worker = ctx.Process(target=_worker, args=(in_q, out_q), daemon=True)
-            worker.start()
-        if i % 20 == 0 or i == total:
-            logger.info(f"[collect]   진행 {i}/{total} "
-                        f"(fact {agg['e_facts']:,}, 스킵 {agg['timeout']}, 오류 {agg['errors']})")
-
-    in_q.put(None)
-    worker.join(timeout=10)
-    if worker.is_alive():
-        worker.terminate()
-    if skipped:
-        logger.warning(f"[collect]   ⏱ 타임아웃 스킵 {len(skipped)}개: {', '.join(skipped)}")
-    agg["ok_corps"] = ok_corps
-    return agg
+    ★2026-10-03 — 종전 worker(`process_corp(stages=("extract","reconcile"))`)는 fact_v2
+    쓰기(`fin2/extract/xbrl.py::store_facts`)를 불렀는데, 2026-09-01 fact_v2 DROP 이후 그
+    경로는 RuntimeError 로 막혀 **모든 기업이 실패**(9/4 오류 12/12, 9/7 1/1)했고,
+    그 결과 `ok_corps` 가 비어 계층2 전사·std_v3·달력이 전부 건너뛰어졌다. fact_v2 가
+    사라졌으므로 extract/reconcile 은 할 일이 없다 — 계층2(`_sync_layer2_lines`)와
+    std_v3(`_sync_std_v3`)가 `report_lines` 를 직접 채운다.
+    그래서 대상 기업을 그대로 `ok_corps` 로 넘긴다. 기업당 파싱은 `_sync_layer2_lines`
+    (메인 프로세스, NAS I/O 도 여기서만)가 수행하므로 worker/타임아웃은 더 필요 없다.
+    `timeout` 인자는 plist·런북 호환을 위해 받기만 하고 무시한다.
+    """
+    return {"e_facts": 0, "errors": 0, "timeout": 0, "ok_corps": list(affected)}
 
 
 def _run_standardize_batches(affected: list[str], timeout: int, batch_size: int = 50) -> dict:

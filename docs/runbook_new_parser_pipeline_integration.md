@@ -25,7 +25,9 @@
 | ① | `collect.discover_recent_corps(days)` | 최근 N일 정기공시 낸 기업 탐지 |
 | ② | `sync_filings(force=True)` | 공시목록 동기화 |
 | ③ | `run_downloads` | 원본 XML 다운로드 |
-| ④ | `_standardize_with_timeout` → `run.process_corp` | **파싱·표준화·분기·달력**(fin2 파이프라인) |
+| ④ | `_standardize_with_timeout` (통과 단계) | ★2026-10-03 extract/reconcile 워커 은퇴(fact_v2 DROP 후 전 기업 실패→계층2·std_v3 스킵 사고). 대상 기업을 그대로 ④-2~④-7 로 넘긴다. 실제 파싱=④-3 `_sync_layer2_lines` |
+| ④-3 | `_sync_layer2_lines` | 계층2(본문+주석) 전사 — 신규 파서 규칙이 반영되는 곳 |
+| ④-6/7 | `_sync_std_v3` · `_sync_calendar_v3` | 계층3 std_v3 + 달력정규화 |
 | ④-2 | `_sync_cf_da` | D&A 복원(cf_da + expense_nature) |
 | ⑤ | `_verify_and_log` → `run_dq_gate` | DQ 게이트(보고서==DB 재검) |
 | ⑤-1 | `_sync_biz_metrics` | 생산능력/가동률 **+ 부문·수출입 매출**(biz_metrics) |

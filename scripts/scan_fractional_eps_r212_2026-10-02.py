@@ -10,7 +10,7 @@ Bulk reads go to the SD-card mirror (/Volumes/dart_data/raw_report), NAS only as
 Output: docs/qa/eps_fractional_targets_2026-10-02.txt (one rcept_no per line) and a .tsv with
 corp/year/period and the exact values found.
 
-Run: python scripts/scan_fractional_eps_r212_2026-10-02.py [--workers 6] [--limit N]
+Run: python scripts/scan_fractional_eps_r212_2026-10-02.py --shard 0/4 (… 3/4, in parallel), then --merge
 """
 from __future__ import annotations
 
@@ -79,31 +79,47 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--shard", default="", help="i/n — scan every n-th filing from i (parallel runs)")
+    ap.add_argument("--merge", action="store_true", help="merge shard outputs into the final files")
     a = ap.parse_args()
+    if a.merge:
+        # report_lines keeps col_index 0 only (IS): a prior-period-only fraction never changes
+        # the stored data, so only filings with a current-period (":0=") hit are targets
+        rows = sorted({line for f in OUT_TSV.parent.glob(OUT_TSV.stem + ".shard*.tsv")
+                       for line in f.read_text().splitlines() if line and ":0=" in line},
+                      key=lambda l: l.split("\t")[0])
+        OUT_TXT.write_text("".join(l.split("\t")[0] + "\n" for l in rows))
+        OUT_TSV.write_text("rcept_no\tcorp_code\tfiscal_year\tfiscal_period\texact_values\n"
+                           + "".join(l + "\n" for l in rows))
+        print(f"merged {len(rows)} targets -> {OUT_TXT}")
+        return
     from sqlalchemy import text
     from collector.db import engine
     with engine.connect() as c:
         jobs = [tuple(r) for r in c.execute(text(_SQL)).fetchall()]
+    tag = ""
+    if a.shard:
+        i, n = map(int, a.shard.split("/"))
+        jobs, tag = jobs[i::n], f".shard{i}of{n}"
     if a.limit:
         jobs = jobs[:a.limit]
-    print(f"filings with IS EPS rows (2015+): {len(jobs)}", flush=True)
+    # targets are appended as they are found, so a run cut short keeps what it scanned
+    out = OUT_TSV.with_name(OUT_TSV.stem + (tag or ".shard0of1") + ".tsv")
+    out.write_text("")
+    print(f"filings with IS EPS rows (2015+){tag}: {len(jobs)}", flush=True)
     counts: dict[str, int] = {}
-    targets = []
-    with ProcessPoolExecutor(a.workers) as ex:
+    with ProcessPoolExecutor(a.workers) as ex, out.open("a") as fh:
         for i, res in enumerate(ex.map(_check, jobs, chunksize=32), 1):
             if res is not None:
                 counts[res[0]] = counts.get(res[0], 0) + 1
                 if res[0] == "target":
-                    targets.append(res)
+                    fh.write("\t".join(map(str, res[1:])) + "\n")
+                    fh.flush()
                 elif res[0] in ("missing", "error"):
                     print("\t".join(map(str, res)), flush=True)
             if i % 5000 == 0:
                 print(f"{i}/{len(jobs)} {counts}", flush=True)
-    targets.sort(key=lambda r: r[1])
-    OUT_TXT.write_text("".join(f"{r[1]}\n" for r in targets))
-    OUT_TSV.write_text("rcept_no\tcorp_code\tfiscal_year\tfiscal_period\texact_values\n"
-                       + "".join("\t".join(map(str, r[1:])) + "\n" for r in targets))
-    print(f"done: scanned {len(jobs)} {counts} -> {OUT_TXT}", flush=True)
+    print(f"done: scanned {len(jobs)} {counts} -> {out}", flush=True)
 
 
 if __name__ == "__main__":

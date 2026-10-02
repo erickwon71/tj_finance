@@ -245,3 +245,20 @@ def test_repeated_block_labels_repair_to_the_agreeing_row(tmp_path):
                 rows.append(_row("SCE", "separate", order, lab, v, col=col))
     res = mc.compare(rows, tables)
     assert not [f for f in res.findings if f["kind"] == "value"], res.findings
+
+
+def test_eps_child_rows_under_eps_section_are_unscaled(tmp_path):
+    # 흥국화재 20230515002741: a 백만원 IS whose EPS lines are '(1) 기본주당이익 > 1. 보통주'. The
+    # child label lacks '주당', but the loader stores it unscaled (won per share) via the section path.
+    body = _section("4. 재무제표", _title("포괄손익계산서"), _table(
+        ["매출", "10,000"], ["당기순이익", "1,200"], ["(1) 기본주당이익", ""], ["1. 보통주", "1,457"],
+        head=["과목", "당기"]))
+    body = body.replace("(단위 : 원)", "(단위 : 백만원)")
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    rows = [_row("IS", "separate", 0, "매출", 10_000_000_000), _row("IS", "separate", 1, "당기순이익", 1_200_000_000),
+            dict(_row("IS", "separate", None, "1. 보통주", 1457), section_path="(1) 기본주당이익")]
+    res = mc.compare(rows, tables)
+    assert not [f for f in res.findings if f["kind"] == "value"], res.findings
+    # without the section path the same cell reads as 1,457 백만원 and is flagged
+    rows[2].pop("section_path")
+    assert [f["label"] for f in mc.compare(rows, tables).findings if f["kind"] == "value"] == ["1. 보통주"]

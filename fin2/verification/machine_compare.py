@@ -281,6 +281,13 @@ def _is_note_col_label(label: str | None) -> bool:
     return bool(label) and re.sub(r"\s+", "", label.split(">")[-1]) == "주석"
 
 
+def _per_share(r: dict) -> bool:
+    """Per-share (EPS) cells are stored unscaled in won. The loader also treats a row under an EPS
+    section as per-share even when its own label lacks '주당' ('(1) 기본주당이익 > 1. 보통주'), so the
+    section path is checked too (R145 `_in_eps_section`)."""
+    return "주당" in r["label_raw"] or "주당" in (r.get("section_path") or "")
+
+
 def _rebase_sce_note_column(items: list[dict], source_has_note_col: bool) -> list[dict]:
     """R201-b: the source table drops note ('주석') columns, but report_lines counts a leading note
     column (col_index 0) whenever the header has one, even on rows that carry no note value (a source
@@ -390,7 +397,7 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
         cand_s: Counter = Counter()
         for r in items:
             row = rowmap.get((r["row_order"], r["label_raw"]))
-            if not row or not r["value_won"] or "주당" in r["label_raw"]:
+            if not row or not r["value_won"] or _per_share(r):
                 continue
             for k in col_for(r["col_index"] or 0, r.get("is_cumulative"), headers_of[row.table]):
                 x = row.cells[k] if k < len(row.cells) else None
@@ -410,7 +417,7 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
 
         def agrees(rs: list[dict], row: SrcRow) -> bool:
             for r in rs:
-                sc_ = 1 if "주당" in r["label_raw"] else scale
+                sc_ = 1 if _per_share(r) else scale
                 ks = col_for(r["col_index"] or 0, r.get("is_cumulative"), headers_of[row.table])
                 xs = [row.cells[k] for k in ks if k < len(row.cells)]
                 if not any(isinstance(x, float) and abs(x * sc_ - r["value_won"]) <= (1.0 if sc_ == 1 else 0.5)
@@ -445,7 +452,7 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
             if row is None or r["value_won"] is None:
                 continue
             counts["cells"] += 1
-            per_share = "주당" in r["label_raw"]
+            per_share = _per_share(r)
             s = 1 if per_share else scale
             tol = 1.0 if per_share else 0.5
             ks = col_for(r["col_index"] or 0, r.get("is_cumulative"), headers_of[row.table])
@@ -732,7 +739,8 @@ def row_table_header(win_tables: list[SrcTable], row: SrcRow, c: int) -> str | N
 
 
 DB_SQL = """
-    SELECT statement, basis, table_seq, row_order, label_raw, col_index, col_label, value_won, is_cumulative
+    SELECT statement, basis, table_seq, row_order, label_raw, section_path, col_index, col_label, value_won,
+           is_cumulative
     FROM report_lines WHERE rcept_no = :r AND statement IN ('BS', 'IS', 'CF', 'SCE')"""
 
 

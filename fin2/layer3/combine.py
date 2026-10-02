@@ -1867,6 +1867,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
         rows = session.execute(text("""
             SELECT statement, basis, col_index, section_path, label_raw, value_won,
                    node_role, table_seq, COALESCE(is_cumulative, false) AS is_cum,
+                   value_exact,
                    CASE WHEN unit_source = 'xbrl' THEN split_part(source_ref, '/', 2) END AS xbrl_local
             FROM report_lines rl
             WHERE rcept_no=:r AND col_index=0 AND value_won IS NOT NULL
@@ -1911,7 +1912,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                 del merged[k]
                 kind_of_cell.pop(k, None)
         for (statement, basis, col_index, section_path, label_raw, value_won,
-             node_role, table_seq, is_cum, xbrl_local) in rows:
+             node_role, table_seq, is_cum, value_exact, xbrl_local) in rows:
             key = (statement, basis, col_index, section_path, label_raw)
             cell = {
                 "statement": statement, "basis": basis, "col_index": col_index,
@@ -1919,6 +1920,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                 "value_won": int(value_won), "node_role": node_role,
                 "table_seq": table_seq, "is_cumulative": bool(is_cum),
                 "xbrl_local": xbrl_local,
+                "value_exact": value_exact,   # R212 — fractional EPS (NULL = value_won exact)
             }
             if key not in merged:
                 # first occurrence. From the base filing → not amended. From a later
@@ -1970,7 +1972,8 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                     # did touch the cell — remember it as the current owner so a later
                     # same-rcept duplicate (within *this* filing) is recognized as such.
                     base["source_rcept"] = rcept
-                elif not is_base and int(value_won) != base["value_won"]:
+                elif not is_base and (int(value_won), value_exact) != (
+                        base["value_won"], base.get("value_exact")):
                     # out-of-scope duplicate, or genuinely later filing with an edited
                     # value → original behavior: patch + mark.
                     cell["source_rcept"] = rcept
@@ -2723,6 +2726,19 @@ _LOSS_CANON = frozenset({
 })
 
 
+def _extended_exact(extended: dict[str, int], cands: dict[str, list[dict]]) -> dict:
+    """R212(2026-10-02): the exact value behind a rounded extended canonical (fractional EPS
+    13.42 → confirmed 13). Taken only when every candidate carrying the confirmed value agrees
+    on one exact value — otherwise the integer stands alone (no guessing)."""
+    out = {}
+    for canon, value in extended.items():
+        exacts = {c["exact"] for c in cands.get(canon, ())
+                  if c.get("value") == value and c.get("exact") is not None}
+        if len(exacts) == 1:
+            out[canon] = exacts.pop()
+    return out
+
+
 def _loss_signed(canon: str, label: str, value):
     """순'손실' 단독 라벨 + 양수 → −value(손실). 그 외는 원값."""
     if (value is not None and value > 0 and canon in _LOSS_CANON
@@ -3136,8 +3152,11 @@ def _map_rows(rows, period: str, basis: str, statements,
                     cum_seen.add(c)
             elif c in cum_seen:
                 continue
+        exact = r.get("value_exact")
         cands[c].append({
             "value": _loss_signed(c, r["label_raw"], r["value_won"]),
+            # R212: exact value of a rounded cell (fractional EPS), same sign rule as `value`
+            "exact": _loss_signed(c, r["label_raw"], exact) if exact is not None else None,
             "stage": res.stage, "label_raw": r["label_raw"],
             "node_role": r["node_role"], "section_path": r["section_path"],
             "table_seq": r["table_seq"], "is_cumulative": is_cum,
@@ -3187,7 +3206,7 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
             params["r"] = rcept_by_stmt[statement]
         db_rows = session.execute(text(f"""
             SELECT label_raw, value_won, node_role, section_path, table_seq,
-                   COALESCE(is_cumulative, false) AS is_cum
+                   COALESCE(is_cumulative, false) AS is_cum, value_exact
             FROM report_lines rl
             WHERE corp_code=:c AND report_fiscal_year=:y AND report_fiscal_period=:p
               AND basis=:b AND statement=:s AND col_index=0 AND value_won IS NOT NULL
@@ -3202,10 +3221,10 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
               )
               {rcept_clause}
         """), params).fetchall()
-        for label_raw, value_won, node_role, section_path, table_seq, is_cum in db_rows:
+        for label_raw, value_won, node_role, section_path, table_seq, is_cum, value_exact in db_rows:
             rows.append({
                 "statement": statement, "basis": basis, "label_raw": label_raw,
-                "value_won": int(value_won), "node_role": node_role,
+                "value_won": int(value_won), "value_exact": value_exact, "node_role": node_role,
                 "section_path": section_path, "table_seq": table_seq,
                 "is_cumulative": bool(is_cum),
             })
@@ -3448,6 +3467,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     # discarding what this function already computed.
     prov["extended"] = {canon: value for canon, value in confirmed.items()
                         if canon not in DIRECT_MAP}
+    prov["extended_exact"] = _extended_exact(prov["extended"], cands)
     # unit override (manual correction for self-contradictory filings, 2026-09-06 —
     # docs/plans/unit_override_self_contradictory_filings_design_2026-09-06.md). Run
     # last so it always wins over whatever DIRECT_MAP/_resolve()/every additive

@@ -28,7 +28,7 @@ def load_extended_all(corp_code: str, basis: str = "consolidated") -> list[dict]
     """
     with get_session() as session:
         rows = session.execute(text("""
-            SELECT e.fiscal_year, e.canonical_account, e.amount_won, s.period_end
+            SELECT e.fiscal_year, e.canonical_account, e.amount_won, s.period_end, e.amount_exact
             FROM extended_financials e
             JOIN std_financials_v3 s
               ON s.corp_code = e.corp_code AND s.fiscal_year = e.fiscal_year
@@ -38,6 +38,7 @@ def load_extended_all(corp_code: str, basis: str = "consolidated") -> list[dict]
         """), {"corp": corp_code, "basis": basis}).fetchall()
         return [
             {"fiscal_year": r[0], "canonical_account": r[1],
-             "amount_won": r[2], "period_end": r[3]}
+             # R212: fractional EPS (13.42) comes from amount_exact; amount_won is its rounding
+             "amount_won": float(r[4]) if r[4] is not None else r[2], "period_end": r[3]}
             for r in rows
         ]

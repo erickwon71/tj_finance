@@ -373,14 +373,35 @@ _CELL_OWN_WON_RE = re.compile(r"(?<![가-힣])원(?=\)?$)")
 
 def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
     """
-    셀 텍스트를 원(KRW) 단위 정수로 변환한다.
+    셀 텍스트를 원(KRW) 단위 정수로 변환한다(정확값을 ROUND_HALF_UP 으로 반올림).
+
+    정확값(소수 포함)이 필요하면 `parse_amount_decimal` 을 쓴다 — R212 소수 EPS.
+    """
+    exact = parse_amount_decimal(cell_text, multiplier)
+    if exact is None:
+        return None
+    return int(exact.to_integral_value(rounding=ROUND_HALF_UP))
+
+
+def fractional_or_none(exact: Optional[Decimal]) -> Optional[Decimal]:
+    """R212: the exact value only when it has a non-zero fraction (else None — value_won is exact)."""
+    if exact is None or exact == exact.to_integral_value():
+        return None
+    return exact
+
+
+def parse_amount_decimal(cell_text: str, multiplier: int = 1) -> Optional[Decimal]:
+    """
+    셀 텍스트를 원(KRW) 단위 **정확값**(Decimal, 반올림 전)으로 변환한다. 판정 규칙은
+    `parse_amount` 와 하나다(공란·R1~R4·R149·R150·R157·R202).
+    R212(2026-10-02): 소수 EPS(13.42) 를 보존하려고 `parse_amount` 의 본문을 이쪽으로 옮겼다.
 
     Args:
         cell_text:  DART XML/PDF에서 추출한 셀 원문
         multiplier: 단위 배수 (detect_unit_multiplier() 결과)
 
     Returns:
-        int  : 정규화된 원 단위 금액
+        Decimal : 정규화된 원 단위 정확값(반올림 전, 부호 포함)
         None : 공란 / 파싱 불가
     """
     if cell_text is None:
@@ -502,7 +523,7 @@ def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
         #   이 경로를 타서 DB 에 원문에도 없는 값이 남았다(전수조사에서 17,771 행 발견).
         #   소수 표기('1.0'·환율 '1,106.52')는 종전대로 float 경유가 필요하다.
         if _PLAIN_INT_RE.fullmatch(s):
-            val = int(s) * multiplier
+            exact = Decimal(int(s) * multiplier)
         else:
             # ── R157(2026-09-22): 소수 표기는 **배수를 먼저** 적용하고 반올림한다.
             #   종전엔 `int(float(s))` 로 소수부를 버린 **뒤** 배수를 곱해, 단위가
@@ -515,13 +536,13 @@ def parse_amount(cell_text: str, multiplier: int = 1) -> Optional[int]:
             #   ★float 대신 Decimal 을 쓴다 — float64 는 유효자릿수 15~17 자리라
             #   큰 값에서 조용히 틀어진다(위 정수 경로가 float 를 피하는 것과 같은
             #   이유). 반올림은 ROUND_HALF_UP(회계 관행).
-            val = int((Decimal(s) * multiplier).to_integral_value(
-                rounding=ROUND_HALF_UP))
+            exact = Decimal(s) * multiplier
+        val = int(exact.to_integral_value(rounding=ROUND_HALF_UP))
         # ── R3: 금액 타당성 상한. 종전 상한 9×10^18 은 BIGINT 한도라 사실상 무제한이어서
         #   병합으로 날조된 값(1.6×10^17 등)이 전부 통과했다(DB 실측 17,771 행).
         if abs(val) > _AMOUNT_SANE_MAX:
             return None   # 두 숫자 이어붙음·인코딩 오류 — 오염보다 결측을 택한다
-        return -val if negative else val
+        return -exact if negative else exact
     except (ValueError, OverflowError, InvalidOperation):
         return None
 

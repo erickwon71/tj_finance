@@ -1516,6 +1516,33 @@ def _run_migrations() -> None:
          # 필요해 callable 로 둔다. 설계: docs/plans/verification_schema_two_worktree_
          # design_2026-09-24.md. 개발 중 SQL 을 고치면 `scripts/vq.py admin apply-schema`.
          _apply_verification_schema),
+
+        # 2026-10-02 R212 (fix batch #92, 사용자 결정 decision #4 = B · 계층3 포함):
+        # 소수 EPS 보존. value_won(BIGINT)은 그대로 두고(기존 소비자·병합 비교 무변경), 반올림된
+        # 칸에만 정확값을 따로 둔다. nullable·DEFAULT 없음 → 카탈로그만 바뀐다(26 GB 즉시).
+        # note_lines(LIKE report_lines)에는 넣지 않는다 — 주석 경로는 EPS 를 싣지 않고
+        # `_NOTE_INSERT_COLS` 가 명시 목록이다. 설계: docs/plans/eps_fractional_value_exact_2026-10-02.md
+        ("2026_10_02_report_lines_value_exact",
+         "ALTER TABLE report_lines ADD COLUMN IF NOT EXISTS value_exact NUMERIC"),
+        ("2026_10_02_extended_facts_v3_amount_exact",
+         "ALTER TABLE extended_facts_v3 ADD COLUMN IF NOT EXISTS amount_exact NUMERIC"),
+        # 뷰는 끝에 컬럼을 덧붙이는 것이라 CREATE OR REPLACE 가 허용된다(기존 컬럼 무변경).
+        ("2026_10_02_extended_financials_amount_exact",
+         """
+        CREATE OR REPLACE VIEW extended_financials AS
+        SELECT ef.corp_code, ef.fiscal_year, ef.fiscal_period, ef.statement_type AS basis,
+               ef.canonical_account, ef.amount_won, 1 AS n_facts,
+               COALESCE(s.source_rcepts->>'BS', s.source_rcepts->>'IS', s.source_rcepts->>'CF') AS source_rcept_no,
+               ef.amount_exact
+        FROM extended_facts_v3 ef
+        JOIN std_financials_v3 s
+          ON s.corp_code = ef.corp_code AND s.fiscal_year = ef.fiscal_year
+         AND s.fiscal_period = ef.fiscal_period AND s.statement_type = ef.statement_type;
+        """),
+        # verification.compute_hashes 에 value_exact 를 넣는다. concat_ws 는 NULL 을 건너뛰므로
+        # value_exact 가 NULL 인 행(= 거의 전부)의 해시는 바뀌지 않는다 — 소수 EPS 를 채운
+        # 재적재만 '데이터 변경' 으로 잡힌다.
+        ("2026_10_02_verification_hash_value_exact", _apply_verification_schema),
     ]
 
     with engine.begin() as conn:

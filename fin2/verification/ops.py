@@ -813,13 +813,14 @@ _DATE_IN_LABEL_RE = re.compile(r"\d{4}[-.]\s*\d{1,2}[-.]\s*\d{1,2}")
 
 
 def _current_db_value(conn, issue: dict):
-    """Current report_lines values of the issue cell (all period blocks, row_order order)."""
+    """Current report_lines values of the issue cell (all period blocks, row_order order).
+    R212: the exact value (fractional EPS 13.42) when the loader kept one, else value_won."""
     cell = _resolve_issue_cell(conn, issue)
     if cell is None:
         return None
     params, col_label = cell
     return conn.execute(text("""
-        SELECT array_agg(value_won ORDER BY row_order) FROM report_lines
+        SELECT array_agg(COALESCE(value_exact, value_won) ORDER BY row_order) FROM report_lines
         WHERE rcept_no = :r AND basis = :b AND statement = :s AND label_raw = :l
           AND (CAST(:cl AS text) IS NULL OR col_label = :cl)"""),
         {**params, "cl": col_label}).scalar()
@@ -842,7 +843,7 @@ def _current_db_blocks(conn, issue: dict) -> list[str] | None:
         return None
     params, col_label = cell
     cells = conn.execute(text("""
-        SELECT row_order, value_won FROM report_lines
+        SELECT row_order, COALESCE(value_exact, value_won) FROM report_lines
         WHERE rcept_no = :r AND basis = :b AND statement = :s AND label_raw = :l
           AND (CAST(:cl AS text) IS NULL OR col_label = :cl)
         ORDER BY row_order"""), {**params, "cl": col_label}).fetchall()

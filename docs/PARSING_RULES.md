@@ -12073,3 +12073,38 @@ DB 데이터는 바뀌지 않는다(재적재 없음).
 **같은 큐에서 다룬 것(value_mismatch)**:
 - 에치에프알 2018FY `20190401005242` SCE 8건(#87632~#87744, batch #91): R201-c 와 같은 주석 열 오프셋 오탐이다(390c771 이전 커밋 `8103ac7f84` 에서 검출). DB 의 21~23 은 `주석` 열 값이다. 현재 도구로 재대조하면 `clean` 이다.
 - 비투엔 2020FY `20210317000884` 별도 EPS 13.42 → DB 13(#88194·#88195, batch #92): `report_lines.value_won` 이 bigint 라 소수 EPS 는 전사 공통으로 정수가 된다. 표본 296필링 중 5건(약 1.7%)의 원문 EPS 에 소수가 있었다. 고치려면 스키마 변경이 필요하므로 사용자 판단(decision #4)을 기다린다.
+
+## R212. 소수 EPS 는 **정확값을 따로 싣는다** — `report_lines.value_exact` · `extended_facts_v3.amount_exact` (2026-10-02, fix batch #92, 사용자 결정 decision #4 = B · 계층3 포함)
+
+**발견**: 비투엔 2020FY `20210317000884` 별도 기본·희석주당이익의 원문은 13.42(전기 19.72)인데 DB 는 13 이다(#88194·#88195).
+`value_won` 이 BIGINT 라서 모든 경로가 EPS 를 정수로 만든다. HTML 은 `parse_amount` R157 소수 경로(ROUND_HALF_UP), XBRL 은 `_numeric_value`, 수동 CSV 는 `parse_amount` 에서 정수가 된다.
+계층3 `extended_facts_v3.amount_won` 도 BIGINT 라서 앱의 `is.eps_basic`/`is.eps_diluted` 도 정수였다.
+표본으로 보면 2015+ EPS 필링 296건 중 5건(약 1.7%)의 원문 EPS 에 소수가 있었다. 전수 결과는 아래 "소급" 에 적는다.
+EPS 0.5 같은 소형주는 반올림 때문에 PER 이 크게 틀어진다.
+
+**규칙**
+1. `value_won` 은 **바꾸지 않는다**(반올림 정수 그대로). 반올림된 칸에만 `value_exact NUMERIC` 에 정확값을 싣는다. 정수 값(`69.0` 포함)이면 NULL 이다.
+   기존 소비자(계층3 정정 병합의 값 비교, 검토 CSV, 기계대조)는 그대로 동작한다. 소수가 필요한 소비자는 `COALESCE(value_exact, value_won)` 을 쓴다.
+2. HTML EPS 경로(`_emit_eps_lines`): `_parse_eps_amount` 는 `int` 서브클래스(`_EpsAmount`)를 돌려주고, 이 값이 `.exact` 를 들고 다닌다. 열 선택(R88 헤더 그리드·cum_map·위치) 코드는 바뀌지 않고, 방출할 때 `value_exact` 로 옮긴다.
+   `parse_amount` 의 본문은 `parse_amount_decimal`(반올림 전 Decimal)로 옮겼다. `parse_amount` 는 그 값을 반올림하므로 결과는 이전과 같다.
+3. XBRL(`report_lines_xbrl`): `_exact_value(fact)` 로 싣는다. 표시 부호(R10 negatedLabel·R175 calc weight·SCE `_value_sign`)는 `value_won` 과 같은 배수를 곱한다.
+   부호 반전 패스(R170-d 법인세, R176 SCE)는 `_negated()` 로 두 값을 함께 뒤집는다. 수동 부호 예외(`_MANUAL_IS_SIGN_FIXES`)는 `value_exact` 를 NULL 로 만든다.
+4. 수동 CSV(`manual_report_lines`): 같은 `parse_amount_decimal` 을 쓴다.
+5. 계층3: `build_merged_lines`·`collect_candidates` 가 `value_exact` 를 읽는다. `_map_rows` 후보에 `exact` 를 싣는데, 부호 규칙은 `value` 와 같은 `_loss_signed` 다.
+   `_extended_exact` 는 확정값(`confirmed`)과 같은 값을 가진 후보들의 정확값이 **하나로 일치할 때만** 붙인다. 엇갈리면 붙이지 않는다(짐작 금지).
+   정정 병합은 `(value_won, value_exact)` 쌍으로 비교한다(13.42 → 13.38 정정도 패치된다). `build.py` 는 `amount_exact` 에 적재한다.
+6. 앱: `extended_financials` 뷰 끝에 `amount_exact` 를 덧붙였다. `app/data/extended.py` 는 `amount_exact` 가 있으면 그 값(float)을 쓴다.
+7. 검증: `verification.compute_hashes` 에 `value_exact` 를 넣었다. `concat_ws` 는 NULL 을 건너뛰므로 NULL 행의 해시는 바뀌지 않는다.
+   recheck 의 현재값(`_current_db_value`·`_current_db_blocks`)은 `COALESCE(value_exact, value_won)` 이다.
+
+**범위 밖**: 본류(`_emit_section_lines`)를 타는 2015 이전 EPS 행과 PDF 경로는 이번에 다루지 않았다.
+PDF 토크나이저(`fin2/extract/pdf.py:64`)는 `.` 을 허용하지 않아, 소수 EPS 가 토큰 두 개로 갈린다. 별도 결함 후보이고, PDF-only 는 현재 보류 정책 대상이다.
+
+**스키마**(`collector/db.py` 마이그레이션 4건, 추가만): `2026_10_02_report_lines_value_exact`, `2026_10_02_extended_facts_v3_amount_exact`, `2026_10_02_extended_financials_amount_exact`(뷰 컬럼 추가), `2026_10_02_verification_hash_value_exact`.
+테이블 소유자 권한이 필요해서 사용자가 실행한다. ★마이그레이션 전에 이 코드를 main 에 push 하면 데일리 적재와 계층3 빌드가 없는 컬럼을 참조해 실패한다(데몬이 origin/main 을 ff 한다). 순서: 마이그레이션 → push → reload.
+
+**회귀 테스트**: `fin2/tests/test_r212_fractional_eps.py`(8건). 픽스처 갱신: `test_combine_cross_source_amendment_r171.py`(행 튜플에 value_exact), `test_store_report_lines_manual_guard.py`(sqlite DDL).
+
+**소급**: `scripts/scan_fractional_eps_r212_2026-10-02.py` 로 대상을 고른다. 정규식 사전필터 → 운영 추출기로 재추출해 IS 행에 `value_exact` 가 생기는 필링만 남긴다.
+결과는 `docs/qa/eps_fractional_targets_2026-10-02.txt` 이고, `batch add-targets 92` 후 `batch reload 92` 한다. 그 뒤 해당 기업의 계층3을 재빌드한다.
+★일부 원문은 utf-8 로 선언돼 있지만 실제는 EUC-KR 이다(비투엔 `20210317000884`). 스캐너는 utf-8 엄격 디코딩이 실패하면 cp949 로 읽는다.

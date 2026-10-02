@@ -48,8 +48,9 @@ from __future__ import annotations
 import csv
 import re
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP
 
-from parser.common.amount_normalizer import detect_unit_multiplier, parse_amount
+from parser.common.amount_normalizer import detect_unit_multiplier, fractional_or_none, parse_amount_decimal
 
 from fin2.extract.report_lines import ReportLineRow, _TABLE_LEVEL_COLS
 from fin2.extract.text import _adecimal_from_unit
@@ -143,7 +144,8 @@ def build_manual_report_lines(
         unit_text = (row.get("unit") or "").strip() or "원"
         multiplier = detect_unit_multiplier(f"단위 : {unit_text}")
         raw_value_text = (row.get("value_raw") or "").strip() or None
-        value_won = parse_amount(raw_value_text, multiplier) if raw_value_text is not None else None
+        exact = parse_amount_decimal(raw_value_text, multiplier) if raw_value_text is not None else None
+        value_won = int(exact.to_integral_value(rounding=ROUND_HALF_UP)) if exact is not None else None
 
         depth_text = (row.get("depth") or "").strip()
         depth = int(depth_text) if depth_text else 0
@@ -168,6 +170,7 @@ def build_manual_report_lines(
             period_kind=period_kind,
             is_cumulative=is_cumulative,
             value_won=value_won,
+            value_exact=fractional_or_none(exact),  # R212 — fractional EPS keeps its exact value
             adecimal=_adecimal_from_unit(multiplier),
             unit_source="manual",
             source_ref=f"{statement}_{basis}/manual"[:180],

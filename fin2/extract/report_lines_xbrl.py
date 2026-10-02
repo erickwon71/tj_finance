@@ -153,6 +153,7 @@ from parser.xbrl_instance.taxonomy_linkbase import (
 from parser.xbrl_instance.role_map import build_role_map, extra_core_roles, has_local_role_types, index_core_roles
 
 from fin2.extract.report_lines import ReportLineRow
+from parser.common.amount_normalizer import fractional_or_none
 from fin2.extract.sce_source_defects import apply_source_defect_fixes, verify_row_drops
 
 _STANDARD_LABEL_ROLE = "http://www.xbrl.org/2003/role/label"
@@ -632,6 +633,21 @@ def _numeric_value(fact: XbrlFact, units: dict[str, XbrlUnit]) -> int | None:
     return int(num.to_integral_value(rounding=ROUND_HALF_UP))
 
 
+def _exact_value(fact: XbrlFact) -> Decimal | None:
+    """R212: the fact's exact value when it has a fraction (EPS 13.42), else None. Call only after
+    `_numeric_value` accepted the fact; `value_won` keeps the ROUND_HALF_UP integer."""
+    try:
+        return fractional_or_none(Decimal(fact.value_raw))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def _negated(r: ReportLineRow) -> ReportLineRow:
+    """Flip a line's sign — `value_exact` (R212) goes with `value_won`."""
+    return replace(r, value_won=-r.value_won,
+                   value_exact=-r.value_exact if r.value_exact is not None else None)
+
+
 def _flatten_from(tree: PresentationTree, start: str) -> list[str]:
     """DFS pre-order starting at an arbitrary node (not necessarily a tree
     root) — used to walk the LineItems/Axis *subtrees* of an SCE role rather
@@ -859,6 +875,7 @@ def _emit_statement_lines(
     for loc_label, col_idx, fact, ctx, raw in cells:
         node = tree.nodes[loc_label]
         value = sign_of(loc_label, raw)
+        exact = _exact_value(fact)
         out.append(ReportLineRow(
             corp_code=corp_code,
             rcept_no=rcept_no,
@@ -873,6 +890,7 @@ def _emit_statement_lines(
             period_kind=ctx.period_kind,
             is_cumulative=(ctx.period_kind == "duration" and report_fiscal_period != "FY"),
             value_won=value,
+            value_exact=exact * sign_of(loc_label, 1) if exact is not None else None,
             adecimal=0,  # XBRL facts are already base-unit values (module docstring)
             unit_source=UNIT_SOURCE_XBRL,
             source_ref=f"{statement}_{basis}/{node.element.local}"[:180],
@@ -991,6 +1009,7 @@ def _emit_missing_totals(
                 period_kind=ctx.period_kind,
                 is_cumulative=(ctx.period_kind == "duration" and report_fiscal_period != "FY"),
                 value_won=value,  # no preferredLabel available (bare fact) -> no negatedLabel sign flip applies
+                value_exact=_exact_value(fact),
                 adecimal=0,
                 unit_source=UNIT_SOURCE_XBRL,
                 source_ref=f"{statement}_{basis}/{local}/xbrl_tree_gap_total"[:180],
@@ -1125,6 +1144,7 @@ def _emit_missing_leaf_lines(
                 period_kind=ctx.period_kind,
                 is_cumulative=(ctx.period_kind == "duration" and report_fiscal_period != "FY"),
                 value_won=value,  # no preferredLabel available (bare fact) -> no negatedLabel sign flip applies
+                value_exact=_exact_value(fact),
                 adecimal=0,
                 unit_source=UNIT_SOURCE_XBRL,
                 source_ref=f"{statement}_{basis}/{local}/xbrl_tree_gap_leaf_line"[:180],
@@ -1172,7 +1192,7 @@ def _settle_is_tax_sign(lines: list[ReportLineRow]) -> list[ReportLineRow]:
             flip.add(id(tax))
     if not flip:
         return lines
-    return [replace(r, value_won=-r.value_won) if id(r) in flip else r for r in lines]
+    return [_negated(r) if id(r) in flip else r for r in lines]
 
 
 # verification fix batch #13(2026-09-26, sign_flip 잔여): 개별 확정 셀 예외목록 —
@@ -1203,7 +1223,7 @@ def _apply_manual_is_sign_fixes(lines: list[ReportLineRow], rcept_no: str) -> li
         local = r.source_ref.split("/")[1] if r.source_ref and "/" in r.source_ref else None
         fix = _MANUAL_IS_SIGN_FIXES.get((rcept_no, r.basis, local or ""))
         if fix is not None and r.value_won == fix[0]:
-            out.append(replace(r, value_won=fix[1]))
+            out.append(replace(r, value_won=fix[1], value_exact=None))
         else:
             out.append(r)
     return out
@@ -1367,6 +1387,9 @@ def _emit_sce_lines(
                 if value is None:
                     continue
                 value *= _value_sign(row_node.preferred_label)
+                exact = _exact_value(fact)
+                if exact is not None:
+                    exact *= _value_sign(row_node.preferred_label)
                 out.append(ReportLineRow(
                     corp_code=corp_code,
                     rcept_no=rcept_no,
@@ -1385,6 +1408,7 @@ def _emit_sce_lines(
                     period_kind=None,                        # varies per row/period, same as HTML SCE
                     is_cumulative=False,
                     value_won=value,
+                    value_exact=exact,
                     adecimal=0,
                     unit_source=UNIT_SOURCE_XBRL,
                     source_ref=f"SCE_{basis}/{row_node.element.local}"[:180],
@@ -1601,7 +1625,7 @@ def _settle_sce_signs_by_rollforward(
     for i, (row_loc, _p, _c) in enumerate(meta):
         if row_loc in flipped:
             r = out[i]
-            out[i] = replace(r, value_won=-r.value_won)
+            out[i] = _negated(r)
     final = residuals(set())   # values in `out` already carry the flips
     logger.debug(f"{source}: R176 cells={len(initial)} broken_before="
                  f"{sum(1 for r in initial.values() if r)} broken_after={sum(1 for r in final.values() if r)} "

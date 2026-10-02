@@ -48,7 +48,7 @@ def session():
                 label_raw TEXT, col_index INTEGER, col_label TEXT,
                 context_fiscal_year INTEGER, period_kind TEXT, is_cumulative INTEGER,
                 value_won INTEGER, value_raw TEXT, header_hint TEXT, adecimal INTEGER,
-                unit_source TEXT, source_ref TEXT, context_raw TEXT
+                unit_source TEXT, source_ref TEXT, context_raw TEXT, value_exact NUMERIC
             )
         """))
         # FK 제약은 걸지 않는다(기존 report_lines DDL과 동일한 관례) — SQLite는

@@ -376,7 +376,7 @@ BEGIN
                concat_ws('|', statement, basis, table_seq, row_order, depth, node_role,
                          section_path, label_raw, col_index, col_label, context_fiscal_year,
                          period_kind, is_cumulative, value_won, value_raw, adecimal,
-                         unit_source, header_hint) AS line
+                         unit_source, header_hint, value_exact) AS line
         FROM public.report_lines
         WHERE rcept_no = p_rcept AND statement IN ('BS', 'IS', 'CF', 'SCE')
     ), s AS (

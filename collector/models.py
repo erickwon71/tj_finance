@@ -9,7 +9,7 @@ SQLAlchemy ORM 모델 정의
 """
 from datetime import datetime
 from sqlalchemy import (
-    BigInteger, Boolean, Column, Date, DateTime, Float,
+    BigInteger, Boolean, Column, Date, DateTime, Float, Numeric,
     ForeignKey, Integer, SmallInteger, String, Text, UniqueConstraint, Index,
     CheckConstraint, func, text as sa_text
 )
@@ -447,6 +447,11 @@ class ReportLine(Base):
                                         "단위로 환산할 수 없는 경우(2026-07-31 F1). 값이 있는 칸은 "
                                         "원문이 value_won 에서 복원되므로 NULL(용량 0). "
                                         "이 컬럼이 있어야 '단위 미확정 → NULL' 이 정보손실이 아니다.")
+    value_exact        = Column(Numeric,      nullable=True,
+                                comment="R212(2026-10-02) 정확값 — value_won 이 소수를 반올림한 정수일 때만 "
+                                        "채운다(소수 EPS 13.42 → value_won 13, value_exact 13.42). "
+                                        "NULL = value_won 이 이미 정확한 값. 소수가 필요한 소비자는 "
+                                        "COALESCE(value_exact, value_won).")
     header_hint        = Column(Text,         nullable=True,
                                 comment="헤더 판정 규칙 이름(날짜/기수/단위표기/구분과목/N개월/"
                                         "N분기/날짜범위/기준일/기간라벨/공정가치수준/빈셀). "
@@ -1980,6 +1985,8 @@ class ExtendedFactV3(Base):
     statement_type    = Column(String(12),   primary_key=True)   # consolidated/separate
     canonical_account = Column(String(40),   primary_key=True)   # 예: "bs.goodwill"
     amount_won        = Column(BigInteger,   nullable=False)
+    # R212(2026-10-02): exact value when amount_won is a rounded fraction (EPS 13.42), else NULL
+    amount_exact      = Column(Numeric,      nullable=True)
     built_at          = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (

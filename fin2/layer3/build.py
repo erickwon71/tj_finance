@@ -209,9 +209,11 @@ def build_corp(session, corp: str, year_min: int = 2015,
             # (combine_full()이 이미 계산해 prov["extended"]로 노출) 을 나란히 upsert.
             # StdFinancialV3 와 같은 (corp,fy,period,basis) delete-then-insert 단위
             # (delete는 위로 이동 — R63 코멘트 참고).
+            exact_of = prov.get("extended_exact", {})
             for canon, value in prov.get("extended", {}).items():
                 session.add(ExtendedFactV3(
                     corp_code=corp, fiscal_year=fy, fiscal_period=period,
                     statement_type=basis, canonical_account=canon, amount_won=value,
+                    amount_exact=exact_of.get(canon),  # R212 fractional EPS, else NULL
                 ))
     return n

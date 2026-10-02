@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 from loguru import logger
@@ -172,7 +173,8 @@ def _apply_duplicate_period_label_fix(header_cols, rcept_no, statement, basis):
 
 
 from parser.common.amount_normalizer import (
-    detect_unit_declaration, parse_amount, normalize_account_name, strip_cell_whitespace)
+    detect_unit_declaration, parse_amount, parse_amount_decimal, fractional_or_none,
+    normalize_account_name, strip_cell_whitespace)
 
 from parser.xml.section_detector import (
     assign_tables_to_dart_sections, assign_note_tables_with_titles,
@@ -449,6 +451,9 @@ class ReportLineRow:
     # 헤더 판정 규칙 이름(F2, 2026-07-31). NULL = 규칙에 안 걸린 평범한 데이터 행.
     # 계층3 소비자는 기본적으로 `header_hint IS NULL` 로 거른다(fin2/layer3 가드).
     header_hint: str | None = None
+    # R212(2026-10-02): 정확값. `value_won` 이 소수를 반올림한 정수일 때만 채운다(소수 EPS
+    # 13.42 → value_won 13, value_exact 13.42). 정수 값이면 NULL — value_won 이 이미 정확하다.
+    value_exact: Decimal | None = None
     # ── 표 단위 메타(F3, 2026-07-31) — **DB 의 행에는 안 들어간다.**
     #   `store_report_tables` 가 (rcept_no, statement, basis, table_seq) 로 묶어
     #   `report_tables` 한 행으로 적는다. 메모리에서만 행에 붙여 다니는 이유는 추출기 반환
@@ -484,6 +489,7 @@ class ReportLineRow:
             "is_cumulative": self.is_cumulative,
             "value_won": self.value_won,
             "value_raw": self.value_raw,
+            "value_exact": self.value_exact,
             "header_hint": self.header_hint,
             "adecimal": self.adecimal,
             "unit_source": self.unit_source,
@@ -836,6 +842,23 @@ def _q1_cumulative_proved_equal_to_three_month(header_cols, table_rows) -> bool:
     return witnesses > 0
 
 
+class _EpsAmount(int):
+    """R212: a rounded EPS amount that remembers its exact value (`exact`, None when integral).
+
+    It is an `int`, so column selection (`select_by_header_columns`, cum_map, position picks)
+    handles it unchanged; the emit site reads `.exact` into `value_exact`."""
+    exact: Decimal | None = None
+
+
+def _parse_eps_amount(cell: str, unit: int) -> _EpsAmount | None:
+    exact = parse_amount_decimal(cell, unit)
+    if exact is None:
+        return None
+    a = _EpsAmount(int(exact.to_integral_value(rounding=ROUND_HALF_UP)))
+    a.exact = fractional_or_none(exact)
+    return a
+
+
 def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                     report_fiscal_year, report_fiscal_period,
                     table_seq=None, table_title=None,
@@ -943,7 +966,7 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                 detect_unit_declaration(label) or 1, "declared", None)
         _, amt_cells = _split_label_amounts(cells, table_has_note_column)
         # 위치보존(라벨/주석컬럼 제외, 그 외 자리는 그대로) — cum_map 은 이 위치 기준.
-        amounts_by_pos = [parse_amount(c, unit) for c in amt_cells]
+        amounts_by_pos = [_parse_eps_amount(c, unit) for c in amt_cells]
         present = [a for a in amounts_by_pos if a is not None]
         if not _looks_like_eps_amounts(present):
             # NI귀속류 오판 행 — EPS 로 emit 하지 않고 본류가 처리하도록 남겨둔다(아래
@@ -968,7 +991,7 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
             grid_cells = cells[1:]
             if len(grid_cells) < n_grid:
                 grid_cells = grid_cells + [""] * (n_grid - len(grid_cells))
-            grid_amounts = [parse_amount(c, unit) for c in grid_cells]
+            grid_amounts = [_parse_eps_amount(c, unit) for c in grid_cells]
             # ★R153(2026-09-20) — 본류와 **같은 예외 플래그**를 넘긴다. 안 넘기면
             #   R116/R120 예외 필링에서 EPS 행만 조용히 사라진다: 본류는 예외로
             #   3개월 값을 누적으로 채택해 정상 행을 싣는데, 여기서는 누적 칸이 공란이라
@@ -1037,7 +1060,8 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                 section_path=sec_path,
                 label_raw=label, col_index=col_idx, context_fiscal_year=ctx_fy,
                 period_kind="duration", is_cumulative=(report_fiscal_period != "FY"),
-                value_won=amount, adecimal=_adecimal_from_unit(unit), unit_source=eps_source,
+                value_won=int(amount), value_exact=getattr(amount, "exact", None),
+                adecimal=_adecimal_from_unit(unit), unit_source=eps_source,
                 currency=eps_currency,
                 source_ref=f"eps/{label[:70]}"[:180],
                 context_raw=_synth_acontext(basis, "duration", col_idx, ctx_fy, statement),

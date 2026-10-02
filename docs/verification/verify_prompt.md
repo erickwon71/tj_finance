@@ -79,6 +79,9 @@
 5. 필링 판정:
    - 이슈 없이 전부 일치하면 `vq.py pass --rcept <R> --verified-scopes <show가 알려준 목록> --note "<행수·구조·결과>"`.
    - 원문에 재무제표가 없는 필링은 `vq.py skip --rcept <R> --note "<사유>"`.
+   - **적재 0행 필링**(show 의 적재 행 0·기계대조 `no_source`·파싱 소스 pdf)은 incomplete 로 두지 않는다.
+     원문을 열어 재무제표가 있으면 `missing_row` 이슈 1건(필링 전체 미적재, 대표 행 1개)을 등록하고,
+     없으면 위처럼 skip 한다. 원문 확인 없이 `done` 하지 않는다.
    - 이슈를 등록한 필링은 pass 하지 않는다.
 6. **이번 실행에서 연 Chrome 탭을 전부 닫는다**(`mcp__claude-in-chrome__tabs_close_mcp`). 탭이 회차마다 쌓이면 메모리를 잡아먹는다.
    대조 도중에 오류로 끝내게 되더라도 탭은 먼저 닫는다.

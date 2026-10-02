@@ -165,3 +165,19 @@ def test_r207_colmar_bnh_original_q1_proved_unit():
         _COLMAR_BNH_2024_Q1, rcept_no="20240516002083", corp_code="01032404",
         report_fiscal_year=2024, report_fiscal_period="Q1")
     assert _rows(lines, "IS", "separate")["매출액"].value_won == 119_858_420_057
+
+
+_NEOCREMA_2022_FY_AMEND = _RAW / "KOSDAQ/01219155_네오크레마/annual/2022/20231226000346.xml"
+
+
+def test_r207_neocrema_amended_annual_declares_thousand_over_won_cells():
+    """네오크레마 2022FY [기재정정] — 정정 사유 표는 `(단위 : 원)` 이지만 실제 재무제표 표는
+    `(단위 : 천원)` 아래 원 단위 풀 금액(연결 자산총계 77,318,521,415)이라 x1,000 으로 적재돼 있었다."""
+    assert "20231226000346" in json.loads(
+        rl._PROVED_UNIT_OVERRIDES_PATH.read_text(encoding="utf-8"))
+    if not _NEOCREMA_2022_FY_AMEND.exists():
+        return
+    lines = extract_report_lines(
+        _NEOCREMA_2022_FY_AMEND, rcept_no="20231226000346", corp_code="01219155",
+        report_fiscal_year=2022, report_fiscal_period="FY")
+    assert _rows(lines, "BS", "consolidated")["자산총계"].value_won == 77_318_521_415

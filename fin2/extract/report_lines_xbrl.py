@@ -1551,6 +1551,53 @@ def _extra_role_dup_key(row) -> tuple:
     return (row.basis, concept, row.label_raw, row.col_index, row.value_won)
 
 
+# R208 — printed labels under which a filer carries a BS total as its own (udf) concept.
+_GAP_TOTAL_PRINTED_LABELS: dict[str, frozenset[str]] = {
+    "Assets": frozenset({"자산총계", "자산합계", "자산"}),
+    "Liabilities": frozenset({"부채총계", "부채합계", "부채"}),
+    "Equity": frozenset({"자본총계", "자본합계", "자본"}),
+}
+_GAP_TOTAL_SUFFIX = "/xbrl_tree_gap_total"
+
+
+def _drop_redundant_gap_totals(lines: list[ReportLineRow], rcept_no: str) -> list[ReportLineRow]:
+    """R208 — a missing-total row (`_emit_missing_totals`) must not repeat a total the document prints.
+
+    The A-5 fallback only checks the primary role's tree for the concept, so it duplicates a total that is
+    already there in two shapes (verification extra_row #87034·#87548·#88034 …):
+      (a) the same concept in another table of the same statement (R199's second IS role carries
+          ComprehensiveIncome while the primary IS role does not);
+      (b) a BS total the filer tagged with its own udf concept under the printed label `자본총계`.
+    A gap cell is dropped only when a non-gap row of the same statement/basis/column holds the same value
+    and either carries the same concept (a) or one of the concept's printed total labels (b)."""
+    def concept_of(row) -> str:
+        ref = row.source_ref or ""
+        return ref.split("/")[1] if "/" in ref else ref
+
+    printed: set[tuple] = set()
+    for l in lines:
+        if l.value_won is None or (l.source_ref or "").endswith(_GAP_TOTAL_SUFFIX):
+            continue
+        base = (l.statement, l.basis, l.col_index, l.value_won)
+        printed.add(base + ("concept", concept_of(l)))
+        printed.add(base + ("label", re.sub(r"\s+", "", l.label_raw or "")))
+
+    out: list[ReportLineRow] = []
+    dropped = 0
+    for l in lines:
+        if (l.source_ref or "").endswith(_GAP_TOTAL_SUFFIX):
+            base = (l.statement, l.basis, l.col_index, l.value_won)
+            concept = concept_of(l)
+            labels = _GAP_TOTAL_PRINTED_LABELS.get(concept, frozenset()) if l.statement == "BS" else frozenset()
+            if base + ("concept", concept) in printed or any(base + ("label", lb) in printed for lb in labels):
+                dropped += 1
+                continue
+        out.append(l)
+    if dropped:
+        logger.debug(f"[report_lines_xbrl] {rcept_no}: R208 redundant gap-total cells dropped={dropped}")
+    return out
+
+
 def extract_report_lines_xbrl(
     zip_path: str | Path,
     *,
@@ -1737,6 +1784,7 @@ def extract_report_lines_xbrl(
 
             if not core_roles:
                 logger.debug(f"[report_lines_xbrl] {rcept_no}: core statement role 없음 → 빈 결과")
+            lines = _drop_redundant_gap_totals(lines, rcept_no)
             lines = _apply_manual_is_sign_fixes(_settle_is_tax_sign(lines), rcept_no)
             # R183: SCE source-defect exception list, identity-guarded (sce_source_defects.py).
             verify_row_drops(lines, apply_source_defect_fixes(lines, rcept_no))

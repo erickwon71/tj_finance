@@ -63,9 +63,14 @@ def test_hyundai_corp_2019h1_separate_oci_rows_present():
 
     assert not oci(off)
     assert oci(on) and all(l.table_seq >= 1 for l in oci(on))
-    # additive only: every cell the primary role produced is unchanged
+    # additive only: every cell the primary role produced is unchanged — except a missing-total fallback
+    # cell whose concept the extra role now prints itself (R208 drops that duplicate)
     key = lambda l: (l.statement, l.basis, l.table_seq, l.row_order, l.col_index, l.value_won)  # noqa: E731
-    assert {key(l) for l in off} <= {key(l) for l in on}
+    on_keys = {key(l) for l in on}
+    lost = [l for l in off if key(l) not in on_keys]
+    assert all((l.source_ref or "").endswith("/xbrl_tree_gap_total") for l in lost)
+    concepts_on = {(l.basis, l.col_index, l.value_won, l.source_ref.split("/")[1]) for l in on}
+    assert all((l.basis, l.col_index, l.value_won, l.source_ref.split("/")[1]) in concepts_on for l in lost)
 
 
 def test_extra_role_rows_never_duplicate_the_primary_role():

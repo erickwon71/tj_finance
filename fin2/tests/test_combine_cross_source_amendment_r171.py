@@ -18,11 +18,11 @@ from fin2.layer3.combine import build_merged_lines  # noqa: E402
 _CHAIN = [("orig", False), ("xbrl1", True), ("xml2", True)]
 _KIND = {"orig": (False, False), "xbrl1": (True, False), "xml2": (False, False)}
 _ROWS = {
-    "orig": [("BS", "consolidated", 0, "부채", "부채총계", 1_103_679_410_688, "S", 0, False, None, None),
-             ("IS", "consolidated", 0, None, "매출액", 100, "F", 1, False, None, None)],
+    "orig": [("BS", "consolidated", 0, "부채", "부채총계", 1_103_679_410_688, "S", 0, False, None, False, None),
+             ("IS", "consolidated", 0, None, "매출액", 100, "F", 1, False, None, False, None)],
     "xbrl1": [("BS", "consolidated", 0, "재무상태표 [abstract]>부채 [abstract]", "부채총계",
-               1_135_133_772_680, "S", 0, False, None, "Liabilities")],
-    "xml2": [("BS", "consolidated", 0, "부채", "부채총계", 1_134_848_933_304, "S", 0, False, None, None)],
+               1_135_133_772_680, "S", 0, False, None, False, "Liabilities")],
+    "xml2": [("BS", "consolidated", 0, "부채", "부채총계", 1_134_848_933_304, "S", 0, False, None, False, None)],
 }
 
 

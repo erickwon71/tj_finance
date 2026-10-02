@@ -31,6 +31,7 @@ from pathlib import Path
 from sqlalchemy import text
 
 from parser.common.account_mapper import get_mapper
+from parser.common.amount_normalizer import normalize_account_name
 from fin2.taxonomy.concept_map import map_acode
 from fin2.standardize.rules import (DIRECT_MAP, CONSUMED_CANON, StdContext,
                                     rule_additive_capex, rule_derive_fcf,
@@ -1312,7 +1313,9 @@ def _map_xbrl_concept(local: str | None, fs: str | None) -> _ConceptMatch | None
 # in _top_stage_corroborated()'s tie-break — it only needs to exist in the pool so the
 # NI-identity check (_resolve_ni_attribution) gets a competing candidate to disambiguate
 # against.
-_STAGE_RANK = {"exact": 3, "normalized": 2, "guard": 2, "fuzzy": 1, "structural": 1, None: 0}
+# 'eps' (R213): a row the loader's EPS path emitted — the loader already proved it per-share,
+# so it ranks with an exact label match.
+_STAGE_RANK = {"exact": 3, "eps": 3, "normalized": 2, "guard": 2, "fuzzy": 1, "structural": 1, None: 0}
 
 _CONFLICT_EPS = 0.001
 _CURRENT_STRICT = {"bs.trade_receivables", "bs.trade_payables",
@@ -1867,7 +1870,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
         rows = session.execute(text("""
             SELECT statement, basis, col_index, section_path, label_raw, value_won,
                    node_role, table_seq, COALESCE(is_cumulative, false) AS is_cum,
-                   value_exact,
+                   value_exact, COALESCE(source_ref LIKE 'eps/%', false) AS eps_row,
                    CASE WHEN unit_source = 'xbrl' THEN split_part(source_ref, '/', 2) END AS xbrl_local
             FROM report_lines rl
             WHERE rcept_no=:r AND col_index=0 AND value_won IS NOT NULL
@@ -1912,7 +1915,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                 del merged[k]
                 kind_of_cell.pop(k, None)
         for (statement, basis, col_index, section_path, label_raw, value_won,
-             node_role, table_seq, is_cum, value_exact, xbrl_local) in rows:
+             node_role, table_seq, is_cum, value_exact, eps_row, xbrl_local) in rows:
             key = (statement, basis, col_index, section_path, label_raw)
             cell = {
                 "statement": statement, "basis": basis, "col_index": col_index,
@@ -1921,6 +1924,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                 "table_seq": table_seq, "is_cumulative": bool(is_cum),
                 "xbrl_local": xbrl_local,
                 "value_exact": value_exact,   # R212 — fractional EPS (NULL = value_won exact)
+                "eps_row": eps_row,           # R213 — the loader's EPS path emitted it
             }
             if key not in merged:
                 # first occurrence. From the base filing → not amended. From a later
@@ -2726,6 +2730,39 @@ _LOSS_CANON = frozenset({
 })
 
 
+_EPS_UNIT_DECL_RE = re.compile(r"\(단위:[^)]*\)")
+# component EPS (continuing / discontinued) and other share classes are not the headline figure
+_EPS_NOT_HEADLINE_RE = re.compile(r"계속|중단|우선주")
+
+
+def _eps_canonicals(label_raw: str | None, section_path: str | None) -> tuple[str, ...]:
+    """R213(2026-10-03): canonical(s) of a row the loader's EPS path emitted.
+
+    The loader already decided the row is per-share (R145 structural rule + amount check), so
+    this only names it: '희석' → is.eps_diluted, otherwise is.eps_basic; a combined
+    '기본및희석주당이익' line is both. Continuing/discontinued components and preferred-share
+    lines are not the headline EPS → none, also when the nearest ancestor names the component
+    ('계속영업' > '기본주당손익'; '계속영업과 중단영업' is the total and stays). A child line without '주당' ('1. 보통주' under
+    '(1) 기본주당이익') is named by its section path. The stored sign is the printed sign — it
+    agrees with the controlling-NI sign in ~99% of rows whatever the label says ('손실' labels
+    included), so no loss-label negation is applied."""
+    label = re.sub(r"\s+", "", normalize_account_name(label_raw or ""))
+    if _EPS_NOT_HEADLINE_RE.search(label):
+        return ()
+    # the nearest ancestor may be the component instead ('계속영업' > '기본주당손익');
+    # '계속영업과 중단영업' names both, i.e. the headline total
+    parent = (section_path or "").split(">")[-1]
+    if ("계속" in parent) != ("중단" in parent) or "우선주" in parent:
+        return ()
+    text_ = label if "주당" in label else re.sub(r"\s+", "", section_path or "") + ">" + label
+    text_ = _EPS_UNIT_DECL_RE.sub("", text_)
+    if "주당" not in text_ or _EPS_NOT_HEADLINE_RE.search(text_):
+        return ()
+    if "기본" in text_ and "희석" in text_:
+        return ("is.eps_basic", "is.eps_diluted")
+    return ("is.eps_diluted",) if "희석" in text_ else ("is.eps_basic",)
+
+
 def _extended_exact(extended: dict[str, int], cands: dict[str, list[dict]]) -> dict:
     """R212(2026-10-02): the exact value behind a rounded extended canonical (fractional EPS
     13.42 → confirmed 13). Taken only when every candidate carrying the confirmed value agrees
@@ -3086,10 +3123,39 @@ def _map_rows(rows, period: str, basis: str, statements,
     cands: dict[str, list[dict]] = defaultdict(list)
     cum_seen: set[str] = set()
     stmt_set = set(statements)
+
+    def _add(r: dict, c: str, stage: str) -> None:
+        is_cum = r["is_cumulative"]
+        flow = interim and (c.startswith("is.") or c.startswith("cf."))
+        if flow:
+            if is_cum:
+                if c not in cum_seen:
+                    cands.pop(c, None)
+                    cum_seen.add(c)
+            elif c in cum_seen:
+                return
+        exact = r.get("value_exact")
+        cands[c].append({
+            "value": _loss_signed(c, r["label_raw"], r["value_won"]),
+            # R212: exact value of a rounded cell (fractional EPS), same sign rule as `value`
+            "exact": _loss_signed(c, r["label_raw"], exact) if exact is not None else None,
+            "stage": stage, "label_raw": r["label_raw"],
+            "node_role": r["node_role"], "section_path": r["section_path"],
+            "table_seq": r["table_seq"], "is_cumulative": is_cum,
+            "amended": r.get("amended", False), "amended_by": r.get("amended_by"),
+        })
+
     for r in rows:
         if r["statement"] not in stmt_set or r["basis"] != basis:
             continue
         fs = _FS.get(r["statement"])
+        if r.get("eps_row"):
+            # R213: a row the loader's EPS path emitted (source_ref 'eps/…') is classified by
+            # its own EPS rule, never by the general mapper (which blocks '주당' from fuzzy
+            # on purpose and knew only the bare '기본주당이익' forms — 3.5% of EPS rows).
+            for c in _eps_canonicals(r["label_raw"], r.get("section_path")):
+                _add(r, c, "eps")
+            continue
         res = _map_label(r["label_raw"], fs)
         if res.confidence < 0.88 or res.account_code.startswith("unknown."):
             # R172: an XBRL cell whose Korean label the mapper can't place falls back to
@@ -3143,25 +3209,7 @@ def _map_rows(rows, period: str, basis: str, statements,
         if c == "bs.short_term_investment" and res.stage == "fuzzy":
             if re.search(r"비유동|장기", r["label_raw"] or ""):
                 continue
-        is_cum = r["is_cumulative"]
-        flow = interim and (c.startswith("is.") or c.startswith("cf."))
-        if flow:
-            if is_cum:
-                if c not in cum_seen:
-                    cands.pop(c, None)
-                    cum_seen.add(c)
-            elif c in cum_seen:
-                continue
-        exact = r.get("value_exact")
-        cands[c].append({
-            "value": _loss_signed(c, r["label_raw"], r["value_won"]),
-            # R212: exact value of a rounded cell (fractional EPS), same sign rule as `value`
-            "exact": _loss_signed(c, r["label_raw"], exact) if exact is not None else None,
-            "stage": res.stage, "label_raw": r["label_raw"],
-            "node_role": r["node_role"], "section_path": r["section_path"],
-            "table_seq": r["table_seq"], "is_cumulative": is_cum,
-            "amended": r.get("amended", False), "amended_by": r.get("amended_by"),
-        })
+        _add(r, c, res.stage)
     # is.controlling_ni/is.noncontrolling_ni structural recovery (mismap fix,
     # 2026-08-15 — see _ni_attribution_structural_candidates docstring). IS-only, so
     # only relevant when this call's statement scope includes IS.
@@ -3206,7 +3254,8 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
             params["r"] = rcept_by_stmt[statement]
         db_rows = session.execute(text(f"""
             SELECT label_raw, value_won, node_role, section_path, table_seq,
-                   COALESCE(is_cumulative, false) AS is_cum, value_exact
+                   COALESCE(is_cumulative, false) AS is_cum, value_exact,
+                   COALESCE(source_ref LIKE 'eps/%', false) AS eps_row
             FROM report_lines rl
             WHERE corp_code=:c AND report_fiscal_year=:y AND report_fiscal_period=:p
               AND basis=:b AND statement=:s AND col_index=0 AND value_won IS NOT NULL
@@ -3221,10 +3270,11 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
               )
               {rcept_clause}
         """), params).fetchall()
-        for label_raw, value_won, node_role, section_path, table_seq, is_cum, value_exact in db_rows:
+        for label_raw, value_won, node_role, section_path, table_seq, is_cum, value_exact, eps_row in db_rows:
             rows.append({
                 "statement": statement, "basis": basis, "label_raw": label_raw,
-                "value_won": int(value_won), "value_exact": value_exact, "node_role": node_role,
+                "value_won": int(value_won), "value_exact": value_exact, "eps_row": eps_row,
+                "node_role": node_role,
                 "section_path": section_path, "table_seq": table_seq,
                 "is_cumulative": bool(is_cum),
             })

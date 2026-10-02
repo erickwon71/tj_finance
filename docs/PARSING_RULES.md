@@ -11992,3 +11992,8 @@ DB BS 순번 -1(depth 0)에 `자본` 행이 있고, 값이 같은 표의 `자본
 
 **데일리 배선**: `extract_report_lines_xbrl` 내부 변경이라 추가 배선이 필요 없다.
 **소급**: `docs/qa/r208_backfill_targets_2026-10-02.txt` 184필링을 `batch add-targets` 한 뒤 `batch reload` 한다. 이후 계층3 재빌드(런북 B5)를 한다.
+
+**batch #85 결과(2026-10-02)**: 재적재 184필링 done 184 / failed 0 → 위 조건 재스캔 0필링. 이슈 8건 fixed 8 / not_fixed 0.
+이슈 8필링의 BS 에 선두 `자본` 행이 없다. `자본총계`는 원문 값 그대로다(KG파이낸셜 별도 140,200,258,034 등).
+계층3: 80개사 `build_std_v3.py --year-min 2015` + `calendarize_corps.py` 재동기화를 했다. 자산·부채·자본·순이익·매출·영업이익·CFO 등 주요 열 7,256행 diff 0, orphan 0이다.
+**남은 extra_row(이 규칙 범위 밖)**: SCE 쪽 27건이다. 모두 XBRL 경로 정정본 필링이거나, HTML 경로인 비츠로셀 1건이다. 원인이 필링마다 달라 별도 배치로 처리한다.

@@ -166,7 +166,9 @@ def test_cf_values_and_weighted_identity():
 def test_sce_matches_bs_equity():
     lines = _extract()
     sce = [l for l in lines if l.statement == "SCE"]
-    assert len(sce) == 37  # Phase 3-7 실측(별도 37행)
+    # Phase 3-7 실측(별도 37행) − R210 전기말(2024-12-31) 기말 단독 블록 1행
+    assert len(sce) == 36
+    assert not [l for l in sce if "2024-12-31" in (l.label_raw or "")]
 
     bs0 = {l.label_raw: l.value_won for l in lines if l.statement == "BS" and l.col_index == 0}
     ending = {

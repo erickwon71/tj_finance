@@ -1398,8 +1398,78 @@ def _emit_sce_lines(
                 meta.append((row_loc, period_idx, col_idx))
 
     _settle_sce_signs_by_rollforward(out, meta, tree, row_flat, ifrs_full_ns, source)
+    out = _drop_sce_phantom_cells(out, meta, tree, row_flat, source)
     _check_sce_column_rollup(out, col_parent_of, source)
     return out
+
+
+def _drop_sce_phantom_cells(
+    out: list[ReportLineRow], meta: list[tuple[str, int, int]], tree: PresentationTree,
+    row_flat: list[str], source: str,
+) -> list[ReportLineRow]:
+    """Drop SCE cells that XBRL context-sharing puts in the table but the statement never prints.
+
+    ★R209 — a tree-parent row (e.g. '기타포괄손익', '자본에 직접 반영된 소유주와의 거래') whose fact
+    contradicts its own children: in a period block × column where 기초 + Σ(leaf rows) = 기말 already
+    holds, the parent must equal Σ(its leaf descendants in the block). If it differs in at least one such
+    proven cell and agrees (non-zero) in none, every cell of that parent in that period block is dropped —
+    the facts come from another context (칩스앤미디어 20151127000627: prior-year values one block early;
+    코아스템켐온 20150902000296: 당기순이익 values under '기타포괄손익'; 신라교역 20190201000248).
+
+    ★R210 — a period block that holds nothing but the 기말 row: the plain-context Equity fact of a
+    balance-sheet comparative date (interim filings' 전기말) opens a block of its own; no SCE prints a
+    closing balance without its opening and movements (무학 20190225001238 '기말자본 (2014-12-31)')."""
+    begin_local, end_local = _SCE_BEGINNING_LOCAL, _SCE_ENDING_LOCAL
+    local_of = {loc: tree.nodes[loc].element.local for loc in row_flat}
+    in_table = set(row_flat)
+    kids_of = {loc: [k for k in tree.nodes[loc].children if k in in_table] for loc in row_flat}
+    parents = {loc for loc, kids in kids_of.items() if kids}
+
+    def leaf_descendants(loc: str) -> list[str]:
+        acc: list[str] = []
+        for k in kids_of[loc]:
+            acc.extend(leaf_descendants(k) if k in parents else [k])
+        return acc
+
+    cells: dict[tuple[int, int], dict[str, int]] = {}      # (period, col) -> row_loc -> out index
+    rows_of_period: dict[int, set[str]] = {}
+    for i, (row_loc, period_idx, col_idx) in enumerate(meta):
+        cells.setdefault((period_idx, col_idx), {})[row_loc] = i
+        rows_of_period.setdefault(period_idx, set()).add(row_loc)
+
+    drop: set[tuple[str, int]] = set()                     # (row_loc, period_idx)
+    # R210
+    for period_idx, locs in rows_of_period.items():
+        if locs and all(local_of[l] == end_local for l in locs):
+            drop.update((l, period_idx) for l in locs)
+    # R209
+    contradicted: set[tuple[str, int]] = set()
+    agreed: set[tuple[str, int]] = set()
+    for (period_idx, _col), block in cells.items():
+        b = next((out[i].value_won for l, i in block.items() if local_of[l] == begin_local), None)
+        e = next((out[i].value_won for l, i in block.items() if local_of[l] == end_local), None)
+        block_parents = [l for l in block if l in parents and local_of[l] not in (begin_local, end_local)]
+        if b is None or e is None or not block_parents:
+            continue
+        leaves = [l for l in block if l not in parents and local_of[l] not in (begin_local, end_local)]
+        if b + sum(out[block[l]].value_won for l in leaves) != e:
+            continue                                       # leaves alone do not prove the block
+        for p in block_parents:
+            v = out[block[p]].value_won
+            s = sum(out[block[d]].value_won for d in leaf_descendants(p) if d in block)
+            if v != s:
+                contradicted.add((p, period_idx))
+            elif v:
+                agreed.add((p, period_idx))
+    drop |= contradicted - agreed
+
+    if not drop:
+        return out
+    kept = [r for r, (row_loc, period_idx, _c) in zip(out, meta) if (row_loc, period_idx) not in drop]
+    logger.info(f"{source}: R209/R210 dropped {len(out) - len(kept)} phantom SCE cells "
+                f"({sorted({(local_of[l], p) for l, p in drop})})")
+    meta[:] = [m for m in meta if (m[0], m[1]) not in drop]
+    return kept
 
 
 def _settle_sce_signs_by_rollforward(

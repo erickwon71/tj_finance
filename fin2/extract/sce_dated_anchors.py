@@ -34,6 +34,10 @@ _CLOSE_RE = re.compile(r"기\s*말")
 _TOTAL_COL_RE = re.compile(r"합\s*계|총\s*계")
 # Note reference in a BS label: '(주20)', '(주석 21,31)' (same shape as pdf.py).
 _NOTE_REF_RE = re.compile(r"\(\s*주석?\s*\d[\d,\s와과및]*\)")
+# R215 — combined BS retained-earnings/deficit line, whitespace removed:
+# '이익잉여금(결손금)', 'Ⅳ.미처분이익잉여금(미처리결손금)'.
+_COMBINED_DEFICIT_RE = re.compile(
+    r"[\dⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ.]*(미처분)?이익잉여금\((미처리)?결손금\)")
 
 # Prior-period BS balances handed in by the loader: date → [(basis, label, value)].
 PriorBalances = Dict[datetime.date, List[Tuple[str, str, int]]]
@@ -145,6 +149,10 @@ def add_dated_anchors(anchors: Dict, lines: Sequence,
                 bare = _NOTE_REF_RE.sub("", label).strip()
                 if bare and bare != label:
                     anchors.setdefault((basis, bare, date), set()).add(v)
+                # R215 — a negative combined BS line '이익잉여금(결손금)' is a deficit; the SCE
+                # names that column '결손금' (인투셀 `20260515002144` 2025 block).
+                if v < 0 and _COMBINED_DEFICIT_RE.fullmatch(re.sub(r"\s", "", bare or label)):
+                    anchors.setdefault((basis, "결손금", date), set()).add(v)
 
     # Stage 1 — this filing's BS prior-period columns (and col 0 under its date).
     by_col: Dict[Tuple[str, int], List[Tuple[str, int]]] = defaultdict(list)

@@ -33,5 +33,5 @@ def test_other_filing_other_statement_and_missing_rcept_are_untouched():
 
 def test_table_is_a_pure_sign_pair_for_22_filings():
     assert len({k[0] for k in ap._AS_PRINTED_CELLS}) == 22
-    assert len(ap._AS_PRINTED_CELLS) == 103
+    assert len(ap._AS_PRINTED_CELLS) == 105            # +2 balance cells kept as printed by R215
     assert all(r192 == -printed != 0 for r192, printed in ap._AS_PRINTED_CELLS.values())

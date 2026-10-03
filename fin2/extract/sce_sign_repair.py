@@ -1578,8 +1578,11 @@ def apply_dated_balance_signs(lines: List, prior_balances=None) -> List[Correcti
         # With no row identity at all (no group total column: 미래에셋생명 `20240320002014`),
         # a closing block alone is no proof — the mirror of a closed block closes too.
         # '결손금' columns: the BS often prints the deficit as a positive amount under that
-        # label (롤링스톤 `20190329004131`, 온코크로스), so its sign is no evidence.
-        if "결손금" in concept and "잉여금" not in concept:
+        # label (롤링스톤 `20190329004131`, 온코크로스), so a positive anchor is no evidence.
+        # A negative anchor is (R215): a deficit is negative equity, and the SCE balance
+        # printed as a positive magnitude takes it (인투셀 `20260515002144` 2025 block,
+        # BS −80,414,712,473 / −84,030,840,664).
+        if "결손금" in concept and "잉여금" not in concept and value < 0:
             continue
         # Only identities that contain this cell's column count (a 자본잉여금 sub-identity in
         # the same row says nothing about 자본조정). A cell with no block to check (residual
@@ -1596,6 +1599,12 @@ def apply_dated_balance_signs(lines: List, prior_balances=None) -> List[Correcti
         ln.value_won = value
         if (rf is not None and rf_after is not None and abs(rf_after) > abs(rf)
                 and row_res and sum(row_after) > sum(row_res)):
+            continue
+        # R215 — a deficit column printed wholly as positive magnitudes (balances AND
+        # movements, 20210323001020) is a presentation, not lost parentheses: flipping the
+        # balances alone would break its roll-forward. Deficit cells need the block not worse.
+        if ("결손금" in concept and "잉여금" not in concept and rf is not None
+                and (rf_after is None or abs(rf_after) > abs(rf))):
             continue
         targets.append((ln, concept, date))
     corrections: List[Correction] = []

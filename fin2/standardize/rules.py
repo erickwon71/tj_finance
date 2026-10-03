@@ -154,7 +154,7 @@ def rule_mark_opinc_kifrs(ctx: StdContext) -> None:
     (dart_OperatingIncomeLoss 또는 본문 '영업이익' 라벨 — 둘 다 K-IFRS). IFRS 영업손익은
     concept_map 에서 is.operating_income_ifrs 로 분리돼 컬럼에 유입 불가.
     operating_income 이 채워진 행에 'opinc_kifrs' 를 남겨 출처를 SQL 로 감사 가능하게 한다:
-      SELECT count(*) FROM std_financials_v2 WHERE operating_income IS NOT NULL
+      SELECT count(*) FROM std_financials_v3 WHERE operating_income IS NOT NULL
         AND NOT (applied_rules @> '[\"opinc_kifrs\"]');   -- Phase D 불변식 = 0"""
     if ctx.col.get("operating_income") is not None:
         ctx._mark("opinc_kifrs")

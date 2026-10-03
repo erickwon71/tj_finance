@@ -3,7 +3,7 @@
 
 실행일 기준 최근 등록된 정기공시(사업/반기/분기)를 탐지 → 신규 다운로드 → 파싱·표준화·
 분기·달력 반영을 **원클릭 순차 흐름**으로 진행하고 단계별 진행상황을 표시한다.
-기존 파이프라인(sync_filings·run_downloads·process_corp) 인프로세스 재사용.
+기존 파이프라인(sync_filings·run_downloads + scripts/collect_new.py 의 계층2/3 단계) 인프로세스 재사용.
 """
 from __future__ import annotations
 
@@ -69,7 +69,6 @@ def _run_flow(days: int) -> None:
     """① 탐지 → ② 동기화 → ③ 다운로드 → ④ 파싱·표준화. 단계별 st.status 표시."""
     from collector.filing_collector import sync_filings
     from collector.downloader import run_downloads
-    from run import process_corp  # E→R→S→분기→달력 per-corp 오케스트레이션
 
     with st.status("신규 공시 수집 진행 중…", expanded=True) as status:
         # ① 탐지
@@ -100,22 +99,18 @@ def _run_flow(days: int) -> None:
         affected = collect.needs_standardize_corps(only=corps)
         st.write(f"**④** 파싱·표준화·분기·달력 반영 — 대상 **{len(affected)}개** 기업…")
         if affected:
-            from collector.db import get_session
-            prog = st.progress(0.0)
-            agg = {"e_facts": 0, "s": 0, "q": 0, "c": 0, "errors": 0}
-            for i, corp in enumerate(affected, 1):
-                try:
-                    with get_session() as session:
-                        out = process_corp(session, corp)
-                        for k in ("e_facts", "s", "q", "c"):
-                            agg[k] += out[k]
-                        session.commit()
-                except Exception as exc:  # noqa: BLE001
-                    agg["errors"] += 1
-                    st.write(f"  · ⚠ {corp} 실패: {exc}")
-                prog.progress(i / len(affected))
-            st.write(f"  · fact {agg['e_facts']:,} · std_v2 {agg['s']:,} · "
-                     f"이산분기 {agg['q']:,} · 달력 {agg['c']:,} · 오류 {agg['errors']}")
+            # ★2026-10-03 — 데일리(scripts/collect_new.py)와 같은 계층2→계층3 단계를 탄다.
+            # 옛 process_corp(extract/standardize/…)는 fact_v2·std_v2 DROP 으로 전 기업 실패했다.
+            from scripts.collect_new import (_run_standardize_batches, _sync_calendar_v3,
+                                             _sync_std_v3, _sync_xbrl_instance_lines)
+            agg = _run_standardize_batches(affected, 300)
+            xbrl_affected = collect.needs_xbrl_instance_corps(only=corps)
+            _sync_xbrl_instance_lines(xbrl_affected)
+            v3_corps = sorted(set(agg.get("ok_corps") or []) | set(xbrl_affected))
+            v3 = _sync_std_v3(v3_corps)
+            _sync_calendar_v3(v3_corps)
+            st.write(f"  · 계층2 반영 {len(agg.get('ok_corps') or [])}개 기업 · "
+                     f"std_v3 재빌드 {len(v3_corps)}개 기업 · 실패 {len(v3.get('failed') or [])}")
 
         status.update(label=f"완료 — 신규 {len(corps)}개 기업 수집·반영", state="complete")
 

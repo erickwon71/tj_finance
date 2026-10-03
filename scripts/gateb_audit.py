@@ -4,7 +4,7 @@ Gate B 생산 감사 러너 — std_v2/v3 행을 원본 보고서 face 표와 �
 각 (corp,fy,fp,basis) 행을 audit_std_row 로 판정 → face_audit upsert.
 status: pass(promote 가능) / fail(값불일치, 차단) / pending(범위밖).
 
---source v2(디폴트)/v3 로 감사 대상 std 체인을 고른다(2026-08-11,
+--source v3 (유일 지원: std_financials_v2 는 2026-09-01 DROP)(2026-08-11,
 docs/plans/std_v3_native_gate_b_plan_2026-08-11.md Phase 1). face_audit PK 에 source_version
 이 있어 같은 (corp,fy,fp,basis) 키를 v2/v3 감사결과가 각자 별도 행으로 병행 보관 — 서로
 덮어쓰지 않는다. v3 는 is_stub/is_discrete 개념도 comparative_fallback 개념도 없어(Phase 0
@@ -62,9 +62,7 @@ def _row_rcepts(d: dict, source: str) -> dict:
     ({"BS":rcept,...}) — Phase 0 실측(2026-08-11) 으로 NULL·3키 동시결측 0건 확인,
     개별 키 결측은 정상 시나리오(그 statement 가 그 filing 에 없음)이라 .get() 으로 충분.
     """
-    if source == "v3":
-        return dict(d.get("source_rcepts") or {})
-    return {"BS": d.get("bs_rcept"), "IS": d.get("is_rcept"), "CF": d.get("cf_rcept")}
+    return dict(d.get("source_rcepts") or {})
 
 
 def ensure_table():
@@ -112,12 +110,8 @@ def select_corps(session, args):
     # --corp/--corp-file(위 두 분기, 명시적 단일/목록 지정)은 조사 목적일 수 있어 그대로 둔다
     # (상장폐지 후 이력도 그 경로로는 여전히 조회 가능).
     join = "JOIN corporations c ON c.corp_code = t.corp_code"
-    if args.source == "v3":
-        q = f"SELECT DISTINCT t.corp_code FROM std_financials_v3 t {join}"
-        where = " WHERE"
-    else:
-        q = f"SELECT DISTINCT t.corp_code FROM std_financials_v2 t {join} WHERE t.version=1"
-        where = " AND"
+    q = f"SELECT DISTINCT t.corp_code FROM std_financials_v3 t {join}"
+    where = " WHERE"
     q += f"{where} c.is_active = true"
     where = " AND"
     params = {}
@@ -134,23 +128,13 @@ def select_corps(session, args):
 
 
 def audit_corp(session, corp, args, agg):
-    if args.source == "v3":
-        # v3엔 version/is_stub/is_discrete 컬럼 자체가 없다(Phase 0 확인, fin2/layer3/build.py:41).
-        # is_discrete 는 v2 뷰도 원래 걸러내던 파생행이라 필터 부재가 손실이 아니고,
-        # is_stub 는 v2 기준 0.09%뿐이라 무시 가능 — 별도 필터 없이 std_v3 전체를 감사한다.
-        rows = session.execute(text("""
-            SELECT * FROM std_financials_v3
-            WHERE corp_code=:c AND fiscal_year >= :fymin AND fiscal_year <= :fymax
-            ORDER BY fiscal_year DESC
-        """), {"c": corp, "fymin": args.fy_min, "fymax": args.fy_max}).fetchall()
-    else:
-        rows = session.execute(text("""
-            SELECT * FROM std_financials_v2
-            WHERE corp_code=:c AND version=1 AND NOT COALESCE(is_stub,false)
-              AND NOT COALESCE(is_discrete,false)
-              AND fiscal_year >= :fymin AND fiscal_year <= :fymax
-            ORDER BY fiscal_year DESC
-        """), {"c": corp, "fymin": args.fy_min, "fymax": args.fy_max}).fetchall()
+    # v3엔 version/is_stub/is_discrete 컬럼 자체가 없다(Phase 0 확인, fin2/layer3/build.py:41).
+    # 별도 필터 없이 std_v3 전체를 감사한다. (std_financials_v2 는 2026-09-01 DROP — v2 분기 제거 2026-10-03)
+    rows = session.execute(text("""
+        SELECT * FROM std_financials_v3
+        WHERE corp_code=:c AND fiscal_year >= :fymin AND fiscal_year <= :fymax
+        ORDER BY fiscal_year DESC
+    """), {"c": corp, "fymin": args.fy_min, "fymax": args.fy_max}).fetchall()
     if not rows:
         return
 
@@ -210,13 +194,9 @@ def audit_corp(session, corp, args, agg):
             continue
         basis = d["statement_type"]
         rc = _row_rcepts(d, args.source)
-        if args.source == "v3":
-            # v3(fin2/layer3/combine.py)엔 comparative-column-fallback 개념이 없다(grep 0건,
-            # Phase 0 §2-4 확정) — 값이 있으면 항상 그 filing 자신의 col0. 항상 엄격 대조.
-            is_comp = False
-        else:
-            rules = d.get("applied_rules") or []
-            is_comp = "comparative_fallback" in rules
+        # v3(fin2/layer3/combine.py)엔 comparative-column-fallback 개념이 없다(grep 0건,
+        # Phase 0 §2-4 확정) — 값이 있으면 항상 그 filing 자신의 col0. 항상 엄격 대조.
+        is_comp = False
         # 비교행은 값이 후속보고서 전기/전전기 컬럼 → all_cols face 로 검증.
         ra = audit_std_row(
             d, basis=basis,

@@ -25,7 +25,6 @@ _LOADER_PATHS = [
     "collector/note_lines_sync.py",
     "collector/filing_select.py",
     "scripts/nightly_gap_fill_backfill.py",
-    "scripts/phase_c_rebuild.py",
 ]
 
 _IS_FINAL_FILTER = re.compile(r"is_final\s*=\s*TRUE|is_final\s*=\s*true|AND\s+f\.is_final\b",

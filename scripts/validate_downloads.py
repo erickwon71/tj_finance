@@ -89,17 +89,17 @@ def main():
     print(f"검사 대상: {len(rows):,}" + (f" (corp={args.corp})" if args.corp else ""))
 
     # --statements: fin2 추출 facts 보유 rcept 집합(신뢰가능 신호). ⚠ download_tasks.parsed_facts 는
-    # 레거시 파서 산물로 fact_v2 와 불일치(0인데 fact_v2 有 다수) → 사용 금지. fact_v2 가 권위.
+    # 레거시 파서 산물이라 사용 금지. 계층2 report_lines 가 권위(fact_v2 는 2026-09-01 DROP).
     fact_rcepts: set = set()
     if args.statements:
         if args.corp:
             fact_rcepts = {r[0] for r in session.execute(
-                text("SELECT DISTINCT rcept_no FROM fact_v2 WHERE corp_code=:c"),
+                text("SELECT DISTINCT rcept_no FROM report_lines WHERE corp_code=:c"),
                 {"c": args.corp}).fetchall()}
         else:
-            print("fact_v2 보유 rcept 로딩(DISTINCT, 수십초~수분)...")
+            print("report_lines 보유 rcept 로딩(DISTINCT, 수십초~수분)...")
             fact_rcepts = {r[0] for r in session.execute(
-                text("SELECT DISTINCT rcept_no FROM fact_v2")).fetchall()}
+                text("SELECT DISTINCT rcept_no FROM report_lines")).fetchall()}
             print(f"  → {len(fact_rcepts):,} rcept")
 
     from collections import Counter

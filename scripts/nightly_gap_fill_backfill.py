@@ -139,9 +139,9 @@ def run_phase3() -> int:
 _PHASE4_YEAR_MIN = 2015
 # NULL D&A 대상 기업 목록(연결 FY, 2015+). attempt-tracking 판정용 모집단.
 _PHASE4_CORPS_SQL = """
-    SELECT DISTINCT corp_code FROM std_financials_v2
-    WHERE statement_type='consolidated' AND version=1 AND fiscal_period='FY'
-      AND fiscal_year>=:ymin AND NOT COALESCE(is_stub,false) AND NOT COALESCE(is_discrete,false)
+    SELECT DISTINCT corp_code FROM std_financials_v3
+    WHERE statement_type='consolidated' AND fiscal_period='FY'
+      AND fiscal_year>=:ymin
       AND depreciation IS NULL AND da_total IS NULL
     ORDER BY corp_code
 """

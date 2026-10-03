@@ -2611,7 +2611,7 @@ def cmd_fin2_all(args):
     if getattr(args, "skip_done", False):
         with get_session() as session:
             done = {r[0] for r in session.execute(text(
-                "SELECT DISTINCT corp_code FROM std_financials_v2")).fetchall()}
+                "SELECT DISTINCT corp_code FROM std_financials_v3")).fetchall()}
         before = len(corps)
         corps = [c for c in corps if c not in done]
         skipped_done = before - len(corps)

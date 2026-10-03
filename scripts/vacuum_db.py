@@ -1,10 +1,10 @@
 """A4b / D5 · Weekly VACUUM (ANALYZE) — routine bloat control.
 
-Expert review §5: fact_v2 (87M rows) had ~15% dead tuples and no manual VACUUM
-history. `collector/db.py` migration `2026_07_fact_v2_autovacuum_tuning`
-lowers fact_v2's autovacuum thresholds so autovacuum itself runs more often;
-this script is the explicit weekly backstop (also re-computes planner stats
-via ANALYZE, useful after large collect batches).
+Expert review §5: the big tables (then fact_v2; now note_lines / report_lines) sit at
+~13-15% dead tuples, below autovacuum's default 20% trigger, and had no manual VACUUM
+history. This script is the explicit weekly backstop (also re-computes planner stats
+via ANALYZE, useful after large collect/reload batches).
+(2026-10-03: found uninstalled since 2026-07-19; fact_v2 itself was dropped 2026-09-01.)
 
 Uses `vacuumdb` (not raw SQL) because VACUUM cannot run inside a transaction
 block, and this matches the project's existing pattern of shelling out to
@@ -12,7 +12,7 @@ Postgres client binaries (see backup_db.py / pg_dump).
 
 usage:
   python scripts/vacuum_db.py                 # VACUUM ANALYZE whole DB
-  python scripts/vacuum_db.py --table fact_v2  # just one table
+  python scripts/vacuum_db.py --table report_lines  # just one table
 """
 from __future__ import annotations
 

@@ -607,6 +607,35 @@ def _normalize_custom_eps_units(instance: XbrlInstance, per_share: set[QName]) -
     return n
 
 
+# R216: no listed company has a per-share amount of a million won or more, so a KRW
+# per-share fact declared to millions is a filer entering 원 in a 백만원-mode tool.
+_R216_MIN_SCALE_EXP = 6
+
+
+def _rescale_scaled_krw_per_share(instance: XbrlInstance, per_share: set[QName]) -> int:
+    """R216: some filers tag EPS with a plain-KRW custom concept and `decimals="-6"`, so the
+    원 amount carries a ×10^6 multiplier (STX 20171117000482: 2,753원 → 2753000000;
+    송원산업 20160901000022: 1,317원 → 1317000000). Divide such facts back by 10^-decimals."""
+    n = 0
+    for f in instance.facts:
+        unit = instance.units.get(f.unit_ref) if f.unit_ref else None
+        if unit is None or unit.measure is None or unit.measure.local != "KRW":
+            continue
+        if "PerShare" not in f.qname.local and f.qname not in per_share:
+            continue
+        try:
+            exp = -int(f.decimals or "")
+            num = Decimal(f.value_raw)
+        except (ValueError, InvalidOperation):
+            continue
+        if exp < _R216_MIN_SCALE_EXP or num % (Decimal(10) ** exp) != 0:
+            continue
+        f.value_raw = str(int(num) // 10 ** exp)
+        f.decimals = "0"
+        n += 1
+    return n
+
+
 def _numeric_value(fact: XbrlFact, units: dict[str, XbrlUnit]) -> int | None:
     """KRW measure or KRWEPS divide-unit only (module docstring) — both are
     already base-unit values, no multiplier needed."""
@@ -1739,7 +1768,9 @@ def extract_report_lines_xbrl(
             members = _extract_zip_members(zip_path, tmp_dir)
 
             instance = parse_instance(members.xbrl)
-            _normalize_custom_eps_units(instance, _custom_per_share_qnames(members.xsd))
+            per_share = _custom_per_share_qnames(members.xsd)
+            _normalize_custom_eps_units(instance, per_share)
+            _rescale_scaled_krw_per_share(instance, per_share)
             pre_role_uris = presentation_role_uris(members.pre)
             labels = merge_label_catalogs(
                 parse_labels(members.lab_ko, instance.nsmap) if members.lab_ko else {},

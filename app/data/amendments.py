@@ -1,12 +1,13 @@
 """
 기재정정(amendment) 인식 — C9(W6 대응).
 
-DB는 as-filed(reconcile 가 statement_source 로 statement별 최적 source 선택)라, 기재정정본이
+DB는 as-filed(계층3 std_v3 가 정본 정책 R2 로 statement별 source 선택)라, 기재정정본이
 있는 기간이라도 사용자는 그 사실을 알기 어렵다. 이 모듈은 (corp, 기간)별로 **기재정정 filing
 존재 여부 + DB 가 실제 정정본을 source 로 썼는지**를 요약해 신뢰 배지에서 투명하게 알린다.
 
-reconcile 는 적시 기재정정([기재정정], 최초제출 +400일 내)을 우선 채택하므로 대개 정정본이
-반영되나, 지연/첨부정정([첨부정정])은 원본 유지 — 그런 '원본유지' 기간을 사용자에게 표시.
+정본 정책(최초등록본 + 순차 델타 패치)에 따라 대개 정정본이 반영되나, 첨부정정 등은 원본 유지 —
+그런 '원본유지' 기간을 사용자에게 표시.
+★2026-10-03 — 옛 statement_source(폐기)에서 std_financials_v3.source_rcepts 로 이식.
 """
 from __future__ import annotations
 
@@ -21,11 +22,19 @@ _SQL = text("""
         WHERE corp_code = :c AND is_amendment = true AND fiscal_period IS NOT NULL
     ),
     src AS (   -- DB 가 이 기간에 실제 채택한 source rcept 이 정정본인지(consolidated·별도 통합)
-        SELECT ss.fiscal_year, ss.fiscal_period, bool_or(fl.is_amendment) AS uses_amend
-        FROM statement_source ss
-        JOIN filings fl ON fl.rcept_no = ss.source_rcept_no
-        WHERE ss.corp_code = :c
-        GROUP BY ss.fiscal_year, ss.fiscal_period
+        -- 정정 반영 = (a) source rcept 가 정정본이거나 (b) 정본 정책의 델타 패치로 일부 컬럼이
+        -- 정정본 값으로 바뀐 경우(amended_cols). (b) 는 source 가 원본이어도 정정이 반영된 상태다.
+        SELECT s.fiscal_year, s.fiscal_period,
+               bool_or(
+                 (CASE WHEN jsonb_typeof(s.amended_cols) = 'array'
+                       THEN jsonb_array_length(s.amended_cols) ELSE 0 END) > 0
+                 OR EXISTS (SELECT 1 FROM jsonb_each(s.source_rcepts) k
+                            JOIN filings fl ON fl.rcept_no = (k.value #>> '{}')
+                            WHERE jsonb_typeof(k.value) = 'string' AND fl.is_amendment)
+               ) AS uses_amend
+        FROM std_financials_v3 s
+        WHERE s.corp_code = :c
+        GROUP BY s.fiscal_year, s.fiscal_period
     )
     SELECT a.fiscal_year, a.fiscal_period, COALESCE(s.uses_amend, false) AS uses_amend
     FROM amend a

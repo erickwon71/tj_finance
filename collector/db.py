@@ -137,20 +137,6 @@ def _run_migrations() -> None:
          # 2026-06: PRD 02 — 첨부정정 플래그(기재정정과 구분)
          "ALTER TABLE filings ADD COLUMN IF NOT EXISTS is_attachment_amendment BOOLEAN DEFAULT FALSE"),
 
-        ("2026_06_statement_source_pk_is_stub",
-         # 2026-06: PRD 01a — statement_source PK 에 is_stub 추가(정상연도 vs stub 공존). 1회만(컬럼 없을 때).
-         """
-        DO $$ BEGIN
-            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                           WHERE table_name='statement_source' AND column_name='is_stub') THEN
-                ALTER TABLE statement_source ADD COLUMN is_stub BOOLEAN NOT NULL DEFAULT FALSE;
-                ALTER TABLE statement_source DROP CONSTRAINT statement_source_pkey;
-                ALTER TABLE statement_source ADD PRIMARY KEY
-                    (corp_code, fiscal_year, fiscal_period, basis, statement, is_stub);
-            END IF;
-        END $$
-        """),
-
         ("2026_06_face_audit_gate_status",
          # 2026-06: PRD 04 Gate B task #5 — face_audit.gate_status(promote 게이트). 뷰가 참조하므로
          # 뷰 재정의 **앞에** 추가. (create_all 이 fresh DB 엔 이미 생성 → IF NOT EXISTS 멱등.)
@@ -1462,6 +1448,19 @@ def _run_migrations() -> None:
         # value_exact 가 NULL 인 행(= 거의 전부)의 해시는 바뀌지 않는다 — 소수 EPS 를 채운
         # 재적재만 '데이터 변경' 으로 잡힌다.
         ("2026_10_02_verification_hash_value_exact", _apply_verification_schema),
+
+        ("2026_10_statement_source_drop",
+         # statement_source 폐기(2026-10-03, 사용자 결정). 이 테이블은 fin2 R-레이어(reconcile.py)가
+         # fact_v2 로 채웠는데 fact_v2 DROP(2026-09-01) 이후 한 번도 갱신되지 않았다(마지막 reconciled_at
+         # 2026-09-01 10:05). 소비처 3곳(app/data/sources.py·app/data/amendments.py·
+         # collector/expense_nature_sync.py)은 std_financials_v3.source_rcepts 로 이식했고
+         # (두 출처가 갈린 9,224건은 전부 v3 가 더 나중의 [기재정정]을 반영), fin2/reconcile.py 는 삭제했다.
+         # pg_depend 확인 — 의존 뷰/FK 0건.
+         # 백업: NAS(tj_finance_data)/db_backup/statement_source_backup_2026-10-03.dump
+         # (pg_dump -Fc -t statement_source, 732,188행, 복원 가능).
+         """
+        DROP TABLE IF EXISTS statement_source;
+        """),
     ]
 
     with engine.begin() as conn:

@@ -35,8 +35,8 @@ HTML↔PDF 결과 신뢰도 조정(T1/T2/T3) — Track C 잔여 93건 스코프.
 
 이 모듈은 그 판정·조정 로직만 담당한다(DB 미의존, 순수 함수 위주 —
 `fin2/tests/test_extract_reconcile.py`가 가짜 facts 리스트로 검증 — 파일명
-★주의: `fin2/tests/test_reconcile.py`는 완전히 다른 기존 모듈 `fin2/reconcile.py`
-[기재정정 select_source]의 테스트라 basename 충돌, 분리했다). 파이프라인
+★주의: 예전에 같은 이름의 `fin2/reconcile.py`(기재정정 select_source)가 있었으나
+2026-10-03 에 삭제됐다 — statement_source 폐기). 파이프라인
 (`collector/pdf_lines_sync.py::recover_one()`)에는 아직 배선 안 됨 — §5
 런북 체크리스트·백필은 별도 지시 대기(계획 후 대기 원칙).
 """

@@ -37,7 +37,6 @@ DATA_TABLES = [
     "std_financials_v3",
     "std_financials_calendar",
     "stock_prices",
-    "statement_source",
     "executives",
     "filings",
     "face_audit",

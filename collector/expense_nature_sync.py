@@ -46,12 +46,9 @@ _EXTENDED_CATALOG_CANONICALS = frozenset({"note.employee_benefits", "note.raw_ma
 
 _TARGET_SQL = """
     SELECT s.corp_code, s.fiscal_year, s.fiscal_period,
-           ss.source_rcept_no AS is_rcept, dt.file_path
+           (s.source_rcepts ->> 'IS') AS is_rcept, dt.file_path
     FROM std_financials_v3 s
-    JOIN statement_source ss
-      ON ss.corp_code=s.corp_code AND ss.fiscal_year=s.fiscal_year
-     AND ss.fiscal_period=s.fiscal_period AND ss.basis=:basis AND ss.statement='IS'
-    JOIN download_tasks dt ON dt.rcept_no = ss.source_rcept_no
+    JOIN download_tasks dt ON dt.rcept_no = (s.source_rcepts ->> 'IS')
     WHERE s.statement_type=:basis AND s.depreciation IS NULL
       AND s.da_total IS NULL
       -- 비용성격 주석은 연간(FY) 총액 → FY 만 타겟. interim(H1/Q1/Q3) da_total 은 표준화의

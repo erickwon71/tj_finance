@@ -50,11 +50,11 @@ _FOREIGN = "stock_code ~ '^9'"   # 900xxx·950xxx = KRX 외국기업 코드대
 _CORP_TABLES = [
     "biz_metrics", "biz_section_tables", "capital_events",
     "corp_verify_status", "dividend_facts", "employee_stats", "exec_pay_individual",
-    "exec_pay_summary", "executives", "face_audit", "face_line_audit", "fact_v2",
+    "exec_pay_summary", "executives", "face_audit", "face_line_audit",
     "major_shareholders", "order_backlog", "other_investments", "periodic_api_progress",
     "rebuild_target_track1", "regulatory_events", "report_lines", "retail_ownership",
     "shareholder_changes",
-    "statement_source", "std_financials_calendar", "std_financials_v2",
+    "std_financials_calendar",
     "treasury_activity", "verification_results",
 ]
 

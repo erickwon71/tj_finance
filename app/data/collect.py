@@ -114,10 +114,18 @@ def needs_standardize_corps(only: list[str] | None = None) -> list[str]:
         JOIN download_tasks dt ON dt.rcept_no = f.rcept_no
          AND dt.status='completed' AND dt.file_type='xml' AND dt.file_path IS NOT NULL
         WHERE f.report_type IN ('annual','half','quarter') {clause}
-          AND NOT EXISTS (
-            SELECT 1 FROM std_financials_v3 s
-            WHERE s.corp_code=f.corp_code AND s.fiscal_year=f.fiscal_year
-              AND s.fiscal_period=f.fiscal_period)
+          AND (
+            NOT EXISTS (
+              SELECT 1 FROM std_financials_v3 s
+              WHERE s.corp_code=f.corp_code AND s.fiscal_year=f.fiscal_year
+                AND s.fiscal_period=f.fiscal_period)
+            -- ★2026-10-03: 이미 표준화된 기간의 [기재정정] 등은 위 조건에 안 걸려 계층2 에
+            -- 영영 안 실렸다(첫 catch-up 에서 78건). 최근 30일 안에 받았는데 계층2 가 0행인
+            -- 필링의 기업도 대상에 넣는다(dq_assertions.daily_body_load 와 같은 기준).
+            OR (dt.created_at > CURRENT_DATE - 30 AND f.fiscal_year >= 2015
+                AND NOT EXISTS (SELECT 1 FROM report_lines r WHERE r.rcept_no = f.rcept_no)
+                AND NOT EXISTS (SELECT 1 FROM note_lines n WHERE n.rcept_no = f.rcept_no))
+          )
         ORDER BY f.corp_code
     """
     params = {"only": only} if only else {}

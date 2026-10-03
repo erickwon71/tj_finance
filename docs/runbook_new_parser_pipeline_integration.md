@@ -26,7 +26,7 @@
 | ② | `sync_filings(force=True)` | 공시목록 동기화 |
 | ③ | `run_downloads` | 원본 XML 다운로드 |
 | ④ | `_standardize_with_timeout` (통과 단계) | ★2026-10-03 extract/reconcile 워커 은퇴(fact_v2 DROP 후 전 기업 실패→계층2·std_v3 스킵 사고). 대상 기업을 그대로 ④-2~④-7 로 넘긴다. 실제 파싱=④-3 `_sync_layer2_lines` |
-| ④-3 | `_sync_layer2_lines` | 계층2(본문+주석) 전사 — 신규 파서 규칙이 반영되는 곳 |
+| ④-3 | `_sync_layer2_lines` | 계층2(본문+주석) 전사 — 신규 파서 규칙이 반영되는 곳. 대상 기업=`needs_standardize_corps`(std_v3 에 없는 기간 **또는 최근 30일 내 받았는데 계층2 0행인 필링** — 2026-10-03 추가: 이미 표준화된 기간의 [기재정정]이 영영 안 실리던 갭) |
 | ④-6/7 | `_sync_std_v3` · `_sync_calendar_v3` | 계층3 std_v3 + 달력정규화 |
 | ④-2 | `_sync_cf_da` | D&A 복원(cf_da + expense_nature) |
 | ⑤ | `_verify_and_log` → `run_dq_gate` | DQ 게이트(보고서==DB 재검) |

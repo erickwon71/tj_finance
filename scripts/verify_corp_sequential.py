@@ -96,8 +96,13 @@ def gate_a_corp(session, corp):
         """), {"s": status, "r": reason, "t": datetime.utcnow(), "rc": r.rcept_no})
 
 
-def rollup_corp(session, corp, corp_name, stage, error=None):
-    """face_audit/std_v2/download_tasks 집계 → corp_verify_status upsert(전기간 요약·재개 마커).
+def rollup_corp(session, corp, corp_name, stage, error=None, source="v3"):
+    """face_audit/std_v3(또는 v2)/download_tasks 집계
+
+    ★2026-10-03 `source` 추가(기본 "v3"). std_financials_v2 가 DROP(2026-09-01)돼 종전 쿼리가
+    UndefinedTable 로 죽었고, 데일리 DQ 게이트(`run_dq_gate`, source="v3" 감사)는 "검사 0"을
+    초록으로 보고했다. "v2" 는 옛 순차 검증 스크립트 호환용(그 체인도 DROP 으로 죽어 있음).
+     → corp_verify_status upsert(전기간 요약·재개 마커).
 
     face_audit 읽기는 전부 source_version='v2' 로 한정한다 — 이 롤업이 요약하는 것은 바로
     위 5단계(Gate B, `audit_corp(..., source="v2")`)가 이 실행에서 방금 남긴 std_v2 감사결과다.
@@ -116,23 +121,28 @@ def rollup_corp(session, corp, corp_name, stage, error=None):
         FROM download_tasks dt JOIN filings f ON f.rcept_no=dt.rcept_no
         WHERE f.corp_code=:c AND dt.gate_a_status IS NOT NULL GROUP BY dt.gate_a_status
     """), {"c": corp}).fetchall())
-    n_std = session.execute(text(
-        "SELECT count(*) FROM std_financials_v2 WHERE corp_code=:c AND version=1"),
-        {"c": corp}).scalar() or 0
+    if source == "v2":
+        n_std = session.execute(text(
+            "SELECT count(*) FROM std_financials_v2 WHERE corp_code=:c AND version=1"),
+            {"c": corp}).scalar() or 0
+    else:
+        n_std = session.execute(text(
+            "SELECT count(*) FROM std_financials_v3 WHERE corp_code=:c"),
+            {"c": corp}).scalar() or 0
     gb = dict(session.execute(text(
         "SELECT status AS s, count(*) AS n FROM face_audit "
-        "WHERE corp_code=:c AND source_version='v2' GROUP BY status"),
-        {"c": corp}).fetchall())
+        "WHERE corp_code=:c AND source_version=:sv GROUP BY status"),
+        {"c": corp, "sv": source}).fetchall())
     gb_fail_a = session.execute(text(
         "SELECT count(*) FROM face_audit "
-        "WHERE corp_code=:c AND source_version='v2' AND gate_status='fail_a'"),
-        {"c": corp}).scalar() or 0
+        "WHERE corp_code=:c AND source_version=:sv AND gate_status='fail_a'"),
+        {"c": corp, "sv": source}).scalar() or 0
     fail_periods = [[r.fiscal_year, r.fiscal_period, r.statement_type, r.gate_status]
                     for r in session.execute(text("""
         SELECT fiscal_year, fiscal_period, statement_type, gate_status FROM face_audit
-        WHERE corp_code=:c AND source_version='v2' AND status='fail'
+        WHERE corp_code=:c AND source_version=:sv AND status='fail'
         ORDER BY fiscal_year DESC, fiscal_period LIMIT 200
-    """), {"c": corp}).fetchall()]
+    """), {"c": corp, "sv": source}).fetchall()]
 
     # Phase B 라인 전수대조 롤업(face_line_audit, 전 source rcept)
     la = session.execute(text("""
@@ -192,7 +202,7 @@ def verify_corp(corp, corp_name, args):
 
     # 6) rollup
     with get_session() as s:
-        vals = rollup_corp(s, corp, corp_name, stage="audited")
+        vals = rollup_corp(s, corp, corp_name, stage="audited", source="v2")
         s.commit()
     return vals
 
@@ -237,7 +247,7 @@ def main():
             print(f"[{i}/{len(todo)}] {corp} {name} — [ERR] {msg}")
             try:
                 with get_session() as s:
-                    rollup_corp(s, corp, name, stage="error", error=msg)
+                    rollup_corp(s, corp, name, stage="error", error=msg, source="v2")
                     s.commit()
             except Exception:
                 pass

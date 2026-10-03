@@ -10,6 +10,9 @@ prototype = DIRECT_MAP metrics; additive/derived (D&A/EBITDA/debt/capex) later.
 """
 from __future__ import annotations
 
+import calendar
+from datetime import date
+
 from sqlalchemy import text, delete
 
 from collector.models import StdFinancialV3, ExtendedFactV3
@@ -17,7 +20,6 @@ from fin2.extract.consolidation_evidence import resolve_std_v3_no_consolidated_f
 from fin2.extract.ifrs_evidence import resolve_std_v3_is_ifrs
 from fin2.layer3.combine import (combine_full, select_canonical_rcepts,
                                  build_merged_lines)
-from fin2.standardize.build import _period_end, _future_guard
 from fin2.standardize.rules import validate_equations
 
 _VALUE_COLS = (
@@ -37,6 +39,60 @@ _VALUE_COLS = (
     "capex fcf net_debt depreciation amortization da_total ebitda "
     "lease_liability borrowings_proceeds borrowings_repaid"
 ).split()
+
+
+# ★2026-10-03 — v2 체인(fin2/standardize/build.py) 삭제로 옮겨온 헬퍼. 로직은 그대로다.
+# 회계기간별 FY 말일로부터의 개월 수(분기말 도출용).
+_FP_MONTHS_BEFORE_FY_END = {"FY": 0, "Q4": 0, "Q3": 3, "H1": 6, "Q2": 6, "Q1": 9}
+
+
+def _period_end(session, corp_code: str, fiscal_year: int, fiscal_period: str,
+                rcept: str | None = None) -> date | None:
+    """period_end. **① 원문 filing 의 period_end_date(권위) → ② 기업 결산월로 도출 → ③ None.**
+
+    ★ 2026-07-17(F6) — '12월 가정' 제거 + 비12월 결산 오산 교정:
+
+    구버전은 filing 이 없으면 `_FP_MONTH_DAY` 로 **H1=6/30 · Q1=3/31 을 하드코딩**하고, FY 는
+    `fiscal_month or 12` 로 **결산월을 모르면 12월이라고 가정**했다. 둘 다 틀렸다:
+
+      · 비12월 결산 기업에서 하드코딩은 **실제와 다르다**(실측: 권위값과 비교해 결산월 3월사
+        2,116행 중 **1,827행 불일치**, 6월사 1,978중 1,588 불일치). 3월 결산사의 H1 은 6/30 이
+        아니라 **9/30** 이다.
+      · 결산월 미상인데 12월로 가정하면 그건 데이터가 아니라 추측이다.
+
+    대신 **회사가 신고한 결산월(corporations.fiscal_month)** 과 분기의 정의로 도출한다 —
+    FY 말일에서 {FY:0, Q3:3, H1:6, Q1:9}개월 뒤로 물린 달의 말일. 이 규칙은 실측으로 검증했다
+    (결산월 3·6·9월사 전 기간에서 권위값과 일치). 결산월이 없으면 **도출하지 않고 None**.
+
+    ①이 99.14%(filings.period_end_date 보유율)를 덮고, ②는 주로 비교컬럼 파생행(rcept 없음,
+    31,064행)에 쓰인다.
+    """
+    if rcept:
+        pe = session.execute(text(
+            "SELECT period_end_date FROM filings WHERE rcept_no=:r"), {"r": rcept}).scalar()
+        if pe:
+            return pe
+
+    off = _FP_MONTHS_BEFORE_FY_END.get(fiscal_period)
+    if off is None:
+        return None
+    fm = session.execute(text(
+        "SELECT fiscal_month FROM corporations WHERE corp_code=:c"), {"c": corp_code}).scalar()
+    if not fm:
+        return None      # 결산월 미상 → 추측하지 않는다(구버전은 12월로 가정했다)
+    try:
+        # FY 말일(fiscal_year, fm)에서 off 개월 뒤로 → 그 달의 말일
+        total = fiscal_year * 12 + (fm - 1) - off
+        y, m = divmod(total, 12)
+        return date(y, m + 1, calendar.monthrange(y, m + 1)[1])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _future_guard(dq: int, period_end) -> int:
+    """미래 period_end(아직 끝나지 않은 기간)= 실제 데이터 불가 → DQ3 격리(소비계층 배제).
+    합성/시드나 기간 오라벨로 period_end 가 오늘 이후인 행 방어."""
+    return 3 if (period_end is not None and period_end > date.today()) else dq
 
 
 def _dq_cross_year_v3(session, corp_code: str, basis: str, col: dict) -> int:

@@ -3,7 +3,7 @@
 
 실행일 기준으로 최근 등록된 정기공시(사업/반기/분기)를 DART 날짜범위 조회로 효율적으로
 탐지(전 기업 per-corp 스캔 회피)한 뒤, 기존 검증된 파이프라인을 그 기업들로 한정해 재사용:
-  sync_filings(corp_codes) → run_downloads(only_corp_codes) → process_corp(per corp).
+  sync_filings(corp_codes) → run_downloads(only_corp_codes) → scripts/collect_new.py 의 계층2→std_v3→달력 단계(per corp).
 
 DART list.json 은 corp_code 없이 bgn_de~end_de 로 전체 정기공시를 페이지네이션 조회 가능.
 """

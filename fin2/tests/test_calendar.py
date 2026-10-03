@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from fin2.standardize.calendar import (  # noqa: E402
+from fin2.standardize.calendar_v3 import (  # noqa: E402
     _MONTH_CQ, _cq_record, _cy_record, _CQ_ORDER, _is_calendarizable_end,
 )
 

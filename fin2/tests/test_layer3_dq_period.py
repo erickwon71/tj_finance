@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from fin2.standardize.build import _future_guard  # noqa: E402
+from fin2.layer3.build import _future_guard  # noqa: E402
 
 
 def test_future_guard_past_period_end_unchanged():

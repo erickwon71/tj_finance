@@ -1691,10 +1691,10 @@ def cmd_aggregate(args):
     from collector.db import relation_is_view
 
     # ⚠ P5 컷오버: standard_financials 가 view(std_financials_v2 기반)면 레거시 집계는 쓰기 불가.
-    #    fin2 파이프라인(extract2/reconcile2/standardize2 또는 fin2-all)을 사용할 것.
+    #    (extract2/fin2-all 등 v2 CLI 는 2026-10-03 제거) 데일리 `scripts/collect_new.py` 가 std_v3 를 채운다.
     if relation_is_view("standard_financials"):
         logger.error("standard_financials 는 P5 컷오버로 view 가 되었습니다(레거시 집계 비활성). "
-                     "fin2 사용: python run.py fin2-all  (또는 standardize2 --corp).")
+                     "표준화는 scripts/collect_new.py(데일리) 가 std_financials_v3 로 수행한다.")
         sys.exit(1)
 
     corp_code = getattr(args, "corp", None)
@@ -2278,116 +2278,6 @@ def cmd_compare(args):
 
 
 # ── CLI 파서 ─────────────────────────────────────────────────────────
-def cmd_extract2(args):
-    """
-    fin2 E-레이어: Track A XBRL 추출 → fact_v2 upsert.
-
-    대상: 해당 기업의 download_tasks.status='completed' AND file_type='xml' 최종본.
-    Track A 가 아닌 파일(구형/Track B)은 0행 → P2 폴백 예정(여기선 스킵).
-
-    옵션:
-      --corp CODE   : 대상 기업 (필수)
-      --year YEAR   : 특정 회계연도만
-      --dry-run     : DB 저장 없이 추출 요약만 출력(단위/연결별도 눈검증)
-    """
-    from collector.db import get_session
-
-    corp = getattr(args, "corp", None)
-    if not corp:
-        logger.error("extract2 는 --corp CODE 가 필요합니다.")
-        sys.exit(1)
-    year = getattr(args, "year", None)
-    dry_run = getattr(args, "dry_run", False)
-
-    with get_session() as session:
-        files, a, b, facts = _extract2_corp(session, corp, year=year, dry_run=dry_run, verbose=True)
-        if not dry_run:
-            session.commit()
-    logger.success(
-        f"[extract2] corp={corp} 파일 {files}개 — Track A {a} / Track B {b}, "
-        f"fact {facts:,}행" + (" (dry-run, 미저장)" if dry_run else " 저장")
-    )
-
-
-def _extract2_corp(session, corp, year=None, dry_run=False, verbose=True):
-    """
-    한 기업의 다운로드 XML 을 fact_v2 로 추출(Track A 우선, 0행이면 Track B 폴백).
-    커밋은 호출자 책임. 반환=(파일수, TrackA수, TrackB수, fact수).
-    """
-    from sqlalchemy import text
-    from fin2.extract import xbrl, text as text_extract
-    from fin2.extract.xbrl import store_facts
-
-    sql = """
-        SELECT dt.rcept_no, dt.file_path,
-               f.corp_code, f.fiscal_year, f.fiscal_period, f.report_type, f.is_amendment
-        FROM download_tasks dt
-        JOIN filings f ON f.rcept_no = dt.rcept_no
-        WHERE dt.status = 'completed' AND dt.file_type = 'xml'
-          AND dt.file_path IS NOT NULL AND f.corp_code = :corp
-    """
-    params = {"corp": corp}
-    if year is not None:
-        sql += "  AND f.fiscal_year = :year\n"
-        params["year"] = year
-    sql += "ORDER BY f.fiscal_year DESC, f.fiscal_period, f.is_amendment ASC, dt.rcept_no ASC"
-
-    rows = session.execute(text(sql), params).fetchall()
-    if not rows:
-        if verbose:
-            logger.warning(f"[extract2] 대상 XML 없음: corp={corp} year={year}")
-        return (0, 0, 0, 0)
-
-    _log = logger.success if verbose else logger.debug
-    total_files = n_track_a = n_track_b = total_facts = 0
-    for r in rows:
-        common = dict(
-            rcept_no=r.rcept_no, corp_code=r.corp_code,
-            report_fiscal_year=r.fiscal_year, report_fiscal_period=r.fiscal_period,
-        )
-        tag = f"{r.fiscal_year}{r.fiscal_period}" + ("*" if r.is_amendment else "")
-        try:
-            facts = xbrl.extract_facts(r.file_path, **common)
-            track = "A"
-            if not facts:
-                facts = text_extract.extract_facts(r.file_path, **common)
-                track = "B"
-        except (FileNotFoundError, OSError) as e:
-            # 소실/손상 파일(예 동방아그로 2003H1 MISSING_FILE)은 스킵 → 기업 전체 롤백 방지
-            # (나머지 정상 연도는 재추출 진행). 해당 연도 fact 는 purge 후 미적재(=공백).
-            if verbose:
-                logger.warning(f"  [{tag}] r{r.rcept_no} — 파일 소실/손상 스킵: {e}")
-            total_files += 1
-            continue
-
-        total_files += 1
-        if not facts:
-            if verbose:
-                logger.info(f"  [{tag}] r{r.rcept_no} — 추출 0행(A·B 모두, PDF 폴백 대상)")
-            continue
-        if track == "A":
-            n_track_a += 1
-        else:
-            n_track_b += 1
-        total_facts += len(facts)
-
-        if dry_run:
-            logger.info(f"  [{tag}] r{r.rcept_no} — Track {track} {len(facts)}행")
-            want_canon = {"bs.total_assets", "is.revenue", "bs.total_equity"}
-            want_acode = {"ifrs-full_Assets", "ifrs-full_Revenue", "ifrs-full_Equity"}
-            for f in facts:
-                hit = (f.canonical_account in want_canon) or (f.acode in want_acode)
-                if hit and f.col_index == 0 and not f.is_dimensional:
-                    label = f.canonical_account or f.acode
-                    logger.info(f"      {label:18s} basis={f.basis or '-':12s} "
-                                f"ADECIMAL={f.adecimal} col={f.col_index} won={f.amount_won:,}")
-        else:
-            n = store_facts(session, facts)
-            _log(f"  [{tag}] r{r.rcept_no} — Track {track} {n}행 upsert")
-
-    return (total_files, n_track_a, n_track_b, total_facts)
-
-
 def cmd_extract_lines(args):
     """
     4계층 재설계 계층2: 보고서 XML → report_lines(원문 tree) 추출/저장. **파일럿 전용**
@@ -2477,174 +2367,6 @@ def cmd_extract_lines(args):
     )
 
 
-def cmd_reconcile2(args):
-    """
-    fin2 R-레이어: fact_v2 → statement_source 정합.
-
-    (corp, fy, period, basis, BS/IS/CF) 별 단일 source filing 선택(over-supersede 해결).
-
-    옵션:
-      --corp CODE   : 대상 기업 (필수)
-      --year YEAR   : 특정 회계연도만
-    """
-    from collector.db import get_session
-    from fin2.reconcile import reconcile_corp
-
-    corp = getattr(args, "corp", None)
-    if not corp:
-        logger.error("reconcile2 는 --corp CODE 가 필요합니다.")
-        sys.exit(1)
-    year = getattr(args, "year", None)
-
-    with get_session() as session:
-        n = reconcile_corp(session, corp, fiscal_year=year)
-        session.commit()
-    logger.success(f"[reconcile2] corp={corp} 완료 — statement_source {n}행")
-
-
-def cmd_standardize2(args):
-    """
-    fin2 S-레이어: statement_source → std_financials_v2 조립(규칙엔진).
-
-    옵션:
-      --corp CODE   : 대상 기업 (필수)
-      --year YEAR   : 특정 회계연도만
-    """
-    from collector.db import get_session
-    from fin2.standardize.build import standardize_corp
-
-    corp = getattr(args, "corp", None)
-    if not corp:
-        logger.error("standardize2 는 --corp CODE 가 필요합니다.")
-        sys.exit(1)
-    year = getattr(args, "year", None)
-
-    with get_session() as session:
-        n = standardize_corp(session, corp, fiscal_year=year)
-        session.commit()
-    logger.success(f"[standardize2] corp={corp} 완료 — std_financials_v2 {n}레코드")
-
-
-def process_corp(session, corp, stages=("extract", "reconcile", "standardize",
-                                        "quarterly", "calendar"), version=1):
-    """
-    한 기업에 fin2 E→R→S(+분기·달력) 파이프라인 1패스 실행. 커밋은 호출자 책임.
-
-    cmd_fin2_all 의 기업 루프 본문을 추출한 공유 헬퍼.
-    scripts/verify_corp_sequential.py(기업 단위 순차 검증)도 동일 경로를 재사용한다.
-    반환: {"e_files","e_facts","r","s","q","c"} 카운트 dict.
-
-    version: std 소비계층 버전(기본 1). Phase C 재구축(scripts/phase_c_rebuild.py)은
-    version=2 로 병행 구축한다(swap 대상). fact_v2·statement_source 는 버전 무관(rcept 단위).
-    """
-    from fin2.reconcile import reconcile_corp
-    from fin2.standardize.build import standardize_corp
-    from fin2.standardize.quarterly import derive_quarters_corp
-    from fin2.standardize.calendar import calendarize_corp
-
-    out = {"e_files": 0, "e_facts": 0, "r": 0, "s": 0, "q": 0, "c": 0}
-    if "extract" in stages:
-        files, _a, _b, facts = _extract2_corp(session, corp, verbose=False)
-        out["e_files"] += files
-        out["e_facts"] += facts
-    if "reconcile" in stages:
-        out["r"] += reconcile_corp(session, corp)
-    if "standardize" in stages:
-        out["s"] += standardize_corp(session, corp, version=version)
-    if "quarterly" in stages:
-        out["q"] += derive_quarters_corp(session, corp, version=version)
-    if "calendar" in stages:
-        out["c"] += calendarize_corp(session, corp, version=version)
-    return out
-
-
-def cmd_fin2_all(args):
-    """
-    fin2 전수 오케스트레이션: 다운로드 완료된 전 기업에 E→R→S 파이프라인 실행.
-
-    대상: download_tasks(status=completed, file_type=xml) 보유 기업.
-    각 기업: extract2 → reconcile2 → standardize2. 기업 단위 커밋(중단 시 재개 가능).
-    기업별 예외는 로깅 후 계속(전체 중단 방지).
-
-    옵션:
-      --corps START:END : list 인덱스 슬라이스(부분 실행/병렬 분할)
-      --limit N         : 최대 기업 수
-      --stage S         : extract|reconcile|standardize|all(기본). 단계만 재실행용.
-      --skip-done       : 이미 std_financials_v2 에 있는 기업(E→R→S 완주) 건너뜀.
-                          중단 후 재개 시 재처리·파일 재다운로드 최소화.
-    ⚠ 장시간 작업. 진행률 50기업마다 로깅.
-    """
-    from sqlalchemy import text
-    from collector.db import get_session
-
-    stage = getattr(args, "stage", None) or "all"
-    do_e = stage in ("all", "extract")
-    do_r = stage in ("all", "reconcile")
-    do_s = stage in ("all", "standardize")
-    # 분기환산(PRD 03 §5.1): standardize 직후. as-filed 누적행에서 이산분기 파생.
-    do_q = stage in ("all", "standardize", "quarterly")
-    # Layer 2 달력정규화(PRD 03 §5.3): 이산분기를 달력분기/연도로. quarterly 직후.
-    do_c = stage in ("all", "standardize", "quarterly", "calendar")
-
-    with get_session() as session:
-        corps = [r[0] for r in session.execute(text("""
-            SELECT DISTINCT f.corp_code
-            FROM download_tasks dt JOIN filings f ON f.rcept_no = dt.rcept_no
-            WHERE dt.status='completed' AND dt.file_type='xml' AND dt.file_path IS NOT NULL
-            ORDER BY f.corp_code
-        """)).fetchall()]
-
-    # --corps START:END 슬라이스 (병렬 분할/부분 실행)
-    corps_arg = getattr(args, "corps", None)
-    if corps_arg:
-        if ":" in corps_arg:
-            a, _, b = corps_arg.partition(":")
-            corps = corps[(int(a) if a else None):(int(b) if b else None)]
-        else:
-            corps = corps[int(corps_arg):int(corps_arg) + 1]
-    limit = getattr(args, "limit", None)
-    if limit:
-        corps = corps[:limit]
-
-    # --skip-done: 이미 std_v2 에 완주 적재된 기업 제외(중단 후 재개 가속)
-    skipped_done = 0
-    if getattr(args, "skip_done", False):
-        with get_session() as session:
-            done = {r[0] for r in session.execute(text(
-                "SELECT DISTINCT corp_code FROM std_financials_v3")).fetchall()}
-        before = len(corps)
-        corps = [c for c in corps if c not in done]
-        skipped_done = before - len(corps)
-
-    total = len(corps)
-    logger.info(f"[fin2-all] stage={stage} 대상 기업 {total}개"
-                + (f" (skip-done {skipped_done}개 제외)" if skipped_done else ""))
-    agg = {"e_files": 0, "e_facts": 0, "r": 0, "s": 0, "q": 0, "c": 0, "errors": 0}
-    stages = tuple(s for s, on in (
-        ("extract", do_e), ("reconcile", do_r), ("standardize", do_s),
-        ("quarterly", do_q), ("calendar", do_c)) if on)
-    for i, corp in enumerate(corps, 1):
-        try:
-            with get_session() as session:
-                c = process_corp(session, corp, stages)
-                for k in ("e_files", "e_facts", "r", "s", "q", "c"):
-                    agg[k] += c[k]
-                session.commit()
-        except Exception as e:
-            agg["errors"] += 1
-            logger.error(f"[fin2-all] corp={corp} 실패: {e}")
-        if i % 50 == 0 or i == total:
-            logger.info(f"[fin2-all] 진행 {i}/{total} — "
-                        f"facts {agg['e_facts']:,} / stmt_src {agg['r']:,} / "
-                        f"std_v2 {agg['s']:,} / 오류 {agg['errors']}")
-
-    logger.success(
-        f"[fin2-all] 완료 — 기업 {total}개, fact {agg['e_facts']:,}행, "
-        f"statement_source {agg['r']:,}, std_v2 {agg['s']:,}, 이산분기 {agg['q']:,}, "
-        f"달력행 {agg['c']:,}, 오류 {agg['errors']}"
-    )
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="DART PDF 수집 시스템",
@@ -2660,8 +2382,6 @@ def main():
             "status", "failed", "reset-failed", "reset-missing", "all",
             # 파싱 (Phase 2)
             "parse", "parse-status", "parse-reset", "unknown-accounts",
-            # fin2 재구축 (E·R·S-레이어 + 전수 오케스트레이션)
-            "extract2", "reconcile2", "standardize2", "fin2-all",
             # 4계층 재설계 — 계층2 report_lines tree (2026-07-19, 파일럿 전용)
             "extract-lines",
             # 다운로더 보완 (Phase 6 전처리)
@@ -2809,18 +2529,6 @@ def main():
                         dest="compare_corps",
                         help="compare: 비교할 기업 DART 코드 콤마 구분")
     parser.add_argument(
-        "--stage",
-        choices=["extract", "reconcile", "standardize", "quarterly", "calendar", "all"],
-        default="all",
-        help="fin2-all: 실행 단계 (extract/reconcile/standardize/quarterly/calendar/all, 기본 all)",
-    )
-    parser.add_argument(
-        "--skip-done",
-        action="store_true",
-        dest="skip_done",
-        help="fin2-all: 이미 std_financials_v2 에 적재된 기업 건너뜀(재개 가속)",
-    )
-    parser.add_argument(
         "--partial",
         action="store_true",
         dest="partial",
@@ -2862,11 +2570,6 @@ def main():
         "parse-status":     cmd_parse_status,
         "parse-reset":      cmd_parse_reset,
         "unknown-accounts": cmd_unknown_accounts,
-        # fin2 재구축 (E·R·S-레이어 + 전수 오케스트레이션)
-        "extract2":         cmd_extract2,
-        "reconcile2":       cmd_reconcile2,
-        "standardize2":     cmd_standardize2,
-        "fin2-all":         cmd_fin2_all,
         "extract-lines":    cmd_extract_lines,
         # 분석 (Phase 3)
         "aggregate":        cmd_aggregate,

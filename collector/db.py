@@ -77,7 +77,8 @@ def init_db() -> None:
     # 백업 NAS(tj_finance_data)/db_backup/fact_v2_backup_2026-09-01.dump. pg_depend
     # 전수 확인 결과 의존 뷰 0건(std_financials_v2 때와 달리 calendar_financials 류의
     # 숨은 소비자 없음 — 위 사고 전례 때문에 재확인함).
-    for _dropped in ("financial_facts", "unknown_accounts", "std_financials_v2", "fact_v2"):
+    # (std_financials_v2·fact_v2 ORM 클래스는 2026-10-03 에 삭제돼 메타데이터에 없다)
+    for _dropped in ("financial_facts", "unknown_accounts"):
         _t = Base.metadata.tables.get(_dropped)
         if _t is not None:
             Base.metadata.remove(_t)
@@ -105,6 +106,9 @@ def _run_migrations() -> None:
     from loguru import logger
 
     migrations: list[tuple[str, object]] = [
+        # ★2026-10-03: std_financials_v2·fact_v2 자체에 대한 DDL 이력(컬럼/인덱스/autovacuum) 9건을 삭제했다 —
+        # 테이블이 DROP 됐고 해당 id 는 schema_migrations 에 이미 기록돼 있어 재실행되지 않는다.
+        # 뷰·matview 정의 이력(valuation_daily 등)은 현존 객체의 재생성 근거라 남겼다.
         ("2025_05_corp_last_filing_sync",
          # 2025-05: last_filing_sync 컬럼 추가 (sync-filings resume 기능)
          "ALTER TABLE corporations ADD COLUMN IF NOT EXISTS last_filing_sync TIMESTAMP"),
@@ -143,35 +147,6 @@ def _run_migrations() -> None:
                 ALTER TABLE statement_source DROP CONSTRAINT statement_source_pkey;
                 ALTER TABLE statement_source ADD PRIMARY KEY
                     (corp_code, fiscal_year, fiscal_period, basis, statement, is_stub);
-            END IF;
-        END $$
-        """),
-
-        ("2026_06_std_v2_pk_is_stub",
-         # 2026-06: PRD 01a — std_financials_v2 PK(uq_std_v2) 에 is_stub 추가. 1회만.
-         """
-        DO $$ BEGIN
-            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                           WHERE table_name='std_financials_v2' AND column_name='is_stub') THEN
-                ALTER TABLE std_financials_v2 ADD COLUMN is_stub BOOLEAN NOT NULL DEFAULT FALSE;
-                ALTER TABLE std_financials_v2 DROP CONSTRAINT uq_std_v2;
-                ALTER TABLE std_financials_v2 ADD CONSTRAINT uq_std_v2 PRIMARY KEY
-                    (corp_code, fiscal_year, fiscal_period, statement_type, version, is_stub);
-            END IF;
-        END $$
-        """),
-
-        ("2026_06_std_v2_pk_is_discrete",
-         # 2026-06: PRD 03 §5.1 — std_financials_v2 PK(uq_std_v2) 에 is_discrete 추가(분기환산 이산행
-         # Q1~Q4 가 누적 as-filed 와 공존). 1회만(컬럼 없을 때).
-         """
-        DO $$ BEGIN
-            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                           WHERE table_name='std_financials_v2' AND column_name='is_discrete') THEN
-                ALTER TABLE std_financials_v2 ADD COLUMN is_discrete BOOLEAN NOT NULL DEFAULT FALSE;
-                ALTER TABLE std_financials_v2 DROP CONSTRAINT uq_std_v2;
-                ALTER TABLE std_financials_v2 ADD CONSTRAINT uq_std_v2 PRIMARY KEY
-                    (corp_code, fiscal_year, fiscal_period, statement_type, version, is_stub, is_discrete);
             END IF;
         END $$
         """),
@@ -263,10 +238,6 @@ def _run_migrations() -> None:
         ("2026_06_stock_prices_bps",        "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS bps        BIGINT"),
         ("2026_06_stock_prices_div_yield",  "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS div_yield  DOUBLE PRECISION"),
         ("2026_06_stock_prices_dps",        "ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS dps        BIGINT"),
-
-        ("2026_06_ix_std_v2_corp_period",
-         # 2026-06: 재무↔주가 결합 준비 — 단일종목 조회 인덱스(아래 valuation_daily matview 의 조인 대상).
-         "CREATE INDEX IF NOT EXISTS ix_std_v2_corp_period ON std_financials_v2 (corp_code, period_end)"),
 
         ("2026_07_valuation_daily_drop_plain_view",
          # A4a(2026-07) — valuation_daily 를 일반 뷰에서 materialized view 로 전환하는 1단계:
@@ -395,15 +366,6 @@ def _run_migrations() -> None:
         #  ix_fact_v2_is_dimensional = boolean 저선택 인덱스, 스캔 0(2.1GB)
         #  ix_fact_v2_corp_code = ix_fact_v2_lookup(corp_code,…) 의 좌프리픽스 중복(2.8GB)
         ("2026_p1_d2_drop_ix_sp_stock_date",             "DROP INDEX IF EXISTS ix_sp_stock_date"),
-        ("2026_p1_d2_drop_ix_fact_v2_is_dimensional",    "DROP INDEX IF EXISTS ix_fact_v2_is_dimensional"),
-        ("2026_p1_d2_drop_ix_fact_v2_corp_code",         "DROP INDEX IF EXISTS ix_fact_v2_corp_code"),
-
-        ("2026_07_fact_v2_autovacuum_tuning",
-         # A4b(2026-07) — 전문가 리뷰 §5: fact_v2(87M행, dead 12.8M/~15%, 수동 VACUUM 이력 전무)의
-         # autovacuum 임계값을 하향(기본 스케일 팩터 20%→2%)해 죽은 튜플이 쌓이기 전에 더 자주 청소.
-         # 주기 VACUUM(ANALYZE)은 scripts/vacuum_db.py(주간 launchd, D5)가 보완.
-         "ALTER TABLE fact_v2 SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_analyze_scale_factor = 0.02)"),
-
         ("2026_07_extended_financials_view",
          # PRD 10~12(전문 서비스 갭 채우기 Phase 1) — concept_map 이 매핑하지만 std_financials_v2
          # wide 컬럼으로 승격되지 않은 ~51종 캐노니컬(bs.goodwill·is.finance_income·
@@ -469,49 +431,6 @@ def _run_migrations() -> None:
         GROUP BY f.corp_code, ss.fiscal_year, ss.fiscal_period, ss.basis,
                  f.canonical_account, ss.source_rcept_no
         """),
-
-        ("2026_07_fact_v2_provenance",
-         # ★ 재무데이터 재구축(계획: docs/plans/vast-nibbling-blum.md) — provenance 4종.
-         # 왜 필요한가: 이전 파이프라인은 추측값과 원본값을 구분하지 못했다. 주석표가 본문으로
-         # 새어도(요약폴백·레거시 갭필), 단위를 배율대입으로 추측해도, 후보 다중 시 max-abs 로
-         # 골라도 결과 행이 정상 행과 동일해 **"오염된 것만 삭제"를 SQL 로 표현할 수 없었다**
-         # (실측: DB손해보험 이익잉여금 8.5경원이 DQ=1 로 앱 노출). 이 컬럼들이 그 구분을
-         # 스키마로 강제한다. 선례 = statement_source.lineage.
-         # 신규 컬럼은 전부 nullable·DEFAULT 없음 → PG11+ 에서 **메타데이터 전용 즉시 반영**
-         # (87M 행 rewrite 없음, 재추출 전까지 NULL).
-         # ⚠ 인덱스는 **의도적으로 여기서 만들지 않는다**: 87M 행 CREATE INDEX 는 트랜잭션 안에서
-         # 테이블을 수 분간 잠그는데, 재추출 전까지 전 행이 NULL 이라 지금은 이득이 없다.
-         # 재구축 완료 후 별도 마이그레이션으로 추가할 것(불변식 어서션 성능용).
-         """
-         ALTER TABLE fact_v2 ADD COLUMN IF NOT EXISTS section_kind VARCHAR(20);
-         ALTER TABLE fact_v2 ADD COLUMN IF NOT EXISTS mapping_stage VARCHAR(12);
-         ALTER TABLE fact_v2 ADD COLUMN IF NOT EXISTS mapping_confidence DOUBLE PRECISION;
-         ALTER TABLE fact_v2 ADD COLUMN IF NOT EXISTS unit_source VARCHAR(10);
-         """),
-
-        ("2026_07_std_v2_value_lineage",
-         # Phase A-3(C1/C6/C7) — max-abs 채택 폐지의 짝. 후보가 갈려 **보류한** canonical 의
-         # 후보 전체를 여기에 남긴다: {canonical: [{value, rcept, chosen:false}, ...]}.
-         # 구버전은 큰 값을 집고 진 후보를 흔적 없이 버려, 사후에 무엇이 경합했는지 알 수 없었다.
-         # 이 컬럼이 **Phase C 패턴루프의 작업목록**이 된다(어떤 계정이 왜 비었는지 SQL 로 조회):
-         #   SELECT corp_code, fiscal_year, jsonb_object_keys(value_lineage)
-         #     FROM std_financials_v2 WHERE value_lineage IS NOT NULL;
-         # 선례 = statement_source.lineage(후보 전체 + chosen 기록).
-         # nullable·DEFAULT 없음 → 메타데이터 전용 즉시 반영(테이블 rewrite 없음).
-         """
-         ALTER TABLE std_financials_v2 ADD COLUMN IF NOT EXISTS value_lineage JSONB;
-         """),
-
-        ("2026_07_std_v2_lease_borrowings",
-         # C 합산(concept_map 감사, docs/qa/audit_concept_map_collapse_2026-07-18.md):
-         # 유동+비유동 리스부채, 단기+장기 차입 유입/상환을 합산한 신규 지표. 구 concept_map 은
-         # 서로 다른 부분을 한 canonical 로 collapse 해 값충돌(보류)만 냈다 → 별도 canonical +
-         # rule_additive_lease/borrowings 합산. nullable·DEFAULT 없음 → 즉시 반영, 재추출 전 NULL.
-         """
-         ALTER TABLE std_financials_v2 ADD COLUMN IF NOT EXISTS lease_liability BIGINT;
-         ALTER TABLE std_financials_v2 ADD COLUMN IF NOT EXISTS borrowings_proceeds BIGINT;
-         ALTER TABLE std_financials_v2 ADD COLUMN IF NOT EXISTS borrowings_repaid BIGINT;
-         """),
 
         ("2026_07_extended_financials_view_distinct",
          # 2026-07-17 트리아지(dq_assertions extended_financials_n_facts_outlier) — 같은 rcept

@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from fin2.standardize.quarterly import (  # noqa: E402
+from fin2.standardize.calendar_v3 import (  # noqa: E402
     _build_discrete, _FLOW_COLS, _STOCK_COLS, _QUARTER_SPEC,
 )
 

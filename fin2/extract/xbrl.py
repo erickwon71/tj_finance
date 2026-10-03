@@ -9,7 +9,7 @@ DART XML 의 TE[@ACODE] 셀을 **추론이 아닌 저장**으로 fact_v2 행으�
 Track 판정: TE[@ACODE] 가 ifrs-full_*/dart_* + ACONTEXT 를 가질 때만 추출(=Track A).
 그 외 파일(구형/Track B)은 행 0개 → P2 텍스트/PDF 폴백 담당.
 
-실행 경로: run.py extract2 → extract_file().
+실행 경로: (v2 CLI extract2 는 2026-10-03 제거) 이 모듈은 ExtractedFact 정의·extract_facts·store_extended_facts_v3 만 남았다.
 XML 로더는 기존 parser._parse_xml_file(malformed/인코딩 자동복구) 재사용.
 """
 from __future__ import annotations
@@ -202,48 +202,6 @@ def extract_facts(
     return list(dedup.values())
 
 
-def store_facts(session, facts: list[ExtractedFact]) -> int:
-    """추출 행들을 fact_v2 에 upsert(ON CONFLICT uq_fact_v2_cell). 반환=처리 행 수.
-
-    ★2026-09-01(fact_v2 GC 트랙 §4-4 DROP, `docs/plans/
-    factv2_sync_scripts_migration_design_2026-09-01.md`) — `fact_v2`가 DROP됐다. 이
-    함수가 유일한 fact_v2 쓰기 경로라 여기 한 곳만 막으면 모든 호출부(`extract_file()`,
-    `run.py::cmd_extract2`/`cmd_fin2_all`, `scripts/phase_c_rebuild.py`,
-    `collector/cf_da_sync.py`)가 커버된다. `fin2/standardize/build.py::
-    standardize_corp()`의 `std_financials_v2` DROP 가드와 동일 패턴 — 원시
-    "relation does not exist" SQL 에러 대신 원인·참고문서를 알려준다."""
-    raise RuntimeError(
-        "fact_v2 was DROPped 2026-09-01 (fact_v2 GC track §4-4) — this write path is "
-        "retired. extended_financials now sources from extended_facts_v3 (built by "
-        "fin2.layer3.combine.combine_full()); std_financials_v3 D&A columns come from "
-        "fin2.layer3.note_da (note_lines). See docs/plans/"
-        "factv2_sync_scripts_migration_design_2026-09-01.md."
-    )
-    if not facts:
-        return 0
-    from datetime import datetime
-    from sqlalchemy.dialects.postgresql import insert
-    from collector.models import FactV2
-
-    rows = [f.as_row() for f in facts]
-    for r in rows:
-        r["parsed_at"] = datetime.utcnow()
-
-    stmt = insert(FactV2).values(rows)
-    # 충돌 시 재추출 값으로 갱신(파서 개선 반영). id/생성시각 제외 전 컬럼 갱신.
-    update_cols = {
-        c.name: stmt.excluded[c.name]
-        for c in FactV2.__table__.columns
-        if c.name not in ("id",)
-    }
-    stmt = stmt.on_conflict_do_update(
-        constraint="uq_fact_v2_cell",
-        set_=update_cols,
-    )
-    session.execute(stmt)
-    return len(rows)
-
-
 def store_extended_facts_v3(session, facts: list[ExtractedFact]) -> int:
     """`ExtractedFact` 목록을 `extended_facts_v3`(라벨 기반 확장 캐노니컬)에 upsert.
 
@@ -292,23 +250,3 @@ def store_extended_facts_v3(session, facts: list[ExtractedFact]) -> int:
     )
     session.execute(stmt)
     return len(rows)
-
-
-def extract_file(
-    session,
-    file_path: str | Path,
-    *,
-    rcept_no: str,
-    corp_code: str,
-    report_fiscal_year: int,
-    report_fiscal_period: str,
-) -> int:
-    """추출 + 저장 일괄. 반환=저장된 fact 수(0이면 Track A 아님 또는 데이터 없음)."""
-    facts = extract_facts(
-        file_path,
-        rcept_no=rcept_no,
-        corp_code=corp_code,
-        report_fiscal_year=report_fiscal_year,
-        report_fiscal_period=report_fiscal_period,
-    )
-    return store_facts(session, facts)

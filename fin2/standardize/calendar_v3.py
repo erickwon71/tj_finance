@@ -21,16 +21,145 @@ row-level 버전 플래그를 대체) → `std_financials_calendar` 에는 상�
 """
 from __future__ import annotations
 
+from datetime import date, datetime
+
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 
 from collector.models import StdFinancialCalendar
-from fin2.standardize.quarterly import _QUARTER_SPEC, _build_discrete
-from fin2.standardize.calendar import (
-    _MONTH_CQ, _CQ_ORDER, _corp_fiscal_month, _is_calendarizable_end,
-    _cq_record, _cy_record,
-)
+from fin2.standardize.rules import _BS_MAP, _IS_MAP, _CF_MAP
+
+# ★2026-10-03 — 아래 헬퍼들은 v2 체인(fin2/standardize/quarterly.py·calendar.py, std_financials_v2
+# 기반)이 삭제되면서 이 모듈로 옮겨졌다. 이산분기 조립·달력분기 레코드 로직 자체는 그대로다.
+# flow = IS + CF 값컬럼 + 파생 flow(선형 합산성). 이산분기는 차감.
+_FLOW_COLS: tuple[str, ...] = tuple(sorted(
+    set(_IS_MAP.values()) | set(_CF_MAP.values())
+    | {"capex", "depreciation", "amortization", "da_total", "ebitda", "fcf"}
+))
+# stock = BS 값컬럼 + BS 파생(net_debt) + 시점값(shares_out). 분기말 스냅샷(차감 금지).
+_STOCK_COLS: tuple[str, ...] = tuple(sorted(
+    set(_BS_MAP.values()) | {"net_debt", "shares_out"}
+))
+
+# 이산분기 → (말 누적행 fp, 차감 누적행 fp | None)
+#   Q1 = Q1                  (차감 없음, Q1누적=3개월)
+#   Q2 = H1 − Q1
+#   Q3 = Q3누적 − H1
+#   Q4 = FY − Q3누적
+_QUARTER_SPEC: dict[str, tuple[str, str | None]] = {
+    "Q1": ("Q1", None),
+    "Q2": ("H1", "Q1"),
+    "Q3": ("Q3", "H1"),
+    "Q4": ("FY", "Q3"),
+}
+
+
+def _build_discrete(end_row: dict, sub_row: dict | None, fp: str,
+                    version: int = 1) -> dict | None:
+    """한 이산분기 레코드 조립. end/sub = 누적행. sub None 이면 차감 없음(Q1)."""
+    rec: dict = {
+        "corp_code": end_row["corp_code"], "fiscal_year": end_row["fiscal_year"],
+        "fiscal_period": fp, "statement_type": end_row["statement_type"],
+        "version": version, "is_stub": False, "is_discrete": True,
+        # 시점·연원은 말(end) 누적행에서 승계.
+        "period_end": end_row.get("period_end"), "is_ifrs": end_row.get("is_ifrs"),
+        "bs_rcept": end_row.get("bs_rcept"), "is_rcept": end_row.get("is_rcept"),
+        "cf_rcept": end_row.get("cf_rcept"),
+        "applied_rules": ["quarterly_derived"],
+        "calculated_at": datetime.utcnow(),
+    }
+    # stock(BS)·시점값 = 분기말 스냅샷(end 누적행 그대로).
+    for c in _STOCK_COLS:
+        rec[c] = end_row.get(c)
+    # flow = end − sub (둘 다 있을 때만; 한쪽 None → 그 컬럼 None).
+    n_flow = 0
+    for c in _FLOW_COLS:
+        ev = end_row.get(c)
+        if sub_row is None:
+            rec[c] = ev
+        elif ev is not None and sub_row.get(c) is not None:
+            rec[c] = ev - sub_row[c]
+        else:
+            rec[c] = None
+        if rec[c] is not None:
+            n_flow += 1
+    # flow 가 전무하면(IS/CF 데이터 없음) 이산분기 의미 없음 → 미생성.
+    if n_flow == 0:
+        return None
+    # data_quality: 결측 구성요소로 일부 flow 가 None 이면 경고(2), 아니면 정상(1).
+    rec["data_quality"] = 1 if all(rec.get(c) is not None
+                                   for c in _FLOW_COLS if end_row.get(c) is not None) else 2
+    # provenance 승계: 이산분기 영업이익은 K-IFRS as-filed 행에서 파생 → opinc_kifrs 마크 전파.
+    if rec.get("operating_income") is not None and end_row.get("applied_rules") \
+            and "opinc_kifrs" in end_row["applied_rules"]:
+        rec["applied_rules"] = rec["applied_rules"] + ["opinc_kifrs"]
+    return rec
+
+
+# period_end 월 → 달력분기 토큰. 달력분기말만(3/6/9/12) 정렬.
+_MONTH_CQ = {3: "CQ1", 6: "CQ2", 9: "CQ3", 12: "CQ4"}
+_CQ_ORDER = ("CQ1", "CQ2", "CQ3", "CQ4")
+_CARRY = ("is_ifrs",)
+
+
+def _corp_fiscal_month(session, corp_code: str) -> int | None:
+    return session.execute(text(
+        "SELECT fiscal_month FROM corporations WHERE corp_code = :c"), {"c": corp_code}).scalar()
+
+
+def _is_calendarizable_end(period_end: date, today: date | None = None) -> bool:
+    """달력분기는 해당 분기말(period_end)이 지나야만 구성 가능하다.
+
+    period_end 가 미래(=아직 끝나지 않은 분기)면 실제 데이터가 존재할 수 없으므로
+    달력화 대상에서 제외한다. (오프셋 결산·시드성 데이터가 미래 분기말을 갖는 경우 방어.)
+    """
+    return period_end <= (today or date.today())
+
+
+def _cq_record(corp_code, basis, cyear, cq, src, derivation, version: int = 1) -> dict:
+    """달력분기(CQ) 레코드 = 그 이산분기 값 직배치(flow·stock 그대로)."""
+    rec = {
+        "corp_code": corp_code, "calendar_year": cyear, "calendar_period": cq,
+        "statement_type": basis, "version": version,
+        "period_end": src["period_end"], "derivation": derivation,
+        "is_complete": False,
+        "source_lineage": [[src["fiscal_year"], src["fiscal_period"]]],
+        "data_quality": src.get("data_quality") or 0,
+        "calculated_at": datetime.utcnow(),
+    }
+    for c in _CARRY:
+        rec[c] = src.get(c)
+    for c in _FLOW_COLS:
+        rec[c] = src.get(c)
+    for c in _STOCK_COLS:
+        rec[c] = src.get(c)
+    return rec
+
+
+def _cy_record(corp_code, basis, cyear, quarters: dict, derivation, version: int = 1) -> dict:
+    """달력연도(CY) 레코드. flow=ΣCQ, stock=CQ4(12-31) 스냅샷. 4분기 완비 가정."""
+    cq4 = quarters["CQ4"]
+    rec = {
+        "corp_code": corp_code, "calendar_year": cyear, "calendar_period": "CY",
+        "statement_type": basis, "version": version,
+        "period_end": date(cyear, 12, 31), "derivation": derivation,
+        "is_complete": True,
+        "source_lineage": [[quarters[q]["fiscal_year"], quarters[q]["fiscal_period"]]
+                           for q in _CQ_ORDER],
+        "data_quality": max((quarters[q].get("data_quality") or 0) for q in _CQ_ORDER),
+        "calculated_at": datetime.utcnow(),
+    }
+    for c in _CARRY:
+        rec[c] = cq4.get(c)
+    # flow = ΣCQ (각 분기 그 컬럼이 모두 non-None 일 때만; 하나라도 None → None, 추정 금지).
+    for c in _FLOW_COLS:
+        vals = [quarters[q].get(c) for q in _CQ_ORDER]
+        rec[c] = sum(vals) if all(v is not None for v in vals) else None
+    # stock = 12-31 스냅샷(CQ4 잔액).
+    for c in _STOCK_COLS:
+        rec[c] = cq4.get(c)
+    return rec
 
 
 def _load_asfiled_v3(session, corp_code: str, basis: str) -> dict[tuple[int, str], dict]:

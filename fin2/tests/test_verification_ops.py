@@ -183,7 +183,8 @@ def test_fix_batch_cycle_and_recheck(engines, as_role, monkeypatch):
 
     monkeypatch.setattr(ops, "require_clean_pushed_head", lambda: "feedbee")
     # a parked (not fixed) issue is released fixing → open, never marked fixed
-    res = ops.batch_mark_fixed(b["batch_id"], exclude=[issue_id], exclude_note="source defect")
+    res = ops.batch_mark_fixed(b["batch_id"], exclude=[issue_id], exclude_note="source defect",
+                                 verdict="defer")
     assert res["released"] == [issue_id] and res["fixed"] == []
     with ops._Tx(evidence="re-take for test") as c:
         assert c.execute(text("SELECT status FROM verification.issues WHERE issue_id = :i"),
@@ -477,7 +478,8 @@ def test_batch_set_done_refuses_when_issues_still_fixing(engines, as_role, monke
 
     # the documented way out: release it fixing -> open with a note, *then* close the batch.
     monkeypatch.setattr(ops, "require_clean_pushed_head", lambda: "feedbee")
-    res = ops.batch_mark_fixed(b["batch_id"], exclude=[issue_id], exclude_note="원문결함, 코드수정 불필요")
+    res = ops.batch_mark_fixed(b["batch_id"], exclude=[issue_id], exclude_note="원문결함, 코드수정 불필요",
+                                 verdict="defer")
     assert res["released"] == [issue_id]
     ops.batch_set(b["batch_id"], status="done")  # no longer raises
 
@@ -668,3 +670,69 @@ def test_recheck_xbrl_tax_expense_label_resolves_by_concept(engines, as_role):
         # non-tax labels and the pre-tax line get no fallback
         assert value("consolidated", "법인세비용차감전순이익") is None
         assert value("consolidated", "당기순이익") is None
+
+
+def test_no_fix_release_is_withdrawn_and_not_registered_again(engines, as_role, monkeypatch):
+    # 2026-10-03 (지엘팜텍 #86707~#86709, batch #93): fix released three issues as a source
+    # defect, but that conclusion only lived in free-text evidence — verify never withdrew
+    # them, they sat `open` in fix_queue, and the reviewer registered the same cells again,
+    # so both sides re-investigated them. Now a `--verdict no_fix` release is withdrawn by the
+    # verify runner with no model run, and the cell cannot be registered again while its DB
+    # value is unchanged.
+    _admin_sql(engines, "UPDATE verification.issues SET status = 'closed' "
+               "WHERE rcept_no = :r AND status <> 'closed'", {"r": R1})
+    _admin_sql(engines, "UPDATE verification.progress SET status = 'pending', claimed_by = NULL, "
+               "lease_until = NULL WHERE corp_code = :c", {"c": CORP})
+    cell = {"basis": "consolidated", "statement": "BS", "account_label": "자산총계",
+            "db_value": 100, "source_value": 90, "source_value_raw": "90", "source_unit": "원",
+            "error_type": "value_mismatch", "evidence": "원문 90, DB 100"}
+
+    as_role("verify")
+    assert ops.claim(SLOT) == SLOT
+    [issue_id] = ops.add_issues(R1, [cell])
+    ops.done()
+
+    as_role("fix")
+    monkeypatch.setattr(ops, "require_clean_pushed_head", lambda: "feedbee")
+    b = ops.batch_new("value_mismatch", "test no_fix release", [issue_id], "R_NOFIX")
+    with pytest.raises(VqError, match="verdict"):
+        ops.batch_mark_fixed(b["batch_id"], exclude=[issue_id], exclude_note="원문결함")
+    res = ops.batch_mark_fixed(b["batch_id"], exclude=[issue_id], verdict="no_fix",
+                               exclude_note="원문 3개월≠누적, DB 는 누적열 정확 전사")
+    assert res["released"] == [issue_id]
+    ops.batch_set(b["batch_id"], status="done")
+    q = ops.fix_queue()
+    assert q["pending_withdraw"] == 1
+    assert issue_id not in [i["issue_id"] for i in ops.issues_of_type("value_mismatch")]
+    b2 = ops.batch_new("value_mismatch", "sweep must skip a no_fix release", None)
+    row = _admin_sql(engines, "SELECT status, fix_batch_id FROM verification.issues "
+                     "WHERE issue_id = :i", {"i": issue_id})[0]
+    assert row == ("open", None)
+    ops.batch_set(b2["batch_id"], status="abandoned")
+
+    as_role("verify")
+    assert [w[0] for w in ops.withdraw_released(dry_run=True)["withdrawn"]] == [issue_id]
+    res = ops.withdraw_released()
+    assert res["withdrawn"] == [issue_id]
+    assert R1 in res["passed_filings"]                # no reload since → no model re-check
+    ev = _admin_sql(engines, "SELECT evidence FROM verification.issue_events WHERE issue_id = :i "
+                    "ORDER BY event_id DESC LIMIT 1", {"i": issue_id})[0][0]
+    assert ev.startswith(ops.WITHDRAWN_NO_FIX_PREFIX) and "누적열 정확 전사" in ev
+    assert ops.withdraw_released()["withdrawn"] == []  # idempotent
+    with pytest.raises(VqError, match="태그 없는"):
+        ops.withdraw_released(ids=[issue_id])           # already closed, not an untagged release
+
+    as_role("fix")
+    assert ops.fix_queue()["pending_withdraw"] == 0
+
+    as_role("verify")
+    assert ops.claim(SLOT) == SLOT
+    assert issue_id in [i["issue_id"] for i in ops.slot_detail(SLOT)["no_fix_cells"]]
+    suppressed: list = []
+    assert ops.add_issues(R1, [cell], suppressed) == []
+    assert suppressed[0]["prior_issue_id"] == issue_id
+    # a changed DB value is a new observation, not the concluded one
+    new_ids = ops.add_issues(R1, [{**cell, "db_value": 101}], suppressed)
+    assert len(new_ids) == 1 and len(suppressed) == 1
+    ops.transition(new_ids[0], "closed", "[withdrawn] test cleanup")
+    ops.done()

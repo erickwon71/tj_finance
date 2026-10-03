@@ -6,6 +6,7 @@
 
 역할은 DB 계정이 정한다(워크트리 .env 의 DATABASE_URL):
   검증 camp_run        (tjf_verify)  next · show · pass · skip · issue add · done · recheck · close · reopen
+                                     · withdraw-released (러너가 자동 실행)
   수정 camp_err_review (tjf_fix)     fix-queue · batch … · ask · decision …
   main                 (관리자)       admin …
 
@@ -20,6 +21,7 @@
   python scripts/vq.py batch new --type sign_flip --title "..." [--rule R167]
   python scripts/vq.py batch reload 3
   python scripts/vq.py batch mark-fixed 3
+  python scripts/vq.py batch mark-fixed 3 --exclude 11,12 --verdict no_fix --note "원문결함 근거"
 """
 from __future__ import annotations
 
@@ -95,6 +97,14 @@ def _print_detail(d: dict, csvs: dict[str, str] | None) -> None:
         for other, same in f["identical_to_earlier"].items():
             print(f"      = {other} 와 byte-identical: {','.join(same)}")
         _print_machine(f)
+    if d.get("no_fix_cells"):
+        print("\n  ★이미 결론난 셀(수정쪽 '코드수정 불필요' — 원문결함·오탐). 재조사·재등록하지 말 것"
+              "(DB 값이 같으면 issue add 가 자동으로 건너뜀; 이견이 있으면 reopen <id>):")
+        for i in d["no_fix_cells"]:
+            print(f"    #{i['issue_id']} {i['rcept_no']} {i['basis']}/{i['statement']} "
+                  f"{i['account_label']}{'/' + i['column_label'] if i['column_label'] else ''} "
+                  f"DB={i['db_value']} 원문={i['source_value_raw']} ({i['error_type']})")
+            print(f"        결론: {i['verdict']}")
     if d["open_issues"]:
         print("\n  미해결 이슈:")
         for i in d["open_issues"]:
@@ -198,8 +208,17 @@ def cmd_issue_add(a):
         items = items if isinstance(items, list) else [items]
     else:
         items = [{k: getattr(a, k) for k in ops._ISSUE_FIELDS if getattr(a, k, None) is not None}]
-    ids = ops.add_issues(a.rcept, items)
+    suppressed: list[dict] = []
+    ids = ops.add_issues(a.rcept, items, suppressed)
     print(f"이슈 등록 {len(ids)}건: {ids}")
+    if suppressed:
+        print(f"★등록 안 함 {len(suppressed)}건 — 수정쪽이 이미 '코드수정 불필요'로 결론낸 셀(DB 값 동일). "
+              f"재조사 불필요. 이견이 있으면 이전 이슈를 `vq.py reopen <id> --evidence ...` 로 다툴 것:")
+        for x in suppressed:
+            print(f"    {x['account_label']}{'/' + x['column_label'] if x['column_label'] else ''} "
+                  f"DB={x['db_value']} → 이전 #{x['prior_issue_id']}: {x['prior_verdict'][:160]}")
+        if not ids:
+            print("    이 필링에 다른 불일치가 없으면 이슈 없이 pass 한다.")
 
 
 def cmd_done(a):
@@ -237,6 +256,21 @@ def cmd_withdraw(a):
     print(_j(ops.transition(a.issue_id, "closed", "[withdrawn] " + a.evidence)))
 
 
+def cmd_withdraw_released(a):
+    ids = [int(x) for x in a.ids.split(",")] if a.ids else None
+    res = ops.withdraw_released(dry_run=a.dry_run, ids=ids)
+    if a.json:
+        print(json.dumps(res, ensure_ascii=False, default=str))
+        return
+    if a.dry_run:
+        for iid, r, ev in res["withdrawn"]:
+            print(f"#{iid} {r}  {ev}")
+        print(f"(dry-run) withdraw 대상 {len(res['withdrawn'])}건")
+        return
+    print(f"withdraw {len(res['withdrawn'])}건 {res['withdrawn']} · "
+          f"재검증 없이 pass 된 필링 {len(res['passed_filings'])} {res['passed_filings']}")
+
+
 # ─────────────────────────────── fix ───────────────────────────────
 def cmd_fix_queue(a):
     q = ops.fix_queue()
@@ -257,12 +291,14 @@ def cmd_fix_queue(a):
         print("  없음")
     print("■ 미배정 이슈 (error_type 별)")
     for g in q["groups"] or []:
-        warn = f" ★반려됨 {g['n_released_fp']}건(새 배치 금지, issues --type 으로 확인)" \
+        warn = f" ★이전 배치에서 제외된 이력 {g['n_released_fp']}건(issues --type 으로 사유 확인)" \
             if g["n_released_fp"] else ""
         print(f"  {g['error_type']:17s} {g['label_ko']:10s} 이슈 {g['n_issues']:4d} · 필링 {g['n_filings']} · "
               f"회사 {g['n_corps']} · 재오픈 {g['n_reopened']} (첫 이슈 #{g['first_issue']}){warn}")
     if not q["groups"]:
         print("  없음")
+    if q.get("pending_withdraw"):
+        print(f"■ no_fix 반려 → verify 자동 withdraw 대기 {q['pending_withdraw']}건 (위 목록에서 제외됨, 손댈 것 없음)")
 
 
 def cmd_issues(a):
@@ -281,13 +317,15 @@ def cmd_issues(a):
             if r["last_reopen_evidence"]:
                 print(f"    마지막 재오픈 사유({r['last_reopen_actor']}, {r['last_reopen_at']}): "
                       f"{r['last_reopen_evidence'][:300]}")
-        # ★2026-09-30 — batch #59 실사례: --exclude로 풀린 '오탐, 코드수정 불필요' 이슈가
-        # 맨 open으로 fix_queue에 재등장해 다음 세션이 또 새 배치를 만들 뻔했다. 이미 결론난
-        # 이슈임을 fix에 바로 보여주고, verify가 withdraw로 닫아야 함을 알린다.
+        # ★2026-09-30 — batch #59 실사례: --exclude로 풀린 이슈가 맨 open으로 fix_queue에
+        # 재등장해 다음 세션이 처음부터 재조사했다. ★2026-10-03 — `--verdict no_fix` 반려는
+        # verify 러너가 자동 withdraw 하고 이 목록에서도 빠진다. 여기 남는 건 defer(결함은
+        # 맞고 미룸) 또는 --verdict 도입 전 반려 — 제외 사유를 먼저 읽고 판단한다.
         if r.get("released_note"):
-            print(f"    ★★이전 batch #{r['released_batch_id']}에서 '코드수정 불필요'로 반려됨"
-                  f"({r['released_at']}) — 새 배치에 넣지 말 것. verify의 withdraw 대기 중")
-            print(f"    반려 사유: {r['released_note'][:300]}")
+            print(f"    ★이전 batch #{r['released_batch_id']}에서 제외됨({r['released_at']}) — "
+                  f"사유를 먼저 읽을 것. 코드수정 불필요 결론이면 새 배치 대신 사용자에게 "
+                  f"`withdraw-released --ids {r['issue_id']}` 요청")
+            print(f"    제외 사유: {r['released_note'][:300]}")
 
 
 def cmd_batch_new(a):
@@ -307,7 +345,8 @@ def cmd_batch_reload(a):
 
 def cmd_batch_mark_fixed(a):
     exclude = [int(x) for x in a.exclude.split(",")] if a.exclude else []
-    print(_j(ops.batch_mark_fixed(a.batch_id, exclude=exclude, exclude_note=a.note)))
+    print(_j(ops.batch_mark_fixed(a.batch_id, exclude=exclude, exclude_note=a.note,
+                                  verdict=a.verdict)))
 
 
 def cmd_batch_set(a):
@@ -410,6 +449,11 @@ def build_parser() -> argparse.ArgumentParser:
     x = sp.add_parser("done"); x.add_argument("--slot"); x.add_argument("--json", action="store_true")
     x.set_defaults(fn=cmd_done)
     x = sp.add_parser("recheck"); x.add_argument("slot", nargs="?"); x.set_defaults(fn=cmd_recheck)
+    x = sp.add_parser("withdraw-released",
+                      help="검증(러너 자동): 수정쪽이 --verdict no_fix 로 반려한 이슈를 withdraw")
+    x.add_argument("--dry-run", action="store_true")
+    x.add_argument("--ids", help="쉼표구분 issue_id — --verdict 도입 전(태그 없는) 반려 중 no_fix 결론인 것")
+    x.add_argument("--json", action="store_true"); x.set_defaults(fn=cmd_withdraw_released)
     for name, fn in (("close", cmd_close), ("reopen", cmd_reopen), ("withdraw", cmd_withdraw)):
         x = sp.add_parser(name); x.add_argument("issue_id", type=int)
         x.add_argument("--evidence", required=True); x.set_defaults(fn=fn)
@@ -431,6 +475,9 @@ def build_parser() -> argparse.ArgumentParser:
     y = bsp.add_parser("mark-fixed"); y.add_argument("batch_id", type=int)
     y.add_argument("--exclude", help="쉼표구분 issue_id — 고치지 않은(주차) 이슈. fixed 대신 open 으로 되돌린다")
     y.add_argument("--note", help="--exclude 이슈를 되돌리는 사유(evidence 에 남음)")
+    y.add_argument("--verdict", choices=["no_fix", "defer"],
+                   help="--exclude 필수: no_fix=원문결함·오탐, 코드수정 불필요(verify 러너가 자동 withdraw, "
+                        "같은 셀 재등록 차단) / defer=결함은 맞음, 나중 배치에서 수정(fix-queue 에 남음)")
     y.set_defaults(fn=cmd_batch_mark_fixed)
     y = bsp.add_parser("set"); y.add_argument("batch_id", type=int)
     y.add_argument("--status", choices=["open", "waiting_decision", "reloading", "done", "abandoned"])

@@ -35,6 +35,42 @@ ERAS = {"2015+": (1, 2015, 9999), "2011-14": (2, 2011, 2014),
         "2007-10": (3, 2007, 2010), "pre-2007": (4, 1999, 2006)}
 
 
+# ─── fix → verify hand-off of a "no code fix needed" conclusion (2026-10-03) ───
+# fix releases a parked issue with `batch mark-fixed --exclude ... --verdict no_fix|defer`.
+#   no_fix — the fix side concluded: source defect / false report, the DB is right. The
+#            verify runner withdraws it on its own (`withdraw_released`, no model run), and
+#            add_issues() refuses to register the same cell again while its DB value is
+#            unchanged. Before this, the conclusion only lived in free-text evidence: verify
+#            never acted on it, the issue sat `open` in fix_queue and the reviewer registered
+#            the same cell again — both sides re-investigated it and spent quota.
+#   defer  — not fixed in this batch, still a defect: stays `open` for a later batch.
+RELEASE_EVIDENCE_LIKE = "fix_batch:%released (not fixed):%"
+NO_FIX_TAG, DEFER_TAG = "[no_fix]", "[defer]"
+RELEASE_VERDICTS = ("no_fix", "defer")
+WITHDRAWN_NO_FIX_PREFIX = "[withdrawn][no_fix]"
+# A closing event (alias `e`) that records a "no code fix needed" verdict. The `[admin] batch
+# #N 결론 ... 코드수정 불필요` form is the hand-written withdraw of batches #22 and #59.
+_NO_FIX_CLOSE_SQL = (f"(e.evidence LIKE '{WITHDRAWN_NO_FIX_PREFIX}%' OR "
+                     "(e.evidence LIKE '[admin] batch #%' AND e.evidence LIKE '%코드수정 불필요%'))")
+
+
+def _released_sql(tag_cond: str) -> str:
+    """Issue `i` whose latest transition is a fix-side release matching `tag_cond` (on `t`)."""
+    return f"""EXISTS (SELECT 1 FROM (SELECT e.evidence FROM verification.issue_events e
+                       WHERE e.issue_id = i.issue_id AND e.action = 'transition'
+                       ORDER BY e.at DESC, e.event_id DESC LIMIT 1) t
+                WHERE t.evidence LIKE '{RELEASE_EVIDENCE_LIKE}' AND {tag_cond})"""
+
+
+# Released with --verdict no_fix and not yet withdrawn by verify: out of the fix queue.
+_PENDING_WITHDRAW_SQL = _released_sql(f"t.evidence LIKE '%: {NO_FIX_TAG}%'")
+# Released before --verdict existed (untagged). Those were mixed (checked 2026-10-03: of 37,
+# 30 no-fix conclusions and 7 deferred), so they are only taken by explicit id
+# (`withdraw-released --ids`), never wholesale.
+_UNTAGGED_RELEASE_SQL = _released_sql(
+    f"t.evidence NOT LIKE '%: {NO_FIX_TAG}%' AND t.evidence NOT LIKE '%: {DEFER_TAG}%'")
+
+
 class VqError(RuntimeError):
     """A refused operation. The message is meant for the operator (Korean)."""
 
@@ -430,6 +466,19 @@ def slot_detail(slot: Slot) -> dict:
             WHERE corp_code = :c AND fiscal_year = :y AND fiscal_period = :p
               AND status <> 'closed'
             ORDER BY issue_id"""), slot.params()).mappings()]
+        # Cells already concluded "no code fix needed": the reviewer must not re-investigate
+        # or re-register them (add_issues refuses while the DB value is unchanged).
+        no_fix = [dict(r) for r in conn.execute(text(f"""
+            SELECT i.issue_id, i.rcept_no, i.basis, i.statement, i.account_label,
+                   i.column_label, i.db_value, i.source_value_raw, i.error_type,
+                   left(e.evidence, 200) AS verdict
+            FROM verification.issues i
+            JOIN LATERAL (SELECT e.evidence FROM verification.issue_events e
+                          WHERE e.issue_id = i.issue_id AND e.to_status = 'closed'
+                          ORDER BY e.at DESC, e.event_id DESC LIMIT 1) e ON true
+            WHERE i.corp_code = :c AND i.fiscal_year = :y AND i.fiscal_period = :p
+              AND i.status = 'closed' AND {_NO_FIX_CLOSE_SQL}
+            ORDER BY i.issue_id"""), slot.params()).mappings()]
     by_rcept: dict[str, dict[str, int]] = {}
     for r, basis, stmt, n in counts:
         code = ("sep" if basis == "separate" else "con") + "-" + stmt.lower()
@@ -454,7 +503,7 @@ def slot_detail(slot: Slot) -> dict:
             if ident:
                 same[g["rcept_no"]] = ident
         f["identical_to_earlier"] = same
-    return {"slot": info, "filings": filings, "open_issues": issues}
+    return {"slot": info, "filings": filings, "open_issues": issues, "no_fix_cells": no_fix}
 
 
 def write_review_csvs(slot: Slot, detail: dict) -> dict[str, str]:
@@ -593,8 +642,34 @@ _ISSUE_FIELDS = ("basis", "statement", "account_label", "column_label", "db_labe
                  "error_type", "evidence", "rule_id")
 
 
-def add_issues(rcept: str, items: list[dict]) -> list[int]:
-    """Register one or more cell mismatches for a filing of the claimed slot."""
+def _prior_no_fix(conn, rcept: str, row: dict) -> dict | None:
+    """The latest closed issue on the same cell whose closing recorded a no-fix verdict, if the
+    DB value observed now is the one that verdict was about (a reload that changed the value
+    makes it a new observation again)."""
+    hit = conn.execute(text(f"""
+        SELECT i.issue_id, i.error_type, e.evidence
+        FROM verification.issues i
+        JOIN LATERAL (SELECT e.evidence FROM verification.issue_events e
+                      WHERE e.issue_id = i.issue_id AND e.to_status = 'closed'
+                      ORDER BY e.at DESC, e.event_id DESC LIMIT 1) e ON true
+        WHERE i.rcept_no = :r AND i.basis = :b AND i.statement = :s
+          AND i.account_label = :a AND coalesce(i.column_label, '') = coalesce(:cl, '')
+          AND i.status = 'closed'
+          AND i.db_value IS NOT DISTINCT FROM CAST(:v AS numeric)
+          AND {_NO_FIX_CLOSE_SQL}
+        ORDER BY i.issue_id DESC LIMIT 1"""),
+        {"r": rcept, "b": row["basis"], "s": row["statement"], "a": row["account_label"],
+         "cl": row.get("column_label"), "v": row.get("db_value")}).mappings().fetchone()
+    return dict(hit) if hit else None
+
+
+def add_issues(rcept: str, items: list[dict], suppressed: list | None = None) -> list[int]:
+    """Register one or more cell mismatches for a filing of the claimed slot.
+
+    An item on a cell the fix side already concluded "no code fix needed" for (and whose DB
+    value is still the same) is not registered; it is appended to `suppressed` instead, so
+    the same finding stops bouncing between verify and fix. To dispute that verdict, reopen
+    the old issue (`vq.py reopen <id> --evidence ...`) rather than registering a new one."""
     _require("verify")
     ids = []
     with _Tx() as conn:
@@ -617,6 +692,15 @@ def add_issues(rcept: str, items: list[dict]) -> list[int]:
                 # _strip_label_disambiguator).
                 row["db_label"] = _strip_label_disambiguator(row["account_label"])
             row["column_label"] = _strip_column_label_prefix(row.get("column_label"))
+            prior = _prior_no_fix(conn, rcept, row)
+            if prior is not None:
+                if suppressed is not None:
+                    suppressed.append({"account_label": row["account_label"],
+                                       "column_label": row["column_label"],
+                                       "db_value": row.get("db_value"),
+                                       "prior_issue_id": prior["issue_id"],
+                                       "prior_verdict": (prior["evidence"] or "")[:300]})
+                continue
             row.update(slot.params(), r=rcept, url=DART_URL.format(rcept=rcept))
             conn.execute(text("SELECT set_config('verification.evidence', :e, true)"),
                          {"e": (it.get("evidence") or "")[:2000]})
@@ -894,7 +978,7 @@ def transition(issue_id: int, to: str, evidence: str | None) -> dict:
 # ═══════════════════════════════ fix side ═══════════════════════════════
 def fix_queue() -> dict:
     with engine.connect() as conn:
-        groups = [dict(r) for r in conn.execute(text("""
+        groups = [dict(r) for r in conn.execute(text(f"""
             SELECT i.error_type, et.label_ko, count(*) AS n_issues,
                    count(DISTINCT i.rcept_no) AS n_filings, count(DISTINCT i.corp_code) AS n_corps,
                    count(*) FILTER (WHERE i.status = 'reopened') AS n_reopened,
@@ -911,7 +995,11 @@ def fix_queue() -> dict:
                    min(i.issue_id) AS first_issue
             FROM verification.issues i JOIN verification.error_types et ON et.code = i.error_type
             WHERE i.status IN ('open', 'reopened') AND i.fix_batch_id IS NULL
+              AND NOT {_PENDING_WITHDRAW_SQL}
             GROUP BY 1, 2 ORDER BY n_issues DESC""")).mappings()]
+        pending_withdraw = conn.execute(text(f"""
+            SELECT count(*) FROM verification.issues i
+            WHERE i.status = 'open' AND {_PENDING_WITHDRAW_SQL}""")).scalar_one()
         batches = [dict(r) for r in conn.execute(text("""
             SELECT b.batch_id, b.error_type, b.rule_id, b.title, b.status, b.created_at,
                    (SELECT count(*) FROM verification.issues i WHERE i.fix_batch_id = b.batch_id
@@ -930,7 +1018,8 @@ def fix_queue() -> dict:
                    answered_at FROM verification.decisions
             WHERE status = 'pending' OR (status = 'answered' AND answered_at > now() - interval '3 days')
             ORDER BY decision_id DESC LIMIT 20""")).mappings()]
-    return {"groups": groups, "batches": batches, "decisions": decisions}
+    return {"groups": groups, "batches": batches, "decisions": decisions,
+            "pending_withdraw": pending_withdraw}
 
 
 def issues_of_type(error_type: str, statuses=("open", "reopened")) -> list[dict]:
@@ -950,7 +1039,7 @@ def issues_of_type(error_type: str, statuses=("open", "reopened")) -> list[dict]
     to_status='open')를 찾아 이미 "코드수정 불필요"로 결론난 적이 있는지 같이 반환한다 —
     이 건은 fix가 다시 배치화할 게 아니라 verify가 `withdraw`로 닫아야 하는 대상이다."""
     with engine.connect() as conn:
-        return [dict(r) for r in conn.execute(text("""
+        return [dict(r) for r in conn.execute(text(f"""
             SELECT i.*, c.corp_name,
                    coalesce(h.reopen_count, 0) AS reopen_count,
                    h.last_reopen_at, h.last_reopen_evidence, h.last_reopen_actor,
@@ -979,6 +1068,7 @@ def issues_of_type(error_type: str, statuses=("open", "reopened")) -> list[dict]
                 FROM verification.issue_events e WHERE e.issue_id = i.issue_id
             ) h ON true
             WHERE i.error_type = :t AND i.status = ANY(:s) AND i.fix_batch_id IS NULL
+              AND NOT {_PENDING_WITHDRAW_SQL}
             ORDER BY i.issue_id"""), {"t": error_type, "s": list(statuses)}).mappings()]
 
 
@@ -991,9 +1081,10 @@ def batch_new(error_type: str, title: str, issue_ids: list[int] | None,
             VALUES (:t, :r, :ti) RETURNING batch_id"""),
             {"t": error_type, "r": rule_id, "ti": title[:200]}).scalar_one()
         if issue_ids is None:
-            issue_ids = [r[0] for r in conn.execute(text("""
-                SELECT issue_id FROM verification.issues
-                WHERE error_type = :t AND status IN ('open', 'reopened') AND fix_batch_id IS NULL"""),
+            issue_ids = [r[0] for r in conn.execute(text(f"""
+                SELECT issue_id FROM verification.issues i
+                WHERE error_type = :t AND status IN ('open', 'reopened') AND fix_batch_id IS NULL
+                  AND NOT {_PENDING_WITHDRAW_SQL}"""),
                 {"t": error_type}).fetchall()]
         n = conn.execute(text("""
             UPDATE verification.issues SET fix_batch_id = :b, status = 'fixing',
@@ -1198,15 +1289,22 @@ def batch_reload(batch_id: int, limit: int | None = None,
 
 
 def batch_mark_fixed(batch_id: int, exclude: list[int] | None = None,
-                     exclude_note: str | None = None) -> dict:
+                     exclude_note: str | None = None, verdict: str | None = None) -> dict:
     """fixing → fixed for every issue of the batch whose filing was actually reloaded with
     changed data (the trigger enforces it). The rest stay fixing and are listed.
 
     The trigger checks that the FILING was reloaded, not that this issue's cell changed —
     an issue parked without a code fix (e.g. a source defect) whose filing got reloaded as
     a batch target would pass. `exclude` releases such issues fixing → open instead
-    (batch #25: four parked issues were marked fixed this way)."""
+    (batch #25: four parked issues were marked fixed this way).
+
+    `verdict` says what the release means (see RELEASE_VERDICTS): `no_fix` hands the issue to
+    verify for an automatic withdraw, `defer` keeps it in the fix queue for a later batch."""
     _require("fix")
+    if exclude and verdict not in RELEASE_VERDICTS:
+        raise VqError("--exclude 에는 --verdict no_fix|defer 가 필요하다 — no_fix=원문결함·오탐으로 "
+                      "코드수정 불필요(verify 가 자동 withdraw), defer=결함은 맞고 나중 배치에서 수정")
+    tag = {"no_fix": NO_FIX_TAG, "defer": DEFER_TAG}.get(verdict or "", "")
     commit = require_clean_pushed_head()
     fixed, not_changed, released = [], [], []
     with engine.connect() as conn:
@@ -1219,7 +1317,8 @@ def batch_mark_fixed(batch_id: int, exclude: list[int] | None = None,
         # fix_batch_id deliberately stays set here (not nulled) — a still-open batch may
         # legitimately re-take a released issue back into `fixing` (test_fix_batch_cycle_
         # and_recheck). It gets cleared once the batch itself closes (see batch_set()).
-        with _Tx(evidence=f"fix_batch:{batch_id} released (not fixed): {exclude_note or ''}") as conn:
+        with _Tx(evidence=f"fix_batch:{batch_id} released (not fixed): "
+                          f"{(tag + ' ') if tag else ''}{exclude_note or ''}") as conn:
             conn.execute(text("""
                 UPDATE verification.issues SET status = 'open' WHERE issue_id = :i"""), {"i": iid})
         released.append(iid)
@@ -1234,6 +1333,82 @@ def batch_mark_fixed(batch_id: int, exclude: list[int] | None = None,
         except Exception as exc:  # noqa: BLE001 — trigger refusal is per issue
             not_changed.append((iid, str(getattr(exc, "orig", exc)).splitlines()[0][:200]))
     return {"batch_id": batch_id, "fixed": fixed, "not_fixed": not_changed, "released": released}
+
+
+# ═══════════════════════ fix verdict → verify (withdraw) ═══════════════════════
+def withdraw_released(dry_run: bool = False, ids: list[int] | None = None) -> dict:
+    """Verify side of a fix `no_fix` release: withdraw (open → closed) every issue the fix side
+    released with `--verdict no_fix`, carrying its conclusion into the closing evidence (which
+    add_issues() then uses to refuse re-registering the cell). `ids` additionally takes those
+    untagged releases made before --verdict existed that were no-fix conclusions. No model is
+    involved — the verify runner calls this between runs.
+
+    A filing whose only remaining issues were withdrawn here goes back to `pending` (via
+    refresh_slot) and would cost a model run that just re-finds the same source defect. If it
+    was not reloaded since those issues were registered (load_seq == the newest
+    found_load_seq of its issues — i.e. the content the reviewer fully compared), it is passed
+    directly instead. Slots that are claimed right now are left to their owner."""
+    _require("verify")
+    cond = (f"({_PENDING_WITHDRAW_SQL} OR (i.issue_id = ANY(:ids) AND {_UNTAGGED_RELEASE_SQL}))")
+    with engine.connect() as conn:
+        rows = [dict(r) for r in conn.execute(text(f"""
+            SELECT i.issue_id, i.rcept_no, i.corp_code, i.fiscal_year, i.fiscal_period,
+                   i.error_type,
+                   (SELECT e.evidence FROM verification.issue_events e
+                     WHERE e.issue_id = i.issue_id AND e.action = 'transition'
+                     ORDER BY e.at DESC, e.event_id DESC LIMIT 1) AS release_evidence
+            FROM verification.issues i
+            WHERE i.status = 'open' AND {cond}
+            ORDER BY i.issue_id"""), {"ids": list(ids or [])}).mappings()]
+    missing = sorted(set(ids or ()) - {r["issue_id"] for r in rows})
+    if missing:
+        raise VqError(f"--ids 중 태그 없는 반려(open) 이슈가 아닌 것: {missing}")
+    out = {"withdrawn": [], "passed_filings": [], "dry_run": dry_run}
+    if dry_run:
+        out["withdrawn"] = [(r["issue_id"], r["rcept_no"], (r["release_evidence"] or "")[:160])
+                            for r in rows]
+        return out
+    for r in rows:
+        ev = r["release_evidence"] or ""
+        ev = ev.replace(f"released (not fixed): {NO_FIX_TAG} ", "released (not fixed): ", 1)
+        transition(r["issue_id"], "closed", f"{WITHDRAWN_NO_FIX_PREFIX} {ev}"[:2000])
+        out["withdrawn"].append(r["issue_id"])
+    for rcept in sorted({r["rcept_no"] for r in rows}):
+        if _pass_after_withdraw(rcept):
+            out["passed_filings"].append(rcept)
+    return out
+
+
+def _pass_after_withdraw(rcept: str) -> bool:
+    with _Tx(evidence="withdraw-released: 남은 이슈가 모두 no_fix 결론으로 닫힘, "
+                      "이슈 등록 이후 재적재 없음 → 등록 시 전체대조 결과로 pass") as conn:
+        f = conn.execute(text("""
+            SELECT pf.status, pf.corp_code, pf.fiscal_year, pf.fiscal_period,
+                   fl.load_seq, fl.scope_hashes, p.status AS slot_status,
+                   (SELECT count(*) FROM verification.issues i
+                     WHERE i.rcept_no = pf.rcept_no AND i.status <> 'closed') AS n_open,
+                   (SELECT max(i.found_load_seq) FROM verification.issues i
+                     WHERE i.rcept_no = pf.rcept_no) AS found_seq
+            FROM verification.progress_filings pf
+            JOIN verification.progress p USING (corp_code, fiscal_year, fiscal_period)
+            LEFT JOIN verification.filing_loads fl USING (rcept_no)
+            WHERE pf.rcept_no = :r FOR UPDATE OF pf"""), {"r": rcept}).mappings().fetchone()
+        if (f is None or f["status"] != "pending" or f["n_open"] or f["slot_status"] == "in_progress"
+                or not f["scope_hashes"] or f["load_seq"] is None or f["load_seq"] != f["found_seq"]):
+            return False
+        conn.execute(text("""
+            UPDATE verification.progress_filings
+               SET status = 'passed', verified_load_seq = :s, verified_scopes = CAST(:sc AS text[]),
+                   verified_scope_hashes = CAST(:h AS jsonb), verified_at = now(),
+                   verified_by = verification.actor(), note = :n, updated_at = now()
+             WHERE rcept_no = :r"""),
+            {"r": rcept, "s": f["load_seq"], "sc": sorted(f["scope_hashes"]),
+             "h": json.dumps(f["scope_hashes"]),
+             "n": "[withdraw-released] 미해결 이슈가 모두 수정쪽 no_fix 결론(원문결함·오탐)으로 "
+                  "withdraw 됨 — 등록 시점 전체대조 결과로 pass"})
+        conn.execute(text("SELECT verification.refresh_slot(:c, :y, :p)"),
+                     {"c": f["corp_code"], "y": f["fiscal_year"], "p": f["fiscal_period"]})
+    return True
 
 
 # ═══════════════════════════════ status ═══════════════════════════════

@@ -189,6 +189,12 @@ main() {
     fi
     prune_logs
 
+    # fix-side "no code fix needed" releases (batch mark-fixed --verdict no_fix): withdraw them
+    # here, without a model run, so neither side re-investigates them (2026-10-03).
+    wr=$("${VQ[@]}" withdraw-released --json 2>&1) || log "withdraw-released 실패: $wr"
+    nw=$(printf '%s' "$wr" | jq -r '.withdrawn | length' 2>/dev/null)
+    [ -n "$nw" ] && [ "$nw" != "0" ] && log "no_fix 반려 withdraw: $wr"
+
     slot=$("${VQ[@]}" claim --json | jq -r '.slot // empty')
     if [ -z "$slot" ]; then
       # With the machine gate on, model work appears as the machine pass progresses.

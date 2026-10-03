@@ -9,6 +9,9 @@
 1. `/Users/taejin/Project/tj_finance/.venv/bin/python scripts/vq.py show` 로 슬롯 상세를 본다.
    필링별 DART 링크·CSV 경로·적재 scope·행수, 이전 판정 이후 바뀐 scope, 같은 슬롯 안에서 byte-identical 인 scope,
    그리고 미해결 이슈가 나온다.
+   `show` 에 **"이미 결론난 셀"** 이 있으면, 그 셀은 수정 쪽이 원문결함·오탐으로 결론낸 것이다(코드수정 불필요). 다시 조사하거나 등록하지 않는다.
+   기계 발견이 그 셀이면 건너뛴다. 실수로 등록해도 `issue add` 가 "등록 안 함" 으로 걸러 준다.
+   그 필링에 다른 불일치가 없으면 이슈 없이 `pass` 한다.
 2. 이 슬롯에 **fixed 이슈**가 있으면 먼저 재확인한다: `vq.py recheck <슬롯>`.
    원문 셀과 현재 DB 값이 같으면 `vq.py close <id> --evidence "..."`, 다르면 `vq.py reopen <id> --evidence "..."`.
    근거에는 원문 셀 문자열과 DB 값을 그대로 적는다.

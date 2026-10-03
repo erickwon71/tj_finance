@@ -130,6 +130,46 @@ def test_sce_identity_catches_dropped_sign_in_source(tmp_path):
     assert f["explain"] == "sign" and f["row"].startswith("2024.12.31") and f["value"] == 30.0
 
 
+def test_flipping_the_total_change_row_is_not_a_dropped_sign(tmp_path):
+    # 20180515001512 (2026-10-03): the source prints closing == opening although the changes
+    # add up to +3,629,919,539. Flipping "자본 증가(감소) 합계" (the total of the rows above)
+    # cancels them and "closes" the column - mc5 reported it as a dropped sign (R162) and the
+    # cell flapped closed/re-registered across reloads. It is source arithmetic.
+    src = (("2017.01.01 (기초자본)", (215370991037,)),
+           ("당기순이익(손실)", (8806886098,)),
+           ("기타포괄손익", (-48110769,)),
+           ("총포괄손익", (8758775329,)),
+           ("배당금지급", (-5128855790,)),
+           ("자본 증가(감소) 합계", (3629919539,)),
+           ("2017.03.31 (기말자본)", (215370991037,)))
+    fmt = lambda v: f"({-v:,})" if v < 0 else f"{v:,}"  # noqa: E731
+    body = _section("4. 재무제표", _title("자본변동표"),
+                    _table(*[[lab, *map(fmt, vals)] for lab, vals in src], head=["구분", "총계"]))
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    rows = [_row("SCE", "separate", order, lab, v, col=col)
+            for order, (lab, vals) in enumerate(src) for col, v in enumerate(vals) if v is not None]
+    res = mc.compare(rows, tables)
+    assert "sign_omitted" not in {f["kind"] for f in res.findings}
+    assert res.verdict == "clean"
+
+
+def test_plain_row_equal_to_the_others_is_still_a_sign_candidate(tmp_path):
+    # the mc6 total-row exclusion must not hide R162 itself: dividends printed without
+    # parentheses that happen to equal net income + OCI (net change 0, closing == opening)
+    src = (("2024.01.01 (기초자본)", (500000000000,)),
+           ("당기순이익", (7000000000,)),
+           ("기타포괄손익", (3000000000,)),
+           ("배당금지급", (10000000000,)),
+           ("2024.12.31 (기말자본)", (500000000000,)))
+    body = _section("4. 재무제표", _title("자본변동표"),
+                    _table(*[[lab, f"{v:,}"] for lab, (v,) in src], head=["구분", "총계"]))
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    rows = [_row("SCE", "separate", order, lab, v) for order, (lab, (v,)) in enumerate(src)]
+    res = mc.compare(rows, tables)
+    f = [f for f in res.findings if f["kind"] == "sign_omitted"]
+    assert len(f) == 1 and f[0]["row"] == "배당금지급"
+
+
 def test_sce_arithmetic_of_the_source_alone_does_not_block(tmp_path):
     # capital rises with no change row (source omission): DB equals the source everywhere
     body = _sce([["2024.01.01 (기초자본)", "100", "10", "110"],

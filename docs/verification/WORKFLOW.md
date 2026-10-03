@@ -32,6 +32,22 @@ CLI: `scripts/vq.py` (모든 명령은 `--help`)
   (recheck 거짓 reopen 이 여러 차례 재발한 전례가 있다 — 관련 메모리:
   `recheck-tool-label-rename-false-reopen-2026-09-25`,
   `recheck-account-label-column-label-exact-match-false-reopen-2026-09-26`).
+- ★2026-10-03 — **수정 쪽 "코드수정 불필요" 결론은 DB 로 넘긴다(텍스트 전달 금지).**
+  전에는 결론이 `--exclude --note` 자유문장에만 남아, 검증 쪽이 처리하지 않았다(지엘팜텍 #86707~#86709 사례).
+  이슈는 `open` 으로 fix-queue 에 남았고, 검증은 같은 셀을 다시 등록했다. 그래서 양쪽이 같은 건을 재조사하며 쿼터를 썼다.
+  1. **fix**: `batch mark-fixed <id> --exclude 1,2 --verdict no_fix --note "근거"`.
+     `--exclude` 에는 `--verdict` 가 필수다. `no_fix` 는 원문결함·오탐이라 DB 가 맞다는 뜻이고,
+     `defer` 는 결함은 맞지만 다른 배치에서 고친다는 뜻이다(fix-queue 에 남음).
+     no_fix 반려는 fix-queue·`issues`·`batch new` 일괄수집에서 곧바로 빠진다.
+  2. **verify 러너**(모델 없음)는 매 회차 시작 전에 `vq.py withdraw-released` 를 실행한다.
+     no_fix 반려를 `[withdrawn][no_fix] <fix 근거>` 로 닫는다(open → closed).
+     그 필링에 남은 이슈가 없고 이슈 등록 이후 재적재도 없으면, 모델 재검증 없이 바로 pass 한다.
+  3. 같은 셀(rcept·basis·statement·계정·열)을 DB 값이 같은 상태로 다시 등록하면 `issue add` 가 **등록하지 않고 건너뛴다**.
+     기계 자동이슈도 마찬가지다. `show` 에는 "이미 결론난 셀" 로 표시된다.
+     결론에 이견이 있으면 새로 등록하지 말고 이전 이슈를 `vq.py reopen <id> --evidence ...` 로 다툰다.
+     재적재로 DB 값이 바뀌면 새 관찰로 보고 다시 등록할 수 있다.
+  4. `--verdict` 도입 전에 반려된 것(태그 없음)은 no_fix 와 defer 가 섞여 있다. 그래서 일괄 처리하지 않는다.
+     no_fix 로 확인된 것만 `vq.py withdraw-released --ids 1,2,...` 로 처리한다(검증 계정 또는 admin).
 
 ## 3. 재적재와 검증이 섞이지 않는 장치 (자동)
 
@@ -176,7 +192,9 @@ claude
    6. commit, `git push origin HEAD:main`
    7. `batch reload <id>`
    8. `batch mark-fixed <id>`
-      - 코드로 고치지 않고 주차한 이슈(원문 결함 등)는 `--exclude 1,2 --note "사유"` 로 빼야 한다. 트리거는 "필링이 재적재됐는가"만 보므로, 빼지 않으면 값이 그대로여도 fixed 가 된다(batch #25 사고). 뺀 이슈는 open 으로 돌아간다.
+      - 코드로 고치지 않은 이슈는 `--exclude 1,2 --verdict no_fix|defer --note "사유"` 로 빼야 한다. 트리거는 "필링이 재적재됐는가"만 보므로, 빼지 않으면 값이 그대로여도 fixed 가 된다(batch #25 사고).
+        - `no_fix`(원문결함·오탐, DB 정상): verify 러너가 자동으로 withdraw 한다. 검증 쪽에 따로 전달할 필요 없다. 같은 셀은 다시 등록되지 않는다.
+        - `defer`(결함은 맞음, 이번 배치 범위 밖): open 으로 fix-queue 에 남는다.
    9. `batch set <id> --status done`
 5. 배치가 끝나면 `/clear` 하거나 세션을 끝낸다. 다음 배치는 1부터 다시 한다.
 

@@ -256,3 +256,52 @@ def test_repass_keeps_clean_and_demotes_mismatch(engines, as_role):
     st = dict(_sql(engines, "SELECT rcept_no, status FROM verification.progress_filings WHERE rcept_no IN (:a, :b)",
                    {"a": R_OK, "b": R_BAD}))
     assert st == {R_OK: "passed", R_BAD: "pending"}
+
+
+def test_machine_does_not_register_a_no_fix_cell_again(engines, as_role):
+    # 2026-10-03: a cell the fix side concluded "no code fix needed" for (closed with a
+    # [withdrawn][no_fix] verdict) must not come back as a new auto issue while its DB value
+    # is unchanged — and with nothing else wrong the filing passes without a model run.
+    _kv(engines, "machine.audit_pct", "0")
+    _sql(engines, "UPDATE report_lines SET value_won = 7 WHERE rcept_no = :r AND label_raw = '배당금지급'",
+         {"r": R_SIGN})
+    with engines["admin"].begin() as c:
+        iid = c.execute(text("""
+            INSERT INTO verification.issues (corp_code, fiscal_year, fiscal_period, rcept_no, basis,
+                statement, account_label, column_label, db_value, error_type)
+            VALUES (:c, 2022, 'FY', :r, 'separate', 'SCE', '배당금지급',
+                    '이익잉여금 @ 2022.12.31 (기말자본)', 7, 'source_defect') RETURNING issue_id"""),
+            {"c": CORP, "r": R_SIGN}).scalar_one()
+        c.execute(text("SELECT set_config('verification.evidence', :e, true)"),
+                  {"e": ops.WITHDRAWN_NO_FIX_PREFIX + " fix_batch:1 released (not fixed): 원문결함"})
+        c.execute(text("UPDATE verification.issues SET status = 'closed' WHERE issue_id = :i"), {"i": iid})
+    assert dict(_sql(engines, "SELECT fiscal_year, status FROM verification.progress"))[2022] == "pending"
+    as_role("verify")
+    total = machine_pass.run(limit=5, log=lambda _m: None)
+    assert total["clean"] == 1 and total["auto_issue"] == 0, total
+    assert _sql(engines, "SELECT count(*) FROM verification.issues WHERE rcept_no = :r "
+                "AND status <> 'closed'", {"r": R_SIGN})[0][0] == 0
+    assert dict(_sql(engines, "SELECT fiscal_year, status FROM verification.progress"))[2022] == "passed"
+
+
+def test_mismatch_made_only_of_no_fix_cells_needs_no_model(engines, as_role):
+    # the column label is not compared: the reviewer's issue often has none
+    with engines["admin"].begin() as c:
+        iid = c.execute(text("""
+            INSERT INTO verification.issues (corp_code, fiscal_year, fiscal_period, rcept_no, basis,
+                statement, account_label, db_value, error_type)
+            VALUES (:c, 2023, 'FY', :r, 'consolidated', 'BS', '자산총계', 900, 'source_defect')
+            RETURNING issue_id"""), {"c": CORP, "r": R_BAD}).scalar_one()
+        c.execute(text("SELECT set_config('verification.evidence', :e, true)"),
+                  {"e": ops.WITHDRAWN_NO_FIX_PREFIX + " fix_batch:1 released (not fixed): 원문결함"})
+        c.execute(text("UPDATE verification.issues SET status = 'closed' WHERE issue_id = :i"), {"i": iid})
+    value = {"kind": "value", "basis": "consolidated", "statement": "BS", "label": "자산총계",
+             "db": 900, "src": 1000, "header": "제 5 기", "src_col": 0}
+    with engines["admin"].connect() as conn:
+        assert machine_pass._all_no_fix(conn, R_BAD, machine_pass.mc.Result(
+            "mismatch", machine_pass.mc.Counter(), [value])) == 1
+        assert machine_pass._all_no_fix(conn, R_BAD, machine_pass.mc.Result(
+            "mismatch", machine_pass.mc.Counter(), [{**value, "db": 901}])) == 0
+        assert machine_pass._all_no_fix(conn, R_BAD, machine_pass.mc.Result(
+            "mismatch", machine_pass.mc.Counter(),
+            [value, {"kind": "bs_identity", "basis": "consolidated", "statement": "BS"}])) == 0

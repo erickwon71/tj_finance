@@ -34,7 +34,7 @@ from pathlib import Path
 
 from lxml import etree
 
-TOOL_VERSION = "mc5"
+TOOL_VERSION = "mc6"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -648,6 +648,16 @@ def sce_identity(rows: list[SrcRow]) -> list[dict]:
             if end and closes(start, vals, -end):
                 signs.append((rows[b].label, end))
             for i, v in enumerate(vals):
+                # mc6 (2026-10-03): flipping a row that is the total of all the other change
+                # rows ("자본 증가(감소) 합계", or one row and its single-child subtotal) just
+                # cancels them - net change 0 - so it "closes" any column whose closing equals
+                # its opening. That is source arithmetic, not a dropped sign: such cells
+                # flapped closed/re-registered across reloads. A plain row that happens to
+                # equal the other rows (dividend printed without parentheses) stays a candidate.
+                rest = vals[:i] + [0.0] + vals[i + 1:]
+                if v and abs(_kept_sum(rest, totals, start, tol, True, True) - v) <= tol and (
+                        totals[i] or sum(1 for x in rest if x) == 1):
+                    continue
                 if v and closes(start, vals[:i] + [-v] + vals[i + 1:], end):
                     signs.append((mids[i].label, v))
             shifts = []

@@ -183,6 +183,33 @@ def findings_to_issues(findings: list[dict], kinds=CELL_KINDS) -> list[dict]:
     return out
 
 
+def _all_no_fix(conn, rcept: str, res: mc.Result) -> int:
+    """Number of findings if every non-info finding is a cell fact on a cell the fix side
+    already concluded "no code fix needed" for (closed no_fix issue, same DB value), else 0.
+
+    The column is not compared: the reviewer's issue and the machine finding label the column
+    differently (or not at all), while label + DB value already pin the cell in a filing."""
+    kinds = {x["kind"] for x in res.findings if x["kind"] not in mc.INFO_KINDS}
+    if not kinds or not kinds <= set(CELL_KINDS):
+        return 0
+    items = findings_to_issues(res.findings)
+    for it in items:
+        hit = conn.execute(text(f"""
+            SELECT 1 FROM verification.issues i
+            JOIN LATERAL (SELECT e.evidence FROM verification.issue_events e
+                          WHERE e.issue_id = i.issue_id AND e.to_status = 'closed'
+                          ORDER BY e.at DESC, e.event_id DESC LIMIT 1) e ON true
+            WHERE i.rcept_no = :r AND i.basis = :b AND i.statement = :s
+              AND i.account_label = :a AND i.status = 'closed'
+              AND i.db_value IS NOT DISTINCT FROM CAST(:v AS numeric)
+              AND {ops._NO_FIX_CLOSE_SQL}
+            LIMIT 1"""), {"r": rcept, "b": it["basis"], "s": it["statement"],
+                         "a": it["account_label"], "v": it.get("db_value")}).fetchone()
+        if hit is None:
+            return 0
+    return len(items)
+
+
 def verify_slot(slot: Slot) -> dict:
     """Machine-verify the pending filings of an already claimed slot, then release it."""
     out = {"slot": str(slot), "clean": 0, "mismatch": 0, "auto_issue": 0, "other": 0, "skipped": 0,
@@ -208,6 +235,8 @@ def verify_slot(slot: Slot) -> dict:
             else:
                 res = mc.compare_filing(conn, f["rcept_no"], path)
             results.append((f, res))
+        known = {f["rcept_no"]: _all_no_fix(conn, f["rcept_no"], r)
+                 for f, r in results if r.verdict == "mismatch"}
     clean = [(f, r) for f, r in results if r.verdict == "clean"]
     # Audit draw per slot, only when the machine would otherwise pass all of it.
     audit = bool(results) and len(clean) == len(results) and random.random() * 100 < pct
@@ -223,6 +252,12 @@ def verify_slot(slot: Slot) -> dict:
                 out["clean"] += 1
             else:
                 out["other"] += 1
+        elif r.verdict == "mismatch" and known.get(f["rcept_no"]) and scopes:
+            # only re-findings of cells concluded "no code fix needed" (source defect / false
+            # report) — a model run would just re-find them (2026-10-03)
+            ops.pass_filing(f["rcept_no"], scopes,
+                            f"{_note(r)} · 불일치 {known[f['rcept_no']]}건 모두 no_fix 결론 셀(원문결함·오탐)")
+            out["clean"] += 1
         elif r.verdict == "no_structure" and not scopes:
             ops.skip_filing(f["rcept_no"], f"[machine {mc.TOOL_VERSION}] 원문에 재무제표 섹션 표가 없고 "
                                            f"DB 적재 행도 없음")
@@ -230,8 +265,18 @@ def verify_slot(slot: Slot) -> dict:
         elif r.verdict == "mismatch" and {x["kind"] for x in r.findings
                                           if x["kind"] not in mc.INFO_KINDS} <= AUTO_ISSUE_KINDS:
             try:
-                ops.add_issues(f["rcept_no"], sign_issues(r))
-                out["auto_issue"] += 1
+                suppressed: list[dict] = []
+                if ops.add_issues(f["rcept_no"], sign_issues(r), suppressed):
+                    out["auto_issue"] += 1
+                elif suppressed and scopes:
+                    # every finding sits on a cell the fix side already concluded "no code fix
+                    # needed" for, and every other cell matched: nothing left for a model run
+                    ops.pass_filing(f["rcept_no"], scopes,
+                                    f"{_note(r)} · 불일치 {len(suppressed)}건 모두 no_fix 결론 셀"
+                                    f"(#{suppressed[0]['prior_issue_id']} 등)")
+                    out["clean"] += 1
+                else:
+                    out["mismatch"] += 1
             except IntegrityError:
                 # an active issue already sits on that cell: the model reviewer sorts it out
                 out["mismatch"] += 1

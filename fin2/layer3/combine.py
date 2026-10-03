@@ -1870,7 +1870,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
         rows = session.execute(text("""
             SELECT statement, basis, col_index, section_path, label_raw, value_won,
                    node_role, table_seq, COALESCE(is_cumulative, false) AS is_cum,
-                   value_exact, COALESCE(source_ref LIKE 'eps/%', false) AS eps_row,
+                   value_exact, """ + _EPS_ROW_SQL + """ AS eps_row,
                    CASE WHEN unit_source = 'xbrl' THEN split_part(source_ref, '/', 2) END AS xbrl_local
             FROM report_lines rl
             WHERE rcept_no=:r AND col_index=0 AND value_won IS NOT NULL
@@ -2730,9 +2730,15 @@ _LOSS_CANON = frozenset({
 })
 
 
+# R213 eps_row flag. R217: an XBRL IS line labelled '주당' is an EPS line too — the HTML path
+# tags those 'eps/…', XBRL keeps the concept, and a filer's own concept (`udf_…`) maps to
+# nothing (148 of 214 such periods had no is.eps_basic). Share counts / dividends per share
+# are not EPS; the amount bound matches R216 (no per-share figure reaches 1,000,000원).
+_EPS_ROW_SQL = """COALESCE(rl.source_ref LIKE 'eps/%' OR (
+        rl.unit_source = 'xbrl' AND rl.statement = 'IS' AND rl.label_raw LIKE '%주당%'
+        AND rl.label_raw !~ '주식수|배당' AND abs(rl.value_won) < 1000000), false)"""
+
 _EPS_UNIT_DECL_RE = re.compile(r"\(단위:[^)]*\)")
-# component EPS (continuing / discontinued) and other share classes are not the headline figure
-_EPS_NOT_HEADLINE_RE = re.compile(r"계속|중단|우선주")
 
 
 def _eps_canonicals(label_raw: str | None, section_path: str | None) -> tuple[str, ...]:
@@ -2746,21 +2752,35 @@ def _eps_canonicals(label_raw: str | None, section_path: str | None) -> tuple[st
     '(1) 기본주당이익') is named by its section path. The stored sign is the printed sign — it
     agrees with the controlling-NI sign in ~99% of rows whatever the label says ('손실' labels
     included), so no loss-label negation is applied."""
+    kind, canons = _eps_classify(label_raw, section_path)
+    return canons if kind in ("headline", "total") else ()
+
+
+def _eps_component(text_: str) -> str | None:
+    has_c, has_d = "계속" in text_, "중단" in text_
+    if not (has_c or has_d):
+        return None
+    return "total" if has_c and has_d else ("continuing" if has_c else "discontinued")
+
+
+def _eps_classify(label_raw: str | None, section_path: str | None) -> tuple[str | None, tuple[str, ...]]:
+    """(kind, canonicals) of an EPS row; kind is 'headline' | 'total' | 'continuing' |
+    'discontinued', or None for a preferred-share / non-EPS line. The label decides first,
+    then the nearest ancestor, then the whole path of a child line. A text naming both '계속'
+    and '중단' ('계속영업과 중단영업', R217 also in the label) is 'total', a headline candidate
+    like any other. It does not outrank a plain-labelled sibling: in 28 measured cells that
+    preference picked the worse value 10 times (legacy column misloads, 오리엔트정공 2012Q3),
+    so disagreeing headlines stay a conflict and `_resolve` holds them."""
     label = re.sub(r"\s+", "", normalize_account_name(label_raw or ""))
-    if _EPS_NOT_HEADLINE_RE.search(label):
-        return ()
-    # the nearest ancestor may be the component instead ('계속영업' > '기본주당손익');
-    # '계속영업과 중단영업' names both, i.e. the headline total
     parent = (section_path or "").split(">")[-1]
-    if ("계속" in parent) != ("중단" in parent) or "우선주" in parent:
-        return ()
     text_ = label if "주당" in label else re.sub(r"\s+", "", section_path or "") + ">" + label
     text_ = _EPS_UNIT_DECL_RE.sub("", text_)
-    if "주당" not in text_ or _EPS_NOT_HEADLINE_RE.search(text_):
-        return ()
+    if "주당" not in text_ or "우선주" in text_ or "우선주" in parent:
+        return None, ()
+    kind = _eps_component(label) or _eps_component(parent) or _eps_component(text_) or "headline"
     if "기본" in text_ and "희석" in text_:
-        return ("is.eps_basic", "is.eps_diluted")
-    return ("is.eps_diluted",) if "희석" in text_ else ("is.eps_basic",)
+        return kind, ("is.eps_basic", "is.eps_diluted")
+    return kind, (("is.eps_diluted",) if "희석" in text_ else ("is.eps_basic",))
 
 
 def _extended_exact(extended: dict[str, int], cands: dict[str, list[dict]]) -> dict:
@@ -3255,7 +3275,7 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
         db_rows = session.execute(text(f"""
             SELECT label_raw, value_won, node_role, section_path, table_seq,
                    COALESCE(is_cumulative, false) AS is_cum, value_exact,
-                   COALESCE(source_ref LIKE 'eps/%', false) AS eps_row
+                   {_EPS_ROW_SQL} AS eps_row
             FROM report_lines rl
             WHERE corp_code=:c AND report_fiscal_year=:y AND report_fiscal_period=:p
               AND basis=:b AND statement=:s AND col_index=0 AND value_won IS NOT NULL

@@ -386,6 +386,28 @@ def test_r181_lotte_chemical_opening_label_shows_opening_date():
             f"{basis}: 기초 라벨에 기말일이 남아 있음 {sorted(got)}"
 
 
+# ── R214: SCE fact 가 전부 instant 라 표 안에 duration 이 없으면 인스턴스의 basis duration 으로 ──
+def test_r214_stx_all_instant_sce_opening_label_uses_instance_durations():
+    """STX 2017H1 `20171117000482` — 연결 SCE 는 당기순이익 같은 흐름 항목까지 전부 instant
+    context(CFY2017eHYA)에 실려 표 자신에 duration 이 하나도 없다. R181 이 기초일을 못 찾아
+    '기초자본 (2017-06-30)' 으로 기말일이 남던 결함(이슈 #88124). 같은 basis 의 인스턴스
+    duration context(CFY2017dHYA 2017-01-01~06-30)로 기초일을 읽는다. 값은 그대로."""
+    lines = _lines("KOSPI/00138297_STX/half/2017/20171117000482.zip",
+                   "20171117000482", "00138297", 2017, "H1", date(2017, 6, 30))
+    if lines is None:
+        return
+    for basis, expected in (
+        ("consolidated", {("기초자본 (2017-01-01)", -330_596_000_000),
+                          ("기초자본 (2016-01-01)", 72_342_000_000)}),
+        ("separate", {("기초자본 (2017-01-01)", -328_883_000_000),
+                      ("기초자본 (2016-01-01)", 72_316_000_000)}),
+    ):
+        got = {(l.label_raw, l.value_won) for l in lines
+               if l.statement == "SCE" and l.basis == basis and l.col_index == 0
+               and l.label_raw.startswith("기초자본")}
+        assert got == expected, f"{basis}: {sorted(got)}"
+
+
 # ── R182: tree-gap 계속영업이익 fact 가 표 자신의 PBT − 법인세 등식과 모순이면 채택하지 않는다 ──
 def test_r182_hanwha_ocean_note_tagged_continuing_ops_not_adopted():
     """한화오션 2024Q1 `20240514001522` 연결 — 인스턴스의 ProfitLossFromContinuingOperations

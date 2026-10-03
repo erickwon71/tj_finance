@@ -1329,6 +1329,24 @@ def _emit_sce_lines(
                 start_d = date.fromisoformat(ctx.start_date)
                 if end_d not in opening_date_of or start_d < opening_date_of[end_d]:
                     opening_date_of[end_d] = start_d
+    # ★R214(2026-10-03) — some filers tag EVERY SCE fact (flows included) on
+    # instant contexts (STX 20171117000482, 한솔제지 20170516000396), so the
+    # table above yields no duration at all and the opening label fell back
+    # to the block's closing date ('기초자본 (2017-06-30)'). Fall back to the
+    # instance's own basis-only duration contexts (IS/CF periods) ending on
+    # the block date — same earliest-start rule, still document evidence.
+    missing_open = all_dates - opening_date_of.keys()
+    if missing_open:
+        for ctx in contexts.values():
+            if (ctx.period_kind != "duration" or not ctx.start_date or not ctx.end_date
+                    or frozenset(ctx.dims) != total_required):
+                continue
+            end_d = date.fromisoformat(ctx.end_date)
+            if end_d not in missing_open:
+                continue
+            start_d = date.fromisoformat(ctx.start_date)
+            if end_d not in opening_date_of or start_d < opening_date_of[end_d]:
+                opening_date_of[end_d] = start_d
     canonical_dates = sorted(all_dates, reverse=True)
 
     out: list[ReportLineRow] = []

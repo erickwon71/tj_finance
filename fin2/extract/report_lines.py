@@ -859,6 +859,47 @@ def _parse_eps_amount(cell: str, unit: int) -> _EpsAmount | None:
     return a
 
 
+# R218 — two EPS lines (e.g. 경상이익 / 순이익) sit in ONE source row, and the filer's XML joined each
+# pair of values into a single cell ("182" + "182" -> "182182"). Only the unambiguous shape is
+# split: the label names exactly two EPS items, no per-period text is embedded in the label, and
+# EVERY amount cell of the row is an integer made of two identical halves.
+_EPS_ITEM_RE = re.compile(r"주당\s*(?:\S{0,4}?)(?:경상|순|계속|분기|반기|당기)?\s*(?:이익|손익|손실)")
+_EPS_SECTION_HEADER_RE = re.compile(
+    r"^[\sA-Za-z0-9Ⅰ-ⅿ.\-\[\]]*주당(?:순이익|손익|이익)(?:\(손실\))?(?:\(주석\d+\))?(?=기본|희석|주당|1\.|\(Profit)")
+_EPS_EMBEDDED_PERIOD_RE = re.compile(r"\d\s*원|제\s*\d+\s*기")
+
+
+def _eps_label_has_two_items(label: str) -> bool:
+    flat = strip_cell_whitespace(label)
+    if _EPS_EMBEDDED_PERIOD_RE.search(flat):
+        return False
+    # A leading section header ("XI. 주당순이익 기본주당순이익 희석주당순이익") is not a value row.
+    flat = _EPS_SECTION_HEADER_RE.sub("", flat, count=1)
+    items = [m.group(0) for m in _EPS_ITEM_RE.finditer(flat)]
+    # Two DIFFERENT lines only (one 경상/계속사업 line + one 순이익 line). "기본주당이익 및
+    # 희석주당이익" is ONE value printed under a combined label, so its cell must not be split.
+    return len(items) == 2 and sum(("경상" in i or "계속" in i) for i in items) == 1
+
+
+def _halve_doubled_eps_amounts(amounts):
+    """Return `amounts` with each value replaced by one half when every present value is a
+    non-fractional integer whose digits are two identical halves; otherwise return it unchanged."""
+    present = [a for a in amounts if a is not None]
+    if not present:
+        return amounts
+    halves = []
+    for a in present:
+        if getattr(a, "exact", None) is not None:
+            return amounts
+        digits = str(abs(int(a)))
+        n = len(digits)
+        if n < 2 or n % 2 or digits[: n // 2] != digits[n // 2:] or digits[0] == "0":
+            return amounts
+        halves.append(int(digits[: n // 2]) * (-1 if a < 0 else 1))
+    it = iter(halves)
+    return [None if a is None else _EpsAmount(next(it)) for a in amounts]
+
+
 def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                     report_fiscal_year, report_fiscal_period,
                     table_seq=None, table_title=None,
@@ -967,6 +1008,9 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
         _, amt_cells = _split_label_amounts(cells, table_has_note_column)
         # 위치보존(라벨/주석컬럼 제외, 그 외 자리는 그대로) — cum_map 은 이 위치 기준.
         amounts_by_pos = [_parse_eps_amount(c, unit) for c in amt_cells]
+        split_doubled = unit == 1 and _eps_label_has_two_items(label)
+        if split_doubled:
+            amounts_by_pos = _halve_doubled_eps_amounts(amounts_by_pos)
         present = [a for a in amounts_by_pos if a is not None]
         if not _looks_like_eps_amounts(present):
             # NI귀속류 오판 행 — EPS 로 emit 하지 않고 본류가 처리하도록 남겨둔다(아래
@@ -992,6 +1036,8 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
             if len(grid_cells) < n_grid:
                 grid_cells = grid_cells + [""] * (n_grid - len(grid_cells))
             grid_amounts = [_parse_eps_amount(c, unit) for c in grid_cells]
+            if split_doubled:
+                grid_amounts = _halve_doubled_eps_amounts(grid_amounts)
             # ★R153(2026-09-20) — 본류와 **같은 예외 플래그**를 넘긴다. 안 넘기면
             #   R116/R120 예외 필링에서 EPS 행만 조용히 사라진다: 본류는 예외로
             #   3개월 값을 누적으로 채택해 정상 행을 싣는데, 여기서는 누적 칸이 공란이라

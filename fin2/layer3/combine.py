@@ -2738,6 +2738,8 @@ _EPS_ROW_SQL = """COALESCE(rl.source_ref LIKE 'eps/%' OR (
         rl.unit_source = 'xbrl' AND rl.statement = 'IS' AND rl.label_raw LIKE '%주당%'
         AND rl.label_raw !~ '주식수|배당' AND abs(rl.value_won) < 1000000), false)"""
 
+_EPS_MAX_PER_SHARE_WON = 1_000_000
+
 _EPS_UNIT_DECL_RE = re.compile(r"\(단위:[^)]*\)")
 
 
@@ -3145,6 +3147,10 @@ def _map_rows(rows, period: str, basis: str, statements,
     stmt_set = set(statements)
 
     def _add(r: dict, c: str, stage: str) -> None:
+        # R218: no per-share figure reaches 1,000,000원 (R216). A section-header row that carries
+        # a net-income / comprehensive-income total ('주당손익' = 분기총포괄이익) is not EPS.
+        if c in ("is.eps_basic", "is.eps_diluted") and abs(r["value_won"]) >= _EPS_MAX_PER_SHARE_WON:
+            return
         is_cum = r["is_cumulative"]
         flow = interim and (c.startswith("is.") or c.startswith("cf."))
         if flow:

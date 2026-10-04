@@ -1430,11 +1430,15 @@ def machine_status(conn) -> dict:
     out["gate"] = "on" if machine_gate_on(conn) else "off"
     from fin2.verification.machine_compare import TOOL_VERSION
     out["tool"] = TOOL_VERSION
+    # Only filings of 'pending' slots count: machine_pass.NEEDS_MACHINE_SQL claims pending
+    # slots only, so counting filings inside has_issues/blocked slots made the daemon launch
+    # workers every poll that could never claim anything (132 such filings, 2026-10-04).
     out["unchecked_pending_filings"] = conn.execute(text("""
         SELECT count(*) FROM verification.progress_filings pf
+        JOIN verification.progress p USING (corp_code, fiscal_year, fiscal_period)
         LEFT JOIN verification.filing_loads fl USING (rcept_no)
         LEFT JOIN verification.machine_checks mc USING (rcept_no)
-        WHERE pf.status = 'pending'
+        WHERE pf.status = 'pending' AND p.status = 'pending'
           AND (mc.rcept_no IS NULL OR mc.load_seq IS DISTINCT FROM fl.load_seq
                OR (mc.tool_version <> :t AND mc.verdict IN ('mismatch', 'error')))"""),
         {"t": TOOL_VERSION}).scalar_one()

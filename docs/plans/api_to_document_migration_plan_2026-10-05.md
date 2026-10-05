@@ -1,6 +1,6 @@
 # DART API 유래 테이블 → 원문 문서 추출 전환 계획 (2026-10-05)
 
-> 상태: **계획 확정(2026-10-05 사용자 결정, §7) — 실행은 별도 지시 후.**
+> 상태: **2015+ 완료(2026-10-05)** — Phase 0~7 실행·컷오버 완료(커밋 7233c98). 남은 것: 2014 이전(표제 폴백 매핑), Phase 8 `stock_prices.shares_out`.
 > 발단: 삼양식품 분석 리포트 점검 중 `dividend_facts` 가 원문이 아닌 DART OpenAPI(alotMatter) 유래임을 확인.
 > 원칙: CLAUDE.md "DB화할 재무등의 정보는 모두 local folder에 저장된 문서로부터 가져올 것".
 > 파서 작업 전 필독: `docs/PARSING_RULES.md`, 편입 절차: `docs/runbook_new_parser_pipeline_integration.md`.
@@ -112,3 +112,14 @@
 보통주/우선주 합산 여부, 발행주식 vs 유통주식(자기주식 차감) 정의, API 연도 폴백(fy−1), 감자·분할·증자 시점, 다중 stock_code 조인 중복. 정의가 다르면 valuation 산식이 요구하는 정의(보통주 발행주식수, 또는 유통주식수)를 먼저 확정한 뒤 문서값을 맞춘다.
 
 **적용**: 일별 주가행에 "직전 분기말 이전 공시된 최신 문서값"을 as-of 로 붙인다(공시일 기준, 미래 참조 금지). 컷오버 후 `get_shares_from_dart` 제거, valuation_daily 재생성.
+
+
+## 9. 실행 결과 (2026-10-05)
+
+- Phase 0: `doc_section_tables` 2015+ 사업보고서 29,389필링 · 표 1,036,862 · 832 MB(R224 파서 수정 후 재적재). 표 0개 367필링.
+- Phase 1~6: 매퍼 6모듈 + 공통, 테스트 24건. 전사 비교(`scripts/compare_doc_vs_api_2026-10-05.py`, (corp,FY) 그룹 완전일치):
+  임원보수 개인 99.95% · 요약 99.87% · 임원 99.59% · 직원 99.50% · 자기주식 99.34% · 소액주주 98.83% · 최대주주 98.61% · 변동 98.60% · 타법인출자 98.36% · 배당 97.14%.
+  표본 불일치는 모두 원문판이 맞음(기재정정 반영, API '#######', 주식배당 절삭, API NULL). API 전용 그룹은 자리표시 행('합계'·'-')·결산월 변경 사례.
+- Phase 7: 백업 `NAS db_backups/api_tables_before_doc_cutover_2026-10-05.dump` → `scripts/sync_doc_sections.py --all`(2,516개사, 2.4분) 컷오버, API 수집 코드·`periodic_api_progress` 제거, 데일리 ⑤-3 `_sync_doc_sections`(두 call site).
+- 부수 발견·수정: R224(`&cr;` 뒤 `&amp;` 소실) — `docs/PARSING_RULES.md` R224.
+- 남은 일: 2014 이전(표제 폴백), Phase 8 shares_out, 반기·분기보고서 섹션(필요 시).

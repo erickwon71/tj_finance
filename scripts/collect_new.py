@@ -718,43 +718,21 @@ def _sync_order_backlog(corps: list[str]) -> None:
         logger.warning(f"[collect] ⑤-2 수주상황 수집 실패(비치명적): {exc}")
 
 
-def _sync_periodic_apis(corps: list[str]) -> None:
-    """⑤-3(Phase 2, PRD 13) — 신규 표준화 기업의 최신 사업연도만 배당/자기주식/직원현황/
-    타법인출자/임원보수(요약+개인별) 6개 API 동기화. 전수 백필(scripts/collect_periodic_apis.py)과
-    별개, 매일 소규모 증분. corp+fy+api 그레인 멱등이라 재실행 안전. 비치명적 — 개별 실패는
-    건너뛰고 계속(일일 쿼터 소진 시에만 이번 배치를 조기 종료, 본 수집엔 영향 없음)."""
+def _sync_doc_sections(corps: list[str]) -> None:
+    """⑤-3 — 신규 표준화 기업의 배당·주주·임원·직원·임원보수·타법인출자·자기주식 10개 테이블을
+    **원문** 비재무 섹션 표(계층2 doc_section_tables)에서 다시 만든다(API→문서 전환,
+    docs/plans/api_to_document_migration_plan_2026-10-05.md, 2026-10-05 컷오버로 DART API 6종
+    `_sync_periodic_apis` 를 대체). 계층2 적재는 ④ 의 note_lines_sync 가 같은 필링에서 이미 했다.
+    ★두 call site(메인 · `--standardize-only` 재개) 모두 배선. 비치명적."""
     if not corps:
         return
-    from datetime import date
-
-    from collector.dart_client import DartClient, DartApiError
-    from collector.dart_periodic import API_NAMES, sync_periodic
-    from collector.rate_limiter import DailyQuotaReached
-
-    fy = date.today().year - 1
-    client = DartClient()
-    rows = 0
-    quota_stopped = False
     try:
-        for corp in corps:
-            for api in API_NAMES:
-                try:
-                    rows += sync_periodic(client, api, corp, fy)
-                except DailyQuotaReached as exc:
-                    logger.warning(f"[collect] ⑤-3 일일 쿼터 소진으로 중단(비치명적): {exc}")
-                    quota_stopped = True
-                    break
-                except DartApiError:
-                    continue  # '020' 등 — 일일 증분 규모라 스킵하고 계속(전수 백필은 별도 오케스트레이터)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(f"[collect] ⑤-3 {corp} {api} 실패(비치명적): {exc}")
-                    continue
-            if quota_stopped:
-                break
-    finally:
-        client.close()
-    if rows:
-        logger.info(f"[collect] ⑤-3 배당/자기주식/직원/출자/임원보수(FY{fy}) 기업 {len(corps)} · 행 {rows:,}")
+        from collector.doc_sections_sync import sync_doc_sections
+        agg = sync_doc_sections(corps)
+        logger.info(f"[collect] ⑤-3 원문 비재무 섹션 10테이블 기업 {len(corps)} · "
+                    + " · ".join(f"{t} {n:,}" for t, n in agg.items() if n))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ⑤-3 원문 비재무 섹션 동기화 실패(비치명적): {exc}")
 
 
 def _run_curated_key_scan() -> None:
@@ -932,7 +910,7 @@ def main() -> None:
         _verify_and_log(agg, args)
         _sync_biz_metrics(affected)
         _sync_order_backlog(affected)
-        _sync_periodic_apis(affected)
+        _sync_doc_sections(affected)
         _refresh_valuation_daily()
         _run_curated_key_scan()
         return
@@ -1061,7 +1039,7 @@ def main() -> None:
     _sync_order_backlog(affected)
 
     # ⑤-3 배당/자기주식/직원현황/타법인출자/임원보수 — 신규 기업의 최신 사업연도만(Phase 2, PRD 13).
-    _sync_periodic_apis(affected)
+    _sync_doc_sections(affected)
 
     # ⑥ valuation_daily matview 갱신(A4a) — 오늘 반영분(신규 재무·주가)까지 밸류에이션 뷰에 즉시 노출.
     _refresh_valuation_daily()

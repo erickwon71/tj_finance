@@ -49,9 +49,9 @@ _FOREIGN = "stock_code ~ '^9'"   # 900xxx·950xxx = KRX 외국기업 코드대
 #   (기저 테이블 std_financials_v2·std_financials_calendar 삭제 시 뷰에 자동 반영).
 _CORP_TABLES = [
     "biz_metrics", "biz_section_tables", "capital_events",
-    "corp_verify_status", "dividend_facts", "employee_stats", "exec_pay_individual",
+    "corp_verify_status", "dividend_facts", "doc_section_tables", "employee_stats", "exec_pay_individual",
     "exec_pay_summary", "executives", "face_audit", "face_line_audit",
-    "major_shareholders", "order_backlog", "other_investments", "periodic_api_progress",
+    "major_shareholders", "order_backlog", "other_investments",
     "rebuild_target_track1", "regulatory_events", "report_lines", "retail_ownership",
     "shareholder_changes",
     "std_financials_calendar",

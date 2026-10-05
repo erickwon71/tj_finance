@@ -5,6 +5,9 @@ deploy/launchd/com.tjfinance.gapfill.plist 로 등록. 각 Phase 는 독립적�
 plist 삭제로 자기 등록을 해제**한다(더 이상 실행되지 않음). 일회성 백필 잡이라 항구적으로
 남겨두지 않는 것이 설계 의도.
 
+★Phase 2 은퇴(2026-10-05): API 6종은 원문 비재무 섹션 표로 대체됐다(API→문서 전환,
+  docs/plans/api_to_document_migration_plan_2026-10-05.md, collector/doc_sections_sync.py).
+  아래는 은퇴 전 설명이다.
 Phase 2 (주주환원 API 6종, PRD 13) — DART 서버 쿼터 제한(하루 40,000콜, 계정 전체 공유).
   scripts/collect_periodic_apis.py 를 API 6종 각각 순차 subprocess 호출(--years 2015-<올해>,
   --skip-existing). 이미 완료됐거나 그날 쿼터가 소진된 API 는 즉시(또는 수초 내) 종료되므로
@@ -36,12 +39,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from loguru import logger
 from sqlalchemy import text
 
-from collector.dart_periodic import API_NAMES
 from collector.db import get_session
 
 _ROOT = Path(__file__).resolve().parents[1]
-_PYTHON = str(_ROOT / ".venv" / "bin" / "python")
-_START_YEAR = 2015
 _PLIST_LABEL = "com.tjfinance.gapfill"
 _PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{_PLIST_LABEL}.plist"
 
@@ -51,41 +51,6 @@ _P4_STATE_FILE = "gap_fill_phase4_state.json"
 
 def _current_year() -> int:
     return date.today().year
-
-
-# ── Phase 2 — 주주환원 API 6종 ───────────────────────────────────────────
-def _phase2_remaining(session) -> int:
-    """전수(활성기업×연도×API) 대비 아직 확인 안 된(periodic_api_progress 미기록) 조합 수."""
-    y0, y1 = _START_YEAR, _current_year()
-    n_corps = session.execute(text(
-        "SELECT count(*) FROM corporations WHERE is_active AND stock_code IS NOT NULL")).scalar()
-    n_years = y1 - y0 + 1
-    total = n_corps * n_years * len(API_NAMES)
-    done = session.execute(text("""
-        SELECT count(*) FROM periodic_api_progress p
-        JOIN corporations c ON c.corp_code = p.corp_code
-        WHERE c.is_active AND c.stock_code IS NOT NULL
-          AND p.fiscal_year BETWEEN :y0 AND :y1
-          AND p.api_name = ANY(:apis)
-    """), {"y0": y0, "y1": y1, "apis": list(API_NAMES)}).scalar()
-    return max(0, total - done)
-
-
-def run_phase2() -> int:
-    """API 6종을 순차 subprocess 호출(이미 완료/쿼터소진분은 즉시 종료). 반환=완료 후 잔여 조합 수."""
-    years = f"{_START_YEAR}-{_current_year()}"
-    for api in API_NAMES:
-        cmd = [_PYTHON, str(_ROOT / "scripts" / "collect_periodic_apis.py"),
-               "--api", api, "--years", years, "--skip-existing"]
-        logger.info(f"[gapfill] Phase2 실행: {' '.join(cmd[1:])}")
-        try:
-            subprocess.run(cmd, cwd=str(_ROOT), check=False)
-        except Exception as exc:  # noqa: BLE001 — 개별 API 실패는 격리(비치명), 다음 API 계속
-            logger.warning(f"[gapfill] Phase2 {api} subprocess 실행 실패(계속): {exc}")
-    with get_session() as s:
-        remaining = _phase2_remaining(s)
-    logger.info(f"[gapfill] Phase2 잔여 조합: {remaining:,}")
-    return remaining
 
 
 # ── Phase 3 — 부문·수출입 매출 ───────────────────────────────────────────
@@ -204,7 +169,7 @@ def _unregister_self() -> None:
 def main() -> None:
     logger.info(f"[gapfill] ==== 시작 {date.today()} ====")
 
-    p2 = run_phase2()
+    p2 = 0   # Phase 2 retired 2026-10-05 (API→document migration)
     p3 = run_phase3()
     p4 = run_phase4()
 

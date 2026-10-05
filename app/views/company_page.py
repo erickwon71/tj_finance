@@ -332,8 +332,7 @@ def _executives_panel(corp_code: str) -> None:
     """임원 현황(지배구조) 로스터 — 최신 사업보고서 기준."""
     yr, rows = cache.executives_roster(corp_code)
     if not rows:
-        st.info("임원 데이터가 없습니다. (수집: `python scripts/collect_executives.py --corps "
-                f"{corp_code} --year 2024`)")
+        st.info("임원 데이터가 없습니다. (원문 사업보고서에 해당 표가 없거나 아직 적재 전)")
         return
     st.markdown(f"#### 👔 임원 현황 — {yr} 사업보고서 · {len(rows)}명")
     reg = sum(1 for r in rows if r["is_registered"])
@@ -359,8 +358,7 @@ def _ownership_panel(corp_code: str) -> None:
     """대주주/지분 현황(B3) — 최대주주+특수관계인 지분, 소액주주(float 근사치), 변동이력."""
     yr, holders, retail, changes = cache.ownership_status(corp_code)
     if not holders:
-        st.info("지분 데이터가 없습니다. (수집: `python scripts/collect_shareholders.py --corps "
-                f"{corp_code} --year 2024`)")
+        st.info("지분 데이터가 없습니다. (원문 사업보고서에 해당 표가 없거나 아직 적재 전)")
         return
     st.markdown(f"#### 🏛 대주주/지분 현황 — {yr} 사업보고서")
 
@@ -413,8 +411,7 @@ def _shareholder_return_panel(corp_code: str, requested_stmt: str) -> None:
     rows = [r for r in rows if r.get("dps_common") is not None or r.get("payout_ratio") is not None
             or r.get("total_shareholder_return_won") is not None]
     if not rows:
-        st.info("배당·자기주식 데이터가 없습니다. (수집: `python scripts/collect_periodic_apis.py "
-                f"--api alotMatter,tesstkAcqsDspsSttus --years 2015-2025 --corps {corp_code}`)")
+        st.info("배당·자기주식 데이터가 없습니다. (원문 사업보고서에 해당 표가 없거나 아직 적재 전)")
         return
 
     rows = sorted(rows, key=lambda r: r["fiscal_year"])
@@ -475,8 +472,7 @@ def _employee_panel(corp_code: str) -> None:
     """직원 현황(부문×성별) — Phase 2, PRD 13 ④."""
     yr, rows = cache.employee_stats(corp_code)
     if not rows:
-        st.info("직원 현황 데이터가 없습니다. (수집: `python scripts/collect_periodic_apis.py "
-                f"--api empSttus --years 2023 --corps {corp_code}`)")
+        st.info("직원 현황 데이터가 없습니다. (원문 사업보고서에 해당 표가 없거나 아직 적재 전)")
         return
     st.markdown(f"#### 👥 직원 현황 — {yr} 사업보고서")
     total_row = next((r for r in rows if r.get("division") == "성별합계"
@@ -505,8 +501,7 @@ def _other_investment_panel(corp_code: str) -> None:
     """타법인 출자현황 — Phase 2, PRD 13 ④."""
     yr, rows = cache.other_investments(corp_code)
     if not rows:
-        st.info("타법인 출자현황 데이터가 없습니다. (수집: `python scripts/collect_periodic_apis.py "
-                f"--api otrCprInvstmntSttus --years 2023 --corps {corp_code}`)")
+        st.info("타법인 출자현황 데이터가 없습니다. (원문 사업보고서에 해당 표가 없거나 아직 적재 전)")
         return
     st.markdown(f"#### 🏢 타법인 출자현황 — {yr} 사업보고서 · {len(rows)}건")
     df = pd.DataFrame([{
@@ -525,8 +520,7 @@ def _exec_pay_panel(corp_code: str) -> None:
     """임원보수(요약+개인별 5억이상 상위5인) — Phase 2, PRD 13 ④."""
     yr, summary, individuals = cache.exec_pay(corp_code)
     if not summary and not individuals:
-        st.info("임원보수 데이터가 없습니다. (수집: `python scripts/collect_periodic_apis.py "
-                f"--api hmvAuditAllSttus,indvdlByPay --years 2023 --corps {corp_code}`)")
+        st.info("임원보수 데이터가 없습니다. (원문 사업보고서에 해당 표가 없거나 아직 적재 전)")
         return
     st.markdown(f"#### 💼 임원보수 — {yr} 사업보고서")
     if summary:

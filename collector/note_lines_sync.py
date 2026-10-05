@@ -39,6 +39,8 @@ from fin2.extract.ifrs_evidence import store_filing_ifrs_evidence
 from fin2.extract.report_lines import (extract_report_lines, store_note_lines,
                                        store_report_lines, store_report_tables)
 from fin2.extract.sce_dated_anchors import load_prior_evidence
+from fin2.layer2.doc_sections import extract_from_file as extract_doc_from_file
+from fin2.layer2.doc_sections import store_doc_section_tables
 
 FY_MIN = 1999
 
@@ -135,7 +137,7 @@ def sync_layer2_lines(
                                load_prior_evidence(session, t.corp_code, t.rcept_no))),
                 )
                 out["rows"] += store_note_lines(session, t.rcept_no, lines)
-                store_report_tables(session, t.rcept_no, lines)   # 표 메타(F3)
+                store_report_tables(session, t.rcept_no, lines, scope="all")   # 표 메타(F3), R219: note_lines 와 짝
                 # is_ifrs 판정 근거(2026-09-08, docs/plans/is_ifrs_v3_design_2026-09-08.md)
                 # — document.xml 을 다시 열어(추출과 별도 파싱, 이 코드베이스에서 이미
                 # 용인되는 패턴 — face_audit.py 도 같은 파일을 독립 재파싱한다) Track A/
@@ -156,6 +158,19 @@ def sync_layer2_lines(
                 except Exception as ev_exc:  # noqa: BLE001
                     logger.warning(f"[note_lines] {t.rcept_no} consolidation_evidence 판정 "
                                    f"실패(비치명): {type(ev_exc).__name__}: {ev_exc}")
+                # 비재무 섹션 표(배당·주주·임원·직원·보수·출자·자기주식) 원본 격자 — API→문서
+                # 전환 Phase 0(docs/plans/api_to_document_migration_plan_2026-10-05.md). 같은
+                # document.xml 을 다시 연다(위 evidence 와 같은 패턴). 실패해도 비치명.
+                # SAVEPOINT: a DB error here must not abort the rcept's main transaction.
+                try:
+                    doc_tables = extract_doc_from_file(t.file_path)
+                    with session.begin_nested():
+                        store_doc_section_tables(
+                            session, t.rcept_no, t.corp_code, t.fiscal_year, t.fiscal_period,
+                            doc_tables)
+                except Exception as ds_exc:  # noqa: BLE001
+                    logger.warning(f"[note_lines] {t.rcept_no} doc_section_tables 적재 "
+                                   f"실패(비치명): {type(ds_exc).__name__}: {ds_exc}")
                 if include_body:
                     # 같은 추출 결과에서 본문(BS/IS/CF/SCE)을 적재한다. store_report_lines 가
                     # rcept 단위 delete-then-insert + col_index=0 필터를 이미 한다.

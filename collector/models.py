@@ -5,7 +5,8 @@ SQLAlchemy ORM 모델 정의
   Phase 2: financial_facts / unknown_accounts / standard_financials / stock_prices
   Phase 6: executives / order_backlog
   갭채우기 Phase 2: dividend_facts / treasury_activity / employee_stats / other_investments /
-    exec_pay_summary / exec_pay_individual / periodic_api_progress
+    exec_pay_summary / exec_pay_individual — 2026-10-05 부터 원문 비재무 섹션 표가 소스
+    (collector/doc_sections_sync.py). periodic_api_progress 는 API 수집 은퇴로 DROP.
 """
 from datetime import datetime
 from sqlalchemy import (
@@ -795,6 +796,7 @@ class Executive(Base):
     tenure_end      = Column(String(20),   nullable=True)   # 임기만료일
     compensation    = Column(BigInteger,   nullable=True,
                              comment="보수총액(원), DART 5억이상 공시 기준")
+    rcept_no        = Column(String(14),   nullable=True)   # 원문 필링(API→문서 전환, 2026-10-05)
     fetched_at      = Column(DateTime,     default=datetime.utcnow)
 
     __table_args__ = (
@@ -1143,6 +1145,7 @@ class MajorShareholder(Base):
     shares_end    = Column(BigInteger,   nullable=True,   comment="기말소유주식수")
     pct_end       = Column(Float,        nullable=True,   comment="기말지분율(%)")
     remark        = Column(String(200),  nullable=True)
+    rcept_no      = Column(String(14),   nullable=True,   comment="원문 필링(API→문서 전환, 2026-10-05)")
     fetched_at    = Column(DateTime,     default=datetime.utcnow)
 
     __table_args__ = (
@@ -1164,6 +1167,7 @@ class ShareholderChange(Base):
     shares        = Column(BigInteger,   nullable=True)
     pct           = Column(Float,        nullable=True)
     cause         = Column(String(200),  nullable=True,   comment="변동원인")
+    rcept_no      = Column(String(14),   nullable=True,   comment="원문 필링(API→문서 전환, 2026-10-05)")
     fetched_at    = Column(DateTime,     default=datetime.utcnow)
 
     __table_args__ = (
@@ -1184,6 +1188,7 @@ class RetailOwnership(Base):
     held_shares       = Column(BigInteger,   nullable=True,   comment="소액주주 보유주식수")
     total_shares      = Column(BigInteger,   nullable=True,   comment="발행주식총수")
     held_rate_pct     = Column(Float,        nullable=True,   comment="소액주주 지분율(주식수 기준, %) — float 근사치")
+    rcept_no          = Column(String(14),   nullable=True,   comment="원문 필링(API→문서 전환, 2026-10-05)")
     fetched_at        = Column(DateTime,     default=datetime.utcnow)
 
     __table_args__ = (
@@ -1223,6 +1228,37 @@ class BizSectionTable(Base):
     )
 
 
+class DocSectionTableRow(Base):
+    """정기보고서 비재무 섹션 표 원본(계층2, 무손실) — API→문서 전환 Phase 0
+    (docs/plans/api_to_document_migration_plan_2026-10-05.md §2.1, writer
+    `fin2/layer2/doc_sections.py`). 배당·주주·임원·직원·임원보수·타법인출자·자기주식 표를
+    ROWSPAN/COLSPAN 전개 격자 그대로 담는다. 1차 식별자는 DART 서식 코드(`aclass`,
+    TABLE-GROUP ACLASS), 없으면 섹션 표제(`section_key`) 폴백. 해석은 계층3 매퍼."""
+    __tablename__ = "doc_section_tables"
+
+    id                   = Column(BigInteger,   primary_key=True, autoincrement=True)
+    rcept_no             = Column(String(14),   nullable=False)
+    corp_code            = Column(String(8),    nullable=False)
+    report_fiscal_year   = Column(SmallInteger, nullable=False)
+    report_fiscal_period = Column(String(5),    nullable=False)
+    table_ord            = Column(SmallInteger, nullable=False, comment="이 rcept 에서 담은 표 순번(문서 순서)")
+    aclass               = Column(String(40),   nullable=True,  comment="TABLE-GROUP ACLASS 서식 코드, 없으면 NULL(표제 폴백)")
+    group_ord            = Column(SmallInteger, nullable=False, comment="TABLE-GROUP 안 표 순번(0=첫 표, 대개 기준일·단위 캡션)")
+    section_key          = Column(String(200),  nullable=True,  comment="normalize_dart_section_title 결과")
+    section_title_raw    = Column(Text,         nullable=True)
+    heading_raw          = Column(Text,         nullable=True,  comment="표 직전 마지막 문단(소제목 후보)")
+    grid                 = Column(JSONB,        nullable=False, comment="ROWSPAN/COLSPAN 전개 2D 텍스트 격자")
+    n_rows               = Column(SmallInteger, nullable=True)
+    n_cols               = Column(SmallInteger, nullable=True)
+    parsed_at            = Column(DateTime,     nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("rcept_no", "table_ord", name="uq_doc_section_tables"),
+        Index("ix_doc_sec_corp_year", "corp_code", "report_fiscal_year"),
+        Index("ix_doc_sec_aclass", "aclass"),
+    )
+
+
 class BizMetric(Base):
     """
     생산능력/생산실적/가동률의 구조화된 long-format 값(corp·기간·지표·부문·품목 단위 1행).
@@ -1257,6 +1293,9 @@ class BizMetric(Base):
 
 
 # ── 13. Phase 2 · 주주환원 + 회사 일반현황 (정기보고서 API 6종) ──────────────────
+# ★2026-10-05 API→문서 전환: 아래 테이블들은 이제 원문 비재무 섹션 표(doc_section_tables)에서
+#   계층3 매퍼(fin2/layer3/doc_*.py)가 채운다(collector/doc_sections_sync.py). `raw` 는 원문판에서
+#   배당만 원문 격자를 담고 나머지는 NULL, 출처는 rcept_no. 아래는 API 시절 설명이다.
 # DART 사업보고서(11011) 기준 corp+fiscal_year 단위. 각 API 응답의 raw 원본을 JSONB 로
 # 보존(필드명 변이·PRD 추정과 실제 API 응답 차이 대비 — 착수 전 실호출로 확인한 실제
 # 필드 스펙은 docs/prd/13_phase2_periodic_apis.md 참조). collector/dart_periodic.py 가 채움.
@@ -1403,21 +1442,6 @@ class ExecPayIndividual(Base):
     __table_args__ = (
         Index("ix_execpayind_corp_year", "corp_code", "fiscal_year"),
     )
-
-
-class PeriodicApiProgress(Base):
-    """Phase 2 6개 API 백필 체크포인트 — (corp_code, fiscal_year, api_name) 단위 진행상태.
-    no_data(status='013') 응답도 반드시 기록해야 재실행 시 이미 확인한 no-data 케이스를
-    다시 조회해 DART 일일 쿼터를 낭비하지 않는다(B3/B2 백필 쿼터소진 교훈과 동일 패턴)."""
-    __tablename__ = "periodic_api_progress"
-
-    corp_code    = Column(String(8),    primary_key=True)
-    fiscal_year  = Column(SmallInteger, primary_key=True)
-    api_name     = Column(String(30),   primary_key=True,
-                          comment="alotMatter/tesstkAcqsDspsSttus/empSttus/otrCprInvstmntSttus/"
-                                  "hmvAuditAllSttus/indvdlByPay")
-    status       = Column(String(10),   nullable=False,   comment="ok/no_data/error")
-    checked_at   = Column(DateTime,     default=datetime.utcnow)
 
 
 class ReportLineAnomaly(Base):

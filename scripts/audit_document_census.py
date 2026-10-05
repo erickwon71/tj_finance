@@ -63,7 +63,14 @@ _CONSUMERS: dict[str, tuple[str, list[str]]] = {
     "재무제표주석":     ("note_lines", ["note_lines"]),
     "사업의내용":       ("biz_metrics·order_backlog·biz_section_tables",
                         ["biz_metrics", "biz_section_tables", "order_backlog"]),
-    "주식의총수등":     ("shares", []),
+    "주식의총수등":     ("shares·doc_section_tables", ["doc_section_tables"]),
+    "배당에관한사항":   ("doc_section_tables", ["doc_section_tables"]),
+    "배당에관한사항등": ("doc_section_tables", ["doc_section_tables"]),
+    "주주에관한사항":   ("doc_section_tables", ["doc_section_tables"]),
+    "임원및직원등의현황": ("doc_section_tables", ["doc_section_tables"]),
+    "임원및직원의현황": ("doc_section_tables", ["doc_section_tables"]),
+    "임원의보수등":     ("doc_section_tables", ["doc_section_tables"]),
+    "타법인출자현황(상세)": ("doc_section_tables", ["doc_section_tables"]),
     "요약재무정보":     ("의도적 제외(본문으로 안 씀)", []),
 }
 
@@ -80,15 +87,10 @@ _BIZ_SUBSECTIONS = frozenset({
 })
 
 _API_TOPIC: dict[str, str] = {
-    "배당에관한사항":          "dividend_facts (API)",
-    "주주에관한사항":          "major_shareholders (API)",
-    "소액주주현황":            "retail_ownership (API)",
-    "최대주주변동내역":        "shareholder_changes (API)",
-    "임원및직원등의현황":      "executives·employee_stats (API)",
-    "임원의보수등":            "exec_pay_summary (API)",
-    "타법인출자현황(상세)":    "other_investments (API)",
-    "자본금변동사항":          "capital_events (API)",
-    "주식의총수등":            "treasury_activity (API)",
+    # 2026-10-05 API→문서 전환: 배당·주주·임원·직원·보수·출자·자기주식은 이제 원문
+    # doc_section_tables(계층2) → fin2/layer3/doc_*.py 로 채운다(아래 _CONSUMERS 참고). 남은 API
+    # 유래는 정기보고서가 아닌 공시가 소스라 사용자 승인 예외인 것뿐이다.
+    "자본금변동사항":          "capital_events (API, 예외 — 주요사항보고서 유래)",
 }
 
 TARGETS_SQL = """

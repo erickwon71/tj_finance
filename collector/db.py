@@ -1449,6 +1449,22 @@ def _run_migrations() -> None:
         # 재적재만 '데이터 변경' 으로 잡힌다.
         ("2026_10_02_verification_hash_value_exact", _apply_verification_schema),
 
+        # API→문서 전환(2026-10-05, docs/plans/api_to_document_migration_plan_2026-10-05.md):
+        # 원문판 행의 출처 필링. nullable·DEFAULT 없음 → 카탈로그만 바뀐다(기존 행 무변경).
+        ("2026_10_05_doc_migration_rcept_no",
+         """
+        ALTER TABLE major_shareholders  ADD COLUMN IF NOT EXISTS rcept_no VARCHAR(14);
+        ALTER TABLE shareholder_changes ADD COLUMN IF NOT EXISTS rcept_no VARCHAR(14);
+        ALTER TABLE retail_ownership    ADD COLUMN IF NOT EXISTS rcept_no VARCHAR(14);
+        ALTER TABLE executives          ADD COLUMN IF NOT EXISTS rcept_no VARCHAR(14);
+        """),
+
+        # API→문서 전환 Phase 7(2026-10-05): DART API 6종 수집 체크포인트 — 수집 은퇴로 소비자 0.
+        # 백업: NAS(tj_finance_data)/db_backups/api_tables_before_doc_cutover_2026-10-05.dump
+        # (pg_dump -Fc, 10개 API 판 테이블 + 이 테이블). ORM 클래스도 삭제(create_all 재생성 방지).
+        ("2026_10_05_periodic_api_progress_drop",
+         "DROP TABLE IF EXISTS periodic_api_progress"),
+
         ("2026_10_statement_source_drop",
          # statement_source 폐기(2026-10-03, 사용자 결정). 이 테이블은 fin2 R-레이어(reconcile.py)가
          # fact_v2 로 채웠는데 fact_v2 DROP(2026-09-01) 이후 한 번도 갱신되지 않았다(마지막 reconciled_at

@@ -12398,3 +12398,24 @@ A/B 로 측정한 1,308셀(추가·사라짐·변경)을 재빌드 후 `extended
 - `doc_section_tables`: 수정 전 코드로 21,232 필링이 적재된 상태에서 중단·TRUNCATE 후 수정 코드로 2015+ 사업보고서 재적재(같은 날 신설 테이블).
 - **영향 측정(2026-10-05, `scripts/measure_r224_label_impact_2026-10-05.py`, 연도당 30건 · 852필링 · `&cr;` 포함 399)**: 수정 코드로 재추출 시 '&'·'<'·'"' 를 되찾는 라벨 — **report_lines 0필링**, note_lines 36필링(4.2%) · 221라벨. 본문 재무제표 라벨은 영향 없음.
 - `report_lines`·`note_lines`(및 계층3): **미착수.** 같은 파서를 쓰므로 `&cr;` 가 있는 필링에서 '&'·'<'·'>'·'"' 가 들어간 라벨·셀이 원문대로 돌아온다. 라벨이 바뀌면 계층3 매핑·검증 대조에도 영향 → 영향 필링 전수 측정(라벨 diff) 후 재적재 범위를 사용자와 정한다. 데일리 신규 적재분은 이미 수정 코드로 들어간다(기존분과 표기가 달라질 수 있음 — 측정 시 함께 본다).
+
+## R225. 밸류에이션 주식수는 **유통주식수(보통주, Ⅵ = Ⅳ−Ⅴ)** 다 — 계층2·3 에 Ⅴ 자기주식수·Ⅵ 유통주식수를 싣고 시총·주당지표가 그것을 쓴다 (2026-10-05, 사용자 결정, API→문서 전환 Phase 8)
+
+**배경**: API→문서 전환 Phase 8(`stock_prices.shares_out`) 점검. 실측하니 `stock_prices.shares_out` 1,124만 행은 **전부** 이미 원문 기반 값(`std_financials_v3.shares_out` = '주식의 총수' 표 Ⅳ 발행주식수, `scripts/fin2_market_cap_daily.py`)과 같았다(불일치 0, 원문 값 없는 종목 943행). API(`stockTotqySttus`)는 `analyzer/price_fetcher.get_market_data` 캐시 미스 경로에만 코드로 남아 있었다. 사용자 결정: 주식수 정의 = **유통주식수**(자기주식은 의결권·배당이 없어 주당지표·시총에서 뺀다).
+
+**규칙**
+1. `fin2/extract/shares.py::extract_share_counts` — Ⅳ(기존 규칙 그대로, 없으면 Ⅱ) + Ⅴ '자기주식수' + Ⅵ '유통주식수'. Ⅴ/Ⅵ 은 **라벨 셀 바로 다음 칸(=보통주 열)** 만 읽고 '-' 는 0주. ('첫 숫자 칸' 규칙을 쓰면 보통주 자기주식이 '-' 일 때 우선주·합계 숫자를 집는다.) Ⅵ 행이 없으면 Ⅳ−Ⅴ(Ⅴ 를 읽었을 때만), 둘 다 없으면 NULL(추측 금지). 같은 표 배수(R90 `_table_multiplier`) 적용.
+2. 계층2 `report_shares_outstanding.treasury_shares/float_shares`(데일리 `shares_transcribe` 가 함께 적재), 계층3 `std_financials_v3.float_shares`(`_select_shares_out(column=)` 같은 정본 선택). `shares_out`(Ⅳ)은 그대로 둔다.
+3. `scripts/fin2_market_cap_daily.py`: `stock_prices.shares_out` = 최신 FY `float_shares`, `market_cap = 수정주가 × 유통주식수`(항등 유지). `valuation_daily` 의 EPS·BPS·DPS·배당수익률은 `sp.shares_out` 을 쓰므로 자동으로 유통주식 기준.
+4. `analyzer/price_fetcher.get_shares_from_dart`(API) 삭제 → `get_float_shares`(std_v3 float_shares).
+
+**검증 표본**: 삼성전자 2024 사업보고서 Ⅳ 5,969,782,550 · Ⅴ 29,700,000 · Ⅵ 5,940,082,550(원문 표 일치). 삼양식품 2024 Ⅴ 74,887 · Ⅵ 7,458,128.
+
+**회귀 테스트**: `fin2/tests/test_shares_float_r225.py`(삼성전자 형태, 보통주 '-' 가 우선주로 새지 않음, Ⅵ 없을 때 Ⅳ−Ⅴ, Ⅴ 없으면 NULL). R90 테스트 그대로 통과.
+
+**소급**: `scripts/backfill_float_shares_r225_2026-10-05.py`(report_shares_outstanding 기존 행의 원문 재독 → treasury/float UPDATE, shares_out 불변) → std_v3 재빌드 → `fin2_market_cap_daily.py` → `refresh_valuation_daily.py`.
+
+**소급 결과(2026-10-05)**: 98,654행 재독(119분, 오류 0) — 유통주식수 97,750 · 표에 Ⅴ/Ⅵ 행 없음 904. 재추출 Ⅳ 가 저장값과 다른 412행 발견.
+**배수 정합(`scripts/reconcile_float_shares_scale_r225_2026-10-05.py`)**: float+treasury 와 shares_out 이 정확히 1,000배 어긋난 409행 — 원문 캡션 '(단위 : 천주)' 를 R90 `_table_multiplier` 가 적용한 쪽과 R90 이전에 적재돼 배수가 빠진 저장 Ⅳ 가 섞여 있었다. 판정 근거 ① 같은 사업연도 FY 지배순이익 ÷ 기본EPS = 암시 주식수(3배 이내) ② 회사 전 기간 Ⅳ 중앙값(±20%). 결과: **저장 Ⅳ 가 틀린 것 313행**(배수 누락 — 현대로템 00302926 은 이력 전체가 109,142주로 적재돼 시총이 실제 12.6조 대신 126억이었다: 암시 주식수 ≈9,520만, 원문 '천주' 캡션) → Ⅳ 를 재추출값으로 교정, **재추출이 거짓 '천주' 캡션을 곱한 것 84행**(00132628 2020Q3 등, 다른 분기는 1,824만 주) → Ⅴ/Ⅵ 를 1/1000. 미해결 12행(대부분 FY EPS 가 아직 없는 2026 반기)은 그대로 두었다. 1,000배 관계가 아닌 54행은 원문에 인쇄된 Ⅵ 가 Ⅳ−Ⅴ 와 다른 것이라 원문 그대로.
+**재계산**: std_v3 전사 재빌드(`--year-min 1990`, 오류 0) → 최신 FY 유통주식수 보유 2,500/2,515개사(어느 FY 에든 있음 2,503) → `fin2_market_cap_daily.py` 8,181,499행 갱신 → `valuation_daily` CONCURRENTLY 갱신(11,209,408행, 404초). 유통주식수가 없는 12개사는 기존(발행주식 기준) 값이 남는다.
+예: 삼성전자 2026-10-02 주식수 5,919,637,922 → 5,827,808,935(2025 FY 자기주식 제외)·시총 1,633.8조 → 1,608.5조, 현대로템 시총 126억 → 12.6조(PER 16.4), 삼양식품은 2025 FY 자기주식 0주(원문 '-')라 7,533,015 그대로. DQ `shares_out_impossible`·`market_cap_impossible` 위반 0.

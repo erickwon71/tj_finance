@@ -17,7 +17,7 @@ from pathlib import Path
 from loguru import logger
 from sqlalchemy import delete, insert, text
 
-from fin2.extract.shares import extract_issued_common_shares_detailed
+from fin2.extract.shares import extract_share_counts
 
 FY_MIN = 2015
 
@@ -43,7 +43,9 @@ _LOADED_SQL = text(
 
 
 def store_report_shares(session, rcept_no: str, corp_code: str, fiscal_year: int,
-                        fiscal_period: str, shares_out: int, as_of_date, source_ref: str) -> int:
+                        fiscal_period: str, shares_out: int, as_of_date, source_ref: str,
+                        treasury_shares: int | None = None,
+                        float_shares: int | None = None) -> int:
     """rcept_no 단위 delete-then-insert(멱등, report_lines 관례와 동일). 반환 = 적재행수(0/1)."""
     from collector.models import ReportSharesOutstanding
 
@@ -54,7 +56,7 @@ def store_report_shares(session, rcept_no: str, corp_code: str, fiscal_year: int
     session.execute(insert(ReportSharesOutstanding).values(
         rcept_no=rcept_no, corp_code=corp_code, fiscal_year=fiscal_year,
         fiscal_period=fiscal_period, shares_out=shares_out, as_of_date=as_of_date,
-        source_ref=source_ref,
+        source_ref=source_ref, treasury_shares=treasury_shares, float_shares=float_shares,
     ))
     return 1
 
@@ -95,7 +97,7 @@ def sync_shares_transcribe(corps: list[str], year_min: int = FY_MIN,
             if not Path(t.file_path).exists():
                 continue
             try:
-                found = extract_issued_common_shares_detailed(t.file_path)
+                found = extract_share_counts(t.file_path)   # R225: Ⅳ + Ⅴ/Ⅵ
             except Exception as exc:  # noqa: BLE001 — 개별 보고서 실패가 전체를 막으면 안 됨
                 out["errors"] += 1
                 logger.warning(f"[shares] {t.rcept_no} 파싱 실패: {type(exc).__name__}: {exc}")
@@ -104,10 +106,10 @@ def sync_shares_transcribe(corps: list[str], year_min: int = FY_MIN,
             seen_corps.add(t.corp_code)
             if not found:
                 continue  # 섹션 없음/미매치 — 결측 허용(R0), 짐작 없음
-            shares, label = found
             out["rows"] += store_report_shares(
                 session, t.rcept_no, t.corp_code, t.fiscal_year, t.fiscal_period,
-                shares, t.period_end_date, label,
+                found["issued"], t.period_end_date, found["issued_label"],
+                treasury_shares=found["treasury"], float_shares=found["float"],
             )
         session.commit()
         out["corps"] = len(seen_corps)

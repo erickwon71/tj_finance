@@ -119,6 +119,66 @@ def _table_multiplier(text: str, section_start: int, table_start: int, table_end
     return _unit_multiplier(text, table_start)
 
 
+_LABEL_TREASURY = "자기주식"     # Ⅴ 자기주식수
+_LABEL_FLOAT = "유통주식"        # Ⅵ 유통주식수 (Ⅳ-Ⅴ)
+
+
+def _pick_common_cell(rows: list[list[str]], key: str) -> int | None:
+    """Ⅴ/Ⅵ 용 — 라벨 셀 **바로 다음 칸**(=보통주 열)만 읽는다. '-' 는 0주.
+
+    `_pick` 처럼 '첫 숫자 칸'을 쓰면 보통주 자기주식이 '-'(0)일 때 우선주·합계·비고 칸의
+    숫자를 대신 집는다. 표준 서식은 '구분 | 보통주 | 우선주 | 합계 | 비고' 라 라벨 다음이
+    보통주다. 읽을 수 없으면 None(추측 금지)."""
+    for cells in rows:
+        for i, c in enumerate(cells[:-1]):
+            if key in c and "보유비율" not in c and "비율" not in c:
+                v = cells[i + 1].strip()
+                if v in ("-", "0"):
+                    return 0
+                if _NUM.match(v):
+                    n = int(v.replace(",", ""))
+                    return n if 0 <= n <= _MAX_PLAUSIBLE_SHARES else None
+                return None
+    return None
+
+
+def extract_share_counts(path: str | Path) -> dict | None:
+    """'주식의 총수' 표에서 보통주 Ⅳ 발행주식수·Ⅴ 자기주식수·Ⅵ 유통주식수.
+
+    반환 {'issued', 'issued_label', 'treasury', 'float'} — issued 는 기존 규칙(Ⅳ, 없으면 Ⅱ)
+    그대로. float 는 Ⅵ 을 읽고, Ⅵ 행이 없으면 Ⅳ−Ⅴ(Ⅴ 를 읽었을 때만). 셋 다 같은 표·같은
+    배수(`_table_multiplier`)를 쓴다. 표를 못 찾으면 None.
+    ★R225(2026-10-05, 사용자 결정): 밸류에이션 주식수는 유통주식수(자기주식 제외)."""
+    text = _decode(path)
+    for sec in (m.start() for m in re.finditer("주식의 총수", text)):
+        pos = sec
+        for _ in range(3):
+            st = text.find("<TABLE", pos)
+            if st < 0:
+                break
+            en = text.find("</TABLE>", st)
+            if en < 0:
+                break
+            pos = en + 8
+            rows = [_cells(tr) for tr in _TR.findall(text[st:pos])]
+            mult = _table_multiplier(text, sec, st, pos, rows)
+            issued, label = _pick(rows, _LABEL_ISSUED), _LABEL_ISSUED
+            if issued is None:
+                issued, label = _pick(rows, _LABEL_ISSUED_TO_DATE), _LABEL_ISSUED_TO_DATE
+            if issued is None:
+                continue
+            treasury = _pick_common_cell(rows, _LABEL_TREASURY)
+            flt = _pick_common_cell(rows, _LABEL_FLOAT)
+            if flt is None and treasury is not None and label == _LABEL_ISSUED:
+                flt = issued - treasury
+            return {
+                "issued": issued * mult, "issued_label": label,
+                "treasury": treasury * mult if treasury is not None else None,
+                "float": flt * mult if flt is not None and flt > 0 else None,
+            }
+    return None
+
+
 def extract_issued_common_shares_detailed(path: str | Path) -> tuple[int, str] | None:
     """발행주식의 총수(Ⅳ) 보통주. 없으면 현재까지 발행한 주식의 총수(Ⅱ) 폴백. 실패 시 None.
     반환 (shares, matched_label) — matched_label 은 provenance(어느 원문 항목을 채택했는지,

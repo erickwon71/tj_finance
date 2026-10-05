@@ -126,7 +126,8 @@ def _dq_cross_year_v3(session, corp_code: str, basis: str, col: dict) -> int:
     return dq
 
 
-def _select_shares_out(session, corp: str, fy: int, period: str, src: dict) -> int | None:
+def _select_shares_out(session, corp: str, fy: int, period: str, src: dict,
+                       column: str = "shares_out") -> int | None:
     """shares_out 정본선택 (Phase 2, 2026-08-09 — 계층2 신설, report_shares_outstanding 조인
     전용, 원문 직접 read 없음: architecture-report-read-layer2-only 준수).
 
@@ -136,16 +137,18 @@ def _select_shares_out(session, corp: str, fy: int, period: str, src: dict) -> i
        를 보고한 아무 filing 에서나 **가장 최근(rcept_no 최대) 값**으로 폴백 — 여러 filing 이
        같은 기간을 다르게 보고할 때(기재정정 등) 최신 정정을 우선한다는 원칙과 일치.
     """
+    if column not in ("shares_out", "float_shares"):
+        raise ValueError(f"_select_shares_out: unsupported column {column!r}")
     primary = (src.get("BS") or src.get("IS") or src.get("CF")) if src else None
     if primary:
         v = session.execute(text(
-            "SELECT shares_out FROM report_shares_outstanding WHERE rcept_no=:r"),
+            f"SELECT {column} FROM report_shares_outstanding WHERE rcept_no=:r"),
             {"r": primary}).scalar()
         if v:
             return v
-    return session.execute(text("""
-        SELECT shares_out FROM report_shares_outstanding
-        WHERE corp_code=:c AND fiscal_year=:y AND fiscal_period=:p
+    return session.execute(text(f"""
+        SELECT {column} FROM report_shares_outstanding
+        WHERE corp_code=:c AND fiscal_year=:y AND fiscal_period=:p AND {column} IS NOT NULL
         ORDER BY rcept_no DESC LIMIT 1
     """), {"c": corp, "y": fy, "p": period}).scalar()
 
@@ -243,6 +246,9 @@ def build_corp(session, corp: str, year_min: int = 2015,
             row.data_quality = dq
             row.period_end = period_end
             row.shares_out = _select_shares_out(session, corp, fy, period, src)
+            # R225: valuation share count = 유통주식수 (Ⅵ, treasury excluded), same selection.
+            row.float_shares = _select_shares_out(session, corp, fy, period, src,
+                                                  column="float_shares")
             # is_ifrs(2026-09-08, docs/plans/is_ifrs_v3_design_2026-09-08.md) — source_rcepts
             # 의 filings.ifrs_evidence(Layer2 적재 시 fin2/extract/ifrs_evidence.py 가 캐싱)를
             # 모아 판정. 연도 추측 없음(증거 없으면 NULL, 이전엔 컬럼 자체가 없어

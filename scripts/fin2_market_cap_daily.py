@@ -7,7 +7,7 @@
 그 시점 실제 시총이 복원되고, 가격 자체도 현재 주식수 기준으로 비교가능해진다.)
 
   market_cap(d) = close_price(d) × current_shares     # close_price = 수정주가
-  current_shares = 해당 corp 최신 FY 의 shares_out (DART 백필)
+  current_shares = 해당 corp 최신 FY 의 유통주식수 (std_financials_v3.float_shares, R225)
 
 shares_out 컬럼에는 이 current_shares(현재 기준 주식수, 상수)를 적재 → market_cap=close×shares_out
 항등 유지. 실제 연도별 actual 주식수는 std_financials_v3.shares_out 에 보존.
@@ -40,19 +40,22 @@ from sqlalchemy import text
 
 from collector.db import get_session
 
-# current_shares = corp 의 최신 FY(shares 보유) 의 상장주식수(con/sep 동일 → max).
+# current_shares = corp 의 최신 FY(유통주식수 보유) 의 유통주식수(con/sep 동일 → max).
 # market_cap = 수정주가(close) × current_shares.
+# ★R225(2026-10-05, 사용자 결정): 주식수 = **유통주식수**(보통주 Ⅳ−Ⅴ, 자기주식 제외,
+#   std_financials_v3.float_shares). 예전엔 발행주식수(shares_out, Ⅳ)였다 — 자기주식은 의결권·
+#   배당이 없어 주당지표(EPS·BPS·DPS)와 시총에서 빼는 것이 맞다.
 _SQL = """
 WITH cur AS (
-    SELECT f.corp_code, max(f.shares_out) AS shares
+    SELECT f.corp_code, max(f.float_shares) AS shares
     FROM std_financials_v3 f
     JOIN (
         SELECT corp_code, max(fiscal_year) AS myr
         FROM std_financials_v3
-        WHERE fiscal_period = 'FY' AND shares_out > 0
+        WHERE fiscal_period = 'FY' AND float_shares > 0
         GROUP BY corp_code
     ) m ON m.corp_code = f.corp_code AND m.myr = f.fiscal_year
-    WHERE f.fiscal_period = 'FY' AND f.shares_out > 0
+    WHERE f.fiscal_period = 'FY' AND f.float_shares > 0
     GROUP BY f.corp_code
 )
 UPDATE stock_prices sp

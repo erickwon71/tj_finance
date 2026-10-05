@@ -1,6 +1,6 @@
 # DART API 유래 테이블 → 원문 문서 추출 전환 계획 (2026-10-05)
 
-> 상태: **2015+ 완료(2026-10-05)** — Phase 0~7 실행·컷오버 완료(커밋 7233c98). 남은 것: 2014 이전(표제 폴백 매핑), Phase 8 `stock_prices.shares_out`.
+> 상태: **2015+ 완료(2026-10-05)** — Phase 0~7 실행·컷오버 완료(커밋 7233c98). Phase 8 완료(R225, 유통주식수). 남은 것: 2014 이전(표제 폴백 매핑).
 > 발단: 삼양식품 분석 리포트 점검 중 `dividend_facts` 가 원문이 아닌 DART OpenAPI(alotMatter) 유래임을 확인.
 > 원칙: CLAUDE.md "DB화할 재무등의 정보는 모두 local folder에 저장된 문서로부터 가져올 것".
 > 파서 작업 전 필독: `docs/PARSING_RULES.md`, 편입 절차: `docs/runbook_new_parser_pipeline_integration.md`.
@@ -123,3 +123,4 @@
 - Phase 7: 백업 `NAS db_backups/api_tables_before_doc_cutover_2026-10-05.dump` → `scripts/sync_doc_sections.py --all`(2,516개사, 2.4분) 컷오버, API 수집 코드·`periodic_api_progress` 제거, 데일리 ⑤-3 `_sync_doc_sections`(두 call site).
 - 부수 발견·수정: R224(`&cr;` 뒤 `&amp;` 소실) — `docs/PARSING_RULES.md` R224.
 - 남은 일: 2014 이전(표제 폴백), Phase 8 shares_out, 반기·분기보고서 섹션(필요 시).
+- Phase 8(R225, 2026-10-05): 실측하니 stock_prices.shares_out 은 이미 전부 원문 Ⅳ 기반(API 는 price_fetcher 캐시 미스 경로 코드뿐). 사용자 결정 '유통주식수'로 정의 전환 — Ⅴ/Ⅵ 계층2·3 적재, 시총·주당지표 유통주식 기준, `get_shares_from_dart` 삭제. 부수 수정: R90 이전 적재로 1,000배 빠져 있던 Ⅳ 313행(현대로템 시총 126억 → 12.6조). 상세 PARSING_RULES R225.

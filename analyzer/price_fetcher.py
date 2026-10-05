@@ -2,8 +2,8 @@
 주가 / 시가총액 수집
 
 주가:   pykrx → Naver Finance (get_market_ohlcv) ← 항상 동작
-상장주식수: DART OpenAPI (stockTotqySttus) ← corp_code 필요
-시가총액: 종가 × 상장주식수 로 계산
+주식수: 원문 기반 유통주식수(std_financials_v3.float_shares, R225) ← corp_code 필요
+시가총액: 종가 × 유통주식수 로 계산
 
 사용 예:
     from analyzer.price_fetcher import get_market_data
@@ -100,57 +100,28 @@ def _fetch_close_price(stock_code: str, target_date: date):
 
 
 # ---------------------------------------------------------------------------
-# 상장주식수 조회 (DART OpenAPI)
+# 유통주식수 조회 (원문 기반, R225)
 # ---------------------------------------------------------------------------
 
-def get_shares_from_dart(corp_code: str, fiscal_year: int) -> Optional[int]:
-    """
-    DART stockTotqySttus API로 보통주 상장주식수 조회.
+def get_float_shares(corp_code: str, fiscal_year: int) -> Optional[int]:
+    """그 사업연도 FY 의 유통주식수(보통주, Ⅳ−Ⅴ) — 원문 '주식의 총수' 표 기반.
 
-    Returns:
-        보통주 istc_totqy (상장주식 총수) or None
+    ★R225(2026-10-05): 예전엔 DART stockTotqySttus API(발행주식총수)를 불렀다. 밸류에이션
+      주식수는 유통주식수(사용자 결정)이고 데이터는 로컬 원문에서만 가져온다(CLAUDE.md) →
+      계층3 `std_financials_v3.float_shares` 를 읽는다. 없으면 None(추측 없음).
     """
     try:
-        import requests
-        from collector.config import DART_API_KEY
-
-        if not DART_API_KEY:
-            return None
-
-        url = "https://opendart.fss.or.kr/api/stockTotqySttus.json"
-        params = {
-            "crtfc_key": DART_API_KEY,
-            "corp_code":  corp_code,
-            "bsns_year":  str(fiscal_year),
-            "reprt_code": "11011",  # 사업보고서
-        }
-        resp = requests.get(url, params=params, timeout=10)
-        data = resp.json()
-
-        if data.get("status") != "000" or not data.get("list"):
-            # 사업보고서 없으면 반기 시도
-            params["reprt_code"] = "11012"
-            resp = requests.get(url, params=params, timeout=10)
-            data = resp.json()
-
-        if data.get("status") != "000" or not data.get("list"):
-            return None
-
-        # 보통주 행 탐색
-        for item in data["list"]:
-            se = item.get("se", "")
-            if "보통주" in se or se == "합계":
-                raw = item.get("istc_totqy", "0")
-                shares = int(re.sub(r"[^0-9]", "", raw) or "0")
-                if shares > 0:
-                    return shares
-
+        from sqlalchemy import text
+        from collector.db import get_session
+        with get_session() as s:
+            return s.execute(text("""
+                SELECT max(float_shares) FROM std_financials_v3
+                WHERE corp_code = :c AND fiscal_year = :y AND fiscal_period = 'FY'
+                  AND float_shares > 0
+            """), {"c": corp_code, "y": fiscal_year}).scalar()
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"유통주식수 조회 실패 [{corp_code} {fiscal_year}]: {e}")
         return None
-
-    except Exception as e:
-        logger.debug(f"DART 상장주식수 조회 오류 [{corp_code}/{fiscal_year}]: {e}")
-        return None
-
 
 # ---------------------------------------------------------------------------
 # 메인 조회 로직
@@ -162,23 +133,23 @@ def _fetch_live(
     corp_code: Optional[str],
     fiscal_year: Optional[int],
 ) -> Optional[dict]:
-    """pykrx 주가 + DART 상장주식수 → 시총 계산 후 캐시 저장."""
+    """pykrx 주가 + 원문 유통주식수(R225) → 시총 계산 후 캐시 저장."""
 
     close, trade_dt = _fetch_close_price(stock_code, target_date)
     if close is None:
         logger.debug(f"주가 없음: {stock_code} @ {target_date}")
         return None
 
-    # 상장주식수: DART API
+    # 유통주식수: 원문 기반 std_financials_v3.float_shares (R225)
     shares_out = None
     market_cap  = None
 
     if corp_code:
         fy = fiscal_year or target_date.year
-        shares_out = get_shares_from_dart(corp_code, fy)
-        # 연말 결산 기준 상장주식수가 없으면 전년도 시도
+        shares_out = get_float_shares(corp_code, fy)
+        # 그 연도 사업보고서가 아직 없으면 전년도
         if not shares_out and fy > 2000:
-            shares_out = get_shares_from_dart(corp_code, fy - 1)
+            shares_out = get_float_shares(corp_code, fy - 1)
 
     if shares_out:
         market_cap = close * shares_out

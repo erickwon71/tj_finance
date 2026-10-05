@@ -1465,6 +1465,15 @@ def _run_migrations() -> None:
         ("2026_10_05_periodic_api_progress_drop",
          "DROP TABLE IF EXISTS periodic_api_progress"),
 
+        # R225(2026-10-05, 사용자 결정 "밸류에이션 주식수는 유통주식으로"): '주식의 총수' 표의
+        # Ⅴ 자기주식수·Ⅵ 유통주식수(보통주)를 계층2·3 에 싣는다. nullable → 카탈로그만 변경.
+        ("2026_10_05_float_shares",
+         """
+        ALTER TABLE report_shares_outstanding ADD COLUMN IF NOT EXISTS treasury_shares BIGINT;
+        ALTER TABLE report_shares_outstanding ADD COLUMN IF NOT EXISTS float_shares BIGINT;
+        ALTER TABLE std_financials_v3 ADD COLUMN IF NOT EXISTS float_shares BIGINT;
+        """),
+
         ("2026_10_statement_source_drop",
          # statement_source 폐기(2026-10-03, 사용자 결정). 이 테이블은 fin2 R-레이어(reconcile.py)가
          # fact_v2 로 채웠는데 fact_v2 DROP(2026-09-01) 이후 한 번도 갱신되지 않았다(마지막 reconciled_at

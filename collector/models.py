@@ -490,6 +490,8 @@ class ReportSharesOutstanding(Base):
     fiscal_year   = Column(SmallInteger, nullable=False, comment="보고서 회계연도")
     fiscal_period = Column(String(5), nullable=False, comment="FY/H1/Q1/Q3")
     shares_out    = Column(BigInteger, nullable=False, comment="발행주식의 총수(보통주)")
+    treasury_shares = Column(BigInteger, nullable=True, comment="Ⅴ 자기주식수(보통주) — R225")
+    float_shares  = Column(BigInteger, nullable=True, comment="Ⅵ 유통주식수(보통주, Ⅳ−Ⅴ) — R225")
     as_of_date    = Column(Date, nullable=True,
                            comment="filings.period_end_date 근사(원문 기준일 문구는 미추출)")
     source_ref    = Column(String(40), nullable=True,
@@ -1714,6 +1716,7 @@ class StdFinancialV3(Base):
     fcf                 = Column(BigInteger, nullable=True)
     net_debt            = Column(BigInteger, nullable=True)
     shares_out          = Column(BigInteger, nullable=True)
+    float_shares        = Column(BigInteger, nullable=True)   # R225 유통주식수(보통주) — 밸류에이션 주식수
     data_quality        = Column(SmallInteger, nullable=True)
     # P1A(2026-09-03, docs/plans/std_v2_retirement_port_to_v3_2026-08-22.md §Phase 1):
     # v2 파리티 마지막 3컬럼. combine 이 rule_additive_lease/rule_additive_borrowings

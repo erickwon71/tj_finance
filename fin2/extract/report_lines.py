@@ -2367,8 +2367,49 @@ _NOTE_INSERT_COLS = (
 ).split()
 
 
-def store_report_tables(session, rcept_no: str, lines: list[ReportLineRow]) -> int:
+_TABLE_SCOPES = ("all", "body", "note")
+
+
+def store_report_tables(session, rcept_no: str, lines: list[ReportLineRow],
+                        scope: str | None = None) -> int:
     """표 단위 메타를 `report_tables` 로 rcept 단위 delete-then-insert (F3, 2026-07-31).
+
+    ★R219(2026-10-05) — delete 범위 = `scope` 가 다루는 statement 만.
+      예전엔 rcept 의 메타를 **전부** 지웠다. 본문만 추출한(`include_notes=False`) 재적재·
+      데일리 XBRL 경로가 이 함수를 부르면 주석 표 메타까지 사라졌고, 주석 표 제목
+      (`section_path`)을 잃은 note_lines 는 계층3 주석 해석(D&A 등)에서 보이지 않게 됐다
+      (2015+ 77,672필링, FY D&A 절반 결측). 이제:
+        scope='body' → statement<>'note' 만 지우고 다시 쓴다(주석 메타 보존)
+        scope='note' → statement='note' 만 (본문 메타 보존)
+        scope='all'  → 전부
+      None 이면 lines 에 주석 행이 있을 때 'all', 없으면 'body' 로 정한다.
+      주석을 함께 적재(`store_note_lines`)하는 호출측은 주석 0행이어도 note_lines 와 짝이
+      맞도록 'all' 을 명시한다.
+    """
+    from sqlalchemy import delete
+    from collector.models import ReportTable
+
+    if scope is None:
+        scope = "all" if any(l.statement == "note" for l in lines) else "body"
+    if scope not in _TABLE_SCOPES:
+        raise ValueError(f"store_report_tables: unknown scope {scope!r}")
+
+    where = [ReportTable.rcept_no == rcept_no]
+    if scope == "body":
+        where.append(ReportTable.statement != "note")
+    elif scope == "note":
+        where.append(ReportTable.statement == "note")
+    session.execute(delete(ReportTable).where(*where))
+    stored = [l for l in lines
+              if (scope != "body" and l.statement == "note")
+              or (scope != "note" and l.statement != "note" and _is_loadable(l))]
+    if not stored:
+        return 0
+    return _insert_report_tables(session, rcept_no, stored)
+
+
+def _insert_report_tables(session, rcept_no: str, stored: list[ReportLineRow]) -> int:
+    """Insert one `report_tables` row per (statement, basis, table_seq) of `stored`.
 
     행 테이블에서 뺀 값들(제목·주석 제목·단위 선언 원문)을 **표마다 한 번** 적는다.
     키는 `(rcept_no, statement, basis, table_seq)` — 함수종속이 측정된 바로 그 키다
@@ -2380,14 +2421,8 @@ def store_report_tables(session, rcept_no: str, lines: list[ReportLineRow]) -> i
     ★ 같은 표의 행이 서로 다른 값을 들고 있으면 **첫 값을 쓴다.** 함수종속은 측정으로 확인됐고
       (표본 300 rcept 위반 0), 그래도 어긋나는 경우는 원문 자체가 그런 것이라 판단하지 않는다.
     """
-    from sqlalchemy import delete, insert
+    from sqlalchemy import insert
     from collector.models import ReportTable
-
-    session.execute(delete(ReportTable).where(ReportTable.rcept_no == rcept_no))
-    stored = [l for l in lines
-              if (l.statement == "note") or _is_loadable(l)]
-    if not stored:
-        return 0
 
     now = datetime.utcnow()
     seen: dict[tuple, dict] = {}

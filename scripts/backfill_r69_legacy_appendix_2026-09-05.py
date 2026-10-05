@@ -66,7 +66,7 @@ def main() -> None:
                     include_notes=True,
                 )
                 note_rows_total += store_note_lines(session, rcept, lines)
-                store_report_tables(session, rcept, lines)
+                store_report_tables(session, rcept, lines, scope="all")
                 n_body = store_report_lines(session, rcept, lines)
                 body_rows_total += n_body
                 if n_body:

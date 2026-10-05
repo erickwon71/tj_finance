@@ -12306,3 +12306,90 @@ A/B 로 측정한 1,308셀(추가·사라짐·변경)을 재빌드 후 `extended
 **소급**: 자동 아님. 2015+ 대상 2건(DB증권 00115694, 멀티캠퍼스 00425351)만 std_v3·달력 재빌드(`--year-min 1990` 아님, 해당 연도 포함하면 충분)한다.
 
 **소급 결과(2026-10-04)**: DB증권·멀티캠퍼스 2개사 std_v3(`--year-min 2015`, 184행)·달력(385행)을 재빌드했다. DB증권 2016Q1 EPS 연결 28·별도 13, 멀티캠퍼스 2018Q1 연결 458·별도 431 로 원문 EPS 와 일치한다. 2015+ `is.eps_*` |값| ≥ 1,000,000 은 0건이다.
+
+## R219. `store_report_tables()` 는 **넘겨받은 lines 가 다루는 statement 범위만** 지우고 다시 쓴다 — 본문 재적재가 주석 표 메타를 지우지 않는다 (2026-10-05, 삼양식품 분석 리포트 '감가상각비 없음' 추적)
+
+**발견**: 삼양식품 std_v3 D&A 가 2017·2018 FY 에만 있었다. 원문 주석(`note_lines`)에는 2024 '감가상각비 및 무형자산상각비 46,025,094,000' 등이 있다. 계층3 주석 해석(`fin2/layer3/note_da.py`)은 `report_tables.section_path`(주석 제목)로 주제를 찾는데, 그 rcept 들의 주석 메타가 0행이었다(본문 메타 8행만 남음).
+- 원인: `store_report_tables()` 가 rcept 의 메타를 **statement 구분 없이 전부** 지우고 lines 에 있는 것만 다시 썼다. 본문만 추출한(`include_notes=False`) 2015+ 전사 재적재(`scripts/reload_report_lines_2015plus_2026-09-12.py`)·각종 R 백필·데일리 `collector/xbrl_instance_lines_sync.py` 가 주석 메타를 지웠다. R135 주석 재적재(2026-09-17)는 `store_note_lines` 만 불러 되살리지 못했다.
+- 규모(2026-10-05): note_lines 가 있는 2015+ 필링 중 **77,672필링**이 주석 메타 없음. 2015+ FY std_v3 D&A 채움률 22,726/46,240.
+
+**규칙** (`fin2/extract/report_lines.py::store_report_tables(scope=)`)
+1. `scope='body'` → `statement<>'note'` 만 delete-then-insert. `'note'` → 주석만. `'all'` → 전부.
+2. `scope=None` 이면 lines 에 주석 행이 있으면 `'all'`, 없으면 `'body'`.
+3. `store_note_lines` 를 함께 부르는 호출측(`collector/note_lines_sync.py`, `fin2/verification/ops.py` XML 경로, a1_a2_c·r69 백필)은 `'all'` 을 명시한다 — 주석 0행 추출이어도 note_lines 와 메타가 짝을 이룬다. ops.py 의 XBRL 경로는 `'body'`.
+
+**소급**: `scripts/restore_note_table_meta_r219_2026-10-05.py`. 원문을 `include_notes=True` 로 재추출해 (basis, table_seq) 표 집합이 DB note_lines 와 같고 표마다 라벨이 겹치면 **메타만** 쓴다. 다르면 note_lines 도 현재 코드로 다시 쓴다. report_lines 는 건드리지 않는다. 표본 6필링: 표 집합 6/6 일치, 행 수는 9/17 이후 행 규칙 변경(R136~)으로 대부분 다름 → 행 수는 판정에 쓰지 않는다. 이후 계층3(std_v3·달력) 재빌드로 D&A/EBITDA 가 채워진다.
+
+**회귀 테스트**: `fin2/tests/test_store_report_tables_scope.py`.
+
+## R220. 달력 CY(12월 결산 native)의 flow 는 **같은 회계연도 FY as-filed 값**을 쓴다 (2026-10-05, 삼양식품 '배당금 지급 2021년 이후 비어 있음')
+
+**발견**: std_v3 FY 의 dividends_paid 는 2021~2025 모두 있는데 `std_financials_calendar` CY 만 NULL. 삼양식품은 배당을 4월에 지급해 Q1 CF 에 배당 줄이 없고(Q1=None), `_cy_record` 는 ΣCQ 를 "4분기 모두 non-None 일 때만" 만들었다. 전사 FY 배당 23,325건 중 15,256건이 Q1 None.
+
+**규칙** (`fin2/standardize/calendar_v3.py::_native_fy_row`/`_cy_record(fy_row=)`): CY 의 네 분기가 한 회계연도에서 왔고(native) 그 FY 행의 period_end 가 그 해 12-31 이면, flow 컬럼은 FY 행 값을 그대로 쓴다. Q1+(H1−Q1)+(Q3−H1)+(FY−Q3)=FY 항등식이라 ΣCQ 와 같은 값이고 추정이 아니다. recomposed(비12월 결산)는 기존 ΣCQ 그대로. 0 으로 채우는 안(배당 줄 부재=0)은 미매핑 라벨과 구분할 수 없어 기각.
+
+**측정**: 기존 native CY 64,221행 중 ΣCQ 가 있는 값은 FY 와 일치(불일치 7행은 std_v3 재빌드 이후 달력이 갱신 안 된 낡은 행). 새로 채워지는 값: dividends_paid 25,686 · da_total 9,028 등.
+
+**회귀 테스트**: `fin2/tests/test_calendar_v3.py`(R220 4건).
+
+## R221. 계층3 std 비용 컬럼은 **비용 = 양수** 관례로 정규화한다 — 항등식 증명 + 성질상 비음수 비용 (2026-10-05, 삼양식품 '2024년부터 비용 음수')
+
+**발견**: 삼양식품 2024·2025 사업보고서 원문이 비용을 괄호로 인쇄한다(`매출원가 (1,004,797,694,924)`, 2023 은 양수). 계층2 는 원문 그대로(정상), 계층3 이 부호를 그대로 옮겨 std cogs/sga/법인세/이자비용이 음수가 됐다. FY cogs 음수 회사 2022 14 → 2025 372. Gate B(face_audit)는 부호만 다른 값을 E2_SIGN 으로 PASS 하며 "std 는 비용을 양수로 정규화" 를 전제하고 있었다 — 규약은 있었고 구현이 없었다.
+
+**규칙** (`fin2/layer3/expense_sign.py::normalize_expense_signs`, `fin2/layer3/build.py` 가 행 저장 직전 호출)
+1. 항등식(±max(1,000원, 값/10⁵)): cogs `gross_profit = revenue ∓ cogs`, sga `operating_income = gross_profit ∓ sga`, tax `net_income = ebt ∓ tax`. `+` 만 성립 → 음수관례 증명 → 부호 반전. `−` 만 성립 → 그대로.
+2. cogs·sga·interest_expense 는 성질상 음수가 될 수 없는 비용이라 자기 증명이 없어도 음수면 반전(같은 표 안에서도 관례가 섞임: 00145260 FY2018 매출원가 양수·판관비/금융비용 음수). 단 1 의 `−` 증명이 있으면 그대로.
+3. 법인세는 환급(음수)이 정상값이라 자기 증명이 있을 때만 반전한다. 음수관례 표에서 양수로 인쇄된 환급(5,992행)은 음수가 된다.
+4. rd_expense 는 대상 아님(주석 소스, `rules.py::rule_rd_fallback` 이 이미 abs).
+
+**측정**(정규화 전 std_v3 전체 시뮬레이션): 반전 cogs 4,084 · sga 8,584 · interest 16,509 · tax 15,072. 남는 음수 cogs 148 · sga 338 은 모두 자기 항등식이 그 음수값을 증명한 행.
+
+**회귀 테스트**: `fin2/tests/test_expense_sign.py`. **데일리 배선**: build_corp 내부라 추가 배선 없음. **소급**: std_v3 전사 재빌드(`--year-min 1990`) + 달력 재빌드(R219 D&A 와 한 번에).
+
+## R222. 정기보고서 **비재무 섹션 표**는 계층2 `doc_section_tables` 에 원문 격자로 담고, 1차 키는 DART **서식 코드(TABLE-GROUP ACLASS)** 다 (2026-10-05, API→문서 전환 Phase 0)
+
+**배경**: 배당·주주·임원·직원·임원보수·타법인출자·자기주식 10개 테이블이 DART OpenAPI(alotMatter 등)로 채워져 있었다(CLAUDE.md "로컬 문서로부터" 원칙 위반, 원문 대조 불가). 계획: `docs/plans/api_to_document_migration_plan_2026-10-05.md`.
+
+**규칙** (`fin2/layer2/doc_sections.py`, 모델 `collector/models.py::DocSectionTableRow`)
+1. DART 는 표준 서식 표를 `<TABLE-GROUP ACLASS="DIVIDEND">` 처럼 감싼다. 섹션 표제는 시대마다 흔들리지만(배당에관한사항 / 배당에관한사항등 / 가.최근5사업연도의…) 서식 코드는 안정적이다. 카탈로그(`docs/qa/doc_section_catalog_2026-10-05.md`, 연도당 40건 표본): 2015+ 대상 코드 출현 99~100%, 2010-14 대부분, 2009 이전 일부.
+2. `TARGET_ACLASS`(TOT_STK·STOCK·OWN_SHR·DIVIDEND·BSH_SPCL·BSH_CHA·SH5_PRE_STT·SH4_PRE_STT·SH5_DRCT_STT·PSN_MBER·EMPLOYEE·UNRESISTER·SUB_CMP*·INV_PRT)의 그룹 안 표를 **전부** 담는다(첫 표는 대개 기준일·단위 캡션 → `group_ord`).
+3. 표제 폴백: 서식 코드 없는 표가 대상 키워드 섹션 안에 있으면 `aclass=NULL` 로 담는다. '주주총회'·'대주주등과의거래' 등은 제외(대상 아님, 필링당 최대 용량).
+4. 격자는 ROWSPAN/COLSPAN 전개(`fin2/extract/biz_section.expand_table_grid`), 판단 없음. `heading_raw` = 표 직전 마지막 문단.
+5. 데일리: `collector/note_lines_sync.py`(두 call site 공용 경로)에서 SAVEPOINT 로 비치명 적재. 소급: `scripts/backfill_doc_section_tables_2026-10-05.py`(1차 2015+ 사업보고서, 사용자 결정 — 2014 이전은 표제 폴백 매핑과 함께 후속).
+
+**회귀 테스트**: `fin2/tests/test_doc_sections_layer2.py`.
+
+## R223. 계층3 문서 매퍼는 **머리 경로(header path)로 열을 찾고**, 숫자·단위·날짜는 공통 규칙으로 읽는다 (2026-10-05, API→문서 전환 Phase 1~6)
+
+모듈: `fin2/layer3/doc_common.py`(공통) · `doc_dividend` · `doc_shareholders` · `doc_people` · `doc_pay` · `doc_investments` · `doc_treasury`, 적재 `collector/doc_sections_sync.py`(테이블명·컬럼 유지, 회사 단위 fy≥2015 delete-then-insert).
+
+1. **필링 선택**: (corp, FY) 사업보고서를 is_final→최초 순으로 보며 해당 서식 코드 표가 있는 첫 필링(첨부정정은 본문이 없어 자연히 원본으로 내려감).
+2. **머리행**: 0열 라벨이 같은 선행 행 묶음. 그 묶음이 1행이면 숫자 셀 없는 선행 행(최대 5) — EMPLOYEE 4단 머리.
+3. **열 찾기**: `find_col(paths, *needles, leaf=)` — 측정 항목(주식수·지분율 등)은 **맨 아래 머리**(`leaf`)로만 찾는다. 상위 배너 '소유주식수 및 지분율' 에 두 이름이 다 들어 있어 부분일치하면 주식수 열이 지분율로 잡혔다(삼양식품 2024 BSH_SPCL 실측). 열 번호 0 이 유효하므로 후보 연쇄는 `or` 금지, `coalesce` 사용.
+4. **숫자**: 셀 안 공백·줄바꿈 제거 후 파싱('3,388,\n417', 삼양식품 2024 BSH_SPCL 계 행 — R150 계열). '-'·빈칸 → NULL, 그 외 파싱 실패 → NULL(추측 금지).
+5. **단위**: 금액은 그룹 캡션의 '(단위 : 천원)' 을 곱해 원으로, 수량은 '천주' 면 ×1,000. 금액 단위 선언이 없으면 금액 NULL.
+6. **날짜**: 'YYYY년 MM월 DD일'·'YYYY-MM-DD' → 'YYYY.MM.DD'(API 판 형식). '-' 대표값(부문·목적·종류)은 NULL.
+7. **API 판과 다르게 한 것(원문 기준)**: 임원 등기·상근 여부를 원문 문자열로 판정(API 판은 'Y/N' 만 읽어 대부분 거짓/NULL), 근속연수 '6년 5개월'→6.42, 자기주식 취득방법 라벨·행 순서 원문 그대로, 원문에 표가 없는 연도는 행 없음(API 판의 전부-NULL 자리표시 행 없음).
+
+**검증(부분 적재 시점 표본, 전사 수치는 컷오버 기록에)**: 원문판 vs API 판 (corp, FY) 그룹 완전일치 — 임원보수(개인) 100% · 요약 99.9% · 소액주주 98.8% · 최대주주 98.6% · 직원 98.9% · 자기주식 97.9% · 변동 97.4% · 배당 96.6%. 표본으로 확인한 불일치는 모두 원문판이 맞다: 2026 기재정정 반영(API 는 정정 전 값), API 의 '#######' 칸 넘침 값, 주식배당 '0.07주'→API 0.0 절삭, 정규직 수 등 API NULL.
+
+**회귀 테스트**: `fin2/tests/test_doc_dividend.py` · `test_doc_shareholders.py` · `test_doc_people_pay_inv_treasury.py`.
+
+## R224. 선언 안 된 명명 엔티티(`&cr;` 등)는 **파싱 전에 정리**한다 — libxml2 가 그 뒤의 `&amp;`·`&lt;`·`&gt;`·`&quot;` 를 버리지 않게 (2026-10-05, API→문서 전환 중 발견)
+
+**발견**: DART 원문은 서식 줄바꿈을 `&cr;` 로 쓴다(연도별 표본 348 filing 중 158개, 219,771회, TD/TH/TE 셀 안에도 있음). XML 에 선언되지 않은 엔티티라 `etree.XMLParser(recover=True)` 가 오류 복구에 들어가고, **그 뒤로는 `&amp;`·`&lt;`·`&gt;`·`&quot;` 를 조용히 버린다**(숫자 참조 `&#38;` 는 유지, libxml2 2.12.10).
+재현: `<a>x&cr;y<b>S&amp;T</b></a>` → 'ST', `<a>x&cr;y<b>1&lt;2 &gt;3 &quot;q&quot;</b></a>` → '12 3 q'. 실측: KR모터스 2018 사업보고서 '(주)S&TC' → '(주)STC', 타법인출자 'K&S WIRE' → 'KS WIRE'.
+**구분 근거**: 원문의 실제 '&' 는 이스케이프 없이 맨 '&' 로 쓰인다(표본 3,954회: 'S&P'·'C&T'·'Oil & Gas'). '&이름;' 꼴은 `&cr;` 와 `&reg;`(1회)뿐이었다 → '&이름;' 은 서식 기호, 맨 '&' 는 실제 문자.
+
+**규칙** (`parser/xml/dart_xml_parser.py::sanitize_dart_xml` 첫 단계 `_resolve_named_entity`)
+- XML 기본 5종(amp lt gt quot apos) → 그대로.
+- `cr` → **삭제**. libxml2 도 지금까지 삭제해 왔다('x&cr;y' → 'xy'). 셀 문자열이 바뀌지 않게 같은 결과를 유지한다(줄바꿈 복원은 라벨이 바뀌는 별개 결정).
+- HTML 명명 엔티티(`reg` 등) → 숫자 문자 참조('®').
+- 그 밖의 '&xyz;' → 실제 문자열 '&amp;xyz;'.
+이후 파서가 오류 복구에 들어가지 않으므로 맨 '&'(→`&amp;`)와 `_BAD_LT` 의 `&lt;` 가 정상 보존된다.
+
+**회귀 테스트**: `fin2/tests/test_xml_sanitize.py`(R224 6건: & 보존, <>" 보존, cr 삭제 유지, ®, 미지 엔티티 literal, 파싱 오류 0). 전체 `pytest tests/ fin2/tests/` 1,674 passed.
+
+**소급**
+- `doc_section_tables`: 수정 전 코드로 21,232 필링이 적재된 상태에서 중단·TRUNCATE 후 수정 코드로 2015+ 사업보고서 재적재(같은 날 신설 테이블).
+- `report_lines`·`note_lines`(및 계층3): **미착수.** 같은 파서를 쓰므로 `&cr;` 가 있는 필링에서 '&'·'<'·'>'·'"' 가 들어간 라벨·셀이 원문대로 돌아온다. 라벨이 바뀌면 계층3 매핑·검증 대조에도 영향 → 영향 필링 전수 측정(라벨 diff) 후 재적재 범위를 사용자와 정한다. 데일리 신규 적재분은 이미 수정 코드로 들어간다(기존분과 표기가 달라질 수 있음 — 측정 시 함께 본다).

@@ -20,6 +20,7 @@ from fin2.extract.consolidation_evidence import resolve_std_v3_no_consolidated_f
 from fin2.extract.ifrs_evidence import resolve_std_v3_is_ifrs
 from fin2.layer3.combine import (combine_full, select_canonical_rcepts,
                                  build_merged_lines)
+from fin2.layer3.expense_sign import normalize_expense_signs
 from fin2.standardize.rules import validate_equations
 
 _VALUE_COLS = (
@@ -214,6 +215,9 @@ def build_corp(session, corp: str, year_min: int = 2015,
                 ni = col.get("net_income")
                 if ni is not None and col.get("controlling_ni") != ni:
                     col["controlling_ni"] = ni
+            # R221: expenses printed in parentheses → positive-expense convention, proven
+            # by IS identities only (fin2/layer3/expense_sign.py).
+            normalize_expense_signs(col)
             row = StdFinancialV3(
                 corp_code=corp, fiscal_year=fy, fiscal_period=period,
                 statement_type=basis,

@@ -137,8 +137,17 @@ def _cq_record(corp_code, basis, cyear, cq, src, derivation, version: int = 1) -
     return rec
 
 
-def _cy_record(corp_code, basis, cyear, quarters: dict, derivation, version: int = 1) -> dict:
-    """달력연도(CY) 레코드. flow=ΣCQ, stock=CQ4(12-31) 스냅샷. 4분기 완비 가정."""
+def _cy_record(corp_code, basis, cyear, quarters: dict, derivation, version: int = 1,
+               fy_row: dict | None = None) -> dict:
+    """달력연도(CY) 레코드. flow=ΣCQ, stock=CQ4(12-31) 스냅샷. 4분기 완비 가정.
+
+    ★R220(2026-10-05) — `fy_row`(같은 회계연도의 as-filed FY 누적행, 12월 결산 native CY)가
+      있으면 flow 는 **FY 원값**을 쓴다. 네 이산분기가 한 회계연도에서 왔으면
+      Q1+(H1−Q1)+(Q3−H1)+(FY−Q3) = FY 가 항등식이라 ΣCQ 와 값이 같고 추정이 없다. 차이는
+      한 분기라도 그 컬럼이 None 일 때뿐이다: ΣCQ 는 None 이 되지만 FY 원값은 남는다.
+      실측 삼양식품 연결 2021~2025 dividends_paid — 4월 지급이라 Q1 CF 에 배당 줄이 없어
+      Q1=None → CY None 이었다(전사 FY 배당 23,325건 중 15,256건이 Q1 None).
+    """
     cq4 = quarters["CQ4"]
     rec = {
         "corp_code": corp_code, "calendar_year": cyear, "calendar_period": "CY",
@@ -154,12 +163,26 @@ def _cy_record(corp_code, basis, cyear, quarters: dict, derivation, version: int
         rec[c] = cq4.get(c)
     # flow = ΣCQ (각 분기 그 컬럼이 모두 non-None 일 때만; 하나라도 None → None, 추정 금지).
     for c in _FLOW_COLS:
+        if fy_row is not None:
+            rec[c] = fy_row.get(c)
+            continue
         vals = [quarters[q].get(c) for q in _CQ_ORDER]
         rec[c] = sum(vals) if all(v is not None for v in vals) else None
     # stock = 12-31 스냅샷(CQ4 잔액).
     for c in _STOCK_COLS:
         rec[c] = cq4.get(c)
     return rec
+
+
+def _native_fy_row(asfiled: dict, quarters: dict, cyear: int, cy_deriv: str) -> dict | None:
+    """R220: the as-filed FY row a native CY equals (one fiscal year ending 12-31), else None."""
+    if cy_deriv != "native":
+        return None
+    cand = asfiled.get((quarters["CQ4"]["fiscal_year"], "FY"))
+    pe = cand.get("period_end") if cand else None
+    if pe is None or pe.month != 12 or pe.year != cyear:
+        return None
+    return cand
 
 
 def _load_asfiled_v3(session, corp_code: str, basis: str) -> dict[tuple[int, str], dict]:
@@ -249,7 +272,9 @@ def calendarize_corp_v3(session, corp_code: str) -> int:
                 cy_deriv = ("native"
                             if len({quarters[q]["fiscal_year"] for q in _CQ_ORDER}) == 1
                             else "recomposed")
-                batch.append(_cy_record(corp_code, basis, cyear, quarters, cy_deriv))
+                batch.append(_cy_record(
+                    corp_code, basis, cyear, quarters, cy_deriv,
+                    fy_row=_native_fy_row(asfiled, quarters, cyear, cy_deriv)))
 
         session.execute(insert(StdFinancialCalendar).values(batch))
         written += len(batch)

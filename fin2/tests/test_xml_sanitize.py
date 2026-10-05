@@ -139,3 +139,38 @@ def test_normal_attributes_untouched():
     assert b'ACODE="ifrs-full_Assets"' in out
     root = _parse(raw)
     assert len(root.findall(".//TABLE")) == 2
+
+
+# ── R224(2026-10-05): undeclared `&cr;` must not make libxml2 drop later escapes ─────────
+
+def _texts(raw: bytes, tag: str) -> list[str]:
+    return ["".join(e.itertext()) for e in _parse(raw).iter(tag)]
+
+
+def test_ampersand_after_cr_entity_survives():
+    # KR모터스 2018 사업보고서: '(주)S&TC' became '(주)STC' once a '&cr;' preceded it.
+    assert _texts(b"<a><P>x&cr;y</P><TE>(S)S&TC</TE><TE>K&S WIRE</TE></a>", "TE") == \
+        ["(S)S&TC", "K&S WIRE"]
+
+
+def test_lt_gt_quot_after_cr_entity_survive():
+    assert _texts(b"<a><P>&cr;</P><TE>1<2 >3 &quot;q&quot;</TE></a>", "TE") == ['1<2 >3 "q"']
+
+
+def test_cr_entity_still_removed_as_before():
+    # libxml2 used to drop '&cr;' entirely; keep that output so cell strings do not change.
+    assert _texts(b"<a><TE>x&cr;y</TE></a>", "TE") == ["xy"]
+
+
+def test_html_named_entity_becomes_character():
+    assert _texts(b"<a><TE>Brand&reg;</TE></a>", "TE") == ["Brand®"]
+
+
+def test_unknown_entity_shaped_text_is_literal():
+    assert _texts(b"<a><TE>R&Dx;</TE></a>", "TE") == ["R&Dx;"]
+
+
+def test_no_parse_errors_left_by_cr():
+    p = etree.XMLParser(recover=True)
+    etree.fromstring(sanitize_dart_xml(b"<a><P>x&cr;y</P><TE>S&T</TE></a>"), p)
+    assert len(p.error_log) == 0

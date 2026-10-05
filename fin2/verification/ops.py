@@ -1243,7 +1243,10 @@ def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, s
                       {"r": reason})
             if t.file_type == "xml":
                 store_note_lines(s, rcept, lines)
-            store_report_tables(s, rcept, lines)
+            # R219: the XML path rewrites note_lines too, so its table meta is rewritten in
+            # full; the XBRL path is body-only and must keep the XML-derived note meta.
+            store_report_tables(s, rcept, lines,
+                                scope="all" if t.file_type == "xml" else "body")
             store_report_lines(s, rcept, lines)
     except DBAPIError as exc:
         if isinstance(exc.orig, pg_errors.LockNotAvailable):

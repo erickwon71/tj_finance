@@ -92,6 +92,52 @@ def test_returns_empty_dict_when_no_rows():
     assert out == {}
 
 
+# ── R220: native CY takes flows from the as-filed FY row ─────────────────────────
+def _q(fy, fp, **vals):
+    return {"fiscal_year": fy, "fiscal_period": fp, "data_quality": 1, **vals}
+
+
+def _samyang_like():
+    """Dividends paid in April: the Q1 CF has no dividend line → Q1 None (삼양식품 2024)."""
+    quarters = {"CQ1": _q(2024, "Q1", dividends_paid=None, cfo=10),
+                "CQ2": _q(2024, "Q2", dividends_paid=None, cfo=20),
+                "CQ3": _q(2024, "Q3", dividends_paid=-11, cfo=30),
+                "CQ4": _q(2024, "Q4", dividends_paid=0, cfo=40)}
+    fy = _v3_row(2024, "FY", 12, 2024, dividends_paid=-19391132800, cfo=100)
+    return quarters, {(2024, "FY"): fy}
+
+
+def test_native_cy_uses_fy_flow_when_a_quarter_is_none():
+    from fin2.standardize.calendar_v3 import _cy_record, _native_fy_row
+    quarters, asfiled = _samyang_like()
+    fy_row = _native_fy_row(asfiled, quarters, 2024, "native")
+    rec = _cy_record("00126955", "consolidated", 2024, quarters, "native", fy_row=fy_row)
+    assert rec["dividends_paid"] == -19391132800
+    assert rec["cfo"] == 100
+
+
+def test_sum_of_quarters_kept_without_fy_row():
+    from fin2.standardize.calendar_v3 import _cy_record
+    quarters, _ = _samyang_like()
+    rec = _cy_record("00126955", "consolidated", 2024, quarters, "native")
+    assert rec["dividends_paid"] is None          # no estimation
+    assert rec["cfo"] == 100                      # Σ CQ
+
+
+def test_recomposed_cy_never_uses_fy_row():
+    from fin2.standardize.calendar_v3 import _native_fy_row
+    quarters, asfiled = _samyang_like()
+    assert _native_fy_row(asfiled, quarters, 2024, "recomposed") is None
+
+
+def test_fy_row_must_end_on_dec31_of_the_calendar_year():
+    from fin2.standardize.calendar_v3 import _native_fy_row
+    quarters, _ = _samyang_like()
+    march_fy = {(2024, "FY"): _v3_row(2024, "FY", 3, 2025)}
+    assert _native_fy_row(march_fy, quarters, 2024, "native") is None
+    assert _native_fy_row({}, quarters, 2024, "native") is None
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

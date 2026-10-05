@@ -9,6 +9,7 @@ DART XML 파서 — 메인 오케스트레이터
 """
 import re
 from dataclasses import dataclass, field
+from html.entities import name2codepoint
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -201,6 +202,35 @@ def parse_dart_xml(
 #   값이 바뀐 filing 5(2%). 바뀐 것은 전부 **오귀속 교정**이었다
 #   (예: '차입금, 기준이자율' 이 '8. 관계기업투자' 밑 → '16. 차입금' 으로 이동).
 
+# ★R224(2026-10-05) — 선언 안 된 명명 엔티티를 파싱 전에 없앤다.
+# DART 원문은 서식 줄바꿈을 `&cr;` 로 쓴다(표본 348 filing 중 158개, 219,771회 — TD/TH/TE 셀
+# 안에도 있음). XML 에 선언되지 않은 엔티티라 libxml2 가 recover 모드로 들어가는데, **그 뒤로는
+# `&amp;`·`&lt;`·`&gt;`·`&quot;` 를 조용히 버린다**(`&#38;` 같은 숫자 참조는 유지):
+#   <a>x&cr;y<b>S&amp;T</b></a> → 'ST'  (KR모터스 2018 '(주)S&TC' → '(주)STC', 'K&S WIRE' → 'KS WIRE')
+# 원문의 실제 '&' 는 이스케이프 없이 맨 '&' 로 쓰이고(표본 3,954회), 명명 엔티티는 `&cr;` 와
+# `&reg;`(1회)뿐이었다. 그래서 '&이름;' 꼴은 서식 기호로 보고:
+#   · XML 기본 5종(amp lt gt quot apos) → 그대로
+#   · cr → 삭제. libxml2 가 지금까지도 삭제해 왔다('x&cr;y' → 'xy') — 셀 문자열을 바꾸지
+#     않으려고 같은 결과를 유지한다(줄바꿈 복원은 라벨이 바뀌는 별개 결정).
+#   · HTML 명명 엔티티(reg 등) → 숫자 문자 참조('®')
+#   · 그 밖의 '&xyz;' → 실제 문자열로 보고 '&amp;xyz;'
+_XML_PREDEFINED = frozenset({b"amp", b"lt", b"gt", b"quot", b"apos"})
+_DART_FORMAT_DROP = frozenset({b"cr"})
+_NAMED_ENTITY = re.compile(rb"&([a-zA-Z][a-zA-Z0-9]{0,15});")
+
+
+def _resolve_named_entity(m: "re.Match") -> bytes:
+    name = m.group(1)
+    if name in _XML_PREDEFINED:
+        return m.group(0)
+    if name in _DART_FORMAT_DROP:
+        return b""
+    cp = name2codepoint.get(name.decode("ascii"))
+    if cp is not None:
+        return b"&#%d;" % cp
+    return b"&amp;" + name + b";"
+
+
 # 엔티티가 아닌 '&'  (&amp; &#123; &#x1F; 는 보존)
 _BAD_AMP = re.compile(
     rb"&(?!(?:[a-zA-Z][a-zA-Z0-9]{1,7}|#[0-9]{1,7}|#x[0-9a-fA-F]{1,6});)"
@@ -260,7 +290,8 @@ _BAD_LT = re.compile(
 def sanitize_dart_xml(raw: bytes) -> bytes:
     """파싱 전 원문 이스케이프 복구. 순서 주의 — '&' 를 먼저 고쳐야 뒤에서 넣는
     &quot;/&lt; 가 다시 이스케이프되지 않는다."""
-    out = _BAD_AMP.sub(b"&amp;", raw)
+    out = _NAMED_ENTITY.sub(_resolve_named_entity, raw)   # R224 — must run first
+    out = _BAD_AMP.sub(b"&amp;", out)
     out = _BAD_ATTR_QUOTE.sub(rb'="&quot;\1&quot;"', out)
     # 위에서 못 잡은 나머지 형태(양끝 2개·끝 2개·중간)를 구조로 마저 처리한다.
     # 이미 &quot; 로 바뀐 값은 날 따옴표가 없어 여기서 다시 건드리지 않는다.

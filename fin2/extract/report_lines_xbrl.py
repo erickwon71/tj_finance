@@ -1220,22 +1220,37 @@ def _settle_is_tax_sign(lines: list[ReportLineRow]) -> list[ReportLineRow]:
     role 로는 가를 수 없어(같은 필링 연결은 + 관례) 같은 (basis, col) 의
     세전이익 − 법인세 = 계속영업이익(없으면 당기순이익) 등식으로만 판정한다:
     세전 + 법인세 = 계속영업이익 이고 세전 − 법인세 ≠ 계속영업이익 일 때만 부호를 뒤집는다.
-    둘 다 아니면(중단영업·반올림 등) 건드리지 않는다(R6)."""
+    둘 다 아니면(중단영업·반올림 등) 건드리지 않는다(R6).
+
+    ★R227(2026-10-08): 위 두 표준 개념으로 판정이 안 서면(후보가 없거나 어느 등식도 안 맞음)
+    — 계속영업 순이익 행을 필러 확장 개념(`udf_…`, 베노티앤알 `계속영업반기순손익`)으로
+    태깅한 경우 — 같은 (basis, col) 의 IS 행 값 전체를 후보로 같은 판정을 한다."""
     by_key: dict[tuple, dict[str, ReportLineRow]] = {}
+    pool_of: dict[tuple, list[ReportLineRow]] = {}
     for row in lines:
         if row.statement != "IS" or row.value_won is None:
             continue
+        pool_of.setdefault((row.basis, row.col_index), []).append(row)
         local = row.source_ref.split("/")[1] if "/" in (row.source_ref or "") else None
         if local in (_TAX_LOCAL, _PBT_LOCAL, *_AFTER_TAX_LOCALS):
             by_key.setdefault((row.basis, row.col_index), {}).setdefault(local, row)
     flip: set[int] = set()
-    for rows in by_key.values():
+    for key, rows in by_key.items():
         tax, pbt = rows.get(_TAX_LOCAL), rows.get(_PBT_LOCAL)
-        after = next((rows[l] for l in _AFTER_TAX_LOCALS if l in rows), None)
-        if tax is None or pbt is None or after is None or tax.value_won == 0:
+        if tax is None or pbt is None or tax.value_won == 0:
             continue
-        if (pbt.value_won + tax.value_won == after.value_won
-                and pbt.value_won - tax.value_won != after.value_won):
+        after = next((rows[l] for l in _AFTER_TAX_LOCALS if l in rows), None)
+        if after is not None:
+            plus = pbt.value_won + tax.value_won == after.value_won
+            minus = pbt.value_won - tax.value_won == after.value_won
+            if plus and not minus:
+                flip.add(id(tax))
+            if plus or minus:
+                continue
+        # R227 — the standard after-tax concepts did not settle it: use any IS value of this column.
+        values = {r.value_won for r in pool_of[key] if r is not tax and r is not pbt}
+        if (pbt.value_won + tax.value_won in values
+                and pbt.value_won - tax.value_won not in values):
             flip.add(id(tax))
     if not flip:
         return lines

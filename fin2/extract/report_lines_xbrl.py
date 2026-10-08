@@ -835,6 +835,24 @@ def _drop_quarter_only_cells(cells: list[tuple], report_fiscal_period: str) -> l
     ]
 
 
+def _is_quarter_only_sce_cell(ctx: XbrlContext, opening_date: date | None,
+                              report_fiscal_period: str) -> bool:
+    """R226 — SCE counterpart of R201: an H1/Q3 duration fact that starts after the block's
+    opening date is the single-quarter fact, not the cumulative one the block shows.
+
+    `_bucket_by_period` falls back to the 3-month (`...Q`) context when a row has no cumulative
+    (`...A`) fact, so that value would be stored inside the cumulative block (웹스 20151201000001
+    연결 SCE 당기순이익: 3-month 394,757,877 in the 2015-01-01~09-30 block). The filing prints
+    that cell blank. `opening_date` is the earliest start of any duration context ending on the
+    block date (R181), i.e. the cumulative start. Q1 and FY have no separate quarter-only
+    context, so they are untouched."""
+    if report_fiscal_period not in ("H1", "Q3"):
+        return False
+    if ctx.period_kind != "duration" or not ctx.start_date or opening_date is None:
+        return False
+    return date.fromisoformat(ctx.start_date) > opening_date
+
+
 def _emit_statement_lines(
     *, tree: PresentationTree, facts_by_qname: dict[QName, list[XbrlFact]],
     contexts: dict[str, XbrlContext], units: dict[str, XbrlUnit],
@@ -1430,6 +1448,8 @@ def _emit_sce_lines(
                 if bucket is None:
                     continue  # this column has no value for this particular period — sparse, not an error
                 fact, ctx = bucket
+                if _is_quarter_only_sce_cell(ctx, opening_date_of.get(d), report_fiscal_period):
+                    continue  # R226 — cumulative cell is blank in the filing
                 value = _numeric_value(fact, units)
                 if value is None:
                     continue

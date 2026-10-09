@@ -48,7 +48,7 @@ def work(rc):
             if t is None:
                 return {"rcept": rc, "status": "nosource"}
             path = t.file_path
-            if t.file_type == "xml" and NAS_MARK in path:
+            if t.file_type == "xml" and NAS_MARK in path and os.environ.get("R02_SOURCE", "sd") == "sd":
                 sd = SD + "/" + path.split(NAS_MARK, 1)[1]
                 if Path(sd).exists():
                     path = sd
@@ -70,6 +70,7 @@ def work(rc):
             for l in lines:
                 if l.statement != "note" and _is_loadable(l):
                     expect.setdefault(L3._key(l), l.value_won)
+            printed = dict(expect)
             for c in corr:
                 k = tuple(c[f] for f in L3._KEY_FIELDS) + (c["label_raw"] or "",)
                 if c["kind"] == "drop":
@@ -81,6 +82,10 @@ def work(rc):
                     SELECT {', '.join(L3._KEY_FIELDS)}, label_raw, value_won
                     FROM report_lines WHERE rcept_no = :r"""), {"r": rc}):
                 db.setdefault(tuple(r[:-2]) + ((r[-2] or ""),), r[-1])
+            if db == printed and corr:
+                # already migrated (pilot run, or loaded by the new daily code): refresh corrections
+                n = L3.store_layer3_corrections(s, rc, corr)
+                return {"rcept": rc, "status": "already", "corrections": n, "computed": len(corr)}
             if db != expect:
                 diff = [[list(k), db.get(k, "absent"), expect.get(k, "absent")]
                         for k in set(db) | set(expect) if db.get(k, "absent") != expect.get(k, "absent")]
@@ -106,7 +111,9 @@ def main():
     print("targets", len(rcepts), flush=True)
     tally = {}
     with Pool(workers) as pool, open(out_path, "a") as fo:
-        for i, res in enumerate(pool.imap_unordered(work, rcepts, chunksize=2), 1):
+        # ordered imap over a corp-sorted list: each worker stays on one company's folder (sibling
+        # FIN_TYPE cache hits, disk locality)
+        for i, res in enumerate(pool.imap(work, rcepts, chunksize=8), 1):
             fo.write(json.dumps(res, ensure_ascii=False, default=str) + "\n")
             fo.flush()
             st = res["status"].split(":")[0]

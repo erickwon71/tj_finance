@@ -409,10 +409,12 @@ class Layer3CellCorrection(Base):
     points at the printed row; a reload deletes the old rows (FK cascade), so a correction never
     outlives the printed cell it was computed for.
 
-    kind: 'value' = printed cell gets another value (applied by the view);
-          'fill'  = the rules add a cell the source leaves blank / absent (report_line_id NULL);
-          'drop'  = the rules remove a printed cell. fill/drop are SCE-only (R183) and are not
-          applied by the view yet (layer 3 does not read SCE).
+    kind: 'value' = printed cell gets another value;
+          'fill'  = the rules add a row the printed extraction does not have (R183 cell fills, an
+                    R159-fixed cell the printed reading cannot parse, e.g. 제주은행 `310.731`);
+                    report_line_id NULL, the whole row in `row_data`;
+          'drop'  = the rules remove a printed row (R183).
+    `report_lines_l3` applies all three, so layer 3 sees what the old layer 2 held.
     """
     __tablename__ = "layer3_cell_corrections"
 
@@ -433,6 +435,7 @@ class Layer3CellCorrection(Base):
     corrected_value  = Column(BigInteger,  nullable=True)
     kind             = Column(String(5),   nullable=False)
     rule             = Column(String(40),  nullable=False, comment="as_printed.STEPS name")
+    row_data         = Column(JSONB,       nullable=True,  comment="kind='fill': the report_lines row")
     created_at       = Column(DateTime,    nullable=False, default=datetime.utcnow)
 
 

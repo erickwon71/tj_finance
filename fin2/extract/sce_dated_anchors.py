@@ -190,7 +190,7 @@ def load_prior_balances(session, corp_code: str, rcept_no: str, years: int = 3) 
     mirror solution."""
     from sqlalchemy import text
 
-    rows = session.execute(text("""
+    prior = session.execute(text("""
         WITH me AS (SELECT period_end_date FROM filings WHERE rcept_no = :r),
         prior AS (
             SELECT f.period_end_date, max(f.rcept_no) AS rcept_no
@@ -202,10 +202,15 @@ def load_prior_balances(session, corp_code: str, rcept_no: str, years: int = 3) 
               AND EXISTS (SELECT 1 FROM report_lines l WHERE l.rcept_no = f.rcept_no
                           AND l.statement = 'BS')
             GROUP BY f.period_end_date)
-        SELECT p.period_end_date, l.basis, l.label_raw, l.value_won
-        FROM prior p JOIN report_lines_l3 l ON l.rcept_no = p.rcept_no   -- R0-2: corrected values, as before
-        WHERE l.statement = 'BS' AND l.col_index = 0 AND l.value_won IS NOT NULL"""),
+        SELECT period_end_date, rcept_no FROM prior"""),
         {"r": rcept_no, "c": corp_code, "n": years}).fetchall()
+    # R0-2: corrected values (report_lines_l3), as the old layer 2 held them. Queried with the
+    # rcepts as constants — joined to the view the planner cannot push rcept_no into it (UNION).
+    end_of = {rc: end for end, rc in prior}
+    rows = [(end_of[rc], basis, label, value) for rc, basis, label, value in session.execute(text("""
+        SELECT rcept_no, basis, label_raw, value_won FROM report_lines_l3
+        WHERE rcept_no = ANY(:rs) AND statement = 'BS' AND col_index = 0 AND value_won IS NOT NULL"""),
+        {"rs": list(end_of)}).fetchall()] if end_of else []
     out: PriorBalances = defaultdict(list)
     for date, basis, label, value in rows:
         out[date].append((basis, label, int(value)))
@@ -246,7 +251,7 @@ def load_prior_income(session, corp_code: str, rcept_no: str, years: int = 3) ->
     `20140407000591` (no IS lines), so the 2013 period had no evidence at all."""
     from sqlalchemy import text
 
-    rows = session.execute(text("""
+    prior = session.execute(text("""
         WITH me AS (SELECT period_end_date FROM filings WHERE rcept_no = :r),
         prior AS (
             SELECT f.period_end_date, f.report_type, max(f.rcept_no) AS rcept_no
@@ -258,11 +263,16 @@ def load_prior_income(session, corp_code: str, rcept_no: str, years: int = 3) ->
               AND EXISTS (SELECT 1 FROM report_lines l WHERE l.rcept_no = f.rcept_no
                           AND l.statement = 'IS')
             GROUP BY f.period_end_date, f.report_type)
-        SELECT p.period_end_date, p.report_type, l.basis, l.label_raw, l.value_won
-        FROM prior p JOIN report_lines_l3 l ON l.rcept_no = p.rcept_no   -- R0-2: corrected values, as before
-        WHERE l.statement = 'IS' AND l.col_index = 0 AND l.value_won IS NOT NULL
-          AND (p.report_type = 'annual' OR l.is_cumulative)"""),
+        SELECT period_end_date, report_type, rcept_no FROM prior"""),
         {"r": rcept_no, "c": corp_code, "n": years + 1}).fetchall()
+    # R0-2: corrected values via report_lines_l3, rcepts as constants (see load_prior_balances)
+    meta = {rc: (end, rtype) for end, rtype, rc in prior}
+    rows = [(meta[rc][0], meta[rc][1], basis, label, value)
+            for rc, basis, label, value, cum in session.execute(text("""
+                SELECT rcept_no, basis, label_raw, value_won, is_cumulative FROM report_lines_l3
+                WHERE rcept_no = ANY(:rs) AND statement = 'IS' AND col_index = 0
+                  AND value_won IS NOT NULL"""), {"rs": list(meta)}).fetchall()
+            if meta[rc][1] == "annual" or cum] if meta else []
     annual_ends = session.execute(text("""
         SELECT DISTINCT period_end_date FROM filings
         WHERE corp_code = :c AND report_type = 'annual' AND period_end_date IS NOT NULL"""),

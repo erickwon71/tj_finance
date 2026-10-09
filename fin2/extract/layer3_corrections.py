@@ -113,8 +113,17 @@ def extract_with_corrections(run: Callable[[bool], list], rcept_no: str, *, is_x
             "printed_value": None if a == "absent" else a,
             "corrected_value": None if b == "absent" else b,
             "kind": kind, "rule": last_rule.get(k, fallback),
+            "row_data": _row_data(r[k]) if kind == "fill" else None,
         })
     return printed, out
+
+
+def _row_data(line) -> str:
+    """The whole report_lines row of a 'fill' correction (JSON text for the jsonb column)."""
+    import json
+    from fin2.extract.report_lines import _TABLE_LEVEL_COLS
+    row = {k: v for k, v in line.as_row().items() if k not in _TABLE_LEVEL_COLS}
+    return json.dumps(row, ensure_ascii=False, default=str)
 
 
 def store_layer3_corrections(session, rcept_no: str, corrections: list[dict]) -> int:
@@ -142,7 +151,8 @@ def store_layer3_corrections(session, rcept_no: str, corrections: list[dict]) ->
         session.execute(text(f"""
             INSERT INTO layer3_cell_corrections
                 (report_line_id, rcept_no, {', '.join(_KEY_FIELDS)}, label_raw, col_label,
-                 printed_value, corrected_value, kind, rule, created_at)
+                 printed_value, corrected_value, kind, rule, row_data, created_at)
             VALUES (:report_line_id, :rcept_no, {', '.join(':' + f for f in _KEY_FIELDS)}, :label_raw,
-                    :col_label, :printed_value, :corrected_value, :kind, :rule, now())"""), rows)
+                    :col_label, :printed_value, :corrected_value, :kind, :rule,
+                    CAST(:row_data AS jsonb), now())"""), rows)
     return len(rows)

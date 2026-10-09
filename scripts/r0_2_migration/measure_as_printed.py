@@ -59,7 +59,7 @@ def work(rc):
         if t is None:
             return {"rcept": rc, "status": "nosource"}
         path, ftype, corp, fy, fp, pe = t
-        if ftype == "xml" and NAS_MARK in path:
+        if ftype == "xml" and NAS_MARK in path and os.environ.get("R02_SOURCE", "sd") == "sd":
             sd = SD + "/" + path.split(NAS_MARK, 1)[1]
             if Path(sd).exists():
                 path = sd
@@ -166,8 +166,9 @@ def main():
                 fo.flush()
             if res is None or not res["status"].startswith("err"):
                 fd.write(rc + "\n")   # errors stay pending for a resumed run
-            if i % 1000 == 0:
+            if i % 100 == 0:
                 fd.flush()
+            if i % 1000 == 0:
                 print(i, flush=True)
     print("done", len(rcepts), flush=True)
 

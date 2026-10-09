@@ -14,6 +14,13 @@ CLI: `scripts/vq.py` (모든 명령은 `--help`)
 
 모든 진행 상태는 `verification` 스키마에 있다. 세션 메모리나 마크다운은 진행상태의 근거가 아니다.
 
+**판정 규칙의 출처와 우선순위** (2026-10-09 — 같은 규칙을 여러 곳에 적어 모델마다 판정이 갈리던 것을 정리):
+1. `docs/PARSING_RULES.md` **R0-1** — 원문 그대로 적재. 원문과 다르게 싣는 것은 증명(닫힘·유일·무악화, 표시단위 ±1,
+   같은 회사 DART 정기보고서 증거)될 때만. 증명 안 되면 인쇄된 그대로.
+2. 검증 판정: `docs/verification/verify_prompt.md` 4번 판정표. 검증은 산수 사실(DB=원문, 항등식 닫힘)만 기록하고 복원 가능성은 판단하지 않는다.
+3. 수정 판정: 수정 워크트리 `CLAUDE.local.md` 의 이슈별 처리 판정표(F1~F5). 증명 여부는 코드로 계산한다.
+4. 각 워크트리 `CLAUDE.local.md` 에는 판정 규칙을 다시 적지 않는다. 위 문서와 다르면 위 문서가 이긴다.
+
 ## 2. 상태
 
 - 슬롯(회사 × 사업연도 × 보고서): `pending` → `in_progress`(점유, lease 2시간) → `passed` | `has_issues` | `blocked`(3회 실패)
@@ -192,6 +199,7 @@ claude
    6. commit, `git push origin HEAD:main`
    7. `batch reload <id>`
    8. `batch mark-fixed <id>`
+      - 어떤 이슈를 코드로 고치고 어떤 것을 no_fix 로 둘지는 수정 워크트리 `CLAUDE.local.md` 판정표(F1~F5)로 정한다.
       - 코드로 고치지 않은 이슈는 `--exclude 1,2 --verdict no_fix|defer --note "사유"` 로 빼야 한다. 트리거는 "필링이 재적재됐는가"만 보므로, 빼지 않으면 값이 그대로여도 fixed 가 된다(batch #25 사고).
         - `no_fix`(원문결함·오탐, DB 정상): verify 러너가 자동으로 withdraw 한다. 검증 쪽에 따로 전달할 필요 없다. 같은 셀은 다시 등록되지 않는다.
         - `defer`(결함은 맞음, 이번 배치 범위 밖): open 으로 fix-queue 에 남는다.

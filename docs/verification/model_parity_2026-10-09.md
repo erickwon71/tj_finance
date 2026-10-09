@@ -36,3 +36,10 @@
 - 전체 대조(no_source)에서 Sonnet 끼리도 한 번 `label_mismatch` 를 더 찾은 실행이 있었다(r3 sonnet_2). 전체 대조는 표 전체를 사람처럼 읽는 일이라 완전한 결정성은 없다 — 대상은 전체 슬롯의 약 3%.
 - 표본은 14슬롯이다. 규칙·도구를 바꾸면 `scripts/verify_sim/` 으로 다시 돌린다.
 - 기계 mc8 변경 전, 열이 밀린 필링에서 등록된 기존 이슈와 "음수 인쇄 셀 반전"을 복원으로 보고 기계가 이미 pass 한 필링은 소급 확인하지 않았다(별도 결정 필요).
+
+## 다시 볼 시점 (2026-10-10)
+
+계층2 를 "인쇄된 값만"으로 바꾸는 이행(`docs/PARSING_RULES.md` R0-2, `docs/plans/layer2_as_printed_migration_2026-10-10.md`)이 끝나면
+검증 규칙의 C2(부호 복원 판단)·audit 예외·기계 `sign_restored` 가 없어진다. 그때 `verify_prompt.md` 를 고친 뒤
+**`scripts/verify_sim` 으로 Haiku/Sonnet 일치를 다시 확인하고** 러너를 재개한다(러너·기계는 2026-10-10 01:20 부터 정지).
+이 시험에서 남은 관찰: 전체 대조(no_source)는 Sonnet 끼리도 판독 누락으로 결과가 갈린 실행이 있었다(r7: BS 한 셀·SCE 라벨) — 규칙 모호가 아니라 판독 누락.

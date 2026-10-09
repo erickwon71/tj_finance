@@ -1181,6 +1181,104 @@ def drop_mismatched_granularity_columns(
     return result
 
 
+# ★R228(2026-10-09, 모베이스 20200814002863 별도 CF) — 데이터 표 THEAD 가 기간 하나를
+# 여러 열(COLSPAN=4)에 걸어 두고 전기 헤더를 빠뜨린 원문. 헤더만 읽으면 4열이 전부 당기로
+# 판정돼 전기 값이 당기로 적재된다. docs/PARSING_RULES.md R228.
+_PERIOD_TOKEN_RE = re.compile(
+    r"제\s*\d+\s*기(?:\s*[（(]\s*[당전]\s*[)）]\s*기?)?\s*(?:\d\s*분기|반기|분기|말)?")
+_COLLAPSE_MIN_COLS = 4
+_TITLE_SIBLING_LIMIT = 6
+_TITLE_BIG_TABLE_ROWS = 8
+
+
+def _period_tokens(text: str) -> list[str]:
+    """문서 순서대로 서로 다른 기간 토큰(`제22기반기` 등, 공백 제거)."""
+    return list(dict.fromkeys(
+        re.sub(r"\s+", "", m.group(0)) for m in _PERIOD_TOKEN_RE.finditer(text)))
+
+
+def _title_period_tokens(table: etree._Element) -> list[str]:
+    """표 자신의 헤더 셀 → 없으면 직전 형제(제목표)에서 읽은 서로 다른 기간 토큰.
+
+    자기 헤더에 2개 이상 있으면 그것을 쓴다. 아니면 앞 형제를 최대 6개까지 거슬러 올라가되
+    행이 8개를 넘는 큰 표(= 앞 재무제표 본체)를 만나면 멈춘다."""
+    own = _period_tokens(" ".join("".join(th.itertext()) for th in table.iter("TH")))
+    if len(own) >= 2:
+        return own
+    chunks: list[str] = []
+    prev = table.getprevious()
+    steps = 0
+    while prev is not None and steps < _TITLE_SIBLING_LIMIT:
+        if prev.tag == "TABLE" and sum(1 for _ in prev.iter("TR")) > _TITLE_BIG_TABLE_ROWS:
+            break
+        chunks.append(" ".join("".join(prev.itertext()).split()))
+        prev = prev.getprevious()
+        steps += 1
+    return _period_tokens(" ".join(reversed(chunks)))
+
+
+def _is_blank_cell(text: str) -> bool:
+    return not text.replace("　", "").strip()
+
+
+def _looks_like_two_period_pairs(table: etree._Element, n_cols: int) -> bool:
+    """데이터 열 n_cols 개가 [앞 절반 | 뒤 절반] 두 기간 분량의 (세부|소계) 쌍 구조인가.
+
+    금액 셀이 있는 행의 50% 이상이 앞·뒤 절반 양쪽에 값을 갖고, 90% 이상이 각 절반에 값 1개
+    이하일 때만 참. 정상 단일 기간 표는 한쪽 절반만 차거나 한 절반에 값이 여러 개다."""
+    half = n_cols // 2
+    any_rows = both = pair_ok = 0
+    for tr in table.iter("TR"):
+        cells = [c for c in tr if c.tag in ("TD", "TH", "TE", "TU")]
+        if len(cells) != n_cols + 1:
+            continue
+        flags = [not _is_blank_cell("".join(c.itertext())) for c in cells[1:]]
+        left, right = sum(flags[:half]), sum(flags[half:])
+        if not (left or right):
+            continue
+        any_rows += 1
+        both += int(bool(left and right))
+        pair_ok += int(left <= 1 and right <= 1)
+    return any_rows >= 5 and both / any_rows >= 0.5 and pair_ok / any_rows >= 0.9
+
+
+def resolve_collapsed_period_span(
+    table: etree._Element, columns: Optional[list[HeaderColumn]],
+) -> tuple[Optional[list[HeaderColumn]], str]:
+    """R228 — 기간 하나로 뭉친 헤더(데이터 열 ≥4, period_rank 전부 동일)를 정리한다.
+
+    반환 (columns, verdict): verdict 는 'unchanged' | 'split'(B: 제목표·헤더의 기간 토큰 k 개로
+    균등 분할) | 'skip'(A: 증거 없음 + 두 기간 구조 → 호출측이 이 표를 적재하지 않는다)."""
+    if not columns:
+        return columns, "unchanged"
+    data = [c for c in columns if not c.is_note]
+    if len(data) < _COLLAPSE_MIN_COLS or len({c.period_rank for c in data}) != 1:
+        return columns, "unchanged"
+    ordered = sorted(data, key=lambda c: c.position)
+    subtypes = [c.subtype for c in ordered]
+    tokens = _title_period_tokens(table)
+    k, n = len(tokens), len(data)
+    if k >= 2 and n % k == 0:
+        per = n // k
+        # 하위 유형(three_month/cumulative)이 섞여 있으면, 같은 순서가 k번 반복될 때만 기간 반복으로 본다
+        # (케이피항공산업 [3개월·누적 | 3개월·누적]). 첫 기의 [3개월 세부·소계 | 누적 세부·소계]처럼
+        # 하위 유형이 구분하는 열은 뭉친 헤더가 아니다.
+        if len(set(subtypes)) == 1 or subtypes == subtypes[:per] * k:
+            order = {c.position: i for i, c in enumerate(ordered)}
+            out = []
+            for c in columns:
+                if c.is_note:
+                    out.append(c)
+                    continue
+                j = order[c.position] // per
+                out.append(HeaderColumn(position=c.position, period_key=tokens[j], period_rank=j,
+                                        subtype=c.subtype, is_note=False))
+            return out, "split"
+    if len(set(subtypes)) == 1 and _looks_like_two_period_pairs(table, n):
+        return columns, "skip"
+    return columns, "unchanged"
+
+
 # ★R113(2026-09-13, 사용자 원문대조로 발견 — 넥슨게임즈[전 엔에이치기업인수목적9호]
 # 00231354 20160513004375 CF 별도, 자비스[전 아이비케이에스제5호기업인수목적] 01174038
 # 20170811000259 CF 별도) — "-"(대시)는 한국 재무제표 표기 관행상 "이 항목 금액은

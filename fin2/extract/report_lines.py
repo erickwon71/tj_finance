@@ -40,7 +40,7 @@ from parser.xml.table_extractor import (
     RowData, _header_rule_name, _is_fs_title_row, _detect_indent, _first_cell_indent,
     _table_has_comma_note_column, _table_has_note_header,
     parse_header_columns, select_by_header_columns, drop_mismatched_granularity_columns,
-    update_dual_closing_runs,
+    update_dual_closing_runs, resolve_collapsed_period_span,
     HeaderColumn, _repair_dot_grouped_cells, apply_source_typo_fixes,
     unresolved_dot_cell_indices,
 )
@@ -1223,6 +1223,12 @@ def _emit_section_lines(
         # 참고열은 이 보고서의 period_kind 와 다른 기간단위라 col_index 축에서 배제한다
         # (위 함수 docstring 근거). FY 보고서는 조기반환이라 무영향.
         header_cols = drop_mismatched_granularity_columns(header_cols, report_fiscal_period)
+        # R228 — 기간 하나로 뭉친 헤더(데이터 열 ≥4): 제목표·헤더의 기간 토큰으로 나누거나(B),
+        # 증거 없이 두 기간 구조면 이 표는 적재하지 않는다(A, 오염보다 결측).
+        header_cols, span_verdict = resolve_collapsed_period_span(table, header_cols)
+        if span_verdict == "skip":
+            logger.debug(f"[report_lines] R228 기간 뭉친 헤더·증거 없음 → 표 보류: {rcept_no} {section_code}")
+            continue
 
         if header_cols is not None:
             n_cols = max(c.position for c in header_cols) + 1

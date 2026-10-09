@@ -111,9 +111,14 @@ def cmd_issue_add(a):
             row["column_label"] = ops._strip_column_label_prefix(row.get("column_label"))
             if row.get("error_type") == "source_defect":
                 row["column_label"] = ops._identity_column_label(row.get("column_label"))
+            elif row.get("error_type") == "label_mismatch":
+                row["column_label"] = None
             if row.get("source_unit") and row["source_unit"] not in ops._SOURCE_UNITS:
                 row["evidence"] = f"표시통화 {row['source_unit']} · {row.get('evidence') or ''}"
                 row["source_unit"] = None
+            if not (row.get("evidence") or "").startswith("["):
+                import re as _re
+                row["account_label"] = _re.sub(r"\s*\(#\d+\)$", "", row["account_label"]) or row["account_label"]
             k, n, base = _key(a.rcept, row), 2, row["account_label"]
             while k in seen:
                 row["account_label"] = f"{base[:280]} (#{n})"; k = _key(a.rcept, row); n += 1
@@ -248,6 +253,9 @@ def main():
     x.add_argument("--kinds"); x.add_argument("--findings"); x.add_argument("--out"); x.add_argument("--rcept", nargs="*")
     x.add_argument("--limit", type=int); x.add_argument("--value")
     x.set_defaults(fn=cmd_machine)
+    x = sp.add_parser("identity"); x.add_argument("--terms", required=True); x.add_argument("--total", required=True)
+    x.add_argument("--unit", required=True); x.add_argument("--eps-unit", default="1")
+    x.set_defaults(fn=real.cmd_identity)
     for name in ("whoami", "status", "next", "claim", "fix-queue", "issues", "batch", "ask", "decision",
                  "runner", "admin", "withdraw-released", "stale-tabs", "rcepts"):
         x = sp.add_parser(name); x.add_argument("rest", nargs="*")

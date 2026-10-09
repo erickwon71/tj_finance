@@ -777,3 +777,16 @@ def test_add_issues_skips_active_cells_numbers_repeats_and_drops_foreign_units(e
     assert ops.add_issues(R1, [cell], None, already) == []
     assert already[0]["issue_id"] == ids[0]
     ops.done()
+
+
+def test_identity_command_counts_terms_and_tolerance(capsys):
+    # 00145914 2019Q3: a reviewer judged this closed by mental arithmetic; 4 non-zero terms ->
+    # tolerance 2 won, difference 3 won -> not closed
+    import importlib.util, sys as _sys
+    from pathlib import Path as _P
+    spec = importlib.util.spec_from_file_location("vq_cli", _P(__file__).resolve().parents[2] / "scripts" / "vq.py")
+    vq_cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(vq_cli)
+    vq_cli.main(["identity", "--terms", "31,628,250,236;(4,271,088,439);(2,465,456,040)",
+                 "--total", "24,891,705,760", "--unit", "원"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["terms"] == 4 and out["tolerance"] == 2 and out["closed"] is False

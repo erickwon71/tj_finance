@@ -739,10 +739,17 @@ def add_issues(rcept: str, items: list[dict], suppressed: list | None = None,
             row["column_label"] = _strip_column_label_prefix(row.get("column_label"))
             if row.get("error_type") == "source_defect":
                 row["column_label"] = _identity_column_label(row.get("column_label"))
+            elif row.get("error_type") == "label_mismatch":
+                # a row issue (XBRL labels: one per table) - no column, so every model gives one key
+                row["column_label"] = None
             if row.get("source_unit") and row["source_unit"] not in _SOURCE_UNITS:
                 # foreign presentation currency ('천 USD'): the column only takes KRW units
                 row["evidence"] = f"표시통화 {row['source_unit']} · {row.get('evidence') or ''}"
                 row["source_unit"] = None
+            if not (row.get("evidence") or "").startswith("["):
+                # a reviewer-typed '(#2)' is noise (the column already names the block); only
+                # tool-built items ([확인 …]/[machine …]) carry the numbering
+                row["account_label"] = re.sub(r"\s*\(#\d+\)$", "", row["account_label"]) or row["account_label"]
             # the same label twice in one submission (a label repeated in one table): number the
             # later ones like the machine does, instead of failing the whole submission
             key = (row["basis"], row["statement"], row["account_label"], row.get("column_label") or "")

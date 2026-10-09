@@ -268,6 +268,32 @@ def cmd_recheck(a):
         print(f"    {r['dart_url']}")
 
 
+def cmd_identity(a):
+    """Identity arithmetic for the reviewer (verify_prompt '닫힘'): sum the terms, compare with the
+    total, tolerance = display unit x ceil(non-zero printed numbers / 2) - no mental arithmetic."""
+    from fin2.verification.machine_compare import identity_tolerance
+    units = {"원": 1, "천원": 1_000, "백만원": 1_000_000, "억원": 100_000_000}
+
+    def num(x: str) -> float:
+        x = x.strip().replace(",", "").replace("△", "-")
+        if x.startswith("(") and x.endswith(")"):
+            x = "-" + x[1:-1]
+        return float(x or 0)
+
+    if a.unit not in units and a.unit != "주당":
+        raise VqError(f"--unit 은 {', '.join(units)}, 주당 중 하나")
+    terms = [num(t) for t in a.terms.split(";") if t.strip()]
+    total = num(a.total)
+    n = sum(1 for t in terms if t) + (1 if total else 0)
+    # the numbers are given as printed (display unit), so the tolerance is in display units too
+    unit = float(a.eps_unit) if a.unit == "주당" else 1
+    tol = identity_tolerance(n) * unit
+    got = sum(terms)
+    diff = total - got
+    print(json.dumps({"sum": got, "total": total, "diff": diff, "terms": n, "tolerance": tol, "unit": a.unit,
+                      "closed": abs(diff) <= tol}, ensure_ascii=False))
+
+
 def cmd_close(a):
     print(_j(ops.transition(a.issue_id, "closed", a.evidence)))
 
@@ -489,6 +515,11 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--dry-run", action="store_true")
     x.add_argument("--ids", help="쉼표구분 issue_id — --verdict 도입 전(태그 없는) 반려 중 no_fix 결론인 것")
     x.add_argument("--json", action="store_true"); x.set_defaults(fn=cmd_withdraw_released)
+    x = sp.add_parser("identity", help="항등식 계산: --terms '기초;변동1;변동2' --total 기말 --unit 원 (닫힘·허용오차를 도구가 계산)")
+    x.add_argument("--terms", required=True, help="원 단위가 아니라 원문에 인쇄된 숫자 그대로, ';' 구분(괄호·△ 는 음수)")
+    x.add_argument("--total", required=True); x.add_argument("--unit", required=True)
+    x.add_argument("--eps-unit", default="1", help="--unit 주당 일 때 인쇄된 마지막 자리(예: 0.01)")
+    x.set_defaults(fn=cmd_identity)
     for name, fn in (("close", cmd_close), ("reopen", cmd_reopen), ("withdraw", cmd_withdraw)):
         x = sp.add_parser(name); x.add_argument("issue_id", type=int)
         x.add_argument("--evidence", required=True); x.set_defaults(fn=fn)

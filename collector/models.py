@@ -397,6 +397,45 @@ class ReportLine(Base):
                 f"{self.label_raw!r} {self.value_won}>")
 
 
+class Layer3CellCorrection(Base):
+    """Layer-3 corrections of printed layer-2 cells (R0-2, 2026-10-10).
+
+    `report_lines` holds printed values only. A cell whose printed value is judged wrong
+    (dropped parenthesis, typo, value from inline XBRL …) gets one row here with the value the
+    correction rules produce; layer 3 reads `report_lines_l3` (report_lines with these applied).
+
+    Rows are computed when the filing is loaded (some rules need the source file, e.g. the inline
+    XBRL overlays) and rewritten with it (`fin2/extract/layer3_corrections.py`). `report_line_id`
+    points at the printed row; a reload deletes the old rows (FK cascade), so a correction never
+    outlives the printed cell it was computed for.
+
+    kind: 'value' = printed cell gets another value (applied by the view);
+          'fill'  = the rules add a cell the source leaves blank / absent (report_line_id NULL);
+          'drop'  = the rules remove a printed cell. fill/drop are SCE-only (R183) and are not
+          applied by the view yet (layer 3 does not read SCE).
+    """
+    __tablename__ = "layer3_cell_corrections"
+
+    id               = Column(BigInteger,  primary_key=True, autoincrement=True)
+    report_line_id   = Column(BigInteger,  ForeignKey("report_lines.id", ondelete="CASCADE"),
+                              nullable=True, index=True)
+    rcept_no         = Column(String(14),  nullable=False, index=True)
+    statement        = Column(String(10),  nullable=False)
+    basis            = Column(String(12),  nullable=True)
+    table_seq        = Column(SmallInteger, nullable=True)
+    row_order        = Column(SmallInteger, nullable=True)
+    col_index        = Column(SmallInteger, nullable=True)
+    is_cumulative    = Column(Boolean,     nullable=True)
+    period_kind      = Column(String(8),   nullable=True)
+    label_raw        = Column(Text,        nullable=True)
+    col_label        = Column(Text,        nullable=True)
+    printed_value    = Column(BigInteger,  nullable=True)
+    corrected_value  = Column(BigInteger,  nullable=True)
+    kind             = Column(String(5),   nullable=False)
+    rule             = Column(String(40),  nullable=False, comment="as_printed.STEPS name")
+    created_at       = Column(DateTime,    nullable=False, default=datetime.utcnow)
+
+
 class ReportTable(Base):
     """계층2 **표 단위** 메타데이터 — 행마다 반복되던 값을 한 곳으로 모은다(F3, 2026-07-31).
 

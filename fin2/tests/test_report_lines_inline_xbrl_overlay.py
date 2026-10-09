@@ -22,6 +22,16 @@ from fin2.extract.report_lines_inline_xbrl_overlay import (  # noqa: E402
     overlay_dividends_paid_sign,
     overlay_tax_expense_value,
 )
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _correction_rules_on():
+    """R0-2: these rules no longer write layer 2 — they produce layer-3 corrections
+    (fin2/extract/layer3_corrections.py). Test the rules themselves with them on."""
+    from fin2.extract.as_printed import forced
+    with forced("repaired"):
+        yield
 
 _LG = (
     Path(__file__).resolve().parents[2]

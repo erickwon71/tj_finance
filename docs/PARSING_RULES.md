@@ -63,8 +63,17 @@
 2. 기계대조(`fin2/verification/machine_compare.py`): 이행 완료 후에는 DB = 원문 인쇄값이 아닌 셀은 모두 발견이다(`sign_restored` 같은 예외 없음). `vq.py status` 의 부호복원 셀 수가 0 이어야 한다.
 3. 회귀 테스트: 괄호가 빠진 원문 픽스처를 추출하면 계층2 값이 **인쇄된 부호 그대로**여야 한다(이행 때 추가).
 
-**이행 상태**: 현행 코드는 아직 계층2 에서 값을 바꾼다(약 108,000셀·18,000필링, 2026-10-09 기계대조 집계). 이행 설계 `docs/plans/layer2_as_printed_migration_2026-10-10.md`.
+**이행 상태**: 이행 설계 `docs/plans/layer2_as_printed_migration_2026-10-10.md`.
 이행 전까지 R0-1 의 "원문과 다르게 싣는 것" 은 계층2 현행 코드에 대한 판정 기준으로 남고, 이행 후에는 계층3 에만 적용된다.
+
+**계층3 보정의 범위와 구현 (2026-10-10 사용자 결정 D5~D8 — 적용 계층: 3)**
+- 계층3 은 **적용 가능한 논리적 방법을 모두** 써서 정상화한다: 부호 복원뿐 아니라 숫자 오타 교정(R159), SCE 원문결함 교정(R183 값·채움·이동·삭제), inline XBRL 태그를 증거로 쓰는 보정(R18 배당 부호·법인세 overlay), XBRL 경로 부호 정산(R170-d·R176), SCE 부호 체인 전체(R162 계열·R163·R185~R193·R188·R189·R190-d·R215).
+  즉 R0-1 1항의 "후보는 부호 복원 하나뿐"·3항의 증거 범위 제한은 **계층2 판정에만** 해당하고, 계층3 보정에는 적용하지 않는다(위 규칙들의 개별 증명 조건은 그대로).
+- 구현: 위 규칙들은 `fin2/extract/as_printed.py` 스위치(`STEPS`) 뒤에 있고 **기본값 = 끔**(계층2 = 인쇄값). 적재 경로는 `fin2/extract/layer3_corrections.py` 로 규칙 끔(인쇄값)·켬(보정값) 두 번 추출해, 차이만 `layer3_cell_corrections`(계층3 테이블, `report_lines.id` 참조·재적재 시 cascade 삭제)에 셀 단위로 쓴다(규칙 이름 포함). 원문 파일이 필요한 규칙(inline XBRL)이 있어 적재 시점에 계산한다 — 결과는 계층2 테이블에 쓰지 않는다.
+- 계층3 읽기: `report_lines_l3` 뷰 = `report_lines` + kind='value' 보정. `fin2/layer3/combine.py`·R187 근거(`sce_dated_anchors.py`)가 이 뷰를 읽는다. kind='fill'/'drop'(SCE R183)은 계층3 SCE 소비처가 생길 때 뷰에 반영한다.
+- 배선: `ops._reload_rcept`, `collector/note_lines_sync.py`(데일리 XML — `collect_new.py` 두 call site 모두 이 함수를 거친다), `collector/xbrl_instance_lines_sync.py`(데일리 XBRL).
+- 옛 동작 비교: `TJF_LAYER2_AS_PRINTED=0` 이면 규칙이 계층2 에 다시 쓴다(한 릴리스 유지 후 삭제, D4).
+- 소급 범위: **2015+ 먼저**(사용자 결정 2026-10-10). 2015 이전은 같은 규칙으로 나중에 한다 — 그때까지 2015 이전 계층2 에는 옛 보정값이 남아 있고 `layer3_cell_corrections` 행이 없다(계층3 값은 같다).
 
 ---
 

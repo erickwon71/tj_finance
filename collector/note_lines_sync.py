@@ -36,8 +36,8 @@ from sqlalchemy import text
 from collector.db import get_session
 from fin2.extract.consolidation_evidence import store_filing_consolidation_evidence
 from fin2.extract.ifrs_evidence import store_filing_ifrs_evidence
-from fin2.extract.report_lines import (extract_report_lines, store_note_lines,
-                                       store_report_lines, store_report_tables)
+from fin2.extract.layer3_corrections import extract_xml_with_corrections, store_layer3_corrections
+from fin2.extract.report_lines import store_note_lines, store_report_lines, store_report_tables
 from fin2.extract.sce_dated_anchors import load_prior_evidence
 from fin2.layer2.doc_sections import extract_from_file as extract_doc_from_file
 from fin2.layer2.doc_sections import store_doc_section_tables
@@ -125,7 +125,8 @@ def sync_layer2_lines(
             if not Path(t.file_path).exists():
                 continue
             try:
-                lines = extract_report_lines(
+                # R0-2: printed lines + layer-3 corrections (fin2/extract/layer3_corrections.py)
+                lines, corrections = extract_xml_with_corrections(
                     t.file_path,
                     rcept_no=t.rcept_no,
                     corp_code=t.corp_code,
@@ -175,6 +176,7 @@ def sync_layer2_lines(
                     # 같은 추출 결과에서 본문(BS/IS/CF/SCE)을 적재한다. store_report_lines 가
                     # rcept 단위 delete-then-insert + col_index=0 필터를 이미 한다.
                     out["body_rows"] += store_report_lines(session, t.rcept_no, lines)
+                    store_layer3_corrections(session, t.rcept_no, corrections)
                 out["filings"] += 1
                 seen_corps.add(t.corp_code)
             except Exception as exc:  # noqa: BLE001 — 한 건 실패가 전체를 막으면 안 됨

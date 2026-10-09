@@ -8,6 +8,18 @@ from __future__ import annotations
 import fin2.extract.sce_sign_repair as ssr
 from fin2.extract.sce_sign_repair import repair_sce_row_identity
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _correction_rules_on():
+    """R0-2: these rules no longer write layer 2 — they produce layer-3 corrections
+    (fin2/extract/layer3_corrections.py). Test the rules themselves with them on."""
+    from fin2.extract.as_printed import forced
+    with forced("repaired"):
+        yield
+
+
 RE = "자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금"
 TOTAL = "자본>자본 합계"
 

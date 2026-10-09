@@ -47,6 +47,16 @@ from parser.xml.table_extractor import (                           # noqa: E402
 )
 from fin2.extract.report_lines import extract_report_lines         # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _correction_rules_on():
+    """R0-2: these rules no longer write layer 2 — they produce layer-3 corrections
+    (fin2/extract/layer3_corrections.py). Test the rules themselves with them on."""
+    from fin2.extract.as_printed import forced
+    with forced("repaired"):
+        yield
+
+
 _ROOT = Path(__file__).resolve().parents[2]
 _LS_2025FY = (_ROOT / "raw_report/KOSPI/00105855_엘에스일렉트릭"
                       "/annual/2025/20260318001243.xml")

@@ -1291,8 +1291,10 @@ def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, s
     from sqlalchemy.exc import DBAPIError
 
     from collector.db import get_session
-    from fin2.extract.report_lines import (extract_report_lines, store_note_lines,
-                                           store_report_lines, store_report_tables)
+    from fin2.extract.layer3_corrections import (extract_xbrl_with_corrections,
+                                                 extract_xml_with_corrections,
+                                                 store_layer3_corrections)
+    from fin2.extract.report_lines import store_note_lines, store_report_lines, store_report_tables
 
     with get_session() as s:
         t = s.execute(text("""
@@ -1311,19 +1313,17 @@ def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, s
     if t.file_type == "xbrl_zip":
         # R170: XBRL-instance filings (body only, no notes) — the same extract+store
         # the daily collector/xbrl_instance_lines_sync.py does.
-        from fin2.extract.report_lines_xbrl import extract_report_lines_xbrl
-        lines = extract_report_lines_xbrl(t.file_path, rcept_no=rcept, corp_code=t.corp_code,
-                                          report_fiscal_year=t.fiscal_year,
-                                          report_fiscal_period=t.fiscal_period,
-                                          period_end_date=t.period_end_date)
+        lines, corrections = extract_xbrl_with_corrections(
+            t.file_path, rcept_no=rcept, corp_code=t.corp_code, report_fiscal_year=t.fiscal_year,
+            report_fiscal_period=t.fiscal_period, period_end_date=t.period_end_date)
     else:
         from fin2.extract.sce_dated_anchors import load_prior_evidence
         with get_session() as s:
             prior_bs, prior_is = load_prior_evidence(s, t.corp_code, rcept)  # R187 / R189-b
-        lines = extract_report_lines(file_path, rcept_no=rcept, corp_code=t.corp_code,
-                                     report_fiscal_year=t.fiscal_year,
-                                     report_fiscal_period=t.fiscal_period, include_notes=True,
-                                     prior_balances=prior_bs, prior_income=prior_is)
+        lines, corrections = extract_xml_with_corrections(
+            file_path, rcept_no=rcept, corp_code=t.corp_code, report_fiscal_year=t.fiscal_year,
+            report_fiscal_period=t.fiscal_period, include_notes=True,
+            prior_balances=prior_bs, prior_income=prior_is)
     if not lines:
         return "failed", "추출 0행 — 기존 적재를 지우지 않고 중단"
     try:
@@ -1337,6 +1337,7 @@ def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, s
             store_report_tables(s, rcept, lines,
                                 scope="all" if t.file_type == "xml" else "body")
             store_report_lines(s, rcept, lines)
+            store_layer3_corrections(s, rcept, corrections)   # R0-2: after the printed rows
     except DBAPIError as exc:
         if isinstance(exc.orig, pg_errors.LockNotAvailable):
             return "deferred", "검증 중(lease) — lease 종료 후 재시도"

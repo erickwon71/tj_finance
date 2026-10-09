@@ -203,7 +203,7 @@ def load_prior_balances(session, corp_code: str, rcept_no: str, years: int = 3) 
                           AND l.statement = 'BS')
             GROUP BY f.period_end_date)
         SELECT p.period_end_date, l.basis, l.label_raw, l.value_won
-        FROM prior p JOIN report_lines l ON l.rcept_no = p.rcept_no
+        FROM prior p JOIN report_lines_l3 l ON l.rcept_no = p.rcept_no   -- R0-2: corrected values, as before
         WHERE l.statement = 'BS' AND l.col_index = 0 AND l.value_won IS NOT NULL"""),
         {"r": rcept_no, "c": corp_code, "n": years}).fetchall()
     out: PriorBalances = defaultdict(list)
@@ -259,7 +259,7 @@ def load_prior_income(session, corp_code: str, rcept_no: str, years: int = 3) ->
                           AND l.statement = 'IS')
             GROUP BY f.period_end_date, f.report_type)
         SELECT p.period_end_date, p.report_type, l.basis, l.label_raw, l.value_won
-        FROM prior p JOIN report_lines l ON l.rcept_no = p.rcept_no
+        FROM prior p JOIN report_lines_l3 l ON l.rcept_no = p.rcept_no   -- R0-2: corrected values, as before
         WHERE l.statement = 'IS' AND l.col_index = 0 AND l.value_won IS NOT NULL
           AND (p.report_type = 'annual' OR l.is_cumulative)"""),
         {"r": rcept_no, "c": corp_code, "n": years + 1}).fetchall()

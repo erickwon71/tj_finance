@@ -1486,6 +1486,23 @@ def _run_migrations() -> None:
          """
         DROP TABLE IF EXISTS statement_source;
         """),
+
+        ("2026_10_10_report_lines_l3_view",
+         # R0-2 (2026-10-10, user decision): report_lines = printed values only; corrections live in
+         # layer3_cell_corrections (created by create_all). Layer 3 reads this view: printed rows with
+         # 'value' corrections applied. 'fill'/'drop' (SCE R183) are not applied — layer 3 reads no SCE.
+         """
+        CREATE OR REPLACE VIEW report_lines_l3 AS
+        SELECT rl.id, rl.corp_code, rl.rcept_no, rl.report_fiscal_year, rl.report_fiscal_period,
+               rl.statement, rl.basis, rl.section_path, rl.row_order, rl.depth, rl.label_raw,
+               rl.col_index, rl.context_fiscal_year, rl.period_kind, rl.is_cumulative,
+               COALESCE(c.corrected_value, rl.value_won) AS value_won,
+               rl.adecimal, rl.unit_source, rl.source_ref, rl.context_raw, rl.node_role,
+               rl.table_seq, rl.col_label, rl.value_raw, rl.header_hint, rl.value_exact,
+               rl.value_won AS printed_value_won, c.rule AS correction_rule
+        FROM report_lines rl
+        LEFT JOIN layer3_cell_corrections c ON c.report_line_id = rl.id AND c.kind = 'value';
+        """),
     ]
 
     with engine.begin() as conn:

@@ -155,6 +155,7 @@ from parser.xbrl_instance.role_map import build_role_map, extra_core_roles, has_
 from fin2.extract.report_lines import ReportLineRow
 from parser.common.amount_normalizer import fractional_or_none
 from fin2.extract.sce_source_defects import apply_source_defect_fixes, verify_row_drops
+from fin2.extract.as_printed import checkpoint, repair_on
 
 _STANDARD_LABEL_ROLE = "http://www.xbrl.org/2003/role/label"
 _BASIS_AXIS_LOCAL = "ConsolidatedAndSeparateFinancialStatementsAxis"
@@ -1503,7 +1504,8 @@ def _emit_sce_lines(
                 ))
                 meta.append((row_loc, period_idx, col_idx))
 
-    _settle_sce_signs_by_rollforward(out, meta, tree, row_flat, ifrs_full_ns, source)
+    if repair_on("R176_xbrl_sce_sign"):
+        _settle_sce_signs_by_rollforward(out, meta, tree, row_flat, ifrs_full_ns, source)
     out = _drop_sce_phantom_cells(out, meta, tree, row_flat, source)
     _check_sce_column_rollup(out, col_parent_of, source)
     return out
@@ -1963,9 +1965,17 @@ def extract_report_lines_xbrl(
             if not core_roles:
                 logger.debug(f"[report_lines_xbrl] {rcept_no}: core statement role 없음 → 빈 결과")
             lines = _drop_redundant_gap_totals(lines, rcept_no)
-            lines = _apply_manual_is_sign_fixes(_settle_is_tax_sign(lines), rcept_no)
+            checkpoint("_base", lines)   # R176 ran during SCE emission: on/off total diff attributes it
+            if repair_on("R170d_tax_sign"):
+                lines = _settle_is_tax_sign(lines)
+            checkpoint("R170d_tax_sign", lines)
+            if repair_on("xbrl_manual_is_sign"):
+                lines = _apply_manual_is_sign_fixes(lines, rcept_no)
+            checkpoint("xbrl_manual_is_sign", lines)
             # R183: SCE source-defect exception list, identity-guarded (sce_source_defects.py).
-            verify_row_drops(lines, apply_source_defect_fixes(lines, rcept_no))
+            if repair_on("R183_source_defects"):
+                verify_row_drops(lines, apply_source_defect_fixes(lines, rcept_no))
+            checkpoint("R183_source_defects", lines)
             return lines
     except Exception as e:
         logger.warning(f"[report_lines_xbrl] {rcept_no}: 추출 실패 ({type(e).__name__}: {e})")

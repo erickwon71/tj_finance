@@ -27,7 +27,7 @@ from sqlalchemy import text
 from collector.db import get_session
 from fin2.extract.ifrs_evidence import store_filing_ifrs_evidence
 from fin2.extract.report_lines import store_report_lines, store_report_tables
-from fin2.extract.report_lines_xbrl import extract_report_lines_xbrl
+from fin2.extract.layer3_corrections import extract_xbrl_with_corrections, store_layer3_corrections
 
 FY_MIN = 2015
 
@@ -96,7 +96,8 @@ def sync_xbrl_instance_lines(
             if not Path(t.file_path).exists():
                 continue
             try:
-                lines = extract_report_lines_xbrl(
+                # R0-2: printed lines + layer-3 corrections (fin2/extract/layer3_corrections.py)
+                lines, corrections = extract_xbrl_with_corrections(
                     t.file_path,
                     rcept_no=t.rcept_no,
                     corp_code=t.corp_code,
@@ -121,6 +122,7 @@ def sync_xbrl_instance_lines(
                     seen_corps.add(t.corp_code)
                     continue
                 out["rows"] += store_report_lines(session, t.rcept_no, lines)
+                store_layer3_corrections(session, t.rcept_no, corrections)
                 out["table_rows"] += store_report_tables(session, t.rcept_no, lines)
                 out["filings"] += 1
                 seen_corps.add(t.corp_code)

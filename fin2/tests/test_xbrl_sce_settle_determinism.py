@@ -15,6 +15,16 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 import fin2.extract.report_lines_xbrl as X  # noqa: E402
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _correction_rules_on():
+    """R0-2: these rules no longer write layer 2 — they produce layer-3 corrections
+    (fin2/extract/layer3_corrections.py). Test the rules themselves with them on."""
+    from fin2.extract.as_printed import forced
+    with forced("repaired"):
+        yield
 
 _RAW = ROOT / "raw_report"
 _KPTU = "KOSDAQ/00357607_케이피티유/half/2018/20180816000025.zip"
@@ -50,7 +60,7 @@ def test_output_does_not_depend_on_hash_seed():
         return
     outs = set()
     for seed in ("0", "5"):
-        env = {**os.environ, "PYTHONHASHSEED": seed}
+        env = {**os.environ, "PYTHONHASHSEED": seed, "TJF_LAYER2_AS_PRINTED": "0"}   # R0-2: rules on
         res = subprocess.run([sys.executable, "-c", _CHILD.format(root=str(ROOT), zip=str(path))],
                              capture_output=True, text=True, env=env, cwd=str(ROOT), timeout=300)
         assert res.returncode == 0, res.stderr[-500:]

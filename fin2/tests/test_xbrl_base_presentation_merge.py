@@ -19,6 +19,18 @@ from parser.xbrl_instance.taxonomy_linkbase import (  # noqa: E402
 )
 from fin2.extract.report_lines_xbrl import extract_report_lines_xbrl  # noqa: E402
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _correction_rules_on():
+    """R0-2: these rules no longer write layer 2 — they produce layer-3 corrections
+    (fin2/extract/layer3_corrections.py). Test the rules themselves with them on."""
+    from fin2.extract.as_printed import forced
+    with forced("repaired"):
+        yield
+
+
 _ROLE = "http://dart.fss.or.kr/role/ifrs/dart_2013-03-31_role-D310005"
 _NS = {"ifrs": "http://xbrl.iasb.org/taxonomy/2009-04-01/ifrs",
        "dart": "http://dart.fss.or.kr/2013-03-31/dart"}

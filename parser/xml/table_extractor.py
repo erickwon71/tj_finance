@@ -1970,6 +1970,9 @@ def apply_source_typo_fixes(cells: list[str],
     """
     if not rcept_no or not _SOURCE_TYPO_CELL_FIXES:
         return cells
+    from fin2.extract.as_printed import repair_on   # R0-2 migration switch
+    if not repair_on("R159_typo"):
+        return cells
     out = None
     for i, c in enumerate(cells):
         fixed = _SOURCE_TYPO_CELL_FIXES.get((rcept_no, (c or "").strip()))

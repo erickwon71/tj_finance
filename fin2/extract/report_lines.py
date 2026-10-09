@@ -202,6 +202,7 @@ from fin2.extract.sce_sign_repair import (
 from fin2.extract.cf_cash_sign_repair import repair_cf_cash_sign_loss
 from fin2.extract.sce_as_printed import apply_as_printed_cells
 from fin2.extract.sce_source_defects import apply_source_defect_fixes, verify_row_drops
+from fin2.extract.as_printed import checkpoint, repair_on
 
 # report_fiscal_year 가 이 값 이하면 pre-2015 K-GAAP 라우팅을 먼저 시도한다(설계문서
 # `docs/plans/pre2015_layer2_backfill_phase2_design_2026-08-10.md` §2-1·§3-3 잔여항목③
@@ -2183,14 +2184,19 @@ def extract_report_lines(
 
     # 버그#2(dividends_paid 부호) 수정 — 원문에 이미 있는 인라인 XBRL(Track A) 사실로
     # CF 텍스트추출 부호를 보정. docs/plans/gate_b_bug2_xbrl_inline_overlay_design_2026-08-13.md.
-    n_overlay = overlay_dividends_paid_sign(lines, file_path, report_fiscal_year)
+    checkpoint("_base", lines)
+    n_overlay = (overlay_dividends_paid_sign(lines, file_path, report_fiscal_year)
+                 if repair_on("R18_dividends_overlay") else 0)
+    checkpoint("R18_dividends_overlay", lines)
     if n_overlay:
         logger.debug(f"[report_lines] inline XBRL overlay 적용: {n_overlay}건 ({rcept_no})")
 
     # 버그①(당기 3개월 미공시 시 전기 3개월 컬럼 오채택) 수정 — 같은 원리로 원문
     # 인라인 XBRL(Track A) 사실로 IS 텍스트추출 tax_expense 값을 보정.
     # docs/plans/d_category_col_misselect_ni_label_dup_design_2026-08-23.md §1.
-    n_tax_overlay = overlay_tax_expense_value(lines, file_path, report_fiscal_year)
+    n_tax_overlay = (overlay_tax_expense_value(lines, file_path, report_fiscal_year)
+                     if repair_on("tax_overlay") else 0)
+    checkpoint("tax_overlay", lines)
     if n_tax_overlay:
         logger.debug(f"[report_lines] tax_expense inline XBRL overlay 적용: "
                      f"{n_tax_overlay}건 ({rcept_no})")
@@ -2198,19 +2204,25 @@ def extract_report_lines(
     # R183(2026-09-26) — SCE source defects (wrong-block row, duplicated row, typo cell)
     # listed per rcept and re-proved by the table's own identities. Runs BEFORE the sign
     # repair chain: a misplaced/spurious row is what keeps that chain from closing.
-    sce_dropped = apply_source_defect_fixes(lines, rcept_no)
+    sce_dropped = (apply_source_defect_fixes(lines, rcept_no)
+                   if repair_on("R183_source_defects") else [])
+    checkpoint("R183_source_defects", lines)
 
     # R162(2026-09-22) — SCE 표 원문에서 빠진 음수 괄호를 복원. ★반드시 **맨 마지막**에
     # 돈다: 부호 방향을 BS/IS 값으로 확정하므로(앵커) 위 overlay 들이 BS/IS 를 손본 뒤의
     # 최종값을 봐야 한다. SCE 만 바꾸고 BS/IS/CF 는 읽기만 한다.
-    sce_fixes = repair_sce_sign_loss(lines, prior_balances, prior_income)
+    sce_fixes = (repair_sce_sign_loss(lines, prior_balances, prior_income)
+                 if repair_on("R162_sign_loss") else [])
+    checkpoint("R162_sign_loss", lines)
     if sce_fixes:
         logger.debug(f"[report_lines] R162 SCE 부호 복원: {len(sce_fixes)}셀 "
                      f"({rcept_no})")
 
     # R162-d 원리의 개별 확정(2026-09-22/23) — 일반 알고리즘이 앵커 부재로 손대지
     # 못하는 셀 중, 사용자가 개별 승인한 것만 rcept 예외목록으로 뒤집는다.
-    manual_sign_fixes = apply_manual_sign_fixes(lines, rcept_no)
+    manual_sign_fixes = (apply_manual_sign_fixes(lines, rcept_no)
+                         if repair_on("R162_manual") else [])
+    checkpoint("R162_manual", lines)
     if manual_sign_fixes:
         logger.debug(f"[report_lines] R162-manual SCE 부호 수동확정: "
                      f"{len(manual_sign_fixes)}셀 ({rcept_no})")
@@ -2219,7 +2231,8 @@ def extract_report_lines(
     # 그룹 합계, 지배기업 합계 + 비지배 = 자본 합계)으로 빠진 음수 괄호를 복원한다.
     # R162 의 열 롤포워드가 먼저 확정해 둔 값을 이 행의 다른 항등식이 물려받을 수 있게
     # 반드시 R162 뒤에 돈다. `fin2/extract/sce_sign_repair.py` 모듈 docstring 참고.
-    row_identity_fixes = repair_sce_row_identity(lines, prior_balances)
+    row_identity_fixes = (repair_sce_row_identity(lines, prior_balances)
+                          if repair_on("R162d_row_identity") else [])
     if row_identity_fixes:
         logger.debug(f"[report_lines] R162-d SCE 행 항등식 부호 복원: "
                      f"{len(row_identity_fixes)}셀 ({rcept_no})")
@@ -2230,30 +2243,38 @@ def extract_report_lines(
         rerun_fixes = rerun_sign_loss_after_row_identity(lines, prior_balances, prior_income)
         if rerun_fixes:
             logger.debug(f"[report_lines] R162-e2 SCE 부호 복원 재실행: {len(rerun_fixes)}셀 ({rcept_no})")
+    checkpoint("R162d_row_identity", lines)
 
     # R163(2026-09-22) — R162 의 자매. CF 현금 조정 구간(기초+순증감+환율효과=기말)이
     # 깨진 열에서 단일 셀 부호를 복원한다. 캠페인 이슈#29.
-    cf_fixes = repair_cf_cash_sign_loss(lines)
+    cf_fixes = repair_cf_cash_sign_loss(lines) if repair_on("R163_cf_cash") else []
+    checkpoint("R163_cf_cash", lines)
     if cf_fixes:
         logger.debug(f"[report_lines] R163 CF 현금 부호 복원: {len(cf_fixes)}셀 "
                      f"({rcept_no})")
 
     # R188(2026-09-27) — 잔액 셀 하나로 열 롤포워드와 행 항등식이 둘 다 1,000원 이내로
     # 닫히면 부호를 복원한다(원 단위 반올림으로 정확히 닫히지 않는 표). R162…R185 뒤에 돈다.
-    tolerance_fixes = repair_sce_balance_tolerance(lines, prior_balances)
+    tolerance_fixes = (repair_sce_balance_tolerance(lines, prior_balances)
+                       if repair_on("R188_balance_tolerance") else [])
+    checkpoint("R188_balance_tolerance", lines)
     if tolerance_fixes:
         logger.debug(f"[report_lines] R188 SCE 잔액 허용오차 복원: {len(tolerance_fixes)}셀 "
                      f"({rcept_no})")
 
     # R189(2026-09-27) — 체인 뒤에도 깨진 행 항등식을 유일한 최소 양수 셀 조합으로 닫는다.
     # 각 셀은 자기 열 롤포워드 잔차를 줄여야 한다(형제 합계 열 미수정 해소).
-    sibling_fixes = repair_sce_sibling_cells(lines, prior_balances, prior_income)
+    sibling_fixes = (repair_sce_sibling_cells(lines, prior_balances, prior_income)
+                     if repair_on("R189_sibling_cells") else [])
+    checkpoint("R189_sibling_cells", lines)
     if sibling_fixes:
         logger.debug(f"[report_lines] R189 SCE 형제 셀 복원: {len(sibling_fixes)}셀 ({rcept_no})")
 
     # R190-d(2026-09-27) — a balance cell equal in magnitude to its dated BS balance (R187
     # anchor, equity totals agreeing) takes the BS sign even if its block does not close.
-    dated_fixes = apply_dated_balance_signs(lines, prior_balances)
+    dated_fixes = (apply_dated_balance_signs(lines, prior_balances)
+                   if repair_on("R190d_dated_balance") else [])
+    checkpoint("R190d_dated_balance", lines)
     if dated_fixes:
         logger.debug(f"[report_lines] R190-d SCE 잔액 BS 부호: {len(dated_fixes)}셀 ({rcept_no})")
 
@@ -2263,6 +2284,7 @@ def extract_report_lines(
 
     # R183 post-check: a dropped row stays dropped only if its block now closes.
     verify_row_drops(lines, sce_dropped)
+    checkpoint("R183_source_defects", lines)
 
     return lines
 

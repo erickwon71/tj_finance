@@ -1760,7 +1760,7 @@ def _stale_annual_reprint_table_seqs(session, corp: str, fy: int, period: str,
     rows = session.execute(text("""
         WITH cur_distinct AS (
             SELECT DISTINCT table_seq, label_raw, value_won
-            FROM report_lines
+            FROM report_lines_l3
             WHERE corp_code = :c AND report_fiscal_year = :y
               AND report_fiscal_period = :p AND basis = :b
               AND statement = :stmt AND col_index = 0 AND value_won IS NOT NULL
@@ -1768,7 +1768,7 @@ def _stale_annual_reprint_table_seqs(session, corp: str, fy: int, period: str,
         ),
         other_distinct AS (
             SELECT DISTINCT report_fiscal_period, label_raw, value_won
-            FROM report_lines
+            FROM report_lines_l3
             WHERE corp_code = :c AND report_fiscal_year = :y AND basis = :b
               AND statement = :stmt AND report_fiscal_period != :p
               AND report_fiscal_period IN ('Q1', 'H1', 'Q3')
@@ -1872,7 +1872,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                    node_role, table_seq, COALESCE(is_cumulative, false) AS is_cum,
                    value_exact, """ + _EPS_ROW_SQL + """ AS eps_row,
                    CASE WHEN unit_source = 'xbrl' THEN split_part(source_ref, '/', 2) END AS xbrl_local
-            FROM report_lines rl
+            FROM report_lines_l3 rl   -- R0-2: printed values + layer-3 corrections
             WHERE rcept_no=:r AND col_index=0 AND value_won IS NOT NULL
               -- F2 가드(2026-07-31): 헤더 규칙에 걸린 행은 기본 제외(계층2 가 이제 버리지
               -- 않고 header_hint 로 전사한다). 본문 경로는 아직 전사하지 않지만 같은 계약을
@@ -3282,7 +3282,7 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
             SELECT label_raw, value_won, node_role, section_path, table_seq,
                    COALESCE(is_cumulative, false) AS is_cum, value_exact,
                    {_EPS_ROW_SQL} AS eps_row
-            FROM report_lines rl
+            FROM report_lines_l3 rl   -- R0-2: printed values + layer-3 corrections
             WHERE corp_code=:c AND report_fiscal_year=:y AND report_fiscal_period=:p
               AND basis=:b AND statement=:s AND col_index=0 AND value_won IS NOT NULL
               AND header_hint IS NULL          -- F2 가드(위와 같은 이유)

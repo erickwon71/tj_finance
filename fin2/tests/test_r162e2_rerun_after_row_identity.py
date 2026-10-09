@@ -10,6 +10,18 @@ from pathlib import Path
 
 import fin2.extract.sce_sign_repair as ssr
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _correction_rules_on():
+    """R0-2: these rules no longer write layer 2 — they produce layer-3 corrections
+    (fin2/extract/layer3_corrections.py). Test the rules themselves with them on."""
+    from fin2.extract.as_printed import forced
+    with forced("repaired"):
+        yield
+
+
 _PATH = Path(__file__).resolve().parents[2] / "raw_report/KOSPI/00107987_남해화학/annual/2021/20220317000080.xml"
 
 

@@ -41,7 +41,9 @@ from lxml import etree
 # mc8 (2026-10-09, Haiku/Sonnet parity): identity findings carry `db_col` too (issues built from
 # them use the same column string as cell issues); a DB = -source cell counts as a restored sign
 # only when the source printed it positive (a flipped negative-printed cell stays a finding).
-TOOL_VERSION = "mc8"
+# mc9 (2026-10-10, R0-2): layer 2 stores printed values, so a DB = -source cell is always a finding
+# (the "restored sign" exception is gone; restorations live in layer3_cell_corrections).
+TOOL_VERSION = "mc9"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -554,8 +556,6 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                 if row is not None and r["value_won"] is not None and ci < len(row.cells):
                     eff[id(row)][ci] = r["value_won"] / scale
             eff_rows = [SrcRow(r.table, r.key, r.alt, r.label, eff[id(r)]) for r in win]
-            bad_cols: set[int] = set()
-            bad_flow: set[tuple] = set()
             # the same identity computed on the printed numbers alone (S-calc): an sce_arith
             # finding that also breaks there is source arithmetic (verify_prompt I3 -> source_defect)
             src_broken = {(g["check"], g["col"], g["from"], g["to"]) for g in sce_identity(win)}
@@ -569,12 +569,6 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                     if ks:
                         db_cols.setdefault(ks[0], r["col_label"])
             for f in sce_identity(eff_rows):
-                # mc8: a broken roll-forward blocks sign restoration in ITS block only; a broken
-                # carry-over still blocks the whole column (it spans two blocks)
-                if f["check"] == "flow":
-                    bad_flow.add((f["col"], f["to"]))
-                else:
-                    bad_cols.add(f["col"])
                 # start/end carry DB values where the DB has the cell; the reviewer compares the
                 # web view with the PRINTED opening/closing, so record those too
                 ia, ib = f.pop("_rows")
@@ -588,18 +582,6 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                     f["db_col"] = db_cols[f["col"]]
                 findings.append(_finding(kind, key, **f))
                 counts[kind] += 1
-            # DB = -source on a cell and the arithmetic holds with the DB sign: the loader
-            # restored a sign the source dropped (R162) - proven, not a defect.
-            for f in [f for f in findings if f.get("kind") == "value" and f["statement"] == "SCE"
-                      and f["basis"] == basis and f["table_seq"] == key[2]]:
-                # only a cell PRINTED positive can be a dropped parenthesis (R0-1 1항); flipping a
-                # cell printed negative stays a finding for the model (C3)
-                if (f["src_col"] in f.get("flipped_at", []) and f["src_col"] not in bad_cols
-                        and (f["src_col"], (f.get("block_end") or "")[:60]) not in bad_flow
-                        and isinstance(f.get("src"), float) and f["src"] > 0):
-                    findings.remove(f)
-                    counts["value"] -= 1
-                    counts["sign_restored"] += 1
         if st_code == "BS":
             f = bs_identity(items, scale)
             if f:

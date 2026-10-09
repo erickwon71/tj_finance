@@ -188,7 +188,8 @@ def test_sce_arithmetic_of_the_source_alone_does_not_block(tmp_path):
     assert {f["kind"] for f in res.findings} == {"sce_arith"}
 
 
-def test_sce_sign_restored_by_loader_is_not_a_finding(tmp_path):
+def test_sce_sign_restored_in_db_is_a_finding(tmp_path):
+    # mc9 (R0-2): layer 2 must hold the printed sign; a restored sign in the DB is a value finding
     body = _sce([["2024.01.01 (기초자본)", "100", "(10)", "90"],
                  ["당기순이익", "", "(20)", "(20)"],
                  ["2024.12.31 (기말자본)", "100", "30", "70"]])
@@ -201,8 +202,9 @@ def test_sce_sign_restored_by_loader_is_not_a_finding(tmp_path):
             if v is not None:
                 rows.append(_row("SCE", "separate", order, lab, v, col=col))
     res = mc.compare(rows, tables)
-    assert res.verdict == "clean"
-    assert res.counts["sign_restored"] == 1
+    assert res.verdict == "mismatch"
+    assert [(f["kind"], f["src"], f["db"]) for f in res.findings if f["kind"] == "value"] == [("value", 30.0, -30)]
+    assert not res.counts.get("sign_restored")
 
 
 def test_sce_subtotals_by_value_before_and_after_items(tmp_path):
@@ -399,9 +401,9 @@ def test_sce_columns_numbered_from_one_are_aligned_by_value(tmp_path):
     assert res.verdict == "clean" and not res.findings
 
 
-def test_sign_restore_is_judged_per_block_and_only_for_positive_print(tmp_path):
-    # prior block's column is broken in the source itself; the current block's dividend printed
-    # without parentheses and restored by the loader closes ITS block -> restored, not a finding
+def test_flipped_cells_are_findings_whatever_the_print(tmp_path):
+    # mc9 (R0-2): a dividend printed without parentheses that the DB stores negative is a finding,
+    # even when the DB sign closes its block
     src = [("2023.01.01 (기초자본)", (100, 50, 150)), ("당기순이익", (None, 7, 7)),
            ("2023.12.31 (기말자본)", (100, 60, 160)),          # 50 + 7 != 60: source arithmetic
            ("2024.01.01 (기초자본)", (100, 60, 160)), ("배당금지급", (None, 10, 10)),
@@ -410,8 +412,8 @@ def test_sign_restore_is_judged_per_block_and_only_for_positive_print(tmp_path):
     tables = mc.load_statement_tables(_xml(tmp_path, body))
     db = [(lab, tuple(-v if lab == "배당금지급" and v else v for v in vals)) for lab, vals in src]
     res = mc.compare(_sce_rows(db), tables)
-    assert not [f for f in res.findings if f["kind"] == "value"]
-    assert res.counts["sign_restored"] == 2
+    assert {f["src_col"] for f in res.findings if f["kind"] == "value"} == {1, 2}
+    assert not res.counts.get("sign_restored")
     # a cell PRINTED negative that the DB stores positive is never a restoration
     src2 = [("2024.01.01 (기초자본)", (100, 60, 160)), ("배당금지급", (None, -10, -10)),
             ("2024.12.31 (기말자본)", (100, 70, 170))]

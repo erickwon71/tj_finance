@@ -176,6 +176,13 @@ def build_rows(db_rows: list[dict]) -> list[tuple]:
             i += 1
             if r["value_won"] is None:
                 amount, raw = "", (r.get("value_raw") or "")
+            elif r.get("value_exact") is not None:
+                # R212: fractional EPS keeps its printed decimals in value_exact (value_won is
+                # the rounded BIGINT) - showing value_won made 0.04 read as 0 and the verify
+                # model register false value_mismatch (2026-10-09, 1,353 filings)
+                amount = f"{r['value_exact'].normalize():,f}" if hasattr(r["value_exact"], "normalize") \
+                    else f"{r['value_exact']:,}"
+                raw = ""
             else:
                 # Thousands separator for readability — the underlying digits
                 # (magnitude, sign) are unchanged, so source comparison still holds.

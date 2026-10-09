@@ -116,17 +116,23 @@ def _print_detail(d: dict, csvs: dict[str, str] | None) -> None:
 def _print_machine(f: dict) -> None:
     """Machine comparison result the model reviewer works from (design: machine_compare)."""
     v = f.get("machine_verdict")
+    # wording follows docs/verification/verify_prompt.md step 3 (2026-10-09): a filing without a
+    # current machine check is left pending - the machine compares it first
     if v is None:
-        print("      기계대조: 없음 → 전체 대조")
+        print("      기계대조: 없음 → 이 필링은 대조하지 않고 pending 으로 둔다(기계가 먼저 대조)")
         return
-    stale = "" if f.get("machine_current") else " ★재적재 이후 판정(stale) → 전체 대조"
+    if not f.get("machine_current"):
+        print(f"      기계대조: {v} (stale — 재적재 이후 판정) → 이 필링은 대조하지 않고 pending 으로 둔다(기계가 다시 대조)")
+        return
     if f.get("machine_audit"):
-        print(f"      기계대조: clean 이지만 1% 표본 재확인 대상(audit) → ★적재 scope 전체를 웹뷰로 대조{stale}")
+        print("      기계대조: clean 이지만 1% 표본 재확인 대상(audit) → ★적재 scope 전체를 웹뷰로 대조")
         return
     if v in ("no_source", "no_structure", "error"):
-        print(f"      기계대조: {v} → 기계가 판단 못함, 적재 scope 전체를 웹뷰로 대조{stale}")
+        print(f"      기계대조: {v} → 기계가 판단 못함, 적재 scope 전체를 웹뷰로 대조")
         return
-    print(f"      기계대조: {v} {f.get('machine_counts')}{stale}")
+    print(f"      기계대조: {v} {f.get('machine_counts')}")
+    if v == "clean":
+        print("      → 기계가 이미 pass 했다. 할 일 없음")
     if v != "mismatch":
         return
     print("      ★아래 발견 항목만 웹뷰에서 확인한다(나머지 셀은 기계가 원문과 일치 확인):")
@@ -213,7 +219,7 @@ def cmd_issue_add(a):
     print(f"이슈 등록 {len(ids)}건: {ids}")
     if suppressed:
         print(f"★등록 안 함 {len(suppressed)}건 — 수정쪽이 이미 '코드수정 불필요'로 결론낸 셀(DB 값 동일). "
-              f"재조사 불필요. 이견이 있으면 이전 이슈를 `vq.py reopen <id> --evidence ...` 로 다툴 것:")
+              f"재조사 불필요. 검증 러너는 다투지 않는다(이견은 사람이 `vq.py reopen <id>` 로):")
         for x in suppressed:
             print(f"    {x['account_label']}{'/' + x['column_label'] if x['column_label'] else ''} "
                   f"DB={x['db_value']} → 이전 #{x['prior_issue_id']}: {x['prior_verdict'][:160]}")
@@ -299,10 +305,14 @@ def cmd_fix_queue(a):
         print("  없음")
     if q.get("pending_withdraw"):
         print(f"■ no_fix 반려 → verify 자동 withdraw 대기 {q['pending_withdraw']}건 (위 목록에서 제외됨, 손댈 것 없음)")
+    if q.get("held"):
+        held = " · ".join(f"{h['error_type']} {h['n']}" for h in q["held"])
+        print(f"■ 보류(defer 반려·동결, 위 목록과 batch new 기본 수집에서 제외): {held} "
+              f"— 목록은 `vq.py issues --type <유형> --held`")
 
 
 def cmd_issues(a):
-    for r in ops.issues_of_type(a.type):
+    for r in ops.issues_of_type(a.type, held=getattr(a, "held", False)):
         print(f"#{r['issue_id']} [{r['status']}] {r['corp_name']} {r['fiscal_year']}{r['fiscal_period']} "
               f"{r['rcept_no']} {r['basis']}/{r['statement']} {r['account_label']}"
               f"{'/' + r['column_label'] if r['column_label'] else ''} DB={r['db_value']} "
@@ -459,7 +469,9 @@ def build_parser() -> argparse.ArgumentParser:
         x.add_argument("--evidence", required=True); x.set_defaults(fn=fn)
 
     x = sp.add_parser("fix-queue"); x.add_argument("--json", action="store_true"); x.set_defaults(fn=cmd_fix_queue)
-    x = sp.add_parser("issues"); x.add_argument("--type", required=True); x.set_defaults(fn=cmd_issues)
+    x = sp.add_parser("issues"); x.add_argument("--type", required=True)
+    x.add_argument("--held", action="store_true", help="defer 반려·동결로 보류된 이슈만 본다")
+    x.set_defaults(fn=cmd_issues)
     x = sp.add_parser("batch"); bsp = x.add_subparsers(dest="sub", required=True)
     y = bsp.add_parser("new"); y.add_argument("--type", required=True); y.add_argument("--title", required=True)
     y.add_argument("--rule"); y.add_argument("--issues", help="쉼표구분 issue_id(생략=그 유형의 미배정 전부)")

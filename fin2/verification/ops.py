@@ -64,6 +64,13 @@ def _released_sql(tag_cond: str) -> str:
 
 # Released with --verdict no_fix and not yet withdrawn by verify: out of the fix queue.
 _PENDING_WITHDRAW_SQL = _released_sql(f"t.evidence LIKE '%: {NO_FIX_TAG}%'")
+# Held back from new batches (2026-10-09): released with --verdict defer (alignment rules,
+# other cause, user decision pending), or frozen by user decision — residual R162-e sign_flip
+# registered before 2026-09-26 (PARSING_RULES R0-1 0항). Without this every `batch new` swept
+# them up again and each had to be excluded again. `vq.py issues --type X --held` lists them.
+_HELD_SQL = ("(" + _released_sql(f"t.evidence LIKE '%: {DEFER_TAG}%'")
+             + " OR (i.error_type = 'sign_flip' AND i.rule_id = 'R162-e'"
+               " AND i.created_at < TIMESTAMPTZ '2026-09-26 00:00:00+09'))")
 # Released before --verdict existed (untagged). Those were mixed (checked 2026-10-03: of 37,
 # 30 no-fix conclusions and 7 deferred), so they are only taken by explicit id
 # (`withdraw-released --ids`), never wholesale.
@@ -346,7 +353,11 @@ MODEL_READY_SQL = """
         WHERE i.corp_code = p.corp_code AND i.fiscal_year = p.fiscal_year
           AND i.fiscal_period = p.fiscal_period AND i.status = 'fixed'
           AND i.created_by NOT LIKE '%machine'))
-     OR (p.status = 'pending' AND NOT EXISTS (
+     OR (p.status IN ('pending', 'has_issues') AND EXISTS (
+        SELECT 1 FROM verification.progress_filings pf
+        WHERE pf.corp_code = p.corp_code AND pf.fiscal_year = p.fiscal_year
+          AND pf.fiscal_period = p.fiscal_period AND pf.status = 'pending')
+        AND NOT EXISTS (
         SELECT 1 FROM verification.progress_filings pf
         LEFT JOIN verification.filing_loads fl USING (rcept_no)
         LEFT JOIN verification.machine_checks mc USING (rcept_no)
@@ -389,7 +400,14 @@ def claim(slot: Slot | None = None, lease_minutes: int = LEASE_MINUTES,
                   AND (p.status = 'pending' OR EXISTS (
                         SELECT 1 FROM verification.issues i
                          WHERE i.corp_code = p.corp_code AND i.fiscal_year = p.fiscal_year
-                           AND i.fiscal_period = p.fiscal_period AND i.status = 'fixed'))
+                           AND i.fiscal_period = p.fiscal_period AND i.status = 'fixed')
+                       -- a has_issues slot can still hold pending filings (no open issue of
+                       -- their own: a new amendment, a reload); without this they were never
+                       -- checked by anyone (145 filings in 123 slots, 2026-10-09)
+                       OR EXISTS (
+                        SELECT 1 FROM verification.progress_filings pf
+                         WHERE pf.corp_code = p.corp_code AND pf.fiscal_year = p.fiscal_year
+                           AND pf.fiscal_period = p.fiscal_period AND pf.status = 'pending'))
                   AND {extra}
                 ORDER BY
                   (p.status = 'has_issues') DESC,
@@ -685,6 +703,10 @@ def add_issues(rcept: str, items: list[dict], suppressed: list | None = None) ->
                 if not it.get(req):
                     raise VqError(f"이슈 필드 {req} 필수")
             row = {k: it.get(k) for k in _ISSUE_FIELDS}
+            if row.get("statement") == "CIS":
+                # report_lines keeps 포괄손익 under IS; a CIS issue missed recheck and the
+                # duplicate checks (71 such issues, 2026-10-09)
+                row["statement"] = "IS"
             if not row.get("db_label"):
                 # camp_run disambiguates a duplicate SCE label by appending "[period]" to
                 # account_label for the unique index; without db_label, recheck's exact-match
@@ -768,7 +790,8 @@ def slot_status(slot: Slot) -> str:
 
 
 # ═══════════════════════════════ recheck (verify) ═══════════════════════════════
-_LABEL_DISAMBIG_RE = re.compile(r"\s*\[[^\[\]]+\]$")
+# '[period]' (camp_run) or ' (#2)' (machine issues-json: same label repeated in one scope)
+_LABEL_DISAMBIG_RE = re.compile(r"\s*(?:\[[^\[\]]+\]|\(#\d+\))$")
 
 
 def _strip_label_disambiguator(label: str) -> str | None:
@@ -800,7 +823,7 @@ def _strip_column_label_prefix(label: str | None) -> str | None:
 #   '… (총계); 세부 자기주식처분이익 …'                 '; 세부 …' remark
 #   '자본자본 합계 @ 2016.12.31 (기말자본)'             ' @ <date> (…)' suffix
 _COL_TAG_PREFIX_RE = re.compile(r"^\[[^\[\]]+\]\s*")
-_COL_REMARK_RE = re.compile(r"\s*;\s*세부.*$")
+_COL_REMARK_RE = re.compile(r"\s*(?:;\s*세부.*|#항등식)$")
 _COL_PERIOD_SUFFIX_RE = re.compile(r"\s*(?:\|\s*구간\s*=.*|\|\s*\d{4}[-.]\d{2}[-.]\d{2}.*|@\s*\d{4}[-.]\d{2}[-.]\d{2}.*)$")
 _COL_PAREN_ANNOT_RE = re.compile(
     r"\s*\((?:[^()]|\([^()]*\))*(?:블록|구간|총계|비교|기말자본)(?:[^()]|\([^()]*\))*\)$")
@@ -873,7 +896,10 @@ def _resolve_issue_cell(conn, issue: dict) -> tuple[dict, str | None] | None:
         SELECT EXISTS (SELECT 1 FROM report_lines
         WHERE rcept_no = :r AND basis = :b AND statement = :s AND label_raw = :l
           AND (CAST(:cl AS text) IS NULL OR col_label = :cl))""")
-    col_label = _strip_column_label_prefix(issue["column_label"])
+    # report_lines.col_label is NULL for BS/IS/CF (only the current column is loaded): a column
+    # label on such an issue (machine issues-json used to put the source header there, '#항등식'
+    # on identity issues) can only make the lookup miss
+    col_label = _strip_column_label_prefix(issue["column_label"]) if issue["statement"] == "SCE" else None
     if conn.execute(exists_sql, {**params, "cl": col_label}).scalar():
         return params, col_label
     if col_label is None:
@@ -995,11 +1021,17 @@ def fix_queue() -> dict:
                    min(i.issue_id) AS first_issue
             FROM verification.issues i JOIN verification.error_types et ON et.code = i.error_type
             WHERE i.status IN ('open', 'reopened') AND i.fix_batch_id IS NULL
-              AND NOT {_PENDING_WITHDRAW_SQL}
+              AND NOT {_PENDING_WITHDRAW_SQL} AND NOT {_HELD_SQL}
             GROUP BY 1, 2 ORDER BY n_issues DESC""")).mappings()]
         pending_withdraw = conn.execute(text(f"""
             SELECT count(*) FROM verification.issues i
             WHERE i.status = 'open' AND {_PENDING_WITHDRAW_SQL}""")).scalar_one()
+        held = [dict(r) for r in conn.execute(text(f"""
+            SELECT i.error_type, count(*) AS n
+            FROM verification.issues i
+            WHERE i.status IN ('open', 'reopened') AND i.fix_batch_id IS NULL
+              AND NOT {_PENDING_WITHDRAW_SQL} AND {_HELD_SQL}
+            GROUP BY 1 ORDER BY 2 DESC""")).mappings()]
         batches = [dict(r) for r in conn.execute(text("""
             SELECT b.batch_id, b.error_type, b.rule_id, b.title, b.status, b.created_at,
                    (SELECT count(*) FROM verification.issues i WHERE i.fix_batch_id = b.batch_id
@@ -1019,10 +1051,10 @@ def fix_queue() -> dict:
             WHERE status = 'pending' OR (status = 'answered' AND answered_at > now() - interval '3 days')
             ORDER BY decision_id DESC LIMIT 20""")).mappings()]
     return {"groups": groups, "batches": batches, "decisions": decisions,
-            "pending_withdraw": pending_withdraw}
+            "pending_withdraw": pending_withdraw, "held": held}
 
 
-def issues_of_type(error_type: str, statuses=("open", "reopened")) -> list[dict]:
+def issues_of_type(error_type: str, statuses=("open", "reopened"), held: bool = False) -> list[dict]:
     """★2026-09-30(사용자 지시) — `reopened`은 fix_queue()에서 순수 신규 `open`과 구분 없이
     섞여 나온다. fix가 "이걸 이미 한 번 고쳤었다"는 걸 모른 채 매번 처음부터 재조사하는
     일이 반복됐다(recheck의 거짓 reopen 버그가 특히 여러 번 재발 — 메모리 다수 기록).
@@ -1068,7 +1100,7 @@ def issues_of_type(error_type: str, statuses=("open", "reopened")) -> list[dict]
                 FROM verification.issue_events e WHERE e.issue_id = i.issue_id
             ) h ON true
             WHERE i.error_type = :t AND i.status = ANY(:s) AND i.fix_batch_id IS NULL
-              AND NOT {_PENDING_WITHDRAW_SQL}
+              AND NOT {_PENDING_WITHDRAW_SQL} AND {'' if held else 'NOT '}{_HELD_SQL}
             ORDER BY i.issue_id"""), {"t": error_type, "s": list(statuses)}).mappings()]
 
 
@@ -1084,7 +1116,7 @@ def batch_new(error_type: str, title: str, issue_ids: list[int] | None,
             issue_ids = [r[0] for r in conn.execute(text(f"""
                 SELECT issue_id FROM verification.issues i
                 WHERE error_type = :t AND status IN ('open', 'reopened') AND fix_batch_id IS NULL
-                  AND NOT {_PENDING_WITHDRAW_SQL}"""),
+                  AND NOT {_PENDING_WITHDRAW_SQL} AND NOT {_HELD_SQL}"""),
                 {"t": error_type}).fetchall()]
         n = conn.execute(text("""
             UPDATE verification.issues SET fix_batch_id = :b, status = 'fixing',

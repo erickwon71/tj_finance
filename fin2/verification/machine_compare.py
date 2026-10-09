@@ -26,6 +26,7 @@ with no source table).
 from __future__ import annotations
 
 import difflib
+import math
 import os
 import re
 from collections import Counter
@@ -34,7 +35,10 @@ from pathlib import Path
 
 from lxml import etree
 
-TOOL_VERSION = "mc6"
+# mc7 (2026-10-09, PARSING_RULES R0-1): identity tolerance = display unit x ceil(terms / 2), the
+# rounding bound of the printed numbers (was changes + 2); SCE findings carry their block's closing
+# row and the DB column label; sce_arith records whether the source's own numbers break it too.
+TOOL_VERSION = "mc7"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -444,6 +448,10 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                 d2s[i] = j
                 used.add(j)
         rowmap = {seq[i]: win[j] for i, j in d2s.items()}
+        # SCE: each source row's block closing label, so a finding on a label repeated in every
+        # year block ('배당금 지급') says which block it is (verify_prompt column_label '<col> @ date')
+        ends = block_end_labels(win) if st_code == "SCE" else [None] * len(win)
+        pos = {id(r): j for j, r in enumerate(win)}
         counts["rows"] += len(seq)
         covered: dict[tuple, set[int]] = {}
         for r in items:
@@ -468,12 +476,14 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                          if isinstance(y, float) and abs(y * s - r["value_won"]) <= tol]
                 flipped = [c for c, y in enumerate(row.cells)
                            if isinstance(y, float) and y and abs(-y * s - r["value_won"]) <= tol]
+                extra = ({"block_end": ends[pos[id(row)]], "db_col": r.get("col_label")}
+                         if st_code == "SCE" else {})
                 findings.append(_finding(
                     "value", key, label=r["label_raw"][:200], row_order=r["row_order"],
                     col_index=r["col_index"], db=r["value_won"],
                     src=x if isinstance(x, float) else str(x), src_col=k,
                     header=(headers_of[row.table][k] if k < len(headers_of[row.table]) else None),
-                    found_at=found, flipped_at=flipped, scale=s))
+                    found_at=found, flipped_at=flipped, scale=s, **extra))
                 counts["value"] += 1
         matched = set(d2s.values())
         lo, hi = (min(matched), max(matched)) if matched else (0, -1)
@@ -491,7 +501,8 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                 counts["zero_row"] += 1
             elif st_code == "SCE":
                 if any(isinstance(x, float) and x for x in r.cells):
-                    findings.append(_finding("missing_row", key, label=r.label[:200], cells=r.cells[:12]))
+                    findings.append(_finding("missing_row", key, label=r.label[:200], cells=r.cells[:12],
+                                             block_end=ends[j]))
                     counts["missing_row"] += 1
             else:
                 if any(isinstance(r.cells[k], float) and r.cells[k] for k in ks if k < len(r.cells)):
@@ -512,11 +523,15 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                     eff[id(row)][ci] = r["value_won"] / scale
             eff_rows = [SrcRow(r.table, r.key, r.alt, r.label, eff[id(r)]) for r in win]
             bad_cols = set()
+            # the same identity computed on the printed numbers alone (S-calc): an sce_arith
+            # finding that also breaks there is source arithmetic (verify_prompt I3 -> source_defect)
+            src_broken = {(g["check"], g["col"], g["from"], g["to"]) for g in sce_identity(win)}
             for f in sce_identity(eff_rows):
                 bad_cols.add(f["col"])
                 kind = {"sign": "sign_omitted", "shift": "sce_identity"}.get(f["explain"], "sce_arith")
                 f["header"] = next((t.headers[f["col"]] for t in win_tables if f["col"] < len(t.headers)), None)
                 f["scale"] = scale
+                f["src_broken"] = (f["check"], f["col"], f["from"], f["to"]) in src_broken
                 findings.append(_finding(kind, key, **f))
                 counts[kind] += 1
             # DB = -source on a cell and the arithmetic holds with the DB sign: the loader
@@ -537,7 +552,8 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                 for c, x in enumerate(row.cells):
                     if isinstance(x, float) and x and c not in covered.get(rk, set()):
                         findings.append(_finding("uncovered_cell", key, label=row.label[:200], src_col=c,
-                                                 header=row_table_header(win_tables, row, c), src=x))
+                                                 header=row_table_header(win_tables, row, c), src=x,
+                                                 block_end=ends[pos[id(row)]]))
                         counts["uncovered_cell"] += 1
     for t in tables:
         # only tables recognisably a statement: banks/insurers put income breakdowns
@@ -623,7 +639,6 @@ def sce_identity(rows: list[SrcRow]) -> list[dict]:
 
     def check(a: int, b: int, kind: str) -> None:
         mids = rows[a + 1: b]
-        tol = len(mids) + 2
         totals = [bool(_SUBTOTAL_LOOSE.search(r.key) or _SUBTOTAL_LOOSE.search(r.alt)) for r in mids]
         for c in range(width):
             start = _num(rows[a].cells[c]) if c < len(rows[a].cells) else 0.0
@@ -631,6 +646,10 @@ def sce_identity(rows: list[SrcRow]) -> list[dict]:
             vals = [_num(r.cells[c]) if c < len(r.cells) else 0.0 for r in mids]
             if not start and not end and not any(vals):
                 continue
+            # R0-1 tolerance: each printed number is rounded to the display unit, so a sum of n
+            # printed numbers can be off by n/2 units (opening + changes + closing).
+            tol = identity_tolerance(2 + sum(1 for v in vals if v))
+
             def closes(st: float, vs: list[float], en: float) -> bool:
                 return any(abs(st + _kept_sum(vs, totals, st, tol, f, bk) - en) <= tol
                            for f, bk in ((True, True), (False, True), (True, False)))
@@ -686,6 +705,34 @@ def sce_identity(rows: list[SrcRow]) -> list[dict]:
 _DATE_RE = re.compile(r"(\d{4})[.\-/년]\s*(\d{1,2})[.\-/월]\s*(\d{1,2})")
 
 
+def identity_tolerance(n_terms: int) -> int:
+    """Closing tolerance in display units for an identity of `n_terms` printed numbers
+    (PARSING_RULES R0-1 2항, user decision 2026-10-09): ceil(n / 2), at least 1."""
+    return max(1, math.ceil(n_terms / 2))
+
+
+def block_end_labels(rows: list[SrcRow]) -> list[str | None]:
+    """Per SCE source row, the label of the closing (기말) row of the block it belongs to:
+    the next closing row at or below it. Rows after the last closing row get None."""
+    out: list[str | None] = [None] * len(rows)
+    current: str | None = None
+    for i in range(len(rows) - 1, -1, -1):
+        lab = _WS_RE.sub("", rows[i].label)
+        if _CLOSE_RE.search(lab):
+            current = rows[i].label
+        out[i] = current
+    return out
+
+
+def label_date(label: str | None) -> str | None:
+    """'2023.12.31 (기말자본)' -> '2023.12.31' (YYYY.MM.DD), None when the label has no date."""
+    m = _DATE_RE.search(label or "")
+    if not m:
+        return None
+    y, mo, d = map(int, m.groups())
+    return f"{y:04d}.{mo:02d}.{d:02d}"
+
+
 def _consecutive(close_label: str, open_label: str) -> bool:
     """Closing and opening dates are adjacent (2023.12.31 -> 2024.01.01). Blocks of a quarterly
     SCE (prior-year quarter, then current year) or reversed order do not carry over."""
@@ -702,7 +749,7 @@ def _consecutive(close_label: str, open_label: str) -> bool:
 
 
 def bs_identity(items: list[dict], scale: int) -> dict | None:
-    """자산총계 = 부채총계 + 자본총계 on the DB's current values (one rounding unit per term)."""
+    """자산총계 = 부채총계 + 자본총계 on the DB's current values (R0-1 tolerance for 3 terms)."""
     cur = {}
     for r in items:
         if r["col_index"] in (0, None) and r["value_won"] is not None:
@@ -715,7 +762,7 @@ def bs_identity(items: list[dict], scale: int) -> dict | None:
     if len(cur) < 3:
         return None
     diff = cur["자산총계"] - cur["부채총계"] - cur["자본총계"]
-    if abs(diff) > 3 * scale:
+    if abs(diff) > identity_tolerance(3) * scale:
         return {"assets": cur["자산총계"], "liabilities": cur["부채총계"], "equity": cur["자본총계"], "diff": diff}
     return None
 

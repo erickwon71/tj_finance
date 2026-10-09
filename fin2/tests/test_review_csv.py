@@ -250,3 +250,15 @@ def test_sce_rows_carry_their_column_label():
     rows = build_rows([{**base, "col_index": 1, "col_label": "자본잉여금", "value_won": 20},
                        {**base, "col_index": 0, "col_label": "자본금", "value_won": 10}])
     assert [(r[5], r[7]) for r in rows] == [("10", "열=자본금"), ("20", "열=자본잉여금")]
+
+
+def test_fractional_eps_shows_value_exact_not_the_rounded_bigint():
+    """R212: value_won is the rounded BIGINT (0.04 -> 0); the CSV must show the printed
+    decimals or the verify model registers a false value_mismatch (2026-10-09)."""
+    from decimal import Decimal
+    r = row("IS", "separate", "기본주당이익", 0, adecimal=0)
+    r["value_exact"] = Decimal("0.0400")
+    neg = row("IS", "separate", "희석주당손실", -5, order=1, adecimal=0)
+    neg["value_exact"] = Decimal("-4.70")
+    out = rc.build_rows([r, neg])
+    assert [x[5] for x in out] == ["0.04", "-4.7"]

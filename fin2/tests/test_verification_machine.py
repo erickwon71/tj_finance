@@ -21,6 +21,19 @@ from fin2.verification.schema import SCHEMA_SQL  # noqa: E402
 TEST_DB = "tjf_vtest_machine"
 CORP = "99000003"
 R_OK, R_BAD, R_SIGN = "29990101000021", "29990101000022", "29990101000023"
+R_ARITH = "29990101000024"
+
+# capital rises with no change row: every DB cell equals the source, but the source's own
+# roll-forward does not close -> machine registers source_defect (mc7, decision (가))
+ARITH_XML = """<?xml version="1.0" encoding="utf-8"?>
+<DOCUMENT><BODY><SECTION-1><TITLE>III. 재무에 관한 사항</TITLE>
+<SECTION-2><TITLE>4. 재무제표</TITLE>
+<TABLE><TR><TD>자본변동표</TD></TR></TABLE>
+<TABLE><TR><TD>구분</TD><TD>자본금</TD><TD>이익잉여금</TD></TR>
+<TR><TD>2021.01.01 (기초자본)</TD><TD>100</TD><TD>10</TD></TR>
+<TR><TD>당기순이익</TD><TD></TD><TD>5</TD></TR>
+<TR><TD>2021.12.31 (기말자본)</TD><TD>125</TD><TD>15</TD></TR></TABLE>
+</SECTION-2></SECTION-1></BODY></DOCUMENT>"""
 SLOT_OK, SLOT_BAD = Slot(CORP, 2024, "FY"), Slot(CORP, 2023, "FY")
 
 SIGN_XML = """<?xml version="1.0" encoding="utf-8"?>
@@ -110,6 +123,21 @@ def engines(tmp_path_factory):
                                 "%s,%s,%s,%s,0)", (CORP, R_SIGN, lab, v, i, col))
         cur.execute("INSERT INTO download_tasks (rcept_no, status, file_path, file_type) "
                     "VALUES (%s, 'completed', %s, 'xml')", (R_SIGN, str(sign_xml)))
+        arith_xml = xml.parent / "arith.xml"
+        arith_xml.write_text(ARITH_XML, encoding="utf-8")
+        cur.execute("INSERT INTO filings (rcept_no, corp_code, report_type, fiscal_year, "
+                    "fiscal_period, is_amendment, filed_at, report_nm) VALUES "
+                    "(%s, %s, 'annual', 2021, 'FY', false, '2022-03-01', '사업보고서')", (R_ARITH, CORP))
+        for i, (lab, vals) in enumerate((("2021.01.01 (기초자본)", (100, 10)), ("당기순이익", (None, 5)),
+                                         ("2021.12.31 (기말자본)", (125, 15)))):
+            for col, v in enumerate(vals):
+                if v is not None:
+                    cur.execute("INSERT INTO report_lines (corp_code, rcept_no, report_fiscal_year, "
+                                "report_fiscal_period, statement, basis, label_raw, value_won, "
+                                "row_order, col_index, table_seq) VALUES (%s,%s,2021,'FY','SCE','separate',"
+                                "%s,%s,%s,%s,0)", (CORP, R_ARITH, lab, v, i, col))
+        cur.execute("INSERT INTO download_tasks (rcept_no, status, file_path, file_type) "
+                    "VALUES (%s, 'completed', %s, 'xml')", (R_ARITH, str(arith_xml)))
     conn.commit()
     conn.close()
     engs = {"admin": _engine(None, "main"), "verify": _engine("tjf_verify", "camp_run:machine"),
@@ -155,15 +183,19 @@ def test_gate_hides_unchecked_slots_from_the_model(engines, as_role):
 def test_machine_passes_clean_and_leaves_mismatch_for_the_model(engines, as_role):
     as_role("verify")
     total = machine_pass.run(limit=10, log=lambda _m: None)
-    assert total["slots"] == 3 and total["clean"] == 1 and total["mismatch"] == 1
-    assert total["auto_issue"] == 1
+    assert total["slots"] == 4 and total["clean"] == 1 and total["mismatch"] == 1
+    assert total["auto_issue"] == 2
     rows = dict(_sql(engines, "SELECT rcept_no, verdict FROM verification.machine_checks"))
-    assert rows == {R_OK: "clean", R_BAD: "mismatch", R_SIGN: "mismatch"}
+    assert rows == {R_OK: "clean", R_BAD: "mismatch", R_SIGN: "mismatch", R_ARITH: "clean"}
     st = dict(_sql(engines, "SELECT fiscal_year, status FROM verification.progress"))
-    assert st == {2024: "passed", 2023: "pending", 2022: "has_issues"}
+    assert st == {2024: "passed", 2023: "pending", 2022: "has_issues", 2021: "has_issues"}
     iss = _sql(engines, "SELECT account_label, column_label, db_value, source_value, error_type, rule_id "
                "FROM verification.issues WHERE rcept_no = :r", {"r": R_SIGN})
     assert iss == [("배당금지급", "이익잉여금 @ 2022.12.31 (기말자본)", 7, -7, "sign_flip", "R162")]
+    # clean but the source's own roll-forward is broken (자본금 100 -> 125 with no change row)
+    arith = _sql(engines, "SELECT account_label, column_label, error_type FROM verification.issues "
+                 "WHERE rcept_no = :r", {"r": R_ARITH})
+    assert arith == [("2021.12.31 (기말자본)", "자본금 @ 2021.12.31 #항등식", "source_defect")]
     who = _sql(engines, "SELECT verified_by, note FROM verification.progress_filings "
                "WHERE rcept_no = :r", {"r": R_OK})[0]
     assert who[0] == "camp_run:machine" and who[1].startswith("[machine ")

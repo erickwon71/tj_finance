@@ -15,7 +15,7 @@ CLI: `scripts/vq.py` (모든 명령은 `--help`)
 모든 진행 상태는 `verification` 스키마에 있다. 세션 메모리나 마크다운은 진행상태의 근거가 아니다.
 
 **판정 규칙의 출처와 우선순위** (2026-10-09 — 같은 규칙을 여러 곳에 적어 모델마다 판정이 갈리던 것을 정리):
-1. `docs/PARSING_RULES.md` **R0-1** — 원문 그대로 적재. 원문과 다르게 싣는 것은 증명(닫힘·유일·무악화, 표시단위 ±1,
+1. `docs/PARSING_RULES.md` **R0-1** — 원문 그대로 적재. 원문과 다르게 싣는 것은 증명(닫힘·유일·무악화, 허용오차 표시단위×⌈항 수÷2⌉,
    같은 회사 DART 정기보고서 증거)될 때만. 증명 안 되면 인쇄된 그대로.
 2. 검증 판정: `docs/verification/verify_prompt.md` 4번 판정표. 검증은 산수 사실(DB=원문, 항등식 닫힘)만 기록하고 복원 가능성은 판단하지 않는다.
 3. 수정 판정: 수정 워크트리 `CLAUDE.local.md` 의 이슈별 처리 판정표(F0~F8). 증명 여부는 코드로 계산한다.
@@ -203,6 +203,9 @@ claude
         - `no_fix`(DB 가 정답): verify 러너가 자동으로 withdraw 한다. 검증 쪽에 따로 전달할 필요 없다. 같은 셀은 다시 등록되지 않는다.
         - `defer`(DB 가 틀렸거나 판단 보류: 다른 원인·정합화 대기·동결·사용자 판단 대기): open 으로 fix-queue 에 남는다.
    9. `batch set <id> --status done`
+   - `waiting_decision` 은 답을 기다리는 `vq.py ask` 가 있을 때만 쓴다. no_fix 결론을 낸 이슈를 `fixing` 으로 붙여 둔 채 주차하지 않는다(그 슬롯은 영원히 `has_issues` 로 남는다).
+   - defer 반려·동결 이슈는 `fix-queue` 의 "보류" 줄에 건수만 나오고 `batch new` 기본 수집에서 빠진다. 목록은 `vq.py issues --type <유형> --held`, 다시 다룰 때는 `batch new --issues <id,...>`.
+   - no_fix 반려는 검증 러너가 매 회차 시작할 때 `withdraw-released` 로 닫는다. 러너를 멈춰 둔 동안에는 쌓인다.
 5. 배치가 끝나면 `/clear` 하거나 세션을 끝낸다. 다음 배치는 1부터 다시 한다.
 
 ## 6. 텔레그램 판단

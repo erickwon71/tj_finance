@@ -62,3 +62,26 @@
 1 F0 defer(동결 ①) · 2 F7-b defer(R184) · 3 F4-b defer(R183) · 4 F3 no_fix · 5 F1 주차 · 6 F7-b defer(R190-d, 음수 인쇄) ·
 7 F6 파서 수정(셀 수 최소 A) · 8 F6 no_fix · 9 F2→F3 no_fix · 10 F8 defer · 11 defer + `vq.py ask --category irreversible` ·
 12 F7-b defer(야간에도) · 13 fixed 가능(push·재적재 전제) · 14 F4-a no_fix
+
+## 결과 기록 — 4차(데이터 영역·생애주기 검토 반영, 기계 mc7, 2026-10-09)
+
+| 문서 | 사례 | Haiku | Sonnet |
+|---|---|---|---|
+| v6(허용오차 ⌈항 수÷2⌉·mc7·데이터 영역 규칙) | verify v4 18 | 2/2 회 18/18 | 18/18 |
+| v6 | fix v4 6 | 6/6 | 6/6 |
+| v6 | verify v3 18 (회귀) | 18/18 | - |
+| v6 | fix v3 14 (회귀) | 14/14 | - |
+
+## 기대 답 — verify_cases_v4.md
+
+1 같은 열(` [member]` 제거) · 2 ② 는 `2018.01.01 (기초자본)`, ① 은 `수정후 기초자본` · 3 예(띄어쓰기 무시) · 4 C1 · 5 C1(외화 미환산 비교) ·
+6 extra_row 1건(필링·basis당), 롤포워드에서 제외 · 7 I1(자본과부채총계) · 8 I1(3항 → 2 단위, 차이 2) · 9 I1(5항 → 3 단위, 차이 2) ·
+10 I3 source_defect(3항 → 2 단위, 차이 3) · 11 missing_row(★원문만) · 12 C1 · 13 그 항등식 해당 없음 · 14 9개월 열, C1 · 15 ⑤ 해당 없음 ·
+16 `자본>이익잉여금 @ 2023.12.31` · 17 적재 scope 전체 대조 · 18 IS 로 바뀜(CIS 쓰지 않음)
+
+## 기대 답 — fix_cases_v4.md
+
+1 F6 no_fix · 2 F1 아님(적재 행 있음) → F4-c 파서 수정 · 3 F4-b defer(R160 정합화) · 4 F4-c 파서 수정(주석 열 오파싱) ·
+5 `vq.py issues --type X --held` 로 찾고 `batch new --issues <id,...>` · 6 `mark-fixed --exclude --verdict no_fix` 후 `batch set --status done`(waiting_decision 금지)
+
+★기대 답 변경: verify_cases_v1 9번(BS 1,000 = 600 + 398)은 허용오차 변경(3항 → 2 단위)으로 I1(이슈 없음)이다.

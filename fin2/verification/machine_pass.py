@@ -29,7 +29,7 @@ MACHINE_LEASE_MINUTES = 15
 
 # A pending slot the machine has not finished: some pending filing lacks a current check.
 NEEDS_MACHINE_SQL = """
-    (p.status = 'pending' AND EXISTS (
+    (p.status IN ('pending', 'has_issues') AND EXISTS (
         SELECT 1 FROM verification.progress_filings pf
         LEFT JOIN verification.filing_loads fl USING (rcept_no)
         LEFT JOIN verification.machine_checks mc USING (rcept_no)
@@ -127,6 +127,48 @@ def _raw(v) -> str:
     return f"{v:,.0f}" if v >= 0 else f"({-v:,.0f})"
 
 
+def _sce_column_label(f: dict) -> str | None:
+    """verify_prompt.md field format: SCE '<DB col_label (or source header)> @ <block closing
+    date>' so the same row label in two year blocks gives two keys; other statements: no
+    column (report_lines.col_label is NULL for BS/IS/CF, so a header there only broke recheck)."""
+    if f.get("statement") != "SCE":
+        return None
+    col = f.get("db_col") or f.get("header")
+    end = f.get("block_end")
+    if not end:
+        return col
+    return f"{col} @ {mc.label_date(end) or end}"
+
+
+def arith_issues(res: mc.Result) -> list[dict]:
+    """source_defect issues for SCE identities the printed numbers themselves break (sce_arith
+    with src_broken: D-calc and S-calc both open, verify_prompt I3). Registered by the machine
+    only for filings that are otherwise clean (user decision 2026-10-09: from mc7 on); in a
+    mismatch filing the model reviewer registers them with the rest."""
+    out, seen = [], set()
+    for f in res.findings:
+        if f["kind"] != "sce_arith" or not f.get("src_broken"):
+            continue
+        s = f.get("scale") or 1
+        when = mc.label_date(f["to"]) or f["to"]
+        col = f"{f.get('header') or '열' + str(f['col'])} @ {when} #항등식"[:200]
+        key = (f["basis"], f["to"][:300], col)
+        if key in seen:
+            continue
+        seen.add(key)
+        what = "기말→다음 기초 이월" if f["check"] == "carry" else "롤포워드"
+        out.append({
+            "basis": f["basis"], "statement": "SCE", "account_label": f["to"][:300], "column_label": col,
+            "db_value": int(round(f["end"] * s)), "source_value": int(round(f["end"] * s)),
+            "source_value_raw": _raw(f["end"]), "source_unit": _UNIT.get(s, "원"),
+            "error_type": "source_defect", "rule_id": "R0-1",
+            "evidence": (f"[machine {mc.TOOL_VERSION}] 자본변동표 열 '{f.get('header')}' {f['from']}→{f['to']} {what}: "
+                         f"D-계산 {f['sum']:,.0f}, 기말 {f['end']:,.0f}, 차이 {f['diff']:,.0f}(표시단위) — "
+                         f"원문 숫자로도 닫히지 않음(원문 산수 불일치, 사용자 결정 (가)). 원인 판단은 수정 쪽."),
+        })
+    return out
+
+
 def findings_to_issues(findings: list[dict], kinds=CELL_KINDS) -> list[dict]:
     """Issue items (vq.py issue add --json-file) for the cell-fact findings of one filing."""
     out, seen = [], set()
@@ -150,7 +192,7 @@ def findings_to_issues(findings: list[dict], kinds=CELL_KINDS) -> list[dict]:
                 et = "column_misassign" if f["statement"] == "SCE" else "period_misassign"
             else:
                 et = "value_mismatch"
-            item.update(column_label=(f.get("header") or None), db_value=f.get("db"),
+            item.update(column_label=_sce_column_label(f), db_value=f.get("db"),
                         source_value=int(round(src * s)) if isinstance(src, (int, float)) else None,
                         source_value_raw=_raw(src), error_type=et,
                         evidence=f"[machine {mc.TOOL_VERSION}] DB {f.get('db')} ≠ 원문 기대열({f.get('header')}) "
@@ -167,7 +209,7 @@ def findings_to_issues(findings: list[dict], kinds=CELL_KINDS) -> list[dict]:
                                  + (" — 전열 '-'" if kind == "zero_row" else ""))
         elif kind == "uncovered_cell":
             src = f.get("src")
-            item.update(column_label=f.get("header"), source_value=int(round(src * s)) if src else None,
+            item.update(column_label=_sce_column_label(f), source_value=int(round(src * s)) if src else None,
                         source_value_raw=_raw(src), error_type="missing_row",
                         evidence=f"[machine {mc.TOOL_VERSION}] 원문 SCE 셀({f.get('header')}={src})이 DB 에 없음")
         elif kind == "extra_row":
@@ -246,7 +288,21 @@ def verify_slot(slot: Slot) -> dict:
             _store(conn, f["rcept_no"], f["claim_load_seq"], r, audit and r.verdict == "clean")
     for f, r in results:
         scopes = sorted((f["scope_hashes"] or {}).keys())
-        if r.verdict == "clean" and not audit:
+        if r.verdict == "clean" and not audit and scopes and arith_issues(r):
+            # every cell matches but the source's own SCE arithmetic is broken (D-calc and S-calc
+            # both open): register source_defect instead of passing (verify_prompt I3, decision (가))
+            try:
+                suppressed: list[dict] = []
+                if ops.add_issues(f["rcept_no"], arith_issues(r), suppressed):
+                    out["auto_issue"] += 1
+                else:
+                    ops.pass_filing(f["rcept_no"], scopes,
+                                    f"{_note(r)} · 원문 산수 불일치 {len(suppressed)}건 모두 no_fix 결론"
+                                    f"(#{suppressed[0]['prior_issue_id']} 등)")
+                    out["clean"] += 1
+            except IntegrityError:
+                out["mismatch"] += 1
+        elif r.verdict == "clean" and not audit:
             if scopes:
                 ops.pass_filing(f["rcept_no"], scopes, _note(r))
                 out["clean"] += 1
@@ -335,7 +391,7 @@ def recheck_slot(slot: Slot) -> dict:
             if path is None:
                 continue
             res = mc.compare_filing(conn, rcept, path)
-            still[rcept] = {_issue_key(x) for x in sign_issues(res)}
+            still[rcept] = {_issue_key(x) for x in sign_issues(res) + arith_issues(res)}
     for rcept, items in by_rcept.items():
         if rcept not in still:
             out["skipped"] += len(items)
@@ -343,13 +399,19 @@ def recheck_slot(slot: Slot) -> dict:
         for i in items:
             if _issue_key(i) in still[rcept]:
                 ops.transition(i["issue_id"], "reopened",
-                               f"[machine {mc.TOOL_VERSION}] 재적재 후에도 이 셀 부호만 뒤집어야 롤포워드가 닫힘")
+                               f"[machine {mc.TOOL_VERSION}] 재적재 후에도 같은 발견이 남음"
+                               f"(부호 누락 또는 원문 산수 불일치)")
                 out["reopened"] += 1
             else:
                 ops.transition(i["issue_id"], "closed",
-                               f"[machine {mc.TOOL_VERSION}] 재적재 후 이 셀의 부호 누락 발견이 사라짐"
-                               f"(롤포워드 닫힘)")
+                               f"[machine {mc.TOOL_VERSION}] 재적재 후 이 발견이 사라짐(롤포워드 닫힘)")
                 out["closed"] += 1
+    if out["skipped"]:
+        # source XML missing: releasing as failed keeps recheck() from claiming the same slot
+        # forever (it stays has_issues with a fixed issue); blocked after 3 tries like any slot
+        ops.release(slot, failed=True, note=f"machine recheck: 원문 XML 없음 {out['skipped']}건")
+        out["status"] = "released_failed"
+        return out
     res = ops.done(slot)
     out["status"] = res["status"]
     return out

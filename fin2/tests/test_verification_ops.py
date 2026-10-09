@@ -490,13 +490,18 @@ def test_batch_set_done_refuses_when_issues_still_fixing(engines, as_role, monke
     # 2026-09-30 (user report): batch #59 released 225 issues this exact way and they came
     # straight back into fix_queue looking like brand-new defects — issues_of_type() must
     # surface that this one was already investigated and released as a false positive.
+    # 2026-10-09: a defer release is held back from the queue groups and from `batch new`'s
+    # default pick (it used to be swept up by every new batch), but stays listable.
     as_role("fix")
     q = ops.fix_queue()
-    g = next(x for x in q["groups"] if x["error_type"] == "source_defect")
-    assert g["n_released_fp"] == g["n_issues"] == 1
-    r = next(x for x in ops.issues_of_type("source_defect") if x["issue_id"] == issue_id)
+    assert not any(x["error_type"] == "source_defect" for x in q["groups"])
+    assert {"error_type": "source_defect", "n": 1} in q["held"]
+    assert not any(x["issue_id"] == issue_id for x in ops.issues_of_type("source_defect"))
+    r = next(x for x in ops.issues_of_type("source_defect", held=True) if x["issue_id"] == issue_id)
     assert r["released_batch_id"] == str(b["batch_id"])
     assert "원문결함, 코드수정 불필요" in r["released_note"]
+    nb = ops.batch_new("source_defect", "default pick skips held issues", None)
+    assert nb["issues"] == 0
 
 
 def test_pace_wait_rules():

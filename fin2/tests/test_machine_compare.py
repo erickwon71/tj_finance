@@ -302,3 +302,77 @@ def test_eps_child_rows_under_eps_section_are_unscaled(tmp_path):
     # without the section path the same cell reads as 1,457 백만원 and is flagged
     rows[2].pop("section_path")
     assert [f["label"] for f in mc.compare(rows, tables).findings if f["kind"] == "value"] == ["1. 보통주"]
+
+
+def test_identity_tolerance_is_half_the_terms_rounded_up():
+    # R0-1 2항 (2026-10-09): n printed numbers rounded to the display unit can be off by n/2
+    assert [mc.identity_tolerance(n) for n in (1, 2, 3, 4, 7, 8)] == [1, 1, 2, 2, 4, 4]
+
+
+def test_label_date_and_block_end_labels(tmp_path):
+    assert mc.label_date("2023.12.31 (기말자본)") == "2023.12.31"
+    assert mc.label_date("2023년 3월 1일") == "2023.03.01"
+    assert mc.label_date("기말자본") is None
+    body = _sce([["2023.01.01 (기초자본)", "100", "10", "110"], ["배당", "", "(5)", "(5)"],
+                 ["2023.12.31 (기말자본)", "100", "5", "105"],
+                 ["2024.01.01 (기초자본)", "100", "5", "105"], ["배당", "", "(6)", "(6)"],
+                 ["2024.12.31 (기말자본)", "100", "(1)", "99"]])
+    rows = mc.load_statement_tables(_xml(tmp_path, body))[0].rows
+    ends = mc.block_end_labels(rows)
+    assert ends[1] == "2023.12.31 (기말자본)" and ends[4] == "2024.12.31 (기말자본)"
+
+
+def test_sce_value_finding_names_its_block_and_db_column(tmp_path):
+    # '배당' repeats in both year blocks; the finding must say which block and the DB column
+    body = _sce([["2023.01.01 (기초자본)", "100", "10", "110"], ["배당", "", "(5)", "(5)"],
+                 ["2023.12.31 (기말자본)", "100", "5", "105"],
+                 ["2024.01.01 (기초자본)", "100", "5", "105"], ["배당", "", "(6)", "(6)"],
+                 ["2024.12.31 (기말자본)", "100", "(1)", "99"]])
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    src = ((100, 10, 110), (None, -5, -5), (100, 5, 105), (100, 5, 105), (None, -6, -60), (100, -1, 99))
+    labels = ["2023.01.01 (기초자본)", "배당", "2023.12.31 (기말자본)",
+              "2024.01.01 (기초자본)", "배당", "2024.12.31 (기말자본)"]
+    rows = [dict(_row("SCE", "separate", o, labels[o], v, col=c), col_label=SCE_HEAD[c + 1])
+            for o, vals in enumerate(src) for c, v in enumerate(vals) if v is not None]
+    res = mc.compare(rows, tables)
+    v = next(f for f in res.findings if f["kind"] == "value")
+    assert v["block_end"] == "2024.12.31 (기말자본)" and v["db_col"] == "합계"
+    from fin2.verification import machine_pass as mp
+    item = next(i for i in mp.findings_to_issues(res.findings, kinds=("value",)))
+    assert item["column_label"] == "합계 @ 2024.12.31" and item["account_label"] == "배당"
+
+
+def test_source_arithmetic_is_marked_and_becomes_a_source_defect_issue(tmp_path):
+    # capital rises with no change row: D-calc and S-calc both open (verify_prompt I3)
+    body = _sce([["2024.01.01 (기초자본)", "100", "10", "110"],
+                 ["당기순이익", "", "5", "5"],
+                 ["2024.12.31 (기말자본)", "125", "15", "140"]])
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    rows = [_row("SCE", "separate", o, lab, v, col=c)
+            for o, (lab, vals) in enumerate((("2024.01.01 (기초자본)", (100, 10, 110)),
+                                              ("당기순이익", (None, 5, 5)),
+                                              ("2024.12.31 (기말자본)", (125, 15, 140))))
+            for c, v in enumerate(vals) if v is not None]
+    res = mc.compare(rows, tables)
+    assert res.verdict == "clean"
+    arith = [f for f in res.findings if f["kind"] == "sce_arith"]
+    assert arith and all(f["src_broken"] for f in arith)
+    from fin2.verification import machine_pass as mp
+    items = mp.arith_issues(res)
+    assert {i["error_type"] for i in items} == {"source_defect"}
+    assert items[0]["account_label"] == "2024.12.31 (기말자본)"
+    assert items[0]["column_label"].endswith("@ 2024.12.31 #항등식")
+
+
+def test_findings_to_issues_leave_the_column_empty_outside_sce():
+    from fin2.verification import machine_pass as mp
+    f = [{"kind": "value", "basis": "separate", "statement": "IS", "label": "매출액", "db": 9, "src": 5.0,
+          "src_col": 0, "header": "제78(당)기1분기", "found_at": [], "flipped_at": [], "scale": 1}]
+    assert "column_label" not in mp.findings_to_issues(f)[0]
+
+
+def test_recheck_label_suffixes_are_stripped():
+    from fin2.verification import ops
+    assert ops._strip_label_disambiguator("1. 보통주 (#2)") == "1. 보통주"
+    assert ops._strip_label_disambiguator("배당 [2023]") == "배당"
+    assert ops._normalize_column_label("이익잉여금 @ 2023.12.31 #항등식") == "이익잉여금"

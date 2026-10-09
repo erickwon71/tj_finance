@@ -248,7 +248,7 @@ def test_audit_draw_keeps_a_clean_slot_for_the_model(engines, as_role):
 
 def test_machine_recheck_closes_after_the_fix_reload(engines, as_role):
     # the fix side (admin here) marks the machine's sign issue fixed after a reload that
-    # flipped the dividend cell; the machine re-check closes it, the model never sees it
+    # flipped the dividend cell; the machine re-check closes the sign issue (its finding is gone)
     as_role("admin")
     _sql(engines, "UPDATE verification.issues SET status = 'fixing' WHERE rcept_no = :r", {"r": R_SIGN})
     _sql(engines, "UPDATE report_lines SET value_won = -7 WHERE rcept_no = :r AND label_raw = '배당금지급'",
@@ -263,11 +263,14 @@ def test_machine_recheck_closes_after_the_fix_reload(engines, as_role):
     total = machine_pass.recheck(limit=5, log=lambda _m: None)
     assert total["closed"] == 1 and total["reopened"] == 0, (total, _sql(engines, "SELECT status, created_by, fixed_parser_commit FROM verification.issues WHERE rcept_no = :r", {"r": R_SIGN}), _sql(engines, "SELECT fiscal_year, status FROM verification.progress"))
     assert _sql(engines, "SELECT status FROM verification.issues WHERE rcept_no = :r", {"r": R_SIGN}) == [("closed",)]
-    # the filing is pending again; the machine passes it now that the roll-forward closes
+    # mc9 (R0-2): the roll-forward closes now, but layer 2 must hold the printed sign — the flipped
+    # cell is a `value` finding, so the machine does not pass the filing (the model sees it)
     _kv(engines, "machine.audit_pct", "0")
-    got = machine_pass.run(limit=5, log=lambda _m: None)
-    dbg = _sql(engines, "SELECT verdict, counts::text, findings::text FROM verification.machine_checks WHERE rcept_no = :r", {"r": R_SIGN})
-    assert dict(_sql(engines, "SELECT fiscal_year, status FROM verification.progress"))[2022] == "passed", (got, dbg)
+    machine_pass.run(limit=5, log=lambda _m: None)
+    verdict, findings = _sql(engines, "SELECT verdict, findings::text FROM verification.machine_checks "
+                             "WHERE rcept_no = :r", {"r": R_SIGN})[0]
+    assert verdict == "mismatch" and '"kind": "value"' in findings
+    assert dict(_sql(engines, "SELECT fiscal_year, status FROM verification.progress"))[2022] != "passed"
 
 
 def test_repass_keeps_clean_and_demotes_mismatch(engines, as_role):

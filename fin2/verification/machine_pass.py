@@ -159,8 +159,8 @@ def arith_issues(res: mc.Result) -> list[dict]:
         what = "기말→다음 기초 이월" if f["check"] == "carry" else "롤포워드"
         out.append({
             "basis": f["basis"], "statement": "SCE", "account_label": f["to"][:300], "column_label": col,
-            "db_value": int(round(f["end"] * s)), "source_value": int(round(f["end"] * s)),
-            "source_value_raw": _raw(f["end"]), "source_unit": _UNIT.get(s, "원"),
+            "db_value": int(round(f["end"] * s)), "source_value": int(round(f.get("src_end", f["end"]) * s)),
+            "source_value_raw": _raw(f.get("src_end", f["end"])), "source_unit": _UNIT.get(s, "원"),
             "error_type": "source_defect", "rule_id": "R0-1",
             "evidence": (f"[machine {mc.TOOL_VERSION}] 자본변동표 열 '{f.get('header')}' {f['from']}→{f['to']} {what}: "
                          f"D-계산 {f['sum']:,.0f}, 기말 {f['end']:,.0f}, 차이 {f['diff']:,.0f}(표시단위) — "
@@ -169,60 +169,142 @@ def arith_issues(res: mc.Result) -> list[dict]:
     return out
 
 
-def findings_to_issues(findings: list[dict], kinds=CELL_KINDS) -> list[dict]:
-    """Issue items (vq.py issue add --json-file) for the cell-fact findings of one filing."""
+# Evidence prefix of issues the model reviewer confirmed in the web view and registered from
+# machine findings (issues-json). Machine-only registrations keep "[machine mcN]" - the fix side
+# tells the two apart (camp_err_review CLAUDE.local.md F5).
+CONFIRMED_PREFIX = "[확인 " + mc.TOOL_VERSION + "]"
+IDENTITY_KINDS = ("sce_identity", "sce_arith", "sign_omitted", "bs_identity")
+
+
+def _close(a: float, b: float) -> bool:
+    return abs(a - b) <= 0.5
+
+
+def cell_error_type(f: dict) -> tuple[str, str]:
+    """error_type of a `value` finding by the symptom table of verify_prompt.md (first match),
+    computed from the numbers so every model gets the same answer, plus an evidence note."""
+    s = f.get("scale") or 1
+    d = f.get("db")
+    src = f.get("src")
+    if not isinstance(src, (int, float)) or not isinstance(d, (int, float)):
+        return "value_mismatch", "원문 셀이 숫자가 아님"
+    sv = src * s
+    if sv == 0:
+        return "value_mismatch", "원문 빈 칸"
+    if d == 0:
+        return "value_mismatch", "DB 빈 칸"
+    if _close(d, -sv):
+        return "sign_flip", ""
+    for n in range(-9, 10):
+        if n and (_close(d, sv * 10 ** n) or _close(d, -sv * 10 ** n)):
+            return "unit_scale", f"DB = 원문 × 10^{n}" + (" (부호도 다름)" if _close(d, -sv * 10 ** n) else "")
+    if f.get("found_at"):
+        return ("column_misassign" if f["statement"] == "SCE" else "period_misassign"), ""
+    return "value_mismatch", ""
+
+
+def identity_issue(f: dict, prefix: str) -> dict | None:
+    """source_defect item for an identity finding (verify_prompt I3), or None when the printed
+    numbers close it (I2 - no source_defect; the D != S cells are registered as cell issues)."""
+    if f["kind"] == "bs_identity":
+        s = 1
+        d = f.get("assets")
+        return {"basis": f["basis"], "statement": "BS", "account_label": "자산총계",
+                "column_label": "#항등식", "db_value": d, "source_value": d,
+                "source_unit": None, "error_type": "source_defect", "rule_id": "R0-1",
+                "evidence": f"{prefix} BS 자산 {f.get('assets'):,} ≠ 부채 {f.get('liabilities'):,} + 자본 "
+                            f"{f.get('equity'):,} (차이 {f.get('diff'):,}원)"}
+    if not f.get("src_broken"):
+        return None
+    s = f.get("scale") or 1
+    when = mc.label_date(f["to"]) or f["to"]
+    col = f"{f.get('db_col') or f.get('header') or '열' + str(f['col'])} @ {when} #항등식"[:200]
+    what = "기말→다음 기초 이월" if f["check"] == "carry" else "롤포워드"
+    src_end = f.get("src_end", f["end"])   # printed closing (mc8); older findings: DB value only
+    return {"basis": f["basis"], "statement": "SCE", "account_label": f["to"][:300], "column_label": col,
+            "db_value": int(round(f["end"] * s)), "source_value": int(round(src_end * s)),
+            "source_value_raw": _raw(src_end), "source_unit": _UNIT.get(s, "원"),
+            "error_type": "source_defect", "rule_id": "R0-1",
+            "evidence": (f"{prefix} 자본변동표 열 '{f.get('header')}' {f['from']}→{f['to']} {what}: "
+                         f"D-계산 {f['sum']:,.0f}, 기말 {f['end']:,.0f}, 차이 {f['diff']:,.0f}(표시단위) — "
+                         f"원문 숫자로도 닫히지 않음(I3)")}
+
+
+def findings_to_issues(findings: list[dict], kinds=CELL_KINDS, select: list[int] | None = None,
+                       prefix: str | None = None) -> list[dict]:
+    """Issue items (vq.py issue add --json-file) for the cell-fact findings of one filing.
+
+    `select`: 1-based finding numbers as `vq.py show` prints them; then every selected finding
+    is converted whatever its kind (identity findings -> source_defect). The `(#n)` suffix for a
+    label repeated in one table is assigned over ALL findings of the filing first, so the same
+    cell gets the same key whichever subset is registered."""
+    prefix = prefix or f"[machine {mc.TOOL_VERSION}]"
     out, seen = [], set()
-    res = mc.Result("mismatch", mc.Counter(), [f for f in findings if f["kind"] == "sign_omitted"])
-    if "sign_omitted" in kinds:
-        out += sign_issues(res)
-        seen |= {(i["basis"], i["statement"], i["account_label"], i["column_label"]) for i in out}
-    for f in findings:
+    if select is None:
+        res = mc.Result("mismatch", mc.Counter(), [f for f in findings if f["kind"] == "sign_omitted"])
+        if "sign_omitted" in kinds:
+            out += sign_issues(res)
+            seen |= {(i["basis"], i["statement"], i["account_label"], i["column_label"]) for i in out}
+    wanted = set(select or ())
+    for no, f in enumerate(findings, 1):
         kind = f["kind"]
-        if kind not in kinds or kind == "sign_omitted":
+        if select is not None:
+            if no not in wanted:
+                if kind in ("value", "missing_row", "zero_row", "uncovered_cell", "extra_row"):
+                    _cell_item(f, prefix, seen)       # reserve its (#n) key
+                continue
+            if kind in IDENTITY_KINDS:
+                it = identity_issue(f, prefix)
+                if it is not None:
+                    out.append({k: v for k, v in it.items() if v is not None})
+                continue
+            if kind not in ("value", "missing_row", "zero_row", "uncovered_cell", "extra_row"):
+                continue
+        elif kind not in kinds or kind == "sign_omitted":
             continue
-        s = f.get("scale") or 1
-        item = {"basis": f["basis"], "statement": f["statement"], "account_label": (f.get("label") or "")[:300],
-                "column_label": None, "source_unit": _UNIT.get(s, "원")}
-        if kind == "value":
-            src = f.get("src")
-            moved = f.get("found_at") or []
-            if f.get("flipped_at") and f["src_col"] in f["flipped_at"]:
-                et = "sign_flip"
-            elif moved:
-                et = "column_misassign" if f["statement"] == "SCE" else "period_misassign"
-            else:
-                et = "value_mismatch"
-            item.update(column_label=_sce_column_label(f), db_value=f.get("db"),
-                        source_value=int(round(src * s)) if isinstance(src, (int, float)) else None,
-                        source_value_raw=_raw(src), error_type=et,
-                        evidence=f"[machine {mc.TOOL_VERSION}] DB {f.get('db')} ≠ 원문 기대열({f.get('header')}) "
-                                 f"{src}; 같은 값이 있는 열 {moved}, 부호만 다른 열 {f.get('flipped_at')}")
-        elif kind in ("missing_row", "zero_row"):
-            cells = f.get("cells") or []
-            nums = [c for c in cells if isinstance(c, (int, float))]
-            # BS/IS/CF: the current-period cell; SCE: the first component that moved
-            cur = (next((c for c in nums if c), 0.0) if f["statement"] == "SCE"
-                   else (nums[0] if nums else None))
-            item.update(source_value=int(round(cur * s)) if cur is not None else 0,
-                        source_value_raw=_raw(cur), error_type="missing_row",
-                        evidence=f"[machine {mc.TOOL_VERSION}] 원문 행이 DB 에 없음 (원문 셀 {cells[:6]})"
-                                 + (" — 전열 '-'" if kind == "zero_row" else ""))
-        elif kind == "uncovered_cell":
-            src = f.get("src")
-            item.update(column_label=_sce_column_label(f), source_value=int(round(src * s)) if src else None,
-                        source_value_raw=_raw(src), error_type="missing_row",
-                        evidence=f"[machine {mc.TOOL_VERSION}] 원문 SCE 셀({f.get('header')}={src})이 DB 에 없음")
-        elif kind == "extra_row":
-            item.update(error_type="extra_row", evidence=f"[machine {mc.TOOL_VERSION}] DB 행이 원문 표에 없음")
-        key = (item["basis"], item["statement"], item["account_label"], item["column_label"])
-        n = 2
-        while key in seen:  # the same label recurs across year blocks
-            item["account_label"] = f"{(f.get('label') or '')[:280]} (#{n})"
-            key = (item["basis"], item["statement"], item["account_label"], item["column_label"])
-            n += 1
-        seen.add(key)
-        out.append({k: v for k, v in item.items() if v is not None})
+        out.append(_cell_item(f, prefix, seen))
     return out
+
+
+def _cell_item(f: dict, prefix: str, seen: set) -> dict:
+    kind = f["kind"]
+    s = f.get("scale") or 1
+    item = {"basis": f["basis"], "statement": f["statement"], "account_label": (f.get("label") or "")[:300],
+            "column_label": None, "source_unit": _UNIT.get(s, "원")}
+    if kind == "value":
+        src = f.get("src")
+        et, note = cell_error_type(f)
+        item.update(column_label=_sce_column_label(f), db_value=f.get("db"),
+                    source_value=int(round(src * s)) if isinstance(src, (int, float)) else None,
+                    source_value_raw=_raw(src), error_type=et,
+                    evidence=f"{prefix} DB {f.get('db')} ≠ 원문 기대열({f.get('header')}) "
+                             f"{src}; 같은 값이 있는 열 {f.get('found_at')}, 부호만 다른 열 {f.get('flipped_at')}"
+                             + (f" — {note}" if note else ""))
+    elif kind in ("missing_row", "zero_row"):
+        cells = f.get("cells") or []
+        nums = [c for c in cells if isinstance(c, (int, float))]
+        # BS/IS/CF: the current-period cell; SCE: the first component that moved
+        cur = (next((c for c in nums if c), 0.0) if f["statement"] == "SCE"
+               else (nums[0] if nums else None))
+        item.update(source_value=int(round(cur * s)) if cur is not None else 0,
+                    source_value_raw=_raw(cur), error_type="missing_row",
+                    evidence=f"{prefix} 원문 행이 DB 에 없음 (원문 셀 {cells[:6]})"
+                             + (" — 전열 '-'" if kind == "zero_row" else ""))
+    elif kind == "uncovered_cell":
+        src = f.get("src")
+        item.update(column_label=_sce_column_label(f), source_value=int(round(src * s)) if src else None,
+                    source_value_raw=_raw(src), error_type="missing_row",
+                    evidence=f"{prefix} 원문 SCE 셀({f.get('header')}={src})이 DB 에 없음")
+    elif kind == "extra_row":
+        item.update(error_type="extra_row", evidence=f"{prefix} DB 행이 원문 표에 없음")
+    key = (item["basis"], item["statement"], item["account_label"], item["column_label"])
+    n = 2
+    while key in seen:  # the same label recurs across year blocks
+        item["account_label"] = f"{(f.get('label') or '')[:280]} (#{n})"
+        key = (item["basis"], item["statement"], item["account_label"], item["column_label"])
+        n += 1
+    seen.add(key)
+    return {k: v for k, v in item.items() if v is not None}
 
 
 def _all_no_fix(conn, rcept: str, res: mc.Result) -> int:

@@ -38,7 +38,10 @@ from lxml import etree
 # mc7 (2026-10-09, PARSING_RULES R0-1): identity tolerance = display unit x ceil(terms / 2), the
 # rounding bound of the printed numbers (was changes + 2); SCE findings carry their block's closing
 # row and the DB column label; sce_arith records whether the source's own numbers break it too.
-TOOL_VERSION = "mc7"
+# mc8 (2026-10-09, Haiku/Sonnet parity): identity findings carry `db_col` too (issues built from
+# them use the same column string as cell issues); a DB = -source cell counts as a restored sign
+# only when the source printed it positive (a flipped negative-printed cell stays a finding).
+TOOL_VERSION = "mc8"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -309,6 +312,34 @@ def _rebase_sce_note_column(items: list[dict], source_has_note_col: bool) -> lis
             for r in items if not _is_note_col_label(r.get("col_label"))]
 
 
+def _align_sce_first_column(items: list[dict], rowmap: dict) -> list[dict]:
+    """mc8: report_lines can number the SCE amount columns from 1 with no column 0 at all while
+    the source table has no note column either (00107613 2023Q1: every cell compared one column
+    to the right - 52 false findings). When the DB's lowest column is >= 1, shift the columns down
+    if that makes clearly more cells agree with the source by value."""
+    cis = [r["col_index"] for r in items if r["col_index"] is not None]
+    if not cis or min(cis) < 1:
+        return items
+    m = min(cis)
+
+    def hits(shift: int) -> int:
+        n = 0
+        for r in items:
+            row = rowmap.get((r["row_order"], r["label_raw"]))
+            ci = (r["col_index"] or 0) - shift
+            if row is None or not r["value_won"] or not 0 <= ci < len(row.cells):
+                continue
+            x = row.cells[ci]
+            if isinstance(x, float) and x and any(abs(x * sc - r["value_won"]) < 1 for sc in _SCALES):
+                n += 1
+        return n
+
+    keep, moved = hits(0), hits(m)
+    if moved > keep and moved * 2 >= sum(1 for r in items if r["value_won"]):
+        return [dict(r, col_index=r["col_index"] - m) if r["col_index"] is not None else r for r in items]
+    return items
+
+
 def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
     """db_rows: report_lines dicts (statement, basis, table_seq, row_order, label_raw,
     col_index, value_won, is_cumulative)."""
@@ -397,6 +428,7 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
 
         if st_code == "SCE":
             items = _rebase_sce_note_column(items, all(t.has_note_col for t in win_tables))
+            items = _align_sce_first_column(items, rowmap)
         headers_of = {t.idx: t.headers for t in win_tables}
         cand_s: Counter = Counter()
         for r in items:
@@ -522,23 +554,49 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                 if row is not None and r["value_won"] is not None and ci < len(row.cells):
                     eff[id(row)][ci] = r["value_won"] / scale
             eff_rows = [SrcRow(r.table, r.key, r.alt, r.label, eff[id(r)]) for r in win]
-            bad_cols = set()
+            bad_cols: set[int] = set()
+            bad_flow: set[tuple] = set()
             # the same identity computed on the printed numbers alone (S-calc): an sce_arith
             # finding that also breaks there is source arithmetic (verify_prompt I3 -> source_defect)
             src_broken = {(g["check"], g["col"], g["from"], g["to"]) for g in sce_identity(win)}
+            # DB column name per source column, so a source_defect built from this finding uses
+            # the same column string as the cell issues of that column (verify_prompt field format)
+            db_cols: dict[int, str] = {}
+            for r in items:
+                row = rowmap.get((r["row_order"], r["label_raw"]))
+                if row is not None and r.get("col_label"):
+                    ks = col_for(r["col_index"] or 0, r.get("is_cumulative"), headers_of[row.table])
+                    if ks:
+                        db_cols.setdefault(ks[0], r["col_label"])
             for f in sce_identity(eff_rows):
-                bad_cols.add(f["col"])
+                # mc8: a broken roll-forward blocks sign restoration in ITS block only; a broken
+                # carry-over still blocks the whole column (it spans two blocks)
+                if f["check"] == "flow":
+                    bad_flow.add((f["col"], f["to"]))
+                else:
+                    bad_cols.add(f["col"])
+                # start/end carry DB values where the DB has the cell; the reviewer compares the
+                # web view with the PRINTED opening/closing, so record those too
+                ia, ib = f.pop("_rows")
+                f["src_start"] = _num(win[ia].cells[f["col"]]) if f["col"] < len(win[ia].cells) else 0.0
+                f["src_end"] = _num(win[ib].cells[f["col"]]) if f["col"] < len(win[ib].cells) else 0.0
                 kind = {"sign": "sign_omitted", "shift": "sce_identity"}.get(f["explain"], "sce_arith")
                 f["header"] = next((t.headers[f["col"]] for t in win_tables if f["col"] < len(t.headers)), None)
                 f["scale"] = scale
                 f["src_broken"] = (f["check"], f["col"], f["from"], f["to"]) in src_broken
+                if f["col"] in db_cols:
+                    f["db_col"] = db_cols[f["col"]]
                 findings.append(_finding(kind, key, **f))
                 counts[kind] += 1
             # DB = -source on a cell and the arithmetic holds with the DB sign: the loader
             # restored a sign the source dropped (R162) - proven, not a defect.
             for f in [f for f in findings if f.get("kind") == "value" and f["statement"] == "SCE"
                       and f["basis"] == basis and f["table_seq"] == key[2]]:
-                if f["src_col"] in f.get("flipped_at", []) and f["src_col"] not in bad_cols:
+                # only a cell PRINTED positive can be a dropped parenthesis (R0-1 1항); flipping a
+                # cell printed negative stays a finding for the model (C3)
+                if (f["src_col"] in f.get("flipped_at", []) and f["src_col"] not in bad_cols
+                        and (f["src_col"], (f.get("block_end") or "")[:60]) not in bad_flow
+                        and isinstance(f.get("src"), float) and f["src"] > 0):
                     findings.remove(f)
                     counts["value"] -= 1
                     counts["sign_restored"] += 1
@@ -648,7 +706,8 @@ def sce_identity(rows: list[SrcRow]) -> list[dict]:
                 continue
             # R0-1 tolerance: each printed number is rounded to the display unit, so a sum of n
             # printed numbers can be off by n/2 units (opening + changes + closing).
-            tol = identity_tolerance(2 + sum(1 for v in vals if v))
+            # term count = non-zero printed numbers (R0-1 2항: zeros and blanks are not terms)
+            tol = identity_tolerance(sum(1 for v in (start, end) if v) + sum(1 for v in vals if v))
 
             def closes(st: float, vs: list[float], en: float) -> bool:
                 return any(abs(st + _kept_sum(vs, totals, st, tol, f, bk) - en) <= tol
@@ -658,7 +717,7 @@ def sce_identity(rows: list[SrcRow]) -> list[dict]:
                 continue
             total = start + _kept_sum(vals, totals, start, tol, True, True)
             f = {"check": kind, "col": c, "from": rows[a].label[:60], "to": rows[b].label[:60],
-                 "start": start, "end": end, "sum": total, "diff": end - total}
+                 "start": start, "end": end, "sum": total, "diff": end - total, "_rows": (a, b)}
             # Which single change closes the column? A sign on one cell (R162: the source
             # dropped parentheses) or one row whose values sit one column off (shifted cells).
             signs = []

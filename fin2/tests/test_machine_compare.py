@@ -376,3 +376,48 @@ def test_recheck_label_suffixes_are_stripped():
     assert ops._strip_label_disambiguator("1. 보통주 (#2)") == "1. 보통주"
     assert ops._strip_label_disambiguator("배당 [2023]") == "배당"
     assert ops._normalize_column_label("이익잉여금 @ 2023.12.31 #항등식") == "이익잉여금"
+
+
+def _sce_rows(blocks, shift=0):
+    rows, order = [], 0
+    for lab, vals in blocks:
+        for col, v in enumerate(vals):
+            if v is not None:
+                rows.append(_row("SCE", "separate", order, lab, v, col=col + shift))
+        order += 1
+    return rows
+
+
+def test_sce_columns_numbered_from_one_are_aligned_by_value(tmp_path):
+    # 00107613 2023Q1 (mc8): report_lines numbered the SCE columns from 1 (no column 0) while the
+    # source has no note column - every cell was compared one column to the right (52 findings)
+    src = [("2024.01.01 (기초자본)", (100, 10, 110)), ("당기순이익", (None, 5, 5)),
+           ("2024.12.31 (기말자본)", (100, 15, 115))]
+    body = _sce([[lab, *("" if v is None else f"{v:,}" for v in vals)] for lab, vals in src])
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    res = mc.compare(_sce_rows(src, shift=1), tables)
+    assert res.verdict == "clean" and not res.findings
+
+
+def test_sign_restore_is_judged_per_block_and_only_for_positive_print(tmp_path):
+    # prior block's column is broken in the source itself; the current block's dividend printed
+    # without parentheses and restored by the loader closes ITS block -> restored, not a finding
+    src = [("2023.01.01 (기초자본)", (100, 50, 150)), ("당기순이익", (None, 7, 7)),
+           ("2023.12.31 (기말자본)", (100, 60, 160)),          # 50 + 7 != 60: source arithmetic
+           ("2024.01.01 (기초자본)", (100, 60, 160)), ("배당금지급", (None, 10, 10)),
+           ("2024.12.31 (기말자본)", (100, 50, 150))]
+    body = _sce([[lab, *("" if v is None else f"{v:,}" for v in vals)] for lab, vals in src])
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    db = [(lab, tuple(-v if lab == "배당금지급" and v else v for v in vals)) for lab, vals in src]
+    res = mc.compare(_sce_rows(db), tables)
+    assert not [f for f in res.findings if f["kind"] == "value"]
+    assert res.counts["sign_restored"] == 2
+    # a cell PRINTED negative that the DB stores positive is never a restoration
+    src2 = [("2024.01.01 (기초자본)", (100, 60, 160)), ("배당금지급", (None, -10, -10)),
+            ("2024.12.31 (기말자본)", (100, 70, 170))]
+    body2 = _sce([[lab, *("" if v is None else (f"({-v:,})" if v < 0 else f"{v:,}") for v in vals)]
+                  for lab, vals in src2])
+    tables2 = mc.load_statement_tables(_xml(tmp_path, body2))
+    db2 = [(lab, tuple(-v if lab == "배당금지급" and v else v for v in vals)) for lab, vals in src2]
+    res2 = mc.compare(_sce_rows(db2), tables2)
+    assert {f["src_col"] for f in res2.findings if f["kind"] == "value"} == {1, 2}

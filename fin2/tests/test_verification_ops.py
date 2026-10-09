@@ -702,6 +702,16 @@ def test_no_fix_release_is_withdrawn_and_not_registered_again(engines, as_role, 
     b = ops.batch_new("value_mismatch", "test no_fix release", [issue_id], "R_NOFIX")
     with pytest.raises(VqError, match="verdict"):
         ops.batch_mark_fixed(b["batch_id"], exclude=[issue_id], exclude_note="원문결함")
+    with pytest.raises(VqError, match="--exclude"):
+        ops.batch_mark_fixed(b["batch_id"], verdict="no_fix")      # #109: would fix everything
+    with pytest.raises(VqError, match="fixing 이슈가 아니다"):
+        ops.batch_mark_fixed(b["batch_id"], exclude=[issue_id + 999999], verdict="no_fix")
+    res = ops.batch_mark_fixed(b["batch_id"], exclude=[issue_id], verdict="defer",
+                               exclude_note="mixed batch: release only", release_only=True)
+    assert res["released"] == [issue_id] and res["fixed"] == []
+    with ops._Tx(evidence="re-take for test") as c:
+        c.execute(text("UPDATE verification.issues SET status = 'fixing' WHERE issue_id = :i"),
+                  {"i": issue_id})
     res = ops.batch_mark_fixed(b["batch_id"], exclude=[issue_id], verdict="no_fix",
                                exclude_note="원문 3개월≠누적, DB 는 누적열 정확 전사")
     assert res["released"] == [issue_id]
@@ -740,4 +750,30 @@ def test_no_fix_release_is_withdrawn_and_not_registered_again(engines, as_role, 
     new_ids = ops.add_issues(R1, [{**cell, "db_value": 101}], suppressed)
     assert len(new_ids) == 1 and len(suppressed) == 1
     ops.transition(new_ids[0], "closed", "[withdrawn] test cleanup")
+    ops.done()
+
+
+def test_add_issues_skips_active_cells_numbers_repeats_and_drops_foreign_units(engines, as_role):
+    # 2026-10-09: a duplicate key used to roll back the whole submission (unique index), so the
+    # outcome depended on how the model retried. Now: an active issue on the cell -> skipped and
+    # reported; the same label twice in one submission -> ' (#2)'; a foreign presentation unit
+    # ('천 USD') would violate the source_unit CHECK -> moved into evidence.
+    _admin_sql(engines, "UPDATE verification.issues SET status = 'closed' "
+               "WHERE rcept_no = :r AND status <> 'closed'", {"r": R1})
+    _admin_sql(engines, "UPDATE verification.progress SET status = 'pending', claimed_by = NULL, "
+               "lease_until = NULL WHERE corp_code = :c", {"c": CORP})
+    cell = {"basis": "consolidated", "statement": "CF", "account_label": "이자수취",
+            "db_value": 5, "source_value": 6, "source_value_raw": "6", "source_unit": "천 USD",
+            "error_type": "value_mismatch", "evidence": "원문 6"}
+    as_role("verify")
+    assert ops.claim(SLOT) == SLOT
+    ids = ops.add_issues(R1, [cell, dict(cell, db_value=7)])
+    assert len(ids) == 2
+    rows = _admin_sql(engines, "SELECT account_label, source_unit, evidence FROM verification.issues "
+                      "WHERE issue_id = ANY(:i) ORDER BY issue_id", {"i": ids})
+    assert [r[0] for r in rows] == ["이자수취", "이자수취 (#2)"]
+    assert rows[0][1] is None and rows[0][2].startswith("표시통화 천 USD")
+    already: list = []
+    assert ops.add_issues(R1, [cell], None, already) == []
+    assert already[0]["issue_id"] == ids[0]
     ops.done()

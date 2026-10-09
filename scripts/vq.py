@@ -98,8 +98,8 @@ def _print_detail(d: dict, csvs: dict[str, str] | None) -> None:
             print(f"      = {other} 와 byte-identical: {','.join(same)}")
         _print_machine(f)
     if d.get("no_fix_cells"):
-        print("\n  ★이미 결론난 셀(수정쪽 '코드수정 불필요' — 원문결함·오탐). 재조사·재등록하지 말 것"
-              "(DB 값이 같으면 issue add 가 자동으로 건너뜀; 이견이 있으면 reopen <id>):")
+        print("\n  ★이미 결론난 셀(수정쪽 no_fix — 지금 DB 가 정답). 재조사·재등록·reopen 하지 않는다"
+              "(DB 값이 같으면 issue add 가 자동으로 건너뜀. 결론에 대한 이견은 사람만 다룬다):")
         for i in d["no_fix_cells"]:
             print(f"    #{i['issue_id']} {i['rcept_no']} {i['basis']}/{i['statement']} "
                   f"{i['account_label']}{'/' + i['column_label'] if i['column_label'] else ''} "
@@ -125,10 +125,17 @@ def _print_machine(f: dict) -> None:
         print(f"      기계대조: {v} (stale — 재적재 이후 판정) → 이 필링은 대조하지 않고 pending 으로 둔다(기계가 다시 대조)")
         return
     if f.get("machine_audit"):
-        print("      기계대조: clean 이지만 1% 표본 재확인 대상(audit) → ★적재 scope 전체를 웹뷰로 대조")
+        print("      기계대조: clean 이지만 1% 표본 재확인 대상(audit) → ★적재 scope 전체를 웹뷰로 대조"
+              f" {f.get('machine_counts')}")
+        # verify_prompt v7: in an audit filing the identities (SCE 1/2, BS 4) come from these
+        # machine findings, not from the model's own arithmetic
+        _print_findings(f)
         return
     if v in ("no_source", "no_structure", "error"):
-        print(f"      기계대조: {v} → 기계가 판단 못함, 적재 scope 전체를 웹뷰로 대조")
+        if not f.get("scope_rows"):
+            print(f"      기계대조: {v} · 적재 행 없음 → verify_prompt 5번 '적재 0행 필링'")
+        else:
+            print(f"      기계대조: {v} → 기계가 판단 못함, 적재 scope 전체를 웹뷰로 대조")
         return
     print(f"      기계대조: {v} {f.get('machine_counts')}")
     if v == "clean":
@@ -136,12 +143,18 @@ def _print_machine(f: dict) -> None:
     if v != "mismatch":
         return
     print("      ★아래 발견 항목만 웹뷰에서 확인한다(나머지 셀은 기계가 원문과 일치 확인):")
+    _print_findings(f)
+
+
+def _print_findings(f: dict) -> None:
     for i, x in enumerate(f.get("machine_findings") or [], 1):
         x = dict(x)
         kind = x.pop("kind")
         where = "/".join(str(x.pop(k)) for k in ("basis", "statement") if k in x)
-        x.pop("table_seq", None)
-        print(f"        {i:>3}. [{kind}] {where} {json.dumps(x, ensure_ascii=False, default=str)[:400]}")
+        if kind != "no_table":
+            x.pop("table_seq", None)
+        # full line: block_end / db_col sit at the end and a cut hid them (2026-10-09)
+        print(f"        {i:>3}. [{kind}] {where} {json.dumps(x, ensure_ascii=False, default=str)}")
 
 
 def _show(slot: Slot, a) -> None:
@@ -215,11 +228,16 @@ def cmd_issue_add(a):
     else:
         items = [{k: getattr(a, k) for k in ops._ISSUE_FIELDS if getattr(a, k, None) is not None}]
     suppressed: list[dict] = []
-    ids = ops.add_issues(a.rcept, items, suppressed)
+    already: list[dict] = []
+    ids = ops.add_issues(a.rcept, items, suppressed, already)
     print(f"이슈 등록 {len(ids)}건: {ids}")
+    if already:
+        print(f"★등록 안 함 {len(already)}건 — 이미 미해결 이슈가 걸린 셀(다시 등록하지 않는다):")
+        for x in already:
+            print(f"    {x['account_label']}{'/' + x['column_label'] if x['column_label'] else ''} → #{x['issue_id']}")
     if suppressed:
         print(f"★등록 안 함 {len(suppressed)}건 — 수정쪽이 이미 '코드수정 불필요'로 결론낸 셀(DB 값 동일). "
-              f"재조사 불필요. 검증 러너는 다투지 않는다(이견은 사람이 `vq.py reopen <id>` 로):")
+              f"등록하지 않은 것으로 센다(검증 러너는 다투지 않는다):")
         for x in suppressed:
             print(f"    {x['account_label']}{'/' + x['column_label'] if x['column_label'] else ''} "
                   f"DB={x['db_value']} → 이전 #{x['prior_issue_id']}: {x['prior_verdict'][:160]}")
@@ -333,12 +351,15 @@ def cmd_issues(a):
         # 맞고 미룸) 또는 --verdict 도입 전 반려 — 제외 사유를 먼저 읽고 판단한다.
         if r.get("released_note"):
             print(f"    ★이전 batch #{r['released_batch_id']}에서 제외됨({r['released_at']}) — "
-                  f"사유를 먼저 읽을 것. 코드수정 불필요 결론이면 새 배치 대신 사용자에게 "
-                  f"`withdraw-released --ids {r['issue_id']}` 요청")
+                  f"사유를 먼저 읽을 것. 지금 DB 가 정답(no_fix)이면 `batch new --issues {r['issue_id']}` 로 "
+                  f"묶어 `batch mark-fixed --exclude {r['issue_id']} --verdict no_fix` 로 반려")
             print(f"    제외 사유: {r['released_note'][:300]}")
 
 
 def cmd_batch_new(a):
+    if a.issues is not None and not a.issues.strip():
+        # an empty list used to mean "every unassigned issue of the type" (memory: R207 batch)
+        raise VqError("--issues 가 비어 있다 — 그 유형 전부를 모으려면 --issues 를 빼고 실행한다")
     ids = [int(x) for x in a.issues.split(",")] if a.issues else None
     print(_j(ops.batch_new(a.type, a.title, ids, a.rule)))
 
@@ -356,7 +377,7 @@ def cmd_batch_reload(a):
 def cmd_batch_mark_fixed(a):
     exclude = [int(x) for x in a.exclude.split(",")] if a.exclude else []
     print(_j(ops.batch_mark_fixed(a.batch_id, exclude=exclude, exclude_note=a.note,
-                                  verdict=a.verdict)))
+                                  verdict=a.verdict, release_only=a.release_only)))
 
 
 def cmd_batch_set(a):
@@ -396,6 +417,10 @@ def cmd_runner(a):
         print(json.dumps(runner.finish(a.run_id, Path(a.log), a.exit_code), ensure_ascii=False))
     elif a.action == "budget":
         print(json.dumps(runner.budget_state(), ensure_ascii=False))
+    elif a.action == "model":
+        m, why = runner.model_for(Slot.parse(a.slot), a.finding_model or runner.FINDING_MODEL_DEFAULT,
+                                  a.full_model or runner.FULL_MODEL_DEFAULT)
+        print(json.dumps({"model": m, "reason": why}))
 
 
 # ─────────────────────────────── admin ───────────────────────────────
@@ -488,8 +513,12 @@ def build_parser() -> argparse.ArgumentParser:
     y.add_argument("--exclude", help="쉼표구분 issue_id — 고치지 않은(주차) 이슈. fixed 대신 open 으로 되돌린다")
     y.add_argument("--note", help="--exclude 이슈를 되돌리는 사유(evidence 에 남음)")
     y.add_argument("--verdict", choices=["no_fix", "defer"],
-                   help="--exclude 필수: no_fix=원문결함·오탐, 코드수정 불필요(verify 러너가 자동 withdraw, "
-                        "같은 셀 재등록 차단) / defer=결함은 맞음, 나중 배치에서 수정(fix-queue 에 남음)")
+                   help="--exclude 필수: no_fix=지금 DB 가 정답(수정 판정표 F0~F8; verify 러너가 자동 withdraw, "
+                        "같은 셀 재등록 차단) / defer=DB 가 틀렸거나 판단 보류(fix-queue·batch new 에서 빠지고 "
+                        "'보류' 건수로만 보임, 목록은 issues --held)")
+    y.add_argument("--release-only", action="store_true",
+                   help="--exclude 이슈만 반려하고 나머지 fixing 이슈는 그대로 둔다(판정이 섞인 배치: "
+                        "먼저 한 판정을 --release-only 로, 그다음 다른 판정을 일반 호출로)")
     y.set_defaults(fn=cmd_batch_mark_fixed)
     y = bsp.add_parser("set"); y.add_argument("batch_id", type=int)
     y.add_argument("--status", choices=["open", "waiting_decision", "reloading", "done", "abandoned"])
@@ -510,12 +539,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     x = sp.add_parser("machine", help="기계 대조: 슬롯을 점유해 원문 XML 과 자동 대조(모델 없음)")
     x.add_argument("action", choices=["run", "try", "gate", "issues-json", "recheck", "repass"])
-    x.add_argument("--kinds", help="issues-json: 쉼표구분 발견 종류(기본: 셀 사실 전부)")
+    x.add_argument("--kinds", help="issues-json: 쉼표구분 발견 종류(그 종류 전부)")
+    x.add_argument("--findings", help="issues-json: show 의 발견 번호(쉼표구분) — 그 발견만 이슈로")
     x.add_argument("--out", help="issues-json: 저장할 JSON 경로")
     x.add_argument("--limit", type=int); x.add_argument("--rcept", nargs="*")
     x.add_argument("--value", choices=["on", "off"])
     x.set_defaults(fn=cmd_machine)
-    x = sp.add_parser("runner"); x.add_argument("action", choices=["start", "finish", "budget"])
+    x = sp.add_parser("runner"); x.add_argument("action", choices=["start", "finish", "budget", "model"])
+    x.add_argument("--finding-model"); x.add_argument("--full-model")
     x.add_argument("--slot"); x.add_argument("--model"); x.add_argument("--run-id", type=int)
     x.add_argument("--log"); x.add_argument("--exit-code", type=int)
     x.set_defaults(fn=cmd_runner)
@@ -564,8 +595,24 @@ def cmd_machine(a):
                                {"r": a.rcept[0]}).fetchone()
         if row is None:
             raise VqError(f"{a.rcept[0]} 의 기계 판정이 없다")
-        kinds = tuple(k.strip() for k in a.kinds.split(",")) if a.kinds else machine_pass.CELL_KINDS
-        items = machine_pass.findings_to_issues(row[0], kinds)
+        if bool(a.kinds) == bool(a.findings):
+            raise VqError("issues-json 은 --findings <발견 번호,...> 또는 --kinds <종류,...> 중 하나만 준다")
+        if a.findings:
+            try:
+                sel = sorted({int(x) for x in a.findings.split(",") if x.strip()})
+            except ValueError:
+                raise VqError("--findings 는 `show` 의 발견 번호(쉼표 구분 정수)다")
+            bad = [n for n in sel if not 1 <= n <= len(row[0] or [])]
+            if bad:
+                raise VqError(f"발견 번호 {bad} 가 없다(이 필링 발견 1~{len(row[0] or [])})")
+            items = machine_pass.findings_to_issues(row[0], select=sel, prefix=machine_pass.CONFIRMED_PREFIX)
+            skipped = [n for n in sel if row[0][n - 1]["kind"] in ("sce_identity", "sce_arith", "sign_omitted")
+                       and not row[0][n - 1].get("src_broken")]
+            if skipped:
+                print(f"★발견 {skipped} 은 원문 숫자로는 닫히는 항등식(I2)이라 source_defect 를 만들지 않았다")
+        else:
+            kinds = tuple(k.strip() for k in a.kinds.split(","))
+            items = machine_pass.findings_to_issues(row[0], kinds, prefix=machine_pass.CONFIRMED_PREFIX)
         Path(a.out).write_text(json.dumps(items, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
         by = {}
         for i in items:

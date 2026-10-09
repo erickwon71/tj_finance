@@ -31,7 +31,7 @@
 
 1 I1 기계오탐 · 2 I1 기계오탐(차이 1) · 3 I3 source_defect · 4 C2 이슈 없음 ·
 5 C3 sign_flip + I3 source_defect(D·S 둘 다 안 닫힘) · 6 C3 unit_scale · 7 아무것도 안 함 · 8 sign_omitted → ① 항등식 규칙(사례에 계산 정보 없음: 항등식 규칙대로) ·
-9 I3 source_defect · 10 C3 label_mismatch · 11 C3 sign_flip + I3 source_defect · 12 C3 missing_row ·
+9 I1(3항 → 2 단위, 이슈 없음) · 10 C3 label_mismatch · 11 C3 sign_flip + I3 source_defect · 12 C3 missing_row ·
 13 하나씩 확인 · 14 이 필링 대조 안 함 · 15 close · 16 기계오탐
 
 ## 기대 답 — verify_cases_v2.md
@@ -85,3 +85,29 @@
 5 `vq.py issues --type X --held` 로 찾고 `batch new --issues <id,...>` · 6 `mark-fixed --exclude --verdict no_fix` 후 `batch set --status done`(waiting_decision 금지)
 
 ★기대 답 변경: verify_cases_v1 9번(BS 1,000 = 600 + 398)은 허용오차 변경(3항 → 2 단위)으로 I1(이슈 없음)이다.
+
+## 2026-10-09 밤 — verify_prompt v7 (발견 확인·번호 등록), 수정 판정표 v7
+
+v7 부터 mismatch 필링은 **발견 확인**(웹뷰 셀이 발견의 `src`/`db` 중 무엇과 같은가, 항등식은 `src_broken`)만 하고 이슈는 `issues-json --findings` 로 도구가 만든다.
+그래서 verify v1~v4 의 mismatch 사례(기계 발견을 모델이 다시 계산하던 것)는 v7 에서 기대 답이 달라진다 — v7 판정은 v5 세트로 본다. v1~v4 의 전체 대조 사례(③④⑤, 필드 형식, 날짜)는 그대로 유효하다.
+실데이터 A/B(읽기 전용 시뮬레이션, 실제 슬롯 14개)가 주 판정 근거다 — 결과는 `docs/verification/model_parity_2026-10-09.md`.
+
+## 기대 답 — verify_cases_v5.md (v7)
+
+1 등록(`--findings 3`) · sign_flip 1 · 2 기계오탐(웹뷰 = D) · - · 3 등록 · source_defect 1 · 4 기계오탐(I2) · - · 5 등록 · source_defect 1 ·
+6 기계오탐(차이 2 ≤ 2 단위) · - · 7 아무것도 안 함 · 8 `--kinds value` 일괄 · 12건 · 9 하나씩 확인 · 10 기계오탐 · 11 기계오탐(나뉜 표 적재됨) ·
+12 5번 적재 0행 필링(원문 확인 → 본표 있으면 missing_row 1 직접 등록, 없으면 skip) · 13 전체 형태로 다시 부른다(멈추지 않음) ·
+14 2번 재확인은 한다, A 는 대조하지 않고 pending · 15 B 는 등록 없이 pending, `pass 0 · 이슈 2 · skip 0 · 재확인 close 0/reopen 0 · 대조 보류 1` ·
+16 missing_row 1(column_label `<열=> @ <날짜>`, evidence `기계 clean 판정 누락`) · 17 value_mismatch 1(`DB 빈 칸`) ·
+18 직접 등록(개별 플래그) extra_row 1, account_label = 별도 CF 의 CSV 첫 금액 행 · 19 source_unit 생략, evidence 앞 `표시통화 천 USD` · 20 등록 안 한 것으로 세고 다시 시도하지 않는다
+
+★기대 답 변경(수정 판정표 v7): fix v2 #11 = F6 no_fix(R165 유형 = 숫자 교정, 후보 없음 — 동결 ② 해소) · fix v2 #6 = F7-a no_fix(표기 해석 R169) ·
+fix v2 #13 = F7-a no_fix(정합화 대기 규칙이 바꿨어도 증명 만족) · fix v4 #3 = F4-b defer(R160 은 F4-a 가 아님).
+
+## 기대 답 — fix_cases_v5.md (수정 판정표 v7)
+
+1 F3 no_fix(DB=원문) · 2 F5 파서 수정(그 다른 셀, 새 R번호 독립 함수) · 3 F6 no_fix(원문 값으로 후보 없음; R189 셀은 셀 이슈로 따로) ·
+4 `mark-fixed B --exclude 4,5 --verdict defer --release-only` → `mark-fixed B --exclude 3 --verdict no_fix` · 5 `--exclude 8 --verdict defer --release-only` → `--exclude 7 --verdict no_fix --release-only` ·
+6 `vq.py ask --category irreversible`(1,000필링 이상), 답 전 백필 안 함 · 7 실행하지 않고 배치를 open 으로 두고 다음 배치 · 8 ② 실패 → 증명 아님(라벨은 근거 아님) → 원문대로(no_fix) ·
+9 F2 → F7-a no_fix(노트 올바른 error_type sign_flip) · 10 F4-b defer(R160) · 11 F4-a no_fix(R194) · 12 F7-b defer(R190-d, 음수 인쇄 셀) ·
+13 rule_id 는 R162-e 그대로(코드가 지킴) → F0 defer · 14 F7-a no_fix(표기 해석 R169)

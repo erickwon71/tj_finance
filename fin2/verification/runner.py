@@ -287,3 +287,28 @@ def finish(run_id: int, log: Path, exit_code: int) -> dict:
                 f"— 마지막 {slot} run {run_id}. 로그 {log.name}")
     return {"run_id": run_id, "slot": str(slot), "outcome": outcome, "stop": stop,
             "sleep_until": sleep_until.isoformat() if sleep_until else None}
+
+
+# Model per slot (2026-10-09 A/B on real slots, docs/verification/model_parity_2026-10-09.md):
+# confirming machine findings (verify_prompt "발견 확인") gave identical results on Haiku and
+# Sonnet; a full comparison (audit draw, no usable source XML) or a re-check of fixed issues makes
+# the model read whole tables and compute identities itself, where Haiku varied between runs.
+FINDING_MODEL_DEFAULT = "haiku"
+FULL_MODEL_DEFAULT = "sonnet"
+
+
+def model_for(slot: Slot, finding_model: str = FINDING_MODEL_DEFAULT,
+              full_model: str = FULL_MODEL_DEFAULT) -> tuple[str, str]:
+    """(model, reason) for one claimed slot."""
+    from fin2.verification import ops
+    d = ops.slot_detail(slot)
+    if ops.recheck_list(slot):
+        return full_model, "recheck"
+    for f in d["filings"]:
+        if f["status"] != "pending" or f.get("machine_verdict") is None or not f.get("machine_current"):
+            continue
+        if not f.get("scope_rows"):
+            return full_model, "zero_rows"
+        if f.get("machine_audit") or f["machine_verdict"] in ("no_source", "no_structure", "error"):
+            return full_model, f"full:{'audit' if f.get('machine_audit') else f['machine_verdict']}"
+    return finding_model, "findings"

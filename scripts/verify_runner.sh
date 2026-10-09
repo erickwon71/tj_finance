@@ -23,7 +23,13 @@ PROMPT_FILE="$ROOT/docs/verification/verify_prompt.md"
 LOG_ROOT="$ROOT/logs/verify_runner"
 RUN_TIMEOUT="${VQ_RUN_TIMEOUT:-2700}"          # 45 min per slot
 MAX_TURNS="${VQ_MAX_TURNS:-120}"   # run 6 hit 80 on a 2-filing SCE-heavy slot
-MODEL="${VQ_MODEL:-sonnet}"
+# Model per slot (2026-10-09 A/B, docs/verification/model_parity_2026-10-09.md): slots that only
+# confirm machine findings -> VQ_FINDING_MODEL (haiku), full comparison / re-check -> VQ_FULL_MODEL
+# (sonnet). VQ_MODEL, when set, forces one model for every slot.
+FORCE_MODEL="${VQ_MODEL:-}"
+FINDING_MODEL="${VQ_FINDING_MODEL:-haiku}"
+FULL_MODEL="${VQ_FULL_MODEL:-sonnet}"
+MODEL="${FORCE_MODEL:-auto}"
 PAUSE="${VQ_PAUSE:-30}"
 MIN_FREE_GB="${VQ_MIN_FREE_GB:-50}"
 # Extra claude flags for the pilot (e.g. the Chrome integration switch), space separated.
@@ -150,7 +156,7 @@ main() {
     log "이 워크트리의 DB 역할이 verify 가 아니다 - .env 의 DATABASE_URL 확인"; exit 1; }
 
   mkdir -p "$LOG_ROOT"
-  log "verify 러너 시작 (model=$MODEL, timeout=${RUN_TIMEOUT}s, max-turns=$MAX_TURNS)"
+  log "verify 러너 시작 (model=$MODEL: 발견확인 $FINDING_MODEL / 전체대조·재확인 $FULL_MODEL, timeout=${RUN_TIMEOUT}s, max-turns=$MAX_TURNS)"
 
   while :; do
     if [ -e "$STOP_FILE" ]; then
@@ -211,6 +217,13 @@ main() {
     day_dir="$LOG_ROOT/$(date '+%Y-%m-%d')"
     mkdir -p "$day_dir"
     logf="$day_dir/${slot//:/_}_$(date '+%H%M%S').json"
+    if [ -n "$FORCE_MODEL" ]; then
+      MODEL="$FORCE_MODEL"; why="forced"
+    else
+      pick=$("${VQ[@]}" runner model --slot "$slot" --finding-model "$FINDING_MODEL" --full-model "$FULL_MODEL")
+      MODEL=$(printf '%s' "$pick" | jq -r '.model // empty'); why=$(printf '%s' "$pick" | jq -r '.reason // empty')
+      [ -n "$MODEL" ] || { MODEL="$FULL_MODEL"; why="fallback"; }
+    fi
     run_id=$("${VQ[@]}" runner start --slot "$slot" --model "$MODEL")
     prompt="$(cat "$PROMPT_FILE")
 
@@ -218,7 +231,7 @@ main() {
   이번 실행의 슬롯: $slot   (run_id=$run_id)
   임시 파일(이슈 JSON 등)은 $day_dir 아래에만 쓴다."
 
-    log "run $run_id 시작: $slot"
+    log "run $run_id 시작: $slot (model=$MODEL, $why)"
     run_claude "$prompt" "$logf"
     rc=$?
     res=$("${VQ[@]}" runner finish --run-id "$run_id" --log "$logf" --exit-code "$rc")

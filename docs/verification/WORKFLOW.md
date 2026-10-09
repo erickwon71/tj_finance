@@ -19,7 +19,8 @@ CLI: `scripts/vq.py` (모든 명령은 `--help`)
    같은 회사 DART 정기보고서 증거)될 때만. 증명 안 되면 인쇄된 그대로.
 2. 검증 판정: `docs/verification/verify_prompt.md` 4번 판정표. 검증은 산수 사실(DB=원문, 항등식 닫힘)만 기록하고 복원 가능성은 판단하지 않는다.
 3. 수정 판정: 수정 워크트리 `CLAUDE.local.md` 의 이슈별 처리 판정표(F0~F8). 증명 여부는 코드로 계산한다.
-4. 각 워크트리 `CLAUDE.local.md` 에는 판정 규칙을 다시 적지 않는다. 위 문서와 다르면 위 문서가 이긴다.
+4. 우선순위: 검증은 R0-1 > `verify_prompt.md`, 수정은 R0-1 > 수정 워크트리 `CLAUDE.local.md` > 이 문서. 검증 워크트리 `CLAUDE.local.md` 에는 판정 규칙을 다시 적지 않는다.
+5. 모델 간 일치 시험: 규칙을 바꾸면 `docs/verification/rule_tests/` 의 이해 시험과 실데이터 A/B(읽기 전용 시뮬레이션)를 다시 돌린다.
 
 ## 2. 상태
 
@@ -43,8 +44,8 @@ CLI: `scripts/vq.py` (모든 명령은 `--help`)
   전에는 결론이 `--exclude --note` 자유문장에만 남아, 검증 쪽이 처리하지 않았다(지엘팜텍 #86707~#86709 사례).
   이슈는 `open` 으로 fix-queue 에 남았고, 검증은 같은 셀을 다시 등록했다. 그래서 양쪽이 같은 건을 재조사하며 쿼터를 썼다.
   1. **fix**: `batch mark-fixed <id> --exclude 1,2 --verdict no_fix --note "근거"`.
-     `--exclude` 에는 `--verdict` 가 필수다. `no_fix` 는 지금 DB 가 정답이라는 뜻이고,
-     `defer` 는 DB 가 틀렸거나 판단을 미룬다는 뜻이다(fix-queue 에 남음). 정확한 기준은 수정 워크트리 `CLAUDE.local.md` 의 "no_fix 와 defer".
+     `--exclude` 에는 `--verdict` 가 필수다(`--verdict` 만 있고 `--exclude` 가 없으면 거부). `no_fix` 는 지금 DB 가 정답이라는 뜻이고,
+     `defer` 는 DB 가 틀렸거나 판단을 미룬다는 뜻이다(fix-queue·batch new 에서 빠지고 '보류' 건수로만 보임, `issues --held`). 두 판정이 섞인 배치는 `--release-only` 로 한 판정씩 뺀다. 정확한 기준은 수정 워크트리 `CLAUDE.local.md`.
      no_fix 반려는 fix-queue·`issues`·`batch new` 일괄수집에서 곧바로 빠진다.
   2. **verify 러너**(모델 없음)는 매 회차 시작 전에 `vq.py withdraw-released` 를 실행한다.
      no_fix 반려를 `[withdrawn][no_fix] <fix 근거>` 로 닫는다(open → closed).
@@ -109,7 +110,10 @@ rm ~/.claude/notify/STOP_VERIFY
 - 사용량 한도 메시지가 오면 리셋 시각까지 쉰다. 이 경우 재시도 횟수는 늘지 않는다.
 - 연속 3회 실패, 디스크 여유 50GB 미만, 코드 동기화 실패일 때만 텔레그램 알림을 보내고 정지한다.
 - 로그: `logs/verify_runner/<날짜>/` (30일 뒤 자동 삭제).
-- 파일럿 옵션(환경변수): `VQ_MODEL`(기본 sonnet), `VQ_MAX_TURNS`(120), `VQ_RUN_TIMEOUT`(2700초), `VQ_CLAUDE_ARGS`(추가 플래그).
+- **모델은 슬롯마다 러너가 고른다**(2026-10-09, `vq.py runner model --slot S`): 기계 발견만 확인하는 슬롯 → `VQ_FINDING_MODEL`(기본 haiku),
+  전체 대조(audit·no_source·no_structure·error)·적재 0행·fixed 재확인 슬롯 → `VQ_FULL_MODEL`(기본 sonnet). 근거: 실슬롯 A/B `docs/verification/model_parity_2026-10-09.md`.
+  `VQ_MODEL` 을 주면 모든 슬롯을 그 모델로 강제한다. 그 밖 옵션: `VQ_MAX_TURNS`(120), `VQ_RUN_TIMEOUT`(2700초), `VQ_CLAUDE_ARGS`(추가 플래그).
+- 규칙·검증 도구를 바꾸면 `scripts/verify_sim/`(읽기 전용 실슬롯 A/B)으로 Haiku·Sonnet 결과가 같은지 다시 확인한다.
 - 탭 정리(2026-09-25 변경): 회차가 끝날 때마다 러너가 **열린 DART 탭을 전부 훑어서**, 캠페인 필링이면서 지금 점유 중인 슬롯이 아닌 탭을 AppleScript 로 닫는다(`vq.py stale-tabs`). 모델이 같은 회사의 다른 기간 공시를 비교용으로 여는 경우와 러너 재시작으로 이력을 잃는 경우에도 남지 않는다. 캠페인 대상이 아닌 공시 탭(직접 연 탭)은 건드리지 않는다. 처음 한 번 macOS 가 "터미널이 Chrome 을 제어" 권한을 물으면 허용한다.
 
 ## 4-1. 기계 대조 (2026-09-24~, 설계 `docs/plans/verification_machine_compare_design_2026-09-24.md`)
@@ -201,7 +205,7 @@ claude
    8. `batch mark-fixed <id>`
       - 코드로 고치지 않은 이슈는 `--exclude 1,2 --verdict no_fix|defer --note "사유"` 로 빼야 한다. 트리거는 "필링이 재적재됐는가"만 보므로, 빼지 않으면 값이 그대로여도 fixed 가 된다(batch #25 사고).
         - `no_fix`(DB 가 정답): verify 러너가 자동으로 withdraw 한다. 검증 쪽에 따로 전달할 필요 없다. 같은 셀은 다시 등록되지 않는다.
-        - `defer`(DB 가 틀렸거나 판단 보류: 다른 원인·정합화 대기·동결·사용자 판단 대기): open 으로 fix-queue 에 남는다.
+        - `defer`(DB 가 틀렸거나 판단 보류: 정합화 대기·동결·찾지 못함·사용자 판단 대기): open 으로 남지만 fix-queue·batch new 기본 수집에서 빠진다('보류' 건수, `issues --held`).
    9. `batch set <id> --status done`
    - `waiting_decision` 은 답을 기다리는 `vq.py ask` 가 있을 때만 쓴다. no_fix 결론을 낸 이슈를 `fixing` 으로 붙여 둔 채 주차하지 않는다(그 슬롯은 영원히 `has_issues` 로 남는다).
    - defer 반려·동결 이슈는 `fix-queue` 의 "보류" 줄에 건수만 나오고 `batch new` 기본 수집에서 빠진다. 목록은 `vq.py issues --type <유형> --held`, 다시 다룰 때는 `batch new --issues <id,...>`.

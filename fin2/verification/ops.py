@@ -43,7 +43,8 @@ ERAS = {"2015+": (1, 2015, 9999), "2011-14": (2, 2011, 2014),
 #            unchanged. Before this, the conclusion only lived in free-text evidence: verify
 #            never acted on it, the issue sat `open` in fix_queue and the reviewer registered
 #            the same cell again — both sides re-investigated it and spent quota.
-#   defer  — not fixed in this batch, still a defect: stays `open` for a later batch.
+#   defer  — the DB is wrong or the call is postponed: stays `open` but is held out of
+#            fix_queue / batch_new (_HELD_SQL); `issues --held` lists it.
 RELEASE_EVIDENCE_LIKE = "fix_batch:%released (not fixed):%"
 NO_FIX_TAG, DEFER_TAG = "[no_fix]", "[defer]"
 RELEASE_VERDICTS = ("no_fix", "defer")
@@ -681,7 +682,28 @@ def _prior_no_fix(conn, rcept: str, row: dict) -> dict | None:
     return dict(hit) if hit else None
 
 
-def add_issues(rcept: str, items: list[dict], suppressed: list | None = None) -> list[int]:
+_SOURCE_UNITS = ("원", "천원", "백만원", "억원")
+
+
+def _identity_column_label(label: str | None) -> str:
+    """source_defect column label: '<col> @ <date> #항등식' (SCE) or '#항등식' - whatever tail the
+    reviewer typed ('#롤포워드', '# 항등식') is replaced, so the key is the same for every model."""
+    base = re.sub(r"\s*#.*$", "", label or "").strip()
+    return f"{base} #항등식" if base else "#항등식"
+
+
+def _active_issue(conn, rcept: str, row: dict) -> int | None:
+    """An issue that is not closed on the same cell (ux_vissues_active_cell key)."""
+    return conn.execute(text("""
+        SELECT issue_id FROM verification.issues
+        WHERE rcept_no = :r AND basis = :b AND statement = :s AND account_label = :a
+          AND coalesce(column_label, '') = coalesce(:cl, '') AND status <> 'closed'
+        LIMIT 1"""), {"r": rcept, "b": row["basis"], "s": row["statement"],
+                      "a": row["account_label"], "cl": row.get("column_label")}).scalar()
+
+
+def add_issues(rcept: str, items: list[dict], suppressed: list | None = None,
+               already: list | None = None) -> list[int]:
     """Register one or more cell mismatches for a filing of the claimed slot.
 
     An item on a cell the fix side already concluded "no code fix needed" for (and whose DB
@@ -695,6 +717,7 @@ def add_issues(rcept: str, items: list[dict], suppressed: list | None = None) ->
         slot = Slot(f["corp_code"], f["fiscal_year"], f["fiscal_period"])
         _own_claim(conn, slot)
         _check_version(f)
+        seen_keys: set[tuple] = set()
         for it in items:
             bad = set(it) - set(_ISSUE_FIELDS)
             if bad:
@@ -714,6 +737,28 @@ def add_issues(rcept: str, items: list[dict], suppressed: list | None = None) ->
                 # _strip_label_disambiguator).
                 row["db_label"] = _strip_label_disambiguator(row["account_label"])
             row["column_label"] = _strip_column_label_prefix(row.get("column_label"))
+            if row.get("error_type") == "source_defect":
+                row["column_label"] = _identity_column_label(row.get("column_label"))
+            if row.get("source_unit") and row["source_unit"] not in _SOURCE_UNITS:
+                # foreign presentation currency ('천 USD'): the column only takes KRW units
+                row["evidence"] = f"표시통화 {row['source_unit']} · {row.get('evidence') or ''}"
+                row["source_unit"] = None
+            # the same label twice in one submission (a label repeated in one table): number the
+            # later ones like the machine does, instead of failing the whole submission
+            key = (row["basis"], row["statement"], row["account_label"], row.get("column_label") or "")
+            n, base = 2, row["account_label"]
+            while key in seen_keys:
+                row["account_label"] = f"{base[:280]} (#{n})"
+                key = (row["basis"], row["statement"], row["account_label"], row.get("column_label") or "")
+                n += 1
+            seen_keys.add(key)
+            active = _active_issue(conn, rcept, row)
+            if active is not None:
+                # an unresolved issue already sits on this cell: not a new observation
+                if already is not None:
+                    already.append({"account_label": row["account_label"],
+                                    "column_label": row["column_label"], "issue_id": active})
+                continue
             prior = _prior_no_fix(conn, rcept, row)
             if prior is not None:
                 if suppressed is not None:
@@ -972,7 +1017,9 @@ def _current_db_blocks(conn, issue: dict) -> list[str] | None:
 
 def recheck_list(slot: Slot | None = None) -> list[dict]:
     with engine.connect() as conn:
-        q = """SELECT * FROM verification.issues WHERE status = 'fixed'"""
+        # machine-registered issues are re-checked by `vq.py machine recheck`, not the model
+        q = """SELECT * FROM verification.issues WHERE status = 'fixed'
+               AND created_by NOT LIKE '%machine'"""
         params: dict = {}
         if slot:
             q += " AND corp_code = :c AND fiscal_year = :y AND fiscal_period = :p"
@@ -1120,7 +1167,10 @@ def batch_new(error_type: str, title: str, issue_ids: list[int] | None,
                 {"t": error_type}).fetchall()]
         n = conn.execute(text("""
             UPDATE verification.issues SET fix_batch_id = :b, status = 'fixing',
-                   rule_id = coalesce(:r, rule_id)
+                   -- freeze (1) is recognised by rule_id R162-e; a batch --rule must not erase it
+                   rule_id = CASE WHEN error_type = 'sign_flip' AND rule_id = 'R162-e'
+                                       AND created_at < TIMESTAMPTZ '2026-09-26 00:00:00+09'
+                                  THEN rule_id ELSE coalesce(:r, rule_id) END
              WHERE issue_id = ANY(:ids) AND status IN ('open', 'reopened')"""),
             {"b": bid, "ids": issue_ids, "r": rule_id}).rowcount
         conn.execute(text("""
@@ -1324,7 +1374,8 @@ def batch_reload(batch_id: int, limit: int | None = None,
 
 
 def batch_mark_fixed(batch_id: int, exclude: list[int] | None = None,
-                     exclude_note: str | None = None, verdict: str | None = None) -> dict:
+                     exclude_note: str | None = None, verdict: str | None = None,
+                     release_only: bool = False) -> dict:
     """fixing → fixed for every issue of the batch whose filing was actually reloaded with
     changed data (the trigger enforces it). The rest stay fixing and are listed.
 
@@ -1333,14 +1384,24 @@ def batch_mark_fixed(batch_id: int, exclude: list[int] | None = None,
     a batch target would pass. `exclude` releases such issues fixing → open instead
     (batch #25: four parked issues were marked fixed this way).
 
-    `verdict` says what the release means (see RELEASE_VERDICTS): `no_fix` hands the issue to
-    verify for an automatic withdraw, `defer` keeps it in the fix queue for a later batch."""
+    `verdict` says what the release means (see RELEASE_VERDICTS): `no_fix` = the DB is right now
+    (verify withdraws it automatically), `defer` = the DB is wrong or the call is postponed (held
+    out of fix-queue / `batch new`, listed by `issues --held`).
+
+    `release_only` releases the excluded issues and leaves every other `fixing` issue alone, so
+    a batch with both verdicts is handled as: release-only call for one verdict, then the normal
+    call for the other (a plain call would mark the rest fixed on the first verdict)."""
     _require("fix")
     if exclude and verdict not in RELEASE_VERDICTS:
-        raise VqError("--exclude 에는 --verdict no_fix|defer 가 필요하다 — no_fix=원문결함·오탐으로 "
-                      "코드수정 불필요(verify 가 자동 withdraw), defer=결함은 맞고 나중 배치에서 수정")
+        raise VqError("--exclude 에는 --verdict no_fix|defer 가 필요하다 — no_fix=지금 DB 가 정답"
+                      "(verify 가 자동 withdraw), defer=DB 가 틀렸거나 판단 보류(보류 목록으로)")
+    if verdict and not exclude:
+        # #109 incident: --verdict without --exclude marked the whole batch fixed
+        raise VqError("--verdict 는 --exclude <issue_id,...> 와 함께만 쓴다(없으면 배치 전체가 fixed 로 간다)")
+    if release_only and not exclude:
+        raise VqError("--release-only 는 --exclude 와 함께만 쓴다")
     tag = {"no_fix": NO_FIX_TAG, "defer": DEFER_TAG}.get(verdict or "", "")
-    commit = require_clean_pushed_head()
+    commit = None if release_only else require_clean_pushed_head()
     fixed, not_changed, released = [], [], []
     with engine.connect() as conn:
         ids = [r[0] for r in conn.execute(text("""
@@ -1348,6 +1409,10 @@ def batch_mark_fixed(batch_id: int, exclude: list[int] | None = None,
             WHERE fix_batch_id = :b AND status = 'fixing' ORDER BY issue_id"""),
             {"b": batch_id}).fetchall()]
     excluded = set(exclude or ())
+    stray = sorted(excluded - set(ids))
+    if stray:
+        # a typo here used to be ignored silently and the intended issue went fixed
+        raise VqError(f"--exclude 의 {stray} 는 배치 #{batch_id} 의 fixing 이슈가 아니다 — 아무것도 바꾸지 않았다")
     for iid in [i for i in ids if i in excluded]:
         # fix_batch_id deliberately stays set here (not nulled) — a still-open batch may
         # legitimately re-take a released issue back into `fixing` (test_fix_batch_cycle_
@@ -1357,6 +1422,9 @@ def batch_mark_fixed(batch_id: int, exclude: list[int] | None = None,
             conn.execute(text("""
                 UPDATE verification.issues SET status = 'open' WHERE issue_id = :i"""), {"i": iid})
         released.append(iid)
+    if release_only:
+        return {"batch_id": batch_id, "fixed": [], "not_fixed": [], "released": released,
+                "still_fixing": [i for i in ids if i not in excluded]}
     ids = [i for i in ids if i not in excluded]
     for iid in ids:
         try:

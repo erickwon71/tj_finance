@@ -1898,6 +1898,9 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                     AND b.basis = rl.basis AND b.table_seq = rl.table_seq
                     AND b.label_raw ~ '^\\[.*\\]$'
               )
+            -- R0-2: load order, as the plain report_lines index scan returned it (first-wins picks
+            -- depend on it; the view's join does not keep it). Fill rows (id < 0) come last.
+            ORDER BY (rl.id < 0), abs(rl.id)
         """), {"r": rcept}).fetchall()
         # ★R171(2026-09-25): a later filing from a DIFFERENT extraction path can't be
         # delta-aligned (_CELL_KEY never matches across paths), so its cells would only
@@ -3295,6 +3298,7 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
                     AND b.label_raw ~ '^\\[.*\\]$'
               )
               {rcept_clause}
+            ORDER BY (rl.id < 0), abs(rl.id)   -- R0-2: load order (see build_merged_lines)
         """), params).fetchall()
         for label_raw, value_won, node_role, section_path, table_seq, is_cum, value_exact, eps_row in db_rows:
             rows.append({

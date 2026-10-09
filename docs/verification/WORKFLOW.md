@@ -18,7 +18,7 @@ CLI: `scripts/vq.py` (모든 명령은 `--help`)
 1. `docs/PARSING_RULES.md` **R0-1** — 원문 그대로 적재. 원문과 다르게 싣는 것은 증명(닫힘·유일·무악화, 표시단위 ±1,
    같은 회사 DART 정기보고서 증거)될 때만. 증명 안 되면 인쇄된 그대로.
 2. 검증 판정: `docs/verification/verify_prompt.md` 4번 판정표. 검증은 산수 사실(DB=원문, 항등식 닫힘)만 기록하고 복원 가능성은 판단하지 않는다.
-3. 수정 판정: 수정 워크트리 `CLAUDE.local.md` 의 이슈별 처리 판정표(F0~F6). 증명 여부는 코드로 계산한다.
+3. 수정 판정: 수정 워크트리 `CLAUDE.local.md` 의 이슈별 처리 판정표(F0~F8). 증명 여부는 코드로 계산한다.
 4. 각 워크트리 `CLAUDE.local.md` 에는 판정 규칙을 다시 적지 않는다. 위 문서와 다르면 위 문서가 이긴다.
 
 ## 2. 상태
@@ -43,15 +43,15 @@ CLI: `scripts/vq.py` (모든 명령은 `--help`)
   전에는 결론이 `--exclude --note` 자유문장에만 남아, 검증 쪽이 처리하지 않았다(지엘팜텍 #86707~#86709 사례).
   이슈는 `open` 으로 fix-queue 에 남았고, 검증은 같은 셀을 다시 등록했다. 그래서 양쪽이 같은 건을 재조사하며 쿼터를 썼다.
   1. **fix**: `batch mark-fixed <id> --exclude 1,2 --verdict no_fix --note "근거"`.
-     `--exclude` 에는 `--verdict` 가 필수다. `no_fix` 는 원문결함·오탐이라 DB 가 맞다는 뜻이고,
-     `defer` 는 결함은 맞지만 다른 배치에서 고친다는 뜻이다(fix-queue 에 남음).
+     `--exclude` 에는 `--verdict` 가 필수다. `no_fix` 는 지금 DB 가 정답이라는 뜻이고,
+     `defer` 는 DB 가 틀렸거나 판단을 미룬다는 뜻이다(fix-queue 에 남음). 정확한 기준은 수정 워크트리 `CLAUDE.local.md` 의 "no_fix 와 defer".
      no_fix 반려는 fix-queue·`issues`·`batch new` 일괄수집에서 곧바로 빠진다.
   2. **verify 러너**(모델 없음)는 매 회차 시작 전에 `vq.py withdraw-released` 를 실행한다.
      no_fix 반려를 `[withdrawn][no_fix] <fix 근거>` 로 닫는다(open → closed).
      그 필링에 남은 이슈가 없고 이슈 등록 이후 재적재도 없으면, 모델 재검증 없이 바로 pass 한다.
   3. 같은 셀(rcept·basis·statement·계정·열)을 DB 값이 같은 상태로 다시 등록하면 `issue add` 가 **등록하지 않고 건너뛴다**.
      기계 자동이슈도 마찬가지다. `show` 에는 "이미 결론난 셀" 로 표시된다.
-     결론에 이견이 있으면 새로 등록하지 말고 이전 이슈를 `vq.py reopen <id> --evidence ...` 로 다툰다.
+     검증 모델(러너)은 결론난 셀을 다투지 않는다(`verify_prompt.md`). 결론에 이견이 있으면 사람이 이전 이슈를 `vq.py reopen <id> --evidence ...` 로 다툰다.
      재적재로 DB 값이 바뀌면 새 관찰로 보고 다시 등록할 수 있다.
   4. `--verdict` 도입 전에 반려된 것(태그 없음)은 no_fix 와 defer 가 섞여 있다. 그래서 일괄 처리하지 않는다.
      no_fix 로 확인된 것만 `vq.py withdraw-released --ids 1,2,...` 로 처리한다(검증 계정 또는 admin).
@@ -192,17 +192,16 @@ claude
 
 4. 세션 1회의 흐름
    1. `batch new`
-   2. 원인 조사
-   3. 파서 수정
-   4. `pytest tests/ fin2/tests/`
-   5. `PARSING_RULES.md` 에 R번호 추가
+   2. 원인 조사, 그리고 이슈마다 수정 워크트리 `CLAUDE.local.md` 판정표(F0~F8)로 처리(파서 수정 / no_fix / defer) 결정
+   3. `PARSING_RULES.md` 에 R번호 규칙을 먼저 적는다(R0-1 안에서)
+   4. 파서 수정
+   5. `pytest tests/ fin2/tests/`
    6. commit, `git push origin HEAD:main`
    7. `batch reload <id>`
    8. `batch mark-fixed <id>`
-      - 어떤 이슈를 코드로 고치고 어떤 것을 no_fix 로 둘지는 수정 워크트리 `CLAUDE.local.md` 판정표(F0~F6)로 정한다.
       - 코드로 고치지 않은 이슈는 `--exclude 1,2 --verdict no_fix|defer --note "사유"` 로 빼야 한다. 트리거는 "필링이 재적재됐는가"만 보므로, 빼지 않으면 값이 그대로여도 fixed 가 된다(batch #25 사고).
-        - `no_fix`(원문결함·오탐, DB 정상): verify 러너가 자동으로 withdraw 한다. 검증 쪽에 따로 전달할 필요 없다. 같은 셀은 다시 등록되지 않는다.
-        - `defer`(결함은 맞음, 이번 배치 범위 밖): open 으로 fix-queue 에 남는다.
+        - `no_fix`(DB 가 정답): verify 러너가 자동으로 withdraw 한다. 검증 쪽에 따로 전달할 필요 없다. 같은 셀은 다시 등록되지 않는다.
+        - `defer`(DB 가 틀렸거나 판단 보류: 다른 원인·정합화 대기·동결·사용자 판단 대기): open 으로 fix-queue 에 남는다.
    9. `batch set <id> --status done`
 5. 배치가 끝나면 `/clear` 하거나 세션을 끝낸다. 다음 배치는 1부터 다시 한다.
 
@@ -213,6 +212,7 @@ claude
   대기 중 판단은 최대 3건, 즉시 발송은 하루 5건까지다.
 - 22–08시에는 `irreversible` 만 만들 수 있고, 발송은 08:00 다이제스트가 한다.
 - 만료(기본 24시간): `irreversible` 은 절대 자동 적용하지 않는다. 나머지는 권장안이 적용된다.
+  그래서 R0-1 정합화 코드 수정 승인·동결 해제·고정 목록 변경은 반드시 `irreversible` 로 묻는다.
 - 폰에서 버튼을 누르면 기록된다. 메시지에 답장하면 자유 입력 답이 된다. 봇에게 `/pending` 을 보내면 대기 목록을 받는다.
 - 봇은 launchd(`com.taejin.claude.decision-bot`)로 상주한다. `~/.claude/notify/link_chat.sh` 를 다시 돌릴 일이 있으면 봇을 먼저 멈춘다.
   같은 토큰으로 getUpdates 를 쓰는 곳이 둘이면 충돌한다.

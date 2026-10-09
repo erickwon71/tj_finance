@@ -191,7 +191,8 @@ def test_machine_passes_clean_and_leaves_mismatch_for_the_model(engines, as_role
     assert st == {2024: "passed", 2023: "pending", 2022: "has_issues", 2021: "has_issues"}
     iss = _sql(engines, "SELECT account_label, column_label, db_value, source_value, error_type, rule_id "
                "FROM verification.issues WHERE rcept_no = :r", {"r": R_SIGN})
-    assert iss == [("배당금지급", "이익잉여금 @ 2022.12.31 (기말자본)", 7, -7, "sign_flip", "R162")]
+    # R0-2: DB keeps the printed 7; no layer-3 correction for the cell -> a source_defect record
+    assert iss == [("배당금지급", "이익잉여금 @ 2022.12.31 (기말자본) #항등식", 7, -7, "source_defect", "R0-2")]
     # clean but the source's own roll-forward is broken (자본금 100 -> 125 with no change row)
     arith = _sql(engines, "SELECT account_label, column_label, error_type FROM verification.issues "
                  "WHERE rcept_no = :r", {"r": R_ARITH})

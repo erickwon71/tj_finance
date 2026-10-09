@@ -423,3 +423,33 @@ def test_flipped_cells_are_findings_whatever_the_print(tmp_path):
     db2 = [(lab, tuple(-v if lab == "배당금지급" and v else v for v in vals)) for lab, vals in src2]
     res2 = mc.compare(_sce_rows(db2), tables2)
     assert {f["src_col"] for f in res2.findings if f["kind"] == "value"} == {1, 2}
+
+
+class _StubConn:
+    """conn.execute(...).fetchall() -> the given layer3_cell_corrections rows."""
+    def __init__(self, rows):
+        self.rows = rows
+
+    def execute(self, *_a, **_k):
+        rows = self.rows
+
+        class _R:
+            def fetchall(self):
+                return rows
+        return _R()
+
+
+def test_sign_omitted_with_layer3_correction_gets_no_issue():
+    # R0-2 (2026-10-10): layer 2 keeps the printed 7; a layer-3 correction already flips it, so
+    # the machine registers nothing. Without the correction it registers a source_defect.
+    from fin2.verification import machine_pass as mp
+    f = {"kind": "sign_omitted", "basis": "separate", "row": "배당금지급", "value": 7.0, "scale": 1,
+         "header": "이익잉여금", "col": 1, "from": "2022.01.01 (기초자본)", "to": "2022.12.31 (기말자본)",
+         "diff": 14.0}
+    res = mc.Result("mismatch", mc.Counter(), [dict(f)])
+    mc.mark_layer3_covered(_StubConn([("separate", "배당금지급", 7, -7)]), "r", res)
+    assert res.findings[0]["l3_covered"] is True and mp.sign_issues(res) == []
+    res2 = mc.Result("mismatch", mc.Counter(), [dict(f)])
+    mc.mark_layer3_covered(_StubConn([("separate", "배당금지급", 7, 7)]), "r", res2)
+    issues = mp.sign_issues(res2)
+    assert [(i["error_type"], i["rule_id"], i["db_value"]) for i in issues] == [("source_defect", "R0-2", 7)]

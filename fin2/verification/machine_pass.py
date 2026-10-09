@@ -85,13 +85,16 @@ AUTO_ISSUE_KINDS = {"sign_omitted"}
 
 
 def sign_issues(res: mc.Result) -> list[dict]:
-    """Issues the machine registers itself: a cell whose sign alone breaks the SCE roll-forward
-    and whose flip closes it exactly, with no other candidate (R162 pattern - the source
-    dropped the parentheses and the DB followed it). The arithmetic is the proof, so no web-view
-    look is needed; the fix side extends the R162 repair."""
+    """Issues the machine registers itself for a cell whose sign alone breaks the SCE roll-forward
+    and whose flip closes it exactly, with no other candidate (the source dropped the parentheses).
+
+    R0-2 (user decision 2026-10-10): layer 2 keeps the printed value, so this is a source defect,
+    not a layer-2 one. A cell whose layer-3 correction already flips it (`l3_covered`, set by
+    machine_compare.compare_filing) gets no issue; the rest are `source_defect` — a candidate for
+    a layer-3 correction step (camp_err_review F5)."""
     out, seen = [], set()
     for f in res.findings:
-        if f["kind"] != "sign_omitted":
+        if f["kind"] != "sign_omitted" or f.get("l3_covered"):
             continue
         # the same row label recurs in every year block: the block's closing row tells them
         # apart (one active issue per cell - ux_vissues_active_cell)
@@ -107,10 +110,11 @@ def sign_issues(res: mc.Result) -> list[dict]:
             "column_label": col,
             "db_value": int(round(v * s)), "source_value": int(round(-v * s)),
             "source_value_raw": f"{abs(v):,.0f}" if v >= 0 else f"({abs(v):,.0f})",
-            "source_unit": _UNIT.get(s, "원"), "error_type": "sign_flip", "rule_id": "R162",
+            "source_unit": _UNIT.get(s, "원"), "error_type": "source_defect", "rule_id": "R0-2",
             "evidence": (f"[machine {mc.TOOL_VERSION}] 자본변동표 열 '{f.get('header')}' {f['from']}→{f['to']} "
                          f"롤포워드가 닫히지 않고(차이 {f['diff']:,.0f}), 이 셀 부호만 뒤집으면 정확히 닫힌다"
-                         f"(다른 후보 없음). DB 는 원문 그대로({v:,.0f}) — 원문 괄호 누락(R162 패턴)."),
+                         f"(다른 후보 없음). DB 는 원문 그대로({v:,.0f}) — 원문 괄호 누락 추정. "
+                         f"계층3 보정 없음 → 계층3 보정 규칙 후보(R0-2)."),
         })
     return out
 
@@ -400,6 +404,13 @@ def verify_slot(slot: Slot) -> dict:
             ops.skip_filing(f["rcept_no"], f"[machine {mc.TOOL_VERSION}] 원문에 재무제표 섹션 표가 없고 "
                                            f"DB 적재 행도 없음")
             out["skipped"] += 1
+        elif (r.verdict == "mismatch" and scopes and not sign_issues(r)
+              and {x["kind"] for x in r.findings if x["kind"] not in mc.INFO_KINDS} <= AUTO_ISSUE_KINDS):
+            # R0-2: every cell matches the print and each suspected dropped parenthesis is already
+            # restored by a layer-3 correction — nothing for layer 2, nothing for the model
+            n = sum(1 for x in r.findings if x["kind"] == "sign_omitted")
+            ops.pass_filing(f["rcept_no"], scopes, f"{_note(r)} · 원문 괄호 누락 추정 {n}셀 모두 계층3 보정 있음(R0-2)")
+            out["clean"] += 1
         elif r.verdict == "mismatch" and {x["kind"] for x in r.findings
                                           if x["kind"] not in mc.INFO_KINDS} <= AUTO_ISSUE_KINDS:
             try:

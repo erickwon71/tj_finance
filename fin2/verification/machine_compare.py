@@ -42,7 +42,8 @@ from lxml import etree
 # them use the same column string as cell issues); a DB = -source cell counts as a restored sign
 # only when the source printed it positive (a flipped negative-printed cell stays a finding).
 # mc9 (2026-10-10, R0-2): layer 2 stores printed values, so a DB = -source cell is always a finding
-# (the "restored sign" exception is gone; restorations live in layer3_cell_corrections).
+# (the "restored sign" exception is gone; restorations live in layer3_cell_corrections);
+# sign_omitted findings carry l3_covered (a layer-3 correction already flips that cell).
 TOOL_VERSION = "mc9"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
@@ -849,4 +850,28 @@ def compare_filing(conn, rcept: str, xml_path: str) -> Result:
         tables = load_statement_tables(resolve_source(xml_path))
     except Exception as exc:  # unreadable source: the model looks at it
         return Result("error", Counter(), [{"kind": "error", "error": f"{type(exc).__name__}: {exc}"[:300]}])
-    return compare(rows, tables)
+    res = compare(rows, tables)
+    mark_layer3_covered(conn, rcept, res)
+    return res
+
+
+def _norm_label(s: str | None) -> str:
+    return re.sub(r"\s+", "", s or "")
+
+
+def mark_layer3_covered(conn, rcept: str, res: Result) -> None:
+    """R0-2 (user decision 2026-10-10): a `sign_omitted` finding (printed positive, the flip closes
+    the roll-forward) whose cell already has a layer-3 correction to the flipped value is handled
+    by layer 3 — set f["l3_covered"] = True so the machine does not register it."""
+    from sqlalchemy import text
+    found = [f for f in res.findings if f.get("kind") == "sign_omitted"]
+    if not found:
+        return
+    corr = conn.execute(text("""
+        SELECT basis, label_raw, printed_value, corrected_value FROM layer3_cell_corrections
+        WHERE rcept_no = :r AND statement = 'SCE' AND kind = 'value'"""), {"r": rcept}).fetchall()
+    for f in found:
+        v = int(round(f["value"] * (f.get("scale") or 1)))
+        row = _norm_label(f.get("row"))
+        f["l3_covered"] = any(b == f["basis"] and p == v and c == -v and _norm_label(lab).startswith(row)
+                              for b, lab, p, c in corr)

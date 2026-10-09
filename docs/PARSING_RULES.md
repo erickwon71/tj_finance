@@ -73,6 +73,7 @@
 - 계층3 읽기: `report_lines_l3` 뷰 = `report_lines` + kind='value' 보정. `fin2/layer3/combine.py`·R187 근거(`sce_dated_anchors.py`)가 이 뷰를 읽는다. kind='fill'/'drop'(SCE R183)은 계층3 SCE 소비처가 생길 때 뷰에 반영한다.
 - 배선: `ops._reload_rcept`, `collector/note_lines_sync.py`(데일리 XML — `collect_new.py` 두 call site 모두 이 함수를 거친다), `collector/xbrl_instance_lines_sync.py`(데일리 XBRL).
 - 옛 동작 비교: `TJF_LAYER2_AS_PRINTED=0` 이면 규칙이 계층2 에 다시 쓴다(한 릴리스 유지 후 삭제, D4).
+- 기계대조 자동 이슈(2026-10-10 사용자 결정): 원문 괄호 누락 추정 셀(`sign_omitted`)은 계층3 보정이 이미 그 셀을 뒤집으면 이슈를 만들지 않고(통과 노트에 건수), 보정이 없으면 `source_defect`(rule_id `R0-2`, 계층3 보정 규칙 후보)로 등록한다(`machine_compare.mark_layer3_covered`, `machine_pass.sign_issues`). 예전처럼 `sign_flip` 으로 등록하지 않는다.
 - 소급 범위: **2015+ 먼저**(사용자 결정 2026-10-10). 2015 이전은 같은 규칙으로 나중에 한다 — 그때까지 2015 이전 계층2 에는 옛 보정값이 남아 있고 `layer3_cell_corrections` 행이 없다(계층3 값은 같다).
 
 ---

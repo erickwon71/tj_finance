@@ -25,7 +25,7 @@ CORP = "99000002"
 R1, R2 = "29990101000011", "29990301000012"
 SLOT = Slot(CORP, 2024, "FY")
 TABLES = ("corporations", "filings", "report_lines", "stock_prices",
-          "report_shares_outstanding", "download_tasks")
+          "report_shares_outstanding", "download_tasks", "layer3_cell_corrections")
 
 
 def _run(*cmd):

@@ -44,7 +44,9 @@ from lxml import etree
 # mc9 (2026-10-10, R0-2): layer 2 stores printed values, so a DB = -source cell is always a finding
 # (the "restored sign" exception is gone; restorations live in layer3_cell_corrections);
 # sign_omitted findings carry l3_covered (a layer-3 correction already flips that cell).
-TOOL_VERSION = "mc9"
+# mc10 (2026-10-10, user decision): verdict from cells only; identity findings are information
+# (layer-3 backlog), never auto-registered.
+TOOL_VERSION = "mc10"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -265,10 +267,13 @@ def load_statement_tables(path: str) -> list[SrcTable]:
     return tables
 
 
-# Recorded but not blocking a pass: the source's own arithmetic does not close while every DB
-# cell equals its source cell - the DB is faithful and the web view would show the same
-# numbers (the previous full web-view standard passed these too).
-INFO_KINDS = {"sce_arith", "zero_row"}
+# Recorded but not blocking a pass. mc10 (2026-10-10, user decision: the campaign checks layer-2
+# faithfulness only): every identity finding is information — the DB cells equal the printed
+# cells, so the arithmetic of the print (and any sign/value correction of it) is layer 3's work.
+# They stay in machine_checks.findings as the layer-3 correction backlog
+# (scripts/r0_2_migration/layer3_backlog.py); `l3_covered` marks those layer 3 already closes.
+IDENTITY_INFO_KINDS = {"sce_arith", "sce_identity", "sign_omitted", "bs_identity"}
+INFO_KINDS = {"zero_row"} | IDENTITY_INFO_KINDS
 
 
 @dataclass

@@ -185,20 +185,20 @@ def test_gate_hides_unchecked_slots_from_the_model(engines, as_role):
 def test_machine_passes_clean_and_leaves_mismatch_for_the_model(engines, as_role):
     as_role("verify")
     total = machine_pass.run(limit=10, log=lambda _m: None)
-    assert total["slots"] == 4 and total["clean"] == 1 and total["mismatch"] == 1
-    assert total["auto_issue"] == 2
+    # mc10 (2026-10-10): the campaign checks layer-2 faithfulness only. R_SIGN (dividend printed
+    # without parentheses, DB = print) and R_ARITH (the source's own roll-forward breaks, DB = print)
+    # pass; their identity findings are recorded as layer-3 backlog, never registered.
+    assert total["slots"] == 4 and total["clean"] == 3 and total["mismatch"] == 1
+    assert total["auto_issue"] == 0
     rows = dict(_sql(engines, "SELECT rcept_no, verdict FROM verification.machine_checks"))
-    assert rows == {R_OK: "clean", R_BAD: "mismatch", R_SIGN: "mismatch", R_ARITH: "clean"}
+    assert rows == {R_OK: "clean", R_BAD: "mismatch", R_SIGN: "clean", R_ARITH: "clean"}
     st = dict(_sql(engines, "SELECT fiscal_year, status FROM verification.progress"))
-    assert st == {2024: "passed", 2023: "pending", 2022: "has_issues", 2021: "has_issues"}
-    iss = _sql(engines, "SELECT account_label, column_label, db_value, source_value, error_type, rule_id "
-               "FROM verification.issues WHERE rcept_no = :r", {"r": R_SIGN})
-    # R0-2: DB keeps the printed 7; no layer-3 correction for the cell -> a source_defect record
-    assert iss == [("배당금지급", "이익잉여금 @ 2022.12.31 (기말자본) #항등식", 7, -7, "source_defect", "R0-2")]
-    # clean but the source's own roll-forward is broken (자본금 100 -> 125 with no change row)
-    arith = _sql(engines, "SELECT account_label, column_label, error_type FROM verification.issues "
-                 "WHERE rcept_no = :r", {"r": R_ARITH})
-    assert arith == [("2021.12.31 (기말자본)", "자본금 @ 2021.12.31 #항등식", "source_defect")]
+    assert st == {2024: "passed", 2023: "pending", 2022: "passed", 2021: "passed"}
+    assert _sql(engines, "SELECT count(*) FROM verification.issues WHERE rcept_no IN (:a, :b)",
+                {"a": R_SIGN, "b": R_ARITH})[0][0] == 0
+    kinds = {r: k for r, k in _sql(engines, "SELECT rcept_no, findings::text FROM verification.machine_checks "
+                                            "WHERE rcept_no IN (:a, :b)", {"a": R_SIGN, "b": R_ARITH})}
+    assert '"sign_omitted"' in kinds[R_SIGN] and '"sce_arith"' in kinds[R_ARITH]
     who = _sql(engines, "SELECT verified_by, note FROM verification.progress_filings "
                "WHERE rcept_no = :r", {"r": R_OK})[0]
     assert who[0] == "camp_run:machine" and who[1].startswith("[machine ")
@@ -249,33 +249,6 @@ def test_audit_draw_keeps_a_clean_slot_for_the_model(engines, as_role):
     ops.done(SLOT_OK)
 
 
-def test_machine_recheck_closes_after_the_fix_reload(engines, as_role):
-    # the fix side (admin here) marks the machine's sign issue fixed after a reload that
-    # flipped the dividend cell; the machine re-check closes the sign issue (its finding is gone)
-    as_role("admin")
-    _sql(engines, "UPDATE verification.issues SET status = 'fixing' WHERE rcept_no = :r", {"r": R_SIGN})
-    _sql(engines, "UPDATE report_lines SET value_won = -7 WHERE rcept_no = :r AND label_raw = '배당금지급'",
-         {"r": R_SIGN})
-    _sql(engines, "UPDATE verification.issues SET status = 'fixed', fixed_parser_commit = 'c0ffee' "
-         "WHERE rcept_no = :r", {"r": R_SIGN})
-    as_role("model")
-    assert ops.claim() is None or ops.own_slot() != Slot(CORP, 2022, "FY")
-    if ops.own_slot():
-        ops.done(ops.own_slot())
-    as_role("verify")
-    total = machine_pass.recheck(limit=5, log=lambda _m: None)
-    assert total["closed"] == 1 and total["reopened"] == 0, (total, _sql(engines, "SELECT status, created_by, fixed_parser_commit FROM verification.issues WHERE rcept_no = :r", {"r": R_SIGN}), _sql(engines, "SELECT fiscal_year, status FROM verification.progress"))
-    assert _sql(engines, "SELECT status FROM verification.issues WHERE rcept_no = :r", {"r": R_SIGN}) == [("closed",)]
-    # mc9 (R0-2): the roll-forward closes now, but layer 2 must hold the printed sign — the flipped
-    # cell is a `value` finding, so the machine does not pass the filing (the model sees it)
-    _kv(engines, "machine.audit_pct", "0")
-    machine_pass.run(limit=5, log=lambda _m: None)
-    verdict, findings = _sql(engines, "SELECT verdict, findings::text FROM verification.machine_checks "
-                             "WHERE rcept_no = :r", {"r": R_SIGN})[0]
-    assert verdict == "mismatch" and '"kind": "value"' in findings
-    assert dict(_sql(engines, "SELECT fiscal_year, status FROM verification.progress"))[2022] != "passed"
-
-
 def test_repass_keeps_clean_and_demotes_mismatch(engines, as_role):
     # two filings passed by the model before the machine existed: one faithful, one not
     _sql(engines, "UPDATE report_lines SET value_won = 900 WHERE rcept_no = :r AND label_raw = '자산총계'",
@@ -294,32 +267,6 @@ def test_repass_keeps_clean_and_demotes_mismatch(engines, as_role):
     st = dict(_sql(engines, "SELECT rcept_no, status FROM verification.progress_filings WHERE rcept_no IN (:a, :b)",
                    {"a": R_OK, "b": R_BAD}))
     assert st == {R_OK: "passed", R_BAD: "pending"}
-
-
-def test_machine_does_not_register_a_no_fix_cell_again(engines, as_role):
-    # 2026-10-03: a cell the fix side concluded "no code fix needed" for (closed with a
-    # [withdrawn][no_fix] verdict) must not come back as a new auto issue while its DB value
-    # is unchanged — and with nothing else wrong the filing passes without a model run.
-    _kv(engines, "machine.audit_pct", "0")
-    _sql(engines, "UPDATE report_lines SET value_won = 7 WHERE rcept_no = :r AND label_raw = '배당금지급'",
-         {"r": R_SIGN})
-    with engines["admin"].begin() as c:
-        iid = c.execute(text("""
-            INSERT INTO verification.issues (corp_code, fiscal_year, fiscal_period, rcept_no, basis,
-                statement, account_label, column_label, db_value, error_type)
-            VALUES (:c, 2022, 'FY', :r, 'separate', 'SCE', '배당금지급',
-                    '이익잉여금 @ 2022.12.31 (기말자본)', 7, 'source_defect') RETURNING issue_id"""),
-            {"c": CORP, "r": R_SIGN}).scalar_one()
-        c.execute(text("SELECT set_config('verification.evidence', :e, true)"),
-                  {"e": ops.WITHDRAWN_NO_FIX_PREFIX + " fix_batch:1 released (not fixed): 원문결함"})
-        c.execute(text("UPDATE verification.issues SET status = 'closed' WHERE issue_id = :i"), {"i": iid})
-    assert dict(_sql(engines, "SELECT fiscal_year, status FROM verification.progress"))[2022] == "pending"
-    as_role("verify")
-    total = machine_pass.run(limit=5, log=lambda _m: None)
-    assert total["clean"] == 1 and total["auto_issue"] == 0, total
-    assert _sql(engines, "SELECT count(*) FROM verification.issues WHERE rcept_no = :r "
-                "AND status <> 'closed'", {"r": R_SIGN})[0][0] == 0
-    assert dict(_sql(engines, "SELECT fiscal_year, status FROM verification.progress"))[2022] == "passed"
 
 
 def test_mismatch_made_only_of_no_fix_cells_needs_no_model(engines, as_role):
@@ -342,4 +289,4 @@ def test_mismatch_made_only_of_no_fix_cells_needs_no_model(engines, as_role):
             "mismatch", machine_pass.mc.Counter(), [{**value, "db": 901}])) == 0
         assert machine_pass._all_no_fix(conn, R_BAD, machine_pass.mc.Result(
             "mismatch", machine_pass.mc.Counter(),
-            [value, {"kind": "bs_identity", "basis": "consolidated", "statement": "BS"}])) == 0
+            [value, {"kind": "bs_identity", "basis": "consolidated", "statement": "BS"}])) == 1   # mc10: info

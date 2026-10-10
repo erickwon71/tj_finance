@@ -125,7 +125,8 @@ def test_sce_identity_catches_dropped_sign_in_source(tmp_path):
                 rows.append(_row("SCE", "separate", order, lab, v, col=col))
     res = mc.compare(rows, tables)
     kinds = [f["kind"] for f in res.findings]
-    assert "sign_omitted" in kinds and res.verdict == "mismatch"
+    # mc10: identity findings are recorded (layer-3 backlog) but do not block — every cell matches
+    assert "sign_omitted" in kinds and res.verdict == "clean"
     f = next(f for f in res.findings if f["kind"] == "sign_omitted" and f["col"] == 1)
     assert f["explain"] == "sign" and f["row"].startswith("2024.12.31") and f["value"] == 30.0
 

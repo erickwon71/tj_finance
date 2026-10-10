@@ -244,11 +244,7 @@ def findings_to_issues(findings: list[dict], kinds=CELL_KINDS, select: list[int]
     cell gets the same key whichever subset is registered."""
     prefix = prefix or f"[machine {mc.TOOL_VERSION}]"
     out, seen = [], set()
-    if select is None:
-        res = mc.Result("mismatch", mc.Counter(), [f for f in findings if f["kind"] == "sign_omitted"])
-        if "sign_omitted" in kinds:
-            out += sign_issues(res)
-            seen |= {(i["basis"], i["statement"], i["account_label"], i["column_label"]) for i in out}
+    # mc10 (2026-10-10): identity findings are layer-3 backlog, never issues (see INFO_KINDS)
     wanted = set(select or ())
     for no, f in enumerate(findings, 1):
         kind = f["kind"]
@@ -258,13 +254,10 @@ def findings_to_issues(findings: list[dict], kinds=CELL_KINDS, select: list[int]
                     _cell_item(f, prefix, seen)       # reserve its (#n) key
                 continue
             if kind in IDENTITY_KINDS:
-                it = identity_issue(f, prefix)
-                if it is not None:
-                    out.append({k: v for k, v in it.items() if v is not None})
                 continue
             if kind not in ("value", "missing_row", "zero_row", "uncovered_cell", "extra_row"):
                 continue
-        elif kind not in kinds or kind == "sign_omitted":
+        elif kind not in kinds or kind in IDENTITY_KINDS:
             continue
         out.append(_cell_item(f, prefix, seen))
     return out
@@ -374,21 +367,9 @@ def verify_slot(slot: Slot) -> dict:
             _store(conn, f["rcept_no"], f["claim_load_seq"], r, audit and r.verdict == "clean")
     for f, r in results:
         scopes = sorted((f["scope_hashes"] or {}).keys())
-        if r.verdict == "clean" and not audit and scopes and arith_issues(r):
-            # every cell matches but the source's own SCE arithmetic is broken (D-calc and S-calc
-            # both open): register source_defect instead of passing (verify_prompt I3, decision (가))
-            try:
-                suppressed: list[dict] = []
-                if ops.add_issues(f["rcept_no"], arith_issues(r), suppressed):
-                    out["auto_issue"] += 1
-                else:
-                    ops.pass_filing(f["rcept_no"], scopes,
-                                    f"{_note(r)} · 원문 산수 불일치 {len(suppressed)}건 모두 no_fix 결론"
-                                    f"(#{suppressed[0]['prior_issue_id']} 등)")
-                    out["clean"] += 1
-            except IntegrityError:
-                out["mismatch"] += 1
-        elif r.verdict == "clean" and not audit:
+        # mc10 (2026-10-10): identity findings (source arithmetic, suspected dropped parentheses)
+        # are layer-3 backlog, not layer-2 issues — the machine registers nothing for them.
+        if r.verdict == "clean" and not audit:
             if scopes:
                 ops.pass_filing(f["rcept_no"], scopes, _note(r))
                 out["clean"] += 1
@@ -404,31 +385,6 @@ def verify_slot(slot: Slot) -> dict:
             ops.skip_filing(f["rcept_no"], f"[machine {mc.TOOL_VERSION}] 원문에 재무제표 섹션 표가 없고 "
                                            f"DB 적재 행도 없음")
             out["skipped"] += 1
-        elif (r.verdict == "mismatch" and scopes and not sign_issues(r)
-              and {x["kind"] for x in r.findings if x["kind"] not in mc.INFO_KINDS} <= AUTO_ISSUE_KINDS):
-            # R0-2: every cell matches the print and each suspected dropped parenthesis is already
-            # restored by a layer-3 correction — nothing for layer 2, nothing for the model
-            n = sum(1 for x in r.findings if x["kind"] == "sign_omitted")
-            ops.pass_filing(f["rcept_no"], scopes, f"{_note(r)} · 원문 괄호 누락 추정 {n}셀 모두 계층3 보정 있음(R0-2)")
-            out["clean"] += 1
-        elif r.verdict == "mismatch" and {x["kind"] for x in r.findings
-                                          if x["kind"] not in mc.INFO_KINDS} <= AUTO_ISSUE_KINDS:
-            try:
-                suppressed: list[dict] = []
-                if ops.add_issues(f["rcept_no"], sign_issues(r), suppressed):
-                    out["auto_issue"] += 1
-                elif suppressed and scopes:
-                    # every finding sits on a cell the fix side already concluded "no code fix
-                    # needed" for, and every other cell matched: nothing left for a model run
-                    ops.pass_filing(f["rcept_no"], scopes,
-                                    f"{_note(r)} · 불일치 {len(suppressed)}건 모두 no_fix 결론 셀"
-                                    f"(#{suppressed[0]['prior_issue_id']} 등)")
-                    out["clean"] += 1
-                else:
-                    out["mismatch"] += 1
-            except IntegrityError:
-                # an active issue already sits on that cell: the model reviewer sorts it out
-                out["mismatch"] += 1
         elif r.verdict == "mismatch":
             out["mismatch"] += 1
         else:

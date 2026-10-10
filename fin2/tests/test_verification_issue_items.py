@@ -38,11 +38,13 @@ def test_identity_finding_becomes_source_defect_only_when_source_breaks_too():
     f = {"kind": "sce_arith", "basis": "separate", "statement": "SCE", "check": "flow", "col": 1,
          "from": "2023.01.01 (기초자본)", "to": "2023.12.31 (기말자본)", "start": 10.0, "end": 30.0,
          "sum": 20.0, "diff": 10.0, "scale": 1000, "header": "이익잉여금", "src_broken": True}
-    [it] = mp.findings_to_issues([f], select=[1], prefix="[확인 x]")
-    assert it["error_type"] == "source_defect"
-    assert it["column_label"] == "이익잉여금 @ 2023.12.31 #항등식"
+    # mc10 (2026-10-10): identity findings are layer-3 backlog — selecting one registers nothing
+    assert mp.findings_to_issues([f], select=[1], prefix="[확인 x]") == []
+    assert mp.findings_to_issues([dict(f, src_broken=False)], select=[1]) == []
+    # the issue builder itself is kept for the layer-3 backlog export
+    it = mp.identity_issue(f, "[확인 x]")
+    assert it["error_type"] == "source_defect" and it["column_label"] == "이익잉여금 @ 2023.12.31 #항등식"
     assert it["db_value"] == 30_000 and it["source_unit"] == "천원"
-    assert mp.findings_to_issues([dict(f, src_broken=False)], select=[1]) == []   # I2
 
 
 def test_kinds_path_unchanged_for_bulk_registration():
@@ -59,7 +61,7 @@ def test_source_defect_reports_the_printed_closing_not_the_db_value():
          "from": "2023.01.01 (기초자본)", "to": "2023.09.30 (기말자본)", "start": -5.0, "end": -129.0,
          "src_start": -5.0, "src_end": 129.0, "sum": -35.0, "diff": -94.0, "scale": 1,
          "header": "기타자본구성요소", "db_col": "자본>기타자본구성요소", "src_broken": True}
-    [it] = mp.findings_to_issues([f], select=[1], prefix="[확인 x]")
+    it = mp.identity_issue(f, "[확인 x]")
     assert it["db_value"] == -129 and it["source_value"] == 129 and it["source_value_raw"] == "129"
     assert it["column_label"] == "자본>기타자본구성요소 @ 2023.09.30 #항등식"
 

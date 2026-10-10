@@ -71,16 +71,75 @@ def _last_segment(col_label: Optional[str]) -> str:
     return col_label.split(">")[-1].strip()
 
 
+_UNIT_SEG_RE = re.compile(r"^[(（]?\s*단위")
+
+
+def _segments(col_label: Optional[str]) -> list[str]:
+    """열 헤더 경로의 조각들(단위 선언 조각 제외), **자간 공백을 뺀 형태** — '누 적'·'당 분 기'·
+    '전 분 기' 처럼 띄어 쓴 헤더가 흔하다(실측 00217743 20151116000973, 00178790 20251114000638)."""
+    if not col_label:
+        return []
+    segs = (re.sub(r"\s+", "", s) for s in col_label.split(">"))
+    return [s for s in segs if s and not _UNIT_SEG_RE.match(s)]
+
+
 def period_rank_from_label(col_label: Optional[str]) -> Optional[int]:
-    """열 헤더에서 기간 순위를 읽는다(0=당기). 기간 표기가 아니면 None."""
-    seg = _last_segment(col_label)
-    if not seg:
-        return None
-    if _CUR_RE.match(seg):
-        return 0
-    if _PRIOR_RE.match(seg):
-        return 1
+    """열 헤더에서 기간 순위를 읽는다(0=당기). 기간 표기가 아니면 None.
+
+    ★R230(2026-10-10): 경로의 **모든 조각**을 본다 — 헤더가 '당기>매출원가'·'당기>판매비와관리비'
+    처럼 [기간 > 기능] 2단이면 마지막 조각은 기간이 아니다(종전엔 None → 위치 추측 MULTICOL 로
+    떨어져 판관비 열이 '전기'가 됐다)."""
+    for seg in _segments(col_label):
+        if _CUR_RE.match(seg):
+            return 0
+        if _PRIOR_RE.match(seg):
+            return 1
     return None
+
+
+# ── R230(2026-10-10): 같은 기간 안의 기능별 열 — 합계 열 하나만 ─────────────────
+# 비용의 성격별 분류 표는 열이 [기간 > 기능] 2단인 서식이 있다:
+#   '(단위:천원)>누적>매출원가' | '…>누적>판매비와 관리비' | '…>누적>성격별 비용'
+# 기간 열을 '첫 누적 열' 하나로 고르면 매출원가 몫만 읽고, 그 열이 빈 행(무형자산상각비)은
+# 통째로 빠진다(실측 00110431 2015Q3 [기재정정] 20151209000350: 감가상각비 343,401,000 만 →
+# 정답 721,815,000 + 1,076,024,000). 같은 기간의 열이 여럿이면 **합계 열**을 쓴다. 합계 열이
+# 정확히 하나가 아니면 종전처럼 앞 열(합산 추측은 하지 않는다).
+_PERIOD_SEG_RE = re.compile(
+    r"^(당기|당분기|당반기|금기|전기|전분기|전반기|직전기)(말|초)?(?![가-힣])"
+    r"|누적|3\s*개월|제\s*\d+\s*(?:\(\s*[당전]\s*\)\s*)?기|\d{4}\s*년|\d{4}[.\-/]\d{1,2}")
+_TOTAL_SEG_RE = re.compile(r"^(?:합\s*계|계|총\s*계|총\s*액|합\s*계\s*액|성격별\s*비용(?:\s*합계)?|비용\s*합계|총\s*비용)$")
+
+
+def _dim_key(col_label: Optional[str]) -> tuple:
+    """기간 조각을 뺀 나머지 조각(기능·자산분류 등)."""
+    return tuple(s for s in _segments(col_label) if not _PERIOD_SEG_RE.search(s))
+
+
+def _period_key(col_label: Optional[str]) -> tuple:
+    return tuple(s for s in _segments(col_label) if _PERIOD_SEG_RE.search(s))
+
+
+def _one_column(cols: list[int], labels: dict[int, str]) -> list[int]:
+    """같은 기간으로 판정된 열들 → 쓸 열 하나: 합계 열이 정확히 하나면 그 열, 아니면 앞 열."""
+    if len(cols) <= 1:
+        return cols
+    dims = {c: _dim_key(labels.get(c)) for c in cols}
+    if len(set(dims.values())) == 1:
+        return [min(cols)]          # 기능 구분이 없는 중복 헤더 — 종전처럼 앞 열
+    totals = [c for c in cols if dims[c] and _TOTAL_SEG_RE.match(dims[c][-1].replace(" ", ""))]
+    # no single total column: the earlier behaviour (first column) — the rule only changes
+    # tables that print their own total
+    return totals if len(totals) == 1 else [min(cols)]
+
+
+def _col_labels(trows: list) -> dict[int, str]:
+    labels: dict[int, str] = {}
+    for r in trows:
+        ci = r.col_index or 0
+        lbl = getattr(r, "col_label", None)
+        if lbl and ci not in labels:
+            labels[ci] = lbl
+    return labels
 
 
 # ── interim(H1/Q1/Q3) 누적/분기 열 구분 (2026-07-29) ─────────────────────────
@@ -91,15 +150,33 @@ def period_rank_from_label(col_label: Optional[str]) -> Optional[int]:
 #     col1 '…>누적'  감가상각비 1,656,460,000,000   ← 이쪽을 써야 한다
 _CUM_RE = re.compile(r"누적")
 _DISCRETE_RE = re.compile(r"3개월|3\s*개월|당분기|당3분기")
+_THREE_MONTH_RE = re.compile(r"3\s*개월")
+_PRIOR_LOOSE_RE = re.compile(r"^(?:전\s*누적|전\s*년|전\s*기|전\s*분\s*기|전\s*반\s*기|직전)")
+
+
+def cumulative_cols(trows: list) -> Optional[list[int]]:
+    """표에서 당기 '누적' 열(R230: 같은 기간의 기능별 열이면 합계 열 하나). 헤더에 누적 표기가
+    없으면 None.
+
+    당기 누적 = 첫 누적 열과 기간 조각이 같은 열들(헤더가 [당기 3개월, 당기 누적, 전기 3개월,
+    전기 누적] 순이라 첫 누적 열이 당기다 — 종전 규칙 그대로). 전기 표기가 붙은 열은 뺀다."""
+    labels = _col_labels(trows)
+    # a '3개월' column is never the cumulative one even under a '당누적3분기' header, and
+    # '전누적…'/'전년…' segments are the prior period (실측 00126487 2021Q3 20211115001068:
+    # '당누적3분기>3개월' 46,095,000 | '당누적3분기>누적' 7,812,531,000 | '전누적3분기>…')
+    cum = sorted(ci for ci, l in labels.items() if any(_CUM_RE.search(sg) for sg in _segments(l))
+                 and period_rank_from_label(l) != 1
+                 and not any(_THREE_MONTH_RE.search(s) or _PRIOR_LOOSE_RE.match(s) for s in _segments(l)))
+    if not cum:
+        return None
+    first = _period_key(labels[cum[0]])
+    return _one_column([ci for ci in cum if _period_key(labels[ci]) == first], labels)
 
 
 def cumulative_col(trows: list) -> Optional[int]:
-    """표에서 '누적' 열의 col_index. 헤더로 판별 불가하면 None."""
-    for r in trows:
-        lbl = getattr(r, "col_label", None) or ""
-        if _CUM_RE.search(lbl):
-            return r.col_index or 0
-    return None
+    """표에서 당기 '누적' 열의 col_index. 헤더로 판별 불가하면 None."""
+    cols = cumulative_cols(trows)
+    return cols[0] if cols else None
 
 
 def _ranks_from_col_labels(trows: list) -> Optional[dict[int, int]]:
@@ -107,19 +184,19 @@ def _ranks_from_col_labels(trows: list) -> Optional[dict[int, int]]:
 
     제N기 표기는 표 안에서 **상대 비교**해야 하므로(기수가 큰 쪽이 당기) 따로 처리한다.
     """
-    labels: dict[int, str] = {}
-    for r in trows:
-        ci = r.col_index or 0
-        lbl = getattr(r, "col_label", None)
-        if lbl and ci not in labels:
-            labels[ci] = lbl
+    labels = _col_labels(trows)
     if not labels:
         return None
 
     ranks = {ci: period_rank_from_label(l) for ci, l in labels.items()}
     if any(v is not None for v in ranks.values()):
         # 당기/전기 표기가 하나라도 있으면 그걸 신뢰한다. 판정 안 된 열은 제외.
-        return {ci: v for ci, v in ranks.items() if v is not None}
+        # R230: 같은 순위의 열이 기능별로 여럿이면 합계 열 하나만(고를 수 없으면 그 순위 없음).
+        out: dict[int, int] = {}
+        for rank in set(v for v in ranks.values() if v is not None):
+            for ci in _one_column(sorted(c for c, v in ranks.items() if v == rank), labels):
+                out[ci] = rank
+        return out
 
     # 제N기 비교 — 기수가 큰 쪽이 당기.
     nos: dict[int, int] = {}
@@ -222,7 +299,12 @@ def resolve_periods(rows: list, prefer_cumulative: bool = False) -> list[PeriodC
             for rank, seq in enumerate(seqs):
                 trows = by_table[seq]
                 # interim 은 형제표 안에서도 '3개월/누적' 로 열이 갈린다 → 누적 열 채택.
-                want = (cumulative_col(trows) if prefer_cumulative else None) or 0
+                want = cumulative_col(trows) if prefer_cumulative else None
+                if want is None:
+                    # R230: the extra columns of a sibling table are functions (매출원가/판관비/
+                    # 합계) — the single total column when the table prints one, else column 0
+                    labels = _col_labels(trows)
+                    want = _one_column(sorted(labels), labels)[0] if labels else 0
                 for r in trows:
                     if (r.col_index or 0) != want:
                         continue          # 형제표에서 여분 컬럼은 기간이 아니다

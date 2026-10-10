@@ -35,9 +35,11 @@ NEEDS_MACHINE_SQL = """
         LEFT JOIN verification.machine_checks mc USING (rcept_no)
         WHERE pf.corp_code = p.corp_code AND pf.fiscal_year = p.fiscal_year
           AND pf.fiscal_period = p.fiscal_period AND pf.status = 'pending'
+          -- a pending filing whose check is from another tool version is re-checked whatever its
+          -- verdict (2026-10-10: clean-by-mc9 filings held back by auto issues that were later
+          -- closed as out of scope stayed pending forever)
           AND (mc.rcept_no IS NULL OR mc.load_seq IS DISTINCT FROM fl.load_seq
-               OR (mc.tool_version <> '""" + mc.TOOL_VERSION + """'
-                   AND mc.verdict IN ('mismatch', 'error')))))"""
+               OR mc.tool_version <> '""" + mc.TOOL_VERSION + """')))"""
 
 
 def audit_pct(conn) -> float:

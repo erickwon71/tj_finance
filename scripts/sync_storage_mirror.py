@@ -89,6 +89,12 @@ def _recent_relpaths(since_hours: int) -> list[str] | None:
                 SELECT file_path FROM download_tasks
                 WHERE status = 'completed' AND file_path IS NOT NULL
                   AND completed_at >= now() - make_interval(hours => :h)
+                UNION
+                -- 2026-10-10: web-viewer prints of filings without a main XML
+                -- (docs/plans/viewer_xml_source_policy_2026-10-10.md)
+                SELECT viewer_xml_path FROM download_tasks
+                WHERE viewer_xml_path IS NOT NULL
+                  AND viewer_built_at >= now() - make_interval(hours => :h)
             """), {"h": since_hours}).fetchall()
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[mirror] 최근 파일 목록 조회 실패({exc}) — 전체 스캔으로 진행")

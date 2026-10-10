@@ -19,6 +19,7 @@
 | r2 | v7 초안 | Haiku 1 | — | 기계 버그 발견: SCE 열 번호가 1부터인 필링을 한 칸 밀려 대조(가짜 발견 59건), 부호 복원 판정이 열 단위라 다른 블록의 원문 산수 불일치가 정상 복원을 막음, 항등식 발견의 기초·기말이 DB 값 |
 | r3 | v7 + 기계 mc8 | Haiku 3 · Sonnet 2 | 8/14 (발견 슬롯은 대부분 일치) | Haiku 1회가 웹뷰 셀 오독 · 원문에 같은 기초 라벨이 두 번 → 블록 혼동 · no_table 기준 모호 · audit·no_source 전체 대조에서 Haiku 누락/오독 · Sonnet 이 `#롤포워드` 로 열 표기 |
 | **r4** | **v7 최종** | Haiku 3 (발견 슬롯 0~10) · Sonnet 1 (전 슬롯) | **14/14** | — |
+| r5 (2026-10-10) | R0-2 이행 후: 기계 mc11(산수=기록용, 위치 신호 `sce_identity`·`bs_identity` 만 판정), verify_prompt 항등식 규칙 폐지 | Haiku 3 · Sonnet 1, 새 표본 13슬롯 | **9/13** — 바뀐 규칙의 슬롯(value·sce_identity·sce_arith·sign_omitted·bs_identity·audit·no_source)은 전부 4/4 일치 | 갈린 4슬롯은 오늘 바꾸지 않은 규칙: ① **읽을 수 없는 원문 문자열 규칙**(`83.876.907`·`(8,4730` 처럼 깨진 숫자 + DB 에 셀 없음 = 같음)을 Haiku 가 놓침 — no_table 1/3, uncovered_cell 3/3, Sonnet 은 지킴 ② 행·표 단위(missing_row·unmatched_table) 판정의 Haiku 실행 간 변동(2/3·1/3) |
 
 비용(실측): Haiku ≈ $0.02~0.04/슬롯, Sonnet ≈ $0.4~0.9/슬롯(약 17~20배).
 

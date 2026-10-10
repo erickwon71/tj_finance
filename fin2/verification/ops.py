@@ -1550,8 +1550,9 @@ def machine_status(conn) -> dict:
         LEFT JOIN verification.filing_loads fl USING (rcept_no)
         LEFT JOIN verification.machine_checks mc USING (rcept_no)
         WHERE pf.status = 'pending' AND p.status = 'pending'
+          -- same condition as machine_pass.NEEDS_MACHINE_SQL (any verdict of another version)
           AND (mc.rcept_no IS NULL OR mc.load_seq IS DISTINCT FROM fl.load_seq
-               OR (mc.tool_version <> :t AND mc.verdict IN ('mismatch', 'error')))"""),
+               OR mc.tool_version <> :t)"""),
         {"t": TOOL_VERSION}).scalar_one()
     # A passed-count drop is usually this, not a regression: trg_finalize_load demotes a
     # filing back to pending when a reload changes data that was already passed

@@ -45,7 +45,7 @@ $PY scripts/r0_2_migration/reload_drift.py $D/viewer_rcepts.txt $D/viewer_reload
 command grep -o '"status": "[a-z]*' $D/viewer_reload.jsonl | sort | uniq -c | tee -a $LOG
 
 step "7 layer-3 rebuild"
-rm -f $D/viewer_corps_part_*
+rm -f $D/viewer_corps_part_*(N)
 awk -v d=$D '{ print > (d "/viewer_corps_part_" (NR % 4)) }' $D/viewer_corps.txt
 for p in $D/viewer_corps_part_?; do
   $PY scripts/build_std_v3.py --corp "$(paste -sd, $p)" --year-min 2015 > $p.log 2>&1 &

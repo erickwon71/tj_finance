@@ -151,8 +151,8 @@ def arith_issues(res: mc.Result) -> list[dict]:
     mismatch filing the model reviewer registers them with the rest."""
     out, seen = [], set()
     for f in res.findings:
-        if f["kind"] != "sce_arith" or not f.get("src_broken"):
-            continue
+        if f["kind"] != "sce_arith" or not f.get("src_broken") or f.get("l3_covered"):
+            continue   # R0-2: an identity the layer-3 corrections close is handled there
         s = f.get("scale") or 1
         when = mc.label_date(f["to"]) or f["to"]
         col = f"{f.get('header') or '열' + str(f['col'])} @ {when} #항등식"[:200]

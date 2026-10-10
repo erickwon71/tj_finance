@@ -852,7 +852,38 @@ def compare_filing(conn, rcept: str, xml_path: str) -> Result:
         return Result("error", Counter(), [{"kind": "error", "error": f"{type(exc).__name__}: {exc}"[:300]}])
     res = compare(rows, tables)
     mark_layer3_covered(conn, rcept, res)
+    _mark_identities_closed_in_layer3(conn, rcept, tables, res)
     return res
+
+
+_IDENTITY_KINDS = ("sce_arith", "sce_identity", "sign_omitted")
+
+
+def _identity_key(f: dict) -> tuple:
+    return (f.get("basis"), f.get("table_seq"), f.get("check"), f.get("col"), f.get("from"), f.get("to"))
+
+
+def _mark_identities_closed_in_layer3(conn, rcept: str, tables, res: Result) -> None:
+    """R0-2 (user decision 2026-10-10): cells are compared on layer 2 (printed values), identities
+    are judged on the layer-3 values too. An identity finding that no longer appears when the same
+    filing is compared with report_lines_l3 (printed + corrections) is closed by layer 3:
+    flag it l3_covered, take it out of the verdict, count it (`l3_covered`)."""
+    from sqlalchemy import text
+    ident = [f for f in res.findings if f.get("kind") in _IDENTITY_KINDS]
+    if not ident:
+        return
+    rows_l3 = [dict(r) for r in conn.execute(text(DB_SQL.replace("FROM report_lines ", "FROM report_lines_l3 ")),
+                                             {"r": rcept}).mappings()]
+    open_l3 = {_identity_key(f) for f in compare(rows_l3, tables).findings if f.get("kind") in _IDENTITY_KINDS}
+    for f in ident:
+        if _identity_key(f) not in open_l3:
+            f["l3_covered"] = True
+    n = sum(1 for f in ident if f.get("l3_covered"))
+    if n:
+        res.counts["l3_covered"] = n
+        blocking = [f for f in res.findings if f["kind"] not in INFO_KINDS and not f.get("l3_covered")]
+        if res.verdict == "mismatch" and not blocking:
+            res.verdict = "clean"
 
 
 def _norm_label(s: str | None) -> str:

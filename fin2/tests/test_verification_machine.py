@@ -92,6 +92,8 @@ def engines(tmp_path_factory):
     conn = psycopg2.connect(dbname=TEST_DB)
     with conn.cursor() as cur:
         cur.execute(SCHEMA_SQL.read_text(encoding="utf-8"))
+        from collector.db import REPORT_LINES_L3_VIEW_SQL   # R0-2: machine judges identities on it
+        cur.execute(REPORT_LINES_L3_VIEW_SQL)
         cur.execute("INSERT INTO corporations (corp_code, corp_name, market, stock_code, "
                     "is_active, coverage_class) VALUES (%s, 'TESTCO', 'KOSPI', '123460', true, "
                     "'periodic')", (CORP,))

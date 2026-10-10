@@ -45,6 +45,33 @@ def _set_verification_identity(dbapi_conn, _record) -> None:
         cur.close()
 
 
+# R0-2 (2026-10-10): layer 3 reads report_lines through this view — printed rows with layer-3
+# corrections applied (value / fill / drop). Shared by the migration and the verification tests.
+REPORT_LINES_L3_VIEW_SQL = """
+        CREATE VIEW report_lines_l3 AS
+        SELECT rl.id, rl.corp_code, rl.rcept_no, rl.report_fiscal_year, rl.report_fiscal_period,
+               rl.statement, rl.basis, rl.section_path, rl.row_order, rl.depth, rl.label_raw,
+               rl.col_index, rl.context_fiscal_year, rl.period_kind, rl.is_cumulative,
+               CASE WHEN c.kind = 'value' THEN c.corrected_value ELSE rl.value_won END AS value_won,
+               rl.adecimal, rl.unit_source, rl.source_ref, rl.context_raw, rl.node_role,
+               rl.table_seq, rl.col_label, rl.value_raw, rl.header_hint, rl.value_exact,
+               rl.value_won AS printed_value_won, c.rule AS correction_rule
+        FROM report_lines rl
+        LEFT JOIN layer3_cell_corrections c ON c.report_line_id = rl.id AND c.kind IN ('value', 'drop')
+        WHERE c.kind IS DISTINCT FROM 'drop'
+        UNION ALL
+        SELECT -c.id, d->>'corp_code', c.rcept_no, (d->>'report_fiscal_year')::smallint,
+               d->>'report_fiscal_period', c.statement, c.basis, d->>'section_path', c.row_order,
+               (d->>'depth')::smallint, c.label_raw, c.col_index, (d->>'context_fiscal_year')::smallint,
+               c.period_kind, c.is_cumulative, c.corrected_value, (d->>'adecimal')::smallint,
+               d->>'unit_source', d->>'source_ref', d->>'context_raw', d->>'node_role', c.table_seq,
+               c.col_label, d->>'value_raw', d->>'header_hint', (d->>'value_exact')::numeric,
+               NULL::bigint, c.rule
+        FROM layer3_cell_corrections c CROSS JOIN LATERAL (SELECT c.row_data AS d) x
+        WHERE c.kind = 'fill' AND c.row_data IS NOT NULL;
+"""
+
+
 def init_db() -> None:
     """
     DB 초기화: 존재하지 않는 테이블을 생성하고 연결 상태를 확인.
@@ -1511,27 +1538,7 @@ def _run_migrations() -> None:
          """
         ALTER TABLE layer3_cell_corrections ADD COLUMN IF NOT EXISTS row_data JSONB;
         DROP VIEW IF EXISTS report_lines_l3;
-        CREATE VIEW report_lines_l3 AS
-        SELECT rl.id, rl.corp_code, rl.rcept_no, rl.report_fiscal_year, rl.report_fiscal_period,
-               rl.statement, rl.basis, rl.section_path, rl.row_order, rl.depth, rl.label_raw,
-               rl.col_index, rl.context_fiscal_year, rl.period_kind, rl.is_cumulative,
-               CASE WHEN c.kind = 'value' THEN c.corrected_value ELSE rl.value_won END AS value_won,
-               rl.adecimal, rl.unit_source, rl.source_ref, rl.context_raw, rl.node_role,
-               rl.table_seq, rl.col_label, rl.value_raw, rl.header_hint, rl.value_exact,
-               rl.value_won AS printed_value_won, c.rule AS correction_rule
-        FROM report_lines rl
-        LEFT JOIN layer3_cell_corrections c ON c.report_line_id = rl.id AND c.kind IN ('value', 'drop')
-        WHERE c.kind IS DISTINCT FROM 'drop'
-        UNION ALL
-        SELECT -c.id, d->>'corp_code', c.rcept_no, (d->>'report_fiscal_year')::smallint,
-               d->>'report_fiscal_period', c.statement, c.basis, d->>'section_path', c.row_order,
-               (d->>'depth')::smallint, c.label_raw, c.col_index, (d->>'context_fiscal_year')::smallint,
-               c.period_kind, c.is_cumulative, c.corrected_value, (d->>'adecimal')::smallint,
-               d->>'unit_source', d->>'source_ref', d->>'context_raw', d->>'node_role', c.table_seq,
-               c.col_label, d->>'value_raw', d->>'header_hint', (d->>'value_exact')::numeric,
-               NULL::bigint, c.rule
-        FROM layer3_cell_corrections c CROSS JOIN LATERAL (SELECT c.row_data AS d) x
-        WHERE c.kind = 'fill' AND c.row_data IS NOT NULL;
+        """ + REPORT_LINES_L3_VIEW_SQL + """
         """),
     ]
 

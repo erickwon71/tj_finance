@@ -548,11 +548,19 @@ def write_review_csvs(slot: Slot, detail: dict) -> dict[str, str]:
                 if Path(fp).exists():
                     kind, path = ft or "unknown", fp
                     break
+            if kind != "xml":
+                # 2026-10-10: no main XML but a web-viewer print -> layer 2 was loaded from it
+                # (same choice as _reload_rcept); the CSV must not say xbrl_zip / pdf
+                vx = session.execute(text("SELECT viewer_xml_path FROM download_tasks "
+                                          "WHERE rcept_no = :r AND viewer_xml_path IS NOT NULL LIMIT 1"),
+                                     {"r": f["rcept_no"]}).scalar()
+                if vx and Path(vx).exists():
+                    kind, path = "viewer_xml", vx
             rows = sc.load_rows(session, f["rcept_no"])
             checks = sc.run_checks(session, f["rcept_no"], corp_code=info["corp_code"],
                                    fiscal_period=info["fiscal_period"], rows=rows)
             missing = None
-            if kind == "xml":
+            if kind in ("xml", "viewer_xml"):
                 from fin2.extract.sce_dated_anchors import load_prior_evidence
                 prior_bs, prior_is = load_prior_evidence(session, info["corp_code"], f["rcept_no"])
                 lines = extract_report_lines(
@@ -1276,6 +1284,13 @@ def require_clean_pushed_head() -> str:
     if not ok:
         raise VqError("HEAD 가 origin/main 에 없다 — `git push origin HEAD:main` 후 재적재할 것"
                       "(검증 러너가 같은 코드를 받아야 한다).")
+    # 2026-10-10: a worktree left on an old commit (e.g. before R0-2) passed the check above
+    # and would reload layer 2 with the old parser — the HEAD must also contain origin/main.
+    current = subprocess.run(["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor", "origin/main",
+                              "HEAD"], capture_output=True).returncode == 0
+    if not current:
+        raise VqError("HEAD 가 origin/main 보다 뒤처졌다 — `git merge --ff-only origin/main` 후 재적재할 것"
+                      "(옛 파서로 계층2 를 다시 쓰지 않도록).")
     return commit
 
 

@@ -481,3 +481,25 @@ def test_unlabeled_row_under_amountless_row_is_its_continuation(tmp_path):
     assert "(라벨없음)" not in labels
     wrapped = next(r for r in t.rows if r.label.startswith("지분법"))
     assert wrapped.cells[1] == 5.0
+
+
+def test_unlabeled_row_under_row_with_amounts_inherits_its_label(tmp_path):
+    # mc12 (user decision 2026-10-10): amounts above too -> a separate row, named after the row
+    # above as the loader names it (00485177 2026 H1 별도 SCE 지분법 … 4,089,113)
+    body = _sce([["2024.01.01 (기초자본)", "100", "50", "150"],
+                 ["지분법자본변동", "", "(2)", "(2)"],
+                 ["", "", "7", "7"],
+                 ["2024.12.31 (기말자본)", "100", "55", "155"]])
+    t = mc.load_statement_tables(_xml(tmp_path, body))[0]
+    rows = [(r.label, r.cells[1]) for r in t.rows if r.label == "지분법자본변동"]
+    assert rows == [("지분법자본변동", -2.0), ("지분법자본변동", 7.0)]
+
+
+def test_dash_only_unlabeled_row_is_kept_as_a_separate_row(tmp_path):
+    # mc12: the loader keeps a blank-label row printed '-' as its own (zero) row — so does the machine
+    body = _sce([["2024.01.01 (기초자본)", "100", "50", "150"],
+                 ["지분법자본변동", "", "", "0"],
+                 ["", "", "", "-"],
+                 ["2024.12.31 (기말자본)", "100", "50", "150"]])
+    t = mc.load_statement_tables(_xml(tmp_path, body))[0]
+    assert [r.label for r in t.rows].count("지분법자본변동") == 2

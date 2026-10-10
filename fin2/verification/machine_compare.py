@@ -208,14 +208,22 @@ def _parse_table(idx: int, table, basis: str, title: str) -> SrcTable | None:
         label = ">".join(parts)
         cells = [parse_amount(by_col[c]) if c in by_col else _EMPTY for c in cols]
         if not label:
-            # an unlabeled row carrying amounts (campaign issue #51) must still surface
-            if not any(isinstance(x, float) and x for x in cells):
+            # an unlabeled row carrying amounts (campaign issue #51) must still surface; a printed
+            # '-' / 0 counts (mc12: the loader keeps such a row too), an all-blank row does not
+            if not any(isinstance(x, float) for x in cells):
                 continue
             prev = st.rows[-1] if st.rows else None
-            if prev is not None and not any(isinstance(x, float) and x for x in prev.cells):
-                # mc12 (2026-10-10, user decision): the row above has no amounts and this one has
-                # them — one row whose label wrapped onto a second line; take its amounts
+            if prev is not None and not any(isinstance(x, float) for x in prev.cells):
+                # mc12 (2026-10-10, user decision): the row above has no amounts (every cell blank —
+                # a printed '-' or 0 counts as an amount) and this one has them: one row whose label
+                # wrapped onto a second line; take its amounts
                 prev.cells = cells
+                continue
+            # amounts above too: a separate row. The loader names it after the row above (the
+            # convention the DB shows), so the machine does the same and pairs it by that name;
+            # a DB without the row still gets a missing_row. No row above: '(라벨없음)'.
+            if prev is not None:
+                st.rows.append(SrcRow(idx, prev.key, prev.alt, prev.label, cells))
                 continue
             label, parts = "(라벨없음)", ["(라벨없음)"]
         st.rows.append(SrcRow(idx, norm_label(label), norm_label(parts[-1]), label, cells))

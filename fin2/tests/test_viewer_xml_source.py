@@ -52,8 +52,8 @@ def test_statement_sections_and_signature():
     class N:
         def __init__(self, text, length):
             self.text, self.length = text, length
-    a = vs.signature([N("4. 재무제표", "186944"), N("5. 재무제표 주석", "244431")])
-    b = vs.signature([N("4. 재무제표", "186945"), N("5. 재무제표 주석", "244431")])
+    a = vs.signature([(x.text, x) for x in (N("4. 재무제표", "186944"), N("5. 재무제표 주석", "244431"))])
+    b = vs.signature([(x.text, x) for x in (N("4. 재무제표", "186945"), N("5. 재무제표 주석", "244431"))])
     assert a and b and a != b and vs.signature([]) is None
 
 
@@ -64,5 +64,17 @@ def test_viewer_file_never_takes_the_package_name(tmp_path, monkeypatch):
     class Scraper:
         def fetch_viewer_section(self, *a, **k):
             return _SECTION.encode("utf-8")
-    path, sig = vs.build_viewer_xml(Scraper(), "20150827000474", str(tmp_path / "x.placeholder"), [N()])
+    path, sig = vs.build_viewer_xml(Scraper(), "20150827000474", str(tmp_path / "x.placeholder"), [("4. 재무제표", N())])
     assert path.endswith("20150827000474.viewer.xml") and sig
+
+
+def test_attachment_layout_maps_to_standard_titles():
+    from fin2.extract.viewer_xml import select_sections
+
+    class N:
+        def __init__(self, text):
+            self.text = text
+    nodes = [N(t) for t in ("정 정 신 고 (보고)", "반기연결재무제표 검토보고서", "(첨부)반 기 연 결 재 무 제 표", "주석")]
+    assert [t for t, _ in select_sections(nodes)] == ["2. 연결재무제표", "3. 연결재무제표 주석"]
+    std = [N(t) for t in ("1. 요약재무정보", "2. 연결재무제표", "3. 연결재무제표 주석", "4. 재무제표", "5. 재무제표 주석")]
+    assert [t for t, _ in select_sections(std)] == ["2. 연결재무제표", "3. 연결재무제표 주석", "4. 재무제표", "5. 재무제표 주석"]

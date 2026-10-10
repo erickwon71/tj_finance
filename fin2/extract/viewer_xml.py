@@ -13,6 +13,8 @@ in sign only (the printed convention), 0 other differences.
 """
 from __future__ import annotations
 
+import re
+
 from lxml import etree, html
 
 SECTION1_TITLE = "III. 재무에 관한 사항"
@@ -37,7 +39,27 @@ def _convert(el):
 def is_statement_section(toc_text: str) -> bool:
     """TOC nodes to fetch: (연결)재무제표 and their notes."""
     t = toc_text.replace(" ", "")
-    return "재무제표" in t and "요약" not in t and "기타" not in t
+    return "재무제표" in t and "요약" not in t and "기타" not in t and "보고서" not in t
+
+
+def select_sections(nodes) -> list[tuple[str, object]]:
+    """[(title to use, toc node)] — the standard report layout as is; an audit/review-report
+    layout ([첨부정정]: '(첨부)반 기 연 결 재 무 제 표' followed by a bare '주석' node) mapped to
+    the standard titles the main extractor knows (2./4. 재무제표, 3./5. 주석)."""
+    out, last_std = [], None
+    for n in nodes:
+        t = n.text.replace(" ", "")
+        if is_statement_section(n.text):
+            if re.match(r"^\d+\.", t):           # standard layout: keep the title
+                out.append((n.text, n))
+                last_std = None
+            else:                                   # attached statements
+                last_std = "2. 연결재무제표" if "연결" in t else "4. 재무제표"
+                out.append((last_std, n))
+        elif t == "주석" and last_std:
+            out.append(("3. 연결재무제표 주석" if last_std.startswith("2.") else "5. 재무제표 주석", n))
+            last_std = None
+    return out
 
 
 def build_document(sections: list[tuple[str, bytes]]) -> bytes:

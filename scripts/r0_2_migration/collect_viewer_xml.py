@@ -14,9 +14,9 @@ from pathlib import Path
 
 sys.path.insert(0, os.getcwd())
 
-# XBRL-only filings (no main XML), and PDF-only filings with no layer-2 rows except
-# [첨부정정] (an audit/review report with the statements attached — another section layout,
-# handled separately). User decisions 2026-10-10.
+# XBRL-only filings (no main XML), and PDF-only filings with no layer-2 rows (incl. [첨부정정],
+# whose statements are attached to an audit/review report — viewer_xml.select_sections maps that
+# layout). User decisions 2026-10-10.
 SQL = """
 SELECT x.rcept_no, x.file_path FROM download_tasks x JOIN filings f USING (rcept_no)
 WHERE x.file_type = 'xbrl_zip' AND x.status = 'completed' AND f.fiscal_year >= 2015
@@ -24,7 +24,6 @@ WHERE x.file_type = 'xbrl_zip' AND x.status = 'completed' AND f.fiscal_year >= 2
 UNION
 SELECT d.rcept_no, d.file_path FROM download_tasks d JOIN filings f USING (rcept_no)
 WHERE d.file_type = 'pdf' AND d.status = 'completed' AND f.fiscal_year >= 2015
-  AND f.report_nm NOT LIKE '%%첨부정정%%'
   AND NOT EXISTS (SELECT 1 FROM download_tasks x WHERE x.rcept_no = d.rcept_no
                   AND x.file_type <> 'pdf' AND x.status = 'completed')
   AND NOT EXISTS (SELECT 1 FROM report_lines r WHERE r.rcept_no = d.rcept_no)
@@ -38,7 +37,7 @@ def main():
     import psycopg2
     from collector.legacy_downloader import LegacyDartScraper
     from fin2.extract.html_viewer import parse_toc_tree
-    from fin2.extract.viewer_xml import build_document, is_statement_section
+    from fin2.extract.viewer_xml import build_document, select_sections
 
     manifest = sys.argv[1]
     limit = int(sys.argv[2]) if len(sys.argv) > 2 else None
@@ -58,16 +57,16 @@ def main():
             try:
                 toc = s.fetch_toc_page(rc)
                 nodes = parse_toc_tree(toc or "")
-                picked = [n for n in nodes if is_statement_section(n.text)]
+                picked = select_sections(nodes)
                 if not picked:
                     rec.update(status="no_statement_nodes", toc=[n.text for n in nodes][:40])
                 else:
                     sections = []
-                    for n in picked:
+                    for title, n in picked:
                         raw = s.fetch_viewer_section(rc, dcm_no=n.dcm_no, ele_id=n.ele_id,
                                                      offset=n.offset, length=n.length, dtd=n.dtd)
-                        sections.append((n.text, raw or b""))
-                    out = Path(zip_path).with_suffix(".xml")
+                        sections.append((title, raw or b""))
+                    out = Path(zip_path).with_name(f"{rc}.viewer.xml")
                     data = build_document(sections)
                     out.write_bytes(data)
                     rec.update(status="ok", path=str(out), bytes=len(data),

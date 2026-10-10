@@ -20,17 +20,17 @@ RETRY_DAYS = 180          # document.xml retries stop after 6 months (user decis
 
 
 def statement_nodes(scraper, rcept_no: str):
+    """[(title to use, toc node)] of the statement / notes sections (viewer_xml.select_sections)."""
     from fin2.extract.html_viewer import parse_toc_tree
-    from fin2.extract.viewer_xml import is_statement_section
-    nodes = parse_toc_tree(scraper.fetch_toc_page(rcept_no) or "")
-    return [n for n in nodes if is_statement_section(n.text)]
+    from fin2.extract.viewer_xml import select_sections
+    return select_sections(parse_toc_tree(scraper.fetch_toc_page(rcept_no) or ""))
 
 
 def signature(nodes) -> Optional[str]:
     """Title + length of every statement section — changes when DART re-renders the document."""
     if not nodes:
         return None
-    key = "|".join(f"{n.text}:{n.length}" for n in nodes)
+    key = "|".join(f"{n.text}:{n.length}" for _, n in nodes)
     return hashlib.sha1(key.encode("utf-8")).hexdigest()
 
 
@@ -41,9 +41,9 @@ def build_viewer_xml(scraper, rcept_no: str, near_path: str, nodes=None) -> Opti
     nodes = nodes if nodes is not None else statement_nodes(scraper, rcept_no)
     if not nodes:
         return None
-    sections = [(n.text, scraper.fetch_viewer_section(rcept_no, dcm_no=n.dcm_no, ele_id=n.ele_id,
-                                                      offset=n.offset, length=n.length, dtd=n.dtd) or b"")
-                for n in nodes]
+    sections = [(title, scraper.fetch_viewer_section(rcept_no, dcm_no=n.dcm_no, ele_id=n.ele_id,
+                                                     offset=n.offset, length=n.length, dtd=n.dtd) or b"")
+                for title, n in nodes]
     # <rcept>.viewer.xml: the package's own XML, when it arrives, is saved as <rcept>.xml
     out = Path(near_path).with_name(f"{rcept_no}.viewer.xml")
     out.write_bytes(build_document(sections))

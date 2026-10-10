@@ -20,8 +20,23 @@ from lxml import etree, html
 SECTION1_TITLE = "III. 재무에 관한 사항"
 
 
+def _append_text(out, text):
+    """Append text after the last child of `out` (or to its text when it has none)."""
+    if not text:
+        return
+    if len(out):
+        out[-1].tail = (out[-1].tail or "") + text
+    else:
+        out.text = (out.text or "") + text
+
+
 def _convert(el):
-    """lxml.html element -> DART-style XML element (upper-case tags, same attributes and text)."""
+    """lxml.html element -> DART-style XML element (upper-case tags, same attributes and text).
+
+    <BR> is dropped, its tail kept: the viewer renders DART's in-cell line break `&cr;` as <BR>,
+    and the DART XML reader deletes `&cr;` (parser/xml/dart_xml_parser.py). BR is not a DART tag,
+    so a kept <BR/> was read as the text '<BR/>' — labels like 'Ⅴ. 이익잉여금<BR/>' (176 filings)
+    and statement titles hidden behind an empty '<P><BR/></P>' (2026-10-10)."""
     if not isinstance(el.tag, str):
         return None
     out = etree.Element(el.tag.upper())
@@ -29,11 +44,31 @@ def _convert(el):
         out.set(k.upper(), v)
     out.text = el.text
     for ch in el:
+        if isinstance(ch.tag, str) and ch.tag.upper() == "BR":
+            _append_text(out, ch.tail)
+            continue
         c = _convert(ch)
         if c is not None:
             out.append(c)
             c.tail = ch.tail
     return out
+
+
+def strip_line_breaks(root) -> int:
+    """Drop <BR> elements (keeping their tail text) from an already built viewer XML tree —
+    the same rule as _convert, for prints built before it. Returns the number removed."""
+    n = 0
+    for br in list(root.iter("BR")):
+        parent = br.getparent()
+        prev = br.getprevious()
+        if br.tail:
+            if prev is not None:
+                prev.tail = (prev.tail or "") + br.tail
+            else:
+                parent.text = (parent.text or "") + br.tail
+        parent.remove(br)
+        n += 1
+    return n
 
 
 def is_statement_section(toc_text: str) -> bool:

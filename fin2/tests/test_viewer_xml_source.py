@@ -45,6 +45,42 @@ def test_viewer_print_reads_parentheses_as_printed(tmp_path):
     assert got.get("대손충당금") == -73 and got.get("자산총계") == 1000
 
 
+_P_TITLED = """<HTML><BODY>
+<P class='section-2'><A name='toc1'>4. 재무제표</A></P>
+<P><BR></P>
+<P><SPAN>1) 재무상태표</SPAN><BR></P>
+<P><BR></P>
+<P>   제 15기  1분기말  2018.03.31 현재<BR>   제 14기  전기말  2017.12.31 현재<BR>   (단위: 원)</P>
+<TABLE BORDER='1'><TBODY>
+<TR><TD>과 목</TD><TD>제 15 기 1분기</TD><TD>제 14 기 연간</TD></TR>
+<TR><TD>유동자산</TD><TD>1,000</TD><TD>900</TD></TR>
+<TR><TD>Ⅴ. 이익잉여금<BR></TD><TD>600</TD><TD>600</TD></TR>
+<TR><TD>자산총계</TD><TD>1,000</TD><TD>900</TD></TR>
+</TBODY></TABLE>
+</BODY></HTML>"""
+
+
+def test_line_breaks_are_dropped_like_dart_cr(tmp_path):
+    """<BR> = DART's `&cr;`, which the DART XML reader deletes; kept, it became the text '<BR/>'
+    in labels and hid paragraph titles (20180906000287 티로보틱스: 0 rows)."""
+    xml = build_document([("4. 재무제표", _P_TITLED.encode("utf-8"))])
+    assert b"<BR" not in xml
+    p = tmp_path / "20180906000287.viewer.xml"
+    p.write_bytes(xml)
+    lines = extract_report_lines(str(p), rcept_no="20180906000287", corp_code="00867098",
+                                 report_fiscal_year=2018, report_fiscal_period="Q1", include_notes=False)
+    got = {l.label_raw.strip(): l.value_won for l in lines if l.statement == "BS" and l.col_index == 0}
+    assert got.get("자산총계") == 1000 and got.get("Ⅴ. 이익잉여금") == 600
+
+
+def test_strip_line_breaks_keeps_tail_text():
+    from lxml import etree
+    from fin2.extract.viewer_xml import strip_line_breaks
+    root = etree.fromstring("<P>a<BR/>b<SPAN>c</SPAN><BR/>d<BR/></P>")
+    assert strip_line_breaks(root) == 3
+    assert etree.tostring(root) == b"<P>ab<SPAN>c</SPAN>d</P>"
+
+
 def test_statement_sections_and_signature():
     assert is_statement_section("4. 재무제표") and is_statement_section("3. 연결재무제표 주석")
     assert not is_statement_section("1. 요약재무정보") and not is_statement_section("6. 기타 재무에 관한 사항")

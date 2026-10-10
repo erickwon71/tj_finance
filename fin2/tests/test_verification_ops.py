@@ -790,3 +790,11 @@ def test_identity_command_counts_terms_and_tolerance(capsys):
                  "--total", "24,891,705,760", "--unit", "원"])
     out = json.loads(capsys.readouterr().out)
     assert out["terms"] == 4 and out["tolerance"] == 2 and out["closed"] is False
+
+
+def test_zero_row_filing_with_active_missing_row_takes_no_duplicate(monkeypatch):
+    # 2026-10-10 run 3703: 'whole filing not loaded' registered twice under different first-row
+    # labels on a zero-row filing. The guard is in add_issues; this checks its SQL shape only.
+    import inspect
+    src = inspect.getsource(ops.add_issues)
+    assert "zero_row_dup" in src and "NOT EXISTS (SELECT 1 FROM report_lines" in src

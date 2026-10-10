@@ -717,8 +717,21 @@ def add_issues(rcept: str, items: list[dict], suppressed: list | None = None,
         slot = Slot(f["corp_code"], f["fiscal_year"], f["fiscal_period"])
         _own_claim(conn, slot)
         _check_version(f)
+        # 2026-10-10 (run 3703): a reviewer re-registered 'whole filing not loaded' on a zero-row
+        # filing that already carried that issue under another first-row label. A zero-row filing
+        # with an active missing_row takes no further missing_row (reported in `already`).
+        zero_row_dup = conn.execute(text("""
+            SELECT issue_id FROM verification.issues WHERE rcept_no = :r
+               AND error_type = 'missing_row' AND status IN ('open', 'reopened', 'fixing', 'fixed')
+               AND NOT EXISTS (SELECT 1 FROM report_lines WHERE rcept_no = :r)
+            ORDER BY issue_id LIMIT 1"""), {"r": rcept}).scalar()
         seen_keys: set[tuple] = set()
         for it in items:
+            if zero_row_dup and it.get("error_type") == "missing_row":
+                if already is not None:
+                    already.append({"account_label": it.get("account_label"),
+                                    "column_label": it.get("column_label"), "issue_id": zero_row_dup})
+                continue
             bad = set(it) - set(_ISSUE_FIELDS)
             if bad:
                 raise VqError(f"알 수 없는 이슈 필드 {sorted(bad)}")

@@ -461,3 +461,23 @@ def test_position_signals_block_and_pure_arithmetic_does_not():
     # both misread -> the model checks them; sce_arith / sign_omitted are layer-3 backlog only
     assert {"sce_identity", "bs_identity"} & mc.INFO_KINDS == set()
     assert {"sce_arith", "sign_omitted", "zero_row"} <= mc.INFO_KINDS
+
+
+def test_broken_comma_grouping_reads_as_text():
+    # mc12: '(8,4730' (a broken print the parser does not load) is not a number for the machine
+    assert mc.parse_amount("(8,4730)") is None and mc.parse_amount("83.876.907") is None
+    assert mc.parse_amount("(84,730)") == -84730.0 and mc.parse_amount("1,234,567") == 1234567.0
+    assert mc.parse_amount("12345") == 12345.0 and mc.parse_amount("(1,500.25)") == -1500.25
+
+
+def test_unlabeled_row_under_amountless_row_is_its_continuation(tmp_path):
+    # mc12 (user decision 2026-10-10): the label of the row above wrapped onto a blank-label line
+    body = _sce([["2024.01.01 (기초자본)", "100", "50", "150"],
+                 ["지분법 적용대상 관계기업의", "", "", ""],
+                 ["", "", "5", "5"],
+                 ["2024.12.31 (기말자본)", "100", "55", "155"]])
+    t = mc.load_statement_tables(_xml(tmp_path, body))[0]
+    labels = [r.label for r in t.rows]
+    assert "(라벨없음)" not in labels
+    wrapped = next(r for r in t.rows if r.label.startswith("지분법"))
+    assert wrapped.cells[1] == 5.0

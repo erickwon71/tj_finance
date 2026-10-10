@@ -47,10 +47,16 @@ from lxml import etree
 # mc10 (2026-10-10, user decision): verdict from cells only; identity findings are information
 # (layer-3 backlog), never auto-registered.
 # mc11 (2026-10-10): sce_identity / bs_identity block again (position signals, model checks them).
-TOOL_VERSION = "mc11"
+# mc12 (2026-10-10, user decisions after r5): comma groups must be 3 digits (broken prints read as
+# text, like the parser); an unlabeled row under an amount-less labeled row is that row's wrapped
+# continuation.
+TOOL_VERSION = "mc12"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
+# mc12 (2026-10-10): thousands separators must group by three ('(8,4730' is a broken print the
+# parser does not load either — verify_prompt "숫자로 읽히지 않는 문자열"); no comma = plain digits
+_GROUPED_RE = re.compile(r"^\d{1,3}(,\d{3})+(\.\d+)?$|^\d+(\.\d+)?$")
 _WS_RE = re.compile(r"[\s　\xa0]")
 _SCALES = (1, 1_000, 1_000_000, 100_000_000)
 _EMPTY = "EMPTY"
@@ -97,6 +103,8 @@ def parse_amount(t: str):
     if not _NUM_RE.match(t):
         return None
     neg = t.startswith(("(", "△", "▲", "-", "−"))
+    if not _GROUPED_RE.match(t.strip("()△▲-−")):
+        return None
     try:
         v = float(re.sub(r"[^\d.]", "", t))
     except ValueError:
@@ -202,6 +210,12 @@ def _parse_table(idx: int, table, basis: str, title: str) -> SrcTable | None:
         if not label:
             # an unlabeled row carrying amounts (campaign issue #51) must still surface
             if not any(isinstance(x, float) and x for x in cells):
+                continue
+            prev = st.rows[-1] if st.rows else None
+            if prev is not None and not any(isinstance(x, float) and x for x in prev.cells):
+                # mc12 (2026-10-10, user decision): the row above has no amounts and this one has
+                # them — one row whose label wrapped onto a second line; take its amounts
+                prev.cells = cells
                 continue
             label, parts = "(라벨없음)", ["(라벨없음)"]
         st.rows.append(SrcRow(idx, norm_label(label), norm_label(parts[-1]), label, cells))

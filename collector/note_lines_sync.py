@@ -116,6 +116,12 @@ def sync_layer2_lines(
                 r[0]
                 for r in session.execute(_LOADED_SQL, {"corps": list(corps)}).fetchall()
             }
+            # 2026-10-10: the main XML arrived for a filing loaded from the web-viewer print
+            # (collector/downloader.py::_mark_completed sets the flag) -> load it again
+            loaded -= {r[0] for r in session.execute(text(
+                "SELECT dt.rcept_no FROM download_tasks dt JOIN filings f USING (rcept_no) "
+                "WHERE dt.layer2_reload_pending AND f.corp_code = ANY(:corps)"),
+                {"corps": list(corps)}).fetchall()}
             targets = [t for t in targets if t.rcept_no not in loaded]
         if not targets:
             return out
@@ -177,6 +183,9 @@ def sync_layer2_lines(
                     # rcept 단위 delete-then-insert + col_index=0 필터를 이미 한다.
                     out["body_rows"] += store_report_lines(session, t.rcept_no, lines)
                     store_layer3_corrections(session, t.rcept_no, corrections)
+                    session.execute(text("UPDATE download_tasks SET layer2_reload_pending = FALSE "
+                                         "WHERE rcept_no = :r AND layer2_reload_pending"),
+                                    {"r": t.rcept_no})
                 out["filings"] += 1
                 seen_corps.add(t.corp_code)
             except Exception as exc:  # noqa: BLE001 — 한 건 실패가 전체를 막으면 안 됨

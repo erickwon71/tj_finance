@@ -25,6 +25,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from collector.db import get_session
+from collector.viewer_source import VIEWER_SOURCE_SQL
 from fin2.extract.ifrs_evidence import store_filing_ifrs_evidence
 from fin2.extract.report_lines import store_report_lines, store_report_tables
 from fin2.extract.layer3_corrections import extract_xbrl_with_corrections, store_layer3_corrections
@@ -41,8 +42,27 @@ _TARGETS_SQL = text(
     WHERE dt.status = 'completed'
       AND dt.file_type = 'xbrl_zip'
       AND dt.file_path IS NOT NULL
+      AND dt.viewer_xml_path IS NULL          -- 2026-10-10: the viewer print wins (below)
       AND f.fiscal_year >= :fy_min
       AND f.corp_code = ANY(:corps)
+    ORDER BY dt.rcept_no
+    """
+)
+
+# 2026-10-10 (docs/plans/viewer_xml_source_policy_2026-10-10.md): filings without a main XML
+# whose printed document was rebuilt from the web viewer — loaded through the XML path (printed
+# values + layer-3 corrections, notes included). Due when never loaded from it or flagged.
+_VIEWER_TARGETS_SQL = text(
+    f"""
+    SELECT dt.rcept_no, dt.viewer_xml_path AS file_path, f.corp_code, f.fiscal_year,
+           f.fiscal_period, COALESCE(dt.layer2_reload_pending, FALSE) AS flagged
+    FROM download_tasks dt JOIN filings f USING(rcept_no)
+    WHERE {VIEWER_SOURCE_SQL}
+      AND f.fiscal_year >= :fy_min
+      AND f.corp_code = ANY(:corps)
+      AND (COALESCE(dt.layer2_reload_pending, FALSE)
+           OR NOT EXISTS (SELECT 1 FROM report_lines r WHERE r.rcept_no = dt.rcept_no
+                          AND r.unit_source IS DISTINCT FROM 'xbrl'))
     ORDER BY dt.rcept_no
     """
 )
@@ -74,6 +94,9 @@ def sync_xbrl_instance_lines(
     out = {"corps": 0, "filings": 0, "rows": 0, "table_rows": 0, "errors": 0}
     if not corps:
         return out
+    v = sync_viewer_lines(corps, year_min)
+    for k in ("filings", "rows", "errors"):
+        out[k] += v[k]
 
     with get_session() as session:
         targets = session.execute(
@@ -135,4 +158,41 @@ def sync_xbrl_instance_lines(
         session.commit()
         out["corps"] = len(seen_corps)
 
+    return out
+
+
+def sync_viewer_lines(corps: list[str], year_min: int = FY_MIN) -> dict:
+    """Load the web-viewer print of filings without a main XML (see _VIEWER_TARGETS_SQL)
+    through the XML path: printed values in report_lines, layer-3 corrections, notes, table
+    meta. Clears layer2_reload_pending on success. Runs inside ④-4, so both daily call sites
+    and the layer-3 rebuild set (xbrl_affected) cover it."""
+    from fin2.extract.layer3_corrections import extract_xml_with_corrections, store_layer3_corrections
+    from fin2.extract.report_lines import store_note_lines
+    from fin2.extract.sce_dated_anchors import load_prior_evidence
+    out = {"filings": 0, "rows": 0, "errors": 0}
+    with get_session() as session:
+        targets = session.execute(_VIEWER_TARGETS_SQL, {"fy_min": year_min, "corps": list(corps)}).fetchall()
+    for t in targets:
+        if not Path(t.file_path).exists():
+            continue
+        try:
+            with get_session() as session:
+                pb, pi = load_prior_evidence(session, t.corp_code, t.rcept_no)
+                lines, corrections = extract_xml_with_corrections(
+                    t.file_path, rcept_no=t.rcept_no, corp_code=t.corp_code,
+                    report_fiscal_year=t.fiscal_year, report_fiscal_period=t.fiscal_period,
+                    include_notes=True, prior_balances=pb, prior_income=pi)
+                if not lines:
+                    continue          # keep whatever is loaded (XBRL) rather than empty it
+                session.execute(text("SELECT set_config('verification.load_reason', 'viewer_source', true)"))
+                store_note_lines(session, t.rcept_no, lines)
+                store_report_tables(session, t.rcept_no, lines, scope="all")
+                out["rows"] += store_report_lines(session, t.rcept_no, lines)
+                store_layer3_corrections(session, t.rcept_no, corrections)
+                session.execute(text("UPDATE download_tasks SET layer2_reload_pending = FALSE "
+                                     "WHERE rcept_no = :r"), {"r": t.rcept_no})
+            out["filings"] += 1
+        except Exception as exc:  # noqa: BLE001
+            out["errors"] += 1
+            logger.warning(f"[viewer_lines] {t.rcept_no} 적재 실패: {type(exc).__name__}: {exc}")
     return out

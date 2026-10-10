@@ -24,7 +24,7 @@ DART 제출 형식:
 import io
 import shutil
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -47,6 +47,10 @@ from collector.config import (
 XML_PENDING_ALERT_START_DAYS    = 30  # 이 날짜부터 알림 시작
 XML_PENDING_ALERT_INTERVAL_DAYS = 7   # 알림 반복 간격
 XML_PENDING_ESCALATE_DAYS       = 60  # 이 날짜부터 알림 표시를 강조(자동 동작 변화는 없음)
+# ★2026-10-10 정책(사용자 결정, docs/plans/viewer_xml_source_policy_2026-10-10.md) — 대기 중에는
+# 웹뷰 인쇄본으로 만든 XML 로 계층2 를 적재하고, document.xml 재시도는 대기 시작 후 180일까지만
+# 한다(그 뒤로는 웹뷰 출처로 확정). 원본 XML 이 올라오면 자동 재적재(layer2_reload_pending).
+from collector.viewer_source import RETRY_DAYS as _VIEWER_RETRY_DAYS
 from collector.dart_client import DartClient, DartApiError
 from collector.rate_limiter import DailyQuotaReached
 
@@ -179,6 +183,31 @@ def _mark_skipped(rcept_no: str, reason: str) -> None:
         )
 
 
+def _refresh_viewer_source(rcept_no: str) -> None:
+    """2026-10-10 policy (docs/plans/viewer_xml_source_policy_2026-10-10.md): while the package
+    has no main XML, layer 2 reads the printed document rebuilt from the web viewer. Build it on
+    the first pending day, rebuild it when the document's statement sections change (that also
+    flags a layer-2 reload). Never fails the download step."""
+    try:
+        from collector.legacy_downloader import LegacyDartScraper
+        from collector.viewer_source import refresh_viewer
+        with get_session() as session:
+            row = session.execute(
+                select(Filing, Corporation)
+                .join(Corporation, Filing.corp_code == Corporation.corp_code)
+                .where(Filing.rcept_no == rcept_no)).one()
+            near = _build_file_path(row.Corporation, row.Filing) / f"{rcept_no}.placeholder"
+            scraper = LegacyDartScraper()
+            try:
+                result = refresh_viewer(session, scraper, rcept_no, str(near))
+            finally:
+                scraper.close()
+        if result in ("built", "rebuilt"):
+            logger.info(f"  ↳ 웹뷰 인쇄본 XML {result}: {rcept_no} (계층2 적재 대상)")
+    except Exception as exc:  # noqa: BLE001 — the retry continues tomorrow
+        logger.warning(f"  ↳ 웹뷰 인쇄본 XML 생성 실패(비치명, 다음 재시도에 다시): {rcept_no}: {exc}")
+
+
 def _handle_xml_pending(rcept_no: str, api_err_msg: str) -> None:
     """[014](document.xml 아직 없음) 처리 — 2026-08-19 정책(모듈 상단 주석 참고).
 
@@ -220,8 +249,9 @@ def _handle_xml_pending(rcept_no: str, api_err_msg: str) -> None:
                else "🔔 XML_PENDING_ALERT")
         logger.warning(
             f"  {tag} {rcept_no}: document.xml {days_pending}일째 미등록([014]) — "
-            f"자동 대체 없이 계속 재시도 중(logs/collect.err.log 검색용 태그)."
+            f"웹뷰 인쇄본으로 적재하며 {_VIEWER_RETRY_DAYS}일까지 재시도(logs/collect.err.log 검색용 태그)."
         )
+    _refresh_viewer_source(rcept_no)
     return None
 
 
@@ -278,8 +308,9 @@ def _handle_standard_file_pending(
                else "🔔 XML_PENDING_ALERT")
         logger.warning(
             f"  {tag} {rcept_no}: 표준파일(XML/XBRL) {days_pending}일째 미등록"
-            f"(현재 {file_type} 로 잠정 저장) — 계속 재시도 중."
+            f"(현재 {file_type} 로 잠정 저장) — 웹뷰 인쇄본으로 적재하며 {_VIEWER_RETRY_DAYS}일까지 재시도."
         )
+    _refresh_viewer_source(rcept_no)
 
 
 def _build_file_path(
@@ -453,6 +484,11 @@ def run_downloads(
                         # attempts=3 으로 막혀 매일 재시도가 끊긴다.
                         DownloadTask.xml_pending_since.isnot(None),
                     ),
+                    # 2026-10-10: pending for document.xml longer than 180 days -> the viewer
+                    # source is final, no more retries
+                    or_(DownloadTask.xml_pending_since.is_(None),
+                        DownloadTask.xml_pending_since
+                        > datetime.utcnow() - timedelta(days=_VIEWER_RETRY_DAYS)),
                 )
                 .order_by(
                     Filing.corp_code.asc(),
@@ -634,7 +670,7 @@ def _download_one(
             # 이미 완전히 다운로드된 파일이면 스킵
             if dest_path.exists() and dest_path.stat().st_size == best.file_size:
                 logger.debug(f"  이미 존재 (동일 크기) → 스킵: {dest_path.name}")
-                if ext not in (".xml", ".xbrl") and filing.report_type in _XML_EXPECTED_REPORT_TYPES:
+                if ext != ".xml" and filing.report_type in _XML_EXPECTED_REPORT_TYPES:  # 2026-10-10: XBRL alone waits too
                     logger.info(f"  ⏳ 표준파일 미등록(현재 {ext})→ 대기 상태 유지: {task.rcept_no}")
                     _handle_standard_file_pending(
                         task.rcept_no, dest_path, ext.lstrip("."), best.file_size,
@@ -676,7 +712,7 @@ def _download_one(
             f"  ✓ 저장 완료{fmt_note}: {dest_path.relative_to(RAW_REPORT_DIR)} "
             f"({file_size / 1024 / 1024:.1f} MB)"
         )
-        if ext not in (".xml", ".xbrl") and filing.report_type in _XML_EXPECTED_REPORT_TYPES:
+        if ext != ".xml" and filing.report_type in _XML_EXPECTED_REPORT_TYPES:  # 2026-10-10: XBRL alone waits too
             # R103(2026-09-13) — 표준파일(XML/XBRL) 대신 PDF 등만 있는 최근 정기보고서.
             # 완료 처리하지 않고 대기시켜 데일리가 document.xml 을 계속 재시도하게 한다
             # (모듈 상단 [014] 정책과 같은 근본원인 — 표준파일이 뒤늦게 올라오는 관행).
@@ -736,6 +772,15 @@ def _mark_completed(
         xml_pending_since=None,
         xml_pending_last_alert_at=None,
     )
+    if file_type.lstrip(".") == "xml":
+        # 2026-10-10: the main XML arrived for a filing loaded from the viewer -> reload layer 2
+        # from it (collector/note_lines_sync.py honours the flag even for loaded filings)
+        with get_session() as session:
+            had_viewer = session.execute(
+                select(DownloadTask.viewer_xml_path).where(DownloadTask.rcept_no == rcept_no)
+            ).scalar()
+        if had_viewer:
+            values["layer2_reload_pending"] = True
     if parser_track is not None:
         values["parser_track"] = parser_track
     if dcm_no is not None:

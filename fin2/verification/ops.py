@@ -1310,14 +1310,22 @@ def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, s
     from fin2.extract.report_lines import store_note_lines, store_report_lines, store_report_tables
 
     with get_session() as s:
+        # 2026-10-10 (docs/plans/viewer_xml_source_policy_2026-10-10.md): no completed main XML
+        # but a web-viewer print -> that XML is the source (as the daily ④-4 loads it)
         t = s.execute(text("""
-            SELECT dt.file_path, dt.file_type, f.corp_code, f.fiscal_year, f.fiscal_period,
-                   f.period_end_date
+            SELECT CASE WHEN dt.status = 'completed' AND dt.file_type = 'xml' THEN dt.file_path
+                        WHEN dt.viewer_xml_path IS NOT NULL THEN dt.viewer_xml_path
+                        ELSE dt.file_path END AS file_path,
+                   CASE WHEN dt.status = 'completed' AND dt.file_type = 'xml' THEN 'xml'
+                        WHEN dt.viewer_xml_path IS NOT NULL THEN 'xml'
+                        ELSE dt.file_type END AS file_type,
+                   f.corp_code, f.fiscal_year, f.fiscal_period, f.period_end_date
             FROM download_tasks dt JOIN filings f USING (rcept_no)
-            WHERE dt.rcept_no = :r AND dt.status = 'completed'
-              AND dt.file_type IN ('xml', 'xbrl_zip')
-              AND dt.file_path IS NOT NULL
-            ORDER BY (dt.file_type = 'xml') DESC LIMIT 1"""), {"r": rcept}).fetchone()
+            WHERE dt.rcept_no = :r
+              AND ((dt.status = 'completed' AND dt.file_type IN ('xml', 'xbrl_zip')
+                    AND dt.file_path IS NOT NULL)
+                   OR dt.viewer_xml_path IS NOT NULL)
+            LIMIT 1"""), {"r": rcept}).fetchone()
     if t is None:
         return "failed", "XML/XBRL 원문 없음 — PDF 경로는 전용 스크립트로 처리"
     file_path = _sd_path(t.file_path) if use_sd and t.file_type == "xml" else t.file_path
@@ -1351,6 +1359,8 @@ def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, s
                                 scope="all" if t.file_type == "xml" else "body")
             store_report_lines(s, rcept, lines)
             store_layer3_corrections(s, rcept, corrections)   # R0-2: after the printed rows
+            s.execute(text("UPDATE download_tasks SET layer2_reload_pending = FALSE "
+                           "WHERE rcept_no = :r AND layer2_reload_pending"), {"r": rcept})
     except DBAPIError as exc:
         if isinstance(exc.orig, pg_errors.LockNotAvailable):
             return "deferred", "검증 중(lease) — lease 종료 후 재시도"

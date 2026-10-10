@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 
 from collector.db import engine
 from fin2.verification import machine_compare as mc
+from collector.viewer_source import VIEWER_SOURCE_SQL
 from fin2.verification import ops
 from fin2.verification.ops import Slot
 
@@ -42,6 +43,9 @@ NEEDS_MACHINE_SQL = """
                OR mc.tool_version <> '""" + mc.TOOL_VERSION + """')))"""
 
 
+VIEWER_AUDIT_PCT = 10.0     # slots with a web-viewer-source filing (user decision 2026-10-10)
+
+
 def audit_pct(conn) -> float:
     v = conn.execute(text("SELECT value FROM verification.kv WHERE key = 'machine.audit_pct'")).scalar()
     try:
@@ -52,10 +56,14 @@ def audit_pct(conn) -> float:
 
 def _source_path(conn, rcept: str) -> str | None:
     from pathlib import Path
+    # the main XML, else the web-viewer print of a filing without one (2026-10-10)
     for (fp,) in conn.execute(text("""
-            SELECT file_path FROM download_tasks
-            WHERE rcept_no = :r AND status = 'completed' AND file_type = 'xml'
-              AND file_path IS NOT NULL ORDER BY id DESC"""), {"r": rcept}).fetchall():
+            SELECT CASE WHEN status = 'completed' AND file_type = 'xml' THEN file_path
+                        ELSE viewer_xml_path END
+            FROM download_tasks
+            WHERE rcept_no = :r AND ((status = 'completed' AND file_type = 'xml' AND file_path IS NOT NULL)
+                                     OR viewer_xml_path IS NOT NULL)
+            ORDER BY id DESC"""), {"r": rcept}).fetchall():
         if Path(fp).exists():
             return fp
     return None
@@ -360,6 +368,14 @@ def verify_slot(slot: Slot) -> dict:
             results.append((f, res))
         known = {f["rcept_no"]: _all_no_fix(conn, f["rcept_no"], r)
                  for f, r in results if r.verdict == "mismatch"}
+        # 2026-10-10 (user decision): the web-viewer print is our own conversion — a converter
+        # error is read the same way by the parser and the machine, so slots holding such a
+        # filing get a 10% audit draw (the model checks the DART web view itself)
+        if results and conn.execute(text(f"""
+                SELECT EXISTS (SELECT 1 FROM download_tasks dt
+                               WHERE dt.rcept_no = ANY(:rs) AND {VIEWER_SOURCE_SQL})"""),
+                {"rs": [f["rcept_no"] for f, _ in results]}).scalar():
+            pct = max(pct, VIEWER_AUDIT_PCT)
     clean = [(f, r) for f, r in results if r.verdict == "clean"]
     # Audit draw per slot, only when the machine would otherwise pass all of it.
     audit = bool(results) and len(clean) == len(results) and random.random() * 100 < pct

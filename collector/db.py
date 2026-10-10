@@ -1531,6 +1531,20 @@ def _run_migrations() -> None:
         LEFT JOIN layer3_cell_corrections c ON c.report_line_id = rl.id AND c.kind = 'value';
         """),
 
+        ("2026_10_10_download_tasks_viewer_source",
+         # docs/plans/viewer_xml_source_policy_2026-10-10.md — web-viewer XML for filings without
+         # a main XML in the DART package; reload flag when the source changes.
+         """
+        ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS viewer_xml_path VARCHAR(1000);
+        ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS viewer_sig VARCHAR(64);
+        ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS viewer_built_at TIMESTAMP;
+        ALTER TABLE download_tasks ADD COLUMN IF NOT EXISTS layer2_reload_pending BOOLEAN;
+        CREATE INDEX IF NOT EXISTS ix_download_tasks_reload_pending ON download_tasks (rcept_no)
+            WHERE layer2_reload_pending;
+        CREATE INDEX IF NOT EXISTS ix_download_tasks_viewer ON download_tasks (rcept_no)
+            WHERE viewer_xml_path IS NOT NULL;
+        """),
+
         ("2026_10_10_report_lines_l3_fill_drop",
          # The view must hand layer 3 exactly what the old layer 2 held: also apply 'drop' (row hidden)
          # and 'fill' (row added from row_data — e.g. an R159-fixed BS cell that the printed reading

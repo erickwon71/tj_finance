@@ -149,6 +149,12 @@ class DownloadTask(Base):
     # 자동 재시도(collector/downloader.py::_handle_xml_pending). 30일부터 7일 간격 로그 알림.
     xml_pending_since        = Column(DateTime, nullable=True, comment="[014] 최초 관측 시각")
     xml_pending_last_alert_at = Column(DateTime, nullable=True, comment="마지막 알림 로그 발행 시각")
+    # 2026-10-10 (docs/plans/viewer_xml_source_policy_2026-10-10.md): no main XML in the DART
+    # package -> the printed document is rebuilt from the web viewer and loaded instead.
+    viewer_xml_path       = Column(String(1000), nullable=True, comment="웹뷰 인쇄본으로 만든 DART XML 경로")
+    viewer_sig            = Column(String(64),  nullable=True, comment="웹뷰 목차 재무제표 섹션 서명(제목·길이 해시)")
+    viewer_built_at       = Column(DateTime,    nullable=True)
+    layer2_reload_pending = Column(Boolean,     nullable=True, comment="원천이 바뀌어 계층2 재적재 필요")
 
     # PRD 02 Gate A: 다운로드 유효성 검증
     gate_a_status    = Column(String(12), nullable=True, index=True,

@@ -153,10 +153,25 @@ def needs_xbrl_instance_corps(only: list[str] | None = None) -> list[str]:
         JOIN filings f ON f.rcept_no = dt.rcept_no
         WHERE dt.status='completed' AND dt.file_type='xbrl_zip' AND dt.file_path IS NOT NULL
           AND f.fiscal_year >= 2015 {clause}
+          AND dt.viewer_xml_path IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM report_lines r
             WHERE r.rcept_no = dt.rcept_no AND r.unit_source = 'xbrl')
-        ORDER BY f.corp_code
+        UNION
+        -- 2026-10-10 (docs/plans/viewer_xml_source_policy_2026-10-10.md): web-viewer print of a
+        -- filing without a main XML, not loaded from it yet (scoped like above) or flagged for a
+        -- reload (any corp — the flag is set by a pending retry that may not be in today's list)
+        SELECT DISTINCT f.corp_code
+        FROM download_tasks dt
+        JOIN filings f ON f.rcept_no = dt.rcept_no
+        WHERE dt.viewer_xml_path IS NOT NULL
+          AND NOT (dt.status = 'completed' AND dt.file_type = 'xml')
+          AND f.fiscal_year >= 2015
+          AND (COALESCE(dt.layer2_reload_pending, FALSE)
+               OR (TRUE {clause} AND NOT EXISTS (
+                     SELECT 1 FROM report_lines r WHERE r.rcept_no = dt.rcept_no
+                     AND r.unit_source IS DISTINCT FROM 'xbrl')))
+        ORDER BY 1
     """
     params = {"only": only} if only else {}
     with get_session() as s:

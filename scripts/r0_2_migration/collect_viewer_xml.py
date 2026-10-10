@@ -45,9 +45,11 @@ def main():
     done = set()
     if os.path.exists(manifest):
         done = {d["rcept"] for d in map(json.loads, open(manifest)) if d["status"] == "ok"}
-    cur = psycopg2.connect(os.environ["DATABASE_URL"]).cursor()
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    cur = conn.cursor()
     cur.execute(SQL)
     targets = [(r, p) for r, p in cur.fetchall() if r not in done][:limit]
+    conn.close()      # never hold a transaction (and its locks) through hours of fetching
     print("targets", len(targets), flush=True)
     s = LegacyDartScraper()
     with open(manifest, "a") as fo:

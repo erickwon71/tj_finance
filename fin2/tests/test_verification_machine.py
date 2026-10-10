@@ -289,4 +289,4 @@ def test_mismatch_made_only_of_no_fix_cells_needs_no_model(engines, as_role):
             "mismatch", machine_pass.mc.Counter(), [{**value, "db": 901}])) == 0
         assert machine_pass._all_no_fix(conn, R_BAD, machine_pass.mc.Result(
             "mismatch", machine_pass.mc.Counter(),
-            [value, {"kind": "bs_identity", "basis": "consolidated", "statement": "BS"}])) == 1   # mc10: info
+            [value, {"kind": "bs_identity", "basis": "consolidated", "statement": "BS"}])) == 0   # mc11: position signal, the model looks

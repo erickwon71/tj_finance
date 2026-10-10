@@ -80,7 +80,9 @@ DB 가 원문과 같으면 이슈가 아니다. 그런 원문 결함의 보정�
    | `missing_row` | 웹뷰에 그 행이 있고, CSV 의 같은 basis·statement 에 그 계정명 행이 없다 | CSV 에 그 계정명 행이 있고 값이 같다 |
    | `uncovered_cell` | CSV 그 행에 그 열 줄(`열=`)이 없다 | CSV 에 그 열 줄이 있고 값이 같다 |
    | `extra_row` | 웹뷰의 그 표에 그 계정명 행이 없다 | 웹뷰에 그 계정명 행이 있다 |
-   | `sce_identity`·`sce_arith`·`sign_omitted`·`bs_identity` | — | 언제나 아무것도 하지 않는다(산수 기록용, 계층3 보정 후보 목록으로 쓰인다. 노트에도 적지 않는다) |
+   | `sce_identity` (값 위치 의심: 그 행의 값을 옆 열에서 가져오면 산수가 맞는다) | 웹뷰에서 `to` 블록의 `row` 행을 찾아 열 머리 `header` 아래에 **보이는** 숫자가 CSV 의 같은 행·같은 열(`db_col`) 값과 **다르다** → 아래 "직접 등록" 으로 `column_misassign` 1건(account_label = 그 행 CSV 항목명, column_label = `<db_col> @ <to 날짜>`, db_value = CSV 값, source_value·source_value_raw = 웹뷰 그 칸, evidence `웹뷰 열 위치 ≠ DB 열`) | 웹뷰 그 칸 숫자가 CSV 값과 같다(원문 배치 그대로 — 산수는 계층3 몫, 노트에도 적지 않는다) |
+   | `bs_identity` (자산총계 ≠ 부채총계 + 자본총계, DB 값 `assets`·`liabilities`·`equity` 원) | 웹뷰 BS 당기 열의 자산총계·부채총계·자본총계 중 DB 값과 **다른** 것이 있다 → 다른 행마다 "직접 등록" 으로 `value_mismatch` 1건 | 세 값이 모두 DB 와 같다(원문 자체의 산수 — 아무것도 하지 않는다) |
+   | `sce_arith`·`sign_omitted` | — | 언제나 아무것도 하지 않는다(원문 산수 기록, 계층3 보정 후보 목록. 노트에도 적지 않는다) |
    | `zero_row` | — | 언제나 아무것도 하지 않는다(노트에도 적지 않는다) |
    | `unmatched_table` | 웹뷰 목차에서 그 표를 찾아 보니 BS·IS(포괄손익)·CF·SCE **본표**이고, 그 표의 금액 행들이 CSV 의 같은 basis·statement 에 **없다** → 아래 "직접 등록" 으로 `missing_row` 1건(그 표 첫 금액 행, evidence `표 전체 미적재, 금액행 N개`) | 주석 표·이익잉여금처분계산서·요약표·정정 전후 비교표·**신탁계정·특별계정 등 회사 본체가 아닌 회계단위의 표**이거나, 그 금액 행들이 CSV 에 이미 있다(나뉜 표). `title`·`basis` 는 믿지 않는다 |
    | `no_table` | 그 묶음(`table_seq`)의 CSV 행 가운데 원문의 **같은 종류**(그 statement) 본표에 없는 금액 행이 있다(다른 종류 본표에만 있는 행 포함, 예: BS 행이 CF 로 실림) → "직접 등록" 으로 `extra_row` 1건(account_label = 그런 행 중 CSV 에서 가장 위의 행) | 묶음의 금액 행이 모두 원문 같은 종류 본표에 있다 |
@@ -91,7 +93,7 @@ DB 가 원문과 같으면 이슈가 아니다. 그런 원문 결함의 보정�
    - **10건 이상 같은 종류**(`value`·`missing_row`·`uncovered_cell`·`extra_row` 중 하나): 그 종류의 발견 목록에서 첫 번째·가운데(짝수면 앞쪽)·마지막 3건만 확인한다.
      3건 모두 "등록" 이면 그 종류 전체를 `--kinds <그 종류>`(`--findings` 대신)로 만들어 등록한다. 하나라도 "기계오탐" 이면 그 종류는 하나씩 확인한다.
    - 기계오탐은 pass `--note` 에 `기계오탐: <발견 번호>·<종류>·<원인 한 줄>` 로 남긴다(이슈가 있어 pass 하지 않는 필링이면 생략).
-   - mismatch 필링에서는 `label_mismatch` 판정·산수 계산을 하지 않는다. 계층2 에는 부호 복원이 없다(R0-2, 2026-10-10) — 원문이 양수로 인쇄되고 DB 가 음수면, 롤포워드가 DB 값으로 닫혀 보여도 `value` 발견이고 표대로 "등록" 이다(네가 계산해 기계오탐으로 바꾸지 않는다). 같은 자리의 `missing_row` 와 `extra_row` 도 발견 종류대로 각각 등록한다.
+   - mismatch 필링에서는 `label_mismatch` 판정·산수 계산을 하지 않는다(`sce_identity`·`bs_identity` 도 계산하지 않고 위 표대로 웹뷰 숫자만 본다). 계층2 에는 부호 복원이 없다(R0-2, 2026-10-10) — 원문이 양수로 인쇄되고 DB 가 음수면, 롤포워드가 DB 값으로 닫혀 보여도 `value` 발견이고 표대로 "등록" 이다(네가 계산해 기계오탐으로 바꾸지 않는다). 같은 자리의 `missing_row` 와 `extra_row` 도 발견 종류대로 각각 등록한다.
 
    ### 전체 대조 (`audit`·`no_source`·`no_structure`·`error` 필링)
 

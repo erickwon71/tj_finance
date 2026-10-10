@@ -73,7 +73,7 @@
 - 계층3 읽기: `report_lines_l3` 뷰 = `report_lines` + kind='value' 보정. `fin2/layer3/combine.py`·R187 근거(`sce_dated_anchors.py`)가 이 뷰를 읽는다. kind='fill'/'drop'(SCE R183)은 계층3 SCE 소비처가 생길 때 뷰에 반영한다.
 - 배선: `ops._reload_rcept`, `collector/note_lines_sync.py`(데일리 XML — `collect_new.py` 두 call site 모두 이 함수를 거친다), `collector/xbrl_instance_lines_sync.py`(데일리 XBRL).
 - 옛 동작 비교: `TJF_LAYER2_AS_PRINTED=0` 이면 규칙이 계층2 에 다시 쓴다(한 릴리스 유지 후 삭제, D4).
-- **검증 캠페인 범위 = 계층2 충실도만 (2026-10-10 사용자 결정)**: 검증(기계·모델)은 "DB 셀 = 원문 인쇄값" 만 본다. 산수(롤포워드·합계·BS 항등식)와 괄호 누락 추정은 계층2 이슈가 아니다 — 이슈를 만들지 않고, 기계대조 결과(`machine_checks.findings` 의 `sce_arith`·`sce_identity`·`sign_omitted`·`bs_identity`, 계층3 이 이미 닫는 것은 `l3_covered`)에 기록만 남겨 **계층3 보정 후보 목록**으로 모은다(`scripts/r0_2_migration/layer3_backlog.py`). 계층3 보정은 이 목록을 모아 한 번에 한다. 기계대조 mc10, `verify_prompt.md` 항등식 규칙(I1~I3)·결정 (가) 폐지.
+- **검증 캠페인 범위 = 계층2 충실도만 (2026-10-10 사용자 결정)**: 검증(기계·모델)은 "DB 셀 = 원문 인쇄값" 만 본다. 산수(롤포워드·합계·BS 항등식)와 괄호 누락 추정은 계층2 이슈가 아니다 — 이슈를 만들지 않고, 기계대조 결과(`machine_checks.findings` 의 `sce_arith`·`sce_identity`·`sign_omitted`·`bs_identity`, 계층3 이 이미 닫는 것은 `l3_covered`)에 기록만 남겨 **계층3 보정 후보 목록**으로 모은다(`scripts/r0_2_migration/layer3_backlog.py`). 계층3 보정은 이 목록을 모아 한 번에 한다. 기계대조 mc10, `verify_prompt.md` 항등식 규칙(I1~I3)·결정 (가) 폐지. **보강(mc11, 같은 날 사용자 결정)**: 값 위치를 의심하게 하는 신호 `sce_identity`(옆 열 값으로 산수가 맞음)·`bs_identity` 는 계층3 이 닫지 않으면 판정에 남겨 모델이 웹뷰(제3의 독립 판독)로 위치를 확인한다 — 기계와 파서가 같은 표 구조를 똑같이 잘못 읽는 사각지대 때문. 웹뷰 위치가 DB 와 다르면 `column_misassign`/`value_mismatch`, 같으면 아무것도 하지 않는다. 순수 산수(`sce_arith`·`sign_omitted`)만 기록용.
 - 소급 범위: **2015+ 먼저**(사용자 결정 2026-10-10). 2015 이전은 같은 규칙으로 나중에 한다 — 그때까지 2015 이전 계층2 에는 옛 보정값이 남아 있고 `layer3_cell_corrections` 행이 없다(계층3 값은 같다).
 
 ---

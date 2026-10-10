@@ -454,3 +454,10 @@ def test_sign_omitted_with_layer3_correction_gets_no_issue():
     mc.mark_layer3_covered(_StubConn([("separate", "배당금지급", 7, 7)]), "r", res2)
     issues = mp.sign_issues(res2)
     assert [(i["error_type"], i["rule_id"], i["db_value"]) for i in issues] == [("source_defect", "R0-2", 7)]
+
+
+def test_position_signals_block_and_pure_arithmetic_does_not():
+    # mc11 (2026-10-10): sce_identity / bs_identity can reveal a column the machine and the parser
+    # both misread -> the model checks them; sce_arith / sign_omitted are layer-3 backlog only
+    assert {"sce_identity", "bs_identity"} & mc.INFO_KINDS == set()
+    assert {"sce_arith", "sign_omitted", "zero_row"} <= mc.INFO_KINDS

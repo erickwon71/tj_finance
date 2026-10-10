@@ -46,7 +46,8 @@ from lxml import etree
 # sign_omitted findings carry l3_covered (a layer-3 correction already flips that cell).
 # mc10 (2026-10-10, user decision): verdict from cells only; identity findings are information
 # (layer-3 backlog), never auto-registered.
-TOOL_VERSION = "mc10"
+# mc11 (2026-10-10): sce_identity / bs_identity block again (position signals, model checks them).
+TOOL_VERSION = "mc11"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -268,11 +269,15 @@ def load_statement_tables(path: str) -> list[SrcTable]:
 
 
 # Recorded but not blocking a pass. mc10 (2026-10-10, user decision: the campaign checks layer-2
-# faithfulness only): every identity finding is information — the DB cells equal the printed
-# cells, so the arithmetic of the print (and any sign/value correction of it) is layer 3's work.
-# They stay in machine_checks.findings as the layer-3 correction backlog
-# (scripts/r0_2_migration/layer3_backlog.py); `l3_covered` marks those layer 3 already closes.
-IDENTITY_INFO_KINDS = {"sce_arith", "sce_identity", "sign_omitted", "bs_identity"}
+# faithfulness only): pure arithmetic of the print — unexplained (sce_arith) or closed by a sign
+# flip alone (sign_omitted) — is layer 3's work; it stays in machine_checks.findings as the
+# layer-3 correction backlog (scripts/r0_2_migration/layer3_backlog.py).
+# mc11 (same day, user decision): position signals stay blocking — sce_identity (the roll-forward
+# closes with the next column's value of a row: a misassigned column the machine and the parser
+# may both have read the same way) and bs_identity (자산 ≠ 부채 + 자본 on DB totals). The model
+# checks them in the web view (a third, independent reader); l3_covered ones are not blocking.
+IDENTITY_INFO_KINDS = {"sce_arith", "sign_omitted"}
+POSITION_KINDS = {"sce_identity", "bs_identity"}
 INFO_KINDS = {"zero_row"} | IDENTITY_INFO_KINDS
 
 

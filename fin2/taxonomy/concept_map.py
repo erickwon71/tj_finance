@@ -193,6 +193,17 @@ ACODE_TO_CANONICAL: dict[str, str] = {**_BS, **_IS, **_CF}
 TAXONOMY_VERSION = "ifrs-full+dart/2024"
 
 
+# R229: concepts mapped broadly for the Gate B audit (candidate-set membership, R23 —
+# '후보 추가는 단조 개선') that do not name the canonical itself: other payables / non-current
+# payables are not 매입채무. A printed label is never resolved through them
+# (fin2/taxonomy/ko_labels.py).
+AUDIT_ONLY_CONCEPTS = frozenset({
+    "dart_ShortTermOtherPayables",
+    "dart_LongTermTradeAndOtherNonCurrentPayables",
+    "ifrs-full_NoncurrentPayables",
+})
+
+
 def map_acode(acode: str | None) -> str | None:
     """XBRL ACODE → canonical(bs.x/is.x/cf.x). 미등록은 None(미매핑 보존)."""
     if not acode:

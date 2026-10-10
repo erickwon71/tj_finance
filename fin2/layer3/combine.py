@@ -33,6 +33,7 @@ from sqlalchemy import text
 from parser.common.account_mapper import get_mapper
 from parser.common.amount_normalizer import normalize_account_name
 from fin2.taxonomy.concept_map import map_acode
+from fin2.taxonomy.ko_labels import canonical_for_label
 from fin2.standardize.rules import (DIRECT_MAP, CONSUMED_CANON, StdContext,
                                     rule_additive_capex, rule_derive_fcf,
                                     rule_derive_net_debt, rule_additive_da,
@@ -1306,6 +1307,25 @@ def _map_xbrl_concept(local: str | None, fs: str | None) -> _ConceptMatch | None
     return _ConceptMatch(canon, 1.0, "normalized", None)
 
 
+def _map_taxonomy_label(label_raw: str | None, fs: str | None) -> _ConceptMatch | None:
+    """★R229(2026-10-10) — printed statements carry no concept (DART XML ACODEs tag form
+    fields only), so a label the alias catalog lacks was lost even when it is the
+    taxonomy's own Korean label ('영업권 이외의 무형자산' = IntangibleAssetsOtherThanGoodwill:
+    ~30k FY2015+ periods with intangibles NULL). fin2/taxonomy/ko_labels resolves such a
+    label to its concept's canonical when the label is unambiguous across the taxonomy.
+    The leaf of a path label ('A>B') is looked up. Ranked 'taxonomy' — below the alias catalog
+    (tuned to how filers print: '자본총계' beats a header-like '자본' row, '무형자산' total keeps
+    deciding over a '영업권 이외의 무형자산' line printed beside it — measured as 10 new
+    conflicts at the 'normalized' rank) and above a fuzzy guess.
+    Per-share rows stay with the loader's EPS path (R213) — never classified here."""
+    if not label_raw or not fs:
+        return None
+    canon = canonical_for_label(label_raw.split(">")[-1])
+    if canon is None or not canon.startswith(fs + ".") or canon in ("is.eps_basic", "is.eps_diluted"):
+        return None
+    return _ConceptMatch(canon, 1.0, "taxonomy", None)
+
+
 # mapping-stage provenance rank (exact/normalized beat fuzzy). Mirrors build._STAGE_RANK.
 # 'structural' (2026-08-15, is.controlling_ni/is.noncontrolling_ni mismap fix — see
 # _ni_attribution_structural_candidates) ranks with 'fuzzy': it's a label-independent
@@ -1315,7 +1335,10 @@ def _map_xbrl_concept(local: str | None, fs: str | None) -> _ConceptMatch | None
 # against.
 # 'eps' (R213): a row the loader's EPS path emitted — the loader already proved it per-share,
 # so it ranks with an exact label match.
-_STAGE_RANK = {"exact": 3, "eps": 3, "normalized": 2, "guard": 2, "fuzzy": 1, "structural": 1, None: 0}
+# 'taxonomy' (R229): a printed label equal to a taxonomy Korean label — between the alias
+# catalog and a fuzzy guess.
+_STAGE_RANK = {"exact": 3, "eps": 3, "normalized": 2, "guard": 2, "taxonomy": 1.5,
+               "fuzzy": 1, "structural": 1, None: 0}
 
 _CONFLICT_EPS = 0.001
 _CURRENT_STRICT = {"bs.trade_receivables", "bs.trade_payables",
@@ -3192,9 +3215,15 @@ def _map_rows(rows, period: str, basis: str, statements,
             # (_NARROW_PREFER trade_payables, R16/R42 overrides …) keep deciding
             # whenever they apply — concept-first measured 357 new trade_payables
             # conflicts (parent TradeAndOtherCurrentPayables vs narrow child).
-            res = _map_xbrl_concept(r.get("xbrl_local"), fs)
+            # R229: a printed row has no concept; its label, when it is the taxonomy's own
+            # Korean label, names one.
+            res = _map_xbrl_concept(r.get("xbrl_local"), fs) or _map_taxonomy_label(r["label_raw"], fs)
             if res is None:
                 continue
+        elif res.stage == "fuzzy":
+            # R229: a label equal to a taxonomy label is identity evidence; a fuzzy alias
+            # match is only similarity — the taxonomy concept decides when it names one.
+            res = _map_taxonomy_label(r["label_raw"], fs) or res
         c = res.account_code
         # is.revenue fuzzy-containment false positives (R52, 2026-08-27 — see
         # docs/plans/gateb_r52_revenue_cogs_note_mismap_design_2026-08-27.md).

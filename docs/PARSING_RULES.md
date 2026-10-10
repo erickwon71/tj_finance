@@ -12714,3 +12714,28 @@ Q1 은 3개월 컨텍스트와 누적 컨텍스트의 기간이 같고 FY 는 3�
 **재적재(2026-10-09)**: batch #118 로 4필링 reload → done 4 / deferred 0 / failed 0, 이슈 #88462~#88468 fixed 7 / not_fixed 0. 지적된 7셀이 원문과 일치한다(기타유동채권 감소 17,364,466,670 · 유형자산 처분 123,121,766 · 기타유동금융자산 증가 -8,603,463 · 유형자산 취득 -3,521,424,773 · 무형자산 취득 -1,031,536 · 재무활동 2,495,732,915 · 이자지급 -464,267,085).
 계층3 은 4개사만 재빌드했다(std_v3 `--year-min 2015` 248행, 달력 348행, orphan 0). 모베이스 별도 `cf.fx_effect_on_cash` 는 -10,090(전기 값 누출) → 0 이 됐다. 복원 건수를 특정 규칙 효과로 귀속하지 않는다.
 
+
+## R229. 인쇄 계정명이 **택소노미 한국어 표준 라벨**이면 그 개념으로 계층3 계정을 정한다 (2026-10-10, 사용자 결정 "근본적인 방법으로")
+
+**발견**: 웹뷰 인쇄본 재적재(XBRL 적재 1,639필링 → 인쇄값) 후 계층3 비교에서 `intangibles` 622칸이 NULL 이 됐다. XBRL 셀은 개념(R172 `xbrl_local`)으로 `bs.intangibles` 가 됐지만 인쇄본 `영업권 이외의 무형자산` 은 별칭 사전(`account_maps`)에 없다.
+같은 라벨을 인쇄한 **원본 XML** 필링도 이미 같은 상태였다 — 2015+ 31,842기간 중 29,777기간 `intangibles` NULL. DART XML 의 ACODE 는 서식 항목(CS_DIV, SH5_* …)만 달고 재무제표 행에는 개념이 없으므로, 인쇄본 경로(XML·웹뷰·PDF)는 라벨만으로 매핑된다.
+DART 편집기로 작성한 재무제표는 택소노미의 한국어 라벨을 그대로 인쇄하는 경우가 많다.
+
+**정의**:
+- 색인 `fin2/taxonomy/ko_label_index.json` = DART 택소노미 한국어 라벨 링크베이스(`taxonomy_cache/*labels_lab_{ifrs,dart}-ko_*`, 2010~2024 vintage, gcd 제외)의 **표준·terse·total 라벨** → 개념. 기초/기말 라벨(SCE 문맥), negated 라벨(부호 반대), DART `dart_label` 역할(`기말 장부금액` 같은 문맥 캡션), `[abstract]`·`[text block]` 등은 넣지 않는다. 키 = `normalize_account_name` 후 공백 제거. 옛 vintage 의 `ifrs_` 접두는 `ifrs-full_` 로 통일. 생성 `scripts/build_ko_label_index.py`.
+- 조회 `fin2/taxonomy/ko_labels.canonical_for_label`: 라벨을 가진 **모든 개념이 같은 canonical** 로 갈 때만 그 canonical(`concept_map.map_acode`), 아니면 모호 → 사용 안 함.
+  `concept_map.AUDIT_ONLY_CONCEPTS`(Gate B 감사용으로 넓게 묶은 `dart_ShortTermOtherPayables`·`dart_LongTermTradeAndOtherNonCurrentPayables`·`ifrs-full_NoncurrentPayables` → `bs.trade_payables`, R23 "후보 추가는 단조 개선")는 값 식별에 쓰지 않는다(미지급금 ≠ 매입채무).
+- 계층3 `combine._map_rows` 순서: ① 별칭 exact/normalized ② (XBRL 셀) 개념 R172 ③ **택소노미 라벨(R229)** ④ 퍼지(≥0.88). 택소노미 라벨 일치는 동일성 증거라 유사도 추정인 퍼지보다 앞선다. 경로 라벨(`A>B`)은 끝 조각으로 찾는다.
+  후보 순위(`_STAGE_RANK`)는 별도 단계 `taxonomy`(1.5) — 별칭(exact 3·normalized 2)보다 낮고 퍼지(1)보다 높다. 처음 `normalized` 로 두었다가 전사 재빌드 비교에서 새 충돌 10칸(→NULL)이 나왔다: 머리행 같은 `자본` 행(퍼지라 `자본총계` 에 밀리던 것)이 동순위가 되고, `무형자산` 합계 옆에 인쇄된 `영업권 이외의 무형자산` 이 동순위가 됐다. 별칭 사전은 회사들의 인쇄 관례로 다듬어진 것이라 택소노미 일치보다 앞선다.
+- 주당이익(`is.eps_basic/diluted`)은 적재기 EPS 경로(R213) 소관이라 이 단계에서 분류하지 않는다.
+
+**전수 측정**(2015+ BS/IS/CF col 0 라벨, 필링 수 가중, 읽기 전용):
+새 매핑 — `bs.intangibles` 22,430 · `cf.acquisition_of_subsidiaries` 12,663 · `bs.investments_in_subsidiaries` 10,592 · `cf.short_term_investment_net` 9,064 · `cf.bond_repaid` 4,259 · `is.revenue` 1,118(`수익`) 등.
+퍼지 교정 — `비유동 기타포괄손익-공정가치 측정 금융자산` 단기투자→장기투자 4,251 · `기타영업수익` other_income→other_op_revenue 1,391 · `유동부채 합계` 부채총계→유동부채 89 · `유동자산 합계` 자산총계→유동자산 88 등. 퍼지와 택소노미가 같은 결과 67,313.
+**데일리 배선**: 계층3 빌드 내부 변경이라 추가 배선 없음(색인 JSON 은 저장소에 커밋). **소급**: 계층3 전사 재빌드(2015+). **회귀 테스트**: `fin2/tests/test_r229_taxonomy_labels.py`.
+
+**소급 결과(2026-10-10)**: 계층3 전사 재빌드(2,528개사, 2015+, 189,138행) 전후 비교(사본 `r02_r226_std_before`·`r02_r226_ext_before`).
+std — 바뀐 행 36,690: `intangibles` 채워짐 33,976 · 값 변경 1,311(표본 전부 자식 행 `기타무형자산`·`산업재산권` 대신 인쇄 합계 `영업권 이외의 무형자산`) · `revenue` 채워짐 1,729(`수익`) · `current_assets` 194 · `current_liabilities` 185 · `receivables` 채워짐 127 / 값 13 · NULL 이 된 칸 **0**.
+extended — 새 칸 42,139 · 부호 3,061(`cf.dividends_received` 2,814: 조정 항목 `배당금수익` 대신 `배당금수취(영업)`, 상당수 0→0) · 값 2,266 · 빠짐 1,710(`is.other_income` 1,402 → `is.other_op_revenue` 로 이동).
+남은 계층3 과제(이 규칙 이전부터 있던 것): `cf.short_term_investment_net`·`cf.govt_grant` 같은 순액 계정에 취득/처분·수취/상환 여러 행이 붙어도 extended 는 한 행만 고른다(전·후 모두 순액이 아님) → 계층3 백로그.
+웹뷰 재적재로 비었던 `intangibles` 622칸은 이 재빌드로 채워졌다.

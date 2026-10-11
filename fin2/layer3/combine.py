@@ -30,7 +30,7 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from parser.common.account_mapper import get_mapper
+from parser.common.account_mapper import MappingResult, get_mapper
 from parser.common.amount_normalizer import normalize_account_name
 from fin2.taxonomy.concept_map import map_acode
 from fin2.taxonomy.ko_labels import canonical_for_label
@@ -1276,7 +1276,32 @@ def _map_label(label_raw: str, fs: str | None):
     """Cached AccountMapper.map — the same face labels (자산총계·매출액…) recur across
     every filing, and map() runs fuzzy Jaro-Winkler over all aliases, so caching by
     (label_raw, fs) is the dominant speedup for the full std_v3 build. Deterministic."""
+    if fs == "cf" and label_raw:
+        # R236: '(영업|투자|재무)활동으로 분류된 X' — the qualifier names the section, X names the
+        # account. Matching the whole label let the shared prefix of the alias
+        # '재무활동으로분류된배당금지급' pull '…차입금' / '…이자지급' into cf.dividends_paid by fuzzy
+        # score. X (also without a '…으로 인한 현금유입' tail) is mapped when it matches exactly; else
+        # the whole label maps as before, except a fuzzy match on an alias that itself starts with
+        # the qualifier (a fuzzy X alone mis-maps too: 선수금의 증가 → net change in cash).
+        m = _CF_CLASSIFIED_PREFIX_RE.match(label_raw)
+        if m and label_raw[m.end():].strip():
+            rest = label_raw[m.end():]
+            for cand in (rest, _CF_CASH_TAIL_RE.sub("", rest)):   # '…의 처분으로 인한 현금유입'
+                if not cand.strip():
+                    continue
+                res = get_mapper().map(cand, fs_section=fs)
+                if res.stage in ("exact", "normalized"):
+                    return res
+            res = get_mapper().map(label_raw, fs_section=fs)
+            if res.stage == "fuzzy" and _CF_CLASSIFIED_PREFIX_RE.match(res.matched_alias or ""):
+                # the score came from the shared qualifier, not from the account
+                return MappingResult(f"unknown.{label_raw[:80]}", 0.0, "unknown")
+            return res
     return get_mapper().map(label_raw, fs_section=fs)
+
+
+_CF_CASH_TAIL_RE = re.compile(r"\s*(으로|로)\s*인한\s*현\s*금\s*(유\s*입|유\s*출)\s*(액)?\s*$")
+_CF_CLASSIFIED_PREFIX_RE = re.compile(r"^\s*(영업|투자|재무)\s*활\s*동\s*으\s*로\s*분\s*류\s*된\s*")
 
 class _ConceptMatch(NamedTuple):
     account_code: str

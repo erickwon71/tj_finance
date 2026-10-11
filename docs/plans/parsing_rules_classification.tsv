@@ -144,7 +144,7 @@ R142	7663	7702	40	유효	R142. `fin2/extract/statement_titles.py::is_substatemen
 R143	7703	7745	43	유효	R143. `fin2/extract/report_lines_inline_xbrl_overlay.py::overlay_tax_expense_val	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	XBRL 오버레이 값 덮어쓰기 후보 제외	
 R144	7746	7853	108	유효	R144. EPS(주당손익) 경로와 본류의 **판정 불일치** 3종 + 셀 안 줄바꿈으로	layer2/no	layer2/no	layer2	-	EPS 이중전사·기간열 판정 통일	
 R145	7854	7969	116	유효	"R145. EPS 행 판정을 `""주당""` 부분문자열에서 **구조 패턴**으로 교체 +"	layer2/no	layer2/no	layer2	-	EPS 행 구조 판정·섹션경로	
-R146	7970	8049	80	이행중/미해결(제목 근거)	R146. `rule_additive_da()` 가 **같은 감가상각비를 CF·IS·주석에서 각각 더해** D&A 와 EBITDA 를 정수배로 	layer3/no	layer3/no	layer3	-	D&A 출처 중복 합산 미해결	
+R146	7970	8049	80	미해결로 적혀 있음(2026-09-19 제목 기준 — 현재 상태 확인 필요)	R146. `rule_additive_da()` 가 **같은 감가상각비를 CF·IS·주석에서 각각 더해** D&A 와 EBITDA 를 정수배로 	layer3/no	layer3/no	layer3	-	D&A 출처 중복 합산 미해결	
 R147	8050	8106	57	유효	R147. `_is_eps_label()` 이 라벨에 `주당` 이 없는 EPS **자식행**(계속영업/중단영업 세부이익)을 인식 못 해 통째로 	layer2/no	layer2/no	layer2	-	EPS 자식행 인식 규칙	
 R148	8107	8166	60	유효	R148. `fin2/extract/text.py::_detect_body_statement_tables()` — 자본변동표가 **표지 문구 없	layer2/no	layer2/no	layer2	-	표지 없는 SCE 분할표 인식	
 R149	8167	8230	64	유효	R149. `parse_amount()` 가 `'2,564원'`(셀이 스스로 원 단위를 밝힌 표기)을 못 읽어 **EPS 행이 통째로 결측** 	layer2/no	layer2/no	layer2	-	셀 원 접미사 읽기	

@@ -2,13 +2,31 @@
 
 > **이 문서의 목적.** 파싱·적재 규칙이 코드 docstring·핸드오프·메모리에 흩어져 있어,
 > 새 파서를 만들 때마다 규칙을 다시 발굴하거나 **모르고 어긋나게 구현**하는 일이 반복된다.
-> 이 문서가 규칙의 **단일 진입점**이다. 규칙을 새로 정하거나 바꾸면 **여기에 먼저 적고**,
+> 이 문서가 규칙의 **단일 진입점**이다. 규칙 본문은 2026-10-12 부터 `docs/rules/` 의 계층별 파일에 있다(아래 0-0·0-1).
+> 규칙을 새로 정하거나 바꾸면 **판정 순서로 고른 계층 파일에 먼저 적고**(머리에 `적용 계층:`), 0-1 색인에 한 줄 더하고,
 > 근거가 되는 코드/문서를 링크한다.
 >
 > **읽는 법.** 각 규칙은 `규칙 / 근거(파일:줄 or 문서) / 어기면 생기는 일` 3단으로 적는다.
 > 근거 없는 규칙은 규칙이 아니다 — "그렇게 해왔다"는 여기에 쓰지 않는다.
+> **원칙끼리 겹쳐 보이면 바로 아래 "지금 유효한 원칙" 표가 이긴다**(R0-2 가 R0-1 의 일부를 대체한 뒤 두 절을 읽는 순서에 따라 해석이 갈렸다).
 >
-> 최종 갱신 2026-10-10 (R0-2 계층2 = 인쇄된 값만, 값 수정은 계층3 — 사용자 결정).
+> 최종 갱신 2026-10-12 (계층별 분리 · 지금 유효한 원칙 표 · R116/R154 계층3 이행).
+
+## 지금 유효한 원칙 (2026-10-12 — 아래 R0·R0-2·R0-1 본문을 요약한 것, 새 결정 아님)
+
+| 질문 | 2015+ 의 답 | 근거 | 2015 이전 |
+|---|---|---|---|
+| 보고서를 어떻게 읽나 | 모든 보고서를 같은 방식으로, 있으면 파싱·없으면 넘어감. 정정본은 같은 항목이 나중에 나오면 이긴다 | R0 | 같음 |
+| 계층2(`report_lines`)에 무엇을 싣나 | **인쇄된 숫자를 그 표의 선언 단위로 읽은 값 그대로** | R0-2 | R0-2 이행 전 — 옛 보정값이 남아 있음 |
+| 계층2 에서 허용되는 "읽는 법" | 괄호·△·마이너스=음수, 마침표 천단위 구분자(R158·R158-b), 쪼개진 숫자 잇기(R202), 이어붙은 EPS 나누기(R218), 증명된 실제 단위(R169·R207·R238, 숫자는 그대로), XBRL 표현 규칙(R10, XBRL 폴백 필링만) | R0-2 표 왼쪽, R0-1 머리 | — |
+| 인쇄값과 **다른 값**(부호 복원·숫자 교정·빈칸 채움·행 이동/삭제·다른 원천 덮어쓰기) | **계층3 에서만** — `layer3_cell_corrections`(value·fill·drop), 각 규칙의 증명 조건으로. 코드가 `fin2/extract` 에 있어도 `as_printed` STEPS 뒤 | R0-2 "계층3 보정의 범위" | 계층2 에 옛 보정값 |
+| R0-1 의 "후보는 부호 복원 하나뿐"·"증거 범위"·"판정에서는 이 절이 이긴다"·"정합화 대기" 표 | **대체됨(→R0-2)** — 2015+ 계층2 판정에 쓰지 않는다. 계층3 보정에도 1항 후보 제한·3항 증거 제한은 적용하지 않는다 | R0-1 머리 인용, R0-2 72행 | — |
+| 항등식이 "닫혔다"의 기준 | 표시 단위 × ⌈항 수 ÷ 2⌉ 이하(계층3 증명·기계대조 공통) | R0-1 2항(유효) | 같음 |
+| 계층3 은 무엇을 읽나 | `report_lines_l3` 뷰(인쇄값 + value·fill·drop 보정). 계층2 에 표가 있는지 물을 때도 이 뷰 | R0-2 "계층3 읽기" | — |
+| 본문 XML 이 없는 필링의 계층2 원천 | 웹뷰 인쇄본(`<rcept>.viewer.xml`). XBRL 은 계층3 증거, 웹뷰도 없을 때만 XBRL 폴백 | R0-2 "본문 XML 없는 필링" | — |
+| 검증(기계·모델)이 이슈로 만드는 것 | **DB 셀 = 원문 인쇄값인가**만. 산수는 기록용(계층3 보정 후보), 위치 신호 `sce_identity`·`bs_identity` 만 판정 | R0-2 "검증 캠페인 범위" | — |
+| 확정 못 하면 | 추측하지 않는다 — 값을 못 읽으면 NULL + `value_raw`, 기간·열을 못 정하면 싣지 않음 | R6, R0-1 4항 | 같음 |
+| 규칙이 어느 파일에 있나 | 0-1 색인. 계층은 "규칙이 무엇을 결정하는가"(판정 순서) | 0-0 | — |
 
 ---
 
@@ -71,7 +89,7 @@
 - 계층3 은 **적용 가능한 논리적 방법을 모두** 써서 정상화한다: 부호 복원뿐 아니라 숫자 오타 교정(R159), SCE 원문결함 교정(R183 값·채움·이동·삭제), inline XBRL 태그를 증거로 쓰는 보정(R18 배당 부호·법인세 overlay), XBRL 경로 부호 정산(R170-d·R176), SCE 부호 체인 전체(R162 계열·R163·R185~R193·R188·R189·R190-d·R215), Q1 누적 공란의 3개월 값 채움(R116·R154, 2026-10-11 사용자 결정 — STEP `R154_q1_cum_fill`).
   즉 R0-1 1항의 "후보는 부호 복원 하나뿐"·3항의 증거 범위 제한은 **계층2 판정에만** 해당하고, 계층3 보정에는 적용하지 않는다(위 규칙들의 개별 증명 조건은 그대로).
 - 구현: 위 규칙들은 `fin2/extract/as_printed.py` 스위치(`STEPS`) 뒤에 있고 **기본값 = 끔**(계층2 = 인쇄값). 적재 경로는 `fin2/extract/layer3_corrections.py` 로 규칙 끔(인쇄값)·켬(보정값) 두 번 추출해, 차이만 `layer3_cell_corrections`(계층3 테이블, `report_lines.id` 참조·재적재 시 cascade 삭제)에 셀 단위로 쓴다(규칙 이름 포함). 원문 파일이 필요한 규칙(inline XBRL)이 있어 적재 시점에 계산한다 — 결과는 계층2 테이블에 쓰지 않는다.
-- 계층3 읽기: `report_lines_l3` 뷰 = `report_lines` + kind='value' 보정. `fin2/layer3/combine.py`·R187 근거(`sce_dated_anchors.py`)가 이 뷰를 읽는다. kind='fill'/'drop'(SCE R183)은 계층3 SCE 소비처가 생길 때 뷰에 반영한다.
+- 계층3 읽기: `report_lines_l3` 뷰 = `report_lines` + 보정 세 종류 — kind='value'(값 대체)·'drop'(행 숨김)·'fill'(`row_data` 로 행 추가, id = −보정 id). 처음(2026-10-10 오전)엔 value 만 반영했고, 같은 날 마이그레이션 `2026_10_10_report_lines_l3_fill_drop`(`collector/db.py`)으로 fill·drop 도 반영한다(R159 로 고친 BS 셀·R154 Q1 누적 채움이 fill 로 온다). `fin2/layer3/combine.py`(정본 필링 선택 `select_canonical_rcepts` 포함)·R187 근거(`sce_dated_anchors.py`)가 이 뷰를 읽는다. ★계층3 코드가 계층2 존재 여부를 물을 때도 이 뷰를 본다 — fill 로만 존재하는 표가 있다(2026-10-12 `e8bf11d`).
 - 배선: `ops._reload_rcept`, `collector/note_lines_sync.py`(데일리 XML — `collect_new.py` 두 call site 모두 이 함수를 거친다), `collector/xbrl_instance_lines_sync.py`(데일리 XBRL).
 - 옛 동작 비교: `TJF_LAYER2_AS_PRINTED=0` 이면 규칙이 계층2 에 다시 쓴다(한 릴리스 유지 후 삭제, D4).
 - **본문 XML 없는 필링의 원천 = 웹뷰 인쇄본(2026-10-10 사용자 결정)**: DART 원본 묶음에 본문 XML 이 없으면(XBRL 만·PDF 만) XBRL/PDF 는 인쇄본이 아니므로(XBRL 은 차감·유출 부호와 계정명이 다름) 웹뷰(`report/viewer.do`) 문서를 DART XML 골격으로 감싼 `<rcept>.viewer.xml` 을 계층2 원천으로 쓴다(`fin2/extract/viewer_xml.py`, `collector/viewer_source.py`). document.xml 은 180일 재시도, 오면 자동 재적재. 설계 `docs/plans/viewer_xml_source_policy_2026-10-10.md`. XBRL 은 계층3 증거로만 남는다.
@@ -358,7 +376,7 @@
 | R143 | R143. fin2/extract/report_lines_inline_xbrl_overlay.py::overlay_tax_e… | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | as_printed STEP |
 | R144 | R144. EPS(주당손익) 경로와 본류의 판정 불일치 3종 + 셀 안 줄바꿈으로 | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R145 | R145. EPS 행 판정을 "주당" 부분문자열에서 구조 패턴으로 교체 + | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
-| R146 | R146. rule_additive_da() 가 같은 감가상각비를 CF·IS·주석에서 각각 더해 D&A 와 EBITDA 를 … | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 이행중/미해결(제목 근거) |  |
+| R146 | R146. rule_additive_da() 가 같은 감가상각비를 CF·IS·주석에서 각각 더해 D&A 와 EBITDA 를 … | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 미해결로 적혀 있음(2026-09-19 제목 기준 — 현재 상태 확인 필요) |  |
 | R147 | R147. _is_eps_label() 이 라벨에 주당 이 없는 EPS 자식행(계속영업/중단영업 세부이익)을 인식 못 해 통… | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R148 | R148. fin2/extract/text.py::_detect_body_statement_tables() — 자본변동표가 … | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R149 | R149. parse_amount() 가 '2,564원'(셀이 스스로 원 단위를 밝힌 표기)을 못 읽어 EPS 행이 통째로 … | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |

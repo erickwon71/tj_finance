@@ -8,6 +8,8 @@ Gate B·face_audit·verify(기계대조·모델 검증)·감사 스크립트.
 ---
 
 ## R22. Gate B `face_audit.py` — `is.cogs` vs `report_won` **개념 자체가 다른** 4개사는
+
+> **상태** 유효 · **적용 계층** 검증
 curated pending 예외처리(R21 §3 후속, 사용자 결정 2026-08-15 옵션 a)
 
 R21 §3이 확인한 문제: 19개사 중 4개사(00108940 대성홀딩스·00117212 두산·00143527·00163673
@@ -49,6 +51,8 @@ fail_a(총) 0(비관련 필드 회귀 없음) + fail_b(Track B, 64건 — R21에
 ---
 
 ## R23. `fin2/taxonomy/concept_map.py` — `bs.trade_payables` concept_map 갭 5종 추가
+
+> **상태** 유효 · **적용 계층** 검증
 (Gate B 리더 전용, std_v3 무관) + 우연일치 가드 1건
 
 전수스캔(`gateb-reader-concept-gap-scan-2026-08-15` 메모리, `scripts/probe_gateb_reader_
@@ -101,6 +105,8 @@ concept_gap_2026-08-15.py`(결과 CSV 포함) · `fin2/taxonomy/concept_map.py` 
 ---
 
 ## R25. Gate B `face_audit.py::_ni_attribution_structural_candidates()` — `is.controlling_ni`/
+
+> **상태** 유효 · **적용 계층** 검증
 `is.noncontrolling_ni` 구조기반 후보보강, raw XML 독립 재구현(R24 의 발상을 Gate B 쪽에 이식)
 
 R24(std_v3 쪽)와 **같은 근본원인**이 원문을 직접 읽는 Gate B 리더에도 독립적으로 있었다
@@ -145,6 +151,8 @@ tests/ fin2/tests/` 522 passed(무관 기존 실패 1건 `test_lxintl_facility_t
 ---
 
 ## R26. Gate B `face_audit.py` — FX 표시통화(두산밥캣) curated pending 강등, 옵션 B
+
+> **상태** 유효 · **적용 계층** 검증
 (2026-08-15)
 
 R25 와 같은 30건 조사 중 발견된 ①FX 표시통화 메커니즘(설계문서 §1-A). 두산밥캣
@@ -183,6 +191,8 @@ dropped` 불변, R25 와 동일). `docs/plans/gate_b_facereader_controlling_ni_f
 ---
 
 ## R32. Gate B — 업종 프로파일 파생 `revenue` 검증 (증권/은행/보험/여신전문, 2026-08-17)
+
+> **상태** 유효 · **적용 계층** 검증
 
 설계 `docs/plans/gateb_industry_derived_revenue_design_2026-08-17.md`, census
 `docs/qa/industry_profile_component_census_2026-08-17.md`.
@@ -254,6 +264,8 @@ _PROFILE_VALUE_FALLBACK_KEYS`)해 우회한다. 회귀는
 ---
 
 ## R33. Gate B — 증거강도(축2) 계측 + `fail_a` 승격의 gapfill 예외 1건 (2026-08-18)
+
+> **상태** 유효 · **적용 계층** 검증
 
 설계 `docs/plans/gateb_evidence_grade_redesign_2026-08-17.md`(§6 2026-08-18 개정),
 실측 `docs/qa/gateb_evidence_census_2026-08-18.md`.
@@ -327,6 +339,8 @@ WHERE source_version='v3' AND evidence_detail ? 'E5_HEURISTIC';
 ---
 
 ## R35. `fin2/audit/face_audit.py` — NI 귀속표 전체가 XBRL 미태깅인 문서에서
+
+> **상태** 유효 · **적용 계층** 검증
 `is.controlling_ni`가 감사기 후보 풀에 전혀 안 들어오던 결함(P3-1 '원인 A' 후속)
 
 **증상** — P3-1 재감사 잔여 668건(원인 A, R34 제외분) 중 527건(56개사)이 `LABEL_UNMATCHED`
@@ -385,6 +399,8 @@ B, 카카오게임즈·폴라리스오피스 등 13개사)은 **손대지 않음
 ---
 
 ## R36. `fin2/audit/face_audit.py` — `_ni_attribution_text_candidates()`(R35) 열(컬럼)
+
+> **상태** 유효 · **적용 계층** 검증
 선택 누락으로 전기/전전기 값이 값불일치 오탐을 낸 결함(P3-1 '원인 A' 그룹② 후속)
 
 **증상** — R35 신설 함수가 잡은 51건/13개사(카카오게임즈·성도이엔지 등)가 `fail`/
@@ -428,6 +444,8 @@ test_ni_attribution_text_fallback.py`) — FY(첫 열만 채택)·interim(누적
 ---
 
 ## R37. `scripts/gateb_audit.py::select_corps()` — Gate B 감사 유니버스가 상장폐지사를
+
+> **상태** 유효 · **적용 계층** 검증
 걸러내지 않던 결함(P3-1 '원인 A' 그룹③-a 후속)
 
 **증상** — 위지윅스튜디오(01276327, 2026-08-18 상장폐지 확정)가 전수/범위 재감사에서
@@ -451,6 +469,8 @@ KOSPI/KOSDAQ 상장된 보통주")에 맞춰 **감사 유니버스에서 아예 
 ---
 
 ## R38. `fin2/audit/face_audit.py::read_report_face_xbrl_zip()` + `scripts/gateb_audit.py`
+
+> **상태** 유효 · **적용 계층** 검증
 배선 3곳 — Track D(xbrl_zip) 신설, `document.xml` 없는 filing 의 감사 커버리지 공백
 해소(P3-1 '원인 A' 그룹③-b 후속)
 
@@ -491,6 +511,8 @@ fin2/tests/` 회귀 없음.
 ---
 
 ## R40. Track D(xbrl_zip 재파싱) — 다중필링 narrow-prefer 재현 불가(알려진 감사 커버리지
+
+> **상태** 유효 · **적용 계층** 검증
 공백, 수정 안 함)
 
 **증상** — R38(Track D) 재감사가 새로 드러낸 fail_b 541행 중 232건이 `bs.trade_payables`
@@ -538,6 +560,8 @@ R40(패턴B 문서화)이 전부 안전 검증된 뒤, `scripts/run_gateb_audit_
 ---
 
 ## R41. `fin2/audit/curated_key_scan.py` 신설 — Gate B curated 키 재생성기(전수 패턴
+
+> **상태** 유효 · **적용 계층** 검증
 스캔 → 신규/재발 후보 탐지, 자동 코드 반영 없음)
 
 **배경** — R15~R33 다수가 특정 (corp, fy, period[, basis]) 를 리터럴로 열거한 override
@@ -592,6 +616,8 @@ integration.md` 체크리스트 ① 준수). 알림은 기존 `scripts/notify.py
 ---
 
 ## R46. `fin2/audit/face_audit.py::_with_ni_attribution_text_fallback()` —
+
+> **상태** 유효 · **적용 계층** 검증
 NI 귀속 스킵게이트 결함 수정, 171건/26개사(2026-08-26, R45 후속)
 
 **배경** — R45 Gate B 재감사 중 발견된 예외 1건(01137383, 위 R45 항목·
@@ -649,6 +675,8 @@ fin2/tests/ tests/` 624 passed(무관 기존실패 1건 제외, 신규 회귀테
 ---
 
 ## R54. `fin2/audit/face_audit.py::read_report_face_xbrl()` — 회사고유 확장(UDF)
+
+> **상태** 유효 · **적용 계층** 검증
 acode 라벨매칭 폴백, `bs.trade_payables` 25건 해소(2026-08-28~29)
 
 **배경** — [[gateb-trade-payables-45-triage-2026-08-28]] 세션에서 trade_payables
@@ -705,6 +733,8 @@ fail_a 2건이 남았다(`checked_at`이 재감사 시작 이전 — R37(`select
 ---
 
 ## R56. `fin2/audit/face_audit.py` — 갤럭시아에스엠 라벨-acode 뒤바뀜
+
+> **상태** 유효 · **적용 계층** 검증
 1건 curated 예외로 face_audit 오탐 해소(2026-08-29)
 
 **배경** — [[gateb-trade-payables-45-triage-2026-08-28]] 클래스C 3건 중 마지막
@@ -753,6 +783,8 @@ LABEL_UNMATCHED(pending)로 남는다 — VALUE_DIFF(확정 오류)를 주장하
 ---
 
 ## R61. Gate B Phase B(`fin2/audit/line_audit.py`) DB측 원천 `fact_v2`→`report_lines`
+
+> **상태** 유효 · **적용 계층** 검증
 이식 + 전수재감사로 발견한 Track A/B 감사리더 버그 3종(★완전 종료 2026-09-01)
 
 **배경** — Phase B(본문 전 계정 라인 전수대조, `face_line_audit`)는 계층2 GC(`fact_v2`
@@ -792,6 +824,8 @@ LABEL_UNMATCHED(pending)로 남는다 — VALUE_DIFF(확정 오류)를 주장하
 ---
 
 ## R140. 계층2 검토 CSV에 SCE 포함 + `layer2_review.py`에 `--min-severity` 단계
+
+> **상태** 유효 · **적용 계층** 검증
 필터 추가 (2026-09-18, 사용자 지시)
 
 **배경**: R139와 같은 브라우저 에이전트 원문대조 캠페인 설계
@@ -831,6 +865,8 @@ review_csv.py::SCOPE_ORDER`와 `fin2/audit/layer2_selfcheck.py::STATEMENTS`는
 
 ## R167. 검증 ↔ 재적재 규칙 — 적재 스탬프·lease·내용버전 (2026-09-24, R139 대체)
 
+> **상태** 유효 · **적용 계층** 검증
+
 **배경**: 몇 달짜리 원문대조 캠페인의 상태를 DB(`verification` 스키마)에 두면서, 검증 중이거나
 이미 검증된 데이터와 재적재가 섞이는 문제를 **규약이 아니라 DB 가 강제하도록** 정했다.
 실제 사고 두 건이 계기다: 검증 세션이 구코드로 재적재해 백필을 되돌린 일(R164 백필 SCE
@@ -868,6 +904,8 @@ review_csv.py::SCOPE_ORDER`와 `fin2/audit/layer2_selfcheck.py::STATEMENTS`는
 
 ## R174. Gate B 판독기 — 증명된 단위 교정(R132/R169)을 따르고, 당기 첫 칸 '-' 는 0 후보로 둔다 (2026-09-25)
 
+> **상태** 유효 · **적용 계층** 검증
+
 **발견**: Gate B 148건 트리아지. DB 는 원문과 맞는데 기준값(report_won)이 틀려 fail_b 가 났다.
 (1) R169 교정 필링 3건에서 ×10⁶ — 판독기가 셀 ADECIMAL(−6)/선언 백만원을 그대로 믿었다.
 (2) 당기 칸이 '-' 인 행 — Track B any-column 판독은 숫자 칸만 후보로 삼아 정답 0 과 맞을 수 없었다(DB=0 유형 195필드).
@@ -890,6 +928,8 @@ fail_b→pass 140 · pending→pass 78 · pass→(fail/pending) 0. 남은 7건�
 
 ## R201-b. 기계대조(machine_compare)의 **SCE 주석 열 오프셋** 오탐 (2026-09-30, 검증 도구 수정)
 
+> **상태** 유효 · **적용 계층** 검증
+
 **발견**: 카카오게임즈 2023FY `20240320002052`(160건)·기가비스 2023H1 `20230814003197`(32)·카페24 2017FY `20180402005387`(33) column_misassign 이슈는 전부 mc5 가 낸 것이다.
 DB 행은 자체 항등식이 맞는다(예: 기가비스 자본금 100,000,000 + 이익잉여금 61,077,361,961 = 합계 61,177,361,961). 기계대조가 SCE 열을 `col_index` 그대로 원문 셀 번호로 쓴 것이 원인이다.
 원문 표 파서는 '주석' 열을 버리지만(`_parse_table` `cols`), report_lines 는 헤더에 주석 열이 있으면 첫 구성요소를 col_index 1 부터 매긴다(주석 값이 없는 행도 마찬가지, 주석 열 보유 SCE 226필링 중 195가 1부터).
@@ -903,6 +943,8 @@ DB 데이터는 바뀌지 않는다(재적재 없음). 해당 이슈는 검증 �
 **회귀 테스트**: `fin2/tests/test_xbrl_quarter_only_cell_r201.py`(R201-b 3건).
 
 ## R201-c. R201-b 의 주석 열 판정이 **그룹 접두 라벨**(`지배기업 소유주 귀속분>주석`)을 놓친다 (2026-10-01, 검증 도구 수정)
+
+> **상태** 유효 · **적용 계층** 검증
 
 **발견**: 에치에프알 2018FY `20190401005242` 연결 SCE 의 column_misassign 151건 + value_mismatch 8건(#87615~#87744 등)이 전부 mc5 오탐이다.
 DB 는 원문과 일치한다(`전기초 잔액` 자본금 2,500,000,000 = col 1, 자본잉여금 2,052,232,079 = col 2, 구성요소 합 = 지배 합계 47,805,530,781).
@@ -919,6 +961,8 @@ R201-b 는 `col_label != "주석"` 정확 일치로 주석 셀을 걸렀기 때�
 **회귀 테스트**: `fin2/tests/test_xbrl_quarter_only_cell_r201.py`(R201-c 2건).
 
 ## R211. 기계대조(machine_compare)의 주당 판정은 **`section_path` 도 본다** — EPS 절 자식행(`(1) 기본주당이익 > 1. 보통주`) (2026-10-02, fix batch #90, 검증 도구 수정)
+
+> **상태** 유효 · **적용 계층** 검증
 
 **발견**: 흥국화재 2023Q1 `20230515002741`·`20230630000997`, 2016Q3 `20161114002032` 의 IS EPS 행 16건(#87877~#87896)이 value_mismatch 로 등록됐다.
 DB 는 원문과 일치한다(`1. 보통주` 1,457 = 원문 1,457원/주). 표 단위가 백만원이고, EPS 행 라벨에는 `주당` 이 없으며 조상 행(`(1) 기본주당이익`)에만 있다.

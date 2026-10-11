@@ -7,6 +7,8 @@
 
 ## R7. 유니버스
 
+> **상태** 유효 · **적용 계층** 운영
+
 **규칙** — 현재 시점 KOSPI/KOSDAQ 상장 **보통주**, 개인이 거래 가능한 기업.
 **국내 상장 외국기업 제외** — 식별 = `stock_code` 가 **'9' 로 시작**(900xxx 직상장·950xxx DR/원주).
 
@@ -18,6 +20,8 @@
 ---
 
 ## R8. 새 파서/로더 추가 3층 (자동 반영 안 됨)
+
+> **상태** 유효 · **적용 계층** 운영
 
 **규칙** — 파싱·적재를 새로 추가하면 **자동으로 전부 반영되지 않는다.** 세 가지를 각각 챙긴다.
 
@@ -34,6 +38,8 @@
 ---
 
 ## R82. Category C(fy1999~2003 절단 복구) 배치 경로 — HTML→PDF T1/T2/T3
+
+> **상태** 유효 · **적용 계층** 운영
 조정 배선 완료
 
 `collector/pdf_lines_sync.py::recover_one()`가 PDF만 파싱하던 옛 방식 대신
@@ -67,6 +73,8 @@ T3/T3, DB증권·일성건설 T2/T2 — 연결재무제표 자체가 없는 정�
 돌리는 소급 백필은 별도 단계(런북 원칙) — 미착수, 별도 지시 대기.
 
 ## R96. `collector/downloader.py::_pick_best_file_by_size()` — DART `document.xml`
+
+> **상태** 유효 · **적용 계층** 운영
 ZIP에 xml이 여러 개(본문+첨부)일 때 "가장 큰 파일" 휴리스틱이 첨부(감사보고서)를
 본문으로 오채택 (2026-09-12)
 
@@ -170,6 +178,8 @@ fiscal_year·SD/NAS 각각의 doc_name·DART링크·file_path).
 ---
 
 ## R103. `collector/downloader.py` — 정기보고서가 접수 당시 PDF만 있고 표준파일
+
+> **상태** 유효 · **적용 계층** 운영
 (XML/XBRL)은 나중에 등록되는 경우, "완료"로 마감되어 재확인이 없었음 (2026-09-13)
 
 **배경**: 2015+ 항목수 분포 리포트 작성 중 발견한 결측 8건 중 5건(2026 반기보고서,
@@ -211,6 +221,8 @@ AND report_type IN (annual,half,quarter)`로 후보를 뽑아 DART에 XML이 지
 ---
 
 ## R104. `collector/filing_collector.py` — 같은 날 접수된 "최초본+첨부정정/첨부추가"
+
+> **상태** 유효 · **적용 계층** 운영
 그룹에서 최초본이 download_tasks에 영영 안 잡히는 결함 (2026-09-13, R103 후속 같은 날)
 
 **배경**: R103으로 부국증권·멤레이비티의 2026 반기보고서를 살펴보다가, 사용자 질문
@@ -251,6 +263,8 @@ AND report_type IN (annual,half,quarter)`로 후보를 뽑아 DART에 XML이 지
 ---
 
 ## R139. `store_report_lines()` — 원문대조 완료(`layer2_review_queue.status='pass'`)
+
+> **상태** 대체됨(→R167, 2026-09-24 사용자 결정, 이력으로 보존) · **적용 계층** 운영
 행도 `unit_source='manual'`과 같은 방식으로 재적재 보호 (2026-09-18)
 
 > ★**2026-09-24 폐지·대체(사용자 결정)** — 아래 하드 차단은 **R167** 로 대체됐다.
@@ -312,6 +326,8 @@ tests/ fin2/tests/` 전체 1059 passed(기존에 알려진 무관 실패
 ---
 
 ## R219. `store_report_tables()` 는 **넘겨받은 lines 가 다루는 statement 범위만** 지우고 다시 쓴다 — 본문 재적재가 주석 표 메타를 지우지 않는다 (2026-10-05, 삼양식품 분석 리포트 '감가상각비 없음' 추적)
+
+> **상태** 유효 · **적용 계층** 운영
 
 **발견**: 삼양식품 std_v3 D&A 가 2017·2018 FY 에만 있었다. 원문 주석(`note_lines`)에는 2024 '감가상각비 및 무형자산상각비 46,025,094,000' 등이 있다. 계층3 주석 해석(`fin2/layer3/note_da.py`)은 `report_tables.section_path`(주석 제목)로 주제를 찾는데, 그 rcept 들의 주석 메타가 0행이었다(본문 메타 8행만 남음).
 - 원인: `store_report_tables()` 가 rcept 의 메타를 **statement 구분 없이 전부** 지우고 lines 에 있는 것만 다시 썼다. 본문만 추출한(`include_notes=False`) 2015+ 전사 재적재(`scripts/reload_report_lines_2015plus_2026-09-12.py`)·각종 R 백필·데일리 `collector/xbrl_instance_lines_sync.py` 가 주석 메타를 지웠다. R135 주석 재적재(2026-09-17)는 `store_note_lines` 만 불러 되살리지 못했다.

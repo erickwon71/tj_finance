@@ -64,7 +64,7 @@ R0·R0-1·R0-2·R2·R6·R9 는 `00_principles`. 분류가 끝나면 모든 규�
 최종 분류(`parsing_rules_classification.tsv` `final`): 계층2 127(그중 XBRL 폴백 21) · 계층3 88 · 검증 22 · 운영 8 · 원칙 6 · 색인/부록 4 · 사례 4.
 
 **R116·R154·R153 = 빈칸 채움 → 계층3 (2026-10-11 사용자 결정)**. Q1 누적 공란에 3개월 값을 싣는 것은 증명이 있어도 R0-2 의 "빈칸 채움"이다. 계층2 를 공란 그대로 두면 검증이 이 셀을 다시 확인할 일이 없어진다. R120(두 열 모두 인쇄값일 때 누적 열 판정)은 열의 기간 판정이라 계층2 유지. `PARSING_RULES.md` R116·R154 머리에 "적용 계층: 3 — 코드 이행 대기"를 적었다.
-코드 이행(별도 작업, 이 분리 작업과 섞지 않음): `report_lines.py` 의 `_Q1_CUM_BLANK_USE_3M_RCEPTS`·`q1_cum_blank_use_3m` 두 사용처(본류 1317행·EPS 1057행)를 `as_printed` STEP(`R154_q1_cum_fill`)으로 감싸 `layer3_cell_corrections` fill 로 보내고 → 켬/끔 재추출로 영향 셀 측정 → 회귀 테스트(형지I&C·드림시큐리티·기아 2024Q1) → 2015+ 해당 필링 재적재·계층3 재빌드 → Gate B 무영향 확인.
+**코드 이행 완료 (2026-10-12, fix batch #126 — 결과는 PARSING_RULES.md R154 절 끝).** 당시 계획: `report_lines.py` 의 `_Q1_CUM_BLANK_USE_3M_RCEPTS`·`q1_cum_blank_use_3m` 두 사용처(본류 1317행·EPS 1057행)를 `as_printed` STEP(`R154_q1_cum_fill`)으로 감싸 `layer3_cell_corrections` fill 로 보내고 → 켬/끔 재추출로 영향 셀 측정 → 회귀 테스트(형지I&C·드림시큐리티·기아 2024Q1) → 2015+ 해당 필링 재적재·계층3 재빌드 → Gate B 무영향 확인.
 
 ### 규칙 한 건의 표준 서식 (모델 해석 차이 방지)
 

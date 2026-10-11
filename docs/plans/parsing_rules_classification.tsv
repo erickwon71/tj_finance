@@ -112,7 +112,7 @@ R112	6705	6717	13	유효	"R112. 같은 파일 — 글자당 공백 주석헤더(
 R113	6718	6732	15	유효	"R113. 같은 파일 `select_by_header_columns()` — 순수 대시(""-"") 셀을 구조적"	layer2/no	layer2/no	layer2	-	순수 대시 셀을 0으로 읽기	
 R114	6733	6748	16	유효	R114. 같은 함수 — R113 직후 회귀: 무표지 병합군(COLSPAN 다중열)에서	layer2/no	layer2/no	layer2	-	병합군 대시 채택 순서	
 R115	6749	6761	13	유효	R115. `parser/xml/table_extractor.py::drop_mismatched_granularity_columns()`	layer2/no	layer2/no	layer2	-	연간참고열 배제 후 rank 재부여	
-R116	6762	6784	23	유효	R116. `fin2/extract/report_lines.py::_Q1_CUM_BLANK_USE_3M_RCEPTS` — Q1	layer3/yes	layer3/yes	layer3	★이행 필요 — as_printed STEPS 밖에서 계층2 공란에 3개월 값 기록(사용자 결정 2026-10-11: 빈칸 채움)	Q1 누적 공란 ← 3개월 값 = 빈칸 채움(R0-2)	
+R116	6762	6784	23	유효	R116. `fin2/extract/report_lines.py::_Q1_CUM_BLANK_USE_3M_RCEPTS` — Q1	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(R154_q1_cum_fill, 2026-10-12 이행 완료 batch #126)	Q1 누적 공란 ← 3개월 값 = 빈칸 채움(R0-2)	
 R117	6785	6801	17	유효	R117. `parser/xml/table_extractor.py::_columns_from_grid()` — 완전공란	layer2/no	layer2/no	layer2	-	공란 주석헤더열 건너뜀	
 R118	6802	6832	31	유효	R118. `fin2/extract/report_lines.py::_R118_DUPLICATE_PERIOD_LABEL_FIX` —	layer3/yes	layer2/no	layer2	-	사용자 결정 2026-10-11 — 열의 기간 판정(읽는 법)	
 R119	6833	6849	17	유효	R119. `parser/xml/table_extractor.py::_columns_from_grid()` — 같은 셀 안	layer2/no	layer2/no	layer2	-	괄호 서브타입 접미 인식	
@@ -152,8 +152,8 @@ R150	8231	8284	54	유효	R150. `parse_amount()` 가 천단위 콤마 **바로 �
 R151	8285	8285	1	유효	R151. `_looks_like_equity_changes_header()` 가 열이름의 **자간 공백**을 처리하지 않아	layer2/no	layer2/no	layer2	-	SCE 열이름 자간공백 처리	
 R148	8286	8331	46	유효	R148(표지 없는 SCE 물리분할표)이 신한지주 외에서는 발동하지 못했다 (2026-09-20)	layer2/no	layer2/no	layer2	-	SCE 열이름 자간공백 처리	
 R152	8332	8542	211	유효	R152. 금융업 보충표기(대손준비금·비상위험준비금)가 본항목과 **같은 칸**에 압축돼 자본/손익 본항목 행이 통째로 유실 (2026-09-2	layer2/no	layer2/no	layer2	-	압축 보충표기 칸 본항목 읽기	
-R153	8543	8587	45	유효	R153. R116/R120 열선택 **예외 플래그**가 EPS 경로에 전달되지 않아 EPS 행이 **두 경로 사이 틈으로 증발** (2026-	layer2/no	layer2/no	layer3	★이행 필요 — as_printed STEPS 밖에서 계층2 공란에 3개월 값 기록(사용자 결정 2026-10-11: 빈칸 채움)	R116/R154 채움 플래그를 EPS 경로에 전달 — R116·R154 와 함께 이행	
-R154	8588	8683	96	유효	R154. Q1 표가 **스스로 증명한** `3개월 = 누적` 등식을 읽어, 누적 칸이 공란인 행을 구제한다 — R116 예외목록의 일반화 (2	layer3/yes	layer3/yes	layer3	★이행 필요 — as_printed STEPS 밖에서 계층2 공란에 3개월 값 기록(사용자 결정 2026-10-11: 빈칸 채움)	Q1 누적 공란 ← 3개월 값 = 빈칸 채움(R0-2)	
+R153	8543	8587	45	유효	R153. R116/R120 열선택 **예외 플래그**가 EPS 경로에 전달되지 않아 EPS 행이 **두 경로 사이 틈으로 증발** (2026-	layer2/no	layer2/no	layer3	as_printed STEPS 뒤(R154_q1_cum_fill, 2026-10-12 이행 완료 batch #126)	R116/R154 채움 플래그를 EPS 경로에 전달 — R116·R154 와 함께 이행	
+R154	8588	8683	96	유효	R154. Q1 표가 **스스로 증명한** `3개월 = 누적` 등식을 읽어, 누적 칸이 공란인 행을 구제한다 — R116 예외목록의 일반화 (2	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(R154_q1_cum_fill, 2026-10-12 이행 완료 batch #126)	Q1 누적 공란 ← 3개월 값 = 빈칸 채움(R0-2)	
 R155	8684	8746	63	대체됨(→R168)	"R155. **[R168 로 대체 — 산수 자기증명 시 적재]** 구형 2단 열(내역칸/잔액칸) 서식에서 양쪽이 다 찬 ""그룹 마감행""이 R6 "	layer2/no	layer2/no	layer2	-	구형 2단열 마감행 미적재 결정	
 R156	8747	8798	52	유효	R156. **[설계대로 — 캠페인 판정 기준]** 분기·반기 필링에서 **누적 칸이 공란인 행**은 적재되지 않는다(3개월만 있어도) — Q1	layer2/no	layer2/no	layer2	-	누적 공란행 미적재 설계	
 R157	8799	8834	36	유효	R157. `parse_amount()` 가 소수부를 **단위 배수 적용 전에** 버려, 선언 단위가 있는 표에서 값이 조용히 깎였다 (2026	layer2/no	layer2/no	layer2	-	소수부 절삭·배수 순서 읽기	

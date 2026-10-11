@@ -229,10 +229,18 @@ def _label(k: int | None, decl_mults: set[int]) -> str:
 
 
 def scan_rcept(s, rcept_no: str, suspects: set[str]) -> list[dict]:
+    # layer-2 source, same order as the reload (ops._reload_rcept): the main XML, else the
+    # web-viewer print of a filing without one (2026-10-10 viewer policy) — XBRL-only packages
+    # are loaded from that print, so their declared units are judged from it too
     meta = s.execute(text("""
-        SELECT dt.file_path, f.corp_code, f.corp_name, f.fiscal_year, f.fiscal_period
+        SELECT CASE WHEN dt.status = 'completed' AND dt.file_type = 'xml' THEN dt.file_path
+                    ELSE dt.viewer_xml_path END AS file_path,
+               f.corp_code, f.corp_name, f.fiscal_year, f.fiscal_period
         FROM download_tasks dt JOIN filings f USING (rcept_no)
-        WHERE dt.rcept_no = :r AND dt.file_type = 'xml' AND dt.status = 'completed'"""),
+        WHERE dt.rcept_no = :r
+          AND ((dt.status = 'completed' AND dt.file_type = 'xml' AND dt.file_path IS NOT NULL)
+               OR dt.viewer_xml_path IS NOT NULL)
+        ORDER BY (dt.status = 'completed' AND dt.file_type = 'xml') DESC, dt.id DESC"""),
         {"r": rcept_no}).first()
     if meta is None or not Path(meta.file_path).exists():
         return [{"rcept": rcept_no, "decision": "no_xml"}]

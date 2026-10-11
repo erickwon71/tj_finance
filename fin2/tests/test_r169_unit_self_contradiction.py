@@ -231,3 +231,32 @@ def test_r238_samyang_packaging_2020q1_original_separate():
         report_fiscal_year=2020, report_fiscal_period="Q1")
     assert _rows(lines, "BS", "separate")["자산총계"].value_won == 560_925_000_000
     assert _rows(lines, "IS", "separate")["매출액"].value_won == 81_580_000_000
+
+
+_HD_HYUNDAI_2019_Q3_AMEND_VIEWER = _RAW / "KOSPI/01205709_HD현대/quarter/2019/20191114002747.viewer.xml"
+
+
+def test_r238_hd_hyundai_2019q3_viewer_print_declared_won_cells_in_thousand_won():
+    """HD현대 2019Q3 [기재정정] 20191114002747 — XBRL-only package, layer 2 reads the DART web-viewer
+    print (2026-10-10 policy). The print heads every statement "(단위 : 원)" over 천원 digits
+    (자산총계 25,475,706,904; the original and the next-day amendment say "(단위 : 천원)").
+    The R169/R238 scan reads the same source as the reload (main XML, else viewer print)."""
+    data = json.loads(rl._PROVED_UNIT_OVERRIDES_PATH.read_text(encoding="utf-8"))
+    assert set(data["20191114002747"].values()) == {1_000} and len(data["20191114002747"]) == 8
+    if not _HD_HYUNDAI_2019_Q3_AMEND_VIEWER.exists():
+        return
+    lines = extract_report_lines(
+        _HD_HYUNDAI_2019_Q3_AMEND_VIEWER, rcept_no="20191114002747", corp_code="01205709",
+        report_fiscal_year=2019, report_fiscal_period="Q3")
+    assert _rows(lines, "BS", "consolidated")["자산총계"].value_won == 25_475_706_904_000
+    assert _rows(lines, "BS", "separate")["자산총계"].value_won == 8_342_118_838_000
+    eps = [l for l in lines if l.statement == "IS" and "주당" in (l.label_raw or "")]
+    assert all(l.unit_source == "declared" and abs(l.value_won) < 100_000 for l in eps)
+
+
+def test_r169_scan_source_query_falls_back_to_viewer_print():
+    """scan_rcept must pick the layer-2 source like ops._reload_rcept: main XML, else viewer print."""
+    import inspect
+    from fin2.audit import unit_self_contradiction as usc
+    src = inspect.getsource(usc.scan_rcept)
+    assert "viewer_xml_path" in src and "file_type = 'xml'" in src

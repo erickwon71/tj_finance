@@ -12891,6 +12891,8 @@ Gate B(41개사 재감사·저장, 사본 비교): fail_b→pass 1(00573269 2022
 | 기존 R169 결과 변화 | 없음. 미확정 36섹션(NH투자증권 CF 등) 그대로, 기존 확정 섹션 변화 0 |
 | 범위 밖 | HD현대 `20191114002747`: 본문 XML 이 없는 XBRL 원천(`no_xml`)이다. 단위가 표머리가 아니라 XBRL decimals 경로라 이 규칙으로 판정하지 않는다(별도 조사). 2015 이전 지명 23건(한솔홀딩스 2013 6건·롯데손해보험 2011 등)은 R0-2 이행 전 시대라 다루지 않았다 |
 
+**재적재·결과(fix batch #124, 2026-10-11)**: `vq.py batch reload 124` 2필링 done 2 · deferred 0 · failed 0. 계층2 BS 행은 전부 `proved_unit` 이다(SK네트웍스 연결 50·별도 46, 삼양패키징 별도 35). 계층3 00131780·01060814 재빌드(258행)·calendar(279행, orphan 0). std_v3: SK네트웍스 2017Q3 연결 자산총계 7,814,615,000,000 · 매출 11,207,010,000,000 · 순이익 16,635,000,000. 삼양패키징 2020Q1 자산총계 560,925,000,000. DQ ERROR 0. 2015+ 자산총계 ×300 이상 고립 이상치(미격리) 0. Gate B 재감사(`--recheck`, 2015+): 00131780 pass 46 · 01060814 pass 35, value_diff 0.
+
 **회귀 테스트**: `fin2/tests/test_r169_unit_self_contradiction.py`. `test_r238_decision_rule_allows_mega_only_for_under_nomination` · `test_r238_sk_networks_2017q3_declared_won_cells_in_million_won`(EPS 원 단위 유지 포함) · `test_r238_samyang_packaging_2020q1_original_separate` 를 추가했고, `test_r169_data_file_shape` 의 허용 k 에 10⁶ 을 넣었다.
 
 **코드**: `fin2/audit/unit_self_contradiction.py`(`_UNDER_RATIO_SQL`·`under_ratio_suspects`·`_decide(allow_mega)`·2차 증거 ×k) · `fin2/extract/report_lines.py::_unit_override`(출처 문구 R169/R238) · `fin2/extract/review_csv.py::_note`(`unit_source=proved_unit` 비고) · `docs/verification/verify_prompt.md`(S 정의에 proved_unit 추가).

@@ -1,0 +1,259 @@
+S001	principles	0	no	지배 원칙: 문서 그대로 읽기, 거짓부재·오파싱 감시
+S002	principles	0	no	R0-2 원칙: 계층2 인쇄값만, 값 변경은 계층3
+S003	principles	0	no	R0-1 원칙: 증명된 경우만 원문과 다르게 싣기
+S004	index	0	no	규칙 색인 표
+S005	layer2	3	no	원문 read는 계층2 전용, 읽기 범위 규정
+S006	principles	0	no	R2 정본 정책 원칙(최초본+델타)
+S007	layer2	3	no	모든 버전 전사, 읽어서 싣는 범위
+S008	layer2	3	no	단위 열 단위 판정, 표 읽기 규칙
+S009	layer2	3	no	병합 표 제목·단위 인식 규칙
+S010	layer2	3	no	헤더 의심행 삭제 금지, 표 행 인식
+S011	principles	0	no	R6 확정 못 하면 NULL 원칙
+S012	ops	6	no	수집 유니버스 대상 기업 필터
+S013	ops	6	no	새 파서 배선·백필·검증 3층 절차
+S014	principles	0	no	R9 검증은 원문 대조 원칙
+S015	layer2	3	no	XBRL preferredLabel 부호 읽기 규칙
+S016	layer2	3	no	표 논리 열 occupied-grid 읽기 규칙
+S017	layer2	3	no	발행주식수 파싱 규칙, 정본선택은 계층3
+S018	layer2	3	no	pre-2015 K-GAAP 표 전사 경로
+S019	layer2	3	no	구형 IFRS taxonomy XBRL 읽기 확장
+S020	layer3	4	no	비유동 후보 사전필터, 후보 선택 규칙
+S021	layer3	4	no	curated override 후보 선택, 계정 매핑
+S022	layer3	2	no	형제 라벨 합산 override, 인쇄에 없는 값 생성
+S023	layer3	2	yes	인라인XBRL 부호 덮어쓰기, 계층2 파서에서 호출
+S024	layer2	3	no	콤마 없는 주석번호 가드, 표 읽기 규칙
+S025	layer3	4	no	지주회사 영업비용 서브라인 override 후보
+S026	layer3	2	no	COGS 서브라인 합산 override, 값 생성
+S027	audit	5	no	Gate B 개념 불일치 4개사 pending 처리
+S028	audit	5	no	Gate B 리더 concept_map 갭 추가
+S029	layer3	4	no	NI 귀속 구조기반 후보 추가, 매핑 보강
+S030	audit	5	no	Gate B 지배/비지배 구조 후보 재구현
+S031	audit	5	no	FX 표시통화 법인 pending 강등 규칙
+S032	layer2	3	no	EPS 행 판정 라벨 오판 수정, 값 크기 게이트
+S033	layer2	3	no	K-GAAP 헤드라인 NI EPS 오판 skip 규칙
+S034	layer3	4	no	NI 결측 복구, 계층3 후보 주입
+S035	layer2	3	no	표제 중복 마커의 단위 룩백 규칙
+S036	layer2	3	no	하이픈 음수 셀 게이트 읽기 규칙
+S037	audit	5	no	업종 파생 revenue 검증 규칙(Gate B)
+S038	audit	5	no	Gate B 증거등급 계측·fail_a 승격 규칙
+S039	layer3	4	no	정정본 셀 우선, 계층3 정본 병합
+S040	audit	5	no	NI 귀속 텍스트 후보 감사 추가
+S041	audit	5	no	감사기 열 선택 규칙 수정
+S042	audit	5	no	Gate B 감사 유니버스 상장폐지 제외
+S043	audit	5	no	xbrl_zip 감사 경로 추가 배선
+S044	layer3	4	no	BS 총계 라벨 드리프트, 정정 우선 그룹
+S045	audit	5	no	Track D 한계 문서화, 수정 안 함 결정
+S046	audit	5	no	curated 키 재생성 스캔 도구
+S047	layer3	4	no	정정본 하위라인 stale 셀 채택 규칙
+S048	layer3	4	no	포괄이익 귀속 표기 가드 매핑
+S049	layer3	4	no	계속영업 귀속 성분 가드, 후보 풀
+S050	layer3	4	no	NI 앵커 재설계, 계층3 identity 검증
+S051	audit	5	no	NI 귀속 스킵게이트 제거, 감사 후보
+S052	audit	5	no	UDF acode 라벨매칭 감사 폴백
+S053	layer3	4	no	결합형 alias 오매핑 사전 갭 메움
+S054	audit	5	no	라벨-acode 뒤바뀜 감사 curated 예외
+S055	layer3	4	no	짝 canonical 재라우팅 규칙
+S056	layer3	2	no	net_debt 합산 배선, 파생값 생성
+S057	layer3	4	no	차입금·전환사채 alias 등록, 신규 canonical
+S058	layer3	4	no	fuzzy 오매핑 alias 충돌 정리
+S059	layer3	4	no	장기차입금 결합라벨 재라우팅, HELD 해소
+S060	layer3	4	no	유동성사채 canonical 분리 alias
+S061	audit	5	no	Phase B 라인 감사 이식, 감사 리더 수정
+S062	layer3	4	no	is.net_income alias 추가, 로마숫자 정규화
+S063	layer3	4	no	K-GAAP 인터림 재게재 배제, 정본 선택
+S064	layer3	4	no	주석번호 결합표기 라벨 정규화 확장
+S065	layer2	3	no	주석 헤더 TH 기반 주석열 탐지
+S066	layer3	4	no	stale 재게재 필터를 매출 계산기에 배선
+S067	layer2	3	no	문서 기본단위 폴백 오귀속 가드(단위 읽기)
+S068	layer3	4	no	계정 매핑·리스부채 섹션 재분류 및 combine 배선
+S069	layer2	3	no	레거시 헤딩·부속명세서 컨테이너 인식
+S070	layer2	3	no	레거시 헤딩 갭 A-1/A-2/C 수정
+S071	layer2	3	no	통짜셀 BS 표에서 total_assets 추출
+S072	layer3	4	no	_reduce_conflict 수익 grand-total 후보 판정
+S073	layer3	2	no	curated 배수 곱하기로 값 교정(계층3)
+S074	layer2	3	no	값 거부 칸에 의한 컬럼 선두절삭 방지
+S075	layer2	3	no	PDF 3줄 이중언어 레이아웃 파싱
+S076	case_log	1	no	DART 아카이브 인코딩 손상 원인 규명 기록
+S077	layer2	3	no	PERIOD_MARK 정규식 확장(하이픈·괄호 기간)
+S078	layer2	3	no	표-격자 폴백으로 줄바꿈 라벨 복원
+S079	layer3	4	no	계정매퍼 exact alias 추가(반의어 오매핑)
+S080	layer3	4	no	계정매퍼 반의어 어휘 스캔·FUZZY_BLOCK
+S081	layer3	4	no	신규 canonical 코드 신설
+S082	ops	6	no	배치 복구 경로 reconcile 배선
+S083	layer2	3	no	reconcile T2 분기 PDF 채택 조건
+S084	layer3	4	no	fuzzy containment 미처분 이익잉여금 오매핑
+S085	layer2	3	no	EPS 2단 헤더 누적열 선택
+S086	layer2	3	no	else 분기 선두 None 절삭 오인
+S087	layer2	3	no	extract_rows 6열 선두 절삭 결함
+S088	layer2	3	no	THEAD 헤더그리드로 열 판정
+S089	layer2	3	no	TBODY 헤더행 및 HTML 뷰어 헤더 판독 확장
+S090	layer2	3	no	천주 단위 인식(shares.py) 및 시총 소스 전환
+S091	layer2	3	no	손상 XML 감지(파싱 전 차단)
+S092	layer2	3	no	PDF 헤더 구조 우선 파싱, 주석열 오인
+S093	layer2	3	no	IS 0행: 서브컬럼·앵커·부호 읽기
+S094	layer2	3	no	정정본 회계연도 판정 및 파서 라우팅 폴백
+S095	layer2	3	no	배너행 건너뛰기로 헤더그리드 복구
+S096	ops	6	no	ZIP 본문 파일 선택 규칙(수집)
+S097	layer2	3	no	FIN_TYPE 기본값·TOC placeholder 연결 판정
+S098	layer2	3	no	구형 괄호숫자 표제 인식
+S099	layer2	3	no	꼬리표제 및 빈 SPAN pending 계산
+S100	layer2	3	no	주석마커보다 헤딩판정 우선
+S101	ops	6	no	표준파일 미등록 정기보고서 재확인 상태
+S102	ops	6	no	같은날 첨부정정 그룹 최초본 큐 포함
+S103	layer3	4	no	std_v3 consolidation_status 컬럼 길이
+S104	layer2	3	no	연결비대상 근거 각주 정규식 좁힘
+S105	layer2	3	no	재작성 문장구조 오탐 배제
+S106	layer2	3	no	SPAC 껍데기 법인 선언 스코프 제한
+S107	layer2	3	no	전기만 지칭 결측선언 가드
+S108	layer2	3	no	순번-연도 불가 케이스 영구 예외
+S109	layer2	3	no	글자당 공백 서브헤더 정규식
+S110	layer2	3	no	글자당 공백 주석헤더 인식
+S111	layer2	3	no	순수 대시를 0으로 읽는 raw_amounts
+S112	layer2	3	no	무표지 병합군 대시 vs 실값 선택
+S113	layer2	3	no	분기 참고열 연도서수 열 배제
+S114	layer3	2	yes	Q1 공백 누적란을 3개월값으로 채움
+S115	layer2	3	no	주석헤더 완전공란 열 건너뛰기
+S116	layer3	2	yes	중복 기간라벨 열 rank 교정(행 이동)
+S117	layer2	3	no	셀 내 괄호 서브타입 접미사 인식
+S118	layer2	3	no	무표지 2열 병합군 열 순서 예외 목록
+S119	layer2	3	no	연결 섹션 옛 수치 표 스킵 예외
+S120	layer2	3	no	괄호 뒤 "기" 생략 오타 표기 인식
+S121	layer2	3	no	증권사 헤더 변형 인식 추가
+S122	case_log	1	no	명세/소계 규칙 시도 후 되돌림 기록
+S123	layer2	3	no	2015+ 명세/소계 중복 서브타입 열 해석
+S124	layer2	3	no	달력날짜·참조열 기간라벨 인식 추가
+S125	layer2	3	no	SCE 캡션 오부착 가드
+S126	layer2	3	no	forward-scan 경로 SCE 가드 확장
+S127	layer2	3	no	"당N분기" 서수 브랜치 우선 인식
+S128	layer2	3	no	2자리 연도 축약 분기 표기 인식
+S129	layer2	3	no	XBRL prohibited arc 중복 제거
+S130	layer2	3	no	XBRL CF 트리 미연결 fact 직접 조회
+S131	layer2	3	no	무표지 병합군 값동일 열선택 일반화, 인쇄값 채택
+S132	layer2	3	no	자기모순 단위선언 rcept 단위 해석 강제
+S133	layer2	3	no	XBRL 트리 미연결 개념 fact 싣는 범위
+S134	layer2	3	no	SCE 앵커행 기수 규칙 드롭 방지, 행 인식
+S135	layer2	3	no	라벨 영역 다중 물리셀 라벨 이어붙임
+S136	layer2	3	no	PDF 단독 주석번호 금액 오인 방지
+S137	layer2	3	no	미매핑 라벨 저장 거부 제거, 원문 충실 전사
+S138	audit	5	no	2015+ 폴백 스캔 오탐 확정, 스캔 스크립트 수정
+S139	ops	6	no	재적재 보호 규칙, R167로 폐지 대체된 이력
+S140	audit	5	no	원문대조 캠페인 리뷰 CSV와 단계 필터 도구
+S141	layer2	3	no	병합 표제에서 텍스트 위치로 재무제표 분류
+S142	layer2	3	no	재무제표명 없는 하위 표지 판정, 표 분류
+S143	layer3	2	yes	차감후 OCI 행 제외, XBRL 값 덮어쓰기 후보 정정
+S144	layer2	3	no	EPS 경로 판정 열선택 셀 줄바꿈 분할 처리
+S145	layer2	3	no	EPS 행 판정을 구조 패턴으로 교체
+S146	layer3	4	no	std D&A 출처 중복 합산 규칙, 미해결 별도 트랙
+S147	layer2	3	no	주당 없는 EPS 자식행 인식 규칙 E 추가
+S148	layer2	3	no	표지 없는 SCE 물리분할표 내용 기반 판정
+S149	layer2	3	no	2,564원 셀 자체 원 단위 표기 읽기
+S150	layer2	3	no	콤마 뒤 공백 쪼개진 금액 이어붙여 읽기
+S151	layer2	3	no	SCE 열이름 자간 공백 처리, 표 인식
+S152	layer2	3	no	자간 공백 열이름 물리분할 표 판정
+S153	layer2	3	no	금융업 보충표기 압축칸 본항목 첫 값만 적재
+S154	layer2	3	no	EPS 경로에 열선택 예외 플래그 배선
+S155	layer3	2	yes	Q1 누적 공란을 3개월 값으로 채움, 빈칸 채움
+S156	layer2	3	no	2열 그룹 마감행 판정불가 미적재, R168 대체
+S157	layer2	3	no	분기 누적 공란 행 미적재 설계, 구제 불가
+S158	layer2	3	no	소수부 배수 전 적용, 단위 표기 계산 순서
+S159	layer2	3	no	마침표 깨진 천단위 셀 정수짝 대조 복원
+S160	layer3	2	yes	원문 오타 셀 예외목록 교정, 숫자 교정
+S161	layer2	3	no	마침표 셀 미적재, 확인요청 목록 보고
+S162	layer2	3	no	각주 문장 제거 후 표제 분류
+S163	layer3	2	yes	SCE 음수괄호 누락 부호 복원, 항등식 증명
+S164	layer3	2	yes	CF 현금조정 구간 음수 부호 복원
+S165	layer2	3	no	처분계산서 가드가 SCE 판별 못함, 표 인식
+S166	audit	5	no	SCE 기말잔액 셀 이중 앵커 후보 판정
+S167	layer2	3	no	ROWSPAN 둘째 물리행 상속 라벨로 별도 행
+S168	audit	5	no	검증 판정 적재버전 묶기와 lease 규칙
+S169	layer2	3	no	그룹 마감행 산수 자기증명 시에만 적재
+S170	layer2	3	no	증명된 섹션 선언 단위 해석 교정
+S171	layer2	3	no	XBRL 회사 pre.xml base 병합, arc 개념 단위
+S172	layer3	2	no	정정 체인에서 나중 XML 필링이 XBRL 셀 대체
+S173	layer3	4	no	XBRL 셀 개념 source_ref 기반 계정 매핑
+S174	layer2	3	no	EPS 경로 주석열 판정 공유, stale 재적재
+S175	audit	5	no	Gate B 판독기 단위 교정과 대시 0 후보
+S176	layer3	2	yes	XBRL CF 표시부호 weight 누적곱으로 부호 결정
+S177	layer3	2	yes	XBRL SCE 소유주거래 부호 롤포워드 반전
+S178	layer2	3	no	SCE 기간 순서 canonical_dates 표 단위 고정
+S179	layer2	3	no	단위표기 헤더 규칙 전체일치로 데이터행 보존
+S180	layer2	3	no	음수 EPS 괄호 원 접미사 읽기
+S181	layer2	3	no	total 열 공란 행 가드 제거, 다른 열 보존
+S182	layer2	3	no	XBRL 기초자본 라벨 날짜를 블록 시작일로
+S183	layer2	3	no	계속영업이익 tree-gap fact 등식 위반 시 미적재
+S184	layer3	2	yes	SCE 원문 오류 값 행이동 행제외 교정
+S185	layer3	2	yes	합계 열만 인쇄된 SCE 변동행 셀 항등식으로 채움
+S186	layer3	2	yes	계층형 표 두 합계칸 변동행 구성요소 채움
+S187	layer3	2	yes	부분 뒤집기 열 전체 확장, 부호 증명
+S188	layer3	2	yes	SCE 잔액 날짜 앵커로 부호 증거 제공
+S189	layer3	2	yes	SCE 잔액 1,000원 허용오차 이중 항등식 부호
+S190	layer3	2	yes	깨진 행 항등식 형제 셀 부호 맞춤
+S191	layer3	2	yes	변동 행 외부 증거에 이전 보고서 IS 추가
+S192	layer3	2	yes	SCE 거울해 가드와 분기반기 날짜 앵커
+S193	layer3	2	yes	SCE 중첩 소계 판정과 부호
+S194	layer3	2	yes	SCE 잔액 BS 날짜 부호 우선 적용
+S195	layer3	2	yes	SCE 선행 소계 인쇄 부호 유지
+S196	layer3	2	yes	SCE 변동 셀 부호를 IS 앵커로 뒤집음
+S197	layer3	2	yes	선행 소계 증명 후 구성요소 부호 결정
+S198	layer2	3	no	IS/CF 표를 SCE 표에서 제외하는 표 인식
+S199	layer2	3	no	표제 분류 시 SCE 이름 위치 판정
+S200	layer2	3	no	연금흐름표 표제 오기를 CF 표제로 인식
+S201	layer3	2	yes	R162-e 반전 거부 가드와 예외목록
+S202	layer3	2	yes	열 확장 행항등식 조건으로 셀 부호 뒤집기
+S203	layer3	2	yes	뒤집은 뒤 소계 재판정으로 부호 채택
+S204	layer3	2	yes	마침표 셀을 반올림 정수로 교정
+S205	layer3	2	yes	콤마 그룹 결손 셀을 예외목록으로 교정
+S206	layer3	2	yes	마침표+숫자 오타 셀을 예외목록으로 교정
+S207	layer3	2	yes	.5 마침표 셀을 항등식으로 교정
+S208	layer3	2	yes	소계행 제외 후 단일셀 반전으로 부호 복원
+S209	layer3	2	yes	열 항등식으로 빠진 음수 괄호 복원
+S210	layer2	3	no	두 번째 IS role 행을 적재 대상에 포함
+S211	layer3	2	yes	XBRL SCE 부호 정산 동률을 결정적으로 처리
+S212	layer2	3	no	3개월 단독 fact 셀은 싣지 않음
+S213	audit	5	no	기계대조 SCE 주석 열 오프셋 오탐 보정
+S214	audit	5	no	기계대조 그룹 접두 주석 라벨 판정
+S215	layer2	3	no	중복 행 판정에 개념명 포함
+S216	layer3	2	yes	그룹 합계 공란 행의 자본합계 부호 반전
+S217	layer3	2	yes	행항등식 후 부호 복원 체인 재실행
+S218	layer2	3	no	셀 안 숫자 첫 자리 이어붙임 읽는 법
+S219	layer2	3	no	회사 확장 EPS 개념의 단위 읽기
+S220	layer2	3	no	.0 셀 정수부 복원(읽는 법 예외)
+S221	layer2	3	no	XBRL 비용 negation 제거(인쇄 표시 따름)
+S222	layer2	3	no	마침표+쉼표 혼합 구분자 셀 읽는 법
+S223	index	0	no	부록 B 규칙 원출처 색인
+S224	index	0	no	부록 C 미결·위반 현황
+S225	index	0	no	부록 D 예외목록 카탈로그
+S226	layer3	2	yes	SCE 셀을 원문 인쇄 부호로 되돌림
+S227	layer2	3	no	선언 단위 ×1,000 부풀림 지명·단위 해석
+S228	layer2	3	no	XBRL 보충 총계 중복 행 제외
+S229	layer2	3	no	SCE 모순 부모행 셀 제외
+S230	layer2	3	no	기말 단독 SCE 블록 제외
+S231	audit	5	no	기계대조 주당 판정에 section_path 사용
+S232	layer2	3	no	소수 EPS 정확값을 value_exact에 적재
+S233	layer3	4	no	계층3 EPS 행 자체 규칙 분류
+S234	layer2	3	no	SCE 기초 라벨 날짜를 duration context로 읽음
+S235	layer3	2	yes	결손금 열 음수 BS 앵커로 부호 복원
+S236	layer2	3	no	KRW 주당 decimals≤−6 단위 해석
+S237	layer3	4	no	XBRL 주당 행 계층3 EPS 규칙 분류
+S238	layer2	3	no	두 반쪽 이어붙임 EPS 셀 읽는 법
+S239	ops	6	no	store_report_tables scope로 메타 삭제 방지
+S240	layer3	4	no	달력 CY flow를 FY as-filed 값으로 채움
+S241	layer3	2	no	계층3 비용 컬럼 양수 관례로 부호 정규화
+S242	layer2	3	no	비재무 섹션 표 원문 격자 적재
+S243	layer3	4	no	문서 매퍼 머리 경로로 열 찾기
+S244	layer2	3	no	선언 안 된 엔티티 파싱 전 정리
+S245	layer2	3	no	유통주식수 Ⅴ/Ⅵ 행 읽기
+S246	layer2	3	no	XBRL SCE 3개월 단독 셀 미적재
+S247	layer3	2	yes	법인세 부호 정산 후보에 계속영업 행 추가
+S248	layer2	3	no	기간 뭉친 헤더 분할 또는 적재 제외
+S249	layer3	4	no	택소노미 한국어 라벨로 계층3 계정 매핑
+S250	layer3	4	no	주석 2단 열에서 기간별 합계 열 선택
+S251	layer3	4	no	D&A 출처를 현금흐름 조정 하나로 정함
+S252	layer3	2	yes	CF 유출 구간 하위 항목 부호 부여
+S253	layer3	2	yes	원 단위 소수 셀 쉼표 제거 형태로 등재
+S254	layer3	4	no	현금 행 있으면 손익 계정명 후보 제외
+S255	layer3	4	no	자산 차감 계정 행을 표 내 합산
+S256	layer3	2	no	CF 배당 지급 −|값| 부호 부여
+S257	layer3	4	no	CF 한정어 떼고 계정 매핑
+S258	layer3	4	no	정정본 계정명 변경 시 최초본 셀 대체
+S259	layer2	3	no	단위 선언과 실제 단위 불일치 증명 해석

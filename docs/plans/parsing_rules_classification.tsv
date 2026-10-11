@@ -1,0 +1,260 @@
+rule	start	end	lines	status	title	haiku	sonnet	final	impl	note	group
+R0	15	47	33	유효	R0. ★★ 지배 원칙 — 문서를 그대로 읽는다. 없으면 넘어간다.	principles/no	principles/no	principles	-	지배 원칙 R0	
+R0-2	48	83	36	유효	R0-2. ★★★ 계층2 는 인쇄된 값만 싣는다. 값을 고치는 일은 모두 계층3 에서 한다 (2026-10-10, 사용자 결정 — 반복해서 깨진	principles/no	principles/no	principles	-	지배 원칙 R0-2	
+R0-1	84	195	112	일부 대체됨(→R0-2: 2015+ 부호복원 증명·정합화 대기 표·'이 절이 이긴다'. 표기 해석 1항은 유효)	"R0-1. ★★ 원문 그대로 적재한다. 원문과 다르게 싣는 것은 ""증명된"" 경우뿐이다 (2026-10-09, 사용자 결정)"	principles/no	principles/no	principles	-	지배 원칙 R0-1	
+0. 규칙 색인	196	220	25	유효	0. 규칙 색인	index/no	index/no	index	-	규칙 색인	
+R1	221	245	25	유효	R1. 보고서 원문 read 는 계층2 전용	layer2/no	layer2/no	layer2	-	원문 read는 계층2 전용	
+R2	246	408	163	유효(내부 '표 단위 델타' 설계 문단만 폐기)	R2. ★정본 정책 — 최초등록본 + 순차 델타 패치	principles/no	principles/no	principles	-	R2 정본 정책 원칙	
+R3	409	421	13	유효	R3. 계층2 는 모든 버전을 전사한다	layer2/no	layer2/no	layer2	-	모든 버전 전사, 거르지 않음	
+R4	422	479	58	유효	R4. 단위는 표가 아니라 **열** 단위로 판정	layer2/no	layer2/no	layer2	-	단위를 열 단위로 판정	
+R4-2	480	540	61	유효	R4-2. 제목+데이터 병합 표 / 제목 자체가 없는 표	layer2/no	layer2/no	layer2	-	병합표·제목없는 표 인식	
+R5	541	554	14	유효	R5. 헤더 의심 행을 삭제하지 않는다 (header_hint)	layer2/no	layer2/no	layer2	-	헤더 의심 행 삭제 안 함	
+R6	555	573	19	유효	R6. 확정 못 하면 추측하지 않는다	principles/no	principles/no	principles	-	R6 추측 금지 원칙	
+R7	574	585	12	유효	R7. 유니버스	ops/no	ops/no	ops	-	유니버스 정의	
+R8	586	601	16	유효	R8. 새 파서/로더 추가 3층 (자동 반영 안 됨)	ops/no	ops/no	ops	-	파서 배선·백필 절차	
+R9	602	615	14	유효	R9. 검증은 집계가 아니라 원문 대조로	principles/no	principles/no	principles	-	R9 원문 대조 원칙	
+R10	616	660	45	유효	R10. XBRL 원문(instance) — 값 부호는 `preferredLabel`이 결정, `calc:weight`는 저장에 안 씀	layer2/no	layer2/no	layer2	-	XBRL negated 라벨 표현 규칙	xbrl_fallback
+R11	661	737	77	유효	R11. ★표의 논리적 열 = 헤더·본문을 관통하는 하나의 occupied-grid (본문 행도 ROWSPAN/COLSPAN 확장)	layer2/no	layer2/no	layer2	-	표 논리적 열 occupied-grid	
+R12	738	773	36	유효	"R12. 발행주식수(""주식의 총수 등"") — 계층2 cross-cutting 스칼라 전사"	layer2/no	layer2/no	layer2	-	발행주식수 별도 전사	
+R13	774	825	52	유효	R13. pre-2015(K-GAAP 구서식) 계층2 전사 — 연도 라우팅 신규 모듈, 2015+ 경로 무변경	layer2/no	layer2/no	layer2	-	pre-2015 구서식 전사	
+R14	826	885	60	유효	R14. XBRL 원문(instance) 구형 IFRS taxonomy(2010~2013 계열) 확장 — namespace/외부BFS/라벨/누락	layer2/no	layer2/no	layer2	-	구형 XBRL taxonomy 읽기	xbrl_fallback
+R15	886	928	43	유효	R15. 계층3 `_CURRENT_STRICT`(bs.trade_payables 등) — 비유동 후보를 stage-rank 숏컷보다 먼저 걸러낼	layer3/no	layer3/no	layer3	-	계층3 유동/비유동 후보 필터	
+R16	929	992	64	유효	R16. 계층3 `_resolve()` stage-rank 숏컷 — `is.revenue`/`bs.trade_payables` 총계 vs	layer3/no	layer3/no	layer3	-	계층3 curated override 매핑	
+R17	993	1048	56	유효	R17. `bs.trade_payables` additive override — curated 키는 **corp 단독이 아니라	layer3/no	layer3/no	layer3	-	계층3 additive override 키	
+R18	1049	1102	54	유효	R18. 계층2 CF `cf.dividends_paid` 부호 — document.xml 인라인 XBRL(Track A) 사실로 대사(오버레이)	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	배당 부호를 XBRL로 덮어씀	
+R19	1103	1162	60	유효	R19. `table_extractor.py::_split_label_amounts()` 주석번호 가드 — 콤마 없는 단일 숫자는	layer2/no	layer2/no	layer2	-	주석번호 가드 금액 판정	
+R20	1163	1216	54	유효	R20. 계층3 `_resolve()` stage-rank 숏컷 — 지주회사형 `is.sga`(영업비용 총계 vs	layer3/no	layer3/no	layer3	-	계층3 sga 서브라인 override	
+R21	1217	1320	104	유효	R21. `is.cogs` additive override — 매출원가류 서브라인 **합산**(stage-rank/충돌	layer3/no	layer3/no	layer3	-	계층3 cogs 합산 override	
+R22	1321	1361	41	유효	R22. Gate B `face_audit.py` — `is.cogs` vs `report_won` **개념 자체가 다른** 4개사는	audit/no	audit/no	audit	-	Gate B cogs 예외 처리	
+R23	1362	1413	52	유효	R23. `fin2/taxonomy/concept_map.py` — `bs.trade_payables` concept_map 갭 5종 추가	audit/no	audit/no	audit	-	Gate B 리더 concept_map	
+R24	1414	1472	59	유효	R24. 계층3 `combine.py::_map_rows()` — `is.controlling_ni`/`is.noncontrolling_ni`	layer3/no	layer3/no	layer3	-	NI 귀속 구조 후보 보강	
+R25	1473	1516	44	유효	R25. Gate B `face_audit.py::_ni_attribution_structural_candidates()` — `is.contr	audit/no	audit/no	audit	-	Gate B NI 귀속 후보 재구현	
+R26	1517	1554	38	유효	R26. Gate B `face_audit.py` — FX 표시통화(두산밥캣) curated pending 강등, 옵션 B	audit/no	audit/no	audit	-	Gate B FX pending 강등	
+R27	1555	1612	58	유효	R27. `fin2/extract/report_lines.py` — EPS(주당손익) 행 판정의 라벨 부분문자열	layer2/no	layer2/no	layer2	-	EPS 행 판정 값크기 게이트	
+R28	1613	1707	95	유효	R28. `fin2/extract/report_lines.py` — K-GAAP 구서식(00269852류) 헤드라인	layer2/no	layer2/no	layer2	-	구서식 EPS 오판 skip-gate	
+R29	1708	1771	64	유효	R29. `fin2/layer3/combine.py` — K-GAAP 구서식 헤드라인 NI `net_income` 결측 복구	layer3/no	layer3/no	layer3	-	헤드라인 NI 후보 주입	
+R30	1772	1838	67	유효	R30. `fin2/extract/text.py`/`statement_titles.py` — 표제/계정구분 중복 마커가	layer2/no	layer2/no	layer2	-	단위 룩백 중복 마커 건너뜀	
+R31	1839	1919	81	유효	R31. `parser/xml/table_extractor.py::_NUMBER_PATTERN` — 괄호 없는 순수	layer2/no	layer2/no	layer2	-	하이픈 음수 셀 인식	
+R32	1920	1990	71	유효	R32. Gate B — 업종 프로파일 파생 `revenue` 검증 (증권/은행/보험/여신전문, 2026-08-17)	audit/no	audit/no	audit	-	Gate B 업종 파생 매출 검증	
+R33	1991	2063	73	유효	R33. Gate B — 증거강도(축2) 계측 + `fail_a` 승격의 gapfill 예외 1건 (2026-08-18)	audit/no	audit/no	audit	-	Gate B 증거강도 계측	
+R34	2064	2110	47	유효	R34. `fin2/layer3/combine.py::_resolve()` — R2 델타패치가 정정본의 표 재렌더링에	layer3/no	layer3/no	layer3	-	정정본 델타패치 무력화 수정	
+R35	2111	2168	58	유효	R35. `fin2/audit/face_audit.py` — NI 귀속표 전체가 XBRL 미태깅인 문서에서	audit/no	audit/no	audit	-	감사기 NI 귀속 후보 보강	
+R36	2169	2211	43	유효	R36. `fin2/audit/face_audit.py` — `_ni_attribution_text_candidates()`(R35) 열(컬럼)	audit/no	audit/no	audit	-	감사기 열 선택 오탐 수정	
+R37	2212	2234	23	유효	R37. `scripts/gateb_audit.py::select_corps()` — Gate B 감사 유니버스가 상장폐지사를	audit/no	audit/no	audit	-	감사 유니버스 상폐 제외	
+R38	2235	2274	40	유효	R38. `fin2/audit/face_audit.py::read_report_face_xbrl_zip()` + `scripts/gateb_au	audit/no	audit/no	audit	-	Track D xbrl_zip 감사 신설	
+R39	2275	2331	57	유효	R39. `fin2/layer3/combine.py::_resolve()` — BS 총계 3종의 라벨-표현 드리프트가	layer3/no	layer3/no	layer3	-	BS 총계 라벨 드리프트 정정	
+R40	2332	2378	47	유효	R40. Track D(xbrl_zip 재파싱) — 다중필링 narrow-prefer 재현 불가(알려진 감사 커버리지	audit/no	audit/no	audit	-	Track D 한계, 수정 안 함	
+R41	2379	2432	54	유효	R41. `fin2/audit/curated_key_scan.py` 신설 — Gate B curated 키 재생성기(전수 패턴	audit/no	audit/no	audit	-	curated 키 재생성 스캐너	
+R42	2433	2491	59	유효	R42. `bs.trade_payables` 정정본 하위라인 재구성이 남긴 stale 셀 오채택 — R16 계열의	layer3/no	layer3/no	layer3	-	stale 하위라인 오채택 override	
+R43	2492	2567	76	유효	R43. `account_mapper.py` 포괄손익 귀속 가드 — '포괄이익'/'포괄손실'(쪼개진 표기) 미포착	layer3/no	layer3/no	layer3	-	포괄손익 귀속 매퍼 가드	
+R44	2568	2644	77	유효	R44. '계속영업' 귀속 성분 자매가드 — DRB동일(00118266) 부수발견 후속조사	layer3/no	layer3/no	layer3	-	계속영업 귀속 매퍼 가드	
+R45	2645	2728	84	유효	R45. `fin2/layer3/combine.py::_resolve_ni_attribution()` — net_income 앵커	layer3/no	layer3/no	layer3	-	NI 앵커 재설계	
+R46	2729	2785	57	유효	R46. `fin2/audit/face_audit.py::_with_ni_attribution_text_fallback()` —	audit/no	audit/no	audit	-	감사기 NI 귀속 스킵게이트	
+R54	2786	2841	56	유효	R54. `fin2/audit/face_audit.py::read_report_face_xbrl()` — 회사고유 확장(UDF)	audit/no	audit/no	audit	-	감사기 UDF acode 라벨 폴백	
+R55	2842	2902	61	유효	R55. `account_maps/bs_accounts.py` — `bs.trade_payables` 결합형 alias의	layer3/no	layer3/no	layer3	-	매입채무 alias 갭 메움	
+R56	2903	2950	48	유효	R56. `fin2/audit/face_audit.py` — 갤럭시아에스엠 라벨-acode 뒤바뀜	audit/no	audit/no	audit	-	감사기 라벨-acode 예외	
+R57	2951	3051	101	유효	R57. `fin2/layer3/combine.py::_resolve()` — `_CURRENT_STRICT` 탈락분을	layer3/no	layer3/no	layer3	-	비유동 탈락분 재라우팅	
+R58	3052	3148	97	유효	R58. `fin2/layer3/combine.py::_apply_enrichment()` — 원인 C(v3가 차입금	layer3/no	layer3/no	layer3	-	차입금 세부항목 합산 배선	
+R58	3149	3221	73	유효	"R58 순서4-② ""alias 3종"" (2026-08-31) — `account_maps/bs_accounts.py` +"	layer3/no	layer3/no	layer3	-	차입금 alias·canonical 추가	
+R58	3222	3350	129	유효	"R58 순서4-③ ""나머지 소수 라벨""(신주인수권부사채/교환사채) + 순서4-②의"	layer3/no	layer3/no	layer3	-	사채 canonical·fuzzy 충돌 수정	
+R59	3351	3424	74	유효	R59. `fin2/layer3/combine.py::_resolve()` — `bs.long_term_debt` 결합(rollup)	layer3/no	layer3/no	layer3	-	결합 라벨 HELD 재라우팅	
+R60	3425	3484	60	유효	R60. `account_maps/bs_accounts.py` — `bs.current_portion_lt_debt` 개념분리	layer3/no	layer3/no	layer3	-	유동성사채 canonical 분리	
+R61	3485	3523	39	유효	R61. Gate B Phase B(`fin2/audit/line_audit.py`) DB측 원천 `fact_v2`→`report_lines`	audit/no	audit/no	audit	-	Phase B 감사리더 이식·버그	
+R62	3524	3594	71	유효	R62. `account_maps/is_accounts.py` + `parser/common/amount_normalizer.py` —	layer3/no	layer3/no	layer3	-	NI alias·로마숫자 정규화	
+R63	3595	3781	187	유효	R63. `fin2/layer3/combine.py` + `fin2/layer3/build.py` — K-GAAP시대 연결 인터림	layer3/no	layer3/no	layer3	-	직전연차 재게재 배제	
+R64	3782	3846	65	유효	R64. `parser/common/amount_normalizer.py::normalize_account_name()` — 주석번호	layer3/no	layer3/no	layer3	-	주석번호 접속사 정규화	
+R65	3847	3936	90	유효	R65. `parser/xml/table_extractor.py` — 헤더 `<TH>주석</TH>` 기반 주석열	layer2/no	layer2/no	layer2	-	주석열 헤더 탐지 값오염 수정	
+R66	3937	4019	83	유효	R66. `fin2/layer3/combine.py::combine_full()` — 증권/보험/은행/여신전문	layer3/no	layer3/no	layer3	-	combine 매출액 stale 필터 배선	
+R67	4020	4120	101	유효	R67. `fin2/extract/text.py`/`fin2/extract/report_lines.py` — 계층2 문서레벨	layer2/no	layer2/no	layer2	-	문서 기본단위 폴백 오귀속 가드	
+R68	4121	4201	81	유효	R68. `account_maps/bs_accounts.py`+`cf_accounts.py`+`fin2/layer3/combine.py` —	layer3/no	layer3/no	layer3	-	리스부채 등 계정 매핑 신설	
+R69	4202	4294	93	유효	R69. `parser/xml/section_detector.py`+`fin2/extract/text.py`+`fin2/extract/	layer2/no	layer2/no	layer2	-	레거시 헤딩 표제 인식 확장	
+R70	4295	4371	77	유효	R70. `fin2/extract/legacy_pre2015.py`+`fin2/extract/statement_titles.py` —	layer2/no	layer2/no	layer2	-	레거시 헤딩·요약 접두 인식	
+R71	4372	4452	81	유효	R71. `fin2/extract/legacy_pre2015.py` — (A-3) 통짜-셀 레거시 BS 표	layer2/no	layer2/no	layer2	-	통짜셀 BS 총자산 읽기	
+R72	4453	4544	92	유효	R72. `fin2/layer3/combine.py::_reduce_conflict()` — is.revenue grand-total	layer3/no	layer3/no	layer3	-	combine 매출 후보 선택 보정	
+R73	4545	4711	167	유효	R73. `fin2/layer3/unit_overrides.py` — 원문 자기모순 필링 수동 단위교정	layer3/no	layer3/no	layer3	-	수동 단위교정 곱셈 적용	
+R74	4712	4828	117	유효	R74. `_AMOUNT_SANE_MAX` 값-거부 셀이 선두절삭 컬럼압축과 충돌해	layer2/no	layer2/no	layer2	-	값거부 시 컬럼압축 밀림 방지	
+R75	4829	5004	176	유효	"R75. `fin2/extract/pdf.py` — Track C(PDF-only) ""3줄 이중언어"" 레이아웃"	layer2/no	layer2/no	layer2	-	PDF 3줄 이중언어 레이아웃 읽기	
+R76	5005	5094	90	유효	R76. OpenDART `document.xml` 아카이브 자체의 2001년 접수분 인코딩 손상	case_log/no	case_log/no	case_log	-	원문 인코딩 손상 경위 조사	
+R77	5095	5149	55	유효	R77. `fin2/extract/pdf.py::_PERIOD_MARK_RE` — 정정회차·당기/전기 표기가 낀	layer2/no	layer2/no	layer2	-	PDF 기간마커 정규식 확장	
+R78	5150	5221	72	유효	R78. `fin2/extract/pdf.py` — 라벨이 숫자를 사이에 두고 줄바꿈되는 세 번째	layer2/no	layer2/no	layer2	-	PDF 표격자 폴백 읽기	
+R79	5222	5256	35	유효	"R79. `account_mapper` — ""차/대""·""임차/임대"" 처럼 한 글자 차이로 뜻이"	layer3/no	layer3/no	layer3	-	계정 alias 반의어 매핑	
+R80	5257	5291	35	유효	R80. `account_mapper` 전체 어휘 스캔 — R79 패턴의 체계적 재현(형태소 반의어	layer3/no	layer3/no	layer3	-	계정 매퍼 어휘 반의어 방어	
+R81	5292	5339	48	유효	"R81. R80 ""처분(inflow) 전용 canonical 미신설"" 후속 — 사용자 지시 ""처분"	layer3/no	layer3/no	layer3	-	처분 canonical 신설	
+R82	5340	5372	33	유효	R82. Category C(fy1999~2003 절단 복구) 배치 경로 — HTML→PDF T1/T2/T3	ops/no	ops/no	ops	-	Category C 복구 배치 배선	
+R83	5373	5411	39	유효	R83. Track C 93건 전체 소급 백필 실행 중 `reconcile()` T2 분기 오채택	layer2/no	layer2/no	layer2	-	reconcile T2 PDF 채택조건	
+R84	5412	5483	72	유효	R84. `parser/common/account_mapper.py` — Stage 3 fuzzy containment 가	layer3/no	layer3/no	layer3	-	미처분이익잉여금 오매핑 차단	
+R85	5484	5544	61	일부 대체 후보(→R88 열 판정 3갈래 추측) — D단계 확인	R85. `fin2/extract/report_lines.py::_emit_eps_lines()` — H1/Q3 EPS 행이	layer2/no	layer2/no	layer2	-	EPS 2단헤더 누적열 선택	
+R86	5545	5625	81	일부 대체 후보(→R88 열 판정 3갈래 추측) — D단계 확인	R86. `fin2/extract/report_lines.py::_emit_section_lines()` — else 분기(선두 None	layer2/no	layer2/no	layer2	-	선두 None 절삭 오인 수정	
+R87	5626	5711	86	일부 대체 후보(→R88 열 판정 3갈래 추측) — D단계 확인	"R87. `parser/xml/table_extractor.py::extract_rows()` — ""6-column IS 형식 대응"""	layer2/no	layer2/no	layer2	-	extract_rows 선두절삭 동형 결함	
+R88	5712	5781	70	유효	R88. `parser/xml/table_extractor.py::parse_header_columns()`/	layer2/no	layer2/no	layer2	-	THEAD 그리드로 열 판정	
+R89	5782	5855	74	유효	R89. 헤더 먼저 읽기(R88) 확장 — `parser/xml/table_extractor.py` §7(THEAD 없는	layer2/no	layer2/no	layer2	-	헤더 먼저 읽기 확장	
+R90	5856	5906	51	유효	"R90. `fin2/extract/shares.py` ""단위 : 천주"" 미인식 ×1000 축소 +"	layer2/no	layer2/no	layer2	-	천주 단위 판정 및 시총 배선	
+R92	5907	5943	37	유효	R92. `parser/xml/dart_xml_parser.py::_parse_xml_file()` — DART archive 원문	layer2/no	layer2/no	layer2	-	손상 XML 파싱 제외	
+R93	5944	5999	56	유효	R93. `fin2/extract/pdf.py` — 헤더 구조 우선 파싱 재설계: 주석번호 열 오인식 +	layer2/no	layer2/no	layer2	-	PDF 헤더우선 파싱·주석열 구분	
+R94	6000	6068	69	유효	R94. `fin2/extract/pdf.py` — 손익계산서가 통째로 0행이었던 3중 원인: 서브컬럼	layer2/no	layer2/no	layer2	-	PDF IS 서브헤더·앵커·부호	
+R91	6069	6135	67	유효	R91. `collector/filing_collector.py` — 제목 태그 없는 정정본 회계연도 오판정 +	layer2/no	layer2/no	layer2	-	정정본 회계연도·era 재시도	
+R95	6136	6225	90	유효	R95. `parser/xml/table_extractor.py::_headerless_header_trs()` — THEAD 없는	layer2/no	layer2/no	layer2	-	배너행 때문의 헤더인식 실패	
+R96	6226	6328	103	유효	R96. `collector/downloader.py::_pick_best_file_by_size()` — DART `document.xml`	ops/no	ops/no	ops	-	ZIP 본문 파일 선택 규칙	
+R98	6329	6394	66	유효	"R98. 연결재무제표 없는 회사가 ""연결 basis 존재""로 오판되는 두 갈래 원인 —"	layer2/no	layer2/no	layer2	-	연결 basis 존재 판정	
+R100	6395	6432	38	유효	R100. `fin2/extract/statement_titles.py::classify_legacy_statement_heading()` —	layer2/no	layer2/no	layer2	-	괄호숫자 접두 표제 인식	
+R101	6433	6476	44	유효	R101. `fin2/extract/statement_titles.py` — 구형 레이아웃 표제가 **다른 문장 뒤에	layer2/no	layer2/no	layer2	-	꼬리표제·빈요소 pending 처리	
+R102	6477	6510	34	유효	R102. `fin2/extract/text.py::_detect_legacy_body_statement_tables()` — 주석마커	layer2/no	layer2/no	layer2	-	주석마커보다 헤딩판정 우선	
+R103	6511	6551	41	유효	R103. `collector/downloader.py` — 정기보고서가 접수 당시 PDF만 있고 표준파일	ops/no	ops/no	ops	-	PDF 먼저 접수 시 재확인 대기	
+R104	6552	6591	40	유효	"R104. `collector/filing_collector.py` — 같은 날 접수된 ""최초본+첨부정정/첨부추가"""	ops/no	ops/no	ops	-	같은날 최초본 큐 포함	
+R105	6592	6608	17	유효	R105. `standard_financials.consolidation_status` VARCHAR(20) 길이초과로 std_v3	layer3/no	case_log/no	case_log	-	버그 수정 기록(스키마 길이) — 판정 규칙 없음	
+R106	6609	6628	20	유효	R106. `fin2/extract/consolidation_evidence.py` — IFRS1109/1115 소급재작성	layer2/no	layer2/no	layer2	-	재작성 각주 연결비대상 오탐 축소	
+R107	6629	6641	13	유효	"R107. 같은 파일 — ""OO재무제표를 재작성하지 않았습니다"" 문장구조 잔여"	layer2/no	layer2/no	layer2	-	재무제표를 재작성 문장 배제	
+R108	6642	6654	13	유효	"R108. 같은 파일 — SPAC 합병보고서에서 SPAC 껍데기 법인의 ""해당사항 없음"""	layer2/no	layer2/no	layer2	-	SPAC 껍데기 선언 스코프 조정	
+R109	6655	6667	13	유효	R109. 같은 파일 — 비교연도(전기)만 지칭하는 결측선언이 당기 확정	layer2/no	layer2/no	layer2	-	전기만 지칭 선언 가드	
+R110	6668	6690	23	유효	R110. 같은 파일 — 순번↔회계연도 매핑이 불가능한 케이스(SGA솔루션즈)를	layer2/no	layer2/no	layer2	-	매핑불가 영구예외·중복행 삭제	
+R111	6691	6704	14	유효	R111. `parser/xml/table_extractor.py`/`fin2/extract/text.py` — 글자당	layer2/no	layer2/no	layer2	-	글자당 공백 서브헤더 인식	
+R112	6705	6717	13	유효	"R112. 같은 파일 — 글자당 공백 주석헤더(""주  석"") 인식 실패로 헤더그리드"	layer2/no	layer2/no	layer2	-	주석헤더 공백 인식	
+R113	6718	6732	15	유효	"R113. 같은 파일 `select_by_header_columns()` — 순수 대시(""-"") 셀을 구조적"	layer2/no	layer2/no	layer2	-	순수 대시 셀을 0으로 읽기	
+R114	6733	6748	16	유효	R114. 같은 함수 — R113 직후 회귀: 무표지 병합군(COLSPAN 다중열)에서	layer2/no	layer2/no	layer2	-	병합군 대시 채택 순서	
+R115	6749	6761	13	유효	R115. `parser/xml/table_extractor.py::drop_mismatched_granularity_columns()`	layer2/no	layer2/no	layer2	-	연간참고열 배제 후 rank 재부여	
+R116	6762	6784	23	유효	R116. `fin2/extract/report_lines.py::_Q1_CUM_BLANK_USE_3M_RCEPTS` — Q1	layer3/yes	layer3/yes	layer3	★이행 필요 — as_printed STEPS 밖에서 계층2 공란에 3개월 값 기록(사용자 결정 2026-10-11: 빈칸 채움)	Q1 누적 공란 ← 3개월 값 = 빈칸 채움(R0-2)	
+R117	6785	6801	17	유효	R117. `parser/xml/table_extractor.py::_columns_from_grid()` — 완전공란	layer2/no	layer2/no	layer2	-	공란 주석헤더열 건너뜀	
+R118	6802	6832	31	유효	R118. `fin2/extract/report_lines.py::_R118_DUPLICATE_PERIOD_LABEL_FIX` —	layer3/yes	layer2/no	layer2	-	사용자 결정 2026-10-11 — 열의 기간 판정(읽는 법)	
+R119	6833	6849	17	유효	R119. `parser/xml/table_extractor.py::_columns_from_grid()` — 같은 셀 안	layer2/no	layer2/no	layer2	-	괄호 서브타입 접미 인식	
+R120	6850	6895	46	유효	R120. `parser/xml/table_extractor.py::select_by_header_columns()`	layer2/no	layer2/no	layer2	-	무표지 2열 마지막을 누적 판정	
+R121	6896	6917	22	유효	R121. `fin2/extract/report_lines.py::_MANUAL_NO_CONSOLIDATED_FS_RCEPTS` —	layer2/no	layer2/no	layer2	-	연결 섹션 통째 스킵 예외	
+R122	6918	6930	13	유효	"R122. `parser/xml/table_extractor.py::_PERIOD_KEY_RE` — 괄호 뒤 ""기"""	layer2/no	layer2/no	layer2	-	괄호뒤 기 탈락 표기 인식	
+R123	6931	6942	12	유효	R123. 같은 파일 — 증권사류 헤더 4가지 미인식 변형 (2015+ 전수 폴백	layer2/no	layer2/no	layer2	-	증권사 헤더 표기 변형 인식	
+R124	6943	6955	13	대체됨(→R125, SB성보 회귀로 폐기)	R124. (시도했다가 되돌림) 명세/소계 COLSPAN=2 중복 서브타입 열의 전사	case_log/no	case_log/no	case_log	-	일반화 시도 폐기 경위	
+R125	6956	6974	19	유효	R125. `parser/xml/table_extractor.py`/`fin2/extract/report_lines.py` —	layer2/no	layer2/no	layer2	-	명세/소계 열 2015+ 한정 해석	
+R126	6975	6991	17	유효	R126. `parser/xml/table_extractor.py::_PERIOD_KEY_RE` — 달력날짜	layer2/no	layer2/no	layer2	-	달력날짜 기간라벨 인식	
+R127	6992	7009	18	유효	R127. `fin2/extract/text.py::_looks_like_equity_changes_header()`(신규) —	layer2/no	layer2/no	layer2	-	SCE 표 오부착 가드	
+R127b	7010	7029	20	유효	"R127b. 같은 함수 — SCE 오염 가드를 ""제목표/데이터표 분리 서식"" forward-scan"	layer2/no	layer2/no	layer2	-	SCE 오염 가드 forward-scan 확장	
+R128	7030	7045	16	유효	"R128. 같은 파일 `_PERIOD_KEY_RE` — ""당N분기""/""전N분기"" 표기가 서수"	layer2/no	layer2/no	layer2	-	당N분기 표기 병합 방지	
+R128b	7046	7062	17	유효	"R128b. 같은 파일 — 2자리 연도 축약형+N분기(""19년 3분기"") 미인식 (2026-09-15,"	layer2/no	layer2/no	layer2	-	2자리 연도 N분기 인식	
+R129	7063	7084	22	유효	R129. `parser/xbrl_instance/taxonomy_linkbase.py::_drop_prohibited_only_locs()`	layer2/no	layer2/no	layer2	-	prohibited arc loc 제거	xbrl_fallback
+R130	7085	7118	34	유효	R130. `fin2/extract/report_lines_xbrl.py::_emit_missing_cf_lines()`(신규) —	layer2/no	layer2/no	layer2	-	CF fact 직접조회 백업 경로	xbrl_fallback
+R131	7119	7149	31	유효	R131. `parser/xml/table_extractor.py::select_by_header_columns()` —	layer2/no	layer2/no	layer2	-	무표지 병합군 값동일 열 채택	
+R132	7150	7204	55	유효	R132. `fin2/extract/report_lines.py::_MANUAL_UNIT_OVERRIDE_MULTIPLIER_	layer2/no	layer2/no	layer2	-	증명된 자기모순 단위 rcept 해석	
+R133	7205	7243	39	유효	R133. `fin2/extract/report_lines_xbrl.py::_emit_missing_leaf_lines()`	layer2/no	layer2/no	layer2	-	XBRL 트리미연결 개별항목 행 인식	xbrl_fallback
+R134	7244	7266	23	유효	R134. `parser/xml/table_extractor.py::_header_rule_name()` — SCE 전용	layer2/no	layer2/no	layer2	-	SCE 기수 규칙 앵커행 드롭 방지	
+R135	7267	7308	42	유효	R135. `fin2/extract/report_lines.py::_grid_body_rows()` — 라벨 영역에	layer2/no	layer2/no	layer2	-	다중 라벨 셀 연결 인식	
+R136	7309	7369	61	유효	R136. `fin2/extract/pdf.py` — 콤마 없는 단독 주석번호가 금액으로 오인식되는	layer2/no	layer2/no	layer2	-	PDF 단독 주석번호 금액 오인 방지	
+R137	7370	7482	113	유효	R137. `fin2/extract/pdf.py::facts_from_text()`/`collector/pdf_lines_	layer2/no	layer2/no	layer2	-	PDF 경로 라벨 저장 거부 제거	
+R138	7483	7529	47	유효	R138. `scripts/scan_header_fallback_2015plus_2026-09-14.py` — R125	audit/no	case_log/no	case_log	-	스캔 오탐 경위 기록	
+R139	7530	7590	61	대체됨(→R167, 2026-09-24 사용자 결정, 이력으로 보존)	R139. `store_report_lines()` — 원문대조 완료(`layer2_review_queue.status='pass'`)	ops/no	ops/no	ops	-	검증완료 필링 재적재 보호(폐지)	
+R140	7591	7628	38	유효	R140. 계층2 검토 CSV에 SCE 포함 + `layer2_review.py`에 `--min-severity` 단계	audit/no	audit/no	audit	-	검토CSV SCE 포함·심각도 필터	
+R141	7629	7662	34	유효	R141. `fin2/extract/statement_titles.py::classify_statement_in_body_section()` —	layer2/no	layer2/no	layer2	-	병합 표제에서 마지막 위치 재무제표명	
+R142	7663	7702	40	유효	R142. `fin2/extract/statement_titles.py::is_substatement_marker()` 신설 +	layer2/no	layer2/no	layer2	-	하위표 구분 표지 문맥 승계	
+R143	7703	7745	43	유효	R143. `fin2/extract/report_lines_inline_xbrl_overlay.py::overlay_tax_expense_val	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	XBRL 오버레이 값 덮어쓰기 후보 제외	
+R144	7746	7853	108	유효	R144. EPS(주당손익) 경로와 본류의 **판정 불일치** 3종 + 셀 안 줄바꿈으로	layer2/no	layer2/no	layer2	-	EPS 이중전사·기간열 판정 통일	
+R145	7854	7969	116	유효	"R145. EPS 행 판정을 `""주당""` 부분문자열에서 **구조 패턴**으로 교체 +"	layer2/no	layer2/no	layer2	-	EPS 행 구조 판정·섹션경로	
+R146	7970	8049	80	이행중/미해결(제목 근거)	R146. `rule_additive_da()` 가 **같은 감가상각비를 CF·IS·주석에서 각각 더해** D&A 와 EBITDA 를 정수배로 	layer3/no	layer3/no	layer3	-	D&A 출처 중복 합산 미해결	
+R147	8050	8106	57	유효	R147. `_is_eps_label()` 이 라벨에 `주당` 이 없는 EPS **자식행**(계속영업/중단영업 세부이익)을 인식 못 해 통째로 	layer2/no	layer2/no	layer2	-	EPS 자식행 인식 규칙	
+R148	8107	8166	60	유효	R148. `fin2/extract/text.py::_detect_body_statement_tables()` — 자본변동표가 **표지 문구 없	layer2/no	layer2/no	layer2	-	표지 없는 SCE 분할표 인식	
+R149	8167	8230	64	유효	R149. `parse_amount()` 가 `'2,564원'`(셀이 스스로 원 단위를 밝힌 표기)을 못 읽어 **EPS 행이 통째로 결측** 	layer2/no	layer2/no	layer2	-	셀 원 접미사 읽기	
+R150	8231	8284	54	유효	R150. `parse_amount()` 가 천단위 콤마 **바로 뒤**에서 공백으로 쪼개진 금액 (`'4,244, 863'`)을 결측으로 처리	layer2/no	layer2/no	layer2	-	콤마 뒤 공백 쪼개진 금액 읽기	
+R151	8285	8285	1	유효	R151. `_looks_like_equity_changes_header()` 가 열이름의 **자간 공백**을 처리하지 않아	layer2/no	layer2/no	layer2	-	SCE 열이름 자간공백 처리	
+R148	8286	8331	46	유효	R148(표지 없는 SCE 물리분할표)이 신한지주 외에서는 발동하지 못했다 (2026-09-20)	layer2/no	layer2/no	layer2	-	SCE 열이름 자간공백 처리	
+R152	8332	8542	211	유효	R152. 금융업 보충표기(대손준비금·비상위험준비금)가 본항목과 **같은 칸**에 압축돼 자본/손익 본항목 행이 통째로 유실 (2026-09-2	layer2/no	layer2/no	layer2	-	압축 보충표기 칸 본항목 읽기	
+R153	8543	8587	45	유효	R153. R116/R120 열선택 **예외 플래그**가 EPS 경로에 전달되지 않아 EPS 행이 **두 경로 사이 틈으로 증발** (2026-	layer2/no	layer2/no	layer3	★이행 필요 — as_printed STEPS 밖에서 계층2 공란에 3개월 값 기록(사용자 결정 2026-10-11: 빈칸 채움)	R116/R154 채움 플래그를 EPS 경로에 전달 — R116·R154 와 함께 이행	
+R154	8588	8683	96	유효	R154. Q1 표가 **스스로 증명한** `3개월 = 누적` 등식을 읽어, 누적 칸이 공란인 행을 구제한다 — R116 예외목록의 일반화 (2	layer3/yes	layer3/yes	layer3	★이행 필요 — as_printed STEPS 밖에서 계층2 공란에 3개월 값 기록(사용자 결정 2026-10-11: 빈칸 채움)	Q1 누적 공란 ← 3개월 값 = 빈칸 채움(R0-2)	
+R155	8684	8746	63	대체됨(→R168)	"R155. **[R168 로 대체 — 산수 자기증명 시 적재]** 구형 2단 열(내역칸/잔액칸) 서식에서 양쪽이 다 찬 ""그룹 마감행""이 R6 "	layer2/no	layer2/no	layer2	-	구형 2단열 마감행 미적재 결정	
+R156	8747	8798	52	유효	R156. **[설계대로 — 캠페인 판정 기준]** 분기·반기 필링에서 **누적 칸이 공란인 행**은 적재되지 않는다(3개월만 있어도) — Q1	layer2/no	layer2/no	layer2	-	누적 공란행 미적재 설계	
+R157	8799	8834	36	유효	R157. `parse_amount()` 가 소수부를 **단위 배수 적용 전에** 버려, 선언 단위가 있는 표에서 값이 조용히 깎였다 (2026	layer2/no	layer2/no	layer2	-	소수부 절삭·배수 순서 읽기	
+R158	8835	8914	80	유효	R158. 천단위 구분자가 **마침표**로 깨진 셀 — 행 안의 정수 짝과 대조해 복원 (2026-09-22, 캠페인 이슈#22)	layer2/no	layer2/no	layer2	-	마침표 깨진 구분자 읽기	
+R159	8915	9053	139	유효	R159. **원문 자체의 오타 셀**을 rcept 예외목록으로 교정 (2026-09-22, R118 패턴)	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	원문 오타 셀 예외목록 교정	
+R160	9054	9115	62	유효	R160. 해결되지 않은 **마침표 셀은 적재하지 않는다** — 결측으로 남기고 확인 요청 목록으로 보고 (2026-09-22, 사용자 정책)	layer2/no	layer2/no	layer2	-	해결 안 된 마침표 셀 미적재	
+R161	9116	9222	107	유효	R161. **각주 문장이 표제 앞에** 붙어 재무제표 분류가 한 칸씩 밀렸다 (2026-09-22, 캠페인 이슈#26)	layer2/no	layer2/no	layer2	-	각주 뒤 표제 재무제표 분류	
+R162	9223	9575	353	유효	R162. SCE 표 원문에서 음수 괄호가 빠져 자본변동표 셀이 부호 반대로 적재된다 — **교차대조(방향) + 열 롤포워드 항등식(자격)** 	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	SCE 누락 음수 부호 복원	
+R163	9576	9642	67	유효	R163. CF **현금 조정 구간**에서 원문이 빠뜨린 음수 부호를 복원한다 — R162 의 자매(자본변동표 → 현금흐름표) (2026-09-	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	CF 현금조정 구간 부호 복원	
+R164	9643	9808	166	유효	R164. 처분계산서 가드가 **SCE 를 구조적으로 판별 못 해** 자본변동표를 통째로 버렸다	layer2/no	layer2/no	layer2	-	SCE 처분계산서 가드 오판 수정	
+R165	9809	9885	77	유효	R165. SCE 기말잔액 행의 한 셀만 원문에서 값이 틀려 있다(행 항등식+BS 이중앵커로 확정)	audit/no	layer3/yes	layer3	구현 없음(스캔만)	셀 값 교정 = 인쇄값과 다른 값(R0-2)	
+R166	9886	9957	72	유효	R166. 라벨 칸이 ROWSPAN 으로 이어지는 **두 번째 물리행**이 유실·오라벨된다	layer2/no	layer2/no	layer2	-	ROWSPAN 둘째 물리행 라벨 상속	
+R167	9958	9994	37	유효	R167. 검증 ↔ 재적재 규칙 — 적재 스탬프·lease·내용버전 (2026-09-24, R139 대체)	audit/no	ops/no	audit	-	검증↔재적재 규약(verification 스키마)	
+R168	9995	10063	69	유효	R168. 구형 2단 열(내역칸/잔액칸) 서식의 **그룹 마감행**을 산수로 자기증명될 때만 적재한다 (2026-09-24, R155 뒤집음)	layer2/no	layer2/no	layer2	-	마감행 산수 자기증명 시 적재	
+R169	10064	10157	94	유효	R169. 자기모순 단위선언(선언 백만원·천원, 실제 원)을 **타 필링 동일값 대조**로 섹션별 확정해 교정한다 (2026-09-25, R13	layer2/no	layer2/no	layer2	-	자기모순 단위선언 섹션 단위 해석	
+R170	10158	10238	81	유효	R170. XBRL 경로: 회사 `_pre.xml` 은 **DART 표준 base 표시링크베이스에 대한 델타**다 — base 를 병합하고 ar	layer2/no	layer2/no	layer2	-	XBRL base 표시링크 병합	xbrl_fallback
+R171	10239	10280	42	유효	R171. 정정 체인에 추출 경로가 섞이면(XML → XBRL → XML) **나중 XML 필링이 앞선 XBRL 셀을 스코프 단위로 대체**한다	layer3/no	layer3/no	layer3	-	경로 혼합 정정본 스코프 대체	
+R172	10281	10335	55	유효	R172. 계층3: XBRL 셀은 라벨이 매핑 안 되면 **XBRL 개념(source_ref)** 으로 매핑한다 — R171 양방향화 (2026	layer3/no	layer3/no	layer3	-	XBRL 개념 기반 계정 매핑	
+R173	10336	10363	28	유효	R173. EPS 경로도 본류와 **같은 주석열 판정**으로 금액 칸을 가른다 (2026-09-25)	layer2/no	layer2/no	layer2	-	EPS 주석열 판정 공유	
+R174	10364	10385	22	유효	R174. Gate B 판독기 — 증명된 단위 교정(R132/R169)을 따르고, 당기 첫 칸 '-' 는 0 후보로 둔다 (2026-09-25)	audit/no	audit/no	audit	-	Gate B 판독기 단위·대시 처리	
+R175	10386	10420	35	유효	R175. XBRL 경로 CF 표시부호 = 계산링크베이스 weight 누적곱 — 단, **표 자신의 부모=Σ자식 등식이 더 많이 성립할 때만**	layer3/yes	layer2/no	layer2	-	XBRL 폴백 경로(본문 XML·웹뷰 모두 없을 때만 계층2 원천) — 표시부호 읽는 법. 사용자 확인 2026-10-11: XBRL 은 계층2 원천이 아니라 웹뷰 XML 사용, XBRL=계층3 증거	xbrl_fallback
+R176	10421	10449	29	유효	R176. XBRL SCE 소유주거래 행 부호 = 롤포워드 등식(기초 + Σ변동 = 기말)이 **증명할 때만** 반전 (2026-09-25)	layer3/yes	layer2/no	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	사용자 결정 2026-10-11 — as_printed STEPS R176_xbrl_sce_sign	
+R177	10450	10486	37	유효	R177. XBRL SCE row_order 기간 순서(`canonical_dates`)는 행마다 따로 잡지 않고 **표 전체에서 한 번만** 	layer2/no	layer2/no	layer2	-	SCE 기간 순서 표 전체 1회 산정	xbrl_fallback
+R178	10487	10535	49	유효	"R178. `_header_rule_name`의 ""단위표기"" 규칙이 라벨 **부분일치**라 자기 라벨에 단위를 부기한"	layer2/no	layer2/no	layer2	-	단위표기 부분일치 행 드롭 수정	
+R179	10536	10571	36	유효	R179. `parse_amount()` 의 R149 '원' 접미사 규칙이 **음수(손실) EPS 셀** `'(89원)'`(원이 닫는 괄호 **	layer2/no	layer2/no	layer2	-	괄호 안 원 접미사 EPS 읽기	
+R180	10572	10614	43	유효	R180. XBRL SCE 행이 **자본합계(total) 열에 fact 를 어디에도 안 가져도** 다른 열의 진짜 값을 버리면 안 된다 — 순수	layer2/no	layer2/no	layer2	-	자본합계 공란 행 구성요소 값 유지	xbrl_fallback
+R181	10615	10639	25	유효	R181. XBRL SCE '기초자본' 라벨 날짜 — DART 는 기초 fact 를 **블록 기말 instant context** 에 싣는다, 	layer2/no	layer2/no	layer2	-	XBRL 기초자본 라벨 날짜 표기	xbrl_fallback
+R182	10640	10661	22	유효	R182. XBRL tree-gap(R133) 계속영업이익 fact 는 표 자신의 **법인세차감전 − 법인세** 등식과 모순이면 올리지 않는다 	layer2/no	layer2/no	layer2	-	등식 모순 tree-gap 값 미적재	xbrl_fallback
+R183	10662	10738	77	유효	R183. SCE **원문 자체 오류**(값 오기·기간블록 오배치·중복행) — rcept 예외목록 + **적재시점 항등식 재증명** 가드 (20	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	SCE 원문오류 값·행 교정 예외목록	
+R184	10739	10777	39	유효	R184. **합계 열에만 인쇄된 SCE 변동행** — 빈 구성요소 셀을 항등식으로 채우는 일반 규칙 (2026-09-27, 사용자 결정, fi	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	합계열 인쇄 변동행 빈칸 채움	
+R184-b	10778	10804	27	유효	R184-b. R184 를 **계층형 표**(그룹 소계 + 자본 합계)로 확장 — 두 합계 칸에만 인쇄된 변동행 (2026-10-01, fix 	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	계층형 표 합계 인쇄행 빈칸 채움	
+R185	10805	10842	38	유효	R185. R162-d **부분 뒤집기 열**의 열 일관성 가드 — 증명될 때만 열 전체로 확장 (2026-09-27, 사용자 결정 B, fix	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	부분 뒤집기 열 전체 부호 확장	
+R187	10843	10862	20	유효	R187. SCE 잔액 행의 **날짜 앵커** — 같은 필링 BS 전기말 열 + 직전 사업보고서 BS (2026-09-27, 사용자 결정, fi	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	BS 날짜 앵커로 SCE 부호 결정	
+R188	10863	10900	38	유효	R188. SCE 잔액 셀 **1,000원 허용오차 이중 항등식** (2026-09-27, 사용자 결정: 소액 차이 1,000원 이하 허용, f	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	1,000원 허용 이중항등식 뒤집기	
+R189	10901	10932	32	유효	R189. 체인 뒤에도 깨진 행 항등식 — **형제 셀**을 열 롤포워드와 외부 증거로 맞춤 (2026-09-27, 사용자 지시, fix bat	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	형제 셀 부호 맞춤	
+R189-b	10933	10963	31	유효	R189-b. R189 변동 행의 외부 증거에 **이전 보고서 IS**(블록과 같은 기간) 추가 (2026-09-27, 사용자 지시, fix b	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	이전 IS 증거로 부호 맞춤	
+R190	10964	11016	53	유효	R190. SCE **거울해 가드** — 분기·반기 BS 날짜 앵커(G-A) + 잔액 행 자체 증명(G-B(i)) + 앵커 해법 자기일관성(R1	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	거울해 가드와 부호 앵커	
+R190-c	11017	11049	33	유효	R190-c. SCE **중첩 소계** 판정·부호 (2026-09-27, fix batch #40)	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	중첩 소계 판정·부호	
+R190-d	11050	11082	33	유효	"R190-d. SCE 잔액 셀의 **BS 날짜 부호 우선** — 블록이 닫히지 않아도 적용 (2026-09-27, 사용자 결정 ""측정 후 적용"""	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	BS 날짜 부호 우선 적용	
+R191	11083	11107	25	유효	R191. SCE **선행 소계**(구성요소 위에 먼저 찍힌 소계)의 인쇄 부호 유지 (2026-09-28, fix batch #45)	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	선행 소계 인쇄 부호 유지	
+R192	11108	11166	59	유효	"R192. SCE 변동 셀의 **이전 보고서 IS 부호**를 R162 앵커로 사용 (2026-09-28, 사용자 결정 ""측정 후 보고"", fix"	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	IS 앵커로 SCE 부호 뒤집기	
+R193	11167	11223	57	유효	R193. SCE **선행 소계**(구성요소 위에 먼저 찍힌 소계·제목행)를 아래 행의 합으로 증명 (2026-09-29, fix batch #	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	선행 소계 증명 후 부호 복원	
+R194	11224	11254	31	유효	R194. SCE 표제 아래 붙은 **IS/CF 표**는 SCE 데이터가 아니다 — R127 의 거울 가드 (2026-09-29, fix bat	layer2/no	layer2/no	layer2	-	SCE 표제 아래 IS/CF 표 제외	
+R195	11255	11283	29	유효	R195. 표제 분류에서 **SCE 이름도 '가장 나중 이름 채택'** 에 참여한다 — R141 의 빠진 절반 (2026-09-29, fix b	layer2/no	layer2/no	layer2	-	표제 분류 마지막 이름 채택	
+R196	11284	11313	30	유효	R196. 표제 오기 `연금흐름표`(현금→연금)도 현금흐름표 표제로 인식 (2026-09-29, fix batch #50)	layer2/no	layer2/no	layer2	-	연금흐름표 오기 표제 인식	
+R197	11314	11349	36	유효(내부 R197-a 만 측정 후 폐기)	R197. R162-e 교차 열 가드 + 원문 결함 앵커 예외목록 (2026-09-29, fix batch #55)	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	교차열 가드, 부호 복원 예외	
+R185-b	11350	11380	31	유효	R185-b. 열 일관성 확장의 행 항등식 조건 완화 (2026-09-27, fix batch #34)	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	열 일관성 확장 부호 복원	
+R186	11381	11417	37	유효	R186. R162-e **자기일관성** — 뒤집은 뒤 소계를 다시 판정해도 블록이 닫혀야 채택 (2026-09-27, fix batch #33	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	뒤집은 뒤 자기일관성 검사	
+R159-보강	11418	11448	31	유효	R159-보강. 백만원 선언 표의 **진짜 소수 정밀도** 셀 — R158/R160 콤마-오타 판정으로 못 푸는	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	소수 셀 반올림값으로 교정	
+R159-보강②	11449	11479	31	유효	R159-보강②. **콤마 그룹핑 결손**(자릿수 누락) — dot-typo 계열이 아니어도 같은	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	자릿수 결손 셀 숫자 교정	
+R159-보강③	11480	11511	32	유효	R159-보강③. **마침표 오타 + 숫자 오타**가 한 칸에 겹친 셀 — 항등식·정수판으로	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	마침표+숫자 오타 셀 교정	
+R159-보강④	11512	11528	17	유효	R159-보강④. 합계 항등식이 확정하는 **'.5' 꼴 마침표 셀** — 롯데에너지머티리얼즈 (2026-10-01, 검증 이슈 #86151)	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	.5꼴 마침표 셀 값 교정	
+R162-f	11529	11551	23	유효	R162-f. 원문 **소계행이 틀려** R162-c 산술증명이 실패하면, 라벨로 식별한 소계행을 빼고 R162-e(단일셀 반전)를 다시 시도한	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	소계 오류 시 단일셀 반전	
+R162-d	11552	11626	75	유효	R162-d. SCE 행 내부 **열 항등식**(구성요소 합 = 그룹 합계)으로 빠진 음수 괄호를 복원 — **이중증거 셀만 적용** (사용자 	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	열 항등식으로 음수 복원	
+R199	11627	11659	33	유효	R199. XBRL 필링의 **두 번째 IS role**(손익계산서 + 포괄손익계산서 별개 표) 을 적재한다 (2026-09-30, fix qu	layer2/no	layer2/no	layer2	-	두 번째 IS role 적재	xbrl_fallback
+R200	11660	11682	23	유효	R200. R176 XBRL SCE 부호 정산의 **동률 처리를 결정적으로** — 순회 순서 고정 + 동률은 본성상 음수 행만 (2026-09-	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	XBRL SCE 부호 정산 동률 처리	
+R201	11683	11695	13	유효	R201. XBRL H1/Q3 IS·CF — **누적 fact 가 없고 3개월 fact 만 있는 칸은 적재하지 않는다** (2026-09-30,	layer2/no	layer2/no	layer2	-	3개월 단독 칸 적재 안 함	xbrl_fallback
+R201-b	11696	11709	14	유효	R201-b. 기계대조(machine_compare)의 **SCE 주석 열 오프셋** 오탐 (2026-09-30, 검증 도구 수정)	audit/no	audit/no	audit	-	기계대조 주석 열 오프셋 오탐	
+R201-c	11710	11725	16	유효	R201-c. R201-b 의 주석 열 판정이 **그룹 접두 라벨**(`지배기업 소유주 귀속분>주석`)을 놓친다 (2026-10-01, 검증 도	audit/no	audit/no	audit	-	기계대조 그룹 접두 주석 라벨	
+R199-b	11726	11745	20	유효	R199-b. R199 의 중복 판정에 **개념(concept)** 을 넣는다 — 순이익 귀속 vs 총포괄손익 귀속 `비지배지분` (2026-0	layer2/no	layer2/no	layer2	-	추가 IS role 중복 판정	
+R162-d2	11746	11775	30	유효	R162-d2. R162-d 행 항등식 — **그룹 합계 칸이 공란이고 구성요소가 하나만 인쇄된 행** (2026-09-30, fix batch	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	공란 그룹합계 행항등식 복원	
+R162-e2	11776	11798	23	유효	R162-e2. R162-d/d2 가 셀을 바꾼 필링은 **부호 복원 체인(R162/R162-e)을 한 번 더** 돈다 (2026-09-30, 	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	부호 복원 체인 재실행	
+R202	11799	11821	23	유효	R202. 셀 안에서 **숫자의 첫 1~2자리가 떨어져** 공백으로 이어진 서식 — `1 73,918,853,979` = 173,918,853,	layer2/no	layer2/no	layer2	-	첫자리 분리 숫자 이어읽기	
+R203	11822	11837	16	유효	"R203. XBRL EPS 를 **회사 확장 개념(`perShareItemType`) + `unitRef=""SHARES""`** 로 태깅한 필링 "	layer2/no	layer2/no	layer2	-	확장 EPS 개념 단위 정규화	xbrl_fallback
+R158-b	11838	11855	18	유효	R158-b. 소수부가 **전부 0**(`.0`/`.00`)인 마침표 셀 — 같은 행에 정수부와 같은 온전한 셀이 있으면 정수부로 복원 (202	layer2/no	layer2/no	layer2	-	.0 소수부 마침표 셀 읽기	
+R204	11856	11876	21	유효	R204. XBRL IS — **필링이 base 배치를 옮겨 단 비용 개념**도 base 템플릿의 negation 을 물려받아 제거한다 (202	layer2/no	layer2/no	layer2	-	확장 비용 개념 negation 제거	xbrl_fallback
+R205	11877	11898	22	유효	R205. **마침표+쉼표 혼합 구분자** 셀(`69.792,290` = 69,792,290) — 소수로 읽지 않고 R160(결측)·R158(정	layer2/no	layer2/no	layer2	-	마침표+쉼표 혼합 구분자 읽기	
+부록 B. 규칙이 사는	11899	11986	88	유효	부록 B. 규칙이 사는 곳 (원출처)	index/no	index/no	index	-	부록 B 규칙 원출처	
+부록 C. 미결 / 위	11987	12033	47	유효	부록 C. 미결 / 위반 현황	index/no	index/no	index	-	부록 C 미결 현황	
+부록 D. rcept 	12034	12129	96	유효	부록 D. rcept 단위 예외목록 카탈로그 (2026-09-15 취합)	index/no	index/no	index	-	부록 D 예외목록 카탈로그	
+R206	12130	12145	16	유효	R206. R192 제외 22필링의 **불확실 셀 103개는 원문 부호 그대로 적재** — 셀 단위 예외 (2026-10-02, 사용자 결정)	layer3/yes	layer2/no	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	부호복원 체인의 예외 목록 → 부호복원계열과 같이 계층3(사용자 결정 2026-10-11)	
+R207	12146	12183	38	유효	R207. R169 단위 자기모순 — **1e15 상한에 안 걸리는 ×1,000 부풀림**은 `자산총계/이웃 필링` 비율로 지명한다 (2026-	layer2/no	layer2/no	layer2	-	자산총계 비율로 단위 지명	
+R208	12184	12219	36	유효	R208. XBRL 누락 총계 보충(R14 A-5)은 **문서가 이미 찍은 총계를 다시 넣지 않는다** — udf 총계 행 · 두 번째 IS r	layer2/no	layer2/no	layer2	-	이미 찍힌 총계 중복 보충 금지	xbrl_fallback
+R209	12220	12249	30	유효	R209. XBRL SCE **부모행 fact 가 자기 자식 합과 모순**이면 그 기간 블록의 부모행을 올리지 않는다 (2026-10-02, f	layer2/no	layer2/no	layer2	-	자식합 모순 부모행 미적재	xbrl_fallback
+R210	12250	12275	26	유효	R210. XBRL SCE 에서 **기말 행 하나만 있는 기간 블록**은 올리지 않는다 — 재무상태표 비교일 자본 (2026-10-02, fix	layer2/no	layer2/no	layer2	-	기말 단독 블록 미적재	xbrl_fallback
+R211	12276	12293	18	유효	R211. 기계대조(machine_compare)의 주당 판정은 **`section_path` 도 본다** — EPS 절 자식행(`(1) 기본주	audit/no	audit/no	audit	-	기계대조 EPS 자식행 판정	
+R212	12294	12353	60	유효	R212. 소수 EPS 는 **정확값을 따로 싣는다** — `report_lines.value_exact` · `extended_facts_v3	layer2/no	layer2/no	layer2	-	소수 EPS 정확값 별도 컬럼	
+R213	12354	12390	37	유효	R213. 계층3 EPS 는 **적재기의 EPS 행을 자체 규칙으로 분류**한다 — 일반 매퍼 라벨 공백 (2026-10-03, R212 후속,	layer3/no	layer3/no	layer3	-	EPS 행 자체 규칙 분류	
+R214	12391	12419	29	유효	R214. XBRL SCE 가 **전부 instant** 로 태깅돼 표 안에 duration 이 없으면, 기초 라벨 날짜는 같은 basis 의 	layer2/no	layer2/no	layer2	-	전부 instant SCE 기초일 읽기	xbrl_fallback
+R215	12420	12456	37	유효	R215. SCE '결손금' 열은 **음수** BS 앵커를 쓴다 — `이익잉여금(결손금)` 결합 라벨도 '결손금' 개념으로 잇는다 (2026-1	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	결손금 음수 BS 앵커 부호	
+R216	12457	12478	22	유효	R216. XBRL 주당 개념이 **KRW 단위 + `decimals` ≤ −6** 이면 10^(−decimals) 로 나눠 원으로 되돌린다 (	layer2/no	layer2/no	layer2	-	KRW decimals 주당값 원 환산	xbrl_fallback
+R217	12479	12507	29	유효	R217. 계층3 은 **XBRL IS '주당' 행도 R213 EPS 규칙으로 분류**한다 — 라벨에 '계속'·'중단'이 함께 있으면 합계 후보	layer3/no	layer3/no	layer3	-	XBRL 주당 행 EPS 분류	
+R218	12508	12540	33	유효	R218. 라벨에 EPS 항목이 **정확히 둘**이고 금액 셀이 전부 **같은 두 반쪽**이면 반으로 쪼갠다 — 원문 XML 이 두 값을 한 셀	layer2/no	layer3/yes	layer2	-	기준표 예외 목록에 명시된 표기 해석	
+R219	12541	12559	19	유효	R219. `store_report_tables()` 는 **넘겨받은 lines 가 다루는 statement 범위만** 지우고 다시 쓴다 — 본	ops/no	ops/no	ops	-	report_tables 범위 삭제 적재	
+R220	12560	12569	10	유효	R220. 달력 CY(12월 결산 native)의 flow 는 **같은 회계연도 FY as-filed 값**을 쓴다 (2026-10-05, 삼양	layer3/no	layer3/no	layer3	-	달력 CY flow는 FY값 사용	
+R221	12570	12583	14	유효	R221. 계층3 std 비용 컬럼은 **비용 = 양수** 관례로 정규화한다 — 항등식 증명 + 성질상 비음수 비용 (2026-10-05, 삼양	layer3/no	layer3/no	layer3	-	비용 양수 부호 정규화	
+R222	12584	12596	13	유효	R222. 정기보고서 **비재무 섹션 표**는 계층2 `doc_section_tables` 에 원문 격자로 담고, 1차 키는 DART **서식 	layer2/no	layer2/no	layer2	-	비재무 표 doc_section_tables	
+R223	12597	12612	16	유효	R223. 계층3 문서 매퍼는 **머리 경로(header path)로 열을 찾고**, 숫자·단위·날짜는 공통 규칙으로 읽는다 (2026-10-0	layer3/no	layer3/no	layer3	-	문서 매퍼 머리경로 열 매핑	
+R224	12613	12632	20	유효	R224. 선언 안 된 명명 엔티티(`&cr;` 등)는 **파싱 전에 정리**한다 — libxml2 가 그 뒤의 `&amp;`·`&lt;`·`&	layer2/no	layer2/no	layer2	-	미선언 엔티티 파싱 전 정리	
+R225	12633	12653	21	유효	R225. 밸류에이션 주식수는 **유통주식수(보통주, Ⅵ = Ⅳ−Ⅴ)** 다 — 계층2·3 에 Ⅴ 자기주식수·Ⅵ 유통주식수를 싣고 시총·주당지표	layer2/no	layer2/no	layer2	-	유통주식수 Ⅴ·Ⅵ 읽기	
+R226	12654	12671	18	유효	R226. XBRL **SCE** 도 H1/Q3 에서 3개월 단독 사실은 누적 블록에 싣지 않는다 — R201 의 SCE 판 (2026-10-0	layer2/no	layer2/no	layer2	-	SCE 3개월 단독 사실 제외	xbrl_fallback
+R227	12672	12689	18	유효	R227. R170-d 법인세 부호 정산은 **필러 확장 개념의 계속영업 순이익 행**도 후보로 쓴다 (2026-10-08, fix batch 	layer3/yes	layer3/yes	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	법인세 부호 정산 후보 확대	
+R228	12690	12717	28	유효	R228. **기간 하나가 여러 열에 뭉친 본문 표 헤더**는 문서 증거로 기간을 나누고, 증거가 없고 두 기간 구조가 뚜렷하면 적재하지 않는다	layer2/no	layer2/no	layer2	-	뭉친 기간 헤더 분리 또는 결측	
+R229	12718	12742	25	유효	"R229. 인쇄 계정명이 **택소노미 한국어 표준 라벨**이면 그 개념으로 계층3 계정을 정한다 (2026-10-10, 사용자 결정 ""근본적인 "	layer3/no	layer3/no	layer3	-	택소노미 라벨로 계정 매핑	
+R230	12743	12756	14	유효	R230. 주석 표 열이 **[기간 > 기능]** 2단이면 그 기간의 **합계 열**을 쓴다 — 계층3 D&A (2026-10-10, 사용자 지	layer3/no	layer3/no	layer3	-	주석 2단 열 합계 열 선택	
+R231	12757	12772	16	유효	R231. D&A = **현금흐름표 조정 금액**. 출처는 하나만, 출처를 기록한다 (2026-10-11, 사용자 결정 A, 적용 계층: 3)	layer3/no	layer3/no	layer3	-	D&A 출처 하나만 사용	
+R232	12773	12794	22	유효	"R232. CF ""현금유출액"" 구간에 유출 금액의 **크기**를 인쇄한 양식 → 계층3 이 부호를 붙인다 (2026-10-11, 사용자 지시 """	layer3/yes	layer3/no	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	이미 계층3(본문 적용 계층: 3)	
+R159-보강⑤	12795	12801	7	유효	R159-보강⑤. 천원 표에 **원 단위까지 소수 3자리**로 인쇄한 셀 — CJ제일제당 2025 사업보고서 (2026-10-11, 사용자 지시	layer3/yes	layer3/no	layer3	as_printed STEPS 뒤(2015+ 계층3 이행 완료, 코드는 fin2/extract, 2015 이전 미이행)	이미 layer3_cell_corrections fill(본문 적용 계층: 3)	
+R233	12802	12806	5	유효	"R233. CF 이자·배당 현금 계정은 **현금 행**이 있으면 손익 계정명 후보를 버린다 (2026-10-11, 사용자 지시 ""행 순서에 따라"	layer3/no	layer3/no	layer3	-	이자·배당 현금 행 우선	
+R234	12807	12818	12	유효	R234. BS 자산마다 붙은 **차감 계정 행**은 같은 표 안에서 합산해 총액으로 쓴다 (2026-10-11, 사용자 결정, 적용 계층: 3	layer3/no	layer3/no	layer3	-	차감 계정 행 합산	
+R235	12819	12824	6	유효	R235. CF **배당금 지급**은 성질상 유출 — 계층3 에서 −|값| (2026-10-11, 사용자 결정, 적용 계층: 3)	layer3/no	layer3/no	layer3	-	배당 지급 -|값| 부호	
+R236	12825	12831	7	유효	"R236. CF 계정명 앞의 **""(영업|투자|재무)활동으로 분류된""** 한정어는 떼고 매핑한다 — 뗀 나머지는 정확·정규화 일치만 (2026-"	layer3/no	layer3/no	layer3	-	활동 분류 한정어 제거 매핑	
+R237	12832	12844	13	유효	R237. 정정본에서 **같은 위치·같은 금액** 셀의 계정명이 바뀌면 그 셀이 최초본 셀을 대체한다 — 계층3 병합만 (2026-10-11, 	layer3/no	layer3/no	layer3	-	정정본 계정명 변경 셀 대체	
+R238	12845	12882	38	유효	"R238. 표머리가 **""(단위 : 원)""** 인데 숫자가 **천원·백만원**으로 인쇄된 섹션은 증명된 실제 단위로 읽는다 — R169 의 반대"	layer2/no	layer2/no	layer2	-	선언 원·실제 백만원 단위 해석	

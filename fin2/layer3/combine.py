@@ -1859,6 +1859,37 @@ def _filing_source_kind(session, rcept: str) -> str:
     return "xml"
 
 
+# R234 (2026-10-11, user decision): a BS that prints a contra line under every asset
+# ('건물 / 감가상각누계액 / 구축물 / 감가상각누계액 …', 로젠 20190401002764) repeats the same
+# (label, section_path) once per asset. The merge keyed cells by that pair and kept the first, so
+# the contra canonical held only the first asset's share and the pick followed load order. The
+# rows of one table are summed into one cell: each is the contra of the asset above it, and the
+# canonical is the total. Only the contra labels below, only when every value has one sign (a
+# mixed sign is a sign question, not a total — 17 keys left as before).
+_CONTRA_LABEL_RE = re.compile(
+    r"(감가상각누계액|상각누계액|손상차손누계액|대손충당금|평가충당금|손실충당금|평가손실충당금"
+    r"|현재가치할인차금|정부보조금|국고보조금)")
+_CONTRA_STRIP_RE = re.compile(r"[\s()]")
+
+
+def _sum_contra_rows(rows: list) -> list:
+    """Sum same-(statement, basis, col, section_path, label, table_seq) BS contra rows of one filing."""
+    groups: dict[tuple, list[int]] = {}
+    for i, r in enumerate(rows):
+        if r[0] == "BS" and _CONTRA_LABEL_RE.fullmatch(_CONTRA_STRIP_RE.sub("", r[4] or "")):
+            groups.setdefault((r[0], r[1], r[2], r[3], r[4], r[7]), []).append(i)
+    drop: set[int] = set()
+    out = list(rows)
+    for idx in groups.values():
+        vals = [int(rows[i][5]) for i in idx]
+        if len(idx) < 2 or (min(vals) < 0 < max(vals)):
+            continue
+        first = rows[idx[0]]
+        out[idx[0]] = (*first[:5], sum(vals), *first[6:9], None, *first[10:])
+        drop.update(idx[1:])
+    return [r for i, r in enumerate(out) if i not in drop] if drop else rows
+
+
 def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
     """★정본 정책(사용자 2026-07-22): 최초등록본 + 순차 델타 패치.
 
@@ -1933,6 +1964,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
         # 부채는 정정1 값을 골라 BS 항등식이 깨졌다). Such a filing replaces the other-
         # path cells of every (statement, basis) scope it actually covers; scopes it
         # doesn't carry keep their cells (R2-0: amendments are arbitrary subsets).
+        rows = _sum_contra_rows(rows)   # R234
         kind = _filing_source_kind(session, rcept)
         if not is_base:
             covered = {(r[0], r[1]) for r in rows}
@@ -2166,6 +2198,26 @@ def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
     return _eps_dup(svals)  # shallowest still split → EPS among them, else hold
 
 
+# R233 (2026-10-11): cash-flow interest/dividend canonicals also carry K-GAAP direct-method
+# aliases ('이자비용', '이자수익'), which in an indirect-method statement are the P&L add-back
+# lines of the adjustments section — same size, opposite sign to the cash line. With both in the
+# pool the pick depended on candidate order (extended 15 after the R0-2 reload: 00112679 2015Q1,
+# 00154718 2020FY). A candidate named with a cash verb wins; without one the aliases stay.
+_CASH_VERB_CANONS = ("cf.interest_paid", "cf.interest_received", "cf.dividends_received",
+                     "cf.dividends_paid")
+_CASH_VERB_RE = re.compile(r"지\s*급|수\s*취|수\s*령|납\s*부|유\s*입|유\s*출")
+
+
+def _drop_accrual_cash_aliases(cands: dict[str, list[dict]]) -> None:
+    for c in _CASH_VERB_CANONS:
+        rows = cands.get(c)
+        if not rows:
+            continue
+        cash = [r for r in rows if _CASH_VERB_RE.search(r.get("label_raw") or "")]
+        if cash and len(cash) < len(rows):
+            cands[c] = cash
+
+
 def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
              fy: int | None = None, period: str | None = None, basis: str | None = None,
              stale_reprint_table_seqs: dict[str, set] | None = None):
@@ -2293,6 +2345,7 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
     # 없어(라벨 자체가 애초에 유동/비유동 어느 쪽도 아님) 별도 함수로 뺐다 — 자세한
     # 근거는 _route_bare_lease_by_section 독스트링 참고.
     _route_bare_lease_by_section(cands)
+    _drop_accrual_cash_aliases(cands)   # R233
     for c, rows in cands.items():
         # ★R2 델타패치 실질화(2026-08-20, P3-1 재감사 후속): build_merged_lines() 의 셀
         # 키에 section_path 가 들어있어, 정정본이 표를 재렌더링해 section_path 가 원본과

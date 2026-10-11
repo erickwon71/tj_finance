@@ -503,3 +503,38 @@ def test_dash_only_unlabeled_row_is_kept_as_a_separate_row(tmp_path):
                  ["2024.12.31 (기말자본)", "100", "50", "150"]])
     t = mc.load_statement_tables(_xml(tmp_path, body))[0]
     assert [r.label for r in t.rows].count("지분법자본변동") == 2
+
+
+def test_dot_broken_thousands_separator_reads_like_the_loader():
+    # mc13 (R158/R158-b/R205): 한진칼 2023FY 별도 SCE 당기순이익 — '379,175,507.735' printed next to
+    # '379,175,507,735' in the same row is that integer, not 379,175,507.735 (14 false unit_scale)
+    assert mc.repair_dot_cells(["", "379,175,507.735", "379,175,507,735"]) == \
+        ["", "379175507735", "379,175,507,735"]
+    assert mc.repair_dot_cells(["(5,398.259)", "(5,398,259)"]) == ["(5398259)", "(5,398,259)"]
+    # R158 zero tail: digits cut off before trailing zeros
+    assert mc.repair_dot_cells(["10,590,556.9", "10,590,556,900"])[0] == "10590556900"
+    # R158-b: all-zero fraction whose integer part is printed intact
+    assert mc.repair_dot_cells(["125,309,341.0", "125,309,341"])[0] == "125,309,341"
+    # R205: first separator only is a dot
+    assert mc.repair_dot_cells(["69.792,290", "69,792,290"])[0] == "69,792,290"
+
+
+def test_dot_cell_without_a_row_twin_stays_as_printed():
+    # no intact twin (삼성E&A 633,492,278.632 vs total 633,492,277,632) -> R160, unchanged
+    cells = ["633,492,278.632", "633,492,277,632"]
+    assert mc.repair_dot_cells(cells) == cells
+    # two candidates -> undecidable, unchanged
+    cells = ["1,234.5", "1,234,500", "12,345,000"]
+    assert mc.repair_dot_cells(cells) == cells
+    # per-share rows keep their decimals
+    cells = ["343.0", "343"]
+    assert mc.repair_dot_cells(cells, "희석주당이익 (단위 : 원)") == cells
+
+
+def test_dot_cell_repaired_inside_a_parsed_table(tmp_path):
+    body = _sce([["2023.01.01 (기초자본)", "100", "100"],
+                 ["당기순이익(손실)", "379,175,507.735", "379,175,507,735"],
+                 ["2023.12.31 (기말자본)", "379,175,507,835", "379,175,507,835"]])
+    t = mc.load_statement_tables(_xml(tmp_path, body))[0]
+    row = next(r for r in t.rows if r.label == "당기순이익(손실)")
+    assert row.cells[:2] == [379175507735.0, 379175507735.0]

@@ -50,7 +50,11 @@ from lxml import etree
 # mc12 (2026-10-10, user decisions after r5): comma groups must be 3 digits (broken prints read as
 # text, like the parser); an unlabeled row under an amount-less labeled row is that row's wrapped
 # continuation.
-TOOL_VERSION = "mc12"
+# mc13 (2026-10-11): a thousands separator printed as '.' is read like the loader does (R158 /
+# R158-b / R205 notation, PARSING_RULES R0-1 1항): '379,175,507.735' next to '379,175,507,735' in
+# the same row is that integer. Without it the cell read as a decimal and the DB came out as
+# "source x 1,000" — 14 false unit_scale issues (한진칼·삼성E&A·HD한국조선해양, 2026-10-11).
+TOOL_VERSION = "mc13"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -110,6 +114,46 @@ def parse_amount(t: str):
     except ValueError:
         return None
     return -v if neg else v
+
+
+# R158 / R205 broken thousands separators (own copy — this module stays independent of the parser)
+_DOT_GROUPED_RE = re.compile(r"^([(\[]?[-−△▲]?)(\d{1,3}(?:,\d{3})*)\.(\d+)([)\]]?)$")
+_DOT_THEN_COMMA_RE = re.compile(r"^([(\[]?[-−△▲]?)(\d{1,3})\.(\d{3}(?:,\d{3})+)([)\]]?)$")
+_PER_SHARE_LABEL_RE = re.compile(r"주당|per\s*share|[(（]\s*단위\s*[:：]?\s*원\s*[)）]", re.I)
+
+
+def repair_dot_cells(texts: list[str], label: str = "") -> list[str]:
+    """Read a '.'-broken thousands separator the way the loader does, proven by the same row:
+    R158  digits of the broken cell + an all-zero tail = the digits of exactly one intact integer
+          cell of the row ('42,549.493' / '42,549,493', '10,590,556.9' / '10,590,556,900');
+    R158-b a 1~2 digit all-zero fraction whose integer part is printed intact in the row;
+    R205  '69.792,290' (first separator only) = an intact cell with the same digits.
+    Anything else stays as printed (a decimal / text); per-share rows are never touched."""
+    if _PER_SHARE_LABEL_RE.search(label or ""):
+        return texts
+    clean = [_WS_RE.sub("", t or "") for t in texts]
+    intact = {re.sub(r"\D", "", t) for t in clean
+              if t and "." not in t and re.search(r"\d", t) and _NUM_RE.match(t)}
+    if not intact:
+        return texts
+    out = list(texts)
+    for i, t in enumerate(clean):
+        mixed = _DOT_THEN_COMMA_RE.match(t)
+        if mixed:
+            if re.sub(r"\D", "", mixed.group(2) + mixed.group(3)) in intact:
+                out[i] = f"{mixed.group(1)}{mixed.group(2)},{mixed.group(3)}{mixed.group(4)}"
+            continue
+        m = _DOT_GROUPED_RE.match(t)
+        if not m:
+            continue
+        digits = re.sub(r"\D", "", m.group(2)) + m.group(3)
+        cands = {d for d in intact if d.startswith(digits) and set(d[len(digits):]) <= {"0"}}
+        if len(cands) == 1:
+            out[i] = f"{m.group(1)}{cands.pop()}{m.group(4)}"
+        elif (not cands and len(m.group(3)) <= 2 and set(m.group(3)) <= {"0"}
+              and re.sub(r"\D", "", m.group(2)) in intact):
+            out[i] = f"{m.group(1)}{m.group(2)}{m.group(4)}"
+    return out
 
 
 def _text(el) -> str:
@@ -206,7 +250,8 @@ def _parse_table(idx: int, table, basis: str, title: str) -> SrcTable | None:
         parts = [by_col[c] for c in sorted(by_col) if c < first_amt and c not in note_cols
                  and by_col[c].strip()]
         label = ">".join(parts)
-        cells = [parse_amount(by_col[c]) if c in by_col else _EMPTY for c in cols]
+        texts = repair_dot_cells([by_col.get(c, "") for c in cols], label)
+        cells = [parse_amount(t) if c in by_col else _EMPTY for c, t in zip(cols, texts)]
         if not label:
             # an unlabeled row carrying amounts (campaign issue #51) must still surface; a printed
             # '-' / 0 counts (mc12: the loader keeps such a row too), an all-blank row does not

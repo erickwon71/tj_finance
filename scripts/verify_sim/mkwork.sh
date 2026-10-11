@@ -7,5 +7,7 @@ cp "$SRC/CLAUDE.md" "$W/CLAUDE.md"
 cp "$SRC/.claude/worktrees/camp_run/CLAUDE.local.md" "$W/CLAUDE.local.md"
 cp "$SRC/docs/verification/"*.md "$W/docs/verification/"
 cp "$SRC/docs/PARSING_RULES.md" "$W/docs/PARSING_RULES.md"
+# 2026-10-12: rule bodies moved to docs/rules/ (PARSING_RULES.md is the entry + index)
+mkdir -p "$W/docs/rules" && cp "$SRC/docs/rules/"*.md "$W/docs/rules/"
 cp "$HERE/vq_shim.py" "$W/scripts/vq.py"
 echo "work_$R ready"

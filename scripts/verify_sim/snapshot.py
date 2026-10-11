@@ -54,6 +54,15 @@ for name, pred in STRATA:
         if n >= n_per:
             break
 
+# SNAP_EXTRA="name=corp:fy:fp,..." adds named slots (2026-10-12: R160 NULL rows, R154 Q1 fill)
+import os  # noqa: E402
+for item in filter(None, os.environ.get("SNAP_EXTRA", "").split(",")):
+    name, s_ = item.split("=", 1)
+    c = next((c for c in cands if f'{c["corp_code"]}:{c["fiscal_year"]}:{c["fiscal_period"]}' == s_), None)
+    if c is not None and s_ not in used:
+        used.add(s_)
+        picked.append({"stratum": name, "slot": s_, "kinds": c["kinds"], "status": c["status"]})
+
 for p in picked:
     slot = Slot.parse(p["slot"])
     d = ops.slot_detail(slot)

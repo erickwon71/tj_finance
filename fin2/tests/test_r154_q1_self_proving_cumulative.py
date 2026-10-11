@@ -145,3 +145,13 @@ def test_both_paths_receive_the_same_flag():
     assert "q1_cum_blank_use_3m=q1_cum_blank_use_3m" in src
     eps_fn = src.split("def _emit_eps_lines", 1)[1].split("\ndef ", 1)[0]
     assert "q1_cum_blank_use_3m" in eps_fn
+
+
+def test_layer3_finds_a_statement_that_exists_only_as_fills():
+    """R154 → 계층3(2026-10-12): Q1 IS 의 누적 칸이 전부 공란이면 계층2 에는 IS 행이 하나도 없고
+    계층3 fill 만 있다(00874803 20170512006316). 정본 필링 선택이 계층2 를 보면 IS 출처를 잃는다 —
+    R0-2 대로 report_lines_l3 를 봐야 한다."""
+    import fin2.layer3.combine as combine
+    src = Path(combine.__file__).read_text(encoding="utf-8")
+    fn = src.split("def select_canonical_rcepts", 1)[1].split("\ndef ", 1)[0]
+    assert "FROM report_lines_l3" in fn

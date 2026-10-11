@@ -2170,8 +2170,10 @@ def select_canonical_rcepts(session, corp: str, fy: int, period: str,
     out: dict[str, str] = {}
     for statement in statements:
         for rcept in filings:  # most-final first
+            # R0-2: layer 3 reads report_lines_l3 — a statement may exist only as layer-3 fills
+            # (R154: a Q1 IS whose cumulative column is blank throughout, 00874803 20170512006316).
             has = session.execute(text("""
-                SELECT 1 FROM report_lines
+                SELECT 1 FROM report_lines_l3
                 WHERE rcept_no=:r AND statement=:s LIMIT 1
             """), {"r": rcept, "s": statement}).fetchone()
             if has:

@@ -16,6 +16,10 @@ R116 은 같은 상황(Q1 인데 누적 칸 공란)을 rcept 예외목록으로�
 ★이 판정은 R6("서로 다른 값 중 하나를 짐작하지 않는다")를 거스르지 않는다 — 짐작이
 아니라 필링 자신이 적어 둔 등식을 읽는 것이다. 반례가 하나라도 있으면 즉시 거짓.
 
+★2026-10-11(사용자 결정, R0-2): 이 구제는 **빈칸 채움**이라 계층3 이다. 계층2(기본 추출)는
+공란 그대로이고, 3개월 값은 `layer3_cell_corrections` fill(`R154_q1_cum_fill`)로 계층3 에 간다.
+증거 판정(`_q1_cumulative_proved_equal_to_three_month`)은 그 보정의 조건으로 그대로 쓴다.
+
 실행: pytest fin2/tests/test_r154_q1_self_proving_cumulative.py
 """
 from __future__ import annotations
@@ -28,6 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import pytest                                                     # noqa: E402
 
 import fin2.extract.report_lines as report_lines                  # noqa: E402
+from fin2.extract import as_printed as AP                         # noqa: E402
+from fin2.extract.layer3_corrections import extract_xml_with_corrections  # noqa: E402
 from fin2.extract.report_lines import (                           # noqa: E402
     _q1_cumulative_proved_equal_to_three_month as _proved,
     extract_report_lines,
@@ -91,10 +97,11 @@ def test_empty_inputs_are_false():
 
 @pytest.mark.skipif(not _KIA_2024Q1.exists(), reason="원문 XML 없음")
 def test_kia_2024q1_eps_rows_are_recovered():
-    """camp_run 이슈#20 — 원문 네 값이 그대로 복원되는지."""
-    lines = extract_report_lines(
-        str(_KIA_2024Q1), rcept_no="20240516001819", corp_code="00106641",
-        report_fiscal_year=2024, report_fiscal_period="Q1")
+    """camp_run 이슈#20 — 원문 네 값이 그대로 복원되는지(계층3 = 규칙 켬)."""
+    with AP.forced("repaired"):
+        lines = extract_report_lines(
+            str(_KIA_2024Q1), rcept_no="20240516001819", corp_code="00106641",
+            report_fiscal_year=2024, report_fiscal_period="Q1")
     eps = {(l.basis, l.col_index): l.value_won for l in lines
            if l.statement == "IS" and "주당" in (l.label_raw or "")}
     assert eps.get(("consolidated", 0)) == 7125
@@ -113,6 +120,20 @@ def test_kia_2024q1_ordinary_rows_are_unchanged():
              if l.statement == "IS" and (l.label_raw or "").strip() == "매출액"}
     assert sales.get(("consolidated", 0)) == 26_212_851_000_000
     assert sales.get(("separate", 0)) == 15_711_802_000_000
+
+
+@pytest.mark.skipif(not _KIA_2024Q1.exists(), reason="원문 XML 없음")
+def test_kia_2024q1_layer2_keeps_the_blank_and_layer3_fills(monkeypatch):
+    """R0-2 — 계층2 에는 공란인 당기 EPS 행이 없고, 계층3 보정 fill 두 셀(연결·별도)만 생긴다."""
+    monkeypatch.delenv(AP.ENV, raising=False)
+    lines, corrections = extract_xml_with_corrections(
+        str(_KIA_2024Q1), rcept_no="20240516001819", corp_code="00106641",
+        report_fiscal_year=2024, report_fiscal_period="Q1", include_notes=False)
+    assert not [l for l in lines if l.statement == "IS" and l.col_index == 0
+                and "주당" in (l.label_raw or "")]
+    assert sorted((c["basis"], c["kind"], c["rule"], c["corrected_value"]) for c in corrections) == [
+        ("consolidated", "fill", "R154_q1_cum_fill", 7125),
+        ("separate", "fill", "R154_q1_cum_fill", 5495)]
 
 
 def test_both_paths_receive_the_same_flag():

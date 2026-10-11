@@ -33,6 +33,7 @@ STEPS = (
     "R189_sibling_cells",      # SCE sibling cells
     "R190d_dated_balance",     # SCE balance takes dated BS sign
     "R159_typo",               # cell digit typo list (table_extractor)
+    "R154_q1_cum_fill",        # Q1 blank cumulative cell takes the 3-month value (R116 list + R154 proof)
     "R170d_tax_sign",          # XBRL IS tax sign settled by identity (+ R227)
     "xbrl_manual_is_sign",     # XBRL IS per-rcept manual sign list
     "R176_xbrl_sce_sign",      # XBRL SCE roll-forward sign settlement (+ R200)

@@ -70,6 +70,19 @@ _Q1_CUM_BLANK_USE_3M_RCEPTS = frozenset({
                         # 전전전기 FY) — 당기·전기 둘 다 "누적" 열이 공란)
 })
 
+
+def _q1_cum_fill_on(report_fiscal_period, rcept_no: str, q1_cum_blank_use_3m: bool) -> bool:
+    """R116/R154 — may a blank Q1 cumulative cell take the 3-month value?
+
+    Since 2026-10-11 (user decision, PARSING_RULES R116/R154) this is a **blank fill** under R0-2:
+    layer 2 keeps the blank (the row is not stored), and the filled row reaches layer 3 as a
+    `layer3_cell_corrections` 'fill' (as_printed step `R154_q1_cum_fill`). The body path and the
+    EPS path both ask this one function (R153: the two paths must get the same flag).
+    """
+    return (repair_on("R154_q1_cum_fill")
+            and report_fiscal_period == "Q1"
+            and (rcept_no in _Q1_CUM_BLANK_USE_3M_RCEPTS or q1_cum_blank_use_3m))
+
 # ★R120(2026-09-14, 사용자 확정 — "예외목록으로만 좁힐") — 웹케시 20180814001946,
 # 우리기술투자 20200813000621: H1 보고서 IS 표가 같은 라벨을 구분 텍스트 없이 물리적
 # 으로 다른 2열에 반복하는데 두 열 다 실제 값이고 서로 다르다(3개월≠누적). DART
@@ -1052,10 +1065,8 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
             #   **인자**에도 그대로 적용된다.
             pairs = list(select_by_header_columns(
                 header_cols, grid_amounts, raw_amounts=grid_cells,
-                allow_three_month_as_cumulative=(
-                    report_fiscal_period == "Q1"
-                    and (rcept_no in _Q1_CUM_BLANK_USE_3M_RCEPTS
-                         or q1_cum_blank_use_3m)),
+                allow_three_month_as_cumulative=_q1_cum_fill_on(
+                    report_fiscal_period, rcept_no, q1_cum_blank_use_3m),
                 prefer_last_of_two_as_cumulative=(
                     rcept_no in _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS),
             ).items())
@@ -1312,10 +1323,8 @@ def _emit_section_lines(
                 # R120 — 예외목록에 있는 필링만 무표지 2열 병합군에서 마지막 열(누적) 채택.
                 pairs = list(select_by_header_columns(
                     header_cols, row.amounts, raw_amounts=row.raw_amounts,
-                    allow_three_month_as_cumulative=(
-                        report_fiscal_period == "Q1"
-                        and (rcept_no in _Q1_CUM_BLANK_USE_3M_RCEPTS
-                             or q1_cum_blank_use_3m)),
+                    allow_three_month_as_cumulative=_q1_cum_fill_on(
+                        report_fiscal_period, rcept_no, q1_cum_blank_use_3m),
                     prefer_last_of_two_as_cumulative=(
                         rcept_no in _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS),
                     closing_runs=dual_closing_runs,

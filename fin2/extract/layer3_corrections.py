@@ -100,6 +100,7 @@ def extract_with_corrections(run: Callable[[bool], list], rcept_no: str, *, is_x
     fallback = ("R159_typo" if rcept_no in _typo_rcepts()
                 else "R176_xbrl_sce_sign" if is_xbrl else "unattributed")
     p, r = _body(printed), _body(repaired)
+    r154 = set() if is_xbrl else _r154_keys(run, p, r, last_rule)
     out = []
     for k in set(p) | set(r):
         a = p[k].value_won if k in p else "absent"
@@ -112,10 +113,33 @@ def extract_with_corrections(run: Callable[[bool], list], rcept_no: str, *, is_x
             **dict(zip(_KEY_FIELDS, k[:-1])), "label_raw": k[-1], "col_label": line.col_label,
             "printed_value": None if a == "absent" else a,
             "corrected_value": None if b == "absent" else b,
-            "kind": kind, "rule": last_rule.get(k, fallback),
+            "kind": kind, "rule": "R154_q1_cum_fill" if k in r154 else last_rule.get(k, fallback),
             "row_data": _row_data(r[k]) if kind == "fill" else None,
         })
     return printed, out
+
+
+def _r154_keys(run: Callable[[bool], list], p: dict, r: dict, last_rule: dict) -> set:
+    """Keys the R154/R116 Q1 cumulative fill produced.
+
+    That fill happens while the tables are read, before the first checkpoint, so the step trace
+    cannot name it. Only when this filing has an unnamed difference on a Q1 cumulative line, run
+    the rules-on extraction once more with that one step off: the keys that change are R154's.
+    """
+    suspects = [k for k in set(p) | set(r)
+                if k not in last_rule and k in r and r[k].is_cumulative
+                and r[k].report_fiscal_period == "Q1"
+                and (p[k].value_won if k in p else "absent") != r[k].value_won]
+    if not suspects or "R154_q1_cum_fill" in AP.DISABLED:
+        return set()
+    AP.DISABLED.add("R154_q1_cum_fill")
+    try:
+        with AP.forced("repaired"):
+            without = _body(run(True))
+    finally:
+        AP.DISABLED.discard("R154_q1_cum_fill")
+    return {k for k in suspects
+            if (without[k].value_won if k in without else "absent") != r[k].value_won}
 
 
 def _row_data(line) -> str:

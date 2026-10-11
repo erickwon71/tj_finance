@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from fin2.extract import as_printed as AP  # noqa: E402
 from fin2.extract.report_lines import extract_report_lines, _assign_section_paths  # noqa: E402
 from parser.xml.table_extractor import RowData  # noqa: E402
 
@@ -1306,6 +1307,13 @@ _PYEONGHWA_2018_Q1 = (
 )
 
 
+def _repaired(path, **kw):
+    """R116/R154 Q1 cumulative fill is a layer-3 correction since 2026-10-11 (R0-2 blank fill):
+    these tests check the filled reading, i.e. the rules-on extraction layer 3 reads."""
+    with AP.forced("repaired"):
+        return extract_report_lines(path, **kw)
+
+
 def test_r116_pyeonghwa_industry_separate_is_cumulative_blank_uses_three_month():
     """R116 후속(2026-09-15, IS_separate 이상치 재검증 중 발견) — 평화산업
     20180515002398: Q1 별도 손익계산서가 "3개월" 칸만 채우고 "누적" 칸은 통째로
@@ -1315,7 +1323,7 @@ def test_r116_pyeonghwa_industry_separate_is_cumulative_blank_uses_three_month()
     이 필링에서 3개월/누적 둘 다 정상 채워 영향 없음(45행 그대로)."""
     if not _PYEONGHWA_2018_Q1.exists():
         return
-    lines = extract_report_lines(
+    lines = _repaired(
         _PYEONGHWA_2018_Q1, rcept_no="20180515002398", corp_code="00573579",
         report_fiscal_year=2018, report_fiscal_period="Q1")
     is_s = [l for l in lines if l.statement == "IS" and l.basis == "separate"]
@@ -1400,7 +1408,7 @@ def test_r116_aps_separate_is_cumulative_blank_uses_three_month():
     -207,580,764로 정확히 일치)."""
     if not _APS_2021_Q1.exists():
         return
-    lines = extract_report_lines(
+    lines = _repaired(
         _APS_2021_Q1, rcept_no="20210517001891", corp_code="00296078",
         report_fiscal_year=2021, report_fiscal_period="Q1")
     is_s = {l.label_raw: l.value_won for l in lines
@@ -1424,7 +1432,7 @@ def test_r116_hyungji_ic_2015q1_separate_is_cumulative_blank_uses_three_month():
     공란."""
     if not _HYUNGJI_2015_Q1.exists():
         return
-    lines = extract_report_lines(
+    lines = _repaired(
         _HYUNGJI_2015_Q1, rcept_no="20150514004898", corp_code="00142713",
         report_fiscal_year=2015, report_fiscal_period="Q1")
     is_s = {l.label_raw: l.value_won for l in lines

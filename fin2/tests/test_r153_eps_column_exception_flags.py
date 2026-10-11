@@ -16,6 +16,11 @@ EPS 행은 누적 칸이 공란이라 `pairs` 가 비어 `continue` 로 빠지�
 R144 의 교훈("같은 판정을 두 경로가 각자 구현하면 갈린다")이 열 선택 **인자**에도
 그대로 적용된다.
 
+★2026-10-11(사용자 결정, R0-2): 누적 공란에 3개월 값을 싣는 것은 **빈칸 채움**이라 계층3 이다.
+계층2(기본 추출 = 인쇄값)에는 그 행이 없고, 규칙을 켠 추출(`as_printed.forced("repaired")`)과
+`layer3_cell_corrections` fill(`R154_q1_cum_fill`)에만 있다. 두 경로가 같은 플래그를 받는다는
+R153 의 요지는 그대로 — 이제 둘 다 `_q1_cum_fill_on()` 하나를 묻는다.
+
 실행: pytest fin2/tests/test_r153_eps_column_exception_flags.py
 """
 from __future__ import annotations
@@ -26,11 +31,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import fin2.extract.report_lines as report_lines                  # noqa: E402
+from fin2.extract import as_printed as AP                         # noqa: E402
+from fin2.extract.layer3_corrections import extract_xml_with_corrections  # noqa: E402
 from fin2.extract.report_lines import extract_report_lines        # noqa: E402
 
 _ROOT = Path(__file__).resolve().parents[2]
 _HYUNGJI_2015Q1 = (
     _ROOT / "raw_report/KOSDAQ/00142713_형지I&C/quarter/2015/20150514004898.xml")
+
+
+_KW = dict(rcept_no="20150514004898", corp_code="00142713",
+           report_fiscal_year=2015, report_fiscal_period="Q1")
+
+
+def _repaired(path):
+    """Rules-on extraction = what layer 3 reads through report_lines_l3."""
+    with AP.forced("repaired"):
+        return extract_report_lines(path, **_KW)
 
 
 def _eps_rows(lines, basis):
@@ -42,18 +59,18 @@ def test_exception_lists_are_still_wired_to_the_eps_path():
     """플래그를 넘기는 코드가 살아 있는지(상수 이름이 바뀌면 조용히 깨진다)."""
     src = (Path(report_lines.__file__)).read_text(encoding="utf-8")
     eps_fn = src.split("def _emit_eps_lines", 1)[1].split("\ndef ", 1)[0]
-    assert "allow_three_month_as_cumulative" in eps_fn
-    assert "_Q1_CUM_BLANK_USE_3M_RCEPTS" in eps_fn
+    assert "allow_three_month_as_cumulative=_q1_cum_fill_on(" in eps_fn
     assert "prefer_last_of_two_as_cumulative" in eps_fn
+    flag_fn = src.split("def _q1_cum_fill_on", 1)[1].split("\ndef ", 1)[0]
+    assert "_Q1_CUM_BLANK_USE_3M_RCEPTS" in flag_fn
+    assert 'repair_on("R154_q1_cum_fill")' in flag_fn
 
 
 def test_hyungji_2015q1_eps_rows_recovered():
-    """누적 칸이 통째로 빈 Q1 필링에서 EPS 행이 3개월 값으로 복원된다."""
+    """누적 칸이 통째로 빈 Q1 필링에서 EPS 행이 3개월 값으로 복원된다(계층3 = 규칙 켬)."""
     if not _HYUNGJI_2015Q1.exists():
         return
-    lines = extract_report_lines(
-        _HYUNGJI_2015Q1, rcept_no="20150514004898", corp_code="00142713",
-        report_fiscal_year=2015, report_fiscal_period="Q1")
+    lines = _repaired(_HYUNGJI_2015Q1)
 
     con = _eps_rows(lines, "consolidated")
     assert con, "연결 EPS 행이 여전히 결측"
@@ -66,13 +83,28 @@ def test_hyungji_2015q1_eps_rows_recovered():
 
 
 def test_normal_rows_unaffected():
-    """가산적 수정 — 같은 표의 일반 손익 행은 그대로다."""
+    """가산적 수정 — 같은 표의 일반 손익 행은 그대로다(계층3 = 규칙 켬)."""
     if not _HYUNGJI_2015Q1.exists():
         return
-    lines = extract_report_lines(
-        _HYUNGJI_2015Q1, rcept_no="20150514004898", corp_code="00142713",
-        report_fiscal_year=2015, report_fiscal_period="Q1")
+    lines = _repaired(_HYUNGJI_2015Q1)
     rows = {l.label_raw: l.value_won for l in lines
             if l.statement == "IS" and l.basis == "consolidated" and l.col_index == 0}
     revenue = next(v for k, v in rows.items() if k.startswith("수익(매출액)"))
     assert revenue == 29_893_315_770
+
+
+def test_layer2_keeps_the_blank_and_layer3_gets_r154_fills(monkeypatch):
+    """R0-2 — 계층2 는 누적 공란 그대로(행 없음), 3개월 값은 R154 fill 보정으로만 간다."""
+    if not _HYUNGJI_2015Q1.exists():
+        return
+    monkeypatch.delenv(AP.ENV, raising=False)
+    lines, corrections = extract_xml_with_corrections(_HYUNGJI_2015Q1, include_notes=False, **_KW)
+    assert not [l for l in lines if l.statement == "IS" and l.col_index == 0
+                and "주당" in (l.label_raw or "")]
+    fills = {(c["basis"], c["label_raw"]): c for c in corrections if c["statement"] == "IS"}
+    eps = fills[("consolidated", "기본주당이익(손실) (주31)")]
+    assert (eps["kind"], eps["rule"], eps["printed_value"], eps["corrected_value"]) == (
+        "fill", "R154_q1_cum_fill", None, -7)
+    assert eps["row_data"]                       # report_lines_l3 adds the whole row back
+    assert all(c["rule"] == "R154_q1_cum_fill" and c["kind"] == "fill"
+               for c in corrections if c["statement"] == "IS")

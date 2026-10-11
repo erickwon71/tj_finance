@@ -147,7 +147,7 @@ def _sce_column_label(f: dict) -> str | None:
     column (report_lines.col_label is NULL for BS/IS/CF, so a header there only broke recheck)."""
     if f.get("statement") != "SCE":
         return None
-    col = f.get("db_col") or f.get("header")
+    col = f.get("db_col") or f.get("col_name") or f.get("header")   # mc15: bottom header cell
     end = f.get("block_end")
     if not end:
         return col
@@ -283,7 +283,7 @@ def _cell_item(f: dict, prefix: str, seen: set) -> dict:
         et, note = cell_error_type(f)
         item.update(column_label=_sce_column_label(f), db_value=f.get("db"),
                     source_value=int(round(src * s)) if isinstance(src, (int, float)) else None,
-                    source_value_raw=_raw(src), error_type=et,
+                    source_value_raw=f.get("src_raw") or _raw(src), error_type=et,
                     evidence=f"{prefix} DB {f.get('db')} ≠ 원문 기대열({f.get('header')}) "
                              f"{src}; 같은 값이 있는 열 {f.get('found_at')}, 부호만 다른 열 {f.get('flipped_at')}"
                              + (f" — {note}" if note else ""))
@@ -300,8 +300,8 @@ def _cell_item(f: dict, prefix: str, seen: set) -> dict:
     elif kind == "uncovered_cell":
         src = f.get("src")
         item.update(column_label=_sce_column_label(f), source_value=int(round(src * s)) if src else None,
-                    source_value_raw=_raw(src), error_type="missing_row",
-                    evidence=f"{prefix} 원문 SCE 셀({f.get('header')}={src})이 DB 에 없음")
+                    source_value_raw=f.get("src_raw") or _raw(src), error_type="missing_row",
+                    evidence=f"{prefix} 원문 SCE 셀({f.get('col_name') or f.get('header')}={src})이 DB 에 없음")
     elif kind == "extra_row":
         item.update(error_type="extra_row", evidence=f"{prefix} DB 행이 원문 표에 없음")
     key = (item["basis"], item["statement"], item["account_label"], item["column_label"])

@@ -202,7 +202,8 @@ DB 가 원문과 같으면 이슈가 아니다. 그런 원문 결함의 보정�
 - **한 턴에 Bash 는 하나만** 부른다(병렬 호출 금지).
 - `grep`/`find`/`mkdir` 등 허용되지 않은 명령이 거부되는 것은 정상이다. 허용된 도구(Read/Grep/Glob)로 바꿔 계속한다.
 - 거부된 명령이 `python scripts/vq.py …`·`cd … && …` 처럼 **전체 형태가 아니면** 멈추지 않는다 → 전체 형태 `/Users/taejin/Project/tj_finance/.venv/bin/python scripts/vq.py …` 로 다시 부른다.
-  **전체 형태 그대로** 부른 명령이 `Permission to use Bash has been denied` 로 거부됐을 때만 즉시 멈춘다.
+  뒤에 `| head`·`| cat`·`2>&1`·`> 파일`·`; …`·`&& …` 처럼 **무엇이든 덧붙였으면 전체 형태가 아니다** — 덧붙인 것을 빼고 같은 명령을 다시 부른다(긴 출력은 잘려도 되고, `--json` 이나 `--out` 으로 받는다).
+  **아무것도 덧붙이지 않은 전체 형태 그대로** 부른 명령이 `Permission to use Bash has been denied` 로 거부됐을 때만 즉시 멈춘다.
   그때는 `done` 도 부르지 말고 지금까지 처리한 내용만 아래 형식으로 요약하고 종료한다.
 
 ## 끝낼 때 출력할 것

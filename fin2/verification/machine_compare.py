@@ -57,7 +57,12 @@ from lxml import etree
 # mc14 (2026-10-12, R160 user decision): an unresolved '.'-broken cell is loaded as a row with a
 # NULL value and value_raw. Such a row equals a source cell that is not a number; a NULL row whose
 # source cell is a readable non-zero number is a value finding.
-TOOL_VERSION = "mc14"
+# mc15 (2026-10-12, verify_sim r7): an issue built from a finding carries the PRINTED cell text
+# (src_raw — a cell printed '(3,022,855,339' with no closing parenthesis was re-composed as
+# '(3,022,855,339)'), the column's bottom header cell (col_name — a two-row header gave
+# '총자본총자본'), and SCE blocks whose closing row is only a date ('2015.12.31') get their
+# block_end (the next block starts with a dated row, or it is the table's last dated row).
+TOOL_VERSION = "mc15"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -181,6 +186,7 @@ class SrcRow:
     alt: str            # normalized last label part (two-level labels)
     label: str
     cells: list         # amounts per amount column
+    raws: list = field(default_factory=list)  # mc15: printed text per amount column
 
 
 @dataclass
@@ -189,6 +195,7 @@ class SrcTable:
     basis: str
     title: str
     headers: list[str]  # header text per amount column (spaces removed)
+    col_names: list = field(default_factory=list)  # mc15: bottom header cell per amount column
     rows: list[SrcRow] = field(default_factory=list)
     stype: str | None = None  # BS / IS / SCE / CF, None when undecidable
     has_note_col: bool = False  # header carries a note ('주석') column that `headers` drops
@@ -258,7 +265,13 @@ def _parse_table(idx: int, table, basis: str, title: str) -> SrcTable | None:
     cols = [c for c in range(first_amt, width) if c not in note_cols]
     headers = [_WS_RE.sub("", "".join(t for row in header_rows for cc, t, _ in row if cc == c))
                for c in cols]
-    st = SrcTable(idx, basis, title, headers, has_note_col=bool(note_cols))
+    # mc15: the bottom header cell of each column (verify_prompt "같은 열" compares the source's
+    # lowest header cell with the last part of the DB column), '&cr;' dropped like the loader
+    col_names = []
+    for c in cols:
+        bottom = [t for row in header_rows for cc, t, _ in row if cc == c and t.strip()]
+        col_names.append(_WS_RE.sub("", bottom[-1]).replace("&cr;", "") if bottom else None)
+    st = SrcTable(idx, basis, title, headers, col_names=col_names, has_note_col=bool(note_cols))
     for row in g[first_data:]:
         by_col = {c: t for c, t, o in row if o}
         parts = [by_col[c] for c in sorted(by_col) if c < first_amt and c not in note_cols
@@ -268,6 +281,7 @@ def _parse_table(idx: int, table, basis: str, title: str) -> SrcTable | None:
         bad = unreadable_dot_cells(texts, label)
         cells = [(t.strip() if i in bad else parse_amount(t)) if c in by_col else _EMPTY
                  for i, (c, t) in enumerate(zip(cols, texts))]
+        raws = [by_col.get(c, "").strip() for c in cols]
         if not label:
             # an unlabeled row carrying amounts (campaign issue #51) must still surface; a printed
             # '-' / 0 counts (mc12: the loader keeps such a row too), an all-blank row does not
@@ -279,15 +293,16 @@ def _parse_table(idx: int, table, basis: str, title: str) -> SrcTable | None:
                 # a printed '-' or 0 counts as an amount) and this one has them: one row whose label
                 # wrapped onto a second line; take its amounts
                 prev.cells = cells
+                prev.raws = raws
                 continue
             # amounts above too: a separate row. The loader names it after the row above (the
             # convention the DB shows), so the machine does the same and pairs it by that name;
             # a DB without the row still gets a missing_row. No row above: '(라벨없음)'.
             if prev is not None:
-                st.rows.append(SrcRow(idx, prev.key, prev.alt, prev.label, cells))
+                st.rows.append(SrcRow(idx, prev.key, prev.alt, prev.label, cells, raws))
                 continue
             label, parts = "(라벨없음)", ["(라벨없음)"]
-        st.rows.append(SrcRow(idx, norm_label(label), norm_label(parts[-1]), label, cells))
+        st.rows.append(SrcRow(idx, norm_label(label), norm_label(parts[-1]), label, cells, raws))
     return st
 
 
@@ -629,7 +644,9 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                     "value", key, label=r["label_raw"][:200], row_order=r["row_order"],
                     col_index=r["col_index"], db=r["value_won"],
                     src=x if isinstance(x, float) else str(x), src_col=k,
+                    src_raw=(row.raws[k] if k < len(row.raws) else None),
                     header=(headers_of[row.table][k] if k < len(headers_of[row.table]) else None),
+                    col_name=row_table_colname(win_tables, row, k),
                     found_at=found, flipped_at=flipped, scale=s, **extra))
                 counts["value"] += 1
         matched = set(d2s.values())
@@ -668,7 +685,7 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                 ci = r["col_index"] or 0
                 if row is not None and r["value_won"] is not None and ci < len(row.cells):
                     eff[id(row)][ci] = r["value_won"] / scale
-            eff_rows = [SrcRow(r.table, r.key, r.alt, r.label, eff[id(r)]) for r in win]
+            eff_rows = [SrcRow(r.table, r.key, r.alt, r.label, eff[id(r)], r.raws) for r in win]
             # the same identity computed on the printed numbers alone (S-calc): an sce_arith
             # finding that also breaks there is source arithmetic (verify_prompt I3 -> source_defect)
             src_broken = {(g["check"], g["col"], g["from"], g["to"]) for g in sce_identity(win)}
@@ -706,6 +723,8 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                     if isinstance(x, float) and x and c not in covered.get(rk, set()):
                         findings.append(_finding("uncovered_cell", key, label=row.label[:200], src_col=c,
                                                  header=row_table_header(win_tables, row, c), src=x,
+                                                 src_raw=(row.raws[c] if c < len(row.raws) else None),
+                                                 col_name=row_table_colname(win_tables, row, c),
                                                  block_end=ends[pos[id(row)]]))
                         counts["uncovered_cell"] += 1
     for t in tables:
@@ -870,9 +889,16 @@ def block_end_labels(rows: list[SrcRow]) -> list[str | None]:
     the next closing row at or below it. Rows after the last closing row get None."""
     out: list[str | None] = [None] * len(rows)
     current: str | None = None
+    dated = [label_date(r.label) is not None for r in rows]
+    last_dated = max((i for i, d in enumerate(dated) if d), default=None)
+    has_close_word = any(_CLOSE_RE.search(_WS_RE.sub("", r.label)) for r in rows)
     for i in range(len(rows) - 1, -1, -1):
         lab = _WS_RE.sub("", rows[i].label)
-        if _CLOSE_RE.search(lab):
+        # mc15: a closing row printed as a date only ('2015.12.31') — the next row opens the next
+        # block with a date, or it is the last dated row (only when no row says 기말 at all)
+        date_close = (not has_close_word and dated[i] and i > 0
+                      and (i == last_dated or (i + 1 < len(rows) and dated[i + 1] and rows[i + 1].table == rows[i].table)))
+        if _CLOSE_RE.search(lab) or date_close:
             current = rows[i].label
         out[i] = current
     return out
@@ -940,6 +966,14 @@ def _is_appropriation(t: SrcTable) -> bool:
     """Statement of appropriation of retained earnings: in the statement section, not loaded."""
     first = t.rows[0].key if t.rows else ""
     return bool(_APPROPRIATION_RE.search(_WS_RE.sub("", t.title)) or _APPROPRIATION_RE.search(first))
+
+
+def row_table_colname(win_tables: list[SrcTable], row: SrcRow, c: int) -> str | None:
+    """mc15: bottom header cell of column c of the row's table."""
+    for t in win_tables:
+        if t.idx == row.table:
+            return t.col_names[c] if c < len(t.col_names) else None
+    return None
 
 
 def row_table_header(win_tables: list[SrcTable], row: SrcRow, c: int) -> str | None:

@@ -538,3 +538,30 @@ def test_dot_cell_repaired_inside_a_parsed_table(tmp_path):
     t = mc.load_statement_tables(_xml(tmp_path, body))[0]
     row = next(r for r in t.rows if r.label == "당기순이익(손실)")
     assert row.cells[:2] == [379175507735.0, 379175507735.0]
+
+
+def test_mc15_issue_fields_use_printed_text_bottom_header_and_dated_block_end(tmp_path):
+    # verify_sim r7 (2026-10-12): 00323868 2016Q3 SCE — closing rows are dates only
+    # ('2015.12.31'), the 총자본 header spans two rows, and a cell is printed without its closing
+    # parenthesis. The issue must carry the printed text, the bottom header cell and the block end.
+    trs = "".join("<TR>" + "".join(f"<TD>{c}</TD>" for c in r) + "</TR>" for r in [
+        ["2015.1.1", "100", "100"],
+        ["당기순이익(손실)", "(30", ""],
+        ["2015.12.31", "70", "70"],
+    ])
+    head = ('<THEAD><TR><TH ROWSPAN="2">과목</TH><TH>자본금</TH><TH ROWSPAN="2">총자본</TH></TR>'
+            '<TR><TH>자본금</TH></TR></THEAD>')
+    body = ('<SECTION-2><TITLE>2. 연결재무제표</TITLE><P>연결 자본변동표</P>'
+            f'<TABLE>{head}<TBODY>{trs}</TBODY></TABLE></SECTION-2>')
+    t = mc.load_statement_tables(_xml(tmp_path, body))[0]
+    assert t.col_names[-1] == "총자본"
+    row = next(r for r in t.rows if r.label == "당기순이익(손실)")
+    assert row.raws[0] == "(30"
+    assert mc.block_end_labels(t.rows)[1] == "2015.12.31"
+    from fin2.verification import machine_pass
+    item = machine_pass._cell_item({"kind": "uncovered_cell", "statement": "SCE", "basis": "consolidated",
+                                    "label": "당기순이익(손실)", "src": -30.0, "src_raw": "(30",
+                                    "header": "총자본총자본", "col_name": "총자본",
+                                    "block_end": "2015.12.31", "scale": 1}, "[확인 mc15]", set())
+    assert item["column_label"] == "총자본 @ 2015.12.31"
+    assert item["source_value_raw"] == "(30"

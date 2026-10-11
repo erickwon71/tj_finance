@@ -71,6 +71,25 @@ _Q1_CUM_BLANK_USE_3M_RCEPTS = frozenset({
 })
 
 
+# R160 (2026-10-12, user decision): markers for unreadable printed cells in the column choice.
+# Far beyond any amount (parse_amount caps at _AMOUNT_SANE_MAX), one per cell position.
+_UNREADABLE_MARK_BASE = -(10 ** 30)
+
+
+def _unreadable_markers(row) -> tuple[list, dict]:
+    """(amounts with each unresolved '.'-broken cell replaced by a unique marker, {marker: text}).
+    The row's own amounts are untouched; no markers -> (row.amounts, {})."""
+    idx = [i for i in unresolved_dot_cell_indices(row.raw_amounts, row.account_name)
+           if i < len(row.amounts) and row.amounts[i] is None]
+    if not idx:
+        return row.amounts, {}
+    amounts, marks = list(row.amounts), {}
+    for i in idx:
+        amounts[i] = _UNREADABLE_MARK_BASE - i
+        marks[amounts[i]] = (row.raw_amounts[i] or "").strip()[:64]
+    return amounts, marks
+
+
 def _q1_cum_fill_on(report_fiscal_period, rcept_no: str, q1_cum_blank_use_3m: bool) -> bool:
     """R116/R154 — may a blank Q1 cumulative cell take the 3-month value?
 
@@ -577,7 +596,7 @@ def _row_to_line(
     *, row, col_idx, amount, basis, period_kind, statement,
     corp_code, rcept_no, report_fiscal_year, report_fiscal_period,
     unit, section_code, section_path, node_role, table_seq, table_title,
-    unit_source="declared", currency=None, unit_decl_raw=None,
+    unit_source="declared", currency=None, unit_decl_raw=None, value_raw=None,
 ) -> ReportLineRow:
     ctx_fy = report_fiscal_year - col_idx
     is_cumulative = period_kind == "duration" and report_fiscal_period != "FY"
@@ -595,6 +614,7 @@ def _row_to_line(
         period_kind=period_kind,
         is_cumulative=is_cumulative,
         value_won=amount,
+        value_raw=value_raw,                  # R160: printed text of an unreadable cell (value NULL)
         adecimal=_adecimal_from_unit(unit),
         # 미선언 표는 호출측에서 이미 스킵됐다. 'fx_declared' 는 **표시통화 금액 그대로**라는
         # 뜻이다(원화 환산 아님) — 통화 코드는 report_tables.currency.
@@ -1315,101 +1335,120 @@ def _emit_section_lines(
                               report_fiscal_year=report_fiscal_year)
                     and _looks_like_eps_amounts(row.amounts)):
                 continue  # 진짜 EPS(원/주)만 본류에서 제외 — NI귀속 오판 가드(R27)
+            def _select(amounts):
+                # R160 (2026-10-12): the column choice below runs twice per row — once on the
+                # parsed amounts and once with unreadable printed cells marked, see after.
+                if header_cols is not None:
+                    # R88 — 헤더 그리드로 확정된 위치→회계기간 맵으로 직접 선택(설계문서 §3-4).
+                    # R113 — raw_amounts 를 같이 넘겨 순수 대시("-") 칸을 0으로 채택(원문
+                    # 정책상 "-"=0, 결측 아님 — 위 select_by_header_columns 주석 참고).
+                    # R116 — 예외목록에 있는 Q1 필링만 누적 공란 시 3개월 값을 대체 채택.
+                    # R120 — 예외목록에 있는 필링만 무표지 2열 병합군에서 마지막 열(누적) 채택.
+                    pairs = list(select_by_header_columns(
+                        header_cols, amounts, raw_amounts=row.raw_amounts,
+                        allow_three_month_as_cumulative=_q1_cum_fill_on(
+                            report_fiscal_period, rcept_no, q1_cum_blank_use_3m),
+                        prefer_last_of_two_as_cumulative=(
+                            rcept_no in _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS),
+                        closing_runs=dual_closing_runs,
+                    ).items())
+                elif cum_map is not None:
+                    pairs = [(off, amounts[pos]) for pos, off in cum_map.items()
+                             if pos < len(amounts) and amounts[pos] is not None]
+                    if not pairs:
+                        # ★2026-09-06(R74 후속, 트랙①) — 이 폴백은 "총계/귀속 요약행은 누적값
+                        # 2개만 가져 누적컬럼(1,3) 위치가 비고 값이 0·2 등에 실린다"는 **진짜
+                        # 결측** 전제로 설계됐다(위 §5.4류 사례). 그런데 cum_map 목표 칸의
+                        # `raw_amounts`가 실제 숫자 텍스트인데 `amounts`만 None이면(=
+                        # `_AMOUNT_SANE_MAX` 값-거부, R74와 같은 원인) 그 전제가 깨진다 — 실측
+                        # 확정(00378363 3S FY2023 Q3 연결IS "매출액"): 당기누적(position1)·
+                        # 전기누적(position3) 둘 다 자기모순 단위(×10⁶)로 거부됐는데, 이 폴백이
+                        # "값이 있는 아무 칸"(전기 **3개월**, position2)을 주워 당기누적으로
+                        # 둔갑시켰다 — 컬럼 밀림이 아니라 **완전히 다른 성격의 값**(3개월 vs
+                        # 누적)이 뒤바뀌는, R74의 "else" 분기보다 위험한 변종. cum_map 목표 칸에
+                        # 거부의 증거(진짜 숫자 텍스트)가 있으면 이 폴백 자체를 쓰지 않는다 —
+                        # 결측으로 남기는 편이 엉뚱한 값보다 안전하다(R3 원칙).
+                        raws = row.raw_amounts
+                        targets_rejected = any(
+                            pos < len(raws) and raws[pos].strip() not in _LABEL_REGION_PLACEHOLDERS
+                            for pos in cum_map)
+                        if not targets_rejected:
+                            present = [a for a in amounts if a is not None]
+                            pairs = list(enumerate(present))
+                elif multicol:
+                    # 기간당 다열: 비어있지 않은 금액을 압축 → [당기, 전기, 전전기] 로 매핑.
+                    present = [a for a in amounts if a is not None]
+                    pairs = list(enumerate(present[:n_periods]))
+                else:
+                    # ★2026-08-29(§5.4, classB 유형1) — text.py::_emit_section 의 동형 분기와
+                    # 반드시 같이 고쳐야 하는 쌍둥이 로직. `acontext_missing[i]=True`(TE+ACODE
+                    # 있고 ACONTEXT 없음 — DART 원문이 명시한 "이 기간 미공시")인 칸 앞에서는
+                    # 절삭을 멈춰 진짜 결측으로 남긴다(원문이 실제로 그 기간을 안 비운 경우를
+                    # 전기/전전기 값이 당기로 오귀속되는 것을 막는다). 신호 없는 칸(TD 등)은 기존
+                    # 동작 그대로. 근거: docs/plans/gateb_trade_payables_classB_stale_column_
+                    # investigation_2026-08-29.md §5~6.
+                    # ★2026-09-06(R73 후속, 트랙①) — 두 번째 정지 신호 추가: `raw_amounts[i]`가
+                    # 진짜 숫자 텍스트인데 `amounts[i]`가 None이면, 그 칸은 "원문이 비웠다"가
+                    # 아니라 `parse_amount()`의 `_AMOUNT_SANE_MAX`(R3, 1경원 상한) 가드가 **값을
+                    # 신뢰 못 해 거부**한 것이다(원문 단위선언이 실제 자릿수와 안 맞는 자기모순
+                    # 필링 — declared "백만원"인데 본문이 이미 원 단위인 경우 등). 그런 칸을 진짜
+                    # 공백과 똑같이 절삭하면, 거부된 값 뒤의 진짜 전기/전전기 값이 당기 열로
+                    # 밀려 들어간다(실측 확정: 00204226 소프트센 FY2022 연결BS `이익잉여금(결손금)`
+                    # — 당기 17,293,933,213원이 ×10⁶ 스케일에서 1경원 상한에 걸려 거부되고, 전기
+                    # 6,570,137,526원이 그 자리로 밀려 당기 값으로 둔갑). 이 칸에서도 절삭을
+                    # 멈춰 결측으로 남긴다 — "오염보다 결측을 택한다"는 R3 자신의 원칙을 이
+                    # 압축 단계에도 그대로 잇는다. 근거:
+                    # docs/plans/report_lines_sanemax_reject_compaction_shift_design_2026-09-06.md
+                    # ★R86(2026-09-09) — 세 번째 정지 신호 추가: `table_has_note_column`(이 표에
+                    # 주석참조 컬럼이 있다는 구조적 증거, R19/R65). classB(§5.1) 조사가 이미 밝힌
+                    # 대로, 이 절삭 루프의 **유일한 정당한 존재 이유**는 "라벨 바로 다음 주석참조
+                    # 칸이 빈 값으로 amount_cells 에 섞여 들어와 생기는 phantom 선두 None"(한화손해
+                    # 보험류)이었고, 그 근본원인은 R19(2026-08-24)가 `_split_label_amounts_ex()`
+                    # 단계에서 이미 제거했다 — 주석 컬럼이 있는 표에서만 여전히 필요할 수 있는
+                    # 잔여 케이스에 대비해 그 표들(`table_has_note_column=True`)에서는 기존 동작을
+                    # 그대로 둔다. 주석 컬럼이 **없는** 순수 기간열 표(`table_has_note_column=
+                    # False`)에서 선두가 진짜 공백류(`raws[lead]`가 placeholder)라면, 그건 phantom
+                    # 이 아니라 **원문이 실제로 그 기간을 비운 것**(K-GAAP→IFRS9 전환 등으로 특정
+                    # 계정이 최근 기간엔 없고 오래된 기간에만 존재하는 경우 등) — 절삭하면 전기/
+                    # 전전기 값이 당기 열로 둔갑한다(실측 확정: 삼성전자 20200330003851 2019FY 별도
+                    # 현금흐름표 "장기매도가능금융자산의 처분/취득" 등 — 원문 [공란,공란,전전기값]
+                    # 인데 절삭 후 전전기값이 당기로 저장됨). 이 표들에서도 절삭을 멈춰 결측으로
+                    # 남긴다. 근거: docs/PARSING_RULES.md R86,
+                    # docs/plans/gateb_trade_payables_classB_stale_column_investigation_2026-08-29.md §5.1.
+                    amts = amounts
+                    flags = row.acontext_missing
+                    raws = row.raw_amounts
+                    lead = 0
+                    while (lead < len(amts) and amts[lead] is None
+                           and not (lead < len(flags) and flags[lead])
+                           and (lead >= len(raws) or raws[lead].strip() in _LABEL_REGION_PLACEHOLDERS)
+                           and table_has_note_column):
+                        lead += 1
+                    pairs = list(enumerate(amts[lead:]))
+                return pairs
+
+            pairs = _select(row.amounts)
+            # R160 — an unresolved '.'-broken cell (`unresolved_dot_cell_indices`) is a printed
+            #   value we cannot read: keep the row with a NULL value and the printed text in
+            #   value_raw (R0-1 4항). Where it would sit is decided by the same column choice,
+            #   run on a copy whose unreadable cells carry markers; only periods that got no
+            #   value in the normal run are added, so no loaded number changes.
+            marked, marks = _unreadable_markers(row)
+            null_pairs = []
+            if marks:
+                have = {c for c, a in pairs if a is not None}
+                null_pairs = [(c, marks[a]) for c, a in _select(marked)
+                              if a in marks and c not in have]
             if header_cols is not None:
-                # R88 — 헤더 그리드로 확정된 위치→회계기간 맵으로 직접 선택(설계문서 §3-4).
-                # R113 — raw_amounts 를 같이 넘겨 순수 대시("-") 칸을 0으로 채택(원문
-                # 정책상 "-"=0, 결측 아님 — 위 select_by_header_columns 주석 참고).
-                # R116 — 예외목록에 있는 Q1 필링만 누적 공란 시 3개월 값을 대체 채택.
-                # R120 — 예외목록에 있는 필링만 무표지 2열 병합군에서 마지막 열(누적) 채택.
-                pairs = list(select_by_header_columns(
-                    header_cols, row.amounts, raw_amounts=row.raw_amounts,
-                    allow_three_month_as_cumulative=_q1_cum_fill_on(
-                        report_fiscal_period, rcept_no, q1_cum_blank_use_3m),
-                    prefer_last_of_two_as_cumulative=(
-                        rcept_no in _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS),
-                    closing_runs=dual_closing_runs,
-                ).items())
                 # R168 — old [detail, balance] print layout: track the detail-cell run
                 # so a group-closing row can be proved by arithmetic (see selector).
                 update_dual_closing_runs(header_cols, row.amounts, dual_closing_runs)
-            elif cum_map is not None:
-                pairs = [(off, row.amounts[pos]) for pos, off in cum_map.items()
-                         if pos < len(row.amounts) and row.amounts[pos] is not None]
-                if not pairs:
-                    # ★2026-09-06(R74 후속, 트랙①) — 이 폴백은 "총계/귀속 요약행은 누적값
-                    # 2개만 가져 누적컬럼(1,3) 위치가 비고 값이 0·2 등에 실린다"는 **진짜
-                    # 결측** 전제로 설계됐다(위 §5.4류 사례). 그런데 cum_map 목표 칸의
-                    # `raw_amounts`가 실제 숫자 텍스트인데 `amounts`만 None이면(=
-                    # `_AMOUNT_SANE_MAX` 값-거부, R74와 같은 원인) 그 전제가 깨진다 — 실측
-                    # 확정(00378363 3S FY2023 Q3 연결IS "매출액"): 당기누적(position1)·
-                    # 전기누적(position3) 둘 다 자기모순 단위(×10⁶)로 거부됐는데, 이 폴백이
-                    # "값이 있는 아무 칸"(전기 **3개월**, position2)을 주워 당기누적으로
-                    # 둔갑시켰다 — 컬럼 밀림이 아니라 **완전히 다른 성격의 값**(3개월 vs
-                    # 누적)이 뒤바뀌는, R74의 "else" 분기보다 위험한 변종. cum_map 목표 칸에
-                    # 거부의 증거(진짜 숫자 텍스트)가 있으면 이 폴백 자체를 쓰지 않는다 —
-                    # 결측으로 남기는 편이 엉뚱한 값보다 안전하다(R3 원칙).
-                    raws = row.raw_amounts
-                    targets_rejected = any(
-                        pos < len(raws) and raws[pos].strip() not in _LABEL_REGION_PLACEHOLDERS
-                        for pos in cum_map)
-                    if not targets_rejected:
-                        present = [a for a in row.amounts if a is not None]
-                        pairs = list(enumerate(present))
-            elif multicol:
-                # 기간당 다열: 비어있지 않은 금액을 압축 → [당기, 전기, 전전기] 로 매핑.
-                present = [a for a in row.amounts if a is not None]
-                pairs = list(enumerate(present[:n_periods]))
-            else:
-                # ★2026-08-29(§5.4, classB 유형1) — text.py::_emit_section 의 동형 분기와
-                # 반드시 같이 고쳐야 하는 쌍둥이 로직. `acontext_missing[i]=True`(TE+ACODE
-                # 있고 ACONTEXT 없음 — DART 원문이 명시한 "이 기간 미공시")인 칸 앞에서는
-                # 절삭을 멈춰 진짜 결측으로 남긴다(원문이 실제로 그 기간을 안 비운 경우를
-                # 전기/전전기 값이 당기로 오귀속되는 것을 막는다). 신호 없는 칸(TD 등)은 기존
-                # 동작 그대로. 근거: docs/plans/gateb_trade_payables_classB_stale_column_
-                # investigation_2026-08-29.md §5~6.
-                # ★2026-09-06(R73 후속, 트랙①) — 두 번째 정지 신호 추가: `raw_amounts[i]`가
-                # 진짜 숫자 텍스트인데 `amounts[i]`가 None이면, 그 칸은 "원문이 비웠다"가
-                # 아니라 `parse_amount()`의 `_AMOUNT_SANE_MAX`(R3, 1경원 상한) 가드가 **값을
-                # 신뢰 못 해 거부**한 것이다(원문 단위선언이 실제 자릿수와 안 맞는 자기모순
-                # 필링 — declared "백만원"인데 본문이 이미 원 단위인 경우 등). 그런 칸을 진짜
-                # 공백과 똑같이 절삭하면, 거부된 값 뒤의 진짜 전기/전전기 값이 당기 열로
-                # 밀려 들어간다(실측 확정: 00204226 소프트센 FY2022 연결BS `이익잉여금(결손금)`
-                # — 당기 17,293,933,213원이 ×10⁶ 스케일에서 1경원 상한에 걸려 거부되고, 전기
-                # 6,570,137,526원이 그 자리로 밀려 당기 값으로 둔갑). 이 칸에서도 절삭을
-                # 멈춰 결측으로 남긴다 — "오염보다 결측을 택한다"는 R3 자신의 원칙을 이
-                # 압축 단계에도 그대로 잇는다. 근거:
-                # docs/plans/report_lines_sanemax_reject_compaction_shift_design_2026-09-06.md
-                # ★R86(2026-09-09) — 세 번째 정지 신호 추가: `table_has_note_column`(이 표에
-                # 주석참조 컬럼이 있다는 구조적 증거, R19/R65). classB(§5.1) 조사가 이미 밝힌
-                # 대로, 이 절삭 루프의 **유일한 정당한 존재 이유**는 "라벨 바로 다음 주석참조
-                # 칸이 빈 값으로 amount_cells 에 섞여 들어와 생기는 phantom 선두 None"(한화손해
-                # 보험류)이었고, 그 근본원인은 R19(2026-08-24)가 `_split_label_amounts_ex()`
-                # 단계에서 이미 제거했다 — 주석 컬럼이 있는 표에서만 여전히 필요할 수 있는
-                # 잔여 케이스에 대비해 그 표들(`table_has_note_column=True`)에서는 기존 동작을
-                # 그대로 둔다. 주석 컬럼이 **없는** 순수 기간열 표(`table_has_note_column=
-                # False`)에서 선두가 진짜 공백류(`raws[lead]`가 placeholder)라면, 그건 phantom
-                # 이 아니라 **원문이 실제로 그 기간을 비운 것**(K-GAAP→IFRS9 전환 등으로 특정
-                # 계정이 최근 기간엔 없고 오래된 기간에만 존재하는 경우 등) — 절삭하면 전기/
-                # 전전기 값이 당기 열로 둔갑한다(실측 확정: 삼성전자 20200330003851 2019FY 별도
-                # 현금흐름표 "장기매도가능금융자산의 처분/취득" 등 — 원문 [공란,공란,전전기값]
-                # 인데 절삭 후 전전기값이 당기로 저장됨). 이 표들에서도 절삭을 멈춰 결측으로
-                # 남긴다. 근거: docs/PARSING_RULES.md R86,
-                # docs/plans/gateb_trade_payables_classB_stale_column_investigation_2026-08-29.md §5.1.
-                amts = row.amounts
-                flags = row.acontext_missing
-                raws = row.raw_amounts
-                lead = 0
-                while (lead < len(amts) and amts[lead] is None
-                       and not (lead < len(flags) and flags[lead])
-                       and (lead >= len(raws) or raws[lead].strip() in _LABEL_REGION_PLACEHOLDERS)
-                       and table_has_note_column):
-                    lead += 1
-                pairs = list(enumerate(amts[lead:]))
-            for col_idx, amount in pairs:
-                if amount is None:
+            for col_idx, amount, raw in ([(c, a, None) for c, a in pairs]
+                                         + [(c, None, t) for c, t in null_pairs]):
+                if amount is None and raw is None:
                     continue
                 emit(_row_to_line(
-                    row=row, col_idx=col_idx, amount=amount,
+                    row=row, col_idx=col_idx, amount=amount, value_raw=raw,
                     basis=basis, period_kind=period_kind, statement=statement,
                     corp_code=corp_code, rcept_no=rcept_no,
                     report_fiscal_year=report_fiscal_year,
@@ -2034,8 +2073,13 @@ def _emit_sce_lines(
         for row in rows:
             if not row.account_name:
                 continue
+            # R160 (2026-10-12): an unresolved '.'-broken cell stays as a row with a NULL value
+            # and its printed text (value_raw) — R0-1 4항. SCE columns are fixed positions.
+            unreadable = {i: (row.raw_amounts[i] or "").strip()[:64]
+                          for i in unresolved_dot_cell_indices(row.raw_amounts, row.account_name)
+                          if i < len(row.amounts) and row.amounts[i] is None}
             for col_idx, amount in enumerate(row.amounts):
-                if amount is None:
+                if amount is None and col_idx not in unreadable:
                     continue
                 emit(ReportLineRow(
                     corp_code=corp_code,
@@ -2052,6 +2096,7 @@ def _emit_sce_lines(
                     period_kind=None,                  # instant/duration 이 행마다 다름
                     is_cumulative=False,
                     value_won=amount,
+                    value_raw=unreadable.get(col_idx) if amount is None else None,
                     adecimal=adecimal,
                     unit_source=fx_source or "declared",
                     source_ref=f"{section_code}/{row.account_name[:80]}"[:180],

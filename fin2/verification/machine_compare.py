@@ -54,7 +54,10 @@ from lxml import etree
 # R158-b / R205 notation, PARSING_RULES R0-1 1항): '379,175,507.735' next to '379,175,507,735' in
 # the same row is that integer. Without it the cell read as a decimal and the DB came out as
 # "source x 1,000" — 14 false unit_scale issues (한진칼·삼성E&A·HD한국조선해양, 2026-10-11).
-TOOL_VERSION = "mc13"
+# mc14 (2026-10-12, R160 user decision): an unresolved '.'-broken cell is loaded as a row with a
+# NULL value and value_raw. Such a row equals a source cell that is not a number; a NULL row whose
+# source cell is a readable non-zero number is a value finding.
+TOOL_VERSION = "mc14"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -156,6 +159,17 @@ def repair_dot_cells(texts: list[str], label: str = "") -> list[str]:
     return out
 
 
+def unreadable_dot_cells(texts: list[str], label: str = "") -> set[int]:
+    """mc14 (R160): positions of '.'-broken cells that repair_dot_cells could not prove. The loader
+    does not read them as numbers (it keeps a NULL-value row with value_raw), so neither do we —
+    reading '125.605' as the decimal 125.605 made every such cell a false missing_row/value.
+    Per-share rows are numbers with real decimals and stay as they are."""
+    if _PER_SHARE_LABEL_RE.search(label or ""):
+        return set()
+    return {i for i, t in enumerate(texts)
+            if _DOT_GROUPED_RE.match(_WS_RE.sub("", t or "")) or _DOT_THEN_COMMA_RE.match(_WS_RE.sub("", t or ""))}
+
+
 def _text(el) -> str:
     return "".join(el.itertext()).strip()
 
@@ -251,7 +265,9 @@ def _parse_table(idx: int, table, basis: str, title: str) -> SrcTable | None:
                  and by_col[c].strip()]
         label = ">".join(parts)
         texts = repair_dot_cells([by_col.get(c, "") for c in cols], label)
-        cells = [parse_amount(t) if c in by_col else _EMPTY for c, t in zip(cols, texts)]
+        bad = unreadable_dot_cells(texts, label)
+        cells = [(t.strip() if i in bad else parse_amount(t)) if c in by_col else _EMPTY
+                 for i, (c, t) in enumerate(zip(cols, texts))]
         if not label:
             # an unlabeled row carrying amounts (campaign issue #51) must still surface; a printed
             # '-' / 0 counts (mc12: the loader keeps such a row too), an all-blank row does not
@@ -569,7 +585,26 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
         for r in items:
             rk = (r["row_order"], r["label_raw"])
             row = rowmap.get(rk)
-            if row is None or r["value_won"] is None:
+            if row is None:
+                continue
+            if r["value_won"] is None:
+                # mc14 (R160, 2026-10-12): a NULL-value row is an unreadable printed cell kept as
+                # value_raw. Same as the source when that cell is not a number; a NULL where the
+                # source prints a readable non-zero number is a value finding.
+                ks = col_for(r["col_index"] or 0, r.get("is_cumulative"), headers_of[row.table])
+                covered.setdefault(rk, set()).update(ks)
+                num = next((row.cells[k] for k in ks if k < len(row.cells)
+                            and isinstance(row.cells[k], float) and row.cells[k]), None)
+                if num is not None:
+                    k = ks[0]
+                    findings.append(_finding(
+                        "value", key, label=r["label_raw"][:200], row_order=r["row_order"],
+                        col_index=r["col_index"], db=None, src=num, src_col=k,
+                        header=(headers_of[row.table][k] if k < len(headers_of[row.table]) else None),
+                        found_at=[], flipped_at=[], scale=scale,
+                        **({"block_end": ends[pos[id(row)]], "db_col": r.get("col_label")}
+                           if st_code == "SCE" else {})))
+                    counts["value"] += 1
                 continue
             counts["cells"] += 1
             per_share = _per_share(r)

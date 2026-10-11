@@ -66,19 +66,20 @@ def test_restored_sign_becomes_a_layer3_correction(lb_path, monkeypatch):
 _JEJU = ROOT / "raw_report/KOSPI/00148832_제주은행/quarter/2015/20150515002022.xml"
 
 
-def test_typo_fixed_cell_the_printed_reading_drops_is_a_fill_with_its_row(monkeypatch):
+def test_typo_fixed_cell_is_a_value_correction_on_the_printed_null_row(monkeypatch):
     # 제주은행 2015 1분기 연결 BS 'Ⅰ. 지배기업 소유지분' is printed `310.731` (백만원). R159 lists it as
-    # 310,731; the printed reading cannot parse it, so layer 2 has no row and layer 3 gets a 'fill'
-    # carrying the whole row (report_lines_l3 adds it back).
+    # 310,731. Since R160 (2026-10-12) the printed reading keeps the row with a NULL value and the
+    # printed text in value_raw, so the R159 fix is a 'value' correction on that row (before: no
+    # layer-2 row and a 'fill'). report_lines_l3 shows the same 310,731,000,000 either way.
     if not _JEJU.exists():
         pytest.skip("raw_report not mounted")
     monkeypatch.delenv(AP.ENV, raising=False)
     lines, corrections = extract_xml_with_corrections(
         str(_JEJU), rcept_no="20150515002022", corp_code="00148832", report_fiscal_year=2015,
         report_fiscal_period="Q1", include_notes=False)
-    assert not [l for l in lines if l.statement == "BS" and l.basis == "consolidated"
-                and l.table_seq == 0 and l.row_order == 21 and l.value_won is not None]
-    fill = [c for c in corrections if c["statement"] == "BS" and c["row_order"] == 21]
-    assert len(fill) == 1 and fill[0]["kind"] == "fill" and fill[0]["rule"] == "R159_typo"
-    assert fill[0]["corrected_value"] == 310_731_000_000
-    assert '"label_raw": "Ⅰ. 지배기업 소유지분"' in fill[0]["row_data"]
+    row = [l for l in lines if l.statement == "BS" and l.basis == "consolidated"
+           and l.table_seq == 0 and l.row_order == 21 and l.col_index == 0]
+    assert [(l.value_won, l.value_raw) for l in row] == [(None, "310.731")]
+    fix = [c for c in corrections if c["statement"] == "BS" and c["row_order"] == 21]
+    assert len(fix) == 1 and fix[0]["kind"] == "value" and fix[0]["rule"] == "R159_typo"
+    assert (fix[0]["printed_value"], fix[0]["corrected_value"]) == (None, 310_731_000_000)

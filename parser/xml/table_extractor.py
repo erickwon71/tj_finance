@@ -461,9 +461,12 @@ def extract_rows(
         # 함께 이동시킨다. 따로 움직이면 원문이 다른 열의 값으로 붙는다.
         all_raw: list[str] = list(amount_cells)
         all_flags: list[bool] = list(cell_flags)
+        # R160 (2026-10-12): an unresolved '.'-broken cell is a printed value we cannot read, not
+        # a blank — it keeps its place (popping it would shift the later periods left).
+        _unreadable = {all_raw[i] for i in unresolved_dot_cell_indices(amount_cells, label)}
         if (len(all_parsed) >= 4 and not (preserve_col_positions or keep_all_amount_cells)
                 and table_has_note_column):
-            while all_parsed and all_parsed[0] is None:
+            while all_parsed and all_parsed[0] is None and not (all_raw and all_raw[0] in _unreadable):
                 all_parsed.pop(0)
                 if all_raw:
                     all_raw.pop(0)

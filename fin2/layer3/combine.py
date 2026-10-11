@@ -1915,6 +1915,47 @@ def _sum_contra_rows(rows: list) -> list:
     return [r for i, r in enumerate(out) if i not in drop] if drop else rows
 
 
+_FULLWIDTH = {c: chr(c - 0xFEE0) for c in range(0xFF01, 0xFF5F)}
+
+
+def _cosmetic_label(label: str | None) -> str:
+    return re.sub(r"\s", "", (label or "").translate(_FULLWIDTH))
+
+
+def _label_canon(statement: str, label: str | None) -> str | None:
+    fs = _FS.get(statement)
+    if fs is None or not label:
+        return None
+    r = _map_label(label, fs)
+    return None if r.confidence < 0.88 or r.account_code.startswith("unknown.") else r.account_code
+
+
+def _relabelled_cell(merged: dict, kind_of_cell: dict, old, key, value: int, rcept: str,
+                     kind: str, filing_canon_values: dict | None = None):
+    """R237: the earlier cell a later filing's cell relabels (same place, same amount, other
+    label, same extraction path, another filing), or None.
+
+    Not a relabel when the new label maps to no account (00126937 2023FY '당기순이익' →
+    '계속영업당기순이익': replacing would only drop net income), or when the new label's
+    account already sits elsewhere in the same filing and table scope with another amount (an
+    amendment's own misprint: 00528791 2025FY 3rd amendment prints '자본총계 (E=C+D)' where
+    '자산총계' stood, next to the real '자본총계 (D)')."""
+    if not (old is not None and old in merged and old != key
+            and merged[old]["value_won"] == value
+            and merged[old]["source_rcept"] != rcept
+            and kind_of_cell.get(old) == kind):
+        return None
+    if _cosmetic_label(old[4]) == _cosmetic_label(key[4]):
+        return None     # spacing / line break / full-width form only (00260611 2024H1 '（손실）')
+    canon = _label_canon(key[0], key[4])
+    if canon is None:
+        return None
+    others = (filing_canon_values or {}).get((key[0], key[1], key[2], canon), set()) - {value}
+    if others:
+        return None
+    return old
+
+
 def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
     """★정본 정책(사용자 2026-07-22): 최초등록본 + 순차 델타 패치.
 
@@ -1941,6 +1982,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
     chrono = _period_filings_chrono(session, corp, fy, period)
     merged: dict[tuple, dict] = {}
     kind_of_cell: dict[tuple, str] = {}
+    position_of: dict[tuple, tuple] = {}   # R237: (stmt, basis, col, table_seq, row_order) -> key
     for i, (rcept, is_amend) in enumerate(chrono):
         # ★ base = the FIRST filing (chrono). Its cells are never "amended" even if that
         # filing is itself a [기재정정] (no earlier original to patch → it IS the base).
@@ -1950,7 +1992,8 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
             SELECT statement, basis, col_index, section_path, label_raw, value_won,
                    node_role, table_seq, COALESCE(is_cumulative, false) AS is_cum,
                    value_exact, """ + _EPS_ROW_SQL + """ AS eps_row,
-                   CASE WHEN unit_source = 'xbrl' THEN split_part(source_ref, '/', 2) END AS xbrl_local
+                   CASE WHEN unit_source = 'xbrl' THEN split_part(source_ref, '/', 2) END AS xbrl_local,
+                   row_order
             FROM report_lines_l3 rl   -- R0-2: printed values + layer-3 corrections
             WHERE rcept_no=:r AND col_index=0 AND value_won IS NOT NULL
               -- F2 가드(2026-07-31): 헤더 규칙에 걸린 행은 기본 제외(계층2 가 이제 버리지
@@ -1997,9 +2040,28 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                       if (k[0], k[1]) in covered and kind_of_cell.get(k) != kind]:
                 del merged[k]
                 kind_of_cell.pop(k, None)
+        canon_values: dict[tuple, set] = {}     # R237: this filing's (stmt, basis, col, canon) -> values
+        if not is_base:
+            for r in rows:
+                c = _label_canon(r[0], r[4])
+                if c is not None:
+                    canon_values.setdefault((r[0], r[1], r[2], c), set()).add(int(r[5]))
         for (statement, basis, col_index, section_path, label_raw, value_won,
-             node_role, table_seq, is_cum, value_exact, eps_row, xbrl_local) in rows:
+             node_role, table_seq, is_cum, value_exact, eps_row, xbrl_local, row_order) in rows:
             key = (statement, basis, col_index, section_path, label_raw)
+            pos = (statement, basis, col_index, table_seq, row_order)
+            if not is_base and key not in merged and row_order is not None:
+                # R237: same place, same amount, another label in a later filing = the
+                # amendment relabelled the cell (00667373 2024Q1 배당금지급 → 주식의 발행). The
+                # earlier cell goes; the later one comes in below as an amended cell. Layer 2
+                # and the per-filing corrections are untouched.
+                old = _relabelled_cell(merged, kind_of_cell, position_of.get(pos), key,
+                                       int(value_won), rcept, kind, canon_values)
+                if old is not None:
+                    del merged[old]
+                    kind_of_cell.pop(old, None)
+            if row_order is not None:
+                position_of[pos] = key
             cell = {
                 "statement": statement, "basis": basis, "col_index": col_index,
                 "section_path": section_path, "label_raw": label_raw,

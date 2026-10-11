@@ -2210,6 +2210,23 @@ _CASH_VERB_CANONS = {"cf.interest_paid": "이\\s*자", "cf.interest_received": "
 _CASH_VERB_RE = re.compile(r"지\s*급|수\s*취|수\s*령|납\s*부|유\s*입|유\s*출")
 
 
+# R235 (2026-10-11, user decision): dividends paid are a cash outflow by nature. Statements
+# without in/out sections print the line both ways; layer 3 takes -|value| for a candidate whose
+# label says dividends paid. Other labels in the pool (mis-maps: 배당금수취, 차입금 …) are a
+# mapping problem and are left alone.
+_DIV_PAID_RE = re.compile(r"배당.*(지급|지불|지금)")
+
+
+def _sign_dividends_paid(cands: dict[str, list[dict]]) -> None:
+    rows = cands.get("cf.dividends_paid")
+    if not rows:
+        return
+    cands["cf.dividends_paid"] = [
+        {**r, "value": -abs(r["value"])}
+        if r.get("value") and _DIV_PAID_RE.search(re.sub(r"\s", "", r.get("label_raw") or "")) else r
+        for r in rows]
+
+
 def _drop_accrual_cash_aliases(cands: dict[str, list[dict]]) -> None:
     for c, noun in _CASH_VERB_CANONS.items():
         rows = cands.get(c)
@@ -2349,6 +2366,7 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
     # 근거는 _route_bare_lease_by_section 독스트링 참고.
     _route_bare_lease_by_section(cands)
     _drop_accrual_cash_aliases(cands)   # R233
+    _sign_dividends_paid(cands)          # R235
     for c, rows in cands.items():
         # ★R2 델타패치 실질화(2026-08-20, P3-1 재감사 후속): build_merged_lines() 의 셀
         # 키에 section_path 가 들어있어, 정정본이 표를 재렌더링해 section_path 가 원본과

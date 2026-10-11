@@ -19,9 +19,10 @@ I = the sum of the sibling inflow section.
 - magnitude convention: (H<0 and S≈−H) or (H>0 and S≈H) or (T≈I−S and not T≈I+S)
 - signed convention:    (H<0 and S≈H) or (T≈I+S and not T≈I−S)
 
-Only the magnitude convention is proven → every non-zero child × −1 (a negative child inside a
-magnitude section is a reduction of the outflow, so it turns positive), and a positive header
-× −1. (R232-b — flip without a proof when H<0 and every child is positive — was rejected: in
+Only the magnitude convention is proven → every child and the header become −|value|: the
+section's name says outflow (R232-c, user decision 2026-10-11 — a parenthesised dividend inside
+such a section is still money paid out; 20150515002674 subtracted it in its own subtotal, a
+source arithmetic slip, not a reduction of the outflow). (R232-b — flip without a proof when H<0 and every child is positive — was rejected: in
 pre-2015 tables H itself is often wrong, docs/PARSING_RULES.md R232.)
 
 ## Untouched (R6 — leave missing / as printed rather than guess)
@@ -185,7 +186,7 @@ def _repair_section(rows, inflows, path, segs, children, frozen):
         return []
     proof = "; ".join(mag)
 
-    targets = [c for c in children if c.value_won]
+    targets = [c for c in children if c.value_won > 0]
     if h is not None and h > 0:
         targets.append(header)
     if any(id(ln) in frozen and (frozen[id(ln)] is None or (frozen[id(ln)] > 0) != (ln.value_won < 0))

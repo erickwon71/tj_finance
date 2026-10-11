@@ -75,14 +75,17 @@ def test_signed_table_is_untouched():
     assert repair_cf_outflow_section_signs(lines) == []
 
 
-def test_negative_child_in_magnitude_section_turns_positive():
-    """20210517002154: 유출 구간 안의 `이자의 지급 (2,083,384)` = 유출 차감."""
+def test_negative_child_in_magnitude_section_stays_negative():
+    """R232-c (user decision): 일진홀딩스 20150515002674 `배당금의 지급 (2,298,867,380)` — the
+    section name says outflow, the parenthesised child is money paid out (the source subtotal
+    subtracted it by mistake). Children become -|value|; the printed negative is kept."""
     lines = _financing(header=-(2_100_000_000 - 2_083_384), total=-(600_000_000 - 2_083_384),
                        dividends=-2_083_384)
-    repair_cf_outflow_section_signs(lines)
+    fixes = repair_cf_outflow_section_signs(lines)
     v = _values(lines)
-    assert v["배당금의 지급"] == 2_083_384
+    assert v["배당금의 지급"] == -2_083_384
     assert v["단기차입금의 상환"] == -2_100_000_000
+    assert [f.label_raw for f in fixes] == ["단기차입금의 상환"]
 
 
 def test_all_negative_children_with_magnitude_proof_untouched():

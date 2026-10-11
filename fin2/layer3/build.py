@@ -231,6 +231,7 @@ def build_corp(session, corp: str, year_min: int = 2015,
                 conflicts={k: [c["value"] for c in v] for k, v in conflicts.items()} or None,
                 industry_lines=prov.get("industry_lines"),
                 unit_overrides=prov.get("unit_overrides"),
+                da_source=prov.get("da_source"),
             )
             for c in _VALUE_COLS:
                 if c in col:

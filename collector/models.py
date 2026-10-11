@@ -1765,6 +1765,7 @@ class StdFinancialV3(Base):
     net_debt            = Column(BigInteger, nullable=True)
     shares_out          = Column(BigInteger, nullable=True)
     float_shares        = Column(BigInteger, nullable=True)   # R225 유통주식수(보통주) — 밸류에이션 주식수
+    da_source           = Column(String(16), nullable=True)   # R231 D&A 출처(cf_body/cf_note/nature_note/…)
     data_quality        = Column(SmallInteger, nullable=True)
     # P1A(2026-09-03, docs/plans/std_v2_retirement_port_to_v3_2026-08-22.md §Phase 1):
     # v2 파리티 마지막 3컬럼. combine 이 rule_additive_lease/rule_additive_borrowings

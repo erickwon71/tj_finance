@@ -34,8 +34,15 @@ from parser.common.note_labels import (
     AMORTIZATION, DA_COMBINED, DEPRECIATION, DEPRECIATION_ROU, classify_da_label,
 )
 from parser.common.note_periods import resolve_periods
-from parser.common.note_topics import (DA_SOURCE_BROAD, DA_SOURCE_COMPONENT,
-                                       DA_SOURCE_PRIORITY, map_topic)
+from parser.common.note_topics import (CASH_FLOW, DA_SOURCE_BROAD, DA_SOURCE_COMPONENT,
+                                       DA_SOURCE_PRIORITY, EXPENSE_BY_NATURE, SGA, map_topic)
+
+# ★R231(2026-10-11, 사용자 결정 A): D&A = **현금흐름표 조정 금액** 기준. 비용의 성격별 분류와
+#   현금흐름 조정은 같은 보고서 안에서도 금액이 다르고(자본화 감가상각·사용권자산 포함 여부 등,
+#   실측 JW중외제약 2019 연결 14,148,486,000 vs 12,573,022,000 + 1,937,197,000) 보고서 안에서
+#   맞출 근거가 없다 → 정의를 하나로 정한다. EBITDA·FCF 는 현금 기준 지표라 현금흐름 조정을 먼저.
+_BROAD_ORDER = [CASH_FLOW] + [t for t in DA_SOURCE_BROAD if t != CASH_FLOW]
+DA_SOURCE_NAME = {CASH_FLOW: "cf_note", EXPENSE_BY_NATURE: "nature_note", SGA: "sga_note"}
 
 _ROWS_SQL = text(
     """
@@ -77,8 +84,8 @@ class _Row:
 
 
 def note_da_canonicals(
-    session, rcept_no: str, basis: str, period: str = "FY"
-) -> dict[str, int]:
+    session, rcept_no: str, basis: str, period: str = "FY", with_source: bool = False
+):
     """주석에서 당기 D&A canonical 을 뽑는다. DB(`note_lines`+`report_tables`)에서 읽는다.
 
     Returns:
@@ -86,16 +93,16 @@ def note_da_canonicals(
          "note.da_total": …} 중 확보된 것만. 소스가 없으면 빈 dict.
     """
     if not rcept_no or period not in ("FY", "H1", "Q1", "Q3"):
-        return {}
+        return ({}, None) if with_source else {}
     rows = session.execute(
         _ROWS_SQL, {"rcept": rcept_no, "basis": basis}
     ).fetchall()
     if not rows:
-        return {}
-    return _note_da_canonicals_from_rows(rows, period)
+        return ({}, None) if with_source else {}
+    return _note_da_canonicals_from_rows(rows, period, with_source=with_source)
 
 
-def _note_da_canonicals_from_rows(rows, period: str = "FY") -> dict[str, int]:
+def _note_da_canonicals_from_rows(rows, period: str = "FY", with_source: bool = False):
     """`note_da_canonicals`의 핵심 로직 — DB 를 거치지 않고 이미 손에 든 행 목록에서 계산한다
     (2026-08-08, T3.6). `rows`는 `.section_path/.table_seq/.row_order/.col_index/.col_label/
     .label_raw/.value_won`를 노출하는 객체 목록이면 된다 — SQL 결과 행(`_ROWS_SQL`)도,
@@ -103,7 +110,14 @@ def _note_da_canonicals_from_rows(rows, period: str = "FY") -> dict[str, int]:
     `ReportLineRow`(statement='note'로 필터링한 것)도 그대로 쓸 수 있다. 이 분리 덕분에
     DB 백필 전에도 "고친 코드로 재추출하면 어떻게 나오는가"를 raw XML 재파싱만으로 검증할
     수 있다(백필 없이 note_lines 를 갱신할 필요가 없다).
+
+    with_source=True 면 (canonicals, 출처) — 출처는 DA_SOURCE_NAME 값 또는 'component_note'.
     """
+    out, source = _pick(rows, period)
+    return (out, source) if with_source else out
+
+
+def _pick(rows, period: str):
     # interim 은 누적 열을 골라야 한다(모듈 docstring 참조).
     prefer_cum = period != "FY"
 
@@ -163,16 +177,17 @@ def _note_da_canonicals_from_rows(rows, period: str = "FY") -> dict[str, int]:
     #                      '무형자산상각비에 대한 조정' 423,373,000  ← 깨끗하게 분리됨
     #      감가상각 없이 상각비만 있는 결과는 D&A 로서 불완전하다 → 완전한 소스를 우선한다.
     partial = None
-    for topic in DA_SOURCE_BROAD:
+    for topic in _BROAD_ORDER:
         got = _from_topic(topic)
         if not got:
             continue
-        complete = bool(got.get(DA_COMBINED) or got.get(DEPRECIATION)
-                        or got.get(DEPRECIATION_ROU))
+        # R231: right-of-use depreciation alone is not complete — the main depreciation line
+        # may be printed in a form the label classifier missed (애경산업 2025H1 '유형자산상각비')
+        complete = bool(got.get(DA_COMBINED) or got.get(DEPRECIATION))
         if complete:
-            return got
+            return got, DA_SOURCE_NAME[topic]
         if partial is None:
-            partial = got          # 감가상각분이 없는 반쪽 결과 — 마지막 수단으로만
+            partial = (got, DA_SOURCE_NAME[topic])   # 감가상각분이 없는 반쪽 결과 — 마지막 수단으로만
 
     # ② 완결형이 없으면 구성요소형을 **전부 합산**한다. 자산군별 주석이라 하나만 고르면
     #    나머지가 통째로 빠진다(실측 01274329: 투자부동산 879만만 잡고 리스 14.9억 누락).
@@ -181,7 +196,7 @@ def _note_da_canonicals_from_rows(rows, period: str = "FY") -> dict[str, int]:
         for k, v in _from_topic(topic).items():
             merged[k] = merged.get(k, 0) + v
     if merged:
-        return merged
+        return merged, "component_note"
 
     # ③ 마지막 수단 — 완결형의 반쪽 결과(감가상각분 없이 상각비만). 구성요소형까지 없을 때만.
-    return partial or {}
+    return partial or ({}, None)

@@ -3567,7 +3567,8 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     #   Ignoring the fallback silently loses D&A for every such corp (실측 미채움의 주원인).
     eff_basis = (("separate" if basis == "consolidated" else "consolidated")
                  if prov["basis_fallback"] else basis)
-    _apply_enrichment(session, corp, fy, period, basis, confirmed, col, eff_basis, cands)
+    prov["da_source"] = _apply_enrichment(session, corp, fy, period, basis, confirmed, col,
+                                          eff_basis, cands)
     # extended_financials v3 (2026-09-01, docs/plans/extended_financials_v3_label_based_
     # design_2026-09-01.md §3-1): `confirmed` already holds every canonical _map_rows()
     # mapped and _resolve() picked a single value for — not just the DIRECT_MAP ~40 that
@@ -3609,15 +3610,28 @@ def _apply_enrichment(session, corp, fy, period, basis, confirmed, col, note_bas
     canon = dict(confirmed)
     # 주석 D&A 는 FY + interim 모두 대상(2026-07-29). interim 은 note_da 가 col_label 로
     # '누적' 열을 골라 std_financials 의 누적 기준과 맞춘다 — 누적 열을 못 찾으면 값을 만들지 않는다.
-    # 본문에서 이미 D&A 를 확보했으면 주석을 덧대지 않는다(같은 비용 이중 계상 방지).
-    if not _has_body_da(canon):
+    # ★R231(2026-10-11, 사용자 결정 A): D&A 는 **한 출처만**, 현금흐름 조정 기준 순서로 —
+    #   본문 CF → 주석 현금흐름 → 주석 성격별 → 주석 판관비/구성요소 → 본문 IS.
+    #   본문 IS 의 감가상각비는 대개 판관비 몫뿐이라 맨 뒤다. 출처끼리 더하지 않는다(이중 계상).
+    da_source = None
+    if _has_cf_body_da(canon):
+        da_source = "cf_body"
+        _drop(canon, _IS_BODY_DA_CANON)
+    else:
+        note, note_src = {}, None
         try:
             rcept = select_canonical_rcept(session, corp, fy, period)
             if rcept:
-                canon.update(note_da_canonicals(
-                    session, rcept, note_basis or basis, period))
+                note, note_src = note_da_canonicals(
+                    session, rcept, note_basis or basis, period, with_source=True)
         except Exception:  # noqa: BLE001 — 주석 소스 실패가 표준화 전체를 막으면 안 됨
-            pass
+            note, note_src = {}, None
+        if note:
+            _drop(canon, _IS_BODY_DA_CANON)
+            canon.update(note)
+            da_source = note_src
+        elif any(canon.get(c) for c in _IS_BODY_DA_CANON):
+            da_source = "is_body"
 
     ctx = StdContext(corp_code=corp, fiscal_year=fy, fiscal_period=period,
                      basis=basis, canon=canon, col=dict(col))
@@ -3660,13 +3674,22 @@ def _apply_enrichment(session, corp, fy, period, basis, confirmed, col, note_bas
         v = ctx.col.get(k)
         if v is not None:
             col[k] = v
+    return da_source if col.get("da_total") is not None else None
 
 
-# 본문(CF/IS)에서 이미 D&A 가 잡혔는지 — 잡혔으면 주석을 덧대지 않는다.
-_BODY_DA_CANON = ("cf.depreciation", "cf.amortization", "cf.da_total",
-                  "cf.rou_depreciation", "is.depreciation", "is.amortization")
+# R231: body D&A by statement — the body CF add-back is the D&A definition; the body IS line
+# (usually the SG&A share) is the last resort.
+_CF_BODY_DA_CANON = ("cf.depreciation", "cf.amortization", "cf.da_total",
+                     "cf.rou_depreciation", "cf.roa_depreciation")
+_IS_BODY_DA_CANON = ("is.depreciation", "is.amortization", "is.rou_depreciation",
+                     "is.roa_depreciation")
 
 
-def _has_body_da(canon: dict) -> bool:
-    return any(canon.get(c) for c in _BODY_DA_CANON)
+def _has_cf_body_da(canon: dict) -> bool:
+    return any(canon.get(c) for c in _CF_BODY_DA_CANON)
+
+
+def _drop(canon: dict, keys) -> None:
+    for k in keys:
+        canon.pop(k, None)
 

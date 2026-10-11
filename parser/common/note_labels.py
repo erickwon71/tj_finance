@@ -84,7 +84,9 @@ def classify_da_label(label: str) -> Optional[str]:
     if has_amortize and ("사용권" in s or "리스자산" in s):
         return DEPRECIATION_ROU
     # ④ 투자부동산 상각 — 유형자산 성격의 감가상각.
-    if has_amortize and "투자부동산" in s:
+    #   R231(2026-10-11): '유형자산상각비' 도 감가상각이다(실측 애경산업 2025H1 20250813000751
+    #   현금흐름 주석 '유형자산상각비' 6,537,320,000 — 놓치면 사용권자산 행만으로 D&A 가 된다).
+    if has_amortize and ("투자부동산" in s or "유형자산" in s):
         return DEPRECIATION
     # ⑤ 그 외 감가상각
     if has_dep:

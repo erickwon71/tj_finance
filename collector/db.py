@@ -1545,6 +1545,13 @@ def _run_migrations() -> None:
             WHERE viewer_xml_path IS NOT NULL;
         """),
 
+        ("2026_10_11_std_v3_da_source",
+         # R231 (user decision A): which statement the D&A came from — cf_body / cf_note /
+         # nature_note / sga_note / component_note / is_body.
+         """
+        ALTER TABLE std_financials_v3 ADD COLUMN IF NOT EXISTS da_source VARCHAR(16);
+        """),
+
         ("2026_10_10_report_lines_l3_fill_drop",
          # The view must hand layer 3 exactly what the old layer 2 held: also apply 'drop' (row hidden)
          # and 'fill' (row added from row_data — e.g. an R159-fixed BS cell that the printed reading

@@ -613,6 +613,60 @@ def _check_version(f: dict) -> None:
             f"{f['load_seq']}). `vq.py show` 로 바뀐 scope 를 확인하고 다시 대조할 것.")
 
 
+def _scope_code(basis: str, statement: str) -> str:
+    st = "is" if statement in ("IS", "CIS") else statement.lower()
+    return ("sep" if basis == "separate" else "con") + "-" + st
+
+
+def _carry_twin_issues(conn, f: dict) -> list[dict]:
+    """Byte-identical scopes are not compared again (verify_prompt, amendment shortcut), so a
+    filing whose scope equals an earlier filing's in the same slot inherits that filing's
+    unresolved issues on the scope: the same load carries the same defect (2026-10-10 run 3705 —
+    20151202000271 passed beside its twin 20151202000250 with 19 open CF sign issues). The issue
+    is registered on this filing too, so the fix side reloads both. Returns the copies made."""
+    mine = f.get("scope_hashes") or {}
+    if not mine:
+        return []
+    earlier = conn.execute(text("""
+        SELECT pf.rcept_no, fl.scope_hashes FROM verification.progress_filings pf
+        JOIN verification.filing_loads fl USING (rcept_no)
+        WHERE pf.corp_code = :c AND pf.fiscal_year = :y AND pf.fiscal_period = :p
+          AND pf.seq_in_slot < :s AND pf.rcept_no <> :r"""),
+        {"c": f["corp_code"], "y": f["fiscal_year"], "p": f["fiscal_period"],
+         "s": f["seq_in_slot"], "r": f["rcept_no"]}).fetchall()
+    out: list[dict] = []
+    for twin, hashes in earlier:
+        same = {s for s, h in (hashes or {}).items() if mine.get(s) == h}
+        if not same:
+            continue
+        for it in conn.execute(text(f"""
+                SELECT issue_id, {', '.join(_ISSUE_FIELDS)} FROM verification.issues
+                WHERE rcept_no = :t AND status <> 'closed' ORDER BY issue_id"""),
+                {"t": twin}).mappings():
+            if _scope_code(it["basis"], it["statement"]) not in same:
+                continue
+            row = {k: it[k] for k in _ISSUE_FIELDS}
+            if _active_issue(conn, f["rcept_no"], row) is not None:
+                continue
+            row["evidence"] = (f"[쌍둥이 {twin} #{it['issue_id']}] {it['evidence'] or ''}")[:2000]
+            row.update(c=f["corp_code"], y=f["fiscal_year"], p=f["fiscal_period"], r=f["rcept_no"],
+                       url=DART_URL.format(rcept=f["rcept_no"]))
+            conn.execute(text("SELECT set_config('verification.evidence', :e, true)"),
+                         {"e": row["evidence"]})
+            new_id = conn.execute(text("""
+                INSERT INTO verification.issues
+                    (corp_code, fiscal_year, fiscal_period, rcept_no, basis, statement,
+                     account_label, column_label, db_label, db_row_order, db_value,
+                     source_value, source_value_raw, source_unit, error_type, evidence,
+                     rule_id, dart_url)
+                VALUES (:c, :y, :p, :r, :basis, :statement, :account_label, :column_label,
+                        :db_label, :db_row_order, :db_value, :source_value, :source_value_raw,
+                        :source_unit, :error_type, :evidence, :rule_id, :url)
+                RETURNING issue_id"""), row).scalar_one()
+            out.append({"issue_id": new_id, "from_rcept": twin, "from_issue_id": it["issue_id"]})
+    return out
+
+
 def pass_filing(rcept: str, scopes: list[str], note: str | None) -> dict:
     _require("verify")
     with _Tx(evidence=note or "pass") as conn:
@@ -634,10 +688,17 @@ def pass_filing(rcept: str, scopes: list[str], note: str | None) -> dict:
                 f"  적재됨: {','.join(loaded)}\n  입력:   {','.join(given)}\n"
                 f"  빠짐: {sorted(set(loaded) - set(given))}  남음: {sorted(set(given) - set(loaded))}\n"
                 f"적재된 scope 는 전부 원문과 대조해야 pass 할 수 있다(8scope 전체대조 규약).")
+        carried = _carry_twin_issues(conn, f)
         n_open = conn.execute(text(
             "SELECT count(*) FROM verification.issues WHERE rcept_no = :r AND status <> 'closed'"),
             {"r": rcept}).scalar_one()
         if n_open:
+            twin = (f" (내용이 같은 앞선 필링의 미해결 이슈 {len(carried)}건을 이 필링에 옮겨 등록함: "
+                    f"{', '.join(sorted({c['from_rcept'] for c in carried}))})" if carried else "")
+            if carried:
+                return {"rcept_no": rcept, "status": "has_issues", "carried_from_twin": carried,
+                        "message": f"{rcept} 에 미해결 이슈 {n_open}건{twin} — pass 하지 않음"
+                                   f"(`vq.py done` 으로 슬롯 종료)."}
             raise VqError(f"{rcept} 에 미해결 이슈 {n_open}건 — pass 불가(`vq.py done` 으로 슬롯 종료).")
         conn.execute(text("""
             UPDATE verification.progress_filings

@@ -344,7 +344,7 @@ def _all_no_fix(conn, rcept: str, res: mc.Result) -> int:
 def verify_slot(slot: Slot) -> dict:
     """Machine-verify the pending filings of an already claimed slot, then release it."""
     out = {"slot": str(slot), "clean": 0, "mismatch": 0, "auto_issue": 0, "other": 0, "skipped": 0,
-           "audit": False}
+           "twin_issues": 0, "audit": False}
     with engine.connect() as conn:
         filings = [dict(r) for r in conn.execute(text("""
             SELECT pf.rcept_no, pf.claim_load_seq, fl.scope_hashes,
@@ -389,16 +389,17 @@ def verify_slot(slot: Slot) -> dict:
         # are layer-3 backlog, not layer-2 issues — the machine registers nothing for them.
         if r.verdict == "clean" and not audit:
             if scopes:
-                ops.pass_filing(f["rcept_no"], scopes, _note(r))
-                out["clean"] += 1
+                res = ops.pass_filing(f["rcept_no"], scopes, _note(r))
+                # a byte-identical twin's unresolved issues were carried onto it (no pass)
+                out["clean" if res["status"] == "passed" else "twin_issues"] += 1
             else:
                 out["other"] += 1
         elif r.verdict == "mismatch" and known.get(f["rcept_no"]) and scopes:
             # only re-findings of cells concluded "no code fix needed" (source defect / false
             # report) — a model run would just re-find them (2026-10-03)
-            ops.pass_filing(f["rcept_no"], scopes,
-                            f"{_note(r)} · 불일치 {known[f['rcept_no']]}건 모두 no_fix 결론 셀(원문결함·오탐)")
-            out["clean"] += 1
+            res = ops.pass_filing(f["rcept_no"], scopes,
+                                  f"{_note(r)} · 불일치 {known[f['rcept_no']]}건 모두 no_fix 결론 셀(원문결함·오탐)")
+            out["clean" if res["status"] == "passed" else "twin_issues"] += 1
         elif r.verdict == "no_structure" and not scopes:
             ops.skip_filing(f["rcept_no"], f"[machine {mc.TOOL_VERSION}] 원문에 재무제표 섹션 표가 없고 "
                                            f"DB 적재 행도 없음")
@@ -414,7 +415,8 @@ def verify_slot(slot: Slot) -> dict:
 
 def run(limit: int | None = None, log=print) -> dict:
     """Claim and machine-verify slots until none is left (or `limit` slots)."""
-    total = {"slots": 0, "clean": 0, "mismatch": 0, "auto_issue": 0, "other": 0, "skipped": 0, "audit": 0}
+    total = {"slots": 0, "clean": 0, "mismatch": 0, "auto_issue": 0, "other": 0, "skipped": 0,
+             "twin_issues": 0, "audit": 0}
     while limit is None or total["slots"] < limit:
         slot = ops.claim(lease_minutes=MACHINE_LEASE_MINUTES, where=NEEDS_MACHINE_SQL)
         if slot is None:
@@ -426,7 +428,7 @@ def run(limit: int | None = None, log=print) -> dict:
             log(f"{slot} 실패: {type(exc).__name__}: {exc}")
             continue
         total["slots"] += 1
-        for k in ("clean", "mismatch", "auto_issue", "other", "skipped"):
+        for k in ("clean", "mismatch", "auto_issue", "other", "skipped", "twin_issues"):
             total[k] += r[k]
         total["audit"] += int(r["audit"])
         log(json.dumps(r, ensure_ascii=False))

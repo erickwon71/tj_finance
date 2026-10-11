@@ -159,6 +159,37 @@ def test_reload_during_review_rejects_verdict(engines, as_role):
     assert f2["identical_to_earlier"] == {R1: ["con-bs"]}
 
 
+def test_pass_carries_twin_issues_on_identical_scope(engines, as_role):
+    """2026-10-10 run 3705: an amendment byte-identical to a filing with open issues passed
+    without comparison. Its identical scope now inherits the twin's unresolved issues."""
+    as_role("verify")
+    assert ops.claim(SLOT) == SLOT                       # refresh claim_load_seq after the reload
+    before = _admin_sql(engines, "SELECT status, verified_load_seq, verified_scopes, "
+                        "verified_scope_hashes FROM verification.progress_filings WHERE rcept_no = :r",
+                        {"r": R1})[0]
+    [src] = ops.add_issues(R1, [{"basis": "consolidated", "statement": "BS",
+                                 "account_label": "자산총계", "error_type": "missing_row",
+                                 "evidence": "twin test"}])
+    res = ops.pass_filing(R2, ["con-bs", "sep-is"], "identical scope skipped")
+    assert res["status"] == "has_issues"
+    [c] = res["carried_from_twin"]                       # con-bs only — sep-is differs since the reload
+    assert c["from_rcept"] == R1 and c["from_issue_id"] == src
+    rows = _admin_sql(engines, "SELECT rcept_no, basis, statement, evidence FROM verification.issues "
+                      "WHERE issue_id = :i", {"i": c["issue_id"]})
+    assert rows[0][:3] == (R2, "consolidated", "BS") and rows[0][3].startswith(f"[쌍둥이 {R1} #{src}]")
+    # the carried issue blocks a second pass attempt too, without copying again
+    with pytest.raises(VqError, match="미해결"):
+        ops.pass_filing(R2, ["con-bs", "sep-is"], None)
+    _admin_sql(engines, "DELETE FROM verification.issue_events WHERE issue_id = ANY(:i)",
+               {"i": [src, c["issue_id"]]})
+    _admin_sql(engines, "DELETE FROM verification.issues WHERE issue_id = ANY(:i)",
+               {"i": [src, c["issue_id"]]})
+    _admin_sql(engines, "UPDATE verification.progress_filings SET status = :s, verified_load_seq = :l, "
+               "verified_scopes = :sc, verified_scope_hashes = CAST(:h AS jsonb) WHERE rcept_no = :r",
+               {"s": before[0], "l": before[1], "sc": before[2], "h": json.dumps(before[3]), "r": R1})
+    ops.done()
+
+
 def test_issue_then_done_gives_has_issues(engines, as_role):
     as_role("verify")
     # re-claim own slot refreshes claim_load_seq to the new content

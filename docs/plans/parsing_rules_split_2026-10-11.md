@@ -1,6 +1,8 @@
 # PARSING_RULES.md 분리·명확화 계획 (2026-10-11)
 
-> 상태: **계획만 작성. 실행 전 사용자 검토 필요.** 이동·수정은 별도 요청 후에 한다.
+> 상태(2026-10-12): A(제목 정리)·B(분류)·C(순수 이동)·E(일치 검사) 완료. D(서식 표준화)·F(verify_sim 재시험)는 남음.
+> C 결과: `scripts/split_parsing_rules.py` 로 259절을 내용 그대로 옮김 — 진입점 695줄(원칙 6절 + 색인), `docs/rules/` 6파일. 원본 비공백 10,524줄 전부 새 파일에 있음(누락 0), 새로 생긴 줄은 색인·머리말 305줄. 진입점에 원칙을 남긴 것은 계획(00_principles.md)과 다르다 — `verify_prompt.md`·CLAUDE.md·코드 주석이 "PARSING_RULES.md R0-2" 로 인용하므로 그 인용이 그대로 맞게 했다.
+> E: `scripts/check_rules_sync.py` — 깨진 제목·색인↔파일·worktree 간 문서 동일성.
 
 ## 1. 목표
 

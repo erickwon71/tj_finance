@@ -29,3 +29,13 @@ def test_other_canonicals_untouched():
     cands = {"cf.capex": [_row("유형자산의 취득", -1, "투자"), _row("건설중인자산", -2, "투자")]}
     _drop_accrual_cash_aliases(cands)
     assert len(cands["cf.capex"]) == 2
+
+
+def test_misnamed_cash_line_of_another_account_does_not_win():
+    """00223434 2025FY: '재무활동으로 분류된 이자지급' mis-mapped into a dividends pool."""
+    rows = [_row("배당금수익", 32_011_200, "영업활동현금흐름>조정"),
+            _row("재무활동으로 분류된 이자지급", -5_120_278_275, "재무활동현금흐름")]
+    cands = {"cf.dividends_received": list(rows), "cf.dividends_paid": list(rows)}
+    _drop_accrual_cash_aliases(cands)
+    assert len(cands["cf.dividends_received"]) == 2      # no 배당 cash line -> untouched
+    assert len(cands["cf.dividends_paid"]) == 2          # out of scope

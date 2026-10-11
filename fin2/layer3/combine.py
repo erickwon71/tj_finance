@@ -2202,18 +2202,21 @@ def _reduce_conflict(canon: str, top: list[dict]) -> int | None:
 # aliases ('이자비용', '이자수익'), which in an indirect-method statement are the P&L add-back
 # lines of the adjustments section — same size, opposite sign to the cash line. With both in the
 # pool the pick depended on candidate order (extended 15 after the R0-2 reload: 00112679 2015Q1,
-# 00154718 2020FY). A candidate named with a cash verb wins; without one the aliases stay.
-_CASH_VERB_CANONS = ("cf.interest_paid", "cf.interest_received", "cf.dividends_received",
-                     "cf.dividends_paid")
+# 00154718 2020FY). A candidate named with a cash verb AND the account's own noun wins (a
+# mis-mapped '재무활동으로 분류된 이자지급' must not win cf.dividends_*); without one the
+# aliases stay. cf.dividends_paid is not in scope (its pool has no accrual alias).
+_CASH_VERB_CANONS = {"cf.interest_paid": "이\\s*자", "cf.interest_received": "이\\s*자",
+                     "cf.dividends_received": "배\\s*당"}
 _CASH_VERB_RE = re.compile(r"지\s*급|수\s*취|수\s*령|납\s*부|유\s*입|유\s*출")
 
 
 def _drop_accrual_cash_aliases(cands: dict[str, list[dict]]) -> None:
-    for c in _CASH_VERB_CANONS:
+    for c, noun in _CASH_VERB_CANONS.items():
         rows = cands.get(c)
         if not rows:
             continue
-        cash = [r for r in rows if _CASH_VERB_RE.search(r.get("label_raw") or "")]
+        cash = [r for r in rows if _CASH_VERB_RE.search(r.get("label_raw") or "")
+                and re.search(noun, r.get("label_raw") or "")]
         if cash and len(cash) < len(rows):
             cands[c] = cash
 

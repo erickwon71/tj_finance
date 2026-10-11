@@ -17,6 +17,14 @@ corp+basis's other filings within +-1 fiscal year (and >= 0.1 x the declared mul
 suspect too. The ratio only *nominates*; confirmation is unchanged (exact cross-filing amount
 matches), so a real jump in assets is never rewritten.
 
+R238 (reverse direction, 2026-10-11): a table declared "(단위 : 원)" whose cells are printed
+in 천원 / 백만원 (SK네트웍스 2017Q3: 자산총계 7,814,615 under "(단위 : 원)", neighbours 7.8조)
+shrinks x10^-3 / x10^-6. Nomination mirrors R207 the other way: a filing/basis whose
+declared-won 자산총계 is <= 1/RATIO_SUSPECT_MIN of the neighbours' median. Those sections are
+judged even though every declared multiplier is 1, and k = 1,000 / 1,000,000 may be confirmed
+there (elsewhere k = 10^6 is never confirmed — a 백만원 table proven in 백만원 is not a
+defect). Confirmation is the same exact-match rule below; a nomination alone changes nothing.
+
 Confirmation rule, per section:
   hits(k) = distinct |amount| >= 1e7 that appear in the same corp's other filings with the
             same basis/statement/context year (SCE: same basis, SCE or BS, any year)
@@ -24,8 +32,10 @@ Confirmation rule, per section:
                hits <= 1 and hits(k) >= 10 x that (one round-number coincidence such as
                5,000,000 x 1,000 = 자본금 5,000,000,000 must not veto 80 exact matches)
 Second pass, same rule: a section with no cross-filing evidence may use the amounts of the
-sections of the *same document* already confirmed (same basis) — net income, cash and
-equity totals recur across IS/CF/SCE/BS, and those amounts are already proven in 원.
+sections of the *same document* already confirmed (same basis), each multiplied by that
+section's confirmed k — net income, cash and equity totals recur across IS/CF/SCE/BS, and those
+amounts are already proven in 원 (R238: a 3-month Q3 IS has few cross-filing matches but its
+net income recurs in the confirmed CF/SCE).
 
 Confirmed sections go to fin2/extract/data/unit_self_contradiction_overrides.json (read by
 `report_lines._unit_override()`), written only by `scripts/unit_self_contradiction_scan.py
@@ -82,6 +92,41 @@ def _ratio_suspect_sql(corp_clause: str, rcept_clause: str) -> str:
         ORDER BY 1, 2"""
 
 
+_UNDER_RATIO_SQL = """
+    WITH ta AS (
+      SELECT rcept_no, corp_code, report_fiscal_year fy, basis, value_won a, adecimal, unit_source
+      FROM report_lines
+      WHERE statement = 'BS' AND col_index = 0 AND label_raw = ANY(:labels)
+        AND value_won > 0 AND basis IN ('consolidated','separate'){corp_clause}),
+    tgt AS (
+      SELECT * FROM ta
+      WHERE adecimal = 0 AND unit_source = 'declared' AND fy >= :y{rcept_clause}),
+    med AS (
+      SELECT t.rcept_no, t.basis, t.a,
+             percentile_cont(0.5) WITHIN GROUP (ORDER BY o.a) AS m
+      FROM tgt t JOIN ta o ON o.corp_code = t.corp_code AND o.basis = t.basis
+                            AND o.rcept_no <> t.rcept_no AND abs(o.fy - t.fy) <= 1
+      GROUP BY t.rcept_no, t.basis, t.a)
+    SELECT rcept_no, basis FROM med
+    WHERE a * :ratio <= m
+    ORDER BY 1, 2"""
+
+
+def under_ratio_suspects(s, era_min: int, corps: list[str] | None = None,
+                         rcept_no: str | None = None) -> list[tuple[str, str]]:
+    """(rcept_no, basis) whose declared-won 자산총계 is <= 1/RATIO_SUSPECT_MIN of the same
+    corp+basis's neighbouring filings (R238 nomination trigger — not a proof)."""
+    corp_clause = " AND corp_code = ANY(:c)" if corps else ""
+    if rcept_no:
+        corp_clause = (" AND corp_code = (SELECT corp_code FROM filings WHERE rcept_no = :rc)")
+    rcept_clause = " AND rcept_no = :rc" if rcept_no else ""
+    rows = s.execute(text(_UNDER_RATIO_SQL.format(corp_clause=corp_clause,
+                                                  rcept_clause=rcept_clause)),
+                     {"labels": list(_TOTAL_ASSETS_LABELS), "y": era_min, "c": corps or [],
+                      "ratio": RATIO_SUSPECT_MIN, "rc": rcept_no})
+    return [(r, b) for r, b in rows]
+
+
 def ratio_suspects(s, era_min: int, corps: list[str] | None = None,
                    rcept_no: str | None = None) -> list[tuple[str, str]]:
     """(rcept_no, basis) whose declared-unit 자산총계 is >= RATIO_SUSPECT_MIN x the same
@@ -103,7 +148,8 @@ def suspect_rcepts(s, era_min: int, corps: list[str] | None = None) -> list[str]
         WHERE statement IN ('BS','IS','CF','SCE') AND unit_source = 'declared'
           AND abs(value_won) >= :m AND report_fiscal_year >= :y{corp_clause}
         ORDER BY 1"""), {"m": SUSPECT_MIN, "y": era_min, "c": corps or []})}
-    return sorted(cap | {r for r, _ in ratio_suspects(s, era_min, corps)})
+    return sorted(cap | {r for r, _ in ratio_suspects(s, era_min, corps)}
+                  | {r for r, _ in under_ratio_suspects(s, era_min, corps)})
 
 
 def _extract(fp, meta, rcept_no, forced: int | None):
@@ -162,10 +208,12 @@ def _hits(section_lines, k: int, ev: dict, doc_ev: set | None = None) -> int:
     return len(found)
 
 
-def _decide(hits: dict) -> int | None:
+def _decide(hits: dict, allow_mega: bool = False) -> int | None:
+    """k proven by exact matches, else None. k = 10^6 only for an R238-nominated (declared-won)
+    section — anywhere else a 10^6 majority means the declared 백만원 is right (NH투자증권 CF)."""
     best = max(CANDIDATE_KS, key=lambda k: hits[k])
     others = [hits[k] for k in CANDIDATE_KS if k != best]
-    if best == 1_000_000 or hits[best] < MIN_HITS:
+    if (best == 1_000_000 and not allow_mega) or hits[best] < MIN_HITS:
         return None
     if max(others) > 1 or hits[best] < 10 * max(others):
         return None
@@ -198,6 +246,7 @@ def scan_rcept(s, rcept_no: str, suspects: set[str]) -> list[dict]:
         by_sec_raw[_section_code(ln)].append(ln)
     ev = _evidence(s, meta.corp_code, suspects)
     ratio_bases = {_BASIS_CODE[b] for r, b in ratio_suspects(s, 0, rcept_no=rcept_no)}
+    under_bases = {_BASIS_CODE[b] for r, b in under_ratio_suspects(s, 0, rcept_no=rcept_no)}
     out = []
     for code in sorted(c for c in by_sec_raw if c):
         decl = [ln for ln in by_sec_decl.get(code, []) if ln.unit_source == "declared"]
@@ -205,13 +254,14 @@ def scan_rcept(s, rcept_no: str, suspects: set[str]) -> list[dict]:
         big = any(ln.value_won is not None and abs(ln.value_won) >= SUSPECT_MIN for ln in decl)
         vanished = n_raw > 0 and len(decl) < n_raw
         by_ratio = code.split("_")[1] in ratio_bases
-        if not big and not by_ratio and not (vanished and not decl):
+        by_under = code.split("_")[1] in under_bases
+        if not big and not by_ratio and not by_under and not (vanished and not decl):
             continue
         decl_mults = {10 ** -ln.adecimal for ln in decl if ln.adecimal is not None}
-        if decl_mults == {1}:
+        if decl_mults == {1} and not by_under:
             continue  # the big value is not a scale effect (e.g. R152 concatenated cell)
         hits = {k: _hits(by_sec_raw[code], k, ev) for k in CANDIDATE_KS}
-        k = _decide(hits)
+        k = _decide(hits, allow_mega=by_under)
         out.append({
             "rcept": rcept_no, "corp_code": meta.corp_code, "corp_name": meta.corp_name,
             "fy": meta.fiscal_year, "fp": meta.fiscal_period, "section": code,
@@ -219,21 +269,24 @@ def scan_rcept(s, rcept_no: str, suspects: set[str]) -> list[dict]:
             "rows_declared": len(decl), "rows_forced": n_raw,
             "hits": {str(c): hits[c] for c in CANDIDATE_KS},
             "decision": _label(k, decl_mults),
+            **({"trigger": "R238_under_ratio"} if by_under else {}),
         })
-    # Second pass — in-document evidence from sections confirmed at k=1 (same basis).
+    # Second pass — in-document evidence from sections already confirmed (same basis), each
+    # amount scaled by its section's confirmed k (k=1 for every R169 case; R238 k=10^3/10^6).
     for r in out:
         if r["decision"] != "unconfirmed":
             continue
         basis_code = r["section"].split("_")[1]
-        doc_ev = {abs(ln.value_won) for c in (x["section"] for x in out
-                  if x["decision"] == "confirmed:1" and x["section"].endswith("_" + basis_code))
-                  for ln in by_sec_raw[c]
+        doc_ev = {abs(ln.value_won) * int(x["decision"].split(":")[1])
+                  for x in out
+                  if x["decision"].startswith("confirmed:") and x["section"].endswith("_" + basis_code)
+                  for ln in by_sec_raw[x["section"]]
                   if ln.value_won is not None and ln.unit_source == "manual_unit"
-                  and abs(ln.value_won) >= EVIDENCE_MIN}
+                  and abs(ln.value_won) * int(x["decision"].split(":")[1]) >= EVIDENCE_MIN}
         if not doc_ev:
             continue
         hits = {k: _hits(by_sec_raw[r["section"]], k, ev, doc_ev) for k in CANDIDATE_KS}
-        k = _decide(hits)
+        k = _decide(hits, allow_mega=r.get("trigger") == "R238_under_ratio")
         r["doc_hits"] = {str(c): hits[c] for c in CANDIDATE_KS}
         if k:
             r["decision"] = _label(k, set(r["declared_mults"]))

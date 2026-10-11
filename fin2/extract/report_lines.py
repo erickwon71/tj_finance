@@ -294,7 +294,7 @@ def _unit_override(rcept_no: str, section_code: str) -> tuple[int, str, str] | N
                 "R132 자기모순 단위선언 수기교정")
     m = _PROVED_UNIT_OVERRIDES.get(rcept_no, {}).get(section_code)
     if m is not None:
-        return m, "proved_unit", "R169 자기모순 단위선언 — 타 필링 동일값 대조로 확정"
+        return m, "proved_unit", "R169/R238 자기모순 단위선언 — 타 필링 동일값 대조로 확정"
     return None
 
 def _merge_missing_codes(primary: dict, fallback_fn) -> dict:

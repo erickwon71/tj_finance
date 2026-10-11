@@ -54,7 +54,7 @@
 | 계층2 에서 해도 되는 것 (인쇄된 것을 **읽는 방법**) | 계층2 에서 하면 안 되는 것 (인쇄된 것을 **바꾸는** 일) → 계층3 |
 |---|---|
 | 괄호·△·마이너스 = 음수, 마침표 천단위 구분자 읽기(R158), 공백으로 쪼개진 숫자 잇기(R202), 두 번 이어붙은 EPS 나누기(R218) | 괄호 빠진 셀의 부호 복원(R162 계열·R163·R185~R193·R215), 수동 부호 목록(R162-manual) |
-| 표 선언 단위로 원 환산, 단위=열 판정(R4), 선언이 스스로 모순인 표의 실제 단위(R169·R207, 숫자는 그대로) | 숫자 오타 교정(R159 `_SOURCE_TYPO_CELL_FIXES`·R159 보강), 반올림 교정 |
+| 표 선언 단위로 원 환산, 단위=열 판정(R4), 선언이 스스로 모순인 표의 실제 단위(R169·R207·R238, 숫자는 그대로) | 숫자 오타 교정(R159 `_SOURCE_TYPO_CELL_FIXES`·R159 보강), 반올림 교정 |
 | XBRL 원문의 표현 규칙(preferredLabel 부호 R10 등 — XBRL 이 원문인 필링의 "인쇄" 방식) | 빈 칸 채우기·행 이동·행 삭제(R183·R184) |
 | 읽을 수 없으면 NULL + `value_raw` 보존(R6), 기간·열을 정할 수 없으면 싣지 않음 | 다른 원천(inline XBRL 태그·BS·IS·다른 보고서)으로 값이나 부호를 덮어쓰기(R18 배당 부호, 법인세 overlay) |
 
@@ -83,7 +83,7 @@
 
 ## R0-1. ★★ 원문 그대로 적재한다. 원문과 다르게 싣는 것은 "증명된" 경우뿐이다 (2026-10-09, 사용자 결정)
 
-> **★ 이 절의 지금 범위 (2026-10-10, R0-2 이행 후)** — 계층2 에서 원문과 다르게 싣는 것은 1항의 **표기 해석**(R158·R158-b·R202·R218, R169·R207)뿐이다. 부호 복원 증명·"정합화 대기" 표·"판정에서는 이 절이 이긴다"는 문장은 **2015+ 계층2 판정에 더는 쓰지 않는다**(R0-2 가 대체). 이 절의 증명 조건은 계층3 보정 규칙 각각의 조건으로만 남고, 2015 이전 필링은 R0-2 이행 전이라 옛 값이 남아 있다.
+> **★ 이 절의 지금 범위 (2026-10-10, R0-2 이행 후)** — 계층2 에서 원문과 다르게 싣는 것은 1항의 **표기 해석**(R158·R158-b·R202·R218, R169·R207·R238)뿐이다. 부호 복원 증명·"정합화 대기" 표·"판정에서는 이 절이 이긴다"는 문장은 **2015+ 계층2 판정에 더는 쓰지 않는다**(R0-2 가 대체). 이 절의 증명 조건은 계층3 보정 규칙 각각의 조건으로만 남고, 2015 이전 필링은 R0-2 이행 전이라 옛 값이 남아 있다.
 
 **목표** — 계층2(`report_lines`)는 DART 보고서에 **인쇄된 값을 그대로** 담는다.
 원문에 부호·표기 오류가 있어 보이면 **보고서 내용으로 증명될 때만** 고쳐 싣고, 증명이 안 되면 **인쇄된 그대로** 싣는다.
@@ -109,7 +109,7 @@
   - 그 밖은 후보가 아니다: 숫자를 다른 숫자로 바꾸기(숫자 오타 교정 — 맞는 숫자가 다른 곳에 인쇄돼 있어도), 잔차만큼 맞춘 값, **빈 칸 채우기**(R183-보강·R184·R184-b),
     **행 이동·행 삭제**(R183), 음수 인쇄 셀의 반전(R190-d 일부).
   - 값 교정이 아닌 것(인쇄된 숫자를 **읽는 방법**): 마침표로 찍힌 천단위 구분자(R158·R158-b, 정수 짝이 있을 때만), 공백으로 쪼개진 숫자 잇기(R202), 한 셀에 두 번 이어붙은 주당이익 나누기(R218),
-    그리고 단위 선언 교정(R169·R207, 숫자는 그대로 두고 같은 회사 다른 정기보고서로 증명된 실제 단위로 읽음). 이것들은 후보 규칙이 아니라 표기 해석이며, 해석이 하나로 정해지지 않으면 R6(NULL)이다.
+    그리고 단위 선언 교정(R169·R207·R238, 숫자는 그대로 두고 같은 회사 다른 정기보고서로 증명된 실제 단위로 읽음 — 선언이 실제보다 클 때 R169·R207, 작을 때 R238). 이것들은 후보 규칙이 아니라 표기 해석이며, 해석이 하나로 정해지지 않으면 R6(NULL)이다.
 
 | # | 조건 | 뜻 |
 |---|---|---|
@@ -127,7 +127,7 @@
 **항 수** = 그 계산에 실제로 넣은 0 아닌 숫자의 개수(기초·기말 포함, 0·빈 칸 제외, 계산마다 따로), 허용오차는 최소 1 단위.
 **소계 행**: 열 롤포워드에서 계정명에 `소계`·`합계`·`총포괄` 이 들어가거나 `계` 로 끝나는 행과 `수정후`·`재작성`·`조정후` 기초 행은 소계로 본다. 소계를 뺀 계산과 넣은 계산 중 하나라도 닫히면 닫힌 것이고, 항 수는 그 계산의 것이다(`verify_prompt.md` ① 과 같다). 예: 기초 + 변동 3개 + 기말 = 5개 → 3 단위, BS(자산=부채+자본) 3개 → 2 단위, 같은 날짜 잔액 2개 → 1 단위.
 **표시 단위** = 원 표 1원, 천원 표 1,000원, 백만원 표 1,000,000원, 주당이익은 원문에 인쇄된 마지막 자리(소수 인쇄면 그 소수 자리).
-항들의 표시 단위가 다르면 **그중 가장 큰 단위**를 쓴다. R169/R207 로 단위가 교정된 섹션은 교정된 실제 단위를 쓴다.
+항들의 표시 단위가 다르면 **그중 가장 큰 단위**를 쓴다. R169/R207/R238 로 단위가 교정된 섹션(`unit_source='proved_unit'`)은 교정된 실제 단위를 쓴다.
 파서 복원·기계대조(mc7 부터, `machine_compare.identity_tolerance`)·모델 검증이 모두 이 값을 쓴다.
 
 **3. 증거 범위** — 증명에 쓸 수 있는 숫자는 **같은 회사의 DART 정기보고서(사업·반기·분기보고서, 정정본 포함)에 인쇄된 숫자**뿐이다. 주요사항보고서·증권신고서 등은 쓰지 않는다.
@@ -11982,6 +11982,7 @@ R160 가드(`_DOT_GROUPED_RE`)는 마침표 **뒤가 숫자뿐**인 꼴만 잡�
 | R139 (2026-09-24 폐지→R167) | 사용자 지시 2026-09-18(원문대조 캠페인 자동화 설계 중) · `fin2/extract/report_lines.py::store_report_lines()` · `fin2/tests/test_store_report_lines_manual_guard.py` |
 | R167 | 사용자 결정 2026-09-24(verification 캠페인) · `fin2/verification/schema.sql` · `collector/db.py::_set_verification_identity` · `fin2/tests/test_verification_*.py` |
 | R169 | verification fix batch #3(2026-09-25, 야간 자율) · `fin2/audit/unit_self_contradiction.py` · `scripts/unit_self_contradiction_scan.py` · `fin2/extract/data/unit_self_contradiction_overrides.json` · `fin2/extract/report_lines.py::_unit_override()` · `scripts/collect_new.py::_report_unit_self_contradiction()` · `fin2/tests/test_r169_unit_self_contradiction.py` |
+| R238 | 사용자 승인 2026-10-11(계층2·3 점검 발견, fix batch #124) · `fin2/audit/unit_self_contradiction.py::under_ratio_suspects()`/`_decide(allow_mega)` · `fin2/extract/data/unit_self_contradiction_overrides.json` · `fin2/extract/report_lines.py::_unit_override()` · `fin2/extract/review_csv.py::_note()` · `docs/verification/verify_prompt.md`(S 정의) · `fin2/audit/face_audit.py::_apply_proved_unit_overrides()`(R174, 변경 없음 — k 를 그대로 씀) · `fin2/tests/test_r169_unit_self_contradiction.py`(`test_r238_*`) |
 | R170 | verification fix batch #4(2026-09-25, 야간 자율) · `parser/xbrl_instance/taxonomy_linkbase.py::_build_merged_presentation_tree()`/`resolve_external_base_presentation()`/`_denegate_role()` · `fin2/extract/report_lines_xbrl.py::_numeric_value()` · `fin2/verification/ops.py::_reload_rcept()` · `fin2/tests/test_xbrl_base_presentation_merge.py` |
 | R171 | 사용자 지시 2026-09-25(R170 후속 판단 1번) · `fin2/layer3/combine.py::build_merged_lines()`/`_filing_source_kind()` · `fin2/extract/report_lines_xbrl.py::_settle_is_tax_sign()`(R170-d) · `fin2/tests/test_combine_cross_source_amendment_r171.py` |
 | R172 | 사용자 지시 2026-09-25(XBRL 개념 매핑 착수) · `fin2/layer3/combine.py::_map_xbrl_concept()`/`_map_rows()`/`_ni_attribution_structural_candidates()`/`build_merged_lines()` · `fin2/taxonomy/concept_map.py` · `fin2/tests/test_combine_cross_source_amendment_r171.py` |
@@ -12859,3 +12860,37 @@ R232 초판은 구간 전체에 −1 을 곱해, 괄호로 인쇄된 하위 항�
 **소급 결과(R237, 2026-10-11)**: 계정명이 바뀐 정정본이 있는 627개사 2015+ 재빌드(행 수 불변 51,748). 핵심 값 변화 3행 — 00119140 2023Q3 별도 순이익 +3,422,840,792 → −3,422,840,792(정정본 `분기순손실`), 00573269 2022H1 연결 순이익 456,478,107 → −1,843,485,162(최초본이 기타포괄손익 행을 `반기순이익(손실)` 로 찍었고 정정본이 바로잡음; 지배 −987,284,576 + 비지배 −856,200,586 와 일치), 00527464 2018FY 연결 지배지분 순이익 NULL → 3,628,292,184(정정본 인쇄값 — 정정본 자체가 지배+비지배≠순이익이라 최초본 3,632,490,364 가 맞아 보이나 R2 정정 우선). 그 밖 std: EBITDA·D&A 33 · net_debt 12 · borrowings_repaid 9 · ebt 3 · dividends_paid 2(00667373 2024Q1 −36,762,530,400 → NULL, `cf.equity_issuance` 36,762,530,400) 등. extended 추가 34 · 삭제 142 · 값 85.
 Gate B(41개사 재감사·저장, 사본 비교): fail_b→pass 1(00573269 2022H1 net_income), 새 실패 0, pass→pending 31 은 전부 `LABEL_UNMATCHED`(줄 단위 계정명 대조)이고 R237 로 std 가 바뀐 행이 아님 — 10-08 이후 계층2 재적재(R0-2·웹뷰 `<BR>`)가 대장에 반영된 것. verify machine·verify 는 필링별 `report_lines`/`report_lines_l3` 만 보므로 영향 없음(계층2·보정 무변경).
 **회귀 테스트**: `fin2/tests/test_r237_amendment_relabel.py`(R171 테스트 행에 row_order 추가).
+
+## R238. 표머리가 **"(단위 : 원)"** 인데 숫자가 **천원·백만원**으로 인쇄된 섹션은 증명된 실제 단위로 읽는다 — R169 의 반대 방향 (2026-10-11, 사용자 승인, 적용 계층: 2 — 표기 해석)
+
+**한 줄 요약**: 선언 단위가 실제보다 **작은** 자기모순(선언 원·실제 백만원)이다. 숫자는 그대로 두고 단위만 바꿔 읽는다. 확정 방법은 R169 와 똑같다(같은 회사 다른 필링에 같은 금액이 정확히 인쇄돼 있을 것). 이 규칙의 확정이 있어야만 바꾼다.
+
+**발견**: 2026-10-11 계층2·3 점검. SK네트웍스 2017Q3 `20171114002669`(정본)의 연결재무제표 표머리는 `(단위 : 원)`(원문 XML 13443행)이다. 그런데 셀은 `7,814,615` 처럼 백만원 단위다(같은 문서 요약재무정보는 `(단위: 백만원)`). 계층2 는 선언대로 원으로 읽었고, std_v3 자산총계 **7,814,615원**이 DQ=1 로 소비계층에 노출됐다(앞뒤 분기는 7.8조).
+
+**R169·R207 이 못 잡은 이유**(`fin2/audit/unit_self_contradiction.py`, R238 이전): ① 선언 배수가 전부 1(원)인 섹션은 판정에서 뺐다(R152 붙은 셀의 1e15 오탐 방지 목적). ② `_decide` 가 k=10⁶ 확정을 막았다. ③ 비율 지명(R207)은 "이웃보다 100배 **큰**" 쪽만 봤다.
+
+**규칙**:
+1. **지명(R238 트리거)**: 선언 단위가 원(`adecimal = 0`, `unit_source='declared'`)인 필링·basis 의 당기 `자산총계`가, 같은 회사·같은 basis ±1 회계연도 **다른 필링** 당기 `자산총계` 중앙값의 **1/100 이하**이면 그 필링·basis 를 의심으로 지명한다(`under_ratio_suspects`). 지명은 증명이 아니다. 지명만으로는 아무 값도 바꾸지 않는다.
+2. **판정**: 지명된 basis 의 섹션(BS/IS/CF/SCE)은 선언 배수가 전부 1 이어도 판정한다. R169 의 확정 조건을 그대로 쓴다. 원문 숫자 A 에 k ∈ {1, 1,000, 1,000,000} 을 곱해 같은 회사 **다른 필링**에 적재된 값과 정확히 같은 금액 수 hits(k) 를 센다. hits(k) ≥ 3 이고, 다른 k 는 전부 ≤ 1 이면서 hits(k) ≥ 10×그 값일 때만 확정한다. **k = 10⁶ 확정은 R238 로 지명된 섹션에서만** 허용한다. 다른 곳에서 10⁶ 이 우세하면 선언 백만원이 맞다는 뜻이라 확정하지 않는다(NH투자증권 CF). 증거가 k=1 을 가리키면 `declared_correct` 이고 바꾸지 않는다. 이웃 필링이 오염돼 작아 보였던 가짜 지명(삼성공조 2011형)이 여기서 걸러진다.
+3. **2차(같은 문서 증거)**: 타 필링 증거가 모자라는 섹션은 같은 문서에서 이미 확정된 섹션(같은 basis)의 금액을 증거로 쓴다. 이때 각 금액에 **그 섹션의 확정 k 를 곱한다**(R169 확정은 전부 k=1 이라 기존 결과는 그대로다). 예: 3개월 수치뿐인 Q3 IS 는 타 필링 일치가 적지만, 당기순이익이 확정된 CF/SCE 에 반복돼 확정된다.
+4. **적용**: 확정분만 `fin2/extract/data/unit_self_contradiction_overrides.json` 에 `{rcept: {섹션코드: k}}` 로 기록한다(`scripts/unit_self_contradiction_scan.py --apply`, 수정 워크트리). 파서 `report_lines._unit_override()` 가 그 섹션의 모든 금액 행을 k 배로 읽는다. `unit_source='proved_unit'`, `adecimal = −log10(k)` 이고 R169 와 같은 경로다. **주당이익 행은 표 선언과 무관하게 원 단위 그대로**다(`unit_source='declared'`, `adecimal=0`).
+5. **데일리**: 지명 함수가 `suspect_rcepts` 합집합에 들어가 `collect_new._report_unit_self_contradiction`(두 call site 공통 경로)이 자동으로 함께 탐지·보고한다. 추가 배선은 없다. R169 처럼 **보고만** 한다(`logs/unit_self_contradiction_pending.jsonl`). 적용은 수정 워크트리에서 한다.
+
+**★검증·수정 판정에서 이 규칙을 읽는 법(모델별 해석 차이 방지)**:
+- 계층2 금액의 정답은 "원문 숫자 × **증명된** 단위"다. 검토 CSV 비고에 `unit_source=proved_unit` 이 적힌 행은 표머리 `(단위 : …)` 를 쓰지 않는다. **그 행의 CSV `단위` 칸**이 원문 숫자의 실제 단위다(`docs/verification/verify_prompt.md` 용어 S).
+- 예: SK네트웍스 2017Q3 연결 BS 자산총계. 원문 셀 `7,814,615`, 표머리 `(단위 : 원)`, CSV 단위 `백만원`, DB 7,814,615,000,000 → **같다(D = S)**. `unit_scale` 로 등록하지 않는다.
+- 수정 쪽: 이 셀에 `unit_scale` 이슈가 와 있으면 F7-a(표기 해석) `no_fix` 다. 노트에 `R238·근거 rcept` 를 적는다. 반대로 표머리 원·숫자 백만원인데 `proved_unit` 이 **아닌**(DB 가 원으로 읽은) 셀은 F7-c 가 아니다. 이 규칙의 스캔 대상(지명 → 확정)이므로 `--apply` + `batch reload` 로 처리한다. 확정되지 않으면(증거 부족) 선언대로 두고 `defer`(노트 `R238 미확정: 증거 부족`) 한다. 짐작으로 단위를 바꾸지 않는다(R6).
+- 주당이익 행은 언제나 원 단위다. 섹션이 `proved_unit` 이어도 EPS 를 ×k 로 보지 않는다.
+
+**측정(2026-10-11, 2015+ 전수 재스캔 49섹션)**:
+
+| 지표 | 값 |
+|---|---|
+| R238 지명(2015+ 필링·basis) | SK네트웍스 2017Q3 연결·별도, 삼양패키징 2020Q1 원본 별도, HD현대 2019Q3 기재정정 연결·별도 |
+| 확정 | **2필링 12섹션, 전부 k = 10⁶**. SK네트웍스 `20171114002669` 8섹션: BS·CF·SCE 는 타 필링 hits(10⁶)=5~37, IS_C·IS_S 는 같은 문서 증거 18·9. 삼양패키징 `20200515000779` 별도 4섹션: hits(10⁶)=16~38. hits(1)·hits(1000) 은 모두 0 |
+| 기존 R169 결과 변화 | 없음. 미확정 36섹션(NH투자증권 CF 등) 그대로, 기존 확정 섹션 변화 0 |
+| 범위 밖 | HD현대 `20191114002747`: 본문 XML 이 없는 XBRL 원천(`no_xml`)이다. 단위가 표머리가 아니라 XBRL decimals 경로라 이 규칙으로 판정하지 않는다(별도 조사). 2015 이전 지명 23건(한솔홀딩스 2013 6건·롯데손해보험 2011 등)은 R0-2 이행 전 시대라 다루지 않았다 |
+
+**회귀 테스트**: `fin2/tests/test_r169_unit_self_contradiction.py`. `test_r238_decision_rule_allows_mega_only_for_under_nomination` · `test_r238_sk_networks_2017q3_declared_won_cells_in_million_won`(EPS 원 단위 유지 포함) · `test_r238_samyang_packaging_2020q1_original_separate` 를 추가했고, `test_r169_data_file_shape` 의 허용 k 에 10⁶ 을 넣었다.
+
+**코드**: `fin2/audit/unit_self_contradiction.py`(`_UNDER_RATIO_SQL`·`under_ratio_suspects`·`_decide(allow_mega)`·2차 증거 ×k) · `fin2/extract/report_lines.py::_unit_override`(출처 문구 R169/R238) · `fin2/extract/review_csv.py::_note`(`unit_source=proved_unit` 비고) · `docs/verification/verify_prompt.md`(S 정의에 proved_unit 추가).

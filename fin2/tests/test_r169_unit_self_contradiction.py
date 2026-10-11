@@ -100,7 +100,8 @@ def test_r169_data_file_shape():
     for rcept, secs in data.items():
         assert len(rcept) == 14 and rcept.isdigit(), rcept
         assert secs and set(secs) <= codes, (rcept, secs)
-        assert set(secs.values()) <= {1, 1_000}, (rcept, secs)
+        # R169/R207 prove 1 (원) or 1,000; R238 (declared 원, printed 천원/백만원) proves 1,000 / 10^6
+        assert set(secs.values()) <= {1, 1_000, 1_000_000}, (rcept, secs)
 
 
 _HL_HOLDINGS_2024_FY = _RAW / "KOSPI/00299002_HL홀딩스/annual/2024/20250318001269.xml"
@@ -181,3 +182,52 @@ def test_r207_neocrema_amended_annual_declares_thousand_over_won_cells():
         _NEOCREMA_2022_FY_AMEND, rcept_no="20231226000346", corp_code="01219155",
         report_fiscal_year=2022, report_fiscal_period="FY")
     assert _rows(lines, "BS", "consolidated")["자산총계"].value_won == 77_318_521_415
+
+
+_SK_NETWORKS_2017_Q3 = _RAW / "KOSPI/00131780_SK네트웍스/quarter/2017/20171114002669.xml"
+_SAMYANG_PKG_2020_Q1 = _RAW / "KOSPI/01060814_삼양패키징/quarter/2020/20200515000779.xml"
+
+
+def test_r238_decision_rule_allows_mega_only_for_under_nomination():
+    """R238: k=10^6 is confirmed only for a declared-won section nominated by the reverse ratio.
+    Anywhere else a 10^6 majority means the declared 백만원 is right (NH투자증권 CF)."""
+    hits = {1: 0, 1_000: 0, 1_000_000: 5}
+    assert _decide(hits) is None
+    assert _decide(hits, allow_mega=True) == 1_000_000
+    assert _decide({1: 0, 1_000: 4, 1_000_000: 0}, allow_mega=True) == 1_000
+    # the exact-match conditions are unchanged: too few hits / a competing k
+    assert _decide({1: 0, 1_000: 0, 1_000_000: 2}, allow_mega=True) is None
+    assert _decide({1: 2, 1_000: 0, 1_000_000: 9}, allow_mega=True) is None
+    # evidence for k=1 on a declared-won section = declared_correct, never an override
+    from fin2.audit.unit_self_contradiction import _label
+    assert _label(_decide({1: 30, 1_000: 0, 1_000_000: 0}, allow_mega=True), {1}) == "declared_correct"
+
+
+def test_r238_sk_networks_2017q3_declared_won_cells_in_million_won():
+    """SK네트웍스 2017Q3 — 재무제표 표머리 "(단위 : 원)" 아래 백만원 숫자(자산총계 7,814,615).
+    std_v3 자산총계가 7,814,615원으로 노출돼 있었다. 8섹션 k=10^6(IS 는 같은 문서 증거)."""
+    data = json.loads(rl._PROVED_UNIT_OVERRIDES_PATH.read_text(encoding="utf-8"))
+    assert set(data["20171114002669"].values()) == {1_000_000}
+    assert len(data["20171114002669"]) == 8
+    if not _SK_NETWORKS_2017_Q3.exists():
+        return
+    lines = extract_report_lines(
+        _SK_NETWORKS_2017_Q3, rcept_no="20171114002669", corp_code="00131780",
+        report_fiscal_year=2017, report_fiscal_period="Q3")
+    bs_c = _rows(lines, "BS", "consolidated")["자산총계"]
+    assert bs_c.value_won == 7_814_615_000_000 and bs_c.unit_source == "proved_unit"
+    assert _rows(lines, "BS", "separate")["자산총계"].value_won == 7_092_608_000_000
+    # per-share rows are printed in 원 and stay so
+    eps = [l for l in lines if l.statement == "IS" and "주당" in (l.label_raw or "")]
+    assert eps and all(l.unit_source == "declared" and abs(l.value_won) < 1_000 for l in eps)
+
+
+def test_r238_samyang_packaging_2020q1_original_separate():
+    """삼양패키징 2020Q1 원본 — 별도 4섹션 "(단위 : 원)" 아래 백만원 숫자(자산총계 560,925)."""
+    if not _SAMYANG_PKG_2020_Q1.exists():
+        return
+    lines = extract_report_lines(
+        _SAMYANG_PKG_2020_Q1, rcept_no="20200515000779", corp_code="01060814",
+        report_fiscal_year=2020, report_fiscal_period="Q1")
+    assert _rows(lines, "BS", "separate")["자산총계"].value_won == 560_925_000_000
+    assert _rows(lines, "IS", "separate")["매출액"].value_won == 81_580_000_000

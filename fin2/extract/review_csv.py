@@ -127,6 +127,11 @@ def _note(row: dict) -> str:
     src = row.get("unit_source") or ""
     if src in ("undetermined", "undeclared", "doc_default", "inherited"):
         bits.append(f"unit_source={src}")
+    elif src in ("proved_unit", "manual_unit"):
+        # R169/R207/R238: the section's printed "(단위 : …)" is proven wrong; the 단위 column is
+        # the real unit of the printed digits (verify_prompt S definition)
+        bits.append(f"unit_source={src}(표머리 단위 대신 이 행 단위 칸이 원문 숫자의 실제 단위, "
+                    f"R169·R207·R238)")
     return " / ".join(bits)
 
 

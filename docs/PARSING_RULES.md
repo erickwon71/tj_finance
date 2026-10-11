@@ -469,6 +469,7 @@
 | R216 | R216. XBRL 주당 개념이 KRW 단위 + decimals ≤ −6 이면 10^(−decimals) 로 나눠 원으로 되… | [10_layer2_parse.md](rules/10_layer2_parse.md) · XBRL 폴백 | 2 | 유효 |  |
 | R217 | R217. 계층3 은 XBRL IS '주당' 행도 R213 EPS 규칙으로 분류한다 — 라벨에 '계속'·'중단'이 함께 있으… | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 |  |
 | R218 | R218. 라벨에 EPS 항목이 정확히 둘이고 금액 셀이 전부 같은 두 반쪽이면 반으로 쪼갠다 — 원문 XML 이 두 값을 … | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
+| R218-b | R218-b. 계층3 은 |값| ≥ 1,000,000 인 EPS 후보를 버린다 — 절 제목 행에 실린 순이익·포괄이익 (2026-10-04) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | 2026-10-12 R218 안 하위 절에서 분리 |
 | R219 | R219. store_report_tables() 는 넘겨받은 lines 가 다루는 statement 범위만 지우고 다시 쓴… | [40_ops_pipeline.md](rules/40_ops_pipeline.md) | 운영 | 유효 |  |
 | R220 | R220. 달력 CY(12월 결산 native)의 flow 는 같은 회계연도 FY as-filed 값을 쓴다 (2026-10… | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 |  |
 | R221 | R221. 계층3 std 비용 컬럼은 비용 = 양수 관례로 정규화한다 — 항등식 증명 + 성질상 비음수 비용 (2026-10… | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 |  |

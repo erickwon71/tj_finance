@@ -62,8 +62,8 @@ def test_lg_separate_dividends_paid_sign_corrected():
 
 
 def test_lg_consolidated_dividends_paid_untouched_when_no_fact_match():
-    """연결기준은 이 필링에 매칭되는 표준개념 fact가 없어 원래 텍스트값(양수) 그대로
-    남는다 — 근거 없이 부호를 뒤집지 않는다(설계 §5 블랭킷 금지)."""
+    """연결기준은 이 필링에 매칭되는 표준개념 fact가 없어 R18 은 손대지 않는다(설계 §5
+    블랭킷 금지). 부호는 R232(2026-10-11)가 유출 구간 소계 항등식으로 증명해 붙인다."""
     if not _LG.exists():
         return
     lines = extract_report_lines(
@@ -72,7 +72,7 @@ def test_lg_consolidated_dividends_paid_untouched_when_no_fact_match():
     )
     row = next(l for l in lines if l.statement == "CF" and l.basis == "consolidated"
                and l.col_index == 0 and l.label_raw == "배당금의 지급")
-    assert row.value_won == 745_599_000_000
+    assert row.value_won == -745_599_000_000
     assert row.source_ref is None or not row.source_ref.endswith(";xbrl_inline_override")
 
 
@@ -147,6 +147,20 @@ def test_overlay_already_correct_is_noop(monkeypatch):
     n = overlay_dividends_paid_sign(rows, "dummy.xml", 2025)
     assert n == 0
     assert rows[0].value_won == -632_384
+
+
+def test_overlay_never_turns_dividends_paid_positive(monkeypatch):
+    """R232 가드(2026-10-11): 태그 부호는 회사마다 달라 양수 fact 는 부호 증거가 아니다
+    (20251114001409 인쇄 -84,588 → +84,588 로 뒤집던 사례)."""
+    import fin2.extract.report_lines_inline_xbrl_overlay as mod
+
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+        _FakeFact("cf.dividends_paid", "CF", "separate", False, 84_588),
+    ])
+    rows = [_FakeRow("CF", "separate", 0, False, "배당금의 지급", -84_588)]
+    n = overlay_dividends_paid_sign(rows, "dummy.xml", 2025)
+    assert n == 0
+    assert rows[0].value_won == -84_588
 
 
 # --- §3: overlay_tax_expense_value() — 버그①(컬럼오선택) 수정 ---------------------

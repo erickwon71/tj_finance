@@ -21,6 +21,7 @@ ENV = "TJF_LAYER2_AS_PRINTED"
 
 # Step names (one per value-changing call site).
 STEPS = (
+    "R232_cf_outflow_sign",    # CF outflow-section magnitudes signed (runs before R18)
     "R18_dividends_overlay",   # CF dividends sign from inline XBRL tag
     "tax_overlay",             # IS tax expense value from inline XBRL tag
     "R183_source_defects",     # SCE row move/drop, value fix, cell fill (XML + XBRL)

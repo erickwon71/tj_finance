@@ -164,6 +164,11 @@ def overlay_dividends_paid_sign(
             continue  # magnitude disagreement — probably a different fact, don't touch
         if row.value_won == fact_won:
             continue  # already correct — no-op
+        if fact_won > 0:
+            # R232 (2026-10-11): dividends PAID are an outflow. Tag signs differ by company
+            # (15 of 52 overlays turned a printed negative positive, 20251114001409 -84,588), so a
+            # positive fact is no sign evidence — leave the row (R232 may already have signed it).
+            continue
         row.value_won = fact_won
         row.source_ref = (f"{row.source_ref};xbrl_inline_override"
                            if row.source_ref else "xbrl_inline_override")

@@ -200,6 +200,7 @@ from fin2.extract.sce_sign_repair import (
     rerun_sign_loss_after_row_identity,
 )
 from fin2.extract.cf_cash_sign_repair import repair_cf_cash_sign_loss
+from fin2.extract.cf_outflow_sign import repair_cf_outflow_section_signs
 from fin2.extract.sce_as_printed import apply_as_printed_cells
 from fin2.extract.sce_source_defects import apply_source_defect_fixes, verify_row_drops
 from fin2.extract.as_printed import checkpoint, repair_on
@@ -2185,6 +2186,14 @@ def extract_report_lines(
     # 버그#2(dividends_paid 부호) 수정 — 원문에 이미 있는 인라인 XBRL(Track A) 사실로
     # CF 텍스트추출 부호를 보정. docs/plans/gate_b_bug2_xbrl_inline_overlay_design_2026-08-13.md.
     checkpoint("_base", lines)
+
+    # R232(2026-10-11) — CF "현금유출액" sections printed as magnitudes get their sign, when the
+    # section's own identities prove the convention. Before R18: R18 then sees signed values.
+    outflow_fixes = repair_cf_outflow_section_signs(lines) if repair_on("R232_cf_outflow_sign") else []
+    checkpoint("R232_cf_outflow_sign", lines)
+    if outflow_fixes:
+        logger.debug(f"[report_lines] R232 CF 유출 구간 부호: {len(outflow_fixes)}셀 ({rcept_no})")
+
     n_overlay = (overlay_dividends_paid_sign(lines, file_path, report_fiscal_year)
                  if repair_on("R18_dividends_overlay") else 0)
     checkpoint("R18_dividends_overlay", lines)

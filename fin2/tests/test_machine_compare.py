@@ -565,3 +565,20 @@ def test_mc15_issue_fields_use_printed_text_bottom_header_and_dated_block_end(tm
                                     "block_end": "2015.12.31", "scale": 1}, "[확인 mc15]", set())
     assert item["column_label"] == "총자본 @ 2015.12.31"
     assert item["source_value_raw"] == "(30"
+
+
+def test_mc16_rows_without_row_order_repeating_a_label_pair_in_load_order(tmp_path):
+    # verify_sim r8 (2026-10-12): 코오롱인더 20230515002363 IS prints '계속영업기본주당이익' under
+    # 보통주 (837) and again under 우선주 (849). EPS rows have no row_order, so both DB rows shared
+    # one key and paired crosswise -> two false value findings. Load order now tells them apart.
+    body = _section("2. 연결재무제표", _title("연결 손익계산서"), _table(
+        ["매출액", "1,000"], ["보통주기본주당이익 (단위 : 원)", "832"], ["계속영업기본주당이익 (단위 : 원)", "837"],
+        ["우선주기본주당이익 (단위 : 원)", "844"], ["계속영업기본주당이익 (단위 : 원)", "849"],
+        head=["과목", "당기"]))
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    rows = [_row("IS", "consolidated", 0, "매출액", 1000)] + [
+        _row("IS", "consolidated", None, lab, v) for lab, v in (
+            ("보통주기본주당이익 (단위 : 원)", 832), ("계속영업기본주당이익 (단위 : 원)", 837),
+            ("우선주기본주당이익 (단위 : 원)", 844), ("계속영업기본주당이익 (단위 : 원)", 849))]
+    res = mc.compare(rows, tables)
+    assert not [f for f in res.findings if f["kind"] in ("value", "missing_row", "extra_row")], res.findings

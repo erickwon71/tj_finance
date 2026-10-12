@@ -62,7 +62,10 @@ from lxml import etree
 # '(3,022,855,339)'), the column's bottom header cell (col_name — a two-row header gave
 # '총자본총자본'), and SCE blocks whose closing row is only a date ('2015.12.31') get their
 # block_end (the next block starts with a dated row, or it is the table's last dated row).
-TOOL_VERSION = "mc15"
+# mc16 (2026-10-12, verify_sim r8): DB rows without a row_order (the EPS path) are told apart by
+# load order — two blocks printing the same label ('계속영업기본주당이익' under 보통주 and again under
+# 우선주) used to collapse into one key, pair crosswise and raise false value findings.
+TOOL_VERSION = "mc16"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -458,6 +461,7 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
     findings: list[dict] = []
     if not tables:
         return Result("no_structure", counts, [{"kind": "no_structure"}])
+    _number_rows_without_order(db_rows)
     groups: dict[tuple, list[dict]] = {}
     for r in db_rows:
         if r["statement"] in ("BS", "IS", "CF", "SCE"):
@@ -613,7 +617,7 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                 if num is not None:
                     k = ks[0]
                     findings.append(_finding(
-                        "value", key, label=r["label_raw"][:200], row_order=r["row_order"],
+                        "value", key, label=r["label_raw"][:200], row_order=r.get("_db_row_order", r["row_order"]),
                         col_index=r["col_index"], db=None, src=num, src_col=k,
                         header=(headers_of[row.table][k] if k < len(headers_of[row.table]) else None),
                         found_at=[], flipped_at=[], scale=scale,
@@ -641,7 +645,7 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                 extra = ({"block_end": ends[pos[id(row)]], "db_col": r.get("col_label")}
                          if st_code == "SCE" else {})
                 findings.append(_finding(
-                    "value", key, label=r["label_raw"][:200], row_order=r["row_order"],
+                    "value", key, label=r["label_raw"][:200], row_order=r.get("_db_row_order", r["row_order"]),
                     col_index=r["col_index"], db=r["value_won"],
                     src=x if isinstance(x, float) else str(x), src_col=k,
                     src_raw=(row.raws[k] if k < len(row.raws) else None),
@@ -676,7 +680,8 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                     counts["prior_only"] += 1
         for i in range(len(seq)):
             if i not in d2s:
-                findings.append(_finding("extra_row", key, label=str(seq[i][1])[:200], row_order=seq[i][0]))
+                findings.append(_finding("extra_row", key, label=str(seq[i][1])[:200],
+                                         row_order=None if (seq[i][0] or 0) >= _NO_ORDER_BASE else seq[i][0]))
                 counts["extra_row"] += 1
         if st_code == "SCE":
             eff = {id(r): list(r.cells) for r in win}
@@ -986,7 +991,31 @@ def row_table_header(win_tables: list[SrcTable], row: SrcRow, c: int) -> str | N
 DB_SQL = """
     SELECT statement, basis, table_seq, row_order, label_raw, section_path, col_index, col_label, value_won,
            is_cumulative
-    FROM report_lines WHERE rcept_no = :r AND statement IN ('BS', 'IS', 'CF', 'SCE')"""
+    FROM report_lines WHERE rcept_no = :r AND statement IN ('BS', 'IS', 'CF', 'SCE') ORDER BY abs(id)"""
+
+# mc16: synthetic row_order base for DB rows that have none (EPS path); far above real row orders
+_NO_ORDER_BASE = 10_000_000
+
+
+def _number_rows_without_order(db_rows: list[dict]) -> None:
+    """Give rows with row_order NULL a synthetic order in load order (rows are read ORDER BY id): a
+    repeat of the same (statement, basis, table_seq, label, col_index) starts a new row instance.
+    The original NULL is kept in '_db_row_order' for findings."""
+    seen: dict[tuple, int] = {}
+    inst: dict[tuple, int] = {}
+    n = 0
+    for r in db_rows:
+        if r.get("row_order") is not None:
+            continue
+        base = (r["statement"], r["basis"], r["table_seq"], r["label_raw"])
+        cell = base + (r.get("col_index"), r.get("is_cumulative"))
+        k = seen.get(cell, 0)
+        seen[cell] = k + 1
+        if (base, k) not in inst:
+            n += 1
+            inst[(base, k)] = _NO_ORDER_BASE + n
+        r["_db_row_order"] = None
+        r["row_order"] = inst[(base, k)]
 
 
 def compare_filing(conn, rcept: str, xml_path: str) -> Result:

@@ -69,6 +69,12 @@ def _source_path(conn, rcept: str) -> str | None:
     return None
 
 
+# mc17 (2026-10-14): 200 hid 51 of the 251 findings of 20190515001449, so the model reviewer could
+# neither see nor register them and stopped the runner (3 failures in a row). A filing with more
+# than this many findings is a parser/machine problem, not something to page through.
+MAX_STORED_FINDINGS = 2000
+
+
 def _store(conn, rcept: str, load_seq: int, res: mc.Result, audit: bool) -> None:
     conn.execute(text("""
         INSERT INTO verification.machine_checks
@@ -79,7 +85,7 @@ def _store(conn, rcept: str, load_seq: int, res: mc.Result, audit: bool) -> None
             verdict = EXCLUDED.verdict, audit = EXCLUDED.audit, counts = EXCLUDED.counts,
             findings = EXCLUDED.findings, checked_at = now(), checked_by = verification.actor()"""),
         {"r": rcept, "s": load_seq, "v": mc.TOOL_VERSION, "d": res.verdict, "a": audit,
-         "c": json.dumps(dict(res.counts)), "f": json.dumps(res.findings[:200], ensure_ascii=False,
+         "c": json.dumps(dict(res.counts)), "f": json.dumps(res.findings[:MAX_STORED_FINDINGS], ensure_ascii=False,
                                                            default=str)})
 
 

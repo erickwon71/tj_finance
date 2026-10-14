@@ -65,7 +65,13 @@ from lxml import etree
 # mc16 (2026-10-12, verify_sim r8): DB rows without a row_order (the EPS path) are told apart by
 # load order — two blocks printing the same label ('계속영업기본주당이익' under 보통주 and again under
 # 우선주) used to collapse into one key, pair crosswise and raise false value findings.
-TOOL_VERSION = "mc16"
+# mc17 (2026-10-14, runner stop on 00117601:2019:Q1, 유안타증권 20190515001449): a neighbour table
+# that repeats the best table's labels under entirely different period headers (the 2017 BS printed
+# as a second table beside '2019 1Q / 2018') is a comparison table, not the rest of a split
+# statement - joining it duplicated every label, paired DB rows crosswise (160 false value) and
+# raised 75 false missing_row. missing_row / zero_row findings now carry the table scale, so an
+# issue built from them is stated in the right unit.
+TOOL_VERSION = "mc17"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -454,6 +460,51 @@ def _align_sce_first_column(items: list[dict], rowmap: dict) -> list[dict]:
     return items
 
 
+def _is_period_comparison(best: SrcTable, nb: SrcTable, best_keys: set) -> bool:
+    """True when `nb` repeats most of `best`'s row labels under period headers that share nothing
+    with `best`'s (a prior-period comparison table), so it must not be joined as the remainder of
+    a split statement. A real remainder prints new rows under the same periods."""
+    if not nb.rows or not best.headers or not nb.headers:
+        return False
+    # SCE column headers are equity components, not periods ('자본금' vs '자본자본금'): two tables of
+    # one statement never "differ in period" there (20150128000129 would pair the wrong table)
+    if "SCE" in (best.stype, nb.stype):
+        return False
+    if set(best.headers) & set(nb.headers):
+        return False
+    # different header TEXT is not enough ('제10기1분기' vs '제10기 1분기' are one period): the
+    # comparison table must print only periods strictly older than the best table's latest one
+    older = _older_periods(best.headers, nb.headers)
+    if not older:
+        return False
+    return sum(1 for r in nb.rows if r.key in best_keys) >= 0.5 * len(nb.rows)
+
+
+_YEAR_RE = re.compile(r"(?<!\d)((?:19|20)\d\d)(?!\d)")
+_TERM_RE = re.compile(r"제\s*(\d+)\s*(?:\([^)]*\))?\s*기")
+
+
+def _older_periods(best_headers: list[str], nb_headers: list[str]) -> bool:
+    """True when every period token (year, else 제N기 number) in `nb_headers` is smaller than the
+    largest one in `best_headers`; False when either side has no token of the same kind."""
+    for rx in (_YEAR_RE, _TERM_RE):
+        b = [int(x) for h in best_headers for x in rx.findall(h)]
+        n = [int(x) for h in nb_headers for x in rx.findall(h)]
+        if b and n:
+            return max(n) < max(b)
+    return False
+
+
+def _comparison_of_used(t: SrcTable, tables: list[SrcTable], used: set[int]) -> bool:
+    """mc17: `t` is a prior-period comparison of a table the DB was compared against (same basis and
+    statement, same labels, disjoint period headers) - the DB never holds those periods."""
+    for u in tables:
+        if u.idx in used and u.basis == t.basis and u.stype == t.stype \
+                and _is_period_comparison(u, t, {r.key for r in u.rows}):
+            return True
+    return False
+
+
 def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
     """db_rows: report_lines dicts (statement, basis, table_seq, row_order, label_raw,
     col_index, value_won, is_cumulative)."""
@@ -495,11 +546,20 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                         n += 1
             return n
         best = max((t for t in cand if score[t.idx] >= 0.8 * top), key=lambda t: (vhits(t), score[t.idx]))
+        # mc17: a prior-period comparison table repeats the labels (and often has more rows), so it
+        # can outscore the current-period table on labels alone and drop it below the 0.8 cut -
+        # between two such tables the one whose printed numbers are the DB's wins
+        for t in cand:
+            if t is not best and score[t.idx] >= 0.5 * top and vhits(t) > vhits(best) \
+                    and _is_period_comparison(t, best, {r.key for r in t.rows}):
+                best = t
         bpos = cand.index(best)
         win_tables = [best]
         # split statements: the neighbours inside the same section that also match
+        best_keys = {r.key for r in best.rows}
         for nb in cand[bpos + 1: bpos + 3]:
-            if score[nb.idx] >= 2 and score[nb.idx] >= 0.5 * len(nb.rows):
+            if score[nb.idx] >= 2 and score[nb.idx] >= 0.5 * len(nb.rows) \
+                    and not _is_period_comparison(best, nb, best_keys):
                 win_tables.append(nb)
             else:
                 break
@@ -665,16 +725,17 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
             if dash_only:
                 # all-dash row absent from the DB: value-neutral, but the campaign has been
                 # registering these (issues #103~) - surface it and let the reviewer decide
-                findings.append(_finding("zero_row", key, label=r.label[:200]))
+                findings.append(_finding("zero_row", key, label=r.label[:200], scale=scale))
                 counts["zero_row"] += 1
             elif st_code == "SCE":
                 if any(isinstance(x, float) and x for x in r.cells):
                     findings.append(_finding("missing_row", key, label=r.label[:200], cells=r.cells[:12],
-                                             block_end=ends[j]))
+                                             block_end=ends[j], scale=scale))
                     counts["missing_row"] += 1
             else:
                 if any(isinstance(r.cells[k], float) and r.cells[k] for k in ks if k < len(r.cells)):
-                    findings.append(_finding("missing_row", key, label=r.label[:200], cells=r.cells[:6]))
+                    findings.append(_finding("missing_row", key, label=r.label[:200], cells=r.cells[:6],
+                                             scale=scale))
                     counts["missing_row"] += 1
                 elif any(isinstance(x, float) and x for x in r.cells):
                     counts["prior_only"] += 1
@@ -736,7 +797,7 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
         # only tables recognisably a statement: banks/insurers put income breakdowns
         # (예치금이자·증권이자 …) in the statement section too, and those are not loaded
         if t.idx not in used_tables and t.n_amount_rows >= 3 and t.stype is not None \
-                and not _is_appropriation(t):
+                and not _is_appropriation(t) and not _comparison_of_used(t, tables, used_tables):
             findings.append({"kind": "unmatched_table", "basis": t.basis, "table": t.idx,
                              "title": t.title, "first_rows": [r.label[:40] for r in t.rows[:4]]})
             counts["unmatched_table"] += 1

@@ -582,3 +582,45 @@ def test_mc16_rows_without_row_order_repeating_a_label_pair_in_load_order(tmp_pa
             ("우선주기본주당이익 (단위 : 원)", 844), ("계속영업기본주당이익 (단위 : 원)", 849))]
     res = mc.compare(rows, tables)
     assert not [f for f in res.findings if f["kind"] in ("value", "missing_row", "extra_row")], res.findings
+
+
+def _bs_with_prior_period_table(tmp_path):
+    # 유안타증권 20190515001449: the BS prints '2019 1Q / 2018' and then a second table with only a
+    # '2017' column that repeats the labels (the 2017 layout spells two of them like the DB, the
+    # 2019 layout does not), so on labels alone the 2017 table scored highest and the real table
+    # fell below the 0.8 cut - the DB's 2019 numbers were then compared with the 2017 column.
+    cur = _table(["현금및예치금", "1,000", "900"], ["대출채권", "2,000", "1,800"], ["자산총계", "3,000", "2,700"],
+                 ["유형자산및투자부동산", "40", "30"], ["기타자산합계", "50", "20"], head=["과목", "2019회계연도1분기", "2018회계연도"])
+    old = _table(["현금및예치금", "700"], ["대출채권", "1,500"], ["자산총계", "2,210"], ["유형자산", "11"],
+                 ["기타자산", "12"], head=["과목", "2017회계연도"])
+    body = _section("2. 연결재무제표", _title("연결 재무상태표"), cur, old)
+    rows = [_row("BS", "consolidated", 0, "현금및예치금", 1_000_000), _row("BS", "consolidated", 1, "대출채권", 2_000_000),
+            _row("BS", "consolidated", 2, "자산총계", 3_000_000), _row("BS", "consolidated", 3, "유형자산", 40_000),
+            _row("BS", "consolidated", 4, "기타자산", 50_000)]
+    return mc.load_statement_tables(_xml(tmp_path, body)), rows
+
+
+def test_mc17_prior_period_comparison_table_is_neither_paired_nor_unmatched(tmp_path):
+    tables, rows = _bs_with_prior_period_table(tmp_path)
+    res = mc.compare(rows, tables)
+    # the two DB rows whose label the 2019 layout spells differently stay extra_row (that is what
+    # makes the 2017 table outscore it on labels); nothing may be read off the 2017 column
+    kinds = {f["kind"] for f in res.findings}
+    assert not kinds & {"value", "missing_row", "unmatched_table"}, res.findings
+
+
+def test_mc17_period_older_test_needs_strictly_older_periods():
+    assert mc._older_periods(["2019회계연도1분기", "2018회계연도"], ["2017회계연도"])
+    assert mc._older_periods(["제10기1분기", "제9기"], ["제8기"])
+    # same period spelled differently, or no period token at all, is NOT a comparison table
+    assert not mc._older_periods(["제10기1분기"], ["제10기 1분기"])
+    assert not mc._older_periods(["23년3분기('23.09.30)"], ["22년기말('22.12.31)"])
+
+
+def test_mc17_missing_row_carries_the_table_scale(tmp_path):
+    cur = _table(["현금및예치금", "1,000"], ["기타자산", "5"], ["대출채권", "2,000"], head=["과목", "당기"])
+    body = _section("2. 연결재무제표", _title("연결 재무상태표"), cur)
+    rows = [_row("BS", "consolidated", 0, "현금및예치금", 1_000_000), _row("BS", "consolidated", 1, "대출채권", 2_000_000)]
+    res = mc.compare(rows, mc.load_statement_tables(_xml(tmp_path, body)))
+    miss = [f for f in res.findings if f["kind"] == "missing_row"]
+    assert miss and all(f["scale"] == 1000 for f in miss), res.findings

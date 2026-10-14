@@ -500,6 +500,13 @@ def _detect_body_statement_tables(root, fin_type: str,
                     # stmt=="SCE" 자신을 찾는 스캔은 건드리지 않는다(정상 목적).
                     if stmt != "SCE" and _looks_like_equity_changes_header(nxt):
                         continue           # 이 표는 SCE 데이터 — 계속 뒤에서 진짜 데이터를 찾는다
+                    # ★R242 — R127b 의 BS 판. IS/CF 표제(각주 문장이 표제로 오분류된 경우 포함,
+                    #   두산밥캣 20260514001068 의 '※ 연결 손익계산서… 환산시 적용환율' 표) 뒤 첫
+                    #   데이터표가 재무상태표(자산·부채 총계)이고 IS/CF 내용이 아니면 그 표는 BS
+                    #   데이터다. 연결 CF 에 BS 52행이 실리던 결함.
+                    if (stmt in ("IS", "CF") and _looks_like_balance_sheet(nxt)
+                            and not (_looks_like_cashflow(nxt) or _looks_like_income_statement(nxt))):
+                        continue
                     # ★R194 — 거울: SCE 표제 뒤 첫 데이터표가 IS/CF 내용이면 SCE 데이터가 아니다.
                     #   (표제표 `연결자본변동표` 뒤에 손익계산서 표가 오고, 진짜 자본변동표는 그 뒤
                     #   두 번째 표제표 아래에 있다 — 디케이앤디 20190401005200.)

@@ -697,6 +697,31 @@ def _in_eps_section(section_path: str | None) -> bool:
     return bool(section_path) and "주당" in section_path
 
 
+# R239 — a bare `계속영업` / `중단영업` / `계속영업과 중단영업` row (whitespace already stripped)
+# printed under a 기본/희석 주당이익 header. The row carries neither `주당` nor a unit declaration,
+# so `E` does not see it, and the IS table's own unit (백만원) used to be applied to a won-per-share.
+_EPS_CONTINUING_CHILD_RE = re.compile(
+    r"^(?:\d+\.)?(?:계속|중단)(?:영업|사업)(?:과(?:계속|중단)(?:영업|사업))?$")
+
+
+_EPS_SHARE_CLASS_RE = re.compile(r"^(?:\d+\.)?(?:보통주|우선주)$")
+
+
+def _is_eps_continuing_child(label: str, section_path: str | None) -> bool:
+    """R239 — an EPS child row without `주당` and without its own unit declaration.
+
+    a) `계속영업`류 under a 기본/희석 주당이익 header;
+    b) `보통주`/`우선주` under a 주당이익 section whose title declares 원 (`주당이익(단위:원)`).
+    """
+    if not section_path:
+        return False
+    if _EPS_METHOD_RE.search(section_path) and _EPS_CONTINUING_CHILD_RE.match(label):
+        return True
+    return bool(_EPS_SHARE_CLASS_RE.match(label)) and any(
+        "주당" in part and detect_unit_declaration(part) == 1
+        for part in section_path.split(">"))
+
+
 def _eps_headerless_toplevel(section_path: str | None, *, table_has_eps_header: bool,
                              prev_toplevel_label: str | None) -> bool:
     """`D` — EPS 절 제목이 없는 표의, 포괄손익 총계 바로 뒤 최상위 행인가."""
@@ -781,7 +806,8 @@ def _is_eps_label(label: str, *, section_path: str | None,
     s = strip_cell_whitespace(label)
     if "주당" not in s:
         # `E` — 라벨엔 `주당` 이 없어도 EPS 절 자식이면서 원(₩)을 스스로 선언한 행.
-        return _in_eps_section(section_path) and detect_unit_declaration(label) == 1
+        return ((_in_eps_section(section_path) and detect_unit_declaration(label) == 1)
+                or _is_eps_continuing_child(s, section_path))
     return bool(_EPS_METHOD_RE.search(s) or _EPS_PROFIT_RE.search(s)
                 or _in_eps_section(section_path)
                 or _eps_headerless_toplevel(
@@ -2025,7 +2051,15 @@ def _emit_sce_lines(
     doc_seq = {id(t): i for i, t in enumerate(tables)}
 
     for table in tables:
-        unit = next((u for t, u, _ in tables_with_unit if t is table), None)
+        # R240 — the same table can be listed twice with different units (title-table branch and
+        # the table's own heading); the first entry used to win even when the table's own
+        # declaration said otherwise (IBK 20160816001912: 백만원 table read as 원).
+        units_listed = [u for t, u, _ in tables_with_unit if t is table]
+        unit = units_listed[0] if units_listed else None
+        if len(set(units_listed)) > 1:
+            own = declared_unit(table)
+            if own in units_listed:
+                unit = own
         fx_source, fx_currency, fx_decl = None, None, None
         # R169 — R132/R169 overrides were applied to BS/IS/CF only, so SCE in those filings
         # kept the ×10⁶ value. Same override, same place in the unit resolution order.

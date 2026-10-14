@@ -2015,6 +2015,15 @@ _EPS_ROW_LABEL_RE = re.compile(
     r"주당|per\s*share|[(（]\s*단위\s*[:：]?\s*원\s*[)）]", re.I)
 
 
+# R241 — a comma-grouped amount with only one of its brackets ('7,526,247)' / '(7,526,247').
+#   `parse_amount` returns None for it, so the printed cell used to vanish without a trace. It is
+#   an unreadable printed value like a '.'-broken cell: the row keeps its place with a NULL value
+#   and the printed text (value_raw). Reading it as negative would be a guess (R0-2, R6).
+#   At least one `,ddd` group is required, so footnote marks such as '1)' are not caught.
+_UNBALANCED_BRACKET_AMOUNT_RE = re.compile(
+    r"^(?:[(\[]\s*[-−△▲]?\s*\d{1,3}(?:,\d{3})+|[-−△▲]?\s*\d{1,3}(?:,\d{3})+\s*[)\]])$")
+
+
 def unresolved_dot_cell_indices(amount_cells: list[str],
                                 label: Optional[str]) -> list[int]:
     """R159/R158 로도 **해결되지 않은** 마침표 셀의 위치 — 값을 적재하지 않을 칸.
@@ -2047,7 +2056,8 @@ def unresolved_dot_cell_indices(amount_cells: list[str],
         return []
     return [i for i, c in enumerate(amount_cells)
             if _DOT_GROUPED_RE.match((c or "").strip())
-            or _DOT_THEN_COMMA_RE.match((c or "").strip())]
+            or _DOT_THEN_COMMA_RE.match((c or "").strip())
+            or _UNBALANCED_BRACKET_AMOUNT_RE.match((c or "").strip())]
 
 
 def _repair_dot_grouped_cells(amount_cells: list[str],

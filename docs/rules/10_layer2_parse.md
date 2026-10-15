@@ -5717,6 +5717,7 @@ R212 소급 백필의 대상 목록(`docs/qa/eps_fractional_targets_2026-10-02.*
 > **코드** `parser/xml/table_extractor.py::_UNBALANCED_BRACKET_AMOUNT_RE`·`unresolved_dot_cell_indices`, **테스트** `fin2/tests/test_r241_unbalanced_bracket_amount_cell.py` 3건.
 
 **발견**: 알체라 `20210323001167` 연결 BS `기타포괄손익누계액` 당기 `7,526,247)`(여는 괄호 누락). DB 에 당기 셀이 없었다(#88656 `unclassified`). 음수 해석은 계층3 몫이다.
+**백필(2026-10-16, batch#135, 사용자 결정 B=본문 표만)**: 2014 이후 원문 XML 전수 prefilter 5,587+37(공백 경로)파일 → 새 파서로 본문(BS/IS/CIS/CF/SCE) 추출 시 한쪽 괄호 셀이 나오는 42필링 → 41건 add-targets(1건은 이미 대상) → `batch reload 135 --sd` 41 done / 0 deferred / 0 failed. 주석 표에만 있는 5,354필링은 범위 밖(재적재 안 함). DB 적재는 당기(col 0)만이라 셀이 전기·전전기 열에만 있는 15필링은 DB 에 변화 없음(정상); 당기 셀이 있는 27필링 31셀이 NULL+value_raw 로 적재됨. 옛 파서는 그 칸 한 칸만 버렸고 행·다른 열은 같았다(알체라 옛/새 파서 비교: 762→763행).
 
 
 ## R242. IS·CF 표제표 뒤 첫 데이터표가 재무상태표(자산·부채 총계)이고 IS/CF 내용이 아니면 그 표는 BS 데이터다 — 표제표의 데이터로 잇지 않는다 (2026-10-15, 적용 계층: 2 — 읽기)

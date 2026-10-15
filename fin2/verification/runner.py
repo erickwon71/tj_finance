@@ -221,11 +221,18 @@ def finish(run_id: int, log: Path, exit_code: int) -> dict:
         outcome = "blocked"
     elif exit_code != 0 or data.get("is_error"):
         outcome = "error"
+    elif status == "pending":
+        # The session called `vq.py done` and handed the slot back: its fixed issues were
+        # re-checked and closed, but the filings need a fresh machine comparison (the reload
+        # made the old one stale) which only the machine can do. Waiting for it is not a failure.
+        outcome = "deferred"
     else:
         outcome = "incomplete"
 
     sleep_until = None
-    if outcome == "tool_denied":
+    if outcome == "deferred":
+        pass    # slot is already pending; no retry penalty, not counted as a failure
+    elif outcome == "tool_denied":
         # Not the slot's fault either: release without a retry penalty, no back-off needed
         # (each `claude -p` run starts a fresh process, so the next run is unaffected).
         ops.release(slot, failed=False, note=f"runner run {run_id}: tool_denied")

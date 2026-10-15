@@ -291,7 +291,7 @@ CREATE TABLE IF NOT EXISTS verification.runner_runs (
     model         text,
     outcome       varchar(12) CHECK (outcome IN
                   ('passed', 'has_issues', 'incomplete', 'timeout', 'usage_limit', 'error',
-                   'blocked', 'tool_denied')),
+                   'blocked', 'tool_denied', 'deferred')),
     log_path      text,
     git_head      text
 );
@@ -308,6 +308,19 @@ BEGIN
         ALTER TABLE verification.runner_runs ADD CONSTRAINT runner_runs_outcome_check
             CHECK (outcome IN ('passed', 'has_issues', 'incomplete', 'timeout', 'usage_limit',
                                 'error', 'blocked', 'tool_denied'));
+    END IF;
+END $$;
+-- 2026-10-15: add 'deferred' (slot handed back pending, waiting for a fresh machine comparison).
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'verification.runner_runs'::regclass
+                      AND conname = 'runner_runs_outcome_check'
+                      AND pg_get_constraintdef(oid) LIKE '%deferred%') THEN
+        ALTER TABLE verification.runner_runs DROP CONSTRAINT IF EXISTS runner_runs_outcome_check;
+        ALTER TABLE verification.runner_runs ADD CONSTRAINT runner_runs_outcome_check
+            CHECK (outcome IN ('passed', 'has_issues', 'incomplete', 'timeout', 'usage_limit',
+                                'error', 'blocked', 'tool_denied', 'deferred'));
     END IF;
 END $$;
 -- Account usage (percent of the 5-hour / 7-day limits) at run start and end, from the

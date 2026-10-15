@@ -239,6 +239,12 @@ main() {
     closed=$(close_slot_tabs "$slot")
     [ -n "$closed" ] && [ "$closed" != "0" ] && log "탭 ${closed}개 닫음"
 
+    # A deferred slot waits for a fresh machine comparison; run it now instead of up to POLL_S later.
+    if printf '%s' "$res" | grep -q '"outcome": "deferred"'; then
+      VQ_ACTOR=camp_run:machine "${VQ[@]}" machine run --limit 1 >/dev/null 2>&1 \
+        || log "deferred 슬롯 즉시 기계 대조 실패 - 데몬이 처리"
+    fi
+
     if printf '%s' "$res" | grep -q '"stop": true'; then
       log "연속 실패 - 러너 정지 (알림 발송됨)"
       exit 5

@@ -349,6 +349,25 @@ def _fake_log(tmp_path, name, payload):
     return p
 
 
+def test_runner_deferred_slot_is_not_a_failure(engines, as_role, tmp_path, monkeypatch):
+    """A session that handed the slot back pending (waiting for a fresh machine comparison)
+    is not a failure: no retry penalty and it never trips the consecutive-failure stop."""
+    monkeypatch.setattr(runner, "_notify", lambda msg: None)
+    as_role("verify")
+    for i in range(4):
+        slot = ops.claim(SLOT)
+        run_id = runner.start(slot, "sonnet")
+        ops.release(slot, failed=False, note="deferred test")
+        log = _fake_log(tmp_path, f"d{i}.json", {"type": "result", "is_error": False,
+                                                 "num_turns": 5, "result": "deferred",
+                                                 "usage": {"input_tokens": 10,
+                                                           "output_tokens": 3}})
+        res = runner.finish(run_id, log, 0)
+        assert res["outcome"] == "deferred"
+        assert res["stop"] is False
+    assert ops.slot_status(SLOT) == "pending"
+
+
 def test_runner_classifies_incomplete_and_stops_after_three(engines, as_role, tmp_path,
                                                              monkeypatch):
     monkeypatch.setattr(runner, "_notify", lambda msg: None)

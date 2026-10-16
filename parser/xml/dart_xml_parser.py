@@ -287,10 +287,19 @@ _BAD_LT = re.compile(
 )
 
 
+# ★R246 — `&cr;` between two stacked amounts of one cell is a line break, not nothing.
+# `<TD>20,929,364&cr;90,128,006</TD>` read as '20,929,36490,128,006' (one fake amount). A break
+# right after a thousands group (`,ddd`) and before another amount token becomes a newline
+# character, so the cell keeps its two printed numbers. Anything else (`2,003&cr;3차`, `193&cr;87`)
+# keeps the R224 deletion.
+_AMOUNT_STACK_BREAK = re.compile(rb"(?<=,\d{3})&cr;(?=\d{1,3}(?:,\d{3})*(?:&cr;|<|\s|$))")
+
+
 def sanitize_dart_xml(raw: bytes) -> bytes:
     """파싱 전 원문 이스케이프 복구. 순서 주의 — '&' 를 먼저 고쳐야 뒤에서 넣는
     &quot;/&lt; 가 다시 이스케이프되지 않는다."""
-    out = _NAMED_ENTITY.sub(_resolve_named_entity, raw)   # R224 — must run first
+    out = _AMOUNT_STACK_BREAK.sub(b"&#10;", raw)               # R246 — before R224 deletes &cr;
+    out = _NAMED_ENTITY.sub(_resolve_named_entity, out)    # R224 — must run first
     out = _BAD_AMP.sub(b"&amp;", out)
     out = _BAD_ATTR_QUOTE.sub(rb'="&quot;\1&quot;"', out)
     # 위에서 못 잡은 나머지 형태(양끝 2개·끝 2개·중간)를 구조로 마저 처리한다.

@@ -92,7 +92,8 @@ def _adecimal_from_unit(unit: int) -> int:
 # `consolidation_evidence.py`의 "해\s*당\s*사?\s*항?..." 패턴과 동일한 함정
 # ([[feedback-grep-euckr-locale-trap]]과는 별개, 글자당 공백 강조체 카테고리) — `\s*`로
 # 글자 사이 공백을 전부 허용해 해결.
-_CUM_RE = re.compile(r"누\s*적|누\s*계")
+# R247 — "6개월"/"9개월"/"12개월" 열머리글은 누적이다(table_extractor._SUBTYPE_CUM_RE 와 같은 정의).
+_CUM_RE = re.compile(r"누\s*적|누\s*계|(?<![0-9])(?:6|9|12)\s*개\s*월")
 _THREE_M_RE = re.compile(r"3\s*개\s*월|삼\s*개\s*월")
 
 

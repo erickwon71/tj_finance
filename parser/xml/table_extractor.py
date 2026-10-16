@@ -863,7 +863,8 @@ _PERIOD_KEY_RE = re.compile(
 # 누적 구분 안 된 컬럼을 당기로 잘못 선택(당기누적 25,781,758,600 대신 무관한 제22기
 # 열 82,662,901,775 채택). `fin2/extract/text.py::_interim_cumulative_cols()`의 동형
 # 정규식과 함께 고친다(같은 문서에 두 벌 존재 — R88 헤더그리드 경로 전용 사본).
-_SUBTYPE_CUM_RE = re.compile(r"누\s*적|누\s*계")
+# R247 — "6개월"/"9개월"/"12개월" 열머리글은 누적이다(이랜시스 20191107000097: [3개월|9개월] 두 칸, "누적" 글자 없음).
+_SUBTYPE_CUM_RE = re.compile(r"누\s*적|누\s*계|(?<![0-9])(?:6|9|12)\s*개\s*월")
 _SUBTYPE_3M_RE = re.compile(r"3\s*개\s*월|삼\s*개\s*월")
 
 

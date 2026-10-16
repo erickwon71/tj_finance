@@ -5735,11 +5735,11 @@ R212 소급 백필의 대상 목록(`docs/qa/eps_fractional_targets_2026-10-02.*
 
 > **상태** 유효 · **적용 계층** 2
 >
-> **규칙** `parser/xml/table_extractor.py::_PERIOD_KEY_RE` 의 서수 가지는 `기` 뒤에 `(당)`·`(전)`·`당`·`전`·`전전` 이 붙은 분기/반기 접미사(`1분기`·`분기`·`반기`)까지 한 키로 읽는다.
+> **규칙** `parser/xml/table_extractor.py::_PERIOD_KEY_RE` 의 서수 가지는 `기` 뒤에 `(당)`·`(전)`·`(당)기`(원문 오기 `제23기(당)기 반기`)·`당`·`전`·`전전` 이 붙은 분기/반기 접미사(`1분기`·`분기`·`반기`)까지 한 키로 읽는다.
 > 순수 연간열(`제77기(전기)`·`제76기(전전기)`·`제40기`)은 종전대로 접미사 없는 키라 R115(`drop_mismatched_granularity_columns`)가 계속 배제한다.
-> **코드** `parser/xml/table_extractor.py::_PERIOD_KEY_RE`, **테스트** `tests/test_r243_current_period_header_suffix_not_dropped.py` 12건.
+> **코드** `parser/xml/table_extractor.py::_PERIOD_KEY_RE`, **테스트** `tests/test_r243_current_period_header_suffix_not_dropped.py` 13건.
 
-**발견**: 이슈 `period_misassign` 658건(교보증권 2022H1·미래에셋벤처투자 2019Q1~2021Q3 8필링·서울바이오시스 2015Q1). 헤더 `제78기 당반기` 의 키가 `제78기` 로 잘려 R115 가 순수 연도서수로 보고 당기 열을 버렸고, 남은 `제77기 반기` 가 rank0 이 되어 **전기 값이 당기(col_index 0)로 적재**됐다.
+**발견**: 이슈 `period_misassign` 658건(교보증권 2022H1·미래에셋벤처투자 2019Q1~2021Q3 8필링·서울바이오시스 2015Q1). 헤더 `제78기 당반기`·`제23기(당)기 반기` 의 키가 `제78기` 로 잘려 R115 가 순수 연도서수로 보고 당기 열을 버렸고, 남은 `제77기 반기` 가 rank0 이 되어 **전기 값이 당기(col_index 0)로 적재**됐다.
 **측정(2026-10-16)**: 2015+ H1/Q1/Q3 본문 XML 75,356필링을 옛 정규식으로 전수 추출해 R115 가 rank0 열을 버리는 필링을 셌다 — 19필링(이슈 등록 10 + 미등록 9). 새 정규식에서는 0건.
 
 

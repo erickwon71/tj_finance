@@ -52,3 +52,17 @@ def test_first_quarter_keeps_current_quarter_column():
     cols = parse_header_columns(_table(["과목", "제14(당)기 분기", "제13(전)기 1분기"]))
     kept = drop_mismatched_granularity_columns(cols, "Q1")
     assert [(c.position, c.period_rank) for c in kept if not c.is_note] == [(0, 0), (1, 1)]
+
+
+def test_bare_current_column_next_to_suffixed_prior_is_kept():
+    # R243-c: current column printed "제 10 기" (3개월/누적 in a sub row), prior "제 9 기 1분기".
+    cols = parse_header_columns(_table(["과목", "제 10 기", "제 9 기 1분기", "제 9 기", "제 8 기"]))
+    kept = drop_mismatched_granularity_columns(cols, "Q1")
+    assert [(c.position, c.period_rank) for c in kept if not c.is_note] == [(0, 0), (1, 1)]
+
+
+def test_bare_prior_year_column_before_suffixed_current_is_still_dropped():
+    # first-fiscal-year layout: "제 1 기" (full year) printed before "제 2 기 반기" (current)
+    cols = parse_header_columns(_table(["과목", "제 1 기", "제 2 기 반기"]))
+    kept = drop_mismatched_granularity_columns(cols, "H1")
+    assert [(c.position, c.period_rank) for c in kept if not c.is_note] == [(1, 0)]

@@ -1147,6 +1147,7 @@ def parse_header_columns(
 # 통째로 제외한다. FY 보고서는 애초에 전부 순수 연도서수 열이라 이 필터가 아무것도
 # 지우지 않는다(조기 반환).
 _BARE_FY_ORDINAL_RE = re.compile(r"^제\s*\d+\s*(?:\([^)]{0,4}\))?\s*기$")
+_ORDINAL_RE = re.compile(r"제\s*(\d+)")
 
 
 def drop_mismatched_granularity_columns(
@@ -1162,11 +1163,30 @@ def drop_mismatched_granularity_columns(
         return columns
     keep_ranks: dict[int, int] = {}
     result: list[HeaderColumn] = []
+    # R243-c — 당기 열 헤더가 접미사 없이 "제 10 기" 로만 인쇄되고(3개월/누적은 하위 행) 바로 옆
+    # 전기 열이 "제 9 기 1분기" 처럼 접미사를 달고 있으면, 그 접미사 없는 열은 연간 참고열이 아니라
+    # 이 보고서의 당기 열이다: 서수가 접미사 열의 서수 + 1 이고 그 열보다 앞 rank 일 때만 남긴다.
+    suffixed = {}   # ordinal -> smallest period_rank among suffixed (quarter/half) columns
+    for hc in columns:
+        if hc.is_note or _BARE_FY_ORDINAL_RE.match(hc.period_key.strip()):
+            continue
+        om = _ORDINAL_RE.search(hc.period_key)
+        if om:
+            n = int(om.group(1))
+            suffixed[n] = min(suffixed.get(n, hc.period_rank), hc.period_rank)
+
+    def _is_current_without_suffix(hc) -> bool:
+        om = _ORDINAL_RE.search(hc.period_key)
+        if not om:
+            return False
+        n = int(om.group(1))
+        return n not in suffixed and (n - 1) in suffixed and hc.period_rank < suffixed[n - 1]
+
     for hc in columns:
         if hc.is_note:
             result.append(hc)
             continue
-        if _BARE_FY_ORDINAL_RE.match(hc.period_key.strip()):
+        if _BARE_FY_ORDINAL_RE.match(hc.period_key.strip()) and not _is_current_without_suffix(hc):
             continue   # 분기/반기 보고서 속 연간 참고열 — 배제(R115)
         if hc.period_rank not in keep_ranks:
             keep_ranks[hc.period_rank] = len(keep_ranks)

@@ -378,11 +378,19 @@ def extract_rows(
         _table_has_comma_note_column([_get_cells(tr) for tr in trs])
         or _table_has_note_header(trs))
 
+    max_cells_in_table = max((len(_get_cells(tr)) for tr in trs), default=0)
+
     for tr in trs:
         cells = _get_cells(tr)
         if not cells:
             continue
         cells_el = _get_cell_elements(tr)
+        # R244: a label cell spanning the label + note columns hides the note slot.
+        if table_has_note_column or keep_all_amount_cells:
+            pad = _label_note_colspan_pad(cells_el, len(cells), max_cells_in_table)
+            if pad:
+                cells = [cells[0]] + [""] * pad + cells[1:]
+                cells_el = [cells_el[0]] + [cells_el[0]] * pad + cells_el[1:]
 
         first_text = cells[0].strip() if cells else ""
 
@@ -529,6 +537,21 @@ def _get_cells(tr: etree._Element) -> list[str]:
             text = ''.join(child.itertext()).strip()
             cells.append(text)
     return cells
+
+
+def _label_note_colspan_pad(cells_el: list, n_cells: int, max_cells_in_table: int) -> int:
+    """R244 — number of empty note-column cells to insert after a label cell whose COLSPAN covers the
+    label and the note column (the row then has one physical cell fewer than the other rows).
+
+    Only when the padded row still fits the widest row of the table, so a row that prints its own
+    note cell after a wide label is left alone."""
+    if not cells_el or n_cells < 2:
+        return 0
+    cs = _grid_cell_span(cells_el[0], "COLSPAN")
+    if cs < 2:
+        return 0
+    pad = cs - 1
+    return pad if n_cells + pad <= max_cells_in_table else 0
 
 
 def _get_cell_elements(tr: etree._Element) -> list[etree._Element]:

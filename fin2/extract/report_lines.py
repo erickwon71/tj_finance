@@ -212,6 +212,7 @@ from parser.xml.section_detector import (
     assign_tables_to_dart_sections, assign_note_tables_with_titles,
     SEC_CONSOL_NOTE, SEC_SEP_NOTE, table_direct_rows,
 )
+from fin2.extract.other_entity_tables import drop_other_entity_tables
 from fin2.extract.text import (
     _SECTION_META, _detect_fin_type, _detect_body_statement_tables,
     _interim_cumulative_cols, _adecimal_from_unit, _synth_acontext,
@@ -2214,6 +2215,12 @@ def extract_report_lines(
             # 표는 있지만 그 값이 이 필링 자신의 당기/전기 것이 아니라 옛 시절 데이터라
             # 재배정할 근거가 없다(사용자 확인, 짐작 금지).
             groups = {code: v for code, v in groups.items() if not code.endswith("_C")}
+        # R245 — a later table that follows a marker naming another legal entity (merger report:
+        # absorbed company / SPAC) is that entity's statement, not the filer's.
+        groups, other_entity = drop_other_entity_tables(root, groups)
+        if other_entity:
+            logger.debug(f"[report_lines] R245 타 법인 표 {len(other_entity)}개 제외 ({rcept_no}): "
+                         f"{other_entity}")
     # 문서 전체 기본 단위는 **로컬 선언이 없는 표가 실제로 있을 때만** 찾는다(비용 절감 —
     # 대다수 문서는 표마다 선언이 있어 이 스캔이 불필요하다). `_detect_body_statement_tables`
     # 가 이미 붙여준 표 단위 unit 이 하나라도 None 이면 후보. squished_bs 는 로컬 선언이

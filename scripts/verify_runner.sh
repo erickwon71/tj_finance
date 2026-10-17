@@ -90,44 +90,49 @@ prune_logs() { find "$LOG_ROOT" -type f -mtime +30 -delete 2>/dev/null; }
 # Rule: list every DART tab, and close those whose rcpNo is a campaign filing of a slot that is
 # not in progress right now (`vq.py stale-tabs`). DART tabs for non-campaign filings - the
 # user's own browsing - are never touched.
-dart_tab_rcepts() {
-  osascript <<'OSA' 2>/dev/null
-set out to ""
-if application "Google Chrome" is not running then return out
-tell application "Google Chrome"
-  repeat with w in windows
-    repeat with t in tabs of w
-      set u to URL of t
-      if u contains "dart.fss.or.kr" and u contains "rcpNo=" then
-        set AppleScript's text item delimiters to "rcpNo="
-        set r to text 1 thru 14 of (text item 2 of u)
-        set AppleScript's text item delimiters to ""
-        set out to out & r & " "
-      end if
-    end repeat
-  end repeat
-end tell
-return out
-OSA
-}
+# The Claude-in-Chrome extension was also installed in Brave, and runner sessions opened 30 DART
+# + 10 blank tabs there (2026-10-17) that a Chrome-only sweep never saw. The extension is removed
+# from Brave now (user decision), so only Chrome is swept; add a browser here if one returns.
+# Every sweep below visits each browser in BROWSERS. Each AppleScript takes the browser name
+# as its first argument; `using terms from` is needed because `tab i of w` does not compile
+# against a variable application name (`tab` parses as the tab character).
+BROWSERS=("Google Chrome")
 
-close_slot_tabs() {  # $1 = slot just finished (kept for the log line; the sweep is global)
-  local open stale
-  open=$(dart_tab_rcepts) || open=""
-  [ -n "${open// /}" ] || return 0
-  # shellcheck disable=SC2086
-  stale=$("${VQ[@]}" stale-tabs $open 2>/dev/null) || stale=""
-  [ -n "${stale// /}" ] || return 0
-  # shellcheck disable=SC2086
-  osascript - $stale <<'OSA' 2>/dev/null || log "탭 정리 실패(Chrome 자동화 권한 확인)"
+read -r -d '' AS_LIST_DART <<'OSA'
 on run argv
+  set appName to item 1 of argv
+  set out to ""
+  if application appName is not running then return out
+  using terms from application "Google Chrome"
+  tell application appName
+    repeat with w in windows
+      repeat with i from 1 to (count of tabs of w)
+        set u to URL of tab i of w
+        if u contains "dart.fss.or.kr" and u contains "rcpNo=" then
+          set AppleScript's text item delimiters to "rcpNo="
+          set r to text 1 thru 14 of (text item 2 of u)
+          set AppleScript's text item delimiters to ""
+          set out to out & r & " "
+        end if
+      end repeat
+    end repeat
+  end tell
+  end using terms from
+  return out
+end run
+OSA
+
+read -r -d '' AS_CLOSE_RCEPTS <<'OSA'
+on run argv
+  set appName to item 1 of argv
   set n to 0
-  if application "Google Chrome" is not running then return n
-  tell application "Google Chrome"
+  if application appName is not running then return n
+  using terms from application "Google Chrome"
+  tell application appName
     repeat with w in windows
       repeat with i from (count of tabs of w) to 1 by -1
         set u to URL of tab i of w
-        repeat with r in argv
+        repeat with r in (items 2 thru -1 of argv)
           if u contains ("rcpNo=" & (contents of r as text)) then
             close tab i of w
             set n to n + 1
@@ -137,30 +142,64 @@ on run argv
       end repeat
     end repeat
   end tell
+  end using terms from
   return n
 end run
 OSA
+
+read -r -d '' AS_CLOSE_BLANK <<'OSA'
+on run argv
+  set appName to item 1 of argv
+  set n to 0
+  if application appName is not running then return n
+  using terms from application "Google Chrome"
+  tell application appName
+    repeat with w in windows
+      repeat with i from (count of tabs of w) to 1 by -1
+        if (count of tabs of w) > 1 and (URL of tab i of w) is "chrome://newtab/" then
+          close tab i of w
+          set n to n + 1
+        end if
+      end repeat
+    end repeat
+  end tell
+  end using terms from
+  return n
+end run
+OSA
+
+dart_tab_rcepts() {
+  local app
+  for app in "${BROWSERS[@]}"; do
+    osascript -e "$AS_LIST_DART" "$app" 2>/dev/null
+  done
 }
 
-# Every `claude -p` session that drives Chrome leaves a blank "New tab" behind (14 piled up by
-# 2026-10-17). The runner is the only Chrome user while no run is in progress, so after each
-# run blank tabs are closed - never the last tab of a window, and never a tab with content.
+close_slot_tabs() {  # $1 = slot just finished (kept for the log line; the sweep is global)
+  local open stale app n total=0
+  open=$(dart_tab_rcepts) || open=""
+  [ -n "${open// /}" ] || return 0
+  # shellcheck disable=SC2086
+  stale=$("${VQ[@]}" stale-tabs $open 2>/dev/null) || stale=""
+  [ -n "${stale// /}" ] || return 0
+  for app in "${BROWSERS[@]}"; do
+    # shellcheck disable=SC2086
+    n=$(osascript -e "$AS_CLOSE_RCEPTS" "$app" $stale 2>/dev/null) || { log "탭 정리 실패($app 자동화 권한 확인)"; continue; }
+    total=$((total + ${n:-0}))
+  done
+  echo "$total"
+}
+
+# Every `claude -p` session that drives a browser leaves a blank "New tab" behind (14 in Chrome
+# and 10 in Brave by 2026-10-17). The runner is the only user while no run is in progress, so
+# after each run blank tabs are closed - never the last tab of a window, never a tab with content.
 close_blank_tabs() {
-  osascript <<'OSA' 2>/dev/null
-if application "Google Chrome" is not running then return 0
-set n to 0
-tell application "Google Chrome"
-  repeat with w in windows
-    repeat with i from (count of tabs of w) to 1 by -1
-      if (count of tabs of w) > 1 and (URL of tab i of w) is "chrome://newtab/" then
-        close tab i of w
-        set n to n + 1
-      end if
-    end repeat
-  end repeat
-end tell
-return n
-OSA
+  local app n total=0
+  for app in "${BROWSERS[@]}"; do
+    n=$(osascript -e "$AS_CLOSE_BLANK" "$app" 2>/dev/null) || continue
+    total=$((total + ${n:-0}))
+  done
+  echo "$total"
 }
 
 # macOS has no coreutils `timeout`. perl's alarm survives exec, so the claude process

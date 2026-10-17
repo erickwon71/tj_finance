@@ -723,6 +723,11 @@ def merged_table_local_unit(tbl) -> int | None:
 
     헤더행("과목"/"계정명" 등)에 도달하면 멈춘다 — 그 뒤는 데이터이므로 스캔하지 않는다.
     """
+    return _merged_local_unit_and_text(tbl)[0]
+
+
+def _merged_local_unit_and_text(tbl) -> tuple[int | None, str | None]:
+    """`merged_table_local_unit` 본체 — 단위 배수와 그 근거 행 텍스트를 함께 돌려준다."""
     trs = table_direct_rows(tbl)
     for tr in trs[1:]:                       # trs[0] = 제목행(owned_merged_title 이 확정) — 스킵
         txt = " ".join("".join(tr.itertext()).split())
@@ -731,8 +736,8 @@ def merged_table_local_unit(tbl) -> int | None:
             break                            # 헤더 도달 — 그 뒤는 데이터, 더 스캔하지 않는다
         unit = detect_unit_declaration(txt)
         if unit is not None:
-            return unit
-    return None
+            return unit, txt
+    return None, None
 
 
 # 상속 탐색에서 **건너뛰어도 되는 것**은 두 가지뿐이다(사용자 결정 D1, 2026-07-31).
@@ -836,6 +841,11 @@ def _first_declared_unit_in_section(sec2) -> tuple[int | None, str | None]:
             continue
         unit = declared_unit(tbl)
         decl_text = declaration_text(tbl)
+        if unit is None and owned_merged_title(tbl, include_sce=True) is not None:
+            # R253 - a handwritten statement table (title + data in one TABLE) declares its unit inside
+            # its own meta rows; that declaration is the section's first one for sibling tables
+            # that declare none (특수건설 20151116001903: BS/IS declare 원, SCE/CF none).
+            unit, decl_text = _merged_local_unit_and_text(tbl)
         if unit is None and pending_text is not None:
             unit = detect_unit_declaration(pending_text)
             decl_text = pending_text

@@ -1135,6 +1135,32 @@ def _columns_from_grid(
     return columns
 
 
+def _tbody_subheader_trs(table: etree._Element, header_trs: list) -> list:
+    """R251 - a THEAD that names only the periods (``제34(당)기 3분기`` COLSPAN=2) can leave the
+    ``3개월 | 누적`` sub-header as the first TBODY row (label cell empty). Such a row is part of the header:
+    without it both columns of a period read as the same unlabelled column and every row printing both
+    values is dropped.
+
+    Only a leading TBODY row qualifies: empty label cell, no amount, at least one 3개월/누적 token, and
+    exactly as many cells as the THEAD grid has columns."""
+    tbody = table.find("TBODY")
+    if tbody is None or not header_trs:
+        return []
+    first = tbody.find("TR")
+    if first is None:
+        return []
+    cells = _get_cells(first)
+    if len(cells) < 3 or cells[0].strip():
+        return []
+    if _row_has_amount(cells[1:]) or not any(
+            _SUBTYPE_CUM_RE.search(t) or _SUBTYPE_3M_RE.search(t) for t in cells[1:] if t.strip()):
+        return []
+    grid = _resolve_header_grid(header_trs)
+    if grid is None or len(grid[0]) != len(cells):
+        return []
+    return [first]
+
+
 def parse_header_columns(
     table: etree._Element, allow_duplicate_subtype: bool = False,
 ) -> Optional[list[HeaderColumn]]:
@@ -1148,6 +1174,7 @@ def parse_header_columns(
     thead = table.find("THEAD")
     if thead is not None:
         header_trs = list(thead.findall("TR"))
+        header_trs += _tbody_subheader_trs(table, header_trs)
     else:
         header_trs = _headerless_header_trs(table)
         if not header_trs:

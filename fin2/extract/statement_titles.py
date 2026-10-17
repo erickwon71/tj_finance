@@ -377,7 +377,10 @@ def titleless_bs_start(tbl) -> bool:
     trs = table_direct_rows(tbl)
     if not trs:
         return False
-    if not _HEADER_LABEL_RE.match(re.sub(r"\s+", "", _row_first_cell_text(trs[0]))):
+    head = re.sub(r"\s+", "", _row_first_cell_text(trs[0]))
+    # R252 - a header whose label cell is blank (삼성E&A 20231114001229 consolidated BS, title only
+    # `연결재무제표`) starts the balance sheet just like a `과목` header does.
+    if head and not _HEADER_LABEL_RE.match(head):
         return False
     for tr in trs[1:]:
         compact = re.sub(r"\s+", "", _row_first_cell_text(tr))

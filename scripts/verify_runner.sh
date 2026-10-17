@@ -142,6 +142,27 @@ end run
 OSA
 }
 
+# Every `claude -p` session that drives Chrome leaves a blank "New tab" behind (14 piled up by
+# 2026-10-17). The runner is the only Chrome user while no run is in progress, so after each
+# run blank tabs are closed - never the last tab of a window, and never a tab with content.
+close_blank_tabs() {
+  osascript <<'OSA' 2>/dev/null
+if application "Google Chrome" is not running then return 0
+set n to 0
+tell application "Google Chrome"
+  repeat with w in windows
+    repeat with i from (count of tabs of w) to 1 by -1
+      if (count of tabs of w) > 1 and (URL of tab i of w) is "chrome://newtab/" then
+        close tab i of w
+        set n to n + 1
+      end if
+    end repeat
+  end repeat
+end tell
+return n
+OSA
+}
+
 # macOS has no coreutils `timeout`. perl's alarm survives exec, so the claude process
 # itself gets SIGALRM at the deadline - no watchdog subshell, no orphaned sleep.
 # ${EXTRA_ARGS[@]+...}: an empty array is "unbound" under `set -u` in bash 3.2.
@@ -251,6 +272,8 @@ main() {
     log "run $run_id 종료(rc=$rc): $res"
     closed=$(close_slot_tabs "$slot")
     [ -n "$closed" ] && [ "$closed" != "0" ] && log "탭 ${closed}개 닫음"
+    blank=$(close_blank_tabs)
+    [ -n "$blank" ] && [ "$blank" != "0" ] && log "빈 새 탭 ${blank}개 닫음"
 
     # A deferred slot waits for a fresh machine comparison; run it now instead of up to POLL_S later.
     if printf '%s' "$res" | grep -q '"outcome": "deferred"'; then

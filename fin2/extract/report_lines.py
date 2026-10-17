@@ -1448,7 +1448,7 @@ def _emit_section_lines(
                     lead = 0
                     while (lead < len(amts) and amts[lead] is None
                            and not (lead < len(flags) and flags[lead])
-                           and (lead >= len(raws) or raws[lead].strip() in _LABEL_REGION_PLACEHOLDERS)
+                           and (lead >= len(raws) or raws[lead].strip() in _LEAD_TRIM_PLACEHOLDERS)
                            and table_has_note_column):
                         lead += 1
                     pairs = list(enumerate(amts[lead:]))
@@ -1503,6 +1503,11 @@ def _cell_span(td, attr: str) -> int:
 # 전부 이 표기이면 "금액 후보"로도 안 잡혀 라벨 영역이 과대해진다(T1.1 에서 반증된 첫 후보의
 # 실패 원인) — 그래서 파싱 성공 **또는** 이 집합에 속하면 금액열로 카운트한다.
 _LABEL_REGION_PLACEHOLDERS = frozenset(["", "-", "‐", "―", "–", "—", "ㅡ"])
+
+# R248 — only a truly blank leading cell is a phantom (the note-reference slot mixed into the amount
+# cells). A printed dash in an amount column is a real cell ("nothing in this period"): trimming it
+# shifts the next period's value into the current column (안트로젠 20150513001760 CF).
+_LEAD_TRIM_PLACEHOLDERS = frozenset([""])
 
 
 def _grid_header_split(table):
@@ -1997,6 +2002,14 @@ def _emit_note_lines(
                     ))
 
 
+_NOTE_REF_COLUMN_LABELS = frozenset(["주석", "주석번호", "주기"])
+
+
+def _is_note_ref_column_label(label: str | None) -> bool:
+    """R249 — header text of the note-reference column (spaces inside are layout padding)."""
+    return bool(label) and label.replace(" ", "").replace("\u3000", "") in _NOTE_REF_COLUMN_LABELS
+
+
 def _emit_sce_lines(
     section_code: str,
     tables_with_unit: list[tuple],
@@ -2115,6 +2128,9 @@ def _emit_sce_lines(
                           if i < len(row.amounts) and row.amounts[i] is None}
             for col_idx, amount in enumerate(row.amounts):
                 if amount is None and col_idx not in unreadable:
+                    continue
+                # R249 — a column headed 주석 holds note numbers (`8`), not amounts.
+                if _is_note_ref_column_label(col_labels.get(col_idx)):
                     continue
                 emit(ReportLineRow(
                     corp_code=corp_code,

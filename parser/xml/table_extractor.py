@@ -1090,6 +1090,17 @@ def _columns_from_grid(
         columns.append(HeaderColumn(position=position, period_key=period_key,
                                     period_rank=period_rank_of[period_key], subtype=subtype))
 
+    # R250 — printed years ascending (oldest column first, e.g. 2015년|2016년|2017년):
+    # rank 0 must still be the newest period, so reverse the first-appearance ranks.
+    # Only plain 4-digit year keys qualify; ordinal (제N기) keys are left untouched.
+    if len(period_rank_of) >= 2 and all(re.fullmatch(r"\d{4}년?", k) for k in period_rank_of):
+        years = [int(k[:4]) for k in period_rank_of]
+        if years == sorted(years) and len(set(years)) == len(years):
+            top = len(period_rank_of) - 1
+            for hc in columns:
+                if not hc.is_note:
+                    hc.period_rank = top - hc.period_rank
+
     # ★애매한(period_rank, subtype) 중복 — 기본은 안전하게 폴백. 예: K-GAAP 구서식
     # IS(2003년대)는 "3개월"/"누적" 아래 다시 COLSPAN=2 하위열(둘 다 텍스트가 "금액"
     # 으로 동일)이 있어 헤더 텍스트만으론 어느 쪽이 진짜 금액칸인지 구분이 안 된다

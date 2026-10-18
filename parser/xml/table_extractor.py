@@ -2390,7 +2390,10 @@ def _header_rule_name(text: str, allow_date_label: bool = False) -> Optional[str
     if text.startswith("(기준일") or text.startswith("기준일"):
         return "기준일"
     # NOTE 테이블 period-end 열 헤더: "당기말", "전기말", "당기초", "당분기말", "당반기말" 등
-    if re.fullmatch(r'(당기|전기|당기초|전기초|당분기|전분기|당반기|전반기)(말|초)?', text):
+    # R255 - in an SCE (allow_date_label) the opening/closing balance rows are labelled `당기초`/`전기초`/
+    #   `전기말`: they are data rows, not column headers (제이엘케이 20220318000882, 바이오솔루션
+    #   20170330000990 lost the whole row).
+    if not allow_date_label and re.fullmatch(r'(당기|전기|당기초|전기초|당분기|전분기|당반기|전반기)(말|초)?', text):
         return "기간라벨"
     # NOTE 공정가치 계층 열 헤더: "수준 1", "수준 2", "수준 3"
     if re.fullmatch(r'수준\s*[123]', text):

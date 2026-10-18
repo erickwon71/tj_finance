@@ -25,7 +25,7 @@ _STMT_TITLE = [
     (re.compile(r"현금흐름표"), "CF"),
 ]
 # 본문 표제임을 확정하는 기간 마커(요약표·일반표 배제용).
-_PERIOD_MARK = re.compile(r"제\s*\d+\s*기|반기말|분기말|기말|현재|\d{4}\s*[.\-]\s*\d{1,2}\s*[.\-]\s*\d{1,2}")
+_PERIOD_MARK = re.compile(r"제\s*\d+\s*(?:\([^)]*\))?\s*기|반기말|분기말|기말|현재|\d{4}\s*[.\-]\s*\d{1,2}\s*[.\-]\s*\d{1,2}")
 # 본문 face 표가 아닌 표제(주석·요약·분할·자본변동·세부명세) 배제.
 _TITLE_EXCLUDE = re.compile(r"분할|합병|주석|요약|자본변동|변동표|명세|부속")
 _CONSOL_TITLE = re.compile(r"연결\s*(재무상태표|대차대조표|포괄손익계산서|손익계산서|현금흐름표)")
@@ -87,7 +87,7 @@ _UNIT_ONLY_RE = re.compile(r"^\(?\s*단위\s*[:：]")
 # DART 가 흔히 쓰는 자간 벌림('분 기 연 결 재 무 상 태 표')이 매칭되지 않는다.
 # 자본변동표도 포함한다 — 이 술어의 쓰임은 "이게 표제인가"이지 "추출 대상인가"가 아니다.
 _STMT_NAME_ANY = re.compile(
-    r"재무상태표|대차대조표|포괄손익계산서|손익계산서|현금흐름표|자본변동표")
+    r"재무상태표|대차대조표|포괄손익계산서|포괄계산서|손익계산서|현금흐름표|자본변동표")
 
 
 def has_statement_name(txt: str) -> bool:
@@ -266,7 +266,13 @@ def strip_leading_note_sentences(text: str) -> str:
         out = stripped
 
 
-def title_text_for_classify(tbl, max_skip: int = 3) -> str:
+# R254 - a bank's `(1) 은행계정` sub-heading sits between the statement title and its tables (기업은행
+# 20200515002364 IS). It names no statement, so it is skipped like a unit/period line; `(2) 신탁계정`
+# stays a non-skipped label, which keeps the trust-account tables out of the body.
+_BANK_ACCOUNT_SUBTITLE_RE = re.compile(r"^[(（]?\s*[1１]?\s*[)）]?\s*은행\s*계정\s*[)）]?$")
+
+
+def title_text_for_classify(tbl, max_skip: int = 6) -> str:
     """**분류 전용** 표제 — 직전 형제가 메타데이터(단위/기간)뿐이면 그 형제(들)를 건너뛰고 그
     앞의 표제를 본다(제목·기간·단위가 별도 <P> 로 분리된 요약재무정보 서식). 건너뛰는 대상은
     **재무제표명이 없는 단위/기간 줄뿐**이고, 데이터표(TABLE) 나 라벨 있는 텍스트를 만나면 멈춘다
@@ -300,6 +306,8 @@ def title_text_for_classify(tbl, max_skip: int = 3) -> str:
         #   각주만 있던 형제는 여기서 빈 문자열이 되어 **메타줄과 같이** 취급되므로
         #   계속 뒤로 스캔한다 — 데이터표 경계 검사가 남의 제목을 막아 준다.
         txt = strip_leading_note_sentences(txt)
+        if txt and _BANK_ACCOUNT_SUBTITLE_RE.match(txt):
+            txt = ""
         if txt and not _is_metadata_only(txt):
             return txt[:200]        # 표제(또는 라벨 있는 비메타 형제) — 여기서 멈춘다
         prev = prev.getprevious()   # 메타줄(단위/기간/빈칸)·각주뿐인 형제 건너뛴다
@@ -317,6 +325,9 @@ _MERGED_TITLE_STMT = {
     "포괄손익계산서": "IS", "손익계산서": "IS",
     "현금흐름표": "CF", "자본변동표": "SCE",
 }
+
+
+_TITLE_PREFIX_RE = re.compile(r"^(?:연결|별도|개별|분기|반기|중간)+")
 
 
 def owned_merged_title(tbl, include_sce: bool = False) -> str | None:
@@ -340,6 +351,9 @@ def owned_merged_title(tbl, include_sce: bool = False) -> str | None:
         return None
     first_txt = " ".join("".join(trs[0].itertext()).split())
     compact = re.sub(r"\s+", "", first_txt).strip("()（）")
+    # R254 - a basis/period prefix before the statement name (`연결 재무상태표`, KD 20200515002825) is
+    # still a bare statement title; the basis itself comes from the DART section.
+    compact = _TITLE_PREFIX_RE.sub("", compact)
     stmt = _MERGED_TITLE_STMT.get(compact)
     if stmt == "SCE" and not include_sce:
         return None
@@ -409,6 +423,7 @@ def titleless_bs_start(tbl) -> bool:
 # 실측 본문 섹션 구성(3S·DB손해보험 공통): [단위표 4행 + 데이터표] × 4 = BS·IS·SCE·CF.
 
 _SCE_RE = re.compile(r"자본변동표")
+_SCE_BARE_TITLE_RE = re.compile(r"^(?:\d+[.)]|[가-하][.)])?(?:연결|별도|개별|분기|반기)*자본변동$")
 # R196 — 한국자산신탁 20161114000383 prints its consolidated cash-flow title as '연 결 연 금 흐 름 표'.
 _CF_TITLE_TYPO_RE = re.compile(r"(?<!퇴직)연금흐름표")
 # 이익잉여금처분계산서/결손금처리계산서 표지(공백 제거 후). **4대 재무제표가 아니다.**
@@ -429,6 +444,7 @@ _BODY_STMT_ORDER: list[tuple[str, str]] = [
     ("재무상태표", "BS"),
     ("대차대조표", "BS"),
     ("포괄손익계산서", "IS"),
+    ("포괄계산서", "IS"),       # R254 - 한화생명 prints `나. 포괄계산서`
     ("손익계산서", "IS"),
     ("현금흐름표", "CF"),
 ]
@@ -482,6 +498,9 @@ def classify_statement_in_body_section(title: str, include_sce: bool = False) ->
     # ('…연결자본변동표는 …소급재작성되지 아니하였습니다 라. 연결현금흐름표') was read as SCE.
     sce_pos = -1
     m_sce = None
+    if _SCE_BARE_TITLE_RE.match(t):
+        # R254 - a section title printed as bare `자본변동` (아바텍 20231114002605) is the SCE title.
+        return "SCE" if include_sce else None
     for m_sce in _SCE_RE.finditer(t):
         pass
     if m_sce is not None:

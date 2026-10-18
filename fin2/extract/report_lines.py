@@ -1178,6 +1178,18 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
     return emitted_labels
 
 
+def _is_fx_only_table(table, unit_of) -> bool:
+    """True when the table's unit is undeclared in won and its declaration is a foreign currency only."""
+    if unit_of.get(id(table)) is not None:
+        return False
+    decl = declaration_text(table) or inherited_declaration_text(table)
+    return ColumnUnits.from_declaration(decl).kind == FX_ONLY
+
+
+def _skip_as_2tier_duplicate(table, unit_of, two_tier_fx_kinds) -> bool:
+    return _is_fx_only_table(table, unit_of) in two_tier_fx_kinds
+
+
 def _emit_section_lines(
     section_code: str,
     tables_with_unit: list[tuple],
@@ -1219,11 +1231,15 @@ def _emit_section_lines(
     interim_flow = statement in ("IS", "CF") and report_fiscal_period in ("H1", "Q1", "Q3")
     cum_maps = {id(t): (_interim_cumulative_cols(t) if interim_flow else None) for t in tables}
     has_2tier = interim_flow and any(v is not None for v in cum_maps.values())
+    # R257 - the non-2-tier table is only a duplicate data source of the 2-tier one when both are in
+    # the same currency class; a foreign-currency (USD) face statement printed beside the won one
+    # (두산밥캣 20180515001448) is a different statement and must not be skipped.
+    two_tier_fx_kinds = {_is_fx_only_table(t, unit_of) for t in tables if cum_maps[id(t)] is not None}
     data_tables = sorted(tables, key=lambda t: len(t.findall(".//TR")), reverse=True)
 
     for table in data_tables:
         cum_map = cum_maps[id(table)]
-        if has_2tier and cum_map is None:
+        if has_2tier and cum_map is None and _skip_as_2tier_duplicate(table, unit_of, two_tier_fx_kinds):
             continue  # 2단(3개월/누적) 표 존재 시 연간비교(비2단) 표는 스킵(중복 데이터원 배제)
         # R86(2026-09-09) — else 분기(선두 None 절삭)의 유일한 근거표 신호. extract_rows()가
         # 내부적으로 계산하는 것과 동일한 판정을 여기서도 한 번 더 구해둔다(RowData 는 이
@@ -1510,7 +1526,7 @@ _LABEL_REGION_PLACEHOLDERS = frozenset(["", "-", "‐", "―", "–", "—", "�
 _LEAD_TRIM_PLACEHOLDERS = frozenset([""])
 
 
-def _grid_header_split(table):
+def _grid_header_split(table, *, use_header_span: bool = False):
     """`expand_table_grid`로 표를 펼치고 헤더 구간(n_header)·라벨 영역 폭(offset=LV′)·
     헤더 그리드 폭(width)을 계산한다 — **한 곳에서만** 한다.
 
@@ -1579,10 +1595,14 @@ def _grid_header_split(table):
     # 라벨 영역 폭(L=offset) — LV′: 본문(물리 셀만, 각 행의 첫 물리 셀=그 행의 라벨은 제외)에서
     # 한 번이라도 금액 또는 placeholder 였던 grid_col 중 가장 왼쪽 것.
     amount_cols: set[int] = set()
+    real_amount_cols: set[int] = set()
     for row in body_rows:
         physical = [c for c in row if not c.inherited]
         for c in physical[1:]:                        # physical[0] = 이 행 자신의 라벨 셀
-            if parse_amount(c.text, 1) is not None or c.text.strip() in _LABEL_REGION_PLACEHOLDERS:
+            if parse_amount(c.text, 1) is not None:
+                amount_cols.add(c.grid_col)
+                real_amount_cols.add(c.grid_col)
+            elif c.text.strip() in _LABEL_REGION_PLACEHOLDERS:
                 amount_cols.add(c.grid_col)
 
     offset = 0
@@ -1590,6 +1610,18 @@ def _grid_header_split(table):
         offset += 1
     # 본문에 금액 후보가 전혀 없으면(amount_cols 공집합) offset==width 로 끝나 호출자가
     # 빈 결과를 낸다 — 구 버전의 "n_amounts==0 → {}" 조기 반환과 동치.
+
+    # R256 (SCE only) - an anchor row that prints a blank cell right after its label (두산밥캣
+    # 20170512000497: `2016.12.31 (기말자본)` + empty cell) makes that blank look like an empty value
+    # column, so LV' stops one column short and every ROWSPAN-group row is labelled with the group
+    # caption. When the header's first cell spans exactly the columns left of the first REAL amount,
+    # that span is the label region.
+    if use_header_span and header_rows and real_amount_cols:
+        first = next((c for c in header_rows[0] if not c.inherited), None)
+        if (first is not None and first.grid_col == 0 and first.colspan > offset
+                and first.colspan <= min(real_amount_cols)
+                and parse_amount(first.text, 1) is None):
+            offset = first.colspan
 
     return grid_rows, n_header, offset, width
 
@@ -2102,7 +2134,7 @@ def _emit_sce_lines(
         #   사전(`_label_dict_from_header`)과 본문 행 산출(`_grid_body_rows`)이 반드시 같은
         #   offset(LV′)을 쓰도록 한다(T1.3 전제 — T2.3/T2.4와 동일 패턴, `_build_col_labels`
         #   를 그대로 호출해도 결과는 같지만 두 번 그리드를 만들지 않도록 여기서 공유한다).
-        grid_rows, n_header, offset, width = _grid_header_split(table)
+        grid_rows, n_header, offset, width = _grid_header_split(table, use_header_span=True)
         if n_header is None:
             # 헤더 구간을 못 찾음(실전에서 드묾) — col_label 없이도 값은 잃지 않는다(R6).
             col_labels: dict[int, str] = {}

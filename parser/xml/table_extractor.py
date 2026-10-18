@@ -323,7 +323,7 @@ def _first_of_stacked_parent_total(cell_text: str) -> str:
     left untouched (R1 guard: several amounts in one cell stay unreadable).
     """
     # parenthesized negatives glued to the previous token (`190,809(316)`, `(5,937,480)(515,580)`)
-    spaced = re.sub(r"(?<=[\d)])(?=\()", " ", cell_text)
+    spaced = re.sub(r"(?<=[\d)])(?=\()|(?<=\))(?=\d)", " ", cell_text)
     toks = spaced.split()
     if len(toks) < 2:
         return cell_text

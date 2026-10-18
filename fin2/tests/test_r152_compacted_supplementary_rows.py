@@ -66,7 +66,8 @@ def test_untouched_when_there_is_nothing_to_split():
     없어 복원하면 날조)."""
     assert first_of("1,234") == "1,234"
     assert first_of("576,044,2464,652,625667,787") == "576,044,2464,652,625667,787"
-    assert first_of("(13,701)(2,886)") == "(13,701)(2,886)"
+    # R258 - a parenthesized negative head now yields its first group (label order = value order).
+    assert first_of("(13,701)(2,886)") == "(13,701)"
     assert first_of("") == ""
 
 

@@ -222,6 +222,8 @@ _AMOUNT_LIKE_RE = re.compile(
 #   붙임표/전각 대시는 한국 재무제표에서 0(해당없음)의 관용 표기다. 버릴 값이므로
 #   자리만 건너뛴다. 라벨 게이트(대손준비금·비상위험준비금)가 이미 좁히고 있어
 #   일반 금액칸에는 닿지 않는다.
+_COMPACTED_NEG_HEAD_RE = re.compile(
+    r"^(\(\s*(?:\d{1,3}(?:,\d{3})+|\d{4,})\s*\))\s*[(\d\-−–—]")
 _COMPACTED_PAREN_HEAD_RE = re.compile(
     r"^([-−△▲]?\s*(?:\d{1,3}(?:,\d{3})+|\d{4,}))\s*[-−–—]?\s*\(")
 
@@ -303,7 +305,42 @@ def _first_of_compacted_supplementary_cell(cell_text: str) -> str:
     head = _COMPACTED_PAREN_HEAD_RE.match(cell_text.strip())
     if head and _AMOUNT_LIKE_RE.match(head.group(1)):
         return head.group(1)
+    # R258 - a negative main item printed in parentheses and stacked with a second parenthesized value
+    #   with no separator (`(129,411,450)(341,071,045)`, 한양증권 20190401002860 supplementary row).
+    neg_head = _COMPACTED_NEG_HEAD_RE.match(cell_text.strip())
+    if neg_head and _AMOUNT_LIKE_RE.match(neg_head.group(1)):
+        return neg_head.group(1)
     return cell_text
+
+
+def _first_of_stacked_parent_total(cell_text: str) -> str:
+    """Parent total of a stacked amount cell: `3,762,471\n65,393\n3,697,078` -> `3,762,471`.
+
+    R259 (2026-10-18, user decision A: first token only, like R152). The row prints a parent heading
+    and its child lines in one label cell and the parent's total on the first amount line followed by
+    the children's amounts. The first token is taken only when it equals the sum of the remaining
+    tokens (`-` counts as 0) - the arithmetic proof that it is the parent total. Anything else is
+    left untouched (R1 guard: several amounts in one cell stay unreadable).
+    """
+    # parenthesized negatives glued to the previous token (`190,809(316)`, `(5,937,480)(515,580)`)
+    spaced = re.sub(r"(?<=[\d)])(?=\()", " ", cell_text)
+    toks = spaced.split()
+    if len(toks) < 2:
+        return cell_text
+    vals = []
+    for t in toks:
+        if t in ("-", "−", "–", "—"):
+            vals.append(0)
+            continue
+        v = parse_amount(t, 1)
+        if v is None:
+            return cell_text
+        vals.append(v)
+    if not _AMOUNT_LIKE_RE.match(toks[0]):
+        return cell_text
+    if vals[0] != sum(vals[1:]):
+        return cell_text
+    return toks[0]
 
 
 def extract_rows(
@@ -429,6 +466,9 @@ def extract_rows(
         if _SUPPLEMENTARY_RESERVE_RE.search(label):
             amount_cells = [_first_of_compacted_supplementary_cell(ac)
                             for ac in amount_cells]
+        elif len([ln for ln in label.split("\n") if ln.strip()]) >= 2:
+            # R259 - a parent line stacked with its child lines in one row (대신증권 OCI heading).
+            amount_cells = [_first_of_stacked_parent_total(ac) for ac in amount_cells]
 
         # ★R158(2026-09-22) — 천단위 구분자가 마침표로 깨진 셀을 **같은 행의 정수
         #   칸과 대조해** 복원한다. 짝이 없으면 손대지 않는다(주당손익류 정상 소수

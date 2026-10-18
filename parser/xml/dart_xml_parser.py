@@ -292,7 +292,11 @@ _BAD_LT = re.compile(
 # right after a thousands group (`,ddd`) and before another amount token becomes a newline
 # character, so the cell keeps its two printed numbers. Anything else (`2,003&cr;3차`, `193&cr;87`)
 # keeps the R224 deletion.
-_AMOUNT_STACK_BREAK = re.compile(rb"(?<=,\d{3})&cr;(?=\d{1,3}(?:,\d{3})*(?:&cr;|<|\s|$))")
+# R258 - blank lines may sit between the stacked amounts (`53,040,262,118&cr;&cr;43,714,275,259`, 코리안리
+# 20180515001565; `1,012,264&cr;&cr;&cr;821,771`, 대신증권 20150817000902): any number of extra `&cr;`
+# before the next amount token still marks a break (the extras are deleted by R224 afterwards).
+_AMOUNT_STACK_BREAK = re.compile(rb"(?<=,\d{3})&cr;(?=(?:&cr;)*(?:\d{1,3}(?:,\d{3})*|\(\d{1,3}(?:,\d{3})+\)|-)(?:&cr;|<|\s|$))"
+                                   rb"|(?<=&cr;-)&cr;(?=\d{1,3}(?:,\d{3})*(?:&cr;|<|\s|$))")
 
 
 def sanitize_dart_xml(raw: bytes) -> bytes:

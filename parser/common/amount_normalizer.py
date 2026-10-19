@@ -83,6 +83,7 @@ def strip_cell_whitespace(text: str) -> str:
 
 
 _R202_SPLIT_LEADING_DIGITS = True   # R202: '1 73,918,853,979' (leading digits split off inside one cell) = 173,918,853,979
+_R260_SPLIT_LEADING_DIGITS_MULTI = True   # R260: '2 8 6,763,456,363' (leading digits split one per fragment) = 286,763,456,363
 
 
 def _is_complete_number(tok: str) -> bool:
@@ -439,6 +440,18 @@ def parse_amount_decimal(cell_text: str, multiplier: int = 1) -> Optional[Decima
             and re.fullmatch(r"\d{1,2}(?:,\d{3})+", toks[1])
             and len(toks[0]) + len(toks[1].split(",")[0]) == 3):
         cell_text = toks[0] + toks[1]
+        toks = [cell_text]
+
+    # ── R260(2026-10-19): R202 의 다단 변형 — 첫 자리가 **한 자리씩 둘 이상** 떨어져 나온 서식.
+    #   '2 8 6,763,456,363' 은 286,763,456,363 하나다(현대해상 20210318000755 연결 `Ⅲ. 영업이익`,
+    #   `<SPAN>2</SPAN><SPAN>8</SPAN><SPAN>6,763,456,363</SPAN>`; 웹뷰 인쇄 286,763,456,363).
+    #   주석번호는 한 자리씩 쪼개 찍히지 않으므로 앞 조각이 모두 한 자리 숫자이고 합친 첫 그룹이
+    #   정확히 3자리일 때만 잇는다(R202 의 3자리 조건과 같다).
+    if (_R260_SPLIT_LEADING_DIGITS_MULTI and len(toks) >= 3
+            and all(re.fullmatch(r"\d", tk) for tk in toks[:-1])
+            and re.fullmatch(r"\d{1,2}(?:,\d{3})+", toks[-1])
+            and len(toks) - 1 + len(toks[-1].split(",")[0]) == 3):
+        cell_text = "".join(toks)
         toks = [cell_text]
 
     if len(toks) >= 2 and all(_is_complete_number(tk) for tk in toks):

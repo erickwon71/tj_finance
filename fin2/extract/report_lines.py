@@ -186,6 +186,22 @@ _R118_DUPLICATE_PERIOD_LABEL_FIX: dict[tuple[str, str, str], dict[int, int]] = {
     # position2/3(2번째 "제67기" 그룹=진짜 전기)을 rank1로, position4/5("제66기"=
     # 전전기)를 rank2로 분리 교정.
     ("20220615000399", "CF", "separate"): {2: 1, 3: 1, 4: 2, 5: 2},
+    # 제주은행 2020FY BS 별도(은행계정 본표; missing_row #126623, 2026-10-20) — 헤더가
+    # "제60기"(당기여야 할 제61기)/"제60기"/"제59기" 순으로 첫 그룹만 한 기수 낮게 오기재.
+    # COLSPAN=2 3그룹(금액+빈 칸)이라 position0/1·2/3 이 같은 라벨로 rank0 에 합쳐져 제60기
+    # 값(338,948)과 제59기 값(338,485)이 당기 열로 섞이고 표가 중복 검출돼 본표가 안 실렸다.
+    # 같은 필링 요약재무정보 BS(제61기/제60기/제59기)의 현금 및 예치금 302,541 / 338,948 /
+    # 338,485 와 열 순서·값이 일치 → 1번째 그룹=당기(rank0), 2번째=전기(rank1), 3번째=전전기(rank2).
+    ("20210316000922", "BS", "separate"): {2: 1, 3: 1, 4: 2, 5: 2},
+}
+
+# R118 — optional guard for entries whose (rcept, statement, basis) holds several tables with
+# different column counts: the fix applies only to the table with exactly this many data
+# columns. 제주은행 20210316000922 BS 별도 has the 6-column 은행계정 table (typo header) and a
+# 3-column 신탁계정 table; without the guard the fix overwrote the trust table's position 2
+# (2018 column) and dropped its prior-period values. Older entries have no guard (unchanged).
+_R118_REQUIRED_NCOLS: dict[tuple[str, str, str], int] = {
+    ("20210316000922", "BS", "separate"): 6,
 }
 
 
@@ -194,6 +210,9 @@ def _apply_duplicate_period_label_fix(header_cols, rcept_no, statement, basis):
     period_rank 를 교정한다. 목록에 없으면 무변경(회귀 없음)."""
     fix = _R118_DUPLICATE_PERIOD_LABEL_FIX.get((rcept_no, statement, basis))
     if not fix or header_cols is None:
+        return header_cols
+    need = _R118_REQUIRED_NCOLS.get((rcept_no, statement, basis))
+    if need is not None and len(header_cols) != need:
         return header_cols
     return [
         hc if hc.position not in fix else HeaderColumn(

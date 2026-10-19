@@ -1394,6 +1394,40 @@ def test_r118_shinyoung_securities_duplicate_period_label_typo_corrected():
     assert begin + net == end, (begin, net, end)
 
 
+_JEJU_BANK_2020_FY = (
+    Path(__file__).resolve().parents[2]
+    / "raw_report/KOSPI/00148832_제주은행/annual/2020/20210316000922.xml"
+)
+
+
+def test_r118_jeju_bank_separate_bs_first_group_typo_corrected_and_trust_table_untouched():
+    """R118 후속(2026-10-20, missing_row #126623) — 제주은행 20210316000922: 은행계정 별도
+    재무상태표 헤더가 "제60기"(당기여야 할 제61기)/"제60기"/"제59기" 순으로 첫 그룹을
+    한 기수 낮게 오기재했다. 수정 전엔 6개 물리열이 두 rank 로 병합돼 본표가 적재되지 않고
+    신탁계정 표(자산총계 57,157)만 실렸다. 수정 후 은행계정 표가 당기/전기/전전기 3열로
+    실리고(자산총계 6,520,405/6,182,059/5,968,175, 부채+자본=자산), 같은 필링의 3열
+    신탁계정 표는 예외가 닿지 않아 3개 기간 값을 그대로 유지한다(_R118_REQUIRED_NCOLS)."""
+    if not _JEJU_BANK_2020_FY.exists():
+        return
+    lines = extract_report_lines(
+        _JEJU_BANK_2020_FY, rcept_no="20210316000922", corp_code="00148832",
+        report_fiscal_year=2020, report_fiscal_period="FY")
+    bs = [l for l in lines if l.statement == "BS" and l.basis == "separate"]
+
+    def pick(name, seq=0):
+        return {l.context_fiscal_year: l.value_won for l in bs
+                if l.table_seq == seq and l.label_raw.replace(" ", "") == name}
+
+    assets = pick("자산총계")
+    assert assets[2020] == 6_520_405_000_000, assets
+    assert assets[2019] == 6_182_059_000_000, assets
+    assert assets[2018] == 5_968_175_000_000, assets
+    liab, equity = pick("부채총계"), pick("자본총계")
+    for year in (2020, 2019, 2018):
+        assert liab[year] + equity[year] == assets[year], year
+    assert set(pick("금전신탁", seq=1)) == {2020, 2019, 2018}, pick("금전신탁", seq=1)
+
+
 _APS_2021_Q1 = (
     Path(__file__).resolve().parents[2]
     / "raw_report/KOSDAQ/00296078_APS/quarter/2021/20210517001891.xml"

@@ -195,6 +195,7 @@ report_lines DB 자체에는 "이 행이 예외목록을 거쳤다"는 tagging�
 | (20230515002273, IS, separate) | DSC인베스트먼트 2023 Q1 | "제11(당)기1분기" COLSPAN=2 그룹째 2회 중복 → position2,3→rank1 |
 | (20190401000391, CF, separate) | 이랜시스 2018FY | "제1(당)기" 2회 중복(신설법인) → position2→rank1 |
 | (20220615000399, CF, separate) | 신영증권 2022FY | "제67기" 2회 중복(첫 그룹이 실제론 제68기) → position2,3→rank1 / 4,5→rank2 |
+| (20210316000922, BS, separate) | 제주은행 2020FY | "제60기" 2회 중복(첫 그룹이 실제론 제61기) → position2,3→rank1 / 4,5→rank2. 같은 키의 3열 신탁계정 표에는 닿지 않게 `_R118_REQUIRED_NCOLS`=6 가드 |
 
 ### `_MANUAL_NO_CONSOLIDATED_FS_RCEPTS` (R121) — 문서에 표는 있으나 그 값이 이
 필링의 당기/전기 것이 아님(지주사 전환 이전 시절 데이터 잔존) — 연결 섹션 전체 스킵

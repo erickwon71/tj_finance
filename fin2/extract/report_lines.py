@@ -36,7 +36,7 @@ import re
 
 from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.table_extractor import (
-    extract_rows, _split_label_amounts, _get_cells, _NUMBER_PATTERN, expand_table_grid,
+    extract_rows, _join_split_leading_digit_by_row_sum, _split_label_amounts, _get_cells, _NUMBER_PATTERN, expand_table_grid,
     RowData, _header_rule_name, _is_fs_title_row, _detect_indent, _first_cell_indent,
     _table_has_comma_note_column, _table_has_note_header,
     parse_header_columns, select_by_header_columns, drop_mismatched_granularity_columns,
@@ -1891,6 +1891,8 @@ def _grid_body_rows(
         #   R144/R153 의 교훈 — 같은 판정을 두 경로가 각자 하면 갈린다.
         # ★R159 — 원문 오타 교정을 복원보다 먼저(위 `extract_rows` 와 같은 순서).
         raw_amounts = apply_source_typo_fixes(raw_amounts, rcept_no)
+        # R261 - same row-sum join as `extract_rows` (the SCE grid path must apply it too).
+        raw_amounts = _join_split_leading_digit_by_row_sum(raw_amounts)
         raw_amounts = _repair_dot_grouped_cells(raw_amounts, label)
         for idx, txt in enumerate(raw_amounts):
             amounts[idx] = parse_amount(txt, multiplier) if txt else None

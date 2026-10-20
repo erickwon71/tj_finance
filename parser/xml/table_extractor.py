@@ -343,6 +343,57 @@ def _first_of_stacked_parent_total(cell_text: str) -> str:
     return toks[0]
 
 
+# R261 switch - see `_join_split_leading_digit_by_row_sum`.
+_R261_ROW_SUM_JOIN_SPLIT_LEADING_DIGIT = True
+
+_R261_BLANK_RE = re.compile(r"^[\s\-−–—]*$")
+
+
+def _join_split_leading_digit_by_row_sum(amount_cells: list[str]) -> list[str]:
+    """Join `8\n4,153,171` (one leading digit printed apart, 2-token form) into 84,153,171 when the row sum proves it.
+
+    R261 (2026-10-20). R202/R260 join only when the merged first group has exactly three digits; the
+    two-token form with a shorter merged group cannot be told from a note number in the text alone.
+    Here the row itself is the proof: exactly one cell has the `d` + `dd,ddd,...` shape, every other
+    cell is blank/`-` or a readable amount, and the cells before the last non-blank cell (the total
+    column of a matrix row, e.g. SCE) sum to that total only with the joined value (and not with the
+    second token alone). Anything else is left untouched (R1 guard keeps the cell unreadable).
+    """
+    if not _R261_ROW_SUM_JOIN_SPLIT_LEADING_DIGIT or len(amount_cells) < 3:
+        return amount_cells
+    cand = None
+    for i, ac in enumerate(amount_cells):
+        toks = ac.split()
+        if (len(toks) == 2 and re.fullmatch(r"\d{1,2}", toks[0])
+                and re.fullmatch(r"\d{1,3}(?:,\d{3})+", toks[1])
+                and len(toks[0]) + len(toks[1].split(",")[0]) <= 3):
+            if cand is not None:
+                return amount_cells          # more than one candidate: no unique proof
+            cand = i
+    if cand is None:
+        return amount_cells
+    vals: dict[int, int] = {}
+    for i, ac in enumerate(amount_cells):
+        if i == cand or _R261_BLANK_RE.match(ac):
+            continue
+        v = parse_amount(ac, 1)
+        if v is None:
+            return amount_cells
+        vals[i] = v
+    nonblank = sorted(vals)
+    if not nonblank or nonblank[-1] < cand:
+        return amount_cells                  # the candidate must precede the total cell
+    total_i = nonblank[-1]
+    others = sum(v for i, v in vals.items() if i != total_i)
+    t0, t1 = amount_cells[cand].split()
+    joined = int(t0 + t1.replace(",", ""))
+    if others + joined != vals[total_i] or others + int(t1.replace(",", "")) == vals[total_i]:
+        return amount_cells
+    fixed = list(amount_cells)
+    fixed[cand] = t0 + t1
+    return fixed
+
+
 def extract_rows(
     table_elem: etree._Element,
     multiplier: int = 1,
@@ -469,6 +520,7 @@ def extract_rows(
         elif len([ln for ln in label.split("\n") if ln.strip()]) >= 2:
             # R259 - a parent line stacked with its child lines in one row (대신증권 OCI heading).
             amount_cells = [_first_of_stacked_parent_total(ac) for ac in amount_cells]
+        amount_cells = _join_split_leading_digit_by_row_sum(amount_cells)
 
         # ★R158(2026-09-22) — 천단위 구분자가 마침표로 깨진 셀을 **같은 행의 정수
         #   칸과 대조해** 복원한다. 짝이 없으면 손대지 않는다(주당손익류 정상 소수

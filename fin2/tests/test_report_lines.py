@@ -310,7 +310,7 @@ def test_previously_gap_filings_now_load_with_doc_default_source():
         (_ELP_A, "20160330001530", "00374020", 2015, "FY", "doc_default"),
         (_ELP_B, "20160513002038", "00374020", 2015, "FY", "doc_default"),
         (_WINGSFOOT, "20210517000207", "01405585", 2021, "Q1", "doc_default"),
-        (_INCA, "20170516000038", "01013694", 2017, "Q1", "section_def"),
+        (_INCA, "20170516000038", "01013694", 2017, "Q1", ("section_def", "declared")),   # R263: the IS table declares its own unit
     ]
     for path, rcept, corp, fy, period, expected_source in targets:
         if not path.exists():
@@ -324,7 +324,7 @@ def test_previously_gap_filings_now_load_with_doc_default_source():
         body = [l for l in lines if l.statement in ("BS", "IS", "SCE", "CF")
                 and not l.source_ref.startswith("eps/")]
         assert body, f"{rcept} 본문 행 없음"
-        assert all(l.unit_source == expected_source for l in body), (
+        assert all(l.unit_source in (expected_source if isinstance(expected_source, tuple) else (expected_source,)) for l in body), (
             rcept, {l.unit_source for l in body})
         assert all(l.value_won is not None for l in body)
 

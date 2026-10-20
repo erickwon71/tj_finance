@@ -2116,6 +2116,7 @@ def _emit_sce_lines(
     #   보존하므로 문서 순서를 유지한 채 중복만 제거한다.
     tables = list(dict.fromkeys(tables))
     doc_seq = {id(t): i for i, t in enumerate(tables)}
+    prev_sce_labels = None   # R265 - (grid width, col_labels) of the last headed SCE table.
 
     for table in tables:
         # R240 — the same table can be listed twice with different units (title-table branch and
@@ -2156,7 +2157,14 @@ def _emit_sce_lines(
         #   offset(LV′)을 쓰도록 한다(T1.3 전제 — T2.3/T2.4와 동일 패턴, `_build_col_labels`
         #   를 그대로 호출해도 결과는 같지만 두 번 그리드를 만들지 않도록 여기서 공유한다).
         grid_rows, n_header, offset, width = _grid_header_split(table, use_header_span=True)
-        if n_header is None:
+        if (table.get("data-r265") == "1" and prev_sce_labels is not None
+                and prev_sce_labels[0] == width):
+            # R265 - headerless continuation: every row is a body row, labels come from the previous table.
+            col_labels = dict(prev_sce_labels[1])
+            rows = _grid_body_rows(table, grid_rows, 0, prev_sce_labels[2], multiplier=unit,
+                                   allow_date_label=True, keep_header_rows=False,
+                                   rcept_no=rcept_no)
+        elif n_header is None:
             # 헤더 구간을 못 찾음(실전에서 드묾) — col_label 없이도 값은 잃지 않는다(R6).
             col_labels: dict[int, str] = {}
             rows = _grid_body_rows(table, grid_rows, 0, 0, multiplier=unit,
@@ -2164,6 +2172,7 @@ def _emit_sce_lines(
                                    rcept_no=rcept_no)
         else:
             col_labels = _label_dict_from_header(grid_rows[:n_header], n_header, offset, width)
+            prev_sce_labels = (width, col_labels, offset)
             rows = _grid_body_rows(table, grid_rows, n_header, offset, multiplier=unit,
                                    allow_date_label=True, keep_header_rows=False,
                                    rcept_no=rcept_no)

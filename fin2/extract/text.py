@@ -311,8 +311,28 @@ def _row_to_fact(
 # R264 switch - see `_detect_body_statement_tables` (SCE data printed under the next statement heading).
 _R264_SCE_DATA_UNDER_NEXT_HEADING = True
 
+# R265 switch - see `_headerless_sce_continuation`.
+_R265_HEADERLESS_SCE_CONTINUATION = True
+
 # R263 switch - see `_detect_body_statement_tables` (titleless IS right after the BS).
 _R263_TITLELESS_IS_AFTER_BS = True
+
+
+_SCE_DATE_ROW_RE = re.compile(r"^\d{4}\s*\.\s*\d{1,2}\s*\.\s*\d{1,2}")
+
+
+def _headerless_sce_continuation(tbl, prev) -> bool:
+    """R265 - a table with no header row whose first row opens a dated balance (`2015.1.1(보고금액)`)
+    and has the same cell count as the last row of the previous SCE table continues that table."""
+    from parser.xml.table_extractor import _get_cells
+    rows, prows = table_direct_rows(tbl), table_direct_rows(prev)
+    if not rows or not prows:
+        return False
+    first = _get_cells(rows[0])
+    last = _get_cells(prows[-1])
+    if not first or not last or len(first) != len(last):
+        return False
+    return bool(_SCE_DATE_ROW_RE.match(re.sub(r"\s+", "", first[0]).replace("\u3000", "")))
 
 
 def _titled_as_is(tbl, include_sce: bool) -> bool:
@@ -365,6 +385,7 @@ def _detect_body_statement_tables(root, fin_type: str,
         # `titleless_bs_start` 는 이 인덱스와 일치할 때만 시도한다(그 아래 참고).
         first_amount_idx = next(
             (i for i, t in enumerate(tbls) if table_has_amount_rows(t)), None)
+        last_sce_tbl = None            # R265 - previous SCE table of this section.
         last_stmt: str | None = None   # R142 — 하위표 연속(§ 아래 substatement 분기) 전용.
         for idx, tbl in enumerate(tbls):
             # 섹션이 이미 '본문'을 보장하므로 주석 배제 가드가 불필요 → 재무제표명만 본다
@@ -423,6 +444,13 @@ def _detect_body_statement_tables(root, fin_type: str,
             if (stmt is None and last_stmt == "SCE" and _table_has_data_rows(tbl)
                     and _looks_like_equity_changes_header(tbl)):
                 stmt = last_stmt
+            # R265 - the current-period block printed as a second SCE table without any header row
+            # (미스터블루 20150817000492 separate: `2015.1.1(보고금액)` ... `2015.6.31(당반기말)`).
+            if (_R265_HEADERLESS_SCE_CONTINUATION and stmt is None and last_stmt == "SCE"
+                    and last_sce_tbl is not None and _table_has_data_rows(tbl)
+                    and _headerless_sce_continuation(tbl, last_sce_tbl)):
+                stmt = "SCE"
+                tbl.set("data-r265", "1")   # the SCE emitter reads the labels from the previous table
             # R4-2 §3(2026-08-07) — 위 폴백 2종도 실패했을 때, 표 자신이 섹션의 첫 번째
             # 금액표이고 표 **안**에서 헤더행이 재등장하면(복수 재무제표가 한 물리적 TABLE 에
             # 이어붙은 서식) 헤더 재등장 지점으로 잘라 각각 분리 처리한다(실측 이노시뮬레이션
@@ -448,6 +476,8 @@ def _detect_body_statement_tables(root, fin_type: str,
             if stmt is None:
                 continue
             last_stmt = stmt   # R142 — 다음 표가 substatement 표지를 만났을 때 물려줄 값.
+            if stmt == "SCE":
+                last_sce_tbl = tbl   # R265
             # ★내용 기반 최종 가드 — 표제가 CF/BS/IS 를 가리켜도 **행 라벨이 처분계산서**면
             #   본문이 아니다(계양전기 20220420000289: 제목표가 현금흐름표와 동일 문자열).
             # ★R164(2026-09-22) — 단, **내용으로 SCE 임이 확인된 표에는 이 가드를 적용하지

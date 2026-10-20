@@ -48,3 +48,12 @@ def test_r264_hanwha_investment_consolidated_sce_under_next_heading():
     ls = _rows("00148610", "quarter", "2020", "20200515000970", "Q1")
     got = {l.value_won for l in ls if l.statement == "SCE" and l.basis == "consolidated"}
     assert 886212555000 in got
+
+
+def test_r265_headerless_sce_continuation_misterblue():
+    ls = _rows("01047840", "half", "2015", "20150817000492", "H1")
+    got = {(l.label_raw[:10], l.col_label, l.value_won) for l in ls
+           if l.statement == "SCE" and l.basis == "separate" and l.table_seq == 1}
+    assert ("2015.1.1(보", "자본금", 550000000) in got
+    assert ("반기순이익", "이익잉여금(결손금)", 825814) in got
+    assert ("2015.6.31(", "총계", 10586084025) in got

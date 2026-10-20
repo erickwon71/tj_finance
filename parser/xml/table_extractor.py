@@ -343,6 +343,9 @@ def _first_of_stacked_parent_total(cell_text: str) -> str:
     return toks[0]
 
 
+# R262 switch - see `select_by_header_columns` (a printed 0 beside the amount of a 2-cell period group).
+_R262_ZERO_BESIDE_AMOUNT = True
+
 # R261 switch - see `_join_split_leading_digit_by_row_sum`.
 _R261_ROW_SUM_JOIN_SPLIT_LEADING_DIGIT = True
 
@@ -1646,6 +1649,12 @@ def select_by_header_columns(
                 if _dual_closing_row_proved(
                         run, amounts[left.position], amounts[right.position]):
                     result[rank] = amounts[left.position]
+                elif (_R262_ZERO_BESIDE_AMOUNT and amounts[left.position] == 0
+                        and amounts[right.position] != 0):
+                    # R262 - a printed `0` in the detail cell beside the amount in the other
+                    # cell of the same period group: the 0 carries no competing value, so the
+                    # amount is the row's value (유진증권 Ⅱ. 영업비용 `0 | 153,054,484,021`).
+                    result[rank] = amounts[right.position]
             # 진짜값 0개+대시/공란 아닌 결측(진짜 결측) 또는 진짜값 2개 이상(서로 다른
             # 값, 판정불가, R6) 이면 이 rank 는 건너뜀.
     return result

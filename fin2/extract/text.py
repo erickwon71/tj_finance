@@ -308,6 +308,9 @@ def _row_to_fact(
     )
 
 
+# R264 switch - see `_detect_body_statement_tables` (SCE data printed under the next statement heading).
+_R264_SCE_DATA_UNDER_NEXT_HEADING = True
+
 # R263 switch - see `_detect_body_statement_tables` (titleless IS right after the BS).
 _R263_TITLELESS_IS_AFTER_BS = True
 
@@ -502,8 +505,17 @@ def _detect_body_statement_tables(root, fin_type: str,
             # 연결**한다. 정상 서식(위 branch)은 건드리지 않는 가산적 처리다.
             title_unit = declared_unit(tbl)   # 드물게 제목표가 단위를 보유
             for nxt in tbls[idx + 1:]:
-                if classify_statement_in_body_section(title_text_owned(nxt), include_sce=include_sce) is not None:
-                    break   # 다음 재무제표 제목 도달 → 이 재무제표엔 데이터표 없음(보류)
+                nxt_class = classify_statement_in_body_section(title_text_owned(nxt), include_sce=include_sce)
+                if nxt_class is not None:
+                    # R264 - the SCE data table printed under the NEXT statement's heading (한화투자증권
+                    # 20200515000970: `라. 연결현금흐름표` heading sits between the SCE title table and
+                    # the SCE data). It is the SCE data when its own content reads as an equity-changes
+                    # table and as no BS/IS/CF.
+                    if not (_R264_SCE_DATA_UNDER_NEXT_HEADING and stmt == "SCE"
+                            and nxt_class in ("BS", "IS", "CF") and _table_has_data_rows(nxt) and _looks_like_equity_changes_header(nxt)
+                            and not (_looks_like_balance_sheet(nxt) or _looks_like_income_statement(nxt)
+                                     or _looks_like_cashflow(nxt))):
+                        break   # 다음 재무제표 제목 도달 → 이 재무제표엔 데이터표 없음(보류)
                 if _table_has_data_rows(nxt):
                     # ★R164 — 위 정상 서식 분기와 **같은 면제**를 여기에도 적용한다(같은
                     #   결함이 이 경로로도 들어온다: 표제표/데이터표가 분리된 SCE).

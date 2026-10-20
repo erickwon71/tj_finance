@@ -42,3 +42,9 @@ def test_not_applied_when_a_titled_is_follows():
         counts.append(len(te._detect_body_statement_tables(root, "A", True)["IS_S"]))
     te._R263_TITLELESS_IS_AFTER_BS = True
     assert counts[0] == counts[1]
+
+
+def test_r264_hanwha_investment_consolidated_sce_under_next_heading():
+    ls = _rows("00148610", "quarter", "2020", "20200515000970", "Q1")
+    got = {l.value_won for l in ls if l.statement == "SCE" and l.basis == "consolidated"}
+    assert 886212555000 in got

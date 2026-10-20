@@ -343,6 +343,10 @@ def _first_of_stacked_parent_total(cell_text: str) -> str:
     return toks[0]
 
 
+# R266 switch - see `_dual_base_row_proved`.
+_R266_DUAL_BASE_ROW_PROOF = True
+_R266_BASE_WINDOW = 4
+
 # R262 switch - see `select_by_header_columns` (a printed 0 beside the amount of a 2-cell period group).
 _R262_ZERO_BESIDE_AMOUNT = True
 
@@ -1649,6 +1653,9 @@ def select_by_header_columns(
                 if _dual_closing_row_proved(
                         run, amounts[left.position], amounts[right.position]):
                     result[rank] = amounts[left.position]
+                elif (_R266_DUAL_BASE_ROW_PROOF and not run and _dual_base_row_proved(
+                        closing_runs.get(~rank) or [], amounts[left.position], amounts[right.position])):
+                    result[rank] = amounts[left.position]
                 elif (_R262_ZERO_BESIDE_AMOUNT and amounts[left.position] == 0
                         and amounts[right.position] != 0):
                     # R262 - a printed `0` in the detail cell beside the amount in the other
@@ -1682,6 +1689,19 @@ def _dual_closing_row_proved(run: list, left, right) -> bool:
         return False
 
 
+def _dual_base_row_proved(bases: list, left, right) -> bool:
+    """R266 - the closing row has no detail-only run before it, but one of the last balance cells
+    printed above it is the base the detail cell works on: base + left == right (contra printed
+    in parentheses) or base - |left| == right (contra printed without them). Exact integer
+    equality only."""
+    try:
+        if not left:
+            return False    # a printed 0 proves nothing (R262 reads the amount beside it)
+        return any(b + left == right or b - abs(left) == right for b in bases)
+    except TypeError:
+        return False
+
+
 def update_dual_closing_runs(
     columns: Optional[list[HeaderColumn]], amounts: list, runs: dict[int, list],
 ) -> None:
@@ -1707,6 +1727,8 @@ def update_dual_closing_runs(
             runs.setdefault(rank, []).append(lv)
         else:
             runs[rank] = []
+            if rv is not None:   # R266 - remember the latest balance cells (key ~rank)
+                runs[~rank] = (runs.get(~rank) or [])[-(_R266_BASE_WINDOW - 1):] + [rv]
 
 
 # ★R158(2026-09-22) — 천단위 구분자가 **마침표**로 깨진 셀.

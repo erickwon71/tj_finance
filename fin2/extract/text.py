@@ -308,6 +308,18 @@ def _row_to_fact(
     )
 
 
+# R263 switch - see `_detect_body_statement_tables` (titleless IS right after the BS).
+_R263_TITLELESS_IS_AFTER_BS = True
+
+
+def _titled_as_is(tbl, include_sce: bool) -> bool:
+    """True when the table carries its own income-statement title (R263 guard)."""
+    for title in (title_text_owned(tbl), title_text_for_classify(tbl)):
+        if classify_statement_in_body_section(title, include_sce=include_sce) == "IS":
+            return True
+    return False
+
+
 def _detect_body_statement_tables(root, fin_type: str,
                                   include_sce: bool = False) -> dict[str, list[tuple]]:
     """**DART 섹션 기반 본문표 식별**(2026-07-17 재설계).
@@ -374,6 +386,16 @@ def _detect_body_statement_tables(root, fin_type: str,
                 used_merged_title = stmt is not None
             if stmt is None and idx == first_amount_idx and titleless_bs_start(tbl):
                 stmt = "BS"
+            # R263 - an income statement printed with no title of its own right after the balance
+            # sheet (인카금융 20170516000038 separate: only the period/unit table sits between them).
+            # Taken only when the table reads as an IS by its row labels, is not a BS, and no IS has
+            # been read in this section yet.
+            if (_R263_TITLELESS_IS_AFTER_BS and stmt is None and last_stmt == "BS"
+                    and _table_has_data_rows(tbl) and _looks_like_income_statement(tbl)
+                    and not _looks_like_balance_sheet(tbl)
+                    and not groups.get(SECTION_CODE_OF[(basis, "IS")])
+                    and not any(_titled_as_is(t, include_sce) for t in tbls[idx + 1:])):
+                stmt = "IS"
             # ★R142(2026-09-19) — 재무제표 하나가 기간대역별 하위표 2개로 쪼개지고, 뒤쪽
             # 하위표의 표제가 재무제표명을 아예 반복하지 않는 서식("(2) 개별재무제표
             # (2015년 및 2016년)")일 때, 직전에 성공적으로 분류된 statement 를 그대로

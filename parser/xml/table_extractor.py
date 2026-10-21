@@ -370,6 +370,9 @@ def _first_of_stacked_parent_total(cell_text: str) -> str:
     return toks[0]
 
 
+# R269 switch - see `_period_label_row_has_amounts`.
+_R269_PERIOD_LABEL_ROW_WITH_AMOUNTS = True
+
 # R268 switch - see `_amounts_equal_within_rounding`.
 _R268_ROUNDING_TOLERANCE = True
 
@@ -529,7 +532,8 @@ def extract_rows(
         #   판단은 계층3 이 header_hint 를 보고 한다(`_header_rule_name` docstring).
         header_hint = _header_rule_name(first_text, allow_date_label=date_labels_ok)
         if header_hint and not keep_header_rows:
-            continue
+            if not (_R269_PERIOD_LABEL_ROW_WITH_AMOUNTS and _period_label_row_has_amounts(header_hint, cells)):
+                continue
 
         # 재무제표 이름만 있는 제목 행 건너뜀 (예: "재무상태표", "포괄손익계산서")
         if _is_fs_title_row(cells):
@@ -1707,6 +1711,23 @@ def select_by_header_columns(
             # 진짜값 0개+대시/공란 아닌 결측(진짜 결측) 또는 진짜값 2개 이상(서로 다른
             # 값, 판정불가, R6) 이면 이 rank 는 건너뜀.
     return result
+
+
+def _period_label_row_has_amounts(header_hint: str, cells: list) -> bool:
+    """R269 - a row whose label reads as a period header (`당분기말`) but whose other cells print
+    comma-grouped amounts of 1,000,000 or more is a data row carrying that printed label
+    (넷마블 20260514000897 prints the trade receivables line as `당분기말`)."""
+    if header_hint != "기간라벨":
+        return False
+    big = 0
+    for c in cells[1:]:
+        t = c.strip()
+        if not t:
+            continue
+        if not re.fullmatch(r"\(?\d{1,3}(?:,\d{3}){2,}\)?", t):
+            return False
+        big += 1
+    return big >= 1
 
 
 def _amounts_equal_within_rounding(a, b) -> bool:

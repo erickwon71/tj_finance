@@ -313,6 +313,33 @@ def _first_of_compacted_supplementary_cell(cell_text: str) -> str:
     return cell_text
 
 
+def _split_parallel_stacked_row(label: str, amount_cells: list):
+    """R267 - a row printing k label lines (`1. 보통주자본금\n2. 우선주자본금`) whose every non-blank
+    amount cell prints exactly k amount lines (numbers or `-`) is k rows stacked in one: return
+    [(label_i, cells_i)], else None. Only printed lines are redistributed, nothing is computed."""
+    lab = [ln.strip() for ln in label.split("\n") if ln.strip()]
+    if len(lab) == 1:
+        # the label's own `&cr;` is deleted by the XML reader (`1. 보통주자본금&cr;2. 우선주자본금`
+        # reads as `1. 보통주자본금2. 우선주자본금`): cut at the numbered-item markers
+        lab = [x.strip() for x in re.split(r"(?<=\S)(?=\d{1,2}\.\s)", lab[0]) if x.strip()]
+    k = len(lab)
+    if k < 2:
+        return None
+    split = []
+    for c in amount_cells:
+        if not c.strip():
+            split.append([""] * k)
+            continue
+        lines = [ln.strip() for ln in c.split("\n") if ln.strip()]
+        if len(lines) != k or not all(
+                _AMOUNT_LIKE_RE.match(ln) or re.fullmatch(r"[-−–—]+", ln) for ln in lines):
+            return None
+        split.append(lines)
+    if not any(c.strip() for c in amount_cells):
+        return None
+    return [(lab[i], [col[i] for col in split]) for i in range(k)]
+
+
 def _first_of_stacked_parent_total(cell_text: str) -> str:
     """Parent total of a stacked amount cell: `3,762,471\n65,393\n3,697,078` -> `3,762,471`.
 
@@ -342,6 +369,9 @@ def _first_of_stacked_parent_total(cell_text: str) -> str:
         return cell_text
     return toks[0]
 
+
+# R267 switch - see `_split_parallel_stacked_row`.
+_R267_SPLIT_PARALLEL_STACKED_ROW = True
 
 # R266 switch - see `_dual_base_row_proved`.
 _R266_DUAL_BASE_ROW_PROOF = True
@@ -521,88 +551,97 @@ def extract_rows(
 
         # ★R152(2026-09-20) — 금융업 보충표기가 본항목과 **같은 칸**에 압축된 행.
         #   `_first_of_compacted_supplementary_cell` docstring 에 근거·검산.
+        stacked_parts = None
         if _SUPPLEMENTARY_RESERVE_RE.search(label):
             amount_cells = [_first_of_compacted_supplementary_cell(ac)
                             for ac in amount_cells]
-        elif len([ln for ln in label.split("\n") if ln.strip()]) >= 2:
+        elif (len([ln for ln in label.split("\n") if ln.strip()]) >= 2
+                or (_R267_SPLIT_PARALLEL_STACKED_ROW and any("\n" in ac for ac in amount_cells))):
+            multi_line_label = len([ln for ln in label.split("\n") if ln.strip()]) >= 2
             # R259 - a parent line stacked with its child lines in one row (대신증권 OCI heading).
-            amount_cells = [_first_of_stacked_parent_total(ac) for ac in amount_cells]
-        amount_cells = _join_split_leading_digit_by_row_sum(amount_cells)
+            stacked = ([_first_of_stacked_parent_total(ac) for ac in amount_cells]
+                       if multi_line_label else list(amount_cells))
+            if _R267_SPLIT_PARALLEL_STACKED_ROW and stacked == list(amount_cells):
+                stacked_parts = _split_parallel_stacked_row(label, amount_cells)   # R267 - k rows
+            amount_cells = stacked
+        work = stacked_parts if stacked_parts else [(label, amount_cells)]
+        for label, amount_cells in work:
+            amount_cells = _join_split_leading_digit_by_row_sum(amount_cells)
 
-        # ★R158(2026-09-22) — 천단위 구분자가 마침표로 깨진 셀을 **같은 행의 정수
-        #   칸과 대조해** 복원한다. 짝이 없으면 손대지 않는다(주당손익류 정상 소수
-        #   보호). 근거·실측은 `_repair_dot_grouped_cells` docstring.
-        # ★R159 — 원문 오타 교정을 **복원보다 먼저** 적용한다(교정된 셀은 정상
-        #   정수가 되므로 R158 이 건드릴 일이 없어진다).
-        amount_cells = apply_source_typo_fixes(amount_cells, rcept_no)
-        amount_cells = _repair_dot_grouped_cells(amount_cells, label)
+            # ★R158(2026-09-22) — 천단위 구분자가 마침표로 깨진 셀을 **같은 행의 정수
+            #   칸과 대조해** 복원한다. 짝이 없으면 손대지 않는다(주당손익류 정상 소수
+            #   보호). 근거·실측은 `_repair_dot_grouped_cells` docstring.
+            # ★R159 — 원문 오타 교정을 **복원보다 먼저** 적용한다(교정된 셀은 정상
+            #   정수가 되므로 R158 이 건드릴 일이 없어진다).
+            amount_cells = apply_source_typo_fixes(amount_cells, rcept_no)
+            amount_cells = _repair_dot_grouped_cells(amount_cells, label)
 
-        # 금액 파싱 (전체 amount_cells 파싱 후 재정렬)
-        all_parsed = [parse_amount(ac, multiplier) for ac in amount_cells]
-        # ★R160 — 해결되지 않은 마침표 셀은 **값을 버린다**(결측). 원문 텍스트는
-        #   `raw_amounts` 에 그대로 남겨 보고·감사가 가능하게 한다.
-        for _i in unresolved_dot_cell_indices(amount_cells, label):
-            if _i < len(all_parsed):
-                all_parsed[_i] = None
+            # 금액 파싱 (전체 amount_cells 파싱 후 재정렬)
+            all_parsed = [parse_amount(ac, multiplier) for ac in amount_cells]
+            # ★R160 — 해결되지 않은 마침표 셀은 **값을 버린다**(결측). 원문 텍스트는
+            #   `raw_amounts` 에 그대로 남겨 보고·감사가 가능하게 한다.
+            for _i in unresolved_dot_cell_indices(amount_cells, label):
+                if _i < len(all_parsed):
+                    all_parsed[_i] = None
 
-        # 6-column IS 형식 대응: 앞쪽 구조적 빈 셀(None) 제거
-        # 예: [None, None, 42647억, None, 43360억] → [42647억, None, 43360억]
-        # 조건: amount_cells ≥ 4개 (3-column IS는 영향 없음)
-        # ★ preserve_col_positions=True 면 하지 않는다 — 자본변동표처럼 **열이 기간이 아니라
-        #   축(자본금/이익잉여금/…)**인 표에서는 선행 공란이 구조적 잡음이 아니라 "이 변동은
-        #   그 자본 항목에 영향이 없었다"는 **의미 있는 값**이다. 여기서 당기면 열이 통째로
-        #   밀려 이익잉여금 값이 자본금 열로 들어간다(실측: SCE 행 내부정합 95.3% 의 주원인).
-        # ★R86 후속(2026-09-09) — `table_has_note_column`도 요구한다. report_lines.py::
-        #   _emit_section_lines()의 else 분기(선두 None 절삭)와 **동형 결함**이 여기 하나 더
-        #   있었다: 4열 이상인 표(예 삼성전자 2017Q1 [당기1분기,전기1분기,전기,전전기] 4열 CF —
-        #   `_interim_cumulative_cols()`가 3개월/누적 2단 헤더를 못 찾아 cum_map=None →
-        #   preserve_col_positions=False)에서, 원문이 당기(또는 당기+전기) 컬럼을 진짜로
-        #   비워둔 행이 이 절삭에 걸려 전기/전전기 값이 당기 열로 둔갑한다(실측: rcpNo=
-        #   20170515003806 별도·연결 현금흐름표 "단기매도가능금융자산의 처분"·"자기주식의
-        #   처분" 등 — 사용자가 원문대조로 발견). else 분기와 **같은 근거**(주석참조 컬럼이
-        #   있는 표에서만 이 절삭의 원 동기 사례가 성립, classB §5.1)로 같은 신호를 적용 —
-        #   주석 컬럼이 없는 표는 절삭하지 않고 결측으로 남긴다. `table_has_note_column`은
-        #   바로 위에서 표 하나당 한 번 이미 계산해둔 값이라 추가 비용 없음. 근거:
-        #   docs/PARSING_RULES.md R86.
-        # 원문 문자열은 파싱값과 **같은 인덱스**를 유지해야 한다(value_raw 용) — 아래 재정렬에서
-        # 함께 이동시킨다. 따로 움직이면 원문이 다른 열의 값으로 붙는다.
-        all_raw: list[str] = list(amount_cells)
-        all_flags: list[bool] = list(cell_flags)
-        # R160 (2026-10-12): an unresolved '.'-broken cell is a printed value we cannot read, not
-        # a blank — it keeps its place (popping it would shift the later periods left).
-        _unreadable = {all_raw[i] for i in unresolved_dot_cell_indices(amount_cells, label)}
-        if (len(all_parsed) >= 4 and not (preserve_col_positions or keep_all_amount_cells)
-                and table_has_note_column):
-            while all_parsed and all_parsed[0] is None and not (all_raw and all_raw[0] in _unreadable):
-                all_parsed.pop(0)
-                if all_raw:
-                    all_raw.pop(0)
-                if all_flags:
-                    all_flags.pop(0)
+            # 6-column IS 형식 대응: 앞쪽 구조적 빈 셀(None) 제거
+            # 예: [None, None, 42647억, None, 43360억] → [42647억, None, 43360억]
+            # 조건: amount_cells ≥ 4개 (3-column IS는 영향 없음)
+            # ★ preserve_col_positions=True 면 하지 않는다 — 자본변동표처럼 **열이 기간이 아니라
+            #   축(자본금/이익잉여금/…)**인 표에서는 선행 공란이 구조적 잡음이 아니라 "이 변동은
+            #   그 자본 항목에 영향이 없었다"는 **의미 있는 값**이다. 여기서 당기면 열이 통째로
+            #   밀려 이익잉여금 값이 자본금 열로 들어간다(실측: SCE 행 내부정합 95.3% 의 주원인).
+            # ★R86 후속(2026-09-09) — `table_has_note_column`도 요구한다. report_lines.py::
+            #   _emit_section_lines()의 else 분기(선두 None 절삭)와 **동형 결함**이 여기 하나 더
+            #   있었다: 4열 이상인 표(예 삼성전자 2017Q1 [당기1분기,전기1분기,전기,전전기] 4열 CF —
+            #   `_interim_cumulative_cols()`가 3개월/누적 2단 헤더를 못 찾아 cum_map=None →
+            #   preserve_col_positions=False)에서, 원문이 당기(또는 당기+전기) 컬럼을 진짜로
+            #   비워둔 행이 이 절삭에 걸려 전기/전전기 값이 당기 열로 둔갑한다(실측: rcpNo=
+            #   20170515003806 별도·연결 현금흐름표 "단기매도가능금융자산의 처분"·"자기주식의
+            #   처분" 등 — 사용자가 원문대조로 발견). else 분기와 **같은 근거**(주석참조 컬럼이
+            #   있는 표에서만 이 절삭의 원 동기 사례가 성립, classB §5.1)로 같은 신호를 적용 —
+            #   주석 컬럼이 없는 표는 절삭하지 않고 결측으로 남긴다. `table_has_note_column`은
+            #   바로 위에서 표 하나당 한 번 이미 계산해둔 값이라 추가 비용 없음. 근거:
+            #   docs/PARSING_RULES.md R86.
+            # 원문 문자열은 파싱값과 **같은 인덱스**를 유지해야 한다(value_raw 용) — 아래 재정렬에서
+            # 함께 이동시킨다. 따로 움직이면 원문이 다른 열의 값으로 붙는다.
+            all_raw: list[str] = list(amount_cells)
+            all_flags: list[bool] = list(cell_flags)
+            # R160 (2026-10-12): an unresolved '.'-broken cell is a printed value we cannot read, not
+            # a blank — it keeps its place (popping it would shift the later periods left).
+            _unreadable = {all_raw[i] for i in unresolved_dot_cell_indices(amount_cells, label)}
+            if (len(all_parsed) >= 4 and not (preserve_col_positions or keep_all_amount_cells)
+                    and table_has_note_column):
+                while all_parsed and all_parsed[0] is None and not (all_raw and all_raw[0] in _unreadable):
+                    all_parsed.pop(0)
+                    if all_raw:
+                        all_raw.pop(0)
+                    if all_flags:
+                        all_flags.pop(0)
 
-        amounts: list[Optional[int]] = []
-        raw_amounts: list[str] = []
-        acontext_missing: list[bool] = []
-        for i in range(num_cols):
-            amounts.append(all_parsed[i] if i < len(all_parsed) else None)
-            raw_amounts.append(all_raw[i] if i < len(all_raw) else "")
-            acontext_missing.append(all_flags[i] if i < len(all_flags) else False)
+            amounts: list[Optional[int]] = []
+            raw_amounts: list[str] = []
+            acontext_missing: list[bool] = []
+            for i in range(num_cols):
+                amounts.append(all_parsed[i] if i < len(all_parsed) else None)
+                raw_amounts.append(all_raw[i] if i < len(all_raw) else "")
+                acontext_missing.append(all_flags[i] if i < len(all_flags) else False)
 
-        indent = _detect_indent(label)
-        label_clean = label.lstrip()  # 들여쓰기 공백 제거
+            indent = _detect_indent(label)
+            label_clean = label.lstrip()  # 들여쓰기 공백 제거
 
-        rows.append(RowData(
-            account_name=label_clean,
-            amounts=amounts,
-            raw_amounts=raw_amounts,
-            acontext_missing=acontext_missing,
-            header_hint=header_hint,
-            row_order=row_order,
-            is_subtotal=_is_subtotal(label_clean),
-            indent_level=indent,
-            raw_indent=_first_cell_indent(tr),
-        ))
-        row_order += 1
+            rows.append(RowData(
+                account_name=label_clean,
+                amounts=amounts,
+                raw_amounts=raw_amounts,
+                acontext_missing=acontext_missing,
+                header_hint=header_hint,
+                row_order=row_order,
+                is_subtotal=_is_subtotal(label_clean),
+                indent_level=indent,
+                raw_indent=_first_cell_indent(tr),
+            ))
+            row_order += 1
 
     return rows
 

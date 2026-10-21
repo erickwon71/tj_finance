@@ -299,10 +299,37 @@ _AMOUNT_STACK_BREAK = re.compile(rb"(?<=,\d{3})&cr;(?=(?:&cr;)*(?:\d{1,3}(?:,\d{
                                    rb"|(?<=&cr;-)&cr;(?=\d{1,3}(?:,\d{3})*(?:&cr;|<|\s|$))")
 
 
+# R274 - a row whose label cell prints several lines (`주당이익&cr;   기본주당순이익&cr;   희석주당순이익`)
+# prints one amount per line in its other cells (`172&cr;170`); limited to per-share rows (`주당`). R246 only breaks after a `,ddd` group, so
+# small integers fused into `172170`. In such a row a `&cr;` between two digit runs is a line break.
+_R274_STACKED_ROW_DIGIT_BREAK = True
+_TR_BLOCK = re.compile(rb"<TR\b[^>]*>.*?</TR>", re.DOTALL)
+_FIRST_TD = re.compile(rb"<TD\b[^>]*>(.*?)</TD>", re.DOTALL)
+_PER_SHARE_KEYS = ("주당".encode(), "주당".encode("cp949"))
+_DIGIT_CR_DIGIT = re.compile(rb"(?<=\d)&cr;(?=\d)")
+
+
+def _break_stacked_row_digits(raw: bytes) -> bytes:
+    if b"&cr;" not in raw:
+        return raw
+
+    def fix(m):
+        tr = m.group(0)
+        first = _FIRST_TD.search(tr)
+        if not first or first.group(1).count(b"&cr;") < 2 or not any(k in first.group(1) for k in _PER_SHARE_KEYS):
+            return tr
+        head, tail = tr[:first.end()], tr[first.end():]
+        return head + _DIGIT_CR_DIGIT.sub(b"&#10;", tail)
+
+    return _TR_BLOCK.sub(fix, raw)
+
+
 def sanitize_dart_xml(raw: bytes) -> bytes:
     """파싱 전 원문 이스케이프 복구. 순서 주의 — '&' 를 먼저 고쳐야 뒤에서 넣는
     &quot;/&lt; 가 다시 이스케이프되지 않는다."""
     out = _AMOUNT_STACK_BREAK.sub(b"&#10;", raw)               # R246 — before R224 deletes &cr;
+    if _R274_STACKED_ROW_DIGIT_BREAK:
+        out = _break_stacked_row_digits(out)
     out = _NAMED_ENTITY.sub(_resolve_named_entity, out)    # R224 — must run first
     out = _BAD_AMP.sub(b"&amp;", out)
     out = _BAD_ATTR_QUOTE.sub(rb'="&quot;\1&quot;"', out)

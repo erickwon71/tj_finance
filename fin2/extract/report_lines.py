@@ -1069,7 +1069,17 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
             _last_top = lbl
 
     emitted_labels: set[str] = set()
+    eps_entries = []
     for tr, cells, sec_path, anchor in zip(trs, tr_cells, section_paths, prev_top):
+        # R274 - `주당이익 / 기본주당순이익 / 희석주당순이익` stacked in one row with `172\n170` cells
+        parts = (_te._split_parallel_stacked_row(cells[0], list(cells[1:]))
+                 if _te._R274_STACKED_HEADING_ROW and cells and "주당" in cells[0]
+                 and any("\n" in c for c in cells[1:]) else None)
+        if parts:
+            eps_entries.extend((tr, [lab] + cs, sec_path, anchor) for lab, cs in parts)
+        else:
+            eps_entries.append((tr, cells, sec_path, anchor))
+    for tr, cells, sec_path, anchor in eps_entries:
         if not cells or not _is_eps_label(
                 cells[0], section_path=sec_path,
                 report_fiscal_year=report_fiscal_year,

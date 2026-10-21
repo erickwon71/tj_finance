@@ -322,17 +322,33 @@ def _split_parallel_stacked_row(label: str, amount_cells: list):
         # the label's own `&cr;` is deleted by the XML reader (`1. 보통주자본금&cr;2. 우선주자본금`
         # reads as `1. 보통주자본금2. 우선주자본금`): cut at the numbered-item markers
         lab = [x.strip() for x in re.split(r"(?<=\S)(?=\d{1,2}\.\s)", lab[0]) if x.strip()]
+    # R274 - `주당이익\n   기본주당순이익\n   희석주당순이익` with the line breaks deleted leaves runs of
+    #   spaces between the lines; the first line is a heading that prints no amount of its own
+    n_amt = {len([ln for ln in c.split("\n") if ln.strip()]) for c in amount_cells if c.strip()}
+    heading_mode = False
+    note_ref_first = False
+    if _R274_STACKED_HEADING_ROW and len(lab) < 2 and "주당" in lab[0]:
+        counts = [len([ln for ln in c.split("\n") if ln.strip()]) for c in amount_cells if c.strip()]
+        if len(set(counts)) == 2 and counts[0] == 1 and len(set(counts[1:])) == 1:
+            note_ref_first = True       # `22` = the heading line's note number, in the first cell
+            counts = counts[1:]
+        parts = [x.strip() for x in re.split(r"\s{2,}", lab[0]) if x.strip()]
+        if counts and len(set(counts)) == 1 and counts[0] >= 2 and len(parts) == counts[0] + 1:
+            lab = parts[1:]
+            heading_mode = True     # per-share amounts are small numbers (172, 170)
     k = len(lab)
     if k < 2:
         return None
     split = []
-    for c in amount_cells:
-        if not c.strip():
+    for ci, c in enumerate(amount_cells):
+        if not c.strip() or (note_ref_first and heading_mode and ci == 0):
             split.append([""] * k)
             continue
         lines = [ln.strip() for ln in c.split("\n") if ln.strip()]
         if len(lines) != k or not all(
-                _AMOUNT_LIKE_RE.match(ln) or re.fullmatch(r"[-−–—]+", ln) for ln in lines):
+                _AMOUNT_LIKE_RE.match(ln) or re.fullmatch(r"[-−–—]+", ln)
+                or (heading_mode and re.fullmatch(r"[(\[]?-?\d{1,3}(?:\.\d+)?[)\]]?", ln))
+                for ln in lines):
             return None
         split.append(lines)
     if not any(c.strip() for c in amount_cells):
@@ -369,6 +385,9 @@ def _first_of_stacked_parent_total(cell_text: str) -> str:
         return cell_text
     return toks[0]
 
+
+# R274 switch - see `_split_parallel_stacked_row`.
+_R274_STACKED_HEADING_ROW = True
 
 # R270 switch - see `_join_single_digit_fragments`.
 _R270_SPLIT_SINGLE_DIGITS = True
@@ -2317,6 +2336,31 @@ _UNBALANCED_BRACKET_AMOUNT_RE = re.compile(
     r"^(?:[(\[]\s*[-−△▲]?\s*\d{1,3}(?:,\d{3})+|[-−△▲]?\s*\d{1,3}(?:,\d{3})+\s*[)\]])$")
 
 
+# R273 — a comma-grouped amount whose grouping is broken ('5697,593,488', '3,786,718,98',
+#   '2,000.014,500'). Stripping the commas used to load the digit string as a number although the
+#   printed cell is not a readable amount (the verifier reads it as non-numeric). Like R160/R241 the
+#   row keeps its place with a NULL value and the printed text (value_raw).
+_R273_BROKEN_COMMA_GROUPING = True
+_BROKEN_COMMA_CELL_RE = re.compile(r"^[(\[]?\s*[-−△▲]?\s*[\d,.]*\d[\d,.]*\s*[)\]]?$")
+_R273_DAMAGED_SHAPE_RE = re.compile(
+    r"^(?:\d{1,3}(?:,\d{3})+,(?:\d{1,2}|\d{4,})?"      # 4,440,35 / 1,000,000, / 1,313,938,37
+    r"|\d{1,3},\d{4,}"                                   # 1,933146
+    r"|\d{4,},\d{3}(?:,\d{3})*)$")                       # 2633,407
+_VALID_COMMA_GROUPING_RE = re.compile(r"^\d{1,3}(?:,\d{3})*(?:\.\d+)?$")
+
+
+def _is_broken_comma_grouping(cell: str) -> bool:
+    c = (cell or "").strip()
+    if "," not in c or not _BROKEN_COMMA_CELL_RE.match(c):
+        return False
+    core = re.sub(r"[()\[\]\s−△▲-]", "", c)
+    if _VALID_COMMA_GROUPING_RE.match(core) or _DOT_GROUPED_RE.match(c) or _DOT_THEN_COMMA_RE.match(c):
+        return False        # a valid number, or a shape R159/R205 already handle
+    # only shapes that are clearly a damaged amount; "15,32" / "5,0" / "9,9,99" are note-reference
+    # lists or decimals and stay out of scope
+    return bool(_R273_DAMAGED_SHAPE_RE.match(core))
+
+
 def unresolved_dot_cell_indices(amount_cells: list[str],
                                 label: Optional[str]) -> list[int]:
     """R159/R158 로도 **해결되지 않은** 마침표 셀의 위치 — 값을 적재하지 않을 칸.
@@ -2350,7 +2394,8 @@ def unresolved_dot_cell_indices(amount_cells: list[str],
     return [i for i, c in enumerate(amount_cells)
             if _DOT_GROUPED_RE.match((c or "").strip())
             or _DOT_THEN_COMMA_RE.match((c or "").strip())
-            or _UNBALANCED_BRACKET_AMOUNT_RE.match((c or "").strip())]
+            or _UNBALANCED_BRACKET_AMOUNT_RE.match((c or "").strip())
+            or (_R273_BROKEN_COMMA_GROUPING and _is_broken_comma_grouping(c))]
 
 
 def _repair_dot_grouped_cells(amount_cells: list[str],

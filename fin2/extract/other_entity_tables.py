@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 _ROLE = r"(?:합병법인|피합병법인|합병회사|피합병회사|분할법인|분할신설법인|존속법인|소멸법인)"
 _COMPANY_HINT = re.compile(r"주식회사|\(주\)|㈜|기업인수목적|스팩|SPAC")
 _BRACKET = re.compile(rf"^\[\s*(?:({_ROLE})\s+)?([^\[\]]{{2,60}}?)\s*\]$")
+_R272_ABSORBED_WITH_SUBSIDIARIES = True   # `…삼양제넥스와 그 종속기업의 … 연결재무제표`
 _ABSORBED = re.compile(r"흡수합병된\s*([^\s의]{1,30}(?:\s*주식회사)?)의[^.]{0,40}재무제표")
+_ABSORBED_GROUP = re.compile(r"흡수합병된\s*([^\s의와과]{1,30})[와과]\s*그\s*종속기업의[^.]{0,40}재무제표")
 _NOISE = re.compile(r"주식회사|\(주\)|㈜|\s+")
 
 
@@ -42,10 +44,21 @@ def _marker_of(el) -> str | None:
     if el.tag == "P":
         text = "".join(el.itertext())
         if "흡수합병된" in text and len(text) <= 200:
-            m = _ABSORBED.search(re.sub(r"\s+", " ", text.replace("&cr;", " ")))
+            flat = re.sub(r"\s+", " ", text.replace("&cr;", " "))
+            m = _ABSORBED.search(flat)
+            if not m and _R272_ABSORBED_WITH_SUBSIDIARIES:
+                m = _ABSORBED_GROUP.search(flat)
             if m:
                 return normalize_entity(m.group(1))
     return None
+
+
+def _is_group_marker(el) -> bool:
+    """True for the `…와 그 종속기업의 … 재무제표` sentence (R272), which scopes to one basis."""
+    if el.tag != "P":
+        return False
+    flat = re.sub(r"\s+", " ", "".join(el.itertext()).replace("&cr;", " "))
+    return bool(_ABSORBED_GROUP.search(flat)) and not _ABSORBED.search(flat)
 
 
 def drop_other_entity_tables(root, groups: dict) -> tuple[dict, list[tuple[str, str, str]]]:
@@ -57,12 +70,23 @@ def drop_other_entity_tables(root, groups: dict) -> tuple[dict, list[tuple[str, 
     wanted = {id(t) for tws in groups.values() for t, _, _ in tws}
     if not wanted:
         return groups, []
+    basis_of = {id(t): code.rsplit("_", 1)[-1] for code, tws in groups.items() for t, _, _ in tws}
+    last_basis: str | None = None
+    scoped = False
     entity_at: dict[int, str | None] = {}
     pos_of: dict[int, int] = {}
     current: str | None = None
     seen = 0
     for el in root.iter():
         if id(el) in wanted:
+            basis = basis_of.get(id(el))
+            if _R272_ABSORBED_WITH_SUBSIDIARIES and scoped and basis in ("C", "S"):
+                # a marker scopes to its own consolidated/separate run of tables; the filer's
+                # other-basis statements that follow carry no marker of their own
+                if last_basis is not None and basis != last_basis:
+                    current = None
+                    scoped = False
+                last_basis = basis
             entity_at[id(el)] = current
             pos_of[id(el)] = seen
             seen += 1
@@ -72,6 +96,8 @@ def drop_other_entity_tables(root, groups: dict) -> tuple[dict, list[tuple[str, 
         name = _marker_of(el)
         if name:
             current = name
+            scoped = _R272_ABSORBED_WITH_SUBSIDIARIES and _is_group_marker(el)
+            last_basis = None
     out: dict[str, list] = {}
     dropped: list[tuple[str, str, str]] = []
     for code, tws in groups.items():

@@ -4,7 +4,7 @@ import parser.xml.table_extractor as te
 
 
 def test_r273_damaged_amount_shapes_are_unreadable():
-    for cell in ["10,921,090,50", "2,014,857,92", "(11592,467,385)", "1,879,674,", "1,933146", "2633,407"]:
+    for cell in ["10,921,090,50", "2,014,857,92", "(11592,467,385)", "1,879,674,", "1,933146", "2633,407", "2,000.014,500"]:
         assert te._is_broken_comma_grouping(cell), cell
     assert te.unresolved_dot_cell_indices(["10,921,090,50", "5,725,490,326"], "금융수익") == [0]
 

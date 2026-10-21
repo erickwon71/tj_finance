@@ -370,6 +370,9 @@ def _first_of_stacked_parent_total(cell_text: str) -> str:
     return toks[0]
 
 
+# R270 switch - see `_join_single_digit_fragments`.
+_R270_SPLIT_SINGLE_DIGITS = True
+
 # R269 switch - see `_period_label_row_has_amounts`.
 _R269_PERIOD_LABEL_ROW_WITH_AMOUNTS = True
 
@@ -574,6 +577,8 @@ def extract_rows(
         work = stacked_parts if stacked_parts else [(label, amount_cells)]
         for label, amount_cells in work:
             amount_cells = _join_split_leading_digit_by_row_sum(amount_cells)
+            if _R270_SPLIT_SINGLE_DIGITS and not keep_header_rows:
+                amount_cells = [_join_single_digit_fragments(ac) for ac in amount_cells]
 
             # ★R158(2026-09-22) — 천단위 구분자가 마침표로 깨진 셀을 **같은 행의 정수
             #   칸과 대조해** 복원한다. 짝이 없으면 손대지 않는다(주당손익류 정상 소수
@@ -1711,6 +1716,16 @@ def select_by_header_columns(
             # 진짜값 0개+대시/공란 아닌 결측(진짜 결측) 또는 진짜값 2개 이상(서로 다른
             # 값, 판정불가, R6) 이면 이 rank 는 건너뜀.
     return result
+
+
+def _join_single_digit_fragments(cell: str) -> str:
+    """R270 - a body-statement cell whose every fragment is one digit (`<SPAN>9</SPAN><SPAN>6</SPAN>`,
+    2-4 fragments) is one number printed digit by digit (미래에셋생명 EPS 96). Statement bodies
+    only: in notes the same shape can be stacked separate values."""
+    toks = cell.split()
+    if 2 <= len(toks) <= 4 and all(re.fullmatch(r"\d", t) for t in toks):
+        return "".join(toks)
+    return cell
 
 
 def _period_label_row_has_amounts(header_hint: str, cells: list) -> bool:

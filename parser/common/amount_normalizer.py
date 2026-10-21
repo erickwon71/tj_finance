@@ -84,8 +84,6 @@ def strip_cell_whitespace(text: str) -> str:
 
 _R202_SPLIT_LEADING_DIGITS = True   # R202: '1 73,918,853,979' (leading digits split off inside one cell) = 173,918,853,979
 _R260_SPLIT_LEADING_DIGITS_MULTI = True   # R260: '2 8 6,763,456,363' (leading digits split one per fragment) = 286,763,456,363
-
-
 def _is_complete_number(tok: str) -> bool:
     """토큰 하나가 **온전한 금액 표기**인가 — 부호·괄호를 벗긴 뒤 3자리 그룹 또는 무콤마
     정수/소수. 한 셀 안에 이런 토큰이 둘 이상이면 이어붙이면 안 된다(`parse_amount` R1)."""

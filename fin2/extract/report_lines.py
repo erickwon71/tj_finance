@@ -33,6 +33,7 @@ from loguru import logger
 
 import json
 import re
+import parser.xml.table_extractor as _te
 
 from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.table_extractor import (
@@ -932,6 +933,8 @@ class _EpsAmount(int):
 
 
 def _parse_eps_amount(cell: str, unit: int) -> _EpsAmount | None:
+    if _te._R270_SPLIT_SINGLE_DIGITS:
+        cell = _te._join_single_digit_fragments(cell)    # R270: `9` + `6` printed apart = 96
     exact = parse_amount_decimal(cell, unit)
     if exact is None:
         return None

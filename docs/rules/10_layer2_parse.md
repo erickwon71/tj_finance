@@ -6060,6 +6060,18 @@ R212 소급 백필의 대상 목록(`docs/qa/eps_fractional_targets_2026-10-02.*
 
 **측정(2026-10-21)**: 2015+ 본문 XML 전수 추출에서 이 규칙이 작동한 필링 3건(넷마블·네이블 2), 얻은 셀 6, 잃은 값 0, 오류 0.
 
+## R270. 본문 EPS 칸이 한 자리씩 조각난 숫자(`<SPAN>9</SPAN><SPAN>6</SPAN>`)는 하나로 잇는다 (2026-10-21, 적용 계층: 2 — 읽기)
+
+> **상태** 유효 · **적용 계층** 2
+>
+> **규칙** `parser/xml/table_extractor.py::_join_single_digit_fragments`(스위치 `_R270_SPLIT_SINGLE_DIGITS`) — 칸의 조각이 2~4개이고 모두 한 자리 숫자이면 이어붙인다. 적용처는 본문 재무제표 행(`extract_rows`, 주석 `keep_header_rows=True` 제외)과 본문 EPS 경로(`fin2/extract/report_lines.py::_parse_eps_amount`).
+> **하지 않는 것** 주석: 같은 모양이 `&cr;` 로 쌓인 별개 값일 수 있어(시험 시 주석 값 소실 15건) 적용하지 않는다. 한 조각이 두 자리 이상이면 잇지 않는다.
+> **테스트** `tests/test_r270_single_digit_fragments.py`.
+
+**발견**: 미래에셋생명 20160516003039 연결 IS `1. 기본주당순이익` 당기 칸이 `<SPAN>9</SPAN><SPAN>6</SPAN>` 로 찍혀 R1 가드로 결측이었다(96).
+
+**측정(2026-10-21)**: 한 자리 조각 칸이 있는 2015+ 본문 XML 577 파일(주석 포함 추출) 켬/끔 — 바뀐 필링 2건(미래에셋생명 20160516003039·20170515004869, IS 각 1셀), 잃은 값 0, 오류 0.
+
 ## R10. XBRL 원문(instance) — 값 부호는 `preferredLabel`이 결정, `calc:weight`는 저장에 안 씀
 
 > **상태** 유효 · **적용 계층** 2 · XBRL 폴백 경로 전용(본문 XML·웹뷰 인쇄본이 모두 없을 때)

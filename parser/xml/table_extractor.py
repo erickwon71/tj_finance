@@ -370,6 +370,9 @@ def _first_of_stacked_parent_total(cell_text: str) -> str:
     return toks[0]
 
 
+# R268 switch - see `_amounts_equal_within_rounding`.
+_R268_ROUNDING_TOLERANCE = True
+
 # R267 switch - see `_split_parallel_stacked_row`.
 _R267_SPLIT_PARALLEL_STACKED_ROW = True
 
@@ -1706,6 +1709,14 @@ def select_by_header_columns(
     return result
 
 
+def _amounts_equal_within_rounding(a, b) -> bool:
+    """R268 - equal, or (both printed in the millions or more) one won apart: a statement that
+    adds rounded thousands prints a balance one won off its parts (586,..361 vs 362)."""
+    if a == b:
+        return True
+    return _R268_ROUNDING_TOLERANCE and abs(b) >= 1_000_000 and abs(a - b) == 1
+
+
 def _dual_closing_row_proved(run: list, left, right) -> bool:
     """R168 — does this row's `left` cell provably belong to the row itself?
 
@@ -1721,9 +1732,9 @@ def _dual_closing_row_proved(run: list, left, right) -> bool:
     if not run:
         return False
     try:
-        if run[0] - sum(abs(v) for v in run[1:]) - abs(left) == right:
+        if _amounts_equal_within_rounding(run[0] - sum(abs(v) for v in run[1:]) - abs(left), right):
             return True
-        return sum(run) + left == right
+        return _amounts_equal_within_rounding(sum(run) + left, right)
     except TypeError:
         return False
 
@@ -1736,7 +1747,8 @@ def _dual_base_row_proved(bases: list, left, right) -> bool:
     try:
         if not left:
             return False    # a printed 0 proves nothing (R262 reads the amount beside it)
-        return any(b + left == right or b - abs(left) == right for b in bases)
+        return any(_amounts_equal_within_rounding(b + left, right)
+                   or _amounts_equal_within_rounding(b - abs(left), right) for b in bases)
     except TypeError:
         return False
 

@@ -64,13 +64,17 @@ sync_code() {
     # "local changes" and stopped the verify runner twice at 00:00 (2026-10-15/17). Wait once for a live
     # holder; remove a lock that is older than 2 min with no git process (it is a dead one).
     lock="$(git rev-parse --git-dir)/index.lock"
-    if [ -e "$lock" ]; then
-      sleep 20
-      if [ -e "$lock" ] && [ -n "$(find "$lock" -mmin +2 2>/dev/null)" ] && ! pgrep -x git >/dev/null; then
+    # A live holder can keep the lock for minutes (2026-10-22 11:52: a 20s wait was not enough
+    # and stopped the runner), so retry for up to ~3 min before giving up.
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+      [ -e "$lock" ] || break
+      if [ -n "$(find "$lock" -mmin +2 2>/dev/null)" ] && ! pgrep -x git >/dev/null; then
         log "죽은 index.lock 제거: $lock"
         rm -f "$lock"
+        break
       fi
-    fi
+      sleep 15
+    done
     if ! git merge --ff-only -q origin/main; then
       log "ff-only 실패: 워크트리에 로컬 커밋/변경이 있다 - 러너 정지"
       notify "[verify 러너 정지] camp_run 코드 동기화(ff-only) 실패 - 로컬 변경 또는 git 락 확인 필요"

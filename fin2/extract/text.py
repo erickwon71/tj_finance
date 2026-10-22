@@ -1113,9 +1113,14 @@ def _looks_like_cashflow(tbl) -> bool:
 # 미처분이익잉여금(미처리결손금)·자본 합계' 인데, 옛 목록으로는 `자본금` 과
 # (미처분)`이익잉여금` **2개만** 걸려 임계값(3) 미달로 SCE 가 아니라고 판정됐다.
 # 둘 다 자본변동표에만 쓰이는 자본 구성요소 명칭이라 BS/IS/CF 헤더에는 나타나지 않는다.
-_SCE_COLUMN_LABELS_RE = re.compile(
-    r"자본금|자본잉여금|이익잉여금|자본조정|기타포괄손익누계액|비지배지분|주식발행초과금"
-    r"|기타불입자본|기타자본구성요소")
+# R275 - `보통주납입자본`·`기타자본항목` are equity-component column names too (코스리거글로벌
+# 20150813000705 / 20150513003244 SCE: with `주식발행초과금`·`이익잉여금` only 2 matched, so the
+# `결손금처리액` row made the whole SCE read as an appropriation statement and it was dropped).
+_R275_MORE_SCE_COLUMN_NAMES = True
+_SCE_COLUMN_LABELS_BASE = (r"자본금|자본잉여금|이익잉여금|자본조정|기타포괄손익누계액|비지배지분|주식발행초과금"
+                           r"|기타불입자본|기타자본구성요소")
+_SCE_COLUMN_LABELS_RE = re.compile(_SCE_COLUMN_LABELS_BASE)
+_SCE_COLUMN_LABELS_RE_R275 = re.compile(_SCE_COLUMN_LABELS_BASE + r"|보통주납입자본|기타자본항목")
 
 
 def _looks_like_equity_changes_header(tbl) -> bool:
@@ -1160,7 +1165,8 @@ def _looks_like_equity_changes_header(tbl) -> bool:
     for r in rows[:3]:
         cells += _get_cells(r)
     joined = re.sub(r"\s+", "", "".join(cells))
-    return len(_SCE_COLUMN_LABELS_RE.findall(joined)) >= 3
+    labels_re = _SCE_COLUMN_LABELS_RE_R275 if _R275_MORE_SCE_COLUMN_NAMES else _SCE_COLUMN_LABELS_RE
+    return len(labels_re.findall(joined)) >= 3
 
 
 def _looks_like_income_or_cashflow_face(tbl) -> bool:

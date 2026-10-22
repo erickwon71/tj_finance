@@ -1211,8 +1211,13 @@ def _columns_from_grid(
 
     columns: list[HeaderColumn] = []
     period_rank_of: dict[str, int] = {}
+    year_of_col: dict[int, str] = {}   # R276: printed calendar-year label per column position
     for col in range(label_cols, n_cols):
         stack = _header_column_stack(grid, col)
+        if _R276_YEAR_LABEL_DISAMBIGUATES:
+            ym = next((_R276_YEAR_LABEL_RE.search(t) for t in stack if _R276_YEAR_LABEL_RE.search(t)), None)
+            if ym:
+                year_of_col[col - label_cols] = ym.group(1)
         period_key = None
         subtype_text = ""
         for i, text in enumerate(stack):
@@ -1258,6 +1263,24 @@ def _columns_from_grid(
             subtype = "three_month"
         columns.append(HeaderColumn(position=position, period_key=period_key,
                                     period_rank=period_rank_of[period_key], subtype=subtype))
+
+    # R276 - two columns that print different calendar years but the same ordinal (`2015연도 (제16기)` |
+    # `2016연도 (제16기)` | `2017연도 (제18기)`, a typo in the ordinal) would share one period and the
+    # row-wise "the one column with a value" rule then reads the wrong year. Re-key by the printed year.
+    if _R276_YEAR_LABEL_DISAMBIGUATES and len(year_of_col) >= 2:
+        by_key: dict[str, set] = {}
+        for hc in columns:
+            if not hc.is_note and hc.position in year_of_col:
+                by_key.setdefault(hc.period_key, set()).add(year_of_col[hc.position])
+        if (all(not hc.is_note and hc.position in year_of_col for hc in columns if not hc.is_note)
+                and any(len(v) > 1 for v in by_key.values())):
+            period_rank_of = {}
+            for hc in columns:
+                if hc.is_note:
+                    continue
+                hc.period_key = year_of_col[hc.position] + "년"
+                period_rank_of.setdefault(hc.period_key, len(period_rank_of))
+                hc.period_rank = period_rank_of[hc.period_key]
 
     # R250 — printed years ascending (oldest column first, e.g. 2015년|2016년|2017년):
     # rank 0 must still be the newest period, so reverse the first-appearance ranks.
@@ -2340,6 +2363,8 @@ _UNBALANCED_BRACKET_AMOUNT_RE = re.compile(
 #   '2,000.014,500'). Stripping the commas used to load the digit string as a number although the
 #   printed cell is not a readable amount (the verifier reads it as non-numeric). Like R160/R241 the
 #   row keeps its place with a NULL value and the printed text (value_raw).
+_R276_YEAR_LABEL_DISAMBIGUATES = True
+_R276_YEAR_LABEL_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})\s*(?:연도|년도)")
 _R273_BROKEN_COMMA_GROUPING = True
 _BROKEN_COMMA_CELL_RE = re.compile(r"^[(\[]?\s*[-−△▲]?\s*[\d,.]*\d[\d,.]*\s*[)\]]?$")
 _R273_DAMAGED_SHAPE_RE = re.compile(

@@ -648,6 +648,12 @@ def _classify_legacy_heading_core(
 _LEGACY_SENTENCE_SPLIT = re.compile(r"다\.")
 
 
+# R277 - `1. 연결재무제표` section heading printed in the same element, right before the statement title
+# (`1. 연결재무제표&cr;연 결 재 무 상 태 표`): the number prefix made the whole heading read as a note heading.
+_R277_SECTION_NUMBER_PREFIX = True
+_R277_SECTION_PREFIX_RE = re.compile(r"^\d{1,2}\.(연결|별도|개별)?재무제표(?=(?:연결|별도|개별)?\S{0,6}(?:재무상태표|손익계산서|포괄손익계산서|현금흐름표|자본변동표))")
+
+
 def classify_legacy_statement_heading(
     text: str, include_sce: bool = False,
 ) -> tuple[str, str] | None:
@@ -684,6 +690,13 @@ def classify_legacy_statement_heading(
     if not text:
         return None
     t = re.sub(r"\s+", "", text)
+    if _R277_SECTION_NUMBER_PREFIX:
+        m = _R277_SECTION_PREFIX_RE.match(t)
+        if m and len(t) > m.end():
+            rest = t[m.end():]
+            if not rest.startswith(("연결", "별도", "개별")) and m.group(1) == "연결":
+                rest = "연결" + rest
+            t = rest
     result = _classify_legacy_heading_core(t, include_sce)
     if result is not None:
         return result

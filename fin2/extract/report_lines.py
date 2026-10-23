@@ -1389,7 +1389,7 @@ def _emit_section_lines(
 
         dual_closing_runs: dict[int, list] = {}   # R168 — per table
         for row in table_rows:
-            if not row.account_name:
+            if not row.account_name and not _te._R280_BLANK_LABEL_ROWS:
                 continue
             # ★R144 — EPS 경로가 전사했고 그 표가 원(₩) 단위를 명시 선언한 행은 본류에서
             #   뺀다. 표가 백만원 선언이면 아래 기존 게이트가 그 행을 "EPS 아님"으로 보고

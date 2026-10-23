@@ -570,7 +570,12 @@ def extract_rows(
                 cells, table_has_note_column, cells_el)
 
         if not label:
-            continue
+            # R280 — a body-statement row with a blank account name but printed amounts is a real
+            #   printed row (e.g. a CF line whose name cell is empty). Keep it with label ''; notes
+            #   (keep_header_rows, grid path) still drop blank-label rows (spacers).
+            if not (_R280_BLANK_LABEL_ROWS and not keep_header_rows
+                    and any(parse_amount(ac, multiplier) is not None for ac in amount_cells)):
+                continue
 
         # 명백한 메타데이터/레이블 행 건너뜀 (재무 데이터 아님).
         # skip_junk=False(계층2 충실전사)면 집계용 블록리스트를 적용하지 않는다.
@@ -2387,6 +2392,25 @@ def _is_broken_comma_grouping(cell: str) -> bool:
     return bool(_R273_DAMAGED_SHAPE_RE.match(core))
 
 
+# R279 — one cell holding the same comma-grouped amount twice with no separator
+#   ('760,000,000,760,000,000': two 760,000,000 run together). The printed text is not one readable
+#   amount and picking one half would be a guess, so like R160/R273 the row keeps its place with a
+#   NULL value and the printed text (value_raw).
+_R279_DOUBLED_AMOUNT_CELL = True
+_R280_BLANK_LABEL_ROWS = True
+_DOUBLED_GROUPS_RE = re.compile(r"^[(\[]?\s*[-−△▲]?\s*(\d{1,3}(?:,\d{3})+)\s*[)\]]?$")
+
+
+def _is_doubled_amount_cell(cell: str) -> bool:
+    m = _DOUBLED_GROUPS_RE.match((cell or "").strip())
+    if not m:
+        return False
+    g = m.group(1).split(",")
+    n = len(g)
+    # six groups is above 10^15 won, so a real amount cannot look like this; the copy starts at a full 3-digit group
+    return n >= 6 and n % 2 == 0 and g[:n // 2] == g[n // 2:] and len(g[0]) == 3
+
+
 def unresolved_dot_cell_indices(amount_cells: list[str],
                                 label: Optional[str]) -> list[int]:
     """R159/R158 로도 **해결되지 않은** 마침표 셀의 위치 — 값을 적재하지 않을 칸.
@@ -2421,7 +2445,8 @@ def unresolved_dot_cell_indices(amount_cells: list[str],
             if _DOT_GROUPED_RE.match((c or "").strip())
             or _DOT_THEN_COMMA_RE.match((c or "").strip())
             or _UNBALANCED_BRACKET_AMOUNT_RE.match((c or "").strip())
-            or (_R273_BROKEN_COMMA_GROUPING and _is_broken_comma_grouping(c))]
+            or (_R273_BROKEN_COMMA_GROUPING and _is_broken_comma_grouping(c))
+            or (_R279_DOUBLED_AMOUNT_CELL and _is_doubled_amount_cell(c))]
 
 
 def _repair_dot_grouped_cells(amount_cells: list[str],

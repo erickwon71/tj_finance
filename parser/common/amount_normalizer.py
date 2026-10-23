@@ -84,6 +84,7 @@ def strip_cell_whitespace(text: str) -> str:
 
 _R202_SPLIT_LEADING_DIGITS = True   # R202: '1 73,918,853,979' (leading digits split off inside one cell) = 173,918,853,979
 _R260_SPLIT_LEADING_DIGITS_MULTI = True   # R260: '2 8 6,763,456,363' (leading digits split one per fragment) = 286,763,456,363
+_R278_SPACE_THOUSANDS = True
 def _is_complete_number(tok: str) -> bool:
     """토큰 하나가 **온전한 금액 표기**인가 — 부호·괄호를 벗긴 뒤 3자리 그룹 또는 무콤마
     정수/소수. 한 셀 안에 이런 토큰이 둘 이상이면 이어붙이면 안 된다(`parse_amount` R1)."""
@@ -427,6 +428,15 @@ def parse_amount_decimal(cell_text: str, multiplier: int = 1) -> Optional[Decima
         if _is_complete_number(joined):
             cell_text = joined
             toks = [joined]
+
+    # ── R278(2026-10-23): 천단위 구분이 콤마 대신 **공백**으로 인쇄된 서식.
+    #   '860 400 551' 은 세 값이 아니라 860,400,551 하나다(알엔티엑스 20161114002611 SCE
+    #   `전환상환우선주 전환권 행사`). 첫 조각 1~3자리 + 뒤 조각이 모두 정확히 3자리이고 조각이
+    #   셋 이상일 때만 잇는다(콤마 없는 3자리 정수 셋이 한 셀에 나란히 있는 경우는 없다).
+    if (_R278_SPACE_THOUSANDS and len(toks) >= 3 and re.fullmatch(r"\d{1,3}", toks[0])
+            and all(re.fullmatch(r"\d{3}", tk) for tk in toks[1:])):
+        cell_text = "".join(toks)
+        toks = [cell_text]
 
     # ── R202(2026-09-30): 숫자의 **첫 1~2자리가 셀 안에서 따로 떨어져** 공백으로 이어진 서식.
     #   '1 73,918,853,979' 는 두 값이 아니라 173,918,853,979 하나다(원문 실측: 호텔신라

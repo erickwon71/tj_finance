@@ -316,6 +316,12 @@ _R265_HEADERLESS_SCE_CONTINUATION = True
 
 # R263 switch - see `_detect_body_statement_tables` (titleless IS right after the BS).
 _R263_TITLELESS_IS_AFTER_BS = True
+# R281 - a balance-sheet body printed under an income-statement heading (대성창투 20191114001034
+# separate: the `분기 재무상태표` heading holds only the period table, the BS body follows the
+# `분기 포괄손익계산서` heading, and the real IS body follows with no heading). A table titled as an
+# IS that reads as a balance sheet and not as an income statement is the BS body; R263 then takes
+# the untitled IS body after it.
+_R281_BS_BODY_UNDER_IS_HEADING = True
 
 
 _SCE_DATE_ROW_RE = re.compile(r"^\d{4}\s*\.\s*\d{1,2}\s*\.\s*\d{1,2}")
@@ -473,6 +479,10 @@ def _detect_body_statement_tables(root, fin_type: str,
                     and _looks_like_income_statement(tbl)
                     and not _looks_like_balance_sheet(tbl)):
                 stmt = "IS"
+            if (_R281_BS_BODY_UNDER_IS_HEADING and stmt == "IS" and _table_has_data_rows(tbl)
+                    and _looks_like_balance_sheet(tbl) and not _looks_like_income_statement(tbl)
+                    and not groups.get(SECTION_CODE_OF[(basis, "BS")])):
+                stmt = "BS"
             if stmt is None:
                 continue
             last_stmt = stmt   # R142 — 다음 표가 substatement 표지를 만났을 때 물려줄 값.

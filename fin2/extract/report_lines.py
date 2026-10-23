@@ -41,7 +41,7 @@ from parser.xml.table_extractor import (
     RowData, _header_rule_name, _is_fs_title_row, _detect_indent, _first_cell_indent,
     _table_has_comma_note_column, _table_has_note_header,
     parse_header_columns, select_by_header_columns, drop_mismatched_granularity_columns,
-    update_dual_closing_runs, resolve_collapsed_period_span,
+    update_dual_closing_runs, resolve_collapsed_period_span, resolve_truncated_period_header,
     HeaderColumn, _repair_dot_grouped_cells, apply_source_typo_fixes,
     unresolved_dot_cell_indices,
 )
@@ -1348,6 +1348,7 @@ def _emit_section_lines(
         if span_verdict == "skip":
             logger.debug(f"[report_lines] R228 기간 뭉친 헤더·증거 없음 → 표 보류: {rcept_no} {section_code}")
             continue
+        header_cols = resolve_truncated_period_header(table, header_cols)   # R283
 
         if header_cols is not None:
             n_cols = max(c.position for c in header_cols) + 1

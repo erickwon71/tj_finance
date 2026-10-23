@@ -1525,6 +1525,81 @@ def _looks_like_two_period_pairs(table: etree._Element, n_cols: int) -> bool:
     return any_rows >= 5 and both / any_rows >= 0.5 and pair_ok / any_rows >= 0.9
 
 
+# R283 - a table whose THEAD names only the LAST periods of the statement (the leading period header
+# cells are blank) while the heading block above lists all of them in order (LG씨엔에스 20150813001306
+# separate 반기 포괄손익계산서: heading lists 제29기 반기/제28기 반기/제28기/제27기, THEAD names 제28기/제27기
+# only, the amounts sit in 4 pairs of cells). Read by the THEAD alone the FY2014 column became the current one.
+# The blank leading header groups take the missing leading periods of the heading, when the heading's tail
+# equals the THEAD's labels and the blank positions carry amounts.
+_R283_TRUNCATED_PERIOD_HEADER = True
+
+
+def _sibling_period_tokens(table: etree._Element) -> list[str]:
+    chunks: list[str] = []
+    prev = table.getprevious()
+    steps = 0
+    while prev is not None and steps < _TITLE_SIBLING_LIMIT:
+        if prev.tag == "TABLE" and sum(1 for _ in prev.iter("TR")) > _TITLE_BIG_TABLE_ROWS:
+            break
+        chunks.append(" ".join("".join(prev.itertext()).split()))
+        prev = prev.getprevious()
+        steps += 1
+    return _period_tokens(" ".join(reversed(chunks)))
+
+
+def resolve_truncated_period_header(
+    table: etree._Element, columns: Optional[list[HeaderColumn]],
+) -> Optional[list[HeaderColumn]]:
+    if not _R283_TRUNCATED_PERIOD_HEADER or not columns:
+        return columns
+    labelled = [c for c in columns if not c.is_note]
+    if not labelled:
+        return columns
+    first = min(c.position for c in labelled)
+    lead = sorted(c.position for c in columns if c.position < first)
+    if first < 2 or lead != list(range(first)) or any(c.period_key for c in columns if c.position < first):
+        return columns
+    ranks = sorted({c.period_rank for c in labelled})
+    m = len(ranks)
+    if len(labelled) % m:
+        return columns
+    w = len(labelled) // m
+    if any(sum(1 for c in labelled if c.period_rank == r) != w for r in ranks):
+        return columns
+    tokens = _sibling_period_tokens(table)
+    miss = len(tokens) - m
+    if miss < 1 or first != miss * w:
+        return columns
+    keys = []
+    for r in ranks:
+        key = next(c.period_key for c in labelled if c.period_rank == r)
+        keys.append(re.sub(r"\s+", "", key))
+    if keys != tokens[miss:]:
+        return columns
+    n_total = max(c.position for c in columns) + 1
+    with_amount = 0
+    for tr in table.iter("TR"):
+        cells = [c for c in tr if c.tag in ("TD", "TH", "TE", "TU")]
+        if len(cells) != n_total + 1:
+            continue
+        if any(re.search(r"\d", "".join(c.itertext())) for c in cells[1:1 + first]):
+            with_amount += 1
+    if with_amount < 2:
+        return columns
+    out = []
+    for c in columns:
+        if c.position < first:
+            r = c.position // w
+            out.append(HeaderColumn(position=c.position, period_key=tokens[r], period_rank=r,
+                                    subtype=None, is_note=False))
+        elif c.is_note:
+            out.append(c)
+        else:
+            out.append(HeaderColumn(position=c.position, period_key=c.period_key,
+                                    period_rank=c.period_rank + miss, subtype=c.subtype, is_note=False))
+    return out
+
+
 def resolve_collapsed_period_span(
     table: etree._Element, columns: Optional[list[HeaderColumn]],
 ) -> tuple[Optional[list[HeaderColumn]], str]:

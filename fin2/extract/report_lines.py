@@ -1781,10 +1781,15 @@ def _note_heading(table) -> str | None:
     return unit_only_fallback
 
 
+# R284 - SCE/note grid rows whose label cells continue by ROWSPAN from the previous row take that
+# row's own label (e.g. 지분법자본변동>지분법자본변동), not the outermost group cell (`자본의 변동`).
+_R284_CONTINUATION_ROW_OWN_LABEL = True
+
+
 def _grid_body_rows(
     table, grid_rows, n_header: int, offset: int, *,
     multiplier: int = 1, allow_date_label: bool = False, keep_header_rows: bool = True,
-    rcept_no: str | None = None,
+    rcept_no: str | None = None, continuation_own_label: bool = False,
 ) -> list[RowData]:
     """`expand_table_grid`의 본문(헤더 이후) 그리드 행을 `RowData`로 변환한다(R11) —
     주석(`_emit_note_lines`, T2.4)·SCE(`_emit_sce_lines`, T2.5) **공용**. T1.4가 "L 규칙은
@@ -1834,6 +1839,7 @@ def _grid_body_rows(
 
     out: list[RowData] = []
     row_order = 0
+    last_own_label_cols: list[int] = []     # R284 - label-region columns of the last row with its own label
     for tr, row in zip(body_trs, body_rows):
         physical = [c for c in row if not c.inherited]
         if not physical:
@@ -1867,6 +1873,13 @@ def _grid_body_rows(
         if is_continuation:
             label = next((c.text for c in row
                           if c.grid_col < offset and c.text.strip()), "")
+            if continuation_own_label and _R284_CONTINUATION_ROW_OWN_LABEL and last_own_label_cols:
+                # R284 - the second physical row of a ROWSPAN label carries the label cells the
+                # previous row printed itself (same columns), not the outermost group cell.
+                own = [c.text.strip() for c in row
+                       if c.grid_col in last_own_label_cols and c.inherited and c.text.strip()]
+                if own:
+                    label = ">".join(own)
             if not label.strip():
                 continue                # 라벨을 복원할 수 없으면 종전대로 버린다
         else:
@@ -1894,6 +1907,8 @@ def _grid_body_rows(
         #   금액은 원래도 정확했다 — 라벨 텍스트만 부정확했음). 헤더 다단 조인
         #   (`_label_dict_from_header`)과 같은 ">" 관례를 본문 행에도 적용한다.
         label_region_cells = [c for c in physical if c.grid_col < offset]
+        if not is_continuation:
+            last_own_label_cols = [c.grid_col for c in label_region_cells]
         if not is_continuation and len(label_region_cells) > 1:
             joined = ">".join(
                 c.text.strip() for c in label_region_cells if c.text.strip())
@@ -2188,19 +2203,19 @@ def _emit_sce_lines(
             col_labels = dict(prev_sce_labels[1])
             rows = _grid_body_rows(table, grid_rows, 0, prev_sce_labels[2], multiplier=unit,
                                    allow_date_label=True, keep_header_rows=False,
-                                   rcept_no=rcept_no)
+                                   rcept_no=rcept_no, continuation_own_label=True)
         elif n_header is None:
             # 헤더 구간을 못 찾음(실전에서 드묾) — col_label 없이도 값은 잃지 않는다(R6).
             col_labels: dict[int, str] = {}
             rows = _grid_body_rows(table, grid_rows, 0, 0, multiplier=unit,
                                    allow_date_label=True, keep_header_rows=False,
-                                   rcept_no=rcept_no)
+                                   rcept_no=rcept_no, continuation_own_label=True)
         else:
             col_labels = _label_dict_from_header(grid_rows[:n_header], n_header, offset, width)
             prev_sce_labels = (width, col_labels, offset)
             rows = _grid_body_rows(table, grid_rows, n_header, offset, multiplier=unit,
                                    allow_date_label=True, keep_header_rows=False,
-                                   rcept_no=rcept_no)
+                                   rcept_no=rcept_no, continuation_own_label=True)
         adecimal = _adecimal_from_unit(unit)
         section_paths = _assign_section_paths(rows, "SCE")
         node_roles = _classify_positions(rows)

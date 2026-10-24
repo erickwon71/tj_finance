@@ -86,7 +86,10 @@ def check_source_trust(market_status: dict, krx_mode: bool) -> tuple[bool, str]:
     """그날 판정을 진행해도 되는지. 반환 (진행가능, 사유).
 
     G0a  시장별 조회가 하나라도 실패(두 소스 모두)면 스킵
-    G0b  시장별 목록 크기가 직전 성공 대비 -5% 이상 감소면 스킵
+    G0b  시장별 목록 크기가 직전 성공(같은 출처) 대비 -5% 이상 감소면 스킵
+         ※ 출처가 다르면 비교하지 않는다 — FDR 목록은 우선주가 섞여 KRX 보통주 목록보다 크다.
+           2026-10-03 KOSPI 가 FDR(942)로 기준선이 잡힌 뒤 KRX(801)가 정상 복귀하자 -15% 오판정으로
+           스킵되고, 스킵은 기준선을 갱신하지 않아 10-06 부터 18일간 판정이 멈췄다.
     G0c  DART 단독 모드면 스킵 (상장폐지 기업을 걸러내지 못하는 모드)
     """
     if not krx_mode:
@@ -106,7 +109,7 @@ def check_source_trust(market_status: dict, krx_mode: bool) -> tuple[bool, str]:
                 WHERE verdict = 'source_ok' AND krx_market_ok LIKE :m
                   AND krx_market_size IS NOT NULL
                 ORDER BY checked_at DESC LIMIT 1
-            """), {"m": f"%{market}:%"}).scalar()
+            """), {"m": f"%{market}:{st.get('used')}%"}).scalar()
             if prev and now_n < prev * (1 - MARKET_SHRINK_LIMIT):
                 return False, (f"G0b: {market} 목록이 {prev:,} → {now_n:,} "
                                f"({(now_n/prev - 1):.1%}) 급감 — 조회 이상 의심")

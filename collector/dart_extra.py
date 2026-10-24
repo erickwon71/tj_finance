@@ -36,6 +36,21 @@ def _get(url: str, params: dict) -> Optional[dict]:
 
 # ── 시장조치(규제) 이력 ───────────────────────────────────────────────────────
 
+_REGULATORY_RULES: list[tuple[str, str, str, bool]] = [
+    ("관리종목",         "해제", "admin_issue",          True),
+    ("관리종목",         "",     "admin_issue",          False),
+    ("상장폐지",         "",     "delisting",            False),
+    ("매매거래정지",     "해제", "trading_halt",         True),
+    ("매매거래정지",     "",     "trading_halt",         False),
+    ("불성실공시법인",   "",     "disclosure_violation", False),
+    ("회생절차",         "종결", "rehabilitation",       True),
+    ("회생절차",         "폐지", "rehabilitation",       True),
+    ("회생절차",         "",     "rehabilitation",       False),
+    ("투자주의환기종목", "해제", "investment_caution",   True),
+    ("투자주의환기종목", "",     "investment_caution",   False),
+]
+
+
 def classify_regulatory_event(report_nm: str) -> Optional[tuple[str, bool]]:
     """report_nm → (event_type, is_lift), 관심 이벤트가 아니면 None."""
     for keyword, sub_keyword, event_type, is_lift in _REGULATORY_RULES:

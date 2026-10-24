@@ -190,7 +190,11 @@ def _refresh_viewer_source(rcept_no: str) -> None:
     flags a layer-2 reload). Never fails the download step."""
     try:
         from collector.legacy_downloader import LegacyDartScraper
-        from collector.viewer_source import refresh_viewer
+        from collector.viewer_source import refresh_viewer, viewer_write_blocked
+        blocked = viewer_write_blocked()
+        if blocked:
+            logger.warning(f"  ↳ 웹뷰 인쇄본 XML 생략({rcept_no}): {blocked}")
+            return
         with get_session() as session:
             row = session.execute(
                 select(Filing, Corporation)

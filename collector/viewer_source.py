@@ -19,6 +19,25 @@ VIEWER_SOURCE_SQL = ("dt.viewer_xml_path IS NOT NULL "
 RETRY_DAYS = 180          # document.xml retries stop after 6 months (user decision)
 
 
+def viewer_write_blocked() -> Optional[str]:
+    """Reason the viewer XML must not be written now, else None.
+
+    The file lands under RAW_REPORT_DIR and its path is stored in download_tasks. Run from a
+    worktree whose raw_report symlink points at the SD card, it would exist only on the backup
+    volume: the mirror then fails on it every night (rc=23, 2026-10-22/23, rcept 20260908000141).
+    """
+    from collector.config import RAW_REPORT_DIR
+    from collector.storage_guard import PRIMARY_ROOT
+    try:
+        actual = RAW_REPORT_DIR.resolve(strict=True)
+    except OSError as exc:
+        return f"raw_report 심링크 해석 실패: {exc}"
+    expected = PRIMARY_ROOT.resolve()
+    if actual != expected:
+        return f"raw_report 가 PRIMARY 가 아님 ({actual} != {expected}) — 메인 저장소에서 실행할 것"
+    return None
+
+
 def statement_nodes(scraper, rcept_no: str):
     """[(title to use, toc node)] of the statement / notes sections (viewer_xml.select_sections)."""
     from fin2.extract.html_viewer import parse_toc_tree

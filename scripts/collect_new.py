@@ -178,7 +178,9 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
                 vals = vcs.rollup_corp(s, corp, names.get(corp, "?"), stage="audited")
                 dq3 = s.execute(text(
                     "SELECT count(*) FROM std_financials_v3 WHERE corp_code=:c "
-                    "AND COALESCE(data_quality,1) >= 3"), {"c": corp}).scalar() or 0
+                    "AND fiscal_year >= :fy "       # same range as the Gate B recheck; pre-2015 DQ3 is old noise
+                    "AND COALESCE(data_quality,1) >= 3"),
+                    {"c": corp, "fy": fy_min}).scalar() or 0
                 s.commit()
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"[verify]   {corp} 검사 실패: {type(exc).__name__}: {exc}")

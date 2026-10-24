@@ -1,22 +1,19 @@
-"""C10 · Failure notification — macOS 알림 + 이메일.
+"""C10 · Failure notification — macOS 알림 + 텔레그램.
 
 W7(전문가 리뷰): dqcheck/backup 실패가 로그 파일에만 남아 아무도 매일 읽지 않는다 — 그래서
 백업이 며칠간 미실행이었던 것도 모르고 지나갔다. `osascript`로 macOS 알림센터에 띄워
 launchd LaunchAgent(GUI 세션에서 실행됨)에서 바로 눈에 띄게 한다.
 
-2026-07-31 추가 — **이메일 경로**:
+2026-10-24 — **텔레그램 경로** (이메일 대체):
   macOS 알림은 그 Mac 앞에 있어야 보인다. KRX/DART 인증키 만료처럼 "며칠 안에 조치하지 않으면
-  수집이 멈추는" 사건은 자리를 비워도 알아야 하므로 메일로도 보낸다.
+  수집이 멈추는" 사건은 자리를 비워도 알아야 하므로 텔레그램으로도 보낸다.
 
-  설정(.env):
-      ALERT_EMAIL_TO    수신 주소 (없으면 이메일 생략, 알림만)
-      SMTP_HOST         기본 smtp.gmail.com
-      SMTP_PORT         기본 587 (STARTTLS)
-      SMTP_USER         발신 계정
-      SMTP_PASSWORD     ※ Gmail 은 **앱 비밀번호**여야 한다(2단계 인증 계정의 일반 비밀번호 불가)
-                          https://myaccount.google.com/apppasswords
+  발송은 사용자 홈의 `~/.claude/notify/telegram.sh` (환경변수 TJ_TELEGRAM_SH 로 경로 변경 가능)를
+  그대로 호출한다. 봇 토큰은 그쪽 telegram.env 에만 있고 이 저장소에는 두지 않는다.
+  야간(22:00-08:00)에는 그 스크립트가 큐에 쌓았다가 08:00 다이제스트로 보낸다(exit 3).
+  메시지는 한 줄·마크다운 없이·200자 이내로 줄여 보낸다.
 
-  SMTP 설정이 없거나 실패해도 **호출자를 막지 않는다** — 알림은 부가 기능이지 게이트가 아니다.
+  스크립트가 없거나 실패해도 **호출자를 막지 않는다** — 알림은 부가 기능이지 게이트가 아니다.
 
 usage:
     from scripts.notify import notify_failure
@@ -28,10 +25,8 @@ standalone test:
 from __future__ import annotations
 
 import os
-import smtplib
 import subprocess
 import sys
-from email.message import EmailMessage
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -76,53 +71,51 @@ def notify_macos(title: str, message: str) -> None:
         pass
 
 
-def notify_email(subject: str, body: str) -> bool:
-    """이메일 발송. 설정이 없으면 False(경고 없이 스킵), 실패하면 로그만 남기고 False."""
-    to_addr = os.getenv("ALERT_EMAIL_TO", "").strip()
-    if not to_addr:
+TELEGRAM_MAX_CHARS = 200
+
+
+def _one_line(title: str, message: str) -> str:
+    """Telegram text: one line, no markdown, at most TELEGRAM_MAX_CHARS characters."""
+    text = f"[TJ Finance] {title} — {message}"
+    text = " ".join(text.replace("*", "").replace("`", "").replace("_", " ").split())
+    return text if len(text) <= TELEGRAM_MAX_CHARS else text[:TELEGRAM_MAX_CHARS - 1] + "…"
+
+
+def notify_telegram(title: str, message: str) -> bool:
+    """텔레그램 발송. 즉시 전달되면 True, 야간 큐 보관(exit 3)·스크립트 없음·실패면 False."""
+    script = Path(os.getenv("TJ_TELEGRAM_SH") or Path.home() / ".claude" / "notify" / "telegram.sh")
+    if not script.exists():
+        logger.warning(f"[notify] 텔레그램 스크립트가 없어 건너뛴다: {script}")
         return False
-
-    host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
-    port = int(os.getenv("SMTP_PORT", "587"))
-    user = os.getenv("SMTP_USER", "").strip()
-    password = os.getenv("SMTP_PASSWORD", "").strip()
-    if not user or not password:
-        logger.warning(
-            "[notify] ALERT_EMAIL_TO 는 있는데 SMTP_USER/SMTP_PASSWORD 가 없어 이메일을 건너뛴다. "
-            "Gmail 은 앱 비밀번호가 필요하다: https://myaccount.google.com/apppasswords")
-        return False
-
-    msg = EmailMessage()
-    msg["Subject"] = f"[TJ Finance] {subject}"
-    msg["From"] = user
-    msg["To"] = to_addr
-    msg.set_content(body)
-
     try:
-        with smtplib.SMTP(host, port, timeout=20) as smtp:
-            smtp.starttls()
-            smtp.login(user, password)
-            smtp.send_message(msg)
-        logger.info(f"[notify] 이메일 발송: {to_addr} — {subject}")
-        return True
+        r = subprocess.run([str(script), _one_line(title, message)],
+                           capture_output=True, text=True, timeout=30)
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"[notify] 이메일 발송 실패({type(exc).__name__}: {exc}) — 알림만 남긴다")
+        logger.warning(f"[notify] 텔레그램 발송 실패({type(exc).__name__}: {exc}) — 알림만 남긴다")
         return False
+    if r.returncode == 0:
+        logger.info(f"[notify] 텔레그램 발송 — {title}")
+        return True
+    if r.returncode == 3:
+        logger.info(f"[notify] 텔레그램 보류(야간 큐 또는 전송 실패, 08:00 다이제스트로 재전송) — {title}")
+    else:
+        logger.warning(f"[notify] 텔레그램 스크립트 종료코드 {r.returncode} — {title}")
+    return False
 
 
-def notify_failure(title: str, message: str, email: bool = True) -> None:
-    """실패 알림 — macOS 알림센터 + (설정돼 있으면) 이메일.
+def notify_failure(title: str, message: str, telegram: bool = True) -> None:
+    """실패 알림 — macOS 알림센터 + 텔레그램.
 
     Args:
-        email: 이메일까지 보낼지. 소음이 큰 경고는 False 로 알림만.
+        telegram: 텔레그램까지 보낼지. 소음이 큰 경고는 False 로 알림센터만.
     """
     logger.error(f"[notify] {title} — {message}")
     if (why := _suppressed()) is not None:
         logger.info(f"[notify] 발송 생략({why}) — 테스트 환경")
         return
     notify_macos(title, message)
-    if email:
-        notify_email(title, message)
+    if telegram:
+        notify_telegram(title, message)
 
 
 if __name__ == "__main__":

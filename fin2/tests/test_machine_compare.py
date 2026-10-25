@@ -624,3 +624,40 @@ def test_mc17_missing_row_carries_the_table_scale(tmp_path):
     res = mc.compare(rows, mc.load_statement_tables(_xml(tmp_path, body)))
     miss = [f for f in res.findings if f["kind"] == "missing_row"]
     assert miss and all(f["scale"] == 1000 for f in miss), res.findings
+
+
+# ── mc18: supplementary reserve amounts printed in the main amount's cell ──
+_RESERVE = "5. 이익잉여금 (대손준비금 적립액) (대손준비금 전입예정액)"
+
+
+def test_compacted_supplementary_first_value():
+    f = mc.first_of_compacted_supplementary
+    assert f("551,779,458,997(4,056,218,467)(2,105,652,781)", _RESERVE) == "551,779,458,997"
+    assert f("19,287,584,329 (17,181,931,548)", "분기순이익 (대손준비금 반영 후 조정이익)") == "19,287,584,329"
+    assert f("623,930- (692)(692)", _RESERVE) == "623,930"                 # zero supplement printed '-'
+    assert f("(129,411,450)(341,071,045)", _RESERVE) == "(129,411,450)"    # negative main item
+    assert f("1, 958,360 5,320", _RESERVE) == "1,958,360"                  # split leading fragment
+
+
+def test_compacted_supplementary_guards():
+    f = mc.first_of_compacted_supplementary
+    # a note reference is not an amount (R152 incident: 26 x unit fabricated)
+    assert f("26, 27", _RESERVE) == "26, 27"
+    # outside the reserve label nothing is touched
+    assert f("551,779,458,997(4,056,218,467)", "5. 이익잉여금") == "551,779,458,997(4,056,218,467)"
+    assert f("1,000", _RESERVE) == "1,000"
+
+
+def test_compacted_supplementary_cell_is_clean_not_value_finding(tmp_path):
+    body = _section("2. 연결재무제표", _title("연결 재무상태표"), _table(
+        ["자산총계", "10,000"], ["부채총계", "4,000"], [_RESERVE, "6,000(40)(20)"], ["자본총계", "6,000"],
+        head=["과목", "당기"]))
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    rows = [_row("BS", "consolidated", i, lab, v) for i, (lab, v) in enumerate(
+        (("자산총계", 10000), ("부채총계", 4000), (_RESERVE, 6000), ("자본총계", 6000)))]
+    res = mc.compare(rows, tables)
+    assert not [f for f in res.findings if f["kind"] == "value"], res.findings
+    # the DB cell is still checked against the first value
+    bad = [dict(r) for r in rows]
+    bad[2]["value_won"] = 6400
+    assert any(f["kind"] == "value" for f in mc.compare(bad, tables).findings)

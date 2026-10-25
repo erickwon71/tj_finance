@@ -71,7 +71,12 @@ from lxml import etree
 # statement - joining it duplicated every label, paired DB rows crosswise (160 false value) and
 # raised 75 false missing_row. missing_row / zero_row findings now carry the table scale, so an
 # issue built from them is stated in the right unit.
-TOOL_VERSION = "mc17"
+# mc18 (2026-10-25, 교보증권 정정공시 4건): a financial-sector row whose label names a supplementary
+# reserve (대손준비금 / 비상위험준비금) can print the main amount and the supplementary amounts in
+# one cell ('551,779,458,997(4,056,218,467)(2,105,652,781)' in a web-viewer print). The loader keeps
+# the first value (PARSING_RULES R152 / R152-b / R152-c / R258); the machine read the whole cell as
+# text and raised a false value finding. Own copy of that rule, gated by the label.
+TOOL_VERSION = "mc18"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -131,6 +136,34 @@ def parse_amount(t: str):
     except ValueError:
         return None
     return -v if neg else v
+
+
+_RESERVE_LABEL_RE = re.compile(r"대손준비금|비상위험준비금")
+# an amount, not a note number: grouped thousands or four and more digits
+_AMOUNT_LIKE_RE = re.compile(r"^[(\[]?\s*[-−△▲]?\s*(?:\d{1,3}(?:,\d{3})+|\d{4,})[\d,\.]*[)\]]?,?$")
+_COMPACTED_PAREN_HEAD_RE = re.compile(r"^([-−△▲]?\s*(?:\d{1,3}(?:,\d{3})+|\d{4,}))\s*[-−–—]?\s*\(")
+_COMPACTED_NEG_HEAD_RE = re.compile(r"^(\(\s*(?:\d{1,3}(?:,\d{3})+|\d{4,})\s*\))\s*[(\d\-−–—]")
+
+
+def first_of_compacted_supplementary(text: str, label: str) -> str:
+    """Main amount of a cell that also prints supplementary reserve amounts (mc18).
+    Only rows whose label names the reserve are touched; anything that does not start with a
+    plausible amount (a note reference such as '26, 27') is returned unchanged."""
+    if not _RESERVE_LABEL_RE.search(label or ""):
+        return text
+    toks = (text or "").split()
+    if len(toks) >= 2 and toks[0].endswith(","):
+        joined = toks[0] + toks[1]
+        if isinstance(parse_amount(joined), float):
+            toks = [joined] + toks[2:]
+    if len(toks) >= 2 and isinstance(parse_amount(toks[0]), float) and _AMOUNT_LIKE_RE.match(toks[0]):
+        return toks[0]
+    stripped = (text or "").strip()
+    for rx in (_COMPACTED_PAREN_HEAD_RE, _COMPACTED_NEG_HEAD_RE):
+        head = rx.match(stripped)
+        if head and _AMOUNT_LIKE_RE.match(head.group(1)):
+            return head.group(1)
+    return text
 
 
 # R158 / R205 broken thousands separators (own copy — this module stays independent of the parser)
@@ -287,6 +320,7 @@ def _parse_table(idx: int, table, basis: str, title: str) -> SrcTable | None:
                  and by_col[c].strip()]
         label = ">".join(parts)
         texts = repair_dot_cells([by_col.get(c, "") for c in cols], label)
+        texts = [first_of_compacted_supplementary(t, label) for t in texts]
         bad = unreadable_dot_cells(texts, label)
         cells = [(t.strip() if i in bad else parse_amount(t)) if c in by_col else _EMPTY
                  for i, (c, t) in enumerate(zip(cols, texts))]

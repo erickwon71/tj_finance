@@ -379,6 +379,32 @@ def machine_gate_on(conn) -> bool:
     return (v or "off").strip().lower() == "on"
 
 
+# Slots a model reviewer may claim (before the model gate / caller filter). Shared by claim() and
+# model_ready_slots() so the runner autostart counts exactly what a claim could pick.
+CLAIMABLE_SQL = """
+p.status IN ('pending', 'has_issues')
+  AND (p.status = 'pending' OR EXISTS (
+        SELECT 1 FROM verification.issues i
+         WHERE i.corp_code = p.corp_code AND i.fiscal_year = p.fiscal_year
+           AND i.fiscal_period = p.fiscal_period AND i.status = 'fixed')
+       -- a has_issues slot can still hold pending filings (no open issue of
+       -- their own: a new amendment, a reload); without this they were never
+       -- checked by anyone (145 filings in 123 slots, 2026-10-09)
+       OR EXISTS (
+        SELECT 1 FROM verification.progress_filings pf
+         WHERE pf.corp_code = p.corp_code AND pf.fiscal_year = p.fiscal_year
+           AND pf.fiscal_period = p.fiscal_period AND pf.status = 'pending'))"""
+
+
+def model_ready_slots(conn) -> int:
+    """How many slots a model reviewer could claim right now (read-only; no claim is made).
+    Same filter as claim(): the claimable shape plus, when kv machine.gate = on, the model gate."""
+    extra = _model_ready_sql() if machine_gate_on(conn) else "TRUE"
+    return conn.execute(text(f"""
+        SELECT count(*) FROM verification.progress p
+        WHERE {CLAIMABLE_SQL} AND {extra}""")).scalar_one()
+
+
 def claim(slot: Slot | None = None, lease_minutes: int = LEASE_MINUTES,
           where: str | None = None) -> Slot | None:
     """Claim the next slot (or a named one). Priority:
@@ -397,18 +423,7 @@ def claim(slot: Slot | None = None, lease_minutes: int = LEASE_MINUTES,
             row = conn.execute(text(f"""
                 SELECT p.corp_code, p.fiscal_year, p.fiscal_period
                 FROM verification.progress p
-                WHERE p.status IN ('pending', 'has_issues')
-                  AND (p.status = 'pending' OR EXISTS (
-                        SELECT 1 FROM verification.issues i
-                         WHERE i.corp_code = p.corp_code AND i.fiscal_year = p.fiscal_year
-                           AND i.fiscal_period = p.fiscal_period AND i.status = 'fixed')
-                       -- a has_issues slot can still hold pending filings (no open issue of
-                       -- their own: a new amendment, a reload); without this they were never
-                       -- checked by anyone (145 filings in 123 slots, 2026-10-09)
-                       OR EXISTS (
-                        SELECT 1 FROM verification.progress_filings pf
-                         WHERE pf.corp_code = p.corp_code AND pf.fiscal_year = p.fiscal_year
-                           AND pf.fiscal_period = p.fiscal_period AND pf.status = 'pending'))
+                WHERE {CLAIMABLE_SQL}
                   AND {extra}
                 ORDER BY
                   (p.status = 'has_issues') DESC,
@@ -1638,6 +1653,7 @@ def machine_status(conn) -> dict:
         if audit:
             out["audit"] += n
     out["gate"] = "on" if machine_gate_on(conn) else "off"
+    out["model_ready_slots"] = model_ready_slots(conn)
     from fin2.verification.machine_compare import TOOL_VERSION
     out["tool"] = TOOL_VERSION
     # Only filings of 'pending' slots count: machine_pass.NEEDS_MACHINE_SQL claims pending

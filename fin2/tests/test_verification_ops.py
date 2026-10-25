@@ -130,9 +130,19 @@ def test_fix_role_cannot_claim(as_role):
         ops.claim()
 
 
+def test_model_ready_slots_counts_what_claim_can_pick(engines, as_role):
+    """The runner autostart (scripts/machine_daemon.sh) starts a runner only when this is > 0."""
+    as_role("verify")
+    with ops.engine.connect() as conn:
+        assert ops.model_ready_slots(conn) == 1               # the pending slot
+        assert ops.machine_status(conn)["model_ready_slots"] == 1
+
+
 def test_claim_show_and_pass_gate(engines, as_role):
     as_role("verify")
     assert ops.claim() == SLOT
+    with ops.engine.connect() as conn:
+        assert ops.model_ready_slots(conn) == 0               # in_progress: nobody else can claim it
     d = ops.slot_detail(SLOT)
     f1 = next(f for f in d["filings"] if f["rcept_no"] == R1)
     assert f1["scope_rows"] == {"sep-is": 1, "con-bs": 1}

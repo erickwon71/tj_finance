@@ -25,3 +25,20 @@ COMMENT ON COLUMN report_lines_l3.printed_value_won IS 'Value as printed in the 
 COMMENT ON COLUMN report_lines_l3.correction_rule IS 'tj_finance rule id that changed the printed value; NULL = no correction.';
 COMMENT ON COLUMN stock_prices.stock_code IS 'KRX ticker; map to corp_code via corporations.';
 COMMENT ON TABLE note_lines IS 'NOT for consumers. Layer 2 quality (printed values only): not refined, not verified (deferred by the verification campaign), no layer 3 view. Notes-derived metrics (depreciation, D&A, EBITDA) are already in std_financials_v3 / extended_financials.';
+
+-- structured disclosure tables (guide section s10_structured)
+COMMENT ON TABLE biz_metrics IS 'Business-section metrics (segment sales, capacity, utilization, R&D, ...) parsed from the report HTML tables as long format: metric/segment/item/period_label/value/unit. Parsed text tables, not part of the financial-statement verification; check unit and is_ratio.';
+COMMENT ON TABLE capital_events IS 'Capital events from DART disclosures (paid/free increase, reduction, CB issue, treasury acquire/dispose): shares_delta, detail jsonb. Source = DART API. Use filed_at as the availability date.';
+COMMENT ON TABLE dividend_facts IS 'Annual dividend facts per fiscal_year (dps common/pref, total dividend, payout ratio, yield). Availability = filing date of rcept_no.';
+COMMENT ON TABLE employee_stats IS 'Employees per division/sex per fiscal_year (counts, average tenure, salary totals). Availability = filing date of rcept_no.';
+COMMENT ON TABLE exec_pay_individual IS 'Individual executive pay (>= disclosure threshold) per fiscal_year; pay_detail jsonb. Availability = filing date of rcept_no.';
+COMMENT ON TABLE exec_pay_summary IS 'Executive pay summary per fiscal_year (head count, total, average). Availability = filing date of rcept_no.';
+COMMENT ON TABLE executives IS 'Registered/unregistered executives per fiscal_year (position, career, tenure, compensation). Availability = filing date of rcept_no.';
+COMMENT ON TABLE major_shareholders IS 'Major shareholders per fiscal_year: shares and ownership percent at begin/end of the period. Availability = filing date of rcept_no.';
+COMMENT ON TABLE order_backlog IS 'Order backlog per fiscal_year and category (backlog, new orders, completed). Only companies that report it; unit column states the amount unit.';
+COMMENT ON TABLE other_investments IS 'Other-corporation investments per fiscal_year (investee, quantity, ownership, book value). Availability = filing date of rcept_no.';
+COMMENT ON TABLE regulatory_events IS 'Regulatory events from DART disclosures (trading_halt, disclosure_violation, delisting, admin_issue, rehabilitation, investment caution); is_lift marks a release. Use filed_at as the availability date.';
+COMMENT ON TABLE report_shares_outstanding IS 'Shares outstanding per report (rcept_no) as of as_of_date, with treasury_shares and float_shares where known.';
+COMMENT ON TABLE retail_ownership IS 'Small-shareholder counts and holdings per fiscal_year. Availability = filing date of rcept_no.';
+COMMENT ON TABLE shareholder_changes IS 'Changes of the largest shareholder per fiscal_year (holder, shares, percent, cause). Availability = filing date of rcept_no.';
+COMMENT ON TABLE treasury_activity IS 'Treasury-share holdings per fiscal_year and stock_kind (begin, acquired, disposed, incinerated, end). Availability = filing date of rcept_no.';

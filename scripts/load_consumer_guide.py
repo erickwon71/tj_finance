@@ -1,7 +1,7 @@
 """Load docs/consumer_guide/*.md into the consumer_guide table and apply comments.sql.
 
 Idempotent: creates the table if missing, upserts every section, deletes sections whose
-source file was removed, then applies the table/column comments. Source of truth = the
+source file was removed, then applies the table/column comments and grants.sql (the reader's allowlist). Source of truth = the
 markdown files; rerun after editing them. See docs/consumer_guide/README.md.
 
     .venv/bin/python scripts/load_consumer_guide.py [--dry-run]
@@ -63,6 +63,7 @@ def main() -> None:
         return
 
     comments_sql = (GUIDE_DIR / "comments.sql").read_text(encoding="utf-8")
+    grants_sql = (GUIDE_DIR / "grants.sql").read_text(encoding="utf-8")
     conn = psycopg2.connect(DATABASE_URL)
     try:
         with conn, conn.cursor() as cur:
@@ -85,6 +86,7 @@ def main() -> None:
             cur.execute("UPDATE consumer_guide SET guide_version = %s", (version,))
             cur.execute(f"GRANT SELECT ON consumer_guide TO {READER_ROLE}")
             cur.execute(comments_sql)
+            cur.execute(grants_sql)
             cur.execute(
                 "INSERT INTO schema_migrations (id) VALUES (%s) ON CONFLICT DO NOTHING",
                 (MIGRATION_ID,),

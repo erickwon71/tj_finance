@@ -637,6 +637,9 @@ def test_compacted_supplementary_first_value():
     assert f("623,930- (692)(692)", _RESERVE) == "623,930"                 # zero supplement printed '-'
     assert f("(129,411,450)(341,071,045)", _RESERVE) == "(129,411,450)"    # negative main item
     assert f("1, 958,360 5,320", _RESERVE) == "1,958,360"                  # split leading fragment
+    # mc19: printed line breaks stay as '&cr;' and a newline splits the leading amount
+    assert f("1,\n958,360&cr;\n(19,556)&cr;\n3,315", _RESERVE) == "1,958,360"
+    assert f("6,000&cr;(40)&cr;(20)", _RESERVE) == "6,000"
 
 
 def test_compacted_supplementary_guards():

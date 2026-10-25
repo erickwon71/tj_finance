@@ -76,7 +76,10 @@ from lxml import etree
 # one cell ('551,779,458,997(4,056,218,467)(2,105,652,781)' in a web-viewer print). The loader keeps
 # the first value (PARSING_RULES R152 / R152-b / R152-c / R258); the machine read the whole cell as
 # text and raised a false value finding. Own copy of that rule, gated by the label.
-TOOL_VERSION = "mc18"
+# mc19 (2026-10-25, 미래에셋 20160516002286): the same cell can come with '&cr;' line breaks and a leading
+# amount split by a printed newline ('1,\n958,360&cr;\n(19,556)&cr;\n3,315', R152-c in the loader); mc18 kept
+# the '&cr;' on its tokens, so the join of the split amount was rejected and the cell stayed text.
+TOOL_VERSION = "mc19"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -151,14 +154,16 @@ def first_of_compacted_supplementary(text: str, label: str) -> str:
     plausible amount (a note reference such as '26, 27') is returned unchanged."""
     if not _RESERVE_LABEL_RE.search(label or ""):
         return text
-    toks = (text or "").split()
+    # the XML reader leaves '&cr;' (a printed line break) in the text: it separates values like a space
+    flat = (text or "").replace("&cr;", " ")
+    toks = flat.split()
     if len(toks) >= 2 and toks[0].endswith(","):
         joined = toks[0] + toks[1]
         if isinstance(parse_amount(joined), float):
             toks = [joined] + toks[2:]
     if len(toks) >= 2 and isinstance(parse_amount(toks[0]), float) and _AMOUNT_LIKE_RE.match(toks[0]):
         return toks[0]
-    stripped = (text or "").strip()
+    stripped = flat.strip()
     for rx in (_COMPACTED_PAREN_HEAD_RE, _COMPACTED_NEG_HEAD_RE):
         head = rx.match(stripped)
         if head and _AMOUNT_LIKE_RE.match(head.group(1)):

@@ -536,6 +536,21 @@ def test_manual_fix_flips_bh_2019q1_amendment_treasury_stock_balances():
     assert len(fixes) == 2
 
 
+def test_manual_fix_flips_hd_hyundai_electric_2020q1_retained_earnings_scope_change():
+    """HD현대일렉트릭 20200515002598 (issue #84221) - the 이익잉여금 cell of the 연결대상범위의
+    변동 row is printed (497,572,079) but only +497,572,079 closes the column roll-forward;
+    the neighbouring cells of the row stay untouched."""
+    re_cell = _Line("SCE", "consolidated", "연결대상범위의 변동", -497_572_079,
+                    col_index=4, col_label="자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금",
+                    row_order=14)
+    nci = _Line("SCE", "consolidated", "연결대상범위의 변동", -252_729_825,
+                col_index=6, col_label="자본>비지배지분", row_order=14)
+    fixes = apply_manual_sign_fixes([re_cell, nci], "20200515002598")
+    assert re_cell.value_won == 497_572_079
+    assert nci.value_won == -252_729_825
+    assert len(fixes) == 1
+
+
 def test_manual_fix_is_wired_into_extract_report_lines():
     rl = (_ROOT / "fin2/extract/report_lines.py").read_text(encoding="utf-8")
     assert "apply_manual_sign_fixes(lines, rcept_no)" in rl

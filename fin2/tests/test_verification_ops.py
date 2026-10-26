@@ -480,6 +480,66 @@ def test_runner_tool_denied_detected_via_permission_denials_field(engines, as_ro
                               "WHERE corp_code=:c"), {"c": CORP}).fetchone() == ("pending", 0)
 
 
+def test_chrome_unavailable_detection():
+    assert runner.chrome_unavailable("요약\n[CHROME_UNAVAILABLE]\n연결을 복구하면 다시 돌려야 한다")
+    assert runner.chrome_unavailable("Chrome 확장이 연결되지 않아 `tabs_context_mcp` 가 2회 연속 오류였다")
+    assert not runner.chrome_unavailable("슬롯 A — pass 2 · 이슈 0 · skip 0 · 대조 보류 0")
+    assert not runner.chrome_unavailable("")
+
+
+def test_runner_chrome_unavailable_stops_without_retry_penalty(engines, as_role, tmp_path):
+    """2026-10-26: Chrome disconnected -> the session handed the slot back pending, finish()
+    called it `deferred` and the loop re-claimed the same slot 21 times (~$9.5)."""
+    _admin_sql(engines, "UPDATE verification.progress SET status='pending', retry_count=0 "
+               "WHERE corp_code=:c", {"c": CORP})
+    as_role("verify")
+    # (a) the session released the slot itself (pending) and reported the marker
+    slot = ops.claim(SLOT)
+    run_id = runner.start(slot, "sonnet")
+    ops.release(slot, failed=False, note="chrome test")
+    log = _fake_log(tmp_path, "chrome_a.json", {
+        "type": "result", "is_error": False, "num_turns": 6,
+        "result": "슬롯 x — pass 0 · 이슈 0 · 대조 보류 1\n[CHROME_UNAVAILABLE]\n연결 복구 필요"})
+    res = runner.finish(run_id, log, 0)
+    assert res["outcome"] == "chrome_down" and res["stop"] is True
+    # (b) the session ended while still holding the slot: released without a retry penalty
+    slot = ops.claim(SLOT)
+    run_id = runner.start(slot, "sonnet")
+    log = _fake_log(tmp_path, "chrome_b.json", {
+        "type": "result", "is_error": False, "num_turns": 6,
+        "result": "Chrome 확장이 연결되지 않아 대조를 하지 못했다"})
+    res = runner.finish(run_id, log, 0)
+    assert res["outcome"] == "chrome_down" and res["stop"] is True
+    with engines["admin"].connect() as c:
+        assert c.execute(text("SELECT status, retry_count FROM verification.progress "
+                              "WHERE corp_code=:c"), {"c": CORP}).fetchone() == ("pending", 0)
+        assert c.execute(text("SELECT outcome FROM verification.runner_runs "
+                              "WHERE run_id=:r"), {"r": run_id}).scalar() == "chrome_down"
+
+
+def test_blocked_slot_is_unblocked_only_by_a_content_changing_reload(engines, as_role):
+    """2026-10-26: six blocked slots kept their old machine verdict after their filings were
+    reloaded from the web-view print and could never be re-verified."""
+    _admin_sql(engines, "UPDATE verification.progress SET status='blocked', retry_count=3 "
+               "WHERE corp_code=:c", {"c": CORP})
+    as_role("fix")
+    with engines["fix"].begin() as c:       # same content -> not a new load
+        c.execute(text("UPDATE report_lines SET value_won = value_won WHERE rcept_no = :r"),
+                  {"r": R1})
+    as_role("verify")
+    assert ops.slot_status(SLOT) == "blocked"
+    as_role("fix")
+    with engines["fix"].begin() as c:       # changed content -> clean start
+        c.execute(text("UPDATE report_lines SET value_won = 102 WHERE rcept_no = :r "
+                       "AND statement = 'BS'"), {"r": R1})
+    with engines["admin"].connect() as c:
+        assert c.execute(text("SELECT status, retry_count FROM verification.progress "
+                              "WHERE corp_code=:c"), {"c": CORP}).fetchone() == ("pending", 0)
+        assert c.execute(text("SELECT count(*) FROM verification.progress_events "
+                              "WHERE corp_code=:c AND action='unblocked_by_reload'"),
+                         {"c": CORP}).scalar() == 1
+
+
 def test_reopen_after_batch_done_clears_stale_fix_batch_id(engines, as_role):
     # handoff docs/qa/handoff_2026-09-26_full_automation.md §5: reopening an issue whose
     # fix_batch_id points at an already-finished batch used to leave it invisible to both the

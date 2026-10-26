@@ -24,7 +24,7 @@ CLI: `scripts/vq.py` (모든 명령은 `--help`)
 
 ## 2. 상태
 
-- 슬롯(회사 × 사업연도 × 보고서): `pending` → `in_progress`(점유, lease 2시간) → `passed` | `has_issues` | `blocked`(3회 실패)
+- 슬롯(회사 × 사업연도 × 보고서): `pending` → `in_progress`(점유, lease 2시간) → `passed` | `has_issues` | `blocked`(3회 실패. 그 슬롯의 필링이 **내용이 바뀐 채** 재적재되면 자동으로 `pending`·재시도 0회로 풀린다 — 이벤트 `unblocked_by_reload`, 2026-10-26)
 - 필링(슬롯 안의 rcept): `pending` · `passed` · `has_issues` · `skipped`
 - 이슈: `open → fixing → fixed → closed`, 재확인에서 틀리면 `reopened → fixing`. 오등록은 `withdraw`(open → closed).
   - 검증 계정만 가능: 등록, `fixed → closed/reopened`, `closed → reopened`
@@ -98,6 +98,7 @@ touch ~/.claude/notify/STOP_VERIFY
 rm ~/.claude/notify/STOP_VERIFY
 ```
 
+- **Chrome 확장이 연결되지 않으면**(세션이 요약 아래에 `[CHROME_UNAVAILABLE]` 을 적는다) 러너는 슬롯에 재시도 벌점을 주지 않고 `STOP_VERIFY` 를 만든 뒤 알림을 보내고 멈춘다(outcome `chrome_down`, 종료코드 6). 자동기동 데몬도 이 파일이 있으면 기동하지 않는다. 확장 연결을 복구한 뒤 파일을 지우고 다시 실행한다. (2026-10-26 이전에는 같은 슬롯이 `deferred` 로 분류돼 21회 되풀이됐다.)
 - 매 회차 `git merge --ff-only origin/main` 을 하므로, 수정 워크트리가 push 한 코드가 자동으로 반영된다. 러너 스크립트 자신이 바뀌면 회차 사이에 스스로 재시작한다.
 - 예산: 5시간 창당 `runner.slots_per_window`(기본 12), 7일 `runner.weekly_slots`(파일럿 후 설정). 값은 `verification.kv` 에 있어 코드 수정 없이 조정된다.
   **2026-09-24 파일럿 30회 실측 후 튜닝(Max x5)**: `runner.pace_mode=on`.

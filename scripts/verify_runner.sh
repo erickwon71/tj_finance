@@ -324,6 +324,10 @@ main() {
         || log "deferred 슬롯 즉시 기계 대조 실패 - 데몬이 처리"
     fi
 
+    if printf '%s' "$res" | grep -q '"outcome": "chrome_down"'; then
+      log "Chrome 확장 연결 안 됨 - 러너 정지 (STOP_VERIFY 작성, 알림 발송됨). 연결 복구 후 STOP_VERIFY 삭제하고 재시작"
+      exit 6
+    fi
     if printf '%s' "$res" | grep -q '"stop": true'; then
       log "연속 실패 - 러너 정지 (알림 발송됨)"
       exit 5

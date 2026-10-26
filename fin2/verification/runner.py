@@ -40,6 +40,31 @@ _EPOCH_RE = re.compile(r"\|(\d{10})\b")
 # array Claude Code itself attaches to the result JSON (see `finish()`) — this regex is now
 # only a fallback for the rare case that field is empty but the text still names the error.
 _BASH_DENIED_RE = re.compile(r"permission to use bash has been denied|don't ask mode", re.I)
+# 2026-10-26: with the Chrome extension disconnected a session cannot do a web-view comparison,
+# registers nothing and hands the slot back as pending -> finish() classified it `deferred` (no
+# retry penalty, no stop) and the loop claimed the same slot again: 21 runs / ~$9.5 in 2 hours.
+# The verify prompt makes the session print this marker on its own line when two consecutive
+# Chrome calls fail; the text fallback covers the wording the model used before the marker existed.
+CHROME_MARKER = "[CHROME_UNAVAILABLE]"
+_CHROME_DOWN_RE = re.compile(r"\[CHROME_UNAVAILABLE\]|Chrome 확장이 연결되지 않|Chrome 을 쓸 수 없")
+STOP_FILE = NOTIFY.parent / "STOP_VERIFY"
+
+
+def chrome_unavailable(result_text: str) -> bool:
+    """True when the session reported that it could not use the Chrome extension."""
+    return bool(_CHROME_DOWN_RE.search(result_text or ""))
+
+
+def _write_stop_file(reason: str) -> None:
+    """Make the shell loop and the machine daemon's runner autostart stay down until the user
+    removes the file (both already honour it). No-op under pytest."""
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+    try:
+        STOP_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STOP_FILE.write_text(reason + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _kv(conn, key: str) -> str:
@@ -213,6 +238,8 @@ def finish(run_id: int, log: Path, exit_code: int) -> dict:
     elif (data.get("permission_denials") or _BASH_DENIED_RE.search(result_text)) \
             and status == "in_progress":
         outcome = "tool_denied"
+    elif chrome_unavailable(result_text) and status in ("pending", "in_progress"):
+        outcome = "chrome_down"
     elif status == "passed":
         outcome = "passed"
     elif status == "has_issues":
@@ -232,6 +259,12 @@ def finish(run_id: int, log: Path, exit_code: int) -> dict:
     sleep_until = None
     if outcome == "deferred":
         pass    # slot is already pending; no retry penalty, not counted as a failure
+    elif outcome == "chrome_down":
+        # Not the slot's fault: no retry penalty. Re-claiming it would fail the same way, so
+        # the loop stops (STOP_VERIFY also keeps the daemon's autostart away) until the user
+        # has the extension connected again and removes the file.
+        if status == "in_progress":
+            ops.release(slot, failed=False, note=f"runner run {run_id}: chrome_down")
     elif outcome == "tool_denied":
         # Not the slot's fault either: release without a retry penalty, no back-off needed
         # (each `claude -p` run starts a fresh process, so the next run is unaffected).
@@ -286,6 +319,14 @@ def finish(run_id: int, log: Path, exit_code: int) -> dict:
               AND outcome NOT IN ('usage_limit', 'tool_denied')
             ORDER BY run_id DESC LIMIT :n"""),
             {"w": run["worktree"], "n": STOP_AFTER_CONSECUTIVE_FAILS}).fetchall()]
+
+    if outcome == "chrome_down":
+        _write_stop_file(f"chrome_down run {run_id} {slot}: reconnect the Claude-in-Chrome "
+                         f"extension, then remove this file and restart the runner")
+        _notify(f"[verify 러너 정지] Chrome 확장 연결 안 됨 - {slot} run {run_id}. "
+                f"연결 복구 후 ~/.claude/notify/STOP_VERIFY 삭제하고 러너 재시작")
+        return {"run_id": run_id, "slot": str(slot), "outcome": outcome, "stop": True,
+                "sleep_until": None}
 
     stop = (len(last) == STOP_AFTER_CONSECUTIVE_FAILS
             and all(o in FAIL_OUTCOMES for o in last))

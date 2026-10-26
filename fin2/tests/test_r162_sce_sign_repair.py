@@ -520,6 +520,22 @@ def test_manual_fix_requires_the_old_value_to_match():
     assert fixes == []
 
 
+def test_manual_fix_flips_bh_2019q1_amendment_treasury_stock_balances():
+    """비에이치 20190821000012 (issue #86399) — both 2019 separate 자기주식 balances print
+    without parentheses; the other cells of the same rows stay untouched."""
+    opening = _Line("SCE", "separate", "2019.01.01 (기초자본)", 49_929_862_900,
+                    col_index=3, col_label="자본>자기주식", row_order=6)
+    closing = _Line("SCE", "separate", "2019.03.31 (기말자본)", 49_929_862_900,
+                    col_index=3, col_label="자본>자기주식", row_order=11)
+    capital = _Line("SCE", "separate", "2019.03.31 (기말자본)", 15_816_291_000,
+                    col_index=0, col_label="자본>자본금", row_order=11)
+    fixes = apply_manual_sign_fixes([opening, closing, capital], "20190821000012")
+    assert opening.value_won == -49_929_862_900
+    assert closing.value_won == -49_929_862_900
+    assert capital.value_won == 15_816_291_000
+    assert len(fixes) == 2
+
+
 def test_manual_fix_is_wired_into_extract_report_lines():
     rl = (_ROOT / "fin2/extract/report_lines.py").read_text(encoding="utf-8")
     assert "apply_manual_sign_fixes(lines, rcept_no)" in rl

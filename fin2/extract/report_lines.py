@@ -683,6 +683,17 @@ def _row_to_line(
 _EPS_MAX_PLAUSIBLE_WON = 10_000_000
 
 
+# R285 - a row whose every printed amount cell carries its own won suffix ('188원', '(89원)',
+# '(2,564)원') was read without the table multiplier (R149/R179), so its adecimal must say won too;
+# inheriting the table's 백만원 made a 188-won EPS render as 0 in the review CSV (흥국화재 2013-2023).
+_WON_SUFFIX_CELL_RE = re.compile(r"\d[\d,.\s]*\)?\s*원\s*\)?$")
+
+
+def _row_prints_won(row) -> bool:
+    cells = [c.strip() for c in (row.raw_amounts or []) if c and c.strip() not in ("", "-")]
+    return bool(cells) and all(_WON_SUFFIX_CELL_RE.search(c) for c in cells)
+
+
 def _looks_like_eps_amounts(amounts) -> bool:
     """파싱된 금액들이 EPS(원/주)치고 비현실적으로 크면 False. 값이 전부 없으면(None)
     판단 불가 → 보수적으로 True(기존 동작 유지, 결측>오염 — 짐작 말고 기존 경로 유지)."""
@@ -1544,7 +1555,7 @@ def _emit_section_lines(
                     corp_code=corp_code, rcept_no=rcept_no,
                     report_fiscal_year=report_fiscal_year,
                     report_fiscal_period=report_fiscal_period,
-                    unit=unit, section_code=section_code, section_path=section_path,
+                    unit=1 if _row_prints_won(row) else unit, section_code=section_code, section_path=section_path,
                     node_role=node_roles.get(id(row)),
                     table_seq=table_seq, table_title=table_title,
                     unit_source=unit_source, currency=currency, unit_decl_raw=decl_raw,

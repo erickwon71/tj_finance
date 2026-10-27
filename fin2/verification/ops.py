@@ -1182,7 +1182,7 @@ def _current_db_blocks(conn, issue: dict) -> list[str] | None:
 def recheck_list(slot: Slot | None = None) -> list[dict]:
     with engine.connect() as conn:
         # machine-registered issues are re-checked by `vq.py machine recheck`, not the model
-        q = """SELECT * FROM verification.issues WHERE status = 'fixed'
+        q = """SELECT * FROM verification.issues WHERE status = 'fixed' AND scope = 'report'
                AND created_by NOT LIKE '%machine'"""
         params: dict = {}
         if slot:
@@ -1213,7 +1213,7 @@ def transition(issue_id: int, to: str, evidence: str | None) -> dict:
 
 
 # ═══════════════════════════════ fix side ═══════════════════════════════
-def fix_queue() -> dict:
+def fix_queue(scope: str = "report") -> dict:
     with engine.connect() as conn:
         groups = [dict(r) for r in conn.execute(text(f"""
             SELECT i.error_type, et.label_ko, count(*) AS n_issues,
@@ -1231,18 +1231,19 @@ def fix_queue() -> dict:
                    ) AS n_released_fp,
                    min(i.issue_id) AS first_issue
             FROM verification.issues i JOIN verification.error_types et ON et.code = i.error_type
-            WHERE i.status IN ('open', 'reopened') AND i.fix_batch_id IS NULL
+            WHERE i.status IN ('open', 'reopened') AND i.fix_batch_id IS NULL AND i.scope = :sc
               AND NOT {_PENDING_WITHDRAW_SQL} AND NOT {_HELD_SQL}
-            GROUP BY 1, 2 ORDER BY n_issues DESC""")).mappings()]
+            GROUP BY 1, 2 ORDER BY n_issues DESC"""), {"sc": scope}).mappings()]
         pending_withdraw = conn.execute(text(f"""
             SELECT count(*) FROM verification.issues i
-            WHERE i.status = 'open' AND {_PENDING_WITHDRAW_SQL}""")).scalar_one()
+            WHERE i.status = 'open' AND i.scope = :sc AND {_PENDING_WITHDRAW_SQL}"""),
+            {"sc": scope}).scalar_one()
         held = [dict(r) for r in conn.execute(text(f"""
             SELECT i.error_type, count(*) AS n
             FROM verification.issues i
-            WHERE i.status IN ('open', 'reopened') AND i.fix_batch_id IS NULL
+            WHERE i.status IN ('open', 'reopened') AND i.fix_batch_id IS NULL AND i.scope = :sc
               AND NOT {_PENDING_WITHDRAW_SQL} AND {_HELD_SQL}
-            GROUP BY 1 ORDER BY 2 DESC""")).mappings()]
+            GROUP BY 1 ORDER BY 2 DESC"""), {"sc": scope}).mappings()]
         batches = [dict(r) for r in conn.execute(text("""
             SELECT b.batch_id, b.error_type, b.rule_id, b.title, b.status, b.created_at,
                    (SELECT count(*) FROM verification.issues i WHERE i.fix_batch_id = b.batch_id
@@ -1254,8 +1255,9 @@ def fix_queue() -> dict:
                      AND d.status = 'answered'
                      AND d.answered_at > coalesce(b.updated_at, b.created_at)) AS n_answered
             FROM verification.fix_batches b
-            WHERE b.status IN ('open', 'waiting_decision', 'reloading')
-            ORDER BY n_answered DESC, b.status = 'reloading' DESC, b.batch_id""")).mappings()]
+            WHERE b.status IN ('open', 'waiting_decision', 'reloading') AND b.scope = :sc
+            ORDER BY n_answered DESC, b.status = 'reloading' DESC, b.batch_id"""),
+            {"sc": scope}).mappings()]
         decisions = [dict(r) for r in conn.execute(text("""
             SELECT decision_id, category, batch_id, question, status, answer_key, answer_text,
                    answered_at FROM verification.decisions
@@ -1265,7 +1267,8 @@ def fix_queue() -> dict:
             "pending_withdraw": pending_withdraw, "held": held}
 
 
-def issues_of_type(error_type: str, statuses=("open", "reopened"), held: bool = False) -> list[dict]:
+def issues_of_type(error_type: str, statuses=("open", "reopened"), held: bool = False,
+                   scope: str = "report") -> list[dict]:
     """★2026-09-30(사용자 지시) — `reopened`은 fix_queue()에서 순수 신규 `open`과 구분 없이
     섞여 나온다. fix가 "이걸 이미 한 번 고쳤었다"는 걸 모른 채 매번 처음부터 재조사하는
     일이 반복됐다(recheck의 거짓 reopen 버그가 특히 여러 번 재발 — 메모리 다수 기록).
@@ -1311,32 +1314,34 @@ def issues_of_type(error_type: str, statuses=("open", "reopened"), held: bool = 
                 FROM verification.issue_events e WHERE e.issue_id = i.issue_id
             ) h ON true
             WHERE i.error_type = :t AND i.status = ANY(:s) AND i.fix_batch_id IS NULL
+              AND i.scope = :sc
               AND NOT {_PENDING_WITHDRAW_SQL} AND {'' if held else 'NOT '}{_HELD_SQL}
-            ORDER BY i.issue_id"""), {"t": error_type, "s": list(statuses)}).mappings()]
+            ORDER BY i.issue_id"""), {"t": error_type, "s": list(statuses), "sc": scope}).mappings()]
 
 
 def batch_new(error_type: str, title: str, issue_ids: list[int] | None,
-              rule_id: str | None = None) -> dict:
+              rule_id: str | None = None, scope: str = "report") -> dict:
     _require("fix")
     with _Tx(evidence=f"batch new: {title}") as conn:
         bid = conn.execute(text("""
-            INSERT INTO verification.fix_batches (error_type, rule_id, title)
-            VALUES (:t, :r, :ti) RETURNING batch_id"""),
-            {"t": error_type, "r": rule_id, "ti": title[:200]}).scalar_one()
+            INSERT INTO verification.fix_batches (error_type, rule_id, title, scope)
+            VALUES (:t, :r, :ti, :sc) RETURNING batch_id"""),
+            {"t": error_type, "r": rule_id, "ti": title[:200], "sc": scope}).scalar_one()
         if issue_ids is None:
             issue_ids = [r[0] for r in conn.execute(text(f"""
                 SELECT issue_id FROM verification.issues i
                 WHERE error_type = :t AND status IN ('open', 'reopened') AND fix_batch_id IS NULL
+                  AND i.scope = :sc
                   AND NOT {_PENDING_WITHDRAW_SQL} AND NOT {_HELD_SQL}"""),
-                {"t": error_type}).fetchall()]
+                {"t": error_type, "sc": scope}).fetchall()]
         n = conn.execute(text("""
             UPDATE verification.issues SET fix_batch_id = :b, status = 'fixing',
                    -- freeze (1) is recognised by rule_id R162-e; a batch --rule must not erase it
                    rule_id = CASE WHEN error_type = 'sign_flip' AND rule_id = 'R162-e'
                                        AND created_at < TIMESTAMPTZ '2026-09-26 00:00:00+09'
                                   THEN rule_id ELSE coalesce(:r, rule_id) END
-             WHERE issue_id = ANY(:ids) AND status IN ('open', 'reopened')"""),
-            {"b": bid, "ids": issue_ids, "r": rule_id}).rowcount
+             WHERE issue_id = ANY(:ids) AND status IN ('open', 'reopened') AND scope = :sc"""),
+            {"b": bid, "ids": issue_ids, "r": rule_id, "sc": scope}).rowcount
         conn.execute(text("""
             INSERT INTO verification.batch_targets (batch_id, rcept_no)
             SELECT DISTINCT :b, rcept_no FROM verification.issues WHERE fix_batch_id = :b
@@ -1521,6 +1526,53 @@ def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, s
     return "done", None
 
 
+def _reload_biz(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, str | None]:
+    """Layer 2 of the '사업의 내용' tables for one filing (biz_section_tables, all four domains)
+    followed by the layer-3 rebuild of that fiscal year (biz_metrics, order_backlog) - the same
+    two steps the daily pipeline runs (collector/biz_metrics.py ensure_biz_raw_tables +
+    sync_biz_metrics_corp). Layer 3 must follow: a fix batch that stopped after layer 2 once left
+    derived rows stale for weeks (see memory r211-r212)."""
+    from psycopg2 import errors as pg_errors
+    from sqlalchemy.exc import DBAPIError
+
+    from collector.biz_metrics import sync_biz_metrics_corp
+    from collector.db import get_session
+    from collector.order_backlog import sync_order_backlog_corp
+    from fin2.layer2.biz_raw_tables import extract_biz_raw_tables, store_biz_raw_tables
+
+    with get_session() as s:
+        t = s.execute(text("""
+            SELECT CASE WHEN dt.status = 'completed' AND dt.file_type = 'xml' THEN dt.file_path
+                        ELSE dt.viewer_xml_path END AS file_path,
+                   f.corp_code, f.fiscal_year, f.report_type
+            FROM download_tasks dt JOIN filings f USING (rcept_no)
+            WHERE dt.rcept_no = :r
+              AND ((dt.status = 'completed' AND dt.file_type = 'xml' AND dt.file_path IS NOT NULL)
+                   OR dt.viewer_xml_path IS NOT NULL)
+            LIMIT 1"""), {"r": rcept}).fetchone()
+    if t is None or not t.file_path:
+        return "failed", "XML 원문 없음 — PDF 경로는 전용 스크립트로 처리"
+    file_path = _sd_path(t.file_path) if use_sd else t.file_path
+    if not Path(file_path).exists():
+        return "failed", "XML 원문 없음 — PDF 경로는 전용 스크립트로 처리"
+    rows = extract_biz_raw_tables(Path(file_path), t.corp_code, t.fiscal_year)
+    if not rows:
+        return "failed", "추출 0표 — 기존 적재를 지우지 않고 중단"
+    try:
+        with get_session() as s:
+            s.execute(text("SELECT set_config('verification.load_reason', :r, true)"),
+                      {"r": reason})
+            store_biz_raw_tables(s, rcept, rows)
+            if t.report_type == "annual":
+                sync_biz_metrics_corp(s, t.corp_code, t.fiscal_year)
+                sync_order_backlog_corp(s, t.corp_code, t.fiscal_year)
+    except DBAPIError as exc:
+        if isinstance(exc.orig, pg_errors.LockNotAvailable):
+            return "deferred", "검증 중(lease) — lease 종료 후 재시도"
+        return "failed", f"{type(exc.orig).__name__}: {str(exc.orig)[:300]}"
+    return "done", None
+
+
 def batch_reload(batch_id: int, limit: int | None = None,
                  shard: tuple[int, int] | None = None, use_sd: bool = False) -> dict:
     """`shard=(i, n)` reloads only targets with int(rcept) % n == i, so n processes can
@@ -1540,9 +1592,13 @@ def batch_reload(batch_id: int, limit: int | None = None,
         targets = [t for t in targets if int(t) % shard[1] == shard[0]]
     if limit:
         targets = targets[:limit]
+    with engine.connect() as conn:
+        bscope = conn.execute(text("SELECT scope FROM verification.fix_batches WHERE batch_id = :b"),
+                              {"b": batch_id}).scalar_one()
+    reload_fn = {"report": _reload_rcept, "note": _reload_rcept, "biz": _reload_biz}[bscope]
     tally = {"done": 0, "deferred": 0, "failed": 0}
     for i, rcept in enumerate(targets, 1):
-        status, err = _reload_rcept(rcept, f"fix_batch:{batch_id}", use_sd=use_sd)
+        status, err = reload_fn(rcept, f"fix_batch:{batch_id}", use_sd=use_sd)
         tally[status] += 1
         with _Tx() as conn:
             conn.execute(text("""
@@ -1643,7 +1699,7 @@ def withdraw_released(dry_run: bool = False, ids: list[int] | None = None) -> di
                      WHERE e.issue_id = i.issue_id AND e.action = 'transition'
                      ORDER BY e.at DESC, e.event_id DESC LIMIT 1) AS release_evidence
             FROM verification.issues i
-            WHERE i.status = 'open' AND {cond}
+            WHERE i.status = 'open' AND i.scope = 'report' AND {cond}
             ORDER BY i.issue_id"""), {"ids": list(ids or [])}).mappings()]
     missing = sorted(set(ids or ()) - {r["issue_id"] for r in rows})
     if missing:

@@ -6239,6 +6239,19 @@ R212 소급 백필의 대상 목록(`docs/qa/eps_fractional_targets_2026-10-02.*
 
 **범위(2026-10-26)**: `adecimal<0` 인 주당이익 행은 4개사 54필링(흥국화재 46필링 2013~2023, 00117276 5필링, 00120182 2필링, 00178851 1필링).
 
+## R287. 사업의 내용 리더도 파싱 전에 DART 원문을 정리한다 — 맨 `&`·`<` 뒤 글자가 사라지지 않게 (2026-10-27, 적용 계층: 2 — 읽기)
+
+> **상태** 유효 · **적용 계층** 2
+>
+> **규칙** `fin2/extract/biz_section.py::_load_root`(사업의 내용 4개 도메인이 공유: production·sales·catalog·order_backlog)는 XML 을 파싱하기 **전에** `parser/xml/dart_xml_parser.py::sanitize_dart_xml` 을 적용한다. R224 가 본문·주석 읽기 경로에 한 것과 같은 정리이며, 사업의 내용 경로만 빠져 있었다.
+> **하지 않는 것** 표 선택 기준(`find_biz_subsections`·카탈로그 규칙)과 계층3 매핑은 바꾸지 않는다. 저장 표가 원문의 일부 표뿐인 것(숫자 표의 약 38%)은 별개의 미결 사항이다.
+> **테스트** `fin2/tests/test_r287_biz_load_root_sanitize.py`.
+
+**발견**: verification scope `biz` 의 기계대조(`fin2/verification/machine_biz.py`, mb1)가 처음 282개 불일치 필링에서 만든 셀 발견 2,535건 중 99% 가 이 원인이었다. 원문 `H&B사업본부` 가 `H사업본부`, `군산L&S1기` 가 `군산L1기`, `COVID-19&FluA` 가 `COVID-19FluA` 로, `<연구인력현황>` 이 `현황>` 으로 적재돼 있었다. `etree.XMLParser(recover=True)` 가 이스케이프 안 된 `&` 에서 오류 복구에 들어가 뒤 텍스트를 버린다(R224 의 재현과 같다).
+**부수 효과**: 오류 복구가 표 구조를 어긋나게 한 필링이 있었다 — 세아홀딩스 20210318000670 은 수정 후 표가 89 → 91개로 늘었고 새 추출 결과는 원문과 완전히 일치했다(기계대조 clean).
+**범위**: 사업의 내용 테이블 `biz_section_tables` 의 해당 필링 전부와 그 계층3(`biz_metrics`, `order_backlog`). 해당 필링은 기계대조 mismatch 필링으로 특정한다(`vq.py scope status --scope biz`).
+**소급**: 자동이 아니다. fix 큐 배치(scope biz)로 재적재한다 — `ops._reload_biz` 가 계층2 쓰기 뒤에 계층3 재빌드까지 한다.
+
 ## R10. XBRL 원문(instance) — 값 부호는 `preferredLabel`이 결정, `calc:weight`는 저장에 안 씀
 
 > **상태** 유효 · **적용 계층** 2 · XBRL 폴백 경로 전용(본문 XML·웹뷰 인쇄본이 모두 없을 때)

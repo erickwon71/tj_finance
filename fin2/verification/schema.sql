@@ -167,6 +167,16 @@ CREATE TABLE IF NOT EXISTS verification.fix_batches (
     done_at         timestamptz
 );
 
+ALTER TABLE verification.fix_batches ADD COLUMN IF NOT EXISTS scope varchar(6) NOT NULL DEFAULT 'report';
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'verification.fix_batches'::regclass
+                    AND conname = 'fix_batches_scope_check') THEN
+        ALTER TABLE verification.fix_batches ADD CONSTRAINT fix_batches_scope_check
+            CHECK (scope IN ('report', 'note', 'biz'));
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS verification.batch_targets (
     batch_id    bigint      NOT NULL REFERENCES verification.fix_batches(batch_id),
     rcept_no    varchar(14) NOT NULL REFERENCES public.filings(rcept_no),

@@ -57,7 +57,7 @@ class BizTable:
 def _load_root(file_path: Path) -> Optional[etree._Element]:
     """XML 루트 로드. 구형 DART 보고서(~2010년대)는 UTF-8 로 선언됐지만 실제 EUC-KR 인 경우가
     많아 인코딩 자동감지 폴백(_detect_xml_encoding 재사용) + 대용량 사업보고서용 huge_tree."""
-    from parser.xml.dart_xml_parser import _detect_xml_encoding
+    from parser.xml.dart_xml_parser import _detect_xml_encoding, sanitize_dart_xml
 
     with open(file_path, "rb") as f:
         raw = f.read()
@@ -66,6 +66,10 @@ def _load_root(file_path: Path) -> Optional[etree._Element]:
         # EUC-KR → UTF-8 재인코딩 후 선언 교체(text.py/shares.py 폴백과 동일 전략)
         raw = re.sub(rb'encoding\s*=\s*"[^"]*"', b'encoding="utf-8"',
                      raw.decode("euc-kr", "replace").encode("utf-8"), count=1)
+    # R224: 선언 안 된 `&cr;` 등과 이스케이프 안 된 `&`·`<` 를 파싱 전에 복구한다. 이걸 빼먹어
+    # 사업의 내용 표의 `H&B사업본부` 가 `H사업본부` 로, `<연구인력현황>` 이 `현황>` 으로 적재됐다
+    # (verification scope biz 기계대조 mb1, 2026-10-27).
+    raw = sanitize_dart_xml(raw)
     try:
         return etree.fromstring(raw, parser)
     except Exception:

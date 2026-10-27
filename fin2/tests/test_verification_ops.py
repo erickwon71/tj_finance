@@ -919,3 +919,37 @@ def test_zero_row_filing_with_active_missing_row_takes_no_duplicate(monkeypatch)
     import inspect
     src = inspect.getsource(ops.add_issues)
     assert "zero_row_dup" in src and "NOT EXISTS (SELECT 1 FROM report_lines" in src
+
+
+def test_scope_issues_stay_out_of_report_fix_queue_and_batches(engines, as_role):
+    """A biz issue of the same error type must not be swept into a report batch (its filing would
+    be reloaded by the report path), and the other way round."""
+    as_role("admin")
+    ops.init_era("2015+")
+    assert ops.init_scope_era("biz", "2015+")["new_filings"] == 2
+    assert ops.init_scope_era("biz", "2015+")["new_filings"] == 0           # idempotent
+    _admin_sql(engines, """
+        INSERT INTO verification.issues (corp_code, fiscal_year, fiscal_period, rcept_no, scope,
+            basis, statement, account_label, error_type)
+        VALUES (:c, 2024, 'FY', :r, 'report', 'consolidated', 'BS', 'scopetest 자산', 'value_mismatch')""",
+               {"c": CORP, "r": R1})
+    _admin_sql(engines, """
+        INSERT INTO verification.issues (corp_code, fiscal_year, fiscal_period, rcept_no, scope,
+            table_ref, statement, account_label, error_type)
+        VALUES (:c, 2024, 'FY', :r, 'biz', '3', 'BIZ', 'scopetest 행', 'value_mismatch')""",
+               {"c": CORP, "r": R1})
+
+    as_role("fix")
+    assert {g["error_type"]: g["n_issues"] for g in ops.fix_queue("biz")["groups"]} == {"value_mismatch": 1}
+    biz = ops.batch_new("value_mismatch", "biz batch", None, scope="biz")
+    assert biz["issues"] == 1
+    rep = ops.batch_new("value_mismatch", "report batch", None)
+    labels = _admin_sql(engines, "SELECT scope, account_label FROM verification.issues "
+                                 "WHERE fix_batch_id = :b", {"b": rep["batch_id"]})
+    assert all(s == "report" for s, _ in labels) and ("report", "scopetest 자산") in labels
+    assert _admin_sql(engines, "SELECT scope FROM verification.fix_batches WHERE batch_id = :b",
+                      {"b": biz["batch_id"]}) == [("biz",)]
+    # an explicit id list is also confined to the batch's scope
+    other = ops.batch_new("value_mismatch", "ids", [i for (i,) in _admin_sql(
+        engines, "SELECT issue_id FROM verification.issues WHERE scope = 'biz'")], scope="report")
+    assert other["issues"] == 0

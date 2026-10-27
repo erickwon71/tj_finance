@@ -323,7 +323,7 @@ def cmd_withdraw_released(a):
 
 # ─────────────────────────────── fix ───────────────────────────────
 def cmd_fix_queue(a):
-    q = ops.fix_queue()
+    q = ops.fix_queue(getattr(a, "scope", "report"))
     if a.json:
         print(_j(q))
         return
@@ -356,9 +356,11 @@ def cmd_fix_queue(a):
 
 
 def cmd_issues(a):
-    for r in ops.issues_of_type(a.type, held=getattr(a, "held", False)):
+    for r in ops.issues_of_type(a.type, held=getattr(a, "held", False),
+                                scope=getattr(a, "scope", "report")):
+        tref = f"[표 {r['table_ref']}]" if r.get("table_ref") else ""
         print(f"#{r['issue_id']} [{r['status']}] {r['corp_name']} {r['fiscal_year']}{r['fiscal_period']} "
-              f"{r['rcept_no']} {r['basis']}/{r['statement']} {r['account_label']}"
+              f"{r['rcept_no']} {r['basis']}/{r['statement']}{tref} {r['account_label']}"
               f"{'/' + r['column_label'] if r['column_label'] else ''} DB={r['db_value']} "
               f"원문={r['source_value_raw']}({r['source_unit']})")
         if r["evidence"]:
@@ -387,7 +389,7 @@ def cmd_batch_new(a):
         # an empty list used to mean "every unassigned issue of the type" (memory: R207 batch)
         raise VqError("--issues 가 비어 있다 — 그 유형 전부를 모으려면 --issues 를 빼고 실행한다")
     ids = [int(x) for x in a.issues.split(",")] if a.issues else None
-    print(_j(ops.batch_new(a.type, a.title, ids, a.rule)))
+    print(_j(ops.batch_new(a.type, a.title, ids, a.rule, getattr(a, "scope", "report"))))
 
 
 def cmd_batch_add(a):
@@ -482,6 +484,73 @@ def cmd_admin(a):
             print(f"{r[0]}:{r[1]}:{r[2]}")
 
 
+def cmd_scope(a):
+    """note/biz scope: machine pass, status, findings, machine-registered issues."""
+    from collector.db import engine
+    from fin2.verification import machine_pass_scope as mps
+    from fin2.verification import scope_issues as si
+    if a.action == "run":
+        shard = tuple(int(x) for x in a.shard.split("/")) if a.shard else None
+        print(_j(mps.run(a.scope, limit=a.limit, shard=shard)))
+    elif a.action == "status":
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT p.status, count(*) FROM verification.scope_progress p
+                WHERE p.scope = :sc GROUP BY 1 ORDER BY 1"""), {"sc": a.scope}).fetchall()
+            v = conn.execute(text("""
+                SELECT verdict, count(*) FROM verification.scope_machine_checks
+                WHERE scope = :sc GROUP BY 1 ORDER BY 1"""), {"sc": a.scope}).fetchall()
+            i = conn.execute(text("""
+                SELECT error_type, status, count(*) FROM verification.issues
+                WHERE scope = :sc GROUP BY 1, 2 ORDER BY 1, 2"""), {"sc": a.scope}).fetchall()
+        print(_j({"slots": dict(rows), "machine_verdicts": dict(v),
+                  "issues": [list(r) for r in i]}))
+    elif a.action in ("show", "register"):
+        if not a.rcept:
+            raise SystemExit("--rcept 가 필요하다")
+        with engine.connect() as conn:
+            r = conn.execute(text("""
+                SELECT verdict, counts, findings, tool_version, load_seq
+                FROM verification.scope_machine_checks WHERE rcept_no = :r AND scope = :sc"""),
+                {"r": a.rcept, "sc": a.scope}).mappings().fetchone()
+        if r is None:
+            raise SystemExit("기계 대조 결과 없음 — `vq.py scope run` 먼저")
+        if a.action == "show":
+            print(_j({"verdict": r["verdict"], "counts": r["counts"], "tool": r["tool_version"]}))
+            for n, f in enumerate(r["findings"], 1):
+                print(n, _j(f))
+        else:
+            select = [int(x) for x in a.select.split(",")] if a.select else None
+            items = si.findings_to_items(a.scope, r["findings"], f"[machine {r['tool_version']}]", select)
+            ids = si.register(a.scope, a.rcept, items) if a.apply else []
+            print(_j({"items": len(items), "registered": ids, "dry_run": not a.apply}))
+    elif a.action == "recheck":
+        print(_j(si.recheck(a.scope, dry_run=not a.apply)))
+    elif a.action == "register-all":
+        with engine.connect() as conn:
+            rcepts = [x[0] for x in conn.execute(text("""
+                SELECT mc.rcept_no FROM verification.scope_machine_checks mc
+                JOIN verification.scope_progress_filings pf
+                  ON pf.scope = mc.scope AND pf.rcept_no = mc.rcept_no
+                WHERE mc.scope = :sc AND mc.verdict = 'mismatch' AND pf.status = 'pending'
+                  AND mc.load_seq = (SELECT load_seq FROM verification.scope_loads l
+                                      WHERE l.rcept_no = mc.rcept_no AND l.scope = mc.scope)
+                ORDER BY mc.rcept_no LIMIT :n"""), {"sc": a.scope, "n": a.limit or 1000000}).fetchall()]
+        total, filings = 0, 0
+        for rc in rcepts:
+            with engine.connect() as conn:
+                r = conn.execute(text("""SELECT findings, tool_version FROM verification.scope_machine_checks
+                                          WHERE rcept_no = :r AND scope = :sc"""),
+                                 {"r": rc, "sc": a.scope}).mappings().one()
+            items = si.findings_to_items(a.scope, r["findings"], f"[machine {r['tool_version']}]")
+            if a.apply:
+                total += len(si.register(a.scope, rc, items))
+            else:
+                total += len(items)
+            filings += 1
+        print(_j({"filings": filings, "issues": total, "dry_run": not a.apply}))
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = p.add_subparsers(dest="cmd", required=True)
@@ -528,13 +597,17 @@ def build_parser() -> argparse.ArgumentParser:
         x = sp.add_parser(name); x.add_argument("issue_id", type=int)
         x.add_argument("--evidence", required=True); x.set_defaults(fn=fn)
 
-    x = sp.add_parser("fix-queue"); x.add_argument("--json", action="store_true"); x.set_defaults(fn=cmd_fix_queue)
+    x = sp.add_parser("fix-queue"); x.add_argument("--json", action="store_true")
+    x.add_argument("--scope", default="report", choices=["report", "note", "biz"])
+    x.set_defaults(fn=cmd_fix_queue)
     x = sp.add_parser("issues"); x.add_argument("--type", required=True)
     x.add_argument("--held", action="store_true", help="defer 반려·동결로 보류된 이슈만 본다")
+    x.add_argument("--scope", default="report", choices=["report", "note", "biz"])
     x.set_defaults(fn=cmd_issues)
     x = sp.add_parser("batch"); bsp = x.add_subparsers(dest="sub", required=True)
     y = bsp.add_parser("new"); y.add_argument("--type", required=True); y.add_argument("--title", required=True)
     y.add_argument("--rule"); y.add_argument("--issues", help="쉼표구분 issue_id(생략=그 유형의 미배정 전부)")
+    y.add_argument("--scope", default="report", choices=["report", "note", "biz"])
     y.set_defaults(fn=cmd_batch_new)
     y = bsp.add_parser("add-targets"); y.add_argument("batch_id", type=int)
     y.add_argument("--rcept-file", required=True); y.set_defaults(fn=cmd_batch_add)
@@ -586,6 +659,15 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--slot"); x.add_argument("--model"); x.add_argument("--run-id", type=int)
     x.add_argument("--log"); x.add_argument("--exit-code", type=int)
     x.set_defaults(fn=cmd_runner)
+
+    x = sp.add_parser("scope", help="note/biz scope: 기계 대조·상태·이슈 등록(설계 verification_note_biz_expansion)")
+    x.add_argument("action", choices=["run", "status", "show", "register", "register-all", "recheck"])
+    x.add_argument("--scope", required=True, choices=["note", "biz"])
+    x.add_argument("--rcept"); x.add_argument("--limit", type=int)
+    x.add_argument("--shard", help="i/n — 접수번호 % n == i 인 것만")
+    x.add_argument("--select", help="register: show 의 발견 번호(쉼표)")
+    x.add_argument("--apply", action="store_true", help="register*/recheck: 실제 반영(기본은 미리보기)")
+    x.set_defaults(fn=cmd_scope)
 
     x = sp.add_parser("admin")
     x.add_argument("action", choices=["apply-schema", "init", "init-scope", "import-queue", "expire",

@@ -1,6 +1,6 @@
 # 설계 — verification 캠페인을 주석(note_lines)·사업의 내용(biz)으로 확장 (2026-10-27)
 
-> 상태: **P1 완료, P2(스키마) 적용 완료(2026-10-27 밤)**. P3 이후 미착수. 사용자 결정(2026-10-27): 주석과 사업의 내용 **모두**, **전수 표 대조**.
+> 상태: **P1·P2 완료, P3(biz) 진행 중(2026-10-27 밤)** — 기계 모듈·scope CLI·fix 경로 구현, 전수 기계 패스 가동. 주석(note) 기계 모듈은 미착수. 사용자 결정(2026-10-27): 주석과 사업의 내용 **모두**, **전수 표 대조**.
 > 실행은 이 문서를 검토한 뒤 사용자가 별도로 요청할 때 시작한다.
 > 선례: `verification_machine_compare_design_2026-09-24.md`(report_lines 기계대조),
 > `verification_schema_two_worktree_design_2026-09-24.md`(스키마·두 워크트리), `docs/verification/WORKFLOW.md`.
@@ -122,6 +122,17 @@ note_lines(주석)와 biz_section_tables(사업의 내용)에 확장한다. 대�
 - 판정: 기계대조 적합성 **중상**. 완전 일치율 95% 로 모델에 넘길 불일치 후보는 전체의 약 5% 수준이 될 전망이며, 이 중 설계상 제외를 규칙화하면 더 줄어든다.
 
 **결론**: 전수 표 대조는 현실적이다. 사업의 내용을 먼저 하는 결정이 맞다(저장 구조가 grid 라 구현이 가장 단순하고, 첫 결함 단서가 이미 나왔다).
+
+## 6-3. P3 진행 (biz, 2026-10-27 밤)
+
+구현 (모두 `fin2/verification/`, 테스트 `fin2/tests/test_machine_biz.py` 7건):
+- `machine_biz.py` (mb2) — 파서 독립(lxml HTML 파서 + 자체 span 전개)으로 원문 표를 읽고, 저장 표(`biz_section_tables` 행)마다 셀 겹침이 가장 큰 원문 표를 짝지어 grid 를 비교한다. 공백·`&cr;`·빈 칸은 무시. 발견 종류: `cell`·`row_missing`·`row_extra`·`extra_table`. 원문 사업의 내용 섹션의 숫자 표 중 저장 안 된 것은 **세기만** 한다(`unstored_numeric_tables`, 대상 표 기준 미결정 — §6-1).
+- `machine_pass_scope.py` — 필링 단위 기계 패스: 지연 베이스라인 → 대조 → `scope_machine_checks` 기록 → clean 이면 필링 passed, 섹션도 저장 표도 없으면 skipped, 나머지는 pending. 원문은 **SD 미러 우선**(NAS stat 이 필링당 0.4초라 분당 40건 → 370건).
+- `scope_issues.py` — 발견 → 이슈(scope biz, table_ref=table_ord, 행 라벨+`[r행c열]`). biz 발견은 글자 그대로의 차이라 **기계가 직접 등록**한다. `recheck` 는 재적재된 fixed 이슈를 다시 대조해 일치하면 closed, 아니면 reopened.
+- `ops.py` — `fix_queue`/`issues_of_type`/`batch_new` 가 scope 를 가린다(기본 report, 다른 scope 이슈가 report 배치로 쓸려 들어가지 않게), `fix_batches.scope` 컬럼, `batch_reload` 가 scope 로 `_reload_rcept`(report·note) / `_reload_biz`(biz: 계층2 `biz_section_tables` 다시 쓰기 + 계층3 `biz_metrics`·`order_backlog` 재빌드)를 고른다. `withdraw_released`·`recheck_list` 는 아직 report 전용.
+- `vq.py scope run|status|show|register|register-all|recheck --scope biz`, `fix-queue|issues|batch new --scope`.
+
+**첫 결과**: 처음 4천 필링에서 mismatch 약 15%, 셀 발견의 99% 가 하나의 원인 — `biz_section._load_root` 가 `sanitize_dart_xml` 없이 읽어 `&`·`<` 뒤 글자가 사라짐 → **R287** 로 수정(규칙 문서 `rules/10_layer2_parse.md`). 두 번째 유형(단위 표의 앞 빈 칸 138쌍)은 값이 아닌 배치 흔적이라 mb2 에서 비교에서 뺐다.
 
 ## 7-0. 확정된 결정 (사용자, 2026-10-27 야간)
 

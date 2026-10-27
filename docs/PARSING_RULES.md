@@ -538,7 +538,7 @@
 | R284 | R284. SCE 에서 ROWSPAN 라벨의 둘째 물리행은 그 행의 라벨(앞 행이 인쇄한 라벨 칸)을 쓴다 (2026-10-23, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R285 | R285. 모든 금액 셀이 '원' 접미사를 단 행은 표 단위가 아니라 원(adecimal=0)으로 적재한다 (2026-10-26, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R286 | R286. 필링이 인쇄하지 않은 재무제표는 계층3 에서 뒤 보고서의 전기 열로 채운다 (2026-10-27, 적용 계층: 3 — 다른 원천) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | as_printed STEP |
-| R287 | R287. 사업의 내용 리더도 파싱 전에 DART 원문을 정리한다 — 맨 &·< 뒤 글자가 사라지지 않게 (2026-10-27, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | scope biz |
+| R287 | R287. 사업의 내용 리더도 파싱 전에 DART 원문을 정리한다 — 맨 &·< 뒤 글자가 사라지지 않게 (2026-10-27, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | scope biz · R287-b `<A 우선주>` 포함 |
 
 ## 0. 규칙 색인
 

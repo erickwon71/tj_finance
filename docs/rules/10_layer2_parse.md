@@ -6252,6 +6252,9 @@ R212 소급 백필의 대상 목록(`docs/qa/eps_fractional_targets_2026-10-02.*
 **범위**: 사업의 내용 테이블 `biz_section_tables` 의 해당 필링 전부와 그 계층3(`biz_metrics`, `order_backlog`). 해당 필링은 기계대조 mismatch 필링으로 특정한다(`vq.py scope status --scope biz`).
 **소급**: 자동이 아니다. fix 큐 배치(scope biz)로 재적재한다 — `ops._reload_biz` 가 계층2 쓰기 뒤에 계층3 재빌드까지 한다.
 
+**R287-b (2026-10-28) — 본문 문구 `<…>` 도 같은 읽기에서 막는다**: `sanitize_dart_xml` 의 `<` 예외 목록에 `A`(앵커)·`E` 같은 짧은 이름이 있어 본문 문구 `<A 우선주>`·`<E우선주>` 가 태그로 읽혀 문서 전체가 파싱 오류가 되고, 그 뒤의 `&amp;` 가 다시 사라진다(알앤티엑스 20170330000498, 표본 1,197필링 중 4개 0.3%). **공용 `sanitize_dart_xml` 은 고치지 않는다**(본문·주석 읽기도 쓰는 함수라 영향 범위가 크다, 사용자 결정 2026-10-28). 사업의 내용 읽기(`biz_section._escape_attributeless_tags`)만 `<이름 …>` 중 속성에 `=` 가 하나도 없는 것(DART XML 은 유효한 XML 이라 실제 태그의 속성에는 항상 값이 있다)과 `<이름한글…>` 을 `&lt;` 로 바꾼 뒤 sanitize 한다. 테스트 `fin2/tests/test_r287_biz_load_root_sanitize.py`(공용 sanitize 불변 확인 포함).
+**기계 쪽 보정(검증 도구, 규칙 아님)**: mb3 = 표의 행은 자기 직속 `<tr>` 만(중첩 표의 행은 안쪽 표 것), mb4 = 저장 표의 짝은 격자가 완전히 같은 원문 표를 먼저 고르고, 없으면 셀 겹침 최고 + 행 순서 유사도(정정 보고서의 [정정전]/[정정후] 쌍둥이 표).
+
 ## R10. XBRL 원문(instance) — 값 부호는 `preferredLabel`이 결정, `calc:weight`는 저장에 안 씀
 
 > **상태** 유효 · **적용 계층** 2 · XBRL 폴백 경로 전용(본문 XML·웹뷰 인쇄본이 모두 없을 때)

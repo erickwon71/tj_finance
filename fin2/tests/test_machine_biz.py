@@ -93,3 +93,20 @@ def test_empty_cells_are_not_a_difference(tmp_path):
     res = mb.compare([_db([["", "부 문", "", "제56기"], ["H&B사업본부", "", "1,000"],
                            ["TV모니터", "2,000"]])], grids, found)
     assert res.verdict == "clean" and res.counts["empty_shape"] == 1
+
+
+def test_identical_grid_wins_over_a_reordered_twin(tmp_path):
+    """A correction report holds [정정전] and [정정후] versions of a table: same cells, other order."""
+    xml = """<?xml version="1.0" encoding="utf-8"?>
+<DOCUMENT><BODY><SECTION-1><TITLE>II. 사업의 내용</TITLE>
+<TABLE><TR><TD>가</TD><TD>1</TD></TR><TR><TD>나</TD><TD>2</TD></TR><TR><TD>다</TD><TD>3</TD></TR></TABLE>
+<TABLE><TR><TD>나</TD><TD>2</TD></TR><TR><TD>다</TD><TD>3</TD></TR><TR><TD>가</TD><TD>1</TD></TR></TABLE>
+</SECTION-1></BODY></DOCUMENT>"""
+    p = tmp_path / "h.xml"
+    p.write_text(xml, encoding="utf-8")
+    grids, found = mb.load_source_grids(str(p))
+    second = [["나", "2"], ["다", "3"], ["가", "1"]]
+    assert mb.compare([_db(second)], grids, found).verdict == "clean"
+    # not identical to either: the twin with the closer row order is the counterpart
+    res = mb.compare([_db([["나", "2"], ["다", "3"], ["가", "9"]])], grids, found)
+    assert [f["src"] for f in res.findings] == ["1"]

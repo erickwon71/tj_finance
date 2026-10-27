@@ -35,7 +35,15 @@ from fin2.verification import machine_compare as mc
 # cell on single-cell unit tables ("(단위 : 백만원)") that the source does not have (138 row pairs in
 # the first 280 mismatching filings); that is a layout trace, not a printed value (R0-2). A table
 # that differs only in where its empty cells sit is counted (`empty_shape`), never a finding.
-TOOL_VERSION = "mb2"
+# mb3 (2026-10-28): a table's rows are its own <tr> elements only; a <tr> of a table nested in one
+# of its cells belongs to that inner table (machine_compare._grid flattened them, so a cell holding
+# a nested table made the source table look bigger than the stored one: false extra_table /
+# row_extra on 20220516000936 and likely 20160408002193).
+# mb4 (2026-10-28): the counterpart of a stored table is the source table with an IDENTICAL grid
+# when there is one, otherwise the best cell overlap with ties broken by row order. A correction
+# report ([정정전] / [정정후]) holds both versions of a table with the same cells in a different
+# order; matching by cell set alone paired the stored 정정후 table with the 정정전 one (20160408002193).
+TOOL_VERSION = "mb4"
 
 MATCH_MIN = 0.5            # minimum cell-set Jaccard for a source table to count as counterpart
 MAX_FINDINGS = 400         # per filing; more than this is a parser problem, not a list to page
@@ -61,6 +69,48 @@ class SrcGrid:
         return any(_NUM.search(c) for r in self.cells for c in r)
 
 
+_CELL_TAGS = ("td", "th", "te", "tu")
+
+
+def _own_grid(table) -> list:
+    """Normalized grid of one <table>, rowspan/colspan expanded, its own rows only."""
+    trs = []
+    for tr in table.iter("tr"):
+        a = tr.getparent()
+        while a is not None and not (isinstance(a.tag, str) and a.tag.lower() == "table"):
+            a = a.getparent()
+        if a is table:
+            trs.append(tr)
+    occupied: dict = {}
+    out = []
+    for r, tr in enumerate(trs):
+        row: dict = {}
+        col = 0
+        for c in tr:
+            if not (isinstance(c.tag, str) and c.tag.lower() in _CELL_TAGS):
+                continue
+            while (r, col) in occupied:
+                row[col] = occupied[(r, col)]
+                col += 1
+            try:
+                cs = max(1, int(c.get("colspan") or 1))
+                rs = max(1, int(c.get("rowspan") or 1))
+            except ValueError:
+                cs = rs = 1
+            txt = norm(mc._text(c))
+            for dc in range(cs):
+                row[col + dc] = txt
+                for dr in range(1, rs):
+                    occupied[(r + dr, col + dc)] = txt
+            col += cs
+        while (r, col) in occupied:
+            row[col] = occupied[(r, col)]
+            col += 1
+        if row:
+            out.append([row[k] for k in sorted(row)])
+    return out
+
+
 def load_source_grids(path: str) -> tuple[list[SrcGrid], bool]:
     """All tables of the document as normalized grids + whether a '사업의 내용' section exists."""
     raw = open(path, "rb").read()          # the caller resolves the SD mirror (no NAS stat here)
@@ -74,7 +124,7 @@ def load_source_grids(path: str) -> tuple[list[SrcGrid], bool]:
     grids: list[SrcGrid] = []
     by_el: dict[int, SrcGrid] = {}
     for i, tb in enumerate(els):
-        rows = [[norm(c[1]) for c in row] for row in mc._grid(tb)]
+        rows = _own_grid(tb)
         if not rows:
             continue
         g = SrcGrid(idx=i, cells=rows, cellset=frozenset(c for r in rows for c in r if c))
@@ -111,6 +161,11 @@ def _jaccard(a: frozenset, b: frozenset) -> float:
 
 def _row_label(row: list) -> str:
     return next((c for c in row if c), "")[:120]
+
+
+def _key(grid: list) -> tuple:
+    """Hashable form of a grid with empty cells dropped (the comparison form)."""
+    return tuple(tuple(c for c in row if c) for row in grid)
 
 
 def _drop_empty(grid: list) -> list:
@@ -165,15 +220,24 @@ def compare(db_tables: list[dict], grids: list[SrcGrid], section_found: bool) ->
     """db_tables: [{table_ord, domain, metric, grid}] of one filing."""
     res = Result()
     used: set[int] = set()
+    exact_index: dict = {}
+    for g in grids:
+        exact_index.setdefault(_key(g.cells), g)
     counts = {"db_tables": len(db_tables), "exact": 0, "differs": 0, "extra_table": 0}
     for t in db_tables:
         dbg = [[norm(c) for c in row] for row in (t["grid"] or [])]
         dbset = frozenset(c for r in dbg for c in r if c)
-        best, bi = 0.0, None
-        for g in grids:
-            j = _jaccard(dbset, g.cellset)
-            if j > best:
-                best, bi = j, g
+        best, bi = 0.0, exact_index.get(_key(dbg))
+        if bi is not None:
+            best = 1.0
+        else:
+            scored = sorted(((_jaccard(dbset, g.cellset), g) for g in grids),
+                            key=lambda x: -x[0])
+            if scored and scored[0][0] > 0:
+                top = [x for x in scored[:8] if x[0] >= scored[0][0] - 0.05]
+                flat = [c for r in dbg for c in r if c]
+                best, bi = max(top, key=lambda x: (x[0], difflib.SequenceMatcher(
+                    None, flat, [c for r in x[1].cells for c in r if c], autojunk=False).ratio()))
         if bi is None or best < MATCH_MIN:
             counts["extra_table"] += 1
             res.findings.append({"kind": "extra_table", "table_ord": t["table_ord"],

@@ -54,6 +54,20 @@ class BizTable:
     grid: list[list[str]]        # rowspan/colspan 확장된 2D 텍스트 그리드(헤더 포함)
 
 
+# R287-b: DART XML is well-formed, so a real tag with attributes always has a value ("=") in it.
+# A "<" + name + whitespace + words + ">" without any "=" is body text in angle brackets
+# (`<A 우선주>`, `<The Big Door Prize>`). sanitize_dart_xml (shared with the statement and note
+# readers) keeps it, because the name is on its tag whitelist ("A" is the anchor tag), and the
+# first parse error then puts libxml2 in recover mode for the whole document, which drops every
+# later `&amp;`. Only this reader escapes them; the shared sanitizer is left untouched on purpose.
+_ATTRIBUTELESS_TAG = re.compile(
+    rb"<(?=[A-Za-z][\w-]*(?:\s+[^<>=\"']*[\w\x80-\xff]|[\x80-\xff])[^<>=\"']*>)")
+
+
+def _escape_attributeless_tags(raw: bytes) -> bytes:
+    return _ATTRIBUTELESS_TAG.sub(b"&lt;", raw)
+
+
 def _load_root(file_path: Path) -> Optional[etree._Element]:
     """XML 루트 로드. 구형 DART 보고서(~2010년대)는 UTF-8 로 선언됐지만 실제 EUC-KR 인 경우가
     많아 인코딩 자동감지 폴백(_detect_xml_encoding 재사용) + 대용량 사업보고서용 huge_tree."""
@@ -69,7 +83,7 @@ def _load_root(file_path: Path) -> Optional[etree._Element]:
     # R224: 선언 안 된 `&cr;` 등과 이스케이프 안 된 `&`·`<` 를 파싱 전에 복구한다. 이걸 빼먹어
     # 사업의 내용 표의 `H&B사업본부` 가 `H사업본부` 로, `<연구인력현황>` 이 `현황>` 으로 적재됐다
     # (verification scope biz 기계대조 mb1, 2026-10-27).
-    raw = sanitize_dart_xml(raw)
+    raw = sanitize_dart_xml(_escape_attributeless_tags(raw))
     try:
         return etree.fromstring(raw, parser)
     except Exception:

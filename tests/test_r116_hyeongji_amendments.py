@@ -7,3 +7,8 @@ from fin2.extract.report_lines import _Q1_CUM_BLANK_USE_3M_RCEPTS
 @pytest.mark.parametrize("rcept", ["20150514004898", "20150515000009", "20150519000237"])
 def test_hyeongji_2015_q1_filings_are_listed(rcept):
     assert rcept in _Q1_CUM_BLANK_USE_3M_RCEPTS
+
+
+@pytest.mark.parametrize("rcept", ["20160516001323", "20170515004574"])
+def test_kangwonland_q1_filings_are_listed(rcept):
+    assert rcept in _Q1_CUM_BLANK_USE_3M_RCEPTS

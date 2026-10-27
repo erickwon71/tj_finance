@@ -12,3 +12,8 @@ def test_hyeongji_2015_q1_filings_are_listed(rcept):
 @pytest.mark.parametrize("rcept", ["20160516001323", "20170515004574"])
 def test_kangwonland_q1_filings_are_listed(rcept):
     assert rcept in _Q1_CUM_BLANK_USE_3M_RCEPTS
+
+
+@pytest.mark.parametrize("rcept", ["20150515001311", "20160516001736"])
+def test_blank_cumulative_q1_filings_proved_by_h1_report_are_listed(rcept):
+    assert rcept in _Q1_CUM_BLANK_USE_3M_RCEPTS

@@ -78,6 +78,11 @@ _Q1_CUM_BLANK_USE_3M_RCEPTS = frozenset({
     # 정확히 일치함을 확인했다(20160816000077·20170811000749, 연결·별도 매출·매출원가, 2017 은 순이익도).
     "20160516001323",  # 강원랜드 2016 Q1(IS 연결·별도)
     "20170515004574",  # 강원랜드 2017 Q1(IS 별도)
+    # 2026-10-27 — same pattern, same proof (H1 report: H1 cumulative - Q2 3-month == this Q1 3-month):
+    # 오늘이엔엠 20150813000836 (IS 연결: cost of sales, gross profit, operating income, net income),
+    # 우양에이치씨 20160816002117 (IS 별도: sales, cost of sales, gross profit, operating income, net income).
+    "20150515001311",  # 오늘이엔엠 2015 Q1(IS 연결)
+    "20160516001736",  # 우양에이치씨 2016 Q1(IS 별도)
 })
 
 

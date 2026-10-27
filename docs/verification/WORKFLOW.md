@@ -130,6 +130,12 @@ clean 슬롯의 1%(`machine.audit_pct`)는 모델이 전체를 다시 대조한�
 쌓여도 사람이 챙길 필요가 없다(2026-09-26: `machine recheck` 가 아무도 안 돌려서 481건 방치돼 있던 것을
 발견하고 데몬에 편입).
 
+수동 보조 명령(admin, main 에서만; 데몬에 넣지 않음 — 2026-10-27): `vq.py machine repass` 는 기계 기록이 없는
+passed 필링을 재대조해 clean 이면 기록만 남기고 아니면 pending 으로 강등한다. `vq.py machine restamp` 는
+재적재가 passed 를 유지시킨 뒤 `machine_checks` 가 옛 적재에 머물러 status 의 `stale` 로 잡히는 필링을 현재
+적재로 다시 대조해, clean 이면 기록만 현재 load_seq 로 갱신한다. restamp 는 상태를 바꾸지 않으며(강등 없음)
+clean 이 아니면 건드리지 않고 `not_clean_rcepts` 로 알리기만 한다.
+
 ```bash
 tmux new-session -d -s verify_machine -c /Users/taejin/Project/tj_finance/.claude/worktrees/camp_run 'caffeinate -i scripts/machine_daemon.sh'
 ```

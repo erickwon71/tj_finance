@@ -269,6 +269,38 @@ def test_repass_keeps_clean_and_demotes_mismatch(engines, as_role):
     assert st == {R_OK: "passed", R_BAD: "pending"}
 
 
+def test_restamp_stores_current_load_for_clean_and_leaves_the_rest(engines, as_role):
+    # both filings are passed and carry a check from an older load (what a no-op reload leaves)
+    _sql(engines, "UPDATE report_lines SET value_won = 900 WHERE rcept_no = :r AND label_raw = '자산총계'",
+         {"r": R_BAD})
+    _sql(engines, "DELETE FROM verification.machine_checks WHERE rcept_no IN (:a, :b)", {"a": R_OK, "b": R_BAD})
+    _sql(engines, "UPDATE verification.progress_filings SET status = 'passed', verified_by = 'camp_run' "
+         "WHERE rcept_no IN (:a, :b)", {"a": R_OK, "b": R_BAD})
+    for fy in (2024, 2023):
+        _sql(engines, f"SELECT verification.refresh_slot('{CORP}', {fy}, 'FY')")
+    as_role("admin")
+    for r in (R_OK, R_BAD):
+        with engines["admin"].begin() as c:
+            seq = c.execute(text("SELECT verification.ensure_baseline(:r)"), {"r": r}).scalar_one()
+            c.execute(text("""INSERT INTO verification.machine_checks (rcept_no, load_seq, tool_version, verdict)
+                              VALUES (:r, :s, 'old', 'clean')"""), {"r": r, "s": seq - 1})
+    as_role("verify")
+    with pytest.raises(Exception):
+        machine_pass.restamp()                          # admin only
+    as_role("admin")
+    total = machine_pass.restamp(log=lambda _m: None)
+    assert total["restamped"] == 1 and total["not_clean"] == 1 and total["not_clean_rcepts"] == [R_BAD]
+    rows = {r: (t, v) for r, t, v in _sql(engines, """
+        SELECT mc.rcept_no, mc.tool_version, mc.load_seq = fl.load_seq
+        FROM verification.machine_checks mc JOIN verification.filing_loads fl USING (rcept_no)
+        WHERE mc.rcept_no IN (:a, :b)""", {"a": R_OK, "b": R_BAD})}
+    assert rows[R_OK][1] is True and rows[R_OK][0] != "old"      # current load, new tool version
+    assert rows[R_BAD] == ("old", False)                         # not clean: untouched
+    st = dict(_sql(engines, "SELECT rcept_no, status FROM verification.progress_filings WHERE rcept_no IN (:a, :b)",
+                   {"a": R_OK, "b": R_BAD}))
+    assert st == {R_OK: "passed", R_BAD: "passed"}               # never demotes
+
+
 def test_mismatch_made_only_of_no_fix_cells_needs_no_model(engines, as_role):
     # the column label is not compared: the reviewer's issue often has none
     with engines["admin"].begin() as c:

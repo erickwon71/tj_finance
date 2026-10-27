@@ -565,3 +565,43 @@ def repass(limit: int | None = None, log=print) -> dict:
         if total["checked"] % 200 == 0:
             log(json.dumps(total, ensure_ascii=False))
     return total
+
+
+def restamp(limit: int | None = None, log=print) -> dict:
+    """Re-store the machine check of filings whose stored check belongs to an older load.
+
+    A reload that leaves a passed filing passed (no scope hash changed) keeps its old check, which
+    status shows as `stale`. Compare the current load again: clean -> store the check against the
+    current load_seq (status, notes and the audit flag are untouched). Anything else is left alone
+    and only counted - this never demotes a pass; a non-clean result is for `repass`/`run` to decide."""
+    if ops.role() != "admin":
+        raise ops.VqError("machine restamp 는 admin(main) 전용 — machine_checks 를 다시 쓰기 때문")
+    total = {"checked": 0, "restamped": 0, "not_clean": 0, "no_source": 0, "not_clean_rcepts": []}
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT mc.rcept_no, mc.audit
+            FROM verification.machine_checks mc
+            JOIN verification.filing_loads fl USING (rcept_no)
+            WHERE mc.load_seq IS DISTINCT FROM fl.load_seq
+            ORDER BY mc.rcept_no""")).fetchall()
+    for n, (rcept, audit) in enumerate(rows):
+        if limit is not None and n >= limit:
+            break
+        with engine.connect() as conn:
+            path = _source_path(conn, rcept)
+            if path is None:
+                total["no_source"] += 1
+                continue
+            res = mc.compare_filing(conn, rcept, path)
+        total["checked"] += 1
+        if res.verdict != "clean":
+            total["not_clean"] += 1
+            total["not_clean_rcepts"].append(rcept)
+            continue
+        with ops._Tx(evidence=f"[machine restamp {mc.TOOL_VERSION}] {res.verdict}") as conn:
+            seq = conn.execute(text("SELECT verification.ensure_baseline(:r)"), {"r": rcept}).scalar_one()
+            _store(conn, rcept, seq, res, audit)
+        total["restamped"] += 1
+        if total["checked"] % 200 == 0:
+            log(json.dumps(total, ensure_ascii=False))
+    return total

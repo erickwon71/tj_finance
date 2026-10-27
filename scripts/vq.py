@@ -569,12 +569,13 @@ def build_parser() -> argparse.ArgumentParser:
     x.set_defaults(fn=cmd_decision)
 
     x = sp.add_parser("machine", help="기계 대조: 슬롯을 점유해 원문 XML 과 자동 대조(모델 없음)")
-    x.add_argument("action", choices=["run", "try", "gate", "issues-json", "recheck", "repass"])
+    x.add_argument("action", choices=["run", "try", "gate", "issues-json", "recheck", "repass", "restamp"])
     x.add_argument("--kinds", help="issues-json: 쉼표구분 발견 종류(그 종류 전부)")
     x.add_argument("--findings", help="issues-json: show 의 발견 번호(쉼표구분) — 그 발견만 이슈로")
     x.add_argument("--out", help="issues-json: 저장할 JSON 경로")
     x.add_argument("--limit", type=int); x.add_argument("--rcept", nargs="*")
     x.add_argument("--value", choices=["on", "off"])
+    x.add_argument("--mismatch", action="store_true", help="restamp: 옛 도구버전의 mismatch(passed 필링)를 재대조해 clean 이면 기록 교체")
     x.set_defaults(fn=cmd_machine)
     x = sp.add_parser("runner"); x.add_argument("action", choices=["start", "finish", "budget", "model"])
     x.add_argument("--finding-model"); x.add_argument("--full-model")
@@ -599,6 +600,10 @@ def cmd_machine(a):
         # admin: machine re-comparison of filings passed before the machine (legacy/model)
         from fin2.verification import machine_pass
         print(_j(machine_pass.repass(limit=a.limit)))
+    elif a.action == "restamp":
+        # admin: store the machine check of the current load for filings whose check is stale
+        from fin2.verification import machine_pass
+        print(_j(machine_pass.restamp(limit=a.limit, mismatch=a.mismatch)))
     elif a.action == "recheck":
         # the machine's own fixed issues: close/reopen by comparing the reloaded filing
         from fin2.verification import machine_pass

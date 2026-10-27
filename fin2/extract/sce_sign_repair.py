@@ -741,6 +741,25 @@ _MANUAL_SIGN_FIXES: Dict[Tuple[str, str, str, str, int], Tuple[int, int]] = {
     ("20210517001554", "separate", "2021.03.31 (기말자본)", "자기주식", 17):
         (2_169_660_000_000, -2_169_660_000_000),
 
+    # 비에이치 2019Q1 정정 20190821000012 separate (verification issue #86399, 2026-10-26, user
+    # approved). The separate SCE prints the 자기주식 balances without parentheses on both 2019
+    # rows. The note's treasury-stock table prints (49,929,863) thousand won, the FY2018 closing
+    # (20190401003831, row 32) is already corrected to -49,929,862,900 and the 2019 H1/Q3
+    # reports print the same balance as -49,929,862,900.
+    ("20190821000012", "separate", "2019.01.01 (기초자본)", "자기주식", 6):
+        (49_929_862_900, -49_929_862_900),
+    ("20190821000012", "separate", "2019.03.31 (기말자본)", "자기주식", 11):
+        (49_929_862_900, -49_929_862_900),
+
+    # HD현대일렉트릭 2020Q1 20200515002598 consolidated (verification issue #84221, 2026-10-26,
+    # user approved). The 연결대상범위의 변동 row prints the 기타포괄손익누계액 and 이익잉여금
+    # cells with swapped parentheses (497,572,079 / (497,572,079)); the OCI cell is already
+    # flipped by R162_sign_loss. Only +497,572,079 closes the 이익잉여금 column roll-forward
+    # (opening -427,892,647,018 + 분기순손익 -25,894,566,796 + ... = closing -418,117,045,242)
+    # and the pair stays a zero-sum reclass, so 비지배지분 and 자본 합계 are untouched.
+    ("20200515002598", "consolidated", "연결대상범위의 변동", "이익잉여금", 14):
+        (-497_572_079, 497_572_079),
+
     # 고려아연 2017Q1 20170515004148 (consolidated 7 + separate 2)
     ("20170515004148", "consolidated", "기타포괄손익>매도가능증권평가손익", "자본 합계", 18):
         (9_929_116_812, -9_929_116_812),

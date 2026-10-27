@@ -520,6 +520,37 @@ def test_manual_fix_requires_the_old_value_to_match():
     assert fixes == []
 
 
+def test_manual_fix_flips_bh_2019q1_amendment_treasury_stock_balances():
+    """비에이치 20190821000012 (issue #86399) — both 2019 separate 자기주식 balances print
+    without parentheses; the other cells of the same rows stay untouched."""
+    opening = _Line("SCE", "separate", "2019.01.01 (기초자본)", 49_929_862_900,
+                    col_index=3, col_label="자본>자기주식", row_order=6)
+    closing = _Line("SCE", "separate", "2019.03.31 (기말자본)", 49_929_862_900,
+                    col_index=3, col_label="자본>자기주식", row_order=11)
+    capital = _Line("SCE", "separate", "2019.03.31 (기말자본)", 15_816_291_000,
+                    col_index=0, col_label="자본>자본금", row_order=11)
+    fixes = apply_manual_sign_fixes([opening, closing, capital], "20190821000012")
+    assert opening.value_won == -49_929_862_900
+    assert closing.value_won == -49_929_862_900
+    assert capital.value_won == 15_816_291_000
+    assert len(fixes) == 2
+
+
+def test_manual_fix_flips_hd_hyundai_electric_2020q1_retained_earnings_scope_change():
+    """HD현대일렉트릭 20200515002598 (issue #84221) - the 이익잉여금 cell of the 연결대상범위의
+    변동 row is printed (497,572,079) but only +497,572,079 closes the column roll-forward;
+    the neighbouring cells of the row stay untouched."""
+    re_cell = _Line("SCE", "consolidated", "연결대상범위의 변동", -497_572_079,
+                    col_index=4, col_label="자본>지배기업의 소유주에게 귀속되는 자본>이익잉여금",
+                    row_order=14)
+    nci = _Line("SCE", "consolidated", "연결대상범위의 변동", -252_729_825,
+                col_index=6, col_label="자본>비지배지분", row_order=14)
+    fixes = apply_manual_sign_fixes([re_cell, nci], "20200515002598")
+    assert re_cell.value_won == 497_572_079
+    assert nci.value_won == -252_729_825
+    assert len(fixes) == 1
+
+
 def test_manual_fix_is_wired_into_extract_report_lines():
     rl = (_ROOT / "fin2/extract/report_lines.py").read_text(encoding="utf-8")
     assert "apply_manual_sign_fixes(lines, rcept_no)" in rl

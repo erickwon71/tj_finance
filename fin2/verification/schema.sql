@@ -291,7 +291,7 @@ CREATE TABLE IF NOT EXISTS verification.runner_runs (
     model         text,
     outcome       varchar(12) CHECK (outcome IN
                   ('passed', 'has_issues', 'incomplete', 'timeout', 'usage_limit', 'error',
-                   'blocked', 'tool_denied', 'deferred')),
+                   'blocked', 'tool_denied', 'deferred', 'chrome_down')),
     log_path      text,
     git_head      text
 );
@@ -321,6 +321,20 @@ BEGIN
         ALTER TABLE verification.runner_runs ADD CONSTRAINT runner_runs_outcome_check
             CHECK (outcome IN ('passed', 'has_issues', 'incomplete', 'timeout', 'usage_limit',
                                 'error', 'blocked', 'tool_denied', 'deferred'));
+    END IF;
+END $$;
+-- 2026-10-26: add 'chrome_down' (the session could not use the Chrome extension; the runner stops
+-- instead of re-claiming the same slot, see runner.finish()).
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'verification.runner_runs'::regclass
+                      AND conname = 'runner_runs_outcome_check'
+                      AND pg_get_constraintdef(oid) LIKE '%chrome_down%') THEN
+        ALTER TABLE verification.runner_runs DROP CONSTRAINT IF EXISTS runner_runs_outcome_check;
+        ALTER TABLE verification.runner_runs ADD CONSTRAINT runner_runs_outcome_check
+            CHECK (outcome IN ('passed', 'has_issues', 'incomplete', 'timeout', 'usage_limit',
+                                'error', 'blocked', 'tool_denied', 'deferred', 'chrome_down'));
     END IF;
 END $$;
 -- Account usage (percent of the 5-hour / 7-day limits) at run start and end, from the
@@ -572,6 +586,24 @@ BEGIN
                  to_status, actor, db_role, evidence, load_seq)
             VALUES (slot.corp_code, slot.fiscal_year, slot.fiscal_period, NEW.rcept_no,
                     'reloaded_after_pass', 'passed', 'pending', v_actor, v_role,
+                    'changed scopes: ' || coalesce(array_to_string(v_changed, ','), '-')
+                    || ' / reason: ' || v_reason, v_seq);
+        END IF;
+        -- 2026-10-26: a blocked slot (3 failed model attempts) kept its old machine verdict
+        -- and stayed blocked for ever even after its filing was reloaded with new content
+        -- (six slots, PDF-only filings re-loaded from the web-view print, found 10-26). New
+        -- content is a new situation: give the slot a clean start.
+        IF slot.status = 'blocked' THEN
+            UPDATE verification.progress SET status = 'pending', retry_count = 0, updated_at = now(),
+                   note = left(coalesce(note || ' | ', '') || 'unblocked by reload ' || NEW.rcept_no
+                               || ' load_seq ' || v_seq, 2000)
+             WHERE corp_code = slot.corp_code AND fiscal_year = slot.fiscal_year
+               AND fiscal_period = slot.fiscal_period AND status = 'blocked';
+            INSERT INTO verification.progress_events
+                (corp_code, fiscal_year, fiscal_period, rcept_no, action, from_status,
+                 to_status, actor, db_role, evidence, load_seq)
+            VALUES (slot.corp_code, slot.fiscal_year, slot.fiscal_period, NEW.rcept_no,
+                    'unblocked_by_reload', 'blocked', 'pending', v_actor, v_role,
                     'changed scopes: ' || coalesce(array_to_string(v_changed, ','), '-')
                     || ' / reason: ' || v_reason, v_seq);
         END IF;

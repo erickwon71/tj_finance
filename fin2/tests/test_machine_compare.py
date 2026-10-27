@@ -664,3 +664,64 @@ def test_compacted_supplementary_cell_is_clean_not_value_finding(tmp_path):
     bad = [dict(r) for r in rows]
     bad[2]["value_won"] = 6400
     assert any(f["kind"] == "value" for f in mc.compare(bad, tables).findings)
+
+
+def test_mc20_won_suffix_inside_negative_parentheses_is_an_amount():
+    assert mc.parse_amount("(89원)") == -89.0
+    assert mc.parse_amount("(1,234 원)") == -1234.0
+    assert mc.parse_amount("2,564원") == 2564.0
+
+
+def test_mc20_dash_only_leading_rows_are_data_not_header(tmp_path):
+    # 20220317000691: 'Ⅰ.영업수익' prints '-' for every period; the loader keeps the zero row
+    body = _section("4. 재무제표", _title("손익계산서"), _table(
+        ["Ⅰ.영업수익", "", "-"], ["매출액", "", "-"], ["Ⅱ.영업비용", "", "8,639"],
+        ["Ⅲ.영업손실", "", "(8,639)"], ["Ⅳ.당기순손실", "", "(8,639)"],
+        head=["과목", "주석", "제 1 기"]))
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    rows = [_row("IS", "separate", i, lab, v) for i, (lab, v) in enumerate(
+        (("Ⅰ.영업수익", 0), ("매출액", 0), ("Ⅱ.영업비용", 8639), ("Ⅲ.영업손실", -8639), ("Ⅳ.당기순손실", -8639)))]
+    res = mc.compare(rows, tables)
+    assert res.verdict == "clean", res.findings
+    # a dash row whose DB value is not zero is still a value finding
+    rows[0] = _row("IS", "separate", 0, "Ⅰ.영업수익", 5)
+    assert "value" in {f["kind"] for f in mc.compare(rows, tables).findings}
+
+
+def test_mc20_second_copy_of_a_statement_is_not_an_unmatched_table(tmp_path):
+    # 20210218001085: the statement section prints the same BS twice
+    one = _table(["자산총계", "1,000"], ["부채총계", "400"], ["자본총계", "600"], ["현금", "100"],
+                 head=["과목", "당기"])
+    body = _section("2. 재무제표", _title("재무상태표"), one, _title("재무상태표"), one)
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    rows = [_row("BS", "separate", i, lab, v) for i, (lab, v) in enumerate(
+        (("자산총계", 1000), ("부채총계", 400), ("자본총계", 600), ("현금", 100)))]
+    assert "unmatched_table" not in {f["kind"] for f in mc.compare(rows, tables).findings}
+    # a different table beside the first one is still reported
+    other = _table(["재고자산", "2,000"], ["매출채권", "900"], ["차입금", "1,100"], ["미수금", "50"],
+                   head=["과목", "당기"])
+    body = _section("2. 재무제표", _title("재무상태표"), one, _title("재무상태표"), other)
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+    assert "unmatched_table" in {f["kind"] for f in mc.compare(rows, tables).findings}
+
+
+def test_mc20_redundant_minus_marker_before_the_amount():
+    assert mc.parse_amount("(-)236.27") == -236.27
+
+
+def test_mc20_fractional_eps_compares_value_exact_not_the_rounded_integer(tmp_path):
+    head = ["과목", "당기"]
+    body = _section("4. 재무제표", _title("손익계산서"), _table(
+        ["영업이익", "1,000"], ["당기순이익", "500"], ["법인세비용", "100"], ["기본주당이익", "16.5"], head=head))
+    tables = mc.load_statement_tables(_xml(tmp_path, body))
+
+    def rows(exact, won=17):
+        return [_row("IS", "separate", 0, "영업이익", 1000), _row("IS", "separate", 1, "당기순이익", 500),
+                _row("IS", "separate", 2, "법인세비용", 100),
+                {**_row("IS", "separate", 3, "기본주당이익", won), "value_exact": exact}]
+    from decimal import Decimal
+    assert mc.compare(rows(Decimal("16.5")), tables).verdict == "clean"
+    wrong = mc.compare(rows(Decimal("17")), tables)                   # +-1 tolerance used to hide this
+    assert [f["kind"] for f in wrong.findings] == ["value"]
+    missing = mc.compare(rows(None), tables)                          # printed fraction, no exact value
+    assert [f["kind"] for f in missing.findings] == ["eps_exact_missing"]

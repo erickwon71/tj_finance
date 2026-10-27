@@ -73,6 +73,24 @@ _Q1_CUM_BLANK_USE_3M_RCEPTS = frozenset({
     # 같다(별도 IS 당기 3개월 39,865,625·연결 (217,995,797) 등 동일, 누적 열 전부 공란).
     "20150515000009",  # 형지I&C 2015 Q1 정정본(웹뷰 인쇄본 출처)
     "20150519000237",  # 형지I&C 2015 Q1 정정본(웹뷰 인쇄본 출처)
+    # 2026-10-27 — 강원랜드 2016·2017 Q1: IS 연결·별도 표가 3개월 열만 채우고 누적 열은 당기순이익
+    # 행까지 전부 공란(자기증명 없음). 반기보고서의 `반기 누적 − 2분기 3개월` 이 이 1분기 3개월 값과
+    # 정확히 일치함을 확인했다(20160816000077·20170811000749, 연결·별도 매출·매출원가, 2017 은 순이익도).
+    "20160516001323",  # 강원랜드 2016 Q1(IS 연결·별도)
+    "20170515004574",  # 강원랜드 2017 Q1(IS 별도)
+    # 2026-10-27 — same pattern, same proof (H1 report: H1 cumulative - Q2 3-month == this Q1 3-month):
+    # 오늘이엔엠 20150813000836 (IS 연결: cost of sales, gross profit, operating income, net income),
+    # 우양에이치씨 20160816002117 (IS 별도: sales, cost of sales, gross profit, operating income, net income).
+    "20150515001311",  # 오늘이엔엠 2015 Q1(IS 연결)
+    "20160516001736",  # 우양에이치씨 2016 Q1(IS 별도)
+})
+
+# 2026-10-27 - Q1 filings whose cumulative column PRINTS `0` (not blank) next to a non-zero 3-month value.
+# Q1 cumulative equals the 3-month figure by definition, so the 0 is an unfilled placeholder. Each entry
+# needs the H1 proof (H1 cumulative - Q2 3-month == this Q1 3-month) and must also be in the list above
+# (the blank-cumulative fill is the switch that lets the 3-month value stand in).
+_Q1_CUM_PRINTED_ZERO_USE_3M_RCEPTS = frozenset({
+    "20170515004574",  # 강원랜드 2017 Q1(IS 연결: 매출 422,970,649,918 = 809,961,741,942 - 386,991,092,024)
 })
 
 
@@ -683,6 +701,17 @@ def _row_to_line(
 _EPS_MAX_PLAUSIBLE_WON = 10_000_000
 
 
+# R285 - a row whose every printed amount cell carries its own won suffix ('188원', '(89원)',
+# '(2,564)원') was read without the table multiplier (R149/R179), so its adecimal must say won too;
+# inheriting the table's 백만원 made a 188-won EPS render as 0 in the review CSV (흥국화재 2013-2023).
+_WON_SUFFIX_CELL_RE = re.compile(r"\d[\d,.\s]*\)?\s*원\s*\)?$")
+
+
+def _row_prints_won(row) -> bool:
+    cells = [c.strip() for c in (row.raw_amounts or []) if c and c.strip() not in ("", "-")]
+    return bool(cells) and all(_WON_SUFFIX_CELL_RE.search(c) for c in cells)
+
+
 def _looks_like_eps_amounts(amounts) -> bool:
     """파싱된 금액들이 EPS(원/주)치고 비현실적으로 크면 False. 값이 전부 없으면(None)
     판단 불가 → 보수적으로 True(기존 동작 유지, 결측>오염 — 짐작 말고 기존 경로 유지)."""
@@ -1161,6 +1190,7 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                 header_cols, grid_amounts, raw_amounts=grid_cells,
                 allow_three_month_as_cumulative=_q1_cum_fill_on(
                     report_fiscal_period, rcept_no, q1_cum_blank_use_3m),
+                zero_cumulative_is_blank=rcept_no in _Q1_CUM_PRINTED_ZERO_USE_3M_RCEPTS,
                 prefer_last_of_two_as_cumulative=(
                     rcept_no in _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS),
             ).items())
@@ -1439,6 +1469,7 @@ def _emit_section_lines(
                         header_cols, amounts, raw_amounts=row.raw_amounts,
                         allow_three_month_as_cumulative=_q1_cum_fill_on(
                             report_fiscal_period, rcept_no, q1_cum_blank_use_3m),
+                        zero_cumulative_is_blank=rcept_no in _Q1_CUM_PRINTED_ZERO_USE_3M_RCEPTS,
                         prefer_last_of_two_as_cumulative=(
                             rcept_no in _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS),
                         closing_runs=dual_closing_runs,
@@ -1544,7 +1575,7 @@ def _emit_section_lines(
                     corp_code=corp_code, rcept_no=rcept_no,
                     report_fiscal_year=report_fiscal_year,
                     report_fiscal_period=report_fiscal_period,
-                    unit=unit, section_code=section_code, section_path=section_path,
+                    unit=1 if _row_prints_won(row) else unit, section_code=section_code, section_path=section_path,
                     node_role=node_roles.get(id(row)),
                     table_seq=table_seq, table_title=table_title,
                     unit_source=unit_source, currency=currency, unit_decl_raw=decl_raw,

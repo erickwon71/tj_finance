@@ -53,7 +53,14 @@ def extract_xml_with_corrections(file_path, *, rcept_no, corp_code, report_fisca
             report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
             include_notes=include_notes if not repaired else rcept_no in _typo_rcepts(),
             prior_balances=prior_balances, prior_income=prior_income)
-    return extract_with_corrections(run, rcept_no)
+    printed, corrections = extract_with_corrections(run, rcept_no)
+    # R286: a statement the filing does not print, from a later filing's comparative column
+    from fin2.extract.cross_filing_fill import CROSS_FILING_FILLS, cross_filing_fill_corrections
+    if rcept_no in CROSS_FILING_FILLS:
+        corrections = corrections + cross_filing_fill_corrections(
+            rcept_no, printed, report_fiscal_year=report_fiscal_year,
+            report_fiscal_period=report_fiscal_period)
+    return printed, corrections
 
 
 def extract_xbrl_with_corrections(file_path, *, rcept_no, corp_code, report_fiscal_year,

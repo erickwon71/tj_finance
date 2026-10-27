@@ -85,6 +85,14 @@ _Q1_CUM_BLANK_USE_3M_RCEPTS = frozenset({
     "20160516001736",  # 우양에이치씨 2016 Q1(IS 별도)
 })
 
+# 2026-10-27 - Q1 filings whose cumulative column PRINTS `0` (not blank) next to a non-zero 3-month value.
+# Q1 cumulative equals the 3-month figure by definition, so the 0 is an unfilled placeholder. Each entry
+# needs the H1 proof (H1 cumulative - Q2 3-month == this Q1 3-month) and must also be in the list above
+# (the blank-cumulative fill is the switch that lets the 3-month value stand in).
+_Q1_CUM_PRINTED_ZERO_USE_3M_RCEPTS = frozenset({
+    "20170515004574",  # 강원랜드 2017 Q1(IS 연결: 매출 422,970,649,918 = 809,961,741,942 - 386,991,092,024)
+})
+
 
 # R160 (2026-10-12, user decision): markers for unreadable printed cells in the column choice.
 # Far beyond any amount (parse_amount caps at _AMOUNT_SANE_MAX), one per cell position.
@@ -1182,6 +1190,7 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                 header_cols, grid_amounts, raw_amounts=grid_cells,
                 allow_three_month_as_cumulative=_q1_cum_fill_on(
                     report_fiscal_period, rcept_no, q1_cum_blank_use_3m),
+                zero_cumulative_is_blank=rcept_no in _Q1_CUM_PRINTED_ZERO_USE_3M_RCEPTS,
                 prefer_last_of_two_as_cumulative=(
                     rcept_no in _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS),
             ).items())
@@ -1460,6 +1469,7 @@ def _emit_section_lines(
                         header_cols, amounts, raw_amounts=row.raw_amounts,
                         allow_three_month_as_cumulative=_q1_cum_fill_on(
                             report_fiscal_period, rcept_no, q1_cum_blank_use_3m),
+                        zero_cumulative_is_blank=rcept_no in _Q1_CUM_PRINTED_ZERO_USE_3M_RCEPTS,
                         prefer_last_of_two_as_cumulative=(
                             rcept_no in _HEADERLESS_MERGE_LAST_IS_CUMULATIVE_RCEPTS),
                         closing_runs=dual_closing_runs,

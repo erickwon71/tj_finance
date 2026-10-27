@@ -1657,6 +1657,7 @@ def select_by_header_columns(
     allow_three_month_as_cumulative: bool = False,
     prefer_last_of_two_as_cumulative: bool = False,
     closing_runs: Optional[dict[int, list]] = None,
+    zero_cumulative_is_blank: bool = False,
 ) -> dict[int, object]:
     """`HeaderColumn` 맵 + 위치보존 원시 `amounts`(`keep_all_amount_cells=True` 출력)
     → {period_rank: 값}. `_emit_section_lines`가 이 결과를 `col_index=period_rank`로
@@ -1775,6 +1776,15 @@ def select_by_header_columns(
                 three_month = [c for c in cols if c.subtype == "three_month"]
                 if three_month:
                     value = _pick_from_group(three_month)
+            elif (value == 0 and zero_cumulative_is_blank and allow_three_month_as_cumulative
+                  and cum):
+                # R116 (2026-10-27, 강원랜드 20170515004574 연결 IS) - the cumulative column prints `0`
+                # where the 3-month column has the Q1 value. Listed filings only: a printed 0 whose
+                # 3-month cell is a non-zero amount is replaced by the 3-month value.
+                three_month = [c for c in cols if c.subtype == "three_month"]
+                tm_value = _pick_from_group(three_month) if three_month else None
+                if tm_value not in (None, 0):
+                    value = tm_value
             if value is not None:
                 result[rank] = value
         else:

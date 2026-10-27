@@ -1588,13 +1588,21 @@ def batch_reload(batch_id: int, limit: int | None = None,
             SELECT rcept_no FROM verification.batch_targets
             WHERE batch_id = :b AND status IN ('pending', 'deferred') ORDER BY rcept_no"""),
             {"b": batch_id}).fetchall()]
-    if shard:
-        targets = [t for t in targets if int(t) % shard[1] == shard[0]]
-    if limit:
-        targets = targets[:limit]
     with engine.connect() as conn:
         bscope = conn.execute(text("SELECT scope FROM verification.fix_batches WHERE batch_id = :b"),
                               {"b": batch_id}).scalar_one()
+        corp_of = {}
+        if shard and bscope == "biz":
+            corp_of = dict(conn.execute(text(
+                "SELECT rcept_no, corp_code FROM filings WHERE rcept_no = ANY(:r)"),
+                {"r": targets}).fetchall())
+    if shard:
+        # biz: the layer-3 rebuild deletes and re-inserts a whole (corp, fiscal_year); two shards
+        # doing that for filings of one company would interleave and duplicate rows -> shard by corp
+        key = (lambda t: int(corp_of[t])) if bscope == "biz" else int
+        targets = [t for t in targets if key(t) % shard[1] == shard[0]]
+    if limit:
+        targets = targets[:limit]
     reload_fn = {"report": _reload_rcept, "note": _reload_rcept, "biz": _reload_biz}[bscope]
     tally = {"done": 0, "deferred": 0, "failed": 0}
     for i, rcept in enumerate(targets, 1):

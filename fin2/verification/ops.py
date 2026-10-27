@@ -237,6 +237,66 @@ def init_era(era: str = "2015+") -> dict:
     return {"era": era, "slots_upserted": n_slots, "new_filings": n_new}
 
 
+SCOPES = ("note", "biz")
+
+
+def init_scope_era(scope: str, era: str = "2015+") -> dict:
+    """Create/refresh the slots and filings of a table scope ('note' = note_lines, 'biz' =
+    biz_section_tables). Same universe, ranking and slot key as init_era, kept in the scope's own
+    tables (scope_progress / scope_progress_filings) so the report_lines queue is untouched.
+    Every filing of the era joins, with or without stored rows: a filing whose source has the
+    section but no stored table is exactly what the machine must report."""
+    _require("admin")
+    if scope not in SCOPES:
+        raise VqError(f"알 수 없는 scope {scope!r} — {', '.join(SCOPES)}")
+    if era not in ERAS:
+        raise VqError(f"알 수 없는 era {era!r} — {', '.join(ERAS)}")
+    era_rank, fy_min, fy_max = ERAS[era]
+    with _Tx(evidence=f"init {scope} {era}") as conn:
+        conn.execute(text(f"CREATE TEMP TABLE _u ON COMMIT DROP AS {_UNIVERSE_SQL}"))
+        conn.execute(text("""
+            CREATE TEMP TABLE _f ON COMMIT DROP AS
+            SELECT f.rcept_no, f.corp_code, f.fiscal_year, f.fiscal_period,
+                   coalesce(f.is_amendment, false) AS is_amendment,
+                   row_number() OVER (PARTITION BY f.corp_code, f.fiscal_year, f.fiscal_period
+                                      ORDER BY f.filed_at NULLS LAST, f.rcept_no) AS seq
+            FROM filings f JOIN _u USING (corp_code)
+            WHERE f.report_type IN ('annual', 'half', 'quarter')
+              AND f.fiscal_period IN ('Q1', 'H1', 'Q3', 'FY')
+              AND f.fiscal_year BETWEEN :lo AND :hi
+              AND f.fiscal_year <= extract(year FROM now())::int
+              AND (f.report_nm IS NULL OR position('제출기한연장신고서' IN f.report_nm) = 0)
+        """), {"lo": fy_min, "hi": fy_max})
+        n_slots = conn.execute(text("""
+            INSERT INTO verification.scope_progress
+                (scope, corp_code, fiscal_year, fiscal_period, era, era_rank, corp_rank)
+            SELECT DISTINCT :sc, f.corp_code, f.fiscal_year, f.fiscal_period, :era, :er, u.corp_rank
+            FROM _f f JOIN _u u USING (corp_code)
+            ON CONFLICT (scope, corp_code, fiscal_year, fiscal_period)
+            DO UPDATE SET corp_rank = EXCLUDED.corp_rank
+        """), {"sc": scope, "era": era, "er": era_rank}).rowcount
+        conn.execute(text("""
+            CREATE TEMP TABLE _new ON COMMIT DROP AS
+            SELECT rcept_no, corp_code, fiscal_year, fiscal_period, seq, is_amendment FROM _f
+            WHERE NOT EXISTS (SELECT 1 FROM verification.scope_progress_filings pf
+                               WHERE pf.scope = :sc AND pf.rcept_no = _f.rcept_no)"""),
+                     {"sc": scope})
+        n_new = conn.execute(text("""
+            INSERT INTO verification.scope_progress_filings
+                (scope, rcept_no, corp_code, fiscal_year, fiscal_period, seq_in_slot, is_amendment)
+            SELECT :sc, rcept_no, corp_code, fiscal_year, fiscal_period, seq, is_amendment FROM _new
+            ON CONFLICT (scope, rcept_no) DO NOTHING"""), {"sc": scope}).rowcount
+        # A passed slot that gained a filing must be re-verified.
+        conn.execute(text("""
+            SELECT verification.refresh_scope_slot(p.scope, p.corp_code, p.fiscal_year, p.fiscal_period)
+            FROM verification.scope_progress p
+            WHERE p.scope = :sc AND p.status = 'passed' AND EXISTS (
+                SELECT 1 FROM _new n WHERE n.corp_code = p.corp_code
+                   AND n.fiscal_year = p.fiscal_year AND n.fiscal_period = p.fiscal_period)"""),
+                     {"sc": scope})
+    return {"scope": scope, "era": era, "slots_upserted": n_slots, "new_filings": n_new}
+
+
 def sync_if_stale(hours: int = 6) -> dict | None:
     """Pick up new filings/slots at most every few hours (called by the runner's claim)."""
     with engine.connect() as conn:

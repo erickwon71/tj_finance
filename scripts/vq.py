@@ -459,6 +459,10 @@ def cmd_admin(a):
         print("schema applied")
     elif a.action == "init":
         print(_j(ops.init_era(a.era)))
+    elif a.action == "init-scope":
+        if not a.scope:
+            raise SystemExit("--scope note|biz 가 필요하다")
+        print(_j(ops.init_scope_era(a.scope, a.era)))
     elif a.action == "import-queue":
         print(_j(ops.import_legacy_queue(dry_run=not a.apply)))
     elif a.action == "expire":
@@ -584,9 +588,10 @@ def build_parser() -> argparse.ArgumentParser:
     x.set_defaults(fn=cmd_runner)
 
     x = sp.add_parser("admin")
-    x.add_argument("action", choices=["apply-schema", "init", "import-queue", "expire",
+    x.add_argument("action", choices=["apply-schema", "init", "init-scope", "import-queue", "expire",
                                       "send-unsent", "audit-sample"])
     x.add_argument("--era", default="2015+"); x.add_argument("--apply", action="store_true")
+    x.add_argument("--scope", choices=["note", "biz"], help="init-scope: table scope to initialise")
     x.add_argument("--pct", type=float, default=2.0)
     x.set_defaults(fn=cmd_admin)
     return p

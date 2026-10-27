@@ -69,6 +69,15 @@ CLI: `scripts/vq.py` (모든 명령은 `--help`)
    `show` 가 "이전 판정 이후 바뀐 scope" 를 알려주므로 그 scope만 다시 대조하면 된다(기존 R139 하드 차단을 대체).
 5. 새 정정본이 적재되면 기존 슬롯에 자동으로 편입된다. 슬롯이 passed 였으면 pending 으로 돌아간다.
 
+## 3-1. scope (note · biz) — 2026-10-27
+
+report_lines 외에 주석(`note_lines`, scope `note`)과 사업의 내용(`biz_section_tables`, scope `biz`)도 같은 방식으로 검증한다.
+설계·진행: `docs/plans/verification_note_biz_expansion_design_2026-10-27.md`.
+- 슬롯·필링·적재 스탬프·기계 대조는 scope 별 테이블(`scope_progress`, `scope_progress_filings`, `scope_loads`, `scope_machine_checks`)이다. report 의 `progress*`·`filing_loads`·`machine_checks` 는 그대로다.
+- 이슈는 한 테이블(`issues`)을 쓰고 `scope`(기본 `report`)·`table_ref`(note=table_seq, biz=table_ord)로 구분한다. 상태기계(open→fixing→fixed→closed)·역할 권한·`fixed 는 재적재 필요` 규칙은 scope 의 `scope_loads.load_seq` 기준으로 똑같이 동작한다.
+- 슬롯 만들기: `scripts/vq.py admin init-scope --scope biz|note`.
+- 현재(P2 직후) 스키마와 슬롯만 있고, 기계 모듈·러너·fix 큐의 scope 인식은 P3 이후다.
+
 ## 4. 검증 러너 운영
 
 실행: tmux 세션 `verify` 로 띄운다. 터미널을 닫아도 계속 돌고, 원격(tailscale ssh)에서 붙어 볼 수 있다.

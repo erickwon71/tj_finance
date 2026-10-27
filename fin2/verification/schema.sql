@@ -211,13 +211,53 @@ CREATE TABLE IF NOT EXISTS verification.issues (
     created_at          timestamptz NOT NULL DEFAULT now(),
     updated_at          timestamptz NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS ux_vissues_active_cell
-    ON verification.issues (rcept_no, basis, statement, account_label, coalesce(column_label, ''))
-    WHERE status <> 'closed';
 CREATE INDEX IF NOT EXISTS ix_vissues_fixq ON verification.issues (status, error_type);
 CREATE INDEX IF NOT EXISTS ix_vissues_slot
     ON verification.issues (corp_code, fiscal_year, fiscal_period);
 CREATE INDEX IF NOT EXISTS ix_vissues_batch ON verification.issues (fix_batch_id);
+
+-- ───────────── scopes (2026-10-27): note_lines ('note') and biz_section_tables ('biz') ─────────────
+-- Design: docs/plans/verification_note_biz_expansion_design_2026-10-27.md. The report_lines
+-- campaign is scope 'report' and keeps working unchanged: every scope-aware column defaults to it.
+-- note: table_ref = table_seq of note_lines (basis consolidated/separate, account_label = row label)
+-- biz : table_ref = table_ord of biz_section_tables (basis NULL, account_label = row label)
+ALTER TABLE verification.issues ADD COLUMN IF NOT EXISTS scope varchar(6) NOT NULL DEFAULT 'report';
+ALTER TABLE verification.issues ADD COLUMN IF NOT EXISTS table_ref text;
+ALTER TABLE verification.issues ALTER COLUMN basis DROP NOT NULL;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'verification.issues'::regclass
+                    AND conname = 'issues_scope_check') THEN
+        ALTER TABLE verification.issues ADD CONSTRAINT issues_scope_check
+            CHECK (scope IN ('report', 'note', 'biz'));
+    END IF;
+    -- statement: BS/IS/CIS/CF/SCE for report, NOTE / BIZ for the table scopes
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'verification.issues'::regclass
+                    AND conname = 'issues_statement_check'
+                    AND pg_get_constraintdef(oid) LIKE '%NOTE%') THEN
+        ALTER TABLE verification.issues DROP CONSTRAINT IF EXISTS issues_statement_check;
+        ALTER TABLE verification.issues ADD CONSTRAINT issues_statement_check
+            CHECK (statement IN ('BS', 'IS', 'CIS', 'CF', 'SCE', 'NOTE', 'BIZ'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'verification.issues'::regclass
+                    AND conname = 'issues_scope_shape_check') THEN
+        ALTER TABLE verification.issues ADD CONSTRAINT issues_scope_shape_check CHECK (
+            (scope = 'report' AND basis IS NOT NULL AND statement IN ('BS', 'IS', 'CIS', 'CF', 'SCE'))
+         OR (scope = 'note' AND statement = 'NOTE' AND table_ref IS NOT NULL)
+         OR (scope = 'biz'  AND statement = 'BIZ'  AND table_ref IS NOT NULL AND basis IS NULL));
+    END IF;
+END $$;
+DROP INDEX IF EXISTS verification.ux_vissues_active_cell;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_vissues_active_cell_v2
+    ON verification.issues (rcept_no, scope, coalesce(basis, ''), statement, coalesce(table_ref, ''),
+                            account_label, coalesce(column_label, ''))
+    WHERE status <> 'closed';
+CREATE INDEX IF NOT EXISTS ix_vissues_scope ON verification.issues (scope, status, error_type);
+INSERT INTO verification.error_types (code, label_ko, description) VALUES
+    ('missing_table',    '표 누락',       'a numeric source table of the section is absent in DB'),
+    ('extra_table',      '잉여 표',       'DB has a table the source section does not have'),
+    ('section_misassign','섹션 오귀속',   'table stored under the wrong note / section')
+ON CONFLICT (code) DO NOTHING;
 
 -- ───────────────────────────── history (append-only) ─────────────────────────────
 CREATE TABLE IF NOT EXISTS verification.issue_events (
@@ -252,6 +292,7 @@ CREATE TABLE IF NOT EXISTS verification.progress_events (
 );
 CREATE INDEX IF NOT EXISTS ix_vpe_slot
     ON verification.progress_events (corp_code, fiscal_year, fiscal_period, event_id);
+ALTER TABLE verification.progress_events ADD COLUMN IF NOT EXISTS scope varchar(6) NOT NULL DEFAULT 'report';
 
 -- ───────────────────────────── machine comparison ─────────────────────────────
 -- One row per rcept: the latest machine comparison (fin2/verification/machine_compare.py)
@@ -451,20 +492,22 @@ DECLARE
 BEGIN
     SELECT count(*) INTO v_open FROM verification.issues
      WHERE corp_code = p_corp AND fiscal_year = p_fy AND fiscal_period = p_fp
-       AND status <> 'closed';
+       AND scope = 'report' AND status <> 'closed';
 
     UPDATE verification.progress_filings pf SET status = 'has_issues', updated_at = now()
      WHERE pf.corp_code = p_corp AND pf.fiscal_year = p_fy AND pf.fiscal_period = p_fp
        AND pf.status IN ('pending', 'passed')
        AND EXISTS (SELECT 1 FROM verification.issues i
-                    WHERE i.rcept_no = pf.rcept_no AND i.status <> 'closed');
+                    WHERE i.rcept_no = pf.rcept_no AND i.scope = 'report'
+                      AND i.status <> 'closed');
     -- All issues of a filing closed -> back to pending: the reviewer re-checks the scopes
     -- whose content changed since the verdict (vq.py show lists them) and passes it.
     UPDATE verification.progress_filings pf SET status = 'pending', updated_at = now()
      WHERE pf.corp_code = p_corp AND pf.fiscal_year = p_fy AND pf.fiscal_period = p_fp
        AND pf.status = 'has_issues'
        AND NOT EXISTS (SELECT 1 FROM verification.issues i
-                        WHERE i.rcept_no = pf.rcept_no AND i.status <> 'closed');
+                        WHERE i.rcept_no = pf.rcept_no AND i.scope = 'report'
+                          AND i.status <> 'closed');
 
     SELECT count(*), count(*) FILTER (WHERE status IN ('passed', 'skipped'))
       INTO v_total, v_done
@@ -661,6 +704,437 @@ CREATE CONSTRAINT TRIGGER vld_finalize AFTER INSERT ON verification.load_dirty
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION verification.trg_finalize_load();
 
+-- ═════════════════════════════ scoped slots, load stamps, machine checks ═════════════════════════════
+-- Same shape as progress / progress_filings / filing_loads / machine_checks, keyed by scope
+-- ('note', 'biz'), so the report_lines campaign tables and runner stay untouched (user decision
+-- 2026-10-27: separate progress per scope).
+CREATE TABLE IF NOT EXISTS verification.scope_progress (
+    scope           varchar(6)  NOT NULL CHECK (scope IN ('note', 'biz')),
+    corp_code       varchar(8)  NOT NULL REFERENCES public.corporations(corp_code),
+    fiscal_year     smallint    NOT NULL,
+    fiscal_period   varchar(2)  NOT NULL CHECK (fiscal_period IN ('Q1', 'H1', 'Q3', 'FY')),
+    era             varchar(8)  NOT NULL,
+    era_rank        smallint    NOT NULL,
+    corp_rank       integer,
+    status          varchar(12) NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'in_progress', 'passed', 'has_issues', 'blocked')),
+    claimed_by      text,
+    claimed_at      timestamptz,
+    lease_until     timestamptz,
+    retry_count     smallint    NOT NULL DEFAULT 0,
+    n_open_issues   integer     NOT NULL DEFAULT 0,
+    passed_at       timestamptz,
+    note            text CHECK (length(note) <= 2000),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (scope, corp_code, fiscal_year, fiscal_period)
+);
+CREATE INDEX IF NOT EXISTS ix_vsprogress_pick
+    ON verification.scope_progress (scope, era_rank, corp_rank, fiscal_year DESC, fiscal_period)
+    WHERE status = 'pending';
+
+CREATE TABLE IF NOT EXISTS verification.scope_progress_filings (
+    scope               varchar(6)  NOT NULL,
+    rcept_no            varchar(14) NOT NULL REFERENCES public.filings(rcept_no),
+    corp_code           varchar(8)  NOT NULL,
+    fiscal_year         smallint    NOT NULL,
+    fiscal_period       varchar(2)  NOT NULL,
+    seq_in_slot         smallint    NOT NULL DEFAULT 1,
+    is_amendment        boolean     NOT NULL DEFAULT false,
+    status              varchar(12) NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'passed', 'has_issues', 'skipped')),
+    claim_load_seq      integer,
+    verified_load_seq   integer,
+    verified_scopes     text[],
+    verified_scope_hashes jsonb,
+    verified_at         timestamptz,
+    verified_by         text,
+    note                text CHECK (length(note) <= 2000),
+    updated_at          timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (scope, rcept_no),
+    FOREIGN KEY (scope, corp_code, fiscal_year, fiscal_period)
+        REFERENCES verification.scope_progress (scope, corp_code, fiscal_year, fiscal_period)
+);
+CREATE INDEX IF NOT EXISTS ix_vspf_slot
+    ON verification.scope_progress_filings (scope, corp_code, fiscal_year, fiscal_period);
+
+CREATE TABLE IF NOT EXISTS verification.scope_loads (
+    rcept_no        varchar(14) NOT NULL REFERENCES public.filings(rcept_no),
+    scope           varchar(6)  NOT NULL CHECK (scope IN ('note', 'biz')),
+    load_seq        integer     NOT NULL,
+    content_hash    text        NOT NULL,
+    scope_hashes    jsonb       NOT NULL,
+    n_lines         integer     NOT NULL,
+    parser_commit   text,
+    loaded_by       text,
+    reason          text,
+    baseline        boolean     NOT NULL DEFAULT false,
+    loaded_at       timestamptz NOT NULL DEFAULT now(),
+    last_checked_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (rcept_no, scope)
+);
+
+CREATE TABLE IF NOT EXISTS verification.scope_load_events (
+    event_id        bigserial PRIMARY KEY,
+    rcept_no        varchar(14) NOT NULL,
+    scope           varchar(6)  NOT NULL,
+    load_seq        integer     NOT NULL,
+    content_hash    text        NOT NULL,
+    changed_scopes  text[],
+    n_lines         integer     NOT NULL,
+    parser_commit   text,
+    loaded_by       text,
+    db_role         text,
+    reason          text,
+    at              timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_vsle_rcept ON verification.scope_load_events (rcept_no, scope, load_seq);
+
+CREATE TABLE IF NOT EXISTS verification.scope_load_dirty (
+    rcept_no varchar(14) NOT NULL,
+    scope    varchar(6)  NOT NULL,
+    txid     bigint      NOT NULL,
+    PRIMARY KEY (rcept_no, scope, txid)
+);
+
+CREATE TABLE IF NOT EXISTS verification.scope_machine_checks (
+    rcept_no     varchar(14) NOT NULL REFERENCES public.filings(rcept_no),
+    scope        varchar(6)  NOT NULL CHECK (scope IN ('note', 'biz')),
+    load_seq     integer     NOT NULL,
+    tool_version text        NOT NULL,
+    verdict      varchar(12) NOT NULL
+                 CHECK (verdict IN ('clean', 'mismatch', 'no_source', 'no_structure', 'error')),
+    audit        boolean     NOT NULL DEFAULT false,
+    counts       jsonb       NOT NULL DEFAULT '{}'::jsonb,
+    findings     jsonb       NOT NULL DEFAULT '[]'::jsonb,
+    checked_at   timestamptz NOT NULL DEFAULT now(),
+    checked_by   text        NOT NULL DEFAULT verification.actor(),
+    PRIMARY KEY (rcept_no, scope)
+);
+CREATE INDEX IF NOT EXISTS ix_vsmc_verdict ON verification.scope_machine_checks (scope, verdict);
+
+-- Content hashes of one rcept's note_lines / biz_section_tables. Provenance columns (id,
+-- source_ref, context_raw, fetched_at) are excluded on purpose, like compute_hashes().
+-- scope_hashes keys: note -> basis ('consolidated' / 'separate' / '-'), biz -> domain.
+CREATE OR REPLACE FUNCTION verification.compute_scope_hashes(
+    p_scope text, p_rcept text, OUT content_hash text, OUT scope_hashes jsonb, OUT n_lines integer)
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    IF p_scope = 'note' THEN
+        WITH r AS (
+            SELECT coalesce(basis, '-') AS k,
+                   concat_ws('|', statement, basis, table_seq, row_order, depth, node_role,
+                             label_raw, col_index, col_label, context_fiscal_year, period_kind,
+                             is_cumulative, value_won, value_raw, adecimal, unit_source,
+                             header_hint) AS line
+            FROM public.note_lines WHERE rcept_no = p_rcept
+        ), s AS (
+            SELECT k, md5(string_agg(line, E'\n' ORDER BY line)) AS h, count(*) AS n FROM r GROUP BY k
+        )
+        SELECT coalesce(jsonb_object_agg(k, h), '{}'::jsonb), coalesce(sum(n), 0)::integer
+          INTO scope_hashes, n_lines FROM s;
+    ELSIF p_scope = 'biz' THEN
+        WITH r AS (
+            SELECT domain AS k,
+                   concat_ws('|', table_ord, domain, metric, narrative, grid::text,
+                             n_metric_rows) AS line
+            FROM public.biz_section_tables WHERE rcept_no = p_rcept
+        ), s AS (
+            SELECT k, md5(string_agg(line, E'\n' ORDER BY line)) AS h, count(*) AS n FROM r GROUP BY k
+        )
+        SELECT coalesce(jsonb_object_agg(k, h), '{}'::jsonb), coalesce(sum(n), 0)::integer
+          INTO scope_hashes, n_lines FROM s;
+    ELSE
+        RAISE EXCEPTION 'unknown verification scope %', p_scope;
+    END IF;
+    content_hash := md5(scope_hashes::text);
+END $$;
+
+-- Current load stamp of (rcept, scope); 'report' reads the original filing_loads.
+CREATE OR REPLACE FUNCTION verification.cur_load_seq(p_rcept text, p_scope text) RETURNS integer
+LANGUAGE sql STABLE AS $$
+    SELECT CASE WHEN p_scope = 'report'
+                THEN (SELECT load_seq FROM verification.filing_loads WHERE rcept_no = p_rcept)
+                ELSE (SELECT load_seq FROM verification.scope_loads
+                       WHERE rcept_no = p_rcept AND scope = p_scope) END
+$$;
+
+CREATE OR REPLACE FUNCTION verification.cur_parser_commit(p_rcept text, p_scope text) RETURNS text
+LANGUAGE sql STABLE AS $$
+    SELECT CASE WHEN p_scope = 'report'
+                THEN (SELECT parser_commit FROM verification.filing_loads WHERE rcept_no = p_rcept)
+                ELSE (SELECT parser_commit FROM verification.scope_loads
+                       WHERE rcept_no = p_rcept AND scope = p_scope) END
+$$;
+
+CREATE OR REPLACE FUNCTION verification.ensure_scope_baseline(p_rcept text, p_scope text)
+RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = verification, public AS $$
+DECLARE
+    v_seq integer;
+    h record;
+BEGIN
+    SELECT load_seq INTO v_seq FROM verification.scope_loads
+     WHERE rcept_no = p_rcept AND scope = p_scope;
+    IF FOUND THEN
+        RETURN v_seq;
+    END IF;
+    SELECT * INTO h FROM verification.compute_scope_hashes(p_scope, p_rcept);
+    INSERT INTO verification.scope_loads
+        (rcept_no, scope, load_seq, content_hash, scope_hashes, n_lines, parser_commit, loaded_by,
+         reason, baseline)
+    VALUES (p_rcept, p_scope, 1, h.content_hash, h.scope_hashes, h.n_lines, 'pre-verification',
+            verification.actor(), 'baseline', true)
+    ON CONFLICT (rcept_no, scope) DO NOTHING;
+    SELECT load_seq INTO v_seq FROM verification.scope_loads
+     WHERE rcept_no = p_rcept AND scope = p_scope;
+    RETURN v_seq;
+END $$;
+
+-- Slot state of a scope, same rules as refresh_slot().
+CREATE OR REPLACE FUNCTION verification.refresh_scope_slot(
+    p_scope text, p_corp text, p_fy integer, p_fp text)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = verification, public AS $$
+DECLARE
+    v_open integer;
+    v_total integer;
+    v_done integer;
+BEGIN
+    SELECT count(*) INTO v_open FROM verification.issues
+     WHERE scope = p_scope AND corp_code = p_corp AND fiscal_year = p_fy AND fiscal_period = p_fp
+       AND status <> 'closed';
+
+    UPDATE verification.scope_progress_filings pf SET status = 'has_issues', updated_at = now()
+     WHERE pf.scope = p_scope AND pf.corp_code = p_corp AND pf.fiscal_year = p_fy
+       AND pf.fiscal_period = p_fp AND pf.status IN ('pending', 'passed')
+       AND EXISTS (SELECT 1 FROM verification.issues i
+                    WHERE i.rcept_no = pf.rcept_no AND i.scope = p_scope AND i.status <> 'closed');
+    UPDATE verification.scope_progress_filings pf SET status = 'pending', updated_at = now()
+     WHERE pf.scope = p_scope AND pf.corp_code = p_corp AND pf.fiscal_year = p_fy
+       AND pf.fiscal_period = p_fp AND pf.status = 'has_issues'
+       AND NOT EXISTS (SELECT 1 FROM verification.issues i
+                        WHERE i.rcept_no = pf.rcept_no AND i.scope = p_scope
+                          AND i.status <> 'closed');
+
+    SELECT count(*), count(*) FILTER (WHERE status IN ('passed', 'skipped'))
+      INTO v_total, v_done
+      FROM verification.scope_progress_filings
+     WHERE scope = p_scope AND corp_code = p_corp AND fiscal_year = p_fy AND fiscal_period = p_fp;
+
+    UPDATE verification.scope_progress p
+       SET n_open_issues = v_open,
+           status = CASE
+               WHEN p.status IN ('in_progress', 'blocked') THEN p.status
+               WHEN v_open > 0 THEN 'has_issues'
+               WHEN v_total > 0 AND v_done = v_total THEN 'passed'
+               ELSE 'pending' END,
+           passed_at = CASE
+               WHEN p.status IN ('in_progress', 'blocked') THEN p.passed_at
+               WHEN v_open = 0 AND v_total > 0 AND v_done = v_total
+                    THEN coalesce(p.passed_at, now())
+               ELSE NULL END,
+           updated_at = now()
+     WHERE p.scope = p_scope AND p.corp_code = p_corp AND p.fiscal_year = p_fy
+       AND p.fiscal_period = p_fp;
+END $$;
+
+-- Load hook of the scoped tables: statement triggers collect the touched rcepts, the deferred
+-- constraint trigger stamps each rcept once at COMMIT (same design as the report_lines hook).
+CREATE OR REPLACE FUNCTION verification.trg_scope_mark_new() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = verification, public AS $$
+BEGIN
+    INSERT INTO verification.scope_load_dirty (rcept_no, scope, txid)
+    SELECT DISTINCT rcept_no, TG_ARGV[0], txid_current() FROM new_rows
+    ON CONFLICT DO NOTHING;
+    RETURN NULL;
+END $$;
+
+CREATE OR REPLACE FUNCTION verification.trg_scope_mark_old() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = verification, public AS $$
+BEGIN
+    INSERT INTO verification.scope_load_dirty (rcept_no, scope, txid)
+    SELECT DISTINCT rcept_no, TG_ARGV[0], txid_current() FROM old_rows
+    ON CONFLICT DO NOTHING;
+    RETURN NULL;
+END $$;
+
+CREATE OR REPLACE FUNCTION verification.trg_scope_finalize_load() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = verification, public AS $$
+DECLARE
+    h         record;
+    fl        record;
+    v_seq     integer;
+    v_changed text[];
+    v_role    text := verification.actor_role();
+    v_actor   text := verification.actor();
+    v_commit  text := verification.guc('parser_commit');
+    v_reason  text := coalesce(verification.guc('load_reason'), 'unspecified');
+    slot      record;
+BEGIN
+    SELECT * INTO h FROM verification.compute_scope_hashes(NEW.scope, NEW.rcept_no);
+    SELECT * INTO fl FROM verification.scope_loads
+     WHERE rcept_no = NEW.rcept_no AND scope = NEW.scope FOR UPDATE;
+
+    IF FOUND AND fl.content_hash = h.content_hash THEN
+        UPDATE verification.scope_loads SET last_checked_at = now()
+         WHERE rcept_no = NEW.rcept_no AND scope = NEW.scope;
+        DELETE FROM verification.scope_load_dirty
+         WHERE rcept_no = NEW.rcept_no AND scope = NEW.scope AND txid = NEW.txid;
+        RETURN NULL;
+    END IF;
+
+    IF FOUND THEN
+        SELECT array_agg(k ORDER BY k) INTO v_changed
+          FROM (SELECT key AS k FROM jsonb_each_text(h.scope_hashes)
+                UNION SELECT key FROM jsonb_each_text(fl.scope_hashes)) keys
+         WHERE (h.scope_hashes ->> k) IS DISTINCT FROM (fl.scope_hashes ->> k);
+        v_seq := fl.load_seq + 1;
+        UPDATE verification.scope_loads
+           SET load_seq = v_seq, content_hash = h.content_hash, scope_hashes = h.scope_hashes,
+               n_lines = h.n_lines, parser_commit = v_commit, loaded_by = v_actor,
+               reason = v_reason, baseline = false, loaded_at = now(), last_checked_at = now()
+         WHERE rcept_no = NEW.rcept_no AND scope = NEW.scope;
+    ELSE
+        SELECT array_agg(k ORDER BY k) INTO v_changed FROM jsonb_object_keys(h.scope_hashes) k;
+        v_seq := 1;
+        INSERT INTO verification.scope_loads
+            (rcept_no, scope, load_seq, content_hash, scope_hashes, n_lines, parser_commit,
+             loaded_by, reason, baseline)
+        VALUES (NEW.rcept_no, NEW.scope, 1, h.content_hash, h.scope_hashes, h.n_lines, v_commit,
+                v_actor, v_reason, false);
+    END IF;
+
+    INSERT INTO verification.scope_load_events
+        (rcept_no, scope, load_seq, content_hash, changed_scopes, n_lines, parser_commit,
+         loaded_by, db_role, reason)
+    VALUES (NEW.rcept_no, NEW.scope, v_seq, h.content_hash, v_changed, h.n_lines, v_commit,
+            v_actor, v_role, v_reason);
+
+    SELECT p.corp_code, p.fiscal_year, p.fiscal_period, p.status, p.lease_until, p.claimed_by,
+           pf.status AS filing_status
+      INTO slot
+      FROM verification.scope_progress_filings pf
+      JOIN verification.scope_progress p
+        ON p.scope = pf.scope AND p.corp_code = pf.corp_code
+       AND p.fiscal_year = pf.fiscal_year AND p.fiscal_period = pf.fiscal_period
+     WHERE pf.scope = NEW.scope AND pf.rcept_no = NEW.rcept_no;
+
+    IF FOUND THEN
+        IF slot.status = 'in_progress' AND slot.lease_until > now() AND v_role = 'fix' THEN
+            RAISE EXCEPTION 'verification lease active on % scope % (slot % % %, claimed by %, until %)',
+                NEW.rcept_no, NEW.scope, slot.corp_code, slot.fiscal_year, slot.fiscal_period,
+                slot.claimed_by, slot.lease_until
+                USING ERRCODE = '55P03';
+        END IF;
+
+        IF slot.filing_status = 'passed' THEN
+            UPDATE verification.scope_progress_filings SET status = 'pending', updated_at = now()
+             WHERE scope = NEW.scope AND rcept_no = NEW.rcept_no;
+            INSERT INTO verification.progress_events
+                (scope, corp_code, fiscal_year, fiscal_period, rcept_no, action, from_status,
+                 to_status, actor, db_role, evidence, load_seq)
+            VALUES (NEW.scope, slot.corp_code, slot.fiscal_year, slot.fiscal_period, NEW.rcept_no,
+                    'reloaded_after_pass', 'passed', 'pending', v_actor, v_role,
+                    'changed scopes: ' || coalesce(array_to_string(v_changed, ','), '-')
+                    || ' / reason: ' || v_reason, v_seq);
+        END IF;
+        IF slot.status = 'blocked' THEN
+            UPDATE verification.scope_progress SET status = 'pending', retry_count = 0,
+                   updated_at = now(),
+                   note = left(coalesce(note || ' | ', '') || 'unblocked by reload ' || NEW.rcept_no
+                               || ' load_seq ' || v_seq, 2000)
+             WHERE scope = NEW.scope AND corp_code = slot.corp_code
+               AND fiscal_year = slot.fiscal_year AND fiscal_period = slot.fiscal_period
+               AND status = 'blocked';
+            INSERT INTO verification.progress_events
+                (scope, corp_code, fiscal_year, fiscal_period, rcept_no, action, from_status,
+                 to_status, actor, db_role, evidence, load_seq)
+            VALUES (NEW.scope, slot.corp_code, slot.fiscal_year, slot.fiscal_period, NEW.rcept_no,
+                    'unblocked_by_reload', 'blocked', 'pending', v_actor, v_role,
+                    'changed scopes: ' || coalesce(array_to_string(v_changed, ','), '-')
+                    || ' / reason: ' || v_reason, v_seq);
+        END IF;
+        PERFORM verification.refresh_scope_slot(NEW.scope, slot.corp_code, slot.fiscal_year,
+                                                slot.fiscal_period);
+    ELSE
+        -- A filing that joins an already existing slot of the scope (a fresh amendment).
+        INSERT INTO verification.scope_progress_filings
+            (scope, rcept_no, corp_code, fiscal_year, fiscal_period, seq_in_slot, is_amendment)
+        SELECT NEW.scope, f.rcept_no, f.corp_code, f.fiscal_year, f.fiscal_period,
+               (SELECT coalesce(max(seq_in_slot), 0) + 1 FROM verification.scope_progress_filings x
+                 WHERE x.scope = NEW.scope AND x.corp_code = f.corp_code
+                   AND x.fiscal_year = f.fiscal_year AND x.fiscal_period = f.fiscal_period),
+               coalesce(f.is_amendment, false)
+          FROM public.filings f
+          JOIN verification.scope_progress p
+            ON p.scope = NEW.scope AND p.corp_code = f.corp_code
+           AND p.fiscal_year = f.fiscal_year AND p.fiscal_period = f.fiscal_period
+         WHERE f.rcept_no = NEW.rcept_no
+        ON CONFLICT (scope, rcept_no) DO NOTHING;
+        IF FOUND THEN
+            SELECT corp_code, fiscal_year, fiscal_period INTO slot
+              FROM verification.scope_progress_filings
+             WHERE scope = NEW.scope AND rcept_no = NEW.rcept_no;
+            IF FOUND THEN
+                INSERT INTO verification.progress_events
+                    (scope, corp_code, fiscal_year, fiscal_period, rcept_no, action, to_status,
+                     actor, db_role, evidence, load_seq)
+                VALUES (NEW.scope, slot.corp_code, slot.fiscal_year, slot.fiscal_period,
+                        NEW.rcept_no, 'filing_joined', 'pending', v_actor, v_role, v_reason, v_seq);
+                PERFORM verification.refresh_scope_slot(NEW.scope, slot.corp_code,
+                                                        slot.fiscal_year, slot.fiscal_period);
+            END IF;
+        END IF;
+    END IF;
+
+    DELETE FROM verification.scope_load_dirty
+     WHERE rcept_no = NEW.rcept_no AND scope = NEW.scope AND txid = NEW.txid;
+    RETURN NULL;
+END $$;
+
+DROP TRIGGER IF EXISTS vsld_finalize ON verification.scope_load_dirty;
+CREATE CONSTRAINT TRIGGER vsld_finalize AFTER INSERT ON verification.scope_load_dirty
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION verification.trg_scope_finalize_load();
+
+-- Scope slot history. NEW.rcept_no exists only on the filings table, hence two functions
+-- (same reason as trg_progress_event / trg_progress_filing_event).
+CREATE OR REPLACE FUNCTION verification.trg_scope_progress_event() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = verification, public AS $$
+BEGIN
+    IF NEW.status IS DISTINCT FROM OLD.status THEN
+        INSERT INTO verification.progress_events
+            (scope, corp_code, fiscal_year, fiscal_period, action, from_status, to_status,
+             actor, db_role, evidence)
+        VALUES (NEW.scope, NEW.corp_code, NEW.fiscal_year, NEW.fiscal_period, 'slot_status',
+                OLD.status, NEW.status, verification.actor(), verification.actor_role(),
+                verification.guc('evidence'));
+    END IF;
+    RETURN NULL;
+END $$;
+
+CREATE OR REPLACE FUNCTION verification.trg_scope_progress_filing_event() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = verification, public AS $$
+BEGIN
+    IF NEW.status IS DISTINCT FROM OLD.status THEN
+        INSERT INTO verification.progress_events
+            (scope, corp_code, fiscal_year, fiscal_period, rcept_no, action, from_status,
+             to_status, actor, db_role, evidence, load_seq)
+        VALUES (NEW.scope, NEW.corp_code, NEW.fiscal_year, NEW.fiscal_period, NEW.rcept_no,
+                'filing_status', OLD.status, NEW.status, verification.actor(),
+                verification.actor_role(), verification.guc('evidence'),
+                verification.cur_load_seq(NEW.rcept_no, NEW.scope));
+    END IF;
+    RETURN NULL;
+END $$;
+
+DROP TRIGGER IF EXISTS vsprogress_event ON verification.scope_progress;
+CREATE TRIGGER vsprogress_event AFTER UPDATE ON verification.scope_progress
+    FOR EACH ROW EXECUTE FUNCTION verification.trg_scope_progress_event();
+DROP TRIGGER IF EXISTS vspf_event ON verification.scope_progress_filings;
+CREATE TRIGGER vspf_event AFTER UPDATE ON verification.scope_progress_filings
+    FOR EACH ROW EXECUTE FUNCTION verification.trg_scope_progress_filing_event();
+
 -- ═════════════════════════════ issue state machine ═════════════════════════════
 CREATE OR REPLACE FUNCTION verification.trg_issue_before() RETURNS trigger
 LANGUAGE plpgsql SET search_path = verification, public AS $$
@@ -677,23 +1151,26 @@ BEGIN
         IF NEW.status <> 'open' AND v_role <> 'admin' THEN
             RAISE EXCEPTION 'a new issue must start as open (got %)', NEW.status;
         END IF;
+        IF NEW.scope <> 'report' THEN
+            PERFORM verification.ensure_scope_baseline(NEW.rcept_no, NEW.scope);
+        END IF;
         IF NEW.found_load_seq IS NULL THEN
-            SELECT load_seq INTO NEW.found_load_seq
-              FROM verification.filing_loads WHERE rcept_no = NEW.rcept_no;
+            NEW.found_load_seq := verification.cur_load_seq(NEW.rcept_no, NEW.scope);
         END IF;
         IF NEW.found_parser_commit IS NULL THEN
-            SELECT parser_commit INTO NEW.found_parser_commit
-              FROM verification.filing_loads WHERE rcept_no = NEW.rcept_no;
+            NEW.found_parser_commit := verification.cur_parser_commit(NEW.rcept_no, NEW.scope);
         END IF;
         RETURN NEW;
     END IF;
 
     -- Column ownership.
-    IF v_role = 'fix' AND (NEW.rcept_no, NEW.basis, NEW.statement, NEW.account_label,
+    IF v_role = 'fix' AND (NEW.rcept_no, NEW.scope, NEW.table_ref, NEW.basis, NEW.statement,
+                           NEW.account_label,
                            NEW.column_label, NEW.db_value, NEW.source_value,
                            NEW.source_value_raw, NEW.source_unit, NEW.evidence)
             IS DISTINCT FROM
-                          (OLD.rcept_no, OLD.basis, OLD.statement, OLD.account_label,
+                          (OLD.rcept_no, OLD.scope, OLD.table_ref, OLD.basis, OLD.statement,
+                           OLD.account_label,
                            OLD.column_label, OLD.db_value, OLD.source_value,
                            OLD.source_value_raw, OLD.source_unit, OLD.evidence) THEN
         RAISE EXCEPTION 'fix worktree may not edit the observed facts of an issue';
@@ -739,8 +1216,14 @@ BEGIN
             IF NEW.fixed_parser_commit IS NULL THEN
                 RAISE EXCEPTION 'fixed requires fixed_parser_commit';
             END IF;
-            SELECT load_seq, loaded_at INTO v_seq, v_loaded_at
-              FROM verification.filing_loads WHERE rcept_no = NEW.rcept_no;
+            IF NEW.scope = 'report' THEN
+                SELECT load_seq, loaded_at INTO v_seq, v_loaded_at
+                  FROM verification.filing_loads WHERE rcept_no = NEW.rcept_no;
+            ELSE
+                SELECT load_seq, loaded_at INTO v_seq, v_loaded_at
+                  FROM verification.scope_loads
+                 WHERE rcept_no = NEW.rcept_no AND scope = NEW.scope;
+            END IF;
             IF v_role <> 'admin' AND (v_seq IS NULL
                    OR (OLD.found_load_seq IS NOT NULL AND v_seq <= OLD.found_load_seq)
                    OR (OLD.found_load_seq IS NULL AND v_loaded_at <= OLD.created_at)) THEN
@@ -777,8 +1260,7 @@ BEGIN
              load_seq)
         VALUES (NEW.issue_id, 'transition', OLD.status, NEW.status, verification.actor(),
                 verification.actor_role(), verification.guc('evidence'),
-                NEW.fixed_parser_commit,
-                (SELECT load_seq FROM verification.filing_loads WHERE rcept_no = NEW.rcept_no));
+                NEW.fixed_parser_commit, verification.cur_load_seq(NEW.rcept_no, NEW.scope));
     ELSIF NEW.fix_batch_id IS DISTINCT FROM OLD.fix_batch_id
        OR NEW.error_type IS DISTINCT FROM OLD.error_type
        OR NEW.rule_id IS DISTINCT FROM OLD.rule_id THEN
@@ -788,7 +1270,12 @@ BEGIN
                 concat_ws(' ', 'batch=' || NEW.fix_batch_id, 'type=' || NEW.error_type,
                           'rule=' || NEW.rule_id, verification.guc('evidence')));
     END IF;
-    PERFORM verification.refresh_slot(NEW.corp_code, NEW.fiscal_year, NEW.fiscal_period);
+    IF NEW.scope = 'report' THEN
+        PERFORM verification.refresh_slot(NEW.corp_code, NEW.fiscal_year, NEW.fiscal_period);
+    ELSE
+        PERFORM verification.refresh_scope_slot(NEW.scope, NEW.corp_code, NEW.fiscal_year,
+                                                NEW.fiscal_period);
+    END IF;
     RETURN NULL;
 END $$;
 
@@ -838,6 +1325,34 @@ DROP TRIGGER IF EXISTS vpf_event ON verification.progress_filings;
 CREATE TRIGGER vpf_event AFTER UPDATE ON verification.progress_filings
     FOR EACH ROW EXECUTE FUNCTION verification.trg_progress_filing_event();
 
+-- ═════════════════════════════ note_lines / biz_section_tables load hooks ═════════════════════════════
+-- Statement-level, transition-table triggers (cost per statement, not per row).
+DROP TRIGGER IF EXISTS vnl_mark_ins ON public.note_lines;
+CREATE TRIGGER vnl_mark_ins AFTER INSERT ON public.note_lines
+    REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION verification.trg_scope_mark_new('note');
+DROP TRIGGER IF EXISTS vnl_mark_upd ON public.note_lines;
+CREATE TRIGGER vnl_mark_upd AFTER UPDATE ON public.note_lines
+    REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION verification.trg_scope_mark_new('note');
+DROP TRIGGER IF EXISTS vnl_mark_del ON public.note_lines;
+CREATE TRIGGER vnl_mark_del AFTER DELETE ON public.note_lines
+    REFERENCING OLD TABLE AS old_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION verification.trg_scope_mark_old('note');
+
+DROP TRIGGER IF EXISTS vbz_mark_ins ON public.biz_section_tables;
+CREATE TRIGGER vbz_mark_ins AFTER INSERT ON public.biz_section_tables
+    REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION verification.trg_scope_mark_new('biz');
+DROP TRIGGER IF EXISTS vbz_mark_upd ON public.biz_section_tables;
+CREATE TRIGGER vbz_mark_upd AFTER UPDATE ON public.biz_section_tables
+    REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION verification.trg_scope_mark_new('biz');
+DROP TRIGGER IF EXISTS vbz_mark_del ON public.biz_section_tables;
+CREATE TRIGGER vbz_mark_del AFTER DELETE ON public.biz_section_tables
+    REFERENCING OLD TABLE AS old_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION verification.trg_scope_mark_old('biz');
+
 -- ═════════════════════════════ grants ═════════════════════════════
 GRANT USAGE ON SCHEMA public, verification TO tjf_verify, tjf_fix;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO tjf_verify;
@@ -860,6 +1375,8 @@ GRANT INSERT, UPDATE ON verification.issues TO tjf_verify;
 GRANT INSERT, UPDATE ON verification.runner_runs TO tjf_verify;
 GRANT INSERT, UPDATE ON verification.kv TO tjf_verify;
 GRANT INSERT, UPDATE ON verification.machine_checks TO tjf_verify;
+GRANT UPDATE ON verification.scope_progress, verification.scope_progress_filings TO tjf_verify;
+GRANT INSERT, UPDATE ON verification.scope_machine_checks TO tjf_verify;
 
 -- fix: fixer transitions, batches, decisions.
 GRANT UPDATE ON verification.issues TO tjf_fix;
@@ -870,6 +1387,7 @@ GRANT INSERT, UPDATE ON verification.runner_runs TO tjf_fix;
 
 -- Load stamping is written only through the SECURITY DEFINER triggers/functions above.
 REVOKE INSERT, UPDATE, DELETE ON verification.filing_loads, verification.filing_load_events,
-    verification.issue_events, verification.progress_events FROM tjf_verify, tjf_fix;
+    verification.issue_events, verification.progress_events, verification.scope_loads,
+    verification.scope_load_events FROM tjf_verify, tjf_fix;
 -- load_dirty is written by the SECURITY DEFINER statement triggers; nobody writes it directly.
-REVOKE ALL ON verification.load_dirty FROM tjf_verify, tjf_fix;
+REVOKE ALL ON verification.load_dirty, verification.scope_load_dirty FROM tjf_verify, tjf_fix;

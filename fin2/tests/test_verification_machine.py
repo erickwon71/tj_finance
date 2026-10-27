@@ -301,6 +301,22 @@ def test_restamp_stores_current_load_for_clean_and_leaves_the_rest(engines, as_r
     assert st == {R_OK: "passed", R_BAD: "passed"}               # never demotes
 
 
+def test_restamp_mismatch_replaces_only_old_tool_mismatch_of_passed_filings(engines, as_role):
+    _sql(engines, "UPDATE verification.progress_filings SET status = 'passed', verified_by = 'camp_run' "
+         "WHERE rcept_no IN (:a, :b)", {"a": R_OK, "b": R_BAD})
+    for r in (R_OK, R_BAD):
+        _sql(engines, "UPDATE verification.machine_checks SET verdict = 'mismatch', tool_version = 'old' "
+             "WHERE rcept_no = :r", {"r": r})
+    as_role("admin")
+    total = machine_pass.restamp(log=lambda _m: None, mismatch=True)
+    assert total["restamped"] == 1 and total["not_clean"] == 1 and total["not_clean_rcepts"] == [R_BAD]
+    rows = dict(_sql(engines, "SELECT rcept_no, verdict || '/' || tool_version FROM verification.machine_checks "
+                              "WHERE rcept_no IN (:a, :b)", {"a": R_OK, "b": R_BAD}))
+    assert rows[R_OK] == "clean/" + machine_pass.mc.TOOL_VERSION and rows[R_BAD] == "mismatch/old"
+    # a second run finds the clean one done and the same stale mismatch again
+    assert machine_pass.restamp(log=lambda _m: None, mismatch=True)["restamped"] == 0
+
+
 def test_mismatch_made_only_of_no_fix_cells_needs_no_model(engines, as_role):
     # the column label is not compared: the reviewer's issue often has none
     with engines["admin"].begin() as c:

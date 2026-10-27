@@ -135,6 +135,11 @@ passed 필링을 재대조해 clean 이면 기록만 남기고 아니면 pending
 재적재가 passed 를 유지시킨 뒤 `machine_checks` 가 옛 적재에 머물러 status 의 `stale` 로 잡히는 필링을 현재
 적재로 다시 대조해, clean 이면 기록만 현재 load_seq 로 갱신한다. restamp 는 상태를 바꾸지 않으며(강등 없음)
 clean 이 아니면 건드리지 않고 `not_clean_rcepts` 로 알리기만 한다.
+`vq.py machine restamp --mismatch` 는 대상이 다르다: passed 필링 중 옛 도구버전의 mismatch 기록을 재대조해 clean 이면
+기록만 교체한다(2026-10-27 mc20: 기계의 원문 읽기 결함 3종이 만든 거짓 mismatch 정리). 여전히 mismatch 인 건 그대로 둔다.
+mc20 은 이 외에 소수 EPS 를 `value_exact` 로 정확 비교한다(R212: `value_won` 은 반올림 정수라 기존 ±1 허용이 열 오선택·정확값 오적재를 가렸다).
+`value_exact` 가 있으면 원문 값과 정확히 같아야 하고(같은 행의 다른 칸에 정확값이 있으면 열 선택 모호로 보아 통과), 없는데 원문이
+소수이면 `eps_exact_missing` 발견이다. 2015+ 소수 EPS 1,409필링과 대조 표본 400필링에서 새 EPS 발견 0건이었다.
 
 ```bash
 tmux new-session -d -s verify_machine -c /Users/taejin/Project/tj_finance/.claude/worktrees/camp_run 'caffeinate -i scripts/machine_daemon.sh'

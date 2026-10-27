@@ -79,7 +79,13 @@ from lxml import etree
 # mc19 (2026-10-25, 미래에셋 20160516002286): the same cell can come with '&cr;' line breaks and a leading
 # amount split by a printed newline ('1,\n958,360&cr;\n(19,556)&cr;\n3,315', R152-c in the loader); mc18 kept
 # the '&cr;' on its tokens, so the join of the split amount was rejected and the cell stayed text.
-TOOL_VERSION = "mc19"
+# mc20 (2026-10-27, 20220317000691 SK스퀘어 / 20210218001085 키움증권 and 501 of 886 sampled mismatches):
+# three source-reading gaps raised false findings. (A) '(89원)' - the won suffix inside the closing
+# parenthesis of a negative amount - read as text, so a loss EPS cell was EMPTY (the loader reads it,
+# R179). (B) a labelled row printing only '-' under every period ('Ⅰ.영업수익 - -') was taken for a
+# header row, so the DB's zero row had no source row (extra_row). (C) a statement section that prints
+# the same statement twice left the second copy as an unmatched_table.
+TOOL_VERSION = "mc20"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -89,6 +95,7 @@ _GROUPED_RE = re.compile(r"^\d{1,3}(,\d{3})+(\.\d+)?$|^\d+(\.\d+)?$")
 _WS_RE = re.compile(r"[\s　\xa0]")
 _SCALES = (1, 1_000, 1_000_000, 100_000_000)
 _EMPTY = "EMPTY"
+_DASHES = ("-", "−", "–", "—")
 
 # Local SD-card mirror is much faster than the NAS for bulk reads (memory: bulk-read-use-sdcard).
 _NAS_PREFIX = str(Path(__file__).resolve().parents[2] / "raw_report")
@@ -125,6 +132,10 @@ def parse_amount(t: str):
     t = _WS_RE.sub("", (t or "").replace("&cr;", ""))
     if t.endswith("원") and len(t) > 1:
         t = t[:-1]
+    elif t.startswith("(") and t.endswith("원)"):
+        t = t[:-2] + ")"        # '(89원)' is the negative -89, not text
+    if t.startswith("(-)") and len(t) > 3:
+        t = "-" + t[3:]         # '(-)236.27' is a negative amount printed with a redundant sign marker
     if t == "":
         return _EMPTY
     if t in ("-", "−", "–", "—", "0"):
@@ -296,6 +307,10 @@ def _parse_table(idx: int, table, basis: str, title: str) -> SrcTable | None:
     for i, row in enumerate(g):
         nums = [c for c, t, o in row if o and c > 0 and isinstance(parse_amount(t), float)
                 and re.search(r"\d", t)]
+        if not nums and any(o and c == 0 and t.strip() for c, t, o in row):
+            # a labelled row whose amount cells print only '-' (20220317000691 'Ⅰ.영업수익') is the
+            # first data row, not a header row; a header never prints a bare dash under a period
+            nums = [c for c, t, o in row if o and c > 0 and _WS_RE.sub("", t) in _DASHES]
         if nums and first_data is None:
             first_data = i
         if first_data is not None:
@@ -544,6 +559,20 @@ def _comparison_of_used(t: SrcTable, tables: list[SrcTable], used: set[int]) -> 
     return False
 
 
+def _copy_of_used(t: SrcTable, tables: list[SrcTable], used: set[int]) -> bool:
+    """A statement section that prints the same statement twice (20210218001085): `t` repeats the
+    rows and amounts of a table the DB was compared against, so it holds nothing unchecked."""
+    mine = [(r.key, tuple(r.cells)) for r in t.rows]
+    if not mine:
+        return False
+    for u in tables:
+        if u.idx in used and u.basis == t.basis and u.stype == t.stype:
+            theirs = {(r.key, tuple(r.cells)) for r in u.rows}
+            if sum(1 for x in mine if x in theirs) >= 0.9 * len(mine):
+                return True
+    return False
+
+
 def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
     """db_rows: report_lines dicts (statement, basis, table_seq, row_order, label_raw,
     col_index, value_won, is_cumulative)."""
@@ -734,6 +763,26 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
             ok = any(isinstance(x, float) and abs(x * s - r["value_won"]) <= tol for x in xs)
             if not ok and r["value_won"] == 0 and all(x in (0.0, _EMPTY) for x in xs):
                 ok = True
+            exact = r.get("value_exact")
+            if per_share and exact is not None:
+                # mc20 (R212): value_won of a fractional EPS is the rounded integer, the printed value is
+                # value_exact - compare that exactly instead of hiding behind the +-1 tolerance
+                ok = any(isinstance(x, float) and abs(x - float(exact)) <= 1e-6 * max(1.0, abs(x)) for x in xs)
+                if not ok:
+                    # the column pick can be ambiguous (3-month vs cumulative cells of one row); an exact
+                    # decimal printed elsewhere in the same row is not a coincidence (20200814000524)
+                    ok = "." in str(exact) and any(isinstance(y, float) and abs(y - float(exact)) <= 1e-9
+                                                   for y in row.cells)
+            elif per_share and ok and r["value_won"]:
+                frac = next((x for x in xs if isinstance(x, float) and abs(x * s - r["value_won"]) <= tol
+                             and abs(x - round(x)) > 1e-9), None)
+                if frac is not None:
+                    # the source prints a fractional EPS but the DB cell carries no exact value
+                    findings.append(_finding(
+                        "eps_exact_missing", key, label=r["label_raw"][:200],
+                        row_order=r.get("_db_row_order", r["row_order"]), col_index=r["col_index"],
+                        db=r["value_won"], src=frac))
+                    counts["eps_exact_missing"] += 1
             k = ks[0]
             x = next((y for y in xs if isinstance(y, float)), xs[0])
             if not ok:
@@ -745,7 +794,7 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
                          if st_code == "SCE" else {})
                 findings.append(_finding(
                     "value", key, label=r["label_raw"][:200], row_order=r.get("_db_row_order", r["row_order"]),
-                    col_index=r["col_index"], db=r["value_won"],
+                    col_index=r["col_index"], db=(float(exact) if exact is not None and per_share else r["value_won"]),
                     src=x if isinstance(x, float) else str(x), src_col=k,
                     src_raw=(row.raws[k] if k < len(row.raws) else None),
                     header=(headers_of[row.table][k] if k < len(headers_of[row.table]) else None),
@@ -836,7 +885,8 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
         # only tables recognisably a statement: banks/insurers put income breakdowns
         # (예치금이자·증권이자 …) in the statement section too, and those are not loaded
         if t.idx not in used_tables and t.n_amount_rows >= 3 and t.stype is not None \
-                and not _is_appropriation(t) and not _comparison_of_used(t, tables, used_tables):
+                and not _is_appropriation(t) and not _comparison_of_used(t, tables, used_tables) \
+                and not _copy_of_used(t, tables, used_tables):
             findings.append({"kind": "unmatched_table", "basis": t.basis, "table": t.idx,
                              "title": t.title, "first_rows": [r.label[:40] for r in t.rows[:4]]})
             counts["unmatched_table"] += 1
@@ -1090,7 +1140,7 @@ def row_table_header(win_tables: list[SrcTable], row: SrcRow, c: int) -> str | N
 
 DB_SQL = """
     SELECT statement, basis, table_seq, row_order, label_raw, section_path, col_index, col_label, value_won,
-           is_cumulative
+           is_cumulative, value_exact
     FROM report_lines WHERE rcept_no = :r AND statement IN ('BS', 'IS', 'CF', 'SCE') ORDER BY abs(id)"""
 
 # mc16: synthetic row_order base for DB rows that have none (EPS path); far above real row orders

@@ -575,6 +575,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--out", help="issues-json: 저장할 JSON 경로")
     x.add_argument("--limit", type=int); x.add_argument("--rcept", nargs="*")
     x.add_argument("--value", choices=["on", "off"])
+    x.add_argument("--mismatch", action="store_true", help="restamp: 옛 도구버전의 mismatch(passed 필링)를 재대조해 clean 이면 기록 교체")
     x.set_defaults(fn=cmd_machine)
     x = sp.add_parser("runner"); x.add_argument("action", choices=["start", "finish", "budget", "model"])
     x.add_argument("--finding-model"); x.add_argument("--full-model")
@@ -602,7 +603,7 @@ def cmd_machine(a):
     elif a.action == "restamp":
         # admin: store the machine check of the current load for filings whose check is stale
         from fin2.verification import machine_pass
-        print(_j(machine_pass.restamp(limit=a.limit)))
+        print(_j(machine_pass.restamp(limit=a.limit, mismatch=a.mismatch)))
     elif a.action == "recheck":
         # the machine's own fixed issues: close/reopen by comparing the reloaded filing
         from fin2.verification import machine_pass

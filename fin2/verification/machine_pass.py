@@ -567,13 +567,17 @@ def repass(limit: int | None = None, log=print) -> dict:
     return total
 
 
-def restamp(limit: int | None = None, log=print) -> dict:
+def restamp(limit: int | None = None, log=print, mismatch: bool = False) -> dict:
     """Re-store the machine check of filings whose stored check belongs to an older load.
 
     A reload that leaves a passed filing passed (no scope hash changed) keeps its old check, which
     status shows as `stale`. Compare the current load again: clean -> store the check against the
     current load_seq (status, notes and the audit flag are untouched). Anything else is left alone
-    and only counted - this never demotes a pass; a non-clean result is for `repass`/`run` to decide."""
+    and only counted - this never demotes a pass; a non-clean result is for `repass`/`run` to decide.
+
+    mismatch=True (mc20, 2026-10-27): instead select the passed filings whose stored check is a
+    mismatch from an older tool version. A source-reading fix in the machine can turn such a check
+    clean (501 of 886 sampled); the pass already stands, so only the stored check is replaced."""
     if ops.role() != "admin":
         raise ops.VqError("machine restamp 는 admin(main) 전용 — machine_checks 를 다시 쓰기 때문")
     total = {"checked": 0, "restamped": 0, "not_clean": 0, "no_source": 0, "not_clean_rcepts": []}
@@ -582,8 +586,11 @@ def restamp(limit: int | None = None, log=print) -> dict:
             SELECT mc.rcept_no, mc.audit
             FROM verification.machine_checks mc
             JOIN verification.filing_loads fl USING (rcept_no)
-            WHERE mc.load_seq IS DISTINCT FROM fl.load_seq
-            ORDER BY mc.rcept_no""")).fetchall()
+            JOIN verification.progress_filings pf USING (rcept_no)
+            WHERE (CAST(:mm AS boolean) AND mc.verdict = 'mismatch' AND pf.status = 'passed'
+                   AND mc.tool_version <> :tv)
+               OR (NOT CAST(:mm AS boolean) AND mc.load_seq IS DISTINCT FROM fl.load_seq)
+            ORDER BY mc.rcept_no"""), {"mm": mismatch, "tv": mc.TOOL_VERSION}).fetchall()
     for n, (rcept, audit) in enumerate(rows):
         if limit is not None and n >= limit:
             break

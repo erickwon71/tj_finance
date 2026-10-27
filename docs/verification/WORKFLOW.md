@@ -24,7 +24,7 @@ CLI: `scripts/vq.py` (모든 명령은 `--help`)
 
 ## 2. 상태
 
-- 슬롯(회사 × 사업연도 × 보고서): `pending` → `in_progress`(점유, lease 2시간) → `passed` | `has_issues` | `blocked`(3회 실패)
+- 슬롯(회사 × 사업연도 × 보고서): `pending` → `in_progress`(점유, lease 2시간) → `passed` | `has_issues` | `blocked`(3회 실패. 그 슬롯의 필링이 **내용이 바뀐 채** 재적재되면 자동으로 `pending`·재시도 0회로 풀린다 — 이벤트 `unblocked_by_reload`, 2026-10-26)
 - 필링(슬롯 안의 rcept): `pending` · `passed` · `has_issues` · `skipped`
 - 이슈: `open → fixing → fixed → closed`, 재확인에서 틀리면 `reopened → fixing`. 오등록은 `withdraw`(open → closed).
   - 검증 계정만 가능: 등록, `fixed → closed/reopened`, `closed → reopened`
@@ -98,6 +98,7 @@ touch ~/.claude/notify/STOP_VERIFY
 rm ~/.claude/notify/STOP_VERIFY
 ```
 
+- **Chrome 확장이 연결되지 않으면**(세션이 요약 아래에 `[CHROME_UNAVAILABLE]` 을 적는다) 러너는 슬롯에 재시도 벌점을 주지 않고 `STOP_VERIFY` 를 만든 뒤 알림을 보내고 멈춘다(outcome `chrome_down`, 종료코드 6). 자동기동 데몬도 이 파일이 있으면 기동하지 않는다. 확장 연결을 복구한 뒤 파일을 지우고 다시 실행한다. (2026-10-26 이전에는 같은 슬롯이 `deferred` 로 분류돼 21회 되풀이됐다.)
 - 매 회차 `git merge --ff-only origin/main` 을 하므로, 수정 워크트리가 push 한 코드가 자동으로 반영된다. 러너 스크립트 자신이 바뀌면 회차 사이에 스스로 재시작한다.
 - 예산: 5시간 창당 `runner.slots_per_window`(기본 12), 7일 `runner.weekly_slots`(파일럿 후 설정). 값은 `verification.kv` 에 있어 코드 수정 없이 조정된다.
   **2026-09-24 파일럿 30회 실측 후 튜닝(Max x5)**: `runner.pace_mode=on`.
@@ -128,6 +129,17 @@ clean 슬롯의 1%(`machine.audit_pct`)는 모델이 전체를 다시 대조한�
 크면 워커 6개를 다시 띄우고 빌 때까지 기다린다. 재적재·데일리 신규 필링·수정 배치의 `fixed` 이슈가
 쌓여도 사람이 챙길 필요가 없다(2026-09-26: `machine recheck` 가 아무도 안 돌려서 481건 방치돼 있던 것을
 발견하고 데몬에 편입).
+
+수동 보조 명령(admin, main 에서만; 데몬에 넣지 않음 — 2026-10-27): `vq.py machine repass` 는 기계 기록이 없는
+passed 필링을 재대조해 clean 이면 기록만 남기고 아니면 pending 으로 강등한다. `vq.py machine restamp` 는
+재적재가 passed 를 유지시킨 뒤 `machine_checks` 가 옛 적재에 머물러 status 의 `stale` 로 잡히는 필링을 현재
+적재로 다시 대조해, clean 이면 기록만 현재 load_seq 로 갱신한다. restamp 는 상태를 바꾸지 않으며(강등 없음)
+clean 이 아니면 건드리지 않고 `not_clean_rcepts` 로 알리기만 한다.
+`vq.py machine restamp --mismatch` 는 대상이 다르다: passed 필링 중 옛 도구버전의 mismatch 기록을 재대조해 clean 이면
+기록만 교체한다(2026-10-27 mc20: 기계의 원문 읽기 결함 3종이 만든 거짓 mismatch 정리). 여전히 mismatch 인 건 그대로 둔다.
+mc20 은 이 외에 소수 EPS 를 `value_exact` 로 정확 비교한다(R212: `value_won` 은 반올림 정수라 기존 ±1 허용이 열 오선택·정확값 오적재를 가렸다).
+`value_exact` 가 있으면 원문 값과 정확히 같아야 하고(같은 행의 다른 칸에 정확값이 있으면 열 선택 모호로 보아 통과), 없는데 원문이
+소수이면 `eps_exact_missing` 발견이다. 2015+ 소수 EPS 1,409필링과 대조 표본 400필링에서 새 EPS 발견 0건이었다.
 
 ```bash
 tmux new-session -d -s verify_machine -c /Users/taejin/Project/tj_finance/.claude/worktrees/camp_run 'caffeinate -i scripts/machine_daemon.sh'

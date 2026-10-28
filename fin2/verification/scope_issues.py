@@ -215,3 +215,48 @@ def recheck(scope: str, dry_run: bool = False, shard: tuple[int, int] | None = N
                 ops.transition(i["issue_id"], "closed",
                                f"[machine recheck {mod.TOOL_VERSION}] 재적재 후 원문과 일치 확인")
     return out
+
+
+def retriage(scope: str, statuses=("reopened", "open"), dry_run: bool = False,
+             shard: tuple[int, int] | None = None) -> dict:
+    """Close every issue of the given statuses whose finding the CURRENT machine version no longer
+    produces (a machine false positive found later: header years, nested tables, ...). Same key as
+    recheck(). Unlike recheck it works on issues nobody has fixed, so it needs no reload; the
+    evidence names the machine version. Admin / verify role (reopened/open -> closed)."""
+    from fin2.verification import machine_pass_scope as mps
+    from fin2.verification.machine_pass import _source_path
+    from collector.db import engine
+
+    ops._require("verify")
+    mod = mps.MODULES[scope]
+    with engine.connect() as conn:
+        rows = [dict(r) for r in conn.execute(text("""
+            SELECT issue_id, rcept_no, basis, table_ref, column_label, db_label, source_value_raw
+            FROM verification.issues WHERE scope = :sc AND status = ANY(:st) ORDER BY issue_id"""),
+            {"sc": scope, "st": list(statuses)}).mappings()]
+    by_rcept: dict[str, list[dict]] = {}
+    for i in rows:
+        if shard and int(i["rcept_no"]) % shard[1] != shard[0]:
+            continue
+        by_rcept.setdefault(i["rcept_no"], []).append(i)
+    out = {"closed": 0, "kept": 0, "no_source": 0, "filings": len(by_rcept), "dry_run": dry_run}
+    for rcept, issues in by_rcept.items():
+        with engine.connect() as conn:
+            path = _source_path(conn, rcept)
+            res = mod.compare_filing(conn, rcept, path) if path else None
+        if res is None:
+            out["no_source"] += len(issues)
+            continue
+        now = {(it.get("basis"), it["table_ref"], it.get("column_label"), it.get("db_label"),
+                it.get("source_value_raw")) for it in findings_to_items(scope, res.findings, "x")}
+        for i in issues:
+            if (i["basis"], i["table_ref"], i["column_label"], i["db_label"],
+                    i["source_value_raw"]) in now:
+                out["kept"] += 1
+                continue
+            out["closed"] += 1
+            if not dry_run:
+                ops.transition(i["issue_id"], "closed",
+                               f"[machine {mod.TOOL_VERSION} retriage] 현재 기계 버전으로 다시 대조하면 이 차이가 없다 "
+                               f"— 이전 버전의 오탐으로 등록된 이슈를 닫음")
+    return out

@@ -80,3 +80,9 @@ def test_note_items_keep_basis_and_number_repeated_keys():
     assert [i["basis"] for i in items] == ["separate", "separate"]
     assert [i["account_label"] for i in items] == ["기타", "기타 (#2)"]
     assert all(i["table_ref"] == "4" and i["statement"] == "NOTE" for i in items)
+
+
+def test_bare_year_headers_are_not_amounts():
+    assert mn._read_amount("2015") is None and mn._read_amount(" 2024 ") is None
+    assert mn._read_amount("2,015") == 2015               # a printed amount keeps its comma
+    assert mn._read_amount("1,950,000") == 1950000 and mn._read_amount("3000") == 3000

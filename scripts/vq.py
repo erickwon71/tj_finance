@@ -527,6 +527,9 @@ def cmd_scope(a):
     elif a.action == "recheck":
         shard = tuple(int(x) for x in a.shard.split("/")) if a.shard else None
         print(_j(si.recheck(a.scope, dry_run=not a.apply, shard=shard)))
+    elif a.action == "retriage":
+        shard = tuple(int(x) for x in a.shard.split("/")) if a.shard else None
+        print(_j(si.retriage(a.scope, dry_run=not a.apply, shard=shard)))
     elif a.action == "register-all":
         with engine.connect() as conn:
             rcepts = [x[0] for x in conn.execute(text("""
@@ -665,7 +668,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.set_defaults(fn=cmd_runner)
 
     x = sp.add_parser("scope", help="note/biz scope: 기계 대조·상태·이슈 등록(설계 verification_note_biz_expansion)")
-    x.add_argument("action", choices=["run", "status", "show", "register", "register-all", "recheck"])
+    x.add_argument("action", choices=["run", "status", "show", "register", "register-all", "recheck", "retriage"])
     x.add_argument("--scope", required=True, choices=["note", "biz"])
     x.add_argument("--rcept"); x.add_argument("--limit", type=int)
     x.add_argument("--shard", help="i/n — 접수번호 % n == i 인 것만")

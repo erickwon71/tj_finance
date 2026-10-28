@@ -52,7 +52,11 @@ from fin2.verification import machine_compare as mc
 # mn6 (2026-10-28): pairing also scores the overlap of row labels: a table with 3-4 amounts and one
 # wrong value shares too little of its amounts to pair, and became an extra_table instead of a
 # value finding. score = max(amount overlap, mean(amount overlap, label overlap)).
-TOOL_VERSION = "mn6"
+# mn7 (2026-10-28): a bare four-digit 1900-2100 ("2015", no thousands comma) is a year in a period
+# header, not an amount: it made 28,196 of the 163,551 remaining "missing" cells of the note batch
+# (label '구분', values 2,015 / 2,016 ...). A printed amount of that size carries its comma.
+TOOL_VERSION = "mn7"
+_BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
 _PER_SHARE = re.compile(r"주당")
@@ -88,6 +92,8 @@ def _clean(s: str) -> str:
 
 def _read_amount(cell: str):
     """Printed integer of a cell, None when it is not a non-zero integer amount."""
+    if _BARE_YEAR.match(_WS.sub("", cell or "")):
+        return None
     v = mc.parse_amount(cell)
     if not isinstance(v, float) or v == 0 or v != int(v):
         return None

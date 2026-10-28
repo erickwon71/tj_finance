@@ -646,8 +646,13 @@ def test_notes_monetary_transcribed_positional():
             assert l.unit_source in money_src, (l.unit_source, l.label_raw)
             assert l.value_raw is None, "값이 있으면 원문은 중복이라 저장하지 않는다"
         else:
-            assert l.unit_source in {"non_monetary", "undetermined", "undeclared"}, l.unit_source
-            assert l.value_raw, f"단위 미확정 칸인데 원문이 없다: {l.label_raw}"
+            assert l.value_raw, f"값이 없는 칸인데 원문이 없다: {l.label_raw}"
+            if l.unit_source in money_src:
+                # R290 (R160 for the notes): an unresolved '.' cell sits in a column whose unit IS
+                # known (declared / col_money); the value stays NULL, the printed text is kept
+                assert "." in l.value_raw, (l.unit_source, l.value_raw, l.label_raw)
+            else:
+                assert l.unit_source in {"non_monetary", "undetermined", "undeclared"}, l.unit_source
     assert any(l.value_won is not None for l in notes), "금액 주석 표가 하나도 전사되지 않음"
     # 종속기업 요약재무현황(천원 선언) 단위환산 검증: KG ETS 자산총계 = 767,614,120천원 → 원
     # ★로케이터 필드 변경(2026-07-26 주석 전사): section_path = **관장 번호 주석 제목**

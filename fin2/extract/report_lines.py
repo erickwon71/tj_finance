@@ -2081,11 +2081,20 @@ def _emit_note_lines(
             for row in note_rows:
                 if not row.account_name:
                     continue
+                # R290 — R160 (user decision 2026-10-12) for the notes: an unresolved '.' cell
+                # ('6,193,584.95', '9,588,934.00', '125.605') is NOT read as a number but its ROW is
+                # kept with value_won NULL and the printed text in value_raw. Only the body path
+                # (`_unreadable_markers`) had it; here `amounts[i]` is None for such a cell and the
+                # loop below dropped it without a trace (every foreign-currency amount column of the
+                # 외화 노출 tables: 4.5k JPY cells and more).
+                unreadable = {i for i in unresolved_dot_cell_indices(row.raw_amounts, row.account_name)
+                              if i < len(row.amounts)}
                 for col_idx, amount in enumerate(row.amounts):
-                    if amount is None:
+                    is_unreadable = amount is None and col_idx in unreadable
+                    if amount is None and not is_unreadable:
                         continue            # 원문에 숫자가 없는 칸 — 행을 만들지 않는다(종전과 동일)
                     raw = row.raw_amounts[col_idx] if col_idx < len(row.raw_amounts) else ""
-                    mult = cu.multiplier(col_idx)
+                    mult = None if is_unreadable else cu.multiplier(col_idx)
                     value = parse_amount(raw, mult) if mult is not None else None
                     emit(ReportLineRow(
                         corp_code=corp_code,

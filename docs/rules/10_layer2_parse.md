@@ -6267,6 +6267,19 @@ R212 소급 백필의 대상 목록(`docs/qa/eps_fractional_targets_2026-10-02.*
 **배선**: 계층2 쓰기는 `ensure_biz_raw_tables(report_type)` 가 계층3 읽기(`collector/biz_metrics_periodic.py`) 직전에 온디맨드로 한다. 데일리는 `scripts/collect_new.py::_sync_biz_metrics` 한 곳(두 call site 가 모두 이 헬퍼를 부른다). fix 큐 재적재는 `ops._reload_biz` 가 `report_type` 을 넘긴다.
 **소급**: 자동이 아니다 — `scripts/backfill_biz_periodic.py --shard i/n --year-min 2015`.
 
+## R290. 주석에서도 해결되지 않은 마침표 셀은 **행을 싣고 값은 NULL, 인쇄값은 `value_raw`** (R160 의 주석 경로 누락) (2026-10-28, 적용 계층: 2 — 읽기)
+
+> **상태** 유효 · **적용 계층** 2
+>
+> **규칙** `report_lines.py::_emit_note_lines` — 주석 셀의 금액이 `parse_amount` 가 아니라 R160(`unresolved_dot_cell_indices`)에 걸려 `None` 이 된 칸은 건너뛰지 않고 **행을 싣는다**: `value_won` = NULL, `adecimal` = NULL, `value_raw` = 원문 문자열(64자), `unit_source` 는 그 열의 판정 그대로. 숫자로 읽지 않는 것은 R160 과 같다(절삭·반올림 금지).
+> **하지 않는 것** 읽은 셀(`value_won` 이 있는 셀)은 바뀌지 않는다. 원문에 숫자가 없는 칸(`-`, 공란)은 종전대로 행이 없다. 주당손익 행·라벨이 `(단위 : 원)` 을 선언한 행은 R160 과 같이 대상이 아니다. 계층3 은 NULL 을 매핑하지 않는다(`value_won IS NOT NULL`).
+> **테스트** `fin2/tests/test_r290_note_unreadable_dot_cell_null_row.py`.
+
+**발견**: verification scope `note` 기계대조(mn6~)가 외화 노출 표(`20250321001629` 표 99)에서 `외화금액` 열이 `note_lines` 에서 통째로 없음을 찾았다. 셀이 `6,193,584.95`·`9,588,934.00` 처럼 소수점이 있어 R160 이 값을 버리는데(`_grid_body_rows`: `amounts[i] = None`), 본문 경로는 2026-10-12 사용자 결정으로 NULL 행을 싣게 바뀌었으나 주석 방출 루프는 `amount is None → continue` 로 남아 있었다. R158 때 SCE 가 샌 것과 같은 유형(같은 판정을 두 경로가 각자 한다).
+**영향 측정(2026-10-28, 주석 불일치 필링 120개 표본)**: 새 코드 추출 vs 현재 DB — **추가 5,193행(필링당 중앙값 20), 삭제 0, 변경 0**, 추가 행은 전부 `value_won` NULL + `value_raw`.
+**배선**: `_emit_note_lines` 안이므로 데일리(`collect_new.py` ④-3 `_sync_layer2_lines`, 두 call site 공유)에 추가 배선이 없다.
+**소급**: 자동이 아니다 — note 배치(`ops._reload_note`, 본문 report_lines 는 건드리지 않음)로 재적재한다.
+
 ## R10. XBRL 원문(instance) — 값 부호는 `preferredLabel`이 결정, `calc:weight`는 저장에 안 씀
 
 > **상태** 유효 · **적용 계층** 2 · XBRL 폴백 경로 전용(본문 XML·웹뷰 인쇄본이 모두 없을 때)

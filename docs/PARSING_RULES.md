@@ -541,6 +541,7 @@
 | R287 | R287. 사업의 내용 리더도 파싱 전에 DART 원문을 정리한다 — 맨 &·< 뒤 글자가 사라지지 않게 (2026-10-27, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | scope biz · R287-b `<A 우선주>` 포함 |
 | R288 | R288. 분기·반기보고서의 사업의 내용은 부문별 사업 실적 표(매출·제품 매출·생산·수주상황)만 계층2 에 싣는다 (2026-10-28, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | biz_periodic |
 | R289 | R289. 분기·반기 부문별 사업 실적은 연간 테이블에 섞지 않고 fiscal_period 가 있는 별도 테이블에 둔다 (2026-10-28, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | biz_periodic |
+| R290 | R290. 주석에서도 해결되지 않은 마침표 셀은 행을 싣고 값은 NULL, 인쇄값은 value_raw (R160 의 주석 경로 누락) (2026-10-28, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | scope note |
 
 ## 0. 규칙 색인
 

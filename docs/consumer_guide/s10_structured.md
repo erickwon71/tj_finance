@@ -8,6 +8,7 @@ Beyond the financial statements, the role can read these tables extracted from t
 | table | content | key / time columns |
 |---|---|---|
 | `biz_metrics` | business-section metrics (segment sales, capacity, utilization, R&D ...) long format | corp_code, fiscal_year, metric, segment, item, period_label; check `unit`, `is_ratio` |
+| `biz_metrics_periodic` | same as `biz_metrics` for quarterly / half-year reports (segment sales, product sales, production), plus `fiscal_period` (Q1/H1/Q3). The row with `period_year = fiscal_year` is that period (cumulative as printed); other `period_year` rows are the prior full-year columns printed in the same table. Never mix with `biz_metrics` rows | corp_code, fiscal_year, fiscal_period, metric, segment, item, period_year |
 | `capital_events` | paid/free increase, reduction, CB issue, treasury acquire/dispose | `filed_at`, `event_type`, `shares_delta`, `detail` (jsonb) |
 | `regulatory_events` | trading halt, disclosure violation, delisting, admin issue, rehabilitation; `is_lift` = release | `filed_at`, `event_type` |
 | `dividend_facts` | DPS, total dividend, payout ratio, yield | corp_code, fiscal_year |
@@ -18,6 +19,7 @@ Beyond the financial statements, the role can read these tables extracted from t
 | `other_investments` | investments in other corporations | corp_code, fiscal_year |
 | `treasury_activity` | treasury-share holdings and movements | corp_code, fiscal_year, stock_kind |
 | `order_backlog` | order backlog (only companies that report it) | corp_code, fiscal_year, category |
+| `order_backlog_periodic` | `order_backlog` for quarterly / half-year reports, plus `fiscal_period` | corp_code, fiscal_year, fiscal_period, category |
 | `report_shares_outstanding` | shares outstanding per report, treasury and float | rcept_no, as_of_date |
 
 - Point in time: a row is public on or after the earliest `filed_at` of its filing (`rcept_no` -> `filings.filed_at`; use the minimum over the same period, see s04). `capital_events` and `regulatory_events` carry `filed_at` themselves.

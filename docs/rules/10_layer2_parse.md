@@ -6255,6 +6255,18 @@ R212 소급 백필의 대상 목록(`docs/qa/eps_fractional_targets_2026-10-02.*
 **R287-b (2026-10-28) — 본문 문구 `<…>` 도 같은 읽기에서 막는다**: `sanitize_dart_xml` 의 `<` 예외 목록에 `A`(앵커)·`E` 같은 짧은 이름이 있어 본문 문구 `<A 우선주>`·`<E우선주>` 가 태그로 읽혀 문서 전체가 파싱 오류가 되고, 그 뒤의 `&amp;` 가 다시 사라진다(알앤티엑스 20170330000498, 표본 1,197필링 중 4개 0.3%). **공용 `sanitize_dart_xml` 은 고치지 않는다**(본문·주석 읽기도 쓰는 함수라 영향 범위가 크다, 사용자 결정 2026-10-28). 사업의 내용 읽기(`biz_section._escape_attributeless_tags`)만 `<이름 …>` 중 속성에 `=` 가 하나도 없는 것(DART XML 은 유효한 XML 이라 실제 태그의 속성에는 항상 값이 있다)과 `<이름한글…>` 을 `&lt;` 로 바꾼 뒤 sanitize 한다. 테스트 `fin2/tests/test_r287_biz_load_root_sanitize.py`(공용 sanitize 불변 확인 포함).
 **기계 쪽 보정(검증 도구, 규칙 아님)**: mb3 = 표의 행은 자기 직속 `<tr>` 만(중첩 표의 행은 안쪽 표 것), mb4 = 저장 표의 짝은 격자가 완전히 같은 원문 표를 먼저 고르고, 없으면 셀 겹침 최고 + 행 순서 유사도(정정 보고서의 [정정전]/[정정후] 쌍둥이 표).
 
+## R288. 분기·반기보고서의 사업의 내용은 부문별 사업 실적 표(매출·제품 매출·생산·수주상황)만 계층2 에 싣는다 (2026-10-28, 적용 계층: 2 — 읽기)
+
+> **상태** 유효 · **적용 계층** 2
+>
+> **규칙** `fin2/layer2/biz_raw_tables.py::extract_biz_raw_tables(..., report_type)` 가 `quarter`·`half` 이면 추출된 표 중 `keep_for_periodic` 에 해당하는 것만 `biz_section_tables` 에 싣는다: domain `sales`·`production`·`order_backlog` 전부, `catalog` 는 metric `product_status`(주요 제품 매출액·비중)만. 사업보고서(`annual`)와 `report_type` 을 넘기지 않는 옛 호출은 전부 싣는다(변화 없음).
+> **하지 않는 것** 시설·원재료·연구인력·지식재산·파생상품 같은 나머지 카탈로그 표는 분기·반기에는 싣지 않는다(사용자 결정 2026-10-28 "부문별 사업 실적만"). 표를 읽는 방법(소제목 창 탐지·격자 전개)은 사업보고서와 같고 R287 도 그대로 적용된다.
+> **테스트** `fin2/tests/test_biz_periodic.py`.
+
+**배경**: 수집기는 사업보고서만 계층2·3 에 올려 분기·반기 필링 약 7만 5천 개의 사업의 내용 표가 한 건도 없었다(verification scope `biz` 기계대조가 드러냄 — 저장 표 0개 필링이 "통과"로 보였다). 표본 400개 중 395개(98.8%)는 현재 추출기로 표가 나왔다 — 추출 실패가 아니라 적재 대상이 아니었던 것이다.
+**배선**: 계층2 쓰기는 `ensure_biz_raw_tables(report_type)` 가 계층3 읽기(`collector/biz_metrics_periodic.py`) 직전에 온디맨드로 한다. 데일리는 `scripts/collect_new.py::_sync_biz_metrics` 한 곳(두 call site 가 모두 이 헬퍼를 부른다). fix 큐 재적재는 `ops._reload_biz` 가 `report_type` 을 넘긴다.
+**소급**: 자동이 아니다 — `scripts/backfill_biz_periodic.py --shard i/n --year-min 2015`.
+
 ## R10. XBRL 원문(instance) — 값 부호는 `preferredLabel`이 결정, `calc:weight`는 저장에 안 씀
 
 > **상태** 유효 · **적용 계층** 2 · XBRL 폴백 경로 전용(본문 XML·웹뷰 인쇄본이 모두 없을 때)

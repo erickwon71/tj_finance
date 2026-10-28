@@ -5206,3 +5206,16 @@ Gate B(41개사 재감사·저장, 사본 비교): fail_b→pass 1(00573269 2022
 본느 20180718000167, 일월지엠엘 20161129000538(기말현금 소폭 불일치), 뉴트리 20200513000033(순이익 불일치), 티로보틱스 20180402000209·20180906000287(BS 없어 검증 불가), 이노진 20200429000350·20200513000432
 (BS 가 감사의견 변경 뒤 재작성: 대상 필링 자신의 CF 기말현금과 기부 BS 현금이 다르다). 기부 없음: 해성에어로보틱스 20161110000406·20170512003756, 이노시뮬레이션 20190405000147(다음 해 보고서에도 CF 없음), 에이전트AI 20150818000139·20161118000393.
 **목록을 늘리는 법**: 기부(다음 해 같은 기간 보고서)와 위 두 확인을 보인 뒤 `CROSS_FILING_FILLS` 에 한 줄 추가 → 대상 필링 재적재(`ops._reload_rcept`). **테스트**: `tests/test_r286_cross_filing_fill.py`.
+## R289. 분기·반기 부문별 사업 실적은 연간 테이블에 섞지 않고 fiscal_period 가 있는 별도 테이블에 둔다 (2026-10-28, 적용 계층: 3 — 매핑)
+
+> **상태** 유효 · **적용 계층** 3
+>
+> **규칙** `collector/biz_metrics_periodic.py` 가 `biz_section_tables`(R288 로 올라온 분기·반기 표)만 읽어 기존 매핑 함수(`_map_row`·`map_order_table`)로 해석하고 `biz_metrics_periodic`·`order_backlog_periodic`(연간 테이블과 같은 컬럼 + `fiscal_period` Q1/H1/Q3)에 쓴다. 멱등 범위는 `(corp_code, fiscal_year, fiscal_period)`, 한 기간의 원본·정정본은 모두 같은 파서로 읽고 뒤 보고서가 다시 낸 항목만 덮어쓴다(R0, `biz_merge.merge_filings`).
+> **하지 않는 것** `biz_metrics`·`order_backlog`(사업보고서 전용, 연도 단위 delete-then-insert, 앱·소비자 가이드가 읽음)에는 쓰지 않는다 — 분기 행이 섞이면 연간 합산이 어긋나고 사업보고서 재빌드가 분기 행을 지운다. 값 해석(period_year 등)은 연간과 같은 함수이므로 새로 정하지 않는다.
+> **읽는 법** 한 행의 `period_year == fiscal_year` 가 그 분기·반기(원문이 인쇄한 누계) 값이고, 다른 `period_year` 행은 같은 표에 함께 인쇄된 전기 이전 연간 열이다. 오는 소비자는 `fiscal_period` 로 걸러 쓴다.
+> **테스트** `fin2/tests/test_biz_periodic.py`(기간 키 삭제·삽입, 최신 연도 전 기간 선택).
+
+**함정**: `period_groups(..., latest_only=True)` 는 `fiscal_period` 오름차순이라 같은 연도에 Q1·Q3 가 있으면 Q1 만 고른다 → 데일리가 Q3 를 갱신하지 못한다. 그래서 `_groups` 가 "가장 최근 연도의 모든 기간"을 고른다.
+**배선(runbook 체크리스트)**: ① 데일리 `collect_new.py::_sync_biz_metrics`(두 call site 공유) ② 소급 `scripts/backfill_biz_periodic.py`(수동) ③ 검증: verification scope `biz`(저장된 부분집합의 격자가 원문과 같은지; 저장 안 된 표는 세기만) + 회귀 테스트 + 연간 `biz_metrics` 행 수 불변 확인.
+**소비자**: `docs/consumer_guide/s10_structured.md` 에 두 테이블을 올렸다(`tja_reader` 읽기 허용).
+

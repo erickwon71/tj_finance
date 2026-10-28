@@ -1536,6 +1536,8 @@ def _reload_biz(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, str
     from sqlalchemy.exc import DBAPIError
 
     from collector.biz_metrics import sync_biz_metrics_corp
+    from collector.biz_metrics_periodic import (sync_biz_metrics_periodic_corp,
+                                                sync_order_backlog_periodic_corp)
     from collector.db import get_session
     from collector.order_backlog import sync_order_backlog_corp
     from fin2.layer2.biz_raw_tables import extract_biz_raw_tables, store_biz_raw_tables
@@ -1555,7 +1557,7 @@ def _reload_biz(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, str
     file_path = _sd_path(t.file_path) if use_sd else t.file_path
     if not Path(file_path).exists():
         return "failed", "XML 원문 없음 — PDF 경로는 전용 스크립트로 처리"
-    rows = extract_biz_raw_tables(Path(file_path), t.corp_code, t.fiscal_year)
+    rows = extract_biz_raw_tables(Path(file_path), t.corp_code, t.fiscal_year, t.report_type)
     if not rows:
         return "failed", "추출 0표 — 기존 적재를 지우지 않고 중단"
     try:
@@ -1566,6 +1568,9 @@ def _reload_biz(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, str
             if t.report_type == "annual":
                 sync_biz_metrics_corp(s, t.corp_code, t.fiscal_year)
                 sync_order_backlog_corp(s, t.corp_code, t.fiscal_year)
+            else:       # quarter / half: R289 periodic tables, one (corp, year, period) at a time
+                sync_biz_metrics_periodic_corp(s, t.corp_code, t.fiscal_year)
+                sync_order_backlog_periodic_corp(s, t.corp_code, t.fiscal_year)
     except DBAPIError as exc:
         if isinstance(exc.orig, pg_errors.LockNotAvailable):
             return "deferred", "검증 중(lease) — lease 종료 후 재시도"

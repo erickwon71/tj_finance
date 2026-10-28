@@ -148,12 +148,18 @@ class DbTable:
 
 def load_db_tables(conn, rcept: str) -> list[DbTable]:
     from sqlalchemy import text
-    tabs: dict[tuple, DbTable] = {}
-    for r in conn.execute(text("""
+    return tables_from_rows(conn.execute(text("""
             SELECT basis, table_seq, row_order, label_raw, col_index, col_label, value_won,
                    adecimal, value_raw
             FROM note_lines WHERE rcept_no = :r
-            ORDER BY basis, table_seq, row_order, col_index"""), {"r": rcept}):
+            ORDER BY basis, table_seq, row_order, col_index"""), {"r": rcept}))
+
+
+def tables_from_rows(rows) -> list[DbTable]:
+    """DbTables from note_lines rows (anything with those attributes: DB rows, or freshly
+    extracted ReportLineRow objects - `vq.py`/scripts use that to see what a reload would change)."""
+    tabs: dict[tuple, DbTable] = {}
+    for r in rows:
         t = tabs.setdefault((r.basis, r.table_seq), DbTable(r.basis or "", r.table_seq))
         if _PER_SHARE.search(r.label_raw or ""):
             t.n_skipped += 1

@@ -336,7 +336,7 @@ def _all_no_fix(conn, rcept: str, res: mc.Result) -> int:
             JOIN LATERAL (SELECT e.evidence FROM verification.issue_events e
                           WHERE e.issue_id = i.issue_id AND e.to_status = 'closed'
                           ORDER BY e.at DESC, e.event_id DESC LIMIT 1) e ON true
-            WHERE i.rcept_no = :r AND i.basis = :b AND i.statement = :s
+            WHERE i.rcept_no = :r AND i.scope = 'report' AND i.basis = :b AND i.statement = :s
               AND i.account_label = :a AND i.status = 'closed'
               AND i.db_value IS NOT DISTINCT FROM CAST(:v AS numeric)
               AND {ops._NO_FIX_CLOSE_SQL}
@@ -355,7 +355,8 @@ def verify_slot(slot: Slot) -> dict:
         filings = [dict(r) for r in conn.execute(text("""
             SELECT pf.rcept_no, pf.claim_load_seq, fl.scope_hashes,
                    (SELECT count(*) FROM verification.issues i
-                     WHERE i.rcept_no = pf.rcept_no AND i.status <> 'closed') AS n_open
+                     WHERE i.rcept_no = pf.rcept_no AND i.scope = 'report'
+                       AND i.status <> 'closed') AS n_open
             FROM verification.progress_filings pf
             LEFT JOIN verification.filing_loads fl USING (rcept_no)
             WHERE pf.corp_code = :c AND pf.fiscal_year = :y AND pf.fiscal_period = :p
@@ -456,7 +457,7 @@ def recheck_slot(slot: Slot) -> dict:
             SELECT i.issue_id, i.rcept_no, i.basis, i.account_label, i.column_label
             FROM verification.issues i
             WHERE i.corp_code = :c AND i.fiscal_year = :y AND i.fiscal_period = :p
-              AND i.status = 'fixed' AND i.created_by LIKE '%machine'"""), slot.params()).mappings()]
+              AND i.scope = 'report' AND i.status = 'fixed' AND i.created_by LIKE '%machine'"""), slot.params()).mappings()]
         by_rcept: dict[str, list[dict]] = {}
         for i in issues:
             by_rcept.setdefault(i["rcept_no"], []).append(i)
@@ -496,7 +497,7 @@ RECHECK_SQL = """
     (p.status = 'has_issues' AND EXISTS (
         SELECT 1 FROM verification.issues i
         WHERE i.corp_code = p.corp_code AND i.fiscal_year = p.fiscal_year
-          AND i.fiscal_period = p.fiscal_period AND i.status = 'fixed'
+          AND i.fiscal_period = p.fiscal_period AND i.scope = 'report' AND i.status = 'fixed'
           AND i.created_by LIKE '%machine'))"""
 
 

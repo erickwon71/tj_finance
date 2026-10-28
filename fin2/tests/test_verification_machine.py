@@ -338,3 +338,36 @@ def test_mismatch_made_only_of_no_fix_cells_needs_no_model(engines, as_role):
         assert machine_pass._all_no_fix(conn, R_BAD, machine_pass.mc.Result(
             "mismatch", machine_pass.mc.Counter(),
             [value, {"kind": "bs_identity", "basis": "consolidated", "statement": "BS"}])) == 0   # mc11: position signal, the model looks
+
+
+def test_scope_issues_do_not_block_the_report_machine(engines, as_role):
+    """2026-10-28 regression: note / biz issues share the issues table. A filing with 364k open note
+    issues was skipped by the report machine (`n_open` counted every scope), the slot went back to
+    pending and was claimed again in a busy loop for over an hour. A note / biz issue - open, fixing
+    or fixed - must be invisible to everything that works on the report_lines slot."""
+    for scope, stmt, status in (("note", "NOTE", "fixing"), ("biz", "BIZ", "fixed")):
+        _sql(engines, """
+            INSERT INTO verification.issues (corp_code, fiscal_year, fiscal_period, rcept_no, scope,
+                table_ref, statement, account_label, error_type, status)
+            SELECT corp_code, fiscal_year, fiscal_period, rcept_no, :sc, '3', :st, 'scope-leak ' || :sc,
+                   'missing_row', :ss FROM verification.progress_filings WHERE rcept_no = :r""",
+             {"sc": scope, "st": stmt, "ss": status, "r": R_OK})
+    # a reload of R_OK makes it pending with a stale check, exactly like the live case
+    _sql(engines, "UPDATE report_lines SET value_won = value_won + 0 WHERE rcept_no = :r AND label_raw = '자산총계'",
+         {"r": R_OK})
+    _sql(engines, "UPDATE verification.progress_filings SET status = 'pending' WHERE rcept_no = :r", {"r": R_OK})
+    _sql(engines, "SELECT verification.refresh_slot(corp_code, fiscal_year, fiscal_period) "
+                  "FROM verification.progress_filings WHERE rcept_no = :r", {"r": R_OK})
+    _sql(engines, "DELETE FROM verification.machine_checks WHERE rcept_no = :r", {"r": R_OK})
+    _kv(engines, "machine.audit_pct", "0")                # an earlier test leaves the audit draw at 100
+    as_role("verify")
+    machine_pass.run(limit=10, log=lambda _m: None)
+    assert _sql(engines, "SELECT verdict FROM verification.machine_checks WHERE rcept_no = :r",
+                {"r": R_OK}) == [("clean",)]                       # it was checked, not skipped
+    assert _sql(engines, "SELECT status FROM verification.progress_filings WHERE rcept_no = :r",
+                {"r": R_OK}) == [("passed",)]
+    # the machine's recheck query does not see the biz 'fixed' issue either
+    as_role("admin")
+    with engines["admin"].connect() as c:
+        n = c.execute(text("SELECT count(*) FROM verification.progress p WHERE " + machine_pass.RECHECK_SQL)).scalar()
+    assert n == 0

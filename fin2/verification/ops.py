@@ -412,7 +412,7 @@ MODEL_READY_SQL = """
         -- re-checks of machine-registered issues belong to `vq.py machine recheck`
         SELECT 1 FROM verification.issues i
         WHERE i.corp_code = p.corp_code AND i.fiscal_year = p.fiscal_year
-          AND i.fiscal_period = p.fiscal_period AND i.status = 'fixed'
+          AND i.fiscal_period = p.fiscal_period AND i.scope = 'report' AND i.status = 'fixed'
           AND i.created_by NOT LIKE '%machine'))
      OR (p.status IN ('pending', 'has_issues') AND EXISTS (
         SELECT 1 FROM verification.progress_filings pf
@@ -446,7 +446,7 @@ p.status IN ('pending', 'has_issues')
   AND (p.status = 'pending' OR EXISTS (
         SELECT 1 FROM verification.issues i
          WHERE i.corp_code = p.corp_code AND i.fiscal_year = p.fiscal_year
-           AND i.fiscal_period = p.fiscal_period AND i.status = 'fixed')
+           AND i.fiscal_period = p.fiscal_period AND i.scope = 'report' AND i.status = 'fixed')
        -- a has_issues slot can still hold pending filings (no open issue of
        -- their own: a new amendment, a reload); without this they were never
        -- checked by anyone (145 filings in 123 slots, 2026-10-09)
@@ -558,7 +558,7 @@ def slot_detail(slot: Slot) -> dict:
                    rule_id, fix_batch_id
             FROM verification.issues
             WHERE corp_code = :c AND fiscal_year = :y AND fiscal_period = :p
-              AND status <> 'closed'
+              AND scope = 'report' AND status <> 'closed'
             ORDER BY issue_id"""), slot.params()).mappings()]
         # Cells already concluded "no code fix needed": the reviewer must not re-investigate
         # or re-register them (add_issues refuses while the DB value is unchanged).
@@ -571,7 +571,7 @@ def slot_detail(slot: Slot) -> dict:
                           WHERE e.issue_id = i.issue_id AND e.to_status = 'closed'
                           ORDER BY e.at DESC, e.event_id DESC LIMIT 1) e ON true
             WHERE i.corp_code = :c AND i.fiscal_year = :y AND i.fiscal_period = :p
-              AND i.status = 'closed' AND {_NO_FIX_CLOSE_SQL}
+              AND i.scope = 'report' AND i.status = 'closed' AND {_NO_FIX_CLOSE_SQL}
             ORDER BY i.issue_id"""), slot.params()).mappings()]
     by_rcept: dict[str, dict[str, int]] = {}
     for r, basis, stmt, n in counts:
@@ -716,7 +716,7 @@ def _carry_twin_issues(conn, f: dict) -> list[dict]:
             continue
         for it in conn.execute(text(f"""
                 SELECT issue_id, {', '.join(_ISSUE_FIELDS)} FROM verification.issues
-                WHERE rcept_no = :t AND status <> 'closed' ORDER BY issue_id"""),
+                WHERE rcept_no = :t AND scope = 'report' AND status <> 'closed' ORDER BY issue_id"""),
                 {"t": twin}).mappings():
             if _scope_code(it["basis"], it["statement"]) not in same:
                 continue
@@ -765,7 +765,8 @@ def pass_filing(rcept: str, scopes: list[str], note: str | None) -> dict:
                 f"적재된 scope 는 전부 원문과 대조해야 pass 할 수 있다(8scope 전체대조 규약).")
         carried = _carry_twin_issues(conn, f)
         n_open = conn.execute(text(
-            "SELECT count(*) FROM verification.issues WHERE rcept_no = :r AND status <> 'closed'"),
+            "SELECT count(*) FROM verification.issues WHERE rcept_no = :r AND scope = 'report' "
+            "AND status <> 'closed'"),
             {"r": rcept}).scalar_one()
         if n_open:
             twin = (f" (내용이 같은 앞선 필링의 미해결 이슈 {len(carried)}건을 이 필링에 옮겨 등록함: "
@@ -815,7 +816,7 @@ def _prior_no_fix(conn, rcept: str, row: dict) -> dict | None:
         JOIN LATERAL (SELECT e.evidence FROM verification.issue_events e
                       WHERE e.issue_id = i.issue_id AND e.to_status = 'closed'
                       ORDER BY e.at DESC, e.event_id DESC LIMIT 1) e ON true
-        WHERE i.rcept_no = :r AND i.basis = :b AND i.statement = :s
+        WHERE i.rcept_no = :r AND i.scope = 'report' AND i.basis = :b AND i.statement = :s
           AND i.account_label = :a AND coalesce(i.column_label, '') = coalesce(:cl, '')
           AND i.status = 'closed'
           AND i.db_value IS NOT DISTINCT FROM CAST(:v AS numeric)
@@ -840,7 +841,8 @@ def _active_issue(conn, rcept: str, row: dict) -> int | None:
     """An issue that is not closed on the same cell (ux_vissues_active_cell key)."""
     return conn.execute(text("""
         SELECT issue_id FROM verification.issues
-        WHERE rcept_no = :r AND basis = :b AND statement = :s AND account_label = :a
+        WHERE rcept_no = :r AND scope = 'report' AND basis = :b AND statement = :s
+          AND account_label = :a
           AND coalesce(column_label, '') = coalesce(:cl, '') AND status <> 'closed'
         LIMIT 1"""), {"r": rcept, "b": row["basis"], "s": row["statement"],
                       "a": row["account_label"], "cl": row.get("column_label")}).scalar()
@@ -865,7 +867,7 @@ def add_issues(rcept: str, items: list[dict], suppressed: list | None = None,
         # filing that already carried that issue under another first-row label. A zero-row filing
         # with an active missing_row takes no further missing_row (reported in `already`).
         zero_row_dup = conn.execute(text("""
-            SELECT issue_id FROM verification.issues WHERE rcept_no = :r
+            SELECT issue_id FROM verification.issues WHERE rcept_no = :r AND scope = 'report'
                AND error_type = 'missing_row' AND status IN ('open', 'reopened', 'fixing', 'fixed')
                AND NOT EXISTS (SELECT 1 FROM report_lines WHERE rcept_no = :r)
             ORDER BY issue_id LIMIT 1"""), {"r": rcept}).scalar()
@@ -1787,9 +1789,10 @@ def _pass_after_withdraw(rcept: str) -> bool:
             SELECT pf.status, pf.corp_code, pf.fiscal_year, pf.fiscal_period,
                    fl.load_seq, fl.scope_hashes, p.status AS slot_status,
                    (SELECT count(*) FROM verification.issues i
-                     WHERE i.rcept_no = pf.rcept_no AND i.status <> 'closed') AS n_open,
+                     WHERE i.rcept_no = pf.rcept_no AND i.scope = 'report'
+                       AND i.status <> 'closed') AS n_open,
                    (SELECT max(i.found_load_seq) FROM verification.issues i
-                     WHERE i.rcept_no = pf.rcept_no) AS found_seq
+                     WHERE i.rcept_no = pf.rcept_no AND i.scope = 'report') AS found_seq
             FROM verification.progress_filings pf
             JOIN verification.progress p USING (corp_code, fiscal_year, fiscal_period)
             LEFT JOIN verification.filing_loads fl USING (rcept_no)
@@ -1862,7 +1865,8 @@ def status() -> dict:
         filings = dict(conn.execute(text(
             "SELECT status, count(*) FROM verification.progress_filings GROUP BY 1")).fetchall())
         issues = dict(conn.execute(text(
-            "SELECT status, count(*) FROM verification.issues GROUP BY 1")).fetchall())
+            "SELECT status, count(*) FROM verification.issues WHERE scope = 'report' "
+            "GROUP BY 1")).fetchall())
         corps_done = conn.execute(text("""
             SELECT count(*) FROM (SELECT corp_code FROM verification.progress
             GROUP BY corp_code HAVING bool_and(status = 'passed')) x""")).scalar_one()

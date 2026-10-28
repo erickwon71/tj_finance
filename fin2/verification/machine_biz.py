@@ -94,8 +94,11 @@ def _escape_body_angle_text(txt: str) -> str:
     return _TAGLIKE.sub(fix, txt)
 
 
-def _own_grid(table) -> list:
-    """Normalized grid of one <table>, rowspan/colspan expanded, its own rows only."""
+def _own_grid(table, clean=None, copies: bool = True) -> list:
+    """Grid of one <table>, rowspan/colspan expanded, its own rows only. Cells are `norm`ed
+    (comparison form) unless `clean` is given (machine_note keeps the printed text). `copies=False` leaves the cells a rowspan /
+    colspan covers EMPTY instead of repeating the value (one merged amount is one amount)."""
+    clean = clean or norm
     trs = []
     for tr in table.iter("tr"):
         a = tr.getparent()
@@ -119,11 +122,11 @@ def _own_grid(table) -> list:
                 rs = max(1, int(c.get("rowspan") or 1))
             except ValueError:
                 cs = rs = 1
-            txt = norm(mc._text(c))
+            txt = clean(mc._text(c))
             for dc in range(cs):
-                row[col + dc] = txt
+                row[col + dc] = txt if (copies or dc == 0) else ""
                 for dr in range(1, rs):
-                    occupied[(r + dr, col + dc)] = txt
+                    occupied[(r + dr, col + dc)] = txt if copies else ""
             col += cs
         while (r, col) in occupied:
             row[col] = occupied[(r, col)]
@@ -133,8 +136,8 @@ def _own_grid(table) -> list:
     return out
 
 
-def load_source_grids(path: str) -> tuple[list[SrcGrid], bool]:
-    """All tables of the document as normalized grids + whether a '사업의 내용' section exists."""
+def parse_source_root(path: str):
+    """lxml HTML tree of a DART XML file (HTML parser, independent of the production reader)."""
     raw = open(path, "rb").read()          # the caller resolves the SD mirror (no NAS stat here)
     try:
         txt = raw.decode("utf-8")
@@ -142,7 +145,12 @@ def load_source_grids(path: str) -> tuple[list[SrcGrid], bool]:
         txt = raw.decode("cp949", "replace")
     txt = re.sub(r"<\?xml[^>]*\?>", "", txt, count=1)
     txt = _escape_body_angle_text(txt)
-    root = etree.fromstring(txt.encode("utf-8"), etree.HTMLParser(recover=True, encoding="utf-8"))
+    return etree.fromstring(txt.encode("utf-8"), etree.HTMLParser(recover=True, encoding="utf-8"))
+
+
+def load_source_grids(path: str) -> tuple[list[SrcGrid], bool]:
+    """All tables of the document as normalized grids + whether a '사업의 내용' section exists."""
+    root = parse_source_root(path)
     els = list(root.iter("table"))           # keeps the element proxies alive: id() stays stable
     grids: list[SrcGrid] = []
     by_el: dict[int, SrcGrid] = {}

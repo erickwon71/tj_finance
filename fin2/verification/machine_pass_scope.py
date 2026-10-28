@@ -18,10 +18,10 @@ import json
 from sqlalchemy import text
 
 from collector.db import engine
-from fin2.verification import machine_biz
+from fin2.verification import machine_biz, machine_note
 from fin2.verification import ops
 
-MODULES = {"biz": machine_biz}
+MODULES = {"biz": machine_biz, "note": machine_note}
 
 
 def _source_path(conn, rcept: str) -> str | None:
@@ -109,10 +109,11 @@ def check_one(rcept: str, scope: str) -> str:
         if res.verdict == "no_structure" and res.counts.get("db_tables"):
             new_status = None
         if new_status:
-            note = (f"[machine {mod.TOOL_VERSION}] 원문 사업의 내용 표와 기계 대조 전부 일치 — "
+            what = {"biz": "사업의 내용", "note": "재무제표 주석"}[scope]
+            note = (f"[machine {mod.TOOL_VERSION}] 원문 {what} 표와 기계 대조 전부 일치 — "
                     f"저장 표 {res.counts.get('db_tables', 0)}"
                     if new_status == "passed" else
-                    f"[machine {mod.TOOL_VERSION}] 원문에 사업의 내용 섹션이 없고 저장 표도 없음")
+                    f"[machine {mod.TOOL_VERSION}] 원문에 {what} 섹션이 없고 저장 표도 없음")
             conn.execute(text("""
                 UPDATE verification.scope_progress_filings
                    SET status = :st, verified_load_seq = :s, verified_scopes = NULL,

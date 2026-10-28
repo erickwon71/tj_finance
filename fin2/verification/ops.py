@@ -1526,6 +1526,53 @@ def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, s
     return "done", None
 
 
+def _reload_note(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, str | None]:
+    """Re-extract one filing and rewrite ONLY its notes (note_lines + the note part of
+    report_tables). The statements (report_lines, layer3 corrections) are left alone: a note fix
+    must not change - and so must not demote - the statement slots the report_lines campaign has
+    already verified (a full `_reload_rcept` of 200 note-batch filings rewrote the income statement
+    of 136 of them because the stored `section_path` predated the 주당손익 -> 주당이익 label change
+    and sent 136 passed report slots back to pending, 2026-10-28). XBRL-only filings have no notes."""
+    from psycopg2 import errors as pg_errors
+    from sqlalchemy.exc import DBAPIError
+
+    from collector.db import get_session
+    from fin2.extract.layer3_corrections import extract_xml_with_corrections
+    from fin2.extract.report_lines import store_note_lines, store_report_tables
+
+    with get_session() as s:
+        t = s.execute(text("""
+            SELECT CASE WHEN dt.status = 'completed' AND dt.file_type = 'xml' THEN dt.file_path
+                        ELSE dt.viewer_xml_path END AS file_path,
+                   f.corp_code, f.fiscal_year, f.fiscal_period
+            FROM download_tasks dt JOIN filings f USING (rcept_no)
+            WHERE dt.rcept_no = :r
+              AND ((dt.status = 'completed' AND dt.file_type = 'xml' AND dt.file_path IS NOT NULL)
+                   OR dt.viewer_xml_path IS NOT NULL)
+            LIMIT 1"""), {"r": rcept}).fetchone()
+    if t is None or not t.file_path:
+        return "failed", "XML 원문 없음 — 주석은 XML/웹뷰 인쇄본에서만 읽는다"
+    file_path = _sd_path(t.file_path) if use_sd else t.file_path
+    if not Path(file_path).exists():
+        return "failed", "XML 원문 없음 — 주석은 XML/웹뷰 인쇄본에서만 읽는다"
+    lines, _corrections = extract_xml_with_corrections(
+        file_path, rcept_no=rcept, corp_code=t.corp_code, report_fiscal_year=t.fiscal_year,
+        report_fiscal_period=t.fiscal_period, include_notes=True)
+    if not any(l.statement == "note" for l in lines):
+        return "failed", "주석 추출 0행 — 기존 적재를 지우지 않고 중단"
+    try:
+        with get_session() as s:
+            s.execute(text("SELECT set_config('verification.load_reason', :r, true)"),
+                      {"r": reason})
+            store_note_lines(s, rcept, lines)
+            store_report_tables(s, rcept, lines, scope="note")
+    except DBAPIError as exc:
+        if isinstance(exc.orig, pg_errors.LockNotAvailable):
+            return "deferred", "검증 중(lease) — lease 종료 후 재시도"
+        return "failed", f"{type(exc.orig).__name__}: {str(exc.orig)[:300]}"
+    return "done", None
+
+
 def _reload_biz(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, str | None]:
     """Layer 2 of the '사업의 내용' tables for one filing (biz_section_tables, all four domains)
     followed by the layer-3 rebuild of that fiscal year (biz_metrics, order_backlog) - the same
@@ -1608,7 +1655,7 @@ def batch_reload(batch_id: int, limit: int | None = None,
         targets = [t for t in targets if key(t) % shard[1] == shard[0]]
     if limit:
         targets = targets[:limit]
-    reload_fn = {"report": _reload_rcept, "note": _reload_rcept, "biz": _reload_biz}[bscope]
+    reload_fn = {"report": _reload_rcept, "note": _reload_note, "biz": _reload_biz}[bscope]
     tally = {"done": 0, "deferred": 0, "failed": 0}
     for i, rcept in enumerate(targets, 1):
         status, err = reload_fn(rcept, f"fix_batch:{batch_id}", use_sd=use_sd)

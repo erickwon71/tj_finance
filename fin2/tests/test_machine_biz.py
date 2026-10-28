@@ -110,3 +110,22 @@ def test_identical_grid_wins_over_a_reordered_twin(tmp_path):
     # not identical to either: the twin with the closer row order is the counterpart
     res = mb.compare([_db([["나", "2"], ["다", "3"], ["가", "9"]])], grids, found)
     assert [f["src"] for f in res.findings] == ["1"]
+
+
+def test_angle_bracket_body_text_is_kept_and_blank_rows_ignored(tmp_path):
+    xml = """<?xml version="1.0" encoding="utf-8"?>
+<DOCUMENT><BODY><SECTION-1><TITLE>II. 사업의 내용</TITLE>
+<TABLE><TR><TD>구분</TD><TD>내용</TD></TR>
+<TR><TD>논문</TD><TD>AmJ 165-174.<Clinical Pharmacology in Drug Development 2019,00(0)></TD></TR>
+<TR><TD></TD><TD></TD></TR>
+<TR><TD>사업부</TD><TD><MIRAE></TD></TR></TABLE>
+</SECTION-1></BODY></DOCUMENT>"""
+    p = tmp_path / "i.xml"
+    p.write_text(xml, encoding="utf-8")
+    grids, found = mb.load_source_grids(str(p))
+    assert "<ClinicalPharmacologyinDrugDevelopment2019,00(0)>" in grids[0].cells[1][1]
+    assert grids[0].cells[3][1] == "<MIRAE>"
+    stored = [["구분", "내용"], ["논문", "AmJ165-174.<Clinical Pharmacology in Drug Development 2019,00(0)>"],
+              ["사업부", "<MIRAE>"]]                      # no blank row stored
+    res = mb.compare([_db(stored)], grids, found)
+    assert res.verdict == "clean", res.findings

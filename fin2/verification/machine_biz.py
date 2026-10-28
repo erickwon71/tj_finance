@@ -43,7 +43,13 @@ from fin2.verification import machine_compare as mc
 # when there is one, otherwise the best cell overlap with ties broken by row order. A correction
 # report ([정정전] / [정정후]) holds both versions of a table with the same cells in a different
 # order; matching by cell set alone paired the stored 정정후 table with the 정정전 one (20160408002193).
-TOOL_VERSION = "mb4"
+# mb5 (2026-10-28): (1) angle-bracket body text ("<Clinical Pharmacology in Drug Development>",
+# "<MIRAE>") is kept as text: the HTML parser drops an unknown <name ...> together with its words,
+# so the source cell came out shorter than the printed one. A "<name" is a real tag only if the
+# name is one of the DART tag names collected from 494 filings (REAL_TAGS) and it carries no
+# attribute or attributes with "=". This is written here, not imported from the production
+# reader, so the two stay independent. (2) rows with no text at all are not rows of the grid.
+TOOL_VERSION = "mb5"
 
 MATCH_MIN = 0.5            # minimum cell-set Jaccard for a source table to count as counterpart
 MAX_FINDINGS = 400         # per filing; more than this is a parser problem, not a list to page
@@ -70,6 +76,22 @@ class SrcGrid:
 
 
 _CELL_TAGS = ("td", "th", "te", "tu")
+
+# Tag names of DART document XML seen closed with </NAME> in 494 sampled filings (2026-10-28).
+REAL_TAGS = frozenset("""TD TR TE P COL TH SPAN COLGROUP TBODY TABLE TU THEAD PGBRK TITLE TABLE-GROUP
+SECTION-1 SECTION-2 SECTION-3 LIBRARY COMMENT LIBRARYLIST INSERTION FILENAME IMG IMG-CAPTION IMAGE A
+EXTRACTION BODY DOCUMENT DOCUMENT-NAME FORMULA-VERSION COMPANY-NAME COVER-TITLE COVER WARNING SUMMARY
+APPENDIX DOCUMENT-HEADER TOC TFOOT""".split())
+_TAGLIKE = re.compile(r"<(/?)([A-Za-z][A-Za-z0-9-]*)([^<>]*)>")
+
+
+def _escape_body_angle_text(txt: str) -> str:
+    def fix(m):
+        slash, name, attrs = m.group(1), m.group(2).upper(), m.group(3)
+        a = attrs.strip()
+        real = name in REAL_TAGS and (bool(slash) or a in ("", "/") or "=" in a)
+        return m.group(0) if real else "&lt;" + m.group(0)[1:]
+    return _TAGLIKE.sub(fix, txt)
 
 
 def _own_grid(table) -> list:
@@ -119,6 +141,7 @@ def load_source_grids(path: str) -> tuple[list[SrcGrid], bool]:
     except UnicodeDecodeError:
         txt = raw.decode("cp949", "replace")
     txt = re.sub(r"<\?xml[^>]*\?>", "", txt, count=1)
+    txt = _escape_body_angle_text(txt)
     root = etree.fromstring(txt.encode("utf-8"), etree.HTMLParser(recover=True, encoding="utf-8"))
     els = list(root.iter("table"))           # keeps the element proxies alive: id() stays stable
     grids: list[SrcGrid] = []
@@ -165,11 +188,11 @@ def _row_label(row: list) -> str:
 
 def _key(grid: list) -> tuple:
     """Hashable form of a grid with empty cells dropped (the comparison form)."""
-    return tuple(tuple(c for c in row if c) for row in grid)
+    return tuple(t for t in (tuple(c for c in row if c) for row in grid) if t)
 
 
 def _drop_empty(grid: list) -> list:
-    return [[c for c in row if c] for row in grid]
+    return [r for r in ([c for c in row if c] for row in grid) if r]
 
 
 def _diff_grids(db: list, src: list) -> list[dict]:

@@ -536,6 +536,9 @@ def cmd_scope(a):
                   AND mc.load_seq = (SELECT load_seq FROM verification.scope_loads l
                                       WHERE l.rcept_no = mc.rcept_no AND l.scope = mc.scope)
                 ORDER BY mc.rcept_no LIMIT :n"""), {"sc": a.scope, "n": a.limit or 1000000}).fetchall()]
+        if a.shard:
+            si_, sn_ = (int(x) for x in a.shard.split("/"))
+            rcepts = [r for r in rcepts if int(r) % sn_ == si_]
         total, filings = 0, 0
         for rc in rcepts:
             with engine.connect() as conn:

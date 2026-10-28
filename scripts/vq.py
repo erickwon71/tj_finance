@@ -525,7 +525,8 @@ def cmd_scope(a):
             ids = si.register(a.scope, a.rcept, items) if a.apply else []
             print(_j({"items": len(items), "registered": ids, "dry_run": not a.apply}))
     elif a.action == "recheck":
-        print(_j(si.recheck(a.scope, dry_run=not a.apply)))
+        shard = tuple(int(x) for x in a.shard.split("/")) if a.shard else None
+        print(_j(si.recheck(a.scope, dry_run=not a.apply, shard=shard)))
     elif a.action == "register-all":
         with engine.connect() as conn:
             rcepts = [x[0] for x in conn.execute(text("""

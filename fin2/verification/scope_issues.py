@@ -171,7 +171,7 @@ def register(scope: str, rcept: str, items: list[dict]) -> list[int]:
     return ids
 
 
-def recheck(scope: str, dry_run: bool = False) -> dict:
+def recheck(scope: str, dry_run: bool = False, shard: tuple[int, int] | None = None) -> dict:
     """Verify side of a fix: for every `fixed` issue of the scope, compare its (reloaded) filing
     with the source again. The issue is closed when no current finding describes the same cell
     (same table, column label and the same DB / source texts), otherwise reopened."""
@@ -188,6 +188,8 @@ def recheck(scope: str, dry_run: bool = False) -> dict:
             {"sc": scope}).mappings()]
     by_rcept: dict[str, list[dict]] = {}
     for i in fixed:
+        if shard and int(i["rcept_no"]) % shard[1] != shard[0]:
+            continue                       # n processes share the work, one filing each
         by_rcept.setdefault(i["rcept_no"], []).append(i)
     out = {"closed": [], "reopened": [], "no_source": [], "dry_run": dry_run}
     for rcept, issues in by_rcept.items():

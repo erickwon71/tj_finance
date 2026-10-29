@@ -1862,6 +1862,7 @@ def _grid_body_rows(
     multiplier: int = 1, allow_date_label: bool = False, keep_header_rows: bool = True,
     rcept_no: str | None = None, continuation_own_label: bool = False,
     no_dot_repair_cols: frozenset = frozenset(),
+    blank_first_label_fallback: bool = False,
 ) -> list[RowData]:
     """`expand_table_grid`의 본문(헤더 이후) 그리드 행을 `RowData`로 변환한다(R11) —
     주석(`_emit_note_lines`, T2.4)·SCE(`_emit_sce_lines`, T2.5) **공용**. T1.4가 "L 규칙은
@@ -1967,6 +1968,11 @@ def _grid_body_rows(
             continue                        # 옛 SCE 기본 동작(keep_header_rows=False)
         if _is_fs_title_row([c.text for c in physical]):
             continue                        # 재무제표 이름만 있는 제목 행(기존과 동일 가드)
+        if blank_first_label_fallback and not is_continuation and not label.strip():
+            # R295 (notes only): the row's own first cell is blank (a physical blank, not a ROWSPAN)
+            # but another label-area cell has text ('' | '리스부채 합계') - that text is the label.
+            label = ">".join(c.text.strip() for c in physical
+                             if c.grid_col < offset and c.text.strip())
         if not label:
             continue
 
@@ -2104,7 +2110,8 @@ def _emit_note_lines(
                 # 옛 `_build_col_labels`도 이 경우 {} 를 냈지만 그때도 `extract_rows`는
                 # 독립적으로 계속 값을 뽑았다(그 동작 보존). 표 전체를 본문으로, offset=0.
                 note_col_labels: dict[int, str] = {}
-                note_rows = _grid_body_rows(table, grid_rows, 0, 0, multiplier=1)
+                note_rows = _grid_body_rows(table, grid_rows, 0, 0, multiplier=1,
+                                            blank_first_label_fallback=True)
             else:
                 note_col_labels = _label_dict_from_header(
                     grid_rows[:n_header], n_header, offset, width)
@@ -2112,7 +2119,8 @@ def _emit_note_lines(
                 nm_cols = frozenset(i for i, lbl in note_col_labels.items()
                                     if _units.column_is_non_money(lbl))
                 note_rows = _grid_body_rows(table, grid_rows, n_header, offset, multiplier=1,
-                                            no_dot_repair_cols=nm_cols)
+                                            no_dot_repair_cols=nm_cols,
+                                            blank_first_label_fallback=True)
             # ★단위는 표 단위가 아니라 **열 단위**로 정한다(F1, 2026-07-31 — units.py).
             #   선언이 없어도 전사는 계속한다: value_won 은 비고 value_raw 에 원문이 남는다.
             #   표 자신의 선언이 없으면 **앞선 '선언 전용 표'** 에서만 상속한다(D1) —

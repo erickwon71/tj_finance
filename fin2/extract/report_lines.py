@@ -1624,15 +1624,15 @@ def is_pair_amount_cell(text: str) -> bool:
 # is the printed won amount. Anything else in the tail (Korean text, a note reference, another bare
 # number) is refused - nothing is guessed (R6).
 _CCY = r"(?:USD|EUR|JPY|CNY|GBP|CHF|HKD|TWD|PHP|VND|IDR|THB|SGD|AUD|CAD|INR|MYR|RUB|BRL|MXN)"
-_TAIL_FIRST = re.compile(r"^(\(?-?\d{1,3}(?:,\d{3})+\)?)(?=\s)")
+_TAIL_FIRST = re.compile(r"^(\(?-?\d{1,3}(?:,\d{3})+\)?)(?![\d,.])")
 _TAIL_ITEM = r"(?:\(?" + _CCY + r"\s*-?\d[\d,]*(?:\.\d+)?\)?|USD|[$￦U]|[-－=]+)"
-_TAIL_REST = re.compile(r"^(?:\s+" + _TAIL_ITEM + r")+$")
+_TAIL_REST = re.compile(r"^(?:\s*" + _TAIL_ITEM + r")+$")
 
 
 def split_amount_with_tail(text: str) -> str | None:
     """R294 - the first-line amount of an 'amount + foreign/symbol tail' cell, else None.
-    The grid hands over the cell with its line breaks already folded into spaces, so the tail is
-    matched as a token sequence, not as lines."""
+    The grid hands over the cell with its line breaks folded into a space or dropped altogether
+    ('160,500,000USD 8,000,000'), so the tail is matched as a token sequence, not as lines."""
     t = " ".join((text or "").replace("&cr;", " ").split())
     m = _TAIL_FIRST.match(t)
     if not m:

@@ -38,6 +38,8 @@ def test_split_amount_with_tail_is_narrow():
     assert f("84,350,000 \n$") == "84,350,000" and f("34,000,000 \n-") == "34,000,000"
     assert f("19,932,066 \nU") == "19,932,066" and f("105,000,000\n(CNY 128,000)") == "105,000,000"
     assert f("(6,469)\n=====") == "(6,469)"
+    assert f("160,500,000USD 8,000,000") == "160,500,000" and f("116,473,320U") == "116,473,320"   # line break dropped
+    assert f("1,234,5678") is None and f("1,234.5 USD 3") is None and f("1,234-5") is None
     assert f("5,000\n 한화 설명") is None                 # Korean text in the tail
     assert f("6,000\n USD 1,2 (주1)") is None             # a note reference in the tail
     assert f("USD 44,000,000\n 171,750,000") is None      # foreign amount first

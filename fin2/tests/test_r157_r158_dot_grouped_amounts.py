@@ -184,7 +184,8 @@ def test_both_extraction_paths_are_wired():
     rl = (_ROOT / "fin2/extract/report_lines.py").read_text(encoding="utf-8")
     # ★라벨 인자까지 넘기는지 확인한다 — 안 넘기면 EPS 가드가 조용히 무력화된다.
     assert "_repair_dot_grouped_cells(amount_cells, label)" in te
-    assert "_repair_dot_grouped_cells(raw_amounts, label)" in rl
+    # R293 added a third argument (the non-monetary columns to skip); the label must still be passed
+    assert "_repair_dot_grouped_cells(raw_amounts, label, no_dot_repair_cols)" in rl
 
 
 # ─────────────────── R158 EPS 가드 · R159 원문 오타 교정 ───────────────────

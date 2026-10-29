@@ -2535,8 +2535,13 @@ def unresolved_dot_cell_indices(amount_cells: list[str],
 
 
 def _repair_dot_grouped_cells(amount_cells: list[str],
-                              label: Optional[str] = None) -> list[str]:
+                              label: Optional[str] = None,
+                              skip: frozenset = frozenset()) -> list[str]:
     """행 안에서 짝을 찾아 마침표-구분자 셀을 복원한다(못 찾으면 그대로).
+
+    `skip` = 복원하지 않을 칸 인덱스(R293). 비금액 열(환율·지분율·이자율)은 소수가 정상 표기라
+    '1,214.00' 같은 환율이 같은 행의 '12,140,000'(= USD × 환율)과 숫자열 접두사 관계가 되면
+    정수 칸의 숫자로 **대체**됐다(원문 `1,214.00` → `12140000`, 계약환율 열).
 
     판정: 깨진 셀의 숫자열이 같은 행의 **정수 칸** 숫자열의 접두사이고, 남는
     꼬리가 전부 0 이면 그 정수 칸의 자릿수를 정답으로 본다.
@@ -2546,8 +2551,8 @@ def _repair_dot_grouped_cells(amount_cells: list[str],
     if label and _EPS_ROW_LABEL_RE.search(label):
         return amount_cells                 # 주당손익 행 — 위 주석 참고
     broken = [i for i, c in enumerate(amount_cells)
-              if _DOT_GROUPED_RE.match((c or "").strip())
-              or _DOT_THEN_COMMA_RE.match((c or "").strip())]
+              if i not in skip and (_DOT_GROUPED_RE.match((c or "").strip())
+                                    or _DOT_THEN_COMMA_RE.match((c or "").strip()))]
     if not broken:
         return amount_cells
 

@@ -273,6 +273,7 @@ from fin2.extract.text import (
     document_default_unit, nearest_section_default_unit,
 )
 from fin2.extract.units import ColumnUnits, FX_ONLY, SRC_FX
+from fin2.extract import units as _units
 from fin2.extract.legacy_pre2015 import (
     detect_pre2015_body_statement_tables, detect_squished_bs_total_assets,
 )
@@ -1605,6 +1606,18 @@ _LABEL_REGION_PLACEHOLDERS = frozenset(["", "-", "‐", "―", "–", "—", "�
 _LEAD_TRIM_PLACEHOLDERS = frozenset([""])
 
 
+# R291 - a cell that prints two amounts, "5,805,822 (6,364,923)" (a foreign-currency amount and, in
+# parentheses, its won equivalent). `parse_amount` and `_NUMBER_PATTERN` read neither, so a row whose
+# only amounts are such cells was taken for a HEADER row (the header boundary is "the first row with a
+# number-only cell") and its values were dropped. Deliberately narrow: a comma-grouped amount, then a
+# parenthesised number - not "2016 2015" or "1,234 (주1)".
+_PAIR_AMOUNT_CELL = re.compile(r"^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?\s*\(-?[\d,]+(?:\.\d+)?\)$")
+
+
+def is_pair_amount_cell(text: str) -> bool:
+    return bool(_PAIR_AMOUNT_CELL.match(" ".join((text or "").split())))
+
+
 def _grid_header_split(table, *, use_header_span: bool = False):
     """`expand_table_grid`로 표를 펼치고 헤더 구간(n_header)·라벨 영역 폭(offset=LV′)·
     헤더 그리드 폭(width)을 계산한다 — **한 곳에서만** 한다.
@@ -1630,7 +1643,8 @@ def _grid_header_split(table, *, use_header_span: bool = False):
     n_header = 0
     for row in grid_rows:
         physical_texts = [" ".join(c.text.split()) for c in row if not c.inherited]
-        if len(physical_texts) > 1 and any(_NUMBER_PATTERN.search(t) for t in physical_texts[1:]):
+        if len(physical_texts) > 1 and any(_NUMBER_PATTERN.search(t) or _PAIR_AMOUNT_CELL.match(t)
+                                           for t in physical_texts[1:]):
             break
         n_header += 1
     if (n_header == 0 or n_header >= len(grid_rows)) and len(grid_rows) > 1:
@@ -1825,6 +1839,7 @@ def _grid_body_rows(
     table, grid_rows, n_header: int, offset: int, *,
     multiplier: int = 1, allow_date_label: bool = False, keep_header_rows: bool = True,
     rcept_no: str | None = None, continuation_own_label: bool = False,
+    no_dot_repair_cols: frozenset = frozenset(),
 ) -> list[RowData]:
     """`expand_table_grid`의 본문(헤더 이후) 그리드 행을 `RowData`로 변환한다(R11) —
     주석(`_emit_note_lines`, T2.4)·SCE(`_emit_sce_lines`, T2.5) **공용**. T1.4가 "L 규칙은
@@ -1968,7 +1983,7 @@ def _grid_body_rows(
         raw_amounts = apply_source_typo_fixes(raw_amounts, rcept_no)
         # R261 - same row-sum join as `extract_rows` (the SCE grid path must apply it too).
         raw_amounts = _join_split_leading_digit_by_row_sum(raw_amounts)
-        raw_amounts = _repair_dot_grouped_cells(raw_amounts, label)
+        raw_amounts = _repair_dot_grouped_cells(raw_amounts, label, no_dot_repair_cols)
         for idx, txt in enumerate(raw_amounts):
             amounts[idx] = parse_amount(txt, multiplier) if txt else None
         # ★R160 — 해결되지 않은 마침표 셀은 값을 버린다(결측). 이 경로도 반드시
@@ -2071,7 +2086,11 @@ def _emit_note_lines(
             else:
                 note_col_labels = _label_dict_from_header(
                     grid_rows[:n_header], n_header, offset, width)
-                note_rows = _grid_body_rows(table, grid_rows, n_header, offset, multiplier=1)
+                # R293: no '.'-restoration in columns whose header says non-monetary (rates)
+                nm_cols = frozenset(i for i, lbl in note_col_labels.items()
+                                    if _units.column_is_non_money(lbl))
+                note_rows = _grid_body_rows(table, grid_rows, n_header, offset, multiplier=1,
+                                            no_dot_repair_cols=nm_cols)
             # ★단위는 표 단위가 아니라 **열 단위**로 정한다(F1, 2026-07-31 — units.py).
             #   선언이 없어도 전사는 계속한다: value_won 은 비고 value_raw 에 원문이 남는다.
             #   표 자신의 선언이 없으면 **앞선 '선언 전용 표'** 에서만 상속한다(D1) —
@@ -2090,7 +2109,10 @@ def _emit_note_lines(
                 unreadable = {i for i in unresolved_dot_cell_indices(row.raw_amounts, row.account_name)
                               if i < len(row.amounts)}
                 for col_idx, amount in enumerate(row.amounts):
-                    is_unreadable = amount is None and col_idx in unreadable
+                    # R291: a two-amount cell is not read as a number either, but its row is kept
+                    is_unreadable = amount is None and (
+                        col_idx in unreadable
+                        or (col_idx < len(row.raw_amounts) and is_pair_amount_cell(row.raw_amounts[col_idx])))
                     if amount is None and not is_unreadable:
                         continue            # 원문에 숫자가 없는 칸 — 행을 만들지 않는다(종전과 동일)
                     raw = row.raw_amounts[col_idx] if col_idx < len(row.raw_amounts) else ""

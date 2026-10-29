@@ -197,13 +197,22 @@ def label_segments(col_label: str | None) -> list[str]:
     return [seg for seg in s.split(">") if seg and "단위" not in seg]
 
 
+# R292 - "환율변동" / "환율변동효과" / "환산차이" name an AMOUNT (the effect of exchange-rate changes in
+# a roll-forward, 비현금변동>환율변동), but the "율" in them matched the rate marker and the whole
+# column was stored NULL (value_raw only): 507 + 222 cells in a 400-filing sample. Only these words are
+# removed before the marker test; "환율" / "계약환율" / "약정환율" (the rate itself), "지분율", "이자율",
+# "진행률" are untouched, and a "%" next to them still marks the column non-monetary.
+_FX_AMOUNT_WORDS_RE = re.compile(r"환율\s*(?:변동|효과|차이|조정|평가)(?:\s*효과)?|환산\s*(?:차이|손익)")
+
+
 def column_is_non_money(col_label: str | None) -> bool:
     """열 헤더 원문이 **비금액이라고 말하는가**. 헤더가 없으면 말해주는 것이 없다 → False.
 
     어느 단에서든 비금액 표지가 나오면 비금액으로 본다 — '전기말>지분율(%)' 처럼 상위 단이
     기간이고 하위 단이 비율인 경우를 잡아야 한다.
     """
-    return any(NON_MONEY_COL_RE.search(seg) for seg in label_segments(col_label))
+    return any(NON_MONEY_COL_RE.search(_FX_AMOUNT_WORDS_RE.sub("", seg))
+               for seg in label_segments(col_label))
 
 
 def column_is_money(col_label: str | None) -> bool:

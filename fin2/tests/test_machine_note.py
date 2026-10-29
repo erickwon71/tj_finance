@@ -3,6 +3,7 @@ rows, and the conversion of its findings into issue items. No database."""
 from __future__ import annotations
 
 from collections import Counter
+from types import SimpleNamespace
 
 from fin2.verification import machine_note as mn
 from fin2.verification import scope_issues as si
@@ -87,3 +88,17 @@ def test_years_are_not_amounts_on_either_side():
     assert mn._read_amount("2,015") is None               # mn8: symmetric with the DB side
     assert mn._read_amount("1,950,000") == 1950000 and mn._read_amount("3000") == 3000
     assert mn._is_year(2016) and mn._is_year(-1999) and not mn._is_year(2101) and not mn._is_year(1899)
+
+
+def test_db_value_raw_with_a_tail_is_read_by_its_first_amount():
+    """mn9: undeclared / non-monetary columns keep the printed text in value_raw (value_won NULL)."""
+    assert mn._read_db_raw("258,096,615===========") == 258096615
+    assert mn._read_db_raw("(5,813)========") == -5813
+    assert mn._read_db_raw("17,572,153USD 8,000,000") == 17572153
+    assert mn._read_db_raw("1,345,506") == 1345506                       # plain cells unchanged
+    assert mn._read_db_raw("5,000 한화 설명") is None and mn._read_db_raw("1,234,5678") is None
+    rows = [SimpleNamespace(basis="separate", table_seq=3, row_order=0, label_raw="합 계", col_index=3,
+                            col_label="합 계", value_won=None, adecimal=None,
+                            value_raw="258,096,615===========")]
+    tab = mn.tables_from_rows(rows)[0]
+    assert [a[0] for a in tab.amounts] == [258096615]

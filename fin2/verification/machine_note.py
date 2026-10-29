@@ -59,7 +59,12 @@ from fin2.verification import machine_compare as mc
 # without a thousands comma. mn7 skipped only a bare '2015' of the source, so a maturity-year column
 # the DB keeps as 2016 (value_won / value_raw) became an "extra cell": extra_row went 29,949 -> 41,835
 # after R290. Amounts of exactly that size are rare; a year column is not.
-TOOL_VERSION = "mn8"
+# mn9 (2026-10-29): a DB value_raw that prints the amount plus a tail ('258,096,615===========',
+# '(5,813)========', '17,572,153USD 8,000,000') is read by its first amount, like the source side reads
+# the first '&cr;' segment of such a cell. The columns whose unit is undeclared / non-monetary keep the
+# printed text in value_raw with value_won NULL, and the machine called every total of such a table
+# missing (about 40% of the 6,912 total-label missing_row issues left after R295).
+TOOL_VERSION = "mn9"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -102,6 +107,17 @@ def _read_amount(cell: str):
     if _is_year(int(v)):
         return None
     return int(v)
+
+
+def _read_db_raw(raw: str):
+    """mn9 - `_read_amount` of a stored value_raw, else of its first amount when what follows is only a
+    currency / symbol / dash tail (R294 `split_amount_with_tail`)."""
+    v = _read_amount(raw)
+    if v is not None:
+        return v
+    from fin2.extract.report_lines import split_amount_with_tail
+    first = split_amount_with_tail(raw)
+    return _read_amount(first) if first else None
 
 
 def _is_year(v: int) -> bool:
@@ -179,7 +195,7 @@ def tables_from_rows(rows) -> list[DbTable]:
             t.n_skipped += 1
             continue
         if r.value_won is None:
-            v = _read_amount(r.value_raw) if r.value_raw else None
+            v = _read_db_raw(r.value_raw) if r.value_raw else None
             if v is None or abs(v) < MIN_AMOUNT:
                 t.n_skipped += 1
                 continue

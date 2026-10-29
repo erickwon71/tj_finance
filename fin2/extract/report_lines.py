@@ -1618,6 +1618,28 @@ def is_pair_amount_cell(text: str) -> bool:
     return bool(_PAIR_AMOUNT_CELL.match(" ".join((text or "").split())))
 
 
+# R294 (2026-10-29): a cell whose FIRST line is a comma-grouped amount and whose following lines hold
+# only a currency mark, a dash run or '<currency code> <amount>' ('171,750,000&cr; USD 44,000,000',
+# '84,350,000 &cr;$', '34,000,000 &cr;-'). parse_amount returns None for the whole cell; the first line
+# is the printed won amount. Anything else in the tail (Korean text, a note reference, another bare
+# number) is refused - nothing is guessed (R6).
+_CCY = r"(?:USD|EUR|JPY|CNY|GBP|CHF|HKD|TWD|PHP|VND|IDR|THB|SGD|AUD|CAD|INR|MYR|RUB|BRL|MXN)"
+_TAIL_FIRST = re.compile(r"^(\(?-?\d{1,3}(?:,\d{3})+\)?)(?=\s)")
+_TAIL_ITEM = r"(?:\(?" + _CCY + r"\s*-?\d[\d,]*(?:\.\d+)?\)?|USD|[$￦U]|[-－=]+)"
+_TAIL_REST = re.compile(r"^(?:\s+" + _TAIL_ITEM + r")+$")
+
+
+def split_amount_with_tail(text: str) -> str | None:
+    """R294 - the first-line amount of an 'amount + foreign/symbol tail' cell, else None.
+    The grid hands over the cell with its line breaks already folded into spaces, so the tail is
+    matched as a token sequence, not as lines."""
+    t = " ".join((text or "").replace("&cr;", " ").split())
+    m = _TAIL_FIRST.match(t)
+    if not m:
+        return None
+    return m.group(1) if _TAIL_REST.match(t[m.end():]) else None
+
+
 def _grid_header_split(table, *, use_header_span: bool = False):
     """`expand_table_grid`로 표를 펼치고 헤더 구간(n_header)·라벨 영역 폭(offset=LV′)·
     헤더 그리드 폭(width)을 계산한다 — **한 곳에서만** 한다.
@@ -2113,11 +2135,14 @@ def _emit_note_lines(
                     is_unreadable = amount is None and (
                         col_idx in unreadable
                         or (col_idx < len(row.raw_amounts) and is_pair_amount_cell(row.raw_amounts[col_idx])))
-                    if amount is None and not is_unreadable:
-                        continue            # 원문에 숫자가 없는 칸 — 행을 만들지 않는다(종전과 동일)
                     raw = row.raw_amounts[col_idx] if col_idx < len(row.raw_amounts) else ""
+                    # R294: 'amount + foreign/symbol tail' cell - read the first line, keep the print
+                    tail_first = (split_amount_with_tail(raw)
+                                  if amount is None and not is_unreadable else None)
+                    if amount is None and not is_unreadable and tail_first is None:
+                        continue            # 원문에 숫자가 없는 칸 — 행을 만들지 않는다(종전과 동일)
                     mult = None if is_unreadable else cu.multiplier(col_idx)
-                    value = parse_amount(raw, mult) if mult is not None else None
+                    value = parse_amount(tail_first or raw, mult) if mult is not None else None
                     emit(ReportLineRow(
                         corp_code=corp_code,
                         rcept_no=rcept_no,
@@ -2135,7 +2160,8 @@ def _emit_note_lines(
                         # 단위를 확정한 열만 원문 문자열을 버린다(값으로 복원 가능).
                         # 확정 못 한 열은 **원문을 남긴다** — 그것이 NULL 을 정보손실이
                         # 아니게 만드는 유일한 장치다(units.py docstring 참고).
-                        value_raw=None if value is not None else (raw.strip()[:64] or None),
+                        value_raw=(None if value is not None and tail_first is None
+                                   else (raw.strip()[:64] or None)),
                         adecimal=_adecimal_from_unit(mult) if mult is not None else None,
                         unit_source=cu.source(col_idx),
                         # ★ source_ref / context_raw 는 저장하지 않는다(2026-07-28).

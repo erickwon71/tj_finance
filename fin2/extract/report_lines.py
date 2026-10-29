@@ -1626,8 +1626,8 @@ def is_pair_amount_cell(text: str) -> bool:
 _CCY = r"[A-Z]{2,4}"                      # R294-b: any 2-4 capital letter code (DEM, RMB, RS, MMK ...)
 _TAIL_AMT = r"-?(?:\d{1,3}(?:,\d{3})+|\d{3,})(?:\.\d+)?"   # grouped or 3+ digits: "NO 5" is not an amount
 _TAIL_FIRST = re.compile(r"^(\(?-?\d{1,3}(?:,\d{3})+\)?)(?![\d,.])")
-_TAIL_ITEM = (r"(?:\(?(?:(?:US|U)?\$\s*" + _TAIL_AMT + r"|" + _CCY + r"\s*(?:" + _TAIL_AMT + r"|[-－]))\)?"
-              r"|USD|US\$|[$￦U]|[-－=]+)")
+_TAIL_ITEM = (r"(?:\(?(?:(?:US|U)?[$＄]\s*" + _TAIL_AMT + r"|" + _CCY + r"\s*(?:" + _TAIL_AMT + r"|[-－]))\)?"
+              r"|USD|US\$|[$＄￦U]|[-－=]+)")
 _TAIL_REST = re.compile(r"^(?:\s*" + _TAIL_ITEM + r")+$")
 
 
@@ -1859,6 +1859,18 @@ def _note_heading(table) -> str | None:
 _R284_CONTINUATION_ROW_OWN_LABEL = True
 
 
+_TOTAL_WORD_CELL = re.compile(r"^(?:합\s*계|소\s*계|총\s*계|계)$")
+
+
+def _value_area_total_label(physical, offset: int) -> str:
+    """R295-b - the text of the first value-area cell of the row that is only a total word
+    ('합 계', '소계', '계'); '' if there is none."""
+    for c in physical:
+        if c.grid_col >= offset and _TOTAL_WORD_CELL.match((c.text or "").strip()):
+            return c.text.strip()
+    return ""
+
+
 def _grid_body_rows(
     table, grid_rows, n_header: int, offset: int, *,
     multiplier: int = 1, allow_date_label: bool = False, keep_header_rows: bool = True,
@@ -1955,6 +1967,8 @@ def _grid_body_rows(
                        if c.grid_col in last_own_label_cols and c.inherited and c.text.strip()]
                 if own:
                     label = ">".join(own)
+            if not label.strip() and blank_first_label_fallback:
+                label = _value_area_total_label(physical, offset)     # R295-b (notes only)
             if not label.strip():
                 continue                # 라벨을 복원할 수 없으면 종전대로 버린다
         else:
@@ -1975,6 +1989,8 @@ def _grid_body_rows(
             # but another label-area cell has text ('' | '리스부채 합계') - that text is the label.
             label = ">".join(c.text.strip() for c in physical
                              if c.grid_col < offset and c.text.strip())
+            if not label.strip():
+                label = _value_area_total_label(physical, offset)     # R295-b: '합 계' in a value column
         if not label:
             continue
 

@@ -64,7 +64,7 @@ from fin2.verification import machine_compare as mc
 # the first '&cr;' segment of such a cell. The columns whose unit is undeclared / non-monetary keep the
 # printed text in value_raw with value_won NULL, and the machine called every total of such a table
 # missing (about 40% of the 6,912 total-label missing_row issues left after R295).
-TOOL_VERSION = "mn9"
+TOOL_VERSION = "mn10"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -109,6 +109,10 @@ def _read_amount(cell: str):
     return int(v)
 
 
+_RAW_CAP = 64                                   # note_lines.value_raw is stored cut at 64 characters
+_TRAILING_ITEM = re.compile(r"\(?(?:[A-Z]{2,4}|(?:US|U)?[$＄￥¥€£])?\s*[\d,.\-]*\)?$")
+
+
 def _read_db_raw(raw: str):
     """mn9 - `_read_amount` of a stored value_raw, else of its first amount when what follows is only a
     currency / symbol / dash tail (R294 `split_amount_with_tail`)."""
@@ -117,6 +121,10 @@ def _read_db_raw(raw: str):
         return v
     from fin2.extract.report_lines import split_amount_with_tail
     first = split_amount_with_tail(raw)
+    if not first and len(raw) >= _RAW_CAP:
+        # mn10: the loader stores value_raw cut at 64 characters, so the last tail item can be half
+        # printed ('...CNY 28,500,000EUR 8' for 'EUR 89,931'); drop that item and read the rest
+        first = split_amount_with_tail(_TRAILING_ITEM.sub("", raw))
     return _read_amount(first) if first else None
 
 

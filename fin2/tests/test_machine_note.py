@@ -102,3 +102,12 @@ def test_db_value_raw_with_a_tail_is_read_by_its_first_amount():
                             value_raw="258,096,615===========")]
     tab = mn.tables_from_rows(rows)[0]
     assert [a[0] for a in tab.amounts] == [258096615]
+
+
+def test_db_value_raw_cut_at_64_characters_is_read_by_mn10():
+    """mn10: the loader cuts value_raw at 64 characters, which can leave the last tail item half printed."""
+    cut = "146,443,815USD 156,291,562VND 255,580,714,435CNY 28,500,000EUR 8"
+    assert len(cut) == 64 and mn._read_db_raw(cut) == 146443815
+    assert mn._read_db_raw("163,293,260USD 202,376,123VND 300,459,829,623CNY 28,500,000") == 163293260
+    short = "5,000 USD 12 한화"                                              # short text: no cut tolerance
+    assert mn._read_db_raw(short) is None

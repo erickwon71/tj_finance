@@ -1625,8 +1625,12 @@ def is_pair_amount_cell(text: str) -> bool:
 # number) is refused - nothing is guessed (R6).
 _CCY = r"[A-Z]{2,4}"                      # R294-b: any 2-4 capital letter code (DEM, RMB, RS, MMK ...)
 _TAIL_AMT = r"-?(?:\d{1,3}(?:,\d{3})+|\d{3,})(?:\.\d+)?"   # grouped or 3+ digits: "NO 5" is not an amount
+# R294-d: a well-known ISO code may be followed by a short amount ('USD 5,548 EUR 41'), and the yen /
+# euro / pound marks are currency marks like '$' ('(￥179,312,180) ($4,294,383.44)')
+_KNOWN_CCY = r"(?:USD|EUR|JPY|CNY|GBP|AUD|CAD|CHF|HKD|SGD|VND|KRW|RMB|THB|IDR|INR|MYR|PHP|TWD)"
 _TAIL_FIRST = re.compile(r"^(\(?-?\d{1,3}(?:,\d{3})+\)?)(?![\d,.])")
-_TAIL_ITEM = (r"(?:\(?(?:(?:US|U)?[$＄]\s*" + _TAIL_AMT + r"|" + _CCY + r"\s*(?:" + _TAIL_AMT + r"|[-－]))\)?"
+_TAIL_ITEM = (r"(?:\(?(?:(?:US|U)?[$＄￥¥€£]\s*" + _TAIL_AMT + r"|" + _KNOWN_CCY + r"\s*\d{1,2}(?![\d,.])"
+              r"|" + _CCY + r"\s*(?:" + _TAIL_AMT + r"|[-－]))\)?"
               r"|USD|US\$|[$＄￦U]|[-－=]+)")
 _TAIL_REST = re.compile(r"^(?:\s*" + _TAIL_ITEM + r")+$")
 
@@ -1668,6 +1672,7 @@ def _grid_header_split(table, *, use_header_span: bool = False):
     for row in grid_rows:
         physical_texts = [" ".join(c.text.split()) for c in row if not c.inherited]
         if len(physical_texts) > 1 and any(_NUMBER_PATTERN.search(t) or _PAIR_AMOUNT_CELL.match(t)
+                                           or split_amount_with_tail(t) is not None
                                            for t in physical_texts[1:]):
             break
         n_header += 1
@@ -1717,6 +1722,9 @@ def _grid_header_split(table, *, use_header_span: bool = False):
         physical = [c for c in row if not c.inherited]
         for c in physical[1:]:                        # physical[0] = 이 행 자신의 라벨 셀
             if parse_amount(c.text, 1) is not None:
+                amount_cols.add(c.grid_col)
+                real_amount_cols.add(c.grid_col)
+            elif split_amount_with_tail(c.text) is not None:      # R294-d: a column of tail cells is a value column
                 amount_cols.add(c.grid_col)
                 real_amount_cols.add(c.grid_col)
             elif c.text.strip() in _LABEL_REGION_PLACEHOLDERS:

@@ -1623,9 +1623,11 @@ def is_pair_amount_cell(text: str) -> bool:
 # '84,350,000 &cr;$', '34,000,000 &cr;-'). parse_amount returns None for the whole cell; the first line
 # is the printed won amount. Anything else in the tail (Korean text, a note reference, another bare
 # number) is refused - nothing is guessed (R6).
-_CCY = r"(?:USD|EUR|JPY|CNY|GBP|CHF|HKD|TWD|PHP|VND|IDR|THB|SGD|AUD|CAD|INR|MYR|RUB|BRL|MXN)"
+_CCY = r"[A-Z]{2,4}"                      # R294-b: any 2-4 capital letter code (DEM, RMB, RS, MMK ...)
+_TAIL_AMT = r"-?(?:\d{1,3}(?:,\d{3})+|\d{3,})(?:\.\d+)?"   # grouped or 3+ digits: "NO 5" is not an amount
 _TAIL_FIRST = re.compile(r"^(\(?-?\d{1,3}(?:,\d{3})+\)?)(?![\d,.])")
-_TAIL_ITEM = r"(?:\(?" + _CCY + r"\s*-?\d[\d,]*(?:\.\d+)?\)?|USD|[$￦U]|[-－=]+)"
+_TAIL_ITEM = (r"(?:\(?(?:(?:US|U)?\$\s*" + _TAIL_AMT + r"|" + _CCY + r"\s*(?:" + _TAIL_AMT + r"|[-－]))\)?"
+              r"|USD|US\$|[$￦U]|[-－=]+)")
 _TAIL_REST = re.compile(r"^(?:\s*" + _TAIL_ITEM + r")+$")
 
 

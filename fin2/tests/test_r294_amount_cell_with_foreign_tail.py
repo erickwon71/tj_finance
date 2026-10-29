@@ -72,3 +72,16 @@ def test_cells_without_a_tail_do_not_change(tmp_path):
     land = {l.col_index: l for l in rows if l.label_raw.strip() == "토지"}
     assert land[0].value_won == 40181100000 and land[0].value_raw is None
     assert land[2].value_won == 80000000000 and land[2].value_raw is None
+
+
+def test_dollar_and_any_currency_code_tails_r294b():
+    """R294-b: '$' / 'US$' / 'U$' amounts and any 2-4 capital letter code before an amount."""
+    f = split_amount_with_tail
+    assert f("8,080,500(TRY 25,000,000)") == "8,080,500" and f("2,000US$ 82,000") == "2,000"
+    assert f("3,000 U$22,700,000") == "3,000" and f("4,000 $500,000") == "4,000"
+    assert f("5,000 USD 4,650,000 DEM 1,285,000") == "5,000" and f("6,000 RMB 6,000,000") == "6,000"
+    assert f("7,000 RS 90,000") == "7,000" and f("8,000 CNY - USD 4,000,000") == "8,000"
+    # still refused: Korean / note references / bare numbers / a code without a real amount
+    assert f("9,000 USD 1,000,000 (미주,USD 5,000,000)") is None
+    assert f("1,000 - 101,259,961 140,641,247") is None
+    assert f("1,234 NO 5") is None and f("1,234 ABC") is None and f("10,000 한화") is None

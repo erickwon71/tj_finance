@@ -55,7 +55,11 @@ from fin2.verification import machine_compare as mc
 # mn7 (2026-10-28): a bare four-digit 1900-2100 ("2015", no thousands comma) is a year in a period
 # header, not an amount: it made 28,196 of the 163,551 remaining "missing" cells of the note batch
 # (label '구분', values 2,015 / 2,016 ...). A printed amount of that size carries its comma.
-TOOL_VERSION = "mn7"
+# mn8 (2026-10-29): the year rule is symmetric: a printed 1900-2100 is skipped on BOTH sides, with or
+# without a thousands comma. mn7 skipped only a bare '2015' of the source, so a maturity-year column
+# the DB keeps as 2016 (value_won / value_raw) became an "extra cell": extra_row went 29,949 -> 41,835
+# after R290. Amounts of exactly that size are rare; a year column is not.
+TOOL_VERSION = "mn8"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -92,12 +96,16 @@ def _clean(s: str) -> str:
 
 def _read_amount(cell: str):
     """Printed integer of a cell, None when it is not a non-zero integer amount."""
-    if _BARE_YEAR.match(_WS.sub("", cell or "")):
-        return None
     v = mc.parse_amount(cell)
     if not isinstance(v, float) or v == 0 or v != int(v):
         return None
+    if _is_year(int(v)):
+        return None
     return int(v)
+
+
+def _is_year(v: int) -> bool:
+    return 1900 <= abs(v) <= 2100
 
 
 def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
@@ -188,7 +196,7 @@ def tables_from_rows(rows) -> list[DbTable]:
                 t.n_skipped += 1
                 continue
             printed = q if r.value_won > 0 else -q
-        if abs(printed) < MIN_AMOUNT:
+        if abs(printed) < MIN_AMOUNT or _is_year(int(printed)):
             t.n_skipped += 1
             continue
         t.amounts.append((int(printed), r.label_raw or "", r.col_label or "", r.row_order, r.col_index))

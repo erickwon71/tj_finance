@@ -82,7 +82,8 @@ def test_note_items_keep_basis_and_number_repeated_keys():
     assert all(i["table_ref"] == "4" and i["statement"] == "NOTE" for i in items)
 
 
-def test_bare_year_headers_are_not_amounts():
+def test_years_are_not_amounts_on_either_side():
     assert mn._read_amount("2015") is None and mn._read_amount(" 2024 ") is None
-    assert mn._read_amount("2,015") == 2015               # a printed amount keeps its comma
+    assert mn._read_amount("2,015") is None               # mn8: symmetric with the DB side
     assert mn._read_amount("1,950,000") == 1950000 and mn._read_amount("3000") == 3000
+    assert mn._is_year(2016) and mn._is_year(-1999) and not mn._is_year(2101) and not mn._is_year(1899)

@@ -247,6 +247,9 @@ def retriage(scope: str, statuses=("reopened", "open"), dry_run: bool = False,
         if res is None:
             out["no_source"] += len(issues)
             continue
+        if (res.counts or {}).get("findings_total"):
+            out["kept"] += len(issues)         # findings were cut at MAX_FINDINGS: absence proves nothing
+            continue
         now = {(it.get("basis"), it["table_ref"], it.get("column_label"), it.get("db_label"),
                 it.get("source_value_raw")) for it in findings_to_items(scope, res.findings, "x")}
         for i in issues:

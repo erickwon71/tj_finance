@@ -217,6 +217,13 @@ R294(꼬리 칸)·R295(첫 칸이 빈 행) 적용 뒤 합계·소계 라벨 `mis
 - **측정(새 이슈 필링 336 + 무작위 99)** 사라진 발견 1,279(새 이슈 필링) / 18(무작위), 새로 생긴 발견 26 / 7 — 전부 `missing_cell`: 원문에 인쇄된 원화 금액(꼬리 칸)이 DB 에 없는 **진짜 누락**(`12,410,000JPY 78,000` ROWSPAN 칸 등, 별도 조사 대상). mismatch → clean 203필링, clean → mismatch 3필링(무작위).
 - **운영** `TOOL_VERSION` mn11 → 새 이슈 1,613건 배치 258(재적재 없음) → `mark-fixed` → `scope recheck`/`run`/`register-all`. 테스트 `test_source_cell_is_read_like_the_loader_mn11`, `test_source_table_counts_tail_and_split_cells_once`.
 
+### mn12 (기계 `machine_note.py`, DB·파서 무변경) — 구현 2026-10-30
+
+- **원인** R296 이 한 칸에 여러 행이 줄로 쌓인 행(`순확정급여부채의 순이자&cr;  - 확정급여채무의 이자비용&cr;  - 사외적립자산의 이자수익` / `&cr;33,042&cr;(32,186)`)을 줄마다 행으로 적재하는데, 기계의 원문 쪽은 칸의 첫 줄만 읽어 R296 이 만든 행이 전부 "원문에 없는 행"(`extra_cell`)이 됐다(성우전자 `20170515002612` 표 29).
+- **규칙** `_stacked_lines`: 라벨 칸이 `&cr;` 3줄 이상이고, 값이 든 다른 모든 칸의 줄 수가 같고(빈 줄 포함), 그 칸마다 금액이 읽히는 줄이 하나 이상일 때만 줄별로 읽는다(R296 과 같은 조건). 줄 수가 어긋나거나 금액이 없는 칸이 있으면 종전 읽기 그대로. 순서는 줄 우선(DB 의 row_order, col_index 순과 같게).
+- **측정** 열린 note 이슈가 있는 필링 전체에서 쌓인 행이 감지된 필링 71건: 사라진 발견 744(extra_cell 550·extra_table 101·missing_cell 93), 새 발견 593(value 368·missing_cell 134·extra_cell 75·extra_table 16, 36필링). 판정 mismatch → clean 13필링, clean → mismatch 3필링. 새 발견의 대부분은 삼영이엔씨 계열처럼 비슷한 표가 여럿인 필링에서 쌓인 행이 든 원문 표의 금액 목록이 바뀌어 DB 표의 짝이 달라진 것이다. clean → mismatch 3건(두올 `20210319001434`·`20210322000709`·`20220321001298`)은 **DB 가 R296 이전 상태**(열린 이슈가 없어 이번 재적재에서 빠짐)라서 기계가 정확히 짚은 것이다 — 이런 필링은 note 전체 재적재를 하면 해소된다(별도 결정).
+- **운영** `TOOL_VERSION` mn12 → 변한 71필링의 열린 이슈로 배치 → `mark-fixed` → `scope recheck`/`run`/`register-all`. 테스트 `test_stacked_row_is_read_line_by_line_like_r296_mn12`.
+
 ## 7-0. 확정된 결정 (사용자, 2026-10-27 야간)
 
 1. **슬롯 구조 = 별도 progress 테이블**(scope 별). 기존 report_lines 러너·digest 는 건드리지 않는다.

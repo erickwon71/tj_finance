@@ -68,7 +68,10 @@ from fin2.verification import machine_compare as mc
 # an R294 tail ('20,792,401(VND 377,357,546,463)') and a number split by white space inside one cell
 # ('<SPAN>12,553,95</SPAN><SPAN>1</SPAN>'). After R294-R296 the DB holds those amounts while the source side
 # read nothing, so 1,355 extra_row issues appeared with the full reload of 2026-10-30.
-TOOL_VERSION = "mn11"
+# mn12 (2026-10-30): a source row that packs several rows into its cells (R296: a label cell of 3+ '&cr;' lines
+# and every other printing cell with the same number of lines) is read line by line, like the loader splits it;
+# before, only the first line of each value cell was read and every row R296 produced was an "extra cell".
+TOOL_VERSION = "mn12"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -111,6 +114,32 @@ def _read_amount(cell: str):
     if _is_year(int(v)):
         return None
     return int(v)
+
+
+_CR = "&cr;"
+
+
+def _stacked_lines(row, label: str):
+    """mn12 - [(label_line, [(col, cell_line), ...]), ...] when `row` is an R296 stacked row, else None. The label
+    cell has 3+ lines, every other non-empty cell has exactly as many lines (empty lines count), and each of
+    those cells prints an amount on some line; any other shape is left to the single-line reading."""
+    if not label or _CR not in label:
+        return None
+    labs = label.split(_CR)
+    n = len(labs)
+    if n < 3:
+        return None
+    cols = []
+    for col, cell in enumerate(row):
+        if not cell or cell == label:
+            continue
+        lines = cell.split(_CR)
+        if len(lines) != n or not any(_read_source_cell(x.strip()) is not None for x in lines):
+            return None
+        cols.append((col, lines))
+    if not cols:
+        return None
+    return [(labs[j], [(col, ls[j].strip()) for col, ls in cols]) for j in range(n)]
 
 
 _SPLIT_DIGITS = re.compile(r"^[\d,()\-\s]+$")
@@ -179,6 +208,15 @@ def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
             for copies, target in ((False, st.amounts), (True, st.alt_amounts)):
                 for row in mb._own_grid(tb, clean=_clean, copies=copies):
                     label = next((c for c in row if c and mc.parse_amount(c) is None), "")
+                    stacked = _stacked_lines(row, label)
+                    if stacked:
+                        for lab_line, items in stacked:
+                            for col, line in items:
+                                v = _read_source_cell(line)
+                                if v is None or abs(v) < MIN_AMOUNT or _PER_SHARE.search(lab_line):
+                                    continue
+                                target.append((v, mb.norm(lab_line)[:80], col))
+                        continue
                     for col, cell in enumerate(row):
                         if not cell or cell == label:
                             continue

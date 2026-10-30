@@ -108,7 +108,7 @@ def show(issue_id: int) -> None:
             g = mb._own_grid(tb, clean=mn._clean, copies=False)
             if must_have_value and not (needle and any(needle in x for r in g for x in r)):
                 continue
-            vals = {mn._read_amount(x) for r in g for x in r} - {None}
+            vals = {mn._read_source_cell(x) for r in g for x in r} - {None}
             score = len(vals & dbvals)
             if score > best_score:
                 best, best_score = g, score
@@ -119,7 +119,7 @@ def show(issue_id: int) -> None:
         return
     print(f"   (DB 표와 겹치는 금액 {best_score}개 / DB 표 금액 {len(dbvals)}개)")
     for k, r in enumerate(best):
-        if k < 3 or any(needle in x for x in r):
+        if k < 3 or (needle and any(needle in x for x in r)) or (not needle and k < 40):
             print(f"   s{k:<3d} " + " | ".join(x[:16].replace('\n', '/') for x in r))
 
 

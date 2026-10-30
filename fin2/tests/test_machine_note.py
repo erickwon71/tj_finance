@@ -130,3 +130,17 @@ def test_source_table_counts_tail_and_split_cells_once(tmp_path):
     p.write_text(xml, encoding="utf-8")
     tables, found = mn.load_source_tables(str(p))
     assert found and (20000 in tables[0].values) and (3333333 in tables[0].values)
+
+
+def test_stacked_row_is_read_line_by_line_like_r296_mn12(tmp_path):
+    cr = "&cr;"
+    label = cr.join(["순이자", "  - 이자비용", "  - 이자수익"])
+    xml = XML.replace("<TR><TD>지분율</TD>", f"<TR><TD>{label}</TD><TD>{cr}33,042{cr}(32,186)</TD><TD>{cr}30,248{cr}(27,585)</TD></TR>\n<TR><TD>지분율</TD>")
+    p = tmp_path / "s.xml"
+    p.write_text(xml, encoding="utf-8")
+    tables, _ = mn.load_source_tables(str(p))
+    assert {33042, -32186, 30248, -27585} <= set(tables[0].values)
+    # unequal line counts are left to the single-line reading (R296 leaves them alone)
+    assert mn._stacked_lines(["a&cr;b&cr;c", "1,000&cr;2,000"], "a&cr;b&cr;c") is None
+    assert mn._stacked_lines(["a&cr;b", "1,000&cr;2,000"], "a&cr;b") is None            # fewer than 3 lines
+    assert mn._stacked_lines(["a&cr;b&cr;c", "x&cr;y&cr;z"], "a&cr;b&cr;c") is None      # no amount on any line

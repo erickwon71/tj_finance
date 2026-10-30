@@ -111,3 +111,22 @@ def test_db_value_raw_cut_at_64_characters_is_read_by_mn10():
     assert mn._read_db_raw("163,293,260USD 202,376,123VND 300,459,829,623CNY 28,500,000") == 163293260
     short = "5,000 USD 12 한화"                                              # short text: no cut tolerance
     assert mn._read_db_raw(short) is None
+
+
+def test_source_cell_is_read_like_the_loader_mn11():
+    """mn11: the source side reads the first amount of an R294 tail cell and a number split by white space."""
+    r = mn._read_source_cell
+    assert r("20,792,401(VND 377,357,546,463)") == 20792401 and r("12,410,000JPY 78,000") == 12410000
+    assert r("12,553,95\n1") == 12553951 and r("4,244, 863") == 4244863
+    assert r("(5,813)\n====") == -5813 and r("1,345,506") == 1345506
+    # refused like the loader refuses them (R1 / R6): two real amounts, note numbers, years, Korean tails
+    assert r("1,234 5,678") is None and r("4, 27, 30") is None and r("2,015 2,016") is None
+    assert r("5,000 한화 설명") is None and r("") is None
+
+
+def test_source_table_counts_tail_and_split_cells_once(tmp_path):
+    xml = XML.replace("<TD>(900,000)</TD>", "<TD>(900,000)</TD><TD>20,000(USD 15)</TD><TD><SPAN>3,333,33</SPAN>\n<SPAN>3</SPAN></TD>")
+    p = tmp_path / "m.xml"
+    p.write_text(xml, encoding="utf-8")
+    tables, found = mn.load_source_tables(str(p))
+    assert found and (20000 in tables[0].values) and (3333333 in tables[0].values)

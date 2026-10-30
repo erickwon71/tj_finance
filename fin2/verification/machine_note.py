@@ -64,7 +64,11 @@ from fin2.verification import machine_compare as mc
 # the first '&cr;' segment of such a cell. The columns whose unit is undeclared / non-monetary keep the
 # printed text in value_raw with value_won NULL, and the machine called every total of such a table
 # missing (about 40% of the 6,912 total-label missing_row issues left after R295).
-TOOL_VERSION = "mn10"
+# mn11 (2026-10-30): the SOURCE side reads a cell the way the loader does: the first amount of a cell with
+# an R294 tail ('20,792,401(VND 377,357,546,463)') and a number split by white space inside one cell
+# ('<SPAN>12,553,95</SPAN><SPAN>1</SPAN>'). After R294-R296 the DB holds those amounts while the source side
+# read nothing, so 1,355 extra_row issues appeared with the full reload of 2026-10-30.
+TOOL_VERSION = "mn11"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -107,6 +111,26 @@ def _read_amount(cell: str):
     if _is_year(int(v)):
         return None
     return int(v)
+
+
+_SPLIT_DIGITS = re.compile(r"^[\d,()\-\s]+$")
+
+
+def _read_source_cell(cell: str):
+    """mn11 - `_read_amount` of a source cell, else of what the loader reads from it: the first amount in front
+    of an R294 tail, or a number whose digits are split by white space (R150 / `parse_amount`)."""
+    v = _read_amount(cell)
+    if v is not None or not cell:
+        return v
+    from fin2.extract.report_lines import parse_amount as rl_parse, split_amount_with_tail
+    first = split_amount_with_tail(cell)
+    if first:
+        return _read_amount(first)
+    if _WS.search(cell) and _SPLIT_DIGITS.match(cell):
+        joined = rl_parse(cell)
+        if isinstance(joined, (int, float)) and joined == int(joined) and joined != 0 and not _is_year(int(joined)):
+            return int(joined)
+    return None
 
 
 _RAW_CAP = 64                                   # note_lines.value_raw is stored cut at 64 characters
@@ -158,7 +182,7 @@ def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
                     for col, cell in enumerate(row):
                         if not cell or cell == label:
                             continue
-                        v = _read_amount(cell)
+                        v = _read_source_cell(cell)
                         if v is None or abs(v) < MIN_AMOUNT or _PER_SHARE.search(label):
                             if not copies and mc.parse_amount(cell) not in (None, mc._EMPTY):
                                 st.n_skipped += 1

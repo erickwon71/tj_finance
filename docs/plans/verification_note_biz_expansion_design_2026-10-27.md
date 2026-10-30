@@ -210,6 +210,13 @@ R294(꼬리 칸)·R295(첫 칸이 빈 행) 적용 뒤 합계·소계 라벨 `mis
 - **운영** `TOOL_VERSION` mn10 → `scope run` → `recheck`/`register-all`. 테스트 `test_db_value_raw_cut_at_64_characters_is_read_by_mn10`.
 - **남은 1,380건 재분류(2026-10-30)**: 원문 셀 모양 — 숫자만 여러 개 평탄화된 칸 519 · 일반 칸(라벨/구조 문제) 339 · 한글 포함 272 · 원화+통화꼬리 89 · 원화 + 기타 꼬리 89 · 표 못 찾음 64. 평탄화된 칸의 상당수는 외화 열이 아니라 **한 칸에 여러 행의 원화 값이 줄로 들어간 압축 칸**이다(`수익&cr;금융수익&cr;…&cr;소계` 라벨 칸 + 값 칸) — 다음 후보.
 
+### mn11 (기계 `machine_note.py`, DB·파서 무변경) — 구현 2026-10-30
+
+- **원인** 열린 note 이슈 전체 재적재(배치 256/257) 뒤 `extra_row` 가 1,355건 새로 등록됐다(271필링). 원문 대조: 파서가 읽는 두 가지 셀을 기계의 **원문 쪽**만 못 읽었다. ① R294 꼬리 셀(`20,792,401(VND 377,357,546,463)`, `12,410,000JPY 78,000`) — DB 에는 첫 금액이 적재되는데 원문 쪽은 None. ② 한 칸 안에서 공백·줄바꿈으로 쪼개진 숫자(`<SPAN>12,553,95</SPAN>` + `<SPAN>1</SPAN>`, 동원수산 `20210817001089`) — 파서 `parse_amount` 는 이어붙이고 기계의 `machine_compare.parse_amount` 는 못 이었다. 두 경우 인쇄된 숫자는 DB 와 같다(합계로 검산: 12,188,256 + 365,695 = 12,553,951).
+- **규칙** `_read_source_cell`: `_read_amount` 가 None 이면 ① `split_amount_with_tail` 의 첫 금액, ② 숫자·콤마·괄호·`-`·공백만 든 칸이면 `report_lines.parse_amount` 의 결과(정수·비영·연도 아님)를 쓴다. 두 금액이 나열된 칸(`1,234 5,678`)·주석번호 목록(`4, 27, 30`)·연도 열·한글 꼬리는 파서와 같이 거부한다(R1/R6).
+- **측정(새 이슈 필링 336 + 무작위 99)** 사라진 발견 1,279(새 이슈 필링) / 18(무작위), 새로 생긴 발견 26 / 7 — 전부 `missing_cell`: 원문에 인쇄된 원화 금액(꼬리 칸)이 DB 에 없는 **진짜 누락**(`12,410,000JPY 78,000` ROWSPAN 칸 등, 별도 조사 대상). mismatch → clean 203필링, clean → mismatch 3필링(무작위).
+- **운영** `TOOL_VERSION` mn11 → 새 이슈 1,613건 배치 258(재적재 없음) → `mark-fixed` → `scope recheck`/`run`/`register-all`. 테스트 `test_source_cell_is_read_like_the_loader_mn11`, `test_source_table_counts_tail_and_split_cells_once`.
+
 ## 7-0. 확정된 결정 (사용자, 2026-10-27 야간)
 
 1. **슬롯 구조 = 별도 progress 테이블**(scope 별). 기존 report_lines 러너·digest 는 건드리지 않는다.

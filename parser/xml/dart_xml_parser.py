@@ -7,6 +7,7 @@ DART XML 파서 — 메인 오케스트레이터
 
 출력: ParseResult (facts 리스트 + 메타데이터)
 """
+import bisect
 import re
 from dataclasses import dataclass, field
 from html.entities import name2codepoint
@@ -324,10 +325,70 @@ def _break_stacked_row_digits(raw: bytes) -> bytes:
     return _TR_BLOCK.sub(fix, raw)
 
 
+# R296 - a row that packs several logical rows into its cells ('수익&cr;금융수익&cr;기타이익&cr;소계&cr;...' in
+# the label cell, one printed value per line in each value cell, empty lines kept: 삼영이엔씨
+# 20171129000152 separate table 21). The reader deletes `&cr;`, which glued the lines of every cell
+# together and lost the empty lines, so neither the label nor the values could be paired by line.
+# Only when the label cell has 3+ lines and EVERY other cell that prints something has exactly the same
+# number of lines (empty lines count), each `&cr;` of that row becomes the marker character U+E001
+# (a numeric reference: the files may be EUC-KR). report_lines splits such a row line by line.
+_R296_STACKED_ROWS = True
+_CELL_BLOCK = re.compile(rb"<(TD|TH)\b[^>]*>(.*?)</\1>", re.DOTALL)
+_R296_MARK = b"&#57345;"
+
+
+_SECTION_TITLE = re.compile(rb"<SECTION-([12])\b[^>]*>\s*<TITLE[^>]*>(.*?)</TITLE>", re.DOTALL)
+_NOTE_WORDS = ("주석".encode("utf-8"), "주석".encode("cp949"))
+
+
+def _note_section_starts(raw: bytes) -> tuple[list[int], list[bool]]:
+    """Start offsets of the SECTION-1/2 elements and whether each is a note section (title has '주석')."""
+    pos, is_note = [], []
+    for m in _SECTION_TITLE.finditer(raw):
+        pos.append(m.start())
+        is_note.append(any(w in m.group(2) for w in _NOTE_WORDS))
+    return pos, is_note
+
+
+def _mark_stacked_rows(raw: bytes) -> bytes:
+    """R296 applies to the notes only: the body statements (BS/IS/CF) read the same rows through their
+    own path (R246/R258/R274), which must keep seeing the old cell text (코리안리 20180515001565 IS)."""
+    if b"&cr;" not in raw:
+        return raw
+    starts, notes = _note_section_starts(raw)
+    if not any(notes):
+        return raw
+
+    def fix(m):
+        tr = m.group(0)
+        i = bisect.bisect_right(starts, m.start()) - 1
+        if i < 0 or not notes[i]:
+            return tr
+        if tr.count(b"&cr;") < 4 or tr.count(b"<TR") != 1:
+            return tr
+        cells = [(c.group(2)) for c in _CELL_BLOCK.finditer(tr)]
+        if len(cells) < 2 or any(b"<" in c for c in cells):
+            return tr
+        k = cells[0].count(b"&cr;") + 1
+        if k < 3 or not cells[0].replace(b"&cr;", b"").strip():
+            return tr
+        printed = 0
+        for c in cells[1:]:
+            if not c.replace(b"&cr;", b"").strip():
+                continue                                   # a cell that prints nothing
+            if c.count(b"&cr;") + 1 != k:
+                return tr
+            printed += 1 if re.search(rb"\d", c) else 0
+        return tr.replace(b"&cr;", _R296_MARK) if printed else tr
+
+    return _TR_BLOCK.sub(fix, raw)
+
+
 def sanitize_dart_xml(raw: bytes) -> bytes:
     """파싱 전 원문 이스케이프 복구. 순서 주의 — '&' 를 먼저 고쳐야 뒤에서 넣는
     &quot;/&lt; 가 다시 이스케이프되지 않는다."""
-    out = _AMOUNT_STACK_BREAK.sub(b"&#10;", raw)               # R246 — before R224 deletes &cr;
+    out = _mark_stacked_rows(raw) if _R296_STACKED_ROWS else raw
+    out = _AMOUNT_STACK_BREAK.sub(b"&#10;", out)               # R246 — before R224 deletes &cr;
     if _R274_STACKED_ROW_DIGIT_BREAK:
         out = _break_stacked_row_digits(out)
     out = _NAMED_ENTITY.sub(_resolve_named_entity, out)    # R224 — must run first

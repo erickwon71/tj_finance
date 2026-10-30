@@ -1646,6 +1646,49 @@ def split_amount_with_tail(text: str) -> str | None:
     return m.group(1) if _TAIL_REST.match(t[m.end():]) else None
 
 
+# R296 - the reader (parser/xml/dart_xml_parser.py::_mark_stacked_rows) marks each in-cell line break of a
+# row that packs several logical rows into its cells with U+E001. A cell of such a row is a number cell
+# for the header boundary / label-area width when one of its lines is an amount, and the row is split
+# line by line (label line j <-> line j of every value cell).
+_STACK = "\ue001"
+
+
+def is_stacked_amount_cell(text: str) -> bool:
+    return _STACK in (text or "") and any(parse_amount(x.strip(), 1) is not None for x in text.split(_STACK))
+
+
+def _stacked_subrows(label: str, value_cells, offset: int):
+    """R296 - [(sub_label, {col_idx: line_text})] for a row whose label cell and every printed value cell
+    carry the same number of marked lines, else None (the caller then keeps the cells as they are).
+    A sub-label is its line; a line indented deeper than an earlier line is prefixed with that line
+    ('수익>금융수익', '수익>소계'), like the '>' join of multi-level labels."""
+    lines = label.split(_STACK)
+    k = len(lines)
+    if k < 3:
+        return None
+    cols: dict[int, list[str]] = {}
+    for c in value_cells:
+        if not c.text.strip():
+            continue
+        ls = c.text.split(_STACK)
+        if len(ls) != k:
+            return None
+        cols[c.grid_col - offset] = [x.strip() for x in ls]
+    if not cols:
+        return None
+    out, stack = [], []                                    # stack: [(indent, text)]
+    for j, raw_line in enumerate(lines):
+        text = raw_line.strip()
+        if not text:
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip())
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        out.append((">".join([t for _, t in stack] + [text]), {ci: v[j] for ci, v in cols.items()}))
+        stack.append((indent, text))
+    return out
+
+
 def _grid_header_split(table, *, use_header_span: bool = False):
     """`expand_table_grid`로 표를 펼치고 헤더 구간(n_header)·라벨 영역 폭(offset=LV′)·
     헤더 그리드 폭(width)을 계산한다 — **한 곳에서만** 한다.
@@ -1672,7 +1715,7 @@ def _grid_header_split(table, *, use_header_span: bool = False):
     for row in grid_rows:
         physical_texts = [" ".join(c.text.split()) for c in row if not c.inherited]
         if len(physical_texts) > 1 and any(_NUMBER_PATTERN.search(t) or _PAIR_AMOUNT_CELL.match(t)
-                                           or split_amount_with_tail(t) is not None
+                                           or split_amount_with_tail(t) is not None or is_stacked_amount_cell(t)
                                            for t in physical_texts[1:]):
             break
         n_header += 1
@@ -1724,7 +1767,7 @@ def _grid_header_split(table, *, use_header_span: bool = False):
             if parse_amount(c.text, 1) is not None:
                 amount_cols.add(c.grid_col)
                 real_amount_cols.add(c.grid_col)
-            elif split_amount_with_tail(c.text) is not None:      # R294-d: a column of tail cells is a value column
+            elif split_amount_with_tail(c.text) is not None or is_stacked_amount_cell(c.text):   # R294-d / R296
                 amount_cols.add(c.grid_col)
                 real_amount_cols.add(c.grid_col)
             elif c.text.strip() in _LABEL_REGION_PLACEHOLDERS:
@@ -2024,10 +2067,33 @@ def _grid_body_rows(
         value_cells = [c for c in (physical if is_continuation else physical[1:])
                        if c.grid_col >= offset]
         max_idx = max((c.grid_col - offset for c in value_cells), default=-1)
+        sub = (_stacked_subrows(label, value_cells, offset)
+               if (_STACK in label and not is_continuation and len(label_region_cells) == 1) else None)
+        if sub is not None:
+            # R296: one source row packs several logical rows - one RowData per printed line
+            for sub_label, line_cells in sub:
+                raw_sub = [""] * (max_idx + 1)
+                for ci, txt in line_cells.items():
+                    raw_sub[ci] = txt
+                raw_sub = apply_source_typo_fixes(raw_sub, rcept_no)
+                raw_sub = _join_split_leading_digit_by_row_sum(raw_sub)
+                raw_sub = _repair_dot_grouped_cells(raw_sub, sub_label, no_dot_repair_cols)
+                amt_sub = [parse_amount(t, multiplier) if t else None for t in raw_sub]
+                for _i in unresolved_dot_cell_indices(raw_sub, sub_label):
+                    if _i < len(amt_sub):
+                        amt_sub[_i] = None
+                out.append(RowData(
+                    account_name=sub_label.lstrip(), amounts=amt_sub, raw_amounts=raw_sub,
+                    header_hint=None, row_order=row_order, indent_level=_detect_indent(sub_label),
+                    raw_indent=_first_cell_indent(tr),
+                ))
+                row_order += 1
+            continue
         amounts: list[int | None] = [None] * (max_idx + 1)
         raw_amounts: list[str] = [""] * (max_idx + 1)
         for c in value_cells:
-            raw_amounts[c.grid_col - offset] = c.text
+            raw_amounts[c.grid_col - offset] = c.text.replace(_STACK, " ")
+        label = label.replace(_STACK, " ")
         # ★R158(2026-09-22) — 천단위 구분자가 마침표로 깨진 셀 복원. **이 경로도
         #   반드시 거쳐야 한다** — `extract_rows` 에만 넣었더니 SCE(이 그리드 경로)는
         #   복원이 안 돼 왜곡값이 그대로 남았다(실측: 엘에스일렉트릭 20260318001243

@@ -296,8 +296,13 @@ _BAD_LT = re.compile(
 # R258 - blank lines may sit between the stacked amounts (`53,040,262,118&cr;&cr;43,714,275,259`, 코리안리
 # 20180515001565; `1,012,264&cr;&cr;&cr;821,771`, 대신증권 20150817000902): any number of extra `&cr;`
 # before the next amount token still marks a break (the extras are deleted by R224 afterwards).
+# R296-b - a cell whose FIRST line is a lone dash (`<TD>-&cr;3,272,017</TD>`, 성우테크론 20150515000581 table 227:
+# the dash is the empty placeholder of the first stacked line) breaks after the dash too; read glued it became
+# the negative number -3,272,017 although every other cell of the column adds up to +3,272,017.
 _AMOUNT_STACK_BREAK = re.compile(rb"(?<=,\d{3})&cr;(?=(?:&cr;)*(?:\d{1,3}(?:,\d{3})*|\(\d{1,3}(?:,\d{3})+\)|-)(?:&cr;|<|\s|$))"
                                    rb"|(?<=&cr;-)&cr;(?=\d{1,3}(?:,\d{3})*(?:&cr;|<|\s|$))")
+_R296B_DASH_FIRST_LINE = True
+_DASH_FIRST_LINE_BREAK = re.compile(rb"(?<=>-)&cr;(?=\d{1,3}(?:,\d{3})+(?:&cr;|<|\s|$))")
 
 
 # R274 - a row whose label cell prints several lines (`주당이익&cr;   기본주당순이익&cr;   희석주당순이익`)
@@ -389,6 +394,8 @@ def sanitize_dart_xml(raw: bytes) -> bytes:
     &quot;/&lt; 가 다시 이스케이프되지 않는다."""
     out = _mark_stacked_rows(raw) if _R296_STACKED_ROWS else raw
     out = _AMOUNT_STACK_BREAK.sub(b"&#10;", out)               # R246 — before R224 deletes &cr;
+    if _R296B_DASH_FIRST_LINE:
+        out = _DASH_FIRST_LINE_BREAK.sub(b"&#10;", out)
     if _R274_STACKED_ROW_DIGIT_BREAK:
         out = _break_stacked_row_digits(out)
     out = _NAMED_ENTITY.sub(_resolve_named_entity, out)    # R224 — must run first

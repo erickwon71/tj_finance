@@ -2474,7 +2474,29 @@ def _is_broken_comma_grouping(cell: str) -> bool:
         return False        # a valid number, or a shape R159/R205 already handle
     # only shapes that are clearly a damaged amount; "15,32" / "5,0" / "9,9,99" are note-reference
     # lists or decimals and stay out of scope
-    return bool(_R273_DAMAGED_SHAPE_RE.match(core))
+    return bool(_R273_DAMAGED_SHAPE_RE.match(core)) or (_R273B_MORE_BROKEN_SHAPES and _is_more_broken_shape(core))
+
+
+# R273-b - more damaged groupings, found by the 2026-10-31 triage of the note extra_row issues (137 cells whose
+#   comma-stripped digits were loaded: '1,1112,007', '552,24' stays out of scope). Only shapes that cannot be a
+#   decimal, a year or a note-reference list: a double comma ('9,999,,999'), a leading comma (',999,999', ',5232'),
+#   a group of 4+ digits after the first comma ('9,9999,999'), and 3+ groups whose middle group is not 3 digits
+#   ('99,99,999', '(17,08,854)'; a 2-digit middle group). Two-group shapes ('99,99', '999,99') are still left alone (R273).
+_R273B_MORE_BROKEN_SHAPES = True
+
+
+def _is_more_broken_shape(core: str) -> bool:
+    if not re.fullmatch(r"[\d,]+", core):
+        return False
+    toks = core.split(",")
+    if ",," in core:
+        return len([t for t in toks if t]) >= 2 and any(len(t) == 3 for t in toks)
+    if toks[0] == "":
+        return len(toks) >= 2 and all(toks[1:]) and sum(len(t) for t in toks) >= 4
+    if len(toks[0]) <= 3 and any(len(t) >= 4 for t in toks[1:]):
+        return True
+    return (len(toks) >= 3 and len(toks[0]) <= 3 and len(toks[-1]) == 3
+            and any(len(t) == 2 for t in toks[1:-1]) and all(len(t) <= 3 for t in toks[1:-1]))
 
 
 # R279 — one cell holding the same comma-grouped amount twice with no separator

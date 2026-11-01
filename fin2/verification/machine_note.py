@@ -78,7 +78,11 @@ from fin2.verification import machine_compare as mc
 # mn14 (2026-11-02): a cell that ends in one stray dot after a full thousands grouping ('810,000.', '27,777,623.',
 # 우리엔터프라이즈 20210514000339 table 71, whose row total confirms 810,000) is loaded by `parse_amount` as the
 # integer, but the machine refused it, so every such DB value was reported as an extra cell (105 open issues).
-TOOL_VERSION = "mn14"
+# mn15 (2026-11-02): R158 reads a cell whose thousands separators were printed as dots ('8.490', '(109.886)',
+# '2.939,347', '3.544.298') as the integer when another cell of the same row prints the same digits with commas
+# ('8,490'). The machine saw a decimal and refused the cell, so the DB amount counted once too often as an extra
+# cell (about 300 open note extra_row issues, e.g. 삼목에스폼 20221129000914 table 43, 에스티큐브 20220502000570).
+TOOL_VERSION = "mn15"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -150,6 +154,7 @@ def _stacked_lines(row, label: str):
 
 
 _SPLIT_DIGITS = re.compile(r"^[\d,()\-\s]+$")
+_DOT_GROUPED = re.compile(r"^(\(?-?)(\d{1,3}(?:[.,]\d{3})+)(\)?)$")
 _TRAILING_DOT = re.compile(r"^[(\-]*\d{1,3}(?:,\d{3})+\.\)?$")
 
 
@@ -195,6 +200,18 @@ def _read_db_raw(raw: str):
     return _read_amount(first) if first else None
 
 
+def _read_dot_grouped(cell: str, row_digits: set):
+    """mn15 - R158: a dot-grouped cell is the integer of the comma-grouped cell that prints the same digits in the row."""
+    m = _DOT_GROUPED.match(cell)
+    if not m or "." not in m.group(2):
+        return None
+    digits = re.sub(r"\D", "", m.group(2))
+    if digits not in row_digits:
+        return None
+    v = int(digits)
+    return None if v == 0 or _is_year(v) else (-v if m.group(1) or m.group(3) == ")" else v)
+
+
 def _is_year(v: int) -> bool:
     return 1900 <= abs(v) <= 2100
 
@@ -231,10 +248,13 @@ def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
                                     continue
                                 target.append((v, mb.norm(lab_line)[:80], col))
                         continue
+                    row_digits = {re.sub(r"\D", "", c) for c in row if c and "." not in c and _read_source_cell(c) is not None}
                     for col, cell in enumerate(row):
                         if not cell or cell == label:
                             continue
                         v = _read_source_cell(cell)
+                        if v is None:
+                            v = _read_dot_grouped(cell, row_digits)
                         if v is None or abs(v) < MIN_AMOUNT or _PER_SHARE.search(label):
                             if not copies and mc.parse_amount(cell) not in (None, mc._EMPTY):
                                 st.n_skipped += 1

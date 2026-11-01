@@ -156,3 +156,10 @@ def test_one_trailing_dot_after_thousands_groups_is_read_like_the_loader_mn14():
     r = mn._read_source_cell
     assert r("810,000.") == 810000 and r("27,777,623.") == 27777623
     assert r("1.5") is None and r(".") is None and r("99.") is None
+
+
+def test_dot_grouped_cell_is_read_when_the_row_prints_the_same_digits_mn15():
+    d = {"8490", "109886"}
+    assert mn._read_dot_grouped("8.490", d) == 8490 and mn._read_dot_grouped("(109.886)", d) == -109886
+    assert mn._read_dot_grouped("2.939,347", {"2939347"}) == 2939347
+    assert mn._read_dot_grouped("1.234", d) is None and mn._read_dot_grouped("12.5", {"125"}) is None

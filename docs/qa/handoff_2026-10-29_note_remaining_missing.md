@@ -146,3 +146,11 @@ python scripts/note_remaining_triage.py --show 252328
 - 3,811 내역: R273-b 모양(재적재 전 옛 값) 약 1,680 · `주석`/`관련주석` 열의 주석번호 목록 약 1,380 · 두 묶음 오타(`160,21`→16,021: 합계 160,211 과 비교해 10배 틀림) 약 710(열 머리가 주석이 아닌 것) · 정상 모양인데 기계가 못 찾음 약 613(원인 미확인).
 - **R297**(주석 표의 마지막 머리글 마디가 `주석`·`주석번호`·`주기`·`관련주석` 인 열은 싣지 않음, 커밋 대상 fin2/extract/report_lines.py) + 배치 263(1,080필링 note 재적재, 이슈 3,535 중 closed 2,471). extra_row other 5,424→2,986, total 215→213.
 - **열린 일**: ① 두 묶음 오타(`999,99` 등) 처리 — 사용자 판단 대기(선택지: 단위가 선언된 금액 열에서 `00` 아닌 모양만 NULL / 기계 한계로 기록). ② 정상 모양인데 못 찾는 약 613건 원인 조사. ③ 짝지은 표에 값이 있는 762건·다른 표 707건의 짝짓기 한계. ④ 이슈 없는 필링의 주석 열·깨진 셀은 그대로(전체 note 재적재는 사용자 결정).
+
+## 2026-11-01 evening - machine mn13 and the 613 "valid-looking" cells
+
+- Decision (user): two-group damaged cells (`160,21`, `119,55`, `99,99`, ~730 non-note-column extra_row issues) are recorded as a **machine limit**; no rule, no NULL. They stay open as known noise.
+- The ~613 "valid grouped number the machine cannot find" were a machine reading bug, not a data bug: a cell whose digits are split over tags/lines (`<SPAN>1</SPAN>` `<SPAN>4</SPAN>` `<SPAN>9,810</SPAN>`, 에이치케이 20161114000399 table 23) is joined by the loader to 149,810, but `machine_note._read_source_cell` read the first line (`1`). mn13 (`47126a6`) tries the joined reading first.
+- Re-classification of the 2,986 open extra_row other issues: valid grouped not found 619 -> 259, value in paired table 751 -> 1,418.
+- `scope retriage` (note, 8 shards, dry-run then apply): 1,194 stale issues closed. extra_row other 2,986 -> 2,168, total 213 -> 108, value_mismatch other 284 -> 111.
+- Still open: 259 valid-looking grouped values not found (mostly trailing-dot and 4-digit/2-digit shapes, see `xo3_sum.py` output), 1,418 "value exists in the paired table" (table pairing / duplicate-row limits, not analysed by cell), 357 in another note table, 145 nowhere, 730 two-group (machine limit).

@@ -75,7 +75,10 @@ from fin2.verification import machine_compare as mc
 # <SPAN>9,810</SPAN>', 에이치케이 20161114000399 table 23) is read as the one number the loader joins it into
 # (149,810). mn11 tried the joined reading only when the first-line reading failed, but `parse_amount` of
 # '1\n4\n9,810' returns 1, so the machine saw a small amount and called the DB value an extra cell.
-TOOL_VERSION = "mn13"
+# mn14 (2026-11-02): a cell that ends in one stray dot after a full thousands grouping ('810,000.', '27,777,623.',
+# 우리엔터프라이즈 20210514000339 table 71, whose row total confirms 810,000) is loaded by `parse_amount` as the
+# integer, but the machine refused it, so every such DB value was reported as an extra cell (105 open issues).
+TOOL_VERSION = "mn14"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -147,6 +150,7 @@ def _stacked_lines(row, label: str):
 
 
 _SPLIT_DIGITS = re.compile(r"^[\d,()\-\s]+$")
+_TRAILING_DOT = re.compile(r"^[(\-]*\d{1,3}(?:,\d{3})+\.\)?$")
 
 
 def _read_source_cell(cell: str):
@@ -162,6 +166,10 @@ def _read_source_cell(cell: str):
     v = _read_amount(cell)
     if v is not None:
         return v
+    if _TRAILING_DOT.match(cell):                # mn14: one stray trailing dot, read like the loader
+        joined = rl_parse(cell)
+        if isinstance(joined, (int, float)) and joined == int(joined) and joined != 0 and not _is_year(int(joined)):
+            return int(joined)
     first = split_amount_with_tail(cell)
     if first:
         return _read_amount(first)

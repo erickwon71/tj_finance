@@ -150,3 +150,9 @@ def test_stacked_row_is_read_line_by_line_like_r296_mn12(tmp_path):
     assert mn._stacked_lines(["a&cr;b&cr;c", "1,000&cr;2,000"], "a&cr;b&cr;c") is None
     assert mn._stacked_lines(["a&cr;b", "1,000&cr;2,000"], "a&cr;b") is None            # fewer than 3 lines
     assert mn._stacked_lines(["a&cr;b&cr;c", "x&cr;y&cr;z"], "a&cr;b&cr;c") is None      # no amount on any line
+
+
+def test_one_trailing_dot_after_thousands_groups_is_read_like_the_loader_mn14():
+    r = mn._read_source_cell
+    assert r("810,000.") == 810000 and r("27,777,623.") == 27777623
+    assert r("1.5") is None and r(".") is None and r("99.") is None

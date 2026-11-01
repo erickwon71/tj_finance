@@ -154,3 +154,11 @@ python scripts/note_remaining_triage.py --show 252328
 - Re-classification of the 2,986 open extra_row other issues: valid grouped not found 619 -> 259, value in paired table 751 -> 1,418.
 - `scope retriage` (note, 8 shards, dry-run then apply): 1,194 stale issues closed. extra_row other 2,986 -> 2,168, total 213 -> 108, value_mismatch other 284 -> 111.
 - Still open: 259 valid-looking grouped values not found (mostly trailing-dot and 4-digit/2-digit shapes, see `xo3_sum.py` output), 1,418 "value exists in the paired table" (table pairing / duplicate-row limits, not analysed by cell), 357 in another note table, 145 nowhere, 730 two-group (machine limit).
+
+## 2026-11-02 - cell-level pass over the remaining extra_row other issues (mn14, mn15, batches 264/265)
+
+- **Method that worked**: compare the CURRENT parser's note cells with the DB per issue cell (`scratchpad/stale.py`) and per filing (`stale2.py`). A cell the current parser no longer loads the way the DB has it = stale DB (reload), anything else = machine reading limit or a real table-pairing case.
+- Batch 264: 478 stale cells (e.g. 삼보판지 20150515000896 `-&cr;3,200,000&cr;JPY...` loaded as -3.2B, 포니링크 20200813000190 `1,6000,000`) -> 8-shard note reload, failed 0. Batch 265: the 39 filings whose DB differs from the current parser anywhere (first run refused: dirty tree - commit before `batch reload`; rerun ok).
+- mn14 (`trailing dot`, `810,000.`, 105 issues) and mn15 (R158 dot-grouped cell `8.490`/`(109.886)`/`2.939,347` is the integer when the row prints the same digits with commas) are machine-reading fixes mirroring the loader; `scope retriage` closed ~236 more.
+- State now: extra_row other 1,328 (1,009 filings), total 60, shares 21, currency 2. Remaining: two-group damaged cells ~730 (machine limit, user decision 2026-11-01), valid-looking grouped values the machine cannot find ~86, odd shapes ~68, nowhere ~130, value in another note table ~100, paired-table cases (duplicates / row counting) rest of the ~420.
+- Untouched: filings without open issues keep their old note rows (full note reload = user decision).

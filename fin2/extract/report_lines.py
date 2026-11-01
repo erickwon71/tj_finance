@@ -2231,6 +2231,8 @@ def _emit_note_lines(
                 unreadable = {i for i in unresolved_dot_cell_indices(row.raw_amounts, row.account_name)
                               if i < len(row.amounts)}
                 for col_idx, amount in enumerate(row.amounts):
+                    if _is_note_table_ref_column_label(note_col_labels.get(col_idx)):
+                        continue                    # R297 - a note-number column, not amounts
                     # R291: a two-amount cell is not read as a number either, but its row is kept
                     is_unreadable = amount is None and (
                         col_idx in unreadable
@@ -2293,6 +2295,19 @@ _NOTE_REF_COLUMN_LABELS = frozenset(["주석", "주석번호", "주기"])
 def _is_note_ref_column_label(label: str | None) -> bool:
     """R249 — header text of the note-reference column (spaces inside are layout padding)."""
     return bool(label) and label.replace(" ", "").replace("\u3000", "") in _NOTE_REF_COLUMN_LABELS
+
+
+# R297 - the same for the note tables: the column label is the header path ('(단위: 천원)>관련주석'), so the
+#   note-reference column is recognised by its LAST header segment. Its cells ('22,23', '4,5') are note numbers;
+#   the comma-stripped digits (2223) used to be loaded as amounts.
+_R297_NOTE_TABLE_REF_COLUMN = True
+_NOTE_TABLE_REF_COLUMN_LABELS = _NOTE_REF_COLUMN_LABELS | {"관련주석"}
+
+
+def _is_note_table_ref_column_label(label: str | None) -> bool:
+    if not (_R297_NOTE_TABLE_REF_COLUMN and label):
+        return False
+    return label.split(">")[-1].replace(" ", "").replace("\u3000", "") in _NOTE_TABLE_REF_COLUMN_LABELS
 
 
 def _emit_sce_lines(

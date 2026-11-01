@@ -550,6 +550,7 @@
 | R295 | R295. 주석 표의 행은 첫 물리 칸이 비어도 라벨 영역의 다른 칸에 글자가 있으면 그 글자를 라벨로 싣는다 (2026-10-29, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | scope note |
 | R296 | R296. 한 행에 여러 논리 행이 줄로 압축된 칸(라벨 칸 줄 수 = 모든 값 칸 줄 수)은 줄 단위로 나눈다 (2026-10-30, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | 읽기 단계 표식 U+E001 + `_grid_body_rows` |
 | R296-b | R296-b. 첫 줄이 홑 `-` 이고 둘째 줄이 금액인 칸(`-&cr;3,272,017`)은 음수가 아니라 두 줄 칸 — 결측 (2026-10-31, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | 읽기 단계 `&#10;` + `parse_amount_decimal` |
+| R297 | R297. 주석 표의 `주석`·`관련주석` 열은 금액 열이 아니다 — 주석번호 목록을 싣지 않는다 (2026-11-01, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_is_note_table_ref_column_label` |
 
 ## 0. 규칙 색인
 

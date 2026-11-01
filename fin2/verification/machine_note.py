@@ -71,7 +71,11 @@ from fin2.verification import machine_compare as mc
 # mn12 (2026-10-30): a source row that packs several rows into its cells (R296: a label cell of 3+ '&cr;' lines
 # and every other printing cell with the same number of lines) is read line by line, like the loader splits it;
 # before, only the first line of each value cell was read and every row R296 produced was an "extra cell".
-TOOL_VERSION = "mn12"
+# mn13 (2026-11-01): a cell whose digits are split over several tags / lines ('<SPAN>1</SPAN>\n<SPAN>4</SPAN>\n
+# <SPAN>9,810</SPAN>', 에이치케이 20161114000399 table 23) is read as the one number the loader joins it into
+# (149,810). mn11 tried the joined reading only when the first-line reading failed, but `parse_amount` of
+# '1\n4\n9,810' returns 1, so the machine saw a small amount and called the DB value an extra cell.
+TOOL_VERSION = "mn13"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -148,17 +152,19 @@ _SPLIT_DIGITS = re.compile(r"^[\d,()\-\s]+$")
 def _read_source_cell(cell: str):
     """mn11 - `_read_amount` of a source cell, else of what the loader reads from it: the first amount in front
     of an R294 tail, or a number whose digits are split by white space (R150 / `parse_amount`)."""
-    v = _read_amount(cell)
-    if v is not None or not cell:
-        return v
+    if not cell:
+        return _read_amount(cell)
     from fin2.extract.report_lines import parse_amount as rl_parse, split_amount_with_tail
+    if _WS.search(cell) and _SPLIT_DIGITS.match(cell):
+        joined = rl_parse(cell)                  # mn13: the joined reading comes first, like the loader
+        if isinstance(joined, (int, float)) and joined == int(joined) and joined != 0 and not _is_year(int(joined)):
+            return int(joined)
+    v = _read_amount(cell)
+    if v is not None:
+        return v
     first = split_amount_with_tail(cell)
     if first:
         return _read_amount(first)
-    if _WS.search(cell) and _SPLIT_DIGITS.match(cell):
-        joined = rl_parse(cell)
-        if isinstance(joined, (int, float)) and joined == int(joined) and joined != 0 and not _is_year(int(joined)):
-            return int(joined)
     return None
 
 

@@ -124,6 +124,12 @@ def test_source_cell_is_read_like_the_loader_mn11():
     assert r("5,000 한화 설명") is None and r("") is None
 
 
+def test_digits_split_over_lines_are_joined_before_the_first_line_mn13():
+    r = mn._read_source_cell
+    assert r("1\n4\n9,810") == 149810 and r("(8\n8,\n488)") == -88488
+    assert r("1,000\n2,000") == 1000 and r("1,345,506") == 1345506
+
+
 def test_source_table_counts_tail_and_split_cells_once(tmp_path):
     xml = XML.replace("<TD>(900,000)</TD>", "<TD>(900,000)</TD><TD>20,000(USD 15)</TD><TD><SPAN>3,333,33</SPAN>\n<SPAN>3</SPAN></TD>")
     p = tmp_path / "m.xml"

@@ -205,6 +205,12 @@ def label_segments(col_label: str | None) -> list[str]:
 _FX_AMOUNT_WORDS_RE = re.compile(r"환율\s*(?:변동|효과|차이|조정|평가)(?:\s*효과)?|환산\s*(?:차이|손익)")
 
 
+# R298 - an area column ('면적(㎡)', '㎥') is no amount: with a 천원 table declaration its 7,494 ㎡ was stored as 7,494,000 won
+# (진바이오텍 20220318000006 table 30; 14,003 cells in 1,642 filings carry '㎡' in the column header, 11,500 cells '면적').
+_R298_AREA_COLUMNS = True
+_AREA_COL_RE = re.compile(r"㎡|㎥|면적")
+
+
 def column_is_non_money(col_label: str | None) -> bool:
     """열 헤더 원문이 **비금액이라고 말하는가**. 헤더가 없으면 말해주는 것이 없다 → False.
 
@@ -212,6 +218,7 @@ def column_is_non_money(col_label: str | None) -> bool:
     기간이고 하위 단이 비율인 경우를 잡아야 한다.
     """
     return any(NON_MONEY_COL_RE.search(_FX_AMOUNT_WORDS_RE.sub("", seg))
+               or (_R298_AREA_COLUMNS and _AREA_COL_RE.search(seg))
                for seg in label_segments(col_label))
 
 

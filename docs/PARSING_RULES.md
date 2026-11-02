@@ -527,6 +527,7 @@
 | R273 | R273. 쉼표 묶음이 깨진 금액 칸(`10,921,090,50`)은 읽을 수 없는 칸으로 둔다 — NULL + value_raw (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R273-b | R273-b. 더 많은 깨진 쉼표 묶음 모양(`1,1112,007`·`9,999,,999`·`,663,413,476`·`(17,08,854)`)도 읽을 수 없는 칸으로 둔다 — NULL + value_raw (2026-10-31, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_is_more_broken_shape` |
 | R273-c | R273-c. 쉼표 묶음 셋 이상 + 3자리 아닌 묶음(`4,15,36,37`·`2016,05,20`)은 금액이 아니다 — NULL + value_raw (2026-11-02, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_is_more_broken_shape` |
+| R298 | R298. 열 머리글이 면적(`㎡`·`㎥`·`면적`)이면 금액 열이 아니다 — value_won 비움, 원문은 value_raw (2026-11-03, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `column_is_non_money` |
 | R274 | R274. 여러 줄 라벨 `주당이익 / 기본주당순이익 / 희석주당순이익` 행은 줄 수만큼의 행으로 나눈다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R275 | R275. 자본변동표 열 이름 어휘에 `보통주납입자본`·`기타자본항목` 을 추가한다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R276 | R276. 같은 기수가 겹쳐 인쇄된 열은 인쇄된 연도로 기간을 가른다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |

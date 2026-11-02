@@ -90,7 +90,9 @@ from fin2.verification import machine_compare as mc
 # row's unit (amount_normalizer), the machine reads integers only, so 82 of 130 'amount exists nowhere' extra_row
 # issues (아세아시멘트 20180...: 약정환율 1107.80 -> 1,108, 싸이버원 2024Q1 table 43) were stored roundings. Such a rounded
 # integer now joins the superset of source values (`alt_amounts`) only - it is never a source amount the DB must have.
-TOOL_VERSION = "mn17"
+# mn18 (2026-11-03): a number broken over lines by `&cr;` inside one cell ('3,252,626,&cr;975', 녹십자 2021FY
+# table 105) is joined by the loader; the machine's source cell keeps the literal `&cr;` and read nothing.
+TOOL_VERSION = "mn18"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -174,6 +176,8 @@ def _read_source_cell(cell: str):
     if not cell:
         return _read_amount(cell)
     from fin2.extract.report_lines import parse_amount as rl_parse, split_amount_with_tail
+    if _CR in cell and re.fullmatch(r"[\d,()\-]+(?:&cr;[\d,()\-]+)+", cell):
+        cell = cell.replace(_CR, "\n")          # mn18: digits split by a line break inside one cell
     if _WS.search(cell) and _SPLIT_DIGITS.match(cell):
         joined = rl_parse(cell)                  # mn13: the joined reading comes first, like the loader
         if isinstance(joined, (int, float)) and joined == int(joined) and joined != 0 and not _is_year(int(joined)):

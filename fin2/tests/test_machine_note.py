@@ -176,3 +176,9 @@ def test_decimal_cell_joins_the_alt_values_as_the_rounded_integer_mn17(tmp_path)
     p.write_text(xml, encoding="utf-8")
     tables, found = mn.load_source_tables(str(p))
     assert 12346 in tables[0].alt_values and 12346 not in tables[0].values
+
+
+def test_number_broken_by_a_line_break_inside_a_cell_is_joined_mn18():
+    r = mn._read_source_cell
+    assert r("3,252,626,&cr;975") == 3252626975 and r("286,&cr;015,&cr;804") == 286015804
+    assert r("1,000&cr;2,000") == 1000 and r("-&cr;3,272,017") is None

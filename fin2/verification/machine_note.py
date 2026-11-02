@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import difflib
 import re
+from decimal import Decimal, ROUND_HALF_UP
 from types import SimpleNamespace
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -85,7 +86,11 @@ from fin2.verification import machine_compare as mc
 # mn16 (2026-11-02): a cell printed '(-715,525)' (minus inside the brackets) is the negative amount for the loader
 # (`parse_amount` -> -715,525, the column sums confirm it, 바이오니아 2019Q1 consolidated table 102) but `machine_compare` refused
 # it, so about 40 DB amounts of that shape were reported as extra cells.
-TOOL_VERSION = "mn16"
+# mn17 (2026-11-02): the loader stores a printed decimal (1107.80, '3,671.17원') as the ROUND_HALF_UP integer in the
+# row's unit (amount_normalizer), the machine reads integers only, so 82 of 130 'amount exists nowhere' extra_row
+# issues (아세아시멘트 20180...: 약정환율 1107.80 -> 1,108, 싸이버원 2024Q1 table 43) were stored roundings. Such a rounded
+# integer now joins the superset of source values (`alt_amounts`) only - it is never a source amount the DB must have.
+TOOL_VERSION = "mn17"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -158,6 +163,7 @@ def _stacked_lines(row, label: str):
 
 _SPLIT_DIGITS = re.compile(r"^[\d,()\-\s]+$")
 _DOT_GROUPED = re.compile(r"^(\(?-?)(\d{1,3}(?:[.,]\d{3})+)(\)?)$")
+_DECIMAL_CELL = re.compile(r"^\(?-?(\d{1,3}(?:,\d{3})*\.\d+)원?\)?$")
 _PAREN_MINUS = re.compile(r"^\(-\d{1,3}(?:,\d{3})*\)$")
 _TRAILING_DOT = re.compile(r"^[(\-]*\d{1,3}(?:,\d{3})+\.\)?$")
 
@@ -259,6 +265,13 @@ def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
                         v = _read_source_cell(cell)
                         if v is None:
                             v = _read_dot_grouped(cell, row_digits)
+                        if v is None and copies and not _PER_SHARE.search(label):
+                            m = _DECIMAL_CELL.match(cell)
+                            if m:                       # mn17: the loader stores the ROUND_HALF_UP integer
+                                v = int(Decimal(m.group(1).replace(",", "")).to_integral_value(rounding=ROUND_HALF_UP))
+                                if abs(v) >= MIN_AMOUNT:
+                                    target.append((v, mb.norm(label)[:80], col))
+                                continue
                         if v is None or abs(v) < MIN_AMOUNT or _PER_SHARE.search(label):
                             if not copies and mc.parse_amount(cell) not in (None, mc._EMPTY):
                                 st.n_skipped += 1

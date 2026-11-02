@@ -168,3 +168,11 @@ def test_dot_grouped_cell_is_read_when_the_row_prints_the_same_digits_mn15():
 def test_minus_inside_brackets_is_read_like_the_loader_mn16():
     r = mn._read_source_cell
     assert r("(-715,525)") == -715525 and r("(-128,612,142)") == -128612142 and r("(-0)") is None
+
+
+def test_decimal_cell_joins_the_alt_values_as_the_rounded_integer_mn17(tmp_path):
+    xml = XML.replace("<TD>(900,000)</TD>", "<TD>(900,000)</TD><TD>1107.80</TD><TD>3,671.17원</TD><TD>12,345.5</TD>")
+    p = tmp_path / "m.xml"
+    p.write_text(xml, encoding="utf-8")
+    tables, found = mn.load_source_tables(str(p))
+    assert 12346 in tables[0].alt_values and 12346 not in tables[0].values

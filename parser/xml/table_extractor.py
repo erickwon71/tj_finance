@@ -2483,6 +2483,10 @@ def _is_broken_comma_grouping(cell: str) -> bool:
 #   a group of 4+ digits after the first comma ('9,9999,999'), and 3+ groups whose middle group is not 3 digits
 #   ('99,99,999', '(17,08,854)'; a 2-digit middle group). Two-group shapes ('99,99', '999,99') are still left alone (R273).
 _R273B_MORE_BROKEN_SHAPES = True
+# R273-c - three or more comma groups of which some group after the first is not 3 digits ('4,15,36,37', '4,6,15,38',
+#   '2015,03,31', '9,99,99,99', '12,5,100') cannot be a thousands grouping: they are note-reference lists or dates, and the
+#   comma-stripped digits (4153637) are not an amount. Two-group shapes ('22,23', '160,21') stay as they were (R273).
+_R273C_SHORT_GROUPS = True
 
 
 def _is_more_broken_shape(core: str) -> bool:
@@ -2494,6 +2498,9 @@ def _is_more_broken_shape(core: str) -> bool:
     if toks[0] == "":
         return len(toks) >= 2 and all(toks[1:]) and sum(len(t) for t in toks) >= 4
     if len(toks[0]) <= 3 and any(len(t) >= 4 for t in toks[1:]):
+        return True
+    if _R273C_SHORT_GROUPS and len(toks) >= 3 and 1 <= len(toks[0]) <= 4 and all(1 <= len(t) <= 3 for t in toks[1:]) \
+            and any(len(t) != 3 for t in toks[1:]):
         return True
     return (len(toks) >= 3 and len(toks[0]) <= 3 and len(toks[-1]) == 3
             and any(len(t) == 2 for t in toks[1:-1]) and all(len(t) <= 3 for t in toks[1:-1]))

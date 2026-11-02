@@ -82,7 +82,10 @@ from fin2.verification import machine_compare as mc
 # '2.939,347', '3.544.298') as the integer when another cell of the same row prints the same digits with commas
 # ('8,490'). The machine saw a decimal and refused the cell, so the DB amount counted once too often as an extra
 # cell (about 300 open note extra_row issues, e.g. 삼목에스폼 20221129000914 table 43, 에스티큐브 20220502000570).
-TOOL_VERSION = "mn15"
+# mn16 (2026-11-02): a cell printed '(-715,525)' (minus inside the brackets) is the negative amount for the loader
+# (`parse_amount` -> -715,525, the column sums confirm it, 바이오니아 2019Q1 consolidated table 102) but `machine_compare` refused
+# it, so about 40 DB amounts of that shape were reported as extra cells.
+TOOL_VERSION = "mn16"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -155,6 +158,7 @@ def _stacked_lines(row, label: str):
 
 _SPLIT_DIGITS = re.compile(r"^[\d,()\-\s]+$")
 _DOT_GROUPED = re.compile(r"^(\(?-?)(\d{1,3}(?:[.,]\d{3})+)(\)?)$")
+_PAREN_MINUS = re.compile(r"^\(-\d{1,3}(?:,\d{3})*\)$")
 _TRAILING_DOT = re.compile(r"^[(\-]*\d{1,3}(?:,\d{3})+\.\)?$")
 
 
@@ -171,7 +175,7 @@ def _read_source_cell(cell: str):
     v = _read_amount(cell)
     if v is not None:
         return v
-    if _TRAILING_DOT.match(cell):                # mn14: one stray trailing dot, read like the loader
+    if _TRAILING_DOT.match(cell) or _PAREN_MINUS.match(cell):                # mn14: one stray trailing dot, read like the loader
         joined = rl_parse(cell)
         if isinstance(joined, (int, float)) and joined == int(joined) and joined != 0 and not _is_year(int(joined)):
             return int(joined)

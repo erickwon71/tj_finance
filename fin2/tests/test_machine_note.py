@@ -163,3 +163,8 @@ def test_dot_grouped_cell_is_read_when_the_row_prints_the_same_digits_mn15():
     assert mn._read_dot_grouped("8.490", d) == 8490 and mn._read_dot_grouped("(109.886)", d) == -109886
     assert mn._read_dot_grouped("2.939,347", {"2939347"}) == 2939347
     assert mn._read_dot_grouped("1.234", d) is None and mn._read_dot_grouped("12.5", {"125"}) is None
+
+
+def test_minus_inside_brackets_is_read_like_the_loader_mn16():
+    r = mn._read_source_cell
+    assert r("(-715,525)") == -715525 and r("(-128,612,142)") == -128612142 and r("(-0)") is None

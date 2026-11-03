@@ -242,7 +242,7 @@ def row_label_is_share_count(label: str | None) -> bool:
 # 4,312,142 and '기초수량 적용일수 (일)' 91 sat in a 천원 table and were stored x1000).
 _R302_ROW_OWN_UNIT = True
 _ROW_UNIT_NON_MONEY_RE = re.compile(
-    r"\(\s*단위\s*:?\s*(?:주|건|개|명|일|%|배|회)\s*\)\s*$|\(\s*%\s*\)\s*$")
+    r"\(\s*단위\s*:?\s*(?:주|건|개|명|일|%|배|회)\s*\)\s*$|\(\s*(?:%|일)\s*\)\s*$")
 _ROW_UNIT_WON_RE = re.compile(r"\(\s*단위\s*:?\s*원\s*\)\s*$")
 
 

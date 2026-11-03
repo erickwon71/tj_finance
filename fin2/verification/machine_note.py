@@ -92,7 +92,7 @@ from fin2.verification import machine_compare as mc
 # integer now joins the superset of source values (`alt_amounts`) only - it is never a source amount the DB must have.
 # mn18 (2026-11-03): a number broken over lines by `&cr;` inside one cell ('3,252,626,&cr;975', 녹십자 2021FY
 # table 105) is joined by the loader; the machine's source cell keeps the literal `&cr;` and read nothing.
-TOOL_VERSION = "mn20"
+TOOL_VERSION = "mn21"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -253,6 +253,15 @@ def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
             for copies, target in ((False, st.amounts), (True, st.alt_amounts)):
                 for row in mb._own_grid(tb, clean=_clean, copies=copies):
                     label = next((c for c in row if c and mc.parse_amount(c) is None), "")
+                    # mn21: the 주당 test reads the innermost text cell, like the DB side
+                    # (the last text cell BEFORE the first amount: a trailing remark column is no label)
+                    inner = []
+                    for c in row:
+                        if c and mc.parse_amount(c) is None:
+                            inner.append(c)
+                        elif c and _read_source_cell(c) is not None:
+                            break
+                    ps_label = inner[-1] if inner else label
                     stacked = _stacked_lines(row, label)
                     if stacked:
                         for lab_line, items in stacked:
@@ -269,14 +278,14 @@ def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
                         v = _read_source_cell(cell)
                         if v is None:
                             v = _read_dot_grouped(cell, row_digits)
-                        if v is None and copies and not _PER_SHARE.search(label):
+                        if v is None and copies and not _PER_SHARE.search(ps_label):
                             m = _DECIMAL_CELL.match(cell)
                             if m:                       # mn17: the loader stores the ROUND_HALF_UP integer
                                 v = int(Decimal(m.group(1).replace(",", "")).to_integral_value(rounding=ROUND_HALF_UP))
                                 if abs(v) >= MIN_AMOUNT:
                                     target.append((v, mb.norm(label)[:80], col))
                                 continue
-                        if v is None or abs(v) < MIN_AMOUNT or _PER_SHARE.search(label):
+                        if v is None or abs(v) < MIN_AMOUNT or _PER_SHARE.search(ps_label):
                             if not copies and mc.parse_amount(cell) not in (None, mc._EMPTY):
                                 st.n_skipped += 1
                             continue
@@ -316,7 +325,7 @@ def tables_from_rows(rows) -> list[DbTable]:
     tabs: dict[tuple, DbTable] = {}
     for r in rows:
         t = tabs.setdefault((r.basis, r.table_seq), DbTable(r.basis or "", r.table_seq))
-        if _PER_SHARE.search(r.label_raw or ""):
+        if _PER_SHARE.search((r.label_raw or "").split(">")[-1]):       # mn21: innermost label only
             t.n_skipped += 1
             continue
         if r.value_won is None:

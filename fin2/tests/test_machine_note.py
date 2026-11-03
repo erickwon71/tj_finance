@@ -206,3 +206,15 @@ def test_value_difference_with_both_numbers_elsewhere_in_the_filing_is_no_findin
     twin = _db([-900000], seq=4, labels=("대여금",))
     r = mn.compare([t, twin], tables, found)
     assert not [f for f in r.findings if f["kind"] == "value"]
+
+
+def test_per_share_test_reads_the_innermost_label_only_mn21():
+    # the outer heading names 주당 for every row; only the innermost label decides (DB side)
+    rows = [
+        mn.SimpleNamespace(basis="consolidated", table_seq=1, row_order=0, label_raw="기본주당이익 계산>유통주식수 (단위: 주)",
+                           col_index=0, col_label="", value_won=None, adecimal=None, value_raw="4,312,142"),
+        mn.SimpleNamespace(basis="consolidated", table_seq=1, row_order=1, label_raw="기본주당이익 계산>기본주당이익(손실)",
+                           col_index=0, col_label="", value_won=500000, adecimal=0, value_raw=None),
+    ]
+    (t,) = mn.tables_from_rows(rows)
+    assert t.values == (4312142,)

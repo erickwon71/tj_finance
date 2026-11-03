@@ -182,3 +182,11 @@ def test_number_broken_by_a_line_break_inside_a_cell_is_joined_mn18():
     r = mn._read_source_cell
     assert r("3,252,626,&cr;975") == 3252626975 and r("286,&cr;015,&cr;804") == 286015804
     assert r("1,000&cr;2,000") == 1000 and r("-&cr;3,272,017") is None
+
+
+def test_table_whose_amounts_are_all_printed_in_the_source_is_no_extra_table_mn19(tmp_path):
+    tables, found = _src(tmp_path)
+    r = mn.compare([_db([1200000, -900000, 5000]), _db([5000], seq=2, labels=("전혀",))], tables, found)
+    assert r.verdict == "clean" and r.counts["by_values"] == 1
+    r = mn.compare([_db([1200000, -900000, 5000]), _db([5000, 31337], seq=2, labels=("전혀", "다른"))], tables, found)
+    assert [f["kind"] for f in r.findings] == ["extra_table"]

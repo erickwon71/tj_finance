@@ -92,7 +92,7 @@ from fin2.verification import machine_compare as mc
 # integer now joins the superset of source values (`alt_amounts`) only - it is never a source amount the DB must have.
 # mn18 (2026-11-03): a number broken over lines by `&cr;` inside one cell ('3,252,626,&cr;975', 녹십자 2021FY
 # table 105) is joined by the loader; the machine's source cell keeps the literal `&cr;` and read nothing.
-TOOL_VERSION = "mn18"
+TOOL_VERSION = "mn19"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -401,6 +401,7 @@ def compare(db_tables: list[DbTable], src_tables: list[SrcTable], section_found:
         exact[(s.basis, s.values)].append(s)
         if s.alt_values != s.values:
             exact[(s.basis, s.alt_values)].append(s)
+    src_union = {v for s in src_tables for v in s.alt_values}
     used: set[int] = set()
     counts = {"db_tables": len(db_tables), "exact": 0, "differs": 0, "extra_table": 0}
     for t in db_tables:
@@ -413,6 +414,12 @@ def compare(db_tables: list[DbTable], src_tables: list[SrcTable], section_found:
         pool = by_basis.get(t.basis) or src_tables
         scored = sorted(((_pair_score(t, s), s) for s in pool), key=lambda x: -x[0])
         if not scored or scored[0][0] < MATCH_MIN:
+            # mn19: a table the pairing score cannot match (one or two amounts, a source table split
+            # or merged differently) is no extra table when every amount it holds is printed
+            # somewhere in the source notes of its basis
+            if t.values and all(v in src_union for v in t.values):
+                counts["by_values"] = counts.get("by_values", 0) + 1
+                continue
             counts["extra_table"] += 1
             res.findings.append({"kind": "extra_table", "basis": t.basis, "table_seq": t.seq,
                                  "match": round(scored[0][0], 2) if scored else 0.0,

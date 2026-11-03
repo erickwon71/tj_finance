@@ -530,6 +530,7 @@
 | R298 | R298. 열 머리글이 면적(`㎡`·`㎥`·`면적`)이면 금액 열이 아니다 — value_won 비움, 원문은 value_raw (2026-11-03, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `column_is_non_money` |
 | R299 | R299. 주석 셀이 스스로 `원` 을 붙여 찍으면 adecimal 도 원이다 (2026-11-03, 적용 계층: 2 — 읽기, 메타데이터) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_R299_NOTE_OWN_WON_ADECIMAL` |
 | R300 | R300. 행 라벨이 주식수이면 금액이 아니다 — value_won 비움, 원문은 value_raw (2026-11-03, 적용 계층: 2 — 읽기, 단위=행 귀속) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `row_label_is_share_count` |
+| R301 | R301. 홑 `-` 줄이 여러 개 이어진 뒤 금액 줄이 오는 칸도 음수가 아니다 (2026-11-03, 적용 계층: 2 — 읽기, R296-b 확장) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_R301_DASH_LINES` |
 | R274 | R274. 여러 줄 라벨 `주당이익 / 기본주당순이익 / 희석주당순이익` 행은 줄 수만큼의 행으로 나눈다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R275 | R275. 자본변동표 열 이름 어휘에 `보통주납입자본`·`기타자본항목` 을 추가한다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R276 | R276. 같은 기수가 겹쳐 인쇄된 열은 인쇄된 연도로 기간을 가른다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |

@@ -42,3 +42,11 @@ def test_two_line_dash_then_amount_cell_is_unreadable_not_negative():
     assert parse_amount("-3,272,017", 1) == -3272017
     assert parse_amount("- 3,272,017", 1) == -3272017          # a space is a printed minus sign, not a line
     assert parse_amount("-", 1) is None or parse_amount("-", 1) == 0
+
+
+def test_several_dash_lines_before_an_amount_are_no_negative_r301():
+    out = sanitize_dart_xml('<TD W="1">- &cr;- &cr;1,473,000,000 </TD>'.encode()).decode()
+    assert "&cr;" not in out and out.count("&#10;") == 2
+    assert parse_amount("- \n- \n1,473,000,000", 1) is None
+    assert parse_amount("-\n1,000", 1) is None and parse_amount("- 1,000", 1) == -1000
+    assert "&#10;" not in sanitize_dart_xml("<TD>가- &cr;1,000</TD>".encode()).decode()

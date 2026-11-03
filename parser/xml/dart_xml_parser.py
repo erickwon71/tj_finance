@@ -303,6 +303,10 @@ _AMOUNT_STACK_BREAK = re.compile(rb"(?<=,\d{3})&cr;(?=(?:&cr;)*(?:\d{1,3}(?:,\d{
                                    rb"|(?<=&cr;-)&cr;(?=\d{1,3}(?:,\d{3})*(?:&cr;|<|\s|$))")
 _R296B_DASH_FIRST_LINE = True
 _DASH_FIRST_LINE_BREAK = re.compile(rb"(?<=>-)&cr;(?=\d{1,3}(?:,\d{3})+(?:&cr;|<|\s|$))")
+# R301 - the same for dash lines followed by blanks or repeated (`- &cr;- &cr;1,473,000,000`, 피제이전자
+# 20150813000809 table 13): every lone dash line breaks, so the cell is no negative amount either
+_R301_DASH_LINES = True
+_DASH_LINES_BREAK = re.compile(rb"(>\s*(?:-\s*&cr;\s*)+)(?=\d{1,3}(?:,\d{3})+(?:&cr;|<|\s|$))")
 
 
 # R274 - a row whose label cell prints several lines (`주당이익&cr;   기본주당순이익&cr;   희석주당순이익`)
@@ -396,6 +400,8 @@ def sanitize_dart_xml(raw: bytes) -> bytes:
     out = _AMOUNT_STACK_BREAK.sub(b"&#10;", out)               # R246 — before R224 deletes &cr;
     if _R296B_DASH_FIRST_LINE:
         out = _DASH_FIRST_LINE_BREAK.sub(b"&#10;", out)
+    if _R301_DASH_LINES:
+        out = _DASH_LINES_BREAK.sub(lambda m: m.group(1).replace(b"&cr;", b"&#10;"), out)
     if _R274_STACKED_ROW_DIGIT_BREAK:
         out = _break_stacked_row_digits(out)
     out = _NAMED_ENTITY.sub(_resolve_named_entity, out)    # R224 — must run first

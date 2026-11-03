@@ -92,7 +92,7 @@ from fin2.verification import machine_compare as mc
 # integer now joins the superset of source values (`alt_amounts`) only - it is never a source amount the DB must have.
 # mn18 (2026-11-03): a number broken over lines by `&cr;` inside one cell ('3,252,626,&cr;975', 녹십자 2021FY
 # table 105) is joined by the loader; the machine's source cell keeps the literal `&cr;` and read nothing.
-TOOL_VERSION = "mn19"
+TOOL_VERSION = "mn20"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -402,6 +402,7 @@ def compare(db_tables: list[DbTable], src_tables: list[SrcTable], section_found:
         if s.alt_values != s.values:
             exact[(s.basis, s.alt_values)].append(s)
     src_union = {v for s in src_tables for v in s.alt_values}
+    db_union = {v for t in db_tables for v in t.values}
     used: set[int] = set()
     counts = {"db_tables": len(db_tables), "exact": 0, "differs": 0, "extra_table": 0}
     for t in db_tables:
@@ -433,6 +434,13 @@ def compare(db_tables: list[DbTable], src_tables: list[SrcTable], section_found:
         a = _align(t, best.values, best.amounts)
         b = _align(t, best.alt_values, best.alt_amounts) if best.alt_values != best.values else a
         for f in (a if len(a) <= len(b) else b):
+            # mn20: a 'value' difference whose two numbers both exist on the other side of the
+            # filing (the DB amount in some source table, the source amount in some DB table) is a
+            # row aligned to the wrong line (comparison tables of two years, duplicated blocks),
+            # not a wrong amount; a sign flip or a scaled amount has no such twin
+            if f.get("kind") == "value" and f.get("db") in src_union and f.get("src") in db_union:
+                counts["value_elsewhere"] = counts.get("value_elsewhere", 0) + 1
+                continue
             res.findings.append({**f, "basis": t.basis, "table_seq": t.seq, "src_table": best.idx})
     counts["source_numeric_tables"] = len(src_tables)
     counts["unmatched_source_tables"] = sum(1 for s in src_tables if s.idx not in used)

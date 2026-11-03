@@ -190,3 +190,19 @@ def test_table_whose_amounts_are_all_printed_in_the_source_is_no_extra_table_mn1
     assert r.verdict == "clean" and r.counts["by_values"] == 1
     r = mn.compare([_db([1200000, -900000, 5000]), _db([5000, 31337], seq=2, labels=("전혀", "다른"))], tables, found)
     assert [f["kind"] for f in r.findings] == ["extra_table"]
+
+
+def test_value_difference_with_both_numbers_elsewhere_in_the_filing_is_no_finding_mn20(tmp_path):
+    tables, found = _src(tmp_path)
+    # 1,200,000 in the source is printed in the DB's second table; 77,000 is printed nowhere in the source
+    other = _db([1200000], seq=2, labels=("전혀",))
+    r = mn.compare([_db([1200000, 900000, 5000]), other], tables, found)
+    assert [f["kind"] for f in r.findings] == ["value"]          # 900,000 is a sign flip of -900,000: kept
+    t = mn.DbTable(basis="consolidated", seq=3)
+    t.labels = frozenset(["매출채권", "대여금"])
+    t.amounts = [(1200000, "매출채권", "당기", 0, 0), (5000, "대여금", "당기", 1, 0), (5000, "대여금", "당기", 2, 0)]
+    t.values = (1200000, 5000, 5000)
+    t.valueset = Counter(t.values)
+    twin = _db([-900000], seq=4, labels=("대여금",))
+    r = mn.compare([t, twin], tables, found)
+    assert not [f for f in r.findings if f["kind"] == "value"]

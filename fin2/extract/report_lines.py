@@ -259,7 +259,7 @@ def _apply_duplicate_period_label_fix(header_cols, rcept_no, statement, basis):
 
 from parser.common.amount_normalizer import (
     detect_unit_declaration, parse_amount, parse_amount_decimal, fractional_or_none,
-    normalize_account_name, strip_cell_whitespace)
+    normalize_account_name, strip_cell_whitespace, _CELL_OWN_WON_RE)
 
 from parser.xml.section_detector import (
     assign_tables_to_dart_sections, assign_note_tables_with_titles,
@@ -2243,7 +2243,8 @@ def _emit_note_lines(
                                   if amount is None and not is_unreadable else None)
                     if amount is None and not is_unreadable and tail_first is None:
                         continue            # 원문에 숫자가 없는 칸 — 행을 만들지 않는다(종전과 동일)
-                    mult = None if is_unreadable else cu.multiplier(col_idx)
+                    share_row = _units.row_label_is_share_count(row.account_name)     # R300
+                    mult = None if is_unreadable or share_row else cu.multiplier(col_idx)
                     value = parse_amount(tail_first or raw, mult) if mult is not None else None
                     emit(ReportLineRow(
                         corp_code=corp_code,
@@ -2264,8 +2265,10 @@ def _emit_note_lines(
                         # 아니게 만드는 유일한 장치다(units.py docstring 참고).
                         value_raw=(None if value is not None and tail_first is None
                                    else (raw.strip()[:64] or None)),
-                        adecimal=_adecimal_from_unit(mult) if mult is not None else None,
-                        unit_source=cu.source(col_idx),
+                        adecimal=(0 if _R299_NOTE_OWN_WON_ADECIMAL and mult is not None
+                                  and _CELL_OWN_WON_RE.search((tail_first or raw).strip())
+                                  else _adecimal_from_unit(mult) if mult is not None else None),
+                        unit_source=_units.SRC_NON_MONEY if share_row else cu.source(col_idx),
                         # ★ source_ref / context_raw 는 저장하지 않는다(2026-07-28).
                         #   각각 f"note:{basis}/{label_raw[:80]}" · f"note:{basis}:c{col_index}" 로
                         #   **같은 행의 basis·label_raw·col_index 에서 100% 복원**되는 파생 문자열이라
@@ -2288,6 +2291,10 @@ def _emit_note_lines(
                         unit_inherited=cu.inherited,
                     ))
 
+
+# R299 - a note cell that prints its own won suffix ('3,265,007,000원') is read without the table
+# multiplier (R149), so its adecimal says won too (the same as R285 does for the statements)
+_R299_NOTE_OWN_WON_ADECIMAL = True
 
 _NOTE_REF_COLUMN_LABELS = frozenset(["주석", "주석번호", "주기"])
 

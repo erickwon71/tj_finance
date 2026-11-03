@@ -222,6 +222,21 @@ def column_is_non_money(col_label: str | None) -> bool:
                for seg in label_segments(col_label))
 
 
+# R300 - a ROW whose label (last segment) names a share count ('발행주식수', '가중평균유통보통주식수(주)',
+# '발행한 주식의 수') holds shares, not won, whatever the column header says: the header of such a table
+# is the period ('당분기말>50,000,000주>500원'), so the column rule above never fires and the count was
+# multiplied like money (6,530,014 shares stored as 6,530,014,000 won, 네이블 20211111000269).
+_R300_SHARE_COUNT_ROWS = True
+_SHARE_COUNT_ROW_RE = re.compile(
+    r"(?:주식수|주식\s*의\s*수|주식\s*의\s*총\s*수|주식총수)\s*(?:\(\s*[주천백만]*주?\s*\))?\s*(?:\(\s*\*\s*\d*\s*\))?\s*$")
+
+
+def row_label_is_share_count(label: str | None) -> bool:
+    if not _R300_SHARE_COUNT_ROWS or not label:
+        return False
+    return bool(_SHARE_COUNT_ROW_RE.search(label.split(">")[-1].strip()))
+
+
 def column_is_money(col_label: str | None) -> bool:
     return any(_MONEY_COL_RE.search(seg) for seg in label_segments(col_label))
 

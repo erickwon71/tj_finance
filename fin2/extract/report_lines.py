@@ -2243,8 +2243,12 @@ def _emit_note_lines(
                                   if amount is None and not is_unreadable else None)
                     if amount is None and not is_unreadable and tail_first is None:
                         continue            # 원문에 숫자가 없는 칸 — 행을 만들지 않는다(종전과 동일)
-                    share_row = _units.row_label_is_share_count(row.account_name)     # R300
+                    own_unit = _units.row_label_own_unit(row.account_name)            # R302
+                    share_row = (_units.row_label_is_share_count(row.account_name)    # R300
+                                 or own_unit == "non_money")
                     mult = None if is_unreadable or share_row else cu.multiplier(col_idx)
+                    if own_unit == "won" and mult is not None:
+                        mult = 1
                     value = parse_amount(tail_first or raw, mult) if mult is not None else None
                     emit(ReportLineRow(
                         corp_code=corp_code,

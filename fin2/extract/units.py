@@ -237,6 +237,27 @@ def row_label_is_share_count(label: str | None) -> bool:
     return bool(_SHARE_COUNT_ROW_RE.search(label.split(">")[-1].strip()))
 
 
+# R302: a note ROW whose label ends in its own unit marker '(단위: 주)', '(단위: 원)', '(%)' ... is read in
+# THAT unit, not in the table's declared unit (휴맥스 20260814001937: '유통주식수의 기초수량 (단위: 주)'
+# 4,312,142 and '기초수량 적용일수 (일)' 91 sat in a 천원 table and were stored x1000).
+_R302_ROW_OWN_UNIT = True
+_ROW_UNIT_NON_MONEY_RE = re.compile(
+    r"\(\s*단위\s*:?\s*(?:주|건|개|명|일|%|배|회)\s*\)\s*$|\(\s*%\s*\)\s*$")
+_ROW_UNIT_WON_RE = re.compile(r"\(\s*단위\s*:?\s*원\s*\)\s*$")
+
+
+def row_label_own_unit(label: str | None) -> str | None:
+    """'non_money' | 'won' | None, from the last '>' segment of the row label."""
+    if not _R302_ROW_OWN_UNIT or not label:
+        return None
+    seg = label.split(">")[-1].strip()
+    if _ROW_UNIT_NON_MONEY_RE.search(seg):
+        return "non_money"
+    if _ROW_UNIT_WON_RE.search(seg):
+        return "won"
+    return None
+
+
 def column_is_money(col_label: str | None) -> bool:
     return any(_MONEY_COL_RE.search(seg) for seg in label_segments(col_label))
 

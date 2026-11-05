@@ -62,8 +62,13 @@ _EXTRA_NON_MONEY = (
     r"|\$|달러|USD|EUR|JPY|위안|엔화"
 )
 # '%' 만 위 `_PCT_AS_UNIT` 로 좁히고 나머지 표지는 그대로 쓴다.
+# R303: a '가중치' (weight) column of a weighted-average share table holds ratios ('1.00', '0.63'); R158 took
+# '1.00' for a broken thousands cell and replaced it by the digits of the row's '10,000,000' (린드먼아시아
+# 20190813000234 table 139). Switch for the A/B.
+_R303_WEIGHT_COLS = True
 NON_MONEY_COL_RE = re.compile(
     _PCT_AS_UNIT + "|" + r"비율|이자율|할인율|지분율|주당|수량|주수|배수|USD|EUR|JPY|외화"
+    + (r"|가중치" if _R303_WEIGHT_COLS else "")
     + "|" + _EXTRA_NON_MONEY)
 
 # 금액 표지 — **혼합 선언에서 양의 근거가 필요할 때만** 쓴다.

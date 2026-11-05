@@ -92,7 +92,7 @@ from fin2.verification import machine_compare as mc
 # integer now joins the superset of source values (`alt_amounts`) only - it is never a source amount the DB must have.
 # mn18 (2026-11-03): a number broken over lines by `&cr;` inside one cell ('3,252,626,&cr;975', 녹십자 2021FY
 # table 105) is joined by the loader; the machine's source cell keeps the literal `&cr;` and read nothing.
-TOOL_VERSION = "mn22"
+TOOL_VERSION = "mn23"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -321,13 +321,21 @@ def load_db_tables(conn, rcept: str) -> list[DbTable]:
             ORDER BY basis, table_seq, row_order, col_index"""), {"r": rcept}))
 
 
+_ANGLE_GROUP = re.compile(r"<[^<>]*>")
+
+
+def _innermost_label(label: str) -> str:
+    """mn23: last '>' segment of a DB label; a '>' inside '<...>' ('배당금 <주당 배당금(액면배당률)>:') is part of the text."""
+    return _ANGLE_GROUP.sub(lambda m: m.group(0).replace(">", ""), label).split(">")[-1]
+
+
 def tables_from_rows(rows) -> list[DbTable]:
     """DbTables from note_lines rows (anything with those attributes: DB rows, or freshly
     extracted ReportLineRow objects - `vq.py`/scripts use that to see what a reload would change)."""
     tabs: dict[tuple, DbTable] = {}
     for r in rows:
         t = tabs.setdefault((r.basis, r.table_seq), DbTable(r.basis or "", r.table_seq))
-        if _PER_SHARE.search((r.label_raw or "").split(">")[-1]):       # mn21: innermost label only
+        if _PER_SHARE.search(_innermost_label(r.label_raw or "")):      # mn21: innermost label only
             t.n_skipped += 1
             continue
         if r.value_won is None:

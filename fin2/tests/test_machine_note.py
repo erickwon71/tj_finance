@@ -218,3 +218,8 @@ def test_per_share_test_reads_the_innermost_label_only_mn21():
     ]
     (t,) = mn.tables_from_rows(rows)
     assert t.values == (4312142,)
+
+
+def test_angle_bracket_gt_is_no_label_separator_mn23():
+    assert "주당" in mn._innermost_label("배당금  <주당 배당금(액면배당률)>:")
+    assert mn._innermost_label("기본주당이익 계산>유통주식수 (단위: 주)") == "유통주식수 (단위: 주)"

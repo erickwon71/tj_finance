@@ -194,3 +194,11 @@ python scripts/note_remaining_triage.py --show 252328
 - User approved ("재적재 36766개 필링 진행해"). Note-only reload of 36,766 filings of 2015+ (share list 30,510 + 6,256 with unit-marker labels): 36,540 done, 226 failed (all "XML 원문 없음": no source file, the old note rows stay). 8 shards took about 6 h (`scratchpad/pipe_union.sh`: reload, recheck, run, register-all, retriage). The reload also refreshed older note rows of those filings (R294-R297, R299, R273-c).
 - Machine run after the reload (mn21): clean 98.8% on the first shard (3,922 of 3,969). register-all added a few dozen new issues (extra_row +44, value_mismatch +1) - not yet looked at cell by cell.
 - retriage closed 5,833. Open note issues: missing_row 51,996 (was 57,526) · extra_row 1,173 · extra_table 13 · unit_scale 6 · value_mismatch 6.
+
+## 2026-11-05 afternoon - R303, mn22, mn23 (look at the 61 issues the post-reload run registered)
+
+- **R303**: a `가중치` column is no amount column; R158 had turned a printed `1.00` into `10000000` (린드먼아시아 20190813000234, R0-2 violation). 9 filings held such a value_raw, reloaded.
+- **mn22**: the source label is the first text cell that is not readable as an amount (`1,500,000 USD 4,000,000` was taken as the label when the other cells were rowspan-covered; 체리부로 and 이천/진천물류센터 rows).
+- **mn23**: a `>` inside `<...>` is no label separator (dividend rows `배당금 <주당 배당금(...)>`; mn21 had made the DB side skip differently from the source side).
+- retriage closed 57 + 16. Left as machine limits (about 12): rate cells with a tail (`1,161.20원/1USD`, 경남은행 TRF 20200814001310), conversion-price sentences (`전환권에 관한 사항` 2,993, 20190814002252).
+- Open note issues: see the counts printed at the end of this session's report.

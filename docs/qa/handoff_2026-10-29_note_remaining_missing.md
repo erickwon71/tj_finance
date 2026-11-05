@@ -188,3 +188,9 @@ python scripts/note_remaining_triage.py --show 252328
 - **mn21**: the machine's 주당 skip reads the innermost label (source: last text cell before the first amount; DB: last `>` segment). Before, the new 2026 note layout (outer stub `기본 및 희석 주당이익 ...` on every row) emptied the source table. 150 random filings: identical findings old vs new. Retriage closed 1,300 (extra_table 66 -> 13, missing_row 58,788 -> 57,526).
 - **Reloaded**: 31 extra_table filings (note only). **NOT started**: R300+R302 backfill, union list `scratchpad/union_filings.txt` = 36,766 filings (share list 30,510 + 6,256 with unit-marker labels), about 12 h; Telegram notice sent 2026-11-04 14:20, waits for approval.
 - Open note issues now: missing_row 57,526 · extra_row 1,129 (other 1,058: two-group ~730 machine limit, the rest row-specific, e.g. 대원전선 20160504000303 table 41, OCI홀딩스 20230811001879 table 113) · extra_table 13 · unit_scale 6 · value_mismatch 5.
+
+## 2026-11-05 - R300 + R302 backfill done
+
+- User approved ("재적재 36766개 필링 진행해"). Note-only reload of 36,766 filings of 2015+ (share list 30,510 + 6,256 with unit-marker labels): 36,540 done, 226 failed (all "XML 원문 없음": no source file, the old note rows stay). 8 shards took about 6 h (`scratchpad/pipe_union.sh`: reload, recheck, run, register-all, retriage). The reload also refreshed older note rows of those filings (R294-R297, R299, R273-c).
+- Machine run after the reload (mn21): clean 98.8% on the first shard (3,922 of 3,969). register-all added a few dozen new issues (extra_row +44, value_mismatch +1) - not yet looked at cell by cell.
+- retriage closed 5,833. Open note issues: missing_row 51,996 (was 57,526) · extra_row 1,173 · extra_table 13 · unit_scale 6 · value_mismatch 6.

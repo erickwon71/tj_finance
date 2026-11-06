@@ -223,3 +223,19 @@ def test_per_share_test_reads_the_innermost_label_only_mn21():
 def test_angle_bracket_gt_is_no_label_separator_mn23():
     assert "주당" in mn._innermost_label("배당금  <주당 배당금(액면배당률)>:")
     assert mn._innermost_label("기본주당이익 계산>유통주식수 (단위: 주)") == "유통주식수 (단위: 주)"
+
+
+def test_row_with_an_empty_label_cell_is_no_source_amount_mn24(tmp_path):
+    xml = XML.replace(
+        "<TR><TD>지분율</TD>",
+        "<TR><TD></TD><TD>신한은행</TD><TD>5,900,000</TD><TD>4,500,000</TD></TR>\n<TR><TD>지분율</TD>")
+    p = tmp_path / "n24.xml"
+    p.write_text(xml, encoding="utf-8")
+    tables, _ = mn.load_source_tables(str(p))
+    assert 5900000 not in tables[0].alt_values
+    mn._MN24_BLANK_LABEL = False
+    try:
+        tables, _ = mn.load_source_tables(str(p))
+        assert 5900000 in tables[0].alt_values
+    finally:
+        mn._MN24_BLANK_LABEL = True

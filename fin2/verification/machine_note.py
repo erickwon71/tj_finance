@@ -92,7 +92,7 @@ from fin2.verification import machine_compare as mc
 # integer now joins the superset of source values (`alt_amounts`) only - it is never a source amount the DB must have.
 # mn18 (2026-11-03): a number broken over lines by `&cr;` inside one cell ('3,252,626,&cr;975', 녹십자 2021FY
 # table 105) is joined by the loader; the machine's source cell keeps the literal `&cr;` and read nothing.
-TOOL_VERSION = "mn23"
+TOOL_VERSION = "mn24"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -230,6 +230,9 @@ def _is_year(v: int) -> bool:
     return 1900 <= abs(v) <= 2100
 
 
+_MN24_BLANK_LABEL = True
+
+
 def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
     root = mb.parse_source_root(path)
     els = list(root.iter("table"))              # keep the element proxies alive: id() stays stable
@@ -252,6 +255,10 @@ def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
             st = SrcTable(idx=len(out), basis=basis)
             for copies, target in ((False, st.amounts), (True, st.alt_amounts)):
                 for row in mb._own_grid(tb, clean=_clean, copies=copies):
+                    # mn24: the loader drops a row whose own label cell is empty (user decision 2026-11-06:
+                    # per-bank detail rows under a blank '구분' cell are not loaded)
+                    if _MN24_BLANK_LABEL and copies and row and not row[0] and any(row[1:]):
+                        continue
                     # mn22: a cell the loader reads as an amount ('1,500,000 USD 4,000,000') is no label
                     label = next((c for c in row if c and mc.parse_amount(c) is None
                                   and _read_source_cell(c) is None), "")

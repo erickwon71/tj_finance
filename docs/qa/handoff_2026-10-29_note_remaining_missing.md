@@ -202,3 +202,8 @@ python scripts/note_remaining_triage.py --show 252328
 - **mn23**: a `>` inside `<...>` is no label separator (dividend rows `배당금 <주당 배당금(...)>`; mn21 had made the DB side skip differently from the source side).
 - retriage closed 57 + 16. Left as machine limits (about 12): rate cells with a tail (`1,161.20원/1USD`, 경남은행 TRF 20200814001310), conversion-price sentences (`전환권에 관한 사항` 2,993, 20190814002252).
 - Open note issues: see the counts printed at the end of this session's report.
+
+## 2026-11-06 - mn24: rows with an empty label cell are not loaded (user decision)
+- Decision (user, 2026-11-06): loan totals are enough, per-bank detail rows under a blank '구분' cell need not be loaded (대원전선 20160504000303 table 41). The loader already drops them; no R-rule change, no reload.
+- Machine mn24 (`_MN24_BLANK_LABEL`): a source row whose first cell is empty but which has other cells is not a source amount row (alt pass only). A/B on 2 x 150 filings with open issues: differing tables 265 -> 191 and 259 -> 197, no table got worse.
+- `scope retriage` follows; remaining `unlabeled` issues after it are the non-blank-label cases (date/currency/remark labels).

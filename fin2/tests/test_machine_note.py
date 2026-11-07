@@ -239,3 +239,19 @@ def test_row_with_an_empty_label_cell_is_no_source_amount_mn24(tmp_path):
         assert 5900000 in tables[0].alt_values
     finally:
         mn._MN24_BLANK_LABEL = True
+
+
+def test_amount_stored_in_the_row_label_is_no_missing_cell_mn25():
+    src = mn.SrcTable(idx=0, basis="consolidated")
+    src.amounts = [(15400000, "2019.01.01~", 0), (15269538, "2019.01.01~", 2), (992519970, "2019.01.01~", 3)]
+    src.alt_amounts = list(src.amounts)
+    src.values = tuple(a[0] for a in src.amounts)
+    src.alt_values = src.values
+    src.valueset = Counter(src.values)
+    src.labels = frozenset(["2019.01.01~"])
+    rows = [SimpleNamespace(basis="consolidated", table_seq=1, row_order=0, col_index=c,
+                            label_raw="15,400,000>2019.01.01~ 유통주식수", col_label="", value_won=None,
+                            adecimal=None, value_raw=raw)
+            for c, raw in ((0, "15,269,538"), (1, "992,519,970"))]
+    res = mn.compare(mn.tables_from_rows(rows), [src], True)
+    assert not res.findings and res.counts["amount_in_label"] == 1

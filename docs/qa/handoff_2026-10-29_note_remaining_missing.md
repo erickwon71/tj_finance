@@ -207,3 +207,7 @@ python scripts/note_remaining_triage.py --show 252328
 - Decision (user, 2026-11-06): loan totals are enough, per-bank detail rows under a blank '구분' cell need not be loaded (대원전선 20160504000303 table 41). The loader already drops them; no R-rule change, no reload.
 - Machine mn24 (`_MN24_BLANK_LABEL`): a source row whose first cell is empty but which has other cells is not a source amount row (alt pass only). A/B on 2 x 150 filings with open issues: differing tables 265 -> 191 and 259 -> 197, no table got worse.
 - `scope retriage` follows; remaining `unlabeled` issues after it are the non-blank-label cases (date/currency/remark labels).
+
+## 2026-11-07/08 - stale-DB reload of 2,213 filings, mn25
+- Stale-DB scan of the filings with open note issues (current parser vs note_lines, `stale5.py`): 2,213 of 8,768 differed (old unit plans, e.g. R299 `18,245원` stored with adecimal -3). Note-only reload: 2,210 done, 3 without source XML. `scope retriage` closed 9,434: missing_row 32,183 -> 22,568.
+- Machine mn25 (`_MN25_AMOUNT_IN_LABEL`): a source amount that the loader stored inside the row label ('15,400,000>2019.01.01~ ...', share count in front of a period, undeclared unit) is no missing_cell. A/B on 150 filings: 14 findings fewer, none added.

@@ -92,7 +92,7 @@ from fin2.verification import machine_compare as mc
 # integer now joins the superset of source values (`alt_amounts`) only - it is never a source amount the DB must have.
 # mn18 (2026-11-03): a number broken over lines by `&cr;` inside one cell ('3,252,626,&cr;975', 녹십자 2021FY
 # table 105) is joined by the loader; the machine's source cell keeps the literal `&cr;` and read nothing.
-TOOL_VERSION = "mn25"
+TOOL_VERSION = "mn26"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -469,10 +469,11 @@ def compare(db_tables: list[DbTable], src_tables: list[SrcTable], section_found:
             if f.get("kind") == "value" and f.get("db") in src_union and f.get("src") in db_union:
                 counts["value_elsewhere"] = counts.get("value_elsewhere", 0) + 1
                 continue
-            # mn25: a leading amount cell the loader took for the row label ('15,400,000>2019.01.01~ ...',
-            # a share count in front of a period) is stored in the label, not missing
+            # mn25: an amount cell the loader took for the row label ('15,400,000>2019.01.01~ ...' a share
+            # count in front of a period; a first all-amount row read as header text) is stored in the
+            # label as printed, not missing
             if _MN25_AMOUNT_IN_LABEL and f.get("kind") == "missing_cell" and f.get("src") is not None \
-                    and f"{abs(f['src']):,}>" in label_text:
+                    and re.search(rf"(?<![\d,]){abs(f['src']):,}(?![\d,])", label_text):
                 counts["amount_in_label"] = counts.get("amount_in_label", 0) + 1
                 continue
             res.findings.append({**f, "basis": t.basis, "table_seq": t.seq, "src_table": best.idx})

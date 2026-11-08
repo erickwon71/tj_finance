@@ -92,7 +92,7 @@ from fin2.verification import machine_compare as mc
 # integer now joins the superset of source values (`alt_amounts`) only - it is never a source amount the DB must have.
 # mn18 (2026-11-03): a number broken over lines by `&cr;` inside one cell ('3,252,626,&cr;975', 녹십자 2021FY
 # table 105) is joined by the loader; the machine's source cell keeps the literal `&cr;` and read nothing.
-TOOL_VERSION = "mn26"
+TOOL_VERSION = "mn27"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -460,7 +460,7 @@ def compare(db_tables: list[DbTable], src_tables: list[SrcTable], section_found:
         counts["differs"] += 1
         a = _align(t, best.values, best.amounts)
         b = _align(t, best.alt_values, best.alt_amounts) if best.alt_values != best.values else a
-        label_text = "\n".join(x[1] for x in t.amounts)
+        label_text = "\n".join(f"{x[1]}\n{x[2]}" for x in t.amounts)
         for f in (a if len(a) <= len(b) else b):
             # mn20: a 'value' difference whose two numbers both exist on the other side of the
             # filing (the DB amount in some source table, the source amount in some DB table) is a

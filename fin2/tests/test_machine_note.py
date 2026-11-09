@@ -255,3 +255,9 @@ def test_amount_stored_in_the_row_label_is_no_missing_cell_mn25():
             for c, raw in ((0, "15,269,538"), (1, "992,519,970"))]
     res = mn.compare(mn.tables_from_rows(rows), [src], True)
     assert not res.findings and res.counts["amount_in_label"] == 1
+
+
+def test_db_raw_of_a_two_line_cell_with_the_break_joined_is_read_by_its_first_amount_mn28():
+    assert mn._read_db_raw("227,478(816)") == 227478
+    assert mn._read_db_raw("13,985\n(1,145)") == 13985
+    assert mn._read_db_raw("(816)") == -816 or mn._read_db_raw("(816)") is None

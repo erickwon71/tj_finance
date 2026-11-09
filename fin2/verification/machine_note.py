@@ -92,7 +92,7 @@ from fin2.verification import machine_compare as mc
 # integer now joins the superset of source values (`alt_amounts`) only - it is never a source amount the DB must have.
 # mn18 (2026-11-03): a number broken over lines by `&cr;` inside one cell ('3,252,626,&cr;975', 녹십자 2021FY
 # table 105) is joined by the loader; the machine's source cell keeps the literal `&cr;` and read nothing.
-TOOL_VERSION = "mn27"
+TOOL_VERSION = "mn28"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -205,6 +205,12 @@ def _read_db_raw(raw: str):
     v = _read_amount(raw)
     if v is not None:
         return v
+    if _MN28_PAREN_JOINED:
+        # mn28: a two-line cell whose line break was joined away ('227,478(816)', the loader stores no value for it)
+        # is read by its first amount, like the same cell with the line break kept ('13,985\n(1,145)')
+        m = _PAREN_JOINED.fullmatch(raw.strip())
+        if m:
+            return _read_amount(m.group(1))
     from fin2.extract.report_lines import split_amount_with_tail
     first = split_amount_with_tail(raw)
     if not first and len(raw) >= _RAW_CAP:
@@ -232,6 +238,8 @@ def _is_year(v: int) -> bool:
 
 _MN24_BLANK_LABEL = True
 _MN25_AMOUNT_IN_LABEL = True
+_MN28_PAREN_JOINED = True
+_PAREN_JOINED = re.compile(r"(-?\d{1,3}(?:,\d{3})+)\(\d{1,3}(?:,\d{3})*\)")
 
 
 def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:

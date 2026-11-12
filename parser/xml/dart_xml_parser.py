@@ -344,6 +344,11 @@ def _break_stacked_row_digits(raw: bytes) -> bytes:
 _R296_STACKED_ROWS = True
 _CELL_BLOCK = re.compile(rb"<(TD|TH)\b[^>]*>(.*?)</\1>", re.DOTALL)
 _R296_MARK = b"&#57345;"
+# R304 - the same for a row of exactly two lines (see _mark_stacked_rows); the downstream split is
+# report_lines._stacked_subrows.
+_R304_TWO_LINES = True
+_R304_AMOUNT_LINE = re.compile(rb"\(?-?[\d,]+(?:\.\d+)?\)?")
+_R304_VALUE_LINE = re.compile(rb"|-|\(?-?[\d,]+(?:\.\d+)?\)?")
 
 
 _SECTION_TITLE = re.compile(rb"<SECTION-([12])\b[^>]*>\s*<TITLE[^>]*>(.*?)</TITLE>", re.DOTALL)
@@ -373,18 +378,29 @@ def _mark_stacked_rows(raw: bytes) -> bytes:
         i = bisect.bisect_right(starts, m.start()) - 1
         if i < 0 or not notes[i]:
             return tr
-        if tr.count(b"&cr;") < 4 or tr.count(b"<TR") != 1:
+        if tr.count(b"&cr;") < (2 if _R304_TWO_LINES else 4) or tr.count(b"<TR") != 1:
             return tr
         cells = [(c.group(2)) for c in _CELL_BLOCK.finditer(tr)]
         if len(cells) < 2 or any(b"<" in c for c in cells):
             return tr
         k = cells[0].count(b"&cr;") + 1
-        if k < 3 or not cells[0].replace(b"&cr;", b"").strip():
+        if k < (2 if _R304_TWO_LINES else 3) or not cells[0].replace(b"&cr;", b"").strip():
             return tr
+        if k == 2:
+            # R304: a two-line row is split only when it is plainly two logical rows: both label lines print
+            # text (no amount), and every value cell prints two lines that are amounts, dashes or empty
+            if any(not x.strip() or _R304_AMOUNT_LINE.fullmatch(x.strip()) for x in cells[0].split(b"&cr;")):
+                return tr
+            for c in cells[1:]:
+                if c.strip() != b"-" and c.replace(b"&cr;", b"").strip() and not all(
+                        _R304_VALUE_LINE.fullmatch(x.strip()) for x in c.split(b"&cr;")):
+                    return tr
         printed = 0
         for c in cells[1:]:
             if not c.replace(b"&cr;", b"").strip():
                 continue                                   # a cell that prints nothing
+            if k == 2 and c.strip() == b"-":
+                continue                                   # R304: a lone dash prints no amount on either line
             if c.count(b"&cr;") + 1 != k:
                 return tr
             printed += 1 if re.search(rb"\d", c) else 0

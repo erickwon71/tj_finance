@@ -1651,6 +1651,7 @@ def split_amount_with_tail(text: str) -> str | None:
 # for the header boundary / label-area width when one of its lines is an amount, and the row is split
 # line by line (label line j <-> line j of every value cell).
 _STACK = "\ue001"
+_R304_TWO_LINES = True                           # R304: see parser/xml/dart_xml_parser.py
 
 
 def is_stacked_amount_cell(text: str) -> bool:
@@ -1664,13 +1665,15 @@ def _stacked_subrows(label: str, value_cells, offset: int):
     ('수익>금융수익', '수익>소계'), like the '>' join of multi-level labels."""
     lines = label.split(_STACK)
     k = len(lines)
-    if k < 3:
+    if k < (2 if _R304_TWO_LINES else 3):
         return None
     cols: dict[int, list[str]] = {}
     for c in value_cells:
         if not c.text.strip():
             continue
         ls = c.text.split(_STACK)
+        if k == 2 and _R304_TWO_LINES and c.text.strip() == "-":
+            continue                                       # R304: a lone dash prints no amount
         if len(ls) != k:
             return None
         cols[c.grid_col - offset] = [x.strip() for x in ls]
@@ -1682,6 +1685,8 @@ def _stacked_subrows(label: str, value_cells, offset: int):
         if not text:
             continue
         indent = len(raw_line) - len(raw_line.lstrip())
+        if k == 2 and j == 1 and text.startswith("(") and stack:
+            indent = stack[-1][0] + 1                      # R304: '(국고보조금)' qualifies the line above
         while stack and stack[-1][0] >= indent:
             stack.pop()
         out.append((">".join([t for _, t in stack] + [text]), {ci: v[j] for ci, v in cols.items()}))

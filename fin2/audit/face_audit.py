@@ -893,6 +893,12 @@ def _adecimal_from_unit(unit: int) -> int:
     return -int(round(math.log10(unit)))
 
 
+# Foreign-currency-only statement tables (두산밥캣 prints a USD set beside the won face) are read in the
+# printed currency; before, they were skipped and the DB rows loaded from them (unit_source='fx_declared')
+# found no printed value to meet and showed as line_value_diff.
+_FX_TEXT_TABLES = True
+
+
 def read_report_face_text(file_path: str | Path, root=None) -> list[FaceLine]:
     """
     Track B(텍스트) 보고서의 **본문 재무제표 face 표** 라인을 독립 재추출.
@@ -1010,6 +1016,16 @@ def read_report_face_text(file_path: str | Path, root=None) -> list[FaceLine]:
             # 단위: 섹션 그룹이 이미 준 것 우선, 없으면 표 자기 선언으로 재시도(추측 금지 —
             # strict 추출기와 동일, Phase A §3-C). 둘 다 없으면 스킵.
             u = unit if unit is not None else declared_unit(tbl)
+            if u is None and _FX_TEXT_TABLES:
+                # A table declared in a foreign currency only ('(단위 : USD)') is read in the
+                # printed currency, like report_lines stores it (unit_source='fx_declared'):
+                # the DB row is compared with the printed amount, not with a won conversion.
+                from fin2.extract.text import declaration_text, inherited_declaration_text
+                from fin2.extract.units import ColumnUnits, FX_ONLY
+                cu = ColumnUnits.from_declaration(
+                    declaration_text(tbl) or inherited_declaration_text(tbl))
+                if cu.kind == FX_ONLY:
+                    u = cu.fx_mult
             if u is None:
                 continue
             _read_table(tbl, basis, stmt, u)

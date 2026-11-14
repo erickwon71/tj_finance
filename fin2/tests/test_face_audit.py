@@ -634,3 +634,29 @@ def test_proved_unit_override_also_scales_a_line_without_a_statement(monkeypatch
                            label="y", displayed_value=7, adecimal=-3)
     fa._apply_proved_unit_overrides([mapped, unmapped], "/x/20260930000619.xml")
     assert mapped.adecimal == 0 and unmapped.adecimal == 0
+
+
+_FX_ONLY_XML = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>2. 연결재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>연결 재무상태표 제5기 기말</TD></TR></TABLE>
+   <TABLE><TR><TD>(단위 : USD)</TD></TR><TR><TD>자산총계</TD><TD>1,968,208,852</TD></TR>
+    <TR><TD>부채총계</TD><TD>700,000,000</TD></TR></TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+
+
+def test_text_reader_reads_a_foreign_currency_only_table_in_the_printed_currency(tmp_path):
+    from fin2.audit import face_audit as fa
+
+    p = tmp_path / "doc.xml"
+    p.write_text(_FX_ONLY_XML, encoding="utf-8")
+    lines = fa.read_report_face_text(p)
+    assert [(l.amount_won, l.adecimal) for l in lines] == [(1968208852, 0), (700000000, 0)]
+    fa._FX_TEXT_TABLES = False
+    try:
+        assert fa.read_report_face_text(p) == []
+    finally:
+        fa._FX_TEXT_TABLES = True

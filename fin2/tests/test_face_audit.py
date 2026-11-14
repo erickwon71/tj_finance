@@ -620,3 +620,17 @@ def _run():
 
 if __name__ == "__main__":
     sys.exit(1 if _run() else 0)
+
+
+def test_proved_unit_override_also_scales_a_line_without_a_statement(monkeypatch):
+    from fin2.audit import face_audit as fa
+    import fin2.extract.report_lines as rl
+
+    monkeypatch.setitem(rl._PROVED_UNIT_OVERRIDES, "20260930000619",
+                        {"BS_C": 1, "IS_C": 1, "CF_C": 1, "SCE_C": 1})
+    mapped = fa.FaceLine(statement="IS", basis="consolidated", acode="a", canonical="is.x",
+                         label="x", displayed_value=5, adecimal=-3)
+    unmapped = fa.FaceLine(statement=None, basis="consolidated", acode="b", canonical=None,
+                           label="y", displayed_value=7, adecimal=-3)
+    fa._apply_proved_unit_overrides([mapped, unmapped], "/x/20260930000619.xml")
+    assert mapped.adecimal == 0 and unmapped.adecimal == 0

@@ -1063,10 +1063,17 @@ def _apply_proved_unit_overrides(lines: list[FaceLine], file_path: str | Path) -
     from fin2.extract.report_lines import _unit_override
     rcept = Path(file_path).stem
     for line in lines:
-        if not line.statement or not line.basis:
+        if not line.basis:
             continue
-        code = f"{line.statement}_{'C' if line.basis == 'consolidated' else 'S'}"
-        ov = _unit_override(rcept, code)
+        side = 'C' if line.basis == 'consolidated' else 'S'
+        if line.statement:
+            ov = _unit_override(rcept, f"{line.statement}_{side}")
+        else:
+            # An unmapped account (statement unknown) is scaled like its sibling
+            # sections when every proven section of that basis agrees on one multiplier.
+            ovs = {o[0] for o in (_unit_override(rcept, f"{st}_{side}")
+                                  for st in ("BS", "IS", "CF", "SCE")) if o is not None}
+            ov = (ovs.pop(),) if len(ovs) == 1 else None
         if ov is not None:
             line.adecimal = _adecimal_from_unit(ov[0])
     return lines

@@ -5224,6 +5224,7 @@ Gate B(41개사 재감사·저장, 사본 비교): fail_b→pass 1(00573269 2022
 > **상태** 유효 · **적용 계층** 3
 >
 > **규칙** 은행 필링의 본문 `4. 재무제표` 에 은행 자신의 BS 와 함께 실린 `[신탁계정]` BS 는, 그 표 자신의 후보에서 `bs.total_assets == bs.total_liabilities` 이고 `bs.total_equity` 후보가 없을 때(`_trust_account_table_seqs`) 모든 `bs.*` 항목의 후보에서 뺀다. 이전에는 총계 3종(`_BS_GRAND_TOTAL`)에만 적용돼 같은 표의 `현금 및 예치금` 이 `bs.cash` 로 들어갔다.
+> **보강(같은 날)** ① 그 표의 후보만 남으면(은행 본 BS 에 총계 행이 인쇄되지 않은 제주은행 2017Q1 별도) 신탁 값을 쓰지 않고 비운다(`_TRUST_ONLY_CANDIDATE_DROPPED`). ② IFRS 9 은행 BS 의 `현금및상각후원가측정예치금` 을 `bs.cash_deposits_combined` 별칭으로 올렸다(`account_maps/bs_accounts.py`) — 그 라벨이 `unknown` 이라 제주은행 cash 가 신탁표의 `현금 및 예치금` 에서만 왔다. 재빌드로 제주은행·한화생명 cash 공란이 70→17·60→8행으로 줄었고 제주은행 2025FY 별도 cash 는 신탁 184,392M → 본 BS 240,415M 이 됐다(신한지주 무변동).
 > **하지 않는 것** 표 순서(table_seq=0 우선) 일반 규칙이 아니다 — 신탁 서명(자산==부채, 자본 없음)을 가진 표만 뺀다(네오셈 회귀 선례, 위 `_BS_GRAND_TOTAL` 주석). 뺀 뒤 후보가 비면 그대로 둔다.
 > **실측** 해당 서명의 표는 제주은행 00148832(43표)·기업은행 00149646(19표) 두 곳뿐이다. 재빌드로 제주은행 12개 기간의 cash 와 2020FY 별도 총자산(신탁 571억 → 본 BS 6.52조)이 바뀌었다.
 > **코드·테스트** `fin2/layer3/combine.py` `_TRUST_TABLE_DROPS_ALL_BS`, `fin2/tests/test_combine_amended_label_depth.py`.

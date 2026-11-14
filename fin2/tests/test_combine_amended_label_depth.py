@@ -184,3 +184,28 @@ def test_cfo_identity_also_accepts_a_net_change_printed_before_the_fx_effect():
 
 def _row_v(value):
     return {"value": value}
+
+
+def test_total_assets_from_the_trust_table_alone_is_missing_not_the_trust_value(monkeypatch):
+    # R306: 제주은행 2017Q1 separate - the bank's own BS prints no total rows, only the trust table has them
+    from fin2.layer3 import combine
+
+    def _r(value, label_raw, seq):
+        return {"value": value, "stage": "exact", "label_raw": label_raw, "section_path": None,
+                "table_seq": seq, "amended": False, "amended_by": None}
+
+    cands = {"bs.total_assets": [_r(162, "자산총계", 1)], "bs.total_liabilities": [_r(162, "부채총계", 1)],
+             "bs.total_equity": [], "bs.cash": [_r(147, "현금및예치금", 0)]}
+    confirmed, conflicts = _resolve(cands)
+    assert "bs.total_assets" not in confirmed and "bs.total_assets" not in conflicts
+    assert confirmed["bs.cash"] == 147
+    monkeypatch.setattr(combine, "_TRUST_ONLY_CANDIDATE_DROPPED", False)
+    confirmed, _ = _resolve(cands)
+    assert confirmed["bs.total_assets"] == 162
+
+
+def test_bank_cash_caption_under_ifrs9_maps_to_the_combined_cash_deposits():
+    from parser.common.account_mapper import get_mapper
+
+    for label in ("현금및상각후원가측정예치금", "현금 및 상각후원가 측정 예치금", "Ⅰ.현금및상각후원가측정예치금"):
+        assert get_mapper().map(label, fs_section="bs").account_code == "bs.cash_deposits_combined"

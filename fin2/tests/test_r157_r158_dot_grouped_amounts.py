@@ -199,7 +199,8 @@ def test_eps_rows_are_skipped_by_label():
     cells = ["(1,500.00)", "(1,500,000)"]
     assert repair(cells, "계속영업 기본주당순손실 (단위 : 원)") == cells
     # 라벨이 없으면(구 호출부) 종전 동작 — 가드는 라벨을 줄 때만 작동한다
-    assert repair(list(cells)) != cells
+    # R158-c: an all-zero fraction is a decimal tail, so the call without a label no longer restores it either
+    assert repair(list(cells)) == cells
 
 
 def test_non_eps_rows_still_repaired_with_label():

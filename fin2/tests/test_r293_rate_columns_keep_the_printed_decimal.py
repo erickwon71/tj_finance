@@ -23,7 +23,7 @@ XML = """<?xml version="1.0" encoding="utf-8"?>
 
 def test_repair_skips_the_given_columns():
     cells = ["12,140,000", "1,214.00", "2,208,000"]
-    assert _repair_dot_grouped_cells(cells)[1] == "12140000"                  # the old, wrong reading
+    assert _repair_dot_grouped_cells(cells)[1] == "1,214.00"                  # R158-c: an all-zero fraction is a decimal, even without the column skip
     assert _repair_dot_grouped_cells(cells, None, frozenset({1}))[1] == "1,214.00"
     cells2 = ["42,549,493", "42,549.493"]                                     # a real broken cell is still restored
     assert _repair_dot_grouped_cells(cells2, None, frozenset())[1] == "42549493"

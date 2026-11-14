@@ -451,6 +451,7 @@
 | R202 | R202. 셀 안에서 숫자의 첫 1~2자리가 떨어져 공백으로 이어진 서식 — 1 73,918,853,979 = 173,918… | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R203 | R203. XBRL EPS 를 회사 확장 개념(perShareItemType) + unitRef="SHARES" 로 태깅한 … | [10_layer2_parse.md](rules/10_layer2_parse.md) · XBRL 폴백 | 2 | 유효 |  |
 | R158-b | R158-b. 소수부가 전부 0(.0/.00)인 마침표 셀 — 같은 행에 정수부와 같은 온전한 셀이 있으면 정수부로 복원 (… | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
+| R158-c | R158-c. 소수부 1~2자리 마침표 셀 — 전부 0이면 R158 접두사 복원 없음, 행에 % 칸이 있으면 복원 없음 (2026-11-14, 적용 계층: 2 — 읽기, R158 좁힘) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_R158C_FRACTION_GUARD` |
 | R204 | R204. XBRL IS — 필링이 base 배치를 옮겨 단 비용 개념도 base 템플릿의 negation 을 물려받아 제거… | [10_layer2_parse.md](rules/10_layer2_parse.md) · XBRL 폴백 | 2 | 유효 |  |
 | R205 | R205. 마침표+쉼표 혼합 구분자 셀(69.792,290 = 69,792,290) — 소수로 읽지 않고 R160(결측)·R… | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | 부록 B. 규칙이 사는 … | 부록 B. 규칙이 사는 곳 (원출처) | [99_appendix.md](rules/99_appendix.md) | 부록 | 유효 |  |

@@ -2563,6 +2563,9 @@ def unresolved_dot_cell_indices(amount_cells: list[str],
             or (_R279_DOUBLED_AMOUNT_CELL and _is_doubled_amount_cell(c))]
 
 
+_R158C_FRACTION_GUARD = True
+
+
 def _repair_dot_grouped_cells(amount_cells: list[str],
                               label: Optional[str] = None,
                               skip: frozenset = frozenset()) -> list[str]:
@@ -2610,10 +2613,16 @@ def _repair_dot_grouped_cells(amount_cells: list[str],
             continue
         m = _DOT_GROUPED_RE.match(amount_cells[i].strip())
         digits = _digits_only(m.group(2)) + m.group(3)
+        short_fraction = len(m.group(3)) <= 2
+        if (_R158C_FRACTION_GUARD and short_fraction
+                and any("%" in (c or "") for c in amount_cells)):
+            continue                        # R158-c: a ratio / ownership cell is not a broken thousands separator
         # 더 긴 후보가 여러 개면 판정불가로 두고 손대지 않는다(R6).
         cands = {d for d in intact
                  if len(d) >= len(digits) and d.startswith(digits)
                  and set(d[len(digits):]) <= {"0"}}
+        if _R158C_FRACTION_GUARD and short_fraction and set(m.group(3)) <= {"0"}:
+            cands = set()                   # R158-c: '.0'/'.00' is a decimal tail, only R158-b may restore it
         if len(cands) == 1:
             full = cands.pop()
             out[i] = f"{m.group(1)}{full}{m.group(4)}"

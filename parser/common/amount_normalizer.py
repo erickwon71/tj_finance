@@ -85,6 +85,8 @@ def strip_cell_whitespace(text: str) -> str:
 _R202_SPLIT_LEADING_DIGITS = True   # R202: '1 73,918,853,979' (leading digits split off inside one cell) = 173,918,853,979
 _R260_SPLIT_LEADING_DIGITS_MULTI = True   # R260: '2 8 6,763,456,363' (leading digits split one per fragment) = 286,763,456,363
 _R278_SPACE_THOUSANDS = True
+_R301_DASH_LINES = True   # R301: '- \n- \n1,473,000,000' (several lone dash lines, then an amount line) is no negative amount
+_R296B_DASH_FIRST_LINE = True   # R296-b: '-\n3,272,017' (a lone dash line, then an amount line) is two stacked lines, not -3,272,017
 def _is_complete_number(tok: str) -> bool:
     """토큰 하나가 **온전한 금액 표기**인가 — 부호·괄호를 벗긴 뒤 3자리 그룹 또는 무콤마
     정수/소수. 한 셀 안에 이런 토큰이 둘 이상이면 이어붙이면 안 된다(`parse_amount` R1)."""
@@ -461,6 +463,18 @@ def parse_amount_decimal(cell_text: str, multiplier: int = 1) -> Optional[Decima
             and len(toks) - 1 + len(toks[-1].split(",")[0]) == 3):
         cell_text = "".join(toks)
         toks = [cell_text]
+
+    # ── R296-b(2026-10-31): 첫 줄이 홑 '-' 이고 다음 줄이 금액인 두 줄 셀('-\n3,272,017').
+    #   공백을 지우면 '-3,272,017' 이라는 음수가 되지만, 원문에서 '-' 는 첫 줄의 빈 자리 표시이고
+    #   금액은 둘째 줄의 값이다(성우테크론 20150515000581 table 227: 열의 다른 셀 합이 +3,272,017).
+    #   어느 줄이 이 칸의 값인지 셀만으로는 알 수 없으므로 R1 처럼 결측으로 둔다(짐작 금지).
+    if (_R296B_DASH_FIRST_LINE and len(toks) >= 2 and "\n" in cell_text.strip()
+            and re.fullmatch(r"[-−–—]", toks[0]) and all(_is_complete_number(tk) for tk in toks[1:])):
+        return None
+    # R301: several lone dash lines, then one amount line ('- \n- \n1,473,000,000')
+    if (_R301_DASH_LINES and len(toks) >= 3 and "\n" in cell_text.strip()
+            and all(re.fullmatch(r"[-−–—]", tk) for tk in toks[:-1]) and _is_complete_number(toks[-1])):
+        return None
 
     if len(toks) >= 2 and all(_is_complete_number(tk) for tk in toks):
         if len({tk.strip() for tk in toks}) > 1:

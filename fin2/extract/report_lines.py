@@ -259,7 +259,7 @@ def _apply_duplicate_period_label_fix(header_cols, rcept_no, statement, basis):
 
 from parser.common.amount_normalizer import (
     detect_unit_declaration, parse_amount, parse_amount_decimal, fractional_or_none,
-    normalize_account_name, strip_cell_whitespace)
+    normalize_account_name, strip_cell_whitespace, _CELL_OWN_WON_RE)
 
 from parser.xml.section_detector import (
     assign_tables_to_dart_sections, assign_note_tables_with_titles,
@@ -273,6 +273,7 @@ from fin2.extract.text import (
     document_default_unit, nearest_section_default_unit,
 )
 from fin2.extract.units import ColumnUnits, FX_ONLY, SRC_FX
+from fin2.extract import units as _units
 from fin2.extract.legacy_pre2015 import (
     detect_pre2015_body_statement_tables, detect_squished_bs_total_assets,
 )
@@ -1605,6 +1606,94 @@ _LABEL_REGION_PLACEHOLDERS = frozenset(["", "-", "‐", "―", "–", "—", "�
 _LEAD_TRIM_PLACEHOLDERS = frozenset([""])
 
 
+# R291 - a cell that prints two amounts, "5,805,822 (6,364,923)" (a foreign-currency amount and, in
+# parentheses, its won equivalent). `parse_amount` and `_NUMBER_PATTERN` read neither, so a row whose
+# only amounts are such cells was taken for a HEADER row (the header boundary is "the first row with a
+# number-only cell") and its values were dropped. Deliberately narrow: a comma-grouped amount, then a
+# parenthesised number - not "2016 2015" or "1,234 (주1)".
+_PAIR_AMOUNT_CELL = re.compile(r"^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?\s*\(-?[\d,]+(?:\.\d+)?\)$")
+
+
+def is_pair_amount_cell(text: str) -> bool:
+    return bool(_PAIR_AMOUNT_CELL.match(" ".join((text or "").split())))
+
+
+# R294 (2026-10-29): a cell whose FIRST line is a comma-grouped amount and whose following lines hold
+# only a currency mark, a dash run or '<currency code> <amount>' ('171,750,000&cr; USD 44,000,000',
+# '84,350,000 &cr;$', '34,000,000 &cr;-'). parse_amount returns None for the whole cell; the first line
+# is the printed won amount. Anything else in the tail (Korean text, a note reference, another bare
+# number) is refused - nothing is guessed (R6).
+_CCY = r"[A-Z]{2,4}"                      # R294-b: any 2-4 capital letter code (DEM, RMB, RS, MMK ...)
+_TAIL_AMT = r"-?(?:\d{1,3}(?:,\d{3})+|\d{3,})(?:\.\d+)?"   # grouped or 3+ digits: "NO 5" is not an amount
+# R294-d: a well-known ISO code may be followed by a short amount ('USD 5,548 EUR 41'), and the yen /
+# euro / pound marks are currency marks like '$' ('(￥179,312,180) ($4,294,383.44)')
+_KNOWN_CCY = r"(?:USD|EUR|JPY|CNY|GBP|AUD|CAD|CHF|HKD|SGD|VND|KRW|RMB|THB|IDR|INR|MYR|PHP|TWD)"
+_TAIL_FIRST = re.compile(r"^(\(?-?\d{1,3}(?:,\d{3})+\)?)(?![\d,.])")
+_TAIL_ITEM = (r"(?:\(?(?:(?:US|U)?[$＄￥¥€£]\s*" + _TAIL_AMT + r"|" + _KNOWN_CCY + r"\s*\d{1,2}(?![\d,.])"
+              r"|" + _CCY + r"\s*(?:" + _TAIL_AMT + r"|[-－]))\)?"
+              r"|USD|US\$|[$＄￦U]|[-－=]+)")
+_TAIL_REST = re.compile(r"^(?:\s*" + _TAIL_ITEM + r")+$")
+
+
+def split_amount_with_tail(text: str) -> str | None:
+    """R294 - the first-line amount of an 'amount + foreign/symbol tail' cell, else None.
+    The grid hands over the cell with its line breaks folded into a space or dropped altogether
+    ('160,500,000USD 8,000,000'), so the tail is matched as a token sequence, not as lines."""
+    t = " ".join((text or "").replace("&cr;", " ").split())
+    m = _TAIL_FIRST.match(t)
+    if not m:
+        return None
+    return m.group(1) if _TAIL_REST.match(t[m.end():]) else None
+
+
+# R296 - the reader (parser/xml/dart_xml_parser.py::_mark_stacked_rows) marks each in-cell line break of a
+# row that packs several logical rows into its cells with U+E001. A cell of such a row is a number cell
+# for the header boundary / label-area width when one of its lines is an amount, and the row is split
+# line by line (label line j <-> line j of every value cell).
+_STACK = "\ue001"
+_R304_TWO_LINES = True                           # R304: see parser/xml/dart_xml_parser.py
+
+
+def is_stacked_amount_cell(text: str) -> bool:
+    return _STACK in (text or "") and any(parse_amount(x.strip(), 1) is not None for x in text.split(_STACK))
+
+
+def _stacked_subrows(label: str, value_cells, offset: int):
+    """R296 - [(sub_label, {col_idx: line_text})] for a row whose label cell and every printed value cell
+    carry the same number of marked lines, else None (the caller then keeps the cells as they are).
+    A sub-label is its line; a line indented deeper than an earlier line is prefixed with that line
+    ('수익>금융수익', '수익>소계'), like the '>' join of multi-level labels."""
+    lines = label.split(_STACK)
+    k = len(lines)
+    if k < (2 if _R304_TWO_LINES else 3):
+        return None
+    cols: dict[int, list[str]] = {}
+    for c in value_cells:
+        if not c.text.strip():
+            continue
+        ls = c.text.split(_STACK)
+        if k == 2 and _R304_TWO_LINES and c.text.strip() == "-":
+            continue                                       # R304: a lone dash prints no amount
+        if len(ls) != k:
+            return None
+        cols[c.grid_col - offset] = [x.strip() for x in ls]
+    if not cols:
+        return None
+    out, stack = [], []                                    # stack: [(indent, text)]
+    for j, raw_line in enumerate(lines):
+        text = raw_line.strip()
+        if not text:
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip())
+        if k == 2 and j == 1 and text.startswith("(") and stack:
+            indent = stack[-1][0] + 1                      # R304: '(국고보조금)' qualifies the line above
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        out.append((">".join([t for _, t in stack] + [text]), {ci: v[j] for ci, v in cols.items()}))
+        stack.append((indent, text))
+    return out
+
+
 def _grid_header_split(table, *, use_header_span: bool = False):
     """`expand_table_grid`로 표를 펼치고 헤더 구간(n_header)·라벨 영역 폭(offset=LV′)·
     헤더 그리드 폭(width)을 계산한다 — **한 곳에서만** 한다.
@@ -1630,7 +1719,9 @@ def _grid_header_split(table, *, use_header_span: bool = False):
     n_header = 0
     for row in grid_rows:
         physical_texts = [" ".join(c.text.split()) for c in row if not c.inherited]
-        if len(physical_texts) > 1 and any(_NUMBER_PATTERN.search(t) for t in physical_texts[1:]):
+        if len(physical_texts) > 1 and any(_NUMBER_PATTERN.search(t) or _PAIR_AMOUNT_CELL.match(t)
+                                           or split_amount_with_tail(t) is not None or is_stacked_amount_cell(t)
+                                           for t in physical_texts[1:]):
             break
         n_header += 1
     if (n_header == 0 or n_header >= len(grid_rows)) and len(grid_rows) > 1:
@@ -1679,6 +1770,9 @@ def _grid_header_split(table, *, use_header_span: bool = False):
         physical = [c for c in row if not c.inherited]
         for c in physical[1:]:                        # physical[0] = 이 행 자신의 라벨 셀
             if parse_amount(c.text, 1) is not None:
+                amount_cols.add(c.grid_col)
+                real_amount_cols.add(c.grid_col)
+            elif split_amount_with_tail(c.text) is not None or is_stacked_amount_cell(c.text):   # R294-d / R296
                 amount_cols.add(c.grid_col)
                 real_amount_cols.add(c.grid_col)
             elif c.text.strip() in _LABEL_REGION_PLACEHOLDERS:
@@ -1821,10 +1915,24 @@ def _note_heading(table) -> str | None:
 _R284_CONTINUATION_ROW_OWN_LABEL = True
 
 
+_TOTAL_WORD_CELL = re.compile(r"^(?:합\s*계|소\s*계|총\s*계|계)$")
+
+
+def _value_area_total_label(physical, offset: int) -> str:
+    """R295-b - the text of the first value-area cell of the row that is only a total word
+    ('합 계', '소계', '계'); '' if there is none."""
+    for c in physical:
+        if c.grid_col >= offset and _TOTAL_WORD_CELL.match((c.text or "").strip()):
+            return c.text.strip()
+    return ""
+
+
 def _grid_body_rows(
     table, grid_rows, n_header: int, offset: int, *,
     multiplier: int = 1, allow_date_label: bool = False, keep_header_rows: bool = True,
     rcept_no: str | None = None, continuation_own_label: bool = False,
+    no_dot_repair_cols: frozenset = frozenset(),
+    blank_first_label_fallback: bool = False,
 ) -> list[RowData]:
     """`expand_table_grid`의 본문(헤더 이후) 그리드 행을 `RowData`로 변환한다(R11) —
     주석(`_emit_note_lines`, T2.4)·SCE(`_emit_sce_lines`, T2.5) **공용**. T1.4가 "L 규칙은
@@ -1915,6 +2023,8 @@ def _grid_body_rows(
                        if c.grid_col in last_own_label_cols and c.inherited and c.text.strip()]
                 if own:
                     label = ">".join(own)
+            if not label.strip() and blank_first_label_fallback:
+                label = _value_area_total_label(physical, offset)     # R295-b (notes only)
             if not label.strip():
                 continue                # 라벨을 복원할 수 없으면 종전대로 버린다
         else:
@@ -1930,6 +2040,13 @@ def _grid_body_rows(
             continue                        # 옛 SCE 기본 동작(keep_header_rows=False)
         if _is_fs_title_row([c.text for c in physical]):
             continue                        # 재무제표 이름만 있는 제목 행(기존과 동일 가드)
+        if blank_first_label_fallback and not is_continuation and not label.strip():
+            # R295 (notes only): the row's own first cell is blank (a physical blank, not a ROWSPAN)
+            # but another label-area cell has text ('' | '리스부채 합계') - that text is the label.
+            label = ">".join(c.text.strip() for c in physical
+                             if c.grid_col < offset and c.text.strip())
+            if not label.strip():
+                label = _value_area_total_label(physical, offset)     # R295-b: '합 계' in a value column
         if not label:
             continue
 
@@ -1955,10 +2072,33 @@ def _grid_body_rows(
         value_cells = [c for c in (physical if is_continuation else physical[1:])
                        if c.grid_col >= offset]
         max_idx = max((c.grid_col - offset for c in value_cells), default=-1)
+        sub = (_stacked_subrows(label, value_cells, offset)
+               if (_STACK in label and not is_continuation and len(label_region_cells) == 1) else None)
+        if sub is not None:
+            # R296: one source row packs several logical rows - one RowData per printed line
+            for sub_label, line_cells in sub:
+                raw_sub = [""] * (max_idx + 1)
+                for ci, txt in line_cells.items():
+                    raw_sub[ci] = txt
+                raw_sub = apply_source_typo_fixes(raw_sub, rcept_no)
+                raw_sub = _join_split_leading_digit_by_row_sum(raw_sub)
+                raw_sub = _repair_dot_grouped_cells(raw_sub, sub_label, no_dot_repair_cols)
+                amt_sub = [parse_amount(t, multiplier) if t else None for t in raw_sub]
+                for _i in unresolved_dot_cell_indices(raw_sub, sub_label):
+                    if _i < len(amt_sub):
+                        amt_sub[_i] = None
+                out.append(RowData(
+                    account_name=sub_label.lstrip(), amounts=amt_sub, raw_amounts=raw_sub,
+                    header_hint=None, row_order=row_order, indent_level=_detect_indent(sub_label),
+                    raw_indent=_first_cell_indent(tr),
+                ))
+                row_order += 1
+            continue
         amounts: list[int | None] = [None] * (max_idx + 1)
         raw_amounts: list[str] = [""] * (max_idx + 1)
         for c in value_cells:
-            raw_amounts[c.grid_col - offset] = c.text
+            raw_amounts[c.grid_col - offset] = c.text.replace(_STACK, " ")
+        label = label.replace(_STACK, " ")
         # ★R158(2026-09-22) — 천단위 구분자가 마침표로 깨진 셀 복원. **이 경로도
         #   반드시 거쳐야 한다** — `extract_rows` 에만 넣었더니 SCE(이 그리드 경로)는
         #   복원이 안 돼 왜곡값이 그대로 남았다(실측: 엘에스일렉트릭 20260318001243
@@ -1968,7 +2108,7 @@ def _grid_body_rows(
         raw_amounts = apply_source_typo_fixes(raw_amounts, rcept_no)
         # R261 - same row-sum join as `extract_rows` (the SCE grid path must apply it too).
         raw_amounts = _join_split_leading_digit_by_row_sum(raw_amounts)
-        raw_amounts = _repair_dot_grouped_cells(raw_amounts, label)
+        raw_amounts = _repair_dot_grouped_cells(raw_amounts, label, no_dot_repair_cols)
         for idx, txt in enumerate(raw_amounts):
             amounts[idx] = parse_amount(txt, multiplier) if txt else None
         # ★R160 — 해결되지 않은 마침표 셀은 값을 버린다(결측). 이 경로도 반드시
@@ -2067,11 +2207,17 @@ def _emit_note_lines(
                 # 옛 `_build_col_labels`도 이 경우 {} 를 냈지만 그때도 `extract_rows`는
                 # 독립적으로 계속 값을 뽑았다(그 동작 보존). 표 전체를 본문으로, offset=0.
                 note_col_labels: dict[int, str] = {}
-                note_rows = _grid_body_rows(table, grid_rows, 0, 0, multiplier=1)
+                note_rows = _grid_body_rows(table, grid_rows, 0, 0, multiplier=1,
+                                            blank_first_label_fallback=True)
             else:
                 note_col_labels = _label_dict_from_header(
                     grid_rows[:n_header], n_header, offset, width)
-                note_rows = _grid_body_rows(table, grid_rows, n_header, offset, multiplier=1)
+                # R293: no '.'-restoration in columns whose header says non-monetary (rates)
+                nm_cols = frozenset(i for i, lbl in note_col_labels.items()
+                                    if _units.column_is_non_money(lbl))
+                note_rows = _grid_body_rows(table, grid_rows, n_header, offset, multiplier=1,
+                                            no_dot_repair_cols=nm_cols,
+                                            blank_first_label_fallback=True)
             # ★단위는 표 단위가 아니라 **열 단위**로 정한다(F1, 2026-07-31 — units.py).
             #   선언이 없어도 전사는 계속한다: value_won 은 비고 value_raw 에 원문이 남는다.
             #   표 자신의 선언이 없으면 **앞선 '선언 전용 표'** 에서만 상속한다(D1) —
@@ -2081,12 +2227,34 @@ def _emit_note_lines(
             for row in note_rows:
                 if not row.account_name:
                     continue
+                # R290 — R160 (user decision 2026-10-12) for the notes: an unresolved '.' cell
+                # ('6,193,584.95', '9,588,934.00', '125.605') is NOT read as a number but its ROW is
+                # kept with value_won NULL and the printed text in value_raw. Only the body path
+                # (`_unreadable_markers`) had it; here `amounts[i]` is None for such a cell and the
+                # loop below dropped it without a trace (every foreign-currency amount column of the
+                # 외화 노출 tables: 4.5k JPY cells and more).
+                unreadable = {i for i in unresolved_dot_cell_indices(row.raw_amounts, row.account_name)
+                              if i < len(row.amounts)}
                 for col_idx, amount in enumerate(row.amounts):
-                    if amount is None:
-                        continue            # 원문에 숫자가 없는 칸 — 행을 만들지 않는다(종전과 동일)
+                    if _is_note_table_ref_column_label(note_col_labels.get(col_idx)):
+                        continue                    # R297 - a note-number column, not amounts
+                    # R291: a two-amount cell is not read as a number either, but its row is kept
+                    is_unreadable = amount is None and (
+                        col_idx in unreadable
+                        or (col_idx < len(row.raw_amounts) and is_pair_amount_cell(row.raw_amounts[col_idx])))
                     raw = row.raw_amounts[col_idx] if col_idx < len(row.raw_amounts) else ""
-                    mult = cu.multiplier(col_idx)
-                    value = parse_amount(raw, mult) if mult is not None else None
+                    # R294: 'amount + foreign/symbol tail' cell - read the first line, keep the print
+                    tail_first = (split_amount_with_tail(raw)
+                                  if amount is None and not is_unreadable else None)
+                    if amount is None and not is_unreadable and tail_first is None:
+                        continue            # 원문에 숫자가 없는 칸 — 행을 만들지 않는다(종전과 동일)
+                    own_unit = _units.row_label_own_unit(row.account_name)            # R302
+                    share_row = (_units.row_label_is_share_count(row.account_name)    # R300
+                                 or own_unit == "non_money")
+                    mult = None if is_unreadable or share_row else cu.multiplier(col_idx)
+                    if own_unit == "won" and mult is not None:
+                        mult = 1
+                    value = parse_amount(tail_first or raw, mult) if mult is not None else None
                     emit(ReportLineRow(
                         corp_code=corp_code,
                         rcept_no=rcept_no,
@@ -2104,9 +2272,12 @@ def _emit_note_lines(
                         # 단위를 확정한 열만 원문 문자열을 버린다(값으로 복원 가능).
                         # 확정 못 한 열은 **원문을 남긴다** — 그것이 NULL 을 정보손실이
                         # 아니게 만드는 유일한 장치다(units.py docstring 참고).
-                        value_raw=None if value is not None else (raw.strip()[:64] or None),
-                        adecimal=_adecimal_from_unit(mult) if mult is not None else None,
-                        unit_source=cu.source(col_idx),
+                        value_raw=(None if value is not None and tail_first is None
+                                   else (raw.strip()[:64] or None)),
+                        adecimal=(0 if _R299_NOTE_OWN_WON_ADECIMAL and mult is not None
+                                  and _CELL_OWN_WON_RE.search((tail_first or raw).strip())
+                                  else _adecimal_from_unit(mult) if mult is not None else None),
+                        unit_source=_units.SRC_NON_MONEY if share_row else cu.source(col_idx),
                         # ★ source_ref / context_raw 는 저장하지 않는다(2026-07-28).
                         #   각각 f"note:{basis}/{label_raw[:80]}" · f"note:{basis}:c{col_index}" 로
                         #   **같은 행의 basis·label_raw·col_index 에서 100% 복원**되는 파생 문자열이라
@@ -2130,12 +2301,29 @@ def _emit_note_lines(
                     ))
 
 
+# R299 - a note cell that prints its own won suffix ('3,265,007,000원') is read without the table
+# multiplier (R149), so its adecimal says won too (the same as R285 does for the statements)
+_R299_NOTE_OWN_WON_ADECIMAL = True
+
 _NOTE_REF_COLUMN_LABELS = frozenset(["주석", "주석번호", "주기"])
 
 
 def _is_note_ref_column_label(label: str | None) -> bool:
     """R249 — header text of the note-reference column (spaces inside are layout padding)."""
     return bool(label) and label.replace(" ", "").replace("\u3000", "") in _NOTE_REF_COLUMN_LABELS
+
+
+# R297 - the same for the note tables: the column label is the header path ('(단위: 천원)>관련주석'), so the
+#   note-reference column is recognised by its LAST header segment. Its cells ('22,23', '4,5') are note numbers;
+#   the comma-stripped digits (2223) used to be loaded as amounts.
+_R297_NOTE_TABLE_REF_COLUMN = True
+_NOTE_TABLE_REF_COLUMN_LABELS = _NOTE_REF_COLUMN_LABELS | {"관련주석"}
+
+
+def _is_note_table_ref_column_label(label: str | None) -> bool:
+    if not (_R297_NOTE_TABLE_REF_COLUMN and label):
+        return False
+    return label.split(">")[-1].replace(" ", "").replace("\u3000", "") in _NOTE_TABLE_REF_COLUMN_LABELS
 
 
 def _emit_sce_lines(

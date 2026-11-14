@@ -13,8 +13,8 @@ DECLARE
         'std_financials_calendar', 'calendar_financials', 'extended_financials',
         'report_lines_l3', 'stock_prices', 'valuation_daily',
         -- structured disclosure tables (s10_structured)
-        'biz_metrics', 'capital_events', 'dividend_facts', 'employee_stats', 'exec_pay_individual',
-        'exec_pay_summary', 'executives', 'major_shareholders', 'order_backlog', 'other_investments',
+        'biz_metrics', 'biz_metrics_periodic', 'capital_events', 'dividend_facts', 'employee_stats', 'exec_pay_individual',
+        'exec_pay_summary', 'executives', 'major_shareholders', 'order_backlog', 'order_backlog_periodic', 'other_investments',
         'regulatory_events', 'report_shares_outstanding', 'retail_ownership', 'shareholder_changes',
         'treasury_activity'];
 BEGIN

@@ -1342,6 +1342,63 @@ class BizMetric(Base):
     )
 
 
+class BizMetricPeriodic(Base):
+    """
+    분기·반기보고서의 '사업의 내용' 부문별 사업 실적(매출·제품 매출·생산능력/실적/가동률)을 구조화한
+    long-format 값. biz_metrics 와 같은 컬럼 + fiscal_period. R289(2026-10-28): 사업보고서 전용인
+    biz_metrics(연도 단위 delete-then-insert, 소비자 다수)에 분기 행을 섞으면 연간 합산이 어긋나므로
+    분기·반기는 이 별도 테이블에 둔다. (corp, fiscal_year, fiscal_period) 단위 멱등.
+    period_year == fiscal_year 인 행이 그 분기·반기(인쇄된 누계) 값이고, 다른 period_year 행은 같은 표에
+    함께 인쇄된 전기 이전 연간 열이다.
+    """
+    __tablename__ = "biz_metrics_periodic"
+
+    id            = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code     = Column(String(8),    nullable=False,   index=True)
+    fiscal_year   = Column(SmallInteger, nullable=False,   comment="보고서 회계연도")
+    fiscal_period = Column(String(2),    nullable=False,   comment="Q1/H1/Q3")
+    rcept_no      = Column(String(14),   nullable=False)
+    table_ord     = Column(SmallInteger, nullable=False,   comment="출처 biz_section_tables.table_ord")
+    metric        = Column(String(20),   nullable=False)
+    channel       = Column(String(12),   nullable=True)
+    segment       = Column(String(120),  nullable=True)
+    item          = Column(String(150),  nullable=True)
+    period_label  = Column(String(60),   nullable=True)
+    period_year   = Column(SmallInteger, nullable=True)
+    value         = Column(Float,        nullable=False)
+    unit          = Column(String(30),   nullable=True)
+    is_ratio      = Column(Boolean,      default=False)
+    source        = Column(String(20),   default="html_parse")
+    fetched_at    = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_biz_metric_p_period", "corp_code", "fiscal_year", "fiscal_period", "metric"),
+        Index("ix_biz_metric_p_lookup", "corp_code", "metric", "period_year"),
+    )
+
+
+class OrderBacklogPeriodic(Base):
+    """분기·반기보고서 '수주상황' (order_backlog 와 같은 컬럼 + fiscal_period). R289 — biz_metrics_periodic 과 같은 이유."""
+    __tablename__ = "order_backlog_periodic"
+
+    id            = Column(Integer,      primary_key=True, autoincrement=True)
+    corp_code     = Column(String(8),    nullable=False,   index=True)
+    fiscal_year   = Column(SmallInteger, nullable=False)
+    fiscal_period = Column(String(2),    nullable=False,   comment="Q1/H1/Q3")
+    category      = Column(String(150),  nullable=True)
+    backlog_amt   = Column(BigInteger,   nullable=True)
+    new_orders    = Column(BigInteger,   nullable=True)
+    completed     = Column(BigInteger,   nullable=True)
+    unit          = Column(String(20),   nullable=True)
+    source        = Column(String(20),   nullable=True)
+    rcept_no      = Column(String(14),   nullable=True)
+    fetched_at    = Column(DateTime,     default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_order_p_period", "corp_code", "fiscal_year", "fiscal_period"),
+    )
+
+
 # ── 13. Phase 2 · 주주환원 + 회사 일반현황 (정기보고서 API 6종) ──────────────────
 # ★2026-10-05 API→문서 전환: 아래 테이블들은 이제 원문 비재무 섹션 표(doc_section_tables)에서
 #   계층3 매퍼(fin2/layer3/doc_*.py)가 채운다(collector/doc_sections_sync.py). `raw` 는 원문판에서

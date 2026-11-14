@@ -64,8 +64,27 @@ def _classify_domain(metric: Optional[str], narrative: Optional[str] = None) -> 
     return "catalog"
 
 
-def extract_biz_raw_tables(file_path: Path, corp_code: str, fiscal_year: int) -> list[dict]:
+# R288: what a quarterly / half-year report keeps. Their '사업의 내용' repeats the segment results
+# of the period (sales, product sales, production, order backlog); the long company description
+# tables of the annual report (facilities, materials, R&D staff, IP, derivatives ...) are not
+# loaded for them (user decision 2026-10-28: segment business results only).
+PERIODIC_REPORT_TYPES = frozenset({"quarter", "half"})
+PERIODIC_CATALOG_METRICS = frozenset({"product_status"})
+
+
+def keep_for_periodic(row: dict) -> bool:
+    d = row.get("domain")
+    if d in ("sales", "production", "order_backlog"):
+        return True
+    return d == "catalog" and row.get("metric") in PERIODIC_CATALOG_METRICS
+
+
+def extract_biz_raw_tables(file_path: Path, corp_code: str, fiscal_year: int,
+                           report_type: Optional[str] = None) -> list[dict]:
     """One filing -> rows ready for `biz_section_tables` (all 4 domains). No structured mapping.
+
+    `report_type` 'quarter' / 'half' keeps only the rows of `keep_for_periodic` (R288); annual
+    (or None, the old callers) keeps everything.
 
     Row shape matches `collector.models.BizSectionTable` columns (minus rcept_no/fetched_at,
     which the caller stamps on): corp_code/fiscal_year/table_ord/domain/metric/narrative/grid/
@@ -86,6 +105,8 @@ def extract_biz_raw_tables(file_path: Path, corp_code: str, fiscal_year: int) ->
                 "metric": "order_backlog", "narrative": narrative,
                 "grid": grid, "n_metric_rows": None,
             })
+    if report_type in PERIODIC_REPORT_TYPES:
+        out = [r for r in out if keep_for_periodic(r)]
     return out
 
 
@@ -104,7 +125,8 @@ def store_biz_raw_tables(session, rcept_no: str, rows: list[dict]) -> int:
     return len(rows)
 
 
-def ensure_biz_raw_tables(session, rcept_no: str, file_path, corp_code: str, fiscal_year: int) -> bool:
+def ensure_biz_raw_tables(session, rcept_no: str, file_path, corp_code: str, fiscal_year: int,
+                          report_type: Optional[str] = None) -> bool:
     """계층3 읽기 전 온디맨드 안전장치(Phase3-3, 계획 §3.3) — 이 필링의 raw grid가 아직
     `biz_section_tables`에 없으면 지금 써넣는다. 데일리 파이프라인의 계층2 배선(Phase4)이나
     과거분 전량 백필(Phase5)이 아직 안 끝난 상태에서도 계층3 읽기가 항상 안전하도록 만든다.
@@ -121,6 +143,6 @@ def ensure_biz_raw_tables(session, rcept_no: str, file_path, corp_code: str, fis
     fp = Path(file_path)
     if not fp.exists():
         return False
-    rows = extract_biz_raw_tables(fp, corp_code, fiscal_year)
+    rows = extract_biz_raw_tables(fp, corp_code, fiscal_year, report_type)
     store_biz_raw_tables(session, rcept_no, rows)
     return True

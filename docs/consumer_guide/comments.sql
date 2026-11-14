@@ -28,6 +28,8 @@ COMMENT ON TABLE note_lines IS 'NOT for consumers. Layer 2 quality (printed valu
 
 -- structured disclosure tables (guide section s10_structured)
 COMMENT ON TABLE biz_metrics IS 'Business-section metrics (segment sales, capacity, utilization, R&D, ...) parsed from the report HTML tables as long format: metric/segment/item/period_label/value/unit. Parsed text tables, not part of the financial-statement verification; check unit and is_ratio.';
+COMMENT ON TABLE biz_metrics_periodic IS 'biz_metrics for quarterly / half-year reports: segment sales, product sales, production capacity/output/utilization, plus fiscal_period (Q1/H1/Q3). period_year = fiscal_year is that period (cumulative as printed); other period_year rows are prior full-year columns of the same table. Kept apart from biz_metrics (annual) so annual sums never mix with quarterly rows.';
+COMMENT ON TABLE order_backlog_periodic IS 'order_backlog for quarterly / half-year reports, plus fiscal_period (Q1/H1/Q3).';
 COMMENT ON TABLE capital_events IS 'Capital events from DART disclosures (paid/free increase, reduction, CB issue, treasury acquire/dispose): shares_delta, detail jsonb. Source = DART API. Use filed_at as the availability date.';
 COMMENT ON TABLE dividend_facts IS 'Annual dividend facts per fiscal_year (dps common/pref, total dividend, payout ratio, yield). Availability = filing date of rcept_no.';
 COMMENT ON TABLE employee_stats IS 'Employees per division/sex per fiscal_year (counts, average tenure, salary totals). Availability = filing date of rcept_no.';

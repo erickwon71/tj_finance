@@ -7,6 +7,7 @@ DART XML 파서 — 메인 오케스트레이터
 
 출력: ParseResult (facts 리스트 + 메타데이터)
 """
+import bisect
 import re
 from dataclasses import dataclass, field
 from html.entities import name2codepoint
@@ -295,8 +296,17 @@ _BAD_LT = re.compile(
 # R258 - blank lines may sit between the stacked amounts (`53,040,262,118&cr;&cr;43,714,275,259`, 코리안리
 # 20180515001565; `1,012,264&cr;&cr;&cr;821,771`, 대신증권 20150817000902): any number of extra `&cr;`
 # before the next amount token still marks a break (the extras are deleted by R224 afterwards).
+# R296-b - a cell whose FIRST line is a lone dash (`<TD>-&cr;3,272,017</TD>`, 성우테크론 20150515000581 table 227:
+# the dash is the empty placeholder of the first stacked line) breaks after the dash too; read glued it became
+# the negative number -3,272,017 although every other cell of the column adds up to +3,272,017.
 _AMOUNT_STACK_BREAK = re.compile(rb"(?<=,\d{3})&cr;(?=(?:&cr;)*(?:\d{1,3}(?:,\d{3})*|\(\d{1,3}(?:,\d{3})+\)|-)(?:&cr;|<|\s|$))"
                                    rb"|(?<=&cr;-)&cr;(?=\d{1,3}(?:,\d{3})*(?:&cr;|<|\s|$))")
+_R296B_DASH_FIRST_LINE = True
+_DASH_FIRST_LINE_BREAK = re.compile(rb"(?<=>-)&cr;(?=\d{1,3}(?:,\d{3})+(?:&cr;|<|\s|$))")
+# R301 - the same for dash lines followed by blanks or repeated (`- &cr;- &cr;1,473,000,000`, 피제이전자
+# 20150813000809 table 13): every lone dash line breaks, so the cell is no negative amount either
+_R301_DASH_LINES = True
+_DASH_LINES_BREAK = re.compile(rb"(>\s*(?:-\s*&cr;\s*)+)(?=\d{1,3}(?:,\d{3})+(?:&cr;|<|\s|$))")
 
 
 # R274 - a row whose label cell prints several lines (`주당이익&cr;   기본주당순이익&cr;   희석주당순이익`)
@@ -324,10 +334,90 @@ def _break_stacked_row_digits(raw: bytes) -> bytes:
     return _TR_BLOCK.sub(fix, raw)
 
 
+# R296 - a row that packs several logical rows into its cells ('수익&cr;금융수익&cr;기타이익&cr;소계&cr;...' in
+# the label cell, one printed value per line in each value cell, empty lines kept: 삼영이엔씨
+# 20171129000152 separate table 21). The reader deletes `&cr;`, which glued the lines of every cell
+# together and lost the empty lines, so neither the label nor the values could be paired by line.
+# Only when the label cell has 3+ lines and EVERY other cell that prints something has exactly the same
+# number of lines (empty lines count), each `&cr;` of that row becomes the marker character U+E001
+# (a numeric reference: the files may be EUC-KR). report_lines splits such a row line by line.
+_R296_STACKED_ROWS = True
+_CELL_BLOCK = re.compile(rb"<(TD|TH)\b[^>]*>(.*?)</\1>", re.DOTALL)
+_R296_MARK = b"&#57345;"
+# R304 - the same for a row of exactly two lines (see _mark_stacked_rows); the downstream split is
+# report_lines._stacked_subrows.
+_R304_TWO_LINES = True
+_R304_AMOUNT_LINE = re.compile(rb"\(?-?[\d,]+(?:\.\d+)?\)?")
+_R304_VALUE_LINE = re.compile(rb"|-|\(?-?[\d,]+(?:\.\d+)?\)?")
+
+
+_SECTION_TITLE = re.compile(rb"<SECTION-([12])\b[^>]*>\s*<TITLE[^>]*>(.*?)</TITLE>", re.DOTALL)
+_NOTE_WORDS = ("주석".encode("utf-8"), "주석".encode("cp949"))
+
+
+def _note_section_starts(raw: bytes) -> tuple[list[int], list[bool]]:
+    """Start offsets of the SECTION-1/2 elements and whether each is a note section (title has '주석')."""
+    pos, is_note = [], []
+    for m in _SECTION_TITLE.finditer(raw):
+        pos.append(m.start())
+        is_note.append(any(w in m.group(2) for w in _NOTE_WORDS))
+    return pos, is_note
+
+
+def _mark_stacked_rows(raw: bytes) -> bytes:
+    """R296 applies to the notes only: the body statements (BS/IS/CF) read the same rows through their
+    own path (R246/R258/R274), which must keep seeing the old cell text (코리안리 20180515001565 IS)."""
+    if b"&cr;" not in raw:
+        return raw
+    starts, notes = _note_section_starts(raw)
+    if not any(notes):
+        return raw
+
+    def fix(m):
+        tr = m.group(0)
+        i = bisect.bisect_right(starts, m.start()) - 1
+        if i < 0 or not notes[i]:
+            return tr
+        if tr.count(b"&cr;") < (2 if _R304_TWO_LINES else 4) or tr.count(b"<TR") != 1:
+            return tr
+        cells = [(c.group(2)) for c in _CELL_BLOCK.finditer(tr)]
+        if len(cells) < 2 or any(b"<" in c for c in cells):
+            return tr
+        k = cells[0].count(b"&cr;") + 1
+        if k < (2 if _R304_TWO_LINES else 3) or not cells[0].replace(b"&cr;", b"").strip():
+            return tr
+        if k == 2:
+            # R304: a two-line row is split only when it is plainly two logical rows: both label lines print
+            # text (no amount), and every value cell prints two lines that are amounts, dashes or empty
+            if any(not x.strip() or _R304_AMOUNT_LINE.fullmatch(x.strip()) for x in cells[0].split(b"&cr;")):
+                return tr
+            for c in cells[1:]:
+                if c.strip() != b"-" and c.replace(b"&cr;", b"").strip() and not all(
+                        _R304_VALUE_LINE.fullmatch(x.strip()) for x in c.split(b"&cr;")):
+                    return tr
+        printed = 0
+        for c in cells[1:]:
+            if not c.replace(b"&cr;", b"").strip():
+                continue                                   # a cell that prints nothing
+            if k == 2 and c.strip() == b"-":
+                continue                                   # R304: a lone dash prints no amount on either line
+            if c.count(b"&cr;") + 1 != k:
+                return tr
+            printed += 1 if re.search(rb"\d", c) else 0
+        return tr.replace(b"&cr;", _R296_MARK) if printed else tr
+
+    return _TR_BLOCK.sub(fix, raw)
+
+
 def sanitize_dart_xml(raw: bytes) -> bytes:
     """파싱 전 원문 이스케이프 복구. 순서 주의 — '&' 를 먼저 고쳐야 뒤에서 넣는
     &quot;/&lt; 가 다시 이스케이프되지 않는다."""
-    out = _AMOUNT_STACK_BREAK.sub(b"&#10;", raw)               # R246 — before R224 deletes &cr;
+    out = _mark_stacked_rows(raw) if _R296_STACKED_ROWS else raw
+    out = _AMOUNT_STACK_BREAK.sub(b"&#10;", out)               # R246 — before R224 deletes &cr;
+    if _R296B_DASH_FIRST_LINE:
+        out = _DASH_FIRST_LINE_BREAK.sub(b"&#10;", out)
+    if _R301_DASH_LINES:
+        out = _DASH_LINES_BREAK.sub(lambda m: m.group(1).replace(b"&cr;", b"&#10;"), out)
     if _R274_STACKED_ROW_DIGIT_BREAK:
         out = _break_stacked_row_digits(out)
     out = _NAMED_ENTITY.sub(_resolve_named_entity, out)    # R224 — must run first

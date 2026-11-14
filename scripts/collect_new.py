@@ -690,8 +690,8 @@ def _sync_biz_metrics(corps: list[str]) -> None:
       · P3  부문·수출/내수 매출실적(metric='sales', channel)  (sales_section)
       · B5  캡션 카탈로그 — 제품/원재료 현황·가격변동추이·생산설비·부문별 재무·점유율·
             매출처·투자계획·지식재산권 + 업종특수(보험/증권/건설/제약)  (biz_catalog)
-    따라서 파서를 늘려도 이 배선은 바뀌지 않는다. 사업의 내용 절은 annual 에만 있어 이번에
-    표준화된 기업의 최신 사업보고서만 대상. 비치명적 실패는 본 수집을 막지 않는다(rcept 단위 멱등)."""
+    따라서 파서를 늘려도 이 배선은 바뀌지 않는다. 여기서는 이번에 표준화된 기업의 최신 사업보고서만
+    대상이고, 분기·반기 부문별 실적은 아래 별도 블록(biz_metrics_periodic, R289)이 맡는다. 비치명적 실패는 본 수집을 막지 않는다(rcept 단위 멱등)."""
     if not corps:
         return
     try:
@@ -702,6 +702,16 @@ def _sync_biz_metrics(corps: list[str]) -> None:
                         f"표 {agg['tables']} · 지표행 {agg['metric_rows']:,}")
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[collect] ⑤-1 사업지표 수집 실패(비치명적): {exc}")
+    # R288/R289 (2026-10-28): 분기·반기보고서의 부문별 사업 실적 → biz_metrics_periodic.
+    # 이 헬퍼가 두 call site(메인 · --standardize-only 재개) 양쪽에서 불리므로 여기 한 곳이면 된다.
+    try:
+        from collector.biz_metrics_periodic import sync_biz_periodic
+        agg = sync_biz_periodic(corps, latest_only=True)
+        if agg.get("metric_rows") or agg.get("order_rows"):
+            logger.info(f"[collect] ⑤-1b 분기·반기 사업실적 기업 {agg['corps']} · "
+                        f"지표행 {agg['metric_rows']:,} · 수주행 {agg['order_rows']:,}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ⑤-1b 분기·반기 사업실적 수집 실패(비치명적): {exc}")
 
 
 def _sync_order_backlog(corps: list[str]) -> None:

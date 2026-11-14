@@ -40,7 +40,7 @@ def db():
     _run("createdb", TEST_DB)
     dump = subprocess.run(
         ["pg_dump", "--schema-only", "-t", "corporations", "-t", "filings",
-         "-t", "report_lines", SOURCE_DB], check=True, capture_output=True, text=True).stdout
+         "-t", "report_lines", "-t", "note_lines", "-t", "biz_section_tables", SOURCE_DB], check=True, capture_output=True, text=True).stdout
     # The live report_lines carries the verification triggers; they are recreated by
     # schema.sql below, and would fail here because their functions do not exist yet.
     dump = "\n".join(l for l in dump.splitlines() if "verification." not in l)

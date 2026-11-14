@@ -2474,7 +2474,36 @@ def _is_broken_comma_grouping(cell: str) -> bool:
         return False        # a valid number, or a shape R159/R205 already handle
     # only shapes that are clearly a damaged amount; "15,32" / "5,0" / "9,9,99" are note-reference
     # lists or decimals and stay out of scope
-    return bool(_R273_DAMAGED_SHAPE_RE.match(core))
+    return bool(_R273_DAMAGED_SHAPE_RE.match(core)) or (_R273B_MORE_BROKEN_SHAPES and _is_more_broken_shape(core))
+
+
+# R273-b - more damaged groupings, found by the 2026-10-31 triage of the note extra_row issues (137 cells whose
+#   comma-stripped digits were loaded: '1,1112,007', '552,24' stays out of scope). Only shapes that cannot be a
+#   decimal, a year or a note-reference list: a double comma ('9,999,,999'), a leading comma (',999,999', ',5232'),
+#   a group of 4+ digits after the first comma ('9,9999,999'), and 3+ groups whose middle group is not 3 digits
+#   ('99,99,999', '(17,08,854)'; a 2-digit middle group). Two-group shapes ('99,99', '999,99') are still left alone (R273).
+_R273B_MORE_BROKEN_SHAPES = True
+# R273-c - three or more comma groups of which some group after the first is not 3 digits ('4,15,36,37', '4,6,15,38',
+#   '2015,03,31', '9,99,99,99', '12,5,100') cannot be a thousands grouping: they are note-reference lists or dates, and the
+#   comma-stripped digits (4153637) are not an amount. Two-group shapes ('22,23', '160,21') stay as they were (R273).
+_R273C_SHORT_GROUPS = True
+
+
+def _is_more_broken_shape(core: str) -> bool:
+    if not re.fullmatch(r"[\d,]+", core):
+        return False
+    toks = core.split(",")
+    if ",," in core:
+        return len([t for t in toks if t]) >= 2 and any(len(t) == 3 for t in toks)
+    if toks[0] == "":
+        return len(toks) >= 2 and all(toks[1:]) and sum(len(t) for t in toks) >= 4
+    if len(toks[0]) <= 3 and any(len(t) >= 4 for t in toks[1:]):
+        return True
+    if _R273C_SHORT_GROUPS and len(toks) >= 3 and 1 <= len(toks[0]) <= 4 and all(1 <= len(t) <= 3 for t in toks[1:]) \
+            and any(len(t) != 3 for t in toks[1:]):
+        return True
+    return (len(toks) >= 3 and len(toks[0]) <= 3 and len(toks[-1]) == 3
+            and any(len(t) == 2 for t in toks[1:-1]) and all(len(t) <= 3 for t in toks[1:-1]))
 
 
 # R279 — one cell holding the same comma-grouped amount twice with no separator
@@ -2534,9 +2563,17 @@ def unresolved_dot_cell_indices(amount_cells: list[str],
             or (_R279_DOUBLED_AMOUNT_CELL and _is_doubled_amount_cell(c))]
 
 
+_R158C_FRACTION_GUARD = True
+
+
 def _repair_dot_grouped_cells(amount_cells: list[str],
-                              label: Optional[str] = None) -> list[str]:
+                              label: Optional[str] = None,
+                              skip: frozenset = frozenset()) -> list[str]:
     """행 안에서 짝을 찾아 마침표-구분자 셀을 복원한다(못 찾으면 그대로).
+
+    `skip` = 복원하지 않을 칸 인덱스(R293). 비금액 열(환율·지분율·이자율)은 소수가 정상 표기라
+    '1,214.00' 같은 환율이 같은 행의 '12,140,000'(= USD × 환율)과 숫자열 접두사 관계가 되면
+    정수 칸의 숫자로 **대체**됐다(원문 `1,214.00` → `12140000`, 계약환율 열).
 
     판정: 깨진 셀의 숫자열이 같은 행의 **정수 칸** 숫자열의 접두사이고, 남는
     꼬리가 전부 0 이면 그 정수 칸의 자릿수를 정답으로 본다.
@@ -2546,8 +2583,8 @@ def _repair_dot_grouped_cells(amount_cells: list[str],
     if label and _EPS_ROW_LABEL_RE.search(label):
         return amount_cells                 # 주당손익 행 — 위 주석 참고
     broken = [i for i, c in enumerate(amount_cells)
-              if _DOT_GROUPED_RE.match((c or "").strip())
-              or _DOT_THEN_COMMA_RE.match((c or "").strip())]
+              if i not in skip and (_DOT_GROUPED_RE.match((c or "").strip())
+                                    or _DOT_THEN_COMMA_RE.match((c or "").strip()))]
     if not broken:
         return amount_cells
 
@@ -2576,10 +2613,16 @@ def _repair_dot_grouped_cells(amount_cells: list[str],
             continue
         m = _DOT_GROUPED_RE.match(amount_cells[i].strip())
         digits = _digits_only(m.group(2)) + m.group(3)
+        short_fraction = len(m.group(3)) <= 2
+        if (_R158C_FRACTION_GUARD and short_fraction
+                and any("%" in (c or "") for c in amount_cells)):
+            continue                        # R158-c: a ratio / ownership cell is not a broken thousands separator
         # 더 긴 후보가 여러 개면 판정불가로 두고 손대지 않는다(R6).
         cands = {d for d in intact
                  if len(d) >= len(digits) and d.startswith(digits)
                  and set(d[len(digits):]) <= {"0"}}
+        if _R158C_FRACTION_GUARD and short_fraction and set(m.group(3)) <= {"0"}:
+            cands = set()                   # R158-c: '.0'/'.00' is a decimal tail, only R158-b may restore it
         if len(cands) == 1:
             full = cands.pop()
             out[i] = f"{m.group(1)}{full}{m.group(4)}"

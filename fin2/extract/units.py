@@ -62,8 +62,13 @@ _EXTRA_NON_MONEY = (
     r"|\$|달러|USD|EUR|JPY|위안|엔화"
 )
 # '%' 만 위 `_PCT_AS_UNIT` 로 좁히고 나머지 표지는 그대로 쓴다.
+# R303: a '가중치' (weight) column of a weighted-average share table holds ratios ('1.00', '0.63'); R158 took
+# '1.00' for a broken thousands cell and replaced it by the digits of the row's '10,000,000' (린드먼아시아
+# 20190813000234 table 139). Switch for the A/B.
+_R303_WEIGHT_COLS = True
 NON_MONEY_COL_RE = re.compile(
     _PCT_AS_UNIT + "|" + r"비율|이자율|할인율|지분율|주당|수량|주수|배수|USD|EUR|JPY|외화"
+    + (r"|가중치" if _R303_WEIGHT_COLS else "")
     + "|" + _EXTRA_NON_MONEY)
 
 # 금액 표지 — **혼합 선언에서 양의 근거가 필요할 때만** 쓴다.
@@ -197,13 +202,65 @@ def label_segments(col_label: str | None) -> list[str]:
     return [seg for seg in s.split(">") if seg and "단위" not in seg]
 
 
+# R292 - "환율변동" / "환율변동효과" / "환산차이" name an AMOUNT (the effect of exchange-rate changes in
+# a roll-forward, 비현금변동>환율변동), but the "율" in them matched the rate marker and the whole
+# column was stored NULL (value_raw only): 507 + 222 cells in a 400-filing sample. Only these words are
+# removed before the marker test; "환율" / "계약환율" / "약정환율" (the rate itself), "지분율", "이자율",
+# "진행률" are untouched, and a "%" next to them still marks the column non-monetary.
+_FX_AMOUNT_WORDS_RE = re.compile(r"환율\s*(?:변동|효과|차이|조정|평가)(?:\s*효과)?|환산\s*(?:차이|손익)")
+
+
+# R298 - an area column ('면적(㎡)', '㎥') is no amount: with a 천원 table declaration its 7,494 ㎡ was stored as 7,494,000 won
+# (진바이오텍 20220318000006 table 30; 14,003 cells in 1,642 filings carry '㎡' in the column header, 11,500 cells '면적').
+_R298_AREA_COLUMNS = True
+_AREA_COL_RE = re.compile(r"㎡|㎥|면적")
+
+
 def column_is_non_money(col_label: str | None) -> bool:
     """열 헤더 원문이 **비금액이라고 말하는가**. 헤더가 없으면 말해주는 것이 없다 → False.
 
     어느 단에서든 비금액 표지가 나오면 비금액으로 본다 — '전기말>지분율(%)' 처럼 상위 단이
     기간이고 하위 단이 비율인 경우를 잡아야 한다.
     """
-    return any(NON_MONEY_COL_RE.search(seg) for seg in label_segments(col_label))
+    return any(NON_MONEY_COL_RE.search(_FX_AMOUNT_WORDS_RE.sub("", seg))
+               or (_R298_AREA_COLUMNS and _AREA_COL_RE.search(seg))
+               for seg in label_segments(col_label))
+
+
+# R300 - a ROW whose label (last segment) names a share count ('발행주식수', '가중평균유통보통주식수(주)',
+# '발행한 주식의 수') holds shares, not won, whatever the column header says: the header of such a table
+# is the period ('당분기말>50,000,000주>500원'), so the column rule above never fires and the count was
+# multiplied like money (6,530,014 shares stored as 6,530,014,000 won, 네이블 20211111000269).
+_R300_SHARE_COUNT_ROWS = True
+_SHARE_COUNT_ROW_RE = re.compile(
+    r"(?:주식수|주식\s*의\s*수|주식\s*의\s*총\s*수|주식총수)\s*(?:\(\s*[주천백만]*주?\s*\))?\s*(?:\(\s*\*\s*\d*\s*\))?\s*$")
+
+
+def row_label_is_share_count(label: str | None) -> bool:
+    if not _R300_SHARE_COUNT_ROWS or not label:
+        return False
+    return bool(_SHARE_COUNT_ROW_RE.search(label.split(">")[-1].strip()))
+
+
+# R302: a note ROW whose label ends in its own unit marker '(단위: 주)', '(단위: 원)', '(%)' ... is read in
+# THAT unit, not in the table's declared unit (휴맥스 20260814001937: '유통주식수의 기초수량 (단위: 주)'
+# 4,312,142 and '기초수량 적용일수 (일)' 91 sat in a 천원 table and were stored x1000).
+_R302_ROW_OWN_UNIT = True
+_ROW_UNIT_NON_MONEY_RE = re.compile(
+    r"\(\s*단위\s*:?\s*(?:주|건|개|명|일|%|배|회)\s*\)\s*$|\(\s*(?:%|일)\s*\)\s*$")
+_ROW_UNIT_WON_RE = re.compile(r"\(\s*단위\s*:?\s*원\s*\)\s*$")
+
+
+def row_label_own_unit(label: str | None) -> str | None:
+    """'non_money' | 'won' | None, from the last '>' segment of the row label."""
+    if not _R302_ROW_OWN_UNIT or not label:
+        return None
+    seg = label.split(">")[-1].strip()
+    if _ROW_UNIT_NON_MONEY_RE.search(seg):
+        return "non_money"
+    if _ROW_UNIT_WON_RE.search(seg):
+        return "won"
+    return None
 
 
 def column_is_money(col_label: str | None) -> bool:

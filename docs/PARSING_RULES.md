@@ -451,6 +451,7 @@
 | R202 | R202. 셀 안에서 숫자의 첫 1~2자리가 떨어져 공백으로 이어진 서식 — 1 73,918,853,979 = 173,918… | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R203 | R203. XBRL EPS 를 회사 확장 개념(perShareItemType) + unitRef="SHARES" 로 태깅한 … | [10_layer2_parse.md](rules/10_layer2_parse.md) · XBRL 폴백 | 2 | 유효 |  |
 | R158-b | R158-b. 소수부가 전부 0(.0/.00)인 마침표 셀 — 같은 행에 정수부와 같은 온전한 셀이 있으면 정수부로 복원 (… | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
+| R158-c | R158-c. 소수부 1~2자리 마침표 셀 — 전부 0이면 R158 접두사 복원 없음, 행에 % 칸이 있으면 복원 없음 (2026-11-14, 적용 계층: 2 — 읽기, R158 좁힘) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_R158C_FRACTION_GUARD` |
 | R204 | R204. XBRL IS — 필링이 base 배치를 옮겨 단 비용 개념도 base 템플릿의 negation 을 물려받아 제거… | [10_layer2_parse.md](rules/10_layer2_parse.md) · XBRL 폴백 | 2 | 유효 |  |
 | R205 | R205. 마침표+쉼표 혼합 구분자 셀(69.792,290 = 69,792,290) — 소수로 읽지 않고 R160(결측)·R… | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | 부록 B. 규칙이 사는 … | 부록 B. 규칙이 사는 곳 (원출처) | [99_appendix.md](rules/99_appendix.md) | 부록 | 유효 |  |
@@ -525,6 +526,15 @@
 | R270 | R270. 본문 EPS 칸이 한 자리씩 조각난 숫자는 하나로 잇는다 (2026-10-21, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R272 | R272. `…와 그 종속기업의 … 연결재무제표` 문구도 타 법인 표 표지로 본다 — 효력은 그 연결/별도 구분 안에서만 (2026-10-21, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R273 | R273. 쉼표 묶음이 깨진 금액 칸(`10,921,090,50`)은 읽을 수 없는 칸으로 둔다 — NULL + value_raw (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
+| R273-b | R273-b. 더 많은 깨진 쉼표 묶음 모양(`1,1112,007`·`9,999,,999`·`,663,413,476`·`(17,08,854)`)도 읽을 수 없는 칸으로 둔다 — NULL + value_raw (2026-10-31, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_is_more_broken_shape` |
+| R273-c | R273-c. 쉼표 묶음 셋 이상 + 3자리 아닌 묶음(`4,15,36,37`·`2016,05,20`)은 금액이 아니다 — NULL + value_raw (2026-11-02, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_is_more_broken_shape` |
+| R298 | R298. 열 머리글이 면적(`㎡`·`㎥`·`면적`)이면 금액 열이 아니다 — value_won 비움, 원문은 value_raw (2026-11-03, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `column_is_non_money` |
+| R299 | R299. 주석 셀이 스스로 `원` 을 붙여 찍으면 adecimal 도 원이다 (2026-11-03, 적용 계층: 2 — 읽기, 메타데이터) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_R299_NOTE_OWN_WON_ADECIMAL` |
+| R300 | R300. 행 라벨이 주식수이면 금액이 아니다 — value_won 비움, 원문은 value_raw (2026-11-03, 적용 계층: 2 — 읽기, 단위=행 귀속) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `row_label_is_share_count` |
+| R301 | R301. 홑 `-` 줄이 여러 개 이어진 뒤 금액 줄이 오는 칸도 음수가 아니다 (2026-11-03, 적용 계층: 2 — 읽기, R296-b 확장) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_R301_DASH_LINES` |
+| R302 | R302. 주석 행 라벨 끝의 자기 단위 표기 `(단위: 주)`·`(단위: 원)`·`(%)` 는 표 선언 단위보다 앞선다 (2026-11-04, 적용 계층: 2 — 읽기, R300 확장) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_R302_ROW_OWN_UNIT` |
+| R303 | R303. `가중치` 열은 금액 열이 아니다 — R158 이 `1.00` 을 행의 정수 숫자로 바꾸지 않는다 (2026-11-05, 적용 계층: 2 — 읽기, R293 확장) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_R303_WEIGHT_COLS` |
+| R304 | R304. 라벨 칸과 모든 값 칸이 정확히 2줄인 행은 R296 처럼 줄 단위로 나눈다 (2026-11-12, 적용 계층: 2 — 읽기, R296 확장) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_R304_TWO_LINES` |
 | R274 | R274. 여러 줄 라벨 `주당이익 / 기본주당순이익 / 희석주당순이익` 행은 줄 수만큼의 행으로 나눈다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R275 | R275. 자본변동표 열 이름 어휘에 `보통주납입자본`·`기타자본항목` 을 추가한다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R276 | R276. 같은 기수가 겹쳐 인쇄된 열은 인쇄된 연도로 기간을 가른다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
@@ -538,6 +548,18 @@
 | R284 | R284. SCE 에서 ROWSPAN 라벨의 둘째 물리행은 그 행의 라벨(앞 행이 인쇄한 라벨 칸)을 쓴다 (2026-10-23, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R285 | R285. 모든 금액 셀이 '원' 접미사를 단 행은 표 단위가 아니라 원(adecimal=0)으로 적재한다 (2026-10-26, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R286 | R286. 필링이 인쇄하지 않은 재무제표는 계층3 에서 뒤 보고서의 전기 열로 채운다 (2026-10-27, 적용 계층: 3 — 다른 원천) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | as_printed STEP |
+| R287 | R287. 사업의 내용 리더도 파싱 전에 DART 원문을 정리한다 — 맨 &·< 뒤 글자가 사라지지 않게 (2026-10-27, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | scope biz · R287-b `<A 우선주>` 포함 |
+| R288 | R288. 분기·반기보고서의 사업의 내용은 부문별 사업 실적 표(매출·제품 매출·생산·수주상황)만 계층2 에 싣는다 (2026-10-28, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | biz_periodic |
+| R289 | R289. 분기·반기 부문별 사업 실적은 연간 테이블에 섞지 않고 fiscal_period 가 있는 별도 테이블에 둔다 (2026-10-28, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | biz_periodic |
+| R290 | R290. 주석에서도 해결되지 않은 마침표 셀은 행을 싣고 값은 NULL, 인쇄값은 value_raw (R160 의 주석 경로 누락) (2026-10-28, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | scope note |
+| R291 | R291. 한 칸에 금액 두 개("큰 금액 (괄호 금액)")는 헤더 경계가 아니라 데이터이고, 값은 읽지 않되 행과 인쇄값은 남긴다 (2026-10-29, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | scope note |
+| R292 | R292. 환율변동·환율변동효과·환산차이 열은 비율이 아니라 금액이다 — 율 표지에서 뺀다 (2026-10-29, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | scope note |
+| R293 | R293. 비금액 열에서는 마침표 셀 복원(R158/R158-b)을 하지 않는다 — 환율·지분율의 인쇄 소수를 정수로 바꿔 싣지 않는다 (2026-10-29, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | scope note |
+| R294 | R294. 금액 칸의 첫 줄이 금액이고 뒷줄이 외화 병기·기호뿐이면, 첫 줄 금액을 읽고 인쇄 전체를 value_raw 에 남긴다 (2026-10-29, 적용 계층: 2 — 읽기; R294-b/c/d 포함) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | scope note |
+| R295 | R295. 주석 표의 행은 첫 물리 칸이 비어도 라벨 영역의 다른 칸에 글자가 있으면 그 글자를 라벨로 싣는다 (2026-10-29, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | scope note |
+| R296 | R296. 한 행에 여러 논리 행이 줄로 압축된 칸(라벨 칸 줄 수 = 모든 값 칸 줄 수)은 줄 단위로 나눈다 (2026-10-30, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | 읽기 단계 표식 U+E001 + `_grid_body_rows` |
+| R296-b | R296-b. 첫 줄이 홑 `-` 이고 둘째 줄이 금액인 칸(`-&cr;3,272,017`)은 음수가 아니라 두 줄 칸 — 결측 (2026-10-31, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | 읽기 단계 `&#10;` + `parse_amount_decimal` |
+| R297 | R297. 주석 표의 `주석`·`관련주석` 열은 금액 열이 아니다 — 주석번호 목록을 싣지 않는다 (2026-11-01, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_is_note_table_ref_column_label` |
 
 ## 0. 규칙 색인
 

@@ -181,9 +181,18 @@ def _cell_text(te) -> str:
     return raw
 
 
+# ADECIMAL="INF" marks a value of infinite precision: the cell prints the exact value (per-share amounts in won,
+# share counts, ratios), nothing is scaled. It used to read as "no ADECIMAL" and fell back to the document default
+# unit, so the EPS '3,870' of 한국가스공사 20260814001753 became 3,870,000,000 (x1e6, 백만원) against the DB's 3,870.
+_INF_ADECIMAL_EXACT = True
+
+
 def _parse_adecimal(te) -> int | None:
+    raw = te.get("ADECIMAL", "")
+    if _INF_ADECIMAL_EXACT and isinstance(raw, str) and raw.strip().upper() == "INF":
+        return 0
     try:
-        return int(te.get("ADECIMAL", ""))
+        return int(raw)
     except (ValueError, TypeError):
         return None
 

@@ -660,3 +660,15 @@ def test_text_reader_reads_a_foreign_currency_only_table_in_the_printed_currency
         assert fa.read_report_face_text(p) == []
     finally:
         fa._FX_TEXT_TABLES = True
+
+
+def test_adecimal_inf_reads_as_exact_value_not_as_missing(monkeypatch):
+    from lxml import etree
+    from fin2.audit import face_audit as fa
+
+    te = etree.fromstring('<TE ADECIMAL="INF">3,870</TE>')
+    assert fa._parse_adecimal(te) == 0
+    assert fa._parse_adecimal(etree.fromstring('<TE ADECIMAL="-6">1</TE>')) == -6
+    assert fa._parse_adecimal(etree.fromstring("<TE>1</TE>")) is None
+    monkeypatch.setattr(fa, "_INF_ADECIMAL_EXACT", False)
+    assert fa._parse_adecimal(te) is None

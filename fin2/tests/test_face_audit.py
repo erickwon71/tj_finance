@@ -682,3 +682,30 @@ def test_parse_displayed_paren_minus_prefix_is_negative(monkeypatch):
     assert parse_displayed("(1,234)") == -1234
     monkeypatch.setattr(fa, "_PAREN_MINUS_NEGATIVE", False)
     assert parse_displayed("(-)19,017,120,687") == 19017120687
+
+
+def test_parse_displayed_takes_the_first_of_several_compacted_amounts(monkeypatch):
+    from fin2.audit import face_audit as fa
+
+    assert parse_displayed("1,661,694,495 8,766,105 (20,856)") == 1661694495
+    assert parse_displayed("1,234,567") == 1234567
+    monkeypatch.setattr(fa, "_GROUPED_AMOUNT_FIRST", False)
+    assert parse_displayed("1,661,694,495 8,766,105 (20,856)") != 1661694495
+
+
+def test_parse_displayed_drops_trailing_underline_decoration(monkeypatch):
+    from fin2.audit import face_audit as fa
+
+    assert parse_displayed("(3,939,166,174)==============") == -3939166174
+    assert parse_displayed("10,231,467,126\n==============") == 10231467126
+    monkeypatch.setattr(fa, "_TRAIL_DECOR_STRIP", False)
+    assert parse_displayed("(3,939,166,174)==============") == 3939166174
+
+
+def test_multi_note_reference_wrapped_over_two_lines_is_a_note_cell():
+    from fin2.audit.face_audit import _is_multi_note_ref
+
+    assert _is_multi_note_ref("5, 6, 7, 10\n, 36")
+    assert _is_multi_note_ref("2,4,32")
+    assert not _is_multi_note_ref("24,479,319,951")
+    assert not _is_multi_note_ref("-")

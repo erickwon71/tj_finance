@@ -141,6 +141,17 @@ _NOTE_ONLY_RE = re.compile(r"^[\d,\s.]{1,12}$")
 
 
 _PAREN_MINUS_NEGATIVE = True
+_NOTE_SPLIT_CELLS = True
+_TRAIL_DECOR_STRIP = True
+_TRAIL_DECOR_TAIL_RE = re.compile(r"(?<=[0-9)])[=＝_─—―━\s]+$")
+_GROUPED_AMOUNT_FIRST = True
+_GROUPED_FIRST_RE = re.compile(r"[0-9]{1,3}(?:,[0-9]{3})+(?=\s+[0-9])")
+
+
+def _is_multi_note_ref(cell: str) -> bool:
+    from parser.xml.table_extractor import _NOTE_REF_PATTERN, _AMOUNT_GROUPED_PATTERN, _TRAIL_DECOR_RE
+    ns = _TRAIL_DECOR_RE.sub('', re.sub(r"\s+", "", cell or ""))
+    return bool(',' in ns and _NOTE_REF_PATTERN.match(ns) and not _AMOUNT_GROUPED_PATTERN.match(ns))
 _PAREN_MINUS_RE = re.compile(r"^\(\s*[-−]\s*\)\s*[0-9]")
 
 
@@ -154,6 +165,9 @@ def parse_displayed(text: str) -> int | None:
     t = text.strip().replace(" ", " ")
     if not t:
         return None
+    if _TRAIL_DECOR_STRIP:
+        # '(3,939,166,174)==============': the extractor drops the underline decoration, so does the audit
+        t = _TRAIL_DECOR_TAIL_RE.sub("", t)
     neg = t.startswith("(") and t.rstrip().endswith(")")
     if not neg and t[:1] in ("△", "▲", "▵", "−", "-"):
         neg = True
@@ -163,6 +177,11 @@ def parse_displayed(text: str) -> int | None:
     m = _NUM_RE.search(t)
     if not m:
         return None
+    if _GROUPED_AMOUNT_FIRST:
+        # '1,661,694,495 8,766,105 (20,856)': several amounts compacted into one cell, the first one is the cell
+        g = _GROUPED_FIRST_RE.match(m.group(0))
+        if g:
+            m = g
     digits = m.group(0).replace(",", "").replace(" ", "")
     if not digits or digits == ".":
         return None
@@ -982,6 +1001,11 @@ def read_report_face_text(file_path: str | Path, root=None) -> list[FaceLine]:
             #   `'', '-', '', 14,765,347,500`) 공란을 건너뛴 **첫 비공란** 칸을 본다.
             vals = value_cells[1:] if (len(value_cells) > 1 and table_has_note
                                        and _NOTE_ONLY_RE.match(value_cells[0])) else value_cells
+            if _NOTE_SPLIT_CELLS and vals is value_cells and len(vals) > 1 and table_has_note \
+                    and _is_multi_note_ref(vals[0]):
+                # a multi-note reference wrapped over two lines ('5, 6, 7, 10\n, 36') is longer than
+                # _NOTE_ONLY_RE allows, so the dash cell after it was never seen as the first value cell
+                vals = vals[1:]
             first = next((v for v in vals if v), "")
             if first in _DASH_CELLS:
                 nums.append(0)

@@ -50,6 +50,7 @@ BS_ACCOUNTS: dict[str, list[str]] = {
     # 충돌을 피한다. rules 에서 현금성(bs.cash) 없을 때만 이 결합값을 base 로 쓴다(_COL_PRIORITY).
     "bs.cash_deposits_combined": [
         "현금및예치금",
+        "현금및상각후원가측정예치금",   # R306 (2026-11-15): IFRS 9 bank caption (제주은행, 신한지주, 한화생명)
     ],
     "bs.short_term_investment": [
         "단기금융상품", "단기금융기관예치금",

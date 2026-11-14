@@ -1679,6 +1679,7 @@ _BS_GRAND_TOTAL = {"bs.total_assets", "bs.total_liabilities", "bs.total_equity"}
 # grand totals: 제주은행 bs.cash was the trust table's '현금 및 예치금' (184,392M) instead of the bank's own
 # '현금및상각후원가측정예치금' (240,415M).
 _TRUST_TABLE_DROPS_ALL_BS = True
+_TRUST_ONLY_CANDIDATE_DROPPED = True
 
 # controlling_ni/noncontrolling_ni: the alias catalog has bare labels ('지배기업
 # 소유주지분'·'비지배지분') that legitimately appear in BOTH the '당기순이익의 귀속'
@@ -2485,8 +2486,12 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
         # trust-account signature — never a blanket table_seq preference.
         if (c in _BS_GRAND_TOTAL or (_TRUST_TABLE_DROPS_ALL_BS and c.startswith("bs."))) and trust_seqs:
             filtered = [r for r in rows if r.get("table_seq") not in trust_seqs]
-            if filtered:
+            if filtered or _TRUST_ONLY_CANDIDATE_DROPPED:
+                # when every candidate comes from the trust table the line is missing, not the trust value
+                # (제주은행 2017Q1 separate: the bank's own BS prints no total rows, total_assets was the trust 1,627억)
                 rows = filtered
+            if not rows:
+                continue
         # bs.total_equity: drop EquityAndLiabilities-shaped rows masquerading as equity
         # (R51, 2026-08-27 — see _degenerate_total_equity_row_ids docstring) *before* the
         # by_label grouping / depth tiebreak below, same placement reasoning as trust_seqs

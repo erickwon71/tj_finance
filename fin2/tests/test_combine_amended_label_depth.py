@@ -209,3 +209,21 @@ def test_bank_cash_caption_under_ifrs9_maps_to_the_combined_cash_deposits():
 
     for label in ("현금및상각후원가측정예치금", "현금 및 상각후원가 측정 예치금", "Ⅰ.현금및상각후원가측정예치금"):
         assert get_mapper().map(label, fs_section="bs").account_code == "bs.cash_deposits_combined"
+
+
+def test_total_assets_of_a_table_without_liabilities_or_equity_loses_to_the_real_balance_sheet(monkeypatch):
+    # R309: 미래나노텍 2022H1 - a 천원 right-of-use asset note table has a '합 계' row mapped to bs.total_assets
+    from fin2.layer3 import combine
+
+    def _r(value, label_raw, seq, stage="normalized"):
+        return {"value": value, "stage": stage, "label_raw": label_raw, "section_path": None,
+                "table_seq": seq, "amended": False, "amended_by": None}
+
+    cands = {"bs.total_assets": [_r(369_117, "자   산   총   계", 0), _r(167, "합  계", 1)],
+             "bs.total_liabilities": [_r(172_161, "부   채   총   계", 0)],
+             "bs.total_equity": [_r(196_955, "자 본 총 계", 0)]}
+    confirmed, conflicts = _resolve(cands)
+    assert confirmed["bs.total_assets"] == 369_117
+    monkeypatch.setattr(combine, "_ORPHAN_TOTAL_ASSETS_DROPPED", False)
+    confirmed, conflicts = _resolve(cands)
+    assert "bs.total_assets" not in confirmed and "bs.total_assets" in conflicts

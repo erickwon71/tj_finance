@@ -5236,3 +5236,10 @@ Gate B(41개사 재감사·저장, 사본 비교): fail_b→pass 1(00573269 2022
 > **하지 않는 것** 항등식을 닫는 후보가 0개이거나 2개 이상이면 그대로 보류한다(추측 금지). 투자·재무·순증감 중 하나라도 확정값이 없으면 보류한다.
 > **실측** 해당 별칭 라벨을 가진 139개사 12,020행을 재빌드해 변한 행은 다스코 11행뿐이다(전부 합계가 소계로 잘못 적재돼 있었다. 2025Q1 연결 8,268,209,561 → 7,110,782,691). 다스코 2022 이후 보류분은 항등식으로 확정됐다.
 > **코드·테스트** `fin2/layer3/combine.py` `_resolve_cfo_identity`(`_CFO_CASH_IDENTITY`), `fin2/tests/test_combine_amended_label_depth.py`.
+## R309. 부채·자본 후보가 없는 표의 `bs.total_assets` 후보는 본 BS 표가 따로 있으면 버린다 (2026-11-15, 적용 계층: 3 — 매핑)
+
+> **상태** 유효 · **적용 계층** 3
+>
+> **규칙** BS 섹션에 든 작은 비재무제표 표(사용권자산 주석표의 `합 계`, 담보 제공 표 등)의 `합계` 행이 `bs.total_assets` 로 매핑돼 진짜 `자 산 총 계`(자간 공백이라 `normalized` 단계)와 같은 단계로 겨루거나 이긴다. `bs.total_assets` 후보를 낸 표 중 `bs.total_liabilities`·`bs.total_equity` 후보를 함께 내는 표가 하나라도 있으면, 둘 다 없는 표의 `bs.total_assets` 후보는 버린다(`_orphan_total_assets_table_seqs`, `_ORPHAN_TOTAL_ASSETS_DROPPED`). 후보가 모두 그런 표뿐이면 그대로 둔다.
+> **실측** 미래나노텍 2022H1 별도 총자산 167,926,000(천원 주석표) → 369,117,578,786. DQ3(항등식 위반) 후보 8행(글로본·쎌바이오텍·테라사이언스·포니링크·미래나노텍·에스와이·에스디생명공학)이 모두 data_quality 3 → 1 이 됐다. DQ3 행이 있는 36개사 2,632행과 무작위 150개사 11,126행을 재빌드해 총계·data_quality 가 바뀐 행은 그 8행뿐이다.
+> **코드·테스트** `fin2/layer3/combine.py`, `fin2/tests/test_combine_amended_label_depth.py`.

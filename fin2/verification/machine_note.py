@@ -92,7 +92,7 @@ from fin2.verification import machine_compare as mc
 # integer now joins the superset of source values (`alt_amounts`) only - it is never a source amount the DB must have.
 # mn18 (2026-11-03): a number broken over lines by `&cr;` inside one cell ('3,252,626,&cr;975', 녹십자 2021FY
 # table 105) is joined by the loader; the machine's source cell keeps the literal `&cr;` and read nothing.
-TOOL_VERSION = "mn28"
+TOOL_VERSION = "mn30"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -202,6 +202,12 @@ _TRAILING_ITEM = re.compile(r"\(?(?:[A-Z]{2,4}|(?:US|U)?[$＄￥¥€£])?\s*[\d
 def _read_db_raw(raw: str):
     """mn9 - `_read_amount` of a stored value_raw, else of its first amount when what follows is only a
     currency / symbol / dash tail (R294 `split_amount_with_tail`)."""
+    if _MN29_DB_SPLIT_DIGITS and _WS.search(raw) and re.fullmatch(r"[\d,\s]+", raw):
+        # mn29: a stored value_raw whose digits are split by line breaks ('6,6\n2\n9', '2,673,650\n,\n001': a narrow
+        # printed column) is read like the source side reads the same cell (mn13/mn18), not as its first piece
+        joined = _read_source_cell(raw)
+        if joined is not None:
+            return joined
     v = _read_amount(raw)
     if v is not None:
         return v
@@ -239,6 +245,8 @@ def _is_year(v: int) -> bool:
 _MN24_BLANK_LABEL = True
 _MN25_AMOUNT_IN_LABEL = True
 _MN28_PAREN_JOINED = True
+_MN29_DB_SPLIT_DIGITS = True
+_MN30_DOT_GROUPED_FIRST = True
 _PAREN_JOINED = re.compile(r"(-?\d{1,3}(?:,\d{3})+)\(\d{1,3}(?:,\d{3})*\)")
 
 
@@ -294,6 +302,12 @@ def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
                         if not cell or cell == label:
                             continue
                         v = _read_source_cell(cell)
+                        if _MN30_DOT_GROUPED_FIRST and v is not None and "." in cell:
+                            # mn30: '4,000.000' beside '4,000,000' in the row is the dot-grouped print of 4,000,000 (R158),
+                            # not the decimal 4,000.000
+                            dv = _read_dot_grouped(cell, row_digits)
+                            if dv is not None:
+                                v = dv
                         if v is None:
                             v = _read_dot_grouped(cell, row_digits)
                         if v is None and copies and not _PER_SHARE.search(ps_label):

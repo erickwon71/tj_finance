@@ -261,3 +261,18 @@ def test_db_raw_of_a_two_line_cell_with_the_break_joined_is_read_by_its_first_am
     assert mn._read_db_raw("227,478(816)") == 227478
     assert mn._read_db_raw("13,985\n(1,145)") == 13985
     assert mn._read_db_raw("(816)") == -816 or mn._read_db_raw("(816)") is None
+
+
+def test_db_raw_with_digits_split_by_line_breaks_is_read_joined_mn29():
+    assert mn._read_db_raw("6,6\n2\n9") == 6629
+
+
+def test_dot_grouped_source_cell_beside_its_comma_grouped_pair_is_read_as_integer_mn30(tmp_path):
+    xml = XML.replace(
+        "<TR><TD>지분율</TD>",
+        "<TR><TD>대여금</TD><TD>4,000,000</TD><TD>4,000.000</TD></TR>\n<TR><TD>지분율</TD>")
+    p = tmp_path / "n30.xml"
+    p.write_text(xml, encoding="utf-8")
+    tables, _ = mn.load_source_tables(str(p))
+    assert 4000 not in tables[0].alt_values
+    assert tables[0].alt_values.count(4000000) == 2

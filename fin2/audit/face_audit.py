@@ -142,6 +142,9 @@ _NOTE_ONLY_RE = re.compile(r"^[\d,\s.]{1,12}$")
 
 _PAREN_MINUS_NEGATIVE = True
 _NOTE_SPLIT_CELLS = True
+_SPLIT_GROUP_JOIN = True
+_SPLIT_GROUP_RE = re.compile(r"(?<=[0-9]),\s+(?=[0-9]{3}(?![0-9]))")
+_DASH_OTHER_CURRENT_CELLS = True
 _TRAIL_DECOR_STRIP = True
 _TRAIL_DECOR_TAIL_RE = re.compile(r"(?<=[0-9)])[=＝_─—―━\s]+$")
 _GROUPED_AMOUNT_FIRST = True
@@ -165,6 +168,9 @@ def parse_displayed(text: str) -> int | None:
     t = text.strip().replace(" ", " ")
     if not t:
         return None
+    if _SPLIT_GROUP_JOIN:
+        # '4,244,\n863': a thousands group broken over two lines is one number
+        t = _SPLIT_GROUP_RE.sub(",", t)
     if _TRAIL_DECOR_STRIP:
         # '(3,939,166,174)==============': the extractor drops the underline decoration, so does the audit
         t = _TRAIL_DECOR_TAIL_RE.sub("", t)
@@ -1009,6 +1015,12 @@ def read_report_face_text(file_path: str | Path, root=None) -> list[FaceLine]:
             first = next((v for v in vals if v), "")
             if first in _DASH_CELLS:
                 nums.append(0)
+            elif _DASH_OTHER_CURRENT_CELLS:
+                # the current period is not always the first value cell: an oldest-first table (2013 | 2014 | 2015)
+                # ends with it, a 3-month | cumulative table has it second, so a dash there is a printed zero too
+                filled = [v for v in vals if v]
+                if len(filled) > 1 and (filled[1] in _DASH_CELLS or filled[-1] in _DASH_CELLS):
+                    nums.append(0)
             if not label or not nums:
                 continue
             mapping = mapper.map(label, fs_section=fs_section)

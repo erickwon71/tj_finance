@@ -709,3 +709,39 @@ def test_multi_note_reference_wrapped_over_two_lines_is_a_note_cell():
     assert _is_multi_note_ref("2,4,32")
     assert not _is_multi_note_ref("24,479,319,951")
     assert not _is_multi_note_ref("-")
+
+
+_DASH_LAST_XML = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>2. 재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>재무상태표 제16기 기말</TD></TR></TABLE>
+   <TABLE><TR><TD>(단위 : 원)</TD></TR>
+    <TR><TD>자산총계</TD><TD>2,675,272,719</TD><TD>5,355,760,180</TD><TD>5,729,564,810</TD></TR>
+    <TR><TD>주임종단기대여금</TD><TD>30,000,000</TD><TD>30,000,000</TD><TD>-</TD></TR></TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+
+
+def test_dash_in_the_last_value_cell_of_an_oldest_first_table_is_a_zero_candidate(tmp_path):
+    from fin2.audit import face_audit as fa
+
+    p = tmp_path / "doc.xml"
+    p.write_text(_DASH_LAST_XML, encoding="utf-8")
+    on = [l.amount_won for l in fa.read_report_face_text(p) if "대여금" in (l.label or "")]
+    fa._DASH_OTHER_CURRENT_CELLS = False
+    try:
+        off = [l.amount_won for l in fa.read_report_face_text(p) if "대여금" in (l.label or "")]
+    finally:
+        fa._DASH_OTHER_CURRENT_CELLS = True
+    assert 0 in on and 0 not in off
+
+
+def test_parse_displayed_joins_a_thousands_group_broken_over_two_lines(monkeypatch):
+    from fin2.audit import face_audit as fa
+
+    assert parse_displayed("4,244,\n863") == 4244863
+    assert parse_displayed("5, 6, 7, 10") == 56710
+    monkeypatch.setattr(fa, "_SPLIT_GROUP_JOIN", False)
+    assert parse_displayed("4,244,\n863") == 4244

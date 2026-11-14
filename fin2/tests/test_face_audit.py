@@ -744,4 +744,20 @@ def test_parse_displayed_joins_a_thousands_group_broken_over_two_lines(monkeypat
     assert parse_displayed("4,244,\n863") == 4244863
     assert parse_displayed("5, 6, 7, 10") == 56710
     monkeypatch.setattr(fa, "_SPLIT_GROUP_JOIN", False)
+    monkeypatch.setattr(fa, "_SPLIT_NUMBER_JOIN", False)
     assert parse_displayed("4,244,\n863") == 4244
+
+
+def test_parse_displayed_joins_a_number_broken_at_arbitrary_points(monkeypatch):
+    from fin2.audit import face_audit as fa
+
+    assert parse_displayed("6\n,601,658,41\n6") == 6601658416
+    assert parse_displayed("(98,173,\n2\n36,003)") == -98173236003
+    assert parse_displayed("5, 6, 7, 10\n, 36") == 56710
+    monkeypatch.setattr(fa, "_SPLIT_NUMBER_JOIN", False)
+    assert parse_displayed("6\n,601,658,41\n6") != 6601658416
+
+
+def test_parse_displayed_joins_a_short_number_broken_over_lines():
+    assert parse_displayed("(76\n1\n)") == -761
+    assert parse_displayed("3,611,33\n8") == 3611338

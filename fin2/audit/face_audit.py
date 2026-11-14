@@ -142,6 +142,8 @@ _NOTE_ONLY_RE = re.compile(r"^[\d,\s.]{1,12}$")
 
 _PAREN_MINUS_NEGATIVE = True
 _NOTE_SPLIT_CELLS = True
+_SPLIT_NUMBER_JOIN = True
+_GROUPED_FULL_RE = re.compile(r"[(△▲−-]?[0-9]{1,3}(?:,[0-9]{3})*\)?")
 _SPLIT_GROUP_JOIN = True
 _SPLIT_GROUP_RE = re.compile(r"(?<=[0-9]),\s+(?=[0-9]{3}(?![0-9]))")
 _DASH_OTHER_CURRENT_CELLS = True
@@ -168,6 +170,11 @@ def parse_displayed(text: str) -> int | None:
     t = text.strip().replace(" ", " ")
     if not t:
         return None
+    if _SPLIT_NUMBER_JOIN and "\n" in t:
+        # '6\n,601,658,41\n6': a number broken at arbitrary points is one number when joining it gives a valid grouped amount
+        joined = re.sub(r"\s+", "", t)
+        if _GROUPED_FULL_RE.fullmatch(joined):
+            t = joined
     if _SPLIT_GROUP_JOIN:
         # '4,244,\n863': a thousands group broken over two lines is one number
         t = _SPLIT_GROUP_RE.sub(",", t)

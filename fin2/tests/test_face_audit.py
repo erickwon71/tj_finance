@@ -672,3 +672,13 @@ def test_adecimal_inf_reads_as_exact_value_not_as_missing(monkeypatch):
     assert fa._parse_adecimal(etree.fromstring("<TE>1</TE>")) is None
     monkeypatch.setattr(fa, "_INF_ADECIMAL_EXACT", False)
     assert fa._parse_adecimal(te) is None
+
+
+def test_parse_displayed_paren_minus_prefix_is_negative(monkeypatch):
+    from fin2.audit import face_audit as fa
+
+    assert parse_displayed("(-)19,017,120,687") == -19017120687
+    assert parse_displayed("(−) 5,741,967,194") == -5741967194
+    assert parse_displayed("(1,234)") == -1234
+    monkeypatch.setattr(fa, "_PAREN_MINUS_NEGATIVE", False)
+    assert parse_displayed("(-)19,017,120,687") == 19017120687

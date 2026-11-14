@@ -140,6 +140,10 @@ _DASH_CELLS = frozenset({"-", "−", "–", "―", "－", "—"})
 _NOTE_ONLY_RE = re.compile(r"^[\d,\s.]{1,12}$")
 
 
+_PAREN_MINUS_NEGATIVE = True
+_PAREN_MINUS_RE = re.compile(r"^\(\s*[-−]\s*\)\s*[0-9]")
+
+
 def parse_displayed(text: str) -> int | None:
     """
     보고서 셀 텍스트 → 표시 정수값(리터럴, 단위 미환산). 추출기와 독립한 자체 파서.
@@ -152,6 +156,9 @@ def parse_displayed(text: str) -> int | None:
         return None
     neg = t.startswith("(") and t.rstrip().endswith(")")
     if not neg and t[:1] in ("△", "▲", "▵", "−", "-"):
+        neg = True
+    # '(-)N' is the double-marked minus that the loader reads as negative (appendix T21)
+    if not neg and _PAREN_MINUS_NEGATIVE and _PAREN_MINUS_RE.match(t):
         neg = True
     m = _NUM_RE.search(t)
     if not m:

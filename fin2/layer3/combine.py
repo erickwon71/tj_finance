@@ -2759,6 +2759,35 @@ def _match_ni_identity(cni_vals: set, nci_vals: set, net_income: int):
     return next(iter(near)) if len(near) == 1 else None
 
 
+# R307 (2026-11-15): two labels can both read as the operating cash flow, '영업활동 현금흐름' and '영업활동으로 인한
+# 현금흐름', one being the final total and the other the subtotal before interest / dividends / tax; which is which
+# changes from filing to filing (다스코 2025Q1: the first is the total; 2022Q1: the second), so no label or depth
+# rule is right. The cash identity decides: operating + investing + financing + fx effect = net change in cash.
+_CFO_CASH_IDENTITY = True
+
+
+def _resolve_cfo_identity(confirmed: dict, conflicts: dict) -> None:
+    """Pick the cf.operating candidate that closes the cash identity, only when exactly one does."""
+    if not _CFO_CASH_IDENTITY:
+        return
+    rows = conflicts.get("cf.operating")
+    if not rows:
+        return
+    need = ("cf.investing", "cf.financing", "cf.net_change_in_cash")
+    if any(confirmed.get(k) is None for k in need):
+        return
+    fx = confirmed.get("cf.fx_effect_on_cash") or 0
+    base = confirmed["cf.net_change_in_cash"] - confirmed["cf.investing"] - confirmed["cf.financing"]
+    # the printed net change may or may not include the fx effect (다스코 2022Q1 prints it before the fx line)
+    targets = (base, base - fx)
+    fits = {r["value"] for r in rows
+            if r.get("value") is not None and any(abs(r["value"] - t) <= 1 for t in targets)}
+    if len(fits) == 1:
+        confirmed["cf.operating"] = fits.pop()
+        del conflicts["cf.operating"]
+
+
+
 def _resolve_ni_attribution(cands: dict, confirmed: dict, conflicts: dict) -> None:
     """2nd pass (Phase B, docs/plans/std_v3_controlling_ni_gap_fix_plan_2026-08-08.md §3-2):
     re-select a held is.controlling_ni conflict via the accounting identity
@@ -3585,6 +3614,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     }
     confirmed, conflicts = _resolve(cands, corp, fy, period, basis, stale_reprint_seqs)
     _resolve_ni_attribution(cands, confirmed, conflicts)
+    _resolve_cfo_identity(confirmed, conflicts)
     # ★net_income conflict disambiguation via NI identity (2026-08-22, P1C 잔여회귀 조사 중
     # 발견 — 00120526 2014Q3 / 00139214 2013Q1). is.net_income can end up with 2+ raw
     # candidates instead of a clean single value: (a) an amendment chain where a later

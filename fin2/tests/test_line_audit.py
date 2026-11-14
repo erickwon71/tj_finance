@@ -27,13 +27,13 @@ from fin2.audit.line_audit import (  # noqa: E402
 )
 
 
-def _face(acode, won, basis="consolidated", ade=0, cum=False, row_label=None, in_body=True, instant=False):
+def _face(acode, won, basis="consolidated", ade=0, cum=False, row_label=None, in_body=True, instant=None):
     """Track A face 라인(acode 접두 ifrs/dart). adecimal<0 면 amount_won = won.
     여기선 amount_won 을 직접 통제하려 ade=0(=displayed) 사용. row_label 미지정 시 acode 를
     그대로 라벨로 씀(편의상 — 실제론 XBRL 라벨 텍스트)."""
     return FaceLine(statement=None, basis=basis, acode=acode, canonical=None,
                     label=acode, displayed_value=won, adecimal=ade, is_cumulative=cum,
-                    is_instant=instant, row_label=row_label if row_label is not None else acode,
+                    is_instant=(not cum) if instant is None else instant, row_label=row_label if row_label is not None else acode,
                     in_body_section=in_body)
 
 
@@ -76,7 +76,7 @@ def test_won_match_tolerance():
 def test_reconcile_all_match():
     face = [_face("ifrs-full_Assets", 1000, row_label="자산총계"),
             _face("dart_Revenue", 500, cum=True, row_label="매출액")]
-    lines = [_lrow("자산총계", 1000), _lrow("매출액", 500, cum=True)]
+    lines = [_lrow("자산총계", 1000), _lrow("매출액", 500, cum=True, stmt="IS")]
     r = reconcile_report_lines("R1", face, lines)
     assert r.n_lines == 2 and r.n_match == 2
     assert r.n_value_diff == 0 and r.n_missing == 0 and r.n_extra == 0
@@ -358,3 +358,22 @@ def test_instant_face_cell_of_an_interim_report_is_keyed_not_cumulative():
         assert r.n_value_diff == 1 and r.value_diffs[0].db_won == -3682998621
     finally:
         la._PHASE_B_INSTANT_KEY = True
+
+
+def test_period_cell_is_not_compared_with_a_bs_balance_row_of_the_same_label(monkeypatch):
+    from fin2.audit import line_audit as la
+
+    face = [_face("ifrs-full_X", 0, row_label="기타포괄손익-공정가치측정금융자산평가손익", instant=False)]
+    lines = [_lrow("기타포괄손익-공정가치측정 금융자산 평가손익", -970066580, stmt="BS")]
+    r = reconcile_report_lines("R1", face, lines)
+    assert r.n_value_diff == 0 and r.n_missing == 1
+    monkeypatch.setattr(la, "_PHASE_B_BS_SPLIT", False)
+    r = reconcile_report_lines("R1", face, lines)
+    assert r.n_value_diff == 1
+
+
+def test_instant_cell_may_still_meet_a_cf_row():
+    face = [_face("ifrs-full_CashEnd", 1534320868, row_label="기말의현금및현금성자산", instant=True)]
+    lines = [_lrow("기말의 현금및현금성자산", 1534320868, stmt="CF")]
+    r = reconcile_report_lines("R1", face, lines)
+    assert r.n_match == 1

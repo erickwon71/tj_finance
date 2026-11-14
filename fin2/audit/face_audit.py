@@ -140,6 +140,26 @@ _DASH_CELLS = frozenset({"-", "−", "–", "―", "－", "—"})
 _NOTE_ONLY_RE = re.compile(r"^[\d,\s.]{1,12}$")
 
 
+_PAREN_MINUS_NEGATIVE = True
+_NOTE_SPLIT_CELLS = True
+_SPLIT_NUMBER_JOIN = True
+_GROUPED_FULL_RE = re.compile(r"[(△▲−-]?[0-9]{1,3}(?:,[0-9]{3})*\)?")
+_SPLIT_GROUP_JOIN = True
+_SPLIT_GROUP_RE = re.compile(r"(?<=[0-9]),\s+(?=[0-9]{3}(?![0-9]))")
+_DASH_OTHER_CURRENT_CELLS = True
+_TRAIL_DECOR_STRIP = True
+_TRAIL_DECOR_TAIL_RE = re.compile(r"(?<=[0-9)])[=＝_─—―━\s]+$")
+_GROUPED_AMOUNT_FIRST = True
+_GROUPED_FIRST_RE = re.compile(r"[0-9]{1,3}(?:,[0-9]{3})+(?=\s+[0-9])")
+
+
+def _is_multi_note_ref(cell: str) -> bool:
+    from parser.xml.table_extractor import _NOTE_REF_PATTERN, _AMOUNT_GROUPED_PATTERN, _TRAIL_DECOR_RE
+    ns = _TRAIL_DECOR_RE.sub('', re.sub(r"\s+", "", cell or ""))
+    return bool(',' in ns and _NOTE_REF_PATTERN.match(ns) and not _AMOUNT_GROUPED_PATTERN.match(ns))
+_PAREN_MINUS_RE = re.compile(r"^\(\s*[-−]\s*\)\s*[0-9]")
+
+
 def parse_displayed(text: str) -> int | None:
     """
     보고서 셀 텍스트 → 표시 정수값(리터럴, 단위 미환산). 추출기와 독립한 자체 파서.
@@ -150,12 +170,31 @@ def parse_displayed(text: str) -> int | None:
     t = text.strip().replace(" ", " ")
     if not t:
         return None
+    if _SPLIT_NUMBER_JOIN and "\n" in t:
+        # '6\n,601,658,41\n6': a number broken at arbitrary points is one number when joining it gives a valid grouped amount
+        joined = re.sub(r"\s+", "", t)
+        if _GROUPED_FULL_RE.fullmatch(joined):
+            t = joined
+    if _SPLIT_GROUP_JOIN:
+        # '4,244,\n863': a thousands group broken over two lines is one number
+        t = _SPLIT_GROUP_RE.sub(",", t)
+    if _TRAIL_DECOR_STRIP:
+        # '(3,939,166,174)==============': the extractor drops the underline decoration, so does the audit
+        t = _TRAIL_DECOR_TAIL_RE.sub("", t)
     neg = t.startswith("(") and t.rstrip().endswith(")")
     if not neg and t[:1] in ("△", "▲", "▵", "−", "-"):
+        neg = True
+    # '(-)N' is the double-marked minus that the loader reads as negative (appendix T21)
+    if not neg and _PAREN_MINUS_NEGATIVE and _PAREN_MINUS_RE.match(t):
         neg = True
     m = _NUM_RE.search(t)
     if not m:
         return None
+    if _GROUPED_AMOUNT_FIRST:
+        # '1,661,694,495 8,766,105 (20,856)': several amounts compacted into one cell, the first one is the cell
+        g = _GROUPED_FIRST_RE.match(m.group(0))
+        if g:
+            m = g
     digits = m.group(0).replace(",", "").replace(" ", "")
     if not digits or digits == ".":
         return None
@@ -181,9 +220,18 @@ def _cell_text(te) -> str:
     return raw
 
 
+# ADECIMAL="INF" marks a value of infinite precision: the cell prints the exact value (per-share amounts in won,
+# share counts, ratios), nothing is scaled. It used to read as "no ADECIMAL" and fell back to the document default
+# unit, so the EPS '3,870' of 한국가스공사 20260814001753 became 3,870,000,000 (x1e6, 백만원) against the DB's 3,870.
+_INF_ADECIMAL_EXACT = True
+
+
 def _parse_adecimal(te) -> int | None:
+    raw = te.get("ADECIMAL", "")
+    if _INF_ADECIMAL_EXACT and isinstance(raw, str) and raw.strip().upper() == "INF":
+        return 0
     try:
-        return int(te.get("ADECIMAL", ""))
+        return int(raw)
     except (ValueError, TypeError):
         return None
 
@@ -966,9 +1014,20 @@ def read_report_face_text(file_path: str | Path, root=None) -> list[FaceLine]:
             #   `'', '-', '', 14,765,347,500`) 공란을 건너뛴 **첫 비공란** 칸을 본다.
             vals = value_cells[1:] if (len(value_cells) > 1 and table_has_note
                                        and _NOTE_ONLY_RE.match(value_cells[0])) else value_cells
+            if _NOTE_SPLIT_CELLS and vals is value_cells and len(vals) > 1 and table_has_note \
+                    and _is_multi_note_ref(vals[0]):
+                # a multi-note reference wrapped over two lines ('5, 6, 7, 10\n, 36') is longer than
+                # _NOTE_ONLY_RE allows, so the dash cell after it was never seen as the first value cell
+                vals = vals[1:]
             first = next((v for v in vals if v), "")
             if first in _DASH_CELLS:
                 nums.append(0)
+            elif _DASH_OTHER_CURRENT_CELLS:
+                # the current period is not always the first value cell: an oldest-first table (2013 | 2014 | 2015)
+                # ends with it, a 3-month | cumulative table has it second, so a dash there is a printed zero too
+                filled = [v for v in vals if v]
+                if len(filled) > 1 and (filled[1] in _DASH_CELLS or filled[-1] in _DASH_CELLS):
+                    nums.append(0)
             if not label or not nums:
                 continue
             mapping = mapper.map(label, fs_section=fs_section)

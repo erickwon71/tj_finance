@@ -660,3 +660,104 @@ def test_text_reader_reads_a_foreign_currency_only_table_in_the_printed_currency
         assert fa.read_report_face_text(p) == []
     finally:
         fa._FX_TEXT_TABLES = True
+
+
+def test_adecimal_inf_reads_as_exact_value_not_as_missing(monkeypatch):
+    from lxml import etree
+    from fin2.audit import face_audit as fa
+
+    te = etree.fromstring('<TE ADECIMAL="INF">3,870</TE>')
+    assert fa._parse_adecimal(te) == 0
+    assert fa._parse_adecimal(etree.fromstring('<TE ADECIMAL="-6">1</TE>')) == -6
+    assert fa._parse_adecimal(etree.fromstring("<TE>1</TE>")) is None
+    monkeypatch.setattr(fa, "_INF_ADECIMAL_EXACT", False)
+    assert fa._parse_adecimal(te) is None
+
+
+def test_parse_displayed_paren_minus_prefix_is_negative(monkeypatch):
+    from fin2.audit import face_audit as fa
+
+    assert parse_displayed("(-)19,017,120,687") == -19017120687
+    assert parse_displayed("(−) 5,741,967,194") == -5741967194
+    assert parse_displayed("(1,234)") == -1234
+    monkeypatch.setattr(fa, "_PAREN_MINUS_NEGATIVE", False)
+    assert parse_displayed("(-)19,017,120,687") == 19017120687
+
+
+def test_parse_displayed_takes_the_first_of_several_compacted_amounts(monkeypatch):
+    from fin2.audit import face_audit as fa
+
+    assert parse_displayed("1,661,694,495 8,766,105 (20,856)") == 1661694495
+    assert parse_displayed("1,234,567") == 1234567
+    monkeypatch.setattr(fa, "_GROUPED_AMOUNT_FIRST", False)
+    assert parse_displayed("1,661,694,495 8,766,105 (20,856)") != 1661694495
+
+
+def test_parse_displayed_drops_trailing_underline_decoration(monkeypatch):
+    from fin2.audit import face_audit as fa
+
+    assert parse_displayed("(3,939,166,174)==============") == -3939166174
+    assert parse_displayed("10,231,467,126\n==============") == 10231467126
+    monkeypatch.setattr(fa, "_TRAIL_DECOR_STRIP", False)
+    assert parse_displayed("(3,939,166,174)==============") == 3939166174
+
+
+def test_multi_note_reference_wrapped_over_two_lines_is_a_note_cell():
+    from fin2.audit.face_audit import _is_multi_note_ref
+
+    assert _is_multi_note_ref("5, 6, 7, 10\n, 36")
+    assert _is_multi_note_ref("2,4,32")
+    assert not _is_multi_note_ref("24,479,319,951")
+    assert not _is_multi_note_ref("-")
+
+
+_DASH_LAST_XML = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>2. 재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>재무상태표 제16기 기말</TD></TR></TABLE>
+   <TABLE><TR><TD>(단위 : 원)</TD></TR>
+    <TR><TD>자산총계</TD><TD>2,675,272,719</TD><TD>5,355,760,180</TD><TD>5,729,564,810</TD></TR>
+    <TR><TD>주임종단기대여금</TD><TD>30,000,000</TD><TD>30,000,000</TD><TD>-</TD></TR></TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+
+
+def test_dash_in_the_last_value_cell_of_an_oldest_first_table_is_a_zero_candidate(tmp_path):
+    from fin2.audit import face_audit as fa
+
+    p = tmp_path / "doc.xml"
+    p.write_text(_DASH_LAST_XML, encoding="utf-8")
+    on = [l.amount_won for l in fa.read_report_face_text(p) if "대여금" in (l.label or "")]
+    fa._DASH_OTHER_CURRENT_CELLS = False
+    try:
+        off = [l.amount_won for l in fa.read_report_face_text(p) if "대여금" in (l.label or "")]
+    finally:
+        fa._DASH_OTHER_CURRENT_CELLS = True
+    assert 0 in on and 0 not in off
+
+
+def test_parse_displayed_joins_a_thousands_group_broken_over_two_lines(monkeypatch):
+    from fin2.audit import face_audit as fa
+
+    assert parse_displayed("4,244,\n863") == 4244863
+    assert parse_displayed("5, 6, 7, 10") == 56710
+    monkeypatch.setattr(fa, "_SPLIT_GROUP_JOIN", False)
+    monkeypatch.setattr(fa, "_SPLIT_NUMBER_JOIN", False)
+    assert parse_displayed("4,244,\n863") == 4244
+
+
+def test_parse_displayed_joins_a_number_broken_at_arbitrary_points(monkeypatch):
+    from fin2.audit import face_audit as fa
+
+    assert parse_displayed("6\n,601,658,41\n6") == 6601658416
+    assert parse_displayed("(98,173,\n2\n36,003)") == -98173236003
+    assert parse_displayed("5, 6, 7, 10\n, 36") == 56710
+    monkeypatch.setattr(fa, "_SPLIT_NUMBER_JOIN", False)
+    assert parse_displayed("6\n,601,658,41\n6") != 6601658416
+
+
+def test_parse_displayed_joins_a_short_number_broken_over_lines():
+    assert parse_displayed("(76\n1\n)") == -761
+    assert parse_displayed("3,611,33\n8") == 3611338

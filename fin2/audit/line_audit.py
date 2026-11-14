@@ -171,6 +171,9 @@ def _track_a_face(face_lines: list[FaceLine]) -> list[FaceLine]:
 # as is_cumulative=False. The key reads an instant cell as is_cumulative=False.
 _PHASE_B_INSTANT_KEY = True
 
+# 2026-11-14 - see the candidate filter in reconcile_report_lines (BS balance vs period cell of the same label).
+_PHASE_B_BS_SPLIT = True
+
 
 def _track_a_key(basis: str | None, label: str | None, is_cumulative: bool) -> tuple:
     """Track A 매칭 키 = (basis, 정규화 라벨, is_cumulative). is_cumulative 은 XBRL
@@ -231,6 +234,12 @@ def reconcile_report_lines(
                            ln.is_cumulative and not (_PHASE_B_INSTANT_KEY and ln.is_instant))
         face_keys.add(key)
         candidates = line_idx.get(key)
+        if candidates and _PHASE_B_BS_SPLIT:
+            # a period cell is never compared with a BS balance row: both share is_cumulative=False,
+            # so a 3-month IS cell met the BS balance row of the same label (an instant cell may still
+            # meet a CF row: opening / closing cash)
+            if not ln.is_instant:
+                candidates = [c for c in candidates if c.get("statement") != "BS"]
         if not candidates:
             stmt = ln.statement or _statement_of(ln.canonical)
             out.n_missing += 1

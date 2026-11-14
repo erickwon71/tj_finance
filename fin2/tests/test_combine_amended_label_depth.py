@@ -227,3 +227,23 @@ def test_total_assets_of_a_table_without_liabilities_or_equity_loses_to_the_real
     monkeypatch.setattr(combine, "_ORPHAN_TOTAL_ASSETS_DROPPED", False)
     confirmed, conflicts = _resolve(cands)
     assert "bs.total_assets" not in confirmed and "bs.total_assets" in conflicts
+
+
+def test_a_table_that_does_not_close_the_balance_identity_loses_to_one_that_does(monkeypatch):
+    # R309-b: 한화 2016H1 - a 20.1T table with total assets and liabilities next to the 152T balance sheet
+    from fin2.layer3 import combine
+
+    def _r(value, label_raw, seq):
+        return {"value": value, "stage": "exact", "label_raw": label_raw, "section_path": None,
+                "table_seq": seq, "amended": False, "amended_by": None}
+
+    cands = {"bs.total_assets": [_r(152_136, "자산총계", 0), _r(20_119, "자산총계", 1)],
+             "bs.total_liabilities": [_r(136_982, "부채총계", 0), _r(20_021, "부채총계", 1)],
+             "bs.total_equity": [_r(15_153, "자본총계", 0)]}
+    confirmed, _ = _resolve(cands)
+    assert confirmed["bs.total_assets"] == 152_136 and confirmed["bs.total_liabilities"] == 136_982
+    # no table closes the identity (a balance sheet split over two tables): nothing is dropped
+    cands = {"bs.total_assets": [_r(100, "자산총계", 0)], "bs.total_liabilities": [_r(40, "부채총계", 1)],
+             "bs.total_equity": [_r(60, "자본총계", 1)]}
+    confirmed, _ = _resolve(cands)
+    assert confirmed["bs.total_assets"] == 100 and confirmed["bs.total_liabilities"] == 40

@@ -1719,12 +1719,31 @@ _ORPHAN_TOTAL_ASSETS_DROPPED = True
 
 
 def _orphan_total_assets_table_seqs(cands: dict[str, list[dict]]) -> set:
+    """table_seq values whose BS grand totals must not be used because another table of the filing is the balance
+    sheet: R309 - a table with a total_assets candidate but no liabilities / equity candidate; R309-b - when some
+    table closes the identity (assets == liabilities + equity within 0.5%), a table offering total_assets or
+    total_liabilities that does not close it (한화 2016H1: a 20.1T table next to the 152T balance sheet; 유진증권
+    2018Q3; 제주은행 2017Q1 trust table). Nothing is dropped unless a closing table exists."""
     if not _ORPHAN_TOTAL_ASSETS_DROPPED:
         return set()
-    ta_seqs = {r.get("table_seq") for r in cands.get("bs.total_assets", [])}
-    other = {r.get("table_seq") for k in ("bs.total_liabilities", "bs.total_equity") for r in cands.get(k, [])}
-    full = ta_seqs & other
-    return (ta_seqs - other) if full else set()
+
+    def by_seq(key):
+        out: dict = {}
+        for r in cands.get(key, []):
+            if r.get("value") is not None:
+                out.setdefault(r.get("table_seq"), set()).add(r["value"])
+        return out
+
+    ta, tl, te = by_seq("bs.total_assets"), by_seq("bs.total_liabilities"), by_seq("bs.total_equity")
+    closing = set()
+    for seq, tav in ta.items():
+        if any(abs(a_ - (l_ + e_)) <= 0.005 * abs(a_)
+               for a_ in tav for l_ in tl.get(seq, ()) for e_ in te.get(seq, ())):
+            closing.add(seq)
+    if not closing:
+        full = set(ta) & (set(tl) | set(te))
+        return (set(ta) - set(tl) - set(te)) if full else set()
+    return (set(ta) | set(tl)) - closing
 
 
 def _degenerate_total_equity_row_ids(cands: dict[str, list[dict]]) -> set:
@@ -2510,7 +2529,7 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
                 rows = filtered
             if not rows:
                 continue
-        if c == "bs.total_assets" and orphan_ta_seqs:
+        if c in ("bs.total_assets", "bs.total_liabilities") and orphan_ta_seqs:
             filtered = [r for r in rows if r.get("table_seq") not in orphan_ta_seqs]
             if filtered:
                 rows = filtered

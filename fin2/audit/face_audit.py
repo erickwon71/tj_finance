@@ -105,6 +105,8 @@ class FaceLine:
     displayed_value: int       # 보고서 표시값(단위 미환산, 리터럴)
     adecimal: int | None       # 표시단위(원 환산용)
     is_cumulative: bool = False  # 반기/3분기 누적(YTD) 셀 — std_v2 IS/CF 가 저장하는 값
+    is_instant: bool = False     # ACONTEXT 가 시점(instant) 컨텍스트 — BS 잔액. Q1/H1/Q3 BS 셀은 누적 표지(A)가 붙어
+    # is_cumulative=True 로 읽히지만 report_lines BS 행은 False 라 Phase B 키에서 이 값으로 정규화한다.
     from_gapfill: bool = False   # 표제기반 실패→detect_sections 갭필로 찾은 표(휴리스틱, 저신뢰)
     row_label: str | None = None  # 같은 <TR>의 라벨 셀 원문 텍스트(_row_label_text) — Gate B
     # Phase B(계층2 GC §4-3) report_lines.label_raw 매칭용. 기존 `label`(값 셀 텍스트,
@@ -824,7 +826,7 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
         line = FaceLine(
             statement=stmt, basis=ctx.basis, acode=acode, canonical=canonical,
             label=text[:80], displayed_value=displayed, adecimal=adecimal,
-            is_cumulative=ctx.is_cumulative,
+            is_cumulative=ctx.is_cumulative, is_instant=ctx.period_kind == "instant",
             row_label=_row_label_text(te),
             in_body_section=None if body_ids is None else (id(te) in body_ids),
         )

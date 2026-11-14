@@ -165,6 +165,13 @@ def _track_a_face(face_lines: list[FaceLine]) -> list[FaceLine]:
             and ln.row_label and ln.in_body_section is not False]
 
 
+# An instant (BS balance) face cell of an interim report carries the accumulation marker of its context
+# ('CFY2025eTQA'), so it was keyed is_cumulative=True and met the CF / cumulative-IS rows of the same label
+# ('재고자산' CF change -3.68억 vs the BS balance 503억) instead of its own BS row, which report_lines stores
+# as is_cumulative=False. The key reads an instant cell as is_cumulative=False.
+_PHASE_B_INSTANT_KEY = True
+
+
 def _track_a_key(basis: str | None, label: str | None, is_cumulative: bool) -> tuple:
     """Track A 매칭 키 = (basis, 정규화 라벨, is_cumulative). is_cumulative 은 XBRL
     ACONTEXT 가 실제로 태깅하는 반기/3분기 누적(YTD) 축이라 그대로 키에 포함한다(같은
@@ -220,7 +227,8 @@ def reconcile_report_lines(
     face_keys: set[tuple] = set()   # face 에 등장한 전 키(match·value_diff 무관) → extra 판정용
     for ln in _track_a_face(face_lines):
         out.n_lines += 1
-        key = _track_a_key(ln.basis, ln.row_label, ln.is_cumulative)
+        key = _track_a_key(ln.basis, ln.row_label,
+                           ln.is_cumulative and not (_PHASE_B_INSTANT_KEY and ln.is_instant))
         face_keys.add(key)
         candidates = line_idx.get(key)
         if not candidates:

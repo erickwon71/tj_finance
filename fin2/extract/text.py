@@ -349,6 +349,17 @@ def _titled_as_is(tbl, include_sce: bool) -> bool:
     return False
 
 
+_R308_NOTE_MARK_TITLE = True
+_NUMBERED_HEADING_RE = re.compile(r"(?:^|[\s.])(?:[가-하]|\d{1,2})\.\s*\S*표(?:\s|$)")
+
+
+def _is_remark_title(title: str) -> bool:
+    """A title that starts with '※' is a remark, unless a numbered statement heading follows the note in the same
+    paragraph ('※ ...소급재작성되지 아니하였습니다.  라. 연결현금흐름표', 신영증권 20181109000307)."""
+    t = (title or "").lstrip()
+    return t.startswith("※") and not _NUMBERED_HEADING_RE.search(t)
+
+
 def _detect_body_statement_tables(root, fin_type: str,
                                   include_sce: bool = False) -> dict[str, list[tuple]]:
     """**DART 섹션 기반 본문표 식별**(2026-07-17 재설계).
@@ -483,6 +494,12 @@ def _detect_body_statement_tables(root, fin_type: str,
                     and _looks_like_balance_sheet(tbl) and not _looks_like_income_statement(tbl)
                     and not groups.get(SECTION_CODE_OF[(basis, "BS")])):
                 stmt = "BS"
+            # R308 - a table under a remark paragraph ('※ 재무상태표 주요사항 요약', '※ 기타계정 재분류 사항 ...
+            # 포괄손익계산서상 ...') is a summary / reclassification table, not the statement: its heading only
+            # names the statement it talks about (아이로보틱스 20240321001573, 삼익THK 20150330000271).
+            if (_R308_NOTE_MARK_TITLE and stmt is not None and stmt != "SCE"
+                    and _is_remark_title(title_text_owned(tbl))):
+                stmt = None
             if stmt is None:
                 continue
             last_stmt = stmt   # R142 — 다음 표가 substatement 표지를 만났을 때 물려줄 값.

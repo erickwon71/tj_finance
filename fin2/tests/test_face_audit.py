@@ -761,3 +761,36 @@ def test_parse_displayed_joins_a_number_broken_at_arbitrary_points(monkeypatch):
 def test_parse_displayed_joins_a_short_number_broken_over_lines():
     assert parse_displayed("(76\n1\n)") == -761
     assert parse_displayed("3,611,33\n8") == 3611338
+
+
+_NOTE_MARK_XML = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>4. 재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>재무상태표 제5기 기말</TD></TR></TABLE>
+   <TABLE><TR><TD>(단위 : 원)</TD></TR><TR><TD>자산총계</TD><TD>1,000,000</TD></TR>
+    <TR><TD>부채총계</TD><TD>400,000</TD></TR></TABLE>
+   <P>※ 재무상태표 주요사항 요약</P>
+   <TABLE><TR><TD>(단위 : 원)</TD></TR><TR><TD>자산총계</TD><TD>1,004,000</TD></TR>
+    <TR><TD>부채총계</TD><TD>404,000</TD></TR></TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+
+
+def test_table_under_a_remark_paragraph_is_not_read_as_the_statement(tmp_path):
+    from fin2.extract import text as tx
+    from fin2.audit import face_audit as fa
+
+    p = tmp_path / "doc.xml"
+    p.write_text(_NOTE_MARK_XML, encoding="utf-8")
+
+    def totals():
+        return sorted(l.amount_won for l in fa.read_report_face_text(p) if l.canonical == "bs.total_assets")
+
+    assert totals() == [1000000]
+    tx._R308_NOTE_MARK_TITLE = False
+    try:
+        assert totals() == [1000000, 1004000]
+    finally:
+        tx._R308_NOTE_MARK_TITLE = True

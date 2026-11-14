@@ -1675,6 +1675,10 @@ _BROAD_RE = re.compile(r"및기타|및 기타|AndOther")
 # Real 실측 (2026-08-09): 제주은행(00148832)·기업은행(00149646) — see docs/plans/
 # std_v3_dq_shares_period_backfill_todo_2026-08-09.md.
 _BS_GRAND_TOTAL = {"bs.total_assets", "bs.total_liabilities", "bs.total_equity"}
+# R306 (2026-11-15): the trust-account table is not the filer's own balance sheet for any line, not only the
+# grand totals: 제주은행 bs.cash was the trust table's '현금 및 예치금' (184,392M) instead of the bank's own
+# '현금및상각후원가측정예치금' (240,415M).
+_TRUST_TABLE_DROPS_ALL_BS = True
 
 # controlling_ni/noncontrolling_ni: the alias catalog has bare labels ('지배기업
 # 소유주지분'·'비지배지분') that legitimately appear in BOTH the '당기순이익의 귀속'
@@ -2479,7 +2483,7 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
         # pooled into the same group as the real statement's total — filtering the
         # trust-account rows out first removes that risk. Only fires on the specific
         # trust-account signature — never a blanket table_seq preference.
-        if c in _BS_GRAND_TOTAL and trust_seqs:
+        if (c in _BS_GRAND_TOTAL or (_TRUST_TABLE_DROPS_ALL_BS and c.startswith("bs."))) and trust_seqs:
             filtered = [r for r in rows if r.get("table_seq") not in trust_seqs]
             if filtered:
                 rows = filtered

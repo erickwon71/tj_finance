@@ -5219,3 +5219,11 @@ Gate B(41개사 재감사·저장, 사본 비교): fail_b→pass 1(00573269 2022
 **배선(runbook 체크리스트)**: ① 데일리 `collect_new.py::_sync_biz_metrics`(두 call site 공유) ② 소급 `scripts/backfill_biz_periodic.py`(수동) ③ 검증: verification scope `biz`(저장된 부분집합의 격자가 원문과 같은지; 저장 안 된 표는 세기만) + 회귀 테스트 + 연간 `biz_metrics` 행 수 불변 확인.
 **소비자**: `docs/consumer_guide/s10_structured.md` 에 두 테이블을 올렸다(`tja_reader` 읽기 허용).
 
+## R306. 신탁계정 표(자산총계==부채총계, 자본총계 없음)는 총계 3종뿐 아니라 모든 BS 항목에서 후보를 뺀다 (2026-11-15, 적용 계층: 3 — 매핑)
+
+> **상태** 유효 · **적용 계층** 3
+>
+> **규칙** 은행 필링의 본문 `4. 재무제표` 에 은행 자신의 BS 와 함께 실린 `[신탁계정]` BS 는, 그 표 자신의 후보에서 `bs.total_assets == bs.total_liabilities` 이고 `bs.total_equity` 후보가 없을 때(`_trust_account_table_seqs`) 모든 `bs.*` 항목의 후보에서 뺀다. 이전에는 총계 3종(`_BS_GRAND_TOTAL`)에만 적용돼 같은 표의 `현금 및 예치금` 이 `bs.cash` 로 들어갔다.
+> **하지 않는 것** 표 순서(table_seq=0 우선) 일반 규칙이 아니다 — 신탁 서명(자산==부채, 자본 없음)을 가진 표만 뺀다(네오셈 회귀 선례, 위 `_BS_GRAND_TOTAL` 주석). 뺀 뒤 후보가 비면 그대로 둔다.
+> **실측** 해당 서명의 표는 제주은행 00148832(43표)·기업은행 00149646(19표) 두 곳뿐이다. 재빌드로 제주은행 12개 기간의 cash 와 2020FY 별도 총자산(신탁 571억 → 본 BS 6.52조)이 바뀌었다.
+> **코드·테스트** `fin2/layer3/combine.py` `_TRUST_TABLE_DROPS_ALL_BS`, `fin2/tests/test_combine_amended_label_depth.py`.

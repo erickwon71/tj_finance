@@ -127,3 +127,25 @@ def test_two_base_candidates_same_label_still_conflict_normally():
     confirmed, conflicts = _resolve(cands)
     assert "bs.trade_payables" not in confirmed
     assert "bs.trade_payables" in conflicts
+
+
+def test_trust_account_table_does_not_feed_a_non_total_bs_line(monkeypatch):
+    # R306: the trust-account table (assets == liabilities, no equity) is dropped for every bs.* line, so
+    # the trust '현금 및 예치금' no longer beats the bank's own cash row (제주은행 FY2025 separate)
+    from fin2.layer3 import combine
+
+    def _r(value, stage, label_raw, seq):
+        return {"value": value, "stage": stage, "label_raw": label_raw, "section_path": None,
+                "table_seq": seq, "amended": False, "amended_by": None}
+
+    cands = {
+        "bs.total_assets": [_r(8_012, "exact", "자산총계", 0), _r(217, "exact", "자산총계", 1)],
+        "bs.total_liabilities": [_r(7_365, "exact", "부채총계", 0), _r(217, "exact", "부채총계", 1)],
+        "bs.total_equity": [_r(647, "exact", "자본총계", 0)],
+        "bs.cash": [_r(240, "exact", "현금및상각후원가측정예치금", 0), _r(184, "exact", "현금 및 예치금", 1)],
+    }
+    confirmed, _ = _resolve(cands)
+    assert confirmed["bs.cash"] == 240
+    monkeypatch.setattr(combine, "_TRUST_TABLE_DROPS_ALL_BS", False)
+    confirmed, conflicts = _resolve(cands)
+    assert confirmed.get("bs.cash") != 240 or "bs.cash" in conflicts

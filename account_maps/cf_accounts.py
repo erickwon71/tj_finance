@@ -15,6 +15,7 @@ CF_ACCOUNTS: dict[str, list[str]] = {
     "cf.operating": [
         "영업활동으로인한현금흐름",
         "영업활동현금흐름",
+        "영업활동 현금흐름",     # 2026-11-15 R307: spaced form reached only stage=normalized and lost to the exact subtotal
         "영업활동으로 인한 현금흐름",
         "영업활동",
         "영업활동순현금흐름",   # 2026-07-18 승급('순' 표기 = 순현금흐름 소계)

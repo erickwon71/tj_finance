@@ -149,3 +149,38 @@ def test_trust_account_table_does_not_feed_a_non_total_bs_line(monkeypatch):
     monkeypatch.setattr(combine, "_TRUST_TABLE_DROPS_ALL_BS", False)
     confirmed, conflicts = _resolve(cands)
     assert confirmed.get("bs.cash") != 240 or "bs.cash" in conflicts
+
+
+
+def test_cfo_conflict_is_decided_by_the_cash_identity(monkeypatch):
+    # R307: the two operating labels tie, only the total closes the cash identity: 13,879 - (-6,862 - 1,453 + 33) = 22,161
+    from fin2.layer3 import combine
+
+    def _r(value):
+        return {"value": value}
+
+    conflicts = {"cf.operating": [_r(22_161), _r(23_650)]}
+    confirmed = {"cf.investing": -6_862, "cf.financing": -1_453, "cf.fx_effect_on_cash": 33,
+                 "cf.net_change_in_cash": 13_879}
+    combine._resolve_cfo_identity(confirmed, conflicts)
+    assert confirmed["cf.operating"] == 22_161 and "cf.operating" not in conflicts
+    conflicts = {"cf.operating": [_r(22_161), _r(23_650)]}
+    confirmed = {"cf.investing": -6_862, "cf.financing": -1_453, "cf.fx_effect_on_cash": 33,
+                 "cf.net_change_in_cash": 13_879}
+    monkeypatch.setattr(combine, "_CFO_CASH_IDENTITY", False)
+    combine._resolve_cfo_identity(confirmed, conflicts)
+    assert "cf.operating" in conflicts
+
+
+def test_cfo_identity_also_accepts_a_net_change_printed_before_the_fx_effect():
+    from fin2.layer3 import combine
+
+    confirmed = {"cf.investing": -6_862, "cf.financing": -1_453, "cf.fx_effect_on_cash": 33,
+                 "cf.net_change_in_cash": 13_879}
+    conflicts = {"cf.operating": [_row_v(22_194), _row_v(23_650)]}
+    combine._resolve_cfo_identity(confirmed, conflicts)
+    assert confirmed["cf.operating"] == 22_194
+
+
+def _row_v(value):
+    return {"value": value}

@@ -108,3 +108,18 @@ def test_mixed_declaration_column_behavior_unchanged():
     assert cu.multiplier(0) == 1_000      # '원화금액' = 금액 열
     assert cu.multiplier(1) is None       # '외화금액' → 비금액 표지로 차단
     assert cu.source(0) != SRC_FX
+
+
+def test_r305_scale_word_apart_from_the_currency_code_is_its_scale():
+    from fin2.extract.units import ColumnUnits
+    for decl, mult in [("(단위 : 천, USD)", 1_000), ("(단위: 천 USD)", 1_000),
+                       ("(단위:천 CNY)", 1_000), ("(단위: 백만, USD)", 1_000_000),
+                       ("(단위: 천USD)", 1_000), ("(단위 : USD)", 1)]:
+        cu = ColumnUnits.from_declaration(decl)
+        assert cu.fx_mult == mult, decl
+
+
+def test_r305_switch_off_keeps_the_dropped_scale(monkeypatch):
+    from fin2.extract import units
+    monkeypatch.setattr(units, "_R305_SPLIT_FX_SCALE", False)
+    assert units.ColumnUnits.from_declaration("(단위 : 천, USD)").fx_mult == 1

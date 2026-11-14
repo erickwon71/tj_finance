@@ -158,12 +158,30 @@ def classify_tokens(tokens: list[str]) -> str:
     return NON_MONEY_ONLY
 
 
+# R305 — a scale word printed apart from the currency code ('(단위 : 천, USD)', '(단위: 천 USD)',
+# '(단위: USD 천)') is the scale of that currency. It used to be dropped, so 3,052,266 천USD was
+# stored as 3,052,266 USD (두산밥캣 note and statement rows, unit_source='fx_declared'). Switch for the A/B.
+_R305_SPLIT_FX_SCALE = True
+_FX_SCALE_WORDS = {"천": 1_000, "만": 10_000, "백만": 1_000_000, "억": 100_000_000}
+_FX_CODE_THEN_SCALE_RE = re.compile(
+    r"^[(（]?\s*(" + "|".join(FX_CODES) + r")\s*(천|만|백만|억)\s*[)）]?$", re.I)
+
+
 def first_fx(tokens: list[str]) -> tuple[str, int] | None:
     """선언의 첫 외화 토큰 → (통화코드, 스케일). 없으면 None."""
-    for t in tokens:
+    for i, t in enumerate(tokens):
         fx = fx_token(t)
         if fx:
+            if _R305_SPLIT_FX_SCALE and fx[1] == 1:
+                if i > 0 and tokens[i - 1].strip() in _FX_SCALE_WORDS:
+                    return fx[0], _FX_SCALE_WORDS[tokens[i - 1].strip()]
+                if i + 1 < len(tokens) and tokens[i + 1].strip() in _FX_SCALE_WORDS:
+                    return fx[0], _FX_SCALE_WORDS[tokens[i + 1].strip()]
             return fx
+        if _R305_SPLIT_FX_SCALE:
+            m = _FX_CODE_THEN_SCALE_RE.match(t.strip())
+            if m:
+                return m.group(1).upper(), _FX_SCALE_WORDS[m.group(2)]
     return None
 
 

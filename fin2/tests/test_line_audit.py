@@ -27,13 +27,13 @@ from fin2.audit.line_audit import (  # noqa: E402
 )
 
 
-def _face(acode, won, basis="consolidated", ade=0, cum=False, row_label=None, in_body=True):
+def _face(acode, won, basis="consolidated", ade=0, cum=False, row_label=None, in_body=True, instant=False):
     """Track A face 라인(acode 접두 ifrs/dart). adecimal<0 면 amount_won = won.
     여기선 amount_won 을 직접 통제하려 ade=0(=displayed) 사용. row_label 미지정 시 acode 를
     그대로 라벨로 씀(편의상 — 실제론 XBRL 라벨 텍스트)."""
     return FaceLine(statement=None, basis=basis, acode=acode, canonical=None,
                     label=acode, displayed_value=won, adecimal=ade, is_cumulative=cum,
-                    row_label=row_label if row_label is not None else acode,
+                    is_instant=instant, row_label=row_label if row_label is not None else acode,
                     in_body_section=in_body)
 
 
@@ -341,3 +341,20 @@ def _run():
 
 if __name__ == "__main__":
     sys.exit(1 if _run() else 0)
+
+
+def test_instant_face_cell_of_an_interim_report_is_keyed_not_cumulative():
+    # A BS balance of a Q1/H1/Q3 report carries the accumulation marker of its context (is_cumulative=True) but
+    # report_lines stores the BS row as is_cumulative=False; the CF row of the same label is cumulative.
+    face = [_face("ifrs-full_Inventories", 50396026124, row_label="재고자산", cum=True, instant=True)]
+    lines = [_lrow("재고자산", 50396026124, cum=False, stmt="BS"),
+             _lrow("재고자산", -3682998621, cum=True, stmt="CF")]
+    r = reconcile_report_lines("R1", face, lines)
+    assert r.n_lines == 1 and r.n_match == 1 and r.n_value_diff == 0
+    import fin2.audit.line_audit as la
+    la._PHASE_B_INSTANT_KEY = False
+    try:
+        r = reconcile_report_lines("R1", face, lines)
+        assert r.n_value_diff == 1 and r.value_diffs[0].db_won == -3682998621
+    finally:
+        la._PHASE_B_INSTANT_KEY = True

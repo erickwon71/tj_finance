@@ -105,6 +105,8 @@ class FaceLine:
     displayed_value: int       # 보고서 표시값(단위 미환산, 리터럴)
     adecimal: int | None       # 표시단위(원 환산용)
     is_cumulative: bool = False  # 반기/3분기 누적(YTD) 셀 — std_v2 IS/CF 가 저장하는 값
+    is_instant: bool = False     # ACONTEXT 가 시점(instant) 컨텍스트 — BS 잔액. Q1/H1/Q3 BS 셀은 누적 표지(A)가 붙어
+    # is_cumulative=True 로 읽히지만 report_lines BS 행은 False 라 Phase B 키에서 이 값으로 정규화한다.
     from_gapfill: bool = False   # 표제기반 실패→detect_sections 갭필로 찾은 표(휴리스틱, 저신뢰)
     row_label: str | None = None  # 같은 <TR>의 라벨 셀 원문 텍스트(_row_label_text) — Gate B
     # Phase B(계층2 GC §4-3) report_lines.label_raw 매칭용. 기존 `label`(값 셀 텍스트,
@@ -824,7 +826,7 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
         line = FaceLine(
             statement=stmt, basis=ctx.basis, acode=acode, canonical=canonical,
             label=text[:80], displayed_value=displayed, adecimal=adecimal,
-            is_cumulative=ctx.is_cumulative,
+            is_cumulative=ctx.is_cumulative, is_instant=ctx.period_kind == "instant",
             row_label=_row_label_text(te),
             in_body_section=None if body_ids is None else (id(te) in body_ids),
         )
@@ -889,6 +891,12 @@ def _adecimal_from_unit(unit: int) -> int:
     if unit <= 1:
         return 0
     return -int(round(math.log10(unit)))
+
+
+# Foreign-currency-only statement tables (두산밥캣 prints a USD set beside the won face) are read in the
+# printed currency; before, they were skipped and the DB rows loaded from them (unit_source='fx_declared')
+# found no printed value to meet and showed as line_value_diff.
+_FX_TEXT_TABLES = True
 
 
 def read_report_face_text(file_path: str | Path, root=None) -> list[FaceLine]:
@@ -1008,6 +1016,16 @@ def read_report_face_text(file_path: str | Path, root=None) -> list[FaceLine]:
             # 단위: 섹션 그룹이 이미 준 것 우선, 없으면 표 자기 선언으로 재시도(추측 금지 —
             # strict 추출기와 동일, Phase A §3-C). 둘 다 없으면 스킵.
             u = unit if unit is not None else declared_unit(tbl)
+            if u is None and _FX_TEXT_TABLES:
+                # A table declared in a foreign currency only ('(단위 : USD)') is read in the
+                # printed currency, like report_lines stores it (unit_source='fx_declared'):
+                # the DB row is compared with the printed amount, not with a won conversion.
+                from fin2.extract.text import declaration_text, inherited_declaration_text
+                from fin2.extract.units import ColumnUnits, FX_ONLY
+                cu = ColumnUnits.from_declaration(
+                    declaration_text(tbl) or inherited_declaration_text(tbl))
+                if cu.kind == FX_ONLY:
+                    u = cu.fx_mult
             if u is None:
                 continue
             _read_table(tbl, basis, stmt, u)
@@ -1061,10 +1079,17 @@ def _apply_proved_unit_overrides(lines: list[FaceLine], file_path: str | Path) -
     from fin2.extract.report_lines import _unit_override
     rcept = Path(file_path).stem
     for line in lines:
-        if not line.statement or not line.basis:
+        if not line.basis:
             continue
-        code = f"{line.statement}_{'C' if line.basis == 'consolidated' else 'S'}"
-        ov = _unit_override(rcept, code)
+        side = 'C' if line.basis == 'consolidated' else 'S'
+        if line.statement:
+            ov = _unit_override(rcept, f"{line.statement}_{side}")
+        else:
+            # An unmapped account (statement unknown) is scaled like its sibling
+            # sections when every proven section of that basis agrees on one multiplier.
+            ovs = {o[0] for o in (_unit_override(rcept, f"{st}_{side}")
+                                  for st in ("BS", "IS", "CF", "SCE")) if o is not None}
+            ov = (ovs.pop(),) if len(ovs) == 1 else None
         if ov is not None:
             line.adecimal = _adecimal_from_unit(ov[0])
     return lines

@@ -1710,6 +1710,23 @@ def _trust_account_table_seqs(cands: dict[str, list[dict]]) -> set:
             if tl_by_seq.get(seq) == v and seq not in eq_seqs}
 
 
+# R309 (2026-11-15): a small non-statement table of the BS section (a right-of-use asset note with a '합 계' row, a
+# collateral table) can map its '합계' to bs.total_assets and tie with, or beat, the real '자 산 총 계' (letter-spaced,
+# stage=normalized): 미래나노텍 2022H1 separate total_assets was 167,926,000 (a 천원 note table) next to liabilities of
+# 172,161,896,116. A table that offers a total_assets candidate but no total_liabilities and no total_equity candidate
+# is not the balance sheet when another table of the filing offers a total_assets together with one of them.
+_ORPHAN_TOTAL_ASSETS_DROPPED = True
+
+
+def _orphan_total_assets_table_seqs(cands: dict[str, list[dict]]) -> set:
+    if not _ORPHAN_TOTAL_ASSETS_DROPPED:
+        return set()
+    ta_seqs = {r.get("table_seq") for r in cands.get("bs.total_assets", [])}
+    other = {r.get("table_seq") for k in ("bs.total_liabilities", "bs.total_equity") for r in cands.get(k, [])}
+    full = ta_seqs & other
+    return (ta_seqs - other) if full else set()
+
+
 def _degenerate_total_equity_row_ids(cands: dict[str, list[dict]]) -> set:
     """id() of bs.total_equity candidate rows that are actually an
     EquityAndLiabilities-shaped line (부채와자본총계/총자본) masquerading as equity —
@@ -2360,6 +2377,7 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
     confirmed: dict[str, int] = {}
     conflicts: dict[str, list[dict]] = {}
     trust_seqs = _trust_account_table_seqs(cands)
+    orphan_ta_seqs = _orphan_total_assets_table_seqs(cands)
     degenerate_eq_ids = _degenerate_total_equity_row_ids(cands)
     # R63 stale-reprint drop (§1/§8 above): unlike trust_seqs/degenerate_eq_ids (both
     # applied inline further down, *never* emptying a canonical's candidate pool —
@@ -2492,6 +2510,10 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
                 rows = filtered
             if not rows:
                 continue
+        if c == "bs.total_assets" and orphan_ta_seqs:
+            filtered = [r for r in rows if r.get("table_seq") not in orphan_ta_seqs]
+            if filtered:
+                rows = filtered
         # bs.total_equity: drop EquityAndLiabilities-shaped rows masquerading as equity
         # (R51, 2026-08-27 — see _degenerate_total_equity_row_ids docstring) *before* the
         # by_label grouping / depth tiebreak below, same placement reasoning as trust_seqs

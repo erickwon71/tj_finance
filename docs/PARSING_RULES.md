@@ -539,6 +539,7 @@
 | R306 | R306. 신탁계정 표(자산총계==부채총계, 자본총계 없음)는 총계 3종뿐 아니라 모든 BS 항목에서 후보를 뺀다 (2026-11-15, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | `_TRUST_TABLE_DROPS_ALL_BS` |
 | R307 | R307. 영업활동 현금흐름이 두 라벨로 인쇄되면 현금 항등식으로 합계를 가린다 — `영업활동 현금흐름` 별칭 추가 (2026-11-15, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | `_CFO_CASH_IDENTITY` |
 | R308 | R308. 표제가 `※` 로 시작하는 표는 재무제표 본표가 아니다 (2026-11-15, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_R308_NOTE_MARK_TITLE` |
+| R309 | R309. 부채·자본 후보가 없는 표의 `bs.total_assets` 후보는 본 BS 표가 따로 있으면 버린다 (2026-11-15, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | `_ORPHAN_TOTAL_ASSETS_DROPPED` |
 | R274 | R274. 여러 줄 라벨 `주당이익 / 기본주당순이익 / 희석주당순이익` 행은 줄 수만큼의 행으로 나눈다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R275 | R275. 자본변동표 열 이름 어휘에 `보통주납입자본`·`기타자본항목` 을 추가한다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R276 | R276. 같은 기수가 겹쳐 인쇄된 열은 인쇄된 연도로 기간을 가른다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |

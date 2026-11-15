@@ -2517,6 +2517,7 @@ def _drop_accrual_cash_aliases(cands: dict[str, list[dict]]) -> None:
 # A restatement moves the value a little (3-7% in the measured cases); a value several times larger or smaller is
 # another row or a wider aggregate (a component '기타투자활동' 11.9B next to the section total -943B in 00117212,
 # '매입채무' 1.8B vs '매입채무 및 기타유동채무' 8.8B in 00530413): only a difference up to _R311_MAX_REL counts.
+_R314_NI_ATTRIBUTION_CHILD = True
 _R311_SAME_SLOT_RESTATED = True
 _R311_MAX_REL = 0.2
 
@@ -2702,6 +2703,15 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
         if c in ("bs.total_assets", "bs.total_liabilities") and orphan_ta_seqs:
             filtered = [r for r in rows if r.get("table_seq") not in orphan_ta_seqs]
             if filtered:
+                rows = filtered
+        # R314: a row printed inside the '... 의 귀속' section (or under a heading that is the net income row itself)
+        # under the bare net income wording ('분기순이익' next to '비지배지분') is the owners' share; it must not
+        # outrank the real net income row printed above it
+        if c == "is.net_income" and _R314_NI_ATTRIBUTION_CHILD:
+            own = {_norm_label(r.get("label_raw")) for r in rows if not r.get("section_path") and r.get("value")}
+            filtered = [r for r in rows if "귀속" not in (r.get("section_path") or "")
+                        and _norm_label(r.get("section_path")) not in own]
+            if filtered and len(filtered) < len(rows):
                 rows = filtered
         # bs.total_equity: drop EquityAndLiabilities-shaped rows masquerading as equity
         # (R51, 2026-08-27 — see _degenerate_total_equity_row_ids docstring) *before* the

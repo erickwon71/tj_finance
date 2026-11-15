@@ -2469,6 +2469,36 @@ def _drop_accrual_cash_aliases(cands: dict[str, list[dict]]) -> None:
             cands[c] = cash
 
 
+# R311 (2026-11-15): an amendment that restates a value under another label of the same account ('매입채무및기타채무'
+# -> '매입채무 및 기타유동채무', 제일엠앤에스 separate 2024FY, 엔케이젠 2023FY consolidated) leaves two candidates:
+# the original one (exact stage) wins the stage rank over the amended one (normalized) and the restated value is lost.
+# The per-label stale drop does not see them (the normalised labels differ). In a table section (the same
+# table_seq and a printed section_path) with exactly ONE original candidate and amended candidates that agree on
+# another value, the original candidate is stale. Two original candidates in the slot are two rows: untouched.
+# A restatement moves the value a little (3-7% in the measured cases); a value several times larger or smaller is
+# another row or a wider aggregate (a component '기타투자활동' 11.9B next to the section total -943B in 00117212,
+# '매입채무' 1.8B vs '매입채무 및 기타유동채무' 8.8B in 00530413): only a difference up to _R311_MAX_REL counts.
+_R311_SAME_SLOT_RESTATED = True
+_R311_MAX_REL = 0.2
+
+
+def _same_slot_restated_stale_ids(rows) -> set:
+    slots: dict[tuple, list] = defaultdict(list)
+    for r in rows:
+        if r.get("section_path"):
+            slots[(r.get("table_seq"), r.get("section_path"))].append(r)
+    stale: set = set()
+    for group in slots.values():
+        base = [r for r in group if not r.get("amended")]
+        amended = [r for r in group if r.get("amended")]
+        if len(base) == 1 and amended and len({r["value"] for r in amended}) == 1 \
+                and amended[0]["value"] != base[0]["value"]:
+            a, b = amended[0]["value"], base[0]["value"]
+            if abs(a - b) <= _R311_MAX_REL * max(abs(a), abs(b)):
+                stale.add(id(base[0]))
+    return stale
+
+
 def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
              fy: int | None = None, period: str | None = None, basis: str | None = None,
              stale_reprint_table_seqs: dict[str, set] | None = None):
@@ -2666,6 +2696,8 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
             if not any(g.get("amended") for g in group):
                 continue  # 진짜 총계/하위항목 구조차이 — depth-우선에 맡긴다
             stale_ids.update(id(g) for g in group if not g.get("amended"))
+        if _R311_SAME_SLOT_RESTATED:
+            stale_ids |= _same_slot_restated_stale_ids(rows)
         if stale_ids:
             rows = [r for r in rows if id(r) not in stale_ids]
         # bs.other_current_payables "기타유동금융부채" vs "기타(유동)부채" 충돌 (2026-09-01,

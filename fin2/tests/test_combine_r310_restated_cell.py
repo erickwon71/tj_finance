@@ -102,3 +102,34 @@ def test_trade_payables_and_other_financial_liabilities_caption_is_trade_payable
     from fin2.layer3.combine import _FS, _map_label
     for label in ("매입채무및기타금융부채", "매입채무 및 기타금융부채"):
         assert _map_label(label, _FS["BS"]).account_code == "bs.trade_payables"
+
+
+def _cand(value, stage, label_raw, amended, section="부채>유동부채"):
+    return {"value": value, "stage": stage, "label_raw": label_raw, "section_path": section, "table_seq": 0,
+            "amended": amended, "amended_by": "a" if amended else None}
+
+
+def test_r311_value_restated_under_another_label_of_the_same_account_wins(monkeypatch):
+    # 제일엠앤에스 separate 2024FY: '매입채무및기타채무' (original, exact) vs '매입채무 및 기타유동채무' (amended, normalized)
+    cands = {"bs.trade_payables": [_cand(67, "exact", "매입채무및기타채무", False),
+                                   _cand(65, "normalized", "매입채무 및 기타유동채무", True)]}
+    confirmed, _ = combine._resolve(cands)
+    assert confirmed["bs.trade_payables"] == 65
+    monkeypatch.setattr(combine, "_R311_SAME_SLOT_RESTATED", False)
+    confirmed, _ = combine._resolve(cands)
+    assert confirmed["bs.trade_payables"] == 67
+
+
+def test_r311_two_original_rows_in_the_slot_are_left_alone():
+    cands = {"bs.trade_payables": [_cand(67, "exact", "매입채무및기타채무", False),
+                                   _cand(9, "exact", "매입채무", False),
+                                   _cand(65, "normalized", "매입채무 및 기타유동채무", True)]}
+    stale = combine._same_slot_restated_stale_ids(cands["bs.trade_payables"])
+    assert stale == set()
+
+
+def test_r311_a_value_several_times_apart_is_not_a_restatement():
+    # 00117212: a component row (11.9B) next to the section total (-943B); 00530413: 1.8B vs a wider aggregate 8.8B
+    rows = [_cand(-943, "exact", "투자활동으로 인한 현금흐름", False, "영업활동"),
+            _cand(12, "fuzzy", "기타투자활동", True, "영업활동")]
+    assert combine._same_slot_restated_stale_ids(rows) == set()

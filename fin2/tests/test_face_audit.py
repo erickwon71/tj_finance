@@ -794,3 +794,36 @@ def test_table_under_a_remark_paragraph_is_not_read_as_the_statement(tmp_path):
         assert totals() == [1000000, 1004000]
     finally:
         tx._R308_NOTE_MARK_TITLE = True
+
+
+_NOTE_SENTENCE_XML = _NOTE_MARK_XML.replace(
+    "※ 재무상태표 주요사항 요약",
+    "(1) 당분기말과 전기말 현재 각 보고부문에 대한 재무상태표는 아래와 같습니다.")
+
+
+def test_table_under_a_note_sentence_title_is_not_read_as_the_statement(tmp_path):
+    # R312: 유진증권 20181115000123 - a segment balance sheet of the notes (1.53T) next to the real one
+    from fin2.extract import text as tx
+    from fin2.audit import face_audit as fa
+
+    p = tmp_path / "doc.xml"
+    p.write_text(_NOTE_SENTENCE_XML, encoding="utf-8")
+
+    def totals():
+        return sorted(l.amount_won for l in fa.read_report_face_text(p) if l.canonical == "bs.total_assets")
+
+    assert totals() == [1000000]
+    tx._R312_NOTE_SENTENCE_TITLE = False
+    try:
+        assert totals() == [1000000, 1004000]
+    finally:
+        tx._R312_NOTE_SENTENCE_TITLE = True
+
+
+def test_note_sentence_title_matches_only_the_sentence_form():
+    from fin2.extract.text import _is_note_sentence_title
+
+    assert _is_note_sentence_title("22. 현금흐름표 (1) 보고기간종료일 현재 현금및현금성자산의 내역은 다음과 같습니다")
+    assert _is_note_sentence_title("(1) 각 보고부문에 대한 재무상태표는 아래와 같습니다.<제 66(당) 기 3분기>")
+    assert not _is_note_sentence_title("제 66(당) 기 3분기 2018년 09월 30일 현재 유진투자증권주식회사 및 그 종속기업 (단위 : 원)")
+    assert not _is_note_sentence_title("")

@@ -353,6 +353,19 @@ _R308_NOTE_MARK_TITLE = True
 _NUMBERED_HEADING_RE = re.compile(r"(?:^|[\s.])(?:[가-하]|\d{1,2})\.\s*\S*표(?:\s|$)")
 
 
+# R312 (2026-11-15): a table whose own title is a note sentence ('(1) 당분기말과 전기말 현재 각 보고부문에 대한
+# 재무상태표는 아래와 같습니다.', '22. 현금흐름표 (1) 보고기간종료일 현재 현금및현금성자산의 내역은 다음과 같습니다') names the
+# statement it talks about; it is a note table, not the statement. The web-view print of a 첨부정정 puts the note
+# tables into the statement section, and the segment balance sheet of 유진증권 20181115000123 (1.53T) fed total
+# assets / liabilities next to the real 7.2T (DQ3 in 2018Q3).
+_R312_NOTE_SENTENCE_TITLE = True
+_NOTE_SENTENCE_RE = re.compile(r"(?:다음과|아래와)\s*같(?:습니다|으며|다)")
+
+
+def _is_note_sentence_title(title: str) -> bool:
+    return bool(_NOTE_SENTENCE_RE.search(title or ""))
+
+
 def _is_remark_title(title: str) -> bool:
     """A title that starts with '※' is a remark, unless a numbered statement heading follows the note in the same
     paragraph ('※ ...소급재작성되지 아니하였습니다.  라. 연결현금흐름표', 신영증권 20181109000307)."""
@@ -499,6 +512,9 @@ def _detect_body_statement_tables(root, fin_type: str,
             # names the statement it talks about (아이로보틱스 20240321001573, 삼익THK 20150330000271).
             if (_R308_NOTE_MARK_TITLE and stmt is not None and stmt != "SCE"
                     and _is_remark_title(title_text_owned(tbl))):
+                stmt = None
+            if (_R312_NOTE_SENTENCE_TITLE and stmt is not None and stmt != "SCE"
+                    and _is_note_sentence_title(title_text_owned(tbl))):
                 stmt = None
             if stmt is None:
                 continue

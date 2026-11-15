@@ -543,6 +543,7 @@
 | R310 | R310. 정정본이 셀의 라벨과 값을 함께 바꾸면 이전 셀이 새 값을 받는다 — 매입채무및기타금융부채·총계 (A)(D) 별칭 추가 (2026-11-15, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | `_R310_POSITIONAL_RESTATEMENT`, `_R310B_SIGN_WORD_VARIANT` |
 | R311 | R311. 같은 표 섹션의 원본 후보 하나를 정정 후보가 대체한다 — 같은 계정의 라벨만 바뀐 값 정정, 값 차이 20% 이내 (2026-11-15, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | `_R311_SAME_SLOT_RESTATED` |
 | R312 | R312. 표제가 `…는 다음과/아래와 같습니다` 문장인 표는 재무제표 본표가 아니다 (2026-11-15, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_R312_NOTE_SENTENCE_TITLE` |
+| R313 | R313. 주주 배당의 다른 표기도 `cf.dividends_paid` 별칭이다 — `연차배당의 지급`·`보통주 배당 지급` 등 (2026-11-15, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | `account_maps/cf_accounts.py` |
 | R274 | R274. 여러 줄 라벨 `주당이익 / 기본주당순이익 / 희석주당순이익` 행은 줄 수만큼의 행으로 나눈다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R275 | R275. 자본변동표 열 이름 어휘에 `보통주납입자본`·`기타자본항목` 을 추가한다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R276 | R276. 같은 기수가 겹쳐 인쇄된 열은 인쇄된 연도로 기간을 가른다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |

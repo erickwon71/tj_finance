@@ -540,7 +540,7 @@
 | R307 | R307. 영업활동 현금흐름이 두 라벨로 인쇄되면 현금 항등식으로 합계를 가린다 — `영업활동 현금흐름` 별칭 추가 (2026-11-15, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | `_CFO_CASH_IDENTITY` |
 | R308 | R308. 표제가 `※` 로 시작하는 표는 재무제표 본표가 아니다 (2026-11-15, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_R308_NOTE_MARK_TITLE` |
 | R309 | R309. 부채·자본 후보가 없는 표의 `bs.total_assets` 후보는 본 BS 표가 따로 있으면 버린다 (2026-11-15, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | `_ORPHAN_TOTAL_ASSETS_DROPPED` |
-| R310 | R310. 정정본이 셀의 라벨과 값을 함께 바꾸면 이전 셀이 새 값을 받는다 — 매입채무및기타금융부채·총계 (A)(D) 별칭 추가 (2026-11-15, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | `_R310_POSITIONAL_RESTATEMENT` |
+| R310 | R310. 정정본이 셀의 라벨과 값을 함께 바꾸면 이전 셀이 새 값을 받는다 — 매입채무및기타금융부채·총계 (A)(D) 별칭 추가 (2026-11-15, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | `_R310_POSITIONAL_RESTATEMENT`, `_R310B_SIGN_WORD_VARIANT` |
 | R311 | R311. 같은 표 섹션의 원본 후보 하나를 정정 후보가 대체한다 — 같은 계정의 라벨만 바뀐 값 정정, 값 차이 20% 이내 (2026-11-15, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | `_R311_SAME_SLOT_RESTATED` |
 | R312 | R312. 표제가 `…는 다음과/아래와 같습니다` 문장인 표는 재무제표 본표가 아니다 (2026-11-15, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | `_R312_NOTE_SENTENCE_TITLE` |
 | R274 | R274. 여러 줄 라벨 `주당이익 / 기본주당순이익 / 희석주당순이익` 행은 줄 수만큼의 행으로 나눈다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |

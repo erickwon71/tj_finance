@@ -2021,10 +2021,23 @@ _R310_POSITIONAL_RESTATEMENT = True
 _R310_ALIGN_MIN = 0.5      # share of the later table's rows that must line up with the earlier table
 _R310_MIN_ROWS = 5
 _R310_MAX_RUN = 3          # longest run of replaced rows between two equal runs that is paired
+# R310-b: a row whose label differs only by the sign word ('영업이익(손실)' -> '영업손실') is the same row
+# when its account appears once in both tables
+_R310B_SIGN_WORD_VARIANT = True
 
 
 def _row_token(statement: str, label) -> str:
     return _label_canon(statement, label) or _cosmetic_label(label)
+
+
+def _signed_form(label) -> bool:
+    """'영업이익(손실)': the value is printed with its own sign; '영업손실' alone may print the amount."""
+    lab = _cosmetic_label(label)
+    return "이익" in lab and "손실" in lab
+
+
+def _sign_word_stem(label) -> str:
+    return re.sub(r"이익|손실", "손익", re.sub(r"\((?:이익|손실)\)", "", _cosmetic_label(label)))
 
 
 def _restated_pairs(rows, position_of: dict, merged: dict) -> dict:
@@ -2057,7 +2070,8 @@ def _restated_pairs(rows, position_of: dict, merged: dict) -> dict:
                     ok = old[i1 + k][1]
                     # only the very same label (section path or footnote changed); another label of the
                     # same account is a different row (장기매출채권 vs 매출채권, 계속영업이익 vs 손실)
-                    if _cosmetic_label(ok[4]) == _cosmetic_label(new[j1 + k][1]):
+                    nl = new[j1 + k][1]
+                    if _cosmetic_label(ok[4]) == _cosmetic_label(nl):
                         pairs[sc + (new[j1 + k][0],)] = ok
             elif tag == "replace" and i2 - i1 <= _R310_MAX_RUN and j2 - j1 <= _R310_MAX_RUN:
                 before = n == 0 or ops[n - 1][0] == "equal"
@@ -2072,6 +2086,31 @@ def _restated_pairs(rows, position_of: dict, merged: dict) -> dict:
                     k = old_run.get(order)
                     if k is not None and _label_canon(st, k[4]) is not None and _label_canon(st, label) is None:
                         pairs[sc + (order,)] = k
+        if _R310B_SIGN_WORD_VARIANT:
+            # the alignment may put the old row against a neighbour (the '당기순손실의 귀속' header maps to the
+            # same account), so the sign-word variants are matched by their own label, once on each side
+            old_stem: dict[str, list] = {}
+            for _o, k in old:
+                old_stem.setdefault(_sign_word_stem(k[4]), []).append(k)
+            new_val = {r[12]: r[5] for r in rows if (r[0], r[1], r[2], r[7]) == sc and r[12] is not None}
+            new_stem: dict[str, list] = {}
+            for order, lab in new:
+                new_stem.setdefault(_sign_word_stem(lab), []).append((order, lab))
+            for stem, olds in old_stem.items():
+                news = new_stem.get(stem, [])
+                if len(olds) != 1 or len(news) != 1:
+                    continue
+                order, lab = news[0]
+                ok = olds[0]
+                pos = sc + (order,)
+                ov, nv = (merged[ok].get("value_won") if ok in merged else None), new_val.get(order)
+                same_sign = ov is not None and nv is not None and ov != 0 and nv != 0 and (ov > 0) == (nv > 0)
+                if (pos not in pairs and same_sign and _signed_form(ok[4])
+                        and _cosmetic_label(ok[4]) != _cosmetic_label(lab)
+                        and _label_canon(st, ok[4]) is not None
+                        and _label_canon(st, ok[4]) == _label_canon(st, lab)
+                        and all(v != ok for v in pairs.values())):
+                    pairs[pos] = ok
     return pairs
 
 

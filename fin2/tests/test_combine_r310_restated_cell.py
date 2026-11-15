@@ -133,3 +133,53 @@ def test_r311_a_value_several_times_apart_is_not_a_restatement():
     rows = [_cand(-943, "exact", "투자활동으로 인한 현금흐름", False, "영업활동"),
             _cand(12, "fuzzy", "기타투자활동", True, "영업활동")]
     assert combine._same_slot_restated_stale_ids(rows) == set()
+
+
+# R310-b - the sign word of a label changes with the value ('영업이익(손실)' -> '영업손실')
+def _is(values, labels):
+    return [("IS", "consolidated", 0, None, lab, val, "S", 0, False, None, False, None, i)
+            for i, (lab, val) in enumerate(zip(labels, values))]
+
+
+_IS_ROWS = {
+    "orig": _is([100, 50, 50, 20, -2, 3, -2, -2, -2],
+                ["매출액", "매출원가", "매출총이익", "판매비와관리비", "영업이익(손실)", "금융수익",
+                 "법인세비용차감전순이익(손실)", "계속영업이익(손실)", "당기순이익(손실)"]),
+    # the amendment prints the loss wording, drops the continuing-operations row and adds the attribution header
+    "amd1": _is([60, 30, 30, 10, -1, 2, -1, -1, 0],
+                ["매출액", "매출원가", "매출총이익", "판매비와관리비", "영업손실", "금융수익",
+                 "법인세비용차감전순손실", "당기순손실", "당기순손실의 귀속"]),
+}
+
+
+def _merged_is(monkeypatch=None):
+    class _S(_FakeSession):
+        def execute(self, stmt, params):
+            sql = str(stmt)
+            if "FROM filings f" in sql:
+                return _Result([("orig", False), ("amd1", True)])
+            if "bool_or(unit_source = 'xbrl')" in sql:
+                return _Result([(False, False)])
+            return _Result(_IS_ROWS[params["r"]])
+    return {c["label_raw"]: c for c in build_merged_lines(_S(), "X", 2022, "H1")}
+
+
+def test_sign_word_variant_restates_the_earlier_cell():
+    m = _merged_is()
+    assert m["영업이익(손실)"]["value_won"] == -1 and m["영업이익(손실)"]["amended"]
+    assert m["당기순이익(손실)"]["value_won"] == -1 and m["당기순이익(손실)"]["amended"]
+
+
+def test_sign_word_variant_switch_off(monkeypatch):
+    monkeypatch.setattr(combine, "_R310B_SIGN_WORD_VARIANT", False)
+    m = _merged_is()
+    assert m["영업이익(손실)"]["value_won"] == -2 and "영업손실" in m
+
+
+def test_sign_word_variant_is_not_paired_when_the_printed_sign_changes(monkeypatch):
+    # 01577952 2025Q1: '영업이익(손실)' -2.87B -> '영업손실' printed as the amount 2.87B
+    rows = dict(_IS_ROWS)
+    rows["amd1"] = _is([60, 30, 30, 10, 1, 2, 1, 1, 0], [r[4] for r in _IS_ROWS["amd1"]])
+    monkeypatch.setitem(_IS_ROWS, "amd1", rows["amd1"])
+    m = _merged_is()
+    assert m["영업이익(손실)"]["value_won"] == -2 and "영업손실" in m

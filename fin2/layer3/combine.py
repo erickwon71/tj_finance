@@ -2518,6 +2518,10 @@ def _drop_accrual_cash_aliases(cands: dict[str, list[dict]]) -> None:
 # another row or a wider aggregate (a component '기타투자활동' 11.9B next to the section total -943B in 00117212,
 # '매입채무' 1.8B vs '매입채무 및 기타유동채무' 8.8B in 00530413): only a difference up to _R311_MAX_REL counts.
 _R314_NI_ATTRIBUTION_CHILD = True
+# R315: a cash flow section total printed once as the heading row ('I. 영업활동으로 인한 현금흐름' -2,258M) and once as
+# the first subtotal under it ('영업활동으로 인한 현금흐름' -2,264M, before interest / tax lines): the child is exact and
+# outranks the heading (normalized, roman numeral prefix), so the section total came from the subtotal (00964595)
+_R315_CF_SECTION_CHILD = True
 _R311_SAME_SLOT_RESTATED = True
 _R311_MAX_REL = 0.2
 
@@ -2711,6 +2715,11 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
             own = {_norm_label(r.get("label_raw")) for r in rows if not r.get("section_path") and r.get("value")}
             filtered = [r for r in rows if "귀속" not in (r.get("section_path") or "")
                         and _norm_label(r.get("section_path")) not in own]
+            if filtered and len(filtered) < len(rows):
+                rows = filtered
+        if c in ("cf.operating", "cf.investing", "cf.financing") and _R315_CF_SECTION_CHILD:
+            own = {_norm_label(r.get("label_raw")) for r in rows if not r.get("section_path") and r.get("value")}
+            filtered = [r for r in rows if _norm_label(r.get("section_path")) not in own]
             if filtered and len(filtered) < len(rows):
                 rows = filtered
         # bs.total_equity: drop EquityAndLiabilities-shaped rows masquerading as equity

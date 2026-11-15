@@ -23,6 +23,9 @@ BS_ACCOUNTS: dict[str, list[str]] = {
     "bs.total_assets": [
         "자산총계", "자산 합계", "자산의 합계", "자산 총계",
         "합계", "총자산",
+        # R310 (2026-11-15): grand totals printed with a formula letter ('부채총계 (A)', '자본총계(D)'; 제일엠앤에스, 우진플라임,
+        # 테크윙, 피에이치에이); the unmapped label made the amended value invisible. '자본총계 (E=C+D)' is not this form.
+        "자산총계 (A)", "자산총계(A)", "자산총계 (B)", "자산총계(B)", "자산총계 (C)", "자산총계(C)", "자산총계 (D)", "자산총계(D)", "자산총계 (E)", "자산총계(E)",
     ],
 
     # ── 유동자산 ──────────────────────────────────────────────────────
@@ -196,6 +199,9 @@ BS_ACCOUNTS: dict[str, list[str]] = {
     "bs.total_liabilities": [
         "부채총계", "부채 합계", "부채의 합계", "부채 총계",
         "총부채",
+        # R310 (2026-11-15): grand totals printed with a formula letter ('부채총계 (A)', '자본총계(D)'; 제일엠앤에스, 우진플라임,
+        # 테크윙, 피에이치에이); the unmapped label made the amended value invisible. '자본총계 (E=C+D)' is not this form.
+        "부채총계 (A)", "부채총계(A)", "부채총계 (B)", "부채총계(B)", "부채총계 (C)", "부채총계(C)", "부채총계 (D)", "부채총계(D)", "부채총계 (E)", "부채총계(E)",
     ],
 
     # ── 유동부채 ──────────────────────────────────────────────────────
@@ -211,6 +217,9 @@ BS_ACCOUNTS: dict[str, list[str]] = {
         "단기매입채무", "유동매입채무",
         "장기매입채무및기타비유동채무",   # 2026-07-18 2차(장기 접두 변형)
         "매입채무및기타지급채무",   # 2026-07-18 B라운드(지급채무 표기변형)
+        # R310 (2026-11-15): same pairing as 매입채무및기타채무; the label fell to fuzzy other_current_payables
+        # while its non-current twin went to trade_payables (아이텍 trade_payables 0, ~20 corps empty)
+        "매입채무및기타금융부채", "매입채무 및 기타금융부채",
     ],
     "bs.short_term_debt": [
         "단기차입금",
@@ -441,6 +450,9 @@ BS_ACCOUNTS: dict[str, list[str]] = {
     "bs.total_equity": [
         "자본총계", "자본 합계", "자본의 합계", "자본 총계",
         "총자본",
+        # R310 (2026-11-15): grand totals printed with a formula letter ('부채총계 (A)', '자본총계(D)'; 제일엠앤에스, 우진플라임,
+        # 테크윙, 피에이치에이); the unmapped label made the amended value invisible. '자본총계 (E=C+D)' is not this form.
+        "자본총계 (A)", "자본총계(A)", "자본총계 (B)", "자본총계(B)", "자본총계 (C)", "자본총계(C)", "자본총계 (D)", "자본총계(D)", "자본총계 (E)", "자본총계(E)",
         # ⚠ "총자본" 라벨은 필자마다 다른 XBRL 개념을 가리킨다(2026-08-27 실측,
         #   R51 조사): 포스코스틸리온은 ifrs-full_EquityAndLiabilities(=자산총계,
         #   오답)로, 리노공업은 ifrs-full_Equity(진짜 지분, 정답 — 이 라벨이 유일한

@@ -1,0 +1,104 @@
+"""R310 - an amendment that restates a cell and changes its label or section path (pure, fake session).
+
+제일엠앤에스 2024FY: '자산총계' -> '자본총계 (E=C+D)', '부채총계' -> '부채총계 (A)'; 이오플로우 2024FY: 'Ⅰ.매출액' -> '수익'.
+The earlier cell takes the restated value when the table lines up row by row with the earlier one.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from fin2.layer3 import combine  # noqa: E402
+from fin2.layer3.combine import build_merged_lines  # noqa: E402
+
+_CHAIN = [("orig", False), ("amd1", True), ("amd2", True)]
+
+
+def _bs(values, labels):
+    return [("BS", "consolidated", 0, None, lab, val, "S", 0, False, None, False, None, i)
+            for i, (lab, val) in enumerate(zip(labels, values))]
+
+
+_BASE_LABELS = ["유동자산", "비유동자산", "자산총계", "유동부채", "비유동부채", "부채총계", "자본금", "이익잉여금", "자본총계"]
+_ROWS = {
+    "orig": _bs([10, 20, 30, 12, 8, 20, 5, 5, 10], _BASE_LABELS),
+    # restated values; the total rows are printed under other labels
+    "amd1": _bs([11, 22, 33, 13, 9, 22, 5, 6, 11],
+                ["유동자산", "비유동자산", "자본총계 (E=C+D)", "유동부채", "비유동부채", "부채총계 (A)", "자본금", "이익잉여금", "자본총계 (D)"]),
+    # a second amendment repeats the first one for the totals
+    "amd2": _bs([11, 22, 33, 13, 9, 22, 5, 6, 11],
+                ["유동자산", "비유동자산", "자본총계 (E=C+D)", "유동부채", "비유동부채", "부채총계 (A)", "자본금", "이익잉여금", "자본총계 (D)"]),
+}
+
+
+class _Result:
+    def __init__(self, rows): self._rows = rows
+    def fetchall(self): return self._rows
+    def fetchone(self): return self._rows[0] if self._rows else None
+
+
+class _FakeSession:
+    def execute(self, stmt, params):
+        sql = str(stmt)
+        if "FROM filings f" in sql:
+            return _Result(_CHAIN)
+        if "bool_or(unit_source = 'xbrl')" in sql:
+            return _Result([(False, False)])
+        return _Result(_ROWS[params["r"]])
+
+
+def _merged():
+    return {c["label_raw"]: c for c in build_merged_lines(_FakeSession(), "X", 2024, "FY")}
+
+
+def test_restated_cell_under_another_label_updates_the_earlier_cell():
+    m = _merged()
+    assert m["자산총계"]["value_won"] == 33 and m["자산총계"]["amended"]
+    # '(A)' / '(D)' labels map to the grand totals: they come in as amended cells and the stale base loses in _resolve
+    assert m["부채총계 (A)"]["value_won"] == 22 and m["부채총계 (A)"]["amended"]
+    assert m["자본총계 (D)"]["value_won"] == 11
+    assert "자본총계 (E=C+D)" not in m          # the misprint took the place of 자산총계 and restated it
+    from fin2.layer3.combine import _FS, _map_label
+    assert _map_label("자본총계 (E=C+D)", _FS["BS"]).account_code.startswith("unknown.")
+    assert _map_label("부채총계 (A)", _FS["BS"]).account_code == "bs.total_liabilities"
+
+
+def test_switch_off_keeps_the_old_behaviour(monkeypatch):
+    monkeypatch.setattr(combine, "_R310_POSITIONAL_RESTATEMENT", False)
+    m = _merged()
+    assert m["자산총계"]["value_won"] == 30 and "자본총계 (E=C+D)" in m
+
+
+def test_table_that_does_not_line_up_is_untouched():
+    # most rows of the later table map to other accounts than the rows at the same place: not a restatement
+    _ROWS["amd1"] = _bs([1, 2, 3, 4, 5, 6, 7, 8, 9],
+                        ["자본금", "이익잉여금", "자본총계 (E=C+D)", "유동자산", "비유동자산", "부채총계 (A)", "유동부채", "자산총계", "자본총계 (D)"])
+    _ROWS["amd2"] = _ROWS["amd1"]
+    try:
+        m = _merged()
+        assert "자본총계 (E=C+D)" in m and m["자본총계 (E=C+D)"]["value_won"] == 3
+        assert m["부채총계"]["value_won"] == 20
+    finally:
+        _ROWS["amd1"] = _bs([11, 22, 33, 13, 9, 22, 5, 6, 11],
+                            ["유동자산", "비유동자산", "자본총계 (E=C+D)", "유동부채", "비유동부채", "부채총계 (A)", "자본금", "이익잉여금", "자본총계 (D)"])
+        _ROWS["amd2"] = _ROWS["amd1"]
+
+
+def test_controlling_equity_wording_drift_drops_the_stale_candidate(monkeypatch):
+    # 엔케이젠 2024FY: '지배기업의 소유주에게 귀속되는 자본' (base, exact) vs '지배회사지분' (amended, fuzzy)
+    def _r(value, stage, label_raw, amended):
+        return {"value": value, "stage": stage, "label_raw": label_raw, "section_path": "자본", "table_seq": 0,
+                "amended": amended, "amended_by": "a" if amended else None}
+
+    cands = {"bs.controlling_equity": [_r(-23, "exact", "지배기업의 소유주에게 귀속되는 자본", False),
+                                       _r(-25, "fuzzy", "지배회사지분", True)]}
+    confirmed, _ = combine._resolve(cands)
+    assert confirmed["bs.controlling_equity"] == -25
+
+
+def test_trade_payables_and_other_financial_liabilities_caption_is_trade_payables():
+    from fin2.layer3.combine import _FS, _map_label
+    for label in ("매입채무및기타금융부채", "매입채무 및 기타금융부채"):
+        assert _map_label(label, _FS["BS"]).account_code == "bs.trade_payables"

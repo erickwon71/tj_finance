@@ -1271,11 +1271,19 @@ _COGS_ADDITIVE_OVERRIDE = {
 }
 
 
+# R310: a caption that carries its own formula ('자본총계 (E=C+D)', printed where the total assets stood in
+# 제일엠앤에스 2024FY) names no account: fuzzy matching sent it to bs.total_equity.
+_FORMULA_CAPTION_GUARD = True
+_FORMULA_CAPTION_RE = re.compile(r"\(\s*[A-Z]\s*=\s*[A-Z]")
+
+
 @lru_cache(maxsize=200_000)
 def _map_label(label_raw: str, fs: str | None):
     """Cached AccountMapper.map — the same face labels (자산총계·매출액…) recur across
     every filing, and map() runs fuzzy Jaro-Winkler over all aliases, so caching by
     (label_raw, fs) is the dominant speedup for the full std_v3 build. Deterministic."""
+    if _FORMULA_CAPTION_GUARD and label_raw and _FORMULA_CAPTION_RE.search(label_raw):
+        return MappingResult(f"unknown.{label_raw[:80]}", 0.0, "unknown")
     if fs == "cf" and label_raw:
         # R236: '(영업|투자|재무)활동으로 분류된 X' — the qualifier names the section, X names the
         # account. Matching the whole label let the shared prefix of the alias
@@ -1675,6 +1683,9 @@ _BROAD_RE = re.compile(r"및기타|및 기타|AndOther")
 # Real 실측 (2026-08-09): 제주은행(00148832)·기업은행(00149646) — see docs/plans/
 # std_v3_dq_shares_period_backfill_todo_2026-08-09.md.
 _BS_GRAND_TOTAL = {"bs.total_assets", "bs.total_liabilities", "bs.total_equity"}
+# R310: single-concept lines whose label wording may change in an amendment (지배기업의 소유주에게 귀속되는 자본 ->
+# 지배회사지분): an older candidate under another label is stale when a later filing restated the line.
+_STALE_LABEL_AGNOSTIC = _BS_GRAND_TOTAL | {"bs.controlling_equity"}
 # R306 (2026-11-15): the trust-account table is not the filer's own balance sheet for any line, not only the
 # grand totals: 제주은행 bs.cash was the trust table's '현금 및 예치금' (184,392M) instead of the bank's own
 # '현금및상각후원가측정예치금' (240,415M).
@@ -1997,6 +2008,73 @@ def _relabelled_cell(merged: dict, kind_of_cell: dict, old, key, value: int, rce
     return old
 
 
+# R310 (2026-11-15): an amendment that restates a cell AND changes its label (or section path) cannot be
+# delta-aligned by the cell key (statement, basis, col, section_path, label), and R237 only follows a
+# relabel with the same amount. 제일엠앤에스 2024FY: '자산총계' -> '자본총계 (E=C+D)', '부채총계' -> '부채총계 (A)',
+# 이오플로우 2024FY: 'Ⅰ.매출액' -> '수익', 엔케이젠 2024FY: section '당기순이익(손실)의 귀속' -> '당기순손실의 귀속'.
+# The earlier cell then stayed as it was and the new one was unmapped or lost the stage rank. The rows of the
+# later table are aligned with the earlier table as sequences of accounts (difflib, so an inserted or removed
+# row does not shift the rest). A row of the same account under another key, or a short run of rows between two
+# equal runs whose old row maps to an account while the new label maps to none, is the restated old cell: the
+# old cell takes the new value and is marked amended.
+_R310_POSITIONAL_RESTATEMENT = True
+_R310_ALIGN_MIN = 0.5      # share of the later table's rows that must line up with the earlier table
+_R310_MIN_ROWS = 5
+_R310_MAX_RUN = 3          # longest run of replaced rows between two equal runs that is paired
+
+
+def _row_token(statement: str, label) -> str:
+    return _label_canon(statement, label) or _cosmetic_label(label)
+
+
+def _restated_pairs(rows, position_of: dict, merged: dict) -> dict:
+    """R310: {(statement, basis, col_index, table_seq, row_order) of a row of the later filing: key of the
+    earlier cell it restates}."""
+    import difflib
+    new_by_scope: dict[tuple, list] = {}
+    for r in rows:
+        if r[12] is not None:
+            new_by_scope.setdefault((r[0], r[1], r[2], r[7]), []).append((r[12], r[4]))
+    old_by_scope: dict[tuple, list] = {}
+    for pos, key in position_of.items():
+        if key in merged:
+            old_by_scope.setdefault(pos[:4], []).append((pos[4], key))
+    pairs: dict = {}
+    for sc, new in new_by_scope.items():
+        old = sorted(old_by_scope.get(sc, ()))
+        new = sorted(new)
+        if len(new) < _R310_MIN_ROWS or not old:
+            continue
+        st = sc[0]
+        a = [_row_token(st, k[4]) for _o, k in old]
+        b = [_row_token(st, lab) for _o, lab in new]
+        ops = difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()
+        if sum(i2 - i1 for tag, i1, i2, _j1, _j2 in ops if tag == "equal") / len(new) < _R310_ALIGN_MIN:
+            continue
+        for n, (tag, i1, i2, j1, j2) in enumerate(ops):
+            if tag == "equal":
+                for k in range(i2 - i1):
+                    ok = old[i1 + k][1]
+                    # only the very same label (section path or footnote changed); another label of the
+                    # same account is a different row (장기매출채권 vs 매출채권, 계속영업이익 vs 손실)
+                    if _cosmetic_label(ok[4]) == _cosmetic_label(new[j1 + k][1]):
+                        pairs[sc + (new[j1 + k][0],)] = ok
+            elif tag == "replace" and i2 - i1 <= _R310_MAX_RUN and j2 - j1 <= _R310_MAX_RUN:
+                before = n == 0 or ops[n - 1][0] == "equal"
+                after = n == len(ops) - 1 or ops[n + 1][0] == "equal"
+                if not (before and after and len(ops) > 1):
+                    continue
+                if i2 - i1 == j2 - j1:
+                    old_run = {new[j1 + t][0]: old[i1 + t][1] for t in range(i2 - i1)}
+                else:
+                    old_run = {o: k for o, k in old[i1:i2]}
+                for order, label in new[j1:j2]:
+                    k = old_run.get(order)
+                    if k is not None and _label_canon(st, k[4]) is not None and _label_canon(st, label) is None:
+                        pairs[sc + (order,)] = k
+    return pairs
+
+
 def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
     """★정본 정책(사용자 2026-07-22): 최초등록본 + 순차 델타 패치.
 
@@ -2081,6 +2159,11 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                       if (k[0], k[1]) in covered and kind_of_cell.get(k) != kind]:
                 del merged[k]
                 kind_of_cell.pop(k, None)
+        pairs: dict = {}
+        new_keys: set = set()
+        if not is_base and _R310_POSITIONAL_RESTATEMENT:
+            pairs = _restated_pairs(rows, position_of, merged)
+            new_keys = {(r[0], r[1], r[2], r[3], r[4]) for r in rows}
         canon_values: dict[tuple, set] = {}     # R237: this filing's (stmt, basis, col, canon) -> values
         if not is_base:
             for r in rows:
@@ -2101,6 +2184,24 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                 if old is not None:
                     del merged[old]
                     kind_of_cell.pop(old, None)
+            if pairs and key not in merged and row_order is not None:
+                old = pairs.get(pos)
+                if (old is not None and old != key and old in merged and old not in new_keys
+                        and merged[old]["source_rcept"] != rcept and kind_of_cell.get(old) == kind):
+                    # R310: the old cell takes the restated value under its own key. An equal value is left to
+                    # the normal path (the cell may bring its own section_path), except a later amendment that
+                    # repeats an earlier restated cell under the other label: nothing to add then.
+                    oc = merged[old]
+                    if (int(value_won), value_exact) != (oc["value_won"], oc.get("value_exact")):
+                        oc["value_won"] = int(value_won)
+                        oc["value_exact"] = value_exact
+                        oc["source_rcept"] = rcept
+                        oc["amended"] = True
+                        oc["amended_by"] = rcept
+                        oc["amend_chain"] = oc["amend_chain"] + [rcept]
+                        continue
+                    if oc["amended"] and _cosmetic_label(old[4]) != _cosmetic_label(label_raw):
+                        continue
             if row_order is not None:
                 position_of[pos] = key
             cell = {
@@ -2556,7 +2657,7 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
         # 한해 라벨을 무시하고 canonical 전체를 한 그룹으로 취급한다.
         by_label: dict[str, list[dict]] = defaultdict(list)
         for r in rows:
-            key = "\0GRAND_TOTAL" if c in _BS_GRAND_TOTAL else _norm_label(r.get("label_raw"))
+            key = "\0GRAND_TOTAL" if c in _STALE_LABEL_AGNOSTIC else _norm_label(r.get("label_raw"))
             by_label[key].append(r)
         stale_ids = set()
         for label, group in by_label.items():

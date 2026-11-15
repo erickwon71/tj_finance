@@ -513,9 +513,15 @@ def _detect_body_statement_tables(root, fin_type: str,
             if (_R308_NOTE_MARK_TITLE and stmt is not None and stmt != "SCE"
                     and _is_remark_title(title_text_owned(tbl))):
                 stmt = None
-            if (_R312_NOTE_SENTENCE_TITLE and stmt is not None and stmt != "SCE"
-                    and _is_note_sentence_title(title_text_owned(tbl))):
-                stmt = None
+            if _R312_NOTE_SENTENCE_TITLE and stmt is not None and stmt != "SCE":
+                owned = title_text_owned(tbl)
+                if _is_note_sentence_title(owned):
+                    stmt = None
+                elif (classify_statement_in_body_section(owned, include_sce=include_sce) is None
+                      and _is_note_sentence_title(title_text_for_classify(tbl))):
+                    # a second table under the same note sentence has no title of its own: the title that
+                    # classified it is the neighbouring one
+                    stmt = None
             if stmt is None:
                 continue
             last_stmt = stmt   # R142 — 다음 표가 substatement 표지를 만났을 때 물려줄 값.

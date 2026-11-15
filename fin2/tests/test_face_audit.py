@@ -820,6 +820,41 @@ def test_table_under_a_note_sentence_title_is_not_read_as_the_statement(tmp_path
         tx._R312_NOTE_SENTENCE_TITLE = True
 
 
+_NOTE_SENTENCE_TWO_TABLES_XML = """<DOCUMENT>
+ <SECTION-2>
+  <TITLE>4. 재무제표</TITLE>
+  <TABLE-GROUP>
+   <TABLE><TR><TD>재무상태표 제5기 기말</TD></TR></TABLE>
+   <TABLE><TR><TD>(단위 : 원)</TD></TR><TR><TD>자산총계</TD><TD>1,000,000</TD></TR>
+    <TR><TD>부채총계</TD><TD>400,000</TD></TR></TABLE>
+   <P>(1) 당분기말 현재 각 보고부문에 대한 재무상태표는 아래와 같습니다.</P>
+   <TABLE><TR><TD>(단위 : 원)</TD></TR></TABLE>
+   <TABLE><TR><TD>자산총계</TD><TD>1,008,000</TD></TR>
+    <TR><TD>부채총계</TD><TD>408,000</TD></TR></TABLE>
+  </TABLE-GROUP>
+ </SECTION-2>
+</DOCUMENT>"""
+
+
+def test_second_table_under_a_note_sentence_title_is_not_read_as_the_statement(tmp_path):
+    # R312: 01157235 20220816001855 - the table after the one the sentence introduces has no title of its own
+    from fin2.extract import text as tx
+    from fin2.audit import face_audit as fa
+
+    p = tmp_path / "doc.xml"
+    p.write_text(_NOTE_SENTENCE_TWO_TABLES_XML, encoding="utf-8")
+
+    def totals():
+        return sorted(l.amount_won for l in fa.read_report_face_text(p) if l.canonical == "bs.total_assets")
+
+    assert totals() == [1000000]
+    tx._R312_NOTE_SENTENCE_TITLE = False
+    try:
+        assert totals() == [1000000, 1008000]
+    finally:
+        tx._R312_NOTE_SENTENCE_TITLE = True
+
+
 def test_note_sentence_title_matches_only_the_sentence_form():
     from fin2.extract.text import _is_note_sentence_title
 

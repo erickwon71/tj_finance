@@ -42,6 +42,8 @@ class _Result:
 class _FakeSession:
     def execute(self, stmt, params):
         sql = str(stmt)
+        if "period_end_date" in sql:
+            return _Result([])
         if "FROM filings f" in sql:
             return _Result(_CHAIN)
         if "bool_or(unit_source = 'xbrl')" in sql:
@@ -156,6 +158,8 @@ def _merged_is(monkeypatch=None):
     class _S(_FakeSession):
         def execute(self, stmt, params):
             sql = str(stmt)
+            if "period_end_date" in sql:
+                return _Result([])
             if "FROM filings f" in sql:
                 return _Result([("orig", False), ("amd1", True)])
             if "bool_or(unit_source = 'xbrl')" in sql:
@@ -209,6 +213,8 @@ def _merged_r322():
     class _S(_FakeSession):
         def execute(self, stmt, params):
             sql = str(stmt)
+            if "period_end_date" in sql:
+                return _Result([])
             if "FROM filings f" in sql:
                 return _Result([("orig", False), ("amd1", False), ("amd2", False)])
             if "bool_or(unit_source = 'xbrl')" in sql:
@@ -235,6 +241,8 @@ def _merged_r323():
     class _S(_FakeSession):
         def execute(self, stmt, params):
             sql = str(stmt)
+            if "period_end_date" in sql:
+                return _Result([])
             if "FROM filings f" in sql:
                 return _Result([("orig", False), ("amd1", True)])
             if "bool_or(unit_source = 'xbrl')" in sql:

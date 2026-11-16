@@ -36,6 +36,8 @@ class _Result:
 class _FakeSession:
     def execute(self, stmt, params):
         sql = str(stmt)
+        if "period_end_date" in sql:
+            return _Result([])
         if "FROM filings f" in sql:
             return _Result(_CHAIN)
         if "bool_or(unit_source = 'xbrl')" in sql:

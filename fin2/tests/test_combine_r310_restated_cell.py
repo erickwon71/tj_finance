@@ -221,3 +221,32 @@ def test_second_filing_undoes_a_restatement_paired_by_the_first(monkeypatch):
     assert _merged_r322()["부채총계"]["value_won"] == 20
     monkeypatch.setattr(combine, "_R322_POSITION_AFTER_PAIR", False)
     assert _merged_r322()["부채총계"]["value_won"] == 99
+
+
+# R323 - the amendment prints the sign word ('영업이익' -> '영업이익(손실)')
+_R323_ORIG = _is([100, 50, 50, 20, 15, 3, 14, 14, 14],
+                 ["매출액", "매출원가", "매출총이익", "판매비와관리비", "영업이익", "금융수익", "법인세비용차감전순이익", "계속영업이익", "당기순이익"])
+_R323_AMD = _is([100, 50, 50, 20, 14, 3, 13, 13, 13],
+                ["매출액", "매출원가", "매출총이익", "판매비와관리비", "영업이익(손실)", "금융수익", "법인세비용차감전순이익(손실)", "계속영업이익",
+                 "당기순이익(손실)"])
+
+
+def _merged_r323():
+    class _S(_FakeSession):
+        def execute(self, stmt, params):
+            sql = str(stmt)
+            if "FROM filings f" in sql:
+                return _Result([("orig", False), ("amd1", True)])
+            if "bool_or(unit_source = 'xbrl')" in sql:
+                return _Result([(False, False)])
+            return _Result({"orig": _R323_ORIG, "amd1": _R323_AMD}[params["r"]])
+    return {c["label_raw"]: c for c in build_merged_lines(_S(), "X", 2018, "FY")}
+
+
+def test_new_label_with_the_sign_word_restates_the_earlier_cell(monkeypatch):
+    m = _merged_r323()
+    assert m["영업이익"]["value_won"] == 14 and m["영업이익"]["amended"] and "영업이익(손실)" not in m
+    assert m["당기순이익"]["value_won"] == 13
+    monkeypatch.setattr(combine, "_R323_NEW_LABEL_SIGNED", False)
+    m = _merged_r323()
+    assert m["영업이익"]["value_won"] == 15 and m["영업이익(손실)"]["value_won"] == 14

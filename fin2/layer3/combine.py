@@ -2021,6 +2021,10 @@ _R310_POSITIONAL_RESTATEMENT = True
 _R310_ALIGN_MIN = 0.5      # share of the later table's rows that must line up with the earlier table
 _R310_MIN_ROWS = 5
 _R310_MAX_RUN = 3          # longest run of replaced rows between two equal runs that is paired
+# R322: a row that took part in an R310 pairing is registered at its position under the key of the cell it restated, so the
+# next filing of the period aligns against it (00392691 2019H1: the first of two same-day attachment amendments restated
+# '부채총계' under a letter-spaced label, the second one found no row at that position and could not undo it)
+_R322_POSITION_AFTER_PAIR = True
 # R310-b: a row whose label differs only by the sign word ('영업이익(손실)' -> '영업손실') is the same row
 # when its account appears once in both tables
 _R310B_SIGN_WORD_VARIANT = True
@@ -2231,6 +2235,8 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                     # the normal path (the cell may bring its own section_path), except a later amendment that
                     # repeats an earlier restated cell under the other label: nothing to add then.
                     oc = merged[old]
+                    if _R322_POSITION_AFTER_PAIR:
+                        position_of[pos] = old
                     if (int(value_won), value_exact) != (oc["value_won"], oc.get("value_exact")):
                         oc["value_won"] = int(value_won)
                         oc["value_exact"] = value_exact

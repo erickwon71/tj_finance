@@ -183,3 +183,41 @@ def test_sign_word_variant_is_not_paired_when_the_printed_sign_changes(monkeypat
     monkeypatch.setitem(_IS_ROWS, "amd1", rows["amd1"])
     m = _merged_is()
     assert m["영업이익(손실)"]["value_won"] == -2 and "영업손실" in m
+
+
+# R322 - a row that took part in an R310 pairing is registered at its position, so the next filing can undo it
+_R322_LABELS = ["유동자산", "비유동자산", "자산총계", "유동부채", "비유동부채", "부채총계", "자본금", "이익잉여금", "자본총계"]
+_R322_SPACED = [lab.replace("부채총계", "부  채  총  계") for lab in _R322_LABELS]
+
+
+def _r322_rows(values, labels, shift):
+    return [("BS", "consolidated", 0, None, lab, val, "S", 0, False, None, False, None, i + shift)
+            for i, (lab, val) in enumerate(zip(labels, values))]
+
+
+_R322_ROWS = {
+    "orig": _r322_rows([10, 20, 30, 12, 8, 20, 5, 5, 10], _R322_LABELS, 0),
+    # 00392691 2019H1: the first same-day attachment amendment prints another liability total under a letter-spaced
+    # label and its rows sit one place further down
+    "amd1": _r322_rows([10, 20, 30, 12, 8, 99, 5, 5, 10], _R322_SPACED, 1),
+    # the second one prints the original numbers again under the same letter-spaced label
+    "amd2": _r322_rows([10, 20, 30, 12, 8, 20, 5, 5, 10], _R322_SPACED, 0),
+}
+
+
+def _merged_r322():
+    class _S(_FakeSession):
+        def execute(self, stmt, params):
+            sql = str(stmt)
+            if "FROM filings f" in sql:
+                return _Result([("orig", False), ("amd1", False), ("amd2", False)])
+            if "bool_or(unit_source = 'xbrl')" in sql:
+                return _Result([(False, False)])
+            return _Result(_R322_ROWS[params["r"]])
+    return {c["label_raw"]: c for c in build_merged_lines(_S(), "X", 2019, "H1")}
+
+
+def test_second_filing_undoes_a_restatement_paired_by_the_first(monkeypatch):
+    assert _merged_r322()["부채총계"]["value_won"] == 20
+    monkeypatch.setattr(combine, "_R322_POSITION_AFTER_PAIR", False)
+    assert _merged_r322()["부채총계"]["value_won"] == 99

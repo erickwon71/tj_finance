@@ -2312,7 +2312,30 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                     cell["amend_chain"] = base["amend_chain"] + [rcept]
                     merged[key] = cell
                 # equal value, or same base-filing duplicate (out-of-scope) → no-op
-    return list(merged.values())
+    out = list(merged.values())
+    return _drop_unfilled_statements(out) if _R319_UNFILLED_STATEMENT else out
+
+
+# R319 (2026-11-16): a filing whose balance sheet is printed with 0 in every row has not filled the form in (00442455
+# 2026Q1: the XBRL current period column is 0 in all 31 BS rows, the prior period column has the values; 00323868 2019Q1 /
+# H1 consolidated: BS, IS and CF are all 0): total assets 0 is no balance sheet. The statement tables of that basis whose rows
+# are all 0 are not candidates, so the cells stay empty instead of 0 (data_quality 3).
+_R319_UNFILLED_STATEMENT = True
+_R319_MIN_ROWS = 8
+
+
+def _drop_unfilled_statements(lines: list[dict]) -> list[dict]:
+    """Drop the BS / IS / CF cells of a basis whose BS is 0 in every row, when that statement of the basis is 0 in every row
+    too (all tables of the period's filing chain together: an amendment may split the cells over filings)."""
+    groups: dict[tuple, list] = {}
+    for r in lines:
+        if r["statement"] in ("BS", "IS", "CF"):
+            groups.setdefault((r["statement"], r["basis"]), []).append(r)
+    zero = {k for k, g in groups.items() if len(g) >= _R319_MIN_ROWS and all(not (r.get("value_won") or 0) for r in g)}
+    drop = {k for k in zero if (("BS", k[1]) in zero)}
+    if not drop:
+        return lines
+    return [r for r in lines if (r["statement"], r["basis"]) not in drop]
 
 
 def select_canonical_rcept(session, corp: str, fy: int, period: str) -> str | None:

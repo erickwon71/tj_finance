@@ -2123,6 +2123,27 @@ def _restated_pairs(rows, position_of: dict, merged: dict) -> dict:
     return pairs
 
 
+# R324 (2026-11-17): a company that changed its fiscal year end has two reports with different closing dates in one
+# fiscal_year / fiscal_period slot (00814786 2022 FY: closing 2022.06 and 2022.12; 00108977 2017: 2017.03 and 2017.12). They
+# are not amendments of each other, but the merge treated the later one as an overlay on the earlier one: cells that only the
+# earlier report has leaked into the later period (308 account values in 27 corps) or conflicted with it (94 values held
+# empty). Only the filings of the latest closing date (the report and its amendments) are merged.
+_R324_LATEST_CLOSING_ONLY = True
+
+
+def _latest_closing_chain(session, chrono: list) -> list:
+    if len(chrono) < 2:
+        return chrono
+    rows = session.execute(text("SELECT rcept_no, period_end_date FROM filings WHERE rcept_no = ANY(:r)"),
+                           {"r": [c[0] for c in chrono]}).fetchall()
+    pe = {r[0]: r[1] for r in rows}
+    dates = {d for d in pe.values() if d is not None}
+    if len(dates) < 2:
+        return chrono
+    latest = max(dates)
+    return [c for c in chrono if pe.get(c[0]) in (latest, None)]
+
+
 def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
     """★정본 정책(사용자 2026-07-22): 최초등록본 + 순차 델타 패치.
 
@@ -2147,6 +2168,8 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
       table_seq, is_cumulative, source_rcept, amended(bool), amended_by, amend_chain.
     """
     chrono = _period_filings_chrono(session, corp, fy, period)
+    if _R324_LATEST_CLOSING_ONLY:
+        chrono = _latest_closing_chain(session, chrono)
     merged: dict[tuple, dict] = {}
     kind_of_cell: dict[tuple, str] = {}
     position_of: dict[tuple, tuple] = {}   # R237: (stmt, basis, col, table_seq, row_order) -> key

@@ -2028,6 +2028,9 @@ _R322_POSITION_AFTER_PAIR = True
 # R310-b: a row whose label differs only by the sign word ('영업이익(손실)' -> '영업손실') is the same row
 # when its account appears once in both tables
 _R310B_SIGN_WORD_VARIANT = True
+# R323: the sign word pairing also holds when the NEW label is the signed form ('반기순이익' -> '반기순이익(손실)'); the
+# same-sign condition stays
+_R323_NEW_LABEL_SIGNED = True
 
 
 def _row_token(statement: str, label) -> str:
@@ -2095,7 +2098,9 @@ def _restated_pairs(rows, position_of: dict, merged: dict) -> dict:
             # same account), so the sign-word variants are matched by their own label, once on each side
             old_stem: dict[str, list] = {}
             for _o, k in old:
-                old_stem.setdefault(_sign_word_stem(k[4]), []).append(k)
+                keys = old_stem.setdefault(_sign_word_stem(k[4]), [])
+                if k not in keys:       # one cell can sit at several positions (R322)
+                    keys.append(k)
             new_val = {r[12]: r[5] for r in rows if (r[0], r[1], r[2], r[7]) == sc and r[12] is not None}
             new_stem: dict[str, list] = {}
             for order, lab in new:
@@ -2109,7 +2114,7 @@ def _restated_pairs(rows, position_of: dict, merged: dict) -> dict:
                 pos = sc + (order,)
                 ov, nv = (merged[ok].get("value_won") if ok in merged else None), new_val.get(order)
                 same_sign = ov is not None and nv is not None and ov != 0 and nv != 0 and (ov > 0) == (nv > 0)
-                if (pos not in pairs and same_sign and _signed_form(ok[4])
+                if (pos not in pairs and same_sign and (_signed_form(ok[4]) or (_R323_NEW_LABEL_SIGNED and _signed_form(lab)))
                         and _cosmetic_label(ok[4]) != _cosmetic_label(lab)
                         and _label_canon(st, ok[4]) is not None
                         and _label_canon(st, ok[4]) == _label_canon(st, lab)

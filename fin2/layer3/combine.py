@@ -3025,6 +3025,31 @@ def _resolve_cfo_identity(confirmed: dict, conflicts: dict) -> None:
 
 
 
+# R318 (2026-11-16): the income tax line has two candidates with different values and the stage rank picks the one that
+# does not close EBT - tax = net income (00536888 2023FY consolidated: the original '법인세비용(수익)' 2.2B is exact, the
+# amendment's '법인세 수익(비용)' -1.7B is normalized, EBT -15.79B and net income -14.09B close with -1.7B). The label cannot
+# tell which sign convention a company prints, the identity can: the candidate that closes it, when exactly one does,
+# is the tax expense.
+_R318_TAX_IDENTITY = True
+
+
+def _resolve_tax_identity(cands: dict, confirmed: dict, conflicts: dict) -> None:
+    if not _R318_TAX_IDENTITY:
+        return
+    ebt, ni = confirmed.get("is.ebt"), confirmed.get("is.net_income")
+    rows = cands.get("is.tax_expense") or []
+    if ebt is None or ni is None or len({r["value"] for r in rows if r.get("value") is not None}) < 2:
+        return
+    target = ebt - ni
+    cur = confirmed.get("is.tax_expense")
+    if cur is not None and abs(cur - target) <= 1:
+        return
+    fits = {r["value"] for r in rows if r.get("value") is not None and abs(r["value"] - target) <= 1}
+    if len(fits) == 1:
+        confirmed["is.tax_expense"] = fits.pop()
+        conflicts.pop("is.tax_expense", None)
+
+
 def _resolve_ni_attribution(cands: dict, confirmed: dict, conflicts: dict) -> None:
     """2nd pass (Phase B, docs/plans/std_v3_controlling_ni_gap_fix_plan_2026-08-08.md §3-2):
     re-select a held is.controlling_ni conflict via the accounting identity
@@ -3852,6 +3877,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     confirmed, conflicts = _resolve(cands, corp, fy, period, basis, stale_reprint_seqs)
     _resolve_ni_attribution(cands, confirmed, conflicts)
     _resolve_cfo_identity(confirmed, conflicts)
+    _resolve_tax_identity(cands, confirmed, conflicts)
     # ★net_income conflict disambiguation via NI identity (2026-08-22, P1C 잔여회귀 조사 중
     # 발견 — 00120526 2014Q3 / 00139214 2013Q1). is.net_income can end up with 2+ raw
     # candidates instead of a clean single value: (a) an amendment chain where a later

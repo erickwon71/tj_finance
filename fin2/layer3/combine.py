@@ -2545,6 +2545,11 @@ _R314_NI_ATTRIBUTION_CHILD = True
 # the first subtotal under it ('영업활동으로 인한 현금흐름' -2,264M, before interest / tax lines): the child is exact and
 # outranks the heading (normalized, roman numeral prefix), so the section total came from the subtotal (00964595)
 _R315_CF_SECTION_CHILD = True
+# R320: the bare '수익' printed as the top row of the income statement (no section) is the revenue total, but it maps only
+# at the taxonomy stage, so a component printed below it ('수수료수익', exact / normalized) outranked it: 00148610 2026Q3
+# separate 346.7B instead of 6,436.4B; 00161426 consolidated / separate 2020Q1-2022 (한올바이오파마류 '수익' with '수수료수익'
+# among its parts). It wins only when it is the one such row and larger than every other candidate of its table.
+_R320_BARE_REVENUE_TOP = True
 _R311_SAME_SLOT_RESTATED = True
 _R311_MAX_REL = 0.2
 
@@ -2740,6 +2745,15 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
                         and _norm_label(r.get("section_path")) not in own]
             if filtered and len(filtered) < len(rows):
                 rows = filtered
+        if c == "is.revenue" and _R320_BARE_REVENUE_TOP:
+            tops = [r for r in rows if r.get("stage") == "taxonomy" and not r.get("section_path")
+                    and _norm_label(r.get("label_raw")) == "수익"]
+            if len(tops) == 1 and len(rows) > 1:
+                top = tops[0]
+                others = [r["value"] for r in rows if r is not top and r.get("table_seq") == top.get("table_seq")
+                          and r.get("value") is not None]
+                if others and len(others) == len(rows) - 1 and top["value"] is not None and top["value"] > max(others):
+                    rows = [top]
         if c in ("cf.operating", "cf.investing", "cf.financing") and _R315_CF_SECTION_CHILD:
             own = {_norm_label(r.get("label_raw")) for r in rows if not r.get("section_path") and r.get("value")}
             filtered = [r for r in rows if _norm_label(r.get("section_path")) not in own]

@@ -5,7 +5,8 @@ title: Prices and valuation
 ---
 **stock_prices** (stock_code, trade_date), 1990-01-03 to today, one row per ticker per trading day: open/high/low/close_price (KRW, integer), volume, market_cap (KRW), shares_out, and KRX-published per, pbr, eps, bps, dps, div_yield.
 - `close_price` is the **adjusted** close (splits and bonus issues back-adjusted). Use it for charts and returns.
-- Since 2026-09-14 (KRX after-market until 20:00) `close_price` from the daily OHLCV source is the last trade of the day, which often differs from the regular-session close `close_raw` (15:30). Use `close_raw` for the official close.
+- Since 2026-09-14 (KRX after-market until 20:00) open/high/low/close_price are replaced by KRX regular-session values (adjusted basis kept). The latest trading day is provisional until the next night (no KRX data yet; close may be an after-market trade).
+- `close_price` is adjusted only within the 15-day refetch window: older values are not re-adjusted after a later split or bonus issue. Use `close_raw` for the official close of the day.
 - `close_raw` is the **unadjusted** close of the day and `list_shares` the listed common shares of the day (treasury included), both from KRX daily trade data, 2015 onward. `krx_mktcap` is KRX's own market cap (close_raw x list_shares).
 - `shares_out` is the **float** share count of the day: list_shares x the float ratio (float shares / common shares) of the latest report on or before that day, so splits and reverse splits inside a quarter scale the treasury part too. `market_cap` = close_raw x shares_out. It changes on the day a share change is reflected by KRX (bonus issues: when the new shares are listed, usually 2-3 weeks after the ex-rights date, as in KRX's own figure).
 - Before 2015 (no KRX daily data) market_cap / shares_out use close_price x the latest reported float shares and are approximate.

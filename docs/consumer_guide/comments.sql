@@ -25,7 +25,7 @@ COMMENT ON COLUMN report_lines_l3.printed_value_won IS 'Value as printed in the 
 COMMENT ON COLUMN report_lines_l3.correction_rule IS 'tj_finance rule id that changed the printed value; NULL = no correction.';
 COMMENT ON COLUMN stock_prices.stock_code IS 'KRX ticker; map to corp_code via corporations.';
 COMMENT ON COLUMN stock_prices.close_price IS 'Adjusted close (splits / bonus issues back-adjusted as of the time the row was fetched). Use for charts and returns, not for market cap.';
-COMMENT ON COLUMN stock_prices.close_raw IS 'Unadjusted regular-session closing price of the day (KRX daily trade, 2015-). Since 2026-09-14 close_price is the last trade incl. the 16:00-20:00 after-market and may differ.';
+COMMENT ON COLUMN stock_prices.close_raw IS 'Unadjusted regular-session closing price of the day (KRX daily trade, 2015-). The latest day is filled the next night; until then close_price is provisional.';
 COMMENT ON COLUMN stock_prices.list_shares IS 'Listed common shares of the day (KRX, treasury shares included, 2015-).';
 COMMENT ON COLUMN stock_prices.krx_mktcap IS 'Market cap published by KRX for the day (close_raw x list_shares, treasury included).';
 COMMENT ON COLUMN stock_prices.shares_out IS 'Float shares of the day: list_shares x float ratio (float / common shares) of the latest report on or before the day.';

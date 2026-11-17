@@ -26,6 +26,7 @@ class _Session:
         if sql.startswith("INSERT INTO _krx_day"):
             self.inserted = params
         if sql.strip().startswith("UPDATE stock_prices"):
+            self.update_sql, self.update_params = sql, params
             return _Res(rowcount=len(self.inserted or []))
         return _Res()
 
@@ -39,7 +40,20 @@ def test_rows_are_parsed_and_bad_rows_skipped(monkeypatch):
     s = _Session()
     n, upd, _ = kd.sync_day(s, date(2026, 9, 1), "KOSDAQ")
     assert n == 3 and upd == 1
-    assert s.inserted == [{"c": "340570", "p": 30650, "s": 16070120, "m": 492549178000}]
+    assert s.inserted == [{"c": "340570", "p": 30650, "s": 16070120, "m": 492549178000,
+                          "o": None, "h": None, "l": None}]
+    assert s.update_params["fix"] is False
+
+
+def test_close_is_replaced_from_the_after_market_start(monkeypatch):
+    monkeypatch.setattr(kd, "fetch_daily_trade", lambda m, d: [
+        {"ISU_CD": "005930", "TDD_CLSPRC": "188700", "LIST_SHRS": "5846278608", "MKTCAP": "1",
+         "TDD_OPNPRC": "180000", "TDD_HGPRC": "196500", "TDD_LWPRC": "179200"}])
+    s = _Session()
+    kd.sync_day(s, kd.AFTER_MARKET_START, "KOSPI")
+    assert (s.inserted[0]["o"], s.inserted[0]["h"], s.inserted[0]["l"]) == (180000, 196500, 179200)
+    assert s.update_params["fix"] is True
+    assert "close_price = CASE" in s.update_sql and "OFFSET 1 LIMIT 1" in s.update_sql
 
 
 def test_network_errors_are_retried_but_authorization_is_not(monkeypatch):

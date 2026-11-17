@@ -139,18 +139,42 @@ def _select_shares_out(session, corp: str, fy: int, period: str, src: dict,
     """
     if column not in ("shares_out", "float_shares"):
         raise ValueError(f"_select_shares_out: unsupported column {column!r}")
+    cols = "shares_out, treasury_shares, float_shares, source_ref"
     primary = (src.get("BS") or src.get("IS") or src.get("CF")) if src else None
+    row = None
     if primary:
-        v = session.execute(text(
-            f"SELECT {column} FROM report_shares_outstanding WHERE rcept_no=:r"),
-            {"r": primary}).scalar()
-        if v:
-            return v
-    return session.execute(text(f"""
-        SELECT {column} FROM report_shares_outstanding
-        WHERE corp_code=:c AND fiscal_year=:y AND fiscal_period=:p AND {column} IS NOT NULL
-        ORDER BY rcept_no DESC LIMIT 1
-    """), {"c": corp, "y": fy, "p": period}).scalar()
+        row = session.execute(text(
+            f"SELECT {cols} FROM report_shares_outstanding WHERE rcept_no=:r"),
+            {"r": primary}).first()
+        if row is not None and not _shares_value(row, column):
+            row = None
+    if row is None:
+        row = session.execute(text(f"""
+            SELECT {cols} FROM report_shares_outstanding
+            WHERE corp_code=:c AND fiscal_year=:y AND fiscal_period=:p AND {column} IS NOT NULL
+            ORDER BY rcept_no DESC LIMIT 1
+        """), {"c": corp, "y": fy, "p": period}).first()
+    return _shares_value(row, column) if row is not None else None
+
+
+_LABEL_ISSUED_TO_DATE = "현재까지 발행한 주식의 총수"
+
+
+def _shares_value(row, column: str) -> int | None:
+    """R334-b (2026-11-18, layer 3): when Ⅳ 발행주식의 총수 was printed blank and the reader fell back
+    to Ⅱ (issued to date, before reductions Ⅲ), Ⅱ is not the issued count once shares were retired.
+    If Ⅴ treasury and Ⅵ float of the same table are both known and do not add up to it, the issued
+    count is Ⅴ + Ⅵ (the table's own identity Ⅵ = Ⅳ − Ⅴ). 엘컴텍 2015 Q1: Ⅱ 271,384,859,
+    Ⅲ 188,717,340 (감자), Ⅳ '-', Ⅵ 82,667,519 -> 82,667,519."""
+    shares_out, treasury, flt, source_ref = row
+    if column == "float_shares":
+        return flt
+    # Guard: Ⅳ = Ⅱ − Ⅲ can never exceed Ⅱ. A larger Ⅴ + Ⅵ means Ⅴ or Ⅵ was misread
+    # (SDN 2016 H1: Ⅴ read equal to Ⅵ) and the printed fallback is kept.
+    if (source_ref == _LABEL_ISSUED_TO_DATE and treasury is not None and flt
+            and treasury + flt < shares_out):
+        return treasury + flt
+    return shares_out
 
 
 def _periods(session, corp: str, year_min: int):

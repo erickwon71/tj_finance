@@ -5,6 +5,9 @@ unadjusted close, listed shares and KRX market cap of that day. Only existing st
 (stock_code, trade_date) are updated; rows KRX has but stock_prices lacks are counted, not
 inserted (close_price, the adjusted series, would be unknown).
 
+From 2026-09-14 (KRX after-market until 20:00) open/high/low/close are also replaced by the
+regular-session values, scaled to the stored adjusted basis (see _UPDATE_SQL).
+
 Fetched (date, market) pairs are logged in public.krx_daily_trade_log, including empty answers
 (holidays), so a long backfill can be resumed: --resume skips logged pairs.
 
@@ -28,9 +31,37 @@ from sqlalchemy import text
 from collector.db import get_session
 from collector.krx_client import DAILY_TRADE_ENDPOINTS, KrxUnavailable, fetch_daily_trade
 
-_LOG_DDL = """CREATE TABLE IF NOT EXISTS public.krx_daily_trade_log (
+# KRX after-market (16:00-20:00, all stocks) opened on this day; since then the pykrx daily close is
+# the last trade of the day, not the regular-session close (R333, found 2026-11-18).
+AFTER_MARKET_START = date(2026, 9, 14)
+
+_LOG_DDL ="""CREATE TABLE IF NOT EXISTS public.krx_daily_trade_log (
     bas_dd date, market text, n_rows integer, n_updated integer, n_missing integer,
     fetched_at timestamp DEFAULT now(), PRIMARY KEY (bas_dd, market))"""
+
+
+# From AFTER_MARKET_START the OHLCV source mixes sessions: open and volume are regular-session values,
+# high/low may include the after-market and close is the after-market last trade. Replace open/high/
+# low/close with KRX regular-session values on the stored (adjusted) basis. The basis factor is the
+# median of stored/KRX over open, high and low: open is never touched by the after-market, so the
+# median is the true factor (1 without a later corporate action, the adjustment ratio otherwise).
+# Rows without a KRX high (trading halts) keep their values (close = reference price already).
+_UPDATE_SQL = """
+UPDATE stock_prices sp SET close_raw = k.p, list_shares = k.s, krx_mktcap = k.m,
+    open_price  = CASE WHEN k.r IS NULL THEN sp.open_price  ELSE round(k.o * k.r)::integer END,
+    high_price  = CASE WHEN k.r IS NULL THEN sp.high_price  ELSE round(k.h * k.r)::integer END,
+    low_price   = CASE WHEN k.r IS NULL THEN sp.low_price   ELSE round(k.l * k.r)::integer END,
+    close_price = CASE WHEN k.r IS NULL THEN sp.close_price ELSE round(k.p * k.r)::integer END
+FROM (
+    SELECT k.*,
+           CASE WHEN :fix AND k.o > 0 AND k.h > 0 AND k.l > 0
+                     AND s.open_price > 0 AND s.high_price > 0 AND s.low_price > 0
+                THEN (SELECT x FROM unnest(ARRAY[s.open_price::numeric / k.o, s.high_price::numeric / k.h,
+                                                 s.low_price::numeric / k.l]) x ORDER BY x OFFSET 1 LIMIT 1)
+           END AS r
+    FROM _krx_day k JOIN stock_prices s ON s.stock_code = k.c AND s.trade_date = :d
+) k
+WHERE sp.stock_code = k.c AND sp.trade_date = :d"""
 
 
 def _int(v):
@@ -69,15 +100,14 @@ def sync_day(session, d: date, market: str) -> tuple[int, int, int]:
         code = (r.get("ISU_CD") or "").strip()
         close, shares, cap = _int(r.get("TDD_CLSPRC")), _int(r.get("LIST_SHRS")), _int(r.get("MKTCAP"))
         if len(code) == 6 and close and shares:
-            recs.append({"c": code, "p": close, "s": shares, "m": cap})
+            recs.append({"c": code, "p": close, "s": shares, "m": cap, "o": _int(r.get("TDD_OPNPRC")),
+                         "h": _int(r.get("TDD_HGPRC")), "l": _int(r.get("TDD_LWPRC"))})
     n_upd = n_miss = 0
     if recs:
-        session.execute(text("CREATE TEMP TABLE IF NOT EXISTS _krx_day (c varchar(6), p integer, s bigint, m bigint) "
-                             "ON COMMIT DELETE ROWS"))
-        session.execute(text("INSERT INTO _krx_day VALUES (:c, :p, :s, :m)"), recs)
-        n_upd = session.execute(text("""
-            UPDATE stock_prices sp SET close_raw = k.p, list_shares = k.s, krx_mktcap = k.m
-            FROM _krx_day k WHERE sp.stock_code = k.c AND sp.trade_date = :d"""), {"d": d}).rowcount
+        session.execute(text("CREATE TEMP TABLE IF NOT EXISTS _krx_day (c varchar(6), p integer, s bigint, "
+                             "m bigint, o integer, h integer, l integer) ON COMMIT DELETE ROWS"))
+        session.execute(text("INSERT INTO _krx_day VALUES (:c, :p, :s, :m, :o, :h, :l)"), recs)
+        n_upd = session.execute(text(_UPDATE_SQL), {"d": d, "fix": d >= AFTER_MARKET_START}).rowcount
         n_miss = session.execute(text("""
             SELECT count(*) FROM _krx_day k WHERE NOT EXISTS
               (SELECT 1 FROM stock_prices sp WHERE sp.stock_code = k.c AND sp.trade_date = :d)"""),

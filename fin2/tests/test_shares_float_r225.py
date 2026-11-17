@@ -50,3 +50,12 @@ def test_no_treasury_row_no_float_guess(tmp_path):
     p = _doc(tmp_path, _row("Ⅳ. 발행주식의 총수", "1,000,000"))
     r = extract_share_counts(p)
     assert r["issued"] == 1000000 and r["treasury"] is None and r["float"] is None
+
+
+def test_r334_truncated_float_cell_is_unreadable(tmp_path):
+    # 다우데이타 20150817001557: Ⅵ common cell printed ',526,648' (total column 34,526,648).
+    p = _doc(tmp_path, _row("Ⅳ. 발행주식의 총수 (Ⅱ-Ⅲ)", "35,700,000", "-", "35,700,000")
+             + _row("Ⅴ. 자기주식수", "1,173,352", "-", "1,173,352")
+             + _row("Ⅵ. 유통주식수 (Ⅳ-Ⅴ)", ",526,648", "-", "34,526,648"))
+    r = extract_share_counts(p)
+    assert r["treasury"] == 1173352 and r["float"] == 34526648

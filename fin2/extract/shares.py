@@ -35,7 +35,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_NUM = re.compile(r'^-?[\d,]+$')
+# R334 (2026-11-18): a cell must start and end with a digit. A truncated cell like ',526,648'
+# (다우데이타 2015 H1 Ⅵ, total column 34,526,648) is unreadable, not 526,648 (R0: no guessing).
+_NUM = re.compile(r'^-?\d(?:[\d,]*\d)?$')
 _TR = re.compile(r'<TR.*?</TR>', re.S | re.I)
 _CELL = re.compile(r'<T[DEH][^>]*>(.*?)</T[DEH]>', re.S | re.I)
 _TAG = re.compile(r'<[^>]+>')

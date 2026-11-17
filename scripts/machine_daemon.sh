@@ -37,7 +37,10 @@ RUNNER_AUTOSTART="${VQ_RUNNER_AUTOSTART:-1}"
 RUNNER_STOP_FILE="$HOME/.claude/notify/STOP_VERIFY"
 RUNNER_SESSION="${VQ_RUNNER_TMUX_SESSION:-verify_auto}"
 RUNNER_MIN_GAP_S="${VQ_RUNNER_AUTOSTART_MIN_GAP_S:-3600}"     # at most one start per hour
-RUNNER_MAX_PER_DAY="${VQ_RUNNER_AUTOSTART_MAX_PER_DAY:-6}"
+# Pro plan from 2026-11-18 (docs/plans/pro_plan_budget_policy_2026-11-17.md): at most 2 starts a
+# day (was 6), and only in the night hours below, so the daytime limit stays with the user.
+RUNNER_MAX_PER_DAY="${VQ_RUNNER_AUTOSTART_MAX_PER_DAY:-2}"
+RUNNER_AUTOSTART_HOURS="${VQ_RUNNER_AUTOSTART_HOURS:-22-8}"   # local START-END, empty = any time
 
 log() { printf '%s  %s\n' "$(date '+%m-%d %H:%M:%S')" "$*"; }
 
@@ -52,11 +55,24 @@ notify() {
 # $1 = number of slots a model reviewer could claim now (status.machine.model_ready_slots).
 # Guards: STOP_VERIFY file, an already running runner, a minimum gap and a daily cap (a runner that
 # keeps dying must not be restarted forever - it also stops itself and notifies after repeated failures).
+# 0 (true) when the local hour is inside "START-END" (END exclusive, wraps midnight) or the spec is empty.
+in_hours() {
+  local spec="$1" a b h
+  [ -n "$spec" ] || return 0
+  a=${spec%-*}; b=${spec#*-}; h=$((10#$(date +%H)))
+  if [ "$a" -lt "$b" ]; then
+    [ "$h" -ge "$a" ] && [ "$h" -lt "$b" ]
+  else
+    [ "$h" -ge "$a" ] || [ "$h" -lt "$b" ]
+  fi
+}
+
 runner_autostart() {
   [ "$RUNNER_AUTOSTART" = "1" ] || return 0
   [ "${1:-0}" -gt 0 ] || return 0
   [ -e "$RUNNER_STOP_FILE" ] && return 0
   pgrep -f "scripts/verify_runner.sh" >/dev/null && return 0
+  in_hours "$RUNNER_AUTOSTART_HOURS" || return 0
   command -v tmux >/dev/null || { log "tmux 없음 - 러너 자동 기동 불가"; return 0; }
 
   local state="$LOG_ROOT/runner_autostart.log" now last today count

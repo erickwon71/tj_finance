@@ -645,6 +645,41 @@ def test_pace_wait_rules():
     assert runner.pace_wait({}, **kw) == (0, None)
 
 
+def test_hours_wait_window():
+    """kv runner.full_model_hours (Pro plan, 2026-11-17): full-model slots run only inside it."""
+    from datetime import datetime
+    at = lambda h, m=0: datetime(2026, 11, 18, h, m)
+    # wrapping window 22-8: 22:00-07:59 inside
+    for h in (22, 23, 0, 3, 7):
+        assert runner.hours_wait("22-8", at(h, 30)) == 0
+    assert runner.hours_wait("22-8", at(8)) == 14 * 3600
+    assert runner.hours_wait("22-8", at(21, 30)) == 30 * 60
+    # plain window 9-18
+    assert runner.hours_wait("9-18", at(12)) == 0
+    assert runner.hours_wait("9-18", at(18)) == 15 * 3600       # next day 09:00
+    assert runner.hours_wait("9-18", at(8, 59, )) == 60
+    # empty / malformed never blocks
+    for spec in ("", None, "x", "5-5", "25-3"):
+        assert runner.hours_wait(spec, at(12)) == 0
+
+
+def test_claim_exclude_skips_named_slots(engines, as_role):
+    """The runner hands back a full-model slot outside its hours and claims past it."""
+    as_role("verify")
+    _admin_sql(engines, "UPDATE verification.progress SET status = 'pending', claimed_by = NULL, "
+                        "lease_until = NULL WHERE corp_code = :c", {"c": CORP})
+    pending = _admin_sql(engines, "SELECT count(*) FROM verification.progress WHERE corp_code = :c "
+                                  "AND status = 'pending'", {"c": CORP})[0][0]
+    assert pending == 1
+    assert ops.claim(exclude=[SLOT]) is None
+    got = ops.claim(exclude=[Slot(CORP, 2023, "FY")])
+    assert got == SLOT
+    assert ops.release(SLOT, failed=False)["status"] == "pending"
+    row = _admin_sql(engines, "SELECT retry_count FROM verification.progress WHERE corp_code = :c "
+                              "AND fiscal_year = 2024 AND fiscal_period = 'FY'", {"c": CORP})[0]
+    assert row[0] == 0
+
+
 def test_strip_label_disambiguator():
     # camp_run appends "[period]" (or similar) to disambiguate a label that repeats across SCE
     # year blocks, to satisfy ux_vissues_active_cell — report_lines.label_raw never carries it.

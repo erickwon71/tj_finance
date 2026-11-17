@@ -116,13 +116,20 @@ rm ~/.claude/notify/STOP_VERIFY
     수정·대화형 몫을 남은 기간에 비례해 보장한다.
   - `runner.slots_per_window`=60 은 안전장치로만 둔다.
   - 실측: 회당 주간 ≈0.13%p, 5h ≈1.6%p, 평균 4.6분. 근거는 설계 §11.
+  **2026-11-18 Pro 요금제 전환(한도 ≈ Max x5 의 1/5)에 맞춘 현재값** — 근거·실측은 `docs/plans/pro_plan_budget_policy_2026-11-17.md`:
+  - `runner.slots_per_window`=8, `runner.max_5h_pct`=40, `runner.reserve_7d_pct`=60, `runner.safety_7d_pct`=10.
+  - `runner.full_model_hours`=`22-8`: 이 시간대(현지시각, 끝 시각 제외, 자정 넘김 가능) 밖에서는 full-model(sonnet) 슬롯을 실행하지 않는다.
+    러너가 점유한 슬롯이 full-model이면 벌점 없이 반납(`vq.py runner defer`)하고 그 슬롯은 건너뛴다(`vq.py claim --exclude`).
+    발견확인(haiku) 슬롯이 없으면 시간대가 열릴 때까지 기다린다. 값을 비우면 시간 제한이 없다. 현재 판정: `vq.py runner full-gate`.
+  - 자동 기동(`machine_daemon.sh`)은 `VQ_RUNNER_AUTOSTART_HOURS`(기본 `22-8`) 안에서만, 하루 최대 `VQ_RUNNER_AUTOSTART_MAX_PER_DAY`(기본 2)회.
+  - `VQ_MAX_TURNS` 기본값 120 → 60.
   회차마다 `runner_runs.usage_5h_*`/`usage_7d_*` 에 계정 사용률(%)을 시작·끝으로 남긴다. 다른 세션과 한도를 공유하므로 차이는 상한값이다. 이 값으로 파일럿 후 예산을 정한다.
 - 사용량 한도 메시지가 오면 리셋 시각까지 쉰다. 이 경우 재시도 횟수는 늘지 않는다.
 - 연속 3회 실패, 디스크 여유 50GB 미만, 코드 동기화 실패일 때만 텔레그램 알림을 보내고 정지한다.
 - 로그: `logs/verify_runner/<날짜>/` (30일 뒤 자동 삭제).
 - **모델은 슬롯마다 러너가 고른다**(2026-10-09, `vq.py runner model --slot S`): 기계 발견만 확인하는 슬롯 → `VQ_FINDING_MODEL`(기본 haiku),
   전체 대조(audit·no_source·no_structure·error)·적재 0행·fixed 재확인 슬롯 → `VQ_FULL_MODEL`(기본 sonnet). 근거: 실슬롯 A/B `docs/verification/model_parity_2026-10-09.md`.
-  `VQ_MODEL` 을 주면 모든 슬롯을 그 모델로 강제한다. 그 밖 옵션: `VQ_MAX_TURNS`(120), `VQ_RUN_TIMEOUT`(2700초), `VQ_CLAUDE_ARGS`(추가 플래그).
+  `VQ_MODEL` 을 주면 모든 슬롯을 그 모델로 강제한다. 그 밖 옵션: `VQ_MAX_TURNS`(60, 2026-11-17 이전 120), `VQ_RUN_TIMEOUT`(2700초), `VQ_CLAUDE_ARGS`(추가 플래그).
 - 규칙·검증 도구를 바꾸면 `scripts/verify_sim/`(읽기 전용 실슬롯 A/B)으로 Haiku·Sonnet 결과가 같은지 다시 확인한다.
 - 탭 정리(2026-09-25 변경): 회차가 끝날 때마다 러너가 **열린 DART 탭을 전부 훑어서**, 캠페인 필링이면서 지금 점유 중인 슬롯이 아닌 탭을 AppleScript 로 닫는다(`vq.py stale-tabs`). 모델이 같은 회사의 다른 기간 공시를 비교용으로 여는 경우와 러너 재시작으로 이력을 잃는 경우에도 남지 않는다. 캠페인 대상이 아닌 공시 탭(직접 연 탭)은 건드리지 않는다. 처음 한 번 macOS 가 "터미널이 Chrome 을 제어" 권한을 물으면 허용한다.
 

@@ -7,6 +7,10 @@ for the usage budget, whether to stop the loop.
 Budget knobs live in verification.kv so the pilot can tune them without a code change:
   runner.slots_per_window  (default 12)  runs per rolling 5-hour window
   runner.weekly_slots      (default none) runs per rolling 7 days, set after the pilot
+  runner.full_model_hours  (default none = any time) local hours 'START-END' (e.g. '22-8')
+                           in which full-model (sonnet) slots may run; outside them the runner
+                           only takes finding-confirmation (haiku) slots. Pro plan, 2026-11-17:
+                           docs/plans/pro_plan_budget_policy_2026-11-17.md
 """
 from __future__ import annotations
 
@@ -23,7 +27,8 @@ from fin2.verification import ops
 from fin2.verification.ops import Slot, _Tx
 from fin2.verification.session_info import parser_commit, worktree_name
 
-DEFAULTS = {"runner.slots_per_window": "12", "runner.weekly_slots": ""}
+DEFAULTS = {"runner.slots_per_window": "12", "runner.weekly_slots": "",
+            "runner.full_model_hours": ""}
 FAIL_OUTCOMES = ("error", "timeout", "incomplete", "blocked")
 STOP_AFTER_CONSECUTIVE_FAILS = 3
 NOTIFY = Path.home() / ".claude" / "notify" / "telegram.sh"
@@ -101,7 +106,10 @@ def usage_snapshot() -> tuple[float | None, float | None]:
 
 def pace_wait(c: dict, *, max_5h: float, reserve_7d: float, safety_7d: float,
               now=None) -> tuple[int, str | None]:
-    """Seconds to wait under measured-usage pacing (Max x5 tuning, design §11), and why.
+    """Seconds to wait under measured-usage pacing (design §11), and why.
+
+    Tuned for Max x5 until 2026-11-17; from 2026-11-18 the plan is Pro (about 1/5 of the
+    limits), so the kv values are lower (docs/plans/pro_plan_budget_policy_2026-11-17.md).
 
     - 5-hour window: at or above max_5h percent, wait for its reset (the rest of the window
       belongs to the interactive / fix sessions).
@@ -132,6 +140,38 @@ def pace_wait(c: dict, *, max_5h: float, reserve_7d: float, safety_7d: float,
         if seven >= ceiling:
             return 1800, f"7d {seven}% >= ceiling {ceiling:.1f}%"
     return 0, None
+
+
+def hours_wait(spec: str, now=None) -> int:
+    """Seconds until local time is inside the hour window `spec`, 0 when it already is.
+
+    `spec` is 'START-END' in whole local hours, END exclusive; START > END wraps midnight
+    ('22-8' = 22:00-07:59). Empty or malformed means no restriction (never blocks).
+    """
+    from datetime import datetime, timedelta
+
+    try:
+        a, b = (int(x) for x in str(spec).strip().split("-"))
+    except ValueError:
+        return 0
+    if not (0 <= a <= 23 and 0 <= b <= 24) or a == b:
+        return 0
+    now = now or datetime.now()
+    h = now.hour
+    inside = (a <= h < b) if a < b else (h >= a or h < b)
+    if inside:
+        return 0
+    start = now.replace(hour=a, minute=0, second=0, microsecond=0)
+    if start <= now:
+        start += timedelta(days=1)
+    return max(60, int((start - now).total_seconds()))
+
+
+def full_model_gate(now=None) -> dict:
+    """Whether a full-model slot may run now (kv runner.full_model_hours)."""
+    with engine.connect() as conn:
+        spec = _kv(conn, "runner.full_model_hours")
+    return {"hours": spec or None, "wait_seconds": hours_wait(spec, now)}
 
 
 def start(slot: Slot, model: str | None) -> int:

@@ -22,7 +22,9 @@ NOTIFY="$HOME/.claude/notify/telegram.sh"
 PROMPT_FILE="$ROOT/docs/verification/verify_prompt.md"
 LOG_ROOT="$ROOT/logs/verify_runner"
 RUN_TIMEOUT="${VQ_RUN_TIMEOUT:-2700}"          # 45 min per slot
-MAX_TURNS="${VQ_MAX_TURNS:-120}"   # run 6 hit 80 on a 2-filing SCE-heavy slot
+# 120 -> 60 on 2026-11-17 (Pro plan from 11-18): one long run takes a large share of the Pro
+# 5-hour window. A run cut at 60 turns ends `incomplete` and the slot is tried again later.
+MAX_TURNS="${VQ_MAX_TURNS:-60}"
 # Model per slot (2026-10-09 A/B, docs/verification/model_parity_2026-10-09.md): slots that only
 # confirm machine findings -> VQ_FINDING_MODEL (haiku), full comparison / re-check -> VQ_FULL_MODEL
 # (sonnet). VQ_MODEL, when set, forces one model for every slot.
@@ -235,6 +237,10 @@ main() {
   mkdir -p "$LOG_ROOT"
   log "verify 러너 시작 (model=$MODEL: 발견확인 $FINDING_MODEL / 전체대조·재확인 $FULL_MODEL, timeout=${RUN_TIMEOUT}s, max-turns=$MAX_TURNS)"
 
+  # Full-model slots claimed outside kv runner.full_model_hours are handed back and skipped
+  # until the window opens (Pro plan, docs/plans/pro_plan_budget_policy_2026-11-17.md).
+  DEFERRED=()
+
   while :; do
     if [ -e "$STOP_FILE" ]; then
       log "STOP 파일 발견 - 정지 (재개하려면 파일 삭제 후 다시 실행)"
@@ -278,7 +284,18 @@ main() {
     nw=$(printf '%s' "$wr" | jq -r '.withdrawn | length' 2>/dev/null)
     [ -n "$nw" ] && [ "$nw" != "0" ] && log "no_fix 반려 withdraw: $wr"
 
-    slot=$("${VQ[@]}" claim --json | jq -r '.slot // empty')
+    full_wait=$("${VQ[@]}" runner full-gate | jq -r '.wait_seconds // 0')
+    if [ "${full_wait:-0}" -eq 0 ] && [ "${#DEFERRED[@]}" -gt 0 ]; then
+      log "full-model 시간대 진입 - 미뤄둔 슬롯 ${#DEFERRED[@]}개 다시 대상"
+      DEFERRED=()
+    fi
+
+    slot=$("${VQ[@]}" claim --json ${DEFERRED[@]+--exclude "${DEFERRED[@]}"} | jq -r '.slot // empty')
+    if [ -z "$slot" ] && [ "${#DEFERRED[@]}" -gt 0 ] && [ "${full_wait:-0}" -gt 0 ]; then
+      log "발견확인 슬롯 없음 - full-model 슬롯 ${#DEFERRED[@]}개는 시간대까지 대기 ${full_wait}s"
+      sleep "$(( full_wait < 1800 ? full_wait : 1800 ))"
+      continue
+    fi
     if [ -z "$slot" ]; then
       # With the machine gate on, model work appears as the machine pass progresses.
       unchecked=$("${VQ[@]}" status --json | jq -r '.machine.unchecked_pending_filings // 0')
@@ -300,6 +317,13 @@ main() {
       pick=$("${VQ[@]}" runner model --slot "$slot" --finding-model "$FINDING_MODEL" --full-model "$FULL_MODEL")
       MODEL=$(printf '%s' "$pick" | jq -r '.model // empty'); why=$(printf '%s' "$pick" | jq -r '.reason // empty')
       [ -n "$MODEL" ] || { MODEL="$FULL_MODEL"; why="fallback"; }
+      if [ "$why" != "findings" ] && [ "${full_wait:-0}" -gt 0 ]; then
+        "${VQ[@]}" runner defer --slot "$slot" >/dev/null \
+          || log "슬롯 반납 실패: $slot (리스 만료로 풀림)"
+        DEFERRED+=("$slot")
+        log "full-model 슬롯 미룸: $slot ($why) - 시간대 밖"
+        continue
+      fi
     fi
     run_id=$("${VQ[@]}" runner start --slot "$slot" --model "$MODEL")
     prompt="$(cat "$PROMPT_FILE")

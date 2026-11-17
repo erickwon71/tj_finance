@@ -237,6 +237,14 @@ fail_a 36건 전수 재실행(적용 6건·전부 report_won 일치·오탐 0, �
 `fin2/extract/report_lines_inline_xbrl_overlay.py` ·
 `fin2/extract/report_lines.py::extract_report_lines()`.
 
+## R18-b. R18 은 부호만 바꾸고 인쇄된 크기는 그대로 둔다 (2026-11-17, 적용 계층: 3 — 보정)
+
+> **규칙** `fin2/extract/report_lines_inline_xbrl_overlay.py::overlay_dividends_paid_sign` — 인쇄값이 이미 음수면 손대지 않고, 양수면 `-인쇄값` 으로만 바꾼다(fact 값을 복사하지 않는다). fact 는 `read_report_face_xbrl(..., cf_from_sce=True)` 로 읽어 자본변동표 합계 열 fact 도 부호 증거로 쓴다(LG 00120021 은 현금흐름표 행이 회사 확장 태그라 그것이 유일한 fact).
+> **발견(2026-11-17, R328 측정 중)** R18 보정 39건 중 8건이 현금흐름표 인쇄값을 자본변동표의 배당 결의액으로 덮었다(1% 허용오차 안이라 통과): 00138729 아세아제지 2024FY 연결·별도 -16,178,555,520 → -16,179,283,200, LG 00120021 별도 2024FY~2026H1 5건(예 483,734 → -483,737 백만원), 00113207 대한전선 2026Q3 연결 -2,004,262,354 → -2,008,889,064. 판독기가 자본변동표 fact 를 현금흐름 값으로 읽었기 때문이다(R328).
+> **백필** 7필링 R0-2 재적재(`fin2/verification/ops._reload_rcept`) 뒤 3개사 std 재빌드: 2015+ 에서 바뀐 값은 위 8건뿐(아세아제지·대한전선은 인쇄값, LG 는 R232 가 인쇄 크기로 부호만 붙임). Gate B 3개사 fail 0. 부호만 바꾼 나머지 R18 25필링은 재적재해도 보정이 같았다.
+> **함께 고친 것** `scripts/reload_report_lines_corp.py` 는 `extract_report_lines`+`store_report_lines` 만 불러, `report_lines` 삭제 시 ON DELETE CASCADE 로 그 필링의 `layer3_cell_corrections` 가 모두 지워지고 다시 만들어지지 않았다(주석도 재적재 안 함). 같은 옵션을 받되 R0-2 경로(`fin2/verification/ops._reload_rcept`)로 재적재하도록 바꿨다(LG 20250318001070 재적재 전후 보정 27건 동일). `report_line_load_progress`·`line_anomalies` 는 더 이상 쓰지 않는다.
+> **테스트** `fin2/tests/test_report_lines_inline_xbrl_overlay.py::test_r18b_sign_only_never_copies_the_fact_magnitude`, LG 기대값 -632,379,000,000(인쇄 크기).
+
 ## R20. 계층3 `_resolve()` stage-rank 숏컷 — 지주회사형 `is.sga`(영업비용 총계 vs
 
 > **상태** 유효 · **적용 계층** 3

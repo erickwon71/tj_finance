@@ -130,7 +130,9 @@ def overlay_dividends_paid_sign(
     if report_fiscal_year < _MIN_FISCAL_YEAR:
         return 0
 
-    facts = read_report_face_xbrl(file_path)
+    # The SCE total-column fact is kept here (cf_from_sce=True): it is only sign evidence, and
+    # for some filers (LG 00120021) it is the only dividends fact (the CF row has an entity tag).
+    facts = read_report_face_xbrl(file_path, cf_from_sce=True)
     target_facts = [f for f in facts
                     if f.canonical == _TARGET_CANONICAL and f.statement == "CF"]
     if not target_facts:
@@ -169,7 +171,13 @@ def overlay_dividends_paid_sign(
             # (15 of 52 overlays turned a printed negative positive, 20251114001409 -84,588), so a
             # positive fact is no sign evidence — leave the row (R232 may already have signed it).
             continue
-        row.value_won = fact_won
+        if row.value_won < 0:
+            # R18-b (2026-11-17): the printed sign already agrees - this overlay corrects the SIGN
+            # only. The fact may be the SCE dividend declared, which differs from the cash paid
+            # (00138729 2024FY printed -16,178,555,520, SCE -16,179,283,200; LG 2024FY separate
+            # 483,734 vs 483,737 million): never copy its magnitude.
+            continue
+        row.value_won = -row.value_won
         row.source_ref = (f"{row.source_ref};xbrl_inline_override"
                            if row.source_ref else "xbrl_inline_override")
         n_applied += 1

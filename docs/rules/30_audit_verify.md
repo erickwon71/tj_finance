@@ -979,3 +979,12 @@ DB 데이터는 바뀌지 않는다(재적재 없음).
 **같은 큐에서 다룬 것(value_mismatch)**:
 - 에치에프알 2018FY `20190401005242` SCE 8건(#87632~#87744, batch #91): R201-c 와 같은 주석 열 오프셋 오탐이다(390c771 이전 커밋 `8103ac7f84` 에서 검출). DB 의 21~23 은 `주석` 열 값이다. 현재 도구로 재대조하면 `clean` 이다.
 - 비투엔 2020FY `20210317000884` 별도 EPS 13.42 → DB 13(#88194·#88195, batch #92): `report_lines.value_won` 이 bigint 라 소수 EPS 는 전사 공통으로 정수가 된다. 표본 296필링 중 5건(약 1.7%)의 원문 EPS 에 소수가 있었다. 고치려면 스키마 변경이 필요하므로 사용자 판단(decision #4)을 기다린다.
+
+## R328. Gate B 판독기는 현금흐름 계정을 자본변동표 표에서 읽지 않는다 (2026-11-17, 적용 계층: 검증 도구 수정, 사용자 결정)
+
+> **규칙** `fin2/audit/face_audit.py::read_report_face_xbrl`(스위치 `_R328_CF_NOT_FROM_SCE`, `_in_sce_table`) — XBRL 셀의 canonical 이 `cf.*` 이고, 그 셀이 든 `<TABLE>` 에 `ComponentsOfEquityAxis` 문맥 셀이 하나라도 있으면(=자본변동표) 후보에서 뺀다. 판독기 전용 별칭에 `ifrs-full_DividendsPaidOrdinaryShares → cf.dividends_paid` 를 더한다(운영 `concept_map` 은 그대로).
+> **사용자 결정(2026-11-17)** 배당금 경고는 std 를 바꾸지 않고 판독기를 고친다. dividends_paid = 지배기업 소유주 배당(R321) 유지.
+> **발견** 자본변동표 합계 열은 무차원이라 판독기가 그 셀을 본문 현금흐름 값으로 집었다. 00138729 아세아제지는 자본변동표에만 `DividendsPaidClassifiedAsFinancingActivities`(배당 결의액, 2025FY -10,685,985,250)를 쓰고 현금흐름표 '(4)배당금의 지급'(-10,685,473,600, std 와 같음)은 `DividendsPaidOrdinaryShares` 로 태깅한다. 00194947 한전산업 2025Q3 은 자본변동표 합계(지배 + 비지배 배당)를 읽었다. std 는 두 회사 모두 현금흐름표 인쇄값과 같다.
+> 같은 판독기에서 `cf.dividends_paid` 태그가 붙은 행의 라벨에 '배당'이 없으면 회사의 잘못된 태깅으로 보고 뺀다(00447007 알리코제약은 '리스부채의 원금상환' -302,112,263 에 `DividendsPaidClassifiedAsFinancingActivities` 를 붙였다).
+> **R0-2** 판독기만 바뀐다. 다만 R18(계층3 배당 부호 보정)이 이 판독기를 써서 자본변동표 배당 결의액을 값까지 복사하고 있었으므로 R18-b(`20_layer3_map.md`)로 함께 고쳤다. R18 은 `cf_from_sce=True` 로 자본변동표 fact 를 부호 증거로만 쓴다.
+> **테스트** `fin2/tests/test_r328_face_reader_cf_not_from_sce.py`(현금흐름표 행만 후보·스위치 끔·라벨 없는 배당 태그 제외).

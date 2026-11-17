@@ -1,11 +1,17 @@
-"""Targeted report_lines re-load for specific corp-years (B1 stale-data recovery).
+"""Targeted layer-2 re-load for specific corps / corp-years / filings.
 
-Some (corp, fiscal_year) had report_lines loaded by an OLDER extractor and are missing
-the IS statement, even though the CURRENT extractor (post split-table fix, 2026-07-23)
-extracts it. --redo-empty didn't catch them (they had non-zero BS rows). This re-extracts
-and re-stores every completed-XML filing for the given corps (delete-then-insert per
-rcept, idempotent), updating report_line_load_progress. Nothing destructive beyond the
-per-rcept re-store the normal loader already does.
+Each filing is re-extracted and stored through the R0-2 path the daily collector and the
+verification queue use (`fin2.verification.ops._reload_rcept`): printed rows (body + notes),
+table meta and the layer-3 corrections (`layer3_cell_corrections`) in one transaction,
+delete-then-insert per rcept, idempotent.
+
+Why (2026-11-17): this script used to call `extract_report_lines` + `store_report_lines`
+only. `layer3_cell_corrections` references `report_lines` ON DELETE CASCADE, so a reload
+silently dropped every layer-3 correction of the filing (R232 signs, R154 fills, ...) and
+did not write them again; the next std rebuild then used uncorrected values. Notes were not
+reloaded either (include_notes=False). The legacy bookkeeping tables
+`report_line_load_progress` / `line_anomalies` are no longer written (the daily path never
+wrote them).
 
 Usage: python scripts/reload_report_lines_corp.py --corp 00139214,00136101 [--year 2020]
        python scripts/reload_report_lines_corp.py --corp <csv> --year-max 2010  # R31(T22)
@@ -15,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -24,9 +29,13 @@ from loguru import logger
 from sqlalchemy import text
 
 from collector.db import get_session
-from collector.models import ReportLineLoadProgress
-from fin2.extract.report_lines import extract_report_lines, store_report_lines
-from fin2.audit.line_anomaly import detect_anomalies, store_anomalies
+from fin2.verification.ops import _reload_rcept
+
+# Same source selection as _reload_rcept: a completed main XML / XBRL zip, or a web-view print.
+_SOURCE_SQL = """
+    ((dt.status = 'completed' AND dt.file_type IN ('xml', 'xbrl_zip') AND dt.file_path IS NOT NULL)
+     OR dt.viewer_xml_path IS NOT NULL)
+"""
 
 
 def main():
@@ -40,10 +49,9 @@ def main():
                      help="fiscal_year >= 이 값만. 계층2 캠페인 스코프가 2015+ 라 "
                           "그 경계를 지킬 때 쓴다(사용자 지시 2026-09-19)")
     ap.add_argument("--overwrite-reviewed", action="store_true",
-                     help="★R139 보호가드 우회 — 원문대조 완료(status='pass')로 표시된 "
-                          "필링까지 덮어쓴다. 그 판정이 **이 결함을 알기 전에** 내려졌고 "
-                          "현재 파서가 확실히 더 정확할 때만 쓸 것(사람 확인 데이터를 "
-                          "조용히 덮는 장치라 기본값은 끔).")
+                     help="호환용(무시). R139 보호가드는 2026-09-24 폐지됐다.")
+    ap.add_argument("--reason", default="reload_report_lines_corp",
+                     help="verification.load_reason 에 남길 사유")
     args = ap.parse_args()
     if not args.corp and not args.rcept_file:
         ap.error("--corp 또는 --rcept-file 중 하나는 필요하다")
@@ -53,11 +61,10 @@ def main():
             rcepts = [t.strip() for t in Path(args.rcept_file).read_text(
                 encoding="utf-8").split() if t.strip()]
             print(f"입력 rcept = {len(rcepts)}")
-            targets = s.execute(text("""
-                SELECT dt.rcept_no, dt.file_path, f.corp_code, f.fiscal_year, f.fiscal_period
+            targets = s.execute(text(f"""
+                SELECT DISTINCT dt.rcept_no, f.corp_code, f.fiscal_year
                 FROM download_tasks dt JOIN filings f USING(rcept_no)
-                WHERE dt.rcept_no = ANY(:rcepts) AND dt.status='completed'
-                  AND dt.file_type='xml' AND dt.file_path IS NOT NULL
+                WHERE dt.rcept_no = ANY(:rcepts) AND {_SOURCE_SQL}
                 ORDER BY f.corp_code, f.fiscal_year, dt.rcept_no
             """), {"rcepts": rcepts}).fetchall()
         else:
@@ -73,49 +80,26 @@ def main():
             if args.year_min:
                 params["ymin"] = args.year_min
             targets = s.execute(text(f"""
-                SELECT dt.rcept_no, dt.file_path, f.corp_code, f.fiscal_year, f.fiscal_period
+                SELECT DISTINCT dt.rcept_no, f.corp_code, f.fiscal_year
                 FROM download_tasks dt JOIN filings f USING(rcept_no)
-                WHERE f.corp_code IN :corps AND dt.status='completed' AND dt.file_type='xml'
-                  AND dt.file_path IS NOT NULL{yr_clause}
+                WHERE f.corp_code IN :corps AND {_SOURCE_SQL}{yr_clause}
                 ORDER BY f.corp_code, f.fiscal_year, dt.rcept_no
             """), params).fetchall()
 
-        print(f"대상 filing = {len(targets)}")
-        n_done = n_is = 0
-        prev_corp = None
-        for r in targets:
-            # ★대량 배치(수백 corp)가 백그라운드 실행시간 제한에 걸려 죽는 사고 재현
-            #   (R31/T22, 2026-08-17) — 예전엔 커밋을 루프 끝에 딱 한 번만 해서, 중간에
-            #   죽으면 이미 처리한 만큼도 전부 롤백돼 재시도가 처음부터 다시 시작해야 했다.
-            #   corp 경계에서 커밋해 부분 진행을 살린다(멱등 재적재라 재시작해도 안전).
-            if prev_corp is not None and r.corp_code != prev_corp:
-                s.commit()
-            prev_corp = r.corp_code
-            if not Path(r.file_path).exists():
-                logger.warning(f"file missing {r.rcept_no}")
-                continue
-            try:
-                lines = extract_report_lines(
-                    r.file_path, rcept_no=r.rcept_no, corp_code=r.corp_code,
-                    report_fiscal_year=r.fiscal_year,
-                    report_fiscal_period=r.fiscal_period, include_notes=False)
-                nl = store_report_lines(s, r.rcept_no, lines,
-                                        overwrite_reviewed=args.overwrite_reviewed)
-                found = detect_anomalies(lines, rcept_no=r.rcept_no, corp_code=r.corp_code,
-                                         report_fiscal_period=r.fiscal_period)
-                na = store_anomalies(s, r.rcept_no, found)
-                nis = sum(1 for ln in lines if ln.statement == "IS")
-                n_is += nis
-                s.merge(ReportLineLoadProgress(
-                    rcept_no=r.rcept_no, corp_code=r.corp_code, fiscal_year=r.fiscal_year,
-                    status="done", n_lines=nl, n_anomalies=na, message="reload",
-                    processed_at=datetime.utcnow()))
-                n_done += 1
-                print(f"  {r.corp_code} {r.fiscal_year} {r.rcept_no}: {nl}행 (IS {nis})", flush=True)
-            except Exception as e:  # noqa: BLE001
-                logger.error(f"{r.rcept_no}: {type(e).__name__}: {e}")
-        s.commit()
-        print(f"\n완료 — filing {n_done} 재적재 · IS 총 {n_is}행")
+    print(f"대상 filing = {len(targets)}")
+    n_done = n_failed = 0
+    for r in targets:
+        try:
+            status, msg = _reload_rcept(r.rcept_no, args.reason)
+        except Exception as e:  # noqa: BLE001
+            status, msg = "failed", f"{type(e).__name__}: {e}"
+        if status == "done":
+            n_done += 1
+            print(f"  {r.corp_code} {r.fiscal_year} {r.rcept_no}: done", flush=True)
+        else:
+            n_failed += 1
+            logger.error(f"{r.rcept_no}: {status} {msg}")
+    print(f"\n완료 — filing {n_done} 재적재 · 실패 {n_failed}")
 
 
 if __name__ == "__main__":

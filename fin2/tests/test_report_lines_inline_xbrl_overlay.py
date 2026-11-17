@@ -47,7 +47,7 @@ _GUKIL_PAPER = (
 # --- §1: 실측 파일 재현(LG, 설계문서 §6-2) -----------------------------------
 
 def test_lg_separate_dividends_paid_sign_corrected():
-    """LG 별도기준 CF '배당금의 지급'이 텍스트추출(양수, 버그)에서 -632,384,000,000
+    """LG 별도기준 CF '배당금의 지급'이 텍스트추출(양수, 버그)에서 -632,379,000,000
     (report_won과 정확 일치)으로 오버레이된다."""
     if not _LG.exists():
         return
@@ -57,8 +57,10 @@ def test_lg_separate_dividends_paid_sign_corrected():
     )
     row = next(l for l in lines if l.statement == "CF" and l.basis == "separate"
                and l.col_index == 0 and l.label_raw == "배당금의 지급")
-    assert row.value_won == -632_384_000_000
-    assert row.source_ref.endswith(";xbrl_inline_override")
+    # R18-b (2026-11-17): printed magnitude 632,379 million, sign only. R232 (CF outflow section)
+    # signs it before the overlay runs, so the overlay leaves it (the SCE fact -632,384 million is
+    # the dividend declared and is never copied).
+    assert row.value_won == -632_379_000_000
 
 
 def test_lg_consolidated_dividends_paid_untouched_when_no_fact_match():
@@ -111,7 +113,7 @@ def test_overlay_ambiguous_two_candidate_rows_untouched(monkeypatch):
     """같은 (basis, is_cumulative) 에 후보 텍스트행이 2개면(모호) 손대지 않는다."""
     import fin2.extract.report_lines_inline_xbrl_overlay as mod
 
-    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp, **kw: [
         _FakeFact("cf.dividends_paid", "CF", "separate", False, -500),
     ])
     rows = [
@@ -127,7 +129,7 @@ def test_overlay_magnitude_mismatch_untouched(monkeypatch):
     """크기가 자릿수부터 다르면(다른 사실일 가능성) 손대지 않는다."""
     import fin2.extract.report_lines_inline_xbrl_overlay as mod
 
-    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp, **kw: [
         _FakeFact("cf.dividends_paid", "CF", "separate", False, -5_000_000),
     ])
     rows = [_FakeRow("CF", "separate", 0, False, "배당금의 지급", 632_384)]
@@ -140,7 +142,7 @@ def test_overlay_already_correct_is_noop(monkeypatch):
     """이미 부호까지 일치하면 손대지 않는다(카운트도 0)."""
     import fin2.extract.report_lines_inline_xbrl_overlay as mod
 
-    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp, **kw: [
         _FakeFact("cf.dividends_paid", "CF", "separate", False, -632_384),
     ])
     rows = [_FakeRow("CF", "separate", 0, False, "배당금의 지급", -632_384)]
@@ -154,7 +156,7 @@ def test_overlay_never_turns_dividends_paid_positive(monkeypatch):
     (20251114001409 인쇄 -84,588 → +84,588 로 뒤집던 사례)."""
     import fin2.extract.report_lines_inline_xbrl_overlay as mod
 
-    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp, **kw: [
         _FakeFact("cf.dividends_paid", "CF", "separate", False, 84_588),
     ])
     rows = [_FakeRow("CF", "separate", 0, False, "배당금의 지급", -84_588)]
@@ -212,7 +214,7 @@ def test_overlay_tax_expense_ebt_label_excluded(monkeypatch):
     후보에서 제외된다(EBT 오염 재현 방지)."""
     import fin2.extract.report_lines_inline_xbrl_overlay as mod
 
-    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp, **kw: [
         _FakeFact("is.tax_expense", "IS", "consolidated", True, -2_310_052_284),
     ])
     rows = [
@@ -234,7 +236,7 @@ def test_overlay_tax_expense_oci_after_tax_label_excluded(monkeypatch):
     방지 회귀."""
     import fin2.extract.report_lines_inline_xbrl_overlay as mod
 
-    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp, **kw: [
         _FakeFact("is.tax_expense", "IS", "separate", True, 5_650_000_000),
     ])
     rows = [
@@ -253,7 +255,7 @@ def test_overlay_tax_expense_no_magnitude_gate(monkeypatch):
     교정한다 — magnitude tolerance 게이트가 없다."""
     import fin2.extract.report_lines_inline_xbrl_overlay as mod
 
-    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp, **kw: [
         _FakeFact("is.tax_expense", "IS", "consolidated", True, -2_310_052_284),
     ])
     rows = [_FakeRow("IS", "consolidated", 0, True, "법인세비용(수익)", -138_250_046)]
@@ -266,7 +268,7 @@ def test_overlay_tax_expense_ambiguous_two_candidates_untouched(monkeypatch):
     """같은 (basis, is_cumulative)에 후보 텍스트행이 2개면(모호) 손대지 않는다."""
     import fin2.extract.report_lines_inline_xbrl_overlay as mod
 
-    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp, **kw: [
         _FakeFact("is.tax_expense", "IS", "consolidated", True, -2_310_052_284),
     ])
     rows = [
@@ -282,7 +284,7 @@ def test_overlay_tax_expense_already_correct_is_noop(monkeypatch):
     """이미 값이 일치하면 손대지 않는다(카운트도 0)."""
     import fin2.extract.report_lines_inline_xbrl_overlay as mod
 
-    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp: [
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp, **kw: [
         _FakeFact("is.tax_expense", "IS", "consolidated", True, -2_310_052_284),
     ])
     rows = [_FakeRow("IS", "consolidated", 0, True, "법인세비용(수익)", -2_310_052_284)]
@@ -296,3 +298,21 @@ def test_overlay_tax_expense_pre2024_is_noop_without_reading_file():
     n = overlay_tax_expense_value(rows, "/nonexistent/path.xml", 2023)
     assert n == 0
     assert rows[0].value_won == -138_250_046
+
+
+def test_r18b_sign_only_never_copies_the_fact_magnitude(monkeypatch):
+    """R18-b (2026-11-17): the fact can be the SCE dividend declared (00138729 2024FY
+    -16,179,283,200 vs printed CF -16,178,555,520). A printed negative is left as printed;
+    a printed positive only changes sign, keeping the printed magnitude."""
+    import fin2.extract.report_lines_inline_xbrl_overlay as mod
+
+    monkeypatch.setattr(mod, "read_report_face_xbrl", lambda fp, **kw: [
+        _FakeFact("cf.dividends_paid", "CF", "separate", False, -16_179_283_200),
+        _FakeFact("cf.dividends_paid", "CF", "consolidated", False, -16_179_283_200),
+    ])
+    rows = [_FakeRow("CF", "separate", 0, False, "(6)배당금의 지급", -16_178_555_520),
+            _FakeRow("CF", "consolidated", 0, False, "(8)배당금의 지급", 16_178_555_520)]
+    n = overlay_dividends_paid_sign(rows, "dummy.xml", 2025)
+    assert n == 1
+    assert rows[0].value_won == -16_178_555_520
+    assert rows[1].value_won == -16_178_555_520

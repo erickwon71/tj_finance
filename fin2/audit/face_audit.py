@@ -727,7 +727,31 @@ def _ni_attribution_text_candidates(root) -> list[FaceLine]:
 _FACE_AUDIT_EXTRA_ACODE: dict[str, str] = {
     "ifrs-full_InventoriesTotal": "bs.inventory",
     "ifrs-full_PropertyPlantAndEquipmentIncludingRightofuseAssets": "bs.ppe",
+    # R328 (2026-11-17): some filers tag the cash flow statement's owners' dividend row with
+    # this concept (00138729 '(4)배당금의 지급' -7,683,106,000) and use
+    # DividendsPaidClassifiedAsFinancingActivities only in the SCE.
+    "ifrs-full_DividendsPaidOrdinaryShares": "cf.dividends_paid",
 }
+
+# R328 (2026-11-17): a cash flow canonical is never read from a statement-of-changes-in-equity
+# table. The SCE total column is not dimensional, and filers reuse cash flow concepts there
+# (DividendsPaidClassifiedAsFinancingActivities = the dividend declared, owners + minority),
+# which the reader took as the cash paid: 00138729 2025FY SCE -10,685,985,250 vs CF
+# -10,685,473,600; 00194947 2025Q3 SCE total includes the minority dividend.
+_R328_CF_NOT_FROM_SCE = True
+_SCE_AXIS_TOKEN = "ComponentsOfEquityAxis"
+
+
+def _in_sce_table(te, cache: dict[int, bool]) -> bool:
+    """True when the <TABLE> holding `te` has a cell on the components-of-equity axis."""
+    table = next(te.iterancestors("TABLE"), None)
+    if table is None:
+        return False
+    key = id(table)
+    if key not in cache:
+        cache[key] = any(_SCE_AXIS_TOKEN in (c.get("ACONTEXT") or "")
+                         for c in table.iter("TE"))
+    return cache[key]
 
 
 # ★2026-08-28(gateb_trade_payables_classA_udf_acode_label_fallback_design_2026-08-28.md)
@@ -768,7 +792,7 @@ def _map_acode_face(acode: str) -> str | None:
 
 
 def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
-                          root=None) -> list[FaceLine]:
+                          root=None, cf_from_sce: bool = False) -> list[FaceLine]:
     """
     Track A(XBRL) 보고서의 face 라인을 독립 재추출. 기본 col_index=0(당기)·비차원만.
 
@@ -827,6 +851,7 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
         return _body_te_ids_cache[0]
 
     dedup: dict[tuple, FaceLine] = {}
+    sce_tables: dict[int, bool] = {}
     for te in root.findall(".//TE[@ACODE]"):
         acode = te.get("ACODE", "")
         if len(acode) > 255:
@@ -867,6 +892,15 @@ def read_report_face_xbrl(file_path: str | Path, all_cols: bool = False,
             if unit is not None:
                 adecimal = _adecimal_from_unit(unit)
         canonical = "bs.trade_payables" if udf_trade_payables else _map_acode_face(acode)
+        if _R328_CF_NOT_FROM_SCE and not cf_from_sce and canonical and canonical.startswith("cf.") \
+                and _in_sce_table(te, sce_tables):
+            continue
+        if _R328_CF_NOT_FROM_SCE and canonical == "cf.dividends_paid":
+            # R328: a dividends tag on a row whose label has no '배당' is a filer mis-tag
+            # (00447007 tags '리스부채의 원금상환' with DividendsPaidClassifiedAsFinancingActivities).
+            row_label = _row_label_text(te)
+            if row_label is not None and "배당" not in row_label:
+                continue
         stmt = _statement_of(canonical)
         if stmt is None and ctx.period_kind == "instant":
             stmt = "BS"

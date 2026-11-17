@@ -32,6 +32,26 @@ from fin2.extract.layer3_corrections import extract_xbrl_with_corrections, store
 
 FY_MIN = 2015
 
+
+def store_filing_evidences(session, rcept_no: str, file_path, *, xml_source: bool = True) -> None:
+    """Store filings.ifrs_evidence and filings.consolidation_evidence for one filing, as the
+    daily XML path (collector/note_lines_sync.py) does after loading it. Non-fatal: a failure
+    is logged and rolled back to a savepoint, the load itself is kept.
+
+    Why (2026-11-17): the web-view print load (sync_viewer_lines) and the verification reload
+    (fin2.verification.ops._reload_rcept) stored lines and corrections but neither evidence,
+    so 179 final filings 2015+ that declare "연결재무제표 해당사항 없음" and 1,199 with IFRS
+    evidence had none. xml_source=False (XBRL instance zip): IFRS from the DB track only
+    (Track D), consolidation from the web-view print next to the zip (R325)."""
+    from fin2.extract.consolidation_evidence import store_filing_consolidation_evidence
+    for name, fn, fp in (("ifrs_evidence", store_filing_ifrs_evidence, file_path if xml_source else None),
+                         ("consolidation_evidence", store_filing_consolidation_evidence, file_path)):
+        try:
+            with session.begin_nested():
+                fn(session, rcept_no, file_path=fp)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[evidence] {rcept_no} {name} 판정 실패(비치명): {type(exc).__name__}: {exc}")
+
 # 대상: XBRL instance zip 다운로드가 끝난 정기보고서(document.xml 014 폴백으로 받은 것,
 # collector/downloader.py::_try_xbrl_instance_fallback — Phase 2). period_end_date 는
 # extract_report_lines_xbrl() 의 col0(당기) 날짜 정확매치에 필수(없으면 그 rcept 는 스킵됨).
@@ -189,6 +209,7 @@ def sync_viewer_lines(corps: list[str], year_min: int = FY_MIN) -> dict:
                 store_report_tables(session, t.rcept_no, lines, scope="all")
                 out["rows"] += store_report_lines(session, t.rcept_no, lines)
                 store_layer3_corrections(session, t.rcept_no, corrections)
+                store_filing_evidences(session, t.rcept_no, t.file_path)
                 session.execute(text("UPDATE download_tasks SET layer2_reload_pending = FALSE "
                                      "WHERE rcept_no = :r"), {"r": t.rcept_no})
             out["filings"] += 1

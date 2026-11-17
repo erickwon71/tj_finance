@@ -355,3 +355,10 @@ tests/ fin2/tests/` 전체 1059 passed(기존에 알려진 무관 실패
 > **DB 정리** `scripts/fix_raw_path_on_disk_names_2026-11-17.py`: `download_tasks.file_path` 183,020건·`viewer_xml_path` 2,353건을 디스크 이름으로 바꿨다(옛 값은 `public.raw_path_backup_20261117`). 찾지 못한 975건은 상장폐지로 보관 폴더에 옮겨진 10개사의 옛 경로였다.
 > **함께 고친 기존 결함** `collector/delisting_archive._repoint_download_tasks`가 디스크 목록의 NFD 폴더 경로와 NFC로 저장된 경로를 `startswith`로 비교해 한 번도 맞지 않았다("file_path 재배선 0건"). NFC로 비교하도록 고치고 10개사 1,079건을 보관 폴더 경로로 바꿨다(`scripts/repoint_archived_corps_2026-11-17.py`, 옛 값은 같은 백업 테이블).
 > **테스트** `tests/test_raw_paths_on_disk.py`(SMB처럼 정확한 철자만 존재하는 환경을 흉내 내 NFC 경로가 NFD 폴더로 풀림, 있는 경로·없는 경로는 그대로).
+
+## R329. 웹뷰 인쇄본 적재와 검증 재적재도 필링 판정(IFRS·연결 증거)을 저장한다 (2026-11-17, 적용 계층: 운영)
+
+> **규칙** `collector/xbrl_instance_lines_sync.py::store_filing_evidences` — 필링을 적재한 뒤 `filings.ifrs_evidence` 와 `filings.consolidation_evidence` 를 저장한다(데일리 XML 경로 `collector/note_lines_sync.py` 와 같은 판정, 실패해도 savepoint 로 되돌리고 적재는 유지). 호출부: `sync_viewer_lines`(④-4 웹뷰 인쇄본), `fin2/verification/ops._reload_rcept`(검증 큐 재적재, `scripts/reload_report_lines_corp.py`). XBRL zip 원천이면 IFRS 는 DB 트랙(Track D)만, 연결 증거는 옆의 웹뷰 인쇄본(R325)으로 본다.
+> **발견(2026-11-17)** 2015+ 최종본 중 `consolidation_evidence_detail` 이 NULL 인 1,083건을 다시 판정: 865건은 증거 없음(연결재무제표가 있는 회사, 증거가 없으면 detail 도 NULL 로 저장되는 구조라 정상), **179건(172개사)은 "2. 연결재무제표 — 해당사항 없음" 인데 비어 있었다**(162건이 2026-11-12~17 접수, 대부분 11-16 3분기보고서). 적재 기록(`verification.filing_load_events`)상 `viewer_source` 로 적재된 필링이었고, 그 경로와 `_reload_rcept` 는 두 판정을 모두 저장하지 않았다. 같은 원인으로 IFRS 판정이 빈 최종본이 2,198건 있었다.
+> **백필** `scripts/backfill_filing_evidence_viewer_reload_2026-11-17.py --apply`(빈 칸만 채움, 기록 `public.filing_evidence_backfill_20261117`): 연결 증거 179건, IFRS 1,202건(track_a 939, std_no_kifrs 260, std_no_mixed 2, track_d 1), 영향 1,018개사 std 재빌드(2015+).
+> **테스트** `tests/test_viewer_load_stores_evidence.py`(두 판정 저장·한쪽 실패 비치명·XBRL zip 원천의 경로 선택).

@@ -1526,6 +1526,8 @@ def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, s
                                 scope="all" if t.file_type == "xml" else "body")
             store_report_lines(s, rcept, lines)
             store_layer3_corrections(s, rcept, corrections)   # R0-2: after the printed rows
+            from collector.xbrl_instance_lines_sync import store_filing_evidences
+            store_filing_evidences(s, rcept, file_path, xml_source=t.file_type == "xml")
             s.execute(text("UPDATE download_tasks SET layer2_reload_pending = FALSE "
                            "WHERE rcept_no = :r AND layer2_reload_pending"), {"r": rcept})
     except DBAPIError as exc:

@@ -138,6 +138,26 @@ def fetch_listing(market: str, bas_dd: Optional[str] = None) -> MarketListing:
     )
 
 
+DAILY_TRADE_ENDPOINTS = {
+    "KOSPI":  "/sto/stk_bydd_trd",
+    "KOSDAQ": "/sto/ksq_bydd_trd",
+}
+
+
+def fetch_daily_trade(market: str, bas_dd: str) -> list[dict]:
+    """Daily trade of every listed issue on one trading day (2026-11-17, market cap by date).
+
+    Rows carry ISU_CD (6-digit code), TDD_CLSPRC (unadjusted close), LIST_SHRS (listed shares)
+    and MKTCAP. No look-back here: an empty list is a holiday or an unpublished day, which the
+    caller records as "no data" for that date (it does not mean delisting). Authorization and
+    network failures raise KrxUnavailable.
+    """
+    path = DAILY_TRADE_ENDPOINTS.get(market)
+    if path is None:
+        raise KrxUnavailable(f"알 수 없는 시장: {market}")
+    return _get(path, bas_dd)
+
+
 def is_common_stock(row: dict) -> bool:
     """보통주 주권만 채택. 우선주·신주인수권·ETF 등 제외.
 

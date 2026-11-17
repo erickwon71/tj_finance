@@ -1,27 +1,36 @@
-"""재무↔주가 결합 — 일별 시가총액 적재 (액면분할 등 보정 반영).
+"""재무↔주가 결합 — 일별 시가총액 적재 (그날 실제 종가 × 그날 유통주식수).
 
-★ stock_prices.close_price 는 pykrx get_market_ohlcv_by_date(adjusted=True 기본)로 수집한
-**KRX 수정주가**(액면분할·무상증자·유상증자 등 주식수 변동을 현재 기준으로 back-adjust)다.
-따라서 시가총액은 **수정주가 × 현재(최신) 상장주식수** 로 계산해야 전 기간 일관·정확하다.
-(분할 이전 가격은 KRX 가 이미 현재 주식수 기준으로 나눠놓았으므로 현재 주식수를 곱하면
-그 시점 실제 시총이 복원되고, 가격 자체도 현재 주식수 기준으로 비교가능해진다.)
+★2026-11-17 (사용자 결정, 방식 B): 예전 식은 `close_price × current_shares` 였다.
+  current_shares = 최신 사업보고서(FY)의 유통주식수 하나를 전 기간에 곱하는 상수였고, close_price 는
+  "수정주가"라고 가정했다. 두 가정이 다 틀렸다:
+  · 최신 FY 이후 주식수가 바뀐 회사(2025 FY 대비 30% 넘게 바뀐 회사 307개사: 무상증자·액면병합·
+    유상증자)는 지금 시총이 틀렸다 — 티앤엘(2026-08 1:1 무상증자)은 절반, 5:1 병합 회사는 5배.
+  · 일일 수집은 최근 15일만 다시 받으므로 저장된 과거 가격은 대부분 받은 날의 실제 가격이고 일부
+    구간만 나중에 수정주가로 다시 받았다(티앤엘 2025-12 약 4.8만 → 2026-01 약 2.4만 가짜 반토막,
+    하루 +45%/-40% 초과 움직임 216종목 247회). 그래서 과거 시총 = 실제 가격 × 지금 주식수가 됐다.
+  이제 KRX OpenAPI 일별 매매정보(`scripts/krx_daily_trade_sync.py`)의 그날 실제 종가(close_raw)와
+  상장주식수(list_shares)로 계산한다:
 
-  market_cap(d) = close_price(d) × current_shares     # close_price = 수정주가
-  current_shares = 해당 corp 최신 FY 의 유통주식수 (std_financials_v3.float_shares, R225)
+    market_cap(d) = close_raw(d) × float_shares(d)
+    float_shares(d) = round(list_shares(d) × float_ratio(d))
+    float_ratio(d) = 그날 직전 정기보고서(period_end ≤ d, 없으면 가장 이른 보고서)의
+                     float_shares ÷ shares_out (유통주식수 ÷ 보통주 Ⅳ, 1 이하)
+  자기주식 "수"를 빼지 않고 "비율"을 곱한다: 분기 중간에 액면병합·분할·무상증자가 있으면 자기주식도
+  같이 병합·분할·배정되므로, 옛 보고서의 자기주식 수를 새 상장주식수에서 빼면 병합 회사는 시총이
+  0 근처로 떨어진다(2026-11-18 검증에서 확인: 032190·007460 등).
 
-shares_out 컬럼에는 이 current_shares(현재 기준 주식수, 상수)를 적재 → market_cap=close×shares_out
-항등 유지. 실제 연도별 actual 주식수는 std_financials_v3.shares_out 에 보존.
+  R225(2026-10-05, 사용자 결정): 시총·주당지표의 주식수 = 유통주식수(자기주식 제외). KRX 가 주는
+  시가총액(krx_mktcap)은 자기주식을 포함한 값이라 별도 컬럼에 그대로 둔다.
+  무상증자 권리락일부터 신주 상장일까지(보통 2~3주)는 KRX 상장주식수가 옛 값이라 KRX 공식 시총과
+  같은 방식으로 작게 잡힌다.
 
-★2026-09-09: std_financials_v2 → v3 로 소스 전환(2026-09-01 v2 DROP 이후 이 스크립트가
-`UndefinedTable` 로 매일 크래시하고 있었다 — `nightly_valuation_refresh.py`가 단계별
-try/except 로 이 실패를 삼켜서 8일 넘게 아무도 몰랐다. `stock_prices.market_cap`/
-`shares_out` 전종목이 2026-08-31 이후 정체됐던 사고, 삼성전자 20260814003699 계층2
-검토 캠페인 진행 중 사용자가 "시총 오류 확인해봐"로 발견 지시). v3 엔 `version`/
-`is_discrete`/`is_stub` 컬럼이 없다(PK 중복 자체가 없어 그 필터가 애초에 불필요,
-`dq_assertions.py::check_completeness` 주석 참고) — 조건 삭제. `basis` 역할은
-`statement_type`(separate/consolidated) 컬럼이 대신한다.
+  KRX 일별 데이터가 없는 행(2015 이전, 수집 누락)은 예전 방식으로 남긴다: close_price × 가장 최근
+  정기보고서(분기·반기 포함)의 유통주식수.
 
-선행: 없음(v3 는 표준화 파이프라인이 매일 갱신). 멱등·순수 SQL.
+shares_out 컬럼 = 그날 유통주식수(위 float_shares(d)) — market_cap = close_raw × shares_out 항등.
+close_price 는 수정주가 시계열(차트·수익률용)로 그대로 둔다.
+
+선행: scripts/krx_daily_trade_sync.py (nightly_valuation_refresh.py 가 이 스크립트 전에 실행).
 
 usage:
   python scripts/fin2_market_cap_daily.py              # 전수
@@ -40,23 +49,74 @@ from sqlalchemy import text
 
 from collector.db import get_session
 
-# current_shares = corp 의 최신 FY(유통주식수 보유) 의 유통주식수(con/sep 동일 → max).
-# market_cap = 수정주가(close) × current_shares.
-# ★R225(2026-10-05, 사용자 결정): 주식수 = **유통주식수**(보통주 Ⅳ−Ⅴ, 자기주식 제외,
-#   std_financials_v3.float_shares). 예전엔 발행주식수(shares_out, Ⅳ)였다 — 자기주식은 의결권·
-#   배당이 없어 주당지표(EPS·BPS·DPS)와 시총에서 빼는 것이 맞다.
-_SQL = """
+# float_ratio(d) step function per corp, from the periodic reports.
+_TREASURY_SQL = """
+CREATE TEMP TABLE _float_ratio ON COMMIT DROP AS
+WITH r AS (
+    SELECT corp_code, period_end,
+           min(LEAST(float_shares::float8 / shares_out, 1.0)) AS float_ratio
+    FROM std_financials_v3
+    WHERE shares_out > 0 AND float_shares > 0 AND period_end IS NOT NULL
+    GROUP BY corp_code, period_end
+)
+SELECT c.stock_code, r.float_ratio,
+       CASE WHEN row_number() OVER w = 1 THEN DATE '1900-01-01' ELSE r.period_end END AS valid_from,
+       COALESCE(lead(r.period_end) OVER w, DATE '9999-12-31') AS valid_to
+FROM r JOIN corporations c ON c.corp_code = r.corp_code AND c.stock_code IS NOT NULL
+WINDOW w AS (PARTITION BY r.corp_code ORDER BY r.period_end);
+CREATE INDEX ON _float_ratio (stock_code, valid_from);
+"""
+
+_KRX_SQL = """
+UPDATE stock_prices sp
+SET shares_out = x.shares,
+    market_cap = sp.close_raw::bigint * x.shares
+FROM (
+    SELECT sp2.stock_code, sp2.trade_date,
+           round(sp2.list_shares * COALESCE(t.float_ratio, 1.0))::bigint AS shares
+    FROM stock_prices sp2
+    LEFT JOIN _float_ratio t ON t.stock_code = sp2.stock_code
+         AND sp2.trade_date >= t.valid_from AND sp2.trade_date < t.valid_to
+    WHERE sp2.close_raw IS NOT NULL AND sp2.list_shares > 0 {stock_filter2}
+) x
+WHERE sp.stock_code = x.stock_code AND sp.trade_date = x.trade_date
+  AND (sp.shares_out IS DISTINCT FROM x.shares
+       OR sp.market_cap IS DISTINCT FROM sp.close_raw::bigint * x.shares)
+"""
+
+# Days after the last KRX row of a stock (today's KRX data is published after the nightly run):
+# carry the last listed share count forward for up to 30 days. close_price of the latest days
+# equals the unadjusted close unless a corporate action happened in between, which the next
+# night's KRX row then corrects.
+_CARRY_SQL = """
+UPDATE stock_prices sp
+SET shares_out = x.shares,
+    market_cap = sp.close_price::bigint * x.shares
+FROM (
+    SELECT sp2.stock_code, sp2.trade_date,
+           round(k.list_shares * COALESCE(t.float_ratio, 1.0))::bigint AS shares
+    FROM stock_prices sp2
+    JOIN LATERAL (SELECT k.list_shares, k.trade_date FROM stock_prices k
+                  WHERE k.stock_code = sp2.stock_code AND k.list_shares > 0
+                    AND k.trade_date < sp2.trade_date AND k.trade_date >= sp2.trade_date - 30
+                  ORDER BY k.trade_date DESC LIMIT 1) k ON true
+    LEFT JOIN _float_ratio t ON t.stock_code = sp2.stock_code
+         AND sp2.trade_date >= t.valid_from AND sp2.trade_date < t.valid_to
+    WHERE sp2.close_raw IS NULL AND sp2.trade_date >= current_date - 30 {stock_filter2}
+) x
+WHERE sp.stock_code = x.stock_code AND sp.trade_date = x.trade_date
+  AND (sp.shares_out IS DISTINCT FROM x.shares
+       OR sp.market_cap IS DISTINCT FROM sp.close_price::bigint * x.shares)
+"""
+
+# Rows without KRX daily data: previous method, with the share count of the latest periodic
+# report (quarter / half year included), not the latest annual report.
+_FALLBACK_SQL = """
 WITH cur AS (
-    SELECT f.corp_code, max(f.float_shares) AS shares
-    FROM std_financials_v3 f
-    JOIN (
-        SELECT corp_code, max(fiscal_year) AS myr
-        FROM std_financials_v3
-        WHERE fiscal_period = 'FY' AND float_shares > 0
-        GROUP BY corp_code
-    ) m ON m.corp_code = f.corp_code AND m.myr = f.fiscal_year
-    WHERE f.fiscal_period = 'FY' AND f.float_shares > 0
-    GROUP BY f.corp_code
+    SELECT DISTINCT ON (corp_code) corp_code, float_shares AS shares
+    FROM std_financials_v3
+    WHERE float_shares > 0 AND period_end IS NOT NULL
+    ORDER BY corp_code, period_end DESC, float_shares DESC
 )
 UPDATE stock_prices sp
 SET shares_out = cur.shares,
@@ -64,6 +124,7 @@ SET shares_out = cur.shares,
 FROM corporations c
 JOIN cur ON cur.corp_code = c.corp_code
 WHERE c.stock_code = sp.stock_code
+  AND (sp.close_raw IS NULL OR sp.list_shares IS NULL)
   {stock_filter}
   AND (sp.shares_out IS DISTINCT FROM cur.shares
        OR sp.market_cap IS DISTINCT FROM sp.close_price::bigint * cur.shares)
@@ -71,17 +132,20 @@ WHERE c.stock_code = sp.stock_code
 
 
 def run(stock: str | None = None) -> int:
-    """수정주가×현재주식수 시총(market_cap)·shares_out 재계산. 반환=갱신 행수. 멱등·순수 SQL."""
-    stock_filter = "AND sp.stock_code = :sc" if stock else ""
+    """그날 실제 종가 × 그날 유통주식수 시총(market_cap)·shares_out 재계산. 반환=갱신 행수."""
     params = {"sc": stock} if stock else {}
-    sql = _SQL.format(stock_filter=stock_filter)
-
-    logger.info(f"[market-cap] 수정주가×현재주식수 시총 계산 "
-                f"{'(stock=' + stock + ')' if stock else '(전수)'}")
+    f1 = "AND sp.stock_code = :sc" if stock else ""
+    f2 = "AND sp2.stock_code = :sc" if stock else ""
+    logger.info(f"[market-cap] 그날 종가 × 그날 유통주식수 {'(stock=' + stock + ')' if stock else '(전수)'}")
     with get_session() as s:
-        res = s.execute(text(sql), params)
-        logger.success(f"[market-cap] 완료 — {res.rowcount:,} 행 갱신")
-        return res.rowcount
+        s.execute(text(_TREASURY_SQL))
+        n_krx = s.execute(text(_KRX_SQL.format(stock_filter2=f2)), params).rowcount
+        n_old = s.execute(text(_FALLBACK_SQL.format(stock_filter=f1)), params).rowcount
+        n_carry = s.execute(text(_CARRY_SQL.format(stock_filter2=f2)), params).rowcount
+        s.commit()
+    logger.success(f"[market-cap] 완료 — KRX 일별 {n_krx:,} 행 · 최근 이월 {n_carry:,} 행 · "
+                   f"예전 방식(KRX 없음) {n_old:,} 행 갱신")
+    return n_krx + n_old + n_carry
 
 
 def main() -> None:

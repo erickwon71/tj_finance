@@ -1552,6 +1552,73 @@ def _run_migrations() -> None:
         ALTER TABLE std_financials_v3 ADD COLUMN IF NOT EXISTS da_source VARCHAR(16);
         """),
 
+        ("2026_11_17_stock_prices_krx_daily",
+         # Market cap by date (user decision 2026-11-17, option B): KRX OpenAPI daily trade
+         # (stk_bydd_trd / ksq_bydd_trd) gives the unadjusted close and the listed shares of each
+         # day. close_price stays the adjusted series (charts); market_cap = close_raw x float
+         # shares of that day (scripts/fin2_market_cap_daily.py). Before: adjusted-or-raw close
+         # x one constant share count from the latest annual report, so a share change after it
+         # (티앤엘 2026-08 1:1 bonus issue) halved the market cap and every earlier date used the
+         # current share count with an unadjusted price.
+         """
+        ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS close_raw INTEGER;
+        ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS list_shares BIGINT;
+        ALTER TABLE stock_prices ADD COLUMN IF NOT EXISTS krx_mktcap BIGINT;
+        COMMENT ON COLUMN stock_prices.close_raw IS 'Unadjusted closing price of the day (KRX OpenAPI daily trade TDD_CLSPRC).';
+        COMMENT ON COLUMN stock_prices.list_shares IS 'Listed common shares of the day (KRX LIST_SHRS, treasury shares included).';
+        COMMENT ON COLUMN stock_prices.krx_mktcap IS 'Market cap published by KRX for the day (close_raw x list_shares).';
+        """),
+
+        ("2026_11_17_valuation_daily_close_raw",
+         # Same matview as 2026_08_valuation_daily_v3_netdebt_migration plus close_raw; dividend_yield
+         # is dividends / market_cap (= dps / close_raw), because close_price is the adjusted series
+         # and no longer matches the share count of the day. WITH NO DATA: run
+         # scripts/refresh_valuation_daily.py (non-concurrent) once after the migration.
+         """
+        DROP MATERIALIZED VIEW IF EXISTS valuation_daily;
+
+        CREATE MATERIALIZED VIEW valuation_daily AS
+        SELECT
+            c.corp_code, c.corp_name, sp.stock_code, sp.trade_date,
+            sp.close_price, sp.market_cap, sp.shares_out,
+            fin.fiscal_year, fin.basis,
+            CASE WHEN fin.ni > 0      THEN sp.market_cap::double precision / fin.ni END      AS per,
+            CASE WHEN fin.eq > 0      THEN sp.market_cap::double precision / fin.eq END      AS pbr,
+            CASE WHEN fin.revenue > 0 THEN sp.market_cap::double precision / fin.revenue END AS psr,
+            CASE WHEN fin.cfo > 0     THEN sp.market_cap::double precision / fin.cfo END     AS pcr,
+            (sp.market_cap + COALESCE(fin.net_debt, 0))                                     AS ev,
+            CASE WHEN fin.ebitda > 0
+                 THEN (sp.market_cap + COALESCE(fin.net_debt,0))::double precision / fin.ebitda END           AS ev_ebitda,
+            CASE WHEN fin.operating_income > 0
+                 THEN (sp.market_cap + COALESCE(fin.net_debt,0))::double precision / fin.operating_income END AS ev_ebit,
+            CASE WHEN sp.shares_out > 0 THEN fin.ni::double precision / sp.shares_out END AS eps,
+            CASE WHEN sp.shares_out > 0 THEN fin.eq::double precision / sp.shares_out END AS bps,
+            CASE WHEN sp.shares_out > 0 AND fin.dividends_paid IS NOT NULL
+                 THEN abs(fin.dividends_paid)::double precision / sp.shares_out END AS dps,
+            CASE WHEN sp.market_cap > 0 AND fin.dividends_paid IS NOT NULL
+                 THEN abs(fin.dividends_paid)::double precision / sp.market_cap END AS dividend_yield,
+            sp.close_raw
+        FROM stock_prices sp
+        JOIN corporations c ON c.stock_code = sp.stock_code AND c.is_active
+        LEFT JOIN LATERAL (
+            SELECT f.fiscal_year, f.statement_type AS basis,
+                   COALESCE(f.controlling_ni, f.net_income)       AS ni,
+                   COALESCE(f.controlling_equity, f.total_equity) AS eq,
+                   f.revenue, f.cfo, f.ebitda, f.operating_income, f.dividends_paid, f.net_debt
+            FROM std_financials_v3 f
+            WHERE f.corp_code = c.corp_code AND f.fiscal_period = 'FY'
+              AND f.period_end <= sp.trade_date
+            ORDER BY f.period_end DESC,
+                     CASE f.statement_type WHEN 'consolidated' THEN 0 ELSE 1 END
+            LIMIT 1
+        ) fin ON true
+        WHERE sp.market_cap IS NOT NULL
+        WITH NO DATA;
+
+        CREATE UNIQUE INDEX ux_valuation_daily_corp_date ON valuation_daily (corp_code, trade_date);
+        COMMENT ON MATERIALIZED VIEW valuation_daily IS 'Daily valuation ratios from market_cap (close_raw x float shares of the day) and the latest annual FY row with period_end <= trade_date. Annual (not TTM) and NOT point-in-time (look-ahead before disclosure). Active companies only. Do not use for backtests.';
+        """),
+
         ("2026_10_10_report_lines_l3_fill_drop",
          # The view must hand layer 3 exactly what the old layer 2 held: also apply 'drop' (row hidden)
          # and 'fill' (row added from row_data — e.g. an R159-fixed BS cell that the printed reading

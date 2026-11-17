@@ -13,8 +13,8 @@ COMMENT ON VIEW standard_financials IS 'std_financials_v3 plus gate_b_status (in
 COMMENT ON VIEW standard_financials_verified IS 'standard_financials restricted to gate_b_status = pass: highest trust, lower coverage.';
 COMMENT ON VIEW extended_financials IS 'Long format of accounts that are not standard columns (canonical_account, amount_won, amount_exact) per (corp_code, fiscal_year, fiscal_period, basis). Cumulative like std_financials_v3.';
 COMMENT ON VIEW report_lines_l3 IS 'Layer 3 line items = layer 2 report_lines + tj_finance corrections. value_won = corrected, printed_value_won = as printed, correction_rule = reason. Pass rcept_no as = ANY(ARRAY(SELECT ... FROM filings WHERE is_final)); never join this view to filings (26 GB scan). Do not query report_lines.';
-COMMENT ON TABLE stock_prices IS 'Daily KRX prices per stock_code (1990-): OHLCV, market_cap (KRW), shares_out, and KRX-published per/pbr/eps/bps/dps/div_yield.';
-COMMENT ON MATERIALIZED VIEW valuation_daily IS 'Daily valuation ratios from market_cap and the latest annual FY row with period_end <= trade_date. Annual (not TTM) and NOT point-in-time (look-ahead before disclosure). Active companies only. Do not use for backtests.';
+COMMENT ON TABLE stock_prices IS 'Daily KRX prices per stock_code (1990-): OHLCV (adjusted close_price), close_raw / list_shares / krx_mktcap of the day (KRX, 2015-), market_cap and shares_out of the day (float shares).';
+COMMENT ON MATERIALIZED VIEW valuation_daily IS 'Daily valuation ratios from market_cap (close_raw x float shares of the day) and the latest annual FY row with period_end <= trade_date. Annual (not TTM) and NOT point-in-time (look-ahead before disclosure). Active companies only. Do not use for backtests.';
 
 COMMENT ON COLUMN std_financials_v3.data_quality IS '1 ok, 2 warning (BS identity off 1-5% or gross profit mismatch >5%), 3 error (identity off >5% or total_assets<=0). Use < 3.';
 COMMENT ON COLUMN std_financials_v3.consolidation_status IS 'On consolidated rows: consolidated | no_subsidiary_confirmed (equals separate, confirmed) | fallback_unconfirmed (separate shown, unconfirmed). Empty on separate rows.';
@@ -24,6 +24,13 @@ COMMENT ON COLUMN report_lines_l3.value_won IS 'Corrected value in KRW (equals p
 COMMENT ON COLUMN report_lines_l3.printed_value_won IS 'Value as printed in the report, KRW.';
 COMMENT ON COLUMN report_lines_l3.correction_rule IS 'tj_finance rule id that changed the printed value; NULL = no correction.';
 COMMENT ON COLUMN stock_prices.stock_code IS 'KRX ticker; map to corp_code via corporations.';
+COMMENT ON COLUMN stock_prices.close_price IS 'Adjusted close (splits / bonus issues back-adjusted as of the time the row was fetched). Use for charts and returns, not for market cap.';
+COMMENT ON COLUMN stock_prices.close_raw IS 'Unadjusted regular-session closing price of the day (KRX daily trade, 2015-). Since 2026-09-14 close_price is the last trade incl. the 16:00-20:00 after-market and may differ.';
+COMMENT ON COLUMN stock_prices.list_shares IS 'Listed common shares of the day (KRX, treasury shares included, 2015-).';
+COMMENT ON COLUMN stock_prices.krx_mktcap IS 'Market cap published by KRX for the day (close_raw x list_shares, treasury included).';
+COMMENT ON COLUMN stock_prices.shares_out IS 'Float shares of the day: list_shares x float ratio (float / common shares) of the latest report on or before the day.';
+COMMENT ON COLUMN stock_prices.market_cap IS 'close_raw x shares_out of the day (KRW). Rows without KRX daily data (before 2015) use close_price x the latest reported float shares (approximate).';
+
 COMMENT ON TABLE note_lines IS 'NOT for consumers. Layer 2 quality (printed values only): not refined, not verified (deferred by the verification campaign), no layer 3 view. Notes-derived metrics (depreciation, D&A, EBITDA) are already in std_financials_v3 / extended_financials.';
 
 -- structured disclosure tables (guide section s10_structured)

@@ -770,6 +770,10 @@ class StockPrice(Base):
     bps          = Column(BigInteger, nullable=True,  comment="주당순자산 (원)")
     div_yield    = Column(Float,      nullable=True,  comment="배당수익률 (%)")
     dps          = Column(BigInteger, nullable=True,  comment="주당배당금 (원)")
+    # KRX OpenAPI daily trade (2026-11-17): unadjusted close, listed shares and KRX market cap of the day
+    close_raw    = Column(Integer,    nullable=True,  comment="수정 전 종가")
+    list_shares  = Column(BigInteger, nullable=True,  comment="상장주식수(자기주식 포함)")
+    krx_mktcap   = Column(BigInteger, nullable=True,  comment="KRX 시가총액")
 
     __table_args__ = (
         UniqueConstraint("stock_code", "trade_date", name="uq_stock_prices"),

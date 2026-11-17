@@ -9,8 +9,9 @@ import pytest
 
 from fin2.extract.text import _CUM_RE
 from parser.xml.table_extractor import _SUBTYPE_CUM_RE
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
-RAW = Path(__file__).resolve().parents[1] / "raw_report" / "KOSDAQ" / "01199189_이랜시스" / "quarter" / "2019" / "20191107000097.xml"
+RAW = on_disk(Path(__file__).resolve().parents[1] / "raw_report" / "KOSDAQ" / "01199189_이랜시스" / "quarter" / "2019" / "20191107000097.xml")
 
 
 @pytest.mark.parametrize("rx", [_CUM_RE, _SUBTYPE_CUM_RE])

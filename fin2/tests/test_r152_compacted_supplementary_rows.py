@@ -28,11 +28,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from fin2.extract.report_lines import extract_report_lines             # noqa: E402
 from parser.xml.table_extractor import (                                # noqa: E402
     _first_of_compacted_supplementary_cell as first_of)
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
 _ROOT = Path(__file__).resolve().parents[2]
-_DAISHIN = _ROOT / "raw_report/KOSPI/00110893_대신증권/quarter/2015/20150515002053.xml"
-_KOREANRE = _ROOT / "raw_report/KOSPI/00113191_코리안리/quarter/2015/20150515002691.xml"
-_MIRAE = _ROOT / "raw_report/KOSPI/00111722_미래에셋증권/quarter/2015/20150515001242.xml"
+_DAISHIN = on_disk(_ROOT / "raw_report/KOSPI/00110893_대신증권/quarter/2015/20150515002053.xml")
+_KOREANRE = on_disk(_ROOT / "raw_report/KOSPI/00113191_코리안리/quarter/2015/20150515002691.xml")
+_MIRAE = on_disk(_ROOT / "raw_report/KOSPI/00111722_미래에셋증권/quarter/2015/20150515001242.xml")
 
 
 def test_space_separated_compaction_takes_the_primary_value():
@@ -136,7 +137,7 @@ def test_mirae_consolidated_equity_identity_closes():
 # 캠페인 이슈#32(camp_run 발견). 붙임표/전각 대시는 한국 재무제표에서 0(해당없음)의
 # 관용 표기다.
 
-_WOORI = (
+_WOORI = on_disk(
     Path(__file__).resolve().parents[2]
     / "raw_report/KOSPI/01350869_우리금융지주/annual/2019/20200330004490.xml"
 )
@@ -204,7 +205,7 @@ def test_woori_2019fy_separate_equity_identity_closes():
 # 같은 필링 [별도] BS 의 같은 행은 평문 TD(SPAN 없음)라 원래도 멀쩡히 뽑혔다 — 그래서
 # 연결만 깨지고 별도는 안 깨지는 비대칭이 났다(camp_run 이슈#41).
 
-_MIRAE_2016Q1 = (
+_MIRAE_2016Q1 = on_disk(
     Path(__file__).resolve().parents[2]
     / "raw_report/KOSPI/00111722_미래에셋증권/quarter/2016/20160516002286.xml"
 )

@@ -355,6 +355,7 @@ tests/ fin2/tests/` 전체 1059 passed(기존에 알려진 무관 실패
 > **DB 정리** `scripts/fix_raw_path_on_disk_names_2026-11-17.py`: `download_tasks.file_path` 183,020건·`viewer_xml_path` 2,353건을 디스크 이름으로 바꿨다(옛 값은 `public.raw_path_backup_20261117`). 찾지 못한 975건은 상장폐지로 보관 폴더에 옮겨진 10개사의 옛 경로였다.
 > **함께 고친 기존 결함** `collector/delisting_archive._repoint_download_tasks`가 디스크 목록의 NFD 폴더 경로와 NFC로 저장된 경로를 `startswith`로 비교해 한 번도 맞지 않았다("file_path 재배선 0건"). NFC로 비교하도록 고치고 10개사 1,079건을 보관 폴더 경로로 바꿨다(`scripts/repoint_archived_corps_2026-11-17.py`, 옛 값은 같은 백업 테이블).
 > **테스트** `tests/test_raw_paths_on_disk.py`(SMB처럼 정확한 철자만 존재하는 환경을 흉내 내 NFC 경로가 NFD 폴더로 풀림, 있는 경로·없는 경로는 그대로).
+> **실파일 테스트(2026-11-18)** 원문을 직접 여는 회귀 테스트 16개 파일(31건)이 NFC 한글 경로로 `exists()` 를 검사해 NAS 에서 "raw report not available" 로 조용히 skip 되고 있었다. 테스트도 경로를 `on_disk()` 로 풀어서 연다(`tests/test_r245~r256*`, `fin2/tests/test_r0_2_layer2_as_printed.py`·`test_r152`·`test_r154`·`test_r157_r158`·`test_r161`·`test_r168`·`test_r204`). 새 실파일 테스트도 같은 방식으로 쓴다.
 
 ## R329. 웹뷰 인쇄본 적재와 검증 재적재도 필링 판정(IFRS·연결 증거)을 저장한다 (2026-11-17, 적용 계층: 운영)
 

@@ -6,6 +6,7 @@ R257 - a USD face statement printed beside the won one is not a duplicate of the
 from pathlib import Path
 
 import pytest
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
 ROOT = Path(__file__).resolve().parents[1] / "raw_report" / "KOSPI" / "01032486_두산밥캣" / "quarter"
 CORP = "01032486"
@@ -13,7 +14,7 @@ CORP = "01032486"
 
 def _lines(year, rcept, fp="Q1"):
     from fin2.extract.report_lines import extract_report_lines
-    path = ROOT / str(year) / f"{rcept}.xml"
+    path = on_disk(ROOT / str(year) / f"{rcept}.xml")
     if not path.exists():
         pytest.skip("raw report not available")
     return extract_report_lines(path, rcept_no=rcept, corp_code=CORP, report_fiscal_year=year,

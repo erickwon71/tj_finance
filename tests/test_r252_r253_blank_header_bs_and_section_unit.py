@@ -10,10 +10,11 @@ import pytest
 from lxml import etree
 
 from fin2.extract.statement_titles import titleless_bs_start
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
 ROOT = Path(__file__).resolve().parents[1] / "raw_report"
-SEC = glob.glob(str(ROOT / "KOSPI" / "00126308_삼성E&A" / "quarter" / "2023" / "20231114001229.xml"))
-TUK = glob.glob(str(ROOT / "KOSDAQ" / "00186939_특수건설" / "quarter" / "2015" / "20151116001903.xml"))
+SEC = glob.glob(str(on_disk(ROOT / "KOSPI" / "00126308_삼성E&A" / "quarter" / "2023" / "20231114001229.xml")))
+TUK = glob.glob(str(on_disk(ROOT / "KOSDAQ" / "00186939_특수건설" / "quarter" / "2015" / "20151116001903.xml")))
 
 
 def _bs(first_cell):

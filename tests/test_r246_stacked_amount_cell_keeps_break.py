@@ -8,8 +8,9 @@ from pathlib import Path
 import pytest
 
 from parser.xml.dart_xml_parser import sanitize_dart_xml
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
-RAW = Path(__file__).resolve().parents[1] / "raw_report" / "KOSPI" / "00145190_유화증권" / "annual" / "2021" / "20220317001176.xml"
+RAW = on_disk(Path(__file__).resolve().parents[1] / "raw_report" / "KOSPI" / "00145190_유화증권" / "annual" / "2021" / "20220317001176.xml")
 
 
 def test_amount_stack_keeps_a_break():

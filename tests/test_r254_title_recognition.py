@@ -11,6 +11,7 @@ import pytest
 from lxml import etree
 
 from fin2.extract import statement_titles as st
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
 ROOT = Path(__file__).resolve().parents[1] / "raw_report"
 
@@ -57,7 +58,7 @@ def test_period_lines_with_parenthesized_ordinal_are_metadata():
 
 def _lines(rel, rcept, corp, fy, fp):
     from fin2.extract.report_lines import extract_report_lines
-    path = ROOT / rel
+    path = on_disk(ROOT / rel)
     if not path.exists():
         pytest.skip("raw report not available")
     return extract_report_lines(path, rcept_no=rcept, corp_code=corp, report_fiscal_year=fy,

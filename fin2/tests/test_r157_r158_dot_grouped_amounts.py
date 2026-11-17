@@ -46,6 +46,7 @@ from parser.xml.table_extractor import (                           # noqa: E402
     unresolved_dot_cell_indices as unresolved,
 )
 from fin2.extract.report_lines import extract_report_lines         # noqa: E402
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
 
 @pytest.fixture(autouse=True)
@@ -58,9 +59,9 @@ def _correction_rules_on():
 
 
 _ROOT = Path(__file__).resolve().parents[2]
-_LS_2025FY = (_ROOT / "raw_report/KOSPI/00105855_엘에스일렉트릭"
+_LS_2025FY = on_disk(_ROOT / "raw_report/KOSPI/00105855_엘에스일렉트릭"
                       "/annual/2025/20260318001243.xml")
-_HD_SHIPBUILDING_2025Q1 = (
+_HD_SHIPBUILDING_2025Q1 = on_disk(
     _ROOT / "raw_report/KOSPI/00164830_HD한국조선해양"
             "/quarter/2025/20250515002500.xml")
 

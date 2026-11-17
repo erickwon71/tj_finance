@@ -21,11 +21,12 @@ import pytest                                                      # noqa: E402
 
 from parser.xbrl_instance.taxonomy_linkbase import _R204_EXPENSE_LOCAL_RE as expense_re  # noqa: E402
 from fin2.extract.report_lines_xbrl import extract_report_lines_xbrl  # noqa: E402
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
 _ROOT = Path(__file__).resolve().parents[2]
-_WONIK = _ROOT / "raw_report/KOSDAQ/00216647_원익홀딩스/half/2018/20180816000066.zip"
-_SEOUL = _ROOT / "raw_report/KOSDAQ/00130587_서울전자통신/quarter/2016/20161114002549.zip"
-_NEXT = _ROOT / "raw_report/KOSDAQ/00614593_넥스트아이/half/2018/20180816000176.zip"
+_WONIK = on_disk(_ROOT / "raw_report/KOSDAQ/00216647_원익홀딩스/half/2018/20180816000066.zip")
+_SEOUL = on_disk(_ROOT / "raw_report/KOSDAQ/00130587_서울전자통신/quarter/2016/20161114002549.zip")
+_NEXT = on_disk(_ROOT / "raw_report/KOSDAQ/00614593_넥스트아이/half/2018/20180816000176.zip")
 
 
 @pytest.mark.parametrize("local,want", [

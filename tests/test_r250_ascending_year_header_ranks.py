@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 
 from parser.xml.table_extractor import _columns_from_grid
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
-RAW = Path(__file__).resolve().parents[1] / "raw_report" / "KOSDAQ" / "01201590_에브리봇" / "annual" / "2017" / "20180402004986.xml"
+RAW = on_disk(Path(__file__).resolve().parents[1] / "raw_report" / "KOSDAQ" / "01201590_에브리봇" / "annual" / "2017" / "20180402004986.xml")
 
 
 def _ranks(headers):

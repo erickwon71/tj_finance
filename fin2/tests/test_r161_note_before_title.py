@@ -37,9 +37,10 @@ from fin2.extract.statement_titles import (                        # noqa: E402
     strip_leading_note_sentences as strip,
 )
 from fin2.extract.text import classify_statement_in_body_section   # noqa: E402
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
 _ROOT = Path(__file__).resolve().parents[2]
-_SF = (_ROOT / "raw_report/KOSPI/00139214_삼성화재해상보험"
+_SF = on_disk(_ROOT / "raw_report/KOSPI/00139214_삼성화재해상보험"
                "/quarter/2019/20190515002191.xml")
 
 _NOTE_CF = ("註) 당분기 자본변동표는 기업회계기준서 제1116호를 적용하여 작성되었으며, "

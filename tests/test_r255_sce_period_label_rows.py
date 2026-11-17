@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from parser.xml.table_extractor import _header_rule_name
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
 ROOT = Path(__file__).resolve().parents[1] / "raw_report"
 
@@ -29,7 +30,7 @@ def test_period_label_is_data_row_in_sce(label):
 ])
 def test_balance_rows_are_loaded(rel, rcept, corp, fy, fp, basis, labels):
     from fin2.extract.report_lines import extract_report_lines
-    path = ROOT / rel
+    path = on_disk(ROOT / rel)
     if not path.exists():
         pytest.skip("raw report not available")
     lines = extract_report_lines(path, rcept_no=rcept, corp_code=corp, report_fiscal_year=fy,

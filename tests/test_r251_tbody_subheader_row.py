@@ -9,8 +9,9 @@ import pytest
 from lxml import etree
 
 from parser.xml.table_extractor import parse_header_columns
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
-RAW = glob.glob(str(Path(__file__).resolve().parents[1] / "raw_report" / "KOSPI" / "00126292_삼성카드" / "quarter" / "2016" / "20161114002044.xml"))
+RAW = glob.glob(str(on_disk(Path(__file__).resolve().parents[1] / "raw_report" / "KOSPI" / "00126292_삼성카드" / "quarter" / "2016" / "20161114002044.xml")))
 
 
 def _table(tbody_first_label):

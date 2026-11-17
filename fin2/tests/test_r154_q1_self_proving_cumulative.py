@@ -39,9 +39,10 @@ from fin2.extract.report_lines import (                           # noqa: E402
     extract_report_lines,
 )
 from parser.xml.table_extractor import HeaderColumn               # noqa: E402
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
 _ROOT = Path(__file__).resolve().parents[2]
-_KIA_2024Q1 = _ROOT / "raw_report/KOSPI/00106641_기아/quarter/2024/20240516001819.xml"
+_KIA_2024Q1 = on_disk(_ROOT / "raw_report/KOSPI/00106641_기아/quarter/2024/20240516001819.xml")
 
 
 def _cols():

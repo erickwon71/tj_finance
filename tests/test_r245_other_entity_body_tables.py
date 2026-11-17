@@ -5,6 +5,7 @@ import pytest
 from lxml import etree
 
 from fin2.extract.other_entity_tables import drop_other_entity_tables, normalize_entity
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
 RAW = Path(__file__).resolve().parents[1] / "raw_report"
 
@@ -69,7 +70,7 @@ def test_normalize_entity():
     ("KOSDAQ/01065013_콜마바이오텍/quarter/2017/20170529000084.viewer.xml", {"BS_S": 1}),
 ])
 def test_real_merger_reports_keep_one_separate_bs_table(rel, gone):
-    path = RAW / rel
+    path = on_disk(RAW / rel)
     if not path.exists():
         pytest.skip("raw report not available")
     from fin2.extract.report_lines import _detect_body_statement_tables, _parse_xml_file

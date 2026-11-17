@@ -17,8 +17,9 @@ sys.path.insert(0, str(ROOT))
 from fin2.extract import as_printed as AP  # noqa: E402
 from fin2.extract.layer3_corrections import extract_xml_with_corrections  # noqa: E402
 from fin2.extract.report_lines import extract_report_lines  # noqa: E402
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
-_LB = ROOT / "raw_report/KOSDAQ/00231901_LB인베스트먼트/half/2024/20240814002514.xml"
+_LB = on_disk(ROOT / "raw_report/KOSDAQ/00231901_LB인베스트먼트/half/2024/20240814002514.xml")
 _RC = "20240814002514"
 _KW = dict(rcept_no=_RC, corp_code="00231901", report_fiscal_year=2024, report_fiscal_period="H1")
 
@@ -63,7 +64,7 @@ def test_restored_sign_becomes_a_layer3_correction(lb_path, monkeypatch):
     assert all(c["printed_value"] != c["corrected_value"] and c["rule"] for c in corrections)
 
 
-_JEJU = ROOT / "raw_report/KOSPI/00148832_제주은행/quarter/2015/20150515002022.xml"
+_JEJU = on_disk(ROOT / "raw_report/KOSPI/00148832_제주은행/quarter/2015/20150515002022.xml")
 
 
 def test_typo_fixed_cell_is_a_value_correction_on_the_printed_null_row(monkeypatch):

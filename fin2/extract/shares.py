@@ -38,6 +38,11 @@ from pathlib import Path
 # R334 (2026-11-18): a cell must start and end with a digit. A truncated cell like ',526,648'
 # (다우데이타 2015 H1 Ⅵ, total column 34,526,648) is unreadable, not 526,648 (R0: no guessing).
 _NUM = re.compile(r'^-?\d(?:[\d,]*\d)?$')
+# R336 (2026-11-18): a count printed with spaces inside ('106,461, 552' 두산에너빌리티 20171114001621,
+# '21,939,5 62' HLB테라퓨틱스 20160513004931, '3 8,515, 764' 윈팩 20210517000432) is the same number
+# when the spaces are dropped and the thousands groups are intact.
+_SPACED_NUM = re.compile(r'^\d[\d, ]*\d$')
+_GROUPED = re.compile(r'^\d{1,3}(?:,\d{3})+$')
 _TR = re.compile(r'<TR.*?</TR>', re.S | re.I)
 _CELL = re.compile(r'<T[DEH][^>]*>(.*?)</T[DEH]>', re.S | re.I)
 _TAG = re.compile(r'<[^>]+>')
@@ -46,6 +51,36 @@ _WS = re.compile(r'\s+')
 # 물리적 상한: KOSPI/KOSDAQ 최다주식(삼성전자 ~60억주)도 10^10 미만. 10^11 초과는 불가값
 # (단위 오인·셀 병합 등 파싱 오류 신호) → 채택 거부. shares_out 10^6 과다저장 재발 방지(P0-3).
 _MAX_PLAUSIBLE_SHARES = 100_000_000_000  # 10^11
+# R335: issued shares (Ⅱ/Ⅳ) above 10^10 never occurred - the largest KRX listed count 2015~2026 is
+# 삼성전자 6,419,324,700 (next 1,244,473,009). Used only to reject a unit caption, never a printed value.
+_MAX_PLAUSIBLE_ISSUED = 10_000_000_000  # 10^10
+
+
+def _count(cell: str) -> int | None:
+    """The share count printed in one cell, or None (unreadable / not a count)."""
+    c = cell.strip()
+    if _NUM.match(c) and c != '-':
+        return int(c.replace(',', ''))
+    if ' ' in c and _SPACED_NUM.match(c):            # R336
+        joined = c.replace(' ', '')
+        if _GROUPED.match(joined):
+            return int(joined.replace(',', ''))
+    return None
+
+
+def _first_count(cells: list[str], key: str) -> int | None:
+    """First count after the label cell (= the common column; '-' / blank cells are skipped as
+    before). R336: a cell that holds digits but cannot be read stops the scan - before, the scan
+    went on to the next column and took the preferred or total count as the common one
+    (두산에너빌리티 2017 Q3: preferred 12,904,210 stored instead of common 106,461,552)."""
+    start = next((i for i, c in enumerate(cells) if key in c), -1) + 1
+    for c in cells[start:]:
+        n = _count(c)
+        if n is not None:
+            return n if 0 < n <= _MAX_PLAUSIBLE_SHARES else None
+        if re.search(r'\d', c) and c.strip() != '-':
+            return None
+    return None
 
 
 def _decode(path: str | Path) -> str:
@@ -84,6 +119,36 @@ def _corroborating_values(segment: str) -> set[int]:
     return out
 
 
+# R335 (2026-11-18): document-wide "N주" statements. Digits not preceded by another digit, comma
+# or dot, then "주" not starting "주식"/"주주" ("2,000천주" and "14,000,000주식" do not match).
+_DOC_JU = re.compile(r'(?<![\d,.])(\d{1,3}(?:,\d{3})+|\d{4,})\s*주(?![식주])')
+# Only table values at least this large count as evidence; small counts (treasury 35, 383) are
+# too likely to equal some unrelated "N주" in the document.
+_R335_MIN_EVIDENCE = 100_000
+
+
+def _document_multiplier(text: str, rows: list[list[str]]) -> int | None:
+    """R335 — the table's printed counts against "N주" statements anywhere in the document.
+
+    1 when only printed values are stated, 1000 when only their x1000 are, else None (no or
+    conflicting evidence: the caption decides as before). 세종텔레콤 20261116001658 / 티에스아이
+    20261109000059: caption "(단위 : 천주)" but the section has no prose; the document states
+    "유통주식수는 14,000,000주" / "발행한 주식의 총수는 보통주 19,843,212주" = the printed Ⅳ."""
+    vals = {v for v in (_pick_raw(rows, _LABEL_AUTHORIZED), _pick_raw(rows, _LABEL_ISSUED_TO_DATE),
+                        _pick(rows, _LABEL_ISSUED), _pick_common_cell(rows, _LABEL_TREASURY),
+                        _pick_common_cell(rows, _LABEL_FLOAT))
+            if v is not None and v >= _R335_MIN_EVIDENCE}
+    if not vals:
+        return None
+    stated = {int(m.group(1).replace(',', ''))
+              for m in _DOC_JU.finditer(_WS.sub(' ', _TAG.sub(' ', text)))}
+    ones = any(v in stated for v in vals)
+    thousands = any(v * 1000 in stated for v in vals)
+    if ones != thousands:
+        return 1 if ones else 1000
+    return None
+
+
 def _unit_multiplier(text: str, table_start: int) -> int:
     """표 시작 직전 캡션의 "(단위 : 천주, %)" 선언에서 배수를 뽑는다(교차검증 실패 시
     폴백용). 가장 가까운(=표에 직결된) 선언만 본다 — 창을 넓게 잡으면 훨씬 앞선 무관한
@@ -93,6 +158,8 @@ def _unit_multiplier(text: str, table_start: int) -> int:
     if not matches:
         return 1
     unit = _WS.sub('', matches[-1].group(1))   # 표에 가장 가까운(마지막) 선언
+    if '백만주' in unit:     # R336: 해성디에스 2021~2023 "(단위 : 백만주)" Ⅳ 17 = 17,000,000
+        return 1_000_000
     return 1000 if '천주' in unit else 1
 
 
@@ -118,7 +185,21 @@ def _table_multiplier(text: str, section_start: int, table_start: int, table_end
                 return 1
             if v * 1000 in corroborated:
                 return 1000
-    return _unit_multiplier(text, table_start)
+    doc = _document_multiplier(text, rows)   # R335: no answer in the section -> whole document
+    if doc is not None:
+        return doc
+    mult = _unit_multiplier(text, table_start)
+    if mult > 1:
+        # R335: a caption that makes the table impossible is wrong. 버킷스튜디오 20230814002659
+        # "(단위 : 천주)" with Ⅰ 1,000,000,000 (x1000 = 10^12 authorized shares) and Ⅴ 1,258;
+        # 티로보틱스 20210318000672 Ⅳ 11,853,448 (x1000 = 11.9 billion issued shares).
+        authorized = _pick_raw(rows, _LABEL_AUTHORIZED)
+        issued = [v for v in (_pick_raw(rows, _LABEL_ISSUED_TO_DATE), _pick(rows, _LABEL_ISSUED))
+                  if v is not None]
+        if (authorized is not None and authorized * mult > _MAX_PLAUSIBLE_SHARES) \
+                or (issued and max(issued) * mult > _MAX_PLAUSIBLE_ISSUED):
+            return 1
+    return mult
 
 
 _LABEL_TREASURY = "자기주식"     # Ⅴ 자기주식수
@@ -137,8 +218,8 @@ def _pick_common_cell(rows: list[list[str]], key: str) -> int | None:
                 v = cells[i + 1].strip()
                 if v in ("-", "0"):
                     return 0
-                if _NUM.match(v):
-                    n = int(v.replace(",", ""))
+                n = _count(v)
+                if n is not None:
                     return n if 0 <= n <= _MAX_PLAUSIBLE_SHARES else None
                 return None
     return None
@@ -219,11 +300,9 @@ def _pick_raw(rows: list[list[str]], key: str) -> int | None:
     for cells in rows:
         joined = " ".join(cells)
         if key in joined:
-            for c in cells:
-                if _NUM.match(c) and c != '-':
-                    n = int(c.replace(',', ''))
-                    if 0 < n <= _MAX_PLAUSIBLE_SHARES:
-                        return n
+            n = _first_count(cells, key)
+            if n is not None:
+                return n
     return None
 
 
@@ -235,9 +314,5 @@ def _pick(rows: list[list[str]], key: str) -> int | None:
     for cells in rows:
         joined = " ".join(cells)
         if key in joined and "발행할" not in joined:
-            for c in cells:
-                if _NUM.match(c) and c != '-':
-                    n = int(c.replace(',', ''))
-                    if 0 < n <= _MAX_PLAUSIBLE_SHARES:
-                        return n
+            return _first_count(cells, key)
     return None

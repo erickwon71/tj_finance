@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from parser.xml.table_extractor import (  # noqa: E402
     HeaderColumn, select_by_header_columns, update_dual_closing_runs,
 )
+from collector.raw_paths import on_disk  # noqa: E402  R327: NAS folder names are NFD
 
 _COLS = [HeaderColumn(position=0, period_key="제3기", period_rank=0),
          HeaderColumn(position=1, period_key="제3기", period_rank=0),
@@ -130,8 +131,8 @@ def test_subtype_group_not_touched():
     assert select_by_header_columns(cols, [300, 700], closing_runs={0: [1_000]}) == {0: 700}
 
 
-_KRAFTON = Path(__file__).resolve().parents[2] / (
-    "raw_report/KOSPI/00760971_크래프톤/quarter/2017/20171114001378.xml")
+_KRAFTON = on_disk(Path(__file__).resolve().parents[2] / (
+    "raw_report/KOSPI/00760971_크래프톤/quarter/2017/20171114001378.xml"))
 
 
 @pytest.mark.skipif(not _KRAFTON.exists(), reason="raw_report not mounted")

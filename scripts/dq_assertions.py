@@ -219,24 +219,29 @@ CHECKS: list[dict] = [
         # ⚠ 고정 임계는 시간이 지나면 다시 낡는다(삼성전자 계속 성장) — 재발 시 이 블록을
         # 다시 재보정할 것, 근본 해결(상대적/급변 감지)은 statement_magnitude_spike 참고.
         #
+        # ★ 2026-11-18 재보정(2차): 삼성전자 2026Q3 누적 매출 연결 500.6조·별도 433.8조가 400조
+        # 임계를 자연 초과(원문 20261116001482 '500,626,123' 단위 백만원, Q1 134→H1 305→Q3 501 연속).
+        # 자산 792조도 1,000조에 근접 → 자산 2,000조·자본/이익잉여금 1,500조·매출 1,000조로 상향
+        # (현재 최대 실제값의 약 2배; ×10³~10⁶ 오염은 여전히 이 범위를 넘는다).
+        #
         # is_discrete 포함: 파생분기(Q2=H1−Q1, Q4=FY−Q3)에 오염이 몰려 있고(196행) 앱 분기
         # 차트가 이를 실제로 소비한다. 기존 nonpositive_total_assets 는 discrete 를 제외하나,
         # 여기선 노출 실태를 그대로 드러내는 것이 목적이라 포함한다.
         "name": "statement_magnitude_impossible",
         "sev": "ERROR",
-        "desc": "재무제표 본체 금액이 물리적 불가 크기 (자산>1,000조·자본/이익잉여금>800조·매출>400조) "
+        "desc": "재무제표 본체 금액이 물리적 불가 크기 (자산>2,000조·자본/이익잉여금>1,500조·매출>1,000조) "
                 "인데 미격리(DQ<3) — 단위 ×10³~10⁶ 오염이 소비계층 노출",
         "count": "SELECT count(*) FROM std_financials_v3 "
                  "WHERE COALESCE(data_quality,1) < 3 "
-                 "AND (abs(total_assets) > 1e15 OR abs(total_equity) > 8e14 "
-                 "     OR abs(retained_earnings) > 8e14 OR abs(revenue) > 4e14)",
+                 "AND (abs(total_assets) > 2e15 OR abs(total_equity) > 1.5e15 "
+                 "     OR abs(retained_earnings) > 1.5e15 OR abs(revenue) > 1e15)",
         "sample": "SELECT corp_code, fiscal_year, fiscal_period, statement_type, "
                   "round(total_assets/1e12) AS assets_jo, round(total_equity/1e12) AS equity_jo, "
                   "round(retained_earnings/1e12) AS re_jo, round(revenue/1e12) AS revenue_jo "
                   "FROM std_financials_v3 "
                   "WHERE COALESCE(data_quality,1) < 3 "
-                  "AND (abs(total_assets) > 1e15 OR abs(total_equity) > 8e14 "
-                  "     OR abs(retained_earnings) > 8e14 OR abs(revenue) > 4e14) "
+                  "AND (abs(total_assets) > 2e15 OR abs(total_equity) > 1.5e15 "
+                  "     OR abs(retained_earnings) > 1.5e15 OR abs(revenue) > 1e15) "
                   "ORDER BY GREATEST(COALESCE(abs(total_assets),0), COALESCE(abs(total_equity),0), "
                   "COALESCE(abs(retained_earnings),0), COALESCE(abs(revenue),0)) DESC LIMIT 10",
     },
@@ -488,10 +493,14 @@ CHECKS: list[dict] = [
         #     · '전기말>10% 상승시'            — 환위험 시나리오 열. 값은 천원 금액이다
         #     · '…>지분100%를 취득'            — 문장 속 '%'
         #   그래서 여기서도 ① '단위' 가 든 단(segment)을 걷어내고 ② '%' 는 단위로 쓰인 때만 본다.
+        #   ③ R292(2026-11-18 동기화): '환율변동'·'환율변동효과'·'환산차이' 는 금액 열 이름이다. 로더
+        #     (`units._FX_AMOUNT_WORDS_RE`)는 이 낱말을 지우고 표지를 보는데 여기는 안 지워서 '율' 에
+        #     걸렸다 — 11-16 분기 마감 필링이 최근 200건을 채우자 331행 전부가 이 거짓양성이었다.
         "count": """
             WITH x AS (
               SELECT n.value_won,
-                     regexp_replace(n.col_label, '(^|>)[^>]*단위[^>]*', '', 'g') AS lbl
+                     regexp_replace(regexp_replace(n.col_label, '(^|>)[^>]*단위[^>]*', '', 'g'),
+                                    '환율\s*(변동|효과|차이|조정|평가)(\s*효과)?|환산\s*(차이|손익)', '', 'g') AS lbl
               FROM note_lines n
               WHERE n.rcept_no IN (SELECT rcept_no FROM filings ORDER BY rcept_no DESC LIMIT 200)
                 AND n.value_won IS NOT NULL AND n.col_label IS NOT NULL)
@@ -503,7 +512,8 @@ CHECKS: list[dict] = [
         "sample": """
             WITH x AS (
               SELECT n.rcept_no, n.col_label, n.label_raw, n.value_won,
-                     regexp_replace(n.col_label, '(^|>)[^>]*단위[^>]*', '', 'g') AS lbl
+                     regexp_replace(regexp_replace(n.col_label, '(^|>)[^>]*단위[^>]*', '', 'g'),
+                                    '환율\s*(변동|효과|차이|조정|평가)(\s*효과)?|환산\s*(차이|손익)', '', 'g') AS lbl
               FROM note_lines n
               WHERE n.rcept_no IN (SELECT rcept_no FROM filings ORDER BY rcept_no DESC LIMIT 200)
                 AND n.value_won IS NOT NULL AND n.col_label IS NOT NULL)

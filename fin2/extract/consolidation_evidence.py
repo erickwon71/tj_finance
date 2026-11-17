@@ -149,6 +149,52 @@ def _section_body(text: str) -> str | None:
     return tail[:min(end, _WINDOW)]
 
 
+# ★R330 (2026-11-17, user decision "진행해줘") — wordings the patterns above missed, found in
+# the "2. 연결재무제표" sections of the source filings of 573 std rows whose consolidated cell
+# is the separate fallback without evidence (fallback_unconfirmed): typos of 해당사항 없음
+# (해달/해상/하당/해당사업/업음/무), "작성 대상(법인)이 아닙니다", "종속회사가 존재하지 않",
+# "주권상장법인에 해당되지 않", "개별재무제표만", "개별기준입니다", "연결 대상에서 제외됨",
+# "공시의무가 없", "별도 재무제표 대상", "지배력 상실 … 작성하지 않", and sections that are
+# empty after removing tags, entities and dashes. They run on the tag/entity-stripped body,
+# keep the R109 comparative-year guard, and never fire when the body prints a consolidated
+# statement (연결 재무상태표 / 손익계산서 / 포괄손익): 20200813000534 explains "2019년도 및 2018년도
+# 재무제표는 개별재무제표(연결대상이 없음)" above its real consolidated tables.
+# Measured: 527 of 537 candidate sections, 0 of 2,996 control sections (filings whose std
+# consolidated row has real consolidated data).
+_R330_EXTRA_WORDINGS = True
+_R330_PATTERNS = [
+    re.compile(r'(?:해|하)\s*[당달상?]\s*(?:사|상|내)\s*[항황상업용]?\s*[이가]?\s*(?:없|업|무\s*$|무\b)'),
+    re.compile(r'작성\s*대상[^.]{0,12}아[니닙]'),
+    re.compile(r'대상\s*아님'),
+    re.compile(r'(?:연결\s*대상|종속\s*(?:회사|기업))[^.]{0,15}존재하지\s*(?:않|아니)'),
+    re.compile(r'주권상장법인에\s*해\s*당\s*되지\s*않'),
+    re.compile(r'개별\s*재무제표(?:만|로\s*작성되었|를\s*작성합니다)'),
+    re.compile(r'개\s*별\s*기준(?:입니다|으로\s*변경)'),
+    re.compile(r'연결\s*(?:대상\s*에서\s*)?제외\s*(?:됨|되)'),
+    re.compile(r'연결\s*대상\s*(?:회사)?[이가]?\s*없'),
+    re.compile(r'(?:공시\s*의무|작성할\s*의무)[가는]?\s*없'),
+    re.compile(r'별도\s*재무제표\s*대상'),
+    re.compile(r'지배력\s*(?:을\s*)?상실[^.]{0,40}(?:작성하지|작성\s*대상이\s*아|개별)'),
+]
+_ENTITY_RE = re.compile(r'&#\d+;|&[a-z]+;')
+_CONSOLIDATED_STATEMENT_RE = re.compile(
+    r'연결\s*재\s*무\s*상\s*태\s*표|연결\s*손\s*익\s*계\s*산\s*서|연결\s*포괄\s*손익')
+_EMPTY_FILLER_RE = re.compile(r'[\s\-–—"\'※*·.]')
+
+
+def _r330_declares_absent(body: str) -> bool:
+    t = " ".join(_ENTITY_RE.sub(' ', _TAG_RE.sub(' ', body)).split())
+    if _CONSOLIDATED_STATEMENT_RE.search(t):
+        return False
+    if len(_EMPTY_FILLER_RE.sub('', t)) < _EMPTY_THRESHOLD:
+        return True
+    for p in _R330_PATTERNS:
+        for m in p.finditer(t):
+            if not _is_comparative_year_only(t, m.start()):
+                return True
+    return False
+
+
 def detect_no_consolidated_fs(text: str) -> bool:
     """"2. 연결재무제표" 섹션 본문이 "이 기간 연결재무제표 없음"을 확정하면 True:
     (a) "해당사항 없음" 계열 문구가 있거나, (b) 태그를 지운 본문이 사실상 텅 비어 있으면
@@ -171,7 +217,9 @@ def detect_no_consolidated_fs(text: str) -> bool:
             if not _is_comparative_year_only(body, m.start()):
                 return True
     stripped = _TAG_RE.sub('', body).strip()
-    return len(stripped) < _EMPTY_THRESHOLD
+    if len(stripped) < _EMPTY_THRESHOLD:
+        return True
+    return _R330_EXTRA_WORDINGS and _r330_declares_absent(body)
 
 
 def compute_text_evidence(text: str) -> tuple[str | None, dict]:

@@ -2810,6 +2810,8 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
                           and r.get("value") is not None]
                 if others and len(others) == len(rows) - 1 and top["value"] is not None and top["value"] > max(others):
                     rows = [top]
+        if c == "is.revenue" and _R331_REVENUE_TOTAL_CHILD:
+            rows = _drop_revenue_children_of_total(rows)
         if c in ("cf.operating", "cf.investing", "cf.financing") and _R315_CF_SECTION_CHILD:
             own = {_norm_label(r.get("label_raw")) for r in rows if not r.get("section_path") and r.get("value")}
             filtered = [r for r in rows if _norm_label(r.get("section_path")) not in own]
@@ -3000,7 +3002,56 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
             continue
         if c in CONSUMED_CANON:
             conflicts[c] = sorted(top, key=lambda r: (r["value"] is None, r["value"]))
+    if _R332_REVENUE_GP_IDENTITY:
+        _revenue_by_gross_profit_identity(cands, confirmed, conflicts)
     return confirmed, conflicts
+
+
+# R331 (2026-11-17): a revenue candidate printed under a revenue total row that is itself a
+# candidate ('Ⅰ.영업손익>1. 영업수익' > '수수료수익') is a component of it. The total often maps
+# only at the 'normalized' stage (number prefix) while the component is an exact alias, so the
+# stage rank picked the component: 00136101 메이슨캐피탈 2018FY separate revenue 29,083,528
+# ('수수료수익') instead of 19,142,058,515 ('1. 영업수익').
+_R331_REVENUE_TOTAL_CHILD = True
+
+
+def _drop_revenue_children_of_total(rows: list[dict]) -> list[dict]:
+    totals = {_norm_label(r.get("label_raw")) for r in rows
+              if r.get("value") and _norm_label(r.get("label_raw")) in _REVENUE_TOTAL_LABELS}
+    if not totals:
+        return rows
+    kept = [r for r in rows
+            if _norm_label(((r.get("section_path") or "").split(">"))[-1]) not in totals
+            or _norm_label(r.get("label_raw")) in totals]
+    return kept if kept and len(kept) < len(rows) else rows
+
+
+# R332 (2026-11-17): when the confirmed revenue does not satisfy revenue - |cogs| = gross profit
+# and exactly one other revenue candidate does (within 2 won), that candidate is the top line.
+# 00130091 샘표 2017FY consolidated prints '수익(매출액)' 274,446,518,458, 매출원가, 매출총이익
+# 128,376,363,012 and below them '영업수익' 348,599,632 (other operating revenue); the grand-total
+# preference (_REVENUE_TOTAL_LABELS has 영업수익, not 수익(매출액)) picked 348,599,632.
+_R332_REVENUE_GP_IDENTITY = True
+
+
+def _revenue_by_gross_profit_identity(cands: dict, confirmed: dict, conflicts: dict) -> None:
+    cogs, gp = confirmed.get("is.cogs"), confirmed.get("is.gross_profit")
+    if cogs is None or gp is None:
+        return
+    def ok(v):
+        return v is not None and abs(v - abs(cogs) - gp) <= 2
+    rev = confirmed.get("is.revenue")
+    # Only replaces a confirmed revenue, from the table that revenue was printed in: a held
+    # revenue is not filled (00233653 2025FY separate: cogs / gross profit came from a second
+    # IS table whose '매출액' 2.4조 would have filled the held revenue).
+    if rev is None or ok(rev):
+        return
+    pool = cands.get("is.revenue", [])
+    seqs = {r.get("table_seq") for r in pool if r.get("value") == rev}
+    fits = {r["value"] for r in pool if ok(r.get("value")) and r.get("table_seq") in seqs}
+    if len(fits) == 1:
+        confirmed["is.revenue"] = next(iter(fits))
+        conflicts.pop("is.revenue", None)
 
 
 def _top_stage_corroborated(rows: list[dict]):

@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from parser.xbrl_instance.instance_parser import parse_instance  # noqa: E402
 from fin2.extract.report_lines_xbrl import extract_report_lines_xbrl, _extract_zip_members  # noqa: E402
+from collector.raw_paths import on_disk  # noqa: E402
 
 _SAMPLE = (
     Path(__file__).resolve().parents[2]
@@ -66,7 +67,7 @@ def _parsed_instance():
 
 
 def test_zip_size_matches_phase0_record():
-    assert _SAMPLE.stat().st_size == _EXPECTED_ZIP_SIZE
+    assert on_disk(_SAMPLE).stat().st_size == _EXPECTED_ZIP_SIZE
 
 
 def test_instance_structure_counts():

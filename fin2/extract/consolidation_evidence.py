@@ -215,8 +215,14 @@ def resolve_filing_evidence(session, rcept_no: str, file_path=None, file_text: s
         if file_path is None:
             return None, {}
         from pathlib import Path
-        p = Path(file_path)
-        if p.suffix.lower() != ".xml" or not p.exists():
+        from collector.raw_paths import on_disk
+        p = on_disk(file_path)   # NFC path vs NFD folder on the NAS (2026-11-17)
+        if p.suffix.lower() != ".xml":
+            # R325 (2026-11-17): an XBRL-zip or PDF filing has no document.xml, but the web-view print
+            # saved next to it (<rcept>.viewer.xml) is the same printed document with the same
+            # "2. 연결재무제표" section (00323868 [기재정정] 20190821000075 / ...079: "해당사항 없음").
+            p = p.with_name(f"{rcept_no}.viewer.xml")
+        if not p.exists():
             return None, {}
         try:
             # ★EUC-KR 함정([[feedback-grep-euckr-locale-trap]]) — 연도로 인코딩을 추측하지

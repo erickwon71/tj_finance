@@ -2347,7 +2347,29 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                     merged[key] = cell
                 # equal value, or same base-filing duplicate (out-of-scope) → no-op
     out = list(merged.values())
+    if _R326_FINAL_NO_CONSOLIDATED:
+        out = _drop_basis_final_declares_absent(session, chrono, out)
     return _drop_unfilled_statements(out) if _R319_UNFILLED_STATEMENT else out
+
+
+# R326 (2026-11-17, user decision): when the LAST filing of a period chain declares in its "2. 연결재무제표" section that
+# there are no consolidated statements (filings.consolidation_evidence = no_consolidated_fs_track1), the consolidated cells
+# of the earlier filings are not merged. The amendment withdrew them: 00323868 2019Q1 / H1, the [기재정정] of 2019-08-21
+# gives "연결재무제표 작성 제외" as the reason and prints separate statements only, while the original printed consolidated
+# ones; the merge kept the original's consolidated cells (or the amendment's all-zero XBRL ones), so the period was not a
+# separate-only period and the consolidated = separate fallback (L3-2) never ran, unlike Q3 and FY of the same year.
+_R326_FINAL_NO_CONSOLIDATED = True
+
+
+def _drop_basis_final_declares_absent(session, chrono: list, cells: list[dict]) -> list[dict]:
+    if len(chrono) < 2 or not any(c["basis"] == "consolidated" for c in cells):
+        return cells
+    last = chrono[-1][0]
+    ev = session.execute(text("SELECT consolidation_evidence FROM filings WHERE rcept_no = :r"),
+                         {"r": last}).fetchone()
+    if not ev or ev[0] != "no_consolidated_fs_track1":
+        return cells
+    return [c for c in cells if c["basis"] != "consolidated"]
 
 
 # R319 (2026-11-16): a filing whose balance sheet is printed with 0 in every row has not filled the form in (00442455

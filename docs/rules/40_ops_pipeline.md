@@ -345,3 +345,13 @@ tests/ fin2/tests/` 전체 1059 passed(기존에 알려진 무관 실패
 **소급 결과(2026-10-05)**: 77,588필링 처리 — 메타만 73,361 · note_lines 재작성 4,227(표 구성이 달라 현재 코드로 다시 씀) · 오류 0, 217.8분(6워커, SD 미러). 이후 'note_lines 있음 AND 주석 메타 없음' 필링 0건. 계층3 std_v3 전사 재빌드(`build_std_v3.py --all --year-min 1990`, 5샤드, 2,525개사 · 약 18분, 오류 0) + 달력 전사 재빌드(2,528개사 · 350,401행 · orphan 0).
 결과(FY 2015+ std_v3): D&A 채움 22,726 → **45,102 / 46,240(97.5%)**. 달력 CY(version=1, 2016+): dividends_paid 23,063 · da_total 39,754 · ebitda 39,716 / 40,601, native CY↔FY 불일치 0(R220). std_v3 잔여 음수 cogs 177 · sga 352 는 R221 자기 항등식이 음수를 증명한 행, interest_expense 10. 삼양식품 연결 CY2024: cogs 1,004,797,694,924 · 배당지급 −19,391,132,800 · D&A 46,025,094,000(원문 주석 '감가상각비와 무형자산상각비' 일치) · EBITDA 390,594,244,443.
 참고: `std_financials_calendar` 의 version=2 1,106행(2026-07-18)은 `calendar_v3` 가 지우지 않는 옛 행이며 소비자 뷰 `calendar_financials` 는 version=1 만 읽는다.
+
+## R327. 원문 경로는 디스크에 실제 있는 이름(NAS의 NFD 한글)으로 저장하고, NFC 경로는 실제 이름으로 풀어서 연다 (2026-11-17, 적용 계층: 운영)
+
+> **상태** 유효 · **적용 계층** 운영(저장 경로)
+>
+> **규칙** `collector/raw_paths.py::on_disk` — 경로의 한 마디가 그 철자로 없으면 상위 폴더 목록에서 NFC로 같은 이름을 찾아 바꾼다(없으면 원래 경로 그대로). 다운로더(`collector/downloader.py::_build_file_path`)는 회사 폴더를 이 함수로 풀어 기존 폴더를 쓰고(새 NFC 폴더를 만들지 않는다), DB에는 디스크 이름이 들어간다. 원문을 여는 핵심 지점(`parser/xml/dart_xml_parser._parse_xml_file`, `fin2/extract/biz_section._load_root_uncached`, `fin2/extract/report_lines_xbrl._extract_zip_members`, 연결·IFRS 증거 판정, `fin2/verification/machine_compare.resolve_source`, `ops._sd_path`·재적재 경로)도 같은 함수를 거친다.
+> **발견(2026-11-17)** NAS(`/Volumes/tj_finance_data`, SMB)의 회사 폴더 이름은 NFD 한글인데 DB·코드는 NFC 경로를 쓴다. macOS 27.2.1 업데이트 뒤 SMB 클라이언트가 NFC 조회를 NFD 폴더에 맞춰 주는 것이 마운트 직후 잠깐뿐이고, 10:49부터 한글 폴더 2,510개 모두 NFC 경로로 찾지 못했다(영문 폴더 86개는 정상, SD 미러(HFS)와 APFS는 정규화 무관). 기계대조 '원문 없음' 오판정 114건, 재개 표준화 적재 실패 4건, 테스트 31건 실패. 재마운트로도 몇 초 뒤 재발.
+> **DB 정리** `scripts/fix_raw_path_on_disk_names_2026-11-17.py`: `download_tasks.file_path` 183,020건·`viewer_xml_path` 2,353건을 디스크 이름으로 바꿨다(옛 값은 `public.raw_path_backup_20261117`). 찾지 못한 975건은 상장폐지로 보관 폴더에 옮겨진 10개사의 옛 경로였다.
+> **함께 고친 기존 결함** `collector/delisting_archive._repoint_download_tasks`가 디스크 목록의 NFD 폴더 경로와 NFC로 저장된 경로를 `startswith`로 비교해 한 번도 맞지 않았다("file_path 재배선 0건"). NFC로 비교하도록 고치고 10개사 1,079건을 보관 폴더 경로로 바꿨다(`scripts/repoint_archived_corps_2026-11-17.py`, 옛 값은 같은 백업 테이블).
+> **테스트** `tests/test_raw_paths_on_disk.py`(SMB처럼 정확한 철자만 존재하는 환경을 흉내 내 NFC 경로가 NFD 폴더로 풀림, 있는 경로·없는 경로는 그대로).

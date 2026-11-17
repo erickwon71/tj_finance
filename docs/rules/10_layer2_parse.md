@@ -7286,3 +7286,13 @@ Q1 은 3개월 컨텍스트와 누적 컨텍스트의 기간이 같고 FY 는 3�
 
 **전수 측정**: 2015+ H1/Q3 필링의 SCE 행 중 컨텍스트가 `…dTQQ`/`…dHYQ`(3개월) 인 셀은 **1필링 1셀**(웹스)뿐이다. 같은 패턴의 미등록 필링 없음.
 **회귀 테스트**: `fin2/tests/test_xbrl_sce_quarter_only_r226.py` 4건. **데일리 배선**: `_emit_sce_lines` 내부라 추가 배선 없음.
+
+## R325. XBRL zip·PDF 필링의 연결비대상 증거는 옆에 저장된 웹뷰 인쇄본에서 읽는다 (2026-11-17, 적용 계층: 2 — 읽기)
+
+> **상태** 유효 · **적용 계층** 2 · 필링 메타(`filings.consolidation_evidence`, Track 1)
+>
+> **규칙** `fin2/extract/consolidation_evidence.py::resolve_filing_evidence` — 다운로드 파일(`download_tasks.file_path`)이 `.xml`이 아니면(XBRL zip, PDF) 같은 폴더의 `<접수번호>.viewer.xml`(웹뷰 인쇄본)을 읽어 "2. 연결재무제표" 섹션의 "해당사항 없음"을 찾는다. 인쇄본도 원본과 같은 문서 서식이라 같은 섹션이 있다. 인쇄본이 없으면 예전처럼 증거 없음(NULL)이다.
+> **R0-2** 값을 바꾸지 않는다. 인쇄된 문서에서 읽은 메타데이터만 채운다.
+> **발견** 00323868 웹케시 2019 1분기·반기 [기재정정](20190821000075·…079, 정정 사유 "연결재무제표 작성 제외")은 XBRL zip으로 받아 판정기가 `.xml`이 아니라며 건너뛰었다. 인쇄본에는 "2. 연결재무제표 — 해당사항 없음"이 있다.
+> **실측·백필** 2015년 이후 비XML 필링 중 증거가 없던 2,016건을 다시 판정했다(`scripts/backfill_consolidation_evidence_viewer_r325_2026-11-17.py`): `no_consolidated_fs_track1` 370건, 해당 문구 없음·인쇄본 없음 1,646건.
+> **테스트** `fin2/tests/test_r325_r326_final_no_consolidated.py`(zip 옆 인쇄본에서 증거, 인쇄본 없으면 NULL).

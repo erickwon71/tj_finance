@@ -103,12 +103,18 @@ def _repoint_download_tasks(session, corp_code: str, old_root: str, new_root: st
         JOIN filings f ON f.rcept_no = dt.rcept_no
         WHERE f.corp_code = :c AND dt.file_path IS NOT NULL
     """), {"c": corp_code}).fetchall()
+    # old_root comes from the directory listing (NFD Hangul on the NAS) while file_path was stored NFC,
+    # so a plain startswith never matched and every archived corp kept its raw_report paths
+    # ("file_path 재배선 0건", 10 corps / 979 filings until 2026-11-17). Compare in NFC.
+    import unicodedata
+    old_nfc = unicodedata.normalize("NFC", old_root)
     n = 0
     for rcept_no, fp in rows:
-        if fp.startswith(old_root):
+        fp_nfc = unicodedata.normalize("NFC", fp)
+        if fp_nfc.startswith(old_nfc):
             session.execute(text(
                 "UPDATE download_tasks SET file_path = :fp WHERE rcept_no = :r"),
-                {"fp": new_root + fp[len(old_root):], "r": rcept_no})
+                {"fp": new_root + fp_nfc[len(old_nfc):], "r": rcept_no})
             n += 1
     return n
 

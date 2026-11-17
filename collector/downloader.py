@@ -328,7 +328,11 @@ def _build_file_path(
     """
     market = corp.market or "UNKNOWN"
     folder_name = f"{corp.corp_code}_{corp.safe_name()}"
-    dest_dir = (
+    # The company folder may exist on the NAS under its NFD spelling, which an NFC lookup no longer
+    # finds after macOS 27.2.1 (collector/raw_paths.py): use the existing folder instead of creating a
+    # second one, so the path stored in download_tasks is the one that opens on every volume.
+    from collector.raw_paths import on_disk
+    dest_dir = on_disk(
         RAW_REPORT_DIR
         / market
         / folder_name

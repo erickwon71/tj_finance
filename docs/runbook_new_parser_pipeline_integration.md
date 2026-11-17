@@ -91,7 +91,7 @@
   | 주주환원 API | `scripts/collect_periodic_apis.py --api <..> --years 2015-<올해> --skip-existing` |
   | 대주주/지분 | `scripts/collect_shareholders.py --year <..> --skip-existing` |
   | D&A(cf_da/expense_nature) | `python -c "from collector.cf_da_sync import sync_cf_da; sync_cf_da(year_min=..)"` 등 |
-  | 계층3(`combine.py`) 규칙 변경 — std_v3 값 자체가 바뀜 | `build_std_v3.py --corp <대상> --year-min ..` **다음에 반드시** 같은 corp 목록으로 달력 재동기화도(아래 참고) — 둘 중 하나만 하면 `dq_assertions.py::calendar_orphan_cq`(ERROR) 유령행 발생 |
+  | 계층3(`combine.py`) 규칙 변경 — std_v3 값 자체가 바뀜 | `build_std_v3.py --corp <대상> --year-min ..` — 2026-11-17부터 같은 corp의 달력 재동기화까지 자동으로 한다(`--no-calendar`를 주면 생략, 그때는 `calendarize_corps.py`를 따로 실행). 둘 중 하나만 하면 `dq_assertions.py::calendar_orphan_cq`(ERROR) 유령행 발생 |
 
 - [ ] **B2. `--skip-existing` 재개 안전성 확인** — 장시간 백필은 중단 후 재개가 가능해야 한다.
       DB만으로 "이미 시도함"을 구분 못 하는 경우(예: 매출표 자체가 없는 기업)는 별도 상태파일로
@@ -111,8 +111,12 @@
       예전 std_v3 행을 가리키던 달력분기가 유령행으로 남는다(`dq_assertions.py::
       calendar_orphan_cq`, ERROR). 실측 사례(R63, `docs/PARSING_RULES.md`): std_v3
       백필(1,117개사) 직후 orphan 345건 발생 → 같은 corp 목록으로
-      `calendarize_corp_v3()` 재실행해 0건으로 해소. **std_v3 백필 스크립트 자체엔
-      이게 자동 배선돼 있지 않다** — 매번 수동으로 이어서 돌릴 것.
+      `calendarize_corp_v3()` 재실행해 0건으로 해소.
+      **2026-11-17부터 `scripts/build_std_v3.py`가 재빌드한 corp마다 같은 트랜잭션(corp별
+      savepoint)에서 달력도 다시 만든다**(`--no-calendar`로 끌 수 있음). 2026-11-16에는 수동
+      재빌드(00323868·00442455) 뒤 달력을 다시 돌리지 않아 orphan 5건 ERROR가 났다.
+      `build_corp()`를 직접 부르는 다른 스크립트·일회성 백필은 여전히
+      `scripts/calendarize_corps.py --corp ...`를 이어서 돌려야 한다.
 
 ---
 

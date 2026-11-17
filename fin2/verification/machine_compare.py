@@ -104,6 +104,8 @@ _SD_PREFIX = os.environ.get("VQ_SD_RAW_REPORT", "/Volumes/dart_data/raw_report")
 
 def resolve_source(path: str) -> str:
     """Prefer the SD mirror when it holds a same-size copy; the mirror may lag the NAS."""
+    from collector.raw_paths import on_disk
+    path = str(on_disk(path))   # NFC path vs NFD folder on the NAS (2026-11-17)
     if path.startswith(_NAS_PREFIX) and os.path.isdir(_SD_PREFIX):
         alt = _SD_PREFIX + path[len(_NAS_PREFIX):]
         try:

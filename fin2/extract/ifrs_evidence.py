@@ -124,7 +124,8 @@ def resolve_filing_evidence(session, rcept_no: str, file_path=None, file_text: s
         if file_path is None:
             return None, {}
         from pathlib import Path
-        p = Path(file_path)
+        from collector.raw_paths import on_disk
+        p = on_disk(file_path)   # NFC path vs NFD folder on the NAS (2026-11-17)
         if p.suffix.lower() != ".xml" or not p.exists():
             # PDF/HWP 등 텍스트 판정 불가한 소스 — 이번 스코프 밖(§6-2), 증거없음으로 남김.
             return None, {}

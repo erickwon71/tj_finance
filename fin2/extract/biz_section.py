@@ -72,8 +72,9 @@ def _load_root_uncached(file_path: Path) -> Optional[etree._Element]:
     """XML 루트 로드. 구형 DART 보고서(~2010년대)는 UTF-8 로 선언됐지만 실제 EUC-KR 인 경우가
     많아 인코딩 자동감지 폴백(_detect_xml_encoding 재사용) + 대용량 사업보고서용 huge_tree."""
     from parser.xml.dart_xml_parser import _detect_xml_encoding, sanitize_dart_xml
+    from collector.raw_paths import on_disk
 
-    with open(file_path, "rb") as f:
+    with open(on_disk(file_path), "rb") as f:   # NFC path vs NFD folder on the NAS (2026-11-17)
         raw = f.read()
     parser = etree.XMLParser(recover=True, huge_tree=True)
     if _detect_xml_encoding(raw) != "utf-8":

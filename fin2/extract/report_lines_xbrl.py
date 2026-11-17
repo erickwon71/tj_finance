@@ -363,6 +363,8 @@ def _extract_zip_members(zip_path: Path, dest_dir: Path) -> _ZipMembers:
     """Unzip the 7-file DART XBRL bundle and locate the 5 members this pass
     needs (`_def.xml`/`_cal.xml`-equivalents unused here). Naming convention
     varies by taxonomy vintage — see `_MEMBER_PATTERNS`."""
+    from collector.raw_paths import on_disk
+    zip_path = on_disk(zip_path)   # NFC path vs NFD folder on the NAS (2026-11-17)
     source = str(zip_path)
     with zipfile.ZipFile(zip_path) as zf:
         names = zf.namelist()

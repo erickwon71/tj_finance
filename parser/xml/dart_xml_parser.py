@@ -486,7 +486,9 @@ def _parse_xml_file(file_path: Path) -> Optional[etree._Element]:
     처리하되(대부분 이미 `if root is None` 가드가 있음), 이 케이스는 별도 소스
     (PDF/HTML) 전환을 검토해야 한다(설계문서 §3 [B]).
     """
-    with open(file_path, "rb") as f:
+    # NFC path from the DB / a test vs NFD folder name on the NAS (collector/raw_paths.py, 2026-11-17).
+    from collector.raw_paths import on_disk
+    with open(on_disk(file_path), "rb") as f:
         raw = f.read()
 
     ratio = _corruption_ratio(raw)

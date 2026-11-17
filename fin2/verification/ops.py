@@ -1456,7 +1456,10 @@ def _sd_path(file_path: str) -> str:
     if not file_path.startswith(_RAW_REPORT_NAS):
         return file_path
     candidate = _RAW_REPORT_SD + file_path[len(_RAW_REPORT_NAS):]
-    return candidate if Path(candidate).exists() else file_path
+    if Path(candidate).exists():
+        return candidate
+    from collector.raw_paths import on_disk
+    return str(on_disk(file_path))   # NFC path vs NFD folder on the NAS (2026-11-17)
 
 
 def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, str | None]:
@@ -1491,7 +1494,8 @@ def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, s
             LIMIT 1"""), {"r": rcept}).fetchone()
     if t is None:
         return "failed", "XML/XBRL 원문 없음 — PDF 경로는 전용 스크립트로 처리"
-    file_path = _sd_path(t.file_path) if use_sd and t.file_type == "xml" else t.file_path
+    from collector.raw_paths import on_disk_str
+    file_path = _sd_path(t.file_path) if use_sd and t.file_type == "xml" else on_disk_str(t.file_path)
     if not Path(file_path).exists():
         return "failed", "XML/XBRL 원문 없음 — PDF 경로는 전용 스크립트로 처리"
     if t.file_type == "xbrl_zip":

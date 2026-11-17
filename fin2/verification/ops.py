@@ -466,13 +466,15 @@ def model_ready_slots(conn) -> int:
 
 
 def claim(slot: Slot | None = None, lease_minutes: int = LEASE_MINUTES,
-          where: str | None = None) -> Slot | None:
+          where: str | None = None, exclude: list[Slot] | None = None) -> Slot | None:
     """Claim the next slot (or a named one). Priority:
     1. slots with fixed issues waiting for a re-check,
     2. pending slots that were verified before (reload / closed issue → re-compare),
     3. everything else by era → market-cap rank → latest year → latest period.
     `where` narrows the pick (the machine pass passes its own filter); without it the model
     gate applies when kv machine.gate = on.
+    `exclude` skips named slots: the runner hands back full-model slots outside the hours of
+    kv runner.full_model_hours (Pro plan, 2026-11-17) and must not get the same slot again.
     """
     _require("verify")
     sync_if_stale()
@@ -480,11 +482,14 @@ def claim(slot: Slot | None = None, lease_minutes: int = LEASE_MINUTES,
         _reap_expired(conn)
         if slot is None:
             extra = where or (_model_ready_sql() if machine_gate_on(conn) else "TRUE")
+            excluded = [str(s) for s in (exclude or [])]
             row = conn.execute(text(f"""
                 SELECT p.corp_code, p.fiscal_year, p.fiscal_period
                 FROM verification.progress p
                 WHERE {CLAIMABLE_SQL}
                   AND {extra}
+                  AND NOT (p.corp_code || ':' || p.fiscal_year || ':' || p.fiscal_period
+                           = ANY(CAST(:excluded AS text[])))
                 ORDER BY
                   (p.status = 'has_issues') DESC,
                   EXISTS (SELECT 1 FROM verification.progress_filings pf
@@ -493,7 +498,7 @@ def claim(slot: Slot | None = None, lease_minutes: int = LEASE_MINUTES,
                              AND pf.verified_at IS NOT NULL) DESC,
                   p.era_rank, p.corp_rank NULLS LAST, p.fiscal_year DESC, {_PERIOD_ORDER} DESC
                 LIMIT 1
-                FOR UPDATE SKIP LOCKED""")).fetchone()
+                FOR UPDATE SKIP LOCKED"""), {"excluded": excluded}).fetchone()
             if row is None:
                 return None
             slot = Slot(*row)

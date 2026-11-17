@@ -180,7 +180,8 @@ def cmd_next(a):
 
 
 def cmd_claim(a):
-    slot = ops.claim(Slot.parse(a.slot) if a.slot else None)
+    exclude = [Slot.parse(x) for x in (a.exclude or [])]
+    slot = ops.claim(Slot.parse(a.slot) if a.slot else None, exclude=exclude)
     if a.json:
         print(json.dumps({"slot": str(slot) if slot else None}))
     else:
@@ -449,6 +450,12 @@ def cmd_runner(a):
         m, why = runner.model_for(Slot.parse(a.slot), a.finding_model or runner.FINDING_MODEL_DEFAULT,
                                   a.full_model or runner.FULL_MODEL_DEFAULT)
         print(json.dumps({"model": m, "reason": why}))
+    elif a.action == "full-gate":
+        print(json.dumps(runner.full_model_gate()))
+    elif a.action == "defer":
+        # Hand a claimed full-model slot back outside runner.full_model_hours: no run, no penalty.
+        # note=None keeps the slot's own note (release() would overwrite it with the text).
+        print(json.dumps(ops.release(Slot.parse(a.slot), failed=False), ensure_ascii=False))
 
 
 # ─────────────────────────────── admin ───────────────────────────────
@@ -569,7 +576,9 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--no-csv", action="store_true"); x.add_argument("--json", action="store_true")
     x.set_defaults(fn=cmd_next)
     x = sp.add_parser("claim", help="러너용: 슬롯 점유만")
-    x.add_argument("--slot"); x.add_argument("--json", action="store_true"); x.set_defaults(fn=cmd_claim)
+    x.add_argument("--slot"); x.add_argument("--json", action="store_true")
+    x.add_argument("--exclude", nargs="*", help="이 슬롯들은 건너뛴다(러너: 시간대 밖 full-model 슬롯)")
+    x.set_defaults(fn=cmd_claim)
     x = sp.add_parser("show"); x.add_argument("slot", nargs="?")
     x.add_argument("--no-csv", action="store_true"); x.add_argument("--json", action="store_true")
     x.set_defaults(fn=cmd_show)
@@ -661,7 +670,8 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--value", choices=["on", "off"])
     x.add_argument("--mismatch", action="store_true", help="restamp: 옛 도구버전의 mismatch(passed 필링)를 재대조해 clean 이면 기록 교체")
     x.set_defaults(fn=cmd_machine)
-    x = sp.add_parser("runner"); x.add_argument("action", choices=["start", "finish", "budget", "model"])
+    x = sp.add_parser("runner"); x.add_argument("action", choices=["start", "finish", "budget", "model",
+                                                           "full-gate", "defer"])
     x.add_argument("--finding-model"); x.add_argument("--full-model")
     x.add_argument("--slot"); x.add_argument("--model"); x.add_argument("--run-id", type=int)
     x.add_argument("--log"); x.add_argument("--exit-code", type=int)

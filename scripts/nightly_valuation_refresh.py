@@ -7,6 +7,7 @@
 
   ① 주가 증분 top-up  — 최근 N일 OHLCV 를 stock_prices 에 멱등 upsert (기본 15일, --skip-prices 로 생략)
   ①-b KRX 일별 매매정보 — 최근 15일의 실제 종가·상장주식수(KRX OpenAPI, 2026-11-17)
+  ①-c 수정주가 기준 단절 — 최근 20일에 단절이 생긴 종목만 전체 이력 재수집(R338, 하루 최대 30종목)
   ② 시가총액 재계산   — 그날 실제 종가 × 그날 유통주식수 → market_cap/shares_out (순수 SQL)
   ③ matview refresh   — REFRESH MATERIALIZED VIEW CONCURRENTLY valuation_daily
 
@@ -123,6 +124,17 @@ def main() -> None:
     except Exception as e:  # noqa: BLE001
         failures.append("krx_daily")
         logger.error(f"[valuation] ①-b KRX 일별 단계 실패(계속): {type(e).__name__}: {e}")
+
+    # ①-c R338 수정주가 기준 단절 — ①이 최근 15일만 새 기준으로 받으면 그 앞과 단절이 생긴다.
+    #      최근 20일 안에 단절이 생긴 종목만 상장 이후 전체 이력을 다시 받는다(하루 최대 30종목).
+    if not args.skip_prices:
+        try:
+            from analyzer.adjusted_history import nightly as adjusted_nightly
+            out = adjusted_nightly()
+            logger.info(f"[valuation] ①-c 수정주가 기준 단절 재수집 — {out}")
+        except Exception as e:  # noqa: BLE001
+            failures.append("adjusted_history")
+            logger.error(f"[valuation] ①-c 수정주가 재수집 단계 실패(계속): {type(e).__name__}: {e}")
 
     # ② 시가총액 — 단계 격리
     try:

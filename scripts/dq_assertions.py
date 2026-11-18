@@ -139,6 +139,43 @@ CHECKS: list[dict] = [
                   "ORDER BY max_mc DESC LIMIT 10",
     },
     {
+        # R338 (2026-11-18): the adjusted close jumps while the KRX raw close does not = a stale
+        # basis boundary (15-day refetch window). The nightly ①-c re-fetches such stocks; what is
+        # left is source-side (re-listing after a spin-off halt: KRX resets the reference price,
+        # e.g. KCC 002380 2020-01-21) or a stock the night capped (30 a night). Same predicate as
+        # analyzer.adjusted_history._STALE_SQL; last 400 days to keep the check cheap.
+        "name": "adjusted_price_stale_boundary",
+        "sev": "WARN",
+        "desc": "수정주가 기준 단절(최근 400일) — 수정종가는 뛰는데 실제 종가는 이어지는 날 (R338 야간 재수집 대상)",
+        "count": """
+            WITH x AS (
+              SELECT stock_code, trade_date, close_price, close_raw,
+                     lag(close_price) OVER w AS pc, lag(close_raw) OVER w AS pr
+              FROM stock_prices WHERE trade_date >= CURRENT_DATE - 410 AND COALESCE(volume, 1) > 0
+              WINDOW w AS (PARTITION BY stock_code ORDER BY trade_date))
+            SELECT count(*) FROM x
+            WHERE trade_date >= CURRENT_DATE - 400
+              AND pc > 0 AND pr > 0 AND close_raw > 0 AND close_price > 0
+              AND abs(ln((close_price::numeric / close_raw) / (pc::numeric / pr)))
+                  > GREATEST(0.01, 1.5 / LEAST(close_price, pc))
+              AND abs(ln(close_price::numeric / pc)) > abs(ln(close_raw::numeric / pr))
+        """,
+        "sample": """
+            WITH x AS (
+              SELECT stock_code, trade_date, close_price, close_raw,
+                     lag(close_price) OVER w AS pc, lag(close_raw) OVER w AS pr
+              FROM stock_prices WHERE trade_date >= CURRENT_DATE - 410 AND COALESCE(volume, 1) > 0
+              WINDOW w AS (PARTITION BY stock_code ORDER BY trade_date))
+            SELECT stock_code, trade_date, pc, close_price, pr, close_raw FROM x
+            WHERE trade_date >= CURRENT_DATE - 400
+              AND pc > 0 AND pr > 0 AND close_raw > 0 AND close_price > 0
+              AND abs(ln((close_price::numeric / close_raw) / (pc::numeric / pr)))
+                  > GREATEST(0.01, 1.5 / LEAST(close_price, pc))
+              AND abs(ln(close_price::numeric / pc)) > abs(ln(close_raw::numeric / pr))
+            ORDER BY trade_date DESC LIMIT 10
+        """,
+    },
+    {
         # 2026-09-09: std_financials_v2 DROP(2026-09-01) 이후 fin2_market_cap_daily.py 가
         # 그 테이블을 계속 조회해 UndefinedTable 로 매일 크래시했는데, nightly_valuation_
         # refresh.py 가 단계별 try/except 로 이 실패를 삼켜(파이프라인 전체를 막지 않으려는

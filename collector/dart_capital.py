@@ -237,6 +237,28 @@ def fetch_capital_events(bgn_de: str, end_de: str) -> list[dict]:
     return results
 
 
+# R337 - the daily scan used a fixed 5-day window, so filings made while the daily job was down
+# (2026-07 end, 2026-09 end .. 10-03) were never scanned after it resumed (57 originals in 2026,
+# e.g. 코나아이 무상증자 20260914000031). The window now starts at the last successful store
+# (max(fetched_at)) minus the lookback, capped so a long outage does not turn into a huge scan.
+CAPITAL_RESUME_MAX_DAYS = 120
+
+
+def capital_sync_start(today: date, last_fetched: Optional[date], lookback_days: int = 5,
+                       max_days: int = CAPITAL_RESUME_MAX_DAYS) -> date:
+    """First filing date the daily capital scan must cover."""
+    start = today - timedelta(days=lookback_days)
+    if last_fetched is not None:
+        resume = last_fetched - timedelta(days=lookback_days)
+        start = min(start, max(resume, today - timedelta(days=max_days)))
+    return start
+
+
+def last_capital_fetch_date(session) -> Optional[date]:
+    from sqlalchemy import text
+    return session.execute(text("SELECT max(fetched_at)::date FROM capital_events")).scalar()
+
+
 def sync_capital_events(bgn_de: str, end_de: str) -> int:
     """자본이벤트를 조회해 capital_events 에 멱등 upsert(rcept_no 기준). 추적 대상만."""
     import json
@@ -271,10 +293,11 @@ def sync_capital_events(bgn_de: str, end_de: str) -> int:
 
         result = session.execute(text("""
             INSERT INTO capital_events
-                (corp_code, rcept_no, filed_at, board_date, report_nm, event_type, shares_delta, detail)
+                (corp_code, rcept_no, filed_at, board_date, report_nm, event_type, shares_delta, detail,
+                 fetched_at)
             VALUES
                 (:corp_code, :rcept_no, :filed_at, :board_date, :report_nm, :event_type, :shares_delta,
-                 CAST(:detail AS JSONB))
+                 CAST(:detail AS JSONB), now())
             ON CONFLICT (rcept_no) DO NOTHING
         """), rows)
         saved = result.rowcount or 0

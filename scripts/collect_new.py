@@ -447,9 +447,15 @@ def _sync_capital(lookback_days: int = 5) -> None:
     """B2 — 자본이벤트(증자/감자/CB·BW·EB/자기주식) 감지. 정기보고와 무관하게 매일 상시.
     비치명적 실패(네트워크 등)는 본 수집을 막지 않는다."""
     try:
-        from collector.dart_capital import sync_capital_events
-        end_de = date.today().strftime("%Y%m%d")
-        bgn_de = (date.today() - timedelta(days=lookback_days)).strftime("%Y%m%d")
+        from collector.db import get_session
+        from collector.dart_capital import (capital_sync_start, last_capital_fetch_date,
+                                            sync_capital_events)
+        today = date.today()
+        with get_session() as s:
+            last = last_capital_fetch_date(s)
+        # R337: resume from the last successful store so a stopped daily job leaves no gap
+        bgn_de = capital_sync_start(today, last, lookback_days).strftime("%Y%m%d")
+        end_de = today.strftime("%Y%m%d")
         n = sync_capital_events(bgn_de, end_de)
         if n:
             logger.info(f"[collect] ⓪-2 자본이벤트 신규 {n}건(증자/감자/CB·BW·EB/자기주식)")

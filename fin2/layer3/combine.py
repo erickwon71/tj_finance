@@ -3194,6 +3194,66 @@ def _resolve_tax_identity(cands: dict, confirmed: dict, conflicts: dict) -> None
         conflicts.pop("is.tax_expense", None)
 
 
+# R341 (2026-11-18): EBT - tax = net income decides the sign of EBT and tax when the printed signs
+# do not close it. (a) A loss-only EBT label printed over a profit (삼성중공업 2025FY consolidated:
+# '법인세비용차감전순손실' +650.4B, the prior year's label kept) is negated by `_loss_signed`; when the
+# un-negated value closes the identity, the label was stale. (b) Companies print tax either as a positive
+# expense or as a signed deduction / benefit ('(352.2B)', '법인세수익(비용)'); when only the opposite sign
+# closes the identity, the stored value is negated so tax_expense is always expense-positive. With
+# discontinued operations the identity holds against continuing-operations NI, so both targets are tried.
+_R341_SIGN_IDENTITY = True
+
+_R341_TOL = 1
+
+
+def _is_loss_only_label(label: str | None) -> bool:
+    """The `_loss_signed` label condition: '손실' without '이익'."""
+    return bool(label) and "손실" in label and "이익" not in label
+
+
+def _resolve_sign_identity(cands: dict, confirmed: dict) -> None:
+    if not _R341_SIGN_IDENTITY:
+        return
+    ebt, ni = confirmed.get("is.ebt"), confirmed.get("is.net_income")
+    if ebt is None or ni is None:
+        return
+    tax = confirmed.get("is.tax_expense") or 0
+    targets = [ni]
+    if confirmed.get("is.continuing_ni") is not None:
+        targets.append(confirmed["is.continuing_ni"])
+
+    def closes(e: int, t: int) -> bool:
+        return any(abs(e - t - target) <= _R341_TOL for target in targets)
+
+    if closes(ebt, tax):
+        return
+    if ebt < 0 and closes(-ebt, tax) and any(
+            r.get("value") == ebt and _is_loss_only_label(r.get("label_raw"))
+            for r in cands.get("is.ebt") or ()):
+        confirmed["is.ebt"] = -ebt
+        return
+    if tax and closes(ebt, -tax):
+        confirmed["is.tax_expense"] = -tax
+
+
+# R341: continuing / discontinued operations NI as their own canonicals (extended_financials), so a
+# consumer can tell a legitimate EBT - tax != NI gap (discontinued operations) from an error. Matched
+# by a dedicated label rule, not the alias catalog: a '계속영업이익' alias leaks into is.net_income
+# through the fuzzy matcher (00102113 2024FY, see account_maps/is_accounts.py).
+_R341_OPS_NI_RE = re.compile(
+    r"^(계속|중단)(영업|사업)(당기|분기|반기)?(순)?(이익|손익|손실)$")
+
+
+def _ops_ni_canonical(label_raw: str | None) -> str | None:
+    if not _R341_SIGN_IDENTITY or not label_raw:
+        return None
+    core = re.sub(r"\([^)]*\)|\s+", "", normalize_account_name(label_raw))
+    m = _R341_OPS_NI_RE.match(core)
+    if not m:
+        return None
+    return "is.continuing_ni" if m.group(1) == "계속" else "is.discontinued_ni"
+
+
 def _resolve_ni_attribution(cands: dict, confirmed: dict, conflicts: dict) -> None:
     """2nd pass (Phase B, docs/plans/std_v3_controlling_ni_gap_fix_plan_2026-08-08.md §3-2):
     re-select a held is.controlling_ni conflict via the accounting identity
@@ -3355,6 +3415,7 @@ def _resolve_ni_attribution(cands: dict, confirmed: dict, conflicts: dict) -> No
 _LOSS_CANON = frozenset({
     "is.net_income", "is.operating_income", "is.ebt",
     "is.controlling_ni", "is.gross_profit",
+    "is.continuing_ni", "is.discontinued_ni",  # R341: same printed-loss convention as NI
 })
 
 
@@ -3810,6 +3871,11 @@ def _map_rows(rows, period: str, basis: str, statements,
             for c in _eps_canonicals(r["label_raw"], r.get("section_path")):
                 _add(r, c, "eps")
             continue
+        if fs == "is":
+            ops = _ops_ni_canonical(r["label_raw"])
+            if ops is not None:
+                # R341: additive — the row still goes through the general mapper below
+                _add(r, ops, "exact")
         res = _map_label(r["label_raw"], fs)
         if res.confidence < 0.88 or res.account_code.startswith("unknown."):
             # R172: an XBRL cell whose Korean label the mapper can't place falls back to
@@ -4070,6 +4136,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
             and "is.controlling_ni" in confirmed):
         nci = confirmed.get("is.noncontrolling_ni", 0)
         confirmed["is.net_income"] = confirmed["is.controlling_ni"] + nci
+    _resolve_sign_identity(cands, confirmed)
     col: dict[str, int] = {}
     for canon, value in confirmed.items():
         std_col = DIRECT_MAP.get(canon)

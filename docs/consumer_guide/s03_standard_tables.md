@@ -5,6 +5,8 @@ title: Standardized financials
 ---
 Standard columns (same in all standard objects): balance sheet (total_assets, current_assets, cash, receivables, inventory, ppe, intangibles, total_liabilities, current_liabilities, short_term_debt, long_term_debt, total_equity, controlling_equity, retained_earnings, trade_payables, net_debt, shares_out), income statement (revenue, cogs, gross_profit, sga, rd_expense, operating_income, interest_expense, ebt, tax_expense, net_income, controlling_ni), cash flow (cfo, cfi, cff, capex, dividends_paid), derived (depreciation, amortization, da_total, ebitda, fcf).
 
+Sign conventions (R341, 2026-11-18): `tax_expense` is expense-positive (a tax benefit is negative) whatever sign the filing printed; `ebt`, `net_income` are negative for a loss. `ebt - tax_expense = net_income` holds except when the company has discontinued operations: then `ebt - tax_expense` equals `is.continuing_ni` in `extended_financials`, and `is.discontinued_ni` is the discontinued-operations result (`net_income` = continuing + discontinued). Use them to tell a legitimate gap from a data error.
+
 **std_financials_v3** key = (corp_code, fiscal_year, fiscal_period, statement_type).
 - fiscal_period is FY, H1, Q1 or Q3 (as reported; there is no Q2/Q4 row).
 - Flow items (income statement, cash flow) are **cumulative year-to-date**. Example, 2024 revenue: Q1 71.9T, H1 146.0T, Q3 225.1T, FY 300.9T. Stock items (balance sheet) are period-end balances.

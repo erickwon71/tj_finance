@@ -107,7 +107,8 @@ def _dq_cross_year_v3(session, corp_code: str, basis: str, col: dict) -> int:
     session) is already flushed and visible to this raw-SQL SELECT.
     """
     dq = 1
-    for c, lim_err, lim_warn in (("revenue", 200, 30), ("total_assets", 200, 30)):
+    ratios: dict[str, float] = {}
+    for c in ("revenue", "total_assets"):
         nv = col.get(c)
         if not nv or nv <= 0:
             continue
@@ -118,12 +119,35 @@ def _dq_cross_year_v3(session, corp_code: str, basis: str, col: dict) -> int:
               AND {c}>0 AND data_quality<3
         """), {"cc": corp_code, "st": basis}).scalar()
         if med and med >= 1_000_000_000:
-            ratio = nv / med
-            if ratio > lim_err or ratio < 1.0 / lim_err:
-                return 3
-            if ratio > lim_warn or ratio < 1.0 / lim_warn:
+            ratios[c] = nv / med
+    lim_err, lim_warn = 200, 30
+    for c, ratio in ratios.items():
+        if ratio > lim_err or ratio < 1.0 / lim_err:
+            if c == "revenue" and _r339_low_revenue_is_real(ratio, ratios.get("total_assets")):
                 dq = max(dq, 2)
+                continue
+            return 3
+        if ratio > lim_warn or ratio < 1.0 / lim_warn:
+            dq = max(dq, 2)
     return dq
+
+
+# R339 (2026-11-18, layer 3 DQ): a FY revenue more than 200x BELOW the corp's median is a real
+# business change, not a parse error, when total assets stay within 30x of their own median:
+# a holding company after a spin-off (경동인베스트 2017), a first fiscal year of a few days
+# (폰드그룹 2023, 12/28-12/31), a pre-revenue biotech. Such a row is a warning (DQ2), not
+# quarantined (DQ3). An upward outlier (possible x1000 unit error) and a row without an assets
+# median stay DQ3.
+_R339_LOW_REVENUE_ASSETS_NORMAL = True
+_R339_ASSETS_LIMIT = 30
+
+
+def _r339_low_revenue_is_real(rev_ratio: float, assets_ratio: float | None) -> bool:
+    if not _R339_LOW_REVENUE_ASSETS_NORMAL or assets_ratio is None:
+        return False
+    if rev_ratio >= 1.0:
+        return False
+    return 1.0 / _R339_ASSETS_LIMIT <= assets_ratio <= _R339_ASSETS_LIMIT
 
 
 def _select_shares_out(session, corp: str, fy: int, period: str, src: dict,

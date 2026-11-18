@@ -30,13 +30,20 @@ _NUM_PREFIX = re.compile(r"^[\sⅠ-Ⅹⅰ-ⅹIVXivx0-9０-９\.．\(\)（）]+")
 # trailing 주석 refs. 정상형 '(주27)' 는 '(' 로 잘리지만, 추출이 괄호를 잃어 '순수수료손익 27,41,44>'
 # 처럼 남는 케이스(NH 등)를 위해 끝의 [숫자/콤마/공백] + 선택적 '>' 도 제거한다.
 _NOTE_SUFFIX = re.compile(r"[\s\d,]+>?$")
+# R340: angle-bracket note refs '<주석33,39>' / '<주 5>' (NH 2015-2022 '판매비와관리비<주석33,39>').
+# Only this note-ref form is cut, so a label that itself uses '<' is left alone.
+_ANGLE_NOTE_SUFFIX = re.compile(r"<주석?[\d,]*>?$")
+_R340_ANGLE_NOTE = True
 
 
 def norm(label: str | None) -> str:
     if not label:
         return ""
     s = _NUM_PREFIX.sub("", label)
-    s = re.sub(r"\s+", "", s).split("(")[0].split("（")[0]
+    s = re.sub(r"\s+", "", s)
+    if _R340_ANGLE_NOTE:
+        s = _ANGLE_NOTE_SUFFIX.sub("", s)
+    s = s.split("(")[0].split("（")[0]
     return _NOTE_SUFFIX.sub("", s)
 
 
@@ -55,6 +62,9 @@ _SGA_LABELS = frozenset({
     "판매관리비", "판매비와관리비", "판매비및관리비", "판매및일반관리비",
     "판매및관리비", "판매관리비용", "판관비",
     "판매와관리비",   # DART 원문 오타 변형('비' 누락, NH 2024 등)
+    # R340: one printed SG&A total under this name (한화투자증권 2025Q1~). The split form
+    # '인건비' + '기타일반관리비' without a total is NOT summed (user decision 2026-11-18).
+    "인건비및기타일반관리비",
 })
 
 

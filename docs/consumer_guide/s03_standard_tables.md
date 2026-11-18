@@ -7,6 +7,8 @@ Standard columns (same in all standard objects): balance sheet (total_assets, cu
 
 Sign conventions (R341, 2026-11-18): `tax_expense` is expense-positive (a tax benefit is negative) whatever sign the filing printed; `ebt`, `net_income` are negative for a loss. `ebt - tax_expense = net_income` holds except when the company has discontinued operations: then `ebt - tax_expense` equals `is.continuing_ni` in `extended_financials`, and `is.discontinued_ni` is the discontinued-operations result (`net_income` = continuing + discontinued). Use them to tell a legitimate gap from a data error.
 
+Debt columns (2026-11-18): `short_term_debt` is only the printed short-term borrowings line (단기차입금) and `long_term_debt` only the long-term borrowings line (장기차입금). Current portion of long-term debt, bonds, convertible / exchangeable / warrant bonds are NOT in either column. For total borrowings or net cash use `net_debt` = (all borrowing lines) - cash; never `short_term_debt + long_term_debt - cash` (measured FY2025 consolidated: different in 1,281 of 2,514 rows, debt understated by more than 10% of liabilities in 755). NULL in `short_term_debt` / `long_term_debt` means that line is not printed, not that the company has no debt. `net_debt` NULL currently means no borrowing line was found (mostly debt-free companies; filling `-cash` for confirmed debt-free rows is planned).
+
 **std_financials_v3** key = (corp_code, fiscal_year, fiscal_period, statement_type).
 - fiscal_period is FY, H1, Q1 or Q3 (as reported; there is no Q2/Q4 row).
 - Flow items (income statement, cash flow) are **cumulative year-to-date**. Example, 2024 revenue: Q1 71.9T, H1 146.0T, Q3 225.1T, FY 300.9T. Stock items (balance sheet) are period-end balances.

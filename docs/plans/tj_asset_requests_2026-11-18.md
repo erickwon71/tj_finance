@@ -31,3 +31,25 @@
 
 ## 2~7번
 다음 세션부터 하나씩. 순서 제안: 6(차입금 NULL 구분) → 2(order_backlog) → 3(biz_metrics) → 5(적재 상태, 스키마 승인 필요) → 4(11-19 이후 재집계) → 7.
+
+## 6번: 차입금 NULL 의 뜻 (조사 2026-11-18, 수정 전)
+
+### 구조
+- `short_term_debt` = `bs.short_term_debt`(단기차입금 줄) 하나, `long_term_debt` = `bs.long_term_debt`(장기차입금 줄) 하나. 유동성장기부채·사채·전환사채 등은 **두 열에 들어가지 않고** `net_debt` 계산(`combine.py::_additive_debt_for_net_debt`, `_V3_ST_DEBT_PARTS`/`_V3_LT_DEBT_PARTS`)에만 합산된다.
+- `net_debt` = 차입금 부품 합 − cash. 부품이 하나도 없으면 NULL(`rules.py::rule_derive_net_debt`) → 무차입 회사가 NULL.
+- consumer_guide 에 이 설명이 없다.
+
+### 측정 (2025 FY 연결 DQ<3, scratchpad `debt.sql`)
+- tj_asset 방식 `coalesce(st,0)+coalesce(lt,0)-cash` vs `net_debt`: 2,514행 중 1,281행 다름, 755행은 부채총계의 10% 넘게 차입금 과소(현대자동차 순차입금 15.7조 vs 1.6조, 은행지주 다수). **NULL 문제보다 큼.**
+- `net_debt` NULL 392행: 368행은 BS 에 금액 있는 차입·사채 줄이 없음(무차입 추정), 24행은 줄이 있는데 매핑 안 됨(`유동성금융기관차입금(사채제외)` 10개사, `차입금(유동)`/`차입금(비유동)` 5개사, `차입금등(유동)` 등).
+- `short_term_debt` NULL 711행: 286행은 다른 차입 부품이 있음(단기차입금 줄만 없음 = 정상), 368+24 는 위와 같음, 33행은 net_debt 있으나 차입·사채 라벨 없음(미조사).
+
+### 수정안 (사용자 결정 대기)
+1. **가이드**: 두 열의 뜻과 "총차입금/순현금은 `net_debt` 를 쓸 것"을 `s03` 에 명시. tj_asset 에 즉시 회신.
+2. **매핑 누락 24행**: 위 라벨 별칭 추가(유동/비유동 구분은 section_path), 전 연도 영향 측정 후 재빌드.
+3. **무차입 확인**: BS 가 있고, 차입 부품 후보가 하나도 없고, 금액 있는 `차입|사채|borrow` 줄도 없으면 무차입으로 보고 값 채움 — 방식은 결정 필요(아래).
+
+### 결정·진행 (2026-11-18)
+- ✅ 1 가이드: `s03` 반영(guide_version 865ec0fa63c6), tj_asset 회신 완료.
+- 3 무차입 표시: **`net_debt = −cash` 만 채움**, short/long_term_debt 는 NULL 유지(사용자 결정 2026-11-18). 스키마 변경 없음.
+- 2·3 은 다음 세션(한 세션 한 fix 배치). 시작점: `scripts/qa/debt_null_classify_2026-11-18.sql`·`debt_unmapped_labels_2026-11-18.sql` 로 다시 세고, 무차입 판정 조건(차입 부품 후보 0 + 금액 있는 `차입|사채|borrow` 줄 0 + BS 존재)과 33행(net_debt 있으나 차입 라벨 없음)부터 확인.

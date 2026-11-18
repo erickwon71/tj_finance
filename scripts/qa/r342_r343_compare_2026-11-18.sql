@@ -1,6 +1,8 @@
--- R342/R343 (2026-11-18): compare std_v3 / extended_facts_v3 after the rebuild with the snapshot
+-- R342/R342-b/R343/R344 (2026-11-18): compare std_v3 / extended_facts_v3 after the rebuild with the snapshot
 -- from r342_r343_snapshot_2026-11-18.sql. Every changed cell is listed by column; expected changes:
--- short_term_debt / long_term_debt / net_debt (R342 aliases), net_debt = -cash (R343).
+-- short_term_debt / long_term_debt / net_debt only: R342/R342-b aliases, net_debt = -cash (R343), R344 drops
+-- non-borrowing lines (payables, leases, provisions, contra accounts, assets) from the debt parts. Any other
+-- column changing, or extended_facts_v3 rows other than bs.* debt canonicals, needs a look.
 CREATE TEMP TABLE d AS
 WITH o AS (SELECT corp_code, fiscal_year, fiscal_period, statement_type,
                   to_jsonb(s) - '{built_at,corp_code,fiscal_year,fiscal_period,statement_type}'::text[] j
@@ -30,8 +32,11 @@ SELECT CASE WHEN (n.net_debt = -n.cash) AND n.short_term_debt IS NULL AND n.long
 FROM d JOIN std_financials_v3 n ON n.corp_code = d.corp_code AND n.fiscal_year = d.fy
   AND n.fiscal_period = d.fp AND n.statement_type = d.st
 WHERE d.col = 'net_debt' AND (d.old_v IS NULL OR d.old_v = 'null') GROUP BY 1, 2 ORDER BY 1, 2;
-\echo == value->value changes (should be none, or explained)
-SELECT * FROM d WHERE NOT (old_v IS NULL OR old_v = 'null' OR new_v IS NULL OR new_v = 'null') LIMIT 30;
+\echo == columns other than the three debt columns that changed (expected: none, or rows not rebuilt since an older rule)
+SELECT col, count(*) FROM d WHERE col NOT IN ('short_term_debt', 'long_term_debt', 'net_debt') GROUP BY 1 ORDER BY 2 DESC;
+\echo == net_debt value->value: direction
+SELECT CASE WHEN new_v::text::numeric > old_v::text::numeric THEN 'up' ELSE 'down' END dir, count(*)
+FROM d WHERE col = 'net_debt' AND NOT (old_v IS NULL OR old_v = 'null' OR new_v IS NULL OR new_v = 'null') GROUP BY 1;
 \echo == extended_facts_v3 changes by canonical
 WITH o AS (SELECT * FROM snap_r342_ext),
      n AS (SELECT e.* FROM extended_facts_v3 e JOIN snap_r342_corps USING (corp_code))

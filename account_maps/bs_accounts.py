@@ -564,14 +564,37 @@ BS_EXACT_ONLY_ACCOUNTS: dict[str, list[str]] = {
         "유동금융기관차입금및비유동금융기관차입금(사채제외)의유동성대체부분",
         "단기금융기관차입금및장기금융기관차입금(사채제외)의유동성대체부분",
         "차입금(유동)", "차입금등(유동)", "차입부채(유동)", "단기및유동성차입금",
+        # R342-b: fuzzy put these on a non-debt canonical or the long-term side
+        "단기차입금및장기차입금(사채포함)의유동성대체부분",   # was long_term_debt
+        "단기금융기관차입금",                                  # was short_term_investment
+        "단기차입채무",                                        # was trade_payables
     ],
     "bs.current_portion_lt_debt": [
         "장기금융기관차입금(사채제외)의유동성대체부분",
         "비유동성금융기관차입금의유동성대체부분(사채제외)",
+        # R342-b: current portion by meaning ('유동성…장기…', '…의 유동성 대체 부분', '장기…(유동)');
+        # fuzzy had them on long_term_debt
+        "유동성장기차입부채", "유동성장기사채및차입금", "유동성사채및차입금",
+        "장기차입금(사채포함)의유동성대체부분", "유동성장기차입금(사채포함)",
+        "장기차입부채(유동)", "장기차입금(유동)", "장기차입금(유동성)", "(유동성)장기차입금",
+        "장기차입금의유동성대체", "기타장기차입금(사채제외)의유동성대체부분",
+        "비유동금융기관차입금의유동성부분", "금융기관장기차입금(사채제외)의유동성대체분",
+        "유동성원화장기차입금",
+        "유동성외화장기차입금(Current Portion of Long-term Borrowings in Foreign Currency)",
+        # printed in 유동부채 (one corp, 90 rows): the current portion of bonds and borrowings
+        "유동사채및장기차입금",
+        # typos of 유동성장기차입금 / 유동성외화장기차입금
+        "유동상장기차입금", "유동서외화장기차입금",
     ],
     "bs.long_term_debt": [
         "비유동성금융기관차입금(사채제외)", "비유동금융기관차입금(사채제외)",
         "장기금융기관차입금(사채제외)", "장기금융기관차입금(사채제외)의비유동성부분",
         "차입금(비유동)", "차입금등(비유동)", "차입부채(비유동)",
+        # R342-b: the non-current remainder / non-current borrowings; fuzzy had them on the
+        # current portion, on short-term debt, or on the 비유동부채 total (bs.noncurrent_liabilities)
+        "비유동금융기관차입금(사채제외)의비유동성대체부분",
+        "비유동차입금(사채포함)",
+        "비유동차입부채", "비유동성차입부채",
+        "비유동성장기부채",                                    # was current_portion_lt_debt
     ],
 }

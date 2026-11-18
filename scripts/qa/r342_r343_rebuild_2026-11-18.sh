@@ -1,5 +1,5 @@
 #!/bin/zsh
-# R342/R343 (2026-11-18) retro rebuild: snapshot -> std_v3 rebuild of the affected corps in 5 shards
+# R342/R342-b/R343/R344 (2026-11-18) retro rebuild: snapshot -> std_v3 rebuild of the affected corps in 5 shards
 # (--year-min 1990, calendar included) -> before/after comparison -> consumer_guide reload.
 # Run from anywhere, after the daily pipeline (collect_new.py) has finished.
 set -e

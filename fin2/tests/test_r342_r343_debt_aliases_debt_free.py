@@ -126,3 +126,50 @@ def test_r343_needs_cash_liabilities_and_bs_of_basis():
 def test_r343_derived_net_debt_untouched():
     col = dict(_COL, net_debt=7)
     assert C._debt_free_net_debt(_Session(50, 0), _BS_FREE, "consolidated", {}, {}, col) is None
+
+
+# R342-b: borrowing labels fuzzy had on the wrong side or on a non-debt canonical
+@pytest.mark.parametrize("label, code", [
+    ("유동성장기차입부채", "bs.current_portion_lt_debt"),            # was long_term_debt
+    ("장기차입부채(유동)", "bs.current_portion_lt_debt"),
+    ("유동성장기사채및차입금", "bs.current_portion_lt_debt"),
+    ("비유동 금융기관 차입금(사채 제외)의 비유동성 대체 부분", "bs.long_term_debt"),  # was current portion
+    ("비유동성장기부채", "bs.long_term_debt"),
+    ("비유동차입부채", "bs.long_term_debt"),                           # was the 비유동부채 total
+    ("단기차입금및장기차입금(사채포함)의유동성대체부분", "bs.short_term_debt"),
+    ("단기차입채무", "bs.short_term_debt"),                            # was trade_payables
+])
+def test_r342b_corrected(label, code):
+    r = get_mapper().map(label, fs_section="bs")
+    assert r.account_code == code, (label, r)
+
+
+def test_r342b_financial_institution_borrowing_detail_unmapped():
+    # detail line under 차입부채 > 원화차입금; fuzzy had it on bs.short_term_investment (an asset)
+    assert get_mapper().map("금융기관차입금", fs_section="bs").account_code.startswith("unknown.")
+
+
+# R344: fuzzy may not put a non-borrowing label on a borrowing canonical
+@pytest.mark.parametrize("label", [
+    "유동성장기미지급금", "유동성장기리스부채", "유동성기타충당부채", "유동성장기계약부채", "유동성장기선수금",
+    "유동성사채할인발행차금", "유동성전환사채전환권조정", "유동성신주인수권조정", "장기차입금현재가치할인차금",
+    "유동성장기매출채권", "유동성장기채권", "비유동성채무상품", "비유동대여금의비유동성대체부분",
+    "신주인수권", "신주인수권부채", "유동성전환우선주부채", "비유동사용권부채", "회사",
+])
+def test_r344_not_debt_refused(label):
+    r = get_mapper().map(label, fs_section="bs")
+    assert r.account_code not in C._DEBT_CANONICALS, (label, r)
+
+
+@pytest.mark.parametrize("label, code", [
+    # kept as borrowings: BW written short, redemption premium, rehabilitation / securitised debt, FVTPL CB
+    ("신주인수권사채", "bs.warrant_bond"),
+    ("신주인수권부사채상환할증금", "bs.warrant_bond"),
+    ("유동성회생채무", "bs.current_bond"),
+    ("유동성장기유동화채무", "bs.current_portion_lt_debt"),
+    ("유동성장기금융부채", "bs.current_portion_lt_debt"),   # 00916516 2019: a convertible bond at FVTPL
+    ("장기차입금및장기리스부채", "bs.long_term_debt"),        # combined line keeps the borrowing
+    ("유동성장기부채(Current Portion of Long-term Liabilities)", "bs.current_portion_lt_debt"),
+])
+def test_r344_borrowings_kept(label, code):
+    assert get_mapper().map(label, fs_section="bs").account_code == code

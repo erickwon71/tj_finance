@@ -53,7 +53,46 @@ from parser.common.amount_normalizer import normalize_account_name
 # 로 잡으면 총계와 중복계상될 위험이 커 **의도적으로 무매핑 유지**(임시방편 아님).
 _FUZZY_BLOCK: set[str] = {
     "기계장치의취득", "차량운반구의취득",
+    # R342-b (2026-11-18): a detail line under 차입부채 > 원화차입금 in financial companies — fuzzy
+    # put it on bs.short_term_investment (an asset); mapping it to debt would double the 차입부채
+    # total, so it stays unmapped.
+    "금융기관차입금",
 }
+
+
+# R344 (2026-11-18): a fuzzy match onto a borrowing canonical is refused when the label names
+# something that is not a borrowing. These canonicals are summed with abs() into net_debt
+# (fin2/layer3/combine.py::_additive_debt_for_net_debt), so a contra account adds instead of
+# subtracting, and a payable / lease / asset line inflates debt. Measured over all 259,847
+# distinct BS labels: 5,900+ label rows, e.g. 유동성장기미지급금 2,096 and 유동성장기리스부채 426 ->
+# current portion of long-term debt, 유동성사채할인발행차금 1,179 -> current bond, 유동성장기매출채권
+# (an asset) and 신주인수권 (equity) -> warrant bond. Exact/normalized aliases are not affected.
+# Kept as borrowings: 회생·정리·유동화·연부채무, 할부금, 상환할증금 (adds to the bond's carrying
+# amount), 신주인수권사채 / 신주인수권부채사채 (BW written short), 유동성장기금융부채.
+_R344_DEBT_CANONICALS = frozenset({
+    "bs.short_term_debt", "bs.long_term_debt", "bs.current_portion_lt_debt",
+    "bs.bond", "bs.current_bond", "bs.current_bond_plain",
+    "bs.convertible_bond", "bs.current_convertible_bond",
+    "bs.exchange_bond", "bs.current_exchange_bond",
+    "bs.warrant_bond", "bs.current_warrant_bond",
+})
+# contra accounts, assets, and liabilities that are not borrowings — always refused
+_R344_NOT_DEBT_RE = re.compile(
+    r"(할인발행차금|할인차금|현재가치할인|할인금$|사채할인$|전환사채할인$|할차$|권조정|신주인수권부조정|사채조정"
+    r"|매출채권|상거래채권|장기채권|대여|대출금|채무상품|우선주부채|지급채무|^회사$|기타부채$"
+    r"|신주인수권(?!부?사|부가채|부채권|부채사))")
+# refused only when the label has no borrowing / bond word (keeps '장기차입금및장기리스부채')
+_R344_NOT_DEBT_UNLESS_BORROWING_RE = re.compile(r"(미지급|미지금|리스|사용권|충당|계약부채|선수|예수|보증금)")
+_R344_BORROWING_WORD_RE = re.compile(r"(차입|사채|차임금|borrow|bond)", re.IGNORECASE)
+
+
+def _r344_not_debt(code: str, normalized: str) -> bool:
+    if code not in _R344_DEBT_CANONICALS:
+        return False
+    lab = re.sub(r"\s+", "", normalized or "")
+    return bool(_R344_NOT_DEBT_RE.search(lab)
+                or (_R344_NOT_DEBT_UNLESS_BORROWING_RE.search(lab)
+                    and not _R344_BORROWING_WORD_RE.search(lab)))
 
 
 @dataclass
@@ -328,6 +367,8 @@ class AccountMapper:
         # fs_section 제공 시 섹션-한정 퍼지 먼저 시도, 없으면 전체 퍼지 (단, 섹션 접두사가
         # 불일치하는 코드는 최종 후보에서 제외 — 예: BS 컨텍스트에서 IS 코드 반환 방지)
         fuzzy_result = self._fuzzy_match(raw, normalized, fs_section=fs_section)
+        if fuzzy_result and _r344_not_debt(fuzzy_result.account_code, normalized):
+            fuzzy_result = None
         if fuzzy_result:
             return fuzzy_result
 

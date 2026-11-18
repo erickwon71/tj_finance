@@ -1,6 +1,6 @@
 -- R342/R343 (2026-11-18): snapshot std_v3 + extended_facts_v3 of the affected corps BEFORE the rebuild.
--- Corp list: scripts/qa/r342_r343_corps_2026-11-18.txt (corps with a newly mapped BS label, or a std row
--- with net_debt NULL and cash present). Run from the repo root.
+-- Corp list: scripts/qa/r342_r343_corps_2026-11-18.txt (1,732 corps: a BS label whose mapping R342/R342-b/R344
+-- changes, or a std row with net_debt NULL and cash present). Run from the repo root.
 DROP TABLE IF EXISTS snap_r342_corps, snap_r342_std, snap_r342_ext;
 CREATE TABLE snap_r342_corps (corp_code varchar(8) PRIMARY KEY);
 \copy snap_r342_corps FROM 'scripts/qa/r342_r343_corps_2026-11-18.txt'

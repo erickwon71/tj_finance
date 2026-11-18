@@ -1,4 +1,4 @@
--- R342/R342-b/R343/R344 (2026-11-18): compare std_v3 / extended_facts_v3 after the rebuild with the snapshot
+-- R342~R345 (2026-11-18): compare std_v3 / extended_facts_v3 after the rebuild with the snapshot
 -- from r342_r343_snapshot_2026-11-18.sql. Every changed cell is listed by column; expected changes:
 -- short_term_debt / long_term_debt / net_debt only: R342/R342-b aliases, net_debt = -cash (R343), R344 drops
 -- non-borrowing lines (payables, leases, provisions, contra accounts, assets) from the debt parts. Any other

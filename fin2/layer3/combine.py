@@ -1472,7 +1472,10 @@ _V3_LT_DEBT_PARTS = ("bs.long_term_debt", "bs.bond", "bs.convertible_bond",
                      "bs.exchange_bond", "bs.warrant_bond")
 
 
-def _additive_debt_for_net_debt(canon: dict, col: dict) -> tuple[int | None, int | None]:
+def _additive_debt_for_net_debt(canon: dict, col: dict,
+                                debt_rows: dict[str, list[dict]] | None = None,
+                                asset_end: dict | None = None
+                                ) -> tuple[int | None, int | None]:
     """Sum _V3_ST_DEBT_PARTS/_V3_LT_DEBT_PARTS for net_debt ONLY — never used to
     overwrite the persisted short_term_debt/long_term_debt std columns (see caller,
     _apply_enrichment: those two keys are deliberately absent from its copy-back loop,
@@ -1482,8 +1485,24 @@ def _additive_debt_for_net_debt(canon: dict, col: dict) -> tuple[int | None, int
     the summed total would exceed total_liabilities*1.05, a rollup-vs-detail double-tag
     is suspected and the additive sum is distrusted entirely (both None, caller then
     falls back to whatever DIRECT_MAP already put in ctx.col)."""
-    st_parts = [abs(canon[c]) for c in _V3_ST_DEBT_PARTS if canon.get(c) is not None]
-    lt_parts = [abs(canon[c]) for c in _V3_LT_DEBT_PARTS if canon.get(c) is not None]
+    # labels of every non-zero debt line on any debt canonical: a line printed under one of them
+    # (section_path) is its child even when fuzzy put it on another canonical (00628189 2019 FY:
+    # '(유동성)장기차입금 상환할증금' 71억 under 유동성장기차입금 1조 88억, on long_term_debt)
+    debt_labels = frozenset(_norm_label(r.get("label_raw")) for rows in (debt_rows or {}).values()
+                            for r in rows if r.get("value")) - {""}
+
+    def part(c):
+        # R345: several printed lines on one canonical are summed when that is safe
+        if _R345_DEBT_SIBLING_SUM and debt_rows and debt_rows.get(c):
+            summed = _sum_debt_siblings(debt_rows[c], debt_labels, asset_end)
+            if summed is not None:
+                # 0 (only children / asset-side lines) is "no part", not "a part worth 0": a
+                # period whose only debt-labelled lines are bonds held as assets must stay NULL
+                # for R343 to judge, not become -cash (00113191 2011 H1, 00113562 2004 Q1)
+                return summed or None
+        return abs(canon[c]) if canon.get(c) is not None else None
+    st_parts = [v for v in (part(c) for c in _V3_ST_DEBT_PARTS) if v is not None]
+    lt_parts = [v for v in (part(c) for c in _V3_LT_DEBT_PARTS) if v is not None]
     new_st = sum(st_parts) if st_parts else None
     new_lt = sum(lt_parts) if lt_parts else None
     tl = col.get("total_liabilities")
@@ -1491,6 +1510,116 @@ def _additive_debt_for_net_debt(canon: dict, col: dict) -> tuple[int | None, int
     if tl and tl > 0 and cand_total > tl * 1.05:
         return None, None
     return new_st, new_lt
+
+
+# R345 (2026-11-18, docs/plans/debt_sibling_sum_design_2026-11-18.md, user decision: net_debt only,
+# zero lines dropped, conservative give-up). _resolve keeps ONE value per canonical, so separately
+# printed sibling lines on one debt canonical were picked or held: 00159616 2004 FY lost 원화 3,047.4억
+# + 외화 174.0억 current portions and 원화 1,346.8억 + 외화 624.1억 long-term borrowings (net_debt -655.1B
+# instead of -135.9B); 01109539 2018 Q1 lost 장기차입금 75.5억 + 비유동성장기부채 364.4억. Flat K-GAAP
+# tables also print hierarchy only through numbering (2.장기차입금 = 가.장기차입금 + 나.외화장기차입금),
+# so the sum is taken only when no hidden parent / child is suspected; otherwise the old pick stands.
+# short_term_debt / long_term_debt columns are not affected (net_debt overlay only).
+_R345_DEBT_SIBLING_SUM = True
+_R345_MAX_LINES = 8
+_R345_PREFIX_STYLES = (
+    ("roman", re.compile(r"^\s*[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+\s*[.．]")),
+    ("num_dot", re.compile(r"^\s*\d+\s*[.．]")),
+    ("paren_num", re.compile(r"^\s*[(（]\s*\d+\s*[)）]")),
+    ("num_paren", re.compile(r"^\s*\d+\s*[)）]")),
+    ("hangul_dot", re.compile(r"^\s*[가-하]\s*[.．]")),
+    ("paren_hangul", re.compile(r"^\s*[(（]\s*[가-하]\s*[)）]")),
+    ("hangul_paren", re.compile(r"^\s*[가-하]\s*[)）]")),
+    ("circled", re.compile(r"^\s*[①-⑳㉠-㉭]")),
+    ("letter_dot", re.compile(r"^\s*[a-zA-Z]\s*[.．]")),
+    ("bullet", re.compile(r"^\s*[·ㆍ•]")),
+)
+
+
+def _r345_prefix_style(label: str | None) -> str | None:
+    for name, rx in _R345_PREFIX_STYLES:
+        if rx.match(label or ""):
+            return name
+    return None
+
+
+def _r345_close(a: int, b: int) -> bool:
+    return abs(a - b) <= max(1000, _CONFLICT_EPS * max(abs(a), abs(b)))
+
+
+# a line printed in the asset part is not a borrowing even when its label is (00164973 2004 FY, a
+# securities company: 회사채 held under 단기매매증권 / 매도가능증권 / 만기보유증권, 9,925억, on bs.bond)
+_R345_ASSET_SECTION_RE = re.compile(r"자산|단기매매증권|매도가능증권|만기보유증권|유가증권|대출채권|예치금|금융상품")
+
+
+def _r345_in_asset_section(row: dict, asset_end: dict | None = None) -> bool:
+    # flat tables have no section_path (삼성생명 2007 Q1: 가.회사채 / 마.회사채 3조 under Ⅱ.유가증권):
+    # a line above the table's 자산총계 row is an asset
+    ro, end = row.get("row_order"), (asset_end or {}).get(row.get("table_seq"))
+    if ro is not None and end is not None and ro < end:
+        return True
+    sp = re.sub(r"\s+", "", row.get("section_path") or "")
+    return bool(sp) and "부채" not in sp and bool(_R345_ASSET_SECTION_RE.search(sp))
+
+
+def _sum_debt_siblings(rows: list[dict], debt_labels: frozenset = frozenset(),
+                       asset_end: dict | None = None) -> int | None:
+    """Sum of the separately printed lines of one debt canonical, or None (= keep _resolve's pick).
+
+    1 zero lines and asset-section lines out; 2 one value per line (norm label + section_path; amended wins, else give up);
+    3 one table only; 4 a line whose section_path names another debt line's label (this canonical's
+    candidates or `debt_labels`, any debt canonical) is its child, out — 0 when only children are left;
+    5 a line equal to the sum of all others is the total, used alone; 6 give up on hidden hierarchy:
+    equal values, a line equal to a partial sum of 2+ others, more than 8 lines, or mixed numbering
+    styles ('2.' with '가.', or unnumbered with numbered); 7 otherwise the sum."""
+    rows = [r for r in rows if r.get("value")]
+    if not rows:
+        return None
+    rows = [r for r in rows if not _r345_in_asset_section(r, asset_end)]
+    if not rows:
+        return 0          # only asset-side lines carried this label
+    lines: dict[tuple, list[dict]] = {}
+    for r in rows:
+        key = (_norm_label(r.get("label_raw")), _cosmetic_label(r.get("section_path")))
+        lines.setdefault(key, []).append(r)
+    picked = []          # (norm label, section_path segments, first row, value)
+    for (lab, _sp), group in lines.items():
+        vals = {abs(r["value"]) for r in group}
+        if len(vals) > 1:
+            vals = {abs(r["value"]) for r in group if r.get("amended")}
+            if len(vals) != 1:
+                return None
+        segs = {_norm_label(x) for x in (group[0].get("section_path") or "").split(">")}
+        picked.append((lab, segs, group[0], vals.pop()))
+    # a line printed under a non-zero debt line of the same name is a child too (00113234 2011 FY:
+    # 단기차입금 1,508억 > 단기차입금 65억 + 외화단기차입금 1,442억); header rows without a value are not in
+    # `labs`, so lines under a bare heading stay
+    labs = {p[0] for p in picked} | set(debt_labels)
+    labs.discard("")
+    kept = [p for p in picked if not labs & p[1]]
+    if not kept:
+        return 0          # every line is a child of a debt line counted on its own canonical
+    if len(kept) == 1:
+        return kept[0][3]
+    if len({p[2].get("table_seq") for p in kept}) > 1:
+        return None
+    vals = [p[3] for p in kept]
+    total = sum(vals)
+    for v in vals:
+        if _r345_close(v, total - v):
+            return v
+    if len(vals) > _R345_MAX_LINES or len(set(vals)) < len(vals):
+        return None
+    if len({_r345_prefix_style(p[2].get("label_raw")) for p in kept}) > 1:
+        return None
+    if len(vals) >= 3:
+        from itertools import combinations
+        for i, v in enumerate(vals):
+            others = vals[:i] + vals[i + 1:]
+            for k in range(2, len(others)):
+                if any(_r345_close(v, sum(c)) for c in combinations(others, k)):
+                    return None
+    return total
 
 
 # P1A(2026-09-03, docs/plans/std_v2_retirement_port_to_v3_2026-08-22.md §Phase 1, design
@@ -2285,6 +2414,7 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
                 "xbrl_local": xbrl_local,
                 "value_exact": value_exact,   # R212 — fractional EPS (NULL = value_won exact)
                 "eps_row": eps_row,           # R213 — the loader's EPS path emitted it
+                "row_order": row_order,       # R345 — asset / liability side in flat BS tables
             }
             if key not in merged:
                 # first occurrence. From the base filing → not amended. From a later
@@ -2629,7 +2759,8 @@ def _same_slot_restated_stale_ids(rows) -> set:
 
 def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
              fy: int | None = None, period: str | None = None, basis: str | None = None,
-             stale_reprint_table_seqs: dict[str, set] | None = None):
+             stale_reprint_table_seqs: dict[str, set] | None = None,
+             debt_rows: dict[str, list[dict]] | None = None):
     """{canonical: [candidate]} -> (confirmed {canonical: value}, conflicts {canonical: [candidate]}).
 
     Ported from build._resolve. Conflicts are HELD (not filled) and returned for
@@ -2986,6 +3117,9 @@ def _resolve(cands: dict[str, list[dict]], corp: str | None = None,
             else:
                 conflicts[c] = sorted(rows, key=lambda r: (r["value"] is None, r["value"]))
             continue
+        if debt_rows is not None and c in _DEBT_CANONICALS:
+            # R345: the rows left after every filter above, for net_debt's sibling sum
+            debt_rows[c] = list(rows)
         vals = {r["value"] for r in rows}
         if len(vals) == 1:
             confirmed[c] = next(iter(vals))
@@ -3858,6 +3992,7 @@ def _map_rows(rows, period: str, basis: str, statements,
             "node_role": r["node_role"], "section_path": r["section_path"],
             "table_seq": r["table_seq"], "is_cumulative": is_cum,
             "amended": r.get("amended", False), "amended_by": r.get("amended_by"),
+            "row_order": r.get("row_order"),
         })
 
     for r in rows:
@@ -4084,7 +4219,15 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
         "is": _stale_annual_reprint_table_seqs(session, corp, fy, period, stale_basis, statement="IS"),
         "cf": _stale_annual_reprint_table_seqs(session, corp, fy, period, stale_basis, statement="CF"),
     }
-    confirmed, conflicts = _resolve(cands, corp, fy, period, basis, stale_reprint_seqs)
+    debt_rows: dict[str, list[dict]] = {}
+    confirmed, conflicts = _resolve(cands, corp, fy, period, basis, stale_reprint_seqs,
+                                    debt_rows=debt_rows)
+    # R345: per BS table, the row of 자산총계 — a debt-labelled line above it is an asset
+    asset_end: dict = {}
+    for r in cands.get("bs.total_assets", []):
+        ro, ts = r.get("row_order"), r.get("table_seq")
+        if ro is not None and (ts not in asset_end or ro < asset_end[ts]):
+            asset_end[ts] = ro
     _resolve_ni_attribution(cands, confirmed, conflicts)
     _resolve_cfo_identity(confirmed, conflicts)
     _resolve_tax_identity(cands, confirmed, conflicts)
@@ -4239,7 +4382,8 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     eff_basis = (("separate" if basis == "consolidated" else "consolidated")
                  if prov["basis_fallback"] else basis)
     prov["da_source"] = _apply_enrichment(session, corp, fy, period, basis, confirmed, col,
-                                          eff_basis, cands)
+                                          eff_basis, cands, debt_rows=debt_rows,
+                                          asset_end=asset_end)
     if _R343_DEBT_FREE_NET_DEBT and merged is not None and rcept_by_stmt is None:
         nd = _debt_free_net_debt(session, merged, eff_basis, cands, conflicts, col)
         if nd is not None:
@@ -4266,7 +4410,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
 
 
 def _apply_enrichment(session, corp, fy, period, basis, confirmed, col, note_basis=None,
-                      cands=None):
+                      cands=None, debt_rows=None, asset_end=None):
     """Compute capex/fcf/net_debt/D&A/EBITDA/lease_liability/borrowings_proceeds/
     borrowings_repaid in-place on `col` by reusing the v2 standardize rules on the confirmed
     canonicals. Additive: only sets the new keys, never mutates the
@@ -4324,7 +4468,7 @@ def _apply_enrichment(session, corp, fy, period, basis, confirmed, col, note_bas
     # Scoped to this local ctx only — short_term_debt/long_term_debt are not in the
     # copy-back loop at the bottom of this function, so `col` (the persisted std
     # columns) never sees this overlay.
-    add_st, add_lt = _additive_debt_for_net_debt(canon, ctx.col)
+    add_st, add_lt = _additive_debt_for_net_debt(canon, ctx.col, debt_rows, asset_end)
     if add_st is not None:
         ctx.col["short_term_debt"] = add_st
     if add_lt is not None:

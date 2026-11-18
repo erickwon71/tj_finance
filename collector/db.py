@@ -47,6 +47,10 @@ def _set_verification_identity(dbapi_conn, _record) -> None:
 
 # R0-2 (2026-10-10): layer 3 reads report_lines through this view — printed rows with layer-3
 # corrections applied (value / fill / drop). Shared by the migration and the verification tests.
+# The fill branch casts its jsonb text to the report_lines column types: a UNION ALL column whose
+# type differs between branches blocks predicate pushdown, so `WHERE corp_code = ...` was applied
+# after scanning every company's rows (2026-11-19: 1.1 s -> 30 ms per call, std_v3 rebuild 3 min
+# per company). Every column type must stay equal to report_lines'.
 REPORT_LINES_L3_VIEW_SQL = """
         CREATE VIEW report_lines_l3 AS
         SELECT rl.id, rl.corp_code, rl.rcept_no, rl.report_fiscal_year, rl.report_fiscal_period,
@@ -60,11 +64,12 @@ REPORT_LINES_L3_VIEW_SQL = """
         LEFT JOIN layer3_cell_corrections c ON c.report_line_id = rl.id AND c.kind IN ('value', 'drop')
         WHERE c.kind IS DISTINCT FROM 'drop'
         UNION ALL
-        SELECT -c.id, d->>'corp_code', c.rcept_no, (d->>'report_fiscal_year')::smallint,
-               d->>'report_fiscal_period', c.statement, c.basis, d->>'section_path', c.row_order,
+        SELECT -c.id, (d->>'corp_code')::varchar(8), c.rcept_no, (d->>'report_fiscal_year')::smallint,
+               (d->>'report_fiscal_period')::varchar(5), c.statement, c.basis, d->>'section_path', c.row_order,
                (d->>'depth')::smallint, c.label_raw, c.col_index, (d->>'context_fiscal_year')::smallint,
                c.period_kind, c.is_cumulative, c.corrected_value, (d->>'adecimal')::smallint,
-               d->>'unit_source', d->>'source_ref', d->>'context_raw', d->>'node_role', c.table_seq,
+               (d->>'unit_source')::varchar(14), (d->>'source_ref')::varchar(180),
+               (d->>'context_raw')::varchar(255), (d->>'node_role')::varchar(1), c.table_seq,
                c.col_label, d->>'value_raw', d->>'header_hint', (d->>'value_exact')::numeric,
                NULL::bigint, c.rule
         FROM layer3_cell_corrections c CROSS JOIN LATERAL (SELECT c.row_data AS d) x
@@ -1627,6 +1632,22 @@ def _run_migrations() -> None:
         ALTER TABLE layer3_cell_corrections ADD COLUMN IF NOT EXISTS row_data JSONB;
         DROP VIEW IF EXISTS report_lines_l3;
         """ + REPORT_LINES_L3_VIEW_SQL + """
+        """),
+
+        ("2026_11_19_report_lines_l3_pushdown",
+         # Same rows and columns; the fill branch now casts to the report_lines types so that
+         # corp_code / report_fiscal_period predicates reach ix_report_lines_lookup. DROP + CREATE
+         # loses grants and comments, so both are restored here (comments = consumer_guide/comments.sql).
+         """
+        SET LOCAL lock_timeout = '120s';
+        DROP VIEW IF EXISTS report_lines_l3;
+        """ + REPORT_LINES_L3_VIEW_SQL + """
+        GRANT SELECT ON report_lines_l3 TO tjf_verify, tja_reader;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON report_lines_l3 TO tjf_fix;
+        COMMENT ON VIEW report_lines_l3 IS 'Layer 3 line items = layer 2 report_lines + tj_finance corrections. value_won = corrected, printed_value_won = as printed, correction_rule = reason. Pass rcept_no as = ANY(ARRAY(SELECT ... FROM filings WHERE is_final)); never join this view to filings (26 GB scan). Do not query report_lines.';
+        COMMENT ON COLUMN report_lines_l3.value_won IS 'Corrected value in KRW (equals printed_value_won when correction_rule is NULL).';
+        COMMENT ON COLUMN report_lines_l3.printed_value_won IS 'Value as printed in the report, KRW.';
+        COMMENT ON COLUMN report_lines_l3.correction_rule IS 'tj_finance rule id that changed the printed value; NULL = no correction.';
         """),
     ]
 

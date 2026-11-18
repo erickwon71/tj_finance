@@ -4,7 +4,10 @@
 # Run from anywhere, after the daily pipeline (collect_new.py) has finished.
 set -e
 cd /Users/taejin/Project/tj_finance
-if pgrep -f "scripts/collect_new.py" >/dev/null; then
+# The daily writes std_v3 only in step ④ (before its DQ gate); its later steps (biz/order/doc
+# sections, valuation refresh, curated scan, mirror) do not. ALLOW_DURING_DAILY=1 lets this run
+# while the daily is past step ④ (checked 2026-11-18 23:05: daily in ⑤ DQ gate since 03:49).
+if pgrep -f "scripts/collect_new.py" >/dev/null && [ "${ALLOW_DURING_DAILY:-0}" != "1" ]; then
   echo "daily pipeline (collect_new.py) is still running; run this after it finishes"; exit 1
 fi
 mkdir -p logs

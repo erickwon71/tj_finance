@@ -27,7 +27,7 @@ try:
 except ImportError:
     _HAS_JELLYFISH = False
 
-from account_maps.bs_accounts import BS_ACCOUNTS
+from account_maps.bs_accounts import BS_ACCOUNTS, BS_EXACT_ONLY_ACCOUNTS
 from account_maps.is_accounts import IS_ACCOUNTS
 from account_maps.cf_accounts import CF_ACCOUNTS
 from account_maps.note_accounts import NOTE_ACCOUNTS
@@ -116,6 +116,18 @@ class AccountMapper:
                     norm = normalize_account_name(alias)
                     if norm:
                         self._normalized[norm] = code
+
+        # R342 (2026-11-18): exact-only aliases join the exact/normalized indexes but not
+        # _aliases_by_code, so _fuzzy_match() never sees them and existing fuzzy results stay
+        # put. setdefault: a label already mapped by a regular alias keeps that mapping.
+        for code, aliases in BS_EXACT_ONLY_ACCOUNTS.items():
+            for alias in aliases:
+                norm = normalize_account_name(alias)
+                self._exact_by_prefix["bs"].setdefault(alias, code)
+                self._exact.setdefault(alias, code)
+                if norm:
+                    self._normalized_by_prefix["bs"].setdefault(norm, code)
+                    self._normalized.setdefault(norm, code)
 
         # Precomputed (alias, normalized_alias) pairs for _fuzzy_match().
         # _fuzzy_match() used to call normalize_account_name() over the WHOLE alias

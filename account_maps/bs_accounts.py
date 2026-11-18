@@ -546,3 +546,32 @@ BS_ACCOUNTS: dict[str, list[str]] = {
         "건설중인자산",     # CIP (note.capex_construction_in_progress와 중복 ok)
     ],
 }
+
+
+# R342 (2026-11-18, tj_asset request #6): aliases matched ONLY exactly / after normalization,
+# never offered to the fuzzy matcher. Adding these to BS_ACCOUNTS instead moved existing fuzzy
+# matches (measured over all 259,847 distinct BS labels: '유동성차입금' 1,300+ rows went from the
+# current portion to short-term debt, then pinning it pulled '유동 차입금' 4,385 rows the other
+# way). Labels here were all unknown before, so the only effect is unknown -> mapped.
+# They kept net_debt NULL for companies that do borrow (2025 FY consolidated: 24 rows).
+BS_EXACT_ONLY_ACCOUNTS: dict[str, list[str]] = {
+    "bs.short_term_debt": [
+        # DART '금융기관 차입금(사채 제외)' family, current side
+        "유동성금융기관차입금(사채제외)", "유동금융기관차입금(사채제외)",
+        "단기금융기관차입금(사채제외)",
+        # current borrowings + current portion printed as one line = the whole current
+        # borrowing total, like '유동차입금(사채포함)' above
+        "유동금융기관차입금및비유동금융기관차입금(사채제외)의유동성대체부분",
+        "단기금융기관차입금및장기금융기관차입금(사채제외)의유동성대체부분",
+        "차입금(유동)", "차입금등(유동)", "차입부채(유동)", "단기및유동성차입금",
+    ],
+    "bs.current_portion_lt_debt": [
+        "장기금융기관차입금(사채제외)의유동성대체부분",
+        "비유동성금융기관차입금의유동성대체부분(사채제외)",
+    ],
+    "bs.long_term_debt": [
+        "비유동성금융기관차입금(사채제외)", "비유동금융기관차입금(사채제외)",
+        "장기금융기관차입금(사채제외)", "장기금융기관차입금(사채제외)의비유동성부분",
+        "차입금(비유동)", "차입금등(비유동)", "차입부채(비유동)",
+    ],
+}

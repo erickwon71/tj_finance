@@ -4240,6 +4240,10 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
                  if prov["basis_fallback"] else basis)
     prov["da_source"] = _apply_enrichment(session, corp, fy, period, basis, confirmed, col,
                                           eff_basis, cands)
+    if _R343_DEBT_FREE_NET_DEBT and merged is not None and rcept_by_stmt is None:
+        nd = _debt_free_net_debt(session, merged, eff_basis, cands, conflicts, col)
+        if nd is not None:
+            col["net_debt"] = nd
     # extended_financials v3 (2026-09-01, docs/plans/extended_financials_v3_label_based_
     # design_2026-09-01.md §3-1): `confirmed` already holds every canonical _map_rows()
     # mapped and _resolve() picked a single value for — not just the DIRECT_MAP ~40 that
@@ -4354,6 +4358,57 @@ _CF_BODY_DA_CANON = ("cf.depreciation", "cf.amortization", "cf.da_total",
                      "cf.rou_depreciation", "cf.roa_depreciation")
 _IS_BODY_DA_CANON = ("is.depreciation", "is.amortization", "is.rou_depreciation",
                      "is.roa_depreciation")
+
+
+# R343 (2026-11-18, user decision for tj_asset request #6): a company with no borrowings has no
+# debt part to sum, so rule_derive_net_debt left net_debt NULL — indistinguishable from "not
+# parsed". When debt-free is confirmed by two independent sources, net_debt = 0 - cash.
+# short_term_debt / long_term_debt stay NULL (printed lines only, user decision; no schema change).
+# The note check is required, not optional: borrowings can sit inside a catch-all BS line with no
+# debt word in its label (한라캐스트 2025 FY: 기타유동금융부채 34.8B holds 단기차입금 4.77B and
+# 유동성장기차입금; only the notes show it). Measured on 2025 FY consolidated DQ<3: 368 NULL rows
+# pass the BS test, 157 also pass the note test; the other 211 stay NULL, including companies
+# that repaid during the year (세중: 기초 5B, 상환 -5B) — conservative by design.
+_R343_DEBT_FREE_NET_DEBT = True
+_R343_BS_DEBT_RE = re.compile(r"(차\s*입|사\s*채|borrow)", re.IGNORECASE)
+_R343_BS_NOT_DEBT_RE = re.compile(r"(대\s*여|이\s*자|리\s*스)")
+_R343_NOTE_SQL = text(r"""
+    SELECT count(*) AS n_rows,
+           count(*) FILTER (WHERE coalesce(value_won, 0) <> 0 AND (
+                (label_raw ~ '차\s*입' AND label_raw !~ '(대\s*여|이\s*자|한\s*도|약\s*정|원\s*료|유\s*가\s*증\s*권)')
+             OR (label_raw ~ '사\s*채' AND label_raw !~ '(이\s*자|제\s*외|발\s*행\s*비|상\s*환\s*손\s*익|사\s*채\s*권)')
+             OR label_raw ~* 'borrow')) AS n_debt
+    FROM note_lines WHERE rcept_no = ANY(:rc)
+""")
+_DEBT_CANONICALS = frozenset(_V3_ST_DEBT_PARTS) | frozenset(_V3_LT_DEBT_PARTS)
+
+
+def _debt_free_net_debt(session, merged: list[dict], bs_basis: str, cands: dict,
+                        conflicts: dict, col: dict) -> int | None:
+    """-cash when the period is confirmed debt-free, else None. All must hold:
+    net_debt not derived, cash and total_liabilities present, BS lines exist for the basis the
+    row was built from, no debt canonical among candidates (held ones included), no BS line whose
+    label names borrowings or bonds with a non-zero value, the filing's notes are loaded, and no
+    note line naming borrowings or bonds carries a non-zero value (any column, any basis)."""
+    if col.get("net_debt") is not None or col.get("cash") is None or col.get("total_liabilities") is None:
+        return None
+    bs = [r for r in merged if r["statement"] == "BS" and r["basis"] == bs_basis]
+    if not bs:
+        return None
+    if any(cands.get(c) for c in _DEBT_CANONICALS) or any(c in conflicts for c in _DEBT_CANONICALS):
+        return None
+    for r in bs:
+        lab = r.get("label_raw") or ""
+        if (r.get("value_won") and _R343_BS_DEBT_RE.search(lab)
+                and not _R343_BS_NOT_DEBT_RE.search(lab)):
+            return None
+    rcepts = sorted({r["source_rcept"] for r in bs if r.get("source_rcept")})
+    if not rcepts:
+        return None
+    n_rows, n_debt = session.execute(_R343_NOTE_SQL, {"rc": rcepts}).one()
+    if not n_rows or n_debt:
+        return None
+    return -col["cash"]
 
 
 def _has_cf_body_da(canon: dict) -> bool:

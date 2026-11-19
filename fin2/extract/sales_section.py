@@ -58,6 +58,20 @@ _SALES_HEADING_PREFIX_RE = re.compile(
     r"(?:매출\s*실적|판매\s*실적|매출\s*현황)")
 _SALES_HEAD_WINDOW = 50
 
+# R352: numbered sub-headings whose whole remaining text names the sales part of the section
+# ("가. 매출", "가. 매출에 관한 사항", "가. 매출사항", "4.1. 매출 개요", "1) 매출"). Matched only
+# when a numbering prefix is present and the rest is exactly one of these (whitespace-stripped),
+# so "라. 주요매출처", "2.7 매출채권" or a bare "매출" table-label paragraph never match.
+_SALES_SUBHEADING_NUM_RE = re.compile(
+    r"^\s*(?:[\(（]\s*\d+\s*[\)）]|\d+(?:\s*\.\s*\d+)*\s*[.)]|[가-힣](?:\s*-\s*\d+)?\s*[.)]|[①-⑳])\s*(.+)$",
+    re.S)
+_SALES_SUBHEADING_EXACT = frozenset({
+    "매출", "매출상황", "매출사항", "매출에관한사항", "매출개요", "주요매출등의현황",
+})
+# R352: the section TITLE itself ("4. 매출 및 수주상황", older "4. 매출에 관한 사항"). Many filings put
+# the sales table straight under it with no sub-heading; the TITLE opens a window like a sub-heading.
+_SALES_SECTION_TITLE_KW = ("매출및수주상황", "매출에관한사항")
+
 # 수주상황표 판별 — 매출 헤딩 창에 딸려 들어오는 order backlog 표(B1, 비범위)를 배제.
 _ORDER_KW = ("수주처", "수주일자", "수주총액", "수주잔고", "납기")
 
@@ -180,28 +194,67 @@ def _is_sales_heading(text: str) -> bool:
         return False
     if len(t) <= _HEADING_MAX_LEN:
         n = t.replace(" ", "")
-        return any(k in n for k in _SALES_HEADING_KW)
-    if _SALES_HEADING_PREFIX_RE.match(t):
-        return True
-    return False
+        return any(k in n for k in _SALES_HEADING_KW) or _is_sales_subheading(t)
+    return bool(_SALES_HEADING_PREFIX_RE.match(t))
+
+
+def _is_sales_subheading(text: str) -> bool:
+    """R352: numbered sub-heading naming the sales part ("가. 매출에 관한 사항", "1) 매출")."""
+    t = text.strip()
+    if not t or len(t) > _HEADING_MAX_LEN:
+        return False
+    m = _SALES_SUBHEADING_NUM_RE.match(t)
+    return bool(m) and re.sub(r"\s+", "", m.group(1)) in _SALES_SUBHEADING_EXACT
+
+
+def _is_sales_section_title(el: etree._Element) -> bool:
+    """R352: the '사업의 내용' section TITLE for sales ("4. 매출 및 수주상황")."""
+    if _tag(el) != "TITLE":
+        return False
+    n = re.sub(r"\s+", "", _text(el))
+    return len(n) <= _HEADING_MAX_LEN and any(k in n for k in _SALES_SECTION_TITLE_KW)
+
+
+# R352: header words of order tables that sit in the sales section. Customer tables ("매출처",
+# "주요매출처 | 매출액") stay sales: the catalog does not read most of them (A/B 2026-11-19: 524 tables).
+_NOT_SALES_HEADER_KW = _ORDER_KW + ("발주처", "공사명", "계약잔액")
+
+
+def _is_order_table(grid: list[list[str]]) -> bool:
+    head = "".join(c for row in grid[:3] for c in row).replace(" ", "")
+    return any(k in head for k in _NOT_SALES_HEADER_KW)
 
 
 def find_sales_subsections(root: etree._Element, max_tables_per_marker: int = 3) -> list[SalesTable]:
     """매출 소제목을 문서 순서로 찾아, 각 소제목 다음(다음 소제목/무관 순번소제목 전까지) TABLE 을
-    grid 로 변환. biz_section.find_biz_subsections 의 창 절단·중첩표·1x1 흡수 로직을 그대로 모방."""
+    grid 로 변환. biz_section.find_biz_subsections 의 창 절단·중첩표·1x1 흡수 로직을 그대로 모방.
+
+    R352: the section TITLE ("4. 매출 및 수주상황") is a marker too, so a sales table printed right
+    under it with no sub-heading is found; windows stay disjoint because the next marker (a sales
+    sub-heading) ends the TITLE window."""
     elements = list(root.iter())
     marker_positions: list[int] = [
         i for i, el in enumerate(elements)
-        if _tag(el) in ("SPAN", "P") and _is_sales_heading(_text(el))
+        if (_tag(el) in ("SPAN", "P") and _is_sales_heading(_text(el))) or _is_sales_section_title(el)
     ]
 
     results: list[SalesTable] = []
     for idx, pos in enumerate(marker_positions):
         next_pos = marker_positions[idx + 1] if idx + 1 < len(marker_positions) else len(elements)
+        # R352: elements inside the marker itself (a fused "가. 매출 상황(1) 매출실적" <P> holding a
+        # "가. 매출 상황" <SPAN>) are the heading's own text, not the next numbered sub-heading.
+        own = {id(x) for x in elements[pos].iter()}
 
         # 우리 키워드가 없는 순번 소제목("나. 판매경로 등" 등)을 만나면 창을 잘라낸다 — 다음 절로
         # 넘어갔다는 뜻(S-Oil 실측: '나. 판매경로' 뒤 수주잔고표 오염 방지).
         for j in range(pos + 1, next_pos):
+            if id(elements[j]) in own:
+                continue
+            # R352: a section TITLE ends the window — tables past it belong to another section
+            # (measured: an R&D table and a liquidity table were read as sales without this).
+            if _tag(elements[j]) == "TITLE":
+                next_pos = j
+                break
             t = _text(elements[j])
             if (_tag(elements[j]) in ("SPAN", "P") and len(t) <= _HEADING_MAX_LEN
                     and _NUMBERED_HEADING_RE.match(t) and not _is_sales_heading(t)):
@@ -231,6 +284,11 @@ def find_sales_subsections(root: etree._Element, max_tables_per_marker: int = 3)
             has_number = any(_is_clean_number(c) for row in grid for c in row)
             if not flat or (len(grid) <= 1 and not has_number):
                 narrative_parts.extend(flat)
+                continue
+            # R352: order tables in the window are left for the order-backlog and
+            # catalog readers (the sales mapper drops them anyway, but claiming them here hid
+            # them from the catalog's seen-grid de-duplication).
+            if _is_order_table(grid):
                 continue
             results.append(SalesTable(narrative=" ".join(narrative_parts), grid=grid))
 

@@ -61,6 +61,7 @@ from fin2.extract.biz_section import (
     _text,
     expand_table_grid,
 )
+from fin2.extract.sales_section import sales_value_columns, sales_money_unit
 from parser.xml.section_detector import normalize_dart_section_title
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -430,6 +431,14 @@ def map_catalog_table(ct: CaptionedTable, metric: str,
         if any(k in col_header(c) for k in _UNIT_HEADER_KW):
             unit_col = c
             break
+
+    # R349: metric 'sales' rows are sales amounts only — the same value-column filter as
+    # sales_section (share / profit / asset columns, quantity next to amount columns). The other
+    # catalog metrics stay lossless. The full grid remains in biz_section_tables.
+    if metric == "sales":
+        val_cols = sales_value_columns(val_cols, {c: col_header(c) for c in val_cols})
+        if not val_cols:
+            return []
     label_cols = [c for c in dim_cols if c != unit_col]
 
     # 3) Financial-statement line-item guard — reject statements/notes re-posted inside the
@@ -502,6 +511,9 @@ def map_catalog_table(ct: CaptionedTable, metric: str,
         return label, year
 
     nar_unit = _catalog_unit(ct.narrative, ct.caption_raw, grid)
+    if metric == "sales" and nar_unit is None:
+        nar_unit = sales_money_unit(ct.narrative, ct.caption_raw,
+                                    " ".join(" ".join(r) for r in grid[:3]))
     rows: list[CatalogRow] = []
     for drow in data_rows:
         labels: list[str] = []
@@ -523,7 +535,7 @@ def map_catalog_table(ct: CaptionedTable, metric: str,
         row_unit = drow[unit_col].strip() if unit_col is not None else None
         for c in val_cols:
             val, is_ratio, inline_unit = _parse_value(drow[c])
-            if val is None:
+            if val is None or (is_ratio and metric == "sales"):
                 continue
             plabel, pyear = col_period(c)
             unit = "%" if is_ratio else (row_unit or inline_unit or nar_unit)

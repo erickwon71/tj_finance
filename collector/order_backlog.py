@@ -25,7 +25,7 @@ from fin2.layer2.biz_raw_tables import ensure_biz_raw_tables
 # 수주 데이터가 **전부** 사라진다(실측 2026-08-01: 00147860·00127936 두 기업이 이 경로로 실패).
 # 행을 버리지 않고 **문제 필드만 NULL** 로 낮춘다 — 같은 행의 멀쩡한 값은 살린다.
 _BIGINT_MAX = 9_223_372_036_854_775_807
-_AMOUNT_FIELDS = ("backlog_amt", "new_orders", "completed")
+_AMOUNT_FIELDS = ("backlog_amt", "new_orders", "completed", "opening_backlog", "contract_total")
 
 
 def _drop_out_of_range(row: dict) -> int:
@@ -81,6 +81,8 @@ def sync_order_backlog_corp(session, corp_code: str, year: int | None = None,
                         "corp_code": corp_code, "fiscal_year": f.fiscal_year,
                         "category": r.category, "backlog_amt": r.backlog_amt,
                         "new_orders": r.new_orders, "completed": r.completed,
+                        "opening_backlog": r.opening_backlog, "contract_total": r.contract_total,
+                        "layout": r.layout,
                         "unit": (r.unit or "")[:20] or None, "source": "html_parse",
                     })
             parsed_any = True

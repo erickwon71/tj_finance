@@ -60,3 +60,20 @@ def test_plan_rows_existing_dates_only_and_changed_only():
 def test_halt_days_are_excluded_from_detection_sql():
     from analyzer.adjusted_history import _STALE_SQL
     assert "COALESCE(volume, 1) > 0" in _STALE_SQL
+
+
+def test_halt_row_takes_source_close_r351():
+    # 047400 2026-10-27: halt row stored on the old basis (746), source prices it at 3,730
+    old = {"open": None, "high": None, "low": None, "close": 746, "close_raw": 746}
+    out = rebase_after_market_row(old, {"open": 0, "high": 0, "low": 0, "close": 3730})
+    assert out == {"open": None, "high": None, "low": None, "close": 3730}
+
+
+def test_halt_row_without_source_close_is_kept_r351():
+    old = {"open": None, "high": None, "low": None, "close": 746, "close_raw": 746}
+    assert rebase_after_market_row(old, {"close": None}) is None
+
+
+def test_halt_detection_sql_looks_at_halt_days_r351():
+    from analyzer.adjusted_history import _HALT_SQL
+    assert "volume = 0" in _HALT_SQL

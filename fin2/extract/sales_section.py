@@ -39,6 +39,7 @@ from fin2.extract.biz_section import (
     _PERIOD_GI_RE,
     _PERIOD_YEAR_RE,
     _is_clean_number,
+    _is_period_header_cell,
     _load_root,
     _narrative_unit,
     _parse_value,
@@ -63,6 +64,62 @@ _ORDER_KW = ("수주처", "수주일자", "수주총액", "수주잔고", "납�
 # 매출표 단위 추출 — _narrative_unit(혼합단위 거부)이 놓치는 "(단위: 백만원, %)" 처럼 콤마 뒤에
 # %가 붙은 흔한 표기를 회수(첫 금액 단위 토큰 채택). B4 공유 함수를 건드리지 않고 매출 전용 보강.
 _UNIT_TOKEN_RE = re.compile(r"단위\s*[:：]?\s*[\(（]?\s*(백만원|십억원|억원|천만원|천원|만원|조원|원)")
+# R349: a money unit anywhere inside the unit caption ("(단위 : TON, 백만원)", "(단위: 천C/S, 백만원)").
+# "원/kg" style price units are skipped by the look-ahead.
+_UNIT_ANY_MONEY_RE = re.compile(
+    r"단위\s*[:：]?[^)\]）]*?(백만원|십억원|억원|천만원|천원|만원|조원|원)(?!\s*/)")
+
+# R349: value columns that are not sales amounts. Matched on the whitespace-stripped header with
+# unit captions removed. Quantity columns are dropped only when the table also has amount columns.
+_UNIT_CAPTION_RE = re.compile(r"[\(（]\s*단위[^)）]*[\)）]")
+_RATIO_HEAD_RE = re.compile(r"비중|비율|구성비|점유율|%|증감률|성장률")
+_NON_SALES_HEAD_RE = re.compile(r"이익|손익|손실|자산|부채|자본")
+_QTY_HEAD_RE = re.compile(r"수량|중량|물량|판매량|생산량")
+_AMOUNT_HEAD_RE = re.compile(r"금액|매출액")
+# R349: "제58(당)기", "제 58 (전) 기" — the shared _PERIOD_GI_RE does not allow the (당)/(전) note.
+_SALES_GI_RE = re.compile(r"(?:제\s*)?(?<!\d)(\d{1,3})\s*(?:[\(（]\s*(?:당|전|전전)\s*[\)）])?\s*기")
+# R349: period header variants that _is_period_header_cell does not cover but _is_clean_number
+# accepts ("58기", "53기 연간", "2025년(당기)", "2025연도 당기", "2025년도말", "2025년 4분기").
+# Matched on the whitespace-stripped cell.
+_SALES_PERIOD_CELL_RES = (
+    re.compile(r"(?:제)?\d{1,3}기(?:연간|당기|전기|전전기|말)?(?:[\(（][^)）]*[\)）])?"),
+    re.compile(r"(?:19|20)\d{2}(?:년|연)?도?(?:말|연간|\d분기|상반기|하반기)?"
+               r"(?:[\(（][^)）]*[\)）])?(?:당기|전기|전전기|연간|말)?"),
+)
+_DASH_CELLS = frozenset(("-", "－", "—", "―", "─", "N/A", "n/a"))
+_QUARTER_IN_HEAD_RE = re.compile(r"(\d)\s*분기")
+
+
+def _is_sales_period_cell(c: str) -> bool:
+    if _is_period_header_cell(c):
+        return True
+    t = re.sub(r"\s+", "", c or "")
+    return bool(t) and any(r.fullmatch(t) for r in _SALES_PERIOD_CELL_RES)
+# Checked in this order ("전전기" contains "전기").
+_REL_PERIOD_KW = (("전전기", 2), ("전기", 1), ("당기", 0), ("당반기", 0), ("당분기", 0))
+
+
+def sales_value_columns(val_cols: list[int], headers: dict[int, str]) -> list[int]:
+    """R349: keep only sales-amount value columns, judged on each column's header text.
+
+    Dropped: share columns (비중/비율/% — text in parentheses ignored, so "매출액(비율)" stays),
+    profit / asset columns, and quantity columns when the table also has amount columns."""
+    heads = {c: _UNIT_CAPTION_RE.sub("", re.sub(r"\s+", "", headers.get(c, ""))) for c in val_cols}
+    has_amount = any(_AMOUNT_HEAD_RE.search(h) for h in heads.values())
+    return [c for c in val_cols
+            if not (_RATIO_HEAD_RE.search(re.sub(r"[\(（][^)）]*[\)）]", "", heads[c]))
+                    or _NON_SALES_HEAD_RE.search(heads[c])
+                    or (has_amount and _QTY_HEAD_RE.search(heads[c])
+                        and not _AMOUNT_HEAD_RE.search(heads[c])))]
+
+
+def sales_money_unit(*texts: str) -> Optional[str]:
+    """R349: the money unit inside a mixed unit caption ("(단위 : TON, 백만원)" -> 백만원)."""
+    for t in texts:
+        m = _UNIT_ANY_MONEY_RE.search(t or "")
+        if m:
+            return m.group(1)
+    return None
 
 
 def _sales_unit(narrative: str, extra_text: str = "") -> Optional[str]:
@@ -75,7 +132,10 @@ def _sales_unit(narrative: str, extra_text: str = "") -> Optional[str]:
     if m:
         return m.group(1)
     m = _UNIT_TOKEN_RE.search(extra_text or "")
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    # R349: mixed captions — take the money unit (quantity columns are not loaded as sales)
+    return sales_money_unit(narrative, extra_text)
 
 
 # 채널 정규화 — 원본 라벨을 수출/내수/합계/기타 4종으로 축약(channel VARCHAR(12)).
@@ -191,7 +251,11 @@ def map_sales_table(st: SalesTable, fiscal_year: int) -> list[SalesMetricRow]:
     grid = [r + [""] * (ncols - len(r)) for r in grid]
 
     # 1) 헤더/데이터행 분리 — 첫 '깨끗한 수치' 행부터 데이터.
-    first_data = next((i for i, r in enumerate(grid) if any(_is_clean_number(c) for c in r)), None)
+    # R348: T7 guard (docs/PARSING_RULES.md appendix A) — a year-only header cell ("2025년") is a
+    # clean number too; without the guard the header row became the first data row and the whole
+    # table was dropped (실측 티앤엘 FY2025 20260318001498: "2025년" / "(제28기)" two-row header).
+    first_data = next((i for i, r in enumerate(grid)
+                       if any(_is_clean_number(c) and not _is_sales_period_cell(c) for c in r)), None)
     if first_data is None or first_data == 0:
         return []
     header_rows, data_rows = grid[:first_data], grid[first_data:]
@@ -205,9 +269,16 @@ def map_sales_table(st: SalesTable, fiscal_year: int) -> list[SalesMetricRow]:
     dim_cols, val_cols = [], []
     for c in range(ncols):
         col = [data_rows[r][c].strip() for r in range(len(data_rows))]
-        nonempty = [v for v in col if v]
+        # R349: "-" (nothing sold) counts as blank, as in biz_catalog — a sparse amount column
+        # used to become a label column (실측 테라사이언스·알지노믹스 FY2025: 0 rows).
+        nonempty = [v for v in col if v and v not in _DASH_CELLS]
         clean = sum(1 for v in nonempty if _is_clean_number(v))
         (val_cols if nonempty and clean >= len(nonempty) / 2 else dim_cols).append(c)
+    # R349: keep only sales-amount value columns — ratio (비중/비율), profit/asset columns and,
+    # when amount columns exist, quantity columns (중량/수량) are not sales and used to be loaded
+    # with the same period label as the amount (unit NULL, period_year NULL).
+    val_cols = sales_value_columns(val_cols, {c: " ".join(
+        header_rows[r][c] for r in range(len(header_rows))) for c in val_cols})
     if not val_cols:
         return []
 
@@ -227,7 +298,7 @@ def map_sales_table(st: SalesTable, fiscal_year: int) -> list[SalesMetricRow]:
     max_gi = None
     for r in header_rows:
         for c in val_cols:
-            gm = _PERIOD_GI_RE.search(r[c])
+            gm = _SALES_GI_RE.search(r[c])
             if gm:
                 max_gi = max(max_gi or 0, int(gm.group(1)))
 
@@ -235,7 +306,7 @@ def map_sales_table(st: SalesTable, fiscal_year: int) -> list[SalesMetricRow]:
         label = year = None
         for r in header_rows:
             cell = r[c]
-            gm = _PERIOD_GI_RE.search(cell)
+            gm = _SALES_GI_RE.search(cell)
             ym = _PERIOD_YEAR_RE.search(cell)
             if gm and label is None:
                 label = f"제{gm.group(1)}기"
@@ -247,6 +318,17 @@ def map_sales_table(st: SalesTable, fiscal_year: int) -> list[SalesMetricRow]:
                 year = int(ym.group(0))
                 if label is None:
                     label = f"{ym.group(0)}년"
+                    qm = _QUARTER_IN_HEAD_RE.search(cell)
+                    if qm:  # "2025년 4분기" next to "2025년" — keep them apart (R349)
+                        label = f"{label} {qm.group(1)}분기"
+        if year is None:
+            # R349: relative period headers ("당기" / "전기" / "전전기", "당반기" …)
+            head = re.sub(r"\s+", "", " ".join(r[c] for r in header_rows))
+            for kw, back in _REL_PERIOD_KW:
+                if kw in head:
+                    year = fiscal_year - back
+                    label = label or kw
+                    break
         return label, year
 
     def col_channel_from_header(c: int) -> Optional[str]:

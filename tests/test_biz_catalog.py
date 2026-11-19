@@ -401,4 +401,6 @@ class TestSalesCaptionGap:
         assert rows, "'연도' 표기를 못 읽어 표를 버리면 안 된다"
         got = {(r.segment, r.period_label): r.value for r in rows}
         assert got[("상품", "2024년 매출액")] == 22179568.0
-        assert got[("상품", "2024년 비율")] == 49.9
+        # R349 (2026-11-19): metric 'sales' keeps sales amounts only — the share column is not
+        # loaded (the lossless grid stays in biz_section_tables).
+        assert ("상품", "2024년 비율") not in got

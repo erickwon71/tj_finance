@@ -416,3 +416,22 @@ tests/ fin2/tests/` 전체 1059 passed(기존에 알려진 무관 실패
 > **실측** 00164788: 첫 실행 18.1초(지문 없음 → 94행 재감사·찍음), 두 번째 0.0초, 한 행 지문을 바꾸면 그 행만 1.1초.
 > **스키마** 마이그레이션 `2026_11_19_face_audit_input_fp`(`ALTER TABLE face_audit ADD COLUMN input_fp TEXT`).
 > **테스트** `tests/test_collect_new_dq_gate_incremental.py`.
+
+## R350. 데일리 실행 기록은 끝나는 방식과 관계없이 닫힌다 — 예외·SIGTERM·Ctrl-C 는 failed/killed, 죽은 실행은 다음 실행이 abandoned. 소비자는 `load_status` 뷰로 적재 신선도를 읽는다 (2026-11-19, 적용 계층: 운영, 사용자 결정: 새 테이블 대신 뷰)
+
+> **상태** 유효 · **적용 계층** 운영
+>
+> **규칙** `scripts/collect_new.py` — `_start_run` 이 `summary.pid` 를 남기고, 시작 전에 `status='running'` 인데 프로세스가 없는 이전 행을 `abandoned` 로 바꾼다(pid 없는 R350 이전 행은 다른 데일리 프로세스가 살아 있으면 건드리지 않음). `__main__` 이 SIGTERM 을 SystemExit 로 바꾸고, `main()` 이 예외·종료 신호로 끝나면 열린 실행을 `failed`(예외)/`killed`(SIGTERM·Ctrl-C) 로 닫는다. SIGKILL 은 잡을 수 없어 다음 실행이 abandoned 로 정리한다. 워터마크는 여전히 `success` 만 전진.
+> **뷰** `load_status`(`scripts/qa/r350_load_status_view.sql`, `tja_reader` 에 SELECT): 항목별 `last_run_at`·`last_status`·`last_success_at`·`data_through`·`version`·`stale`. 항목 = `pipeline:<mode>`(최근 30일 안에 돈 모드만; data_through = 마지막 성공 실행의 window_end), `filings`(max filed_at), `capital_events`(max filed_at·fetched_at), `stock_prices`(005930 의 max trade_date), `consumer_guide`(guide_version·updated_at). `stale` = 4일 넘게 새 데이터 없음(긴 연휴엔 참이 될 수 있음).
+> **왜** tj_asset 요청 5(2026-11-18): 무상증자 정보를 `capital_events` 에서만 읽게 되어 적재가 멈추면 시가총액 보정이 빠지는데 읽는 쪽이 알 수 없음. `pipeline_runs` 는 이미 있었으나 11-16 실행(id 60)이 `running`·`finished_at` 없음으로 남아 믿을 수 없었다(시작만 기록, 종료 경로가 정상 return 뿐). id 60 은 수동으로 abandoned 처리.
+> **스키마** 새 테이블 없음(사용자 결정 2026-11-19). 뷰 하나 추가, `load_status`·`pipeline_runs` 를 `docs/consumer_guide/grants.sql` 허용 목록에 넣음(목록 밖은 가이드 적재 때 REVOKE 되므로 GRANT 만으로는 사라진다 — 실제로 한 번 사라짐). 사용법은 가이드 s01.
+
+## R351. 거래정지일 행도 수정주가 기준을 맞춘다 — 정지일 계수가 앞뒤와 다르면 그 종목을 다시 받고, 정지일은 원천 종가를 그대로 쓴다 (2026-11-19, 적용 계층: 운영)
+
+> **상태** 유효 · **적용 계층** 운영(시세 수집)
+>
+> **규칙** `analyzer/adjusted_history.py` — ① `halt_boundaries`(`_HALT_SQL`): 거래량 0 인 날의 계수 `close_price/close_raw` 가 앞이나 뒤 행과 `max(1%, 1.5/종가)` 넘게 다르면 경계. 야간 ①-c `nightly` 가 R338 의 거래일 경계와 합쳐 다시 받을 종목을 고른다(최근 20일, 하루 최대 30). ② `rebase_after_market_row`: 시가·고가·저가가 없는 행(정지일)은 체결이 없어 애프터마켓도 없으므로 원천 종가가 곧 현재 기준의 기준가 → 그 값을 쓴다. ③ `refetch_stock` 은 거래일 경계 또는 정지일 경계가 늘면 되돌린다.
+> **왜** tj_asset 요청 4: 최근 400일 하루 ±30.5% 변동 101건 중 81건(46종목)이 정지일 미보정 — 기업행동 전 정지일 행이 옛 기준(수정종가 = 원래 종가)으로 남고 앞뒤 거래일만 새 기준(047400 2026-10-27..30: 746, 앞뒤 3,730 → 차트에 ×0.2 / ×5). R338 은 병합 정지 기간의 거짓 경계를 피하려고 정지일을 판정에서 빼서 이 행들이 다시 받기 대상이 되지 않았고, 다시 받아도 2026-09-14 이후 행은 시·고·저 비율로만 재기준해서 값이 없는 정지일 행은 그대로 남았다. 원천(네이버)은 정지일도 현재 기준으로 준다(047400 10-27: 3,730).
+> **나머지 20건** 19건은 원래 종가도 같이 뛴 날(실제 가격 변동 또는 원천 쪽 경계 — R338 "원천 쪽 경계(고치지 않음)"), 1건은 R338 거래일 경계(472850, 야간 ①-c 대상).
+> **분류 쿼리** `scripts/qa/tj_asset_price_breaks_classify.sql`. **일회성 소급** `scripts/backfill_halt_rebase_2026-11-19.py`(`--dry-run` 먼저).
+> **테스트** `tests/test_adjusted_history.py`(정지일 원천 종가, 원천 종가 없으면 유지, 정지일 감지 SQL).

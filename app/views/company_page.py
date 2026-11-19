@@ -683,11 +683,21 @@ def _order_backlog_panel(corp_code: str) -> None:
                        f"({len(pts)}개 연도)")
         render_backlog_trend(pts, trend.get("unit"), key="backlog_trend")
 
-    df = pd.DataFrame([{
-        "구분": r["category"] or "전체", "수주총액": r["new_orders"],
-        "기납품액": r["completed"], "수주잔고": r["backlog_amt"],
-    } for r in rows])
-    render_dataframe(df, num_cols=("수주총액", "기납품액", "수주잔고"))
+    # R347: cumulative tables print 수주총액|기납품(누적)|잔고, rollforward tables print
+    # 기초잔고|당기 수주|당기 매출인식|기말잔고 — show the columns of the table's own shape.
+    if any(r.get("layout") == "rollforward" for r in rows):
+        df = pd.DataFrame([{
+            "구분": r["category"] or "전체", "기초잔고": r["opening_backlog"],
+            "당기수주": r["new_orders"], "매출인식": r["completed"], "기말잔고": r["backlog_amt"],
+        } for r in rows])
+        num_cols = ("기초잔고", "당기수주", "매출인식", "기말잔고")
+    else:
+        df = pd.DataFrame([{
+            "구분": r["category"] or "전체", "수주총액": r["contract_total"],
+            "기납품액": r["completed"], "수주잔고": r["backlog_amt"],
+        } for r in rows])
+        num_cols = ("수주총액", "기납품액", "수주잔고")
+    render_dataframe(df, num_cols=num_cols)
     st.caption("출처: DART 사업보고서 '수주상황'/'수주계약 현황' 본문표. 단위는 원문 그대로(보통 "
                "백만원). 프로젝트별 상세 공시는 회사 전체 합계로 축약했습니다.")
 

@@ -872,9 +872,16 @@ class OrderBacklog(Base):
     corp_code    = Column(String(8),    nullable=False,   index=True)
     fiscal_year  = Column(SmallInteger, nullable=False)
     category     = Column(String(150),  nullable=True)   # 수주 분류 (품목/계약처)
-    backlog_amt  = Column(BigInteger,   nullable=True)   # 수주잔고 (원)
-    new_orders   = Column(BigInteger,   nullable=True)   # 당기 신규수주
-    completed    = Column(BigInteger,   nullable=True)   # 당기 완성/납품
+    backlog_amt  = Column(BigInteger,   nullable=True)   # 수주잔고(기말) — 원문 단위(unit)
+    # R347(2026-11-19): meanings depend on layout. cumulative = 수주총액|기납품(누적)|잔고,
+    # rollforward = 기초잔고|당기 수주|당기 매출인식|기말잔고.
+    new_orders   = Column(BigInteger,   nullable=True,
+                          comment="R347 당기 수주 증가(rollforward 만; 신규+변경 등 증감 합). cumulative 표는 NULL")
+    completed    = Column(BigInteger,   nullable=True,
+                          comment="R347 cumulative=누적 기납품, rollforward=당기 매출인식(양수)")
+    opening_backlog = Column(BigInteger, nullable=True, comment="R347 기초 수주잔고(rollforward 만)")
+    contract_total  = Column(BigInteger, nullable=True, comment="R347 수주총액(누적 계약금액, cumulative 만)")
+    layout       = Column(String(12),   nullable=True, comment="R347 cumulative / rollforward")
     unit         = Column(String(20),   nullable=True,
                           comment="원래 공시 단위 (억원/백만원 등)")
     source       = Column(String(20),   nullable=True,
@@ -1393,6 +1400,9 @@ class OrderBacklogPeriodic(Base):
     backlog_amt   = Column(BigInteger,   nullable=True)
     new_orders    = Column(BigInteger,   nullable=True)
     completed     = Column(BigInteger,   nullable=True)
+    opening_backlog = Column(BigInteger, nullable=True)   # R347, same meaning as order_backlog
+    contract_total  = Column(BigInteger, nullable=True)   # R347
+    layout        = Column(String(12),   nullable=True)   # R347 cumulative / rollforward
     unit          = Column(String(20),   nullable=True)
     source        = Column(String(20),   nullable=True)
     rcept_no      = Column(String(14),   nullable=True)

@@ -49,7 +49,7 @@ def test_samsung_hi_aggregate_identity():
     rows = _rows(_SAMSUNG_HI, "00126478", 2025)
     assert len(rows) == 3
     total = next(r for r in rows if r["category"] and r["category"].replace(" ", "") == "합계")
-    assert total["new_orders"] - total["completed"] == total["backlog_amt"]
+    assert total["contract_total"] - total["completed"] == total["backlog_amt"]
     assert total["backlog_amt"] == 280305
     # 날짜열("수주일자"/"납기")이 category 라벨에 섞이면 안 됨.
     assert not any(r["category"] and ("~" in r["category"] or "2025.12" in r["category"]) for r in rows)
@@ -93,8 +93,8 @@ def test_gs_eng_detail_table_total_identity():
     rows = _rows(_GS_ENG, "00120030", 2025)
     assert rows
     for r in rows:
-        if r["new_orders"] is not None:
-            assert abs((r["new_orders"] - r["completed"]) - r["backlog_amt"]) < 10
+        if r["contract_total"] is not None:
+            assert abs((r["contract_total"] - r["completed"]) - r["backlog_amt"]) < 10
 
 
 def test_hanwha_ocean_progress_only_table_skipped():
@@ -134,7 +134,7 @@ def test_wiseai_contract_amount_and_revenue_recognized_synonyms():
     assert rows
     r0 = rows[0]
     assert r0["category"] == "국회사무처 차세대 e의안시스템 구축"
-    assert r0["new_orders"] == 2358101 and r0["completed"] == 1179051 and r0["backlog_amt"] == 1179050
+    assert r0["contract_total"] == 2358101 and r0["completed"] == 1179051 and r0["backlog_amt"] == 1179050
 
 
 def test_kc_cottrell_rollforward_currency_table():
@@ -169,7 +169,7 @@ def test_jeio_completed_prefers_cumulative_in_parens():
     rows = _rows(_JEIO, "00411808", 2025)
     domestic = next(r for r in rows if r["category"] and "국내" in r["category"])
     assert domestic["completed"] == 72900381, domestic
-    assert domestic["new_orders"] - domestic["completed"] == domestic["backlog_amt"]
+    assert domestic["contract_total"] - domestic["completed"] == domestic["backlog_amt"]
 
 
 def test_nkmax_gencorea_malformed_row_dropped():
@@ -179,7 +179,7 @@ def test_nkmax_gencorea_malformed_row_dropped():
     if not _NKMAX_GEN.exists():
         return
     rows = _rows(_NKMAX_GEN, "00977650", 2025)
-    assert not any(r["new_orders"] is not None and r["new_orders"] < 10000 for r in rows), \
+    assert not any(r["contract_total"] is not None and r["contract_total"] < 10000 for r in rows), \
         "납기연도(2032 등)가 수주총액으로 오파싱된 행이 남아있으면 안 됨"
     assert any(r["category"] and r["category"].strip().startswith("합") for r in rows)
 

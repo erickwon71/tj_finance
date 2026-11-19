@@ -119,6 +119,8 @@ def sync_order_backlog_periodic_corp(session, corp_code: str, year: int | None =
                         row = {"corp_code": corp_code, "fiscal_year": f.fiscal_year,
                                "category": r.category, "backlog_amt": r.backlog_amt,
                                "new_orders": r.new_orders, "completed": r.completed,
+                               "opening_backlog": r.opening_backlog,
+                               "contract_total": r.contract_total, "layout": r.layout,
                                "unit": (r.unit or "")[:20] or None, "source": "html_parse",
                                "rcept_no": f.rcept_no}
                         agg["out_of_range"] += _drop_out_of_range(row)

@@ -44,7 +44,14 @@ COMMENT ON TABLE exec_pay_individual IS 'Individual executive pay (>= disclosure
 COMMENT ON TABLE exec_pay_summary IS 'Executive pay summary per fiscal_year (head count, total, average). Availability = filing date of rcept_no.';
 COMMENT ON TABLE executives IS 'Registered/unregistered executives per fiscal_year (position, career, tenure, compensation). Availability = filing date of rcept_no.';
 COMMENT ON TABLE major_shareholders IS 'Major shareholders per fiscal_year: shares and ownership percent at begin/end of the period. Availability = filing date of rcept_no.';
-COMMENT ON TABLE order_backlog IS 'Order backlog per fiscal_year and category (backlog, new orders, completed). Only companies that report it; unit column states the amount unit.';
+COMMENT ON TABLE order_backlog IS 'Order backlog per fiscal_year and category. Column meanings depend on layout (cumulative / rollforward, R347, guide s10). Only companies that report it; unit column states the amount unit.';
+COMMENT ON COLUMN order_backlog.layout IS 'R347 table shape: cumulative = 수주총액|기납품(누적)|수주잔고, rollforward = 기초잔고|당기 수주|당기 매출인식|기말잔고';
+COMMENT ON COLUMN order_backlog.backlog_amt IS 'ending order backlog, in the printed unit (unit column)';
+COMMENT ON COLUMN order_backlog.opening_backlog IS 'R347 opening backlog (rollforward only)';
+COMMENT ON COLUMN order_backlog.new_orders IS 'R347 period order inflow (rollforward only: new orders plus printed changes such as amendments/FX); NULL for cumulative tables';
+COMMENT ON COLUMN order_backlog.completed IS 'R347 cumulative: delivered/recognised to date; rollforward: recognised in the period (positive)';
+COMMENT ON COLUMN order_backlog.contract_total IS 'R347 total contract amount to date (cumulative only)';
+COMMENT ON COLUMN order_backlog_periodic.layout IS 'same as order_backlog.layout';
 COMMENT ON TABLE other_investments IS 'Other-corporation investments per fiscal_year (investee, quantity, ownership, book value). Availability = filing date of rcept_no.';
 COMMENT ON TABLE regulatory_events IS 'Regulatory events from DART disclosures (trading_halt, disclosure_violation, delisting, admin_issue, rehabilitation, investment caution); is_lift marks a release. Use filed_at as the availability date.';
 COMMENT ON TABLE report_shares_outstanding IS 'Shares outstanding per report (rcept_no) as of as_of_date, with treasury_shares and float_shares where known.';

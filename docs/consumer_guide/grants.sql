@@ -16,7 +16,9 @@ DECLARE
         'biz_metrics', 'biz_metrics_periodic', 'capital_events', 'dividend_facts', 'employee_stats', 'exec_pay_individual',
         'exec_pay_summary', 'executives', 'major_shareholders', 'order_backlog', 'order_backlog_periodic', 'other_investments',
         'regulatory_events', 'report_shares_outstanding', 'retail_ownership', 'shareholder_changes',
-        'treasury_activity'];
+        'treasury_activity',
+        -- freshness (R350, s01_scope)
+        'load_status', 'pipeline_runs'];
 BEGIN
     FOR r IN SELECT c.oid::regclass AS rel, c.relname FROM pg_class c
              JOIN pg_namespace n ON n.oid = c.relnamespace

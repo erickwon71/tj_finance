@@ -277,18 +277,76 @@ def _resolve_window(days_arg: str, mode: str) -> tuple[int, str]:
     return max(days, 3), f"마지막 성공 {last} 기준 자동 {days}일"
 
 
+# The run this process opened and has not closed yet (R350) — closed by _finish_run, or by the
+# __main__ guard as failed/killed when the process ends some other way.
+_OPEN_RUN: dict = {"id": None}
+
+
+def _pid_is_daily(pid) -> bool:
+    """True if `pid` is a live collect_new.py process (guards against pid reuse)."""
+    import subprocess
+    try:
+        out = subprocess.run(["ps", "-p", str(int(pid)), "-o", "command="],
+                             capture_output=True, text=True, timeout=5).stdout
+    except Exception:  # noqa: BLE001
+        return False
+    return "collect_new.py" in out
+
+
+def _abandon_stale_runs(session) -> int:
+    """R350: mark earlier 'running' rows whose process is gone as 'abandoned'.
+
+    Before R350 a killed or crashed daily left its row 'running' forever (id 60, 2026-11-16), so
+    readers could not tell a live run from a dead one. Rows without a recorded pid predate R350
+    and are abandoned too unless a daily process is alive right now."""
+    import json
+    from sqlalchemy import text
+    import os
+    import subprocess
+    rows = session.execute(text(
+        "SELECT id, summary->>'pid' AS pid FROM pipeline_runs WHERE status = 'running'")).fetchall()
+    if not rows:
+        return 0
+    try:
+        pids = subprocess.run(["pgrep", "-f", "collect_new.py"], capture_output=True, text=True,
+                              timeout=5).stdout.split()
+    except Exception:  # noqa: BLE001
+        return 0  # cannot tell — leave the rows alone
+    other_daily_alive = any(int(p) != os.getpid() for p in pids if p.isdigit())
+    n = 0
+    for r in rows:
+        if r.pid is not None and _pid_is_daily(r.pid):
+            continue
+        if r.pid is None and other_daily_alive:
+            continue  # pre-R350 row, a daily without a recorded pid may still own it
+        session.execute(text("""
+            UPDATE pipeline_runs SET status = 'abandoned',
+                   summary = coalesce(summary, '{}'::jsonb) || CAST(:sm AS jsonb)
+            WHERE id = :id AND status = 'running'
+        """), {"id": r.id, "sm": json.dumps({"abandoned_at": str(date.today()),
+                                               "reason": "process not running"})})
+        n += 1
+    return n
+
+
 def _start_run(mode: str, days: int) -> int | None:
-    """pipeline_runs 에 실행 시작을 기록하고 id 반환."""
+    """pipeline_runs 에 실행 시작을 기록하고 id 반환. R350: pid 를 남기고 죽은 이전 실행을 정리."""
+    import json
+    import os
     from sqlalchemy import text
     from collector.db import get_session
     try:
         with get_session() as s:
+            stale = _abandon_stale_runs(s)
+            if stale:
+                logger.warning(f"[collect] 끝나지 않은 이전 실행 {stale}건 → abandoned")
             rid = s.execute(text("""
-                INSERT INTO pipeline_runs (mode, status, window_bgn, window_end)
-                VALUES (:m, 'running', :bgn, :end) RETURNING id
+                INSERT INTO pipeline_runs (mode, status, window_bgn, window_end, summary)
+                VALUES (:m, 'running', :bgn, :end, CAST(:sm AS jsonb)) RETURNING id
             """), {"m": mode, "bgn": date.today() - timedelta(days=days),
-                   "end": date.today()}).scalar()
+                   "end": date.today(), "sm": json.dumps({"pid": os.getpid()})}).scalar()
             s.commit()
+            _OPEN_RUN["id"] = rid
             return rid
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[collect] 실행 이력 기록 실패(비치명적): {exc}")
@@ -300,6 +358,7 @@ def _finish_run(run_id: int | None, status: str, summary: dict) -> None:
     if run_id is None:
         return
     import json
+    import os
 
     from sqlalchemy import text
     from collector.db import get_session
@@ -308,8 +367,11 @@ def _finish_run(run_id: int | None, status: str, summary: dict) -> None:
             s.execute(text("""
                 UPDATE pipeline_runs SET finished_at = now(), status = :st, summary = :sm
                 WHERE id = :id
-            """), {"id": run_id, "st": status, "sm": json.dumps(summary, default=str)})
+            """), {"id": run_id, "st": status,
+                   "sm": json.dumps({"pid": os.getpid(), **summary}, default=str)})
             s.commit()
+        if _OPEN_RUN["id"] == run_id:
+            _OPEN_RUN["id"] = None
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[collect] 실행 이력 갱신 실패(비치명적): {exc}")
 
@@ -1116,5 +1178,20 @@ def main() -> None:
     _finish_run(run_id, "success", {"corps": len(corps), **archive_stats, **audit})
 
 
+def _raise_on_sigterm(signum, frame):  # noqa: ARG001
+    raise SystemExit(128 + signum)
+
+
 if __name__ == "__main__":
-    main()
+    # R350: a run that ends by exception, SIGTERM (launchd/kill) or Ctrl-C records failed/killed
+    # instead of staying 'running'. SIGKILL cannot be caught — the next run marks it abandoned.
+    import signal
+    signal.signal(signal.SIGTERM, _raise_on_sigterm)
+    try:
+        main()
+    except BaseException as exc:
+        if _OPEN_RUN["id"] is not None:
+            killed = isinstance(exc, (KeyboardInterrupt, SystemExit))
+            _finish_run(_OPEN_RUN["id"], "killed" if killed else "failed",
+                        {"error": f"{type(exc).__name__}: {exc}"})
+        raise

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional
 
@@ -47,16 +47,33 @@ _NUMBERED_HEADING_RE = re.compile(r"^[가-힣]\s*\.\s*\S")
 # 열 판별 키워드(회사마다 표기 변이 — 괄호부기 "(A+B)"/"(매출액,A)" 등은 in 매칭이라 무관).
 # "도급"(GS건설 "기본 도급금액"처럼 "도급액" 사이에 "금"이 끼는 변이까지 포괄하는 안전한 substring).
 # "계약금액"(위세아이텍 — "수주총액" 대신 이 표현 사용).
-_TOTAL_KW = ("수주총액", "도급", "계약금액")
+_TOTAL_KW = ("수주총액", "도급", "계약금액", "수주금액", "용역금액")
 # "기납품"(액 없이, 실측 에너토크)·"수익인식액"(위세아이텍 — 진행기준 수익인식 = 누적 완료분).
-_COMPLETED_KW = ("기납품", "완성공사액", "수익인식액")
-_BACKLOG_KW = ("수주잔고", "계약잔액")
+# R347: recognition columns seen in the 2023+ census ("공사수익", "매출액", "기성", "누적매출액",
+# "완성계약액", "기매출액", "매출인식액", "총매출누계액"). Matched on the whitespace-stripped header.
+_COMPLETED_KW = ("기납품", "완성공사액", "수익인식액", "공사수익", "매출액", "매출인식", "기성",
+                 "완성계약", "기매출", "매출누계", "누적수입", "매출계상", "수익계상", "납품액")
+_BACKLOG_KW = ("수주잔고", "계약잔액", "수주잔액")
+# R347: rollforward-in-columns tables (기초잔고 | 신규 | 기납품 | 기말잔고). The opening column
+# must be recognised before the backlog keywords — "기초공사계약잔액" also contains "계약잔액".
+# "차기이월"/"기말" are the ending balance, so they are checked first.
+_ENDING_KW = ("차기이월", "기말")
+_OPENING_KW = ("기초", "이월", "전기말")
+# Period inflow columns of a rollforward table (new orders and other changes). Their printed
+# values are summed into new_orders so that opening + new_orders - completed = backlog.
+_NEW_FLOW_KW = ("신규", "산규계약", "수주증가", "증가", "증감", "변경", "변동", "환율", "취소", "추가")
+# Columns that are neither a dimension nor an order amount (contract assets, receivables,
+# allowances, counts) — kept out of category. Matched on the whitespace-stripped header.
+_META_COL_KW = ("미청구공사", "초과청구", "공사미수금", "매출채권", "대손충당금", "손상차손", "계약자산",
+                "계약부채", "수주건수", "순번", "진행율")
 # 진행률형(계약잔액 없이 진행률%만) 판별 — 발견 시 낮은 신뢰도로 스킵.
 _PROGRESS_ONLY_KW = ("진행률", "미청구공사", "공사미수금")
 # 날짜/기한 열 — category 라벨에서 제외(실측: 삼성중공업 "수주일자"/"납기", 에너토크 "수주
 # 년도", 위세아이텍 "계약종료일"[="계약"+"종료일", "계약일" substring 미포함이라 "종료일"
 # 별도 추가] 열이 라벨에 섞여 오염되던 것 방지).
-_DATE_COL_KW = ("일자", "기한", "계약일", "착공", "완공", "납기", "년도", "종료일")
+_DATE_COL_KW = ("일자", "기한", "계약일", "착공", "완공", "납기", "년도", "종료일",
+                # R347: matched on the whitespace-stripped header ("납   기", "계 약 일").
+                "준공", "시작일", "만료", "완료예정", "수주일", "계약기간")
 # 진행률(%) 열 — category 라벨에서 제외(위세아이텍 "50%"가 계약명에 섞이던 것 방지).
 _PROGRESS_COL_KW = ("진행률",)
 # "당기 XX" 미분류 열(환종별 롤포워드표 — 기초계약잔액/당기신규·변동/당기공사수익/기말계약잔액
@@ -84,13 +101,27 @@ _ROLLFORWARD_END_KW = ("기말",)
 _ROLLFORWARD_NEW_KW = ("신규수주",)
 
 
+LAYOUT_CUMULATIVE = "cumulative"    # 수주총액 | 기납품(누적) | 수주잔고
+LAYOUT_ROLLFORWARD = "rollforward"  # 기초잔고 | 당기 수주 | 당기 매출인식 | 기말잔고
+
+
 @dataclass
 class OrderBacklogRow:
+    """One order_backlog row (R347 meanings).
+
+    cumulative : contract_total = 수주총액(누적 계약금액), completed = 누적 기납품, new_orders = NULL
+                 unless the table prints a separate period-new column.
+    rollforward: opening_backlog = 기초잔고, new_orders = 당기 수주 증가(신규 + 변경 등 증감 합),
+                 completed = 당기 매출인식(양수), contract_total = NULL.
+    """
     category: Optional[str]
     backlog_amt: Optional[int]
     new_orders: Optional[int]
     completed: Optional[int]
     unit: Optional[str]
+    opening_backlog: Optional[int] = None
+    contract_total: Optional[int] = None
+    layout: Optional[str] = None
 
 
 _MAX_TABLES_PER_MARKER = 4  # biz_section 과 동일 방어 — 헤딩 텍스트가 러닝헤더로 반복 출현해
@@ -141,9 +172,29 @@ def find_order_subsections(root) -> list[tuple[str, Optional[str], list[list[str
     return results
 
 
-def _col_kind(header_text: str) -> Optional[str]:
-    if any(k in header_text for k in _BACKLOG_KW):
+def _col_kind(header_text: str, qty_is_amount: bool = False) -> Optional[str]:
+    h = re.sub(r"\s+", "", header_text)
+    if "수량" in h and "금액" not in h and not qty_is_amount:
+        return None  # quantity sub-column of an amount column — never an amount (R347);
+        # a merged "수량금액" header (실측 01344336 FY2025) is still the amount column. When the
+        # table has no 금액 column at all the "수량" label is the only one printed and the
+        # values are the amounts (실측 삼성중공업 FY2019 20200330004469) — qty_is_amount.
+    is_balance = any(k in h for k in _BACKLOG_KW)
+    is_total = any(k in h for k in _TOTAL_KW)
+    is_completed = any(k in h for k in _COMPLETED_KW)
+    if any(k in h for k in _ENDING_KW) and (is_balance or "차기이월" in h):
         return "backlog"
+    # "금액(이월금액)" is an amount column with a note, not the opening balance.
+    h_open = re.sub(r"[\(（][^)）]*[\)）]", "", h)
+    if h_open.startswith(_OPENING_KW) or (any(k in h_open for k in _OPENING_KW)
+                                          and not (is_total or is_completed)):
+        return "opening"
+    if is_balance:
+        return "backlog"
+    # "변경계약금액"/"변경도급액" is the current contract amount, not a period change.
+    if any(k in h for k in _NEW_FLOW_KW) and not is_total:
+        return "new"
+    header_text = h
     if any(k in header_text for k in _COMPLETED_KW):
         return "completed"
     if any(k in header_text for k in _TOTAL_KW):
@@ -198,6 +249,7 @@ def _map_rollforward_table(header_rows: list[list[str]], data_rows: list[list[st
     return OrderBacklogRow(
         category=None, backlog_amt=backlog_amt, new_orders=_cell_int(rows_by_kind.get("new")),
         completed=abs(completed) if completed is not None else None, unit=default_unit,
+        opening_backlog=_cell_int(rows_by_kind.get("open")), layout=LAYOUT_ROLLFORWARD,
     )
 
 
@@ -237,24 +289,44 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
     if any(k in all_row_text for k in _FINANCIAL_STMT_KW):
         return []
 
+    # R347: quantity sub-columns are dropped only when the table prints amount columns too.
+    heads_ns = [re.sub(r"\s+", "", " ".join(header_rows[r][c] for r in range(len(header_rows))))
+                for c in range(ncols)]
+    qty_is_amount = not any("금액" in h for h in heads_ns)
     col_kind: dict[int, str] = {}
     unit_col = None
     skip_cols: set[int] = set()  # 날짜/진행률/기간흐름 등 category 라벨에서 제외할 비수치 메타열
     for c in range(ncols):
         head = " ".join(header_rows[r][c] for r in range(len(header_rows)))
+        head_ns = re.sub(r"\s+", "", head)
         # "단위" 완전일치만 단위열로 인정 — substring 매칭이면 "회사명(단위)"(실측 풍산홀딩스,
         # 회사명 셀값 "풍산특수금속㈜ (단위: M/T, 백만원)"=22자가 unit 으로 오인돼 varchar(20)
         # 초과 크래시 + 진짜 카테고리(회사명)가 통째로 사라지는 이중 사고로 이어졌다.
         if head.strip() == "단위":
             unit_col = c
             continue
-        k = _col_kind(head)  # total/completed/backlog 매칭을 먼저 시도(우선순위 상위)
+        if any(kw in head_ns for kw in _META_COL_KW):
+            skip_cols.add(c)  # R347: contract asset / receivable / count columns
+            continue
+        k = _col_kind(head, qty_is_amount)  # total/completed/backlog 매칭을 먼저 시도(우선순위 상위)
         if k:
             col_kind[c] = k
             continue
-        if (any(kw in head for kw in _DATE_COL_KW) or any(kw in head for kw in _PROGRESS_COL_KW)
-                or any(kw in head for kw in _PERIOD_FLOW_COL_KW)):
+        if "수량" in head_ns and "금액" not in head_ns and not qty_is_amount:
+            skip_cols.add(c)  # R347: quantity sub-column of a known amount column
+            continue
+        if (any(kw in head_ns for kw in _DATE_COL_KW) or any(kw in head_ns for kw in _PROGRESS_COL_KW)
+                or any(kw in head_ns for kw in _PERIOD_FLOW_COL_KW)):
             skip_cols.add(c)
+    if "backlog" not in col_kind.values():
+        # R347: "이월계약잔액" printed as the last balance column of a rollforward table is the
+        # balance carried to the next period (ending), not the opening (실측 대우조선 FY2009~2011
+        # "기초계약잔액 | 신규수주액 | 기타증감액 | 당기누적수익계상 | 이월계약잔액").
+        carried = [c for c, k in col_kind.items() if k == "opening" and "이월" in heads_ns[c]
+                   and not heads_ns[c].startswith(("전기", "기초"))
+                   and any(kw in heads_ns[c] for kw in _BACKLOG_KW)]
+        if carried and any(k == "opening" and c not in carried for c, k in col_kind.items()):
+            col_kind[max(carried)] = "backlog"
     if "backlog" not in col_kind.values():
         # 열-기반 판정 실패 — 롤포워드형(행=기초/신규수주/수익인식/기말, 열=당기/전기)일 수
         # 있으니 폴백으로 확인(실측 싸이맥스 FY2017). 둘 다 아니면 신뢰 파생 불가 → 스킵.
@@ -272,6 +344,9 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
     if unit is None:
         unit = default_unit
 
+    # R347: an opening-balance column makes the whole table a rollforward (period flows).
+    rollforward = "opening" in col_kind.values()
+    layout = LAYOUT_ROLLFORWARD if rollforward else LAYOUT_CUMULATIVE
     rows: list[OrderBacklogRow] = []
     for drow in data_rows:
         # "-" 단독 placeholder(대손충당 등 값없는 열)는 의미 있는 라벨이 아니므로 제외.
@@ -284,14 +359,28 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
         vals: dict[str, int] = {}
         for c, kind in col_kind.items():
             cell = drow[c]
-            if kind == "completed":
+            if kind == "completed" and not rollforward:
                 m = _TRAILING_PAREN_NUM_RE.search(cell.strip())
                 if m:
                     vals[kind] = int(m.group(1).replace(",", ""))
                     continue
             v, _, _ = _parse_value(cell)
-            if v is not None:
+            if v is None or not math.isfinite(v):
+                continue
+            if kind == "new":
+                # several period-change columns (신규 / 변경 / 환율 …) add up, printed sign kept
+                vals[kind] = vals.get(kind, 0) + int(v)
+            else:
                 vals[kind] = int(v)
+        if rollforward:
+            # R347: opening + period inflow - recognised = ending. A total column next to an
+            # opening column is the period's new orders (실측 "전기이월누계|수주총액|기납품액|수주잔고":
+            # 360,387 + 260,300 - 298,189 = 322,498). Recognition printed as a deduction
+            # ("(300,624)" / "-300,624") is stored positive.
+            if "new" not in vals and "total" in vals:
+                vals["new"] = vals.pop("total")
+            if "completed" in vals:
+                vals["completed"] = abs(vals["completed"])
         # 불변식 가드: 수주잔고(backlog)는 수주총액(total)을 초과할 수 없다(backlog=total-completed
         # 이므로 completed≥0 이면 항상 backlog≤total). 위반 시 이 행은 신뢰 불가로 폐기 —
         # 실측(엔케이젠바이오텍코리아): 품목 셀이 원본 문서에서 비정상 rowspan 으로 3칸에 걸쳐
@@ -301,14 +390,15 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
         # (같은 표의 다른 정상 행·소스 자체 계산인 합계행은 영향 없음 — 실측으로 합계행 수치는
         # 정확함을 확인).
         total_v, backlog_v = vals.get("total"), vals.get("backlog")
-        if total_v is not None and backlog_v is not None and backlog_v > total_v:
+        if (not rollforward and total_v is not None and backlog_v is not None
+                and backlog_v > total_v):
             continue
+        common = dict(category=category, new_orders=vals.get("new"), completed=vals.get("completed"),
+                      unit=unit, opening_backlog=vals.get("opening"),
+                      contract_total=vals.get("total"), layout=layout)
         if "backlog" in vals:
-            rows.append(OrderBacklogRow(
-                category=category, backlog_amt=vals.get("backlog"),
-                new_orders=vals.get("total"), completed=vals.get("completed"), unit=unit,
-            ))
-        elif (vals.get("total") is not None or vals.get("completed") is not None) and any(
+            rows.append(OrderBacklogRow(backlog_amt=vals.get("backlog"), **common))
+        elif any(vals.get(k) is not None for k in ("total", "completed", "opening", "new")) and any(
                 drow[c].strip() in _DASH_MARKS for c, k in col_kind.items() if k == "backlog"):
             # ★잔고 열이 있는데 그 칸이 '-' 인 행(사용자 결정 D3, 2026-07-31).
             #   실측(20250313000769 레미콘): 수주총액 40,385,176 · 기납품액 40,385,176 ·
@@ -317,10 +407,7 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
             #   ⚠ 다른 열에 실데이터가 있을 때만 만든다 — 전 열이 비면 그건 빈 행이다.
             #   ⚠ 공란이 아니라 **명시적 대시**만 인정한다: 빈 칸은 '해당 없음'인지 '병합 셀'
             #     인지 원문이 말해주지 않으므로 0 이라고 적을 근거가 없다.
-            rows.append(OrderBacklogRow(
-                category=category, backlog_amt=0,
-                new_orders=vals.get("total"), completed=vals.get("completed"), unit=unit,
-            ))
+            rows.append(OrderBacklogRow(backlog_amt=0, **common))
     return rows
 
 
@@ -336,18 +423,18 @@ def _aggregate_if_detail(rows: list[OrderBacklogRow]) -> list[OrderBacklogRow]:
         return rows
     existing_total = next((r for r in rows if _is_total_label(r.category)), None)
     if existing_total is not None:
-        return [OrderBacklogRow(
-            category=None, backlog_amt=existing_total.backlog_amt,
-            new_orders=existing_total.new_orders, completed=existing_total.completed,
-            unit=existing_total.unit,
-        )]
-    total_backlog = sum(r.backlog_amt or 0 for r in rows)
-    total_new = sum(r.new_orders or 0 for r in rows if r.new_orders is not None)
-    total_completed = sum(r.completed or 0 for r in rows if r.completed is not None)
-    unit = next((r.unit for r in rows if r.unit), None)
+        return [replace(existing_total, category=None)]
+
+    def _sum(attr: str) -> Optional[int]:
+        vals = [getattr(r, attr) for r in rows if getattr(r, attr) is not None]
+        return sum(vals) or None
+
     return [OrderBacklogRow(
-        category=None, backlog_amt=total_backlog,
-        new_orders=total_new or None, completed=total_completed or None, unit=unit,
+        category=None, backlog_amt=sum(r.backlog_amt or 0 for r in rows),
+        new_orders=_sum("new_orders"), completed=_sum("completed"),
+        unit=next((r.unit for r in rows if r.unit), None),
+        opening_backlog=_sum("opening_backlog"), contract_total=_sum("contract_total"),
+        layout=next((r.layout for r in rows if r.layout), None),
     )]
 
 
@@ -365,6 +452,8 @@ def parse_order_backlog(file_path: Path, corp_code: str, fiscal_year: int) -> li
                 "corp_code": corp_code, "fiscal_year": fiscal_year,
                 "category": r.category, "backlog_amt": r.backlog_amt,
                 "new_orders": r.new_orders, "completed": r.completed,
+                "opening_backlog": r.opening_backlog, "contract_total": r.contract_total,
+                "layout": r.layout,
                 # DB 컬럼길이 방어 클리핑(unit=varchar(20)) — 실측 풍산홀딩스 크래시 재발 방지용
                 # 최후 안전망(주 방지책은 위 단위열 완전일치 판정).
                 "unit": (r.unit or "")[:20] or None, "source": "html_parse",

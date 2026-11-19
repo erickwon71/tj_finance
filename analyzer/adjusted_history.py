@@ -55,6 +55,40 @@ ORDER BY stock_code, trade_date
 """
 
 
+# R351: halt days whose basis factor (close / close_raw) differs from a neighbouring row's. The
+# traded-day detector above skips halt days on purpose, so halt rows written before a corporate
+# action kept the old basis while the rows around them were re-based (047400 2026-10-27..30:
+# factor 1 between factor-5 rows, a x0.2 / x5 jump on the chart). The source prices halt days
+# on the current basis, so a re-fetch fixes them; a halt run that is consistent is not flagged.
+_HALT_SQL = """
+WITH x AS (
+  SELECT stock_code, trade_date, volume, close_price::numeric / close_raw AS f, close_price,
+         lag(close_price::numeric / close_raw) OVER w AS fp,
+         lead(close_price::numeric / close_raw) OVER w AS fn
+  FROM stock_prices
+  WHERE {where} AND close_raw > 0 AND close_price > 0
+  WINDOW w AS (PARTITION BY stock_code ORDER BY trade_date))
+SELECT stock_code, trade_date, ln(f / COALESCE(fp, fn)) AS step
+FROM x
+WHERE volume = 0 AND trade_date >= :since
+  AND (abs(ln(f / fp)) > GREATEST(:min_step, 1.5 / close_price)
+       OR abs(ln(f / fn)) > GREATEST(:min_step, 1.5 / close_price))
+ORDER BY stock_code, trade_date
+"""
+
+
+def halt_boundaries(session, since: date = date(1990, 1, 1),
+                    codes: Optional[Iterable[str]] = None) -> list[tuple[str, date, float]]:
+    """R351: (stock_code, trade_date, log step) of halt days off their neighbours' basis."""
+    params: dict = {"min_step": MIN_STEP, "since": since}
+    where = "trade_date >= CAST(:since AS date) - 10"
+    if codes is not None:
+        params["codes"] = list(codes)
+        where += " AND stock_code = ANY(:codes)"
+    rows = session.execute(text(_HALT_SQL.format(where=where)), params).fetchall()
+    return [(r[0], r[1], float(r[2] or 0)) for r in rows]
+
+
 def stale_boundaries(session, since: date = date(1990, 1, 1),
                      codes: Optional[Iterable[str]] = None) -> list[tuple[str, date, float]]:
     """(stock_code, trade_date, log step) of every stale basis boundary on or after `since`."""
@@ -84,6 +118,13 @@ def rebase_after_market_row(old: dict, new: dict) -> Optional[dict]:
     raw_close = old.get("close_raw")
     if not raw_close or not old.get("close") or raw_close <= 0:
         return None
+    if not any(old.get(k) for k in ("open", "high", "low")):
+        # R351: halt day — no session, so no after-market trade either; the source close is the
+        # reference price on the source's (current) basis (047400 2026-10-27: 746 -> 3,730).
+        if not new.get("close"):
+            return None
+        return {"open": old.get("open"), "high": old.get("high"), "low": old.get("low"),
+                "close": int(new["close"])}
     old_r = old["close"] / raw_close
     ratios = [_ratio(new.get(k), (old.get(k) or 0) / old_r) for k in ("open", "high", "low")]
     ratios = [r for r in ratios if r]
@@ -137,15 +178,18 @@ def refetch_stock(code: str, today: Optional[date] = None, fetch=None) -> dict:
                         "SELECT trade_date, open_price, high_price, low_price, close_price, close_raw "
                         "FROM stock_prices WHERE stock_code = :c"), {"c": code})}
         before = len(stale_boundaries(s, codes=[code]))
+        halt_before = len(halt_boundaries(s, codes=[code]))
         rows = plan_rows(old_rows, fetched)
         if not rows:
             return {"code": code, "status": "unchanged", "updated": 0, "stale_before": before,
                     "stale_after": before}
         s.execute(text(_UPDATE), [{"code": code, **r} for r in rows])
         after = len(stale_boundaries(s, codes=[code]))
-        if after > before:
+        halt_after = len(halt_boundaries(s, codes=[code]))
+        if after > before or halt_after > halt_before:
             s.rollback()
-            logger.warning(f"[adj-history] {code}: stale {before} -> {after} after re-fetch, rolled back")
+            logger.warning(f"[adj-history] {code}: stale {before} -> {after}, halt {halt_before} -> "
+                           f"{halt_after} after re-fetch, rolled back")
             return {"code": code, "status": "rolled_back", "updated": 0, "stale_before": before,
                     "stale_after": after}
         s.commit()
@@ -162,6 +206,7 @@ def nightly(today: Optional[date] = None, lookback_days: int = 20, max_stocks: i
     today = today or date.today()
     with get_session() as s:
         hits = stale_boundaries(s, since=today - timedelta(days=lookback_days))
+        hits += halt_boundaries(s, since=today - timedelta(days=lookback_days))  # R351
     codes = sorted({h[0] for h in hits})
     out = {"detected": len(codes), "updated": 0, "rolled_back": 0, "unchanged": 0, "no_source": 0,
            "deferred": max(0, len(codes) - max_stocks)}

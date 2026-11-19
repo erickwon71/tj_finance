@@ -68,6 +68,12 @@ _SALES_SUBHEADING_NUM_RE = re.compile(
 _SALES_SUBHEADING_EXACT = frozenset({
     "매출", "매출상황", "매출사항", "매출에관한사항", "매출개요", "주요매출등의현황",
 })
+# R352-b: the section name repeated as a Hangul-numbered sub-heading under its TITLE ("가. 매출 및
+# 수주상황", 랩지노믹스 FY2025). Digit-numbered "4. 매출 및 수주상황" is NOT accepted: holding companies
+# reprint each subsidiary's whole business section under "7. 기타 참고사항" with that heading, and its
+# window ran on into the subsidiary's R&D tables (A/B 2026-11-20: SK 17 rd_staff tables lost).
+_SALES_SUBHEADING_HANGUL_ONLY = frozenset({"매출및수주상황"})
+_HANGUL_NUM_RE = re.compile(r"^\s*[가-힣]\s*[.)]")
 # R352: the section TITLE itself ("4. 매출 및 수주상황", older "4. 매출에 관한 사항"). Many filings put
 # the sales table straight under it with no sub-heading; the TITLE opens a window like a sub-heading.
 _SALES_SECTION_TITLE_KW = ("매출및수주상황", "매출에관한사항")
@@ -204,7 +210,12 @@ def _is_sales_subheading(text: str) -> bool:
     if not t or len(t) > _HEADING_MAX_LEN:
         return False
     m = _SALES_SUBHEADING_NUM_RE.match(t)
-    return bool(m) and re.sub(r"\s+", "", m.group(1)) in _SALES_SUBHEADING_EXACT
+    if not m:
+        return False
+    rest = re.sub(r"\s+", "", m.group(1))
+    if rest in _SALES_SUBHEADING_HANGUL_ONLY:
+        return bool(_HANGUL_NUM_RE.match(t))
+    return rest in _SALES_SUBHEADING_EXACT
 
 
 def _is_sales_section_title(el: etree._Element) -> bool:

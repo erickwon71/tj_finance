@@ -52,13 +52,13 @@ def test_fused_heading_does_not_cut_its_own_window():
 
 def test_numbered_sales_subheading_variants():
     for h in ("가. 매출", "가. 매출에 관한 사항", "가. 매출사항", "4.1. 매출 개요", "1) 매출",
-              "가-1. 주요 매출 등의 현황", "(1) 매출 상황"):
+              "가-1. 주요 매출 등의 현황", "(1) 매출 상황", "가. 매출 및 수주상황"):
         assert _is_sales_heading(h), h
 
 
 def test_non_sales_short_texts_are_not_headings():
     for h in ("라. 주요매출처", "2.7 매출채권", "매출", "매출액", "26. 매출액", "나. 판매경로",
-              "4.2. 주요 매출처", "(2) 수주상황"):
+              "4.2. 주요 매출처", "(2) 수주상황", "4. 매출 및 수주상황"):
         assert not _is_sales_heading(h), h
 
 

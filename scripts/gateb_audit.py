@@ -44,6 +44,18 @@ READER_VERSION = "trackAB-v3"   # 2026-09-01 계층2 GC §4-3 Phase 3 — DB측 
                                  # 매칭 키 acode→라벨(line_audit.py 참고). v2 값과 비교 불가.
 _DETAIL_CAP = 200   # JSONB 상세 라인 상한(대량 보고서 방어)
 
+# R346-b (2026-11-19): fingerprint of the std_financials_v3 row a face result checked. Any change
+# of the row's values or source filings (layer-3 rule, correction, canonical filing, reload) changes
+# it; built_at is left out because the daily rebuilds every row. Alias `s` = std_financials_v3.
+INPUT_FP_EXPR = "md5((to_jsonb(s) - 'built_at')::text)"
+_STAMP_INPUT_FP_SQL = f"""
+    UPDATE face_audit fa SET input_fp = {INPUT_FP_EXPR}
+    FROM std_financials_v3 s
+    WHERE fa.corp_code = :c AND s.corp_code = :c AND fa.source_version = :sv
+      AND s.fiscal_year = fa.fiscal_year AND s.fiscal_period = fa.fiscal_period
+      AND s.statement_type = fa.statement_type AND fa.checked_at >= :t0
+"""
+
 # 표준필드 → statement('BS'/'IS'/'CF', source-agnostic dict 키. §_row_rcepts 참고)
 _FIELD_STMT = {"bs.": "BS", "is.": "IS", "cf.": "CF"}
 
@@ -243,6 +255,10 @@ def audit_corp(session, corp, args, agg):
             index_elements=["corp_code", "fiscal_year", "fiscal_period",
                             "statement_type", "is_stub", "source_version"], set_=upd)
         session.execute(stmt)
+        session.commit()
+        # Stamp what these results checked (R346-b); the upsert itself never touches input_fp.
+        session.execute(text(_STAMP_INPUT_FP_SQL),
+                        {"c": corp, "sv": args.source, "t0": min(b["checked_at"] for b in batch)})
         session.commit()
 
     # ── Phase B: 본문 전 계정 라인 전수 대조(Track A+B) → face_line_audit ───────────────

@@ -1649,6 +1649,16 @@ def _run_migrations() -> None:
         COMMENT ON COLUMN report_lines_l3.printed_value_won IS 'Value as printed in the report, KRW.';
         COMMENT ON COLUMN report_lines_l3.correction_rule IS 'tj_finance rule id that changed the printed value; NULL = no correction.';
         """),
+
+        ("2026_11_19_face_audit_input_fp",
+         # R346-b: fingerprint of the std_financials_v3 row a Gate B face result checked
+         # (md5 of the row without built_at). The daily re-audits a row only when its fingerprint
+         # or the reader version changed. Deliberately not on the ORM model: the audit upsert must
+         # not reset it; scripts/gateb_audit.py stamps it right after writing results.
+         """
+        SET LOCAL lock_timeout = '60s';
+        ALTER TABLE face_audit ADD COLUMN IF NOT EXISTS input_fp TEXT;
+        """),
     ]
 
     with engine.begin() as conn:

@@ -110,37 +110,43 @@ def _run_standardize_batches(affected: list[str], timeout: int, batch_size: int 
     return agg
 
 
-# Gate B results whose source filing was (re)loaded into layer 2 after the audit. Both timestamps
-# are UTC (fin2/extract/report_lines._insert_report_tables, scripts/gateb_audit.py checked_at).
-# Deleting them makes audit_corp(recheck=False) audit exactly those rows / filings again; rows
-# without a result (new periods, new filings) are audited anyway.
-_GATEB_STALE_FACE_SQL = """
+# R346-b: Gate B results whose input changed since the audit. Deleting them makes
+# audit_corp(recheck=False) audit exactly those again; rows / filings without a result (new periods,
+# new filings) are audited anyway.
+# - face_audit checks a std_financials_v3 row against the source document: stale when the row's
+#   fingerprint (gateb_audit.INPUT_FP_EXPR, stamped after each audit) differs — covers layer-3 rule
+#   changes, corrections, a different canonical filing and reloads — or the reader version changed.
+# - face_line_audit checks printed layer-2 lines of one filing: they change only when the filing is
+#   reloaded (report_tables.parsed_at > checked_at, both UTC) — or the reader version changed.
+def _gateb_stale_face_sql(fp_expr: str) -> str:
+    return f"""
     DELETE FROM face_audit fa
     USING std_financials_v3 s
     WHERE fa.corp_code = :c AND s.corp_code = :c AND fa.source_version = 'v3'
       AND s.fiscal_year = fa.fiscal_year AND s.fiscal_period = fa.fiscal_period
       AND s.statement_type = fa.statement_type AND s.fiscal_year >= :fy
-      AND EXISTS (SELECT 1 FROM jsonb_each_text(s.source_rcepts) j
-                  JOIN report_tables rt ON rt.rcept_no = j.value
-                  WHERE rt.parsed_at > fa.checked_at)
+      AND (fa.input_fp IS DISTINCT FROM {fp_expr} OR fa.reader_version IS DISTINCT FROM :rv)
 """
+
+
 _GATEB_STALE_LINE_SQL = """
     DELETE FROM face_line_audit fl
     WHERE fl.corp_code = :c
-      AND EXISTS (SELECT 1 FROM report_tables rt
-                  WHERE rt.rcept_no = fl.rcept_no AND rt.parsed_at > fl.checked_at)
+      AND (fl.reader_version IS DISTINCT FROM :rv
+           OR EXISTS (SELECT 1 FROM report_tables rt
+                      WHERE rt.rcept_no = fl.rcept_no AND rt.parsed_at > fl.checked_at))
 """
 
 
 def run_dq_gate(corps: list[str], fy_min: int = 2015, full: bool = False) -> dict:
     """I2 · 수집시 DQ 게이트 — 수집된 기업에 Gate B(보고서==DB) 재감사 + 항등식(DQ) 집계.
 
-    ★2026-11-19 증분 재감사(사용자 결정): full=False 면 계층2 가 마지막 감사 뒤에 다시 적재된
-    filing 과 그 filing 을 쓰는 std 행만 재감사한다(`_GATEB_STALE_*_SQL` 로 결과를 지운 뒤
-    recheck=False). 11-17 실행에서 Gate B 가 1,276개사 2015+ 전체 이력을 매일 재감사해 23.7시간
-    (회사당 67초) 걸렸는데, 실제로 다시 적재된 것은 약 3%였다. full=True(금요일 데일리 또는
-    --verify-full)는 예전처럼 전부 재감사한다 — 계층2 재적재 없이 계층3 규칙만 바뀐 행은
-    규칙 수정 때의 전수 재감사와 이 주간 전체 재감사가 잡는다.
+    ★2026-11-19 증분 재감사(R346·R346-b, 사용자 결정): full=False 면 입력이 바뀐 결과만 지우고
+    recheck=False 로 재감사한다 — 면 감사는 std 행 지문(`input_fp`)이나 판독기 버전이 바뀐 행,
+    라인 감사는 다시 적재된 filing 이나 판독기 버전이 바뀐 것. 11-17 실행에서 Gate B 가 1,276개사
+    2015+ 전체 이력을 매일 재감사해 23.7시간(회사당 67초) 걸렸다. 지문이 계층3 규칙 변경·보정·
+    원천 filing 변경까지 잡으므로 주간 전체 재감사는 두지 않는다. full=True(`--verify-full`)는
+    예전처럼 전부 재감사한다.
 
     기존 검증 자산 재사용: `gateb_audit.audit_corp`(Phase A 면표 + Phase B 라인, 내부 커밋) +
     `verify_corp_sequential.rollup_corp`(→ corp_verify_status upsert). 표준화가 std_v3 에 이미 반영한
@@ -202,8 +208,10 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015, full: bool = False) -> dic
                     "WHERE corp_code=:c"), {"c": corp}).one_or_none()
                 prev_fail_a, prev_vd = (prev.gb_fail_a, prev.line_value_diff) if prev else (0, 0)
                 if not full:
-                    s.execute(text(_GATEB_STALE_FACE_SQL), {"c": corp, "fy": fy_min})
-                    s.execute(text(_GATEB_STALE_LINE_SQL), {"c": corp})
+                    rv = gateb_audit.READER_VERSION
+                    s.execute(text(_gateb_stale_face_sql(gateb_audit.INPUT_FP_EXPR)),
+                              {"c": corp, "fy": fy_min, "rv": rv})
+                    s.execute(text(_GATEB_STALE_LINE_SQL), {"c": corp, "rv": rv})
                     s.commit()
             with get_session() as s:
                 gateb_audit.audit_corp(s, corp, gb_args, gb_agg)
@@ -838,10 +846,9 @@ def _verify_and_log(agg: dict, args) -> None:
     std_v3_failed = agg.get("std_v3_failed") or []
     if getattr(args, "no_verify", False) or not (ok or std_v3_failed):
         return
-    # Weekly full re-audit on Friday (the daily skips weekends and holidays, so a Sunday slot
-    # would never run; Friday's longer run has the weekend to finish).
-    full = bool(getattr(args, "verify_full", False)) or date.today().weekday() == 4
-    mode = "전체 재감사" if full else "증분 재감사(계층2 재적재분만)"
+    # R346-b: incremental by fingerprint every day; a full re-audit only on request.
+    full = bool(getattr(args, "verify_full", False))
+    mode = "전체 재감사" if full else "증분 재감사(입력 지문이 바뀐 것만)"
     logger.info(f"[verify] DQ 게이트 — {len(ok)}개 기업 Gate B(보고서==DB)+항등식 {mode}(fy≥{args.verify_fy_min})")
     summ = run_dq_gate(ok, args.verify_fy_min, full=full) if ok else {
         "corps": 0, "gb_fail_a": 0, "line_value_diff": 0, "dq3": 0,
@@ -894,7 +901,7 @@ def main() -> None:
     ap.add_argument("--verify-fy-min", type=int, default=2015,
                     help="DQ 게이트 Gate B 재감사 최소 회계연도(기본 2015)")
     ap.add_argument("--verify-full", action="store_true",
-                    help="DQ 게이트 Gate B 를 증분이 아니라 전체 이력 재감사로(금요일은 자동)")
+                    help="DQ 게이트 Gate B 를 증분이 아니라 전체 이력 재감사로")
     ap.add_argument("--skip-holidays", action="store_true",
                     help="KRX 휴장일(주말·공휴일)이면 아무것도 하지 않고 종료. 스케줄 실행(plist)용 — "
                          "손으로 돌릴 때는 주지 않으므로 휴일에도 그대로 작업할 수 있다")

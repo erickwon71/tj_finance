@@ -400,8 +400,19 @@ tests/ fin2/tests/` 전체 1059 passed(기존에 알려진 무관 실패
 
 > **상태** 유효 · **적용 계층** 운영(데일리 ⑤ 검증)
 >
-> **규칙** `scripts/collect_new.py::run_dq_gate(full=False)` — 회사마다 감사 전에 `face_audit` 중 그 std 행의 원천 filing(`source_rcepts`)이 감사 뒤 다시 적재된 것(`report_tables.parsed_at > checked_at`, 둘 다 UTC)과 `face_line_audit` 중 그 filing 이 다시 적재된 것을 지우고 `gateb_audit.audit_corp(recheck=False)` 를 부른다. 결과가 없는 행·filing(새 기간, 새 공시)은 원래대로 감사된다. 금요일 데일리(주말·휴장일은 안 돌아 일요일 칸은 없다)와 `--verify-full` 은 예전처럼 전부 재감사(`recheck=True`). 알림 판단(어제 대비 신규 증가분)과 `corp_verify_status` 집계는 바뀌지 않는다.
+> **규칙** `scripts/collect_new.py::run_dq_gate(full=False)` — 회사마다 감사 전에 `face_audit` 중 그 std 행의 원천 filing(`source_rcepts`)이 감사 뒤 다시 적재된 것(`report_tables.parsed_at > checked_at`, 둘 다 UTC)과 `face_line_audit` 중 그 filing 이 다시 적재된 것을 지우고 `gateb_audit.audit_corp(recheck=False)` 를 부른다. 결과가 없는 행·filing(새 기간, 새 공시)은 원래대로 감사된다. ~~금요일 데일리 전체 재감사~~ → **R346-b 지문 방식으로 대체(같은 날)**. `--verify-full` 은 예전처럼 전부 재감사(`recheck=True`). 알림 판단(어제 대비 신규 증가분)과 `corp_verify_status` 집계는 바뀌지 않는다.
 > **발견(2026-11-19, 사용자 지적 "데일리가 이렇게 길게 걸리는 것은 문제")** 11-17 데일리 35시간(1,276개사) 중 ⑤ Gate B 가 23.7시간(회사당 67초) — 매일 2015+ 전체 이력을 재감사했다. 그 실행에서 실제로 다시 적재된 것은 std 행 1,134/39,378·filing 634/22,324(약 3%).
 > **실측** 00164788: 증분 1.2초(다시 적재된 filing 1건) · 두 번째 0.0초 · 전체 18.9초, 결과 같음.
 > **남는 틈** 계층2 재적재 없이 계층3 규칙만 바뀐 행은 증분이 못 본다 — 규칙 수정 때의 전수 재감사([[30_audit_verify]] 원칙)와 금요일 전체 재감사가 잡는다.
+> **테스트** `tests/test_collect_new_dq_gate_incremental.py`.
+
+## R346-b. Gate B 면 감사 결과에 그 std 행의 지문을 남기고, 데일리는 지문이나 판독기 버전이 바뀐 것만 재감사한다 — 주간 전체 재감사 없음 (2026-11-19, 적용 계층: 운영, 사용자 결정)
+
+> **상태** 유효 · **적용 계층** 운영(데일리 ⑤ 검증) · R346 의 재감사 판정을 바꾼다
+>
+> **규칙** `face_audit.input_fp` = 감사한 `std_financials_v3` 행의 `md5((to_jsonb(s) - 'built_at')::text)`(`scripts/gateb_audit.py::INPUT_FP_EXPR`). `audit_corp` 가 결과를 쓴 직후 같은 식으로 찍는다(ORM 모델에는 없음 — upsert 가 지우지 않게). 데일리(`collect_new.run_dq_gate(full=False)`)는 감사 전에 지문이 지금 행과 다르거나 `reader_version` 이 다른 면 결과, 감사 뒤 다시 적재됐거나 `reader_version` 이 다른 라인 결과(`face_line_audit`, 계층2 인쇄값만 읽으므로 재적재만 보면 된다)를 지우고 `recheck=False` 로 감사한다. 지문이 없는 결과(도입 전, v2 잔재 제외)는 처음 한 번 재감사된다.
+> **왜** R346(재적재 시각만)은 원문 재적재 없이 값이 바뀌는 경우 — 계층3 규칙 변경, 계층3 셀 보정, 원천 filing(최초본·정정본) 교체, 판독기 변경 — 를 못 봐서 금요일 전체 재감사를 두었다. 지문은 이 넷을 매일 정확히 잡으므로 전체 재감사가 필요 없다.
+> **결정성 확인** 무작위 20개사 연속 두 번 재빌드 2,305행 지문 차이 0(`built_at` 만 빼면 된다).
+> **실측** 00164788: 첫 실행 18.1초(지문 없음 → 94행 재감사·찍음), 두 번째 0.0초, 한 행 지문을 바꾸면 그 행만 1.1초.
+> **스키마** 마이그레이션 `2026_11_19_face_audit_input_fp`(`ALTER TABLE face_audit ADD COLUMN input_fp TEXT`).
 > **테스트** `tests/test_collect_new_dq_gate_incremental.py`.

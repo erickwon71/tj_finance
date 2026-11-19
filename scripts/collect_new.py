@@ -110,8 +110,37 @@ def _run_standardize_batches(affected: list[str], timeout: int, batch_size: int 
     return agg
 
 
-def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
+# Gate B results whose source filing was (re)loaded into layer 2 after the audit. Both timestamps
+# are UTC (fin2/extract/report_lines._insert_report_tables, scripts/gateb_audit.py checked_at).
+# Deleting them makes audit_corp(recheck=False) audit exactly those rows / filings again; rows
+# without a result (new periods, new filings) are audited anyway.
+_GATEB_STALE_FACE_SQL = """
+    DELETE FROM face_audit fa
+    USING std_financials_v3 s
+    WHERE fa.corp_code = :c AND s.corp_code = :c AND fa.source_version = 'v3'
+      AND s.fiscal_year = fa.fiscal_year AND s.fiscal_period = fa.fiscal_period
+      AND s.statement_type = fa.statement_type AND s.fiscal_year >= :fy
+      AND EXISTS (SELECT 1 FROM jsonb_each_text(s.source_rcepts) j
+                  JOIN report_tables rt ON rt.rcept_no = j.value
+                  WHERE rt.parsed_at > fa.checked_at)
+"""
+_GATEB_STALE_LINE_SQL = """
+    DELETE FROM face_line_audit fl
+    WHERE fl.corp_code = :c
+      AND EXISTS (SELECT 1 FROM report_tables rt
+                  WHERE rt.rcept_no = fl.rcept_no AND rt.parsed_at > fl.checked_at)
+"""
+
+
+def run_dq_gate(corps: list[str], fy_min: int = 2015, full: bool = False) -> dict:
     """I2 · 수집시 DQ 게이트 — 수집된 기업에 Gate B(보고서==DB) 재감사 + 항등식(DQ) 집계.
+
+    ★2026-11-19 증분 재감사(사용자 결정): full=False 면 계층2 가 마지막 감사 뒤에 다시 적재된
+    filing 과 그 filing 을 쓰는 std 행만 재감사한다(`_GATEB_STALE_*_SQL` 로 결과를 지운 뒤
+    recheck=False). 11-17 실행에서 Gate B 가 1,276개사 2015+ 전체 이력을 매일 재감사해 23.7시간
+    (회사당 67초) 걸렸는데, 실제로 다시 적재된 것은 약 3%였다. full=True(금요일 데일리 또는
+    --verify-full)는 예전처럼 전부 재감사한다 — 계층2 재적재 없이 계층3 규칙만 바뀐 행은
+    규칙 수정 때의 전수 재감사와 이 주간 전체 재감사가 잡는다.
 
     기존 검증 자산 재사용: `gateb_audit.audit_corp`(Phase A 면표 + Phase B 라인, 내부 커밋) +
     `verify_corp_sequential.rollup_corp`(→ corp_verify_status upsert). 표준화가 std_v3 에 이미 반영한
@@ -140,7 +169,7 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
     for corp in corps:
         gb_args = SimpleNamespace(
             corp=corp, corp_file=None, corps=None, sample=None, seed=42,
-            fy_min=fy_min, fy_max=2100, recheck=True, no_commit=False, line_audit=True,
+            fy_min=fy_min, fy_max=2100, recheck=full, no_commit=False, line_audit=True,
             # gateb_audit.audit_corp() 는 args.source 를 첫 줄부터 참조한다(scripts/gateb_audit.py:119).
             # 이 필드가 없어 --download-only 를 벗기는 순간 AttributeError 로 즉사하는 배선
             # 누락이었다(docs/plans/gateb_view_source_version_join_fix_design_2026-08-17.md §1-C
@@ -172,6 +201,10 @@ def run_dq_gate(corps: list[str], fy_min: int = 2015) -> dict:
                     "SELECT gb_fail_a, line_value_diff FROM corp_verify_status "
                     "WHERE corp_code=:c"), {"c": corp}).one_or_none()
                 prev_fail_a, prev_vd = (prev.gb_fail_a, prev.line_value_diff) if prev else (0, 0)
+                if not full:
+                    s.execute(text(_GATEB_STALE_FACE_SQL), {"c": corp, "fy": fy_min})
+                    s.execute(text(_GATEB_STALE_LINE_SQL), {"c": corp})
+                    s.commit()
             with get_session() as s:
                 gateb_audit.audit_corp(s, corp, gb_args, gb_agg)
             with get_session() as s:
@@ -805,8 +838,12 @@ def _verify_and_log(agg: dict, args) -> None:
     std_v3_failed = agg.get("std_v3_failed") or []
     if getattr(args, "no_verify", False) or not (ok or std_v3_failed):
         return
-    logger.info(f"[verify] DQ 게이트 — {len(ok)}개 기업 Gate B(보고서==DB)+항등식 재검(fy≥{args.verify_fy_min})")
-    summ = run_dq_gate(ok, args.verify_fy_min) if ok else {
+    # Weekly full re-audit on Friday (the daily skips weekends and holidays, so a Sunday slot
+    # would never run; Friday's longer run has the weekend to finish).
+    full = bool(getattr(args, "verify_full", False)) or date.today().weekday() == 4
+    mode = "전체 재감사" if full else "증분 재감사(계층2 재적재분만)"
+    logger.info(f"[verify] DQ 게이트 — {len(ok)}개 기업 Gate B(보고서==DB)+항등식 {mode}(fy≥{args.verify_fy_min})")
+    summ = run_dq_gate(ok, args.verify_fy_min, full=full) if ok else {
         "corps": 0, "gb_fail_a": 0, "line_value_diff": 0, "dq3": 0,
         "new_gb_fail_a": 0, "new_line_value_diff": 0, "fail_corps": []}
     msg = (f"[verify] 완료 — 검사 {summ['corps']} · "
@@ -856,6 +893,8 @@ def main() -> None:
                     help="⑤ 수집 후 DQ 게이트(Gate B 재감사+항등식) 생략")
     ap.add_argument("--verify-fy-min", type=int, default=2015,
                     help="DQ 게이트 Gate B 재감사 최소 회계연도(기본 2015)")
+    ap.add_argument("--verify-full", action="store_true",
+                    help="DQ 게이트 Gate B 를 증분이 아니라 전체 이력 재감사로(금요일은 자동)")
     ap.add_argument("--skip-holidays", action="store_true",
                     help="KRX 휴장일(주말·공휴일)이면 아무것도 하지 않고 종료. 스케줄 실행(plist)용 — "
                          "손으로 돌릴 때는 주지 않으므로 휴일에도 그대로 작업할 수 있다")

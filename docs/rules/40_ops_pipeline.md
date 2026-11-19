@@ -395,3 +395,13 @@ tests/ fin2/tests/` 전체 1059 passed(기존에 알려진 무관 실패
 > **DQ** `dq_assertions.py::adjusted_price_stale_boundary`(WARN, 최근 400일).
 > **계획** `docs/plans/adjusted_price_full_history_plan_2026-11-18.md`(2015 이전 연도별 보고서 적재와 맞추는 순서 §7).
 > **테스트** `tests/test_adjusted_history.py`.
+
+## R346. 데일리 DQ 게이트(Gate B)는 계층2 가 마지막 감사 뒤에 다시 적재된 것만 재감사하고, 금요일에 전체를 재감사한다 (2026-11-19, 적용 계층: 운영, 사용자 결정)
+
+> **상태** 유효 · **적용 계층** 운영(데일리 ⑤ 검증)
+>
+> **규칙** `scripts/collect_new.py::run_dq_gate(full=False)` — 회사마다 감사 전에 `face_audit` 중 그 std 행의 원천 filing(`source_rcepts`)이 감사 뒤 다시 적재된 것(`report_tables.parsed_at > checked_at`, 둘 다 UTC)과 `face_line_audit` 중 그 filing 이 다시 적재된 것을 지우고 `gateb_audit.audit_corp(recheck=False)` 를 부른다. 결과가 없는 행·filing(새 기간, 새 공시)은 원래대로 감사된다. 금요일 데일리(주말·휴장일은 안 돌아 일요일 칸은 없다)와 `--verify-full` 은 예전처럼 전부 재감사(`recheck=True`). 알림 판단(어제 대비 신규 증가분)과 `corp_verify_status` 집계는 바뀌지 않는다.
+> **발견(2026-11-19, 사용자 지적 "데일리가 이렇게 길게 걸리는 것은 문제")** 11-17 데일리 35시간(1,276개사) 중 ⑤ Gate B 가 23.7시간(회사당 67초) — 매일 2015+ 전체 이력을 재감사했다. 그 실행에서 실제로 다시 적재된 것은 std 행 1,134/39,378·filing 634/22,324(약 3%).
+> **실측** 00164788: 증분 1.2초(다시 적재된 filing 1건) · 두 번째 0.0초 · 전체 18.9초, 결과 같음.
+> **남는 틈** 계층2 재적재 없이 계층3 규칙만 바뀐 행은 증분이 못 본다 — 규칙 수정 때의 전수 재감사([[30_audit_verify]] 원칙)와 금요일 전체 재감사가 잡는다.
+> **테스트** `tests/test_collect_new_dq_gate_incremental.py`.

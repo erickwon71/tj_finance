@@ -19,7 +19,7 @@ from collector.filing_select import period_groups
 from collector.models import BizMetricPeriodic, OrderBacklogPeriodic
 from collector.order_backlog import _drop_out_of_range
 from fin2.extract.biz_section import _narrative_unit
-from fin2.extract.order_backlog import _aggregate_if_detail, map_order_table
+from fin2.extract.order_backlog import _aggregate_if_detail, is_prior_period_row, map_order_table
 from fin2.layer2.biz_raw_tables import ensure_biz_raw_tables
 
 PERIODIC_TYPES = ("half", "quarter")
@@ -121,10 +121,16 @@ def sync_order_backlog_periodic_corp(session, corp_code: str, year: int | None =
                                "new_orders": r.new_orders, "completed": r.completed,
                                "opening_backlog": r.opening_backlog,
                                "contract_total": r.contract_total, "layout": r.layout,
+                               "scope_change": r.scope_change,
                                "unit": (r.unit or "")[:20] or None, "source": "html_parse",
                                "rcept_no": f.rcept_no}
                         agg["out_of_range"] += _drop_out_of_range(row)
-                        merged[row.get("category") or ""] = row
+                        key = row.get("category") or ""
+                        prev = merged.get(key)
+                        if (prev is not None and prev["rcept_no"] == f.rcept_no
+                                and is_prior_period_row(row, prev)):
+                            continue  # R362-b: prior-period table of the same filing
+                        merged[key] = row
             if not parsed_any:
                 continue
             session.execute(text(

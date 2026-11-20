@@ -23,7 +23,7 @@ def load_order_backlog(corp_code: str) -> dict:
             return {"available": False}
         rows = s.execute(text("""
             SELECT category, backlog_amt, new_orders, completed, unit,
-                   opening_backlog, contract_total, layout
+                   opening_backlog, contract_total, layout, scope_change
             FROM order_backlog WHERE corp_code = :c AND fiscal_year = :fy
             ORDER BY id
         """), {"c": corp_code, "fy": latest_fy}).fetchall()

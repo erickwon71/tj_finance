@@ -51,6 +51,8 @@ COMMENT ON COLUMN order_backlog.opening_backlog IS 'R347 opening backlog (rollfo
 COMMENT ON COLUMN order_backlog.new_orders IS 'R347 period order inflow (rollforward only: new orders plus printed changes such as amendments/FX); NULL for cumulative tables';
 COMMENT ON COLUMN order_backlog.completed IS 'R347 cumulative: delivered/recognised to date; rollforward: recognised in the period (positive)';
 COMMENT ON COLUMN order_backlog.contract_total IS 'R347 total contract amount to date (cumulative only)';
+COMMENT ON COLUMN order_backlog.scope_change IS 'R362 backlog added or removed by a business combination / merger / disposal of a subsidiary, printed sign (rollforward only); not part of new_orders';
+COMMENT ON COLUMN order_backlog_periodic.scope_change IS 'same as order_backlog.scope_change';
 COMMENT ON COLUMN order_backlog_periodic.layout IS 'same as order_backlog.layout';
 COMMENT ON TABLE other_investments IS 'Other-corporation investments per fiscal_year (investee, quantity, ownership, book value). Availability = filing date of rcept_no.';
 COMMENT ON TABLE regulatory_events IS 'Regulatory events from DART disclosures (trading_halt, disclosure_violation, delisting, admin_issue, rehabilitation, investment caution); is_lift marks a release. Use filed_at as the availability date.';

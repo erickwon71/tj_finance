@@ -882,6 +882,8 @@ class OrderBacklog(Base):
     opening_backlog = Column(BigInteger, nullable=True, comment="R347 기초 수주잔고(rollforward 만)")
     contract_total  = Column(BigInteger, nullable=True, comment="R347 수주총액(누적 계약금액, cumulative 만)")
     layout       = Column(String(12),   nullable=True, comment="R347 cumulative / rollforward")
+    scope_change = Column(BigInteger,   nullable=True,
+                          comment="R362 사업결합·종속기업 처분 등 범위 변동(rollforward 만, 인쇄 부호)")
     unit         = Column(String(20),   nullable=True,
                           comment="원래 공시 단위 (억원/백만원 등)")
     source       = Column(String(20),   nullable=True,
@@ -1403,6 +1405,7 @@ class OrderBacklogPeriodic(Base):
     opening_backlog = Column(BigInteger, nullable=True)   # R347, same meaning as order_backlog
     contract_total  = Column(BigInteger, nullable=True)   # R347
     layout        = Column(String(12),   nullable=True)   # R347 cumulative / rollforward
+    scope_change  = Column(BigInteger,   nullable=True)   # R362, same meaning as order_backlog
     unit          = Column(String(20),   nullable=True)
     source        = Column(String(20),   nullable=True)
     rcept_no      = Column(String(14),   nullable=True)

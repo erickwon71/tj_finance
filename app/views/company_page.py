@@ -686,11 +686,14 @@ def _order_backlog_panel(corp_code: str) -> None:
     # R347: cumulative tables print 수주총액|기납품(누적)|잔고, rollforward tables print
     # 기초잔고|당기 수주|당기 매출인식|기말잔고 — show the columns of the table's own shape.
     if any(r.get("layout") == "rollforward" for r in rows):
+        # R362: business combination / disposal of a subsidiary, shown only when printed.
+        has_scope = any(r.get("scope_change") is not None for r in rows)
         df = pd.DataFrame([{
             "구분": r["category"] or "전체", "기초잔고": r["opening_backlog"],
+            **({"범위변동": r.get("scope_change")} if has_scope else {}),
             "당기수주": r["new_orders"], "매출인식": r["completed"], "기말잔고": r["backlog_amt"],
         } for r in rows])
-        num_cols = ("기초잔고", "당기수주", "매출인식", "기말잔고")
+        num_cols = ("기초잔고",) + (("범위변동",) if has_scope else ()) + ("당기수주", "매출인식", "기말잔고")
     else:
         df = pd.DataFrame([{
             "구분": r["category"] or "전체", "수주총액": r["contract_total"],

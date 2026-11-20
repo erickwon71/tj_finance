@@ -62,6 +62,30 @@ _OPENING_KW = ("기초", "이월", "전기말")
 # Period inflow columns of a rollforward table (new orders and other changes). Their printed
 # values are summed into new_orders so that opening + new_orders - completed = backlog.
 _NEW_FLOW_KW = ("신규", "산규계약", "수주증가", "증가", "증감", "변경", "변동", "환율", "취소", "추가")
+# R362: backlog that enters or leaves with a change of the group (business combination, merger,
+# disposal of a subsidiary). It is not an order of the period, so it is kept out of new_orders
+# and stored in scope_change with its printed sign (실측 HD현대중공업 FY2025 "사업결합"
+# 11,376,357, 동원시스템즈 FY2018 "종속기업처분으로 제거" (578,926,705)).
+_SCOPE_CHANGE_KW = ("사업결합", "합병", "연결범위", "종속기업처분", "종속기업취득")
+# R364: a balance keyword followed by a change word is a period change of the balance, not the
+# balance itself (실측 파인텍 FY2016 "기초잔액 | 연결범위의 변동 | 계약잔액 변경 | 기납품액 | 수주잔고":
+# "계약잔액 변경" 62,845,983 was taken as backlog and then overwritten by 수주잔고).
+_BALANCE_CHANGE_SUFFIX_RE = re.compile(r"(?:변경|변동|증감|증가|감소)(?:액|금액)?(?:\(.*\))?$")
+# R363: a grouped number wrapped inside the cell ("351,951,66\n1") is one printed number. Joined
+# only when the whitespace-free text is exactly a thousands-grouped number and the text before
+# the break is not (so "1,000 2,000" two-number cells are never joined).
+_GROUPED_NUM_RE = re.compile(r"^\(?-?\d{1,3}(?:,\d{3})+\)?$")
+
+
+def _join_wrapped_number(cell: str) -> str:
+    t = (cell or "").strip()
+    if not re.search(r"\d\s+[\d,]", t):
+        return cell
+    joined = re.sub(r"\s+", "", t)
+    first = re.split(r"\s+", t)[0]
+    if _GROUPED_NUM_RE.match(joined) and not _GROUPED_NUM_RE.match(first):
+        return joined
+    return cell
 # Columns that are neither a dimension nor an order amount (contract assets, receivables,
 # allowances, counts) — kept out of category. Matched on the whitespace-stripped header.
 _META_COL_KW = ("미청구공사", "초과청구", "공사미수금", "매출채권", "대손충당금", "손상차손", "계약자산",
@@ -112,7 +136,9 @@ class OrderBacklogRow:
     cumulative : contract_total = 수주총액(누적 계약금액), completed = 누적 기납품, new_orders = NULL
                  unless the table prints a separate period-new column.
     rollforward: opening_backlog = 기초잔고, new_orders = 당기 수주 증가(신규 + 변경 등 증감 합),
-                 completed = 당기 매출인식(양수), contract_total = NULL.
+                 completed = 당기 매출인식(양수), contract_total = NULL,
+                 scope_change = 사업결합·종속기업 처분 등 범위 변동(R362, 인쇄 부호 그대로),
+                 so opening + new_orders + scope_change - completed = backlog.
     """
     category: Optional[str]
     backlog_amt: Optional[int]
@@ -122,6 +148,7 @@ class OrderBacklogRow:
     opening_backlog: Optional[int] = None
     contract_total: Optional[int] = None
     layout: Optional[str] = None
+    scope_change: Optional[int] = None  # R362 rollforward only: business combination / disposal
 
 
 _MAX_TABLES_PER_MARKER = 4  # biz_section 과 동일 방어 — 헤딩 텍스트가 러닝헤더로 반복 출현해
@@ -179,11 +206,16 @@ def _col_kind(header_text: str, qty_is_amount: bool = False) -> Optional[str]:
         # a merged "수량금액" header (실측 01344336 FY2025) is still the amount column. When the
         # table has no 금액 column at all the "수량" label is the only one printed and the
         # values are the amounts (실측 삼성중공업 FY2019 20200330004469) — qty_is_amount.
+    if any(k in h for k in _SCOPE_CHANGE_KW):
+        return "scope"  # R362
     is_balance = any(k in h for k in _BACKLOG_KW)
     is_total = any(k in h for k in _TOTAL_KW)
     is_completed = any(k in h for k in _COMPLETED_KW)
     if any(k in h for k in _ENDING_KW) and (is_balance or "차기이월" in h):
         return "backlog"
+    if (is_balance and _BALANCE_CHANGE_SUFFIX_RE.search(h) and not is_total
+            and not any(k in h for k in _OPENING_KW)):
+        return "new"  # R364
     # "금액(이월금액)" is an amount column with a note, not the opening balance.
     h_open = re.sub(r"[\(（][^)）]*[\)）]", "", h)
     if h_open.startswith(_OPENING_KW) or (any(k in h_open for k in _OPENING_KW)
@@ -358,7 +390,7 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
         category = " ".join(dict.fromkeys(labels))[:150] or None
         vals: dict[str, int] = {}
         for c, kind in col_kind.items():
-            cell = drow[c]
+            cell = _join_wrapped_number(drow[c])  # R363
             if kind == "completed" and not rollforward:
                 m = _TRAILING_PAREN_NUM_RE.search(cell.strip())
                 if m:
@@ -367,7 +399,7 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
             v, _, _ = _parse_value(cell)
             if v is None or not math.isfinite(v):
                 continue
-            if kind == "new":
+            if kind in ("new", "scope"):
                 # several period-change columns (신규 / 변경 / 환율 …) add up, printed sign kept
                 vals[kind] = vals.get(kind, 0) + int(v)
             else:
@@ -395,7 +427,8 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
             continue
         common = dict(category=category, new_orders=vals.get("new"), completed=vals.get("completed"),
                       unit=unit, opening_backlog=vals.get("opening"),
-                      contract_total=vals.get("total"), layout=layout)
+                      contract_total=vals.get("total"), layout=layout,
+                      scope_change=vals.get("scope") if rollforward else None)
         if "backlog" in vals:
             rows.append(OrderBacklogRow(backlog_amt=vals.get("backlog"), **common))
         elif any(vals.get(k) is not None for k in ("total", "completed", "opening", "new")) and any(
@@ -409,6 +442,19 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
             #     인지 원문이 말해주지 않으므로 0 이라고 적을 근거가 없다.
             rows.append(OrderBacklogRow(backlog_amt=0, **common))
     return rows
+
+
+def is_prior_period_row(new: dict, existing: dict) -> bool:
+    """R362-b: True when `new` is the prior-period rollforward of `existing` (same filing, same
+    category) — its ending balance is the opening balance of `existing`. Filings often print the
+    current and the prior rollforward table with the same category labels; keyed by category, the
+    later (prior) table overwrote the current one (실측 동원시스템즈 FY2018 20190329000207: 당기
+    기말 0 ← 전기 기말 541,286,219). The printed chain ending(prior) = opening(current) is the proof.
+    """
+    if new.get("layout") != LAYOUT_ROLLFORWARD or existing.get("layout") != LAYOUT_ROLLFORWARD:
+        return False
+    b_new, o_cur, b_cur = new.get("backlog_amt"), existing.get("opening_backlog"), existing.get("backlog_amt")
+    return b_new is not None and o_cur is not None and b_new == o_cur and b_new != b_cur
 
 
 def _is_total_label(category: Optional[str]) -> bool:
@@ -435,6 +481,7 @@ def _aggregate_if_detail(rows: list[OrderBacklogRow]) -> list[OrderBacklogRow]:
         unit=next((r.unit for r in rows if r.unit), None),
         opening_backlog=_sum("opening_backlog"), contract_total=_sum("contract_total"),
         layout=next((r.layout for r in rows if r.layout), None),
+        scope_change=_sum("scope_change"),
     )]
 
 

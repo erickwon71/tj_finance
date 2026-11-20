@@ -596,6 +596,9 @@
 | R359 | R359. FY2015+ basis fallback 은 원문 근거가 있을 때만(연결←별도: 연결재무제표 없음, 별도←연결: R361), 근거 없으면 그 basis 행 없음 (2026-11-21, 적용 계층: 3 — 매핑, 사용자 결정) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | std_financials_v3 |
 | R360 | R360. "2. 연결재무제표" 절 연결 없음 문구 추가(연결재무 작성 안 함·개별 재무제표만·계열회사 없음·소규모기업 기재 생략) (2026-11-21, 적용 계층: 2 — 읽기 증거, 사용자 결정) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | filings.consolidation_evidence |
 | R361 | R361. "4. 재무제표" 절이 표 없이 "2. 연결재무제표에 있으니 참고"로 시작하면 별도=2번 절 근거(`separate_in_section2`) (2026-11-21, 적용 계층: 2 — 읽기 증거, 사용자 결정) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | filings.consolidation_evidence |
+| R362 | R362. 수주 롤포워드 표의 사업결합·연결범위 변동·종속기업 처분 열은 `scope_change` 로 — 당기 수주(new_orders)에 넣지 않고 category 에도 붙이지 않는다 (2026-11-21, 적용 계층: 3 — 매핑, 사용자 결정: 열 추가) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | order_backlog.scope_change |
+| R363 | R363. 수주 표 금액 셀 안의 줄바꿈·공백으로 나뉜 천 단위 숫자는 한 숫자로 읽는다(이어 붙인 글자가 정확히 천 단위 쉼표 숫자이고 앞 조각은 아닐 때만) (2026-11-21, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | order_backlog |
+| R364 | R364. 수주 표 머리글 `계약잔액 변경`·`수주잔고증감액` 처럼 잔고 낱말 뒤가 변동어로 끝나면 당기 증감 열 (2026-11-21, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | order_backlog |
 | R274 | R274. 여러 줄 라벨 `주당이익 / 기본주당순이익 / 희석주당순이익` 행은 줄 수만큼의 행으로 나눈다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R275 | R275. 자본변동표 열 이름 어휘에 `보통주납입자본`·`기타자본항목` 을 추가한다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R276 | R276. 같은 기수가 겹쳐 인쇄된 열은 인쇄된 연도로 기간을 가른다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |

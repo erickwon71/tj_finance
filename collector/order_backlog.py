@@ -17,7 +17,7 @@ from sqlalchemy import text
 
 from collector.models import OrderBacklog
 from fin2.extract.biz_section import _narrative_unit
-from fin2.extract.order_backlog import _aggregate_if_detail, map_order_table
+from fin2.extract.order_backlog import _aggregate_if_detail, is_prior_period_row, map_order_table
 from fin2.layer2.biz_raw_tables import ensure_biz_raw_tables
 
 # PostgreSQL BIGINT 상한. 이걸 넘는 값은 실재하는 수주금액일 수 없고, 알려진 **셀 병합 결함**
@@ -25,7 +25,8 @@ from fin2.layer2.biz_raw_tables import ensure_biz_raw_tables
 # 수주 데이터가 **전부** 사라진다(실측 2026-08-01: 00147860·00127936 두 기업이 이 경로로 실패).
 # 행을 버리지 않고 **문제 필드만 NULL** 로 낮춘다 — 같은 행의 멀쩡한 값은 살린다.
 _BIGINT_MAX = 9_223_372_036_854_775_807
-_AMOUNT_FIELDS = ("backlog_amt", "new_orders", "completed", "opening_backlog", "contract_total")
+_AMOUNT_FIELDS = ("backlog_amt", "new_orders", "completed", "opening_backlog", "contract_total",
+                  "scope_change")
 
 
 def _drop_out_of_range(row: dict) -> int:
@@ -82,7 +83,7 @@ def sync_order_backlog_corp(session, corp_code: str, year: int | None = None,
                         "category": r.category, "backlog_amt": r.backlog_amt,
                         "new_orders": r.new_orders, "completed": r.completed,
                         "opening_backlog": r.opening_backlog, "contract_total": r.contract_total,
-                        "layout": r.layout,
+                        "layout": r.layout, "scope_change": r.scope_change,
                         "unit": (r.unit or "")[:20] or None, "source": "html_parse",
                     })
             parsed_any = True
@@ -93,7 +94,11 @@ def sync_order_backlog_corp(session, corp_code: str, year: int | None = None,
                 bad = _drop_out_of_range(row)
                 if bad:
                     agg["out_of_range"] = agg.get("out_of_range", 0) + bad
-                merged[(row.get("category") or "")] = row
+                key = row.get("category") or ""
+                prev = merged.get(key)
+                if prev is not None and prev["rcept_no"] == f.rcept_no and is_prior_period_row(row, prev):
+                    continue  # R362-b: prior-period table of the same filing
+                merged[key] = row
         if not parsed_any:
             continue
 

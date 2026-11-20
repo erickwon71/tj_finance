@@ -101,8 +101,12 @@ _SALES_GI_RE = re.compile(r"(?:제\s*)?(?<!\d)(\d{1,3})\s*(?:[\(（]\s*(?:당|�
 # R349: period header variants that _is_period_header_cell does not cover but _is_clean_number
 # accepts ("58기", "53기 연간", "2025년(당기)", "2025연도 당기", "2025년도말", "2025년 4분기").
 # Matched on the whitespace-stripped cell.
+# R354: "25(당)기" / "25기 3분기" / "25기 반기" (이지케어텍 00490090) — a (당)/(전) note between the
+# number and 기, and an interim suffix; otherwise _is_clean_number takes the header row for data and
+# the whole table is dropped.
 _SALES_PERIOD_CELL_RES = (
-    re.compile(r"(?:제)?\d{1,3}기(?:연간|당기|전기|전전기|말)?(?:[\(（][^)）]*[\)）])?"),
+    re.compile(r"(?:제)?\d{1,3}(?:[\(（](?:당|전|전전)[\)）])?기"
+               r"(?:연간|당기|전기|전전기|말|\d분기|반기|상반기|하반기)?(?:[\(（][^)）]*[\)）])?"),
     re.compile(r"(?:19|20)\d{2}(?:년|연)?도?(?:말|연간|\d분기|상반기|하반기)?"
                r"(?:[\(（][^)）]*[\)）])?(?:당기|전기|전전기|연간|말)?"),
 )

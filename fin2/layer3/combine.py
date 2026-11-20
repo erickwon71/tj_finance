@@ -3388,6 +3388,83 @@ def _ops_ni_canonical(label_raw: str | None) -> str | None:
     return "is.continuing_ni" if m.group(1) == "계속" else "is.discontinued_ni"
 
 
+# R353 (2026-11-20, tj_asset request 1 — the last 4 rows): continuing / discontinued NI printed under
+# labels the R341 pattern does not know — '계속사업영업당기순이익' (00573269 2025FY), '계속사업영업손익'
+# (00626011), '계속기업당기순이익' (01182578), '계속영업연결당기순이익' — or only as the attribution split
+# '지배기업의 소유주에게 귀속될 계속영업손익' + '비지배지분에 귀속될 계속영업이익(손실)' with no total line
+# (01326792). Some of these forms also read as operating income ('계속사업영업이익'), so a loose candidate
+# is kept out of `_resolve` (private keys, popped by `_pop_loose_ops_ni`) and confirmed only when an
+# identity proves it: value = EBT -/+ tax, or value + discontinued NI = NI.
+_R353_LOOSE_OPS_NI = True
+_R353_CONT, _R353_DISC = "is.r353_cont", "is.r353_disc"
+_R353_CONT_CTRL, _R353_CONT_NCI = "is.r353_cont_ctrl", "is.r353_cont_nci"
+_R353_KEYS = (_R353_CONT, _R353_DISC, _R353_CONT_CTRL, _R353_CONT_NCI)
+_R353_LOOSE_RE = re.compile(
+    r"^(계속|중단)(영업|사업|사업영업|사업의영업|기업|기업의영업)?(연결)?(당기|분기|반기)?(연결)?(순)?"
+    r"(이익|손익|손실)$")
+_R353_ATTR_RE = re.compile(r"계속(영업|사업).*(이익|손익|손실)$")
+
+
+def _loose_ops_ni_key(label_raw: str | None, section_path: str | None) -> str | None:
+    """Private candidate key for an R353 loose continuing/discontinued NI line, or None."""
+    if not _R353_LOOSE_OPS_NI or not label_raw:
+        return None
+    core = re.sub(r"\([^)]*\)|\s+", "", normalize_account_name(label_raw))
+    if _R341_OPS_NI_RE.match(core) or any(w in core for w in ("포괄", "주당", "법인세")):
+        return None
+    sp = section_path or ""
+    if "지배" in core or "귀속" in core or "귀속" in sp:
+        if not _R353_ATTR_RE.search(core):
+            return None
+        nci = "비지배" in core or "비지배" in sp.rsplit(">", 1)[-1]
+        return _R353_CONT_NCI if nci else _R353_CONT_CTRL
+    m = _R353_LOOSE_RE.match(core)
+    if not m:
+        return None
+    return _R353_CONT if m.group(1) == "계속" else _R353_DISC
+
+
+def _pop_loose_ops_ni(cands: dict) -> dict:
+    """Take the R353 private candidates out of `cands` before `_resolve` (never a std/extended value)."""
+    return {k: cands.pop(k) for k in _R353_KEYS if k in cands}
+
+
+def _resolve_loose_ops_ni(loose: dict, cands: dict, confirmed: dict) -> None:
+    """R353: confirm is.continuing_ni / is.discontinued_ni from loose lines only when an identity proves them."""
+    if not loose:
+        return
+    ebt, ni = confirmed.get("is.ebt"), confirmed.get("is.net_income")
+    if ebt is None or ni is None:
+        return
+    tax = confirmed.get("is.tax_expense") or 0
+
+    def vals(key: str) -> set[int]:
+        return {r["value"] for r in loose.get(key, ()) if r.get("value") is not None}
+
+    def cont_proven(v: int) -> bool:
+        if any(abs(ebt - t - v) <= _R341_TOL for t in (tax, -tax)):
+            return True
+        disc = confirmed.get("is.discontinued_ni")
+        return disc is not None and abs(v + disc - ni) <= _R341_TOL
+
+    # a strict (R341) candidate, even a held conflict, is never overridden
+    if "is.continuing_ni" not in cands:
+        fits = {v for v in vals(_R353_CONT) if cont_proven(v)}
+        if not fits:
+            ctrl, nci = vals(_R353_CONT_CTRL), vals(_R353_CONT_NCI) or {0}
+            if len(ctrl) == 1 and len(nci) == 1:
+                s = next(iter(ctrl)) + next(iter(nci))
+                if cont_proven(s):
+                    fits = {s}
+        if len(fits) == 1:
+            confirmed["is.continuing_ni"] = fits.pop()
+    cont = confirmed.get("is.continuing_ni")
+    if "is.discontinued_ni" not in cands and cont is not None:
+        fits = {v for v in vals(_R353_DISC) if abs(cont + v - ni) <= _R341_TOL}
+        if len(fits) == 1:
+            confirmed["is.discontinued_ni"] = fits.pop()
+
+
 def _resolve_ni_attribution(cands: dict, confirmed: dict, conflicts: dict) -> None:
     """2nd pass (Phase B, docs/plans/std_v3_controlling_ni_gap_fix_plan_2026-08-08.md §3-2):
     re-select a held is.controlling_ni conflict via the accounting identity
@@ -3550,6 +3627,7 @@ _LOSS_CANON = frozenset({
     "is.net_income", "is.operating_income", "is.ebt",
     "is.controlling_ni", "is.gross_profit",
     "is.continuing_ni", "is.discontinued_ni",  # R341: same printed-loss convention as NI
+    "is.r353_cont", "is.r353_disc", "is.r353_cont_ctrl", "is.r353_cont_nci",  # R353 loose keys
 })
 
 
@@ -4011,6 +4089,10 @@ def _map_rows(rows, period: str, basis: str, statements,
             if ops is not None:
                 # R341: additive — the row still goes through the general mapper below
                 _add(r, ops, "exact")
+            loose = _loose_ops_ni_key(r["label_raw"], r.get("section_path"))
+            if loose is not None:
+                # R353: private key, kept out of _resolve; the general mapper still runs below
+                _add(r, loose, "exact")
         res = _map_label(r["label_raw"], fs)
         if res.confidence < 0.88 or res.account_code.startswith("unknown."):
             # R172: an XBRL cell whose Korean label the mapper can't place falls back to
@@ -4220,6 +4302,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
         "cf": _stale_annual_reprint_table_seqs(session, corp, fy, period, stale_basis, statement="CF"),
     }
     debt_rows: dict[str, list[dict]] = {}
+    loose_ops_ni = _pop_loose_ops_ni(cands)  # R353
     confirmed, conflicts = _resolve(cands, corp, fy, period, basis, stale_reprint_seqs,
                                     debt_rows=debt_rows)
     # R345: per BS table, the row of 자산총계 — a debt-labelled line above it is an asset
@@ -4279,6 +4362,7 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
             and "is.controlling_ni" in confirmed):
         nci = confirmed.get("is.noncontrolling_ni", 0)
         confirmed["is.net_income"] = confirmed["is.controlling_ni"] + nci
+    _resolve_loose_ops_ni(loose_ops_ni, cands, confirmed)  # R353, before R341 so its target is known
     _resolve_sign_identity(cands, confirmed)
     col: dict[str, int] = {}
     for canon, value in confirmed.items():

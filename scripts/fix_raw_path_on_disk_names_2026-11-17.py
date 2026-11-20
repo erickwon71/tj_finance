@@ -67,11 +67,16 @@ _TARGETS = [
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
+    # R357 (2026-11-20): a second run must not hit ON CONFLICT DO NOTHING on keys backed up before
+    ap.add_argument("--backup-table", default="raw_path_backup_20261117")
     args = ap.parse_args()
+    bt = args.backup_table
+    if not bt.replace("_", "").isalnum():
+        raise SystemExit(f"bad --backup-table: {bt}")
 
     with get_session() as s:
         if args.apply:
-            s.execute(text("""CREATE TABLE IF NOT EXISTS public.raw_path_backup_20261117 (
+            s.execute(text(f"""CREATE TABLE IF NOT EXISTS public.{bt} (
                 tbl text, key text, col text, old_value text, new_value text,
                 PRIMARY KEY (tbl, key, col))"""))
         for tbl, key, col in _TARGETS:
@@ -92,7 +97,7 @@ def main() -> None:
                     changes.append({"k": k, "old": old, "new": new})
             print(f"{tbl}.{col}: {dict(stat)}", flush=True)
             if args.apply and changes:
-                s.execute(text("""INSERT INTO public.raw_path_backup_20261117 (tbl, key, col, old_value, new_value)
+                s.execute(text(f"""INSERT INTO public.{bt} (tbl, key, col, old_value, new_value)
                                   VALUES (:t, :k, :c, :old, :new)
                                   ON CONFLICT (tbl, key, col) DO NOTHING"""),
                           [{"t": tbl, "c": col, **c} for c in changes])

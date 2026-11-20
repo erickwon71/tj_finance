@@ -46,16 +46,24 @@ def clear_cache() -> None:
 
 
 def on_disk(path: str | os.PathLike) -> Path:
-    """The same path spelled as on disk; the input unchanged when it exists or cannot be matched."""
+    """The same path spelled as on disk. Non-ASCII components take the spelling of the directory
+    entry they match under NFC comparison; a component with no entry (not created yet, or the
+    folder cannot be listed) keeps the given spelling, and so does everything after it.
+
+    R357 (2026-11-20): the spelling comes from the directory listing, never from `exists()`. Right
+    after a mount the SMB client briefly resolves an NFC lookup to the NFD folder, so an
+    `exists()`-first check kept the NFC spelling and the downloader stored it (434 paths written
+    2026-11-17..20 that stopped opening minutes later). And a missing tail (a new fiscal-year
+    folder) used to return the whole input unchanged, dropping the company folder's resolution.
+    """
     p = Path(path)
-    if p.exists() or p.is_symlink():
+    if str(p).isascii():
         return p
     parts = p.parts
     cur = Path(parts[0])
     for i, part in enumerate(parts[1:], 1):
-        cand = cur / part
-        if cand.exists() or cand.is_symlink():
-            cur = cand
+        if part.isascii():
+            cur = cur / part
             continue
         name = _entries(str(cur)).get(_nfc(part))
         if name is None:
@@ -63,7 +71,7 @@ def on_disk(path: str | os.PathLike) -> Path:
             _listing.pop(str(cur), None)
             name = _entries(str(cur)).get(_nfc(part))
         if name is None:
-            return p
+            return cur.joinpath(*parts[i:])
         cur = cur / name
     return cur
 

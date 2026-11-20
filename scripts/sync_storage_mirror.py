@@ -75,6 +75,34 @@ def _log_run(status: str, files: int | None, sent_bytes: int | None,
         logger.warning(f"[mirror] 이력 기록 실패(비치명적): {type(exc).__name__}: {exc}")
 
 
+# R358 (2026-11-20): files downloaded since the last successful mirror, not only the last
+# `since_hours`. Run 60 (2026-11-16) died before ⑦ and the next mirror came 2.5 days later, so
+# 1,794 files received on 11-16 (main XML + viewer prints) never reached the SD card. Times are
+# compared as instants: download_tasks.completed_at is naive UTC (datetime.utcnow), while
+# viewer_built_at and storage_sync_log.started_at are naive local time (datetime.now / now()) —
+# comparing completed_at with now() shrank the window by 9 hours. The window is capped at 30 days
+# so a file that can never be copied does not grow the list forever (the periodic --full covers it).
+_RECENT_SQL = """
+    WITH cut AS (
+        SELECT GREATEST(
+                 now() - interval '30 days',
+                 LEAST(now() - make_interval(hours => :h),
+                       COALESCE((SELECT max(started_at) FROM storage_sync_log WHERE status = 'success')
+                                  AT TIME ZONE current_setting('TimeZone') - interval '1 day',
+                                now() - make_interval(hours => :h)))) AS t
+    )
+    SELECT file_path FROM download_tasks, cut
+    WHERE status = 'completed' AND file_path IS NOT NULL
+      AND (completed_at AT TIME ZONE 'UTC') >= cut.t
+    UNION
+    -- 2026-10-10: web-viewer prints of filings without a main XML
+    -- (docs/plans/viewer_xml_source_policy_2026-10-10.md)
+    SELECT viewer_xml_path FROM download_tasks, cut
+    WHERE viewer_xml_path IS NOT NULL
+      AND (viewer_built_at AT TIME ZONE current_setting('TimeZone')) >= cut.t
+"""
+
+
 def _recent_relpaths(since_hours: int) -> list[str] | None:
     """최근 다운로드된 파일의 raw_report 상대경로. None = 목록을 못 구했다(전체 스캔으로).
 
@@ -85,26 +113,20 @@ def _recent_relpaths(since_hours: int) -> list[str] | None:
     """
     try:
         with get_session() as s:
-            rows = s.execute(text("""
-                SELECT file_path FROM download_tasks
-                WHERE status = 'completed' AND file_path IS NOT NULL
-                  AND completed_at >= now() - make_interval(hours => :h)
-                UNION
-                -- 2026-10-10: web-viewer prints of filings without a main XML
-                -- (docs/plans/viewer_xml_source_policy_2026-10-10.md)
-                SELECT viewer_xml_path FROM download_tasks
-                WHERE viewer_xml_path IS NOT NULL
-                  AND viewer_built_at >= now() - make_interval(hours => :h)
-            """), {"h": since_hours}).fetchall()
+            rows = s.execute(text(_RECENT_SQL), {"h": since_hours}).fetchall()
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[mirror] 최근 파일 목록 조회 실패({exc}) — 전체 스캔으로 진행")
         return None
 
+    # R358: a stored NFC spelling of an NFD folder on the NAS fails rsync's stat (rc=23, run 62
+    # 2026-11-20): list the on-disk spelling (collector/raw_paths.py, R327/R357).
+    from collector.raw_paths import on_disk_str
     rels = []
     for (fp,) in rows:
+        fp = on_disk_str(fp)
         if "/raw_report/" in fp:
             rels.append(fp.split("/raw_report/", 1)[1])
-    return rels
+    return sorted(set(rels))
 
 
 def run_mirror(dry_run: bool = False, full: bool = False,
@@ -204,7 +226,9 @@ def _parse_stats(out: str) -> tuple[int, int]:
     """rsync --stats 출력에서 전송 파일 수·바이트."""
     files = total = 0
     for line in out.splitlines():
-        if line.startswith("Number of regular files transferred:"):
+        # openrsync (macOS /usr/bin/rsync) prints "Number of files transferred:" — files_sent
+        # was logged as 0 on every run (R358)
+        if line.startswith(("Number of regular files transferred:", "Number of files transferred:")):
             files = int(line.split(":")[1].strip().replace(",", ""))
         elif line.startswith("Total transferred file size:"):
             total = int(line.split(":")[1].strip().split()[0].replace(",", ""))

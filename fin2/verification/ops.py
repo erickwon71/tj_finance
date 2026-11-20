@@ -1528,8 +1528,14 @@ def _reload_rcept(rcept: str, reason: str, use_sd: bool = False) -> tuple[str, s
             store_layer3_corrections(s, rcept, corrections)   # R0-2: after the printed rows
             from collector.xbrl_instance_lines_sync import store_filing_evidences
             store_filing_evidences(s, rcept, file_path, xml_source=t.file_type == "xml")
-            s.execute(text("UPDATE download_tasks SET layer2_reload_pending = FALSE "
-                           "WHERE rcept_no = :r AND layer2_reload_pending"), {"r": rcept})
+            cleared = s.execute(text("UPDATE download_tasks SET layer2_reload_pending = FALSE "
+                                     "WHERE rcept_no = :r AND layer2_reload_pending"),
+                                {"r": rcept}).rowcount
+            if cleared and t.file_type == "xml" and not t.file_path.endswith(".viewer.xml"):
+                # R356: now read from the main XML, not the viewer print — the daily post
+                # stages (⑤) must run again on it (collector/note_lines_sync.py, same rule)
+                s.execute(text("DELETE FROM pipeline_post_stage_done WHERE rcept_no = :r"),
+                          {"r": rcept})
     except DBAPIError as exc:
         if isinstance(exc.orig, pg_errors.LockNotAvailable):
             return "deferred", "검증 중(lease) — lease 종료 후 재시도"

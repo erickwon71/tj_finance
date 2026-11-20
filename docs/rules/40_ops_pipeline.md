@@ -444,3 +444,25 @@ tests/ fin2/tests/` 전체 1059 passed(기존에 알려진 무관 실패
 > **소급** `scripts/qa/r355_post_stage_catchup.py --chunk 50 --until 17:40`(50개사씩 ⑤ 후 표시, 18:00 데일리와 겹치지 않게 멈춤, 남은 것은 데일리가 이어받음). **결과(2026-11-20 16:06~17:34)**: 11덩이 529개사·537필링 표시, 대기 0. Gate B 새 fail_a 2건(DS단석 00108612·사조산업 00124799, 둘 다 2026 Q3 별도 — 미조사), DQ3 경고 4. 아시아종묘 2026 Q3 분기·반기 지표 0→142행. 시드가 '나중에 검증됨'으로 표시해 catch-up 에서 빠진 과거 연도 필링(최근 받았는데 그 기업 최신 연도가 아니고 분기·반기 지표 0행)은 2개사뿐이라 연도별 `sync_biz_periodic(year=)` 로 직접 채움: 진코스텍 01158632 2017~2024 9개 연도, 덕산넵코어스 00960623 2022~2025.
 > **하지 않은 것** ⑤-2 수주·⑤-3 원문 비재무 섹션은 여전히 최신 사업연도만 다시 만든다(과거 연도 필링 늦은 도착은 ⑤-1c 만 처리).
 > **테스트** `tests/test_collect_new_post_stage_r355.py`(대기 기업이 ⑤ 전 단계에 들어감, 표시는 맨 끝·선택 시각 기준, 표시 실패·대기 조회 실패는 비치명, 과거 연도 연도별 동기화).
+
+## R356. 웹뷰 인쇄본으로 적재한 필링에 원본 XML 이 오면(`layer2_reload_pending`) ④ 가 그 기업을 오늘 공시와 상관없이 다시 고르고, 다시 적재한 필링은 ⑤ 도 다시 돈다 (2026-11-20, 적용 계층: 운영)
+
+> **규칙** `app/data/collect.py::needs_standardize_corps` — `download_tasks.layer2_reload_pending` 이 켜진 (원본 XML 완료) 필링의 기업은 `only`(메인 경로 = 오늘 공시 기업) 제한과 "std_v3 에 기간 없음 / 최근 30일 계층2 0행" 조건 밖에서도 ④ 대상이다. ④-3 `collector/note_lines_sync.py::sync_layer2_lines` 는 이미 이 표시를 존중해 원본 XML 로 다시 적재하고 표시를 끈다. 표시를 끌 때 그 필링의 `pipeline_post_stage_done` 행을 지워 ⑤(R355: Gate B·사업지표·수주·원문 비재무 섹션)가 원본 XML 로 다시 돈다 — 웹뷰 인쇄본에는 재무제표·주석 섹션만 있다. 검증 큐 재적재(`fin2/verification/ops._reload_rcept`)도 원본 XML 로 읽었을 때 같은 일을 한다. 선택 함수 하나를 두 call site(메인·`--standardize-only`)가 같이 쓴다.
+> **발견** R355 소급 뒤 Gate B 새 fail_a 2건 — DS단석 00108612·사조산업 00124799 2026 Q3 별도(20~21개 항목 전부 VALUE_DIFF). 두 필링(`20261116001018`·`20261116001384`)은 접수 당일 원본 XML 이 없어 웹뷰 인쇄본(`.viewer.xml`)으로 계층2 를 적재했는데(11-17 16:55, `filing_load_events.reason=viewer_source`) 그 인쇄본의 `4. 재무제표` 섹션이 비어 있어 연결만 실렸다. 11-17 19:10 원본 XML(4-1~4-4 별도 재무제표 있음)이 와서 다운로더가 표시를 켰지만, ④ 선택은 std_v3 에 기간이 이미 있고 계층2 가 0행이 아니며 메인 경로는 오늘 공시 기업으로 한정돼 이 기업들을 다시 고르지 않았다(R355 와 같은 꼴 — std_v3 존재를 "끝남"으로 봄). 계층3 basis fallback(`fin2/layer3/combine.py`, 그 기간에 한쪽 basis 만 있으면 다른 쪽에 복사)이 별도 행을 연결값으로 채웠고, Gate B 가 원본 XML 의 별도와 대조해 fail_a. 같은 상태 필링 **335건(330개사, 원본 XML 도착 2026-10-23~11-17)**, 모두 마지막 적재가 원본 도착 전 인쇄본. 별도가 아예 빠진 것은 3건(위 2건 + 도화엔지니어링 00114552 `20261113001594`, Gate B pending 이라 fail_a 로 안 잡힘). 서울평가정보 00260745 는 원문이 "4. 재무제표 — 해당사항 없습니다"라 정상.
+> **하지 않은 것** basis fallback 이 연결비대상 증거(`filings.consolidation_evidence`) 없이도 연결→별도 복사를 하는 것은 그대로 둔다(계층2 가 빠졌을 때 별도 값을 지어내는 별개 문제, 사용자 판단 대기).
+> **테스트** `tests/test_needs_standardize_reload_pending_r356.py`(로컬 DB 트랜잭션 롤백: 표시된 필링 기업이 `only` 밖에서도·재개 경로에서도 선택, 표시 없는 기업은 여전히 `only` 로 제한).
+
+## R357. 원문 경로의 한글 마디는 `exists()` 가 아니라 폴더 목록의 실제 철자로 정한다 — 마운트 직후 NFC 조회가 잠깐 통해도 NFD 이름을 저장 (2026-11-20, 적용 계층: 운영)
+
+> **규칙** `collector/raw_paths.py::on_disk` — 경로의 ASCII 아닌 마디는 상위 폴더 목록에서 NFC 로 같은 항목을 찾아 그 철자(NAS 는 NFD)로 바꾼다. `exists()` 로 먼저 통과시키지 않는다. 목록에 없는 마디(아직 안 만든 연도 폴더 등)는 그 마디부터 입력 철자를 쓰되, 앞에서 푼 회사 폴더 철자는 유지한다(예전에는 경로 전체를 입력 그대로 돌려줬다).
+> **발견** 데일리 run 62 미러 실패(rsync rc=23, 엔케이젠바이오텍코리아 `20261118000208.xml` stat 실패)와 완전성 감사 '유실복구 5'. R327 뒤에도 2026-11-17~20 에 받은 `download_tasks.file_path` 434건이 NFC 로 저장돼 몇 분 뒤 열리지 않았다(R327 발견: SMB 클라이언트가 마운트 직후 잠깐만 NFC 조회를 NFD 폴더에 맞춰 줌 → 그 순간 `exists()` 가 참이라 NFC 철자를 그대로 저장). 이 경로를 그냥 `exists()` 로 확인하는 곳(`collector/note_lines_sync.py` 의 `Path(file_path).exists()` 는 조용히 건너뜀, 미러, 완전성 감사의 '유실' 판정 → pending 으로 되돌림)이 영향을 받는다. 434건 모두 계층2 는 이미 적재돼 있었다(다운로드 직후 조회가 통하던 동안 적재).
+> **DB 정리** `scripts/fix_raw_path_on_disk_names_2026-11-17.py --apply --backup-table raw_path_backup_20261120`(새 `--backup-table` 인자 — 11-17 백업 테이블의 ON CONFLICT DO NOTHING 에 옛 값이 묻히지 않게): `file_path` 434건. 못 찾은 98건은 보관 폴더로 옮겨진 에코볼트 00562360 한 회사의 옛 경로(별건, 손대지 않음).
+> **검증 기계대조** 11-15 이후 `verification.machine_checks` no_source 17건이 모두 이 434건(NFC 경로)이었다. 9건은 이미 통과, pending 8건은 같은 load_seq 라 기계가 다시 보지 않고 모델 검증으로 넘어갈 상태라 기록을 지움(백업 `verification.machine_checks_nosource_backup_20261120`). SD 미러 누락(R358)은 영향 없음 — SD 를 읽는 곳(`ops._sd_path`, `machine_compare.resolve_source`)은 SD 에 없으면 NAS 로 읽고, 데일리 적재는 NAS 만 읽는다.
+> **테스트** `tests/test_raw_paths_on_disk.py`(모든 철자가 "있는" 순간에도 NFD 로 풀림, 없는 연도 폴더 아래에서도 회사 폴더 철자 유지).
+
+## R358. SD 미러 증분은 "마지막 성공 미러 이후"에 받은 파일을 보낸다(최대 30일), 시각은 순간으로 비교, openrsync 전송 건수도 센다 (2026-11-20, 적용 계층: 운영)
+
+> **규칙** `scripts/sync_storage_mirror.py::_recent_relpaths` — 대상 = `download_tasks` 중 받은 시각이 `max(now()-since_hours, 마지막 성공 미러 시작-1일)` 보다 앞서지 않은 것 중 이른 쪽 이후(30일 상한). `completed_at`(naive UTC, `datetime.utcnow`)은 `AT TIME ZONE 'UTC'`, `viewer_built_at`·`storage_sync_log.started_at`(naive 현지시각)은 세션 TZ 로 순간화해 비교한다. 목록 경로는 `on_disk_str` 로 디스크 철자로 바꾼다(R357). `_parse_stats` 는 openrsync 의 `Number of files transferred:` 도 읽는다.
+> **발견** R357 조사 중 2026-11-16 이후 받은 파일 2,534개 중 **1,794개가 SD 미러에 없었다** — 전부 11-16 run 60 다운로드분(본문 XML 1,364·웹뷰 인쇄본 430). run 60 이 ⑦ 전에 죽었고 다음 미러(11-19 04:36)는 48시간 창 밖이었다. 게다가 `completed_at`(UTC)을 `now()`(KST)와 그대로 비교해 창이 9시간 더 좁았다. 미러 이력은 openrsync 출력 문구 차이로 매번 `files_sent=0` 이라 전송이 됐는지도 보이지 않았다.
+> **보충** `python scripts/sync_storage_mirror.py --since-hours 144` 1회.
+> **테스트** `tests/test_sync_storage_mirror_window_r358.py`(openrsync·GNU rsync 통계, 로컬 DB 롤백: 마지막 성공 이후 84시간 전 파일 포함, UTC 44시간 전 파일 포함).

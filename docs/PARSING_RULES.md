@@ -590,6 +590,9 @@
 | R353 | R353. 규칙 밖 라벨의 계속·중단영업이익은 항등식으로 증명될 때만 확정한다 — 귀속 내역(지배+비지배)만 있으면 합으로 (2026-11-20, 적용 계층: 3) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | std_financials_v3·extended_financials |
 | R354 | R354. 매출 표 기간 머리글 `25(당)기`·`25기 3분기`·`56기 반기` 도 머리글이다 (2026-11-20, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | biz_metrics |
 | R355 | R355. 데일리 ⑤는 "⑤를 거친 필링" 표시(`pipeline_post_stage_done`)로 고른다 — std_v3 에 기간이 있다는 것만으로 끝난 것으로 보지 않음, 과거 연도 필링은 ⑤-1c 연도별 동기화 (2026-11-20, 적용 계층: 운영) | [40_ops_pipeline.md](rules/40_ops_pipeline.md) | 운영 | 유효 | pipeline_post_stage_done·biz_metrics_periodic |
+| R356 | R356. 웹뷰 인쇄본으로 적재한 필링에 원본 XML 이 오면(`layer2_reload_pending`) ④ 가 그 기업을 오늘 공시와 상관없이 다시 고르고 ⑤ 도 다시 돈다 (2026-11-20, 적용 계층: 운영) | [40_ops_pipeline.md](rules/40_ops_pipeline.md) | 운영 | 유효 | report_lines·pipeline_post_stage_done |
+| R357 | R357. 원문 경로의 한글 마디는 `exists()` 가 아니라 폴더 목록의 실제 철자로 정한다 — 마운트 직후 NFC 조회가 잠깐 통해도 NFD 이름을 저장 (2026-11-20, 적용 계층: 운영) | [40_ops_pipeline.md](rules/40_ops_pipeline.md) | 운영 | 유효 | download_tasks |
+| R358 | R358. SD 미러 증분은 마지막 성공 미러 이후 받은 파일을 보낸다(최대 30일), 시각은 순간으로 비교, openrsync 전송 건수도 센다 (2026-11-20, 적용 계층: 운영) | [40_ops_pipeline.md](rules/40_ops_pipeline.md) | 운영 | 유효 | storage_sync_log |
 | R274 | R274. 여러 줄 라벨 `주당이익 / 기본주당순이익 / 희석주당순이익` 행은 줄 수만큼의 행으로 나눈다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R275 | R275. 자본변동표 열 이름 어휘에 `보통주납입자본`·`기타자본항목` 을 추가한다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R276 | R276. 같은 기수가 겹쳐 인쇄된 열은 인쇄된 연도로 기간을 가른다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |

@@ -158,14 +158,22 @@ def needs_standardize_corps(only: list[str] | None = None) -> list[str]:
     "v3 결측이 쏟아진다"는 우려는 반증됐다. 이 전환의 부수 이득은 self-healing: 셀렉터가
     v3 기준이면 데일리가 건드리는 기업마다 v3 결측을 스스로 메운다.
     """
-    clause = "AND f.corp_code = ANY(:only)" if only else ""
+    # R356: a filing first loaded from the web-viewer print whose main XML arrived later carries
+    # download_tasks.layer2_reload_pending. Its period is already in std_v3 and its layer 2 is not
+    # empty, so the two conditions below never pick it — and the main daily path limits `only` to
+    # today's filers, so the corp stayed on the viewer print for good (335 filings 2026-10-23..11-17,
+    # DS단석/사조산업/도화엔지니어링 2026 Q3 with no separate statements). Flagged corps are
+    # selected regardless of `only`.
+    only_clause = "f.corp_code = ANY(:only) AND" if only else ""
     sql = f"""
         SELECT DISTINCT f.corp_code
         FROM filings f
         JOIN download_tasks dt ON dt.rcept_no = f.rcept_no
          AND dt.status='completed' AND dt.file_type='xml' AND dt.file_path IS NOT NULL
-        WHERE f.report_type IN ('annual','half','quarter') {clause}
+        WHERE f.report_type IN ('annual','half','quarter')
           AND (
+            COALESCE(dt.layer2_reload_pending, FALSE)
+            OR ({only_clause} (
             NOT EXISTS (
               SELECT 1 FROM std_financials_v3 s
               WHERE s.corp_code=f.corp_code AND s.fiscal_year=f.fiscal_year
@@ -176,6 +184,7 @@ def needs_standardize_corps(only: list[str] | None = None) -> list[str]:
             OR (dt.created_at > CURRENT_DATE - 30 AND f.fiscal_year >= 2015
                 AND NOT EXISTS (SELECT 1 FROM report_lines r WHERE r.rcept_no = f.rcept_no)
                 AND NOT EXISTS (SELECT 1 FROM note_lines n WHERE n.rcept_no = f.rcept_no))
+          ))
           )
         ORDER BY f.corp_code
     """

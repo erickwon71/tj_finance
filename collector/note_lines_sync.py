@@ -183,9 +183,16 @@ def sync_layer2_lines(
                     # rcept 단위 delete-then-insert + col_index=0 필터를 이미 한다.
                     out["body_rows"] += store_report_lines(session, t.rcept_no, lines)
                     store_layer3_corrections(session, t.rcept_no, corrections)
-                    session.execute(text("UPDATE download_tasks SET layer2_reload_pending = FALSE "
-                                         "WHERE rcept_no = :r AND layer2_reload_pending"),
-                                    {"r": t.rcept_no})
+                    cleared = session.execute(text(
+                        "UPDATE download_tasks SET layer2_reload_pending = FALSE "
+                        "WHERE rcept_no = :r AND layer2_reload_pending"),
+                        {"r": t.rcept_no}).rowcount
+                    if cleared:
+                        # R356: the post stages (⑤ biz / order backlog / doc sections) of this
+                        # filing ran on the viewer print, which holds only the statement and
+                        # notes sections — make ⑤ pick the filing up again from the main XML.
+                        session.execute(text("DELETE FROM pipeline_post_stage_done "
+                                             "WHERE rcept_no = :r"), {"r": t.rcept_no})
                 out["filings"] += 1
                 seen_corps.add(t.corp_code)
             except Exception as exc:  # noqa: BLE001 — 한 건 실패가 전체를 막으면 안 됨

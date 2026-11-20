@@ -96,6 +96,57 @@ def discover_recent_corps(days: int = 7) -> dict:
     }
 
 
+_POST_PENDING_SQL = """
+    SELECT DISTINCT f.corp_code, f.fiscal_year, f.report_type
+    FROM filings f
+    JOIN download_tasks dt ON dt.rcept_no = f.rcept_no
+     AND dt.status = 'completed' AND dt.file_type = 'xml' AND dt.file_path IS NOT NULL
+    WHERE f.report_type IN ('annual', 'half', 'quarter')
+      AND NOT EXISTS (SELECT 1 FROM pipeline_post_stage_done d WHERE d.rcept_no = f.rcept_no)
+    ORDER BY f.corp_code
+"""
+
+
+def post_stage_pending(limit_corps: int | None = None) -> dict[str, set[tuple[int, str]]]:
+    """R355: corp -> {(fiscal_year, report_type)} of downloaded filings whose corp has not been
+    through the daily post stages (⑤) since the filing arrived. Independent of std_v3, so a run
+    that died after ④ or an out-of-band std rebuild no longer hides a filing from ⑤.
+    `limit_corps` bounds one run's catch-up (corp_code order; the rest waits for the next run)."""
+    out: dict[str, set[tuple[int, str]]] = {}
+    with get_session() as s:
+        for r in s.execute(text(_POST_PENDING_SQL)).fetchall():
+            if r.corp_code not in out and limit_corps is not None and len(out) >= limit_corps:
+                break
+            out.setdefault(r.corp_code, set()).add((int(r.fiscal_year), r.report_type))
+    return out
+
+
+def db_now_utc():
+    """Naive UTC timestamp, comparable with download_tasks.created_at (written in UTC)."""
+    with get_session() as s:
+        return s.execute(text("SELECT (now() AT TIME ZONE 'UTC')::timestamp")).scalar()
+
+
+def mark_post_stage_done(corps: list[str], downloaded_before) -> int:
+    """R355: mark every completed regular filing of `corps` whose download task existed at
+    `downloaded_before` (the post-stage selection time) as done."""
+    if not corps:
+        return 0
+    with get_session() as s:
+        n = s.execute(text("""
+            INSERT INTO pipeline_post_stage_done (rcept_no, corp_code)
+            SELECT DISTINCT f.rcept_no, f.corp_code
+            FROM filings f
+            JOIN download_tasks dt ON dt.rcept_no = f.rcept_no
+             AND dt.status = 'completed' AND dt.file_type = 'xml' AND dt.file_path IS NOT NULL
+            WHERE f.corp_code = ANY(:c) AND f.report_type IN ('annual', 'half', 'quarter')
+              AND dt.created_at <= :t
+            ON CONFLICT (rcept_no) DO NOTHING
+        """), {"c": list(corps), "t": downloaded_before}).rowcount
+        s.commit()
+    return n
+
+
 def needs_standardize_corps(only: list[str] | None = None) -> list[str]:
     """
     다운로드(xml completed)는 됐지만 그 (fy, 기간)이 아직 std_v3 에 없는 기업 = 표준화 대상.

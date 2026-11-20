@@ -1659,6 +1659,45 @@ def _run_migrations() -> None:
         SET LOCAL lock_timeout = '60s';
         ALTER TABLE face_audit ADD COLUMN IF NOT EXISTS input_fp TEXT;
         """),
+
+        ("2026_11_20_pipeline_post_stage_done",
+         # R355: one row per downloaded regular filing whose corp went through the daily post
+         # stages (⑤ Gate B, biz annual/periodic, order backlog, doc sections). The daily used to
+         # treat "std_financials_v3 has the period" as done, so a run that died after ④ (run 60,
+         # 2026-11-16) followed by an out-of-band std rebuild left 529 corps that never got ⑤.
+         # Seed: every completed filing is done except run 60's downloads of corps not verified
+         # by any later run (those stay pending and the next run catches them up).
+         """
+        CREATE TABLE IF NOT EXISTS pipeline_post_stage_done (
+            rcept_no   VARCHAR(20) PRIMARY KEY,
+            corp_code  VARCHAR(8)  NOT NULL,
+            done_at    TIMESTAMP   NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS ix_pipeline_post_stage_done_corp
+            ON pipeline_post_stage_done (corp_code);
+        INSERT INTO pipeline_post_stage_done (rcept_no, corp_code, done_at)
+        SELECT DISTINCT f.rcept_no, f.corp_code, now()
+        FROM filings f
+        JOIN download_tasks dt ON dt.rcept_no = f.rcept_no AND dt.status = 'completed'
+         AND dt.file_type = 'xml' AND dt.file_path IS NOT NULL
+        LEFT JOIN corp_verify_status v ON v.corp_code = f.corp_code
+        WHERE f.report_type IN ('annual', 'half', 'quarter')
+          AND NOT (coalesce(dt.created_at, '2000-01-01') >= '2026-11-16 09:00'
+                   AND (v.verified_at IS NULL OR v.verified_at < '2026-11-17 18:00'))
+        ON CONFLICT (rcept_no) DO NOTHING;
+        """),
+        ("2026_11_20_pipeline_post_stage_done_seed_null_created",
+         # R355 seed fix: old download tasks have created_at NULL; the first seed's NOT(...) was
+         # NULL for them, so 624 corps' historical filings looked pending.
+         """
+        INSERT INTO pipeline_post_stage_done (rcept_no, corp_code, done_at)
+        SELECT DISTINCT f.rcept_no, f.corp_code, now()
+        FROM filings f
+        JOIN download_tasks dt ON dt.rcept_no = f.rcept_no AND dt.status = 'completed'
+         AND dt.file_type = 'xml' AND dt.file_path IS NOT NULL
+        WHERE f.report_type IN ('annual', 'half', 'quarter') AND dt.created_at IS NULL
+        ON CONFLICT (rcept_no) DO NOTHING;
+        """),
     ]
 
     with engine.begin() as conn:

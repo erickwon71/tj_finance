@@ -791,7 +791,7 @@ def _sync_shares_transcribe(corps: list[str]) -> None:
         logger.warning(f"[collect] ④-5 발행주식수 전사 실패(비치명적): {exc}")
 
 
-def _sync_biz_metrics(corps: list[str]) -> None:
+def _sync_biz_metrics(corps: list[str], pending: dict | None = None) -> None:
     """B4+Phase3+B5 — 새로 수집된 기업의 사업보고서 '사업의 내용' 본문표 → biz_metrics.
 
     한 진입점(`parse_biz_metrics`)이 세 파서를 모두 방출한다:
@@ -821,6 +821,35 @@ def _sync_biz_metrics(corps: list[str]) -> None:
                         f"지표행 {agg['metric_rows']:,} · 수주행 {agg['order_rows']:,}")
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[collect] ⑤-1b 분기·반기 사업실적 수집 실패(비치명적): {exc}")
+    # R355: the two calls above only see each corp's latest fiscal year. A pending filing of an
+    # older year (late download, re-download of a past period) gets its own year-scoped sync.
+    if pending:
+        _sync_biz_pending_years(pending)
+
+
+def _sync_biz_pending_years(pending: dict) -> None:
+    from collector.biz_metrics import sync_biz_metrics_corp
+    from collector.biz_metrics_periodic import sync_biz_periodic
+    from collector.db import get_session
+    done = {"annual": 0, "periodic": 0, "err": 0}
+    for corp, keys in sorted(pending.items()):
+        years = {y for y, t in keys if t == "annual"}
+        pyears = {y for y, t in keys if t in ("half", "quarter")}
+        for y in sorted(years):
+            try:
+                with get_session() as s:
+                    sync_biz_metrics_corp(s, corp, y)
+                    s.commit()
+                done["annual"] += 1
+            except Exception as exc:  # noqa: BLE001
+                done["err"] += 1
+                logger.warning(f"[collect] ⑤-1c {corp} {y} annual 실패(비치명적): {exc}")
+        for y in sorted(pyears):
+            agg = sync_biz_periodic([corp], year=y)
+            done["periodic"] += 1
+            done["err"] += agg.get("err", 0)
+    logger.info(f"[collect] ⑤-1c 미처리 필링 연도별 사업지표 — annual {done['annual']} · "
+                f"periodic {done['periodic']} · 오류 {done['err']}")
 
 
 def _sync_order_backlog(corps: list[str]) -> None:
@@ -886,6 +915,40 @@ def _refresh_valuation_daily() -> None:
         refresh(concurrent=True)
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[collect] valuation_daily 갱신 실패(비치명적): {exc}")
+
+
+# R355: corps the post stages (⑤) pick up besides today's ④ corps, per run. Bounded so a large
+# backlog spreads over several nights instead of stretching one daily.
+POST_STAGE_CATCHUP_MAX = 300
+
+
+def _run_post_stages(agg: dict, args, affected: list[str]) -> None:
+    """R355 — ⑤ Gate B + biz + order backlog + doc sections for today's ④ corps AND every corp
+    with a downloaded filing that never went through ⑤ (pipeline_post_stage_done), then mark
+    those filings done. Before R355 the post stages only saw today's ④ corps, and ④ selects by
+    "std_v3 lacks the period" — run 60 (2026-11-16) died after ④ batch 20/34, an out-of-band
+    std rebuild then filled std_v3, and 529 corps never got ⑤. Both call sites use this."""
+    from app.data import collect
+    t0 = collect.db_now_utc()
+    try:
+        pending = collect.post_stage_pending(limit_corps=POST_STAGE_CATCHUP_MAX)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ⑤ 미처리 필링 조회 실패(비치명적, 오늘 ④ 기업만): {exc}")
+        pending = {}
+    extra = sorted(set(pending) - set(affected))
+    if extra:
+        logger.info(f"[collect] ⑤ 미처리 필링 기업 {len(extra)}개 추가(오늘 ④ 밖, R355)")
+    post = sorted(set(affected) | set(pending))
+    agg["ok_corps"] = sorted(set(agg.get("ok_corps") or []) | set(extra))
+    _verify_and_log(agg, args)
+    _sync_biz_metrics(post, pending)
+    _sync_order_backlog(post)
+    _sync_doc_sections(post)
+    try:
+        n = collect.mark_post_stage_done(post, t0)
+        logger.info(f"[collect] ⑤ 완료 표시 — 기업 {len(post)} · 필링 {n:,}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[collect] ⑤ 완료 표시 실패(비치명적, 다음 실행이 다시 집음): {exc}")
 
 
 def _verify_and_log(agg: dict, args) -> None:
@@ -1033,10 +1096,7 @@ def main() -> None:
         # 반드시 여기 배선한다. ④-6이 그날 재빌드한 v3_corps 그대로 재사용.
         _sync_calendar_v3(v3_corps)
 
-        _verify_and_log(agg, args)
-        _sync_biz_metrics(affected)
-        _sync_order_backlog(affected)
-        _sync_doc_sections(affected)
+        _run_post_stages(agg, args, affected)
         _refresh_valuation_daily()
         _run_curated_key_scan()
         return
@@ -1155,17 +1215,9 @@ def main() -> None:
     # 최소화). Gate B 비대상이라 agg에 실패목록을 합류시키지 않음(위 함수 docstring 참고).
     _sync_calendar_v3(v3_corps)
 
-    # ⑤ 수집 후 DQ 게이트 — 새로 표준화된 기업만 Gate B(보고서==DB)+항등식 재검, corp_verify_status 적재.
-    _verify_and_log(agg, args)
-
-    # ⑤-1 사업지표(생산능력/생산실적/가동률) — 신규 기업의 사업보고서 본문표 → biz_metrics(B4).
-    _sync_biz_metrics(affected)
-
-    # ⑤-2 수주상황 — 신규 기업의 사업보고서 본문표 → order_backlog(B1→B4).
-    _sync_order_backlog(affected)
-
-    # ⑤-3 배당/자기주식/직원현황/타법인출자/임원보수 — 신규 기업의 최신 사업연도만(Phase 2, PRD 13).
-    _sync_doc_sections(affected)
+    # ⑤ DQ 게이트(Gate B+항등식) → ⑤-1 사업지표·분기반기 → ⑤-2 수주 → ⑤-3 원문 비재무 섹션.
+    # 대상 = 오늘 ④ 기업 + ⑤를 거치지 못한 필링이 있는 기업(R355, pipeline_post_stage_done).
+    _run_post_stages(agg, args, affected)
 
     # ⑥ valuation_daily matview 갱신(A4a) — 오늘 반영분(신규 재무·주가)까지 밸류에이션 뷰에 즉시 노출.
     _refresh_valuation_daily()

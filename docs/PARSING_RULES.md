@@ -589,6 +589,7 @@
 | R352 | R352. 매출 표 찾기 — 합쳐진 소제목은 자기 창을 닫지 않고, 번호 붙은 매출 소제목 변형과 "4. 매출 및 수주상황" 제목 자체도 시작점, 창은 다음 TITLE 에서 끝; R352-b 한글 번호 `가. 매출 및 수주상황` 소제목(숫자 번호는 지주회사 자회사 절이라 제외) (2026-11-19, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 | biz_section_tables |
 | R353 | R353. 규칙 밖 라벨의 계속·중단영업이익은 항등식으로 증명될 때만 확정한다 — 귀속 내역(지배+비지배)만 있으면 합으로 (2026-11-20, 적용 계층: 3) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | std_financials_v3·extended_financials |
 | R354 | R354. 매출 표 기간 머리글 `25(당)기`·`25기 3분기`·`56기 반기` 도 머리글이다 (2026-11-20, 적용 계층: 3 — 매핑) | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | biz_metrics |
+| R355 | R355. 데일리 ⑤는 "⑤를 거친 필링" 표시(`pipeline_post_stage_done`)로 고른다 — std_v3 에 기간이 있다는 것만으로 끝난 것으로 보지 않음, 과거 연도 필링은 ⑤-1c 연도별 동기화 (2026-11-20, 적용 계층: 운영) | [40_ops_pipeline.md](rules/40_ops_pipeline.md) | 운영 | 유효 | pipeline_post_stage_done·biz_metrics_periodic |
 | R274 | R274. 여러 줄 라벨 `주당이익 / 기본주당순이익 / 희석주당순이익` 행은 줄 수만큼의 행으로 나눈다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R275 | R275. 자본변동표 열 이름 어휘에 `보통주납입자본`·`기타자본항목` 을 추가한다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R276 | R276. 같은 기수가 겹쳐 인쇄된 열은 인쇄된 연도로 기간을 가른다 (2026-10-22, 적용 계층: 2 — 읽기) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |

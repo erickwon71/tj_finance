@@ -129,6 +129,58 @@ def test_balance_change_header_is_period_change():
     assert r.new_orders + r.scope_change - r.completed == r.backlog_amt
 
 
+# R365 — tj_asset check leftovers (2023+ category with numbers).
+_CK_2024 = [
+    ["매출유형", "계약금액(A)", "기인식액(B)", "수주잔고(A-B)"],
+    ["2차전지", "396,035", "203,147", "192,888"],
+    ["합계", "483,639", "231,294", "252,345"],
+]
+_KCTECH_2023 = [
+    ["(단위: 천원)"] * 5,
+    ["구분", "기초공사계약잔액", "신규수주", "수익", "기말공사\n계약잔액(*)"],
+    ["반도체부문", "12,566,884", "53,222,550", "(63,390,491)", "2,398,943"],
+    ["합계", "40,751,987", "135,486,900", "(135,482,935)", "40,755,952"],
+]
+_PIM_2024 = [
+    ["발주처", "수주", "납기", "수주금액", "공급금액", "수주잔고"],
+    ["A", "2024.09", "수시", "7,232,278", "-", "7,232,278"],
+    ["A", "2024.07", "수시", "8,306,699", "490,476", "7,816,223"],
+    ["M", "2024.09", "수시", "9,750,000", "-", "9,750,000"],
+    ["합계", "합계", "합계", "27,505,534", "490,476", "27,015,058"],
+]
+_EUGENE_2023 = [
+    ["(단위: 천원)"] * 6,
+    ["구 분", "기초건설계약잔액", "신규/변경계약액", "공사수익(*1)", "이연수익(*2)", "기말건설계약잔액"],
+    ["건설계약", "49,516", "2,353,762", "1,541,337", "(19,859)", "881,800"],
+]
+_LGINNOTEK_2012 = [
+    ["품목", "수주", "최초", "수주총액", "기납품액", "수주잔고"],
+    ["BMS", "`09.11", "`10.12", "480,600", "31,800", "448,800"],
+]
+
+
+def test_r365_headers():
+    r = map_order_table(_CK_2024)[0]
+    assert (r.category, r.contract_total, r.completed, r.backlog_amt) == ("2차전지", 396035, 203147, 192888)
+    k = map_order_table(_KCTECH_2023)[0]
+    assert k.category == "반도체부문" and k.completed == 63390491
+    assert k.opening_backlog + k.new_orders - k.completed == k.backlog_amt
+    e = map_order_table(_EUGENE_2023)[0]
+    assert e.category == "건설계약" and e.backlog_amt == 881800
+    lg = map_order_table(_LGINNOTEK_2012)[0]
+    assert lg.contract_total == 480600  # "수주" holds dates, not amounts
+
+
+def test_r365_repeated_labels_use_printed_total():
+    rows = map_order_table(_PIM_2024)
+    assert all(r.category in ("A", "M", "합계") for r in rows)  # date column dropped
+    agg = _aggregate_if_detail(rows)
+    assert len(agg) == 1 and agg[0].category is None
+    assert (agg[0].contract_total, agg[0].completed, agg[0].backlog_amt) == (27505534, 490476, 27015058)
+    no_total = [r for r in rows if r.category != "합계"]
+    assert _aggregate_if_detail(no_total) == no_total  # no printed total: rows left as they are
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

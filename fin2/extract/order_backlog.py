@@ -52,7 +52,20 @@ _TOTAL_KW = ("수주총액", "도급", "계약금액", "수주금액", "용역�
 # R347: recognition columns seen in the 2023+ census ("공사수익", "매출액", "기성", "누적매출액",
 # "완성계약액", "기매출액", "매출인식액", "총매출누계액"). Matched on the whitespace-stripped header.
 _COMPLETED_KW = ("기납품", "완성공사액", "수익인식액", "공사수익", "매출액", "매출인식", "기성",
-                 "완성계약", "기매출", "매출누계", "누적수입", "매출계상", "수익계상", "납품액")
+                 "완성계약", "기매출", "매출누계", "누적수입", "매출계상", "수익계상", "납품액",
+                 # R365: "기인식액(B)" (씨케이솔루션·M83 FY2024), "공급금액" (한국피아이엠 FY2024)
+                 "기인식", "공급금액")
+# R365: one-word headers, matched on the whole header without notes — "수익" is the period
+# recognition of a rollforward (케이씨텍 "기초공사계약잔액 | 신규수주 | 수익 | 기말공사계약잔액"),
+# "수주" is the order amount (제놀루션 "수주 | 기납품 | 수주잔고") unless its cells are dates.
+_EXACT_COMPLETED = ("수익", "매출")  # 동일고무벨트 "수주 | 매출 | 수주잔액"
+_EXACT_TOTAL = ("수주",)
+# R365: a column whose every printed cell is a year-month(-day) is a date column even when its
+# header has no date word (한국피아이엠 "수주" = "2024.09").
+# One-word headers are taken as amounts only when every printed cell is an integer amount
+# (LG이노텍 "수주" holds "`06.11").
+_AMOUNT_CELL_RE = re.compile(r"^\(?-?\d{1,3}(?:,\d{3})*\)?$")
+_DATE_CELL_RE = re.compile(r"^(?:19|20)\d{2}\s*[.\-/년]\s*\d{1,2}(?:\s*[.\-/월]\s*\d{1,2})?\s*[.일]?$")
 _BACKLOG_KW = ("수주잔고", "계약잔액", "수주잔액")
 # R347: rollforward-in-columns tables (기초잔고 | 신규 | 기납품 | 기말잔고). The opening column
 # must be recognised before the backlog keywords — "기초공사계약잔액" also contains "계약잔액".
@@ -89,7 +102,10 @@ def _join_wrapped_number(cell: str) -> str:
 # Columns that are neither a dimension nor an order amount (contract assets, receivables,
 # allowances, counts) — kept out of category. Matched on the whitespace-stripped header.
 _META_COL_KW = ("미청구공사", "초과청구", "공사미수금", "매출채권", "대손충당금", "손상차손", "계약자산",
-                "계약부채", "수주건수", "순번", "진행율")
+                "계약부채", "수주건수", "순번", "진행율",
+                # R365: deferred revenue adjustment (유진기업 "이연수익(*2)"), printed in brackets
+                # but added back in the report's own identity — neither a flow we can sign nor a label.
+                "이연수익")
 # 진행률형(계약잔액 없이 진행률%만) 판별 — 발견 시 낮은 신뢰도로 스킵.
 _PROGRESS_ONLY_KW = ("진행률", "미청구공사", "공사미수금")
 # 날짜/기한 열 — category 라벨에서 제외(실측: 삼성중공업 "수주일자"/"납기", 에너토크 "수주
@@ -223,6 +239,10 @@ def _col_kind(header_text: str, qty_is_amount: bool = False) -> Optional[str]:
         return "opening"
     if is_balance:
         return "backlog"
+    if h_open in _EXACT_COMPLETED:
+        return "completed"  # R365
+    if h_open in _EXACT_TOTAL:
+        return "total"  # R365
     # "변경계약금액"/"변경도급액" is the current contract amount, not a period change.
     if any(k in h for k in _NEW_FLOW_KW) and not is_total:
         return "new"
@@ -340,7 +360,16 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
         if any(kw in head_ns for kw in _META_COL_KW):
             skip_cols.add(c)  # R347: contract asset / receivable / count columns
             continue
+        cells = [r[c].strip() for r in data_rows if r[c].strip() and r[c].strip() not in _DASH_MARKS
+                 and not _is_total_label(r[c].strip()) and r[c].strip() != "계"]
+        if cells and all(_DATE_CELL_RE.match(v) for v in cells):
+            skip_cols.add(c)  # R365: date column without a date word in its header
+            continue
         k = _col_kind(head, qty_is_amount)  # total/completed/backlog 매칭을 먼저 시도(우선순위 상위)
+        h_core = re.sub(r"[\(（][^)）]*[\)）]", "", head_ns)
+        if k and h_core in _EXACT_COMPLETED + _EXACT_TOTAL and not (
+                cells and all(_AMOUNT_CELL_RE.match(v) for v in cells)):
+            k = None  # R365: one-word header without amount cells
         if k:
             col_kind[c] = k
             continue
@@ -465,6 +494,15 @@ def _aggregate_if_detail(rows: list[OrderBacklogRow]) -> list[OrderBacklogRow]:
     """행이 많으면(프로젝트 상세형) 회사 전체 합산 1행으로 축약. 적으면(집계형) 그대로.
     이미 "합계" 행이 표에 포함돼 있으면(실측: LS — 부문별 11행+합계 1행=12행) 그 행을 그대로
     채택 — 전부 다시 합산하면 합계행까지 더해져 정확히 2배로 부풀려진다(실측: 149,834→299,668)."""
+    labels = [r.category for r in rows if r.category]
+    if len(rows) <= 10 and len(labels) != len(set(labels)):
+        # R365 (user decision 2026-11-21): repeated labels are separate contracts of one item
+        # (M83 "VFX 용역" x5, 한국피아이엠 발주처 "A" x3). Keyed by category the loader kept only the
+        # last one. With a printed total row the table becomes that row; without one the rows are
+        # left as they were — summing could double merged cells (최초/연장 rows sharing 잔고).
+        printed_total = next((r for r in rows if _is_total_label(r.category)), None)
+        if printed_total is not None:
+            return [replace(printed_total, category=None)]
     if len(rows) <= 10:
         return rows
     existing_total = next((r for r in rows if _is_total_label(r.category)), None)

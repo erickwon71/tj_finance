@@ -4246,6 +4246,50 @@ def combine(session, corp: str, fy: int, period: str, basis: str,
     return col, conflicts
 
 
+# R359 (2026-11-20, user decision): from FY2015 the other basis is copied only on printed
+# evidence that the period has no consolidated statements ("2. 연결재무제표 — 해당사항 없음",
+# filings.consolidation_evidence, Track 1). Separate is filled from consolidated only when the
+# "4. 재무제표" section points to section 2 (R361, 원풍물산); otherwise the copy only
+# hid a missing separate section (DS단석/사조산업/도화엔지니어링 2026 Q3, loaded from a viewer
+# print whose "4. 재무제표" was empty, R356). Before FY2015 no evidence was ever extracted, so the
+# old copy stays (consolidated rows keep consolidation_status='fallback_unconfirmed') until the
+# pre-2015 reload extracts it.
+R359_FY_MIN = 2015
+
+
+def period_no_consolidated_fs(session, corp: str, fy: int, period: str) -> bool:
+    """A filing of the period prints "연결재무제표 — 해당사항 없음" (Track 1 evidence).
+
+    Every filing of the period, not only the merged cells' sources or the final one: an amendment
+    that reprints the same separate figures leaves every cell sourced from the original (30
+    confirmed rows were dropped by the first cut of R359), and an attachment amendment or a
+    viewer print often lacks the "2. 연결재무제표" section text the original carries (11 periods
+    were labelled fallback_unconfirmed although the original declared it). build.py labels
+    consolidation_status with this same function."""
+    from fin2.extract.consolidation_evidence import resolve_std_v3_no_consolidated_fs
+    rcepts = [rc for rc, _ in _period_filings_chrono(session, corp, fy, period)]
+    return bool(resolve_std_v3_no_consolidated_fs(session, {str(i): rc for i, rc in enumerate(rcepts)}))
+
+
+def _period_has_evidence(session, corp: str, fy: int, period: str, code: str) -> bool:
+    rcepts = [rc for rc, _ in _period_filings_chrono(session, corp, fy, period)]
+    if not rcepts:
+        return False
+    return bool(session.execute(text(
+        "SELECT 1 FROM filings WHERE rcept_no = ANY(:rs) AND consolidation_evidence = :e LIMIT 1"),
+        {"rs": rcepts, "e": code}).first())
+
+
+def _basis_fallback_allowed(session, corp: str, fy: int, period: str, basis: str) -> bool:
+    if fy < R359_FY_MIN:
+        return True
+    if basis == "consolidated":
+        return period_no_consolidated_fs(session, corp, fy, period)
+    # R361: separate only when the "4. 재무제표" section itself points to section 2
+    from fin2.extract.consolidation_evidence import EVIDENCE_SEPARATE_IN_SECTION2
+    return _period_has_evidence(session, corp, fy, period, EVIDENCE_SEPARATE_IN_SECTION2)
+
+
 def combine_full(session, corp: str, fy: int, period: str, basis: str,
                  rcept_by_stmt: dict[str, str] | None = None,
                  select_filing: bool = True, statements=("BS", "IS", "CF"),
@@ -4279,6 +4323,8 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
         if not cands:
             other = "separate" if basis == "consolidated" else "consolidated"
             bases_present = {r["basis"] for r in merged}
+            if bases_present == {other} and not _basis_fallback_allowed(session, corp, fy, period, basis):
+                bases_present = set()   # R359: no evidence -> leave the basis empty
             if bases_present == {other}:
                 cands = _map_rows(merged, period, other, statements, corp=corp, fy=fy)
                 prov["basis_fallback"] = True

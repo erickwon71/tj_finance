@@ -79,6 +79,14 @@ _NA_PATTERNS = [
     re.compile(r'대상[^.<]{0,10}해당(?:되지|하지)\s*않'),      # (작성)대상(법인)에 해당(되지/하지) 않습니다
     re.compile(r'관련(?:된|되는)?\s*사항[이가]?\s*없'),        # (연결재무제표와) 관련된 사항이 없습니다
     re.compile(r'개별재무제표\s*작성\s*기준'),                 # 당사는 개별재무제표 작성 기준입니다(긍정형 — 별도기준임을 직접 선언)
+    # R360 (2026-11-20, user decision) — wordings found when R359 stopped copying separate into
+    # consolidated without evidence; same narrow "2. 연결재무제표" section window:
+    re.compile(r'연결\s*재무[^.<]{0,10}(?<!재)작성\s*(?:하지|치)\s*않'),  # 남해화학 20190401004960 "연결재무를 작성하지 않습니다"
+    re.compile(r'개별\s*재무제표만[을를]?\s*작성'),             # 올리패스 20240320000907 "개별 재무제표만을 작성하게 되었습니다"
+    re.compile(r'계열\s*회사[는가은이]?\s*없'),                 # 에이전트AI 20151117000242 "계열회사는 없습니다"
+    # 한국첨단소재 20240814003663 "당사는 소규모기업에 해당되어 기업공시서식 작성기준에 따라 항목을
+    # 기재하지 않습니다" — user decision 2026-11-21: a clear statement for this section.
+    re.compile(r'소규모\s*기업에\s*해당[^.<]{0,40}기재하지\s*않'),
 ]
 # 태그를 지우고 남는 텍스트가 이 길이 미만이면 "완전 공백"으로 본다(§2-1 표본 3건 —
 # 세우글로벌/동화약품/파세코 — 실측: 이 섹션에 <P></P> 뿐 아무 문구도 없이 결측을
@@ -222,11 +230,43 @@ def detect_no_consolidated_fs(text: str) -> bool:
     return _R330_EXTRA_WORDINGS and _r330_declares_absent(body)
 
 
+# R361 (2026-11-21, user decision) — the "4. 재무제표" (separate) section holds no statement and
+# only points to section 2: 원풍물산 00144021 20170331001748 "- 2. 연결재무제표에 있으니, 참고하시기
+# 바랍니다". The company says its separate statements are the ones printed in section 2, so the
+# layer-3 fallback may fill separate from them (fin2/layer3/combine.py::_basis_fallback_allowed).
+EVIDENCE_SEPARATE_IN_SECTION2 = "separate_in_section2"
+_SEPARATE_TITLE_RE = re.compile(r'<TITLE[^>]*>\s*4\.\s*재무제표\s*</TITLE>')
+# The pointer must open the section (only dashes / bullets before it).
+_POINTS_TO_SECTION2_RE = re.compile(r'^[\s\-–—※*·]*2\.\s*연결\s*재무\s*제표[^.]{0,20}(?:있으|참고|참조|갈음|동일)')
+# What follows the pointer may only be non-primary tables (원풍물산 FY2016 /
+# 2017Q1 print a 결손금처리계산서 after it). A primary statement title anywhere in the section means
+# separate statements are printed there and this is not a pointer.
+_PRIMARY_STATEMENT_RE = re.compile(
+    r'재\s*무\s*상\s*태\s*표|대\s*차\s*대\s*조\s*표|손\s*익\s*계\s*산\s*서|현\s*금\s*흐\s*름\s*표|자\s*본\s*변\s*동\s*표')
+
+
+def detect_separate_in_section2(text: str) -> bool:
+    m = _SEPARATE_TITLE_RE.search(text)
+    if m is None:
+        return False
+    tail = text[m.end():]
+    b = _NEXT_BOUNDARY_RE.search(tail)
+    body = tail[:b.start() if b is not None else _WINDOW]
+    t = " ".join(_ENTITY_RE.sub(' ', _TAG_RE.sub(' ', body)).split())
+    if _PRIMARY_STATEMENT_RE.search(t):
+        return False
+    return bool(_POINTS_TO_SECTION2_RE.match(t))
+
+
 def compute_text_evidence(text: str) -> tuple[str | None, dict]:
     """document.xml 원문 텍스트 하나로부터 (evidence_code, detail) 계산."""
     if detect_no_consolidated_fs(text):
         return EVIDENCE_NO_CONSOLIDATED_FS, {
             "reason": '"2. 연결재무제표" section body contains 해당사항+없 tokens',
+        }
+    if detect_separate_in_section2(text):
+        return EVIDENCE_SEPARATE_IN_SECTION2, {
+            "reason": '"4. 재무제표" section only points to "2. 연결재무제표" (R361)',
         }
     return None, {}
 

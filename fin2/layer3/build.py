@@ -16,10 +16,10 @@ from datetime import date
 from sqlalchemy import text, delete
 
 from collector.models import StdFinancialV3, ExtendedFactV3
-from fin2.extract.consolidation_evidence import resolve_std_v3_no_consolidated_fs
 from fin2.extract.ifrs_evidence import resolve_std_v3_is_ifrs
 from fin2.layer3.combine import (combine_full, select_canonical_rcepts,
-                                 build_merged_lines)
+                                 build_merged_lines, period_no_consolidated_fs,
+                                 R359_FY_MIN)
 from fin2.layer3.expense_sign import normalize_expense_signs
 from fin2.standardize.rules import validate_equations
 
@@ -212,6 +212,10 @@ def _periods(session, corp: str, year_min: int):
     return [(int(r[0]), r[1]) for r in rows]
 
 
+_STATEMENT_ANCHOR_COLS = ("total_assets", "total_liabilities", "total_equity", "revenue",
+                          "operating_income", "net_income", "cfo", "cfi", "cff")
+
+
 def build_corp(session, corp: str, year_min: int = 2015,
                bases=("consolidated", "separate")) -> int:
     """Build std_v3 rows for one corp. Returns number of rows written."""
@@ -257,6 +261,12 @@ def build_corp(session, corp: str, year_min: int = 2015,
             )
             if not col:
                 continue  # nothing left to insert (missing / other-basis only / all-stale)
+            # R359: no statement figure at all (only note-derived D&A / share counts) — do not write
+            # a row that looks like statements for this basis (오늘이엔엠 2015Q1 separate, whose
+            # printed separate statements layer 2 did not read, used to get a consolidated copy)
+            # (FY2015+ only, like R359 itself: 459 such pre-2015 rows are left for the pre-2015 reload)
+            if fy >= R359_FY_MIN and not any(col.get(c) is not None for c in _STATEMENT_ANCHOR_COLS):
+                continue
             if basis == "separate":
                 # Separate financial statements have no non-controlling interest —
                 # controlling_ni is always net_income by accounting definition, so
@@ -311,7 +321,8 @@ def build_corp(session, corp: str, year_min: int = 2015,
             # 결측 큐 후보)로 남긴다.
             if basis == "consolidated":
                 if prov["basis_fallback"]:
-                    confirmed = resolve_std_v3_no_consolidated_fs(session, src)
+                    # R359: every filing of the period (same test as the fallback itself)
+                    confirmed = period_no_consolidated_fs(session, corp, fy, period)
                     row.consolidation_status = ("no_subsidiary_confirmed" if confirmed
                                                 else "fallback_unconfirmed")
                 else:

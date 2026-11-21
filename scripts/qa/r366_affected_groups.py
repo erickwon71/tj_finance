@@ -5,7 +5,9 @@
 2. production/sales/catalog tables whose mapping changes with R366 (wrapped numbers joined, no row
    from stacked cells) — mapper off vs on over the stored grids.
 
-usage: python scripts/qa/r366_affected_groups.py <reread_write.csv> <out.csv>
+usage: python scripts/qa/r366_affected_groups.py <reread_write.csv> <out.csv> [switch]
+       switch = biz_section module flag toggled off/on (default _R366_STACKED_ROWS; R367 uses
+       _R367_EXPAND). Re-read csv: any csv with rcept_no,status columns (status 'changed').
 """
 import csv
 import sys
@@ -21,6 +23,7 @@ from fin2.extract import biz_section  # noqa: E402
 
 def main() -> None:
     reread_csv, out_csv = sys.argv[1], sys.argv[2]
+    switch = sys.argv[3] if len(sys.argv) > 3 else "_R366_STACKED_ROWS"
     with open(reread_csv) as fh:
         reread = [r["rcept_no"] for r in csv.DictReader(fh) if r["status"] == "changed"]
     conn = psycopg2.connect(dbname="tj_finance")
@@ -35,12 +38,12 @@ def main() -> None:
                "FROM biz_section_tables b JOIN filings f USING (rcept_no) "
                "WHERE b.domain IN ('production','sales','catalog') AND b.grid::text LIKE '%\\\\n%'")
     for dom, met, nar, grid, fy, corp, rtype in c2:
-        biz_section._R366_STACKED_ROWS = False
+        setattr(biz_section, switch, False)
         try:
             a = _map_row(dom, met, nar, grid, fy)
         except Exception:  # noqa: BLE001
             continue
-        biz_section._R366_STACKED_ROWS = True
+        setattr(biz_section, switch, True)
         if a != _map_row(dom, met, nar, grid, fy):
             groups.add((corp, fy, rtype))
     with open(out_csv, "w", newline="") as fh:

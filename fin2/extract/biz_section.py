@@ -68,6 +68,67 @@ def _escape_attributeless_tags(raw: bytes) -> bytes:
     return _ATTRIBUTELESS_TAG.sub(b"&lt;", raw)
 
 
+# ★R367 / R366-b (2026-11-21) — biz-reader pre-pass on the raw XML, before the shared sanitizer.
+# R367: a <TR> whose value cell stacks one value per item (lines split by `&cr;`, `</P><P>` or
+#   `<BR>`, every line a number or a dash) keeps the line breaks of **every** cell as a newline
+#   character, so the label cell keeps its items (`알루미늄폼(임대)&cr;판넬폼(갱폼)`) and values the
+#   R246 rule cannot split (`728&cr;2,397`) are split too. Other rows keep R224 (break deleted).
+# R366-b: a raw newline inside a value-only cell is printed whitespace (the viewer shows a space),
+#   not a line break (`1⏎55`, `-⏎15.71`); it becomes one space so it is never read as a stack.
+# Only the biz readers use this loader (order/production/sales/catalog); report_lines untouched.
+_R367_PREPASS = True
+_PP_TR = re.compile(r"<TR\b[^>]*>.*?</TR>", re.S | re.I)
+_PP_TD = re.compile(r"(<T[DHE]\b[^>]*>)(.*?)(</T[DHE]>)", re.S | re.I)
+_PP_BREAK = re.compile(r"&cr;|</P\s*>\s*<P\b[^>]*>|<BR\s*/?>", re.I)
+_PP_TAG = re.compile(r"<[^>]+>")
+_PP_NUM_LINE = re.compile(r"^[△−-]?\(?-?\d[\d,]*(?:\.\d+)?\)?%?$")
+_PP_DASHES = frozenset(("-", "－", "—", "―", "─"))
+_PP_VALUE_ONLY = re.compile(r"^[\s\d,.()%△−\-－—―─]*\d[\s\d,.()%△−\-－—―─]*$")
+
+
+def _pp_lines(content: str) -> list[str]:
+    t = _PP_TAG.sub("", _PP_BREAK.sub("\x00", content))
+    return [re.sub(r"\s+", "", x) for x in t.split("\x00") if x.strip()]
+
+
+_PP_DATE_LINE = re.compile(r"^(?:19|20)\d{2}(?:[.\-/]\d{1,2}){0,2}\.?$")
+
+
+def _pp_is_stacked(content: str) -> bool:
+    lines = _pp_lines(content)
+    return (len(lines) >= 2 and all(_PP_NUM_LINE.match(x) or x in _PP_DASHES for x in lines)
+            and any(_PP_NUM_LINE.match(x) for x in lines)
+            and not all(_PP_DATE_LINE.match(x) for x in lines if x not in _PP_DASHES))
+
+
+def _pp_tr(m: "re.Match") -> str:
+    tr = m.group(0)
+    if "<TABLE" in tr.upper():
+        return tr  # a nested table inside the row: the regex cell split is not reliable there
+    if "&cr;" in tr or "<BR" in tr.upper() or "</P" in tr.upper():
+        if any(_pp_is_stacked(td.group(2)) for td in _PP_TD.finditer(tr)):
+            tr = _PP_TD.sub(lambda t: t.group(1) + _PP_BREAK.sub("&#10;", t.group(2)) + t.group(3), tr)
+    if "\n" in tr:
+        def _space(t: "re.Match") -> str:
+            body = t.group(2)
+            if "\n" not in body:
+                return t.group(0)
+            plain = _PP_TAG.sub("", body).replace("&cr;", "").replace("&#10;", "")
+            if not _PP_VALUE_ONLY.match(plain):
+                return t.group(0)
+            return t.group(1) + re.sub(r"[ \t]*\r?\n\s*", " ", body) + t.group(3)
+        tr = _PP_TD.sub(_space, tr)
+    return tr
+
+
+def biz_raw_prepass(raw: bytes) -> bytes:
+    """R367 + R366-b pre-pass (see above). `raw` is UTF-8 here; undecodable bytes round-trip."""
+    if not _R367_PREPASS:
+        return raw
+    text = raw.decode("utf-8", "surrogateescape")
+    return _PP_TR.sub(_pp_tr, text).encode("utf-8", "surrogateescape")
+
+
 def _load_root_uncached(file_path: Path) -> Optional[etree._Element]:
     """XML 루트 로드. 구형 DART 보고서(~2010년대)는 UTF-8 로 선언됐지만 실제 EUC-KR 인 경우가
     많아 인코딩 자동감지 폴백(_detect_xml_encoding 재사용) + 대용량 사업보고서용 huge_tree."""
@@ -84,7 +145,7 @@ def _load_root_uncached(file_path: Path) -> Optional[etree._Element]:
     # R224: 선언 안 된 `&cr;` 등과 이스케이프 안 된 `&`·`<` 를 파싱 전에 복구한다. 이걸 빼먹어
     # 사업의 내용 표의 `H&B사업본부` 가 `H사업본부` 로, `<연구인력현황>` 이 `현황>` 으로 적재됐다
     # (verification scope biz 기계대조 mb1, 2026-10-27).
-    raw = sanitize_dart_xml(_escape_attributeless_tags(raw))
+    raw = sanitize_dart_xml(_escape_attributeless_tags(biz_raw_prepass(raw)))
     try:
         return etree.fromstring(raw, parser)
     except Exception:
@@ -408,8 +469,16 @@ def _is_clean_number(s: str) -> bool:
         return False
     if any(ch in t for ch in ("÷", "×", "=", "/")):
         return False
+    # R367: a stacked value cell (one number per item line) is a value cell too — unless every
+    # line looks like a year (a stacked period header such as "2023\n2024")
+    if "\n" in t and _R367_EXPAND and is_stacked_amount_cell(t):
+        return not all(_YEAR_LINE_RE.match(x.strip()) for x in t.split("\n") if x.strip())
     tail = t[_NUM_LEAD_RE.match(t).end():].strip().lstrip("%").strip()
     return len(tail) <= 6
+
+
+_YEAR_LINE_RE = re.compile(r"^(?:19|20)\d{2}$")
+_DATE_LINE_RE = re.compile(r"^(?:19|20)\d{2}(?:[.\-/]\d{1,2}){0,2}\.?$")
 
 
 # 기간을 나타내는 헤더 셀 — 연도 단독("2023"/"2025년"), 추정("2025(E)"), 기수("제34기").
@@ -478,15 +547,21 @@ def is_merged_column_table(grid: list[list[str]]) -> Optional[str]:
 # one printed number. Joined only when the whitespace-free text is exactly a thousands-grouped
 # number and the text before the break is not, so two complete numbers are never joined.
 _GROUPED_NUM_RE = re.compile(r"^\(?-?\d{1,3}(?:,\d{3})+\)?$")
+_PLAIN_NUM_RE = re.compile(r"^\(?-?\d+(?:\.\d+)?\)?%?$")
 
 
 def join_wrapped_number(cell: str) -> str:
     t = (cell or "").strip()
-    if not re.search(r"[\d,(]\s+[\d,)]", t):
+    if not re.search(r"[\d,(\-]\s+[\d,)]", t):
         return cell
     joined = re.sub(r"\s+", "", t)
-    first = re.split(r"\s+", t)[0]
-    if _GROUPED_NUM_RE.match(joined) and not _GROUPED_NUM_RE.match(first):
+    parts = re.split(r"\s+", t)
+    if _GROUPED_NUM_RE.match(joined) and not _GROUPED_NUM_RE.match(parts[0]):
+        return joined
+    # R366-b: a plain number wrapped by printed whitespace ("1 55", "- 15.71"); never two
+    # complete grouped numbers ("1,000 2,000")
+    if (_R367_EXPAND and "\n" not in t and _PLAIN_NUM_RE.match(joined)
+            and sum(1 for x in parts if _GROUPED_NUM_RE.match(x)) < 2):
         return joined
     return cell
 
@@ -510,7 +585,61 @@ def is_stacked_amount_cell(cell: str) -> bool:
     if (len(lines) < 2 or not all(_STACK_LINE_RE.match(ln) or ln in _STACK_DASHES for ln in lines)
             or not any(_STACK_LINE_RE.match(ln) for ln in lines)):
         return False
+    # stacked dates or years ("1993.12\n1993.09", "2023\n2024") are not amounts
+    if all(_DATE_LINE_RE.match(ln) for ln in lines if ln not in _STACK_DASHES):
+        return False
     return not (len(lines) == 2 and lines[1].startswith("(") and lines[1].endswith(")"))
+
+
+# ★R367 (2026-11-21, user decision: recommended scope) — a stacked row (R366) becomes one row per
+# item when exactly one label cell prints as many lines as the stacked value cells (n); the other
+# label cells are a shared label (their lines joined as R224 did), every other cell with n lines is
+# split by line (dates, units per item), stacked values give line i. Otherwise no row (R366): two
+# n-line label cells cannot be told from one label wrapped over lines; a one-line number beside the
+# stack belongs to no item. Rows with a stacked cell keep R224 labels when they are not expanded.
+_R367_EXPAND = True
+
+
+def _cell_lines(cell: str) -> list[str]:
+    return [x.strip() for x in join_wrapped_number(cell or "").split("\n") if x.strip()]
+
+
+def expand_stacked_rows(rows: list[list[str]], label_cols, val_cols) -> list[list[str]]:
+    label_set = {c for c in label_cols if c is not None}
+    val_cols = [c for c in val_cols if c is not None]
+    out: list[list[str]] = []
+    for row in rows:
+        stacked = [c for c in val_cols if c < len(row) and is_stacked_amount_cell(row[c])]
+        any_stack = stacked or any(is_stacked_amount_cell(v) for v in row)
+        if not any_stack:
+            out.append(row)
+            continue
+        if not stacked or not _R367_EXPAND:
+            # stacked cell outside the value columns, or expansion off: R224 labels, R366 decides
+            out.append([v.replace("\n", "") if c in label_set else v for c, v in enumerate(row)])
+            continue
+        ns = {len(_cell_lines(row[c])) for c in stacked}
+        if len(ns) != 1:
+            continue
+        n = ns.pop()
+        if any((row[c] or "").strip() not in ("",) + tuple(_STACK_DASHES)
+               for c in val_cols if c < len(row) and c not in stacked):
+            continue
+        n_labels = [c for c in label_set if c < len(row) and len(_cell_lines(row[c])) == n]
+        if len(n_labels) != 1:
+            continue
+        for i in range(n):
+            new = []
+            for c, v in enumerate(row):
+                ls = _cell_lines(v)
+                if len(ls) == n:
+                    new.append(ls[i])
+                elif c in label_set:
+                    new.append("".join(ls))
+                else:
+                    new.append(v)
+            out.append(new)
+    return out
 
 
 def _parse_value(s: str) -> tuple[Optional[float], bool, Optional[str]]:
@@ -745,6 +874,8 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
 
     nar_unit = _narrative_unit(bt.narrative)
     rows: list[BizMetricRow] = []
+    data_rows = expand_stacked_rows(  # R367
+        data_rows, label_cols + ([metric_col] if metric_col is not None else []), val_cols)
     for drow in data_rows:
         labels: list[str] = []
         for c in label_cols:

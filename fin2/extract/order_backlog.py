@@ -27,7 +27,7 @@ from typing import Optional
 
 from fin2.extract.biz_section import (
     _FINANCIAL_STMT_KW, _is_clean_number, _is_period_header_cell, _load_root, _narrative_unit,
-    _parse_value, _tag, _text, expand_table_grid, is_merged_column_table, is_stacked_amount_cell,
+    _parse_value, _tag, _text, expand_table_grid, is_merged_column_table, expand_stacked_rows, is_stacked_amount_cell,
     join_wrapped_number,
 )
 
@@ -334,6 +334,7 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
     col_kind: dict[int, str] = {}
     unit_col = None
     skip_cols: set[int] = set()  # 날짜/진행률/기간흐름 등 category 라벨에서 제외할 비수치 메타열
+    pct_kind = None  # R368
     for c in range(ncols):
         head = " ".join(header_rows[r][c] for r in range(len(header_rows)))
         head_ns = re.sub(r"\s+", "", head)
@@ -352,6 +353,16 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
             skip_cols.add(c)  # R365: date column without a date word in its header
             continue
         k = _col_kind(head, qty_is_amount)  # total/completed/backlog 매칭을 먼저 시도(우선순위 상위)
+        # R368: a percent column ("수주총액(%)", cells "100%") is no amount; the "금액" column right
+        # after it carries its kind (오텍 "수주총액(%) | 금액(이월금액) | 기납품액(%) | 금액 | 수주잔고(%) | 금액").
+        pct_cells = [v for v in cells if v.endswith("%")]
+        if "%" in head_ns or (cells and len(pct_cells) * 2 >= len(cells)):
+            skip_cols.add(c)
+            pct_kind = k
+            continue
+        if k is None and pct_kind and "금액" in head_ns:
+            k = pct_kind
+        pct_kind = None
         h_core = re.sub(r"[\(（][^)）]*[\)）]", "", head_ns)
         if k and h_core in _EXACT_COMPLETED + _EXACT_TOTAL and not (
                 cells and all(_AMOUNT_CELL_RE.match(v) for v in cells)):
@@ -395,6 +406,7 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
     rollforward = "opening" in col_kind.values()
     layout = LAYOUT_ROLLFORWARD if rollforward else LAYOUT_CUMULATIVE
     rows: list[OrderBacklogRow] = []
+    data_rows = expand_stacked_rows(data_rows, dim_cols, list(col_kind))  # R367
     for drow in data_rows:
         # R366: a row whose amount cells stack one value per item (에스엠벡셀 FY2018 "43,148\n5,114\n…"
         # under "W/PUMPO/PUMPAL HEAD…") cannot be split by item — R6, no row.

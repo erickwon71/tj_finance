@@ -44,6 +44,7 @@ from fin2.extract.biz_section import (
     _load_root,
     _narrative_unit,
     _parse_value,
+    expand_stacked_rows,
     is_stacked_amount_cell,
     join_wrapped_number,
     _tag,
@@ -356,6 +357,12 @@ def map_sales_table(st: SalesTable, fiscal_year: int) -> list[SalesMetricRow]:
     val_cols = sales_value_columns(val_cols, {c: " ".join(
         header_rows[r][c] for r in range(len(header_rows))) for c in val_cols})
     if not val_cols:
+        return []
+
+    # R367: stacked rows become one row per item before the channel column is found (a stacked
+    # 매출유형 cell "내 수\n수 출\n계" is a channel only once it is split by line).
+    data_rows = expand_stacked_rows(data_rows, dim_cols, val_cols)
+    if not data_rows:
         return []
 
     # 3) 채널-차원열 검출 — 차원열 값의 과반이 채널 키워드(수출/내수/합계)면 그 열을 채널열로

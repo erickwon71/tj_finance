@@ -58,6 +58,7 @@ from fin2.extract.biz_section import (
     is_merged_column_table,
     _narrative_unit,
     _parse_value,
+    expand_stacked_rows,
     is_stacked_amount_cell,
     join_wrapped_number,
     _tag,
@@ -518,6 +519,7 @@ def map_catalog_table(ct: CaptionedTable, metric: str,
         nar_unit = sales_money_unit(ct.narrative, ct.caption_raw,
                                     " ".join(" ".join(r) for r in grid[:3]))
     rows: list[CatalogRow] = []
+    data_rows = expand_stacked_rows(data_rows, label_cols, val_cols)  # R367
     for drow in data_rows:
         labels: list[str] = []
         for c in label_cols:

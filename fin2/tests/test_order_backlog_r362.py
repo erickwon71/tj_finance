@@ -99,7 +99,7 @@ def test_wrapped_number_join_is_strict():
     assert join_wrapped_number("351,951,66\n1") == "351,951,661"
     assert join_wrapped_number("(1,234,56\n7)") == "(1,234,567)"
     assert join_wrapped_number("1,000 2,000") == "1,000 2,000"  # two printed numbers
-    assert join_wrapped_number("12 345") == "12 345"  # no thousands grouping
+    assert join_wrapped_number("12 345") == "12345"  # R366-b: printed whitespace inside one number
     assert join_wrapped_number("1,234,567") == "1,234,567"
 
 

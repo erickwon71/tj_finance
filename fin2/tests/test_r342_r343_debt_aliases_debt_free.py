@@ -7,6 +7,7 @@ R343: net_debt = -cash only when BS and notes both show no borrowings.
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -173,3 +174,48 @@ def test_r344_not_debt_refused(label):
 ])
 def test_r344_borrowings_kept(label, code):
     assert get_mapper().map(label, fs_section="bs").account_code == code
+
+
+# R343-b (2026-11-21): note lines with a debt word that are not the company's borrowing balance.
+_R343B_RE = re.compile(C._R343B_NOTE_NOT_DEBT_PAT)
+
+
+@pytest.mark.parametrize("label", [
+    "자본화된 차입원가",                       # JYP Ent. 2025 Q1
+    "차입원가 자본화",
+    "차감: 차입원가 자본화",
+    "차입원가(건설자금)",
+    "신용평가사업>기업어음, 회사채 평가 등",   # 한국기업평가 revenue line
+    "전환사채 인수, 특수관계자거래",           # JYP Ent. 2026 Q3 (asset)
+    "전환사채 취득, 특수관계자거래",           # 오리온 2026
+    "투자전환사채",
+    "투자사채(*2)",
+    "운영투자사채처분이익",
+])
+def test_r343b_not_debt_note_lines(label):
+    assert _R343B_RE.search(label)
+
+
+@pytest.mark.parametrize("label", [
+    "단기차입금", "장기차입금", "유동성장기차입금", "전환사채", "사채", "회사채", "유동성사채",
+    "신주인수권부사채",                          # 인수 precedes 사채: a real bond issued
+    "제24회 신주인수권부사채>2020-10-22>2023-10-22>2.00%",
+    "전환사채>케이비제27호기업인수목적",          # SPAC holder name after '>'
+    "전환사채평가손익",                          # may be the company's own CB at fair value
+    "기술보증기금>사채 지급보증>상각후원가측정금융자산",
+    "차입금 담보", "사채할인발행차금",
+])
+def test_r343b_real_debt_lines_still_count(label):
+    assert not _R343B_RE.search(label)
+
+
+def test_r343b_pattern_sent_to_note_query():
+    seen = {}
+
+    class _S(_Session):
+        def execute(self, sql, params):
+            seen.update(params)
+            return super().execute(sql, params)
+
+    assert C._debt_free_net_debt(_S(50, 0), _BS_FREE, "consolidated", {}, {}, dict(_COL)) == -100
+    assert seen["not_debt"] == C._R343B_NOTE_NOT_DEBT_PAT

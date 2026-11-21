@@ -4646,9 +4646,19 @@ _IS_BODY_DA_CANON = ("is.depreciation", "is.amortization", "is.rou_depreciation"
 _R343_DEBT_FREE_NET_DEBT = True
 _R343_BS_DEBT_RE = re.compile(r"(차\s*입|사\s*채|borrow)", re.IGNORECASE)
 _R343_BS_NOT_DEBT_RE = re.compile(r"(대\s*여|이\s*자|리\s*스)")
+# R343-b (2026-11-21, tj_asset request #6 follow-up): note lines that carry a debt word but are
+# not a borrowing balance of the company. They alone kept net_debt NULL for 16 companies / 164
+# rows (FY2015+):
+#   차입원가 (자본화된 차입원가, 차입원가 자본화) — a cost disclosure, not a balance (JYP 2025 Q1)
+#   회사채 평가 — a credit-rating agency's revenue line (한국기업평가 every period)
+#   사채 인수/취득 — the company bought someone else's bond: an asset (JYP 2026 Q3, 오리온)
+#   투자(전환)사채 — bonds held as investments: an asset (위메이드플레이, 인콘, 나이스디앤비)
+# Written once and used by both the SQL below (PostgreSQL ARE) and the tests (Python re).
+_R343B_NOTE_NOT_DEBT_PAT = (r"(차\s*입\s*원\s*가|회\s*사\s*채\s*평\s*가"
+                            r"|사\s*채\s*,?\s*(의\s*)?(인\s*수|취\s*득)|투\s*자\s*(전\s*환\s*)?사\s*채)")
 _R343_NOTE_SQL = text(r"""
     SELECT count(*) AS n_rows,
-           count(*) FILTER (WHERE coalesce(value_won, 0) <> 0 AND (
+           count(*) FILTER (WHERE coalesce(value_won, 0) <> 0 AND label_raw !~ :not_debt AND (
                 (label_raw ~ '차\s*입' AND label_raw !~ '(대\s*여|이\s*자|한\s*도|약\s*정|원\s*료|유\s*가\s*증\s*권)')
              OR (label_raw ~ '사\s*채' AND label_raw !~ '(이\s*자|제\s*외|발\s*행\s*비|상\s*환\s*손\s*익|사\s*채\s*권)')
              OR label_raw ~* 'borrow')) AS n_debt
@@ -4679,7 +4689,8 @@ def _debt_free_net_debt(session, merged: list[dict], bs_basis: str, cands: dict,
     rcepts = sorted({r["source_rcept"] for r in bs if r.get("source_rcept")})
     if not rcepts:
         return None
-    n_rows, n_debt = session.execute(_R343_NOTE_SQL, {"rc": rcepts}).one()
+    n_rows, n_debt = session.execute(
+        _R343_NOTE_SQL, {"rc": rcepts, "not_debt": _R343B_NOTE_NOT_DEBT_PAT}).one()
     if not n_rows or n_debt:
         return None
     return -col["cash"]

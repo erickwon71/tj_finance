@@ -29,10 +29,13 @@ MAX_RETRIES = 3
 ALL_SCOPES = tuple(f"{p}-{s}" for p in ("sep", "con") for s in ("bs", "is", "cf", "sce"))
 _PERIOD_ORDER = "CASE p.fiscal_period WHEN 'FY' THEN 4 WHEN 'Q3' THEN 3 WHEN 'H1' THEN 2 ELSE 1 END"
 
-# Eras in global priority order: every company's 2015+ comes before any 2011-14 slot
-# (same rule as scripts/layer2_review.py _ERA_RANK_SQL).
-ERAS = {"2015+": (1, 2015, 9999), "2011-14": (2, 2011, 2014),
-        "2007-10": (3, 2007, 2010), "pre-2007": (4, 1999, 2006)}
+# Eras in global priority order: every company's 2015+ comes before any 2014 slot, and so on back
+# in time (same rule as scripts/layer2_review.py _ERA_RANK_SQL). 2014 and earlier join the
+# verification scope ONE fiscal year at a time (TODO A-5, user decision 2026-11-21): load the year
+# first (scripts/reload_fiscal_year_full.py + the layer-3 rebuild), then `vq.py init` that era.
+ERAS = {"2015+": (1, 2015, 9999), "2014": (2, 2014, 2014), "2013": (3, 2013, 2013),
+        "2012": (4, 2012, 2012), "2011": (5, 2011, 2011),
+        "2007-10": (6, 2007, 2010), "pre-2007": (7, 1999, 2006)}
 
 
 # ─── fix → verify hand-off of a "no code fix needed" conclusion (2026-10-03) ───

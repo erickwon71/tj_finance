@@ -92,7 +92,15 @@ from fin2.verification import machine_compare as mc
 # integer now joins the superset of source values (`alt_amounts`) only - it is never a source amount the DB must have.
 # mn18 (2026-11-03): a number broken over lines by `&cr;` inside one cell ('3,252,626,&cr;975', 녹십자 2021FY
 # table 105) is joined by the loader; the machine's source cell keeps the literal `&cr;` and read nothing.
-TOOL_VERSION = "mn30"
+# mn31 (2026-11-21, B-3): two findings the machine no longer raises.
+#  (a) a cell of a source row whose own first cell is blank is no missing cell: the loader drops such a row
+#      (user decision 2026-11-06 = mn24; the account name of the '기말잔액' block of a related-party table sits in
+#      a value-area cell, the company name above it is inherited) and the user kept that as a LIMIT on
+#      2026-11-21 (R375). mn24 skipped these rows in the superset reading only, so the primary reading still
+#      reported their cells as missing again and again.
+#  (b) a missing cell whose amount AND row label are both printed in another table of the same basis is a
+#      table paired differently, not a missing amount (generic total labels excluded).
+TOOL_VERSION = "mn31"
 _BARE_YEAR = re.compile(r"^(19|20)\d\d$")
 
 MIN_AMOUNT = 1000                 # |printed| below this is not compared (see mn2)
@@ -243,11 +251,39 @@ def _is_year(v: int) -> bool:
 
 
 _MN24_BLANK_LABEL = True
+_MN31_BLANK_LABEL_LIMIT = True       # R375: no missing-cell finding from a blank-first-cell source row
+_MN31_LABEL_VALUE_ELSEWHERE = True   # amount + label printed in another table of the basis: not missing
+_GENERIC_TOTAL = re.compile(r"^(합계|소계|총계|계|total)$", re.I)
 _MN25_AMOUNT_IN_LABEL = True
 _MN28_PAREN_JOINED = True
 _MN29_DB_SPLIT_DIGITS = True
 _MN30_DOT_GROUPED_FIRST = True
 _PAREN_JOINED = re.compile(r"(-?\d{1,3}(?:,\d{3})+)\(\d{1,3}(?:,\d{3})*\)")
+
+
+_TOTAL_WORD = re.compile(r"^(합\s*계|소\s*계|총\s*계|계)$")
+
+
+def _blank_label_flags(tb, grid_filled) -> list:
+    """mn31 / R375: per row of the rowspan-filled grid, True when the CURRENT loader drops the row for want of a
+    label. Not a limit (False): a row with text in the label area besides the first cell (R295, the label area =
+    the first `offset` columns of `_grid_header_split`) or with a total word in a value cell (R295-b) - the loader
+    labels and loads those, so a missing cell of such a row is a real miss (often a filing loaded before R295)."""
+    try:
+        from fin2.extract.report_lines import _grid_header_split
+        offset = _grid_header_split(tb)[2] or 1
+    except Exception:
+        offset = 1
+    out = []
+    for r in grid_filled:
+        flag = bool(r and not r[0] and any(r[1:]))
+        if flag and any(c and mc.parse_amount(c) is None and _read_source_cell(c) is None
+                        for c in r[1:offset]):
+            flag = False                                    # R295: a text cell in the label area
+        if flag and any(_TOTAL_WORD.match(c.strip()) for c in r[1:]):
+            flag = False                                    # R295-b: a total word in a value cell
+        out.append(flag)
+    return out
 
 
 def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
@@ -270,12 +306,19 @@ def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
                 continue
             seen.add(id(tb))
             st = SrcTable(idx=len(out), basis=basis)
+            # mn31 / R375: a row is a blank-label row when its first cell is blank EVEN with the rowspan-inherited
+            # cells filled in (an inherited label cell is a label: R166 loads the row). Row-aligned flags.
+            grid_filled = mb._own_grid(tb, clean=_clean, copies=True)
+            blank_flags = _blank_label_flags(tb, grid_filled)
             for copies, target in ((False, st.amounts), (True, st.alt_amounts)):
-                for row in mb._own_grid(tb, clean=_clean, copies=copies):
+                grid = mb._own_grid(tb, clean=_clean, copies=copies)
+                flags_ok = len(grid) == len(blank_flags)
+                for row_no, row in enumerate(grid):
                     # mn24: the loader drops a row whose own label cell is empty (user decision 2026-11-06:
                     # per-bank detail rows under a blank '구분' cell are not loaded)
                     if _MN24_BLANK_LABEL and copies and row and not row[0] and any(row[1:]):
                         continue
+                    blank_row = bool(flags_ok and blank_flags[row_no])        # mn31 / R375
                     # mn22: a cell the loader reads as an amount ('1,500,000 USD 4,000,000') is no label
                     label = next((c for c in row if c and mc.parse_amount(c) is None
                                   and _read_source_cell(c) is None), "")
@@ -295,7 +338,7 @@ def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
                                 v = _read_source_cell(line)
                                 if v is None or abs(v) < MIN_AMOUNT or _PER_SHARE.search(lab_line):
                                     continue
-                                target.append((v, mb.norm(lab_line)[:80], col))
+                                target.append((v, mb.norm(lab_line)[:80], col, blank_row))
                         continue
                     row_digits = {re.sub(r"\D", "", c) for c in row if c and "." not in c and _read_source_cell(c) is not None}
                     for col, cell in enumerate(row):
@@ -315,13 +358,13 @@ def load_source_tables(path: str) -> tuple[list[SrcTable], bool]:
                             if m:                       # mn17: the loader stores the ROUND_HALF_UP integer
                                 v = int(Decimal(m.group(1).replace(",", "")).to_integral_value(rounding=ROUND_HALF_UP))
                                 if abs(v) >= MIN_AMOUNT:
-                                    target.append((v, mb.norm(label)[:80], col))
+                                    target.append((v, mb.norm(label)[:80], col, blank_row))
                                 continue
                         if v is None or abs(v) < MIN_AMOUNT or _PER_SHARE.search(ps_label):
                             if not copies and mc.parse_amount(cell) not in (None, mc._EMPTY):
                                 st.n_skipped += 1
                             continue
-                        target.append((v, mb.norm(label)[:80], col))
+                        target.append((v, mb.norm(label)[:80], col, blank_row))
             if st.amounts or st.alt_amounts:
                 st.values = tuple(a[0] for a in st.amounts)
                 st.alt_values = tuple(a[0] for a in st.alt_amounts)
@@ -435,6 +478,8 @@ def _align(db: DbTable, src_values: tuple, src_amounts: list) -> list[dict]:
                         "col_label": d[2][:80], "row_order": d[3], "col_index": d[4]})
         for k in range(j1 + n, j2):
             s = src.amounts[k]
+            if _MN31_BLANK_LABEL_LIMIT and len(s) > 3 and s[3]:
+                continue                    # mn31 / R375: the loader drops a blank-first-cell row (a limit)
             out.append({"kind": "missing_cell", "src": s[0], "label": s[1], "src_col": s[2],
                         "prev_db_row": db.amounts[max(0, min(i2, len(db.amounts)) - 1)][3]
                         if db.amounts else None})
@@ -451,6 +496,14 @@ def compare(db_tables: list[DbTable], src_tables: list[SrcTable], section_found:
         if s.alt_values != s.values:
             exact[(s.basis, s.alt_values)].append(s)
     src_union = {v for s in src_tables for v in s.alt_values}
+    # mn31 (b): (basis, amount, innermost label) of every DB cell
+    # -> the set of table seqs holding it (the table under comparison does not count: a duplicate value of a
+    # row printed in two columns of ITS OWN table may well be the missing one)
+    db_cells: dict = defaultdict(set)
+    for t in db_tables:
+        for a in t.amounts:
+            if a[1]:
+                db_cells[(t.basis, a[0], mb.norm(a[1].split(">")[-1])[:80])].add(t.seq)
     db_union = {v for t in db_tables for v in t.values}
     used: set[int] = set()
     counts = {"db_tables": len(db_tables), "exact": 0, "differs": 0, "extra_table": 0}
@@ -497,6 +550,12 @@ def compare(db_tables: list[DbTable], src_tables: list[SrcTable], section_found:
             if _MN25_AMOUNT_IN_LABEL and f.get("kind") == "missing_cell" and f.get("src") is not None \
                     and re.search(rf"(?<![\d,]){abs(f['src']):,}(?![\d,])", label_text):
                 counts["amount_in_label"] = counts.get("amount_in_label", 0) + 1
+                continue
+            # mn31 (b): the amount and its row label are both printed in another table of this basis
+            if _MN31_LABEL_VALUE_ELSEWHERE and f.get("kind") == "missing_cell" and f.get("src") is not None \
+                    and f.get("label") and not _GENERIC_TOTAL.match(f["label"]) \
+                    and (db_cells.get((t.basis, f["src"], f["label"]), set()) - {t.seq}):
+                counts["label_value_elsewhere"] = counts.get("label_value_elsewhere", 0) + 1
                 continue
             res.findings.append({**f, "basis": t.basis, "table_seq": t.seq, "src_table": best.idx})
     counts["source_numeric_tables"] = len(src_tables)

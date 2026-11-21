@@ -104,3 +104,72 @@ def is_depreciation(bucket: Optional[str]) -> bool:
 
 def is_amortization(bucket: Optional[str]) -> bool:
     return bucket == AMORTIZATION
+
+
+# ── R369 (2026-11-21): one-off non-operating items — tj_asset request #7 ─────────────────────────
+# Five total accounts (user-confirmed list). Amounts are positive for gains and losses alike.
+# Financial-asset disposal gain/loss is deliberately NOT included (trading in nature, user decision).
+IMPAIRMENT_LOSS = "is.impairment_loss"
+IMPAIRMENT_REVERSAL = "is.impairment_reversal"
+DISPOSAL_GAIN = "is.disposal_gain"
+DISPOSAL_LOSS = "is.disposal_loss"
+DEBT_FORGIVENESS_GAIN = "is.debt_forgiveness_gain"
+ONEOFF_ACCOUNTS = (IMPAIRMENT_LOSS, IMPAIRMENT_REVERSAL, DISPOSAL_GAIN, DISPOSAL_LOSS,
+                   DEBT_FORGIVENESS_GAIN)
+
+# Recurring operating costs and financial-asset lines that share the words but are not one-offs.
+_ONEOFF_NOT_ASSET = (
+    "금융", "채권", "대여금", "미수", "대손", "신용", "상각후원가", "공정가치", "당기손익",
+    "기타포괄", "파생", "단기매매", "유가증권", "지분증권", "채무증권", "재고", "매출", "누계",
+    "충당", "보증", "계약자산", "평가",
+)
+# A plain '투자자산' may be financial: kept only when it names a subsidiary / associate / JV.
+_ONEOFF_INVEST_OK = ("종속", "관계", "공동", "투자부동산", "투자주식")
+_ONEOFF_ASSET_WORDS = ("유형", "무형", "투자부동산", "부동산", "사용권", "종속", "관계", "공동",
+                       "매각예정", "영업권", "자산", "사업", "토지", "건물", "기계", "투자주식")
+_ONEOFF_NET_LABEL = re.compile(r"\((환입|손실|이익|수익|차손|차익|손상차손|처분이익)\)|환입\)")
+_ONEOFF_NOTE_REF = re.compile(r"\(주[^)]*\)|\[주[^\]]*\]")
+
+
+def classify_oneoff_label(label_raw: Optional[str], strict: bool = False,
+                          fin_note: bool = False) -> Optional[str]:
+    """Row label → one of ONEOFF_ACCOUNTS, or None.
+
+    Matching uses the last '>' segment (the parent group name is not part of the item). A net label
+    that merges gain and loss ('손상차손(환입)', '처분이익(손실)') cannot be split into the two
+    accounts, so it maps to nothing. `strict` (body income statement) and `fin_note` (a 금융수익/
+    금융비용 note, where an unnamed '처분이익' is usually a financial asset) both require the line
+    to name a non-financial asset.
+    """
+    if not label_raw:
+        return None
+    seg = _ONEOFF_NOTE_REF.sub("", str(label_raw)).split(">")[-1]
+    s = re.sub(r"\s+", "", seg)
+    if not s:
+        return None
+    if _ONEOFF_NET_LABEL.search(s):
+        return None
+    if re.search(r"채무(면제|탕감|조정)", s) and re.search(r"(이익|수익)$", s):
+        return DEBT_FORGIVENESS_GAIN
+    is_impair = re.search(r"(손상|감액)", s) is not None
+    is_disposal = "처분" in s
+    if not (is_impair or is_disposal):
+        return None
+    if any(w in s for w in _ONEOFF_NOT_ASSET):
+        return None
+    if "투자자산" in s and not any(w in s for w in _ONEOFF_INVEST_OK):
+        return None
+    if is_impair:
+        if "환입" in s:
+            return IMPAIRMENT_REVERSAL
+        if re.search(r"(차손|손실|비용|손상|감액)(액)?$", s):
+            return IMPAIRMENT_LOSS
+        return None
+    named = any(w in s for w in _ONEOFF_ASSET_WORDS)
+    if (strict or fin_note) and not named:
+        return None
+    if re.search(r"처분(이익|수익|차익)(액)?$", s):
+        return DISPOSAL_GAIN
+    if re.search(r"처분(손실|차손)(액)?$", s):
+        return DISPOSAL_LOSS
+    return None

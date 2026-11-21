@@ -47,6 +47,9 @@ BORROWINGS = "note.borrowings"
 REVENUE = "note.revenue"                       # 고객과의 계약에서 생기는 수익
 INVENTORY = "note.inventory"
 EPS = "note.eps"
+# R369 (2026-11-21): 기타수익·기타비용·금융수익·금융비용·영업외손익 notes — the one-off items
+# (impairment, disposal gain/loss, debt forgiveness) are listed there (tj_asset request #7).
+OTHER_INCOME_EXPENSE = "note.other_income_expense"
 # ⚠ RND 는 topic 으로는 거의 잡히지 않는다(실측 corp 커버리지 0.7% = 2사).
 #   연구개발비는 **독립 주석이 아니라** 판관비/비용의성격별 분류 표 **안의 라벨**이기 때문.
 #   즉 R&D 는 ②주제가 아니라 ④라벨 단계에서 다뤄야 한다. topic 은 폴백으로만 남겨둔다.
@@ -104,6 +107,19 @@ _TOPIC_RULES: list[tuple[str, list[str], list[str]]] = [
     (EPS,                 ["주당이익"],             []),
     (EPS,                 ["주당손익"],             []),
     (EPS,                 ["주당순이익"],           []),
+    # R369: last, so every more specific topic above still wins.
+    (OTHER_INCOME_EXPENSE, ["기타수익"],            []),
+    (OTHER_INCOME_EXPENSE, ["기타비용"],            []),
+    (OTHER_INCOME_EXPENSE, ["기타이익"],            []),
+    (OTHER_INCOME_EXPENSE, ["기타손실"],            []),
+    (OTHER_INCOME_EXPENSE, ["기타손익"],            []),
+    (OTHER_INCOME_EXPENSE, ["기타영업외"],          []),
+    (OTHER_INCOME_EXPENSE, ["영업외수익"],          []),
+    (OTHER_INCOME_EXPENSE, ["영업외비용"],          []),
+    (OTHER_INCOME_EXPENSE, ["영업외손익"],          []),
+    (OTHER_INCOME_EXPENSE, ["금융수익"],            []),
+    (OTHER_INCOME_EXPENSE, ["금융비용"],            []),
+    (OTHER_INCOME_EXPENSE, ["금융손익"],            []),
 ]
 
 

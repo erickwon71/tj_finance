@@ -42,6 +42,7 @@ from fin2.standardize.rules import (DIRECT_MAP, CONSUMED_CANON, StdContext,
                                     _LEASE_PARTS, _BORROW_PROCEEDS_PARTS,
                                     _BORROW_REPAID_PARTS)
 from fin2.layer3.note_da import note_da_canonicals
+from fin2.layer3.note_oneoff import oneoff_canonicals
 from fin2.layer3.unit_overrides import apply_unit_overrides
 from parser.common.note_labels import classify_da_label
 from fin2.layer3.industry_profiles import (
@@ -4526,6 +4527,14 @@ def combine_full(session, corp: str, fy: int, period: str, basis: str,
     # discarding what this function already computed.
     prov["extended"] = {canon: value for canon, value in confirmed.items()
                         if canon not in DIRECT_MAP}
+    if _R369_ONEOFF_ITEMS and merged is not None and rcept_by_stmt is None:
+        # R369: one-off non-operating items (tj_asset request #7), body line first then notes.
+        try:
+            _rc = select_canonical_rcept(session, corp, fy, period)
+            for _k, _v in oneoff_canonicals(session, merged, _rc, eff_basis, period).items():
+                prov["extended"].setdefault(_k, _v)
+        except Exception:  # noqa: BLE001 — a note failure must not stop the standardization
+            pass
     prov["extended_exact"] = _extended_exact(prov["extended"], cands)
     # unit override (manual correction for self-contradictory filings, 2026-09-06 —
     # docs/plans/unit_override_self_contradictory_filings_design_2026-09-06.md). Run
@@ -4632,6 +4641,10 @@ _CF_BODY_DA_CANON = ("cf.depreciation", "cf.amortization", "cf.da_total",
                      "cf.rou_depreciation", "cf.roa_depreciation")
 _IS_BODY_DA_CANON = ("is.depreciation", "is.amortization", "is.rou_depreciation",
                      "is.roa_depreciation")
+
+
+# R369 (2026-11-21, tj_asset request #7): impairment / disposal / debt-forgiveness totals.
+_R369_ONEOFF_ITEMS = True
 
 
 # R343 (2026-11-18, user decision for tj_asset request #6): a company with no borrowings has no

@@ -514,6 +514,31 @@ def _run_migrations() -> None:
          "CREATE INDEX IF NOT EXISTS note_lines_corp_fy_basis_idx "
          "ON note_lines (corp_code, report_fiscal_year, basis)"),
 
+        # 2026-11-21 (R370): foreign-currency amounts printed in the notes (USD/EUR/JPY/CNY). A child
+        # of note_lines keyed by the cell position (no FK to note_lines.id: a cell that prints only
+        # 'USD 2,364,000' has no note_lines row). amount_printed is the printed number, never scaled;
+        # declared_scale is the table's own multiplier for that currency (NULL = not declared).
+        ("2026_11_note_fx_amounts_table",
+         "CREATE TABLE IF NOT EXISTS note_fx_amounts ("
+         " id bigserial PRIMARY KEY,"
+         " rcept_no varchar(14) NOT NULL REFERENCES filings(rcept_no) ON DELETE CASCADE,"
+         " corp_code varchar(8) NOT NULL,"
+         " report_fiscal_year smallint NOT NULL,"
+         " report_fiscal_period varchar(5) NOT NULL,"
+         " basis varchar(12),"
+         " table_seq smallint, row_order smallint, col_index smallint,"
+         " seq smallint NOT NULL DEFAULT 0,"
+         " currency varchar(3) NOT NULL,"
+         " amount_printed numeric NOT NULL,"
+         " declared_scale bigint,"
+         " evidence varchar(20) NOT NULL,"
+         " printed varchar(64))"),
+        ("2026_11_note_fx_amounts_rcept_idx",
+         "CREATE INDEX IF NOT EXISTS note_fx_amounts_rcept_idx ON note_fx_amounts (rcept_no)"),
+        ("2026_11_note_fx_amounts_corp_idx",
+         "CREATE INDEX IF NOT EXISTS note_fx_amounts_corp_idx "
+         "ON note_fx_amounts (corp_code, report_fiscal_year, currency)"),
+
         # 2026-07-31 (F1): 단위 판정을 표 단위 → **열 단위**로 내리면서 생긴 두 컬럼 변경.
         #   · value_raw   : 단위를 확정하지 못한 칸의 **셀 원문**. 이게 있어야 'value_won=NULL'
         #                   이 정보손실이 아니다(fin2/extract/units.py 참고).

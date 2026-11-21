@@ -7376,3 +7376,18 @@ Q1 은 3개월 컨텍스트와 누적 컨텍스트의 기간이 같고 FY 는 3�
 > **한계** 쉼표 없는 작은 숫자가 R246 이전 읽기로 붙은 칸(`24&cr;138` → `24138`)은 계층2 에 흔적이 없어 이번 재읽기 대상에서 빠졌다 — 그 필링이 다시 읽힐 때(데일리·다음 소급) 반영된다.
 > **코드·테스트** `fin2/extract/biz_section.py`, `fin2/tests/test_r367_stacked_rows_by_item.py`(`test_prepass_*`), `scripts/qa/r367_biz_layer2_reread.py`.
 
+
+## R370. 주석 셀에 인쇄된 주요 외화(USD·EUR·JPY·CNY) 금액은 자식 테이블 `note_fx_amounts` 에 인쇄된 숫자 그대로 담는다 (2026-11-21, 적용 계층: 2 — 읽기, 사용자 결정)
+
+> **상태** 유효 · **적용 계층** 2
+>
+> **규칙** `fin2/extract/fx_amounts.py::extract_fx_cell`(스위치 `report_lines._R370_NOTE_FX_AMOUNTS`) — 주석 표의 한 셀에서 주요 4개 통화의 금액을 읽어 `note_fx_amounts` 행으로 만든다(`store_note_lines` 안의 `store_note_fx_amounts` 가 rcept 단위 delete-then-insert, 키 = rcept_no·basis·table_seq·row_order·col_index·seq). `note_lines` 의 값·행은 바꾸지 않는다(원화만 적재 방침 유지, 2026-10-30). 'USD 2,364,000' 만 찍힌 셀은 `note_lines` 행이 없으므로 FK 없이 셀 위치로 묶는다.
+> - `amount_printed` = **인쇄된 숫자 그대로**(배수 곱 없음, 원화 환산 없음, R0-2). 괄호 `(5,000)`·`-5,000` 은 음수, 통화 표지를 감싼 괄호 `(USD 5,000)` 는 부호 아님(`printed` 에 원문 조각이 남는다). 소수는 둘째 자리까지, 셋째 자리(`125.605`)는 못 읽는 셀이라 행 없음.
+> - `declared_scale` = 그 표의 단위 선언이 **그 통화에 대해** 적은 배수(`천USD`·`천달러`·`천, USD` → 1000, `USD` → 1). 선언에 그 통화가 없으면 NULL(표가 말하지 않음). 곱하는 것은 소비자 몫.
+> - `evidence`(통화를 어디서 읽었나): `cell_code`(셀에 코드·`US$` 가 찍힘, 원화 첫 줄 뒤 외화 꼬리 포함) · `cell_symbol`(`$`→USD, `€`→EUR) · `header_foreign`(열 머리글이 외화라 하고 코드를 적음 `외화금액(USD)`) · `row_code`(머리글이 외화, 행 라벨 끝이 코드) · `row_foreign`(머리글이 코드만, 행 라벨이 외화) · `header_code_only`(머리글이 코드만 — **원화 환산액일 수 있다**, 소비자가 판단).
+> - 통화가 정해지지 않으면 행이 없다: 머리글과 행 라벨의 코드가 서로 다르면, 머리글 코드가 둘 이상이면, 행·열 라벨에 `환산`·`원화`·`환율`·`민감도` 가 있으면, 셀에 숫자 말고 글이 섞이면 행 없음. `￥`·`¥`·`£` 와 주요 4통화 밖 코드(SGD·GBP·HKD 등)는 읽고 지나가며 저장하지 않는다(엔·위안 기호가 같은 글자라 추정하지 않는다). `RMB` 는 CNY 로 적는다.
+> - 계층3 소비자는 이 테이블을 JOIN 으로만 쓴다. 기존 `note_lines` 쿼리는 영향이 없다.
+> **실측·소급(2026-11-21)** `scripts/backfill_note_fx_2026-11-21.py`(진행표 `note_fx_backfill_progress`): 2015+ 106,604필링(2,539개사, SD 미러 8분할, 98분)을 읽어 `note_fx_amounts` 1,584,917행(60,590필링, 267MB)을 적재. 통화별 USD 1,059,197 · EUR 202,860 · JPY 186,973 · CNY 135,702. 증거별 cell_code 579,988 · header_code_only 515,416 · row_code 317,326 · header_foreign 78,367 · row_foreign 73,352 · cell_symbol 20,283. 오류 0(SD 미러에 없던 신규 6건은 NAS 에서 읽음, XML 루트 없는 1건은 0행). 필링 6건 외 note_lines·report_lines 는 쓰지 않았다. 끔/켬 6필링 비교에서 `extract_report_lines` 행이 동일, 전체 테스트 2,674 통과(알려진 test_r168 파일 제외). 증거별 40건씩 240행을 원문 XML 에서 대조 — 숫자가 모두 인쇄돼 있었다(존재 확인).
+> **알려진 한계** 열 머리글이 `외화금액` 뿐이고 행 라벨에도 코드가 없는 표(통화가 표 위 소제목이나 다른 열에 있는 경우)는 통화를 못 정해 행이 없다. `header_code_only` 는 원화 환산액일 수 있다. 엔·위안 기호(`￥`)와 4통화 밖 코드는 저장하지 않는다. XBRL 인스턴스 경로의 주석은 이 읽기를 거치지 않는다(기존 행은 그대로 둔다). 2015 이전은 아직 읽지 않았다.
+> **하지 않는 것** 환율 환산·원화 환산 값, 통화 추정, 한글 통화명(`미국달러`) 머리글, 본문 재무제표 외화 처리 변경(`report_tables.currency` 로 이미 처리).
+> **코드·테스트** `fin2/extract/fx_amounts.py`, `fin2/extract/report_lines.py`(`_emit_note_lines` 의 `emit_fx`, `ReportLineList`, `store_note_fx_amounts`), `collector/db.py` 마이그레이션 `2026_11_note_fx_amounts_*`, `tests/test_r370_note_fx_amounts.py`. 계획 `docs/plans/note_multicurrency_plan_2026-11-21.md`.

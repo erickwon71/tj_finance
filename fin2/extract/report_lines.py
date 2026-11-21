@@ -273,6 +273,7 @@ from fin2.extract.text import (
     document_default_unit, nearest_section_default_unit,
 )
 from fin2.extract.units import ColumnUnits, FX_ONLY, SRC_FX
+from fin2.extract.fx_amounts import NoteFxRow, ReportLineList, extract_fx_cell
 from fin2.extract import units as _units
 from fin2.extract.legacy_pre2015 import (
     detect_pre2015_body_statement_tables, detect_squished_bs_total_assets,
@@ -2154,8 +2155,13 @@ def note_column_units(table, note_col_labels: dict) -> "ColumnUnits":
                                         inherited=bool(inherited))
 
 
+# R370 - foreign-currency amounts of the note cells go to a child table (fx_amounts.py); note_lines is
+# not touched. Switch for the A/B.
+_R370_NOTE_FX_AMOUNTS = True
+
+
 def _emit_note_lines(
-    root, *, emit, corp_code, rcept_no, report_fiscal_year, report_fiscal_period,
+    root, *, emit, corp_code, rcept_no, report_fiscal_year, report_fiscal_period, emit_fx=None,
 ) -> None:
     """주석 섹션(연결/별도) 표를 tree 로 전사한다 — **본문과 동일 원칙**(충실전사·판단 없음).
 
@@ -2243,6 +2249,15 @@ def _emit_note_lines(
                         col_idx in unreadable
                         or (col_idx < len(row.raw_amounts) and is_pair_amount_cell(row.raw_amounts[col_idx])))
                     raw = row.raw_amounts[col_idx] if col_idx < len(row.raw_amounts) else ""
+                    if emit_fx is not None and _R370_NOTE_FX_AMOUNTS:
+                        for fx in extract_fx_cell(raw, label=row.account_name,
+                                                  col_label=note_col_labels.get(col_idx),
+                                                  declaration=cu.raw_decl):
+                            emit_fx(NoteFxRow(
+                                corp_code=corp_code, rcept_no=rcept_no,
+                                report_fiscal_year=report_fiscal_year,
+                                report_fiscal_period=report_fiscal_period, basis=basis,
+                                table_seq=table_seq, row_order=row.row_order, col_index=col_idx, fx=fx))
                     # R294: 'amount + foreign/symbol tail' cell - read the first line, keep the print
                     tail_first = (split_amount_with_tail(raw)
                                   if amount is None and not is_unreadable else None)
@@ -2517,7 +2532,7 @@ def extract_report_lines(
         return []
 
     fin_type = _detect_fin_type(root, file_path=file_path)
-    lines: list[ReportLineRow] = []
+    lines: list[ReportLineRow] = ReportLineList()      # R370: a list that also carries .note_fx
 
     # include_sce=True — 계층2 는 자본변동표도 전사한다(fact_v2 는 기본값 False 로 계속 배제).
     # pre-2015(≤2010) 라우팅 — 섹션 코드 단위 병합(위 헬퍼 docstring). 2015+ 소비 경로
@@ -2617,6 +2632,7 @@ def extract_report_lines(
         _emit_note_lines(
             root, emit=lines.append, corp_code=corp_code, rcept_no=rcept_no,
             report_fiscal_year=report_fiscal_year, report_fiscal_period=report_fiscal_period,
+            emit_fx=lines.note_fx.append,
         )
 
     # 버그#2(dividends_paid 부호) 수정 — 원문에 이미 있는 인라인 XBRL(Track A) 사실로
@@ -2927,6 +2943,36 @@ def _insert_report_tables(session, rcept_no: str, stored: list[ReportLineRow]) -
     return len(seen)
 
 
+_FX_INSERT_COLS = ("rcept_no", "corp_code", "report_fiscal_year", "report_fiscal_period", "basis",
+                   "table_seq", "row_order", "col_index", "seq", "currency", "amount_printed",
+                   "declared_scale", "evidence", "printed")
+
+
+def store_note_fx_amounts(session, rcept_no: str, fx_rows) -> int:
+    """R370 - delete-then-insert the foreign amounts of one filing (child of note_lines, keyed by
+    the cell position). `fx_rows=None` means the caller did not read them (a plain list, or the
+    XBRL-instance path whose notes come from another reader): the filing's rows stay as they are.
+    An empty list means 'read, none found' and clears them."""
+    from sqlalchemy import text as _text
+
+    if fx_rows is None:
+        return 0
+    session.execute(_text("DELETE FROM note_fx_amounts WHERE rcept_no = :r"), {"r": rcept_no})
+    if not fx_rows:
+        return 0
+    rows = [{"rcept_no": rcept_no, "corp_code": f.corp_code,
+             "report_fiscal_year": f.report_fiscal_year,
+             "report_fiscal_period": f.report_fiscal_period, "basis": f.basis,
+             "table_seq": f.table_seq, "row_order": f.row_order, "col_index": f.col_index,
+             "seq": f.fx.seq, "currency": f.fx.currency, "amount_printed": f.fx.amount_printed,
+             "declared_scale": f.fx.declared_scale, "evidence": f.fx.evidence,
+             "printed": f.fx.printed} for f in fx_rows]
+    cols = ", ".join(_FX_INSERT_COLS)
+    ph = ", ".join(f":{c}" for c in _FX_INSERT_COLS)
+    session.execute(_text(f"INSERT INTO note_fx_amounts ({cols}) VALUES ({ph})"), rows)
+    return len(rows)
+
+
 def store_note_lines(session, rcept_no: str, lines: list[ReportLineRow]) -> int:
     """statement='note' 행을 note_lines 로 delete-then-insert(rcept 단위, 재현성).
     본문과 동일 원칙 — 값판단 없음. mixed lines 를 넘겨도 note 만 걸러 적재한다."""
@@ -2934,6 +2980,7 @@ def store_note_lines(session, rcept_no: str, lines: list[ReportLineRow]) -> int:
 
     notes = [l for l in lines if l.statement == "note"]
     session.execute(_text("DELETE FROM note_lines WHERE rcept_no = :r"), {"r": rcept_no})
+    store_note_fx_amounts(session, rcept_no, getattr(lines, "note_fx", None))
     if not notes:
         return 0
 

@@ -5096,6 +5096,20 @@ not_fixed 0**. std_v3·calendar_v3 는 85개사를 재빌드했다(실패 0, 런
 
 ---
 
+## R169-c. 단위 선언이 **아예 없어** 스킵된 섹션도 같은 증명으로 실제 단위를 확정한다 — 지명은 `report_tables` 공백으로 (2026-11-21, R169 확장)
+
+> **상태** 유효 · **적용 계층** 2
+>
+> **규칙** 본문 섹션(rcept × BS/IS/CF/SCE × 연결/별도)의 표에 단위 선언이 없고 요약재무정보·주석 폴백도 단위를 못 주면 추출기는 `단위 미선언 → 스킵`(`report_lines.py` `_emit_section_lines`·`_emit_sce_lines`)해 행이 하나도 안 남는다. 이런 섹션은 R169 와 **같은 확정 규칙**(배수 1 로 읽은 원문 금액이 같은 회사 다른 필링 / 같은 문서의 이미 확정된 같은 basis 섹션 금액과 정확히 일치: hits(k)≥3, 다른 k 는 ≤1 이고 10배 차)으로 k 를 확정하고, 확정분만 `unit_self_contradiction_overrides.json` 에 등재해 `proved_unit` 으로 읽는다(숫자는 그대로, 남의 표 선언을 빌리지 않는다 — R4 엘브이엠씨 사고와 다름). 증거가 모자라면 `unconfirmed` 로 두고 스킵 그대로다(R6).
+> **지명** 스킵된 섹션은 `report_lines` 행이 없어 R169 의 행 기반 지명(1e15·비율)에 안 걸린다. `undeclared_gap_suspects()` 가 **같은 회사·같은 회계연도의 다른 최종 필링에는 있는 (basis, statement) 섹션이 이 필링의 `report_tables` 에 없는** 필링을 지명한다(`suspect_rcepts(..., include_undeclared=True)`, 스캔 스크립트 `--include-undeclared`). 지명이 과대해도(정당한 부재 포함) 데이터는 안 바뀐다 — 확정은 정확 일치 증거만 정한다.
+> **하지 않는 것** 지명만으로 단위를 정하지 않는다. 데일리는 탐지·보고만 한다(R169 와 같은 원칙): `collect_new._report_unit_self_contradiction()` 이 최근 3일 파싱분(`parsed_since`)만 지명해 같은 정당한 부재 필링을 매일 재스캔하지 않는다. 두 call site 는 `_run_standardize_batches` 한 곳을 공유한다(런북 A3).
+> **코드** `fin2/audit/unit_self_contradiction.py::undeclared_gap_suspects` · `scripts/unit_self_contradiction_scan.py --include-undeclared` · `scripts/collect_new.py::_report_unit_self_contradiction` · 테스트 `fin2/tests/test_r169c_undeclared_unit_section.py` · 계획 `docs/plans/undeclared_unit_section_proof_2026-11-21.md`
+
+**발견**: 오늘이엔엠 `20150515001311`(2015Q1) — `4. 재무제표` 별도 BS·IS·CF·SCE 4섹션이 `(단위 : 원)` 선언 없이 인쇄돼 전부 스킵(연결표는 선언이 있어 적재). 18기 열 자산총계 31,697,919,939 가 FY2014 별도 필링(원 선언)과 정확히 일치.
+**측정(2026-11-21, 2015+ 전수 dry-run, `docs/qa/r169c_scan_2026-11-21.jsonl`)**: 지명 1,667필링(18.8초) → 스캔 1,686필링(기존 R169 의심 포함) 약 30분. 미선언 스킵으로 판정된 섹션 11, **확정 10(k=1) · 6필링**, 미확정 1(DSC인베스트먼트 2017Q1 CF_S, 증거 2건). 확정: 오늘이엔엠 4섹션(IS_S 는 같은 문서 증거), DSC인베스트먼트 BS_S, 카페24 2017Q1 CF_S, 이노시뮬레이션 2019FY BS_C·BS_S, 넥사다이내믹스 2021Q3 CF_S, 아스타 2022H1 SCE_C.
+**소급**: 6필링 재적재(`ops._reload_rcept`) + 6개사 계층3 재빌드(`build_std_v3 --corp … --year-min 1990`, 달력 포함). 부분 섹션 필링이라 전체 영향은 해당 섹션 행 추가뿐이다.
+**남은 문제(별도 규칙)**: 오늘이엔엠 별도 BS 의 std 컬럼(자산총계 등)은 여전히 NULL — 이 BS 가 `[유동자산]` 식 대괄호 라벨 서식이라 계층3 `build_merged_lines` 의 R63 가드(대괄호 라벨이 있는 table_seq 전체 제외)에 걸린다. TODO B-1-g.
+
 ## R173. EPS 경로도 본류와 **같은 주석열 판정**으로 금액 칸을 가른다 (2026-09-25)
 
 > **상태** 유효 · **적용 계층** 2

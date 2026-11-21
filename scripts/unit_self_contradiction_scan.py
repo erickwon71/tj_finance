@@ -5,6 +5,7 @@ Rule and evidence: `fin2/audit/unit_self_contradiction.py` docstring, docs/PARSI
 Usage:
   python scripts/unit_self_contradiction_scan.py --era-min 2015 --out docs/qa/r169_scan.jsonl
   python scripts/unit_self_contradiction_scan.py --rcepts 20230322000822 --apply
+  python scripts/unit_self_contradiction_scan.py --era-min 2015 --include-undeclared --out docs/qa/r169c_scan.jsonl
 --apply merges confirmed sections into fin2/extract/data/unit_self_contradiction_overrides.json.
 Reload the affected filings afterwards (`vq.py batch add-targets` + `batch reload`).
 """
@@ -29,12 +30,14 @@ def main():
     ap.add_argument("--era-min", type=int, default=2015)
     ap.add_argument("--out", help="JSONL report path")
     ap.add_argument("--apply", action="store_true", help="merge confirmed into the data file")
+    ap.add_argument("--include-undeclared", action="store_true",
+                    help="R169-c: also nominate filings missing a section that a sibling filing has")
     args = ap.parse_args()
     logger.remove()
     logger.add(sys.stderr, level="WARNING")
 
     with get_session() as s:
-        suspects = set(suspect_rcepts(s, args.era_min))
+        suspects = set(suspect_rcepts(s, args.era_min, include_undeclared=args.include_undeclared))
         targets = args.rcepts.split(",") if args.rcepts else sorted(suspects)
         suspects |= set(targets)
         results = []

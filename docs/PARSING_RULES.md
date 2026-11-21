@@ -401,6 +401,7 @@
 | R167 | R167. 검증 ↔ 재적재 규칙 — 적재 스탬프·lease·내용버전 (2026-09-24, R139 대체) | [30_audit_verify.md](rules/30_audit_verify.md) | 검증 | 유효 |  |
 | R168 | R168. 구형 2단 열(내역칸/잔액칸) 서식의 그룹 마감행을 산수로 자기증명될 때만 적재한다 (2026-09-24, R15… | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R169 | R169. 자기모순 단위선언(선언 백만원·천원, 실제 원)을 타 필링 동일값 대조로 섹션별 확정해 교정한다 (2026-09-… | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
+| R169-c | R169-c. 단위 선언이 아예 없어 스킵된 섹션도 R169 와 같은 증명으로 실제 단위를 확정한다 — 지명은 report_tables 공백으로 (2026-11-21) | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R170 | R170. XBRL 경로: 회사 _pre.xml 은 DART 표준 base 표시링크베이스에 대한 델타다 — base 를 병합… | [10_layer2_parse.md](rules/10_layer2_parse.md) · XBRL 폴백 | 2 | 유효 |  |
 | R171 | R171. 정정 체인에 추출 경로가 섞이면(XML → XBRL → XML) 나중 XML 필링이 앞선 XBRL 셀을 스코프 단… | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 |  |
 | R172 | R172. 계층3: XBRL 셀은 라벨이 매핑 안 되면 XBRL 개념(source_ref) 으로 매핑한다 — R171 양방향… | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 |  |

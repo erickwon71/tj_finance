@@ -141,15 +141,56 @@ def ratio_suspects(s, era_min: int, corps: list[str] | None = None,
     return [(r, b) for r, b in rows]
 
 
-def suspect_rcepts(s, era_min: int, corps: list[str] | None = None) -> list[str]:
+def undeclared_gap_suspects(s, era_min: int, corps: list[str] | None = None,
+                            parsed_since=None) -> list[str]:
+    """R169-c nomination: final filings that lack a (basis, statement) body section which another
+    final filing of the same corp and fiscal year has.
+
+    A section skipped for "단위 미선언" leaves no `report_lines` row, so the row-based triggers
+    above can never nominate it. `report_tables` (one row per stored table, small) shows the gap.
+    Over-nomination is harmless: `scan_rcept` confirms a unit only on exact cross-filing / same-
+    document amount matches, and a legitimately absent section (no consolidated statements in a
+    quarter) simply stays `unconfirmed` and unchanged.
+
+    `parsed_since` (a date) limits the nominees to filings whose tables were stored on/after it —
+    the daily report uses it so the same legitimately-absent filings are not re-scanned every day."""
+    corp_clause = " AND corp_code = ANY(:c)" if corps else ""
+    nominee_clause = (" AND fl.rcept_no IN (SELECT rcept_no FROM report_tables WHERE parsed_at >= :since)"
+                      if parsed_since is not None else "")
+    rows = s.execute(text(f"""
+        WITH fl AS (
+            SELECT rcept_no, corp_code, fiscal_year FROM filings
+            WHERE is_final AND fiscal_year >= :y{corp_clause}),
+        sec AS (
+            SELECT DISTINCT rt.rcept_no, rt.basis, rt.statement
+            FROM report_tables rt JOIN fl USING (rcept_no)
+            WHERE rt.statement IN ('BS','IS','CF','SCE') AND rt.basis IN ('consolidated','separate')),
+        cs AS (
+            SELECT DISTINCT fl.corp_code, fl.fiscal_year, sec.basis, sec.statement
+            FROM sec JOIN fl USING (rcept_no))
+        SELECT DISTINCT fl.rcept_no
+        FROM fl JOIN cs ON cs.corp_code = fl.corp_code AND cs.fiscal_year = fl.fiscal_year
+        LEFT JOIN sec ON sec.rcept_no = fl.rcept_no AND sec.basis = cs.basis
+                     AND sec.statement = cs.statement
+        WHERE sec.rcept_no IS NULL
+          AND EXISTS (SELECT 1 FROM sec s2 WHERE s2.rcept_no = fl.rcept_no){nominee_clause}
+        ORDER BY 1"""), {"y": era_min, "c": corps or [], "since": parsed_since})
+    return [r for (r,) in rows]
+
+
+def suspect_rcepts(s, era_min: int, corps: list[str] | None = None,
+                   include_undeclared: bool = False, parsed_since=None) -> list[str]:
     corp_clause = " AND corp_code = ANY(:c)" if corps else ""
     cap = {r for (r,) in s.execute(text(f"""
         SELECT DISTINCT rcept_no FROM report_lines
         WHERE statement IN ('BS','IS','CF','SCE') AND unit_source = 'declared'
           AND abs(value_won) >= :m AND report_fiscal_year >= :y{corp_clause}
         ORDER BY 1"""), {"m": SUSPECT_MIN, "y": era_min, "c": corps or []})}
-    return sorted(cap | {r for r, _ in ratio_suspects(s, era_min, corps)}
-                  | {r for r, _ in under_ratio_suspects(s, era_min, corps)})
+    out = (cap | {r for r, _ in ratio_suspects(s, era_min, corps)}
+           | {r for r, _ in under_ratio_suspects(s, era_min, corps)})
+    if include_undeclared:
+        out |= set(undeclared_gap_suspects(s, era_min, corps, parsed_since))
+    return sorted(out)
 
 
 def _extract(fp, meta, rcept_no, forced: int | None):

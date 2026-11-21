@@ -640,7 +640,9 @@ def _report_unit_self_contradiction(corps: list[str]) -> None:
         from fin2.audit.unit_self_contradiction import scan_rcept, suspect_rcepts
         from fin2.extract.report_lines import _PROVED_UNIT_OVERRIDES
         with get_session() as s:
-            suspects = [r for r in suspect_rcepts(s, 2015, corps) if r not in _PROVED_UNIT_OVERRIDES]
+            suspects = [r for r in suspect_rcepts(s, 2015, corps, include_undeclared=True,
+                                                  parsed_since=date.today() - timedelta(days=3))
+                        if r not in _PROVED_UNIT_OVERRIDES]
             found = [row for rc in suspects for row in scan_rcept(s, rc, set(suspects))]
         # Genuinely huge 백만원 sections (e.g. securities gross trading flows) match other
         # filings only at x10^6 — not a defect, and they would be re-reported every day.

@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -129,6 +130,22 @@ def _recent_relpaths(since_hours: int) -> list[str] | None:
     return sorted(set(rels))
 
 
+def _split_missing(rels: list[str], root: Path | str | None = None,
+                   exists=os.path.exists) -> tuple[list[str], list[str]]:
+    """R371 - (present, missing) of the relative paths under `root` (default: the NAS).
+
+    openrsync aborts the WHOLE `--files-from` transfer, sending nothing, when one listed entry fails
+    its stat (rc=23, 'stat: No such file or directory'). The download table can name a file the NAS
+    does not hold (a viewer print that was never built, a folder spelled another way, an archived
+    delisted corp), and that single entry stopped the mirror of every other file of the day
+    (2026-10-22 and 10-23: six filings never reached the SD card)."""
+    base = str(root if root is not None else PRIMARY_ROOT)
+    present, missing = [], []
+    for rel in rels:
+        (present if exists(f"{base}/{rel}") else missing).append(rel)
+    return present, missing
+
+
 def run_mirror(dry_run: bool = False, full: bool = False,
                since_hours: int = 48) -> dict:
     """NAS → SD 덧붙이기 미러. 반환: {status, files_sent, bytes_sent, duration_sec}
@@ -177,6 +194,8 @@ def run_mirror(dry_run: bool = False, full: bool = False,
 
     listfile: Path | None = None
     mode = "full"
+    rels: list[str] = []
+    missing: list[str] = []
     if not full:
         rels = _recent_relpaths(since_hours)
         if rels is None:
@@ -187,6 +206,16 @@ def run_mirror(dry_run: bool = False, full: bool = False,
             return {"status": "success", "files_sent": 0, "bytes_sent": 0,
                     "duration_sec": time.time() - t0}
         else:
+            # R371: an entry the NAS does not hold must not stop the rest of the list
+            rels, missing = _split_missing(rels)
+            if missing:
+                logger.warning(f"[mirror] 목록 {len(missing)}건은 NAS 에 없어 제외 "
+                               f"(예: {missing[:3]}) — DB 는 completed 인데 파일이 없다")
+            if not rels:
+                logger.info("[mirror] 보낼 파일 없음(목록 전부 NAS 에 없음)")
+                _log_run("success", 0, 0, time.time() - t0, f"원본 없음 {len(missing)}건 제외")
+                return {"status": "success", "files_sent": 0, "bytes_sent": 0,
+                        "duration_sec": time.time() - t0, "missing": missing}
             listfile = Path(TMP_LIST)
             listfile.write_text("\n".join(rels) + "\n", encoding="utf-8")
             cmd += ["--files-from", str(listfile)]
@@ -198,6 +227,15 @@ def run_mirror(dry_run: bool = False, full: bool = False,
     logger.info(f"[mirror] {'(dry-run) ' if dry_run else ''}[{mode}] "
                 f"{PRIMARY_ROOT} → {BACKUP_ROOT}")
     proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode == 23 and listfile is not None:
+        # R371: a file vanished between the check above and the transfer - drop it and send the rest once
+        rels, gone = _split_missing(rels)
+        if gone and rels:
+            logger.warning(f"[mirror] rsync rc=23 — 전송 중 사라진 {len(gone)}건 제외 후 재시도 "
+                           f"(예: {gone[:3]})")
+            missing += gone
+            listfile.write_text("\n".join(rels) + "\n", encoding="utf-8")
+            proc = subprocess.run(cmd, capture_output=True, text=True)
     if listfile:
         listfile.unlink(missing_ok=True)
     dur = time.time() - t0
@@ -219,7 +257,7 @@ def run_mirror(dry_run: bool = False, full: bool = False,
     if not dry_run:
         _log_run("success", files_sent, bytes_sent, dur, "")
     return {"status": "success", "files_sent": files_sent,
-            "bytes_sent": bytes_sent, "duration_sec": dur}
+            "bytes_sent": bytes_sent, "duration_sec": dur, "missing": missing}
 
 
 def _parse_stats(out: str) -> tuple[int, int]:

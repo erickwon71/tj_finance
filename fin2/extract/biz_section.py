@@ -474,6 +474,45 @@ def is_merged_column_table(grid: list[list[str]]) -> Optional[str]:
     return None
 
 
+# R363 (shared since R366): a grouped number wrapped inside the cell ("1,\n918", "(18,3\n99)") is
+# one printed number. Joined only when the whitespace-free text is exactly a thousands-grouped
+# number and the text before the break is not, so two complete numbers are never joined.
+_GROUPED_NUM_RE = re.compile(r"^\(?-?\d{1,3}(?:,\d{3})+\)?$")
+
+
+def join_wrapped_number(cell: str) -> str:
+    t = (cell or "").strip()
+    if not re.search(r"[\d,(]\s+[\d,)]", t):
+        return cell
+    joined = re.sub(r"\s+", "", t)
+    first = re.split(r"\s+", t)[0]
+    if _GROUPED_NUM_RE.match(joined) and not _GROUPED_NUM_RE.match(first):
+        return joined
+    return cell
+
+
+_R366_STACKED_ROWS = True
+_STACK_DASHES = frozenset(("-", "－", "—", "―", "─"))
+_STACK_LINE_RE = re.compile(r"^[△−-]?\(?-?\d[\d,]*(?:\.\d+)?\)?%?$")
+
+
+def is_stacked_amount_cell(cell: str) -> bool:
+    """R366: one cell printing one value per line for several items (DART `&cr;`, kept as a line
+    break by R246) — 금강공업 FY2015 생산 `167,334\n23,018` under a label naming both items.
+    _parse_value would read the first line under that combined label, so the mappers make no row
+    from it (R6: the lines cannot be paired with items). Two lines whose second is in brackets
+    (`102,759,182\n(72,210)`, amount + foreign-currency or cumulative note) are not a stack."""
+    if not _R366_STACKED_ROWS:
+        return False
+    cell = join_wrapped_number(cell)
+    lines = [ln.strip() for ln in (cell or "").split("\n") if ln.strip()]
+    # a dash line is the empty value of one stacked item ("14,884\n-\n14,884" = 내수 | 수출 | 계)
+    if (len(lines) < 2 or not all(_STACK_LINE_RE.match(ln) or ln in _STACK_DASHES for ln in lines)
+            or not any(_STACK_LINE_RE.match(ln) for ln in lines)):
+        return False
+    return not (len(lines) == 2 and lines[1].startswith("(") and lines[1].endswith(")"))
+
+
 def _parse_value(s: str) -> tuple[Optional[float], bool, Optional[str]]:
     """셀 → (숫자값, 비율여부, 인라인단위). 파싱 실패 시 (None, ..)."""
     t = s.strip()
@@ -724,8 +763,11 @@ def map_biz_table(bt: BizTable, fiscal_year: int) -> list[BizMetricRow]:
             # 아니다. 그냥 두면 표 metric 폴백으로 capacity/output 에 섞여 집계를 오염시킨다.
             if row_metric is None:
                 continue
+        if any(is_stacked_amount_cell(drow[c]) for c in val_cols):
+            continue  # R366
         for c in val_cols:
-            val, is_ratio, inline_unit = _parse_value(drow[c])
+            val, is_ratio, inline_unit = _parse_value(
+                join_wrapped_number(drow[c]) if _R366_STACKED_ROWS else drow[c])
             if val is None:
                 continue
             plabel, pyear = col_period(c)

@@ -48,6 +48,7 @@ from typing import Optional
 
 from lxml import etree
 
+from fin2.extract import biz_section as _bs
 from fin2.extract.biz_section import (
     _FINANCIAL_STMT_KW,
     _PERIOD_GI_RE,
@@ -57,6 +58,8 @@ from fin2.extract.biz_section import (
     is_merged_column_table,
     _narrative_unit,
     _parse_value,
+    is_stacked_amount_cell,
+    join_wrapped_number,
     _tag,
     _text,
     expand_table_grid,
@@ -533,8 +536,11 @@ def map_catalog_table(ct: CaptionedTable, metric: str,
         segment = labels[0] if labels else None
         item = labels[1] if len(labels) > 1 else None
         row_unit = drow[unit_col].strip() if unit_col is not None else None
+        if any(is_stacked_amount_cell(drow[c]) for c in val_cols):
+            continue  # R366
         for c in val_cols:
-            val, is_ratio, inline_unit = _parse_value(drow[c])
+            val, is_ratio, inline_unit = _parse_value(
+                join_wrapped_number(drow[c]) if _bs._R366_STACKED_ROWS else drow[c])
             if val is None or (is_ratio and metric == "sales"):
                 continue
             plabel, pyear = col_period(c)

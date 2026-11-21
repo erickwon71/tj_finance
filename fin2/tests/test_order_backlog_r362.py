@@ -5,8 +5,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fin2.extract.order_backlog import (  # noqa: E402
-    LAYOUT_ROLLFORWARD, _aggregate_if_detail, _col_kind, _join_wrapped_number, is_prior_period_row,
-    map_order_table)
+    LAYOUT_ROLLFORWARD, _aggregate_if_detail, _col_kind, is_prior_period_row, map_order_table)
+from fin2.extract.biz_section import join_wrapped_number  # noqa: E402
 
 # HD현대중공업 FY2025 20260320000859 table_ord=20 (HD현대미포 merger in the year).
 _HHI_2025 = [
@@ -96,11 +96,11 @@ _MOVEX_2024Q1 = [
 
 
 def test_wrapped_number_join_is_strict():
-    assert _join_wrapped_number("351,951,66\n1") == "351,951,661"
-    assert _join_wrapped_number("(1,234,56\n7)") == "(1,234,567)"
-    assert _join_wrapped_number("1,000 2,000") == "1,000 2,000"  # two printed numbers
-    assert _join_wrapped_number("12 345") == "12 345"  # no thousands grouping
-    assert _join_wrapped_number("1,234,567") == "1,234,567"
+    assert join_wrapped_number("351,951,66\n1") == "351,951,661"
+    assert join_wrapped_number("(1,234,56\n7)") == "(1,234,567)"
+    assert join_wrapped_number("1,000 2,000") == "1,000 2,000"  # two printed numbers
+    assert join_wrapped_number("12 345") == "12 345"  # no thousands grouping
+    assert join_wrapped_number("1,234,567") == "1,234,567"
 
 
 def test_wrapped_cells_read_whole_number():
@@ -179,6 +179,33 @@ def test_r365_repeated_labels_use_printed_total():
     assert (agg[0].contract_total, agg[0].completed, agg[0].backlog_amt) == (27505534, 490476, 27015058)
     no_total = [r for r in rows if r.category != "합계"]
     assert _aggregate_if_detail(no_total) == no_total  # no printed total: rows left as they are
+
+
+# R366 — 에스엠벡셀 FY2018 20190328001211 table_ord=13: six items stacked in one row.
+_SMV_2018 = [
+    ["품목", "수주일자", "납기", "수주총액", "수주총액", "기납품액", "기납품액", "수주잔고", "수주잔고"],
+    ["품목", "수주일자", "납기", "수량", "금액", "수량", "금액", "수량", "금액"],
+    ["W/PUMPO/PUMPAL HEADA/PTCCM기     타", "2018.01.01∼2018.12.31", "2018.01.01∼2018.12.31",
+     "3,090\n477433,685\n229146", "43,148\n5,114\n5,930\n9,581\n14,733\n2,715", "3,459\n456263,358\n23135",
+     "46,191\n4,374\n3,936\n9,311\n14,786\n665", "-3692217327-3111", "-3,043\n7401,995\n271-532,051"],
+    ["자동차부문계", "2018.01.01∼2018.12.31", "2018.01.01∼2018.12.31", "7,670", "81,223", "7,565", "79,262", "104", "1,960"],
+]
+# 제이오 2025 반기 20250813000887 table_ord=12: 당기(누적) printed on two lines is not a stack.
+_JEIO_2025H1 = [
+    ["구분", "발주처", "공사명", "기본도급액", "완성공사액", "계약잔액"],
+    ["해외", "EcoPro BM Hungary Zrt. 등", "TANK 외", "57,201,917", "2,702,100\n(53,921,791)", "3,280,126"],
+]
+
+
+def test_r366_stacked_item_row_is_not_loaded():
+    rows = map_order_table(_SMV_2018)
+    assert [r.category for r in rows] == ["자동차부문계"]
+    assert (rows[0].contract_total, rows[0].completed, rows[0].backlog_amt) == (81223, 79262, 1960)
+
+
+def test_r366_current_and_cumulative_on_two_lines_is_kept():
+    r = map_order_table(_JEIO_2025H1)[0]
+    assert (r.contract_total, r.completed, r.backlog_amt) == (57201917, 53921791, 3280126)
 
 
 if __name__ == "__main__":

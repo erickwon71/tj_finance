@@ -32,6 +32,7 @@ from typing import Optional
 from lxml import etree
 
 # B4 인프라 재사용(신규 그리드 확장기·수치 파서 작성 금지 — PRD 14 §4.2).
+from fin2.extract import biz_section as _bs
 from fin2.extract.biz_section import (
     _FINANCIAL_STMT_KW,
     _HEADING_MAX_LEN,
@@ -43,6 +44,8 @@ from fin2.extract.biz_section import (
     _load_root,
     _narrative_unit,
     _parse_value,
+    is_stacked_amount_cell,
+    join_wrapped_number,
     _tag,
     _text,
     expand_table_grid,
@@ -433,8 +436,11 @@ def map_sales_table(st: SalesTable, fiscal_year: int) -> list[SalesMetricRow]:
         if channel_col is not None:
             row_channel = _normalize_channel(drow[channel_col].strip())
 
+        if any(is_stacked_amount_cell(drow[c]) for c in val_cols):
+            continue  # R366
         for c in val_cols:
-            val, is_ratio, inline_unit = _parse_value(drow[c])
+            val, is_ratio, inline_unit = _parse_value(
+                join_wrapped_number(drow[c]) if _bs._R366_STACKED_ROWS else drow[c])
             if val is None:
                 continue
             # 매출값은 금액만 — 비율(%) 열(지역 점유율 등)은 제외.

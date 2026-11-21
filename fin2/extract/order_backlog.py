@@ -27,7 +27,8 @@ from typing import Optional
 
 from fin2.extract.biz_section import (
     _FINANCIAL_STMT_KW, _is_clean_number, _is_period_header_cell, _load_root, _narrative_unit,
-    _parse_value, _tag, _text, expand_table_grid, is_merged_column_table,
+    _parse_value, _tag, _text, expand_table_grid, is_merged_column_table, is_stacked_amount_cell,
+    join_wrapped_number,
 )
 
 # 소제목 판정 — biz_section 과 동일하게 짧은 SPAN/P 요소만(내러티브 문단과 구별).
@@ -84,21 +85,6 @@ _SCOPE_CHANGE_KW = ("사업결합", "합병", "연결범위", "종속기업처�
 # balance itself (실측 파인텍 FY2016 "기초잔액 | 연결범위의 변동 | 계약잔액 변경 | 기납품액 | 수주잔고":
 # "계약잔액 변경" 62,845,983 was taken as backlog and then overwritten by 수주잔고).
 _BALANCE_CHANGE_SUFFIX_RE = re.compile(r"(?:변경|변동|증감|증가|감소)(?:액|금액)?(?:\(.*\))?$")
-# R363: a grouped number wrapped inside the cell ("351,951,66\n1") is one printed number. Joined
-# only when the whitespace-free text is exactly a thousands-grouped number and the text before
-# the break is not (so "1,000 2,000" two-number cells are never joined).
-_GROUPED_NUM_RE = re.compile(r"^\(?-?\d{1,3}(?:,\d{3})+\)?$")
-
-
-def _join_wrapped_number(cell: str) -> str:
-    t = (cell or "").strip()
-    if not re.search(r"\d\s+[\d,]", t):
-        return cell
-    joined = re.sub(r"\s+", "", t)
-    first = re.split(r"\s+", t)[0]
-    if _GROUPED_NUM_RE.match(joined) and not _GROUPED_NUM_RE.match(first):
-        return joined
-    return cell
 # Columns that are neither a dimension nor an order amount (contract assets, receivables,
 # allowances, counts) — kept out of category. Matched on the whitespace-stripped header.
 _META_COL_KW = ("미청구공사", "초과청구", "공사미수금", "매출채권", "대손충당금", "손상차손", "계약자산",
@@ -410,6 +396,13 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
     layout = LAYOUT_ROLLFORWARD if rollforward else LAYOUT_CUMULATIVE
     rows: list[OrderBacklogRow] = []
     for drow in data_rows:
+        # R366: a row whose amount cells stack one value per item (에스엠벡셀 FY2018 "43,148\n5,114\n…"
+        # under "W/PUMPO/PUMPAL HEAD…") cannot be split by item — R6, no row.
+        # "2,702,100\n(53,921,791)" in a cumulative completed column is 당기(누적), read below.
+        if any(is_stacked_amount_cell(drow[c]) for c, k in col_kind.items()
+               if not (k == "completed" and not rollforward
+                       and _TRAILING_PAREN_NUM_RE.search(drow[c].strip()))):
+            continue
         # "-" 단독 placeholder(대손충당 등 값없는 열)는 의미 있는 라벨이 아니므로 제외.
         # 회사명 셀에 "(단위: M/T, 백만원)" 처럼 단위주가 박혀있는 경우(실측 풍산홀딩스) 라벨에서
         # 정리(숫자/backlog 계산엔 영향 없음 — 이미 단위열 완전일치 판정으로 별도 처리됨).
@@ -419,7 +412,7 @@ def map_order_table(grid: list[list[str]], default_unit: Optional[str] = None) -
         category = " ".join(dict.fromkeys(labels))[:150] or None
         vals: dict[str, int] = {}
         for c, kind in col_kind.items():
-            cell = _join_wrapped_number(drow[c])  # R363
+            cell = join_wrapped_number(drow[c])  # R363
             if kind == "completed" and not rollforward:
                 m = _TRAILING_PAREN_NUM_RE.search(cell.strip())
                 if m:

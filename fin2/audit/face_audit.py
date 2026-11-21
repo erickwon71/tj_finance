@@ -767,6 +767,9 @@ _TRADE_PAYABLES_ROW_LABELS: frozenset[str] = frozenset({
     "매입채무",
     "매입채무및기타채무",
     "유동매입채무",
+    # B-1-d (2026-11-21): HLB바이오스텝 01189438 2026Q1 — 회사 확장 acode
+    # entity01189438_AccountsPayableAndContractLiabilitiesOfCurrentLiabilities.
+    "매입채무및계약부채",
 })
 
 

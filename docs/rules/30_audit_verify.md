@@ -988,3 +988,12 @@ DB 데이터는 바뀌지 않는다(재적재 없음).
 > 같은 판독기에서 `cf.dividends_paid` 태그가 붙은 행의 라벨에 '배당'이 없으면 회사의 잘못된 태깅으로 보고 뺀다(00447007 알리코제약은 '리스부채의 원금상환' -302,112,263 에 `DividendsPaidClassifiedAsFinancingActivities` 를 붙였다).
 > **R0-2** 판독기만 바뀐다. 다만 R18(계층3 배당 부호 보정)이 이 판독기를 써서 자본변동표 배당 결의액을 값까지 복사하고 있었으므로 R18-b(`20_layer3_map.md`)로 함께 고쳤다. R18 은 `cf_from_sce=True` 로 자본변동표 fact 를 부호 증거로만 쓴다.
 > **테스트** `fin2/tests/test_r328_face_reader_cf_not_from_sce.py`(현금흐름표 행만 후보·스위치 끔·라벨 없는 배당 태그 제외).
+
+## R374. Gate B 판독기는 회사 확장 태그 행 `매입채무 및 계약부채` 도 매입채무로 읽는다 (2026-11-21, 적용 계층: 검증 도구 수정)
+
+**적용 계층: 검증 도구(Gate B 판독기)** — DB·계층2·계층3 값은 바뀌지 않는다. `fin2/audit/face_audit.py::_TRADE_PAYABLES_ROW_LABELS`(회사 확장 acode `entity{8자리}_…` 행을 라벨로만 admit 하는 폐집합)에 `매입채무및계약부채`(공백 제거 후 exact)를 추가했다.
+
+> **발견(TODO B-1-d)** HLB바이오스텝 01189438 2026Q1 별도(`20260515000592`): 매입채무 행이 `entity01189438_AccountsPayableAndContractLiabilitiesOfCurrentLiabilities` 확장 태그라 판독기가 건너뛰었고, 감사용 alias(`dart_ShortTermOtherPayables` → trade_payables)가 붙은 바로 아래 `기타채무` 1,292,512,669 를 매입채무로 읽어 fail_a(`VALUE_DIFF`)였다. DB 4,316,750,374 는 원문 인쇄값 그대로(데이터 결함 아님, 판독기 한계).
+> **재감사(2026-11-21)** 판독기 버전을 올리면 전사 재감사가 걸리므로 올리지 않고, 현재 trade_payables 로 fail 인 30개사만 `gateb_audit.py --corp-file … --recheck` 로 다시 감사했다. HLB바이오스텝 6행 모두 pass, trade_payables fail 행 61 → 58, fail_a 20 → 19. 같은 라벨이 다른 회사에 더 있으면 다음 주기 증분(R346-b)이 아니라 그 회사 재감사 때 반영된다.
+> **테스트** `fin2/tests/test_r374_udf_trade_payables_label.py`.
+

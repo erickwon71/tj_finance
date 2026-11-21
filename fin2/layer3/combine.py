@@ -2326,20 +2326,8 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
               -- 외화 재무제표를 소비하려면 report_tables.currency 를 읽어 통화를 인지하는
               -- 별도 경로를 만들어야 한다(환산은 계층3 의 판단이지 계층2 가 할 일이 아니다).
               AND COALESCE(unit_source, '') <> 'fx_declared'
-              -- 요약재무정보 브래킷라벨 가드(R63, 2026-09-02 — docs/plans/
-              -- std_v3_kgaap_interim_consolidated_stale_annual_reprint_design_
-              -- 2026-09-02.md §6). "요약(연결)재무정보" 표는 "[유동자산]" 식 대괄호로
-              -- 섹션을 나누는데, 이 표가 간혹 정식 BS/IS/CF statement+basis로 잘못
-              -- 분류돼 report_lines에 들어간다(전사 712개 table_seq 확인). 대괄호
-              -- 라벨이 같은 table_seq에 하나라도 있으면 그 table_seq 전체가 요약표
-              -- 잔재라는 신호 — table_seq 전체를 제외한다(대괄호 없는 형제 행,
-              -- 예: 매출액·자산총계도 같은 요약표 소속이라 함께 배제해야 함).
-              AND NOT EXISTS (
-                  SELECT 1 FROM report_lines b
-                  WHERE b.rcept_no = rl.rcept_no AND b.statement = rl.statement
-                    AND b.basis = rl.basis AND b.table_seq = rl.table_seq
-                    AND b.label_raw ~ '^\\[.*\\]$'
-              )
+              -- R63 bracket-label guard removed (B-1-g, 2026-11-21): it dropped every table with a
+              -- "[...]" label, but all 676 such tables today are real statements (see rule R372).
             -- R0-2: load order, as the plain report_lines index scan returned it (first-wins picks
             -- depend on it; the view's join does not keep it). Fill rows (id < 0) come last.
             ORDER BY (rl.id < 0), abs(rl.id)
@@ -4204,14 +4192,6 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
             WHERE corp_code=:c AND report_fiscal_year=:y AND report_fiscal_period=:p
               AND basis=:b AND statement=:s AND col_index=0 AND value_won IS NOT NULL
               AND header_hint IS NULL          -- F2 가드(위와 같은 이유)
-              -- 요약재무정보 브래킷라벨 가드(R63) — build_merged_lines()와 동일, 그
-              -- 함수 안의 주석 참고.
-              AND NOT EXISTS (
-                  SELECT 1 FROM report_lines b
-                  WHERE b.rcept_no = rl.rcept_no AND b.statement = rl.statement
-                    AND b.basis = rl.basis AND b.table_seq = rl.table_seq
-                    AND b.label_raw ~ '^\\[.*\\]$'
-              )
               {rcept_clause}
             ORDER BY (rl.id < 0), abs(rl.id)   -- R0-2: load order (see build_merged_lines)
         """), params).fetchall()

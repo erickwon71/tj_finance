@@ -376,7 +376,7 @@
 | R143 | R143. fin2/extract/report_lines_inline_xbrl_overlay.py::overlay_tax_e… | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 유효 | as_printed STEP |
 | R144 | R144. EPS(주당손익) 경로와 본류의 판정 불일치 3종 + 셀 안 줄바꿈으로 | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R145 | R145. EPS 행 판정을 "주당" 부분문자열에서 구조 패턴으로 교체 + | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
-| R146 | R146. rule_additive_da() 가 같은 감가상각비를 CF·IS·주석에서 각각 더해 D&A 와 EBITDA 를 … | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 미해결로 적혀 있음(2026-09-19 제목 기준 — 현재 상태 확인 필요) |  |
+| R146 | R146. rule_additive_da() 가 같은 감가상각비를 CF·IS·주석에서 각각 더해 D&A 와 EBITDA 를 … | [20_layer3_map.md](rules/20_layer3_map.md) | 3 | 해소(R231, 2026-11-21 재측정 확인) |  |
 | R147 | R147. _is_eps_label() 이 라벨에 주당 이 없는 EPS 자식행(계속영업/중단영업 세부이익)을 인식 못 해 통… | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R148 | R148. fin2/extract/text.py::_detect_body_statement_tables() — 자본변동표가 … | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |
 | R149 | R149. parse_amount() 가 '2,564원'(셀이 스스로 원 단위를 밝힌 표기)을 못 읽어 EPS 행이 통째로 … | [10_layer2_parse.md](rules/10_layer2_parse.md) | 2 | 유효 |  |

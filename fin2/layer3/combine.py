@@ -2328,6 +2328,18 @@ def build_merged_lines(session, corp: str, fy: int, period: str) -> list[dict]:
               AND COALESCE(unit_source, '') <> 'fx_declared'
               -- R63 bracket-label guard removed (B-1-g, 2026-11-21): it dropped every table with a
               -- "[...]" label, but all 676 such tables today are real statements (see rule R372).
+              -- R373 (B-1-h): a later table of the same section whose own period term (제N기 in the
+              -- title) is older than the first table's is a prior-period statement; its column 0 is
+              -- not the current period, so it must never be picked as current.
+              AND NOT EXISTS (
+                  SELECT 1 FROM report_tables t1
+                  JOIN report_tables t0 ON t0.rcept_no = t1.rcept_no
+                       AND t0.statement = t1.statement AND t0.basis = t1.basis AND t0.table_seq = 0
+                  WHERE t1.rcept_no = rl.rcept_no AND t1.statement = rl.statement
+                    AND t1.basis = rl.basis AND t1.table_seq = rl.table_seq AND rl.table_seq > 0
+                    AND substring(t1.table_title from '제\\s*([0-9][0-9]?[0-9]?[0-9]?)\\s*기')::int
+                      < substring(t0.table_title from '제\\s*([0-9][0-9]?[0-9]?[0-9]?)\\s*기')::int
+              )
             -- R0-2: load order, as the plain report_lines index scan returned it (first-wins picks
             -- depend on it; the view's join does not keep it). Fill rows (id < 0) come last.
             ORDER BY (rl.id < 0), abs(rl.id)
@@ -4192,6 +4204,18 @@ def collect_candidates(session, corp: str, fy: int, period: str, basis: str,
             WHERE corp_code=:c AND report_fiscal_year=:y AND report_fiscal_period=:p
               AND basis=:b AND statement=:s AND col_index=0 AND value_won IS NOT NULL
               AND header_hint IS NULL          -- F2 가드(위와 같은 이유)
+              -- R373 (B-1-h): a later table of the same section whose own period term (제N기 in the
+              -- title) is older than the first table's is a prior-period statement; its column 0 is
+              -- not the current period, so it must never be picked as current.
+              AND NOT EXISTS (
+                  SELECT 1 FROM report_tables t1
+                  JOIN report_tables t0 ON t0.rcept_no = t1.rcept_no
+                       AND t0.statement = t1.statement AND t0.basis = t1.basis AND t0.table_seq = 0
+                  WHERE t1.rcept_no = rl.rcept_no AND t1.statement = rl.statement
+                    AND t1.basis = rl.basis AND t1.table_seq = rl.table_seq AND rl.table_seq > 0
+                    AND substring(t1.table_title from '제\\s*([0-9][0-9]?[0-9]?[0-9]?)\\s*기')::int
+                      < substring(t0.table_title from '제\\s*([0-9][0-9]?[0-9]?[0-9]?)\\s*기')::int
+              )
               {rcept_clause}
             ORDER BY (rl.id < 0), abs(rl.id)   -- R0-2: load order (see build_merged_lines)
         """), params).fetchall()

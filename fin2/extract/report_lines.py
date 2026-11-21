@@ -1630,7 +1630,12 @@ _TAIL_AMT = r"-?(?:\d{1,3}(?:,\d{3})+|\d{3,})(?:\.\d+)?"   # grouped or 3+ digit
 # euro / pound marks are currency marks like '$' ('(￥179,312,180) ($4,294,383.44)')
 _KNOWN_CCY = r"(?:USD|EUR|JPY|CNY|GBP|AUD|CAD|CHF|HKD|SGD|VND|KRW|RMB|THB|IDR|INR|MYR|PHP|TWD)"
 _TAIL_FIRST = re.compile(r"^(\(?-?\d{1,3}(?:,\d{3})+\)?)(?![\d,.])")
-_TAIL_ITEM = (r"(?:\(?(?:(?:US|U)?[$＄￥¥€£]\s*" + _TAIL_AMT + r"|" + _KNOWN_CCY + r"\s*\d{1,2}(?![\d,.])"
+# R294-e: a parenthesised foreign amount that carries a scale word - '(USD 325,000백만)', '(US$50,000천)',
+# '(SGD 140백만)'. Only a currency mark + number + {천,백만,억,만} is accepted; a '포함' remark ('(US$ 5,717,069
+# 포함)', refused on purpose by R294-d) and any other Korean text ('(중소기업은행)', '주') stay refused.
+_TAIL_FX_SCALED = (r"\(\s*(?:US\s?D|(?:US|U|JP)?[$＄￥¥€£]|" + _CCY + r")\s*" + _TAIL_AMT +
+                   r"\s*(?:천|백만|억|만)?\s*\)")
+_TAIL_ITEM = (r"(?:" + _TAIL_FX_SCALED + r"|\(?(?:(?:US|U)?[$＄￥¥€£]\s*" + _TAIL_AMT + r"|" + _KNOWN_CCY + r"\s*\d{1,2}(?![\d,.])"
               r"|" + _CCY + r"\s*(?:" + _TAIL_AMT + r"|[-－]))\)?"
               r"|USD|US\$|[$＄￦U]|[-－=]+)")
 _TAIL_REST = re.compile(r"^(?:\s*" + _TAIL_ITEM + r")+$")

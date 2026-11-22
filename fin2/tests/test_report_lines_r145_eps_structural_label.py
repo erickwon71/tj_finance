@@ -88,7 +88,7 @@ def test_pre2015_keeps_legacy_substring_behaviour():
     """pre-2015 에 적용하면 진짜 EPS 1,834행 회귀 + K-GAAP 블럽 11,519행 오염
     (설계문서 §4) — 경계 아래에서는 기존 `"주당"` 부분문자열 동작을 그대로 둔다."""
     assert _is_eps_label("지배주주당기순이익", section_path=None,
-                         report_fiscal_year=2014)
+                         report_fiscal_year=2013)
     assert not _is_eps_label("지배주주당기순이익", section_path=None,
                              report_fiscal_year=2015)
 
@@ -215,10 +215,10 @@ def test_d_has_no_effect_before_2015():
     """pre-2015 는 literal `"주당"` 부분문자열 그대로라 `D` 가 결과를 못 바꾼다 —
     `table_has_eps_header` 를 뒤집어도 판정이 동일해야 한다(경계 아래 무변경)."""
     for label in ("주당순부가가치", "지배주주당기순이익", "기본주당이익", "당기순이익"):
-        a = _is_eps_label(label, section_path=None, report_fiscal_year=2014,
+        a = _is_eps_label(label, section_path=None, report_fiscal_year=2013,
                           table_has_eps_header=False,
                           prev_toplevel_label="Ⅸ. 당기총포괄이익")
-        b = _is_eps_label(label, section_path=None, report_fiscal_year=2014,
+        b = _is_eps_label(label, section_path=None, report_fiscal_year=2013,
                           table_has_eps_header=True,
                           prev_toplevel_label="Ⅸ. 당기총포괄이익")
         assert a == b == ("주당" in label), (label, a, b)

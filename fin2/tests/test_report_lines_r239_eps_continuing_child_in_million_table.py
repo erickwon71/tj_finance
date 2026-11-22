@@ -56,7 +56,7 @@ def test_header_without_method_word_is_not_enough():
 
 
 def test_no_effect_before_2015():
-    assert not _is_eps_label("계속영업", section_path=_PATH, report_fiscal_year=2014)
+    assert not _is_eps_label("계속영업", section_path=_PATH, report_fiscal_year=2013)
 
 
 def test_share_class_row_under_won_declared_eps_title_is_eps():

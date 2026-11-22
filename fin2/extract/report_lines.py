@@ -748,14 +748,21 @@ _EPS_PROFIT_RE = re.compile(                                  # B) 수익어 후
     r"주당(계속영업|중단영업|계속사업|중단사업|분기|반기|당기|연결|별도)?"
     r"(순이익|순손익|순손실|이익|손익|손실)")
 
-# ★적용 경계 = 2015+. pre-2015 는 **적용하면 안 된다**(설계문서 §4, 전수 측정):
+# R378 (2026-11-22) — the boundary moved from FY2015 to FY2014 (docs/rules/10_layer2_parse.md R378).
+#   FY2014 K-IFRS filings print the same 주당이익 layouts; with the gate closed the EPS path emitted
+#   the right row AND the main path emitted a x10^6 ghost copy (SK텔레콤 20141114001414), the R239
+#   `계속영업` children were multiplied by the table unit (LS 20150331003634), and `지배기업주주당기순이익`
+#   (net income) was read as EPS and left unmultiplied. Measured on 7,043 FY2014 filings: 30 change,
+#   none loses a printed value. FY2013 and earlier stay closed (not measured; text below still applies).
+#
+# ★(원래 근거, R145) 적용 경계는 2015+ 였다. pre-2015 는 **적용하면 안 된다**(설계문서 §4, 전수 측정):
 #   · 새 규칙이 "EPS 아님"으로 돌리는 진짜 EPS 가 1,834행/204종(2.2%) — 회귀.
 #   · 새 규칙이 EPS 로 끌어오는 K-GAAP 통짜 블럽이 11,519행/7,350종 — 신규 오염.
 #     ('ⅩⅢ. 당기순이익주당 경상이익: 주당 순이익  :' 류 = R28 이 본류에 위임해 둔 패턴)
 #   pre-2015 는 서식 자체가 다른 별개 트랙이라는 기존 아키텍처(R13 `legacy_pre2015.py`)
 #   와도, 계층2 캠페인 era 게이트와도 일치한다. `_PRE2015_ROUTING_MAX_FY`(=2010) 와는
 #   **다른 경계**다 — 저쪽은 파서 라우팅, 이건 라벨 관행 경계라 값을 공유하지 않는다.
-_EPS_STRUCTURAL_RULE_MIN_FY = 2015
+_EPS_STRUCTURAL_RULE_MIN_FY = 2014
 
 
 def _in_eps_section(section_path: str | None) -> bool:

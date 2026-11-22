@@ -82,7 +82,7 @@ def test_e_has_no_effect_before_2015():
     assert not _is_eps_label(
         "계속영업이익(손실) (단위 : 원)",
         section_path="주당손익>기본주당이익(손실) (단위 : 원)",
-        report_fiscal_year=2014)
+        report_fiscal_year=2013)
 
 
 # ------------------------------------------------------------------ end-to-end

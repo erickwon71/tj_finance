@@ -1502,7 +1502,17 @@ def _emit_section_lines(
                 elif multicol:
                     # 기간당 다열: 비어있지 않은 금액을 압축 → [당기, 전기, 전전기] 로 매핑.
                     present = [a for a in amounts if a is not None]
-                    pairs = list(enumerate(present[:n_periods]))
+                    # R376: a printed dash is a real cell. When the row's printed cells (amounts and
+                    # dashes) are exactly one per period, keep the dash as its own (empty) period slot,
+                    # else the next period's value is compacted into the current period.
+                    raws_m = row.raw_amounts
+                    slots = [a for i, a in enumerate(amounts)
+                             if a is not None or (i < len(raws_m)
+                                                  and raws_m[i].strip() in _PRINTED_DASHES)]
+                    if len(slots) == n_periods and len(slots) != len(present):
+                        pairs = list(enumerate(slots))
+                    else:
+                        pairs = list(enumerate(present[:n_periods]))
                 else:
                     # ★2026-08-29(§5.4, classB 유형1) — text.py::_emit_section 의 동형 분기와
                     # 반드시 같이 고쳐야 하는 쌍둥이 로직. `acontext_missing[i]=True`(TE+ACODE
@@ -1605,6 +1615,9 @@ _LABEL_REGION_PLACEHOLDERS = frozenset(["", "-", "‐", "―", "–", "—", "�
 # cells). A printed dash in an amount column is a real cell ("nothing in this period"): trimming it
 # shifts the next period's value into the current column (안트로젠 20150513001760 CF).
 _LEAD_TRIM_PLACEHOLDERS = frozenset([""])
+
+# R376 - a printed dash (not a blank) in an amount column
+_PRINTED_DASHES = _LABEL_REGION_PLACEHOLDERS - {""}
 
 
 # R291 - a cell that prints two amounts, "5,805,822 (6,364,923)" (a foreign-currency amount and, in

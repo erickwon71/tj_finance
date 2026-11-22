@@ -43,3 +43,11 @@ def test_nine_tech_sce_note_number_is_not_an_amount():
     lines = _extract("*_*/annual/2018/20190329000201.xml", "20190329000201", "00000000", 2018, "FY")
     sce = [l for l in lines if l.statement == "SCE" and l.basis == "separate" and "전환사채의 자본요소" in l.label_raw]
     assert sce and all((l.col_label or "").replace(" ", "") != "주석" for l in sce)
+
+
+def test_r376_multicol_dash_keeps_its_period_slot():
+    lines = _extract("00530556_*/annual/2014/20150916000265.xml", "20150916000265", "00530556", 2014, "FY")
+    for label, won in [("장기금융상품의 처분", 1200000000), ("유형자산의 처분", 2727273),
+                       ("장기미지급금의 상환", -50000000)]:
+        rows = [l for l in lines if l.statement == "CF" and l.basis == "separate" and l.label_raw == label]
+        assert [(l.col_index, l.value_won) for l in rows if l.value_won is not None] == [(1, won)]

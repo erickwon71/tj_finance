@@ -518,6 +518,14 @@ def test_runner_chrome_unavailable_stops_without_retry_penalty(engines, as_role,
                               "WHERE run_id=:r"), {"r": run_id}).scalar() == "chrome_down"
 
 
+def test_chrome_marker_mentioned_in_prose_is_not_chrome_down():
+    """A summary that only mentions the marker must not stop the runner."""
+    assert runner.chrome_unavailable("요약\n[CHROME_UNAVAILABLE]\n복구 필요")
+    assert runner.chrome_unavailable("요약\n  [CHROME_UNAVAILABLE]  ")
+    assert not runner.chrome_unavailable(
+        "Chrome 연결 자체는 살아 있었으므로 `[CHROME_UNAVAILABLE]` 표식은 붙이지 않았습니다.")
+
+
 def test_blocked_slot_is_unblocked_only_by_a_content_changing_reload(engines, as_role):
     """2026-10-26: six blocked slots kept their old machine verdict after their filings were
     reloaded from the web-view print and could never be re-verified."""

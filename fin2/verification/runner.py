@@ -51,7 +51,10 @@ _BASH_DENIED_RE = re.compile(r"permission to use bash has been denied|don't ask 
 # The verify prompt makes the session print this marker on its own line when two consecutive
 # Chrome calls fail; the text fallback covers the wording the model used before the marker existed.
 CHROME_MARKER = "[CHROME_UNAVAILABLE]"
-_CHROME_DOWN_RE = re.compile(r"\[CHROME_UNAVAILABLE\]|Chrome 확장이 연결되지 않|Chrome 을 쓸 수 없")
+# The marker only counts as a whole line: a summary that merely mentions it ("I did not print
+# [CHROME_UNAVAILABLE] because Chrome was alive") must not stop the runner (false stops 2026-11-20/22).
+_CHROME_DOWN_RE = re.compile(r"^\s*\[CHROME_UNAVAILABLE\]\s*$|Chrome 확장이 연결되지 않|Chrome 을 쓸 수 없",
+                             re.MULTILINE)
 STOP_FILE = NOTIFY.parent / "STOP_VERIFY"
 
 

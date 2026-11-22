@@ -37,8 +37,8 @@ RUNNER_AUTOSTART="${VQ_RUNNER_AUTOSTART:-1}"
 RUNNER_STOP_FILE="$HOME/.claude/notify/STOP_VERIFY"
 RUNNER_SESSION="${VQ_RUNNER_TMUX_SESSION:-verify_auto}"
 RUNNER_MIN_GAP_S="${VQ_RUNNER_AUTOSTART_MIN_GAP_S:-3600}"     # at most one start per hour
-# Pro plan from 2026-11-18 (docs/plans/pro_plan_budget_policy_2026-11-17.md): at most 2 starts a
-# day (was 6), and only in the night hours below, so the daytime limit stays with the user.
+# At most 2 starts a day (was 6), and only in the night hours below, so the daytime limit stays
+# with the user (Pro plan; docs/plans/pro_plan_budget_policy_2026-11-17.md).
 RUNNER_MAX_PER_DAY="${VQ_RUNNER_AUTOSTART_MAX_PER_DAY:-2}"
 RUNNER_AUTOSTART_HOURS="${VQ_RUNNER_AUTOSTART_HOURS:-22-8}"   # local START-END, empty = any time
 

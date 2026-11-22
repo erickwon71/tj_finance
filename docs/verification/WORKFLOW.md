@@ -116,8 +116,8 @@ rm ~/.claude/notify/STOP_VERIFY
     수정·대화형 몫을 남은 기간에 비례해 보장한다.
   - `runner.slots_per_window`=60 은 안전장치로만 둔다.
   - 실측: 회당 주간 ≈0.13%p, 5h ≈1.6%p, 평균 4.6분. 근거는 설계 §11.
-  **2026-11-18 Pro 요금제 전환(한도 ≈ Max x5 의 1/5)에 맞춘 현재값** — 근거·실측은 `docs/plans/pro_plan_budget_policy_2026-11-17.md`:
-  - `runner.slots_per_window`=8, `runner.max_5h_pct`=40, `runner.reserve_7d_pct`=60, `runner.safety_7d_pct`=10.
+  **현재값(Pro 요금제, 2026-11-22 사용자가 상향)**: `runner.max_5h_pct`=93(5시간 상한), `runner.reserve_7d_pct`=0, `runner.safety_7d_pct`=10(주간 상한 = 100 − 0 − 10 = 90%), `runner.slots_per_window`=100000(슬롯 수 제한 없앰, 사용률 측정이 실패할 때의 안전장치 역할은 없어짐).
+  2026-11-17 에 정했던 보수 값은 8/40/60/10 이었다(`docs/plans/pro_plan_budget_policy_2026-11-17.md`). 아래 시간대·자동기동·turn 제한은 그대로 적용 중이다.
   - `runner.full_model_hours`=`22-8`: 이 시간대(현지시각, 끝 시각 제외, 자정 넘김 가능) 밖에서는 full-model(sonnet) 슬롯을 실행하지 않는다.
     러너가 점유한 슬롯이 full-model이면 벌점 없이 반납(`vq.py runner defer`)하고 그 슬롯은 건너뛴다(`vq.py claim --exclude`).
     발견확인(haiku) 슬롯이 없으면 시간대가 열릴 때까지 기다린다. 값을 비우면 시간 제한이 없다. 현재 판정: `vq.py runner full-gate`.

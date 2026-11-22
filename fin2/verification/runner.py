@@ -111,8 +111,9 @@ def pace_wait(c: dict, *, max_5h: float, reserve_7d: float, safety_7d: float,
               now=None) -> tuple[int, str | None]:
     """Seconds to wait under measured-usage pacing (design §11), and why.
 
-    Tuned for Max x5 until 2026-11-17; from 2026-11-18 the plan is Pro (about 1/5 of the
-    limits), so the kv values are lower (docs/plans/pro_plan_budget_policy_2026-11-17.md).
+    The limits live in verification.kv. Plan is Pro; the user raised the limits on 2026-11-22:
+    max_5h 93, reserve_7d 0, safety_7d 10 (weekly ceiling 90%). The first Pro values were
+    8/40/60/10 (docs/plans/pro_plan_budget_policy_2026-11-17.md).
 
     - 5-hour window: at or above max_5h percent, wait for its reset (the rest of the window
       belongs to the interactive / fix sessions).

@@ -99,6 +99,10 @@ _Q1_CUM_PRINTED_ZERO_USE_3M_RCEPTS = frozenset({
 _UNREADABLE_MARK_BASE = -(10 ** 30)
 
 
+# R125/R377: first fiscal year whose [detail, subtotal] two-cell period groups are read per row.
+_DUPLICATE_SUBTYPE_MIN_FY = 2014
+
+
 def _unreadable_markers(row) -> tuple[list, dict]:
     """(amounts with each unresolved '.'-broken cell replaced by a unique marker, {marker: text}).
     The row's own amounts are untouched; no markers -> (row.amounts, {})."""
@@ -1367,8 +1371,14 @@ def _emit_section_lines(
         # report_fiscal_year>=2015 필링에만 연다(SB성보류 pre-2015 K-GAAP은 이 규칙이
         # 안 맞아 조용히 틀린 값을 냈던 실측 회귀 때문 — table_extractor.py
         # ::_columns_from_grid R125 docstring 참고).
+        # R377 (2026-11-22) — the gate is widened from FY2015 to FY2014: FY2014 insurer/securities/
+        # financial-holding quarter/half statements print the same [detail, subtotal] two-cell
+        # period groups, and with the gate closed the grid read failed, so the position fallback
+        # loaded the 3-month group (삼성생명 20141114001086: 6,641,942 instead of the printed
+        # cumulative 20,337,364). Measured on all 7,007 FY2014 filings: 42 filings change, and
+        # every spot-checked change moves the current-period cell to the printed cumulative cell.
         header_cols = parse_header_columns(
-            table, allow_duplicate_subtype=(report_fiscal_year >= 2015),
+            table, allow_duplicate_subtype=(report_fiscal_year >= _DUPLICATE_SUBTYPE_MIN_FY),
         ) if statement in ("BS", "IS", "CF") else None
         # R118 — 예외목록(rcept×statement×basis)에 있는 필링만 중복 라벨 열의 rank를
         # 교정한다(원문 자체의 헤더 오타, 위 함수 docstring 근거). R115 필터보다 먼저

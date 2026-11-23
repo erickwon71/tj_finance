@@ -123,3 +123,79 @@ def test_viewer_source_loads_pre2015_filings():
     from collector import viewer_source, xbrl_instance_lines_sync as sync
     assert viewer_source.VIEWER_FY_MIN <= 1999
     assert inspect.signature(sync.sync_viewer_lines).parameters["year_min"].default == viewer_source.VIEWER_FY_MIN
+
+
+# ---- R381: section titles follow what the body prints, not the TOC node text ----
+def _doc(*sections):
+    """sections: (title, [element xml strings]) -> DOCUMENT tree."""
+    from lxml import etree
+    xml = "<DOCUMENT><BODY><SECTION-1><TITLE>III. 재무에 관한 사항</TITLE>"
+    for title, els in sections:
+        xml += f"<SECTION-2><TITLE ATOC=\"Y\">{title}</TITLE>{''.join(els)}</SECTION-2>"
+    return etree.fromstring(xml + "</SECTION-1></BODY></DOCUMENT>")
+
+
+def _titles(doc):
+    return [s.findtext("TITLE") for s in doc.iter("SECTION-2")]
+
+
+_C_HEAD = "<TABLE><TR><TD>반 기 연 결 재 무 상 태 표 제60(당)기 반기 2014년 06월 30일 현재</TD></TR></TABLE>"
+_S_HEAD = "<TABLE><TR><TD>재무상태표 제17기 반기말 2014.06.30 현재</TD></TR></TABLE>"
+_NOTE = "<P>1. 일반사항</P>"
+
+
+def test_r381_consolidated_body_under_plain_title_is_retitled_and_its_notes_follow():
+    """BYC 20140829001554 / 대신증권 20141121000333: TOC node '반 기 재 무 제 표' held 연결 statements."""
+    from fin2.extract.viewer_xml import fix_basis_titles
+    doc = _doc(("4. 재무제표", [_C_HEAD]), ("4. 재무제표", [_NOTE]))
+    assert fix_basis_titles(doc) == 2
+    assert _titles(doc) == ["2. 연결재무제표", "3. 연결재무제표 주석"]
+
+
+def test_r381_title_only_paragraph_heading_counts():
+    """대신증권: the heading is a title-only <P> ('분기연결재무상태표'), the period line is the next table."""
+    from fin2.extract.viewer_xml import fix_basis_titles
+    doc = _doc(("4. 재무제표", ['<P>"검토를 받은 분기재무제표"</P>', "<P>분 기 연 결 재 무 상 태 표</P>"]))
+    assert fix_basis_titles(doc) == 1
+    assert _titles(doc) == ["2. 연결재무제표"]
+
+
+def test_r381_mixed_section_is_split_at_the_basis_change():
+    """한성크린텍 20150730000147: 'XI. 재무제표 등' printed 연결 statements then 별도 ones."""
+    from fin2.extract.viewer_xml import fix_basis_titles
+    doc = _doc(("XI. 재무제표 등", ["<P>XI. 재무제표 등</P>", _C_HEAD, "<TABLE/>", _S_HEAD, "<TABLE/>"]))
+    assert fix_basis_titles(doc) == 1
+    assert _titles(doc) == ["2. 연결재무제표", "4. 재무제표"]
+    cons, sep = list(doc.iter("SECTION-2"))
+    assert "연 결" in "".join(cons.itertext()) and "재무상태표 제17기" in "".join(sep.itertext())
+    assert "재무상태표 제17기" not in "".join(cons.itertext())
+
+
+def test_r381_separate_only_print_and_correct_titles_are_untouched():
+    from fin2.extract.viewer_xml import fix_basis_titles
+    plain = _doc(("4. 재무제표", [_S_HEAD]), ("4. 재무제표", [_NOTE]))
+    assert fix_basis_titles(plain) == 0 and _titles(plain) == ["4. 재무제표", "4. 재무제표"]
+    right = _doc(("2. 연결재무제표", [_C_HEAD]), ("4. 재무제표", [_C_HEAD, _S_HEAD]))
+    assert fix_basis_titles(right) == 0 and _titles(right) == ["2. 연결재무제표", "4. 재무제표"]
+
+
+def test_r381_note_text_is_not_a_heading():
+    from fin2.extract.viewer_xml import fix_basis_titles
+    doc = _doc(("4. 재무제표", [_S_HEAD, "<P>재무상태표 상 순재산액은 자산총계에서 차감한 금액입니다. 현재</P>"]))
+    assert fix_basis_titles(doc) == 0
+
+
+def test_r381_review_report_notes_node_is_not_a_statement_section():
+    from fin2.extract.viewer_xml import select_sections
+
+    class N:
+        def __init__(self, text):
+            self.text = text
+    nodes = [N(t) for t in ("검 토 보 고 서", "반 기 재 무 제 표", "반기재무제표에 대한 주석")]
+    assert [t for t, _ in select_sections(nodes)] == ["4. 재무제표", "5. 재무제표 주석"]
+
+
+def test_r381_build_document_applies_the_fix():
+    sec = '<html><body><table><tr><td>반 기 연 결 재 무 상 태 표 제60(당)기 반기 2014년 06월 30일 현재</td></tr></table></body></html>'
+    xml = build_document([("4. 재무제표", sec.encode("utf-8"))])
+    assert "<TITLE ATOC=\"Y\">2. 연결재무제표</TITLE>" in xml.decode("utf-8")

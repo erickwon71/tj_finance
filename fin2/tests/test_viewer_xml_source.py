@@ -114,3 +114,12 @@ def test_attachment_layout_maps_to_standard_titles():
     assert [t for t, _ in select_sections(nodes)] == ["2. 연결재무제표", "3. 연결재무제표 주석"]
     std = [N(t) for t in ("1. 요약재무정보", "2. 연결재무제표", "3. 연결재무제표 주석", "4. 재무제표", "5. 재무제표 주석")]
     assert [t for t, _ in select_sections(std)] == ["2. 연결재무제표", "3. 연결재무제표 주석", "4. 재무제표", "5. 재무제표 주석"]
+
+
+def test_viewer_source_loads_pre2015_filings():
+    """2026-11-23: viewer-source filings load from FY1999, not the XBRL FY_MIN (2015) — 1,404
+    pre-2015 PDF-only filings had no layer-2 rows because every viewer filter said 2015."""
+    import inspect
+    from collector import viewer_source, xbrl_instance_lines_sync as sync
+    assert viewer_source.VIEWER_FY_MIN <= 1999
+    assert inspect.signature(sync.sync_viewer_lines).parameters["year_min"].default == viewer_source.VIEWER_FY_MIN

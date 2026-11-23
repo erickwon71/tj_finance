@@ -226,7 +226,7 @@ def needs_xbrl_instance_corps(only: list[str] | None = None) -> list[str]:
         JOIN filings f ON f.rcept_no = dt.rcept_no
         WHERE dt.viewer_xml_path IS NOT NULL
           AND NOT (dt.status = 'completed' AND dt.file_type = 'xml')
-          AND f.fiscal_year >= 2015
+          AND f.fiscal_year >= 1999        -- viewer_source.VIEWER_FY_MIN
           AND (COALESCE(dt.layer2_reload_pending, FALSE)
                OR (TRUE {clause} AND NOT EXISTS (
                      SELECT 1 FROM report_lines r WHERE r.rcept_no = dt.rcept_no

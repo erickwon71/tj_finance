@@ -1,9 +1,9 @@
-"""Collect the printed document (DART web viewer) for FY2015+ filings that have no main XML
+"""Collect the printed document (DART web viewer) for filings (FY1999+; --fy-min to narrow) that have no main XML
 (loaded from XBRL, or PDF-only) — user decisions 2026-10-10. Saves a DART-style XML next to the
 source file (<same folder>/<rcept>.xml) via fin2/extract/viewer_xml.py. Read-only on the DB.
 
 Usage (cwd = repo root, DATABASE_URL set):
-  python scripts/r0_2_migration/collect_viewer_xml.py <manifest.jsonl> [limit]
+  python scripts/r0_2_migration/collect_viewer_xml.py <manifest.jsonl> [limit] [--fy-min N]
 Resumable: rcepts already in the manifest with status ok are skipped. Requests are throttled by
 LegacyDartScraper (2 s between requests).
 """
@@ -19,11 +19,13 @@ sys.path.insert(0, os.getcwd())
 # layout). User decisions 2026-10-10.
 SQL = """
 SELECT x.rcept_no, x.file_path FROM download_tasks x JOIN filings f USING (rcept_no)
-WHERE x.file_type = 'xbrl_zip' AND x.status = 'completed' AND f.fiscal_year >= 2015
+WHERE x.file_type = 'xbrl_zip' AND x.status = 'completed' AND f.fiscal_year >= %(fy_min)s
+  AND x.viewer_xml_path IS NULL
   AND NOT EXISTS (SELECT 1 FROM download_tasks d WHERE d.rcept_no = x.rcept_no AND d.file_type = 'xml')
 UNION
 SELECT d.rcept_no, d.file_path FROM download_tasks d JOIN filings f USING (rcept_no)
-WHERE d.file_type = 'pdf' AND d.status = 'completed' AND f.fiscal_year >= 2015
+WHERE d.file_type = 'pdf' AND d.status = 'completed' AND f.fiscal_year >= %(fy_min)s
+  AND d.viewer_xml_path IS NULL
   AND NOT EXISTS (SELECT 1 FROM download_tasks x WHERE x.rcept_no = d.rcept_no
                   AND x.file_type <> 'pdf' AND x.status = 'completed')
   AND NOT EXISTS (SELECT 1 FROM report_lines r WHERE r.rcept_no = d.rcept_no)
@@ -39,14 +41,20 @@ def main():
     from fin2.extract.html_viewer import parse_toc_tree
     from fin2.extract.viewer_xml import build_document, select_sections
 
-    manifest = sys.argv[1]
-    limit = int(sys.argv[2]) if len(sys.argv) > 2 else None
+    args = sys.argv[1:]
+    fy_min = 1999
+    if "--fy-min" in args:
+        i = args.index("--fy-min")
+        fy_min = int(args[i + 1])
+        del args[i:i + 2]
+    manifest = args[0]
+    limit = int(args[1]) if len(args) > 1 else None
     done = set()
     if os.path.exists(manifest):
         done = {d["rcept"] for d in map(json.loads, open(manifest)) if d["status"] == "ok"}
     conn = psycopg2.connect(os.environ["DATABASE_URL"])
     cur = conn.cursor()
-    cur.execute(SQL)
+    cur.execute(SQL, {"fy_min": fy_min})
     targets = [(r, p) for r, p in cur.fetchall() if r not in done][:limit]
     conn.close()      # never hold a transaction (and its locks) through hours of fetching
     print("targets", len(targets), flush=True)

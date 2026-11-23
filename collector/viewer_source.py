@@ -16,6 +16,9 @@ from typing import Optional
 # Rows whose layer 2 comes from the viewer XML (no completed main XML).
 VIEWER_SOURCE_SQL = ("dt.viewer_xml_path IS NOT NULL "
                      "AND NOT (dt.status = 'completed' AND dt.file_type = 'xml')")
+# Viewer-source filings load from the first listed year (2026-11-23: was FY2015 via the XBRL FY_MIN,
+# which left 1,404 pre-2015 PDF-only filings without any layer-2 rows).
+VIEWER_FY_MIN = 1999
 RETRY_DAYS = 180          # document.xml retries stop after 6 months (user decision)
 
 

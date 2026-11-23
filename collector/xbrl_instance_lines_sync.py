@@ -25,7 +25,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from collector.db import get_session
-from collector.viewer_source import VIEWER_SOURCE_SQL
+from collector.viewer_source import VIEWER_FY_MIN, VIEWER_SOURCE_SQL
 from fin2.extract.ifrs_evidence import store_filing_ifrs_evidence
 from fin2.extract.report_lines import store_report_lines, store_report_tables
 from fin2.extract.layer3_corrections import extract_xbrl_with_corrections, store_layer3_corrections
@@ -114,7 +114,7 @@ def sync_xbrl_instance_lines(
     out = {"corps": 0, "filings": 0, "rows": 0, "table_rows": 0, "errors": 0}
     if not corps:
         return out
-    v = sync_viewer_lines(corps, year_min)
+    v = sync_viewer_lines(corps, min(year_min, VIEWER_FY_MIN))
     for k in ("filings", "rows", "errors"):
         out[k] += v[k]
 
@@ -181,7 +181,7 @@ def sync_xbrl_instance_lines(
     return out
 
 
-def sync_viewer_lines(corps: list[str], year_min: int = FY_MIN) -> dict:
+def sync_viewer_lines(corps: list[str], year_min: int = VIEWER_FY_MIN) -> dict:
     """Load the web-viewer print of filings without a main XML (see _VIEWER_TARGETS_SQL)
     through the XML path: printed values in report_lines, layer-3 corrections, notes, table
     meta. Clears layer2_reload_pending on success. Runs inside ④-4, so both daily call sites

@@ -108,9 +108,9 @@ def usage_snapshot() -> tuple[float | None, float | None]:
 
 
 # Weekly ceiling relaxation near the reset (user decision 2026-11-23): unused weekly budget is
-# lost at the reset, so the ceiling rises to 95% with 24 hours left and 99.9% with 6 hours left.
+# lost at the reset, so the ceiling rises to 95% with 24 hours left and 98% with 6 hours left.
 # (hours left at most, ceiling) — never lowers the ceiling the reserve/safety formula gave.
-WEEKLY_RELAX_STEPS = ((6, 99.9), (24, 95.0))
+WEEKLY_RELAX_STEPS = ((6, 98.0), (24, 95.0))
 
 
 def pace_wait(c: dict, *, max_5h: float, reserve_7d: float, safety_7d: float,
@@ -127,7 +127,7 @@ def pace_wait(c: dict, *, max_5h: float, reserve_7d: float, safety_7d: float,
       in the week: stop at `100 - reserve_7d x remaining_fraction - safety_7d`. Early in the
       week the runner stops well before the limit; near the reset the ceiling rises toward
       100 - safety. Within the last 24 hours the ceiling is at least 95%, within the last 6 hours
-      99.9% (WEEKLY_RELAX_STEPS). Unlike an elapsed-time pace line this does not idle the runner for days
+      98% (WEEKLY_RELAX_STEPS). Unlike an elapsed-time pace line this does not idle the runner for days
       because of usage that happened earlier in the week (pilot day: 58% used at 30% elapsed).
     Missing data never blocks (the usage_limit handling is the backstop).
     """

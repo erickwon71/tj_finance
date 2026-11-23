@@ -646,7 +646,7 @@ def test_pace_wait_rules():
     # near the reset the ceiling rises: 1 hour left -> ~94.8
     late = datetime(2026, 9, 29, 3, 0, tzinfo=timezone.utc)
     assert runner.pace_wait({**base, "sevenDayPercent": 90}, **{**kw, "now": late}) == (0, None)
-    # weekly relaxation: 24 h left -> 95%, 6 h left -> 99.9% (user decision 2026-11-23)
+    # weekly relaxation: 24 h left -> 95%, 6 h left -> 98% (user decision 2026-11-23)
     kw0 = dict(max_5h=93, reserve_7d=0, safety_7d=10)
     def week(pct, hours_left):
         n = datetime(2026, 9, 24, 4, 0, tzinfo=timezone.utc)
@@ -655,7 +655,7 @@ def test_pace_wait_rules():
     assert week(89.9, 48)[0] == 0 and week(90, 48)[0] == 1800        # far from reset: 90
     assert week(94.9, 24)[0] == 0 and week(95, 24)[0] == 1800         # 24 h left: 95
     assert week(95, 25)[0] == 1800                                    # just outside
-    assert week(99.8, 6)[0] == 0 and week(99.9, 6)[0] == 1800         # 6 h left: 99.9
+    assert week(97.9, 6)[0] == 0 and week(98, 6)[0] == 1800           # 6 h left: 98
     # 5h window hot -> wait until its reset (1 hour)
     w, why = runner.pace_wait({**base, "fiveHourPercent": 75, "sevenDayPercent": 30}, **kw)
     assert w == 3600 and "5h" in why

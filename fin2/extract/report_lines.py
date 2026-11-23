@@ -785,6 +785,14 @@ _EPS_CONTINUING_CHILD_RE = re.compile(
 _EPS_SHARE_CLASS_RE = re.compile(r"^(?:\d+\.)?(?:보통주|우선주)$")
 
 
+def _is_bare_eps_heading(part: str) -> bool:
+    """R379 — a section title that is itself a 주당이익 heading without the 기본/희석 qualifier
+    (대한전선 `주당이익` > `계속영업과 중단영업`). Net-income labels that merely contain `주주당`
+    (`지배기업주주당기순이익`) are not EPS headings."""
+    s = strip_cell_whitespace(part)
+    return "주당" in s and "주주당" not in s and bool(_EPS_PROFIT_RE.search(s))
+
+
 def _is_eps_continuing_child(label: str, section_path: str | None) -> bool:
     """R239 — an EPS child row without `주당` and without its own unit declaration.
 
@@ -793,7 +801,9 @@ def _is_eps_continuing_child(label: str, section_path: str | None) -> bool:
     """
     if not section_path:
         return False
-    if _EPS_METHOD_RE.search(section_path) and _EPS_CONTINUING_CHILD_RE.match(label):
+    if _EPS_CONTINUING_CHILD_RE.match(label) and any(
+            _EPS_METHOD_RE.search(part) or _is_bare_eps_heading(part)
+            for part in section_path.split(">")):
         return True
     return bool(_EPS_SHARE_CLASS_RE.match(label)) and any(
         "주당" in part and detect_unit_declaration(part) == 1

@@ -51,8 +51,11 @@ def test_other_children_of_the_eps_section_are_not_rescued():
         assert not _is_eps_label(label, section_path=_PATH, report_fiscal_year=2017), label
 
 
-def test_header_without_method_word_is_not_enough():
-    assert not _is_eps_label("계속영업", section_path="주당이익", report_fiscal_year=2017)
+def test_bare_eps_heading_is_enough_since_r379():
+    # R379: a bare `주당이익` heading (no 기본/희석) is an EPS heading too; a net-income label that
+    # merely contains `주주당` is not.
+    assert _is_eps_label("계속영업", section_path="주당이익", report_fiscal_year=2017)
+    assert not _is_eps_label("계속영업", section_path="지배기업주주당기순이익", report_fiscal_year=2017)
 
 
 def test_no_effect_before_2015():

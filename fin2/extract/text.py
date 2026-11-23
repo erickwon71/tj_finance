@@ -41,6 +41,7 @@ from parser.xml.dart_xml_parser import _parse_xml_file
 from parser.xml.section_detector import (
     assign_tables_to_dart_sections, table_direct_rows,
     SEC_CONSOL_FS, SEC_SEP_FS, SEC_LEGACY_FS, SEC_LEGACY_APPENDIX,
+    SEC_AUDIT_ATTACH_SEP, SEC_AUDIT_ATTACH_CONSOL,
     iter_section_elements, table_has_amount_rows,
 )
 from parser.xml.table_extractor import extract_rows, _get_cells
@@ -686,7 +687,16 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
         elements = iter_section_elements(root, SEC_LEGACY_APPENDIX)
         section_kind = SEC_LEGACY_APPENDIX
         if not elements:
-            return {}
+            # R380 — an attached-audit-report document (`[첨부정정]사업보고서`): the statements
+            # sit directly under the `(첨부)재무제표` / `(첨부)연결재무제표` SECTION-1 and the
+            # notes start at the next SECTION-2, so the same heading -> first-data-table walk
+            # below applies. Only reached when both legacy containers are absent.
+            sep_elements = iter_section_elements(root, SEC_AUDIT_ATTACH_SEP)
+            consol_elements = iter_section_elements(root, SEC_AUDIT_ATTACH_CONSOL)
+            elements = sep_elements + consol_elements
+            section_kind = SEC_AUDIT_ATTACH_SEP if sep_elements else SEC_AUDIT_ATTACH_CONSOL
+            if not elements:
+                return {}
 
     groups: dict[str, list[tuple]] = {}
     pending: tuple[str, str] | None = None   # (basis, stmt) — 데이터표를 기다리는 헤딩

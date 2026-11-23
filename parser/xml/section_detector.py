@@ -276,6 +276,15 @@ SEC_LEGACY_FS = "재무제표등"
 # `_detect_legacy_body_statement_tables`가 SEC_LEGACY_FS로 못 찾을 때만 폴백으로 쓴다.
 SEC_LEGACY_APPENDIX = "부속명세서"
 
+# ★R380(2026-11-23) — `[첨부정정]사업보고서` 의 XML 은 사업보고서 본문이 아니라 첨부 감사보고서
+# 한 벌(목차 · 감사의견 · `(첨부)재 무 제 표` · `주석` · 외부감사 실시내용)이다. 재무제표 표가
+# `2.연결재무제표`/`4.재무제표` 가 아니라 `(첨부)재 무 제 표` SECTION-1 에 직접 들어 있고 주석은 그
+# 다음 SECTION-2 라서, 위 두 레거시 컨테이너와 같은 "헤딩 → 첫 데이터표" 워커를 그대로 쓸 수 있다.
+# 역시 `_DART_SECTION_EXACT` 에는 넣지 않는다(주석표 유입 차단, 위 SEC_LEGACY_FS 와 같은 이유).
+# 두 레거시 컨테이너가 **둘 다 없을 때만** 폴백으로 본다.
+SEC_AUDIT_ATTACH_SEP = "(첨부)재무제표"
+SEC_AUDIT_ATTACH_CONSOL = "(첨부)연결재무제표"
+
 
 def iter_section_elements(
     root: etree._Element, normalized_title: str,

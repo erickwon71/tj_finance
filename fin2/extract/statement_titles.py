@@ -481,6 +481,11 @@ def statement_name_followed_by_prose(title: str) -> bool:
     return bool(_NAME_GLUED_PARTICLE_RE.match(tail))
 
 
+# R387 - see the appropriation guard in `classify_statement_in_body_section`.
+_R387_BRACKET_TAIL = True
+_R387_BRACKET_TAIL_RE = re.compile(r"[<＜]([^<>＜＞]+)[>＞]$")
+
+
 def classify_statement_in_body_section(title: str, include_sce: bool = False) -> str | None:
     """본문 섹션 **내부** 표의 표제 → 'BS'|'IS'|'CF'(|'SCE') 또는 None(대상 아님).
 
@@ -510,6 +515,13 @@ def classify_statement_in_body_section(title: str, include_sce: bool = False) ->
         return None
     t = re.sub(r"\s+", "", title)
     if _APPROPRIATION_RE.search(t):
+        # R387 - a dividend remark that merely mentions the appropriation statement can share the element
+        # with the next heading ('- ... 이익잉여금처분계산서(안) 참조 <현 금 흐 름 표>'): judge the bracketed
+        # tail only when it carries no appropriation name itself.
+        if _R387_BRACKET_TAIL:
+            m_tail = _R387_BRACKET_TAIL_RE.search(t)
+            if m_tail and not _APPROPRIATION_RE.search(m_tail.group(1)):
+                return classify_statement_in_body_section(m_tail.group(1), include_sce)
         return None                 # 이익잉여금처분계산서/결손금처리계산서 — 4대 재무제표 아님
     best_code: str | None = None
     best_pos = -1
@@ -576,6 +588,13 @@ _LEGACY_KO_ENUM_PREFIX = re.compile(r"^[가나다라마바사아자차카타파�
 # 재무제표명이 안 걸리면 그대로 거부되므로(위 KO 접두와 같은 안전판) 새 오탐 경로가
 # 생기지 않는다 — "(1)유동자산" 같은 주석 항목은 벗긴 뒤 재무제표명이 없어 계속 거부됨.
 _LEGACY_PAREN_NUM_PREFIX = re.compile(r"^[(（]\d{1,2}[)）]")
+# R386 - '1) 분기연결재무상태표': a numbered sub-heading of the statements block. Accepted only by the
+# legacy walker and only before the notes start (`allow_numbered`), because after the notes begin the same
+# 'N)' shape is a note item number.
+_LEGACY_NUM_PAREN_PREFIX = re.compile(r"^\d{1,2}[)）]")
+# R388 - a bank prints its statements twice, '(은행)' account and '(신탁)' trust account; the bank-account
+# suffix is part of the title, the trust one is still refused.
+_LEGACY_BANK_SUFFIX = re.compile(r"^[(（]은행[)）]")
 # 본문 face 가 아닌 것(첫 45자 기준). '주석' 은 여기서도 배제한다.
 # ★C-1(2026-09-05, 실측 — 삼성증권 20140515001582) — "요약"이 재무제표명 바로 앞
 # 수식어로만 쓰이면(증권/보험 분기보고서 관행: "요약분기연결재무상태표"가 완전한 본문표,
@@ -626,7 +645,7 @@ def is_legacy_note_marker(text: str) -> bool:
 
 
 def _classify_legacy_heading_core(
-    t: str, include_sce: bool, *, bare_only: bool = False,
+    t: str, include_sce: bool, *, bare_only: bool = False, allow_numbered: bool = False,
 ) -> tuple[str, str] | None:
     """`classify_legacy_statement_heading` 의 판정 본체 — **이미 공백이 제거된**
     문자열 `t`에 대해서만 동작한다(호출측이 whitespace-strip 을 책임진다).
@@ -635,8 +654,12 @@ def _classify_legacy_heading_core(
     폴백 전용(아래 `classify_legacy_statement_heading` 참고), 문장 중간에서 잘라낸
     조각이라 그 뒤에 다른 문자가 더 있어도 되는 A형까지 인정하면 오탐 위험이 커진다.
     """
-    if not t or _LEGACY_ENUM_PREFIX.match(t):
+    if not t:
         return None
+    if _LEGACY_ENUM_PREFIX.match(t):
+        if not (allow_numbered and _LEGACY_NUM_PAREN_PREFIX.match(t)):
+            return None
+        t = _LEGACY_NUM_PAREN_PREFIX.sub("", t, count=1)    # R386
     # R69(2026-09-05) — 한글 가나다 열거접두 제거(위 상수 docstring 참고). 벗긴 뒤에도
     # 재무제표명이 안 걸리면 아래 _LEGACY_HEAD.match 에서 그대로 거부된다.
     t = _LEGACY_KO_ENUM_PREFIX.sub("", t, count=1)
@@ -657,6 +680,10 @@ def _classify_legacy_heading_core(
         alt = _LEGACY_ALT_NAME_PAREN.match(rest)
         if alt:
             rest = rest[alt.end():]
+    if rest:
+        bank = _LEGACY_BANK_SUFFIX.match(rest)             # R388
+        if bank:
+            rest = rest[bank.end():]
     if rest:
         if bare_only:
             return None
@@ -686,7 +713,7 @@ _R277_SECTION_PREFIX_RE = re.compile(r"^\d{1,2}\.(연결|별도|개별)?재무�
 
 
 def classify_legacy_statement_heading(
-    text: str, include_sce: bool = False,
+    text: str, include_sce: bool = False, *, allow_numbered: bool = False,
 ) -> tuple[str, str] | None:
     """구형 레이아웃의 재무제표 **표제 헤딩** → (basis, statement) 또는 None.
 
@@ -728,7 +755,7 @@ def classify_legacy_statement_heading(
             if not rest.startswith(("연결", "별도", "개별")) and m.group(1) == "연결":
                 rest = "연결" + rest
             t = rest
-    result = _classify_legacy_heading_core(t, include_sce)
+    result = _classify_legacy_heading_core(t, include_sce, allow_numbered=allow_numbered)
     if result is not None:
         return result
 

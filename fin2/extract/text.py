@@ -644,6 +644,9 @@ def _detect_body_statement_tables(root, fin_type: str,
 _LEGACY_PENDING_SPAN = 4
 
 
+_LEGACY_NUM_HEAD_RE = re.compile(r"^\d{1,2}[.．)）]")
+
+
 def _detect_legacy_body_statement_tables(root, fin_type: str,
                                          include_sce: bool) -> dict[str, list[tuple]]:
     """구형 레이아웃(`XI. 재무제표 등`)에서 본문 재무제표 표를 찾는다 (2026-08-04).
@@ -709,6 +712,7 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
     pending_unit: int | None = None
     pending_age = 0
     pending_fs_etc = False                   # R383 - pending came from a bare '2. 재무제표 등' heading
+    in_note_zone = False                     # R386 - between a notes marker and the next un-numbered statement heading
 
     for tag, el in elements:
         text_ = " ".join("".join(el.itertext()).split())
@@ -759,8 +763,10 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
         # 주석전환 문구뿐이면) 기존대로 주석마커 검사로 넘어간다(회귀 없음, 순서만
         # 바뀜 — 두 판정이 동시에 참일 수 없는 상호배타적 문자열 집합은 아니지만
         # `classify_legacy_statement_heading`의 엄격함이 안전판 역할).
-        head = classify_legacy_statement_heading(text_, include_sce=include_sce)
+        head = classify_legacy_statement_heading(
+            text_, include_sce=include_sce, allow_numbered=not in_note_zone)
         if head is not None:
+            in_note_zone = False if not _LEGACY_NUM_HEAD_RE.match(re.sub(r'\s+', '', text_)) else in_note_zone
             pending = head
             pending_age = 0
             pending_fs_etc = False
@@ -784,6 +790,7 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
             pending = None                    # 주석 구간 진입 — 대기 중 헤딩도 버린다
             pending_unit = None
             pending_fs_etc = False
+            in_note_zone = True
             continue
 
     return groups

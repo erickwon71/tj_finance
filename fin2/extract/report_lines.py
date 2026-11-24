@@ -1959,6 +1959,7 @@ def _note_heading(table) -> str | None:
 # R284 - SCE/note grid rows whose label cells continue by ROWSPAN from the previous row take that
 # row's own label (e.g. 지분법자본변동>지분법자본변동), not the outermost group cell (`자본의 변동`).
 _R284_CONTINUATION_ROW_OWN_LABEL = True
+_R382_SCE_BLANK_LABEL_ROWS = True      # R382: SCE rows with a blank label but printed amounts
 
 
 _TOTAL_WORD_CELL = re.compile(r"^(?:합\s*계|소\s*계|총\s*계|계)$")
@@ -2094,7 +2095,14 @@ def _grid_body_rows(
             if not label.strip():
                 label = _value_area_total_label(physical, offset)     # R295-b: '합 계' in a value column
         if not label:
-            continue
+            # R382 - SCE only (keep_header_rows=False): a blank label cell with printed amounts is
+            # a printed unlabeled row; keep it with label ''. Notes (keep_header_rows=True) still
+            # drop blank-label rows (mostly spacers).
+            if not (_R382_SCE_BLANK_LABEL_ROWS and not keep_header_rows and not is_continuation
+                    and any(c.grid_col >= offset
+                            and parse_amount(c.text.replace(_STACK, " "), multiplier) is not None
+                            for c in physical[1:])):
+                continue
 
         # ★R135(2026-09-16) — 라벨 영역(grid_col < offset)에 물리 셀이 둘 이상인 행은
         #   ROWSPAN 카테고리 헤더("자본의 변동")와 그 아래 구체 항목명("배당금지급")이
@@ -2504,7 +2512,10 @@ def _emit_sce_lines(
         node_roles = _classify_positions(rows)
 
         for row in rows:
-            if not row.account_name:
+            # R382 - a SCE row whose label cell is blank but that prints amounts (an unlabeled
+            # subtotal row) is a printed row: keep it with label_raw '' (R280 did this for the
+            # BS/IS/CF body tables). No name is guessed. Rows without any amount emit nothing.
+            if not row.account_name and not _R382_SCE_BLANK_LABEL_ROWS:
                 continue
             # R160 (2026-10-12): an unresolved '.'-broken cell stays as a row with a NULL value
             # and its printed text (value_raw) — R0-1 4항. SCE columns are fixed positions.

@@ -48,7 +48,7 @@ from parser.xml.table_extractor import extract_rows, _get_cells
 from fin2.extract.xbrl import ExtractedFact
 from fin2.extract.statement_titles import (
     title_text, title_text_owned, title_text_for_classify,
-    classify_statement_in_body_section, SECTION_CODE_OF,
+    classify_statement_in_body_section, statement_name_followed_by_prose, SECTION_CODE_OF,
     _is_metadata_only, _STMT_TITLE, _HEADER_LABEL_RE, _is_bare_structural_marker,
     classify_legacy_statement_heading, is_legacy_note_marker,
     owned_merged_title, titleless_bs_start, is_substatement_marker,
@@ -424,13 +424,18 @@ def _detect_body_statement_tables(root, fin_type: str,
             # (공백·반기/분기 접두 허용). 자본변동표(SCE)는 분류기가 배제한다 —
             # include_sce=True(계층2 report_lines 전용)일 때만 'SCE' 로 통과시킨다.
             # ★분류용 표제는 데이터표 경계를 넘지 않는다(남의 재무제표 제목 차용 방지).
-            stmt = classify_statement_in_body_section(title_text_owned(tbl), include_sce=include_sce)
+            _owned_title = title_text_owned(tbl)
+            stmt = classify_statement_in_body_section(_owned_title, include_sce=include_sce)
+            if stmt is not None and statement_name_followed_by_prose(_owned_title):
+                stmt = None         # R385 - a prose paragraph that mentions a statement name is not a title
             if stmt is None:
                 # 요약재무정보 서식: 제목과 단위가 별도 <P> 로 분리돼 데이터표의 직전 형제가
                 # 단위줄('(단위:천원)')이라 title_text 가 제목을 못 읽는다. 단위줄 1칸만 건너뛰고
                 # 재시도(엠로/에스앤디 등 구형 KOSDAQ 요약; v2 는 XBRL 로 잡던 것). 가산적.
-                stmt = classify_statement_in_body_section(
-                    title_text_for_classify(tbl), include_sce=include_sce)
+                _retry_title = title_text_for_classify(tbl)
+                stmt = classify_statement_in_body_section(_retry_title, include_sce=include_sce)
+                if stmt is not None and statement_name_followed_by_prose(_retry_title):
+                    stmt = None     # R385 - a prose paragraph that mentions a statement name is not a title
             # R4-2(2026-08-05, docs/plans/merged_title_data_table_r4-2_2026-08-05.md) —
             # 위 둘이 **모두** 실패했을 때만 시도하는 최후 폴백 2종. 반드시
             # `table_has_amount_rows(tbl)`(=`_table_has_data_rows`) 가 참인 표에만 적용한다 —

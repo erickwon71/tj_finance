@@ -813,11 +813,14 @@ def test_table_under_a_note_sentence_title_is_not_read_as_the_statement(tmp_path
         return sorted(l.amount_won for l in fa.read_report_face_text(p) if l.canonical == "bs.total_assets")
 
     assert totals() == [1000000]
+    import fin2.extract.statement_titles as _st
     tx._R312_NOTE_SENTENCE_TITLE = False
+    _st._R385_PROSE_AFTER_STATEMENT_NAME = False   # R385 drops the same sentence; isolate R312
     try:
         assert totals() == [1000000, 1004000]
     finally:
         tx._R312_NOTE_SENTENCE_TITLE = True
+        _st._R385_PROSE_AFTER_STATEMENT_NAME = True
 
 
 _NOTE_SENTENCE_TWO_TABLES_XML = """<DOCUMENT>
@@ -848,11 +851,14 @@ def test_second_table_under_a_note_sentence_title_is_not_read_as_the_statement(t
         return sorted(l.amount_won for l in fa.read_report_face_text(p) if l.canonical == "bs.total_assets")
 
     assert totals() == [1000000]
+    import fin2.extract.statement_titles as _st
     tx._R312_NOTE_SENTENCE_TITLE = False
+    _st._R385_PROSE_AFTER_STATEMENT_NAME = False   # R385 drops the same sentence; isolate R312
     try:
         assert totals() == [1000000, 1008000]
     finally:
         tx._R312_NOTE_SENTENCE_TITLE = True
+        _st._R385_PROSE_AFTER_STATEMENT_NAME = True
 
 
 def test_note_sentence_title_matches_only_the_sentence_form():

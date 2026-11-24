@@ -450,6 +450,37 @@ _BODY_STMT_ORDER: list[tuple[str, str]] = [
 ]
 
 
+# R385 switch - see `statement_name_followed_by_prose`.
+_R385_PROSE_AFTER_STATEMENT_NAME = True
+_PROSE_ENDING_RE = re.compile(r"(?:습니다|합니다|입니다|있다|한다|된다|였다|이다)\.?")
+# A heading never glues a particle to the statement name (it continues with 제N기 / a date / '(' / a
+# basis word); a sentence does ('재무상태표일 현재', '재무상태표는', '손익계산서상', '현금흐름표에 …').
+_NAME_GLUED_PARTICLE_RE = re.compile(r"^(?:일|상|에|의|를|을|는|은|가|이|와|도|만|로)")
+
+
+def statement_name_followed_by_prose(title: str) -> bool:
+    """R385 - True when the text after the LAST statement name in `title` is a sentence.
+
+    A body-section table whose own title is just a unit line is classified by the paragraph before
+    it. Such a paragraph can be prose that merely mentions a statement name ('다. 매출채권관련
+    대손충당금 설정방침 당사는 재무상태표일 현재의 매출채권과 … 설정하고 있습니다.'), which made a
+    receivable-ageing note table a second balance sheet (형지엘리트 20150129000055, 동원모빌리티
+    20150226000480, KG파이낸셜 20170112000195). A real heading ends with the name or with a period /
+    unit tail ('연결 재무상태표 제33기 … (단위 : 원)'), never with a predicate or a glued particle. Text BEFORE the name
+    (a footnote merged with the next heading, R141) is not looked at."""
+    if not _R385_PROSE_AFTER_STATEMENT_NAME or not title:
+        return False
+    t = re.sub(r"\s+", "", title)
+    pos = max((t.rfind(name) + len(name) for name, _ in _BODY_STMT_ORDER if t.rfind(name) >= 0), default=-1)
+    if pos < 0:
+        return False
+    tail = t[pos:]
+    if _PROSE_ENDING_RE.search(tail):
+        return True
+    # '재무상태표일 현재', '재무상태표는', '손익계산서상': a particle / suffix glued to the name is a mention.
+    return bool(_NAME_GLUED_PARTICLE_RE.match(tail))
+
+
 def classify_statement_in_body_section(title: str, include_sce: bool = False) -> str | None:
     """본문 섹션 **내부** 표의 표제 → 'BS'|'IS'|'CF'(|'SCE') 또는 None(대상 아님).
 

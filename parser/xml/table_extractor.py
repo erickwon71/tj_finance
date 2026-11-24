@@ -545,6 +545,9 @@ def extract_rows(
                 cells = [cells[0]] + [""] * pad + cells[1:]
                 cells_el = [cells_el[0]] + [cells_el[0]] * pad + cells_el[1:]
 
+        if _R384_SPLIT_LABEL_CELLS and not keep_header_rows and not keep_all_amount_cells:
+            cells, cells_el = _merge_split_label_cells(cells, cells_el)
+
         first_text = cells[0].strip() if cells else ""
 
         # 헤더/제목/단위 행 감지 → 위치에 관계없이 항상 건너뜀
@@ -648,7 +651,9 @@ def extract_rows(
             _unreadable = {all_raw[i] for i in unresolved_dot_cell_indices(amount_cells, label)}
             if (len(all_parsed) >= 4 and not (preserve_col_positions or keep_all_amount_cells)
                     and table_has_note_column):
-                while all_parsed and all_parsed[0] is None and not (all_raw and all_raw[0] in _unreadable):
+                # R384 - a printed dash is a value cell (zero), not a structural blank: stop there.
+                while (all_parsed and all_parsed[0] is None and not (all_raw and all_raw[0] in _unreadable)
+                       and not (_R384_SPLIT_LABEL_CELLS and all_raw and all_raw[0].strip() in _R384_DASH_CELLS)):
                     all_parsed.pop(0)
                     if all_raw:
                         all_raw.pop(0)
@@ -2512,6 +2517,34 @@ def _is_more_broken_shape(core: str) -> bool:
 #   NULL value and the printed text (value_raw).
 _R279_DOUBLED_AMOUNT_CELL = True
 _R280_BLANK_LABEL_ROWS = True
+
+# R384 switch - a body-statement row whose label is printed in two cells (a bare ordinal 'II.' or an
+# empty cell, then the account name) is one label. Without this the name cell is dropped as "extra
+# text" and the note cell shifts one position (팬오션 20140515001895 IS: label 'II.', note 15 as amount).
+_R384_SPLIT_LABEL_CELLS = True
+_R384_DASH_CELLS = frozenset(["-", "\u2014", "\u2500", "\u2015"])
+_BARE_ORDINAL_RE = re.compile(r"^(?:[IVXivx]{1,6}|\d{1,2}|[가-하])\s*[.)]$|^\(\s*(?:\d{1,2}|[가-하])\s*\)$")
+
+
+def _merge_split_label_cells(cells: list[str], cells_el: list) -> tuple[list[str], list]:
+    """R384 - join `[ordinal-or-blank, name, ...]` into `[label, ...]`.
+
+    Only when the second cell is real text (letters, not an amount / note reference / dash) and the
+    first is empty or a bare ordinal; the label is printed text joined with one space, nothing is
+    inferred."""
+    if len(cells) < 3:
+        return cells, cells_el
+    first, second = cells[0].strip(), cells[1].strip()
+    if first and not _BARE_ORDINAL_RE.match(first):
+        return cells, cells_el
+    if not second or not re.search(r"[A-Za-z가-힣]", second):
+        return cells, cells_el
+    if _NUMBER_PATTERN.match(strip_cell_whitespace(second).replace(",", "")):
+        return cells, cells_el
+    merged = f"{first} {second}".strip() if first else second
+    return [merged] + cells[2:], [cells_el[0]] + cells_el[2:]
+
+
 _DOUBLED_GROUPS_RE = re.compile(r"^[(\[]?\s*[-−△▲]?\s*(\d{1,3}(?:,\d{3})+)\s*[)\]]?$")
 
 

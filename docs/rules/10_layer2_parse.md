@@ -7519,3 +7519,27 @@ Q1 은 3개월 컨텍스트와 누적 컨텍스트의 기간이 같고 FY 는 3�
 > **코드** `fin2/extract/text.py` `_R383_LEGACY_FS_ETC_HEADING_BS`·`_balance_sheet_by_compact_totals`, **테스트** `tests/test_r383_fs_etc_heading_separate_bs.py` 4건.
 
 **발견**: `missing_row` #572334(삼성생명 별도 BS `Ⅰ.현금및현금성자산`).
+
+## R384. 표 행의 라벨이 `순번 | 이름` 두 칸으로 갈라져 있으면 하나의 라벨로 합쳐 읽고, 첫 칸이 `-` 인 값 칸은 앞 None 제거에서 지키지 않는다 (2026-11-24, 적용 계층: 2 — 읽기)
+
+> **상태** 유효 · **적용 계층** 2 · `parser/xml/table_extractor.py` `extract_rows`
+>
+> **규칙** 첫 칸이 순번만(`Ⅰ.`, `1)`, `(1)`, `가.` 등, `_BARE_ORDINAL_RE`)이고 둘째 칸이 라벨 글자이면 두 칸을 `순번 이름` 한 칸으로 합쳐 라벨로 쓴다(`_merge_split_label_cells`). 6열 IS 표에서 주석 칸이 비어 앞 None 을 걷어낼 때 첫 원문 칸이 `-`/`―` 등(`_R384_DASH_CELLS`)이면 그 칸은 값이므로 걷어내지 않는다. 스위치 `_R384_SPLIT_LABEL_CELLS`.
+> **왜** 팬오션 IS 에서 라벨이 둘째 칸에 있고 첫 칸이 순번이라 `_split_label_amounts_ex` 가 둘째 칸을 숫자 아닌 여분으로 버리고 라벨을 순번만으로 적재했다(value_mismatch #572561~#572564).
+> **하지 않는 것** 값은 바꾸지 않는다(R0-2). `keep_header_rows`·`keep_all_amount_cells` 경로는 건드리지 않는다.
+> **측정(2026-11-24)** FY2014 이상 최종 필링 103,362개 전수 켬/끔 추출(원문 없음 250 제외, 오류 0): R384 영향 **1필링**(팬오션).
+> **코드** `parser/xml/table_extractor.py`, **테스트** `tests/test_r384_split_label_cells.py`.
+
+**발견**: `value_mismatch` #572561~#572564(팬오션).
+
+## R385. 재무제표 이름 뒤에 서술어가 이어지는 문장은 본문 표제로 보지 않는다 (2026-11-24, 적용 계층: 2 — 읽기)
+
+> **상태** 유효 · **적용 계층** 2 · `fin2/extract/statement_titles.py` `statement_name_followed_by_prose`
+>
+> **규칙** 2015+ 본문 구간 표 분류(`_detect_body_statement_tables`)에서 표 앞 글이 재무제표 이름(재무상태표 등)을 포함하더라도, 마지막 이름 뒤에 서술어(`습니다`·`합니다` 류, `_PROSE_ENDING_RE`)가 있거나 조사가 붙어 이어지면(`_NAME_GLUED_PARTICLE_RE`: 일·상·에·의·를·을·는·은·가·이·와·도·만·로) 표제가 아니라 설명 문장이므로 그 표를 재무제표로 분류하지 않는다. 소유 표제와 재시도(`title_text_for_classify`) 두 곳에 적용하고 스위치는 `_R385_PROSE_AFTER_STATEMENT_NAME`.
+> **왜** 형지엘리트·동원모빌리티·KG파이낸셜은 `…재무상태표는 …작성되었습니다` 같은 문장 뒤의 주석 표가 BS 로 적재되어 BS 표가 하나 더 생겼다(extra_row #572553~#572555·#572567~#572570 등).
+> **하지 않는 것** 값은 바꾸지 않는다(R0-2). 이름 어휘 목록(휴리스틱)은 안트로젠(test_r248) 회귀로 폐기했다.
+> **측정(2026-11-24)** FY2014 이상 최종 필링 103,362개 전수 켬/끔 추출: R385 영향 **51필링**(추가 125셀, 제거 3,072셀 — 대부분 SCE 중복 표 제거), 오류 0. R384 와 겹침 0.
+> **코드** `fin2/extract/statement_titles.py`·`fin2/extract/text.py`, **테스트** `tests/test_r385_prose_is_not_a_statement_title.py`.
+
+**발견**: `extra_row` #572554(및 #572553·#572555·#572567~#572570 동일 원인).

@@ -85,7 +85,14 @@ from lxml import etree
 # R179). (B) a labelled row printing only '-' under every period ('Ⅰ.영업수익 - -') was taken for a
 # header row, so the DB's zero row had no source row (extra_row). (C) a statement section that prints
 # the same statement twice left the second copy as an unmatched_table.
-TOOL_VERSION = "mc20"
+# mc21 (2026-11-24, fix->verify request, 영원무역홀딩스 20140514005220 and 16 more FY2014 filings, 74 false
+# value_mismatch issues): (A) in a 2014 web-view print the statements sit in one '4. 재무제표' section whose
+# title has no '연결', so every table was read as separate and a consolidated DB statement found no
+# candidate table; the table's own heading ('연결 재무상태표 ...') now decides the basis when the section
+# title does not. (B) with no candidate the comparison fell back to ALL tables, so a consolidated IS was
+# paired with the statement of changes in equity (shared labels such as 해외사업환산손익) and its values were
+# compared with SCE capital columns (expected '0'); a BS / IS / CF never falls back to an SCE table now.
+TOOL_VERSION = "mc21"
 
 _CELL_TAGS = {"td", "th", "te", "tu"}
 _NUM_RE = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\s*\)?$")
@@ -394,6 +401,10 @@ def statement_type(t: "SrcTable") -> str | None:
     return None
 
 
+# mc21: the table's own heading names a consolidated statement ('연결 재무상태표 제 41 기 ...').
+_CONSOLIDATED_HEADING_RE = re.compile(r"^[\(\[]?연결[\)\]]?(재무상태표|(포괄)?손익계산서|자본변동표|현금흐름표|재무제표)")
+
+
 def load_statement_tables(path: str) -> list[SrcTable]:
     raw = open(path, "rb").read()
     try:
@@ -425,6 +436,8 @@ def load_statement_tables(path: str) -> list[SrcTable]:
             if st is None or not st.rows:
                 prev_title = re.sub(r"\s+", " ", _text(tb))[:60]
                 continue
+            if st.basis == "separate" and _CONSOLIDATED_HEADING_RE.match(_WS_RE.sub("", st.title)):
+                st.basis = "consolidated"
             st.stype = statement_type(st)
             tables.append(st)
             idx += 1
@@ -599,6 +612,9 @@ def compare(db_rows: list[dict], tables: list[SrcTable]) -> Result:
         dkeys = [norm_label(l) for _, l in seq]
         cand = [t for t in tables if t.basis == basis and t.stype in (st_code, None)] \
             or [t for t in tables if t.basis == basis] or tables
+        if st_code != "SCE":
+            # mc21: an SCE table is never the source of a BS / IS / CF (shared labels, SCE capital columns)
+            cand = [t for t in cand if t.stype != "SCE"]
         dset = set(dkeys)
         score = {t.idx: sum(1 for r in t.rows if r.key in dset or r.alt in dset) for t in cand}
         if not score or max(score.values()) == 0:

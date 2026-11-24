@@ -725,3 +725,40 @@ def test_mc20_fractional_eps_compares_value_exact_not_the_rounded_integer(tmp_pa
     assert [f["kind"] for f in wrong.findings] == ["value"]
     missing = mc.compare(rows(None), tables)                          # printed fraction, no exact value
     assert [f["kind"] for f in missing.findings] == ["eps_exact_missing"]
+
+
+def _consolidated_is_beside_sce(tmp_path):
+    # 영원무역홀딩스 20140514005220: one '4. 재무제표' section (no '연결' in its title) holds the
+    # consolidated IS and SCE; the IS and the SCE share labels such as 해외사업환산손익
+    ist = _table(["당기순이익(손실)", "35,695,814,202"], ["해외사업환산손익", "2,456,951,471"],
+                 ["공동지배기업 평가", "2,144,849,337"], ["총포괄이익", "40,297,614,000"],
+                 head=["과목", "당기"])
+    sce = _table(["2014.01.01 (기초자본)", "0", "100"], ["해외사업환산손익", "0", "2,456,951,471"],
+                 ["공동지배기업 평가", "0", "2,144,849,337"], ["2014.03.31 (기말자본)", "0", "100"],
+                 head=["과목", "자본금", "합계"])
+    body = _section("4. 재무제표", _title("연결 포괄손익계산서"), ist, _title("연결 자본변동표"), sce)
+    return mc.load_statement_tables(_xml(tmp_path, body))
+
+
+def test_mc21_table_heading_decides_the_basis_when_the_section_title_has_no_yeongyeol(tmp_path):
+    tables = _consolidated_is_beside_sce(tmp_path)
+    assert {t.basis for t in tables} == {"consolidated"}
+
+
+def test_mc21_consolidated_is_is_not_compared_with_the_sce_capital_columns(tmp_path):
+    tables = _consolidated_is_beside_sce(tmp_path)
+    rows = [_row("IS", "consolidated", i, lab, v) for i, (lab, v) in enumerate(
+        (("당기순이익(손실)", 35695814202), ("해외사업환산손익", 2456951471),
+         ("공동지배기업 평가", 2144849337), ("총포괄이익", 40297614000)))]
+    kinds = {f["kind"] for f in mc.compare(rows, tables).findings}
+    assert "value" not in kinds and "extra_row" not in kinds
+
+
+def test_mc21_bs_is_cf_never_fall_back_to_an_sce_table(tmp_path):
+    # the only table of the filing is an SCE: an IS has no source table (no_table), not the SCE's columns
+    sce = _table(["2014.01.01 (기초자본)", "0", "100"], ["해외사업환산손익", "0", "2,456,951,471"],
+                 ["2014.03.31 (기말자본)", "0", "100"], head=["과목", "자본금", "합계"])
+    tables = mc.load_statement_tables(_xml(tmp_path, _section("4. 재무제표", _title("연결 자본변동표"), sce)))
+    rows = [_row("IS", "separate", 0, "해외사업환산손익", 2456951471)]
+    kinds = {f["kind"] for f in mc.compare(rows, tables).findings}
+    assert "value" not in kinds and "no_table" in kinds

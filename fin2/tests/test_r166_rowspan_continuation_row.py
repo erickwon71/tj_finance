@@ -150,8 +150,9 @@ def test_all_zero_label_row_keeps_its_zeros():
     assert _vals(rows[2]).count(5_464_171_128) == 3, _vals(rows[2])
 
 
-def test_row_without_a_recoverable_label_is_still_dropped():
-    """상속 라벨조차 없으면 종전대로 버린다 — 라벨 없는 행을 만들지 않는다."""
+def test_row_without_a_recoverable_label_is_kept_with_blank_label_r280():
+    """No inheritable label: R280 keeps the row with account_name '' (printed values are not
+    dropped, and no name is invented)."""
     tbl = etree.fromstring(
         "<TABLE><TBODY>"
         "<TR><TE>과 목</TE><TE>자본금</TE><TE>자본 합계</TE></TR>"
@@ -159,7 +160,7 @@ def test_row_without_a_recoverable_label_is_still_dropped():
         "<TR><TE></TE><TE>2,000</TE><TE>2,000</TE></TR>"
         "</TBODY></TABLE>".encode())
     rows = _rows(tbl)
-    assert len(rows) == 1, [r.account_name for r in rows]
+    assert [r.account_name for r in rows] == ["2021.01.01 (기초자본)", ""]
 
 
 # ─────────────────────── real filings (issues #34/#35) ───────────────────────

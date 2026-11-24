@@ -92,19 +92,28 @@ def test_unproved_pair_still_skipped_r6():
 
 
 def test_no_run_still_skipped_r6():
-    # Balance row immediately before: there is no open group to close.
+    # No open group and the pair does not reconcile with the base balance (R266): skipped.
+    picked = _run([
+        [None, 5_000, None, None],
+        [300, 4_000, None, None],
+    ])
+    assert picked[1] == {}
+
+
+def test_base_balance_proves_pair_r266():
+    # R266: 5,000 - 300 == 4,700 against the balance row just above.
     picked = _run([
         [None, 5_000, None, None],
         [300, 4_700, None, None],
     ])
-    assert picked[1] == {}
+    assert picked[1] == {0: 300}
 
 
 def test_balance_row_ends_the_group():
     picked = _run([
         [1_000, None, None, None],
         [None, 1_000, None, None],                   # balance row closes the group
-        [300, 700, None, None],                      # no run left -> not proved
+        [300, 650, None, None],                      # no run left, no base proof -> not proved
     ])
     assert picked[2] == {}
 

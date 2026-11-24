@@ -1051,12 +1051,37 @@ def _halve_doubled_eps_amounts(amounts):
     return [None if a is None else _EpsAmount(next(it)) for a in amounts]
 
 
+_EPS_NUMBERING_CELL_RE = re.compile(r"^(?:[0-9]{1,2}|[IVXivx]{1,5}|[\u2160-\u216b]{1,2})?[.)]?$")
+
+
+def _eps_drop_leading_numbering_cell(cells: list[str]) -> list[str]:
+    """R389 - a statement table that keeps its row numbering in its own first column
+    (`['XVI.', '주당순이익(손실) (단위 : 원)']`, `['', '기본 및 희석 주당순이익(손실)', '', '', '305', ...]`)
+    puts the label in the SECOND cell. The EPS path read `cells[0]` as the label, so it never
+    saw that row, and the main path emitted it with the table unit (305 won -> 305,000,000).
+    Drop the numbering cell (empty or a bare numeral) only when the next cell is a '주당' label."""
+    if (len(cells) > 1 and _EPS_NUMBERING_CELL_RE.match(cells[0].strip())
+            and "주당" in cells[1]):
+        return cells[1:]
+    return cells
+
+
+def _eps_multicol_periods(table, cum_map, header_cols) -> int | None:
+    """R389: the period count when the table prints several cells per period and no header grid or
+    cumulative map picks the columns (else None)."""
+    if cum_map is not None or header_cols is not None:
+        return None
+    n_periods, multicol = _detect_period_layout(table)
+    return n_periods if multicol else None
+
+
 def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
                     report_fiscal_year, report_fiscal_period,
                     table_seq=None, table_title=None,
                     cum_map: dict[int, int] | None = None,
                     header_cols=None,
-                    q1_cum_blank_use_3m: bool = False) -> set[str]:
+                    q1_cum_blank_use_3m: bool = False,
+                    multicol_periods: int | None = None) -> set[str]:
     """주당손익(EPS) 행을 **per-row 단위**로 전사한다(IS 표 전용).
 
     ★반환값(R144) = 본류에서 **빼도 안전한** 행의 라벨 집합 = 이 함수가 전사했고 + 그 표가
@@ -1090,7 +1115,7 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
     검출) 표 본류와 동일하게 '누적' 토큰이 붙은 컬럼만 위치 기준으로 골라 담는다 — FY/2단 미검출
     표는 기존 동작(앞 3개 위치순) 그대로."""
     trs = list(table_direct_rows(table))
-    tr_cells = [_get_cells(tr) for tr in trs]
+    tr_cells = [_eps_drop_leading_numbering_cell(_get_cells(tr)) for tr in trs]
     # ★R173(2026-09-25) — 본류(`_emit_section_lines`)와 **같은 주석열 판정**. 안 넘기면
     #   '주석' 열의 단일 번호("21")가 첫 금액으로 잡혀 위치가 한 칸씩 밀린다: Q3 표
     #   [주석 21 | 3개월 277 | 누적 (118)] 에서 누적 대신 3개월 277 이 당기로, FY 표에선
@@ -1221,6 +1246,11 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
             # 2단[3개월|누적] 헤더 검출 표 — '누적' 토큰이 붙은 컬럼만 위치로 선택.
             pairs = [(off, amounts_by_pos[pos]) for pos, off in cum_map.items()
                      if pos < len(amounts_by_pos) and amounts_by_pos[pos] is not None]
+        elif multicol_periods:
+            # R389: a table that prints two cells per period (detail | subtotal). The main path
+            # compacts the printed cells into periods for such tables; do the same here so the
+            # EPS row lands in the same period columns as every other row of the table.
+            pairs = list(enumerate(present[:multicol_periods]))
         else:
             # FY 또는 2단 헤더 미검출 — 앞 3개 **열 위치**(당기/전기/전전기).
             # ★R144(2026-09-19) — 예전엔 `present`(None 을 뺀 압축 리스트)를 썼다. 그러면
@@ -1460,7 +1490,8 @@ def _emit_section_lines(
                 report_fiscal_period=report_fiscal_period,
                 table_seq=table_seq, table_title=table_title,
                 cum_map=cum_map, header_cols=header_cols,
-                q1_cum_blank_use_3m=q1_cum_blank_use_3m)
+                q1_cum_blank_use_3m=q1_cum_blank_use_3m,
+                multicol_periods=_eps_multicol_periods(table, cum_map, header_cols))
 
         dual_closing_runs: dict[int, list] = {}   # R168 — per table
         for row in table_rows:

@@ -56,11 +56,32 @@ CHROME_MARKER = "[CHROME_UNAVAILABLE]"
 _CHROME_DOWN_RE = re.compile(r"^\s*\[CHROME_UNAVAILABLE\]\s*$|Chrome 확장이 연결되지 않|Chrome 을 쓸 수 없",
                              re.MULTILINE)
 STOP_FILE = NOTIFY.parent / "STOP_VERIFY"
+# 2026-11-24: Chrome was killed twice (memory pressure) and the runner stayed stopped for 6 hours
+# until the user reconnected it. `open -a "Google Chrome"` brings the extension back by itself
+# (tested twice that day: reconnected in 5-60 s), so a chrome_down run first relaunches Chrome and
+# lets the loop retry; only CHROME_STOP_AFTER consecutive chrome_down runs stop the runner.
+CHROME_STOP_AFTER = 3
+CHROME_RELAUNCH_WAIT_S = 30
 
 
 def chrome_unavailable(result_text: str) -> bool:
     """True when the session reported that it could not use the Chrome extension."""
     return bool(_CHROME_DOWN_RE.search(result_text or ""))
+
+
+def chrome_relaunch() -> bool:
+    """Start Google Chrome (a no-op beyond focusing it when it is already running) and wait
+    CHROME_RELAUNCH_WAIT_S for the extension to reconnect. True when the open command succeeded.
+    No-op under pytest."""
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    import time
+    try:
+        rc = subprocess.run(["open", "-a", "Google Chrome"], capture_output=True, timeout=30).returncode
+    except (OSError, subprocess.SubprocessError):
+        return False
+    time.sleep(CHROME_RELAUNCH_WAIT_S)
+    return rc == 0
 
 
 def _write_stop_file(reason: str) -> None:
@@ -377,12 +398,22 @@ def finish(run_id: int, log: Path, exit_code: int) -> dict:
             {"w": run["worktree"], "n": STOP_AFTER_CONSECUTIVE_FAILS}).fetchall()]
 
     if outcome == "chrome_down":
+        down_in_a_row = len(last) >= CHROME_STOP_AFTER and all(o == "chrome_down" for o in last[:CHROME_STOP_AFTER])
+        if not down_in_a_row:
+            # The slot was released without a penalty; relaunch Chrome and let the loop retry.
+            _notify(f"[verify 러너] Chrome 연결 끊김 - 자동 실행 시도 ({slot} run {run_id})")
+            chrome_relaunch()
+            return {"run_id": run_id, "slot": str(slot), "outcome": outcome, "stop": False,
+                    "sleep_until": None}
         _write_stop_file(f"chrome_down run {run_id} {slot}: reconnect the Claude-in-Chrome "
                          f"extension, then remove this file and restart the runner")
-        _notify(f"[verify 러너 정지] Chrome 확장 연결 안 됨 - {slot} run {run_id}. "
+        _notify(f"[verify 러너 정지] Chrome 자동 실행 {CHROME_STOP_AFTER}회 실패 - {slot} run {run_id}. "
                 f"연결 복구 후 ~/.claude/notify/STOP_VERIFY 삭제하고 러너 재시작")
         return {"run_id": run_id, "slot": str(slot), "outcome": outcome, "stop": True,
                 "sleep_until": None}
+
+    if len(last) >= 2 and last[1] == "chrome_down" and outcome not in ("usage_limit", "tool_denied"):
+        _notify(f"[verify 러너] Chrome 자동 복구 성공 - 러너 계속 ({slot} run {run_id})")
 
     stop = (len(last) == STOP_AFTER_CONSECUTIVE_FAILS
             and all(o in FAIL_OUTCOMES for o in last))

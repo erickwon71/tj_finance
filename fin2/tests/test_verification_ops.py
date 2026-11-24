@@ -502,13 +502,19 @@ def test_runner_chrome_unavailable_stops_without_retry_penalty(engines, as_role,
         "type": "result", "is_error": False, "num_turns": 6,
         "result": "슬롯 x — pass 0 · 이슈 0 · 대조 보류 1\n[CHROME_UNAVAILABLE]\n연결 복구 필요"})
     res = runner.finish(run_id, log, 0)
-    assert res["outcome"] == "chrome_down" and res["stop"] is True
+    # 2026-11-24: the first two chrome_down runs relaunch Chrome and keep going
+    assert res["outcome"] == "chrome_down" and res["stop"] is False
     # (b) the session ended while still holding the slot: released without a retry penalty
     slot = ops.claim(SLOT)
     run_id = runner.start(slot, "sonnet")
     log = _fake_log(tmp_path, "chrome_b.json", {
         "type": "result", "is_error": False, "num_turns": 6,
         "result": "Chrome 확장이 연결되지 않아 대조를 하지 못했다"})
+    res = runner.finish(run_id, log, 0)
+    assert res["outcome"] == "chrome_down" and res["stop"] is False
+    # (c) the third in a row stops the runner (Chrome could not be brought back)
+    slot = ops.claim(SLOT)
+    run_id = runner.start(slot, "sonnet")
     res = runner.finish(run_id, log, 0)
     assert res["outcome"] == "chrome_down" and res["stop"] is True
     with engines["admin"].connect() as c:

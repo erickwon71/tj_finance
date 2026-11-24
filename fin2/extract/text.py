@@ -323,6 +323,7 @@ _R263_TITLELESS_IS_AFTER_BS = True
 # IS that reads as a balance sheet and not as an income statement is the BS body; R263 then takes
 # the untitled IS body after it.
 _R281_BS_BODY_UNDER_IS_HEADING = True
+_R383_LEGACY_FS_ETC_HEADING_BS = True       # R383: '2. 재무제표 등' heading -> separate BS in the legacy walker
 
 
 _SCE_DATE_ROW_RE = re.compile(r"^\d{4}\s*\.\s*\d{1,2}\s*\.\s*\d{1,2}")
@@ -702,6 +703,7 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
     pending: tuple[str, str] | None = None   # (basis, stmt) — 데이터표를 기다리는 헤딩
     pending_unit: int | None = None
     pending_age = 0
+    pending_fs_etc = False                   # R383 - pending came from a bare '2. 재무제표 등' heading
 
     for tag, el in elements:
         text_ = " ".join("".join(el.itertext()).split())
@@ -718,11 +720,20 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
             if pending_age > _LEGACY_PENDING_SPAN:
                 pending = None                # 데이터표 없이 끝난 헤딩 — 멀리서 끌어오지 않는다
                 pending_unit = None
+                pending_fs_etc = False
 
         if tag == "TABLE" and _table_has_data_rows(el):
             if pending is None:
                 continue                      # 관장 헤딩 없는 데이터표 = 주석표 → 취하지 않음
             basis, stmt = pending
+            if pending_fs_etc:
+                # R383 - the heading names no statement, so the table itself must read as a balance
+                # sheet (totals rows) and not as an income statement; otherwise it is not taken.
+                pending_fs_etc = False
+                if not (_balance_sheet_by_compact_totals(el) and not _looks_like_income_statement(el)):
+                    pending = None
+                    pending_unit = None
+                    continue
             if basis == "consolidated" and fin_type == "B":
                 pending = None                # 연결 없는 기업의 연결 표 무시(2015+ 경로와 동일)
                 continue
@@ -747,13 +758,27 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
         if head is not None:
             pending = head
             pending_age = 0
+            pending_fs_etc = False
             # 헤딩이 표(제목표)면 그 표가 단위를 들고 있을 수 있다(A형 '… (단위 : 원)').
             pending_unit = declared_unit(el) if tag == "TABLE" else None
+            continue
+
+        # R383 - an old insurer layout prints the separate balance sheet under the bare section
+        # heading '2. 재무제표 등' (+ a period table) with no '재무상태표' title; its IS/CF carry
+        # titles. Only when no separate BS was read yet; the table guard above does the rest.
+        if (_R383_LEGACY_FS_ETC_HEADING_BS and tag != "TABLE"
+                and re.fullmatch(r"\d+\.재무제표등", re.sub(r"\s+", "", text_))
+                and not groups.get(SECTION_CODE_OF[("separate", "BS")])):
+            pending = ("separate", "BS")
+            pending_age = 0
+            pending_unit = None
+            pending_fs_etc = True
             continue
 
         if is_legacy_note_marker(text_):
             pending = None                    # 주석 구간 진입 — 대기 중 헤딩도 버린다
             pending_unit = None
+            pending_fs_etc = False
             continue
 
     return groups
@@ -1149,6 +1174,18 @@ def _looks_like_balance_sheet(tbl) -> bool:
         if cells and _BS_TOTAL_RE.search(cells[0]):
             return True
     return False
+
+
+def _balance_sheet_by_compact_totals(tbl) -> bool:
+    """R383 guard: the table has a 자산총계 row and a 부채총계/자본총계 row, read with ALL whitespace
+    removed (삼성생명 prints '자       산       총       계'; `_looks_like_balance_sheet` misses it)."""
+    from parser.xml.table_extractor import _get_cells
+    labels = set()
+    for tr in table_direct_rows(tbl):
+        cells = _get_cells(tr)
+        if cells:
+            labels.add(re.sub(r"\s+", "", cells[0]))
+    return "자산총계" in labels and ("부채총계" in labels or "자본총계" in labels)
 
 
 _CF_ROW_RE = re.compile(r"영업활동현금흐름|영업활동으로인한현금흐름|투자활동현금흐름|재무활동현금흐름")

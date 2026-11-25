@@ -1066,6 +1066,13 @@ def _eps_drop_leading_numbering_cell(cells: list[str]) -> list[str]:
     return cells
 
 
+def _eps_row_declares_won(label: str, source: str) -> bool:
+    """R390: the row's own label declares won ('...주당이익(손실)(단위:원)'), so its printed cells
+    are won per share however large they are. The magnitude gate (_EPS_MAX_PLAUSIBLE_WON) exists
+    for rows with NO such declaration; with one, the printed value is what the layer keeps."""
+    return source == "declared" and detect_unit_declaration(label) == 1 and "주당" in label
+
+
 def _eps_multicol_periods(table, cum_map, header_cols) -> int | None:
     """R389: the period count when the table prints several cells per period and no header grid or
     cumulative map picks the columns (else None)."""
@@ -1198,7 +1205,7 @@ def _emit_eps_lines(table, *, emit, basis, statement, corp_code, rcept_no,
         if split_doubled:
             amounts_by_pos = _halve_doubled_eps_amounts(amounts_by_pos)
         present = [a for a in amounts_by_pos if a is not None]
-        if not _looks_like_eps_amounts(present):
+        if not _looks_like_eps_amounts(present) and not _eps_row_declares_won(label, eps_source):
             # NI귀속류 오판 행 — EPS 로 emit 하지 않고 본류가 처리하도록 남겨둔다(아래
             # _emit_section_lines 의 대응 가드와 짝, 2026-08-15).
             continue

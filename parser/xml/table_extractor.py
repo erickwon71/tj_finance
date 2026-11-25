@@ -1018,6 +1018,9 @@ def _table_has_note_header(trs: list[etree._Element]) -> bool:
 # 먼저 매치를 가로채도록(같은 시작위치서 이 대안이 성공하면 search() 가 이를 채택)
 # 상대어+숫자+분기 대안을 추가한다.
 _PERIOD_KEY_RE = re.compile(
+    # R391: `FY2014 3분기` / `FY2013` English-prefixed year headers (Yuanta 20141114000904). Must come first so
+    # the leftmost match keeps the `FY` prefix and a bare `FY2013` is a period key at all.
+    r"FY\s*\d{4}(?:\s*[1-4]\s*분\s*기|\s*반\s*기)?|"
     r"당\s*[1-4]\s*분\s*기|전\s*전\s*[1-4]\s*분\s*기|전\s*[1-4]\s*분\s*기"
     r"|(?:제\s*)?\d+\s*(?:\([^)]{0,4}\)|(?:당|전\s*전|전)\s*\))?\s*"
     r"(?:기(?:\s*(?:\(\s*[당전]\s*\)\s*기?|전\s*전|[당전])?\s*(?:[1-4]\s*분\s*기|반\s*기|분\s*기))?"

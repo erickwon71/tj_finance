@@ -715,6 +715,7 @@ _LEGACY_SENTENCE_SPLIT = re.compile(r"다\.")
 # R277 - `1. 연결재무제표` section heading printed in the same element, right before the statement title
 # (`1. 연결재무제표&cr;연 결 재 무 상 태 표`): the number prefix made the whole heading read as a note heading.
 _R277_SECTION_NUMBER_PREFIX = True
+_R395_TAIL_SECTION_PREFIX = True   # R395 switch (off = tail fragment keeps its section number and is rejected)
 _R394_FINANCIAL_INFO_HEADING = True   # R394 switch (off = only `재무제표` section headings, as before)
 _R277_SECTION_PREFIX_RE = re.compile(r"^\d{1,2}\.(연결|별도|개별)?재무제표(?=(?:연결|별도|개별)?\S{0,6}(?:재무상태표|손익계산서|포괄손익계산서|현금흐름표|자본변동표))")
 
@@ -779,6 +780,17 @@ def classify_legacy_statement_heading(
     if len(parts) > 1:
         tail = parts[-1]
         if tail and tail != t:
+            if _R395_TAIL_SECTION_PREFIX:
+                # R395 - the tail may itself start with a section heading (`2.재무제표가.재무상태표`)
+                m2 = _R277_SECTION_PREFIX_RE.match(tail) or _R394_SECTION_PREFIX_RE.match(tail)
+                if m2 and len(tail) > m2.end():
+                    rest2 = tail[m2.end():]
+                    en2 = rest2[:2] if re.match(r"[가-힣]\.", rest2) else ""
+                    body2 = rest2[len(en2):]
+                    if m2.group(1) == "연결" and not body2.startswith(("연결", "별도", "개별")):
+                        body2 = "연결" + body2
+                    rest2 = en2 + body2
+                    tail = rest2
             return _classify_legacy_heading_core(tail, include_sce, bare_only=True)
     return None
 

@@ -647,6 +647,8 @@ _LEGACY_PENDING_SPAN = 4
 _LEGACY_NUM_HEAD_RE = re.compile(r"^\d{1,2}[.．)）]")
 
 
+_R396_HEADING_CHILDREN_FREE = True   # R396 switch: spans nested in the heading element do not age the pending heading
+_R396_FS_HEADING_WITHOUT_ETC = True  # R396 switch: R383 also takes the bare '2. 재무제표' heading
 _R392_HEADLESS_SCE_CONTINUATION = True   # R392 switch (measurement: off = the old one-table-per-heading walk)
 
 
@@ -714,6 +716,7 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
     pending: tuple[str, str] | None = None   # (basis, stmt) — 데이터표를 기다리는 헤딩
     pending_unit: int | None = None
     pending_age = 0
+    pending_el = None                         # R396 - element that set the pending heading
     pending_fs_etc = False                   # R383 - pending came from a bare '2. 재무제표 등' heading
     in_note_zone = False                     # R386 - between a notes marker and the next un-numbered statement heading
     sce_tail: str | None = None              # R392 - basis of an SCE table just taken, nothing but tables since
@@ -730,7 +733,9 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
         # 없으므로 "헤딩에서 멀어졌다"는 신호가 아니다 — 내용 있는 형제(TABLE 포함)만
         # 센다. 기존 실측 분포("1칸 571건·2칸 48건")는 대부분 빈 형제가 거의 없는
         # 문서라 이 변경으로 달라지지 않는다(전수 회귀 테스트로 확인).
-        if pending is not None and (text_ or tag == "TABLE"):
+        if (pending is not None and (text_ or tag == "TABLE")
+                and not (_R396_HEADING_CHILDREN_FREE and pending_el is not None and tag != "TABLE"
+                         and any(a is pending_el for a in el.iterancestors()))):
             pending_age += 1
             if pending_age > _LEGACY_PENDING_SPAN:
                 pending = None                # 데이터표 없이 끝난 헤딩 — 멀리서 끌어오지 않는다
@@ -785,6 +790,7 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
         if head is not None:
             in_note_zone = False if not _LEGACY_NUM_HEAD_RE.match(re.sub(r'\s+', '', text_)) else in_note_zone
             pending = head
+            pending_el = el
             pending_age = 0
             pending_fs_etc = False
             # 헤딩이 표(제목표)면 그 표가 단위를 들고 있을 수 있다(A형 '… (단위 : 원)').
@@ -795,7 +801,7 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
         # heading '2. 재무제표 등' (+ a period table) with no '재무상태표' title; its IS/CF carry
         # titles. Only when no separate BS was read yet; the table guard above does the rest.
         if (_R383_LEGACY_FS_ETC_HEADING_BS and tag != "TABLE"
-                and re.fullmatch(r"\d+\.재무제표등", re.sub(r"\s+", "", text_))
+                and re.fullmatch(r"\d+\.재무제표" + ("(?:등)?" if _R396_FS_HEADING_WITHOUT_ETC else "등"), re.sub(r"\s+", "", text_))
                 and not groups.get(SECTION_CODE_OF[("separate", "BS")])):
             pending = ("separate", "BS")
             pending_age = 0

@@ -647,6 +647,9 @@ _LEGACY_PENDING_SPAN = 4
 _LEGACY_NUM_HEAD_RE = re.compile(r"^\d{1,2}[.．)）]")
 
 
+_R392_HEADLESS_SCE_CONTINUATION = True   # R392 switch (measurement: off = the old one-table-per-heading walk)
+
+
 def _detect_legacy_body_statement_tables(root, fin_type: str,
                                          include_sce: bool) -> dict[str, list[tuple]]:
     """구형 레이아웃(`XI. 재무제표 등`)에서 본문 재무제표 표를 찾는다 (2026-08-04).
@@ -713,9 +716,12 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
     pending_age = 0
     pending_fs_etc = False                   # R383 - pending came from a bare '2. 재무제표 등' heading
     in_note_zone = False                     # R386 - between a notes marker and the next un-numbered statement heading
+    sce_tail: str | None = None              # R392 - basis of an SCE table just taken, nothing but tables since
 
     for tag, el in elements:
         text_ = " ".join("".join(el.itertext()).split())
+        if text_ and tag != "TABLE" and sce_tail is not None:
+            sce_tail = None                   # R392 - any printed text between tables ends the continuation window
 
         # R101(2026-09-13) — 내용 없는 요소(순수 장식용 빈 SPAN 등)는 나이를 안 먹인다.
         # SBI인베스트먼트(20120329001048) 실측: 헤딩과 데이터표 사이에 빈 SPAN 5개가
@@ -733,6 +739,16 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
 
         if tag == "TABLE" and _table_has_data_rows(el):
             if pending is None:
+                # R392 - a second physical SCE table printed right after the first with no heading of
+                # its own (Yuanta 20141114000904: FY2012 block, then the FY2013/FY2014 blocks). Only a
+                # table that repeats the equity-component column names continues the SCE group.
+                if (_R392_HEADLESS_SCE_CONTINUATION and sce_tail is not None
+                        and _looks_like_equity_changes_header(el)):
+                    _code = SECTION_CODE_OF[(sce_tail, "SCE")]
+                    groups.setdefault(_code, []).append(
+                        (el, declared_unit(el) or groups[_code][-1][1], section_kind))
+                else:
+                    sce_tail = None
                 continue                      # 관장 헤딩 없는 데이터표 = 주석표 → 취하지 않음
             basis, stmt = pending
             if pending_fs_etc:
@@ -749,6 +765,7 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
             unit = pending_unit if pending_unit is not None else declared_unit(el)
             groups.setdefault(SECTION_CODE_OF[(basis, stmt)], []).append(
                 (el, unit, section_kind))
+            sce_tail = basis if stmt == "SCE" else None
             pending = None
             pending_unit = None
             continue

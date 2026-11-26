@@ -624,10 +624,15 @@ _LEGACY_ALT_NAME_PAREN = re.compile(
 )
 # 재무제표명 **직후**에 와야 하는 기간/단위 마커(공백 제거 기준). 이게 있어야 표제로 확정한다.
 # 없으면(=명칭만 있는 단독 헤딩) 별도 규칙으로 받는다 — 아래 docstring 참조.
+_R393_PERIOD_WITHOUT_GI = True   # R393 switch (off = the old marker set; measurement only)
 _LEGACY_PERIOD_AFTER = re.compile(
     r"^(?:제\d+(?:\([^)]*\))?기|\d{4}[.\-년]|[당전]?(?:반기말|분기말|기말)|"
     r"[(（]?단위|[당전]기(?=[\d(（]))"
 )
+# R393 - `제 10(당) [반기] 2014년 1월 1일부터` (the term number is followed by (당)/(전) and the date, with no `기`):
+# Jeju Air 20141114000458 / 20140814001033 printed the SCE and CF titles this way, so both heading tables
+# were rejected and the separate SCE/CF tables were never loaded.
+_R393_PERIOD_WITHOUT_GI_RE = re.compile(r"^제\d+[(（][당전][)）](?:반기|분기)?\d{4}[.\-년]")
 _LEGACY_NAME_TO_CODE = {
     "재무상태표": "BS", "대차대조표": "BS",
     "포괄손익계산서": "IS", "손익계산서": "IS",
@@ -688,7 +693,8 @@ def _classify_legacy_heading_core(
         if bare_only:
             return None
         # A형: 기간/단위 마커가 곧바로 따라와야 한다. 그 외 문자가 이어지면 표제가 아니다.
-        if not _LEGACY_PERIOD_AFTER.match(rest):
+        if not _LEGACY_PERIOD_AFTER.match(rest) and not (
+                _R393_PERIOD_WITHOUT_GI and _R393_PERIOD_WITHOUT_GI_RE.match(rest)):
             return None
     # rest == "" 이면 B형(명칭 단독 헤딩) — 조건 1~3 을 이미 통과했다.
 
@@ -709,6 +715,7 @@ _LEGACY_SENTENCE_SPLIT = re.compile(r"다\.")
 # R277 - `1. 연결재무제표` section heading printed in the same element, right before the statement title
 # (`1. 연결재무제표&cr;연 결 재 무 상 태 표`): the number prefix made the whole heading read as a note heading.
 _R277_SECTION_NUMBER_PREFIX = True
+_R394_FINANCIAL_INFO_HEADING = True   # R394 switch (off = only `재무제표` section headings, as before)
 _R277_SECTION_PREFIX_RE = re.compile(r"^\d{1,2}\.(연결|별도|개별)?재무제표(?=(?:연결|별도|개별)?\S{0,6}(?:재무상태표|손익계산서|포괄손익계산서|현금흐름표|자본변동표))")
 
 
@@ -750,9 +757,18 @@ def classify_legacy_statement_heading(
     t = re.sub(r"\s+", "", text)
     if _R277_SECTION_NUMBER_PREFIX:
         m = _R277_SECTION_PREFIX_RE.match(t)
+        if m is None and _R394_FINANCIAL_INFO_HEADING:
+            m = _R394_SECTION_PREFIX_RE.match(t)
         if m and len(t) > m.end():
             rest = t[m.end():]
-            if not rest.startswith(("연결", "별도", "개별")) and m.group(1) == "연결":
+            if m.re is _R394_SECTION_PREFIX_RE:
+                # R394 - the `가.` enumerator stays in front; the basis word goes after it
+                en = rest[:2]
+                body = rest[2:]
+                if not body.startswith(("연결", "별도", "개별")) and m.group(1) == "연결":
+                    body = "연결" + body
+                rest = en + body
+            elif not rest.startswith(("연결", "별도", "개별")) and m.group(1) == "연결":
                 rest = "연결" + rest
             t = rest
     result = _classify_legacy_heading_core(t, include_sce, allow_numbered=allow_numbered)
@@ -784,3 +800,11 @@ def classify_statement_title(title: str) -> tuple[str, str] | None:
     stmt = _STMT_NAME[m.group(1)]
     basis = "consolidated" if _CONSOL_TITLE.search(title) else "separate"
     return (basis, stmt)
+
+
+# R394 - `2. 별도재무정보(K-IFRS)가. 반기재무상태표` : the section heading is `재무정보` (not `재무제표`) and the
+# statement title is glued to it in one element (Itcen Global 20131129002001 separate BS: the heading was rejected
+# as a numbered note heading, so the separate BS was never loaded while the consolidated one was).
+_R394_SECTION_PREFIX_RE = re.compile(
+    r"^\d{1,2}\.(연결|별도|개별)?재무정보(?:\(K-IFRS\))?(?=[가-힣]\.(?:연결|별도|개별)?\S{0,6}"
+    r"(?:재무상태표|손익계산서|포괄손익계산서|현금흐름표|자본변동표))")

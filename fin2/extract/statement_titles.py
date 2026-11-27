@@ -611,7 +611,7 @@ _LEGACY_EXCLUDE = re.compile(
 # ★C-2(2026-09-05) — "요약" 추가(위 _LEGACY_EXCLUDE 예외와 짝 — 그쪽에서 통과된 것만
 # 여기 걸린다).
 _LEGACY_HEAD = re.compile(
-    r"^(?:요약|연결|별도|개별|반기|분기|중간|당|전)*"
+    r"^(?:요약|연결|별도|개별|반기|분기|중간|당|전|\(포괄\))*"   # R398: `(포괄)손익계산서`
     r"(재무상태표|대차대조표|포괄손익계산서|손익계산서|현금흐름표|자본변동표)"
 )
 # ★R69(2026-09-05) — IFRS 전환기 신·구 명칭 병기("재무상태표(대차대조표)"). 실측
@@ -717,7 +717,9 @@ _LEGACY_SENTENCE_SPLIT = re.compile(r"다\.")
 _R277_SECTION_NUMBER_PREFIX = True
 _R395_TAIL_SECTION_PREFIX = True   # R395 switch (off = tail fragment keeps its section number and is rejected)
 _R394_FINANCIAL_INFO_HEADING = True   # R394 switch (off = only `재무제표` section headings, as before)
-_R277_SECTION_PREFIX_RE = re.compile(r"^\d{1,2}\.(연결|별도|개별)?재무제표(?=(?:연결|별도|개별)?\S{0,6}(?:재무상태표|손익계산서|포괄손익계산서|현금흐름표|자본변동표))")
+_R398_SECTION_HEAD_PAREN_AND_NOTE_REF = True   # R398 switch: `재무제표(K-IFRS)` section head and a leading `별첨 재무제표에 대한 주석 참조` phrase
+_R398_NOTE_REF_PREFIX_RE = re.compile(r"^(?:\(?별첨\)?)?재무제표에대한주석(?:을)?참조(?:하시기바랍니다)?\.?(?=\S)")
+_R277_SECTION_PREFIX_RE = re.compile(r"^\d{1,2}\.(연결|별도|개별)?재무제표(?:\((?:K-IFRS|한국채택국제회계기준)\))?(?=(?:연결|별도|개별)?\S{0,6}(?:재무상태표|손익계산서|포괄손익계산서|현금흐름표|자본변동표))")
 
 
 def classify_legacy_statement_heading(
@@ -756,6 +758,8 @@ def classify_legacy_statement_heading(
     if not text:
         return None
     t = re.sub(r"\s+", "", text)
+    if _R398_SECTION_HEAD_PAREN_AND_NOTE_REF:
+        t = _R398_NOTE_REF_PREFIX_RE.sub("", t, count=1)
     if _R277_SECTION_NUMBER_PREFIX:
         m = _R277_SECTION_PREFIX_RE.match(t)
         if m is None and _R394_FINANCIAL_INFO_HEADING:

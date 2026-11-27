@@ -647,6 +647,19 @@ _LEGACY_PENDING_SPAN = 4
 _LEGACY_NUM_HEAD_RE = re.compile(r"^\d{1,2}[.．)）]")
 
 
+_R397_NOTE_NUMBER_SIBLING_NOT_HEADING = True   # R397 switch: a bare statement name right after a number-only sibling inside the notes zone is a note title
+
+
+def _preceded_by_number_only_sibling(el) -> bool:
+    """True when the previous sibling element prints only an enumerator such as '22.' (R397)."""
+    prev = el.getprevious()
+    while prev is not None and not isinstance(prev.tag, str):
+        prev = prev.getprevious()
+    if prev is None:
+        return False
+    return re.fullmatch(r"\d{1,2}[.．)）]?", "".join(prev.itertext()).strip()) is not None
+
+
 _R396_HEADING_CHILDREN_FREE = True   # R396 switch: spans nested in the heading element do not age the pending heading
 _R396_FS_HEADING_WITHOUT_ETC = True  # R396 switch: R383 also takes the bare '2. 재무제표' heading
 _R392_HEADLESS_SCE_CONTINUATION = True   # R392 switch (measurement: off = the old one-table-per-heading walk)
@@ -787,6 +800,9 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
         # `classify_legacy_statement_heading`의 엄격함이 안전판 역할).
         head = classify_legacy_statement_heading(
             text_, include_sce=include_sce, allow_numbered=not in_note_zone)
+        if (head is not None and _R397_NOTE_NUMBER_SIBLING_NOT_HEADING and in_note_zone
+                and tag != "TABLE" and _preceded_by_number_only_sibling(el)):
+            head = None                       # R397 - '22.' + '현금흐름표' split over two SPANs = a numbered note title
         if head is not None:
             in_note_zone = False if not _LEGACY_NUM_HEAD_RE.match(re.sub(r'\s+', '', text_)) else in_note_zone
             pending = head

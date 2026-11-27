@@ -647,6 +647,10 @@ _LEGACY_PENDING_SPAN = 4
 _LEGACY_NUM_HEAD_RE = re.compile(r"^\d{1,2}[.．)）]")
 
 
+_R399_NOTE_ZONE_SUMMARY_HEADING = True   # R399 switch: '(1) 요약재무상태표' inside the notes zone is a note sub-title, not a statement heading
+_R399_PAREN_NUM_SUMMARY_RE = re.compile(r"^[(（]\d{1,2}[)）]요약")
+
+
 _R397_NOTE_NUMBER_SIBLING_NOT_HEADING = True   # R397 switch: a bare statement name right after a number-only sibling inside the notes zone is a note title
 
 
@@ -803,6 +807,9 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
         if (head is not None and _R397_NOTE_NUMBER_SIBLING_NOT_HEADING and in_note_zone
                 and tag != "TABLE" and _preceded_by_number_only_sibling(el)):
             head = None                       # R397 - '22.' + '현금흐름표' split over two SPANs = a numbered note title
+        if (head is not None and _R399_NOTE_ZONE_SUMMARY_HEADING and in_note_zone
+                and _R399_PAREN_NUM_SUMMARY_RE.match(re.sub(r"\s+", "", text_))):
+            head = None                       # R399 - e.g. merger note '(1) 요약재무상태표 -' (Tovis 20140530001276)
         if head is not None:
             in_note_zone = False if not _LEGACY_NUM_HEAD_RE.match(re.sub(r'\s+', '', text_)) else in_note_zone
             pending = head

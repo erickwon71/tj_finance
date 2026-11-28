@@ -759,6 +759,13 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
                 pending_unit = None
                 pending_fs_etc = False
 
+        if (_R402_SINGLE_CELL_SCE and tag == "TABLE" and pending is not None and pending[1] == "SCE"
+                and not _table_has_data_rows(el)):
+            _syn = expand_single_cell_sce_table(el)
+            if _syn is not None:              # R402 - replace in the tree so siblings (unit lookup) stay put
+                _syn.tail = el.tail
+                el.getparent().replace(el, _syn)
+                el = _syn
         if tag == "TABLE" and _table_has_data_rows(el):
             if pending is None:
                 # R392 - a second physical SCE table printed right after the first with no heading of
@@ -1163,6 +1170,69 @@ def _table_has_data_rows(tbl, minimum: int = 2) -> int:
     # 판정 실체는 `section_detector.table_has_amount_rows` 한 곳에 있다 —
     # 표제 back-scan 경계(statement_titles)와 같은 술어를 써야 어긋나지 않는다.
     return table_has_amount_rows(tbl, minimum)
+
+
+_R402_SINGLE_CELL_SCE = True   # R402 switch (off = a one-cell newline-joined SCE table is not read, as before)
+_R402_AMOUNT_LINE_RE = re.compile(r"^[(（]?-?[\d,]+(?:\.\d+)?[)）]?$")
+
+
+def _r402_is_value_line(line: str) -> bool:
+    """A value cell of a one-cell SCE blob: an amount, a '-' dash, or a full-width blank (U+3000)."""
+    t = line.strip(" \t\r")
+    if t == "":
+        return False
+    return t == "-" or _R402_AMOUNT_LINE_RE.match(t) is not None or t.strip("\u3000") == ""
+
+
+def expand_single_cell_sce_table(tbl):
+    """R402 - rebuild a statement of changes in equity that is printed as ONE row with ONE cell whose
+    lines are `과 목`, the column names, then `label / value x N` records (Haitai 20141201000889 separate
+    SCE). Returns a new TABLE element (TR/TD per record) or None when the cell does not have exactly
+    that shape; every line is kept as printed (R0-2), nothing is added or moved."""
+    rows = table_direct_rows(tbl)
+    if len(rows) != 1:
+        return None
+    from parser.xml.table_extractor import _get_cells
+    cells = _get_cells(rows[0])
+    if len(cells) != 1 or cells[0].count("\n") < 20:
+        return None
+    lines = [ln for ln in cells[0].split("\n") if ln.strip(" \t\r") != ""]
+    if not lines or re.sub(r"\s+", "", lines[0]) != "과목":
+        return None
+    first_val = next((k for k, ln in enumerate(lines) if k and _r402_is_value_line(ln)), None)
+    if first_val is None or first_val < 3:
+        return None
+    ncols = 0
+    while first_val + ncols < len(lines) and _r402_is_value_line(lines[first_val + ncols]):
+        ncols += 1
+    # the column names sit between '과 목' and the first record label (the line before its values)
+    if ncols < 2 or first_val - 1 - 1 != ncols:
+        return None
+    header = lines[:first_val - 1]
+    records: list[list[str]] = []
+    i = first_val - 1
+    while i < len(lines):
+        label = lines[i]
+        if _r402_is_value_line(label):
+            return None                      # a value where a label should be: the shape is not what we think
+        j = i + 1
+        vals: list[str] = []
+        while j < len(lines) and _r402_is_value_line(lines[j]):
+            vals.append(lines[j])
+            j += 1
+        if len(vals) not in (0, ncols):
+            return None                      # a record with a short/long value run: do not guess
+        records.append([label] + vals)
+        i = j
+    if not any(len(r) == 1 + ncols for r in records):
+        return None
+    out = etree.Element("TABLE")
+    body = etree.SubElement(out, "TBODY")
+    for row in [header] + records:
+        tr = etree.SubElement(body, "TR")
+        for cell in row:
+            etree.SubElement(tr, "TD").text = cell
+    return out
 
 
 # 손익계산서 내용 시그니처: 매출/영업수익 행 + 영업이익/당기순이익 행. BS(잔액)·SCE(자본변동)·

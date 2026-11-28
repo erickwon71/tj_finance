@@ -650,13 +650,31 @@ _LEGACY_NAME_TO_CODE = {
 }
 # 주석 구간 시작 마커 — 이 뒤의 표는 본문 후보에서 제외한다(실측 '연결재무제표에 대한 주석').
 _LEGACY_NOTE_MARK = re.compile(r"재무제표에?대한주석|^주석$")
+# R403 switch: a note-zone heading that is a whole short line of its own ('3. 연결주석사항',
+# '2.재무제표주석', '나.별도재무제표주석'). Polaris Office 20140530000498 opens its consolidated notes with
+# '3. 연결주석사항' (followed by '1. 지배기업의 개요' in the same paragraph) and was never recognised as a note zone.
+_R403_NOTE_HEADING_LINE = True
+_R403_NOTE_HEADING_LINE_RE = re.compile(
+    r"(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫ]+\.|\d+\.|[가-하]\.)?"
+    r"(?:연결|별도)?(?:재무제표(?:의|에대한|)?)?(?:주석사항|주석)(?:-계속)?")
+_R403_NOTE_HEADING_MAX_LEN = 24
 
 
 def is_legacy_note_marker(text: str) -> bool:
     """구형 레이아웃에서 **주석 구간의 시작**을 알리는 헤딩인가."""
     if not text:
         return False
-    return bool(_LEGACY_NOTE_MARK.search(re.sub(r"\s+", "", text)[:40]))
+    if _LEGACY_NOTE_MARK.search(re.sub(r"\s+", "", text)[:40]):
+        return True
+    if not _R403_NOTE_HEADING_LINE:
+        return False
+    # R403 - only the first line of the element counts, and the whole line must be the heading
+    # (a reference such as '주석34에서' or a sentence 'XX 참조' is never a heading).
+    first_line = re.split(r"&cr;|\r|\n", text, maxsplit=1)[0]
+    line = re.sub(r"\s+", "", first_line)
+    if not line or len(line) > _R403_NOTE_HEADING_MAX_LEN:
+        return False
+    return _R403_NOTE_HEADING_LINE_RE.fullmatch(line) is not None
 
 
 def _classify_legacy_heading_core(

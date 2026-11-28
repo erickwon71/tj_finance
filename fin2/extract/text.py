@@ -648,6 +648,12 @@ _LEGACY_NUM_HEAD_RE = re.compile(r"^\d{1,2}[.．)）]")
 
 
 _R399_NOTE_ZONE_SUMMARY_HEADING = True   # R399 switch: '(1) 요약재무상태표' inside the notes zone is a note sub-title, not a statement heading
+# R403-b switch: inside the notes zone a bare statement name ('현금흐름표' alone, no period, no 연결/별도) is a note
+# sub-title, not a statement heading. It used to end the zone and open a separate statement: Polaris Office
+# 20140530000498 note 33 '현금흐름표' → separate CF, its consolidated detail table read as separate CF (#573128~#573136).
+_R403_NOTE_ZONE_BARE_NAME = True
+_R403_BARE_STATEMENT_NAMES = frozenset({
+    "재무상태표", "대차대조표", "포괄손익계산서", "손익계산서", "현금흐름표", "자본변동표"})
 _R399_PAREN_NUM_SUMMARY_RE = re.compile(r"^[(（]\d{1,2}[)）]요약")
 
 
@@ -824,6 +830,9 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
         if (head is not None and _R399_NOTE_ZONE_SUMMARY_HEADING and in_note_zone
                 and _R399_PAREN_NUM_SUMMARY_RE.match(re.sub(r"\s+", "", text_))):
             head = None                       # R399 - e.g. merger note '(1) 요약재무상태표 -' (Tovis 20140530001276)
+        if (head is not None and _R403_NOTE_ZONE_BARE_NAME and in_note_zone and tag != "TABLE"
+                and re.sub(r"\s+", "", text_) in _R403_BARE_STATEMENT_NAMES):
+            head = None                       # R403-b - a bare statement name inside the notes is a note sub-title
         if head is not None:
             in_note_zone = False if not _LEGACY_NUM_HEAD_RE.match(re.sub(r'\s+', '', text_)) else in_note_zone
             pending = head

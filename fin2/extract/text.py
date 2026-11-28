@@ -804,6 +804,13 @@ def _detect_legacy_body_statement_tables(root, fin_type: str,
         # `classify_legacy_statement_heading`의 엄격함이 안전판 역할).
         head = classify_legacy_statement_heading(
             text_, include_sce=include_sce, allow_numbered=not in_note_zone)
+        if head is None and not in_note_zone:
+            # R400 - `1. 분기재무상태표` (period-numbered title before the notes). Taken only when
+            # that statement has not been read yet; afterwards the same shape is a note title.
+            _dot = classify_legacy_statement_heading(
+                text_, include_sce=include_sce, allow_numbered=True, allow_numbered_dot=True)
+            if _dot is not None and SECTION_CODE_OF[_dot] not in groups:
+                head = _dot
         if (head is not None and _R397_NOTE_NUMBER_SIBLING_NOT_HEADING and in_note_zone
                 and tag != "TABLE" and _preceded_by_number_only_sibling(el)):
             head = None                       # R397 - '22.' + '현금흐름표' split over two SPANs = a numbered note title

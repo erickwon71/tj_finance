@@ -592,6 +592,11 @@ _LEGACY_PAREN_NUM_PREFIX = re.compile(r"^[(（]\d{1,2}[)）]")
 # legacy walker and only before the notes start (`allow_numbered`), because after the notes begin the same
 # 'N)' shape is a note item number.
 _LEGACY_NUM_PAREN_PREFIX = re.compile(r"^\d{1,2}[)）]")
+# R400 - '1. 분기재무상태표' / '2. 손익계산서': the same numbered statement sub-heading printed with a period
+# (Korea Capital 2014, F&Guide 2014). Accepted only before the notes start (`allow_numbered_dot`) and, in the
+# walker, only while that statement has not been read yet (a later '29. 현금흐름표' is a note title).
+_R400_NUM_DOT_STATEMENT_HEADING = True   # R400 switch (off = `N.` numbered titles are refused, as before)
+_LEGACY_NUM_DOT_PREFIX = re.compile(r"^\d{1,2}[.．]")
 # R388 - a bank prints its statements twice, '(은행)' account and '(신탁)' trust account; the bank-account
 # suffix is part of the title, the trust one is still refused.
 _LEGACY_BANK_SUFFIX = re.compile(r"^[(（]은행[)）]")
@@ -632,7 +637,12 @@ _LEGACY_PERIOD_AFTER = re.compile(
 # R393 - `제 10(당) [반기] 2014년 1월 1일부터` (the term number is followed by (당)/(전) and the date, with no `기`):
 # Jeju Air 20141114000458 / 20140814001033 printed the SCE and CF titles this way, so both heading tables
 # were rejected and the separate SCE/CF tables were never loaded.
-_R393_PERIOD_WITHOUT_GI_RE = re.compile(r"^제\d+[(（][당전][)）](?:반기|분기)?\d{4}[.\-년]")
+_R401_QUARTER_NUMBER_AFTER_TERM = True   # R401 switch (off = `제 15(당) 1분기 2014년` is refused, as before)
+_R393_PERIOD_WITHOUT_GI_RE = re.compile(
+    r"^제\d+[(（][당전][)）](?:\d?(?:반기|분기))?\d{4}[.\-년]")
+# R401 - the same title with the quarter number between the term and the date (`제 15(당) 1분기 2014년 1월 1일부터`,
+# AJ Networks 20140515000263: the IS/SCE/CF titles were refused). `_R393_PERIOD_WITHOUT_GI_RE` now allows `1분기`.
+_R393_PERIOD_WITHOUT_GI_RE_OLD = re.compile(r"^제\d+[(（][당전][)）](?:반기|분기)?\d{4}[.\-년]")
 _LEGACY_NAME_TO_CODE = {
     "재무상태표": "BS", "대차대조표": "BS",
     "포괄손익계산서": "IS", "손익계산서": "IS",
@@ -651,6 +661,7 @@ def is_legacy_note_marker(text: str) -> bool:
 
 def _classify_legacy_heading_core(
     t: str, include_sce: bool, *, bare_only: bool = False, allow_numbered: bool = False,
+    allow_numbered_dot: bool = False,
 ) -> tuple[str, str] | None:
     """`classify_legacy_statement_heading` 의 판정 본체 — **이미 공백이 제거된**
     문자열 `t`에 대해서만 동작한다(호출측이 whitespace-strip 을 책임진다).
@@ -662,9 +673,13 @@ def _classify_legacy_heading_core(
     if not t:
         return None
     if _LEGACY_ENUM_PREFIX.match(t):
-        if not (allow_numbered and _LEGACY_NUM_PAREN_PREFIX.match(t)):
+        if allow_numbered and _LEGACY_NUM_PAREN_PREFIX.match(t):
+            t = _LEGACY_NUM_PAREN_PREFIX.sub("", t, count=1)    # R386
+        elif (allow_numbered_dot and _R400_NUM_DOT_STATEMENT_HEADING
+                and _LEGACY_NUM_DOT_PREFIX.match(t)):
+            t = _LEGACY_NUM_DOT_PREFIX.sub("", t, count=1)      # R400
+        else:
             return None
-        t = _LEGACY_NUM_PAREN_PREFIX.sub("", t, count=1)    # R386
     # R69(2026-09-05) — 한글 가나다 열거접두 제거(위 상수 docstring 참고). 벗긴 뒤에도
     # 재무제표명이 안 걸리면 아래 _LEGACY_HEAD.match 에서 그대로 거부된다.
     t = _LEGACY_KO_ENUM_PREFIX.sub("", t, count=1)
@@ -694,7 +709,9 @@ def _classify_legacy_heading_core(
             return None
         # A형: 기간/단위 마커가 곧바로 따라와야 한다. 그 외 문자가 이어지면 표제가 아니다.
         if not _LEGACY_PERIOD_AFTER.match(rest) and not (
-                _R393_PERIOD_WITHOUT_GI and _R393_PERIOD_WITHOUT_GI_RE.match(rest)):
+                _R393_PERIOD_WITHOUT_GI and (
+                    _R393_PERIOD_WITHOUT_GI_RE if _R401_QUARTER_NUMBER_AFTER_TERM
+                    else _R393_PERIOD_WITHOUT_GI_RE_OLD).match(rest)):
             return None
     # rest == "" 이면 B형(명칭 단독 헤딩) — 조건 1~3 을 이미 통과했다.
 
@@ -724,6 +741,7 @@ _R277_SECTION_PREFIX_RE = re.compile(r"^\d{1,2}\.(연결|별도|개별)?재무�
 
 def classify_legacy_statement_heading(
     text: str, include_sce: bool = False, *, allow_numbered: bool = False,
+    allow_numbered_dot: bool = False,
 ) -> tuple[str, str] | None:
     """구형 레이아웃의 재무제표 **표제 헤딩** → (basis, statement) 또는 None.
 
@@ -776,7 +794,8 @@ def classify_legacy_statement_heading(
             elif not rest.startswith(("연결", "별도", "개별")) and m.group(1) == "연결":
                 rest = "연결" + rest
             t = rest
-    result = _classify_legacy_heading_core(t, include_sce, allow_numbered=allow_numbered)
+    result = _classify_legacy_heading_core(
+        t, include_sce, allow_numbered=allow_numbered, allow_numbered_dot=allow_numbered_dot)
     if result is not None:
         return result
 

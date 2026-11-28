@@ -283,10 +283,17 @@ def scan_rcept(s, rcept_no: str, suspects: set[str]) -> list[dict]:
                OR dt.viewer_xml_path IS NOT NULL)
         ORDER BY (dt.status = 'completed' AND dt.file_type = 'xml') DESC, dt.id DESC"""),
         {"r": rcept_no}).first()
-    if meta is None or not Path(meta.file_path).exists():
+    if meta is None:
         return [{"rcept": rcept_no, "decision": "no_xml"}]
-    declared = _extract(meta.file_path, meta, rcept_no, None)
-    raw = _extract(meta.file_path, meta, rcept_no, 1)   # k=1 → value_won == raw amount
+    xml_path = meta.file_path
+    if not Path(xml_path).exists():
+        # NAS not mounted (or NFC/NFD folder spelling): use the SD mirror copy, as `batch reload --sd` does
+        from fin2.verification.ops import _sd_path
+        xml_path = _sd_path(xml_path)
+        if not Path(xml_path).exists():
+            return [{"rcept": rcept_no, "decision": "no_xml"}]
+    declared = _extract(xml_path, meta, rcept_no, None)
+    raw = _extract(xml_path, meta, rcept_no, 1)   # k=1 → value_won == raw amount
     by_sec_decl: dict = defaultdict(list)
     for ln in declared:
         by_sec_decl[_section_code(ln)].append(ln)
